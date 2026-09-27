@@ -8,6 +8,8 @@
 
 **Revenue routing update, September 27 UTC:** the later [DBC collector](DBC_PLATFORM_COLLECTION.md) adds settled DBC platform claims after unpaid discovery rewards are reserved. The revenue section below reflects that extension. The chain/config checkpoint remains the earlier read-only observation.
 
+**Launch update, September 27, 2026:** the ordinary launch finalized with the actual immutable ticker **REPOING**. The [official identity](REPO_IDENTITY.md) records its mint, launch/team wallet, transaction, and approximately 3% initial purchase. The review below retains the original `$REPO` planning name and pre-launch observations.
+
 ## Conclusion
 
 The normal route fits: **$REPO can be the canonical market for `New1Direction/repo.ing`**, with the same builder, discoverer, curve and migration rules as other newly enrolled markets. No special config or accounting exception is required merely because the repository administrator also operates the platform.

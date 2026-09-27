@@ -85,21 +85,21 @@ Accrual ends at the earliest of:
 
 Already-earned rewards remain claimable afterward. Paid rewards count toward the cap. [Reward rules and settlement proof →](docs/DISCOVERY_REWARDS.md)
 
-## $REPO and platform revenue
+## $REPOING and platform revenue
 
 The active V1 policy allocates eligible **claimed platform revenue** as follows:
 
 | Allocation | Share | Current meaning |
 | --- | ---: | --- |
-| **$REPO buyback reserve** | **60%** | SOL reserved for future reviewed buybacks; purchases are not active. |
+| **$REPOING buyback reserve** | **60%** | SOL reserved for future reviewed buybacks; purchases are not active. |
 | **Protocol liquidity** | **20%** | Reserve for bounded, manually reviewed liquidity deployments. Execution is off. |
 | **Treasury** | **20%** | Retained platform allocation for operations. |
 
 The allocation path consumes **settled platform-fee claims**: DBC collections reserve unpaid discovery rewards before payment; DAMM claims use the platform partner position. Builder earnings and discoverer obligations are separate. See [fee collection and treasury custody](docs/DBC_PLATFORM_COLLECTION.md). An accrued fee is not spendable revenue, and an allocation is not an executed purchase.
 
-**$REPO will use the ordinary repository launch path.** The accepted design tokenizes this repository with the same 1 billion supply, 1% builder allocation and normal discovery/fee rules as other new markets. For this self market, the builder allocation is operator-related. No canonical $REPO mint is configured in the checked production release, and no launch time or burn policy is announced. Its builder earnings remain separate from the 60/20/20 policy; its eligible partner-fee claims enter that policy like other markets. [Official identity — awaiting verified launch →](docs/REPO_IDENTITY.md)
+**$REPOING is live through the ordinary repository launch path.** This repository was tokenized with the same 1 billion supply, 1% builder allocation and normal discovery/fee rules as other new markets. Its immutable on-chain ticker is **REPOING**; earlier planning used `$REPO`. The launch/team wallet purchased approximately **3%** for **0.856011397 SOL**, excluding launch account/network costs. The normal 1% builder allocation is separate and unlocks after verified graduation. Builder earnings remain separate from the 60/20/20 policy; eligible partner-fee claims enter that policy like other markets. [Verified mint, launch receipt, and wallet disclosure →](docs/REPO_IDENTITY.md)
 
-The buyback accounting and review controls exist; a reviewed trading executor still needs implementation before purchases can be activated. There is no automated buying or promised return. [Full $REPO readiness and policy →](docs/REPO_TOKEN.md) · [Ordinary launch economics and review →](docs/REPO_SELF_LAUNCH_REVIEW.md)
+The buyback accounting and review controls exist; a reviewed trading executor still needs implementation before purchases can be activated. There is no automated buying or promised return. [Full $REPOING readiness and policy →](docs/REPO_TOKEN.md) · [Ordinary launch economics and review →](docs/REPO_SELF_LAUNCH_REVIEW.md)
 
 ## Transparent protocol analytics
 
@@ -119,7 +119,7 @@ USD figures use the current SOL price; they are estimates, not historical dollar
 | Graduated fee capture and 60/20/20 revenue controls | **Deployed**; first real graduation remains the production milestone |
 | Protocol liquidity deployment | **Built, execution off**; first manual proof capped at 0.05 SOL investment + 0.012 SOL overhead |
 | Builder Reinvest | **Prepared, execution off** until protocol liquidity has one verified non-zero mainnet deployment and reconciliation `MATCH` |
-| $REPO buyback execution | **Not active**; official mint, reviewed executor, and activation still required |
+| $REPOING buyback execution | **Not active**; runtime mint configuration, reviewed executor, and activation still required |
 
 No automated market launches, trading, wash-volume incentives, or spending are introduced by the discovery and analytics features.
 
@@ -161,8 +161,8 @@ Open `http://localhost:3001`. Configure the ignored `.env.local` from [.env.exam
 Start with the [documentation index](docs/README.md), then choose:
 
 - **Use the product:** [User guide](docs/USER_GUIDE.md) · [Builders](docs/BUILDERS.md) · [Discovery rewards](docs/DISCOVERY_REWARDS.md)
-- **Understand the economics:** [Liquidity](docs/LIQUIDITY.md) · [Builder allocation](docs/BUILDER_ALLOCATION_PLAN.md) · [$REPO](docs/REPO_TOKEN.md) · [Analytics](docs/ANALYTICS.md)
-- **Verify $REPO:** [Official identity](docs/REPO_IDENTITY.md) · [Ordinary launch economics](docs/REPO_SELF_LAUNCH_REVIEW.md)
+- **Understand the economics:** [Liquidity](docs/LIQUIDITY.md) · [Builder allocation](docs/BUILDER_ALLOCATION_PLAN.md) · [$REPOING](docs/REPO_TOKEN.md) · [Analytics](docs/ANALYTICS.md)
+- **Verify $REPOING:** [Official identity](docs/REPO_IDENTITY.md) · [Ordinary launch economics](docs/REPO_SELF_LAUNCH_REVIEW.md)
 - **Review or develop:** [Architecture](docs/ARCHITECTURE.md) · [Development](docs/DEVELOPMENT.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
 
 ## License

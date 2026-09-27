@@ -15,10 +15,10 @@ Launch open source markets. Every trade pays the builders.
 | Understand the 1% builder allocation | [Builder allocation](BUILDER_ALLOCATION_PLAN.md) |
 | Read protocol metrics | [Analytics definitions and sources](ANALYTICS.md) |
 
-## $REPO and platform economics
+## $REPOING and platform economics
 
-- [Official identity](REPO_IDENTITY.md) — awaiting finalized launch verification.
-- [$REPO and revenue policy](REPO_TOKEN.md) — ordinary repository-market rules; buyback execution inactive.
+- [Official identity](REPO_IDENTITY.md) — finalized mint, launch wallet, transaction, and initial purchase.
+- [$REPOING and revenue policy](REPO_TOKEN.md) — ordinary repository-market rules; buyback execution inactive.
 - [Self-launch economics](REPO_SELF_LAUNCH_REVIEW.md) — supply, fees, positions, and separation of builder and platform earnings.
 - [60 / 20 / 20 allocation policy](REVENUE_POLICY_V1.md) — buyback reserve, protocol liquidity, and treasury.
 - [Platform fee collection](DBC_PLATFORM_COLLECTION.md) — discovery reserves, receiving treasury, and verified receipts.

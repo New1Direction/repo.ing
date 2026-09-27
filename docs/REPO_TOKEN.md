@@ -1,30 +1,30 @@
-# $REPO and platform revenue
+# $REPOING and platform revenue
 
-[Documentation](README.md) / $REPO
+[Documentation](README.md) / $REPOING
 
-**Status checked September 26, 2026:** the revenue policy is active. Buyback execution is off, and no canonical `REPO_TOKEN_MINT` is configured in the inspected production release. The ordinary self-launch design is accepted; the official mint and launch timing remain pending.
+**Status checked September 27, 2026:** the canonical market has launched and its mint is verified. The revenue policy is active. Buyback execution is off, and `REPO_TOKEN_MINT` remains unconfigured in the inspected production release.
 
-This guide describes implemented controls and the approved policy. It does not announce a token launch.
+The canonical repository market is live with ticker **REPOING**. Earlier planning used `$REPO`. See the [verified identity, transaction, and initial-purchase disclosure](REPO_IDENTITY.md). Buyback execution remains disabled and the production executor mint setting is still unconfigured at the launch checkpoint.
 
-**Accepted design:** [$REPO as the ordinary market for the repo.ing repository](REPO_SELF_LAUNCH_REVIEW.md), inheriting the current 1 billion supply, 1% builder allocation and normal discovery/fee rules. Verified addresses will be recorded in [Official identity](REPO_IDENTITY.md). Accepting the design does not sign a transaction or enable spending. The revenue policy below is unchanged.
+**Accepted design:** [$REPOING as the ordinary market for the repo.ing repository](REPO_SELF_LAUNCH_REVIEW.md), inheriting the current 1 billion supply, 1% builder allocation and normal discovery/fee rules. Finalized addresses and the launch receipt are recorded in [Official identity](REPO_IDENTITY.md). Publishing the mint does not enable spending. The revenue policy below is unchanged.
 
 ## Repository-market identity and protocol designation
 
-| | Repository markets | $REPO |
+| | Repository markets | $REPOING |
 | --- | --- | --- |
 | Purpose | A canonical market associated with a public GitHub repository | Accepted design: the ordinary market for `New1Direction/repo.ing`, also designated as the protocol token |
-| Identity | GitHub repository ID, canonical mint, and pool | Official mint still to be published and configured |
-| Supply | Current launch profile: 1 billion tokens, six decimals | Would inherit that profile through the ordinary launch route; no mint exists in the checked canonical record |
-| Builder allocation | 1% for new enrolled repository markets, after verified graduation | Would apply normally, becoming an operator-related allocation for the self repository |
+| Identity | GitHub repository ID, canonical mint, and pool | [Verified mint published](REPO_IDENTITY.md); runtime executor configuration remains pending |
+| Supply | Current launch profile: 1 billion tokens, six decimals | Verified fixed supply: 1 billion tokens, six decimals |
+| Builder allocation | 1% for new enrolled repository markets, after verified graduation | Applies normally after verified graduation; operator-related for the self repository |
 
-A ticker does not establish the official $REPO identity. Verify the actual finalized canonical market before publishing/configuring its mint. This document gives no token equity, redemption, governance, staking, or revenue-distribution rights.
+A ticker does not establish the official $REPOING identity. Verify the actual finalized canonical market before publishing/configuring its mint. This document gives no token equity, redemption, governance, staking, or revenue-distribution rights.
 
 ## Active V1 policy: 60 / 20 / 20
 
 ```mermaid
 flowchart LR
     A["Eligible settled platform fee claim"] --> B["Reviewed allocation"]
-    B --> C["60% · $REPO buyback reserve"]
+    B --> C["60% · $REPOING buyback reserve"]
     B --> D["20% · protocol liquidity reserve"]
     B --> E["20% · treasury"]
 ```
@@ -33,7 +33,7 @@ The immutable active policy is **600 / 200 / 200 permilles**. Allocations use in
 
 **Allocatable funds are settled platform-fee claims.** The DBC collector first reserves every unpaid discovery entitlement, then sends only the platform remainder to the receiving treasury. DAMM claims retain their existing partner-position path. Unclaimed accrual is never spendable. Builder fees are excluded. [Collection, custody and execution gates](DBC_PLATFORM_COLLECTION.md).
 
-If $REPO launches as an ordinary canonical market, its own eligible partner-fee claims are included too: the allocator has no self-market exclusion. Its builder earnings remain outside this policy even when their recipient also operates repo.ing.
+As an ordinary canonical market, $REPOING’s own eligible partner-fee claims are included too: the allocator has no self-market exclusion. Its builder earnings remain outside this policy even when their recipient also operates repo.ing.
 
 A reserve records an allocation. It does not mean a trade has executed, tokens have been purchased, or tokens have been burned.
 
@@ -48,7 +48,7 @@ Already implemented:
 
 Still required before any buyback:
 
-1. Publish and verify the canonical $REPO mint and approved token launch details.
+1. Bind the [verified canonical mint and launch details](REPO_IDENTITY.md) into the reviewed runtime buyback configuration. Mint verification is complete; executor configuration remains pending.
 2. Implement and review the trading route; the present executor deliberately rejects execution because no approved venue implementation exists.
 3. Bind the real quote, expected output, minimum received, destination account, spending limits, and expiry to the reviewed intent.
 4. Prove durable submission, recovery, exact settlement, and replay protection in local tests.
