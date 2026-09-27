@@ -19,6 +19,8 @@ expected_dbc_config: 2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M
 launch_transaction: null
 finalized_slot: null
 verified_at_utc: null
+intended_launcher_wallet: 4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce
+team_wallet: 4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce
 launcher_discoverer_wallet: null
 builder_recipient_wallet: null
 initial_buy_sol: null
@@ -27,6 +29,8 @@ buyback_execution: disabled
 ```
 
 `null` means **not selected or not verified**, never zero or an official placeholder address. In particular, the initial buy is undecided in this record; zero may be entered only after the operator chooses no buy and the finalized transaction verifies it.
+
+The operator designated `4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce` as the intended launch and team wallet on September 27, 2026. The address format is valid; wallet control, funding, the actual launch purchase, and discoverer attribution still require verification. The builder recipient remains unbound in this record and must use the normal GitHub verification and wallet-binding flow. The existing platform-fee treasury address is unchanged.
 
 ## Disclosures carried with this identity
 
