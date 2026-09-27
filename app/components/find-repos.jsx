@@ -26,7 +26,7 @@ export function FindRepos({ initial, smartSearch }) {
     cancel()
     const text = value.trim()
     if (!text) { clear(); return }
-    setQuery(text); setError(''); setBusy(true)
+    setQuery(text); setError(''); setReadyOnly(false); setBusy(true)
     const controller = new AbortController(), id = sequence.current
     request.current = controller
     const url = searchRepositoryUrl(text)
@@ -85,7 +85,7 @@ export function FindRepos({ initial, smartSearch }) {
     <div className="finder-examples"><span>Try:</span>{SEARCH_EXAMPLES.map(text => <button key={text} type="button" onClick={() => search(text)}>{text}</button>)}</div>
     <p id="finder-help" className="finder-help">Search repositories tracked by repo.ing. {smartSearch ? 'Descriptions are matched with AI; trend scores come from public evidence. Search text is processed by TypeSafe.' : 'Search names and descriptions, or narrow the list with filters.'}</p>
     <div className="finder-toolbar">
-      <div className="finder-tabs" role="group" aria-label="Market status">{Object.entries(MARKET_FILTERS).map(([value, label]) => <button type="button" key={value} disabled={busy} aria-pressed={market === value} onClick={() => setMarket(value)}>{label}</button>)}</div>
+      <div className="finder-tabs" role="group" aria-label="Market status">{Object.entries(MARKET_FILTERS).map(([value, label]) => <button type="button" key={value} disabled={busy} aria-pressed={market === value} onClick={() => { setMarket(value); setReadyOnly(false) }}>{label}</button>)}</div>
       <button type="button" className="finder-ready-filter" aria-pressed={readyOnly} disabled={busy} onClick={() => { setReadyOnly(value => !value); setMarket('all') }}>Ready to launch <span>{readyCount}</span></button>
       <label className="finder-activity"><span className="sr-only">Repository activity</span><select value={activity} disabled={busy} onChange={event => setActivity(event.target.value)}>{Object.entries(ACTIVITY_FILTERS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       {filtered && <button type="button" className="finder-clear" onClick={clear}><X size={14} aria-hidden="true"/> Clear</button>}
