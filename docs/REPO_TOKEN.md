@@ -12,7 +12,7 @@ This guide describes implemented controls and the approved policy. It does not a
 
 | | Repository markets | $REPO |
 | --- | --- | --- |
-| Purpose | A canonical market associated with a public GitHub repository | Accepted design: the ordinary market for `New1Direction/repoing`, also designated as the protocol token |
+| Purpose | A canonical market associated with a public GitHub repository | Accepted design: the ordinary market for `New1Direction/repo.ing`, also designated as the protocol token |
 | Identity | GitHub repository ID, canonical mint, and pool | Official mint still to be published and configured |
 | Supply | Current launch profile: 1 billion tokens, six decimals | Would inherit that profile through the ordinary launch route; no mint exists in the checked canonical record |
 | Builder allocation | 1% for new enrolled repository markets, after verified graduation | Would apply normally, becoming an operator-related allocation for the self repository |

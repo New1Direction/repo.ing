@@ -8,7 +8,7 @@ The accepted design is the ordinary canonical market for the repo.ing source rep
 project: repo.ing
 symbol: REPO
 status: awaiting_verified_launch
-github: https://github.com/New1Direction/repoing
+github: https://github.com/New1Direction/repo.ing
 github_repository_id: "1388219884"
 network: Solana mainnet-beta
 launch_path: repo.ing normal public-repository launcher
@@ -31,6 +31,8 @@ buyback_execution: disabled
 `null` means **not selected or not verified**, never zero or an official placeholder address. In particular, the initial buy is undecided in this record; zero may be entered only after the operator chooses no buy and the finalized transaction verifies it.
 
 The operator designated `4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce` as the intended launch and team wallet on September 27, 2026. The address format is valid; wallet control, funding, the actual launch purchase, and discoverer attribution still require verification. The builder recipient remains unbound in this record and must use the normal GitHub verification and wallet-binding flow. The existing platform-fee treasury address is unchanged.
+
+GitHub confirmed the repository rename from `New1Direction/repoing` to `New1Direction/repo.ing` on September 27, 2026. Its immutable ID remains **1388219884**, so this is the same canonical repository; the rename does not create a separate market identity.
 
 ## Disclosures carried with this identity
 

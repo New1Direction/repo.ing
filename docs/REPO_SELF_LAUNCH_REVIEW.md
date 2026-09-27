@@ -10,7 +10,9 @@
 
 ## Conclusion
 
-The normal route fits: **$REPO can be the canonical market for `New1Direction/repoing`**, with the same builder, discoverer, curve and migration rules as other newly enrolled markets. No special config or accounting exception is required merely because the repository administrator also operates the platform.
+The normal route fits: **$REPO can be the canonical market for `New1Direction/repo.ing`**, with the same builder, discoverer, curve and migration rules as other newly enrolled markets. No special config or accounting exception is required merely because the repository administrator also operates the platform.
+
+The repository was renamed from `New1Direction/repoing` on September 27, 2026; GitHub verified that ID **1388219884** is unchanged. The original checkpoint below retains its historical name.
 
 This replaces the earlier standalone 80/20, zero-insider-allocation proposal as the direction under review. It does not approve a launch transaction. The ordinary route includes a **1% builder allocation after verified graduation**, and that is an operator-related allocation for this particular repository.
 
@@ -131,7 +133,7 @@ Bought-back token disposition remains undecided. It need not block an ordinary m
 
 1. Accept the ordinary economics and the disclosure decisions above; finalize the repo's publication review.
 2. Prepare a funded normal wallet and the intended name/symbol, then make the existing repository public when ready. Preserve its numeric ID; a replacement repository would be a different canonical identity.
-3. Open the normal repo.ing launcher for `https://github.com/New1Direction/repoing`. Verify the resolved identity and whether a market already exists.
+3. Open the normal repo.ing launcher for `https://github.com/New1Direction/repo.ing`. Verify the resolved identity and whether a market already exists.
 4. Review the selected 85 SOL config, 1% grant, discovery terms, optional buy and actual account/network costs. The operator signs the normal launch transaction manually.
 5. Verify finalized creation and indexing, immutable canonical repository binding, mint/config/pool, actual supply and authorities, launcher attribution and both enrollment versions. Publish only those proven official addresses.
 6. Connect GitHub and bind the intended builder wallet through the existing claim flow. Accrued SOL fees can be claimed before graduation; the 1% token grant waits for verified migration.
