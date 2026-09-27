@@ -1,6 +1,19 @@
 import { bigint, boolean, check, integer, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
+export const builderReminders = pgTable('builder_reminders', {
+  githubUserId: bigint('github_user_id', {mode:'bigint'}).primaryKey(),
+  email: text('email').notNull(), revision: varchar('revision',{length:32}).notNull(),
+  createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(),
+  verifiedAt: timestamp('verified_at',{withTimezone:true}), lastSentAt: timestamp('last_sent_at',{withTimezone:true}),
+  nextCheckAt: timestamp('next_check_at',{withTimezone:true}).defaultNow().notNull(),
+  baseline: text('baseline').notNull().default('{}'), delivery: text('delivery'),
+})
+export const builderReminderRequests = pgTable('builder_reminder_requests', {
+  key: varchar('key',{length:64}).primaryKey(),
+  requestedAt: timestamp('requested_at',{withTimezone:true}).notNull(),
+})
+
 // Finalized block order, agreed by two RPCs. Derived chart evidence, not a fee ledger.
 export const finalizedChartBlocks = pgTable('finalized_chart_blocks', {
   slot: bigint('slot', { mode: 'bigint' }).primaryKey(),
@@ -51,6 +64,7 @@ export const dammTradeEvents = pgTable('damm_trade_events', {
   slot: bigint('slot',{mode:'bigint'}).notNull(),
   tradedAt: timestamp('traded_at',{withTimezone:true}).notNull(),
   quoteAmount: bigint('quote_amount',{mode:'bigint'}).notNull(),
+  nextSqrtPrice: text('next_sqrt_price'),
   direction: varchar('direction',{length:4}).notNull(),
   evidence: text('evidence').notNull(),
 },t=>[uniqueIndex('damm_trade_chain_event_unique').on(t.signature,t.eventIndex),

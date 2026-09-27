@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
-import { chartWindow, chartSpotPrice, chartBar, readMarketChart } from '../src/market-chart.mjs'
+import { chartWindow, chartSpotPrice, chartBar, readMarketChart, chartMigration } from '../src/market-chart.mjs'
 import { chartSeries, chartPriceLabel } from '../app/lib/chart-display.mjs'
+import { evidenceHash } from '../src/graduation-state.mjs'
 import { recordChartBlock } from '../src/chart-ordering.mjs'
 
 const sqrt = 1n << 64n
@@ -48,6 +49,8 @@ test('real PostgreSQL chart aggregation: canonical pool, 120+ history, OHLC, sam
     await client.query('begin')
     await client.query(`create temporary table trade_events(pool text,signature text,event_index integer,slot bigint,traded_at timestamptz,direction text,input_base_units text,output_base_units text,next_sqrt_price text)`)
     await client.query(`create temporary table finalized_chart_blocks(slot bigint primary key,blockhash text,previous_blockhash text,parent_slot bigint,signatures text[],checked_at timestamptz default now())`)
+    await client.query('create temporary table damm_trade_events(github_repo_id bigint,pool text,signature text,event_index integer,slot bigint,traded_at timestamptz,quote_amount bigint,direction text,next_sqrt_price text)')
+    await client.query('create temporary table graduation_events(github_repo_id bigint,pool text,signature text,slot bigint,evidence text,evidence_hash text)')
     const insert = async (pool, signature, index, slot, at, direction, input, output, price) => client.query('insert into trade_events values($1,$2,$3,$4,$5,$6,$7,$8,$9)', [pool, signature, index, slot, at, direction, input, output, String(price)])
     const market = { pool: 'canonical-pool' }
     assert.equal((await readMarketChart(client, market, 'all', now)).totalTrades, 0)
@@ -95,6 +98,32 @@ test('real PostgreSQL chart aggregation: canonical pool, 120+ history, OHLC, sam
     const missing=await readMarketChart(client,market,'1h',now)
     assert.equal(missing.latestOrderingPending,true)
     assert.equal(missing.candles.at(-1).orderingPending,true)
+    // The canonical migrated pool continues the chart; unrelated pools/repos and
+    // pre-migration trades never enter the series, even if their mints match.
+    market.repoId='991';market.mint='test-mint'
+    const migration={mint:market.mint,curve:market.pool,pool:'damm-pool',signature:'migration',slot:250}
+    await client.query('insert into graduation_events values($1,$2,$3,$4,$5,$6)',[991,migration.pool,migration.signature,250,JSON.stringify({migration}),evidenceHash(migration)])
+    const addDamm=(repo,pool,sig,slot,price)=>client.query('insert into damm_trade_events values($1,$2,$3,0,$4,$5,10,\'buy\',$6)',[repo,pool,sig,slot,new Date(now-1000),price?.toString()??null])
+    await addDamm(991,'damm-pool','damm-first',251,sqrt*5n)
+    await addDamm(992,'damm-pool','wrong-repo',999,sqrt)
+    await addDamm(991,'other-pool','wrong-pool',999,sqrt)
+    await addDamm(991,'damm-pool','before-migration',249,sqrt)
+    const migrated=await readMarketChart(client,market,'all',now)
+    assert.equal(migrated.source,'finalized-dbc-and-damm-swaps')
+    assert.equal(migrated.graduation.indexedTrades,1)
+    assert.equal(migrated.latest.signature,'damm-first')
+    assert.equal(migrated.latest.priceSol,.025)
+    assert.equal(migrated.volume24hLamports,BigInt(missing.volume24hLamports)+10n+'')
+    await addDamm(991,'damm-pool','damm-second',251,sqrt*6n)
+    assert.equal((await readMarketChart(client,market,'all',now)).latest,null)
+    await recordChartBlock(client,{slot:251,blockhash:'verified',previousBlockhash:'previous',parentSlot:250,signatures:['damm-second','damm-first']})
+    assert.equal((await readMarketChart(client,market,'all',now)).latest.signature,'damm-first')
+    await addDamm(991,'damm-pool','legacy-missing-price',252,null)
+    const withheld=await readMarketChart(client,market,'all',now)
+    assert.equal(withheld.latest,null)
+    assert.equal(withheld.candles.at(-1).priceEvidenceMissing,true)
+    assert.equal(withheld.volume24hLamports,BigInt(migrated.volume24hLamports)+20n+'')
+
   } finally { await client.query('rollback'); await client.end() }
 })
 
@@ -109,4 +138,13 @@ test('single-price and tiny rounding differences get a stable, honest axis range
   assert.ok(result.priceRange.maxValue - result.priceRange.minValue > 3.9e-11)
   assert.equal(chartScaleRange(null), null)
   assert.ok(chartScaleRange({ priceRange: { minValue: 0, maxValue: 100 } }).priceRange.minValue >= 0)
+})
+
+test('migration proof binds immutable repo, curve, mint, destination, slot and receipt',()=>{
+ const market={repoId:'991',pool:'curve',mint:'mint'}
+ const migration={curve:'curve',mint:'mint',pool:'damm',slot:44,signature:'receipt'}
+ const row={github_repo_id:991,pool:'damm',slot:44,signature:'receipt',evidence:JSON.stringify({migration}),evidence_hash:evidenceHash(migration)}
+ assert.equal(chartMigration(market,row).pool,'damm')
+ for(const patch of [{repoId:'992'},{pool:'wrong'},{mint:'wrong'}])assert.throws(()=>chartMigration({...market,...patch},row),/MISMATCH/)
+ for(const patch of [{pool:'wrong'},{slot:45},{signature:'wrong'},{evidence_hash:'bad'}])assert.throws(()=>chartMigration(market,{...row,...patch}),/MISMATCH/)
 })

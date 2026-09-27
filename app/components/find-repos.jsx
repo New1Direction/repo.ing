@@ -96,7 +96,7 @@ export function FindRepos({ initial, smartSearch }) {
     <div className="inner-card growth-trending finder-results" aria-busy={busy}>
       {visible.map(c => <article key={c.repoId}>
         <div className="growth-heading"><div className="finder-repository"><a href={`https://github.com/${c.fullName}`} target="_blank" rel="noreferrer"><strong>{c.fullName}</strong><ArrowUpRight size={15} aria-hidden="true"/></a><p>{c.description}</p></div>
-          {c.mint ? <Link className="button outline" href={`/token/${c.mint}`}>View market</Link> : c.ready ? <Link className="button outline" href={`/launch/${c.repoId}?from=trend`}>Review & launch</Link> : <a className="button outline" href={`https://github.com/${c.fullName}`} target="_blank" rel="noreferrer">View repository ↗</a>}
+          {c.mint ? <Link className="button outline" href={`/token/${c.mint}`}>View market</Link> : c.ready ? <Link className="button primary" href={`/launch/${c.repoId}?from=trend`}>Review & launch</Link> : <a className="button outline" href={`https://github.com/${c.fullName}`} target="_blank" rel="noreferrer">View repository ↗</a>}
         </div>
         <div className="finder-meta">{c.stars !== null && <span title={`${c.stars} GitHub stars`}><Star size={14} aria-hidden="true"/>{number(c.stars)}</span>}{c.forks !== null && <span title={`${c.forks} GitHub forks`}><GitFork size={14} aria-hidden="true"/>{number(c.forks)}</span>}
           <span className={`finder-market-state${c.ready ? ' positive' : ''}`}>{c.marketState === 'live' ? 'Market live' : c.marketState === 'pending' ? 'Launch in progress' : c.ready ? 'Reviewed · Ready to launch' : 'Awaiting launch review'}</span>

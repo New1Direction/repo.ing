@@ -61,6 +61,10 @@ Use [encrypted backups](BACKUPS.md) for recovery. Keep recovery keys available o
 
 ## Chart ordering verification
 
+Graduated charts also index the verified DAMM destination's swap prices. Migration proof must bind the same repository, curve, mint, destination, slot, and receipt before DAMM history is included. Missing price or transaction-order evidence withholds affected prices while retaining verified volume. Apply migrations `0020` and `0021` before deploying this worker/web version.
+
+Optional [builder email reminders](BUILDER_REMINDERS.md) remain disabled unless a verified sender, secret, provider key, and explicit delivery gate are configured. They do not authorize claims, trades, or reinvestment.
+
 The worker fills `finalized_chart_blocks` for indexed slots with multiple transactions. It requires agreement from the primary and graduation-verification RPCs on mainnet genesis, finalized block identity, and the complete ordered signature list. Conflicting evidence is never overwritten. Work is capped at 12 slots per pass, with a ten-minute retry delay for unavailable slots, independently of fee indexing.
 
 The chart joins this evidence to finalized swaps to recover candle opens and closes. Missing or disagreeing evidence keeps affected boundary-slot prices withheld; recorded volume remains unchanged. Worker logs expose `chartOrdering.verified`, `pending`, and sanitized error codes. This table does not allocate funds or enable execution.

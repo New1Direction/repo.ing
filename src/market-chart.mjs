@@ -1,4 +1,5 @@
 import BN from 'bn.js'
+import { evidenceHash } from './graduation-state.mjs'
 import { getPriceFromSqrtPrice, TokenDecimal } from '@meteora-ag/dynamic-bonding-curve-sdk'
 
 export const CHART_RANGES = {
@@ -32,49 +33,73 @@ export function chartBar(row) {
   const count = Number(row.count)
   if (!Number.isSafeInteger(count) || count < 1) throw Error('Invalid chart trade count')
   // Withhold open/close until finalized block evidence resolves boundary-slot order.
-  if (row.ambiguous) return { time, volumeLamports, count, orderingPending: true }
+  if (row.ambiguous || row.missing_price) return { time, volumeLamports, count, orderingPending: true, priceEvidenceMissing: Boolean(row.missing_price) }
   return { time, open: chartSpotPrice(row.open), high: chartSpotPrice(row.high), low: chartSpotPrice(row.low),
     close: chartSpotPrice(row.close), volumeLamports, count }
 }
 
+// Historical prices require immutable migration proof, independently of short-lived
+// progress observations. Trading links still require the fresh graduation checks.
+export function chartMigration(market, row) {
+  if (!row) return null
+  const { migration } = JSON.parse(row.evidence)
+  if (!migration || evidenceHash(migration) !== row.evidence_hash ||
+      String(row.github_repo_id) !== String(market.repoId) || migration.mint !== market.mint ||
+      migration.curve !== market.pool || migration.pool !== row.pool || migration.signature !== row.signature ||
+      String(migration.slot) !== String(row.slot)) throw Error('CHART_MIGRATION_MISMATCH')
+  return { pool: row.pool, slot: String(row.slot), signature: row.signature }
+}
+const canonicalEvents = `with canonical_events as (
+  select signature,event_index,slot,traded_at,direction,next_sqrt_price,
+    (case when direction='buy' then input_base_units else output_base_units end)::numeric as quote_amount,
+    'DBC'::text as venue from trade_events where pool=$1
+  union all
+  select signature,event_index,slot,traded_at,direction,next_sqrt_price,quote_amount::numeric,'DAMM'::text as venue
+    from damm_trade_events where pool=$5 and github_repo_id=$6 and slot >= $7
+)`
+
 export async function readMarketChart(db, market, range = 'all', now = Date.now()) {
-  const { rows: [summary] } = await db.query(`select min(traded_at) as first, max(traded_at) as last,
-    count(*)::text as count,
-    coalesce(sum((case when direction='buy' then input_base_units else output_base_units end)::numeric)
-      filter (where traded_at >= $2::timestamptz - interval '24 hours'),0)::text as volume
-    from trade_events where pool=$1 and traded_at <= $2`, [market.pool, new Date(now)])
+  const migration = market.repoId ? chartMigration(market, (await db.query('select * from graduation_events where github_repo_id=$1', [market.repoId])).rows[0]) : null
+  const params = (start, end, interval) => [market.pool, start, end, interval, migration?.pool ?? null, market.repoId ?? null, migration?.slot ?? null]
+  const { rows: [summary] } = await db.query(`${canonicalEvents} select min(traded_at) as first, max(traded_at) as last,
+    count(*)::text as count, count(*) filter(where venue='DAMM')::int as damm_count,
+    coalesce(sum(quote_amount) filter (where traded_at >= $2::timestamptz - interval '24 hours'),0)::text as volume
+    from canonical_events where traded_at <= $2 and $3::text is null and $4::text is null`, params(new Date(now), null, null))
   const window = chartWindow(range, summary.first, now, summary.last)
   const [{ rows }, { rows: recent }] = await Promise.all([
-    db.query(`with events as (
+    db.query(`${canonicalEvents}, events as (
       select t.*, array_position(b.signatures,t.signature::text) as transaction_index,
         floor(extract(epoch from traded_at)/$4)::bigint*$4 as bucket
-      from trade_events t left join finalized_chart_blocks b on b.slot=t.slot
-      where pool=$1 and traded_at >= $2 and traded_at <= $3
+      from canonical_events t left join finalized_chart_blocks b on b.slot=t.slot
+      where traded_at >= $2 and traded_at <= $3
     ), bars as (
       select bucket as time, min(slot) as first_slot, max(slot) as last_slot,
         (array_agg(next_sqrt_price order by slot,transaction_index,signature,event_index))[1] as open,
         (array_agg(next_sqrt_price order by slot desc,transaction_index desc,signature desc,event_index desc))[1] as close,
         max(next_sqrt_price::numeric)::text as high, min(next_sqrt_price::numeric)::text as low,
-        sum((case when direction='buy' then input_base_units else output_base_units end)::numeric)::text as volume,
+        sum(quote_amount)::text as volume, bool_or(next_sqrt_price is null) as missing_price,
         count(*)::text as count
       from events group by bucket
     ) select bars.*, exists(select 1 from events e where e.bucket=bars.time
       and e.slot in (bars.first_slot,bars.last_slot) group by e.slot
       having count(distinct e.signature)>1 and bool_or(e.transaction_index is null)) as ambiguous
-      from bars order by time`, [market.pool, window.start, window.end, window.interval]),
-    db.query(`select signature,event_index as "eventIndex",t.slot::text,direction,traded_at as "tradedAt",
+      from bars order by time`, params(window.start, window.end, window.interval)),
+    db.query(`${canonicalEvents} select signature,event_index as "eventIndex",t.slot::text,direction,traded_at as "tradedAt",venue,
       array_position(b.signatures,t.signature::text) as "transactionIndex",
-      next_sqrt_price as "nextSqrtPrice" from trade_events t left join finalized_chart_blocks b on b.slot=t.slot
-      where pool=$1 and traded_at <= $2
-      order by t.slot desc,"transactionIndex" desc,t.signature desc,t.event_index desc limit 120`, [market.pool, window.end]),
+      next_sqrt_price as "nextSqrtPrice" from canonical_events t left join finalized_chart_blocks b on b.slot=t.slot
+      where traded_at <= $2 and $3::text is null and $4::text is null
+      order by t.slot desc,"transactionIndex" desc,t.signature desc,t.event_index desc limit 120`, params(window.end, null, null)),
   ])
   const latestSlot = recent[0]?.slot
   const latestTrades = recent.filter(t => t.slot === latestSlot)
   const latestAmbiguous = latestTrades.some(t => t.transactionIndex === null) &&
     (new Set(latestTrades.map(t => t.signature)).size > 1 || (recent.length === 120 && latestTrades.length === 120))
   const trades = recent.reverse().map(row => ({ signature: row.signature, eventIndex: row.eventIndex,
-    direction: row.direction, tradedAt: row.tradedAt.toISOString(), priceSol: chartSpotPrice(row.nextSqrtPrice) }))
+    direction: row.direction, venue: row.venue, tradedAt: row.tradedAt.toISOString(),
+    priceSol: row.nextSqrtPrice ? chartSpotPrice(row.nextSqrtPrice) : null }))
   return { ...window, candles: rows.map(chartBar), trades, volume24hLamports: summary.volume,
-    totalTrades: Number(summary.count), latest: latestAmbiguous ? null : trades.at(-1) ?? null,
-    latestOrderingPending: latestAmbiguous, fetchedAt: new Date(now).toISOString(), source: 'finalized-dbc-swaps' }
+    totalTrades: Number(summary.count), latest: latestAmbiguous || !trades.at(-1)?.priceSol ? null : trades.at(-1),
+    latestOrderingPending: latestAmbiguous, fetchedAt: new Date(now).toISOString(),
+    source: migration ? 'finalized-dbc-and-damm-swaps' : 'finalized-dbc-swaps',
+    graduation: migration ? { ...migration, indexedTrades: summary.damm_count } : null }
 }

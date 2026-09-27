@@ -446,3 +446,34 @@
   .graduation-numbers strong { font-size:15px; }
   .graduation-caption { font-size:12px; }
 }
+
+/* Launch invitation: one clear primary action, with readable reward terms. */
+.app-header nav a.nav-launch{align-self:center;display:inline-flex;align-items:center;gap:5px;height:34px;padding:0 12px;border-radius:6px;background:var(--green);color:#092519;font-weight:650;border:1px solid transparent;transition:background .12s}
+.app-header nav a.nav-launch:hover{background:#a1efc3;color:#092519}
+.app-header nav a.nav-launch.active:after{display:none}
+.nav-launch:focus-visible,.launch-search button:focus-visible{outline:2px solid var(--text);outline-offset:3px}
+.repo-search.launch-search button{display:flex;justify-content:center;align-items:center;gap:8px;min-width:144px;width:auto;padding:0 18px;background:var(--green);color:#092519;font-size:15px;font-weight:650}
+.repo-search.launch-search button:hover:not(:disabled){background:#a1efc3}
+.repo-search.launch-search button:disabled{cursor:wait;opacity:.65}
+.launch-find-link{display:inline-flex;align-items:center;gap:7px;color:var(--green);font-size:14px;margin-top:12px}
+.launch-find-link:hover{text-decoration:underline}
+.launch-benefits{margin:30px auto 0;border:1px solid var(--border);border-radius:9px;background:var(--surface);text-align:left;overflow:hidden}
+.launch-benefits.compact{max-width:920px}
+.launch-benefits ol{list-style:none;margin:0;padding:23px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
+.launch-benefits li{display:flex;gap:12px;align-items:flex-start;min-width:0}
+.launch-benefit-icon{display:grid;place-items:center;flex:none;width:36px;height:36px;background:color-mix(in srgb,var(--green) 10%,transparent);color:var(--green);border:1px solid color-mix(in srgb,var(--green) 25%,transparent);border-radius:7px}
+.launch-benefits strong{font-size:14px}.launch-benefits p{font-size:13px;line-height:1.55;color:var(--muted);margin:5px 0 0}
+.launch-reward-terms{padding:13px 23px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-top:1px solid var(--border);font-size:12px;line-height:1.6;color:var(--muted)}
+.launch-reward-terms strong{font-size:12px;color:var(--text)}.launch-reward-terms a{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;color:var(--green)}
+.launch-trust-note{color:var(--muted);font-size:13px;line-height:1.7;margin-top:24px}
+.launch-start .repo-search-wrap{margin-bottom:0}.launch-start .launch-find-link{margin-top:16px}
+[data-theme=light] .app-header nav a.nav-launch{color:#092519}
+[data-theme=light] .launch-find-link,[data-theme=light] .launch-reward-terms a,[data-theme=light] .launch-benefit-icon{color:#157347}
+@media(max-width:700px){.app-header nav a.nav-launch{height:29px;padding:0 9px}.launch-benefits ol{grid-template-columns:1fr;gap:20px;padding:20px}.launch-reward-terms{align-items:flex-start;flex-direction:column;gap:8px;padding:14px 20px}.repo-search.launch-search button{min-width:110px;padding:0 10px;font-size:13px}.repo-search.launch-search button svg{width:17px}.launch-find-link{font-size:13px}.launch-start{padding-top:32px}.launch-benefits.compact{margin-top:24px}.launch-benefits p{margin-top:3px}}
+
+.builder-reminder-card{margin-top:24px;padding:22px}.builder-reminder-card h2{display:flex;align-items:center;gap:8px;font-size:17px;margin:0}.builder-reminder-card p,.builder-reminder-card small,.reminder-link-card p{color:var(--muted);font-size:13px;line-height:1.6}.builder-reminder-card label{display:block;font-size:13px;margin-bottom:7px}.reminder-controls{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.reminder-controls input{min-width:0;max-width:340px;flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border-strong);border-radius:6px;padding:10px;font-size:16px}.reminder-controls span{overflow-wrap:anywhere;min-width:0}.builder-reminder-card small{display:block;margin-top:8px}.reminder-link-card{padding:26px}.reminder-link-card h1{font-size:28px}.graduation-explainer{font-size:13px;color:var(--muted);line-height:1.6}
+@media(max-width:550px){.reminder-controls{align-items:stretch;flex-direction:column}.reminder-controls input{max-width:none}}
+
+[data-theme=light] .repo-search.launch-search button{background:var(--green);color:#092519;border-color:var(--green)}
+[data-theme=light] .repo-search.launch-search button:hover:not(:disabled){background:#46d58f}
+.app-header nav{scrollbar-width:none}.app-header nav::-webkit-scrollbar{display:none}

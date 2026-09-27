@@ -8,6 +8,7 @@ Launch open source markets. Every trade pays the builders.
 | --- | --- |
 | Launch a repository, trade, or claim builder fees | [User guide](USER_GUIDE.md) |
 | Manage earnings across repositories | [Builder dashboard](BUILDERS.md) |
+| Configure optional builder email reminders | [Reminders and consent](BUILDER_REMINDERS.md) — delivery disabled until configured |
 | Choose a token image | [Token artwork](TOKEN_IMAGES.md) |
 | Find repositories by topic or activity | [Repository search](REPOSITORY_SEARCH.md) |
 | Understand discoverer earnings | [Discovery rewards](DISCOVERY_REWARDS.md) |

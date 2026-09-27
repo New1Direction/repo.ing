@@ -51,8 +51,10 @@ export function createChartOrdering({ pool, connection, verification, now = Date
       const { rows: [lock] } = await db.query("select pg_try_advisory_lock(hashtext('chart-block-ordering')) as locked")
       locked = lock.locked
       if (!locked) return { status: 'locked', verified: 0 }
-      const { rows } = await db.query(`select t.slot::text,array_agg(distinct t.signature) as signatures
-        from trade_events t left join finalized_chart_blocks b on b.slot=t.slot
+      const { rows } = await db.query(`with all_trades as (
+        select slot,signature from trade_events union all select slot,signature from damm_trade_events
+        ) select t.slot::text,array_agg(distinct t.signature) as signatures
+        from all_trades t left join finalized_chart_blocks b on b.slot=t.slot
         group by t.slot,b.slot,b.signatures having count(distinct t.signature)>1
         and (b.slot is null or not b.signatures @> array_agg(distinct t.signature)::text[])
         order by t.slot desc`)

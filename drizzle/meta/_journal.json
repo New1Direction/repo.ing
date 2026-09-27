@@ -141,6 +141,20 @@
       "when": 1790542598548,
       "tag": "0019_finalized_chart_order",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790542598549,
+      "tag": "0020_damm_chart_prices",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790542598550,
+      "tag": "0021_builder_reminders",
+      "breakpoints": true
     }
   ]
 }

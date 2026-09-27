@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, RefreshCw, Search } from 'lucide-react'
+import { BuilderReminders } from './builder-reminders'
 import { GithubMark } from './github-mark'
 import { CopyAddress } from './copy-address'
 import { useWallet } from './wallet'
@@ -109,6 +110,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
             </article>
           })}</div>}
         </section>
+        <BuilderReminders/>
         <p className="builder-footnote">Only repositories you administer and have shared with the GitHub App appear here. For graduated pools, the payout includes SOL fees accrued before confirmation. Other new earnings stay available for your next claim.</p>
       </>}
     </>}

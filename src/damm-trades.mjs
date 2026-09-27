@@ -30,7 +30,11 @@ export function dammSwapEvents(transaction,market,destination,coder) {
       if(!direction||d.collectFeeMode!==1)throw Error('DAMM_SWAP_ASSET_MISMATCH')
       const quoteAmount=(direction==='buy'?d.includedTransferFeeAmountIn:d.excludedTransferFeeAmountOut).toString()
       if(BigInt(quoteAmount)<=0n)throw Error('DAMM_SWAP_AMOUNT_INVALID')
-      result.push({eventIndex,direction,quoteAmount,tradedAt:new Date(Number(d.currentTimestamp.toString())*1000),evidence:{group:group.index,instruction:ix,quoteAmount,direction}})
+      const nextSqrtPrice=d.swapResult?.nextSqrtPrice?.toString()
+      if(!/^[1-9]\d*$/.test(nextSqrtPrice??'')||BigInt(nextSqrtPrice)>=(1n<<128n))throw Error('DAMM_SWAP_PRICE_INVALID')
+      const tradedAt=new Date(Number(d.currentTimestamp.toString())*1000)
+      if(!Number.isFinite(tradedAt.getTime()))throw Error('DAMM_SWAP_TIMESTAMP_INVALID')
+      result.push({eventIndex,direction,quoteAmount,nextSqrtPrice,tradedAt,evidence:{group:group.index,instruction:ix,quoteAmount,direction,nextSqrtPrice}})
     }
   }
   return result
@@ -54,9 +58,10 @@ export async function indexDammTrades({db,connection,verification,market,graduat
   for(const item of [...histories[0]].reverse()){
     if(!item.err){
       const tx=await agreedFinalizedTransaction(connection,verification,item.signature)
+      if(tx.slot<graduation.slot)throw Error('DAMM_TRADE_PRECEDES_MIGRATION')
       for(const event of dammSwapEvents(tx,market,address,coder))await db.query(`insert into damm_trade_events
-        (github_repo_id,pool,signature,event_index,slot,traded_at,quote_amount,direction,evidence) values($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        on conflict(signature,event_index) do nothing`,[repoId,address,item.signature,event.eventIndex,tx.slot,event.tradedAt,event.quoteAmount,event.direction,evidenceJSON(event.evidence)])
+        (github_repo_id,pool,signature,event_index,slot,traded_at,quote_amount,direction,evidence,next_sqrt_price) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        on conflict(signature,event_index) do nothing`,[repoId,address,item.signature,event.eventIndex,tx.slot,event.tradedAt,event.quoteAmount,event.direction,evidenceJSON(event.evidence),event.nextSqrtPrice])
     }
     await db.query(`insert into pool_fee_cursors(pool,last_signature,last_slot) values($1,$2,$3)
       on conflict(pool) do update set last_signature=excluded.last_signature,last_slot=excluded.last_slot,updated_at=now()`,[address,item.signature,item.slot])

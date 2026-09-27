@@ -22,7 +22,7 @@ Keep some SOL available for transaction fees and token-account costs. The Buy pa
 
 Choose **1H**, **24H**, **7D**, or **All**; switch between **Candles** and **Line**, or **Price** in SOL and **MCap** in estimated USD. Hover or touch the chart for price and volume details. Drag to pan, pinch to zoom, or use the zoom/reset buttons. Keyboard users can focus the chart and press `+`, `-`, or `Home`. **Chart details & data** contains a readable price table.
 
-Prices come from finalized pool swaps. Empty periods stay empty, and a delayed update is labeled. USD values use today’s SOL price. After graduation, the DBC chart remains historical; use the verified Meteora pool link for the migrated market. [Data definitions](CHARTS_AND_RESPONSIVENESS.md).
+Prices come from finalized pool swaps. Empty periods stay empty, and a delayed update is labeled. USD values use today’s SOL price. After verified graduation, the chart continues with finalized swaps from that repository’s canonical DAMM pool. Until its first indexed DAMM price, the curve history is labeled clearly. Use the verified Meteora link to trade. [Data definitions](CHARTS_AND_RESPONSIVENESS.md).
 
 ## Launch a repository market
 
@@ -46,7 +46,7 @@ Open a market from Explore, a direct market link, or your wallet holdings. Check
 
 Slippage allowance and price impact describe different things. Slippage sets a minimum output relative to the quote; price impact describes how the proposed trade moves its execution price relative to the pool's spot price. A 1% slippage setting does not limit a large trade's price impact to 1%.
 
-For a graduated market, use **Continue on Meteora** once repo.ing has verified its destination pool. Review the quote and fees there. The native price chart covers DBC trades. Verified DAMM volume is indexed and included in graduated-market status and protocol analytics; graduated execution takes place on Meteora.
+For a graduated market, use **Continue on Meteora** once repo.ing has verified its destination pool. Review the quote and fees there. The native price chart includes DBC history and verified DAMM swap prices. Verified DAMM volume is included in the chart’s total volume, graduated-market status, and protocol analytics; graduated execution takes place on Meteora.
 
 ## Claim builder fees
 
@@ -101,7 +101,7 @@ Already-earned rewards remain claimable after the earning window closes. Discove
 - **Graduation progress:** real quote reserve relative to that market's configured threshold. Sells can lower it.
 - **Paid to builders:** settled builder payouts. Discovery rewards are separate.
 
-Finalized indexing and short display caches can cause a delay after a trade. An unavailable value is not proof of a zero balance. Graduated DAMM swaps do not populate the native DBC price chart. See the verified pool link for graduated trading.
+Finalized indexing and short display caches can cause a delay after a trade. An unavailable value is not proof of a zero balance. DAMM prices require canonical migration proof and finalized swap evidence; prices with missing evidence remain withheld. See the verified pool link for graduated trading.
 
 ## Common questions
 
@@ -115,3 +115,11 @@ Finalized indexing and short display caches can cause a delay after a trade. An 
 | Wallet disconnected | Unlock the wallet and reconnect; confirm the selected wallet address. |
 
 The market page also provides sharing, owner invitations, and a copyable builder-earnings README badge. Watchlists and optional in-page price alerts are stored in this browser; they do not sync across devices or send background notifications.
+
+## Optional earnings reminders
+
+When email delivery is configured, signed-in builders with a saved payout wallet can enable **Earnings reminders** from Builders. Enter an email and confirm it using the email link within 24 hours. Requests never subscribe someone automatically.
+
+The digest is sent at most once per day, when at least 0.05 SOL is available and at least 0.05 SOL of additional earnings has been verified since the last reminder. Unchanged balances do not generate repeated reminders. The email links to the ordinary review-and-claim flow; it does not authorize a payout. Turn reminders off in Builders or through the email’s unsubscribe link.
+
+Delivery is disabled until a verified sender is configured. [Operator setup and data retention](BUILDER_REMINDERS.md).

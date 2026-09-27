@@ -1,6 +1,6 @@
 'use client'
 import { visiblePolling } from '../lib/visible-polling.mjs'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PriceChart } from './price-chart'
 import { TradePanel } from './trade-panel'
 import { GraduationProgress } from './graduation-progress'
@@ -8,6 +8,7 @@ import { GraduationProgress } from './graduation-progress'
 export function MarketTrading({ market, available, usdPerSol }) {
   const [solPrice, setSolPrice] = useState(usdPerSol)
   const [curve, setCurve] = useState(null), [error, setError] = useState(false)
+  const curveEnded = useRef(null)
   const [now,setNow]=useState(Date.now())
   const verifiedCurve=curve&&Date.parse(curve.validUntil)>now?curve:null
   useEffect(() => {
@@ -28,7 +29,7 @@ export function MarketTrading({ market, available, usdPerSol }) {
         const response = await fetch(`/api/market/${market.mint}/curve`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
         if (!response.ok) throw Error()
         const result = await response.json()
-        if (active) { setCurve(result); setError(false) }
+        if (active) { if (result.status !== 'active') curveEnded.current = market.mint; setCurve(result); setError(false) }
       } catch { if (active) {setError(true);setCurve(null)} } finally { running = false }
     }
     const stopPolling = visiblePolling(refresh, 15000)
@@ -37,5 +38,5 @@ export function MarketTrading({ market, available, usdPerSol }) {
     return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTrade) }
   }, [market.mint])
   return <><GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)}/>
-    <div className="market-grid"><PriceChart key={market.mint} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}/><TradePanel key={market.mint} market={market} available={available} usdPerSol={solPrice} curve={verifiedCurve}/></div></>
+    <div className="market-grid"><PriceChart key={`chart:${market.mint}`} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}/><TradePanel key={`trade:${market.mint}`} market={market} available={available} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/></div></>
 }

@@ -1,3 +1,5 @@
+import {createBuilderReminders,createReminderSender,remindersConfigured} from '../src/builder-reminders.mjs'
+import {createReconciler} from '../src/reconcile.mjs'
 import pg from 'pg'
 import { createChartOrdering } from '../src/chart-ordering.mjs'
 import { createTrendIntake } from '../src/trend-intake.mjs'
@@ -46,6 +48,13 @@ let chartOrderingTask=null,nextChartOrderingCheck=0
 async function observeChartOrdering(){
   try{console.log(JSON.stringify({chartOrdering:await chartOrdering.runOnce()}))}
   catch{console.log(JSON.stringify({chartOrderingError:'Chart ordering verification unavailable'}))}
+}
+let reminderTask=null,nextReminderCheck=0
+const reminders=remindersConfigured()?createBuilderReminders({pool,send:createReminderSender(),secret:process.env.BUILDER_REMINDER_SECRET,
+  origin:new URL(process.env.APP_ORIGIN).origin,reconcile:createReconciler({pool,connection:graduationRPC(rpc),config}).reconcile}):null
+async function deliverBuilderReminders(){
+  try{console.log(JSON.stringify({builderReminders:await reminders.runOnce()}))}
+  catch{console.log(JSON.stringify({builderReminderError:'REMINDERS_UNAVAILABLE'}))}
 }
 const trends=createTrendIntake({pool})
 let trendTask=null,nextTrendCheck=0
@@ -107,6 +116,11 @@ try {
       else if(!reserveDeliveryTask&&Date.now()>=nextReserveDeliveryCheck)
         reserveDeliveryTask=deliverReserveAlerts().finally(()=>{nextReserveDeliveryCheck=Date.now()+30000;reserveDeliveryTask=null})
     }
+    if(reminders){
+      if(once)await deliverBuilderReminders()
+      else if(!reminderTask&&Date.now()>=nextReminderCheck)
+        reminderTask=deliverBuilderReminders().finally(()=>{nextReminderCheck=Date.now()+300000;reminderTask=null})
+    }
     console.log(JSON.stringify(result, (key, value) => {
       if (typeof value === 'bigint') return value.toString()
       if (['error', 'reason', 'launchError', 'feeError'].includes(key) && typeof value === 'string') return 'Indexer error'
@@ -117,4 +131,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
