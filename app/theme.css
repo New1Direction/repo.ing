@@ -1,0 +1,102 @@
+.theme-toggle{width:36px;height:36px;padding:0;border:0;border-radius:8px;background:transparent;color:#bdc6d1;display:grid;place-items:center}
+.brand-wordmark{display:inline-flex;align-items:baseline;letter-spacing:-.045em}
+.brand-mark{display:inline-block;position:relative;overflow:hidden;flex:none;border-radius:50%}
+.brand-mark img{position:absolute;max-width:none}
+.brand-accent{color:#81e6ad}
+.theme-toggle:hover{background:#222629;color:var(--text)}
+.theme-toggle .moon-icon{display:none}
+[data-theme=light] .theme-toggle .sun-icon{display:none}
+[data-theme=light] .theme-toggle .moon-icon{display:block}
+@media(max-width:1050px){.header-actions{gap:16px}}
+@media(max-width:700px){.header-actions{gap:7px}.theme-toggle{width:32px;height:32px}}
+
+:root[data-theme=light]{color-scheme:light;--bg:#f7f9f7;--surface:#fff;--surface2:#eef3ef;--border:#d4ddd6;--border-strong:#b7c5ba;--text:#19221c;--muted:#59685d;--dim:#69776c;--green:#2ec47c;--green-dark:#14955a;--red:#bc454f}
+[data-theme=light] .app-header{border-color:var(--border)}
+[data-theme=light] .brand-accent{color:#168b59}
+[data-theme=light] .app-header nav,[data-theme=light] .footer-inner,[data-theme=light] .eyebrow{color:#536258}
+[data-theme=light] .app-header nav a.active{color:var(--text)}
+[data-theme=light] .app-header nav a.active:after{background:var(--text)}
+[data-theme=light] .theme-toggle{color:#384a3f}
+[data-theme=light] .theme-toggle:hover{background:#e7eee9}
+[data-theme=light] .button{color:var(--text)}
+[data-theme=light] .button:hover:not(:disabled){border-color:#8da99a;background:#eaf2ec}
+[data-theme=light] .button.primary{color:#10291b}
+[data-theme=light] .button.primary:hover:not(:disabled){background:#46d58f;border-color:#46d58f}
+[data-theme=light] .button.white{background:#193e2a;border-color:#193e2a;color:#fff}
+[data-theme=light] .button.white:hover{background:#28563b}
+[data-theme=light] .wallet-error{background:#fff1f1;border-color:#dfafb3;color:#8a242d}
+[data-theme=light] .wallet-options button:hover:not(:disabled){background:#e1f1e6}
+[data-theme=light] .wallet-option-icon{background:#dcebe0;color:#168b59}
+
+[data-theme=light] .hero>p,[data-theme=light] .section-heading p,[data-theme=light] .search-helper,[data-theme=light] .page-intro p,[data-theme=light] .launch-subtitle,[data-theme=light] .info-intro p{color:#53645a}
+[data-theme=light] .repo-search{background:#fff;border-color:#bac8bd}
+[data-theme=light] .repo-search input,[data-theme=light] .explore-search input{color:var(--text)}
+[data-theme=light] .repo-search input::placeholder,[data-theme=light] .explore-search input::placeholder{color:#738277}
+[data-theme=light] .repo-search button{background:#ecf2ed;border-color:#c5d1c8;color:#203529}
+[data-theme=light] .repo-search button:hover{background:#dcebe0}
+[data-theme=light] .view-all,[data-theme=light] .back-link{color:#30493a}
+[data-theme=light] .back-link:hover{color:#142a1b}
+[data-theme=light] .subtle-notice{color:#92592a}
+[data-theme=light] .inline-error{color:#a5333e}
+
+[data-theme=light] .market-table{background:#fff}
+[data-theme=light] .market-head,[data-theme=light] .table-count,[data-theme=light] .unavailable-metric{color:#647269}
+[data-theme=light] .market-row:hover{background:#f1f6f2}
+[data-theme=light] .table-repo small,[data-theme=light] .table-token small,[data-theme=light] .table-earnings small,[data-theme=light] .table-empty{color:#5f6e63}
+[data-theme=light] .repo-avatar,[data-theme=light] .preview-avatar,[data-theme=light] .step-icon{background:#edf3ee;border-color:#cbd7ce;color:#244531}
+[data-theme=light] .badge{background:#eaf0eb;color:#506456}
+[data-theme=light] .badge.verified{background:#dff3e6;color:#175a38}
+[data-theme=light] .badge.verified svg{color:#fff;background:#269b61}
+[data-theme=light] .repo-identity p,[data-theme=light] .repo-stats,[data-theme=light] .repo-stats svg,[data-theme=light] .repo-details{color:#526358}
+[data-theme=light] .explore-search,[data-theme=light] .explore-search kbd{border-color:#c5d1c8;color:#526358;background:#fff}
+[data-theme=light] .segmented button,[data-theme=light] .trade-tabs button{color:#425247;background:#fff}
+[data-theme=light] .segmented button.selected,[data-theme=light] .trade-tabs button.selected{background:#e5efe8;color:#17291e}
+
+[data-theme=light] .repo-hero-card,[data-theme=light] .launch-panel,[data-theme=light] .inner-card,[data-theme=light] .chart-card,[data-theme=light] .trade-card,[data-theme=light] .claim-repo-card,[data-theme=light] .claim-step-card,[data-theme=light] .info-card,[data-theme=light] .step-card,[data-theme=light] .info-note,[data-theme=light] .info-closing{background:#fff}
+[data-theme=light] .field-input,[data-theme=light] .input-suffix,[data-theme=light] .asset-input{border-color:#bac8bd;color:var(--text);background:#fff}
+[data-theme=light] .input-suffix input,[data-theme=light] .asset-input input{color:var(--text)}
+[data-theme=light] .input-suffix span,[data-theme=light] .asset-input>span:last-child{color:#405548}
+[data-theme=light] .field-hint,[data-theme=light] .form-fineprint,[data-theme=light] .fee-line small,[data-theme=light] .preview-token span{color:#64736a}
+[data-theme=light] .unsupported-field{border-color:#b9c8bc;color:#596b5d}
+[data-theme=light] .unsupported-field strong{color:var(--text)}
+[data-theme=light] .unsupported-field small,[data-theme=light] .unsupported-field .button{color:#596b5d}
+[data-theme=light] .small-chip{background:#edf3ee;border-color:#cbd7ce;color:#415a48}
+[data-theme=light] .fee-note{background:#f0f5f1;border-color:#d7e2d9;color:#4c6153}
+[data-theme=light] .transaction-status{background:#e5f5e9;border-color:#a8d8b6;color:#17603a}
+[data-theme=light] .transaction-status.error,[data-theme=light] .state-card.error{background:#fff0f0;border-color:#e2b8bc;color:#a02d38}
+[data-theme=light] .trade-result-card{background:#eef9f0;border-color:#b2d9bc;color:#193a26;box-shadow:0 14px 40px #24402b2b}
+[data-theme=light] .trade-result-card.checking{background:#fff8e8;border-color:#ddc991;color:#493810}
+[data-theme=light] .trade-result-card.failed{background:#fff0f1;border-color:#e4b6bc;color:#6d2029}
+[data-theme=light] .trade-result-card p,[data-theme=light] .trade-result-card small{color:inherit}
+[data-theme=light] .trade-result-actions a,[data-theme=light] .trade-result-actions button{color:#146d40}
+[data-theme=light] .trade-result-card.checking .trade-result-actions a,[data-theme=light] .trade-result-card.checking .trade-result-actions button{color:#775b0c}
+[data-theme=light] .trade-result-card.failed .trade-result-actions a{color:#8d2a36}
+[data-theme=light] .state-card{color:#506157}
+
+[data-theme=light] .market-price span,[data-theme=light] .market-nav,[data-theme=light] .chart-metrics,[data-theme=light] .trade-card label,[data-theme=light] .trade-hint,[data-theme=light] .repo-meta-grid,[data-theme=light] .token-details dt,[data-theme=light] .earnings-card p{color:#607168}
+[data-theme=light] .market-nav .active{color:var(--text);border-color:var(--text)}
+[data-theme=light] .market-nav .disabled{color:#88968c}
+[data-theme=light] .chart-metrics strong,[data-theme=light] .repo-meta-grid strong{color:var(--text)}
+[data-theme=light] .chart-empty-grid{background-image:linear-gradient(to right,transparent calc(100% - 1px),#e1e9e3 calc(100% - 1px)),linear-gradient(to bottom,transparent calc(100% - 1px),#e1e9e3 calc(100% - 1px))}
+[data-theme=light] .chart-empty-label{background:#fffffff0;color:#617166}
+[data-theme=light] .chart-empty-label strong{color:var(--text)}
+[data-theme=light] .trade-tabs,[data-theme=light] .trade-tabs button:first-child{border-color:#ccd8cf}
+[data-theme=light] .trade-convert{color:#496052}
+[data-theme=light] .trade-convert:after{background:#fff;border-color:#cbd8ce}
+[data-theme=light] .asset-input.read-only{color:#607168}
+
+[data-theme=light] .claim-intro p,[data-theme=light] .claim-repo-right>span,[data-theme=light] .step-content>p,[data-theme=light] .step-main span,[data-theme=light] .claim-disclaimer,[data-theme=light] .claim-info,[data-theme=light] .claim-success span{color:#5a6d60}
+[data-theme=light] .claim-step:not(.last):before{background:#c8d5ca}
+[data-theme=light] .step-number{border-color:#aabeb0}
+[data-theme=light] .step-number.done{border-color:#1d9d5e}
+[data-theme=light] .positive,[data-theme=light] .claim-success{color:#16834c}
+[data-theme=light] .step-icon.solana-icon{color:#148750}
+
+[data-theme=light] .info-intro h1 span,[data-theme=light] .info-card>svg,[data-theme=light] .step-index{color:#14824f}
+[data-theme=light] .info-card p,[data-theme=light] .step-card p,[data-theme=light] .info-note p,[data-theme=light] .info-closing p{color:#58695d}
+
+[data-theme=light] .claim-next,[data-theme=light] .claim-wallet-warning{background:#f5f8f5;border-color:#cbd8cf;color:#43574a}
+[data-theme=light] .claim-receipt{background:#eff9f1;border-color:#9bc6a8;color:#16834c}
+[data-theme=light] .claim-receipt p{color:#20362a}
+[data-theme=light] .claim-step-hint,[data-theme=light] .claim-wallet-details{color:#5a6d60}
+[data-theme=light] .claim-pause{background:#fff7ea;border-color:#e2bc7b;color:#715021}

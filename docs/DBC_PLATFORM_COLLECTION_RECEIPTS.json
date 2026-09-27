@@ -1,0 +1,414 @@
+{
+  "checkedAt": "2026-09-27T04:15:52.000Z",
+  "treasury": {
+    "address": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+    "balance": 187668768
+  },
+  "partner": {
+    "address": "H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3",
+    "balance": 46802760
+  },
+  "pending": 0,
+  "totals": {
+    "collected": "187668768",
+    "networkFees": "240000",
+    "available": "0",
+    "discoveryReserved": "47803922",
+    "onchainPartnerRemaining": "47803922",
+    "creatorUnclaimed": "643727768"
+  },
+  "receipts": [
+    {
+      "repoId": "90916769",
+      "phase": "DBC",
+      "signature": "5Usbz3AcZD5oR383UHSRYhNCGHSKLVAv35rRuxycHm9BDKKz4LY8zRZm8KCJYsmNnQTCdwvtz9EXpBiZyxTcEFuE",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "56387652",
+      "networkFee": "10000",
+      "slot": 450885902,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1269625283",
+      "phase": "DBC",
+      "signature": "36zaAF8sJoMJU4F7vQsUAFzqQ4Yuzw2LfcyhTHAWe96NXvTfTLWbMecnKm5AEno5HYcsDHFAN9v8TuS2SSZnFt5z",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "29024710",
+      "networkFee": "10000",
+      "slot": 450886175,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1174789082",
+      "phase": "DBC",
+      "signature": "4A5N6mS6jYAr6HdZ2RVwgjdFUyyHy89bPXNVmp4ku3uGdq549ftqTh8wrYRVeTA7LAEd2kh8xj73XJb9FGmJhxfY",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "25031805",
+      "networkFee": "10000",
+      "slot": 450886175,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1385974685",
+      "phase": "DBC",
+      "signature": "ahmCAhDcAG1MddtuMco1uQ1gn8vBe14bHLEMS7zvJcUoUm6R243GjDCbFVpBj6mJSN5jAMM7gofF8pHwcMDbALf",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "16922116",
+      "networkFee": "10000",
+      "slot": 450886176,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1373659194",
+      "phase": "DBC",
+      "signature": "8UWXK3Wcwuj2Hcv1wifqBmrdEbtBp2Rga3PuCYkr5nYHTsLhBSadvgdnwaGZ8hQ9DqejA8ba4tADF16K3rVmZk6",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "16683061",
+      "networkFee": "10000",
+      "slot": 450886210,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "825470378",
+      "phase": "DBC",
+      "signature": "4yWBbRGjcumMp7L1Jn1AsLoj2ZLXFCUdasB1ZqLyMTTWNiPRuTPvnHHaMiJmijmTyJcnML9P9VjZVi1Wq4ZYjwKb",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "16339370",
+      "networkFee": "10000",
+      "slot": 450886211,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "991028673",
+      "phase": "DBC",
+      "signature": "3Xm1k5A8feMwCRVPNpeWiQ4ohKCVHRM4i94PV9TTZVPbDGMNFkvWaPkELeHPtMWX13KpT3wrgNio8MfDa8Fq9RsS",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "9143362",
+      "networkFee": "10000",
+      "slot": 450886211,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1277471539",
+      "phase": "DBC",
+      "signature": "3gMzM5G8bPydxrZ8X6bfioFT5BZRLdwna3R6UMpCLrcUMozn9ogmZE472nhDM5ZC1tRSGPtStUHijP2KobLVGyHK",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "5175043",
+      "networkFee": "10000",
+      "slot": 450886245,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "994093166",
+      "phase": "DBC",
+      "signature": "4zdf8JMEzV6m9M8ZHhZH2M6y1rmpBXAayQdxPZ7WRME2SieJqyPiNyAEahi6hfEATJv7F72UUViwbFDtGGg2oV1z",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "2274535",
+      "networkFee": "10000",
+      "slot": 450886246,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "219954477",
+      "phase": "DBC",
+      "signature": "5tQGrQwi3d17vhNnZKJamH59auoqk6C1Yef9sUrRuVbuoimu7ZuptTn9trN1rcWEoimrTJTaQjGe5ipna3QmXJyf",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "3284679",
+      "networkFee": "10000",
+      "slot": 450886247,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "582822129",
+      "phase": "DBC",
+      "signature": "47iXLi2hyb8EKom8X7Ko21hvBesis5r6z4dJ81YeoLFcRn4EmueK4zcSKtemHTXJ4JyxWteT3kiMRj6otbB6sTcD",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "926695",
+      "networkFee": "10000",
+      "slot": 450886280,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "162625122",
+      "phase": "DBC",
+      "signature": "2gAFd73QDzGUhPXirgQQMihGmPM2kZ5RACLgTTW3NPex614H5bPCKFBti4FKVimWsLrnBjN6b1Uegf6YiHVSAe97",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "918647",
+      "networkFee": "10000",
+      "slot": 450886280,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1103012935",
+      "phase": "DBC",
+      "signature": "4C7MNn6XvHMKCqZ9MeiV4Gnm6Yr3Y3XvXko2GAXZthAEPcpRVMD63Rw1g8rBdtpQPTUD6tkgVKvaupEApid4upg6",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "918647",
+      "networkFee": "10000",
+      "slot": 450886281,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1138589051",
+      "phase": "DBC",
+      "signature": "2H2kW1py8Eb9rj7gM8FLybtdq9QdrUY2U1fnBbHKaLvJ54TK7itvwEzQWM1r1h5csyMdCQqAFFSDYm16KNG3cahN",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "913500",
+      "networkFee": "10000",
+      "slot": 450886315,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1024554267",
+      "phase": "DBC",
+      "signature": "4sKsEAGuXtrn3AdyGg16c9mtAr1KYL4dp63xfjesrJLMzDDo44ETQhv5WdzcQq9mD7MNfcUTpKoXMtdJ4nm9wK2P",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "639893",
+      "networkFee": "10000",
+      "slot": 450886315,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "603860295",
+      "phase": "DBC",
+      "signature": "5Z52kjUum9KrLCA3tqeFQQazBkNQhTwTqdro9HARQsFQaRpvpAC53xLM5CvZX8BtGqWzXsRubozqbJo5nsLbCdrb",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "568179",
+      "networkFee": "10000",
+      "slot": 450886316,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "826849968",
+      "phase": "DBC",
+      "signature": "2J5WBZGMbyXyJeMS4ikXpzRyKp4HhMv6ecHvpnpFtXkZPZv3PrfU8fAEgaVhG7MmWJNbMnqYETppEgdLAFgkFi17",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "568179",
+      "networkFee": "10000",
+      "slot": 450886350,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1097346685",
+      "phase": "DBC",
+      "signature": "3HkUAmvHhxsqenvWzUdVrprSXdUVfAJn2GMif6bC88nzx1cGFs698tqGzj5hhvgEZXMP1bMDykU7vZqt2tw3xqY",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "541127",
+      "networkFee": "10000",
+      "slot": 450886350,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1266706783",
+      "phase": "DBC",
+      "signature": "3feV7EVRTThQuMWQMahDsvbAhnhmDsePWboGxkxF26iYfwtgqn3eATfWwqBAyPooR9jVuBfsPazdutQmmKCCq3Ae",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "482939",
+      "networkFee": "10000",
+      "slot": 450886351,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1148788086",
+      "phase": "DBC",
+      "signature": "5k5ExKGE3RGL4bPQnwLFL4dobznVJ1449erWw6Zn8f5DqxrDnYZH4bgtc1b1qZNWz8B6ALSXBYHuQJd6njWZg193",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "439474",
+      "networkFee": "10000",
+      "slot": 450886391,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1170821064",
+      "phase": "DBC",
+      "signature": "5o6e3f5ik7hhqCXA8oLEj4yjAemPZGQPXv72btVBHfxRbxmEWML1VbUiY21MRUJvYsVR8u1VP8Pv2MnSDaZoT19D",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "120735",
+      "networkFee": "10000",
+      "slot": 450886392,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1375382253",
+      "phase": "DBC",
+      "signature": "41UpFWni6v5B3e7QcGfqUp4m9hYT79BWKv13u3HEppXftHNrHe6nfWGfXzbmP7eg9Ha5vS9Jv6Pz23GBBLzJ2bxt",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "241469",
+      "networkFee": "10000",
+      "slot": 450886392,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "1269603321",
+      "phase": "DBC",
+      "signature": "uSQnrdEPkxATZWRR4zP4rUDFCWu4gFE9TFcTrAYGRc2GKBmLoQdX75b5xzEkAbgRQ5Lobupm5nSXDr4wGRsafjh",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "81200",
+      "networkFee": "10000",
+      "slot": 450886426,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    },
+    {
+      "repoId": "716719284",
+      "phase": "DBC",
+      "signature": "2S4826uBb6CuqyYN5tfN2Df7Gc7juasJNCPVLVsc2oBTJrG19SmfATfVzCbXVb6Ac1rdcnCHuE4t4H55NeNCrH7u",
+      "wallet": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "amount": "41751",
+      "networkFee": "10000",
+      "slot": 450886428,
+      "reconciliation": "MATCH",
+      "status": "settled"
+    }
+  ],
+  "reconciliation": {
+    "status": "MATCH",
+    "problems": [],
+    "summary": {
+      "earned": "292239980",
+      "claimed": "187668768",
+      "available": "187668768",
+      "allocated": "0",
+      "buybackReserve": "0",
+      "spent": "0"
+    }
+  },
+  "liquidity": {
+    "status": "MATCH",
+    "problems": [],
+    "summary": {
+      "allocated": "0",
+      "committed": "0",
+      "settled": "0",
+      "failed": "0",
+      "open": 0,
+      "remaining": "0",
+      "lockMode": "platform-authority"
+    }
+  },
+  "flags": {
+    "buybacks": "false",
+    "p3": "false",
+    "p4": "false"
+  },
+  "verification": "Every receipt and the treasury balance verified through an independent finalized RPC; all 24 builder reconciliations MATCH.",
+  "allocation": {
+    "result": {
+      "group": "524583e7-e3ed-48b8-bf79-e422ddf213e1",
+      "policyVersion": 1,
+      "claims": 24,
+      "claimedAmount": "187668768"
+    },
+    "summary": {
+      "earned": {
+        "damm": "0",
+        "dbc": "292239980",
+        "total": "292239980"
+      },
+      "claimed": {
+        "damm": "0",
+        "dbc": "187668768",
+        "total": "187668768"
+      },
+      "available": "0",
+      "allocated": {
+        "buyback": "112601254",
+        "liquidity": "37533745",
+        "treasury": "37533769",
+        "total": "187668768"
+      },
+      "spent": "0",
+      "buybackReserve": "112601254",
+      "activePolicy": {
+        "version": 1,
+        "buybackPermille": 600,
+        "liquidityPermille": 200,
+        "activatedAt": "2026-09-26T20:55:58.002Z"
+      }
+    },
+    "reconciliation": {
+      "status": "MATCH",
+      "problems": [],
+      "summary": {
+        "earned": "292239980",
+        "claimed": "187668768",
+        "available": "0",
+        "allocated": "187668768",
+        "buybackReserve": "112601254",
+        "spent": "0"
+      }
+    },
+    "onchainTransactionSent": false
+  },
+  "deployed": {
+    "web": "d71da63d-5531-4991-8069-29e3a4309f09",
+    "worker": "6709fac6-36e7-442e-b418-263072ccb6c1",
+    "status": "SUCCESS",
+    "postAllocationCheck": {
+      "checkedAt": "2026-09-27T04:20:19.320Z",
+      "revenue": {
+        "status": "MATCH",
+        "problems": [],
+        "summary": {
+          "earned": "292239980",
+          "claimed": "187668768",
+          "available": "0",
+          "allocated": "187668768",
+          "buybackReserve": "112601254",
+          "spent": "0"
+        }
+      },
+      "liquidity": {
+        "status": "MATCH",
+        "problems": [],
+        "summary": {
+          "allocated": "37533745",
+          "committed": "0",
+          "settled": "0",
+          "failed": "0",
+          "open": 0,
+          "remaining": "37533745",
+          "lockMode": "platform-authority"
+        }
+      },
+      "graduation": [
+        {
+          "status": "VERIFIED",
+          "markets": 24,
+          "latest": "2026-09-27T04:20:18.161Z"
+        }
+      ],
+      "migrations": 19,
+      "flags": {
+        "buybacks": "false",
+        "p3": "false",
+        "p4": "false",
+        "collection": "true"
+      },
+      "treasury": "FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy",
+      "collectorHash": "a442452495ffedc1e2f8635491933517338424482140b5c293da09b27eb802fd"
+    }
+  }
+}

@@ -1,0 +1,3730 @@
+{
+  "id": "76302c08-e0c8-46bf-8729-b44a85140c5c",
+  "prevId": "5b998cc7-ec6d-4f72-9e76-0e1006121899",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.builder_allocation_claims": {
+      "name": "builder_allocation_claims",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mint": {
+          "name": "mint",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signed_transaction": {
+          "name": "signed_transaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_valid_block_height": {
+          "name": "last_valid_block_height",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "builder_allocation_signature_unique": {
+          "name": "builder_allocation_signature_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "builder_allocation_one_payout": {
+          "name": "builder_allocation_one_payout",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"builder_allocation_claims\".\"status\" in ('pending','settled')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "builder_allocation_claims_github_repo_id_markets_github_repo_id_fk": {
+          "name": "builder_allocation_claims_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "builder_allocation_claims",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "builder_allocation_amount_check": {
+          "name": "builder_allocation_amount_check",
+          "value": "\"builder_allocation_claims\".\"amount\" = 10000000000000"
+        },
+        "builder_allocation_status_check": {
+          "name": "builder_allocation_status_check",
+          "value": "\"builder_allocation_claims\".\"status\" in ('pending','settled','aborted')"
+        },
+        "builder_allocation_settlement_check": {
+          "name": "builder_allocation_settlement_check",
+          "value": "(\"builder_allocation_claims\".\"status\" = 'settled') = (\"builder_allocation_claims\".\"settled_at\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.builder_reinvest_intents": {
+      "name": "builder_reinvest_intents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claim_id": {
+          "name": "claim_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_amount": {
+          "name": "source_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "terms": {
+          "name": "terms",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "terms_hash": {
+          "name": "terms_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prepared_transaction": {
+          "name": "prepared_transaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signed_transaction": {
+          "name": "signed_transaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "position": {
+          "name": "position",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_valid_block_height": {
+          "name": "last_valid_block_height",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "simulation": {
+          "name": "simulation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "settlement": {
+          "name": "settlement",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_debit": {
+          "name": "settled_debit",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "builder_reinvest_idempotency_unique": {
+          "name": "builder_reinvest_idempotency_unique",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "builder_reinvest_signature_unique": {
+          "name": "builder_reinvest_signature_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "builder_reinvest_position_unique": {
+          "name": "builder_reinvest_position_unique",
+          "columns": [
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "builder_reinvest_one_open_per_claim": {
+          "name": "builder_reinvest_one_open_per_claim",
+          "columns": [
+            {
+              "expression": "claim_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"builder_reinvest_intents\".\"status\" in ('prepared','cancelling','submitted')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "builder_reinvest_intents_github_repo_id_markets_github_repo_id_fk": {
+          "name": "builder_reinvest_intents_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "builder_reinvest_intents",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "builder_reinvest_intents_claim_id_repo_claims_id_fk": {
+          "name": "builder_reinvest_intents_claim_id_repo_claims_id_fk",
+          "tableFrom": "builder_reinvest_intents",
+          "tableTo": "repo_claims",
+          "columnsFrom": [
+            "claim_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "builder_reinvest_amount_check": {
+          "name": "builder_reinvest_amount_check",
+          "value": "\"builder_reinvest_intents\".\"source_amount\" > 0 and (\"builder_reinvest_intents\".\"settled_debit\" is null or (\"builder_reinvest_intents\".\"settled_debit\" > 0 and \"builder_reinvest_intents\".\"settled_debit\" <= \"builder_reinvest_intents\".\"source_amount\"))"
+        },
+        "builder_reinvest_status_check": {
+          "name": "builder_reinvest_status_check",
+          "value": "\"builder_reinvest_intents\".\"status\" in ('prepared','cancelling','submitted','settled','aborted')"
+        },
+        "builder_reinvest_settlement_check": {
+          "name": "builder_reinvest_settlement_check",
+          "value": "(\"builder_reinvest_intents\".\"status\" = 'settled' and \"builder_reinvest_intents\".\"settled_at\" is not null and \"builder_reinvest_intents\".\"signature\" is not null and \"builder_reinvest_intents\".\"signed_transaction\" is not null and \"builder_reinvest_intents\".\"settled_debit\" is not null and \"builder_reinvest_intents\".\"settlement\" is not null) or (\"builder_reinvest_intents\".\"status\" <> 'settled' and \"builder_reinvest_intents\".\"settled_at\" is null and \"builder_reinvest_intents\".\"settled_debit\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.buyback_intents": {
+      "name": "buyback_intents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "allocation_group": {
+          "name": "allocation_group",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet_source": {
+          "name": "wallet_source",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_mint": {
+          "name": "destination_mint",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "destination_token_account": {
+          "name": "destination_token_account",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quote_identifier": {
+          "name": "quote_identifier",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expected_output": {
+          "name": "expected_output",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "minimum_output": {
+          "name": "minimum_output",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_slippage_bps": {
+          "name": "max_slippage_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_price_impact_bps": {
+          "name": "max_price_impact_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "policy_version": {
+          "name": "policy_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "network": {
+          "name": "network",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "review": {
+          "name": "review",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "simulation": {
+          "name": "simulation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_by": {
+          "name": "reviewed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "simulated_at": {
+          "name": "simulated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "buyback_intents_idempotency_key_unique": {
+          "name": "buyback_intents_idempotency_key_unique",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "buyback_intents_signature_unique": {
+          "name": "buyback_intents_signature_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "buyback_intents_amount_check": {
+          "name": "buyback_intents_amount_check",
+          "value": "\"buyback_intents\".\"amount\" > 0"
+        },
+        "buyback_intents_status_check": {
+          "name": "buyback_intents_status_check",
+          "value": "\"buyback_intents\".\"status\" in ('prepared','reviewed','simulated','settled','aborted')"
+        },
+        "buyback_intents_settlement_check": {
+          "name": "buyback_intents_settlement_check",
+          "value": "(\"buyback_intents\".\"status\" = 'settled' and \"buyback_intents\".\"settled_at\" is not null and \"buyback_intents\".\"signature\" is not null and \"buyback_intents\".\"resolved_at\" is null and \"buyback_intents\".\"resolution_reason\" is null) or (\"buyback_intents\".\"status\" = 'aborted' and \"buyback_intents\".\"settled_at\" is null and \"buyback_intents\".\"resolved_at\" is not null and \"buyback_intents\".\"resolution_reason\" is not null) or (\"buyback_intents\".\"status\" in ('prepared','reviewed','simulated') and \"buyback_intents\".\"settled_at\" is null and \"buyback_intents\".\"resolved_at\" is null and \"buyback_intents\".\"resolution_reason\" is null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.damm_fee_events": {
+      "name": "damm_fee_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_base_units": {
+          "name": "amount_base_units",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cumulative_earned": {
+          "name": "cumulative_earned",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cumulative_claimed": {
+          "name": "cumulative_claimed",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence_hash": {
+          "name": "evidence_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "damm_fee_events_position_cumulative_earned_key": {
+          "name": "damm_fee_events_position_cumulative_earned_key",
+          "columns": [
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "cumulative_earned",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "damm_fee_events_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "damm_fee_events_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "damm_fee_events",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.damm_trade_events": {
+      "name": "damm_trade_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_index": {
+          "name": "event_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "traded_at": {
+          "name": "traded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quote_amount": {
+          "name": "quote_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "direction": {
+          "name": "direction",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "damm_trade_chain_event_unique": {
+          "name": "damm_trade_chain_event_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "damm_trade_events_github_repo_id_markets_github_repo_id_fk": {
+          "name": "damm_trade_events_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "damm_trade_events",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "damm_trade_amount_check": {
+          "name": "damm_trade_amount_check",
+          "value": "\"damm_trade_events\".\"quote_amount\">0"
+        },
+        "damm_trade_direction_check": {
+          "name": "damm_trade_direction_check",
+          "value": "\"damm_trade_events\".\"direction\" in ('buy','sell')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.discovery_claims": {
+      "name": "discovery_claims",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(36)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "transaction": {
+          "name": "transaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_valid_block_height": {
+          "name": "last_valid_block_height",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "discovery_claims_signature_unique": {
+          "name": "discovery_claims_signature_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "discovery_claims_one_active": {
+          "name": "discovery_claims_one_active",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"discovery_claims\".\"status\" in ('prepared', 'pending')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "discovery_claims_github_repo_id_markets_github_repo_id_fk": {
+          "name": "discovery_claims_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "discovery_claims",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "discovery_claims_amount_check": {
+          "name": "discovery_claims_amount_check",
+          "value": "\"discovery_claims\".\"amount\" > 0 and \"discovery_claims\".\"amount\" <= 2500000000"
+        },
+        "discovery_claims_status_check": {
+          "name": "discovery_claims_status_check",
+          "value": "\"discovery_claims\".\"status\" in ('prepared', 'pending', 'settled', 'aborted')"
+        },
+        "discovery_claims_evidence_check": {
+          "name": "discovery_claims_evidence_check",
+          "value": "(\"discovery_claims\".\"status\" not in ('pending', 'settled') or \"discovery_claims\".\"signature\" is not null) and (\"discovery_claims\".\"status\" <> 'settled' or \"discovery_claims\".\"settled_at\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.discovery_fee_events": {
+      "name": "discovery_fee_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_index": {
+          "name": "event_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "partner_amount": {
+          "name": "partner_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "traded_at": {
+          "name": "traded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "discovery_eligible": {
+          "name": "discovery_eligible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        }
+      },
+      "indexes": {
+        "discovery_fee_events_chain_unique": {
+          "name": "discovery_fee_events_chain_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "discovery_fee_events_github_repo_id_markets_github_repo_id_fk": {
+          "name": "discovery_fee_events_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "discovery_fee_events",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "discovery_fee_events_positive_check": {
+          "name": "discovery_fee_events_positive_check",
+          "value": "\"discovery_fee_events\".\"partner_amount\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.fee_events": {
+      "name": "fee_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mint": {
+          "name": "mint",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_index": {
+          "name": "event_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_base_units": {
+          "name": "amount_base_units",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset": {
+          "name": "asset",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "fee_events_chain_event_unique": {
+          "name": "fee_events_chain_event_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "fee_events_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "fee_events_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "fee_events",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "fee_events_positive_amount_check": {
+          "name": "fee_events_positive_amount_check",
+          "value": "\"fee_events\".\"amount_base_units\" > 0"
+        },
+        "fee_events_kind_check": {
+          "name": "fee_events_kind_check",
+          "value": "\"fee_events\".\"kind\" = 'dbc_creator_quote'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.graduation_alerts": {
+      "name": "graduation_alerts",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "event_key": {
+          "name": "event_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "acknowledged_at": {
+          "name": "acknowledged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "acknowledged_by": {
+          "name": "acknowledged_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "graduation_alert_event_unique": {
+          "name": "graduation_alert_event_unique",
+          "columns": [
+            {
+              "expression": "event_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "graduation_alerts_github_repo_id_markets_github_repo_id_fk": {
+          "name": "graduation_alerts_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "graduation_alerts",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.graduation_events": {
+      "name": "graduation_events",
+      "schema": "",
+      "columns": {
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence_hash": {
+          "name": "evidence_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_observation": {
+          "name": "previous_observation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reconciliation": {
+          "name": "reconciliation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "graduation_signature_unique": {
+          "name": "graduation_signature_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "graduation_pool_unique": {
+          "name": "graduation_pool_unique",
+          "columns": [
+            {
+              "expression": "pool",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "graduation_events_github_repo_id_markets_github_repo_id_fk": {
+          "name": "graduation_events_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "graduation_events",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.graduation_observations": {
+      "name": "graduation_observations",
+      "schema": "",
+      "columns": {
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observation": {
+          "name": "observation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reconciliation": {
+          "name": "reconciliation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error_code": {
+          "name": "error_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "graduation_observations_github_repo_id_markets_github_repo_id_fk": {
+          "name": "graduation_observations_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "graduation_observations",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.liquidity_intents": {
+      "name": "liquidity_intents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "network": {
+          "name": "network",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_amount": {
+          "name": "source_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "swap_amount": {
+          "name": "swap_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_swap_output": {
+          "name": "min_swap_output",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_wallet": {
+          "name": "source_wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_a_mint": {
+          "name": "token_a_mint",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_b_mint": {
+          "name": "token_b_mint",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_amount_token_a": {
+          "name": "max_amount_token_a",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_amount_token_b": {
+          "name": "max_amount_token_b",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quote_identifier": {
+          "name": "quote_identifier",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_slippage_bps": {
+          "name": "max_slippage_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_price_impact_bps": {
+          "name": "max_price_impact_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "lp_owner": {
+          "name": "lp_owner",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "position_nft_mint": {
+          "name": "position_nft_mint",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lock_mode": {
+          "name": "lock_mode",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "policy_version": {
+          "name": "policy_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rules_version": {
+          "name": "rules_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "rules_json": {
+          "name": "rules_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "minimum_liquidity": {
+          "name": "minimum_liquidity",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_network_cost": {
+          "name": "max_network_cost",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "settled_network_cost": {
+          "name": "settled_network_cost",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "review": {
+          "name": "review",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "simulation": {
+          "name": "simulation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signed_transaction": {
+          "name": "signed_transaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_valid_block_height": {
+          "name": "last_valid_block_height",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expected_liquidity": {
+          "name": "expected_liquidity",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_debit": {
+          "name": "settled_debit",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_token_a": {
+          "name": "settled_token_a",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_token_b": {
+          "name": "settled_token_b",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_liquidity": {
+          "name": "settled_liquidity",
+          "type": "varchar(80)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_by": {
+          "name": "reviewed_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewed_at": {
+          "name": "reviewed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "simulated_at": {
+          "name": "simulated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "liquidity_intents_idempotency_key_unique": {
+          "name": "liquidity_intents_idempotency_key_unique",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "liquidity_intents_signature_unique": {
+          "name": "liquidity_intents_signature_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "liquidity_intents_position_unique": {
+          "name": "liquidity_intents_position_unique",
+          "columns": [
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "liquidity_intents_one_open_per_market": {
+          "name": "liquidity_intents_one_open_per_market",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"liquidity_intents\".\"status\" in ('prepared','reviewed','simulated','submitted')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "liquidity_intents_github_repo_id_markets_github_repo_id_fk": {
+          "name": "liquidity_intents_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "liquidity_intents",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "liquidity_intents_amount_check": {
+          "name": "liquidity_intents_amount_check",
+          "value": "\"liquidity_intents\".\"source_amount\" > 0 and \"liquidity_intents\".\"swap_amount\" >= 0"
+        },
+        "liquidity_intents_status_check": {
+          "name": "liquidity_intents_status_check",
+          "value": "\"liquidity_intents\".\"status\" in ('prepared','reviewed','simulated','submitted','settled','aborted')"
+        },
+        "liquidity_intents_settlement_check": {
+          "name": "liquidity_intents_settlement_check",
+          "value": "(\"liquidity_intents\".\"status\" = 'settled' and \"liquidity_intents\".\"settled_at\" is not null and \"liquidity_intents\".\"signature\" is not null and \"liquidity_intents\".\"position\" is not null and \"liquidity_intents\".\"resolved_at\" is null and \"liquidity_intents\".\"resolution_reason\" is null) or (\"liquidity_intents\".\"status\" = 'aborted' and \"liquidity_intents\".\"settled_at\" is null and \"liquidity_intents\".\"resolved_at\" is not null and \"liquidity_intents\".\"resolution_reason\" is not null) or (\"liquidity_intents\".\"status\" in ('prepared','reviewed','simulated','submitted') and \"liquidity_intents\".\"settled_at\" is null and \"liquidity_intents\".\"resolved_at\" is null and \"liquidity_intents\".\"resolution_reason\" is null)"
+        },
+        "liquidity_intents_budget_check": {
+          "name": "liquidity_intents_budget_check",
+          "value": "swap_amount > 0 AND swap_amount < source_amount AND min_swap_output > 0 AND max_network_cost > 0 AND max_slippage_bps > 0 AND max_slippage_bps < 10000 AND max_price_impact_bps > 0 AND max_price_impact_bps <= 10000 AND lock_mode = 'platform-authority' AND source_wallet = lp_owner"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.markets": {
+      "name": "markets",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mint": {
+          "name": "mint",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "launcher_wallet": {
+          "name": "launcher_wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "creator_wallet": {
+          "name": "creator_wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_name": {
+          "name": "token_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_symbol": {
+          "name": "token_symbol",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_image": {
+          "name": "token_image",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "launch_signature": {
+          "name": "launch_signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "blockhash": {
+          "name": "blockhash",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_valid_block_height": {
+          "name": "last_valid_block_height",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "launch_slot": {
+          "name": "launch_slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "launch_finality": {
+          "name": "launch_finality",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "indexed_at": {
+          "name": "indexed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_verified_at": {
+          "name": "last_verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "discovery_version": {
+          "name": "discovery_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "builder_allocation_version": {
+          "name": "builder_allocation_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "launch_block_time": {
+          "name": "launch_block_time",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "markets_github_repo_id_unique": {
+          "name": "markets_github_repo_id_unique",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "markets_mint_unique": {
+          "name": "markets_mint_unique",
+          "columns": [
+            {
+              "expression": "mint",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "markets_pool_unique": {
+          "name": "markets_pool_unique",
+          "columns": [
+            {
+              "expression": "pool",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "markets_launch_signature_unique": {
+          "name": "markets_launch_signature_unique",
+          "columns": [
+            {
+              "expression": "launch_signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "markets_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "markets_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "markets",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "markets_status_check": {
+          "name": "markets_status_check",
+          "value": "\"markets\".\"status\" in ('reserved', 'prepared', 'submitted', 'confirmed', 'failed', 'ambiguous')"
+        },
+        "markets_discovery_version_check": {
+          "name": "markets_discovery_version_check",
+          "value": "\"markets\".\"discovery_version\" is null or \"markets\".\"discovery_version\" in (1,2)"
+        },
+        "markets_builder_allocation_version_check": {
+          "name": "markets_builder_allocation_version_check",
+          "value": "\"markets\".\"builder_allocation_version\" is null or \"markets\".\"builder_allocation_version\" = 1"
+        },
+        "markets_confirmed_evidence_check": {
+          "name": "markets_confirmed_evidence_check",
+          "value": "\"markets\".\"status\" <> 'confirmed' or (\"markets\".\"mint\" is not null and \"markets\".\"pool\" is not null and \"markets\".\"launch_signature\" is not null)"
+        },
+        "markets_indexed_evidence_check": {
+          "name": "markets_indexed_evidence_check",
+          "value": "\"markets\".\"indexed_at\" is null or (\"markets\".\"launch_slot\" is not null and \"markets\".\"launch_finality\" = 'finalized' and \"markets\".\"last_verified_at\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.platform_fee_claims": {
+      "name": "platform_fee_claims",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signed_transaction": {
+          "name": "signed_transaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_valid_block_height": {
+          "name": "last_valid_block_height",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "phase": {
+          "name": "phase",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'DAMM'"
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "receipt": {
+          "name": "receipt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "platform_fee_claims_signature_unique": {
+          "name": "platform_fee_claims_signature_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "platform_fee_claims_one_pending": {
+          "name": "platform_fee_claims_one_pending",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"platform_fee_claims\".\"status\" = 'pending'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "platform_fee_claims_github_repo_id_markets_github_repo_id_fk": {
+          "name": "platform_fee_claims_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "platform_fee_claims",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "platform_fee_claims_amount_check": {
+          "name": "platform_fee_claims_amount_check",
+          "value": "\"platform_fee_claims\".\"amount\" > 0"
+        },
+        "platform_fee_claims_status_check": {
+          "name": "platform_fee_claims_status_check",
+          "value": "\"platform_fee_claims\".\"status\" in ('pending', 'settled', 'aborted')"
+        },
+        "platform_fee_claims_settlement_check": {
+          "name": "platform_fee_claims_settlement_check",
+          "value": "(\"platform_fee_claims\".\"status\" = 'pending' and \"platform_fee_claims\".\"settled_at\" is null and \"platform_fee_claims\".\"resolved_at\" is null and \"platform_fee_claims\".\"resolution_reason\" is null) or (\"platform_fee_claims\".\"status\" = 'settled' and \"platform_fee_claims\".\"settled_at\" is not null and \"platform_fee_claims\".\"resolved_at\" is null and \"platform_fee_claims\".\"resolution_reason\" is null) or (\"platform_fee_claims\".\"status\" = 'aborted' and \"platform_fee_claims\".\"settled_at\" is null and \"platform_fee_claims\".\"resolved_at\" is not null and \"platform_fee_claims\".\"resolution_reason\" is not null)"
+        },
+        "platform_fee_claims_phase_check": {
+          "name": "platform_fee_claims_phase_check",
+          "value": "\"platform_fee_claims\".\"phase\" in ('DBC','DAMM')"
+        },
+        "platform_fee_claims_dbc_evidence_check": {
+          "name": "platform_fee_claims_dbc_evidence_check",
+          "value": "\"platform_fee_claims\".\"phase\" <> 'DBC' or (\"platform_fee_claims\".\"evidence\" is not null and (\"platform_fee_claims\".\"status\" <> 'settled' or \"platform_fee_claims\".\"receipt\" is not null))"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.platform_fee_events": {
+      "name": "platform_fee_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_base_units": {
+          "name": "amount_base_units",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cumulative_earned": {
+          "name": "cumulative_earned",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cumulative_claimed": {
+          "name": "cumulative_claimed",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence_hash": {
+          "name": "evidence_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "platform_fee_events_position_cumulative_earned_key": {
+          "name": "platform_fee_events_position_cumulative_earned_key",
+          "columns": [
+            {
+              "expression": "position",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "cumulative_earned",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "platform_fee_events_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "platform_fee_events_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "platform_fee_events",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "platform_fee_events_positive_amount_check": {
+          "name": "platform_fee_events_positive_amount_check",
+          "value": "\"platform_fee_events\".\"amount_base_units\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.platform_revenue_allocations": {
+      "name": "platform_revenue_allocations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "allocation_group": {
+          "name": "allocation_group",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claim_signature": {
+          "name": "claim_signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claimed_amount": {
+          "name": "claimed_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "buyback_amount": {
+          "name": "buyback_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "liquidity_amount": {
+          "name": "liquidity_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "treasury_amount": {
+          "name": "treasury_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "policy_version": {
+          "name": "policy_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "platform_revenue_allocations_claim_unique": {
+          "name": "platform_revenue_allocations_claim_unique",
+          "columns": [
+            {
+              "expression": "claim_signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "platform_revenue_allocations_parts_check": {
+          "name": "platform_revenue_allocations_parts_check",
+          "value": "\"platform_revenue_allocations\".\"buyback_amount\" + \"platform_revenue_allocations\".\"liquidity_amount\" + \"platform_revenue_allocations\".\"treasury_amount\" = \"platform_revenue_allocations\".\"claimed_amount\" and \"platform_revenue_allocations\".\"buyback_amount\" >= 0 and \"platform_revenue_allocations\".\"liquidity_amount\" >= 0 and \"platform_revenue_allocations\".\"treasury_amount\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.platform_revenue_policies": {
+      "name": "platform_revenue_policies",
+      "schema": "",
+      "columns": {
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "buyback_permille": {
+          "name": "buyback_permille",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "liquidity_permille": {
+          "name": "liquidity_permille",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "platform_revenue_policies_permille_check": {
+          "name": "platform_revenue_policies_permille_check",
+          "value": "\"platform_revenue_policies\".\"buyback_permille\" >= 0 and \"platform_revenue_policies\".\"liquidity_permille\" >= 0 and \"platform_revenue_policies\".\"buyback_permille\" + \"platform_revenue_policies\".\"liquidity_permille\" <= 1000"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.pool_fee_cursors": {
+      "name": "pool_fee_cursors",
+      "schema": "",
+      "columns": {
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "last_signature": {
+          "name": "last_signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_slot": {
+          "name": "last_slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.repo_beneficiaries": {
+      "name": "repo_beneficiaries",
+      "schema": "",
+      "columns": {
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bound_at": {
+          "name": "bound_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "repo_beneficiaries_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "repo_beneficiaries_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "repo_beneficiaries",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.repo_claims": {
+      "name": "repo_claims",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "beneficiary_wallet": {
+          "name": "beneficiary_wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_base_units": {
+          "name": "amount_base_units",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset": {
+          "name": "asset",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "claim_signature": {
+          "name": "claim_signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "settled_at": {
+          "name": "settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_reason": {
+          "name": "resolution_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signed_transaction": {
+          "name": "signed_transaction",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_valid_block_height": {
+          "name": "last_valid_block_height",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "damm_amount_base_units": {
+          "name": "damm_amount_base_units",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "0"
+        }
+      },
+      "indexes": {
+        "repo_claims_signature_unique": {
+          "name": "repo_claims_signature_unique",
+          "columns": [
+            {
+              "expression": "claim_signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "repo_claims_one_pending_per_repo": {
+          "name": "repo_claims_one_pending_per_repo",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"repo_claims\".\"status\" = 'pending'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "repo_claims_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "repo_claims_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "repo_claims",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "repo_claims_positive_amount_check": {
+          "name": "repo_claims_positive_amount_check",
+          "value": "\"repo_claims\".\"amount_base_units\" > 0"
+        },
+        "repo_claims_status_check": {
+          "name": "repo_claims_status_check",
+          "value": "\"repo_claims\".\"status\" in ('pending', 'settled', 'aborted')"
+        },
+        "repo_claims_settlement_check": {
+          "name": "repo_claims_settlement_check",
+          "value": "(\"repo_claims\".\"status\" = 'pending' and \"repo_claims\".\"settled_at\" is null and \"repo_claims\".\"resolved_at\" is null and \"repo_claims\".\"resolution_reason\" is null) or (\"repo_claims\".\"status\" = 'settled' and \"repo_claims\".\"settled_at\" is not null and \"repo_claims\".\"resolved_at\" is null and \"repo_claims\".\"resolution_reason\" is null) or (\"repo_claims\".\"status\" = 'aborted' and \"repo_claims\".\"settled_at\" is null and \"repo_claims\".\"resolved_at\" is not null and \"repo_claims\".\"resolution_reason\" is not null)"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.repo_verifications": {
+      "name": "repo_verifications",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_login": {
+          "name": "github_login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "permission": {
+          "name": "permission",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "verified_at": {
+          "name": "verified_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "repo_verifications_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "repo_verifications_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "repo_verifications",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "repo_verifications_admin_check": {
+          "name": "repo_verifications_admin_check",
+          "value": "\"repo_verifications\".\"permission\" = 'admin'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.repositories": {
+      "name": "repositories",
+      "schema": "",
+      "columns": {
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "owner": {
+          "name": "owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "avatar_url": {
+          "name": "avatar_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "stars": {
+          "name": "stars",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "forks": {
+          "name": "forks",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "archived": {
+          "name": "archived",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_updated_at": {
+          "name": "github_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "synced_at": {
+          "name": "synced_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.repository_participation": {
+      "name": "repository_participation",
+      "schema": "",
+      "columns": {
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_login": {
+          "name": "github_login",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "opted_in_at": {
+          "name": "opted_in_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "repository_participation_github_repo_id_markets_github_repo_id_fk": {
+          "name": "repository_participation_github_repo_id_markets_github_repo_id_fk",
+          "tableFrom": "repository_participation",
+          "tableTo": "markets",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.trade_events": {
+      "name": "trade_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "pool": {
+          "name": "pool",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signature": {
+          "name": "signature",
+          "type": "varchar(88)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_index": {
+          "name": "event_index",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slot": {
+          "name": "slot",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "traded_at": {
+          "name": "traded_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "direction": {
+          "name": "direction",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input_base_units": {
+          "name": "input_base_units",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "output_base_units": {
+          "name": "output_base_units",
+          "type": "varchar(20)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "next_sqrt_price": {
+          "name": "next_sqrt_price",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "trade_events_chain_event_unique": {
+          "name": "trade_events_chain_event_unique",
+          "columns": [
+            {
+              "expression": "signature",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_index",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "trade_events_direction_check": {
+          "name": "trade_events_direction_check",
+          "value": "\"trade_events\".\"direction\" in ('buy', 'sell')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.trend_candidates": {
+      "name": "trend_candidates",
+      "schema": "",
+      "columns": {
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "full_name": {
+          "name": "full_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'detected'"
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "attempted_at": {
+          "name": "attempted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "detected_at": {
+          "name": "detected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_config": {
+          "name": "approved_config",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_discovery_version": {
+          "name": "approved_discovery_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_window_ms": {
+          "name": "approved_window_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "trend_state_check": {
+          "name": "trend_state_check",
+          "value": "\"trend_candidates\".\"state\" in ('detected','reviewed','approved','launched','active','rejected','duplicate')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.trend_launches": {
+      "name": "trend_launches",
+      "schema": "",
+      "columns": {
+        "mint": {
+          "name": "mint",
+          "type": "varchar(44)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "config": {
+          "name": "config",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "candidate_revision": {
+          "name": "candidate_revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "prepared_at": {
+          "name": "prepared_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "trend_launches_github_repo_id_trend_candidates_github_repo_id_fk": {
+          "name": "trend_launches_github_repo_id_trend_candidates_github_repo_id_fk",
+          "tableFrom": "trend_launches",
+          "tableTo": "trend_candidates",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.trend_observations": {
+      "name": "trend_observations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "observed_at": {
+          "name": "observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence_hash": {
+          "name": "evidence_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "trend_observation_unique": {
+          "name": "trend_observation_unique",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "observed_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "trend_observations_github_repo_id_trend_candidates_github_repo_id_fk": {
+          "name": "trend_observations_github_repo_id_trend_candidates_github_repo_id_fk",
+          "tableFrom": "trend_observations",
+          "tableTo": "trend_candidates",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.trend_reviews": {
+      "name": "trend_reviews",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "from_state": {
+          "name": "from_state",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to_state": {
+          "name": "to_state",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "operator": {
+          "name": "operator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "trend_reviews_github_repo_id_trend_candidates_github_repo_id_fk": {
+          "name": "trend_reviews_github_repo_id_trend_candidates_github_repo_id_fk",
+          "tableFrom": "trend_reviews",
+          "tableTo": "trend_candidates",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.trend_signals": {
+      "name": "trend_signals",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "detected_at": {
+          "name": "detected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "operator": {
+          "name": "operator",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "trend_signal_unique": {
+          "name": "trend_signal_unique",
+          "columns": [
+            {
+              "expression": "github_repo_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "url",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "trend_signals_github_repo_id_trend_candidates_github_repo_id_fk": {
+          "name": "trend_signals_github_repo_id_trend_candidates_github_repo_id_fk",
+          "tableFrom": "trend_signals",
+          "tableTo": "trend_candidates",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.trend_source_health": {
+      "name": "trend_source_health",
+      "schema": "",
+      "columns": {
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "checked_at": {
+          "name": "checked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "detail": {
+          "name": "detail",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.wallet_binding_challenges": {
+      "name": "wallet_binding_challenges",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "github_repo_id": {
+          "name": "github_repo_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "wallet": {
+          "name": "wallet",
+          "type": "varchar(44)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "nonce": {
+          "name": "nonce",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "wallet_binding_challenges_nonce_unique": {
+          "name": "wallet_binding_challenges_nonce_unique",
+          "columns": [
+            {
+              "expression": "nonce",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "wallet_binding_challenges_github_repo_id_repositories_github_repo_id_fk": {
+          "name": "wallet_binding_challenges_github_repo_id_repositories_github_repo_id_fk",
+          "tableFrom": "wallet_binding_challenges",
+          "tableTo": "repositories",
+          "columnsFrom": [
+            "github_repo_id"
+          ],
+          "columnsTo": [
+            "github_repo_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

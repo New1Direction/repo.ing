@@ -1,0 +1,37 @@
+export function formatUnits(raw, decimals = 9, maxFraction = decimals) {
+  if (raw === null || raw === undefined) return '—'
+  const n = BigInt(raw)
+  const sign = n < 0n ? '-' : ''
+  const value = n < 0n ? -n : n
+  const base = 10n ** BigInt(decimals)
+  const whole = value / base
+  const fraction = (value % base).toString().padStart(decimals, '0').slice(0, maxFraction).replace(/0+$/, '')
+  return `${sign}${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''}`
+}
+export function formatSolDisplay(raw) {
+  if (raw === null || raw === undefined) return '—'
+  const amount = BigInt(raw)
+  if (amount !== 0n && amount > -1000n && amount < 1000n) return '<0.000001'
+  return formatUnits(raw, 9, 6)
+}
+export function formatSolRounded(raw) {
+  if (raw === null || raw === undefined) return '—'
+  const amount = Number(BigInt(raw)) / 1e9
+  if (amount !== 0 && Math.abs(amount) < 0.00005) return amount < 0 ? '>-0.0001' : '<0.0001'
+  return amount.toLocaleString('en-US', { maximumFractionDigits: 4 })
+}
+export function formatUsdEstimate(lamports, usdPerSol) {
+  if (lamports === null || lamports === undefined || !Number.isFinite(usdPerSol) || usdPerSol <= 0) return null
+  const value = Number(lamports) / 1e9 * usdPerSol
+  if (!Number.isFinite(value) || value < 0) return null
+  if (value > 0 && value < 0.01) return '<$0.01'
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+export function parseUnits(input, decimals) {
+  if (!/^(?:\d+)(?:\.\d+)?$/.test(input)) throw new Error('Enter a positive amount')
+  const [whole, fraction = ''] = input.split('.')
+  if (fraction.length > decimals) throw new Error(`Use at most ${decimals} decimal places`)
+  const amount = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0'))
+  if (amount <= 0n) throw new Error('Enter a positive amount')
+  return amount.toString()
+}

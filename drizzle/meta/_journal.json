@@ -1,0 +1,139 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790255252643,
+      "tag": "0000_flowery_phalanx",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790255694591,
+      "tag": "0001_violet_sister_grimm",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790256660495,
+      "tag": "0002_cultured_spyke",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790257076586,
+      "tag": "0003_shallow_prowler",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790259064053,
+      "tag": "0004_fresh_puppet_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790259454419,
+      "tag": "0005_smart_ulik",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790265756130,
+      "tag": "0006_external_fee_cursor",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790294978380,
+      "tag": "0007_orange_justice",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790300510945,
+      "tag": "0008_claim_intent_resolution",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790353653510,
+      "tag": "0009_discovery_rewards",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790360000000,
+      "tag": "0010_graduated_builder_fees",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790383682956,
+      "tag": "0011_shiny_talon",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790472000000,
+      "tag": "0012_platform_fee_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790480000000,
+      "tag": "0013_platform_revenue_buyback",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790486000000,
+      "tag": "0014_protocol_liquidity",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790486000001,
+      "tag": "0015_builder_reinvest",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790486000002,
+      "tag": "0016_graduation_readiness",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790486000003,
+      "tag": "0017_trend_discovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790486000004,
+      "tag": "0018_dbc_platform_collection",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "name": "github-repository-launchpad-meteora-spike",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start",
+    "meteora:spike": "node scripts/meteora-spike.mjs",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.mjs",
+    "test:launch": "node --test tests/launch-coordinator.test.mjs",
+    "test:launch:chain": "node --test tests/launch-chain.test.mjs",
+    "index:once": "node scripts/index-launches.mjs",
+    "fees:index": "node scripts/index-external-fees.mjs",
+    "worker": "node scripts/run-worker.mjs",
+    "test:external-fees": "node --test tests/external-fee-indexer.test.mjs",
+    "test:index": "node --test tests/launch-indexer.test.mjs",
+    "test:trade": "node --test tests/trade.test.mjs",
+    "test:fees": "node --test tests/fee-accrual.test.mjs",
+    "fees:earned": "node scripts/read-repo-earnings.mjs",
+    "test:github-verification": "node --test tests/github-verification.test.mjs",
+    "github:verify-live": "node scripts/github-live-callback.mjs",
+    "test:wallet-binding": "node --test tests/wallet-binding.test.mjs",
+    "test:claim": "node --test tests/claim.test.mjs",
+    "test:discovery": "node --test tests/discovery-rules.test.mjs tests/discovery-claims.test.mjs",
+    "test:reconcile": "node --test tests/reconcile.test.mjs",
+    "reconcile:repo": "node scripts/reconcile-repo.mjs"
+  },
+  "dependencies": {
+    "@metamask/connect-solana": "^2.1.1",
+    "@meteora-ag/cp-amm-sdk": "1.4.10",
+    "@meteora-ag/dynamic-bonding-curve-sdk": "1.5.13",
+    "@solana/spl-token": "0.4.13",
+    "@solana/web3.js": "1.98.4",
+    "@wallet-standard/app": "^1.1.1",
+    "bn.js": "5.2.2",
+    "bs58": "^6.0.0",
+    "drizzle-orm": "^0.45.3",
+    "lightweight-charts": "5.2.1",
+    "lucide-react": "^1.48.0",
+    "next": "^16.3.6",
+    "pg": "^8.23.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "sharp": "0.35.4"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11"
+  }
+}

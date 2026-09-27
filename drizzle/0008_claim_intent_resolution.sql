@@ -1,0 +1,6 @@
+ALTER TABLE "repo_claims" DROP CONSTRAINT "repo_claims_status_check";--> statement-breakpoint
+ALTER TABLE "repo_claims" DROP CONSTRAINT "repo_claims_settlement_check";--> statement-breakpoint
+ALTER TABLE "repo_claims" ADD COLUMN "resolved_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "repo_claims" ADD COLUMN "resolution_reason" text;--> statement-breakpoint
+ALTER TABLE "repo_claims" ADD CONSTRAINT "repo_claims_status_check" CHECK ("repo_claims"."status" in ('pending', 'settled', 'aborted'));--> statement-breakpoint
+ALTER TABLE "repo_claims" ADD CONSTRAINT "repo_claims_settlement_check" CHECK (("repo_claims"."status" = 'pending' and "repo_claims"."settled_at" is null and "repo_claims"."resolved_at" is null and "repo_claims"."resolution_reason" is null) or ("repo_claims"."status" = 'settled' and "repo_claims"."settled_at" is not null and "repo_claims"."resolved_at" is null and "repo_claims"."resolution_reason" is null) or ("repo_claims"."status" = 'aborted' and "repo_claims"."settled_at" is null and "repo_claims"."resolved_at" is not null and "repo_claims"."resolution_reason" is not null));

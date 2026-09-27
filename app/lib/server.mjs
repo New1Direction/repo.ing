@@ -1,0 +1,167 @@
+import { cache } from 'react'
+import { allocationEnabled } from '../../src/builder-allocation.mjs'
+import pg from 'pg'
+import { Connection, Keypair } from '@solana/web3.js'
+import bs58 from 'bs58'
+import { createReconciler } from '../../src/reconcile.mjs'
+import { githubApiHeaders } from '../../src/github-app-auth.mjs'
+
+export function database() {
+  if (!process.env.DATABASE_URL) return null
+  if (!globalThis.__gitfunPool) globalThis.__gitfunPool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
+  return globalThis.__gitfunPool
+}
+
+export function chain() {
+  if (!process.env.SOLANA_RPC_URL && process.env.NODE_ENV === 'production') throw new Error('SOLANA_RPC_URL is required in production')
+  return new Connection(process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899', 'confirmed')
+}
+
+export function configAddress() { return process.env.DBC_CONFIG || null }
+
+export function creatorSigner() {
+  const value = process.env.PLATFORM_CREATOR_SECRET_KEY
+  if (!value) return null
+  const bytes = value.trim().startsWith('[') ? Uint8Array.from(JSON.parse(value)) : bs58.decode(value)
+  return Keypair.fromSecretKey(bytes)
+}
+
+export function partnerSigner() {
+  const value = process.env.PLATFORM_PARTNER_SECRET_KEY
+  if (!value) return null
+  return Keypair.fromSecretKey(value.trim().startsWith('[') ? Uint8Array.from(JSON.parse(value)) : bs58.decode(value))
+}
+export function discoveryRewardsEnabled() {
+  return process.env.DISCOVERY_REWARDS_ENABLED === 'true' && Boolean(process.env.PLATFORM_PARTNER_SECRET_KEY)
+}
+
+export function builderAllocationEnabled() { return allocationEnabled(configAddress()) }
+
+export function launchAvailable() { return Boolean(database() && configAddress() && creatorSigner()) }
+export function tradeAvailable() { return Boolean(database() && configAddress()) }
+
+export async function listMarkets() {
+  const pool = database()
+  if (!pool) return { markets: [], unavailable: 'Database is not configured.' }
+  try {
+    const { rows } = await pool.query(`
+      select m.github_repo_id::text as "repoId", m.mint, m.pool, m.token_name as "tokenName",
+        m.token_symbol as "symbol", m.indexed_at as "indexedAt", m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet", r.owner, r.name,
+        r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks,
+        coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
+        coalesce(t.volume, 0)::text as "volume24hLamports",
+        b.wallet as "beneficiaryWallet", exists (
+          select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin'
+        ) as "wasVerified"
+      from markets m join repositories r on r.github_repo_id = m.github_repo_id
+      left join (select github_repo_id, sum(amount_base_units) earned from builder_fee_credits group by github_repo_id) f on f.github_repo_id = m.github_repo_id
+      left join (select github_repo_id, sum(amount_base_units) claimed from repo_claims where status = 'settled' group by github_repo_id) c on c.github_repo_id = m.github_repo_id
+      left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
+      left join (select pool, sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric) as volume
+        from trade_events where traded_at >= now() - interval '24 hours' group by pool) t on t.pool = m.pool
+      where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
+      order by m.indexed_at desc`)
+    return { markets: rows.map(row => ({ ...row, stars: Number(row.stars), forks: Number(row.forks),
+      earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString() })) }
+  } catch { return { markets: [], unavailable: 'Markets are temporarily unavailable.' } }
+}
+
+export async function recentBuilderPayouts() {
+  const pool = database()
+  if (!pool) return { payouts: [], unavailable: true }
+  try {
+    const { rows } = await pool.query(`select c.claim_signature as signature, c.amount_base_units::text as amount,
+      c.settled_at as "settledAt", m.mint, r.full_name as "fullName"
+      from repo_claims c join markets m on m.github_repo_id=c.github_repo_id
+      join repositories r on r.github_repo_id=c.github_repo_id
+      where c.status='settled' and c.settled_at is not null and c.amount_base_units>0
+      and m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'
+      order by c.settled_at desc, c.id desc limit 10`)
+    return { payouts: rows, unavailable: false }
+  } catch { return { payouts: [], unavailable: true } }
+}
+
+export async function protocolStats() {
+  const pool = database()
+  if (!pool) return { stats: null, unavailable: 'Protocol stats are unavailable.' }
+  try {
+    const { rows } = await pool.query(`
+      select m.markets as "markets", t.trades as "trades", t.volume as "volumeLamports",
+        f.earned as "earnedLamports", c.paid as "paidLamports"
+      from (select count(*)::text as markets from markets
+        where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized') m
+      cross join (select count(*)::text as trades,
+        coalesce(sum((case when t.direction = 'buy' then t.input_base_units else t.output_base_units end)::numeric), 0)::text as volume
+        from trade_events t join markets market on market.pool = t.pool
+        where market.status = 'confirmed' and market.indexed_at is not null and market.launch_finality = 'finalized') t
+      cross join (select coalesce(sum(f.amount_base_units), 0)::text as earned
+        from builder_fee_credits f join markets market on market.pool = f.pool
+        where market.status = 'confirmed' and market.indexed_at is not null and market.launch_finality = 'finalized') f
+      cross join (select coalesce(sum(c.amount_base_units), 0)::text as paid
+        from repo_claims c join markets market on market.github_repo_id = c.github_repo_id
+        where c.status = 'settled' and market.status = 'confirmed'
+          and market.indexed_at is not null and market.launch_finality = 'finalized') c`)
+    return { stats: rows[0] ?? null, unavailable: null }
+  } catch { return { stats: null, unavailable: 'Protocol stats are temporarily unavailable.' } }
+}
+
+// Filter the canonical market first. These aggregates only read evidence for that market.
+async function singleMarket(column, value) {
+  const pool = database()
+  if (!pool) return { market: null, unavailable: 'Database is not configured.' }
+  try {
+    const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.pool,
+      m.token_name as "tokenName", m.token_symbol as symbol, m.indexed_at as "indexedAt",
+      m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
+      r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl",
+      r.stars, r.forks, r.github_updated_at as "updatedAt", b.wallet as "beneficiaryWallet",
+      (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
+      (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
+      (select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)::text
+        from trade_events where pool = m.pool and traded_at >= now() - interval '24 hours') as "volume24hLamports",
+      exists(select 1 from repo_verifications where github_repo_id = m.github_repo_id and permission = 'admin') as "wasVerified"
+      from markets m join repositories r on r.github_repo_id = m.github_repo_id
+      left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
+      where m.${column} = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [value])
+    const row = rows[0]
+    return { market: row ? { ...row, stars: Number(row.stars), forks: Number(row.forks),
+      remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString() } : null }
+  } catch { return { market: null, unavailable: 'Market is temporarily unavailable.' } }
+}
+// React cache is scoped to the render: metadata and page share one read, without caching payout state.
+export const marketByMint = cache(mint => singleMarket('mint', mint))
+export const marketByRepo = cache(repoId => /^\d+$/.test(String(repoId))
+  ? singleMarket('github_repo_id', String(repoId)) : Promise.resolve({ market: null }))
+
+export async function repositoryById(repoId) {
+  if (!/^\d+$/.test(String(repoId))) return null
+  const pool = database()
+  let row = null
+  if (pool) {
+    try {
+      const result = await pool.query('select github_repo_id::text as "repoId", owner, name, full_name as "fullName", description, avatar_url as "avatarUrl", stars, forks, github_updated_at as "updatedAt" from repositories where github_repo_id = $1', [repoId])
+      row = result.rows[0] ?? null
+    } catch { /* GitHub may still resolve the repository. */ }
+  }
+  try {
+    const githubHeaders = await githubApiHeaders('repo.ing-ui')
+    const response = await fetch(`https://api.github.com/repositories/${repoId}`, { headers: githubHeaders, cache: 'no-store', signal: AbortSignal.timeout(5000) })
+    if (!response.ok) return row
+    const repo = await response.json()
+    if (String(repo.id) !== String(repoId) || repo.private || repo.archived) return row
+    const detailResponse = repo.language !== undefined && repo.license !== undefined ? null : await fetch(`https://api.github.com/repos/${encodeURIComponent(repo.owner.login)}/${encodeURIComponent(repo.name)}`, { headers: githubHeaders, cache: 'no-store', signal: AbortSignal.timeout(5000) })
+    const detail = detailResponse?.ok ? await detailResponse.json() : repo
+    return { repoId: String(repo.id), owner: repo.owner.login, name: repo.name, fullName: repo.full_name,
+      description: repo.description, avatarUrl: repo.owner.avatar_url, stars: repo.stargazers_count,
+      forks: repo.forks_count, language: detail.language ?? null, license: detail.license?.spdx_id ?? null,
+      updatedAt: repo.updated_at, htmlUrl: repo.html_url }
+  } catch { return row }
+}
+
+export async function feeStatus(repoId) {
+  const pool = database()
+  const config = configAddress()
+  if (!pool || !config) return { status: 'UNAVAILABLE', onchainCreatorFee: null }
+  try { return await createReconciler({ pool, connection: chain(), config }).reconcile(repoId) }
+  catch { return { status: 'UNAVAILABLE', onchainCreatorFee: null } }
+}
