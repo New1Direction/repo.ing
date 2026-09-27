@@ -1,4 +1,5 @@
 import pg from 'pg'
+import { createChartOrdering } from '../src/chart-ordering.mjs'
 import { createTrendIntake } from '../src/trend-intake.mjs'
 import { createLiquidityRecovery } from '../src/liquidity-settlement.mjs'
 import { createBuilderReinvestRecovery } from '../src/builder-reinvest.mjs'
@@ -39,6 +40,13 @@ const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetry
 const graduation=createGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
 let nextGraduationCheck=0,graduationTask=null
+const chartOrdering=createChartOrdering({pool,connection:graduationRPC(rpc),verification:process.env.GRADUATION_VERIFICATION_RPC_URL
+  ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
+let chartOrderingTask=null,nextChartOrderingCheck=0
+async function observeChartOrdering(){
+  try{console.log(JSON.stringify({chartOrdering:await chartOrdering.runOnce()}))}
+  catch{console.log(JSON.stringify({chartOrderingError:'Chart ordering verification unavailable'}))}
+}
 const trends=createTrendIntake({pool})
 let trendTask=null,nextTrendCheck=0
 let reserveDelivery=null,reserveDeliveryTask=null,nextReserveDeliveryCheck=0
@@ -82,6 +90,9 @@ try {
     try { result.platformFees = await platformFees.runOnce() }
     catch { result.platformFeeError = 'Platform fee recovery unavailable' }
     // Keep paced verification from delaying trading indexes and already-approved recovery.
+    if(once)await observeChartOrdering()
+    else if(!chartOrderingTask&&Date.now()>=nextChartOrderingCheck)
+      chartOrderingTask=observeChartOrdering().finally(()=>{nextChartOrderingCheck=Date.now()+30000;chartOrderingTask=null})
     // At most one observation pass runs; it uses its own per-market advisory lock.
     if(once)await observeGraduation()
     else if(!graduationTask&&Date.now()>=nextGraduationCheck)
@@ -106,4 +117,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(graduationTask)await graduationTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

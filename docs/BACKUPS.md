@@ -21,6 +21,6 @@ Do not restore over the live database during a routine check. A recovery cutover
 
 ## Recorded coverage and limits
 
-Manual and scheduled encrypted dump/restore checks passed during initial setup. Automatic runs were verified on September 25 and 26, 2026, including after database credential rotation. Those dated observations do not establish the latest job's health; check current job results and stored objects.
+Manual and scheduled encrypted dump/restore checks passed during initial setup. Automatic runs were verified on September 25 and 26, 2026. On September 27, a credential mismatch was repaired by setting the job’s database connection to the Railway Postgres reference. A manual run then uploaded and size-checked a 605,667-byte encrypted snapshot before the chart-evidence migration. The daily 08:00 UTC schedule remains in place. Those dated observations do not establish the latest job's health; check current job results and stored objects.
 
 Automatic backup-failure notifications are not configured. Monitor scheduled completion and test key recovery separately. Keep plaintext dumps, decryption keys, and downloaded archives out of Git and deployment uploads.

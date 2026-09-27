@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import pg from 'pg'
 import { chartWindow, chartSpotPrice, chartBar, readMarketChart } from '../src/market-chart.mjs'
 import { chartSeries, chartPriceLabel } from '../app/lib/chart-display.mjs'
+import { recordChartBlock } from '../src/chart-ordering.mjs'
 
 const sqrt = 1n << 64n
 const now = Date.parse('2026-09-27T04:00:00.000Z')
@@ -46,6 +47,7 @@ test('real PostgreSQL chart aggregation: canonical pool, 120+ history, OHLC, sam
   try {
     await client.query('begin')
     await client.query(`create temporary table trade_events(pool text,signature text,event_index integer,slot bigint,traded_at timestamptz,direction text,input_base_units text,output_base_units text,next_sqrt_price text)`)
+    await client.query(`create temporary table finalized_chart_blocks(slot bigint primary key,blockhash text,previous_blockhash text,parent_slot bigint,signatures text[],checked_at timestamptz default now())`)
     const insert = async (pool, signature, index, slot, at, direction, input, output, price) => client.query('insert into trade_events values($1,$2,$3,$4,$5,$6,$7,$8,$9)', [pool, signature, index, slot, at, direction, input, output, String(price)])
     const market = { pool: 'canonical-pool' }
     assert.equal((await readMarketChart(client, market, 'all', now)).totalTrades, 0)
@@ -73,6 +75,26 @@ test('real PostgreSQL chart aggregation: canonical pool, 120+ history, OHLC, sam
     assert.equal(ambiguous.candles.at(-1).orderingPending, true)
     assert.equal(ambiguous.candles.at(-1).volumeLamports, '14')
     assert.equal(ambiguous.volume24hLamports, '195000014')
+    // Finalized block order is deliberately opposite alphabetical signature order.
+    const proof = {slot:200,blockhash:'verified',previousBlockhash:'previous',parentSlot:199,signatures:['second-tx','one-tx']}
+    await recordChartBlock(client, proof)
+    await recordChartBlock(client, proof)
+    assert.equal((await client.query('select count(*)::integer as n from finalized_chart_blocks')).rows[0].n,1)
+    const resolved = await readMarketChart(client,market,'1h',now)
+    assert.equal(resolved.latestOrderingPending,false)
+    assert.equal(resolved.latest.signature,'one-tx')
+    assert.equal(resolved.latest.priceSol,0.009)
+    assert.equal(resolved.candles.at(-1).open,0.016)
+    assert.equal(resolved.candles.at(-1).close,0.009)
+    assert.equal(resolved.candles.at(-1).volumeLamports,'14')
+    assert.equal(resolved.volume24hLamports,ambiguous.volume24hLamports)
+    await assert.rejects(recordChartBlock(client,{...proof,signatures:[...proof.signatures].reverse()}),/CHART_EVIDENCE_CONFLICT/)
+    assert.deepEqual((await client.query('select signatures from finalized_chart_blocks')).rows[0].signatures,proof.signatures)
+    // A newly indexed signature not in the proof cannot silently receive an order.
+    await insert(market.pool,'missing-proof',0,200,new Date(now-2000),'buy','1','1',sqrt)
+    const missing=await readMarketChart(client,market,'1h',now)
+    assert.equal(missing.latestOrderingPending,true)
+    assert.equal(missing.candles.at(-1).orderingPending,true)
   } finally { await client.query('rollback'); await client.end() }
 })
 

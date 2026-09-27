@@ -80,7 +80,7 @@ export async function POST(request) {
     return Response.json({ result: await action() }, { headers })
   } catch (error) {
     if (error.status) return Response.json({ error: error.message }, { status: error.status, headers })
-    const message = /execution is disabled/.test(error.message) ? 'Buyback execution is disabled until the canonical $REPO configuration exists.' :
+    const message = /execution is disabled/.test(error.message) ? 'Buyback execution is disabled until the canonical $REPOING configuration exists.' :
       /No claimed platform revenue/.test(error.message) ? 'No claimed platform revenue is available to allocate.' :
       /exceeds/.test(error.message) ? error.message :
       'Refresh this page to review platform revenue and try again.'

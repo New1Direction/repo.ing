@@ -16,6 +16,7 @@ import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../lib
 import { displayRepository, refreshDisplayRepository } from '../../lib/repository-display.mjs'
 import { InviteOwner } from '../../components/invite-owner'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
+import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,7 +40,9 @@ export default async function Token({ params, searchParams }) {
   if (!market) notFound()
   const repo = { ...displayRepository(market), mint: market.mint }
 
-  return <><AppHeader/><main className="section-wrap market-page">
+  const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
+  return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page">
+    {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div>}
     <div className="market-title"><div><RepoIdentity repo={repo}/><RepoStats repo={repo} detailed/><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense></div>
       <div className="market-price"><strong>${market.symbol}</strong><span>Repository market</span><CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}/></div>
     </div>

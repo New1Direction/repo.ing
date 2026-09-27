@@ -1,6 +1,16 @@
 import { bigint, boolean, check, integer, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
+// Finalized block order, agreed by two RPCs. Derived chart evidence, not a fee ledger.
+export const finalizedChartBlocks = pgTable('finalized_chart_blocks', {
+  slot: bigint('slot', { mode: 'bigint' }).primaryKey(),
+  blockhash: varchar('blockhash', { length: 44 }).notNull(),
+  previousBlockhash: varchar('previous_blockhash', { length: 44 }).notNull(),
+  parentSlot: bigint('parent_slot', { mode: 'bigint' }).notNull(),
+  signatures: text('signatures').array().notNull(),
+  checkedAt: timestamp('checked_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
 // P5 observations are derived read models. Migration evidence and alerts are durable;
 // none of these tables credits revenue or authorizes spending.
 export const graduationObservations = pgTable('graduation_observations', {

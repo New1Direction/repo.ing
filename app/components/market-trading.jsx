@@ -36,6 +36,6 @@ export function MarketTrading({ market, available, usdPerSol }) {
     window.addEventListener('repoing:trade-confirmed', onTrade)
     return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTrade) }
   }, [market.mint])
-  return <><div className="market-grid"><PriceChart key={market.mint} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}/><TradePanel key={market.mint} market={market} available={available} usdPerSol={solPrice} curve={verifiedCurve}/></div>
-    <GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)}/></>
+  return <><GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)}/>
+    <div className="market-grid"><PriceChart key={market.mint} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}/><TradePanel key={market.mint} market={market} available={available} usdPerSol={solPrice} curve={verifiedCurve}/></div></>
 }

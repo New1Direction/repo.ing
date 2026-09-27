@@ -134,6 +134,13 @@
       "when": 1790486000004,
       "tag": "0018_dbc_platform_collection",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790542598548,
+      "tag": "0019_finalized_chart_order",
+      "breakpoints": true
     }
   ]
 }

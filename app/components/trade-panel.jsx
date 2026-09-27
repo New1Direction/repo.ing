@@ -38,6 +38,8 @@ async function fetchTradeStatus(result) {
 
 export function TradePanel({ market, available, usdPerSol = null, curve = null }) {
   const [direction, setDirection] = useState('buy')
+  const panelRef = useRef(null)
+  const [panelVisible, setPanelVisible] = useState(false)
   const [amount, setAmount] = useState('')
   const [minimumOut, setMinimumOut] = useState(null)
   const [liveQuote, setLiveQuote] = useState(null)
@@ -59,6 +61,20 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const { wallet, connect, provider } = useWallet()
   const router = useRouter()
   const lastChartRefreshSignature = useRef(null)
+
+  useEffect(() => {
+    if (!panelRef.current || !window.IntersectionObserver) return
+    const observer = new IntersectionObserver(([entry]) => setPanelVisible(entry.isIntersecting), { threshold: 0.1 })
+    observer.observe(panelRef.current)
+    return () => observer.disconnect()
+  }, [curve?.status])
+
+  function openTrade(next) {
+    if (busy) return
+    if (next !== direction) selectDirection(next)
+    panelRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+    panelRef.current?.focus({ preventScroll: true })
+  }
 
   function applyTradeStatus(status, original) {
     setResultCard(current => {
@@ -273,7 +289,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   let usdAmount = null
   try { usdAmount = formatUsdEstimate(direction === 'buy' && amount ? parseUnits(amount, 9) : liveQuote?.outputAmount, usdPerSol) } catch { /* Wait for a valid amount. */ }
   if (curve && curve.status !== 'active' && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>{curve.destination ? 'Continue trading in the verified Meteora pool. Review the current quote and fees there before signing.' : 'Bonding-curve trades have ended. We are checking the destination pool; this page updates automatically.'}</p>{curve.destination && <a className="button primary" href={curve.destination.url} target="_blank" rel="noopener noreferrer">Continue on Meteora ↗</a>}</div>
-  return <div className="trade-card">
+  return <><div className="trade-card" id="trade-panel" ref={panelRef} tabIndex={-1} aria-label={`Trade ${market.symbol}`}>
     <div className="trade-tabs" role="tablist" aria-label="Trade direction">
       <button disabled={busy} role="tab" aria-selected={direction === 'buy'} className={direction === 'buy' ? 'selected' : ''} onClick={() => selectDirection('buy')}>Buy</button>
       <button disabled={busy} role="tab" aria-selected={direction === 'sell'} className={direction === 'sell' ? 'selected' : ''} onClick={() => selectDirection('sell')}>Sell</button>
@@ -316,5 +332,5 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       <TransactionStatus stage={busy ? stage : ''}/>
     </form>
     <TradeResultCard result={resultCard} symbol={market.symbol} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)}/>
-  </div>
+  </div>{!panelVisible && !resultCard && <nav className="mobile-trade-actions" aria-label="Quick trade navigation"><span>${market.symbol}</span><button type="button" className="button primary" disabled={busy || !available} onClick={() => openTrade('buy')}>Buy</button><button type="button" className="button outline" disabled={busy || !available} onClick={() => openTrade('sell')}>Sell</button></nav>}</>
 }

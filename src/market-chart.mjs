@@ -31,8 +31,7 @@ export function chartBar(row) {
   if (!Number.isSafeInteger(time) || !/^\d+$/.test(volumeLamports)) throw Error('Invalid chart bar evidence')
   const count = Number(row.count)
   if (!Number.isSafeInteger(count) || count < 1) throw Error('Invalid chart trade count')
-  // The ledger has slot + instruction order, but no transaction order within a slot.
-  // Never invent an open/close across different transactions in the same boundary slot.
+  // Withhold open/close until finalized block evidence resolves boundary-slot order.
   if (row.ambiguous) return { time, volumeLamports, count, orderingPending: true }
   return { time, open: chartSpotPrice(row.open), high: chartSpotPrice(row.high), low: chartSpotPrice(row.low),
     close: chartSpotPrice(row.close), volumeLamports, count }
@@ -47,26 +46,32 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
   const window = chartWindow(range, summary.first, now, summary.last)
   const [{ rows }, { rows: recent }] = await Promise.all([
     db.query(`with events as (
-      select *, floor(extract(epoch from traded_at)/$4)::bigint*$4 as bucket
-      from trade_events where pool=$1 and traded_at >= $2 and traded_at <= $3
+      select t.*, array_position(b.signatures,t.signature::text) as transaction_index,
+        floor(extract(epoch from traded_at)/$4)::bigint*$4 as bucket
+      from trade_events t left join finalized_chart_blocks b on b.slot=t.slot
+      where pool=$1 and traded_at >= $2 and traded_at <= $3
     ), bars as (
       select bucket as time, min(slot) as first_slot, max(slot) as last_slot,
-        (array_agg(next_sqrt_price order by slot,signature,event_index))[1] as open,
-        (array_agg(next_sqrt_price order by slot desc,signature desc,event_index desc))[1] as close,
+        (array_agg(next_sqrt_price order by slot,transaction_index,signature,event_index))[1] as open,
+        (array_agg(next_sqrt_price order by slot desc,transaction_index desc,signature desc,event_index desc))[1] as close,
         max(next_sqrt_price::numeric)::text as high, min(next_sqrt_price::numeric)::text as low,
         sum((case when direction='buy' then input_base_units else output_base_units end)::numeric)::text as volume,
         count(*)::text as count
       from events group by bucket
     ) select bars.*, exists(select 1 from events e where e.bucket=bars.time
-      and e.slot in (bars.first_slot,bars.last_slot) group by e.slot having count(distinct e.signature)>1) as ambiguous
+      and e.slot in (bars.first_slot,bars.last_slot) group by e.slot
+      having count(distinct e.signature)>1 and bool_or(e.transaction_index is null)) as ambiguous
       from bars order by time`, [market.pool, window.start, window.end, window.interval]),
-    db.query(`select signature,event_index as "eventIndex",slot::text,direction,traded_at as "tradedAt",
-      next_sqrt_price as "nextSqrtPrice" from trade_events t where pool=$1 and traded_at <= $2
-      order by t.slot desc,t.signature desc,t.event_index desc limit 120`, [market.pool, window.end]),
+    db.query(`select signature,event_index as "eventIndex",t.slot::text,direction,traded_at as "tradedAt",
+      array_position(b.signatures,t.signature::text) as "transactionIndex",
+      next_sqrt_price as "nextSqrtPrice" from trade_events t left join finalized_chart_blocks b on b.slot=t.slot
+      where pool=$1 and traded_at <= $2
+      order by t.slot desc,"transactionIndex" desc,t.signature desc,t.event_index desc limit 120`, [market.pool, window.end]),
   ])
   const latestSlot = recent[0]?.slot
-  const latestAmbiguous = new Set(recent.filter(t => t.slot === latestSlot).map(t => t.signature)).size > 1 ||
-    (recent.length === 120 && recent.every(t => t.slot === latestSlot))
+  const latestTrades = recent.filter(t => t.slot === latestSlot)
+  const latestAmbiguous = latestTrades.some(t => t.transactionIndex === null) &&
+    (new Set(latestTrades.map(t => t.signature)).size > 1 || (recent.length === 120 && latestTrades.length === 120))
   const trades = recent.reverse().map(row => ({ signature: row.signature, eventIndex: row.eventIndex,
     direction: row.direction, tradedAt: row.tradedAt.toISOString(), priceSol: chartSpotPrice(row.nextSqrtPrice) }))
   return { ...window, candles: rows.map(chartBar), trades, volume24hLamports: summary.volume,

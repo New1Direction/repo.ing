@@ -6,6 +6,7 @@ import { WalletButton } from './wallet'
 import { ThemeToggle } from './theme-toggle'
 import { WatchButton, WatchNotifications } from './watchlist'
 import { formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
+import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
 
 function MarketEarnings({ market, usdPerSol }) {
   const usd = formatUsdEstimate(market.earned, usdPerSol)
@@ -18,11 +19,11 @@ function MarketEarnings({ market, usdPerSol }) {
 export function AppHeader({ active = '' }) {
   return <header className="app-header"><div className="header-inner">
     <Link href="/" className="brand"><BrandMark size={32}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link>
-    <nav aria-label="Main navigation"><Link href="/launch" className={active === 'launch' ? 'active' : ''}>Launch</Link><Link href="/explore" className={active === 'explore' ? 'active' : ''}>Explore</Link><Link href="/builders" className={active === 'builders' ? 'active' : ''}>Builders</Link><Link href="/stats" className={active === 'stats' ? 'active' : ''}>Stats</Link><Link href="/how-it-works" className={active === 'how-it-works' ? 'active' : ''}>How it works</Link></nav>
+    <nav aria-label="Main navigation"><Link href="/launch" className={active === 'launch' ? 'active' : ''}>Launch</Link><Link href="/explore" className={active === 'explore' ? 'active' : ''}>Explore</Link><Link href="/builders" className={active === 'builders' ? 'active' : ''}>Builders</Link><Link href="/stats" className={active === 'stats' ? 'active' : ''}>Stats</Link><Link href={OFFICIAL_TOKEN.marketPath} className={active === 'repoing' ? 'active' : ''}>$REPOING</Link><Link href="/how-it-works" className={active === 'how-it-works' ? 'active' : ''}>How it works</Link></nav>
     <div className="header-actions"><WatchNotifications/><ThemeToggle/><WalletButton /></div>
   </div></header>
 }
-export function Footer() { return <footer className="footer"><div className="footer-inner"><Link href="/" className="footer-brand"><BrandMark size={29}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link><span>The market layer for open source.</span><div className="footer-spacer"/><Link href="/stats">Stats</Link><Link href="/how-it-works">How it works</Link><Link href="/about">About</Link><a href="https://github.com" target="_blank" rel="noreferrer" aria-label="GitHub"><GithubMark size={22}/></a></div></footer> }
+export function Footer() { return <footer className="footer"><div className="footer-inner"><Link href="/" className="footer-brand"><BrandMark size={29}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link><span>The market layer for open source.</span><div className="footer-spacer"/><Link href="/stats">Stats</Link><Link href="/how-it-works">How it works</Link><Link href="/about">About</Link><a href={OFFICIAL_TOKEN.githubUrl} target="_blank" rel="noreferrer" aria-label="repo.ing on GitHub"><GithubMark size={22}/></a></div></footer> }
 export function Button({ children, variant = 'outline', className = '', ...props }) { return <button className={`button ${variant} ${className}`} {...props}>{children}</button> }
 export function Badge({ children, tone = 'muted' }) { return <span className={`badge ${tone}`}>{tone === 'verified' && <Check size={12} strokeWidth={3}/>}<span>{children}</span></span> }
 export function RepoAvatar({ repo, size = 'normal' }) { const image = repo?.mint ? `/api/token-image/${repo.mint}` : repo?.repoId ? `/api/repo-logo/${repo.repoId}?v=3` : repo?.avatarUrl; return <div className={`repo-avatar ${size}`}>{image ? <img src={image} alt="" /> : <GithubMark size={size === 'large' ? 56 : 24}/>}</div> }

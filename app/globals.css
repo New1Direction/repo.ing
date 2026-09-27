@@ -419,3 +419,30 @@
 .repo-finder{margin:24px 0 36px;min-width:0}.finder-search{display:flex;gap:10px}.finder-input{display:flex;align-items:center;gap:10px;flex:1;min-width:0;padding:0 14px;border:1px solid var(--border-strong);border-radius:7px;background:var(--surface);color:var(--muted)}.finder-input:focus-within{border-color:var(--green);outline:2px solid var(--green);outline-offset:2px}.finder-input>svg{flex:none}.finder-input input{width:100%;min-width:0;height:46px;border:0;outline:0!important;background:transparent;color:var(--text);font-size:15px}.finder-input input::placeholder{color:var(--muted)}.finder-search>.button{min-width:112px;font-size:14px}.finder-examples{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:12px;color:var(--muted);font-size:12px}.finder-examples button{border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);padding:5px 9px;font-size:12px}.finder-examples button:hover{border-color:var(--border-strong);background:var(--surface2)}.finder-help{font-size:12px;color:var(--muted);line-height:1.6;margin:12px 0 20px;max-width:900px}.finder-toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border)}.finder-tabs{display:flex;border:1px solid var(--border-strong);border-radius:6px;overflow:hidden}.finder-tabs button{border:0;border-right:1px solid var(--border-strong);background:var(--bg);color:var(--muted);padding:8px 13px;font-size:13px}.finder-tabs button:last-child{border-right:0}.finder-tabs button[aria-pressed=true]{background:var(--surface2);color:var(--text);font-weight:600}.finder-tabs button:focus-visible{outline-offset:-3px}.finder-activity select{font:inherit;font-size:13px;padding:8px 30px 8px 12px;max-width:100%;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text)}.finder-activity select:focus-visible{outline:2px solid var(--green);outline-offset:2px}.finder-clear{display:inline-flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--muted);font-size:13px;padding:8px}.finder-clear:hover{color:var(--text)}.finder-summary{font-size:13px;color:var(--muted);padding:16px 0;overflow-wrap:anywhere}.finder-results{transition:opacity .12s}.finder-results[aria-busy=true]{opacity:.6;pointer-events:none}.finder-repository{min-width:0}.finder-repository>a{display:inline-flex;align-items:center;gap:5px;overflow-wrap:anywhere;color:var(--text)}.finder-repository>a:hover{color:var(--green);text-decoration:underline}.finder-repository>a>svg{flex:none}.finder-repository p{line-height:1.6}.finder-results .growth-heading>.button{flex:none;font-size:13px;min-height:36px;padding:0 13px;color:var(--text)}.finder-meta{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;color:var(--muted);font-size:12px}.finder-meta>span{display:inline-flex;align-items:center;gap:5px}.finder-market-state{padding:2px 8px;border:1px solid var(--border);border-radius:20px}.finder-empty{text-align:center;padding:36px 20px;color:var(--muted)}.finder-empty h2{font-size:19px;margin:12px 0 8px;color:var(--text)}.finder-empty p{font-size:14px;max-width:470px;margin:0 auto 18px}.finder-empty>div{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}.finder-empty .button{font-size:13px}.finder-results .trend-reasons{margin-top:14px}
 @media(max-width:550px){.finder-input input{font-size:16px}.finder-search{flex-wrap:wrap}.finder-input{flex-basis:100%}.finder-search>.button{min-height:40px;width:100%}.finder-tabs{width:100%}.finder-tabs button{flex:1;padding:9px 8px}.finder-toolbar{gap:10px}.finder-help{line-height:1.6}.finder-results .growth-heading{gap:14px}.finder-results>article{padding:16px}.finder-repository>a{font-size:15px}.finder-empty{padding:28px 15px}}
 @media(prefers-reduced-motion:reduce){.finder-results{transition:none}}
+
+/* Market access and reviewed repository discovery. */
+.official-market-note { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:20px; padding:12px 16px; border:1px solid var(--border); border-radius:6px; color:var(--muted); font-size:13px; }
+.official-market-note strong { color:var(--text); }
+.official-market-note a { color:var(--green); }
+.market-page .bonding-card { margin:0 0 16px; padding:16px 20px; }
+.bonding-card .card-heading { margin-bottom:8px; }
+.bonding-card .card-heading h3 { font-size:15px; }
+.graduation-caption { display:flex; align-items:start; justify-content:space-between; gap:12px; margin-top:8px; font-size:13px; color:var(--muted); }
+.graduation-caption details { text-align:right; max-width:65%; overflow-wrap:anywhere; }
+.graduation-caption summary { cursor:pointer; }
+.graduation-caption details p { margin:8px 0; }
+#trade-panel { scroll-margin-top:24px; }
+#trade-panel:focus-visible { outline:2px solid var(--green); outline-offset:4px; }
+.mobile-trade-actions { display:none; }
+.finder-ready-filter { display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); padding:8px 12px; cursor:pointer; font:inherit; font-size:13px; }
+.finder-ready-filter span { border-radius:12px; background:var(--border); padding:1px 7px; font-size:12px; }
+.finder-ready-filter[aria-pressed="true"] { border-color:var(--green); }
+@media (max-width:700px) {
+  .market-page { padding-bottom:80px; }
+  .mobile-trade-actions { position:fixed; bottom:0; inset-inline:0; z-index:30; display:flex; align-items:center; gap:10px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); background:var(--bg); border-top:1px solid var(--border); box-shadow:0 -4px 18px #0002; }
+  .mobile-trade-actions > span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:650; }
+  .mobile-trade-actions .button { min-width:80px; min-height:42px; }
+  .market-page .bonding-card { padding:14px; }
+  .graduation-numbers strong { font-size:15px; }
+  .graduation-caption { font-size:12px; }
+}
