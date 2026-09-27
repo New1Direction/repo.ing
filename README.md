@@ -11,6 +11,8 @@
 
 # The market layer for open source.
 
+[![Builder fees earned on repo.ing](https://repo.ing/api/badge/1388219884)](https://repo.ing/token/59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be)
+
 **repo.ing connects public GitHub repositories to canonical token markets on Solana.** Anyone can discover an eligible repository and launch its market. Trading earns fees for its builders, even before they connect. A current repository administrator can verify with GitHub, bind a payout wallet, and claim those earnings.
 
 One repository. One market. Identity follows GitHub's permanent numeric repository ID, so a rename or transfer does not create a duplicate.
