@@ -4,6 +4,7 @@ import { AnalyticsActivityChart } from './analytics-activity-chart'
 import { ArrowUpRight } from 'lucide-react'
 import { formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
 import { BuilderPayouts } from './builder-payouts'
+import { TeamTokenLocks } from './team-token-locks'
 
 function Amount({ value, usdPerSol, hero = false }) {
   const usd = formatUsdEstimate(value, usdPerSol)
@@ -29,6 +30,7 @@ export function ProtocolAnalytics({ data, usdPerSol }) {
       </>}
     </section>
     <section className="analytics-token" aria-labelledby="repo-title"><div><div className="eyebrow"><Link href={OFFICIAL_TOKEN.marketPath}>$REPOING ↗</Link></div><h2 id="repo-title">Buyback transparency</h2><p>The buyback reserve is visible above. The official token is live. Buybacks still require a reviewed executor, spending limits, a successful rehearsal, and explicit activation.</p><p className="analytics-note">Buyback execution is not active. No burn mechanism is configured.</p></div><div className="analytics-token-state"><span className="analytics-status">Awaiting activation</span><span>Completed buybacks</span><strong>{platform.status==='MATCH'?platform.buybacks:'—'}</strong><small>{platform.status==='MATCH'?`${formatSolDisplay(platform.buybackSpent)} SOL spent`:'Accounting being verified'}</small></div></section>
+    <TeamTokenLocks/>
     <BuilderPayouts payouts={data.payouts} unavailable={false} usdPerSol={usdPerSol}/>
     <div className="protocol-bottom"><p>Indexed finalized DBC and verified DAMM activity. Trades use chain timestamps; fees use indexing time; payouts use settlement records. UTC chart buckets at the range edges may be partial. USD figures are estimates at today’s SOL price, not historical dollar proceeds. Updated {new Date(data.updatedAt).toLocaleString('en-US',{timeZone:'UTC'})} UTC.</p><Link href="/explore">Explore markets <ArrowUpRight size={16}/></Link></div>
   </>

@@ -26,6 +26,14 @@ Prices come from finalized pool swaps. Empty periods stay empty, and a delayed u
 
 ## Launch a repository market
 
+### Understand graduation progress
+
+Each market's Graduation Progress shows finalized SOL reserves against that market's on-chain target. Buys add SOL after trading fees; sells reduce reserves and progress. Trading volume counts activity in both directions, while graduation requires SOL to remain in the curve. The displayed remaining reserve is not an executable purchase quote. Once the target is reached, the site waits for verified migration before linking the same token's DAMM pool.
+
+The official $REPOING market and Stats also show the team's two Jupiter vesting escrows: original deposits, share of fixed supply, exact UTC release schedules, fixed recipient, and source links. These are separate from the builder allocation and do not represent all team holdings. Read [the verified lock disclosure](REPO_IDENTITY.md#team-token-vesting--verified-september-28-2026); Jupiter shows current claim status.
+
+### Launch steps
+
 1. Paste a public GitHub repository URL into [repo.ing](https://repo.ing). Private and archived repositories are not eligible.
 2. If the repository already has a canonical market, open that market. A rename does not create a new repository identity.
 3. Review the repository, token name, ticker, and suggested image. Use **Change image** to choose another project logo or owner avatar, or **Upload image** for your own PNG, JPEG, WebP, or GIF up to 2 MB. The preview fits the full image without cropping; the selected artwork is saved at launch. [Image details](TOKEN_IMAGES.md).
