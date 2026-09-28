@@ -1,9 +1,11 @@
 import Link from 'next/link'
+import { PayoutAnchor } from './payout-anchor'
 import { ArrowUpRight, CircleCheck } from 'lucide-react'
 import { formatUnits, formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
 
 export function BuilderPayouts({ payouts, unavailable, usdPerSol }) {
-  return <section id="builder-payouts" className="builder-payouts" aria-labelledby="recent-payouts-title">
+  return <section id="builder-payouts" className="builder-payouts" tabIndex={-1} aria-labelledby="recent-payouts-title">
+    <PayoutAnchor/>
     <div className="builder-list-heading"><div><h2 id="recent-payouts-title">Recent builder payouts</h2><p>Completed payouts to repository builders.</p></div><Link href="/builders" className="button outline">Claim your fees</Link></div>
     {unavailable ? <p className="builder-empty" role="status">Recent payouts are temporarily unavailable.</p> : !payouts.length ? <p className="builder-empty">Completed builder payouts will appear here.</p> :
       <div className="payout-list">{payouts.map(payout => <div className="payout-row" key={payout.signature}>
