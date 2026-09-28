@@ -3,6 +3,8 @@ import { database } from '../../lib/server.mjs'
 import { githubSessionCookie, readGithubSession, assertSameOrigin } from '../../lib/auth.mjs'
 import { sessionVerifier } from '../../lib/github-session.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
+import { publicError } from '../../lib/public-error.mjs'
+const SAFE = /^(Fresh GitHub|Recent GitHub|Current GitHub|GitHub session|GitHub ID|GitHub App is not configured|Repository verification mismatch|Unsupported binding action|Invalid wallet|Invalid Solana|Invalid public key|Wallet challenge|Choose up to|A payout wallet|Payout wallet|Open the claim page|Claim review|Your claim review)/
 export const runtime = 'nodejs'
 export async function POST(request) {
   try {
@@ -23,5 +25,5 @@ export async function POST(request) {
       return Response.json({ wallet: result.wallet, boundAt: result.boundAt })
     }
     throw new Error('Unsupported binding action')
-  } catch (error) { return Response.json({ error: error.message || 'Binding failed' }, { status: 400 }) }
+  } catch (error) { return Response.json({ error: publicError(error, SAFE, 'Wallet binding failed. Refresh and try again.', 'bind') }, { status: 400 }) }
 }

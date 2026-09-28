@@ -1,4 +1,4 @@
-import { parseRepositoryUrl } from './github.mjs'
+import { parseRepositoryUrl } from './github-url.mjs'
 
 export const TREND_VERSION = 1
 export const TREND_FRESH_MS = 6 * 60 * 60 * 1000

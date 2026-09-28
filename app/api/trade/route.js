@@ -6,6 +6,8 @@ import { createCanonicalTrader } from '../../../src/canonical-trade.mjs'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
 import { tradeStatus } from '../../lib/trade-status.mjs'
+import { publicError } from '../../lib/public-error.mjs'
+const SAFE = /^(Trading is not configured|Invalid trade|Invalid transaction signature|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
 export const runtime = 'nodejs'
 const sessions = globalThis.__gitfunTradeSessions ??= new Map()
 const SESSION_LIFETIME_MS = 10 * 60 * 1000
@@ -97,7 +99,7 @@ export async function POST(request) {
               .recordTradeFees({ githubRepoId: session.prepared.githubRepoId, signatures: [result.signature] })
             feeIndexing = 'recorded'
             creatorFee = accrued.creditedBaseUnits.toString()
-          } catch (error) { feeIndexing = `pending: ${error.message}` }
+          } catch (error) { console.error('trade fee indexing failed', { signature: result.signature, error: error.message }) }
           break
         }
         await new Promise(resolve => setTimeout(resolve, 250))
@@ -107,5 +109,5 @@ export async function POST(request) {
       return Response.json(session.result, { headers: { 'Cache-Control': 'no-store' } })
     }
     throw new Error('Unsupported trade action')
-  } catch (error) { return Response.json({ error: error.message || 'Trade failed' }, { status: 400, headers: { 'Cache-Control': 'no-store' } }) }
+  } catch (error) { return Response.json({ error: publicError(error, SAFE, 'Trade failed. Refresh the quote and try again.', 'trade') }, { status: 400, headers: { 'Cache-Control': 'no-store' } }) }
 }

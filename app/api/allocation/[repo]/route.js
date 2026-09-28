@@ -7,11 +7,15 @@ import { publicOrigin } from '../../../lib/origin.mjs'
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'private, no-store' }
 export async function GET(request, { params }) {
+  let repo
   try {
-    const { repo } = await params
+    ({ repo } = await params)
     if (!/^[1-9]\d*$/.test(repo)) return Response.json({ error: 'Invalid repository' }, { status: 400, headers })
     return Response.json(await allocationView(repo, readGithubSession(request.cookies.get(githubSessionCookie)?.value)), { headers })
-  } catch { return Response.json({ error: 'Allocation status is temporarily unavailable. Try refreshing.' }, { status: 503, headers }) }
+  } catch (error) {
+    console.error('allocation status failed', { repo, error: error.message })
+    return Response.json({ error: 'Allocation status is temporarily unavailable. Try refreshing.' }, { status: 503, headers })
+  }
 }
 export async function POST(request, { params }) {
   let review, repo

@@ -99,10 +99,30 @@ export async function validateTokenImage(value) {
   return `${PNG_PREFIX}${png.toString('base64')}`
 }
 
-export function tokenImageResponse(value) {
+// Small WebP renditions for in-app avatars; the 512px PNG stays canonical for on-chain metadata.
+export const TOKEN_IMAGE_WIDTHS = [64, 128, 256]
+const VARIANT_CACHE_LIMIT = 500
+const variants = new Map()
+
+async function tokenImageVariant(bytes, digest, width) {
+  const key = `${digest}:${width}`
+  let pending = variants.get(key)
+  if (!pending) {
+    pending = sharp(bytes, options).timeout({ seconds: 5 }).resize(width, width).webp({ quality: 82 }).toBuffer()
+    variants.set(key, pending)
+    pending.catch(() => variants.delete(key))
+    if (variants.size > VARIANT_CACHE_LIMIT) variants.delete(variants.keys().next().value)
+  }
+  return pending
+}
+
+export async function tokenImageResponse(value, width = null) {
   const bytes = tokenImageBytes(value)
-  return new Response(bytes, { headers: { 'Content-Type': 'image/png', 'Content-Length': String(bytes.length),
+  const digest = createHash('sha256').update(bytes).digest('hex')
+  const variant = TOKEN_IMAGE_WIDTHS.includes(width)
+  const body = variant ? await tokenImageVariant(bytes, digest, width) : bytes
+  return new Response(body, { headers: { 'Content-Type': variant ? 'image/webp' : 'image/png', 'Content-Length': String(body.length),
     'Cache-Control': 'public, max-age=31536000, immutable',
     'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox",
-    ETag: `"${createHash('sha256').update(bytes).digest('hex')}"` } })
+    ETag: `"${digest}${variant ? `-w${width}` : ''}"` } })
 }
