@@ -1,3 +1,4 @@
+import { estimateTradeCosts, preflightTrade } from '../../../src/trade-costs.mjs'
 import { randomUUID } from 'node:crypto'
 import { Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
@@ -31,21 +32,24 @@ export async function POST(request) {
     if (body.action === 'quote') {
       if (body.direction !== 'buy' && body.direction !== 'sell') throw new Error('Invalid trade direction')
       const engine = trader()
-      const args = { githubRepoId: body.githubRepoId,
+      const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
       const quote = body.direction === 'sell' ? await engine.quoteSell(args) : await engine.quoteBuy(args)
       return Response.json(quote, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (body.action === 'prepare') {
+      if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
       const engine = trader()
       const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
       const prepared = body.direction === 'sell' ? await engine.prepareSell(args) : await engine.prepareBuy(args)
+      const costs = await estimateTradeCosts(chain(), prepared)
+      await preflightTrade(chain(), prepared, costs)
       const id = randomUUID()
       sessions.set(id, { prepared, engine, wallet: body.wallet, createdAt: Date.now() })
-      return Response.json({ id, transaction: prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+      return Response.json({ id, costs, transaction: prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
         minimumAmountOut: prepared.minimumAmountOut.toString(), slippageBps: prepared.slippageBps,
-        lastValidBlockHeight: prepared.lastValidBlockHeight })
+        lastValidBlockHeight: prepared.lastValidBlockHeight }, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (body.action === 'status') {
       if (!validSignature(body.signature)) throw new Error('Invalid transaction signature')
@@ -94,5 +98,5 @@ export async function POST(request) {
       return Response.json(session.result, { headers: { 'Cache-Control': 'no-store' } })
     }
     throw new Error('Unsupported trade action')
-  } catch (error) { return Response.json({ error: error.message || 'Trade failed' }, { status: 400 }) }
+  } catch (error) { return Response.json({ error: error.message || 'Trade failed' }, { status: 400, headers: { 'Cache-Control': 'no-store' } }) }
 }

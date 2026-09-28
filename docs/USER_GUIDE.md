@@ -39,9 +39,10 @@ The launcher does not need to own the repository. Launching creates a market; it
 
 Open a market from Explore, a direct market link, or your wallet holdings. Check the repository and use the copy control to verify the full token mint address.
 
-- **Buy:** enter SOL or use a preset. The panel shows your SOL balance, estimated token output, included trading fee, and price impact.
+- **Buy:** enter SOL or use a preset. Use the sliders button to edit three amounts, saved on this device. Selecting a preset only requests a quote; it does not submit a trade. The panel shows your SOL balance, estimated token output, included trading fee, and price impact.
 - **Sell:** enter a token amount or select **25%**, **50%**, or **MAX** of your current token balance.
 - Review **Estimated receive** and the minimum after the current fixed **1% slippage** allowance. The quote is refreshed before wallet confirmation.
+- With a connected wallet, review the network fee, token account deposit, total cost, and any temporary SOL deposit. Temporary wrapped-SOL rent is returned in the same transaction but is required up front. If your balance is short, the panel shows how much more SOL is needed. The prepared transaction is simulated before wallet approval.
 - Approve in your wallet, then follow the result card. Pending, confirmed, and failed states are separate; the card links to the transaction and supports checking an unresolved status.
 
 Slippage allowance and price impact describe different things. Slippage sets a minimum output relative to the quote; price impact describes how the proposed trade moves its execution price relative to the pool's spot price. A 1% slippage setting does not limit a large trade's price impact to 1%.
@@ -123,3 +124,9 @@ When email delivery is configured, signed-in builders with a saved payout wallet
 The digest is sent at most once per day, when at least 0.05 SOL is available and at least 0.05 SOL of additional earnings has been verified since the last reminder. Unchanged balances do not generate repeated reminders. The email links to the ordinary review-and-claim flow; it does not authorize a payout. Turn reminders off in Builders or through the email’s unsubscribe link.
 
 Delivery is disabled until a verified sender is configured. [Operator setup and data retention](BUILDER_REMINDERS.md).
+
+## Share a market or builder payout
+
+Choose **Share card** on a market to download a 1200 × 630 PNG or copy a caption with the market link. Choose **Graduation progress** for a timestamped reserve/target snapshot, or **Builder payout** for the latest finalized payout. After a successful claim, **Share payout** selects that specific receipt.
+
+Graduation cards require fresh canonical indexed evidence and a reconciliation match. Payout cards recheck the finalized Solana receipt against the settled claim. Unavailable proof shows a retry state instead of an invented number. Cards are snapshots; they do not keep updating after download. Native sharing is available when the browser supports file sharing; otherwise use Download PNG and Copy caption.

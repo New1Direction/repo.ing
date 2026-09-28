@@ -1,4 +1,6 @@
 'use client'
+import { BuyPresets } from './buy-presets'
+import { LoadingSignal } from './loading-signal'
 import { TradeSizeGuide } from './trade-size-guide'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { useEffect, useRef, useState } from 'react'
@@ -42,6 +44,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const [panelVisible, setPanelVisible] = useState(false)
   const [amount, setAmount] = useState('')
   const [minimumOut, setMinimumOut] = useState(null)
+  const [preparedCosts, setPreparedCosts] = useState(null)
   const [liveQuote, setLiveQuote] = useState(null)
   const quoteRef = useRef(null)
   quoteRef.current = liveQuote
@@ -136,28 +139,24 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
 
   useEffect(() => {
     setQuoteStatus('')
+    if (!busy) setPreparedCosts(null)
     if (!available || (curve && curve.status !== 'active') || !amount || busy) { setLiveQuote(null); return }
     let input
     try { input = parseUnits(amount, direction === 'buy' ? 9 : 6) } catch (error) { setLiveQuote(null); setQuoteStatus(error.message); return }
-    if (direction === 'buy' && solBalance !== null && BigInt(input) >= BigInt(solBalance)) {
-      setLiveQuote(null)
-      setQuoteStatus('Insufficient SOL')
-      return
-    }
     if (direction === 'sell' && balance !== null && BigInt(input) > BigInt(balance)) {
       setLiveQuote(null)
       setQuoteStatus('Amount exceeds your token balance')
       return
     }
     const controller = new AbortController()
-    const inputKey = `${market.repoId}:${direction}:${input}`
+    const inputKey = `${market.repoId}:${direction}:${input}:${wallet ?? ""}`
     const keepEstimate = quoteRef.current?.inputKey === inputKey && Date.now() - quoteRef.current.receivedAt < 30000
     if (!keepEstimate) setLiveQuote(null)
     setQuoteStatus(keepEstimate ? 'Refreshing quote…' : 'Calculating quote…')
     const timer = window.setTimeout(async () => {
       try {
         const response = await fetch('/api/trade', { method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ action: 'quote', githubRepoId: market.repoId, direction, amountBaseUnits: input }),
+          body: JSON.stringify({ action: 'quote', githubRepoId: market.repoId, direction, wallet, amountBaseUnits: input }),
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]), cache: 'no-store' })
         const result = await response.json()
         if (!response.ok) throw new Error(result.error || 'Quote unavailable')
@@ -170,7 +169,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       }
     }, 250)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [amount, available, balance, busy, direction, market.repoId, solBalance, curve?.status, quoteRefresh])
+  }, [amount, available, balance, busy, direction, market.repoId, solBalance, curve?.status, quoteRefresh, wallet])
 
   useEffect(() => {
     if (direction !== 'buy' || !wallet) {
@@ -234,7 +233,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     event.preventDefault()
     if (submitting.current) return
     submitting.current = true
-    setBusy(true); setResultCard(null); setMinimumOut(null); setLiveQuote(null)
+    setBusy(true); setPreparedCosts(null); setResultCard(null); setMinimumOut(null); setLiveQuote(null)
     let signedTrade = null
     try {
       if (!available) throw new Error('Trading is unavailable until the canonical pool and local RPC are configured.')
@@ -243,7 +242,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       if (direction === 'buy') {
         setStage('Checking SOL balance')
         const currentSolBalance = await fetchSolBalance(address)
-        if (BigInt(input) >= BigInt(currentSolBalance)) throw new Error('Insufficient SOL. Leave some SOL for network fees and token-account costs.')
+        // The exact prepared transaction checks input, network costs and rent together.
         setSolBalance(currentSolBalance)
       }
       if (direction === 'sell') {
@@ -258,6 +257,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
           direction, amountBaseUnits: input }) })
       const prepared = await preparedResponse.json()
       if (!preparedResponse.ok) throw new Error(prepared.error)
+      setPreparedCosts(prepared.costs)
       setMinimumOut(prepared.minimumAmountOut)
       setStage('Waiting for wallet')
       const { Transaction } = await import('@solana/web3.js')
@@ -276,7 +276,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     } catch (cause) {
       if (signedTrade) setResultCard(current => current?.signature === signedTrade.signature ? current : signedTrade)
       else setResultCard({ state: 'notSubmitted', direction, message: cause.message || 'Trade was not submitted' })
-    } finally { submitting.current = false; setBusy(false); setStage('') }
+    } finally { submitting.current = false; setBusy(false); setPreparedCosts(null); setStage('') }
   }
 
   let validAmount = false, sellExceedsBalance = false
@@ -286,6 +286,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     try { buyExceedsBalance = BigInt(parseUnits(amount, 9)) >= BigInt(solBalance) } catch { /* The input validator handles malformed amounts. */ }
   }
 
+  const costs = busy ? preparedCosts : liveQuote?.costs
+  const costShortfall = costs && BigInt(costs.shortfall) > 0n
   let usdAmount = null
   try { usdAmount = formatUsdEstimate(direction === 'buy' && amount ? parseUnits(amount, 9) : liveQuote?.outputAmount, usdPerSol) } catch { /* Wait for a valid amount. */ }
   if (curve && curve.status !== 'active' && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>{curve.destination ? 'Continue trading in the verified Meteora pool. Review the current quote and fees there before signing.' : 'Bonding-curve trades have ended. We are checking the destination pool; this page updates automatically.'}</p>{curve.destination && <a className="button primary" href={curve.destination.url} target="_blank" rel="noopener noreferrer">Continue on Meteora ↗</a>}</div>
@@ -305,7 +307,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
         {wallet && solBalanceError && <button type="button" onClick={() => setBalanceRefresh(value => value + 1)}>Retry</button>}
       </div>}
       {direction === 'buy' && (!curve || curve.status === 'active') && <TradeSizeGuide repoId={market.repoId} disabled={busy} onSelect={value => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}/>}
-      {direction === 'buy' && <div className="trade-quick-actions" aria-label="Buy amount shortcuts">{['0.01', '0.05', '0.1'].map(value => <button type="button" key={value} disabled={busy || (solBalance !== null && BigInt(parseUnits(value, 9)) >= BigInt(solBalance))} onClick={() => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}>{value} SOL</button>)}</div>}
+      {direction === 'buy' && <BuyPresets disabled={busy} onSelect={value => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}/>}
       {direction === 'sell' && <>
         <div className="trade-balance-row">
           <span title={balance === null ? undefined : `${formatUnits(balance, 6)} ${market.symbol}`}>
@@ -321,14 +323,18 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       </>}
       <div className="trade-convert">↓</div>
       <label>{minimumOut && !liveQuote ? 'Minimum receive' : 'Estimated receive'}</label>
-      <div className={`asset-input read-only quote-output${(!liveQuote && quoteStatus) || !amount ? ' is-waiting' : ''}`} role="status" aria-live="polite" aria-busy={quoteStatus === 'Calculating quote…' || quoteStatus === 'Refreshing quote…'}><span>{quoteStatus === 'Calculating quote…' && <span className="claim-spinner" aria-hidden="true"/>}{liveQuote ? formatUnits(liveQuote.outputAmount, direction === 'buy' ? 6 : 9, 6) : minimumOut ? formatUnits(minimumOut, direction === 'buy' ? 6 : 9, 6) : quoteStatus || (amount ? '—' : 'Enter an amount')}{liveQuote && quoteStatus === 'Refreshing quote…' && <span className="claim-spinner" role="img" aria-label="Refreshing estimate"/>}</span><span>{direction === 'buy' ? market.symbol : 'SOL'}</span></div>
+      <div className={`asset-input read-only quote-output${(!liveQuote && quoteStatus) || !amount ? ' is-waiting' : ''}`} role="status" aria-live="polite" aria-busy={quoteStatus === 'Calculating quote…' || quoteStatus === 'Refreshing quote…'}><span>{quoteStatus === 'Calculating quote…' && <LoadingSignal/>}{liveQuote ? formatUnits(liveQuote.outputAmount, direction === 'buy' ? 6 : 9, 6) : minimumOut ? formatUnits(minimumOut, direction === 'buy' ? 6 : 9, 6) : quoteStatus || (amount ? '—' : 'Enter an amount')}{liveQuote && quoteStatus === 'Refreshing quote…' && <LoadingSignal/>}</span><span>{direction === 'buy' ? market.symbol : 'SOL'}</span></div>
       {quoteStatus && !['Calculating quote…', 'Refreshing quote…'].includes(quoteStatus) && validAmount && <button type="button" className="quote-retry" disabled={busy} onClick={() => setQuoteRefresh(value => value + 1)}>Retry quote</button>}
       <p className="trade-hint" id="trade-quote-hint">{liveQuote || minimumOut
         ? `Minimum after 1% slippage: ${formatUnits(minimumOut || liveQuote.minimumAmountOut, direction === 'buy' ? 6 : 9, 6)} ${direction === 'buy' ? market.symbol : 'SOL'}. Refreshed before wallet confirmation.`
         : 'Quote updates as you enter an amount. Fixed slippage: 1%.'}{direction === 'buy' && ' Leave SOL for network fees and token-account costs.'}</p>
-      {(usdAmount || liveQuote) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div><div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div><div><dt>Network & account setup</dt><dd>Shown in wallet</dd></div></>}</dl>}
+      {(usdAmount || liveQuote) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div><div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div></>}</dl>}
+      {(liveQuote || preparedCosts) && <div className="trade-cost-preview">
+        {costs ? <><dl className="trade-quote-details"><div><dt>Network fee</dt><dd>≈ {formatUnits(costs.networkFee)} SOL</dd></div><div><dt>Token account deposit</dt><dd>{formatUnits(costs.accountDeposits)} SOL</dd></div>{BigInt(costs.refundableDeposit) > 0n && <div><dt>Temporary deposit <small>(returned)</small></dt><dd>{formatUnits(costs.refundableDeposit)} SOL</dd></div>}<div className="trade-cost-total"><dt>{direction === 'buy' ? 'Total spend' : 'SOL costs'}</dt><dd>≈ {formatUnits(costs.total)} SOL</dd></div></dl><p className="trade-hint">{BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction. ` : ''}Estimate checked again before signing.</p></> : <p className="trade-hint">{wallet ? 'Network cost estimate unavailable. Checked again before wallet approval.' : 'Connect your wallet to preview network fees and account deposits.'}</p>}
+        {costShortfall && <p className="trade-funding-note" role="status">You need ≈ {formatUnits((BigInt(costs.shortfall) + 999n) / 1000n * 1000n)} more SOL to cover this trade.</p>}
+      </div>}
       {liveQuote?.priceImpactPercent >= 5 && <p className="trade-impact-warning" role="status">High price impact. This trade moves the execution price by about {liveQuote.priceImpactPercent.toFixed(2)}% before fees. Consider a smaller amount.</p>}
-      <button className="button primary trade-submit" type="submit" disabled={busy || !available || (curve && curve.status !== 'active') || !validAmount || buyExceedsBalance || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <span className="claim-spinner" aria-hidden="true"/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
+      <button className="button primary trade-submit" type="submit" disabled={busy || !available || (curve && curve.status !== 'active') || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
       <TransactionStatus stage={busy ? stage : ''}/>
     </form>
     <TradeResultCard result={resultCard} symbol={market.symbol} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)}/>

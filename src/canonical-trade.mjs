@@ -1,4 +1,5 @@
 import BN from 'bn.js'
+import { estimateTradeCosts } from './trade-costs.mjs'
 import { estimateBuySizes } from './trade-depth.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { readChainPoint } from './chain-clock.mjs'
@@ -51,9 +52,9 @@ export function createCanonicalTrader({ pool: databasePool, connection, config }
     if (!result.minimumAmountOut?.gt(new BN(0))) throw new Error('No executable output quote')
     return { market, pool, amountIn, result, sqrtPrice: state.poolState.sqrtPrice, collectFeeMode: fixed.collectFeeMode }
   }
-  const prepare = async (request, direction) => {
+  const prepare = async (request, direction, quoted = null) => {
     const wallet = new PublicKey(request.wallet)
-    const { market, pool, amountIn, result } = await quote(request, direction)
+    const { market, pool, amountIn, result } = quoted || await quote(request, direction)
     const mint = new PublicKey(market.mint)
     const tx = await dbc.pool.swap({ owner: wallet, payer: wallet, pool, amountIn,
       minimumAmountOut: result.minimumAmountOut, swapBaseForQuote: direction === 'sell', referralTokenAccount: null })
@@ -136,11 +137,17 @@ export function createCanonicalTrader({ pool: databasePool, connection, config }
     return verifyTrade(prepared, signature)
   }
   const publicQuote = async (request, direction) => {
-    const { result, amountIn, sqrtPrice, collectFeeMode } = await quote(request, direction)
+    const quoted = await quote(request, direction)
+    const { result, amountIn, sqrtPrice, collectFeeMode } = quoted
     if (collectFeeMode !== 0) throw Error('Quote fee currency is unsupported')
     const display = quoteDisplay({ direction, input: amountIn.toString(), output: result.outputAmount.toString(),
       sqrtPrice: sqrtPrice.toString(), fee: result.tradingFee.add(result.protocolFee).add(result.referralFee).toString() })
-    return { ...display, outputAmount: result.outputAmount.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
+    let costs = null
+    if (request.wallet) {
+      try { costs = await estimateTradeCosts(connection, await prepare(request, direction, quoted)) }
+      catch { /* Keep the price quote visible; exact prepare preflight still gates signing. */ }
+    }
+    return { ...display, costs, outputAmount: result.outputAmount.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
       slippageBps: SLIPPAGE_BPS }
   }
   const depthCache = new Map()

@@ -8,6 +8,8 @@ import { ReadmeBadge } from './readme-badge'
 import { useWallet } from './wallet'
 import { formatUnits } from '../lib/format.mjs'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
+import { MarketShareCard } from './market-share-card'
+import { LoadingSignal } from './loading-signal'
 import { BuilderReinvest } from './builder-reinvest'
 
 export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
@@ -93,11 +95,12 @@ export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false
   }
 
   return <div className="claim-steps">
-    {(pendingAction || busy) && <div className="claim-progress" role="status" aria-live="polite"><span className="claim-spinner" aria-hidden="true"/><span><strong>{pendingAction === 'claim' ? 'Processing your claim…' : pendingAction === 'verify' ? 'Opening GitHub…' : stage}</strong><small>{pendingAction === 'claim' ? 'Checking current admin access and settling the payout on Solana. Keep this page open.' : pendingAction === 'verify' ? 'You’ll return here after GitHub verification.' : 'Wait for confirmation here.'}</small></span></div>}
+    {(pendingAction || busy) && <div className="claim-progress" role="status" aria-live="polite"><LoadingSignal/><span><strong>{pendingAction === 'claim' ? 'Processing your claim…' : pendingAction === 'verify' ? 'Opening GitHub…' : stage}</strong><small>{pendingAction === 'claim' ? 'Checking current admin access and settling the payout on Solana. Keep this page open.' : pendingAction === 'verify' ? 'You’ll return here after GitHub verification.' : 'Wait for confirmation here.'}</small></span></div>}
     {settledClaim && <div className="claim-receipt" role="status"><Check size={24} aria-hidden="true"/><div>
       <h2>{justClaimed ? 'Claim complete' : 'Latest payout'}</h2><p>{formatUnits(settledClaim.amount)} SOL paid to your verified payout wallet.</p>
       <CopyAddress address={settledClaim.wallet} label="payout wallet"/>
       <a href={`https://explorer.solana.com/tx/${settledClaim.signature}`} target="_blank" rel="noopener noreferrer">View transaction ↗</a>
+      <MarketShareCard mint={mint} signature={settledClaim.signature}/>
       {justClaimed && !reinvestChosen && <div className="claim-badge-next"><p>Show your repository’s earnings in its README.</p><ReadmeBadge repoId={repoId} mint={mint}/></div>}
       {reinvestEnabled && graduated && !reinvestChosen && <button className="button outline" type="button" onClick={() => setReinvestChosen(true)}>Reinvest this payout</button>}
     </div></div>}
