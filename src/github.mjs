@@ -24,6 +24,22 @@ export async function resolvePublicRepository(input, fetchImpl = fetch) {
     headers: await githubApiHeaders('repo.ing-launch-coordinator', fetchImpl),
     redirect: 'follow', cache: 'no-store',
   })
+  return publicRepositoryFromResponse(response)
+}
+
+// Resolve direct launch links by immutable identity, never by a browser-supplied name.
+export async function resolvePublicRepositoryById(id, fetchImpl = fetch) {
+  if (!/^[1-9]\d{0,18}$/.test(String(id))) throw new RepositoryResolutionError('Invalid repository')
+  const response = await fetchImpl(`https://api.github.com/repositories/${id}`, {
+    headers: await githubApiHeaders('repo.ing-image-picker', fetchImpl),
+    redirect: 'follow', cache: 'no-store', signal: AbortSignal.timeout(10000),
+  })
+  const repo = await publicRepositoryFromResponse(response)
+  if (repo.githubRepoId.toString() !== String(id)) throw new RepositoryResolutionError('Repository identity mismatch')
+  return repo
+}
+
+async function publicRepositoryFromResponse(response) {
   if (response.status === 404) throw new RepositoryResolutionError('Repository not found or not public')
   if (!response.ok) throw new RepositoryResolutionError(`GitHub lookup failed: HTTP ${response.status}`)
   const repo = await response.json()

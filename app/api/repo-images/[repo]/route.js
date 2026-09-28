@@ -3,16 +3,13 @@ import { publicOrigin } from '../../../lib/origin.mjs'
 import { repositoryImageSuggestions } from '../../../lib/repo-images.mjs'
 import { normalizeTokenImage, readLimitedBody } from '../../../../src/token-image.mjs'
 
+import { repositoryImageContext } from '../../../../src/repository-image-context.mjs'
+
 export const runtime = 'nodejs'
 let uploads = 0
 async function repository(params) {
   const { repo } = await params
-  if (!/^[1-9]\d{0,18}$/.test(repo)) throw Error('Invalid repository')
-  const pool = database()
-  if (!pool) throw Error('Image service is temporarily unavailable')
-  const { rows } = await pool.query('select owner, name, avatar_url from repositories where github_repo_id=$1', [repo])
-  if (!rows[0]) throw Error('Resolve this repository before choosing an image')
-  return { id: repo, record: rows[0] }
+  return repositoryImageContext(database(), repo)
 }
 
 export async function GET(_request, { params }) {
