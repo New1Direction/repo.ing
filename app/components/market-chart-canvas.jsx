@@ -14,6 +14,7 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
 
   function resetView() {
     const current = latest.current
+    api.current?.line.priceScale().applyOptions({ autoScale: true })
     if (current.series.prices.length) api.current?.chart.timeScale().setVisibleLogicalRange(chartInitialRange(current.series.prices.length, current.style))
   }
   useEffect(() => {
@@ -96,6 +97,9 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
     if (!ready || !api.current) return
     const formatter = value => `${unit === 'USD' ? '$' : ''}${chartPriceLabel(value)}`
     for (const item of [api.current.line, api.current.candles]) item.applyOptions({ priceFormat: { type: 'custom', minMove: unit === 'USD' ? 0.000001 : 1e-15, base: unit === 'USD' ? 1e6 : 1e15, formatter } })
+    // Dragging the price axis disables autoscaling. A SOL range cannot be
+    // reused for USD market cap; refit the shared price scale, preserving time.
+    api.current.line.priceScale().applyOptions({ autoScale: true })
   }, [ready, unit])
 
   function zoom(factor) {
