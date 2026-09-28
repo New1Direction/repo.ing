@@ -60,12 +60,13 @@ export async function readProtocolAnalytics(pool, { range = 'all', now = new Dat
     const revenue = await platformRevenueSummary(db), revenueCheck = await reconcilePlatformRevenue(db)
     const liquidity = await liquidityReserveSummary(db), liquidityCheck = await reconcileLiquidity(db)
     const { rows: [buybacks] } = await db.query("select count(*)::int n from buyback_intents where status='settled'")
+    const { rows: receivers } = await db.query("select distinct wallet from platform_fee_claims where status='settled' order by wallet")
     await db.query('commit')
     const verified = revenueCheck.status === 'MATCH' && liquidityCheck.status === 'MATCH'
     return { ...window, updatedAt: window.until, totals, days: days.map(d => ({ ...d, bucket: d.bucket.toISOString() })), payouts,
       platform: { status: verified ? 'MATCH' : 'REVIEW', policy: revenue.activePolicy,
         ...(verified ? { claimed: revenue.claimed.total, unallocated: revenue.available, buybackReserve: revenue.buybackReserve,
           liquidityReserve: liquidity.remaining, liquidityAdded: liquidity.settled, treasuryAllocated: revenue.allocated.treasury,
-          buybackSpent: revenue.spent, buybacks: buybacks.n } : {}) } }
+          buybackSpent: revenue.spent, buybacks: buybacks.n, custodyWallets: receivers.map(row => row.wallet) } : {}) } }
   } catch (error) { await db.query('rollback'); throw error } finally { db.release() }
 }

@@ -95,7 +95,7 @@ The active V1 policy allocates eligible **claimed platform revenue** as follows:
 
 | Allocation | Share | Current meaning |
 | --- | ---: | --- |
-| **$REPOING buyback reserve** | **60%** | SOL reserved for future reviewed buybacks; purchases are not active. |
+| **$REPOING buyback reserve** | **60%** | Recorded allocation for reviewed protocol buybacks; protocol execution is inactive. |
 | **Protocol liquidity** | **20%** | Reserve for bounded, manually reviewed liquidity deployments. Execution is off. |
 | **Treasury** | **20%** | Retained platform allocation for operations. |
 
@@ -103,7 +103,7 @@ The allocation path consumes **settled platform-fee claims**: DBC collections re
 
 **$REPOING is live through the ordinary repository launch path.** This repository was tokenized with the same 1 billion supply, 1% builder allocation and normal discovery/fee rules as other new markets. Its immutable on-chain ticker is **REPOING**; earlier planning used `$REPO`. The launch/team wallet purchased approximately **3%** for **0.856011397 SOL**, excluding launch account/network costs. The normal 1% builder allocation is separate and unlocks after verified graduation. Builder earnings remain separate from the 60/20/20 policy; eligible partner-fee claims enter that policy like other markets. [Verified mint, launch receipt, and wallet disclosure →](docs/REPO_IDENTITY.md)
 
-The buyback accounting and review controls exist; a reviewed trading executor still needs implementation before purchases can be activated. There is no automated buying or promised return. [Full $REPOING readiness and policy →](docs/REPO_TOKEN.md) · [Ordinary launch economics and review →](docs/REPO_SELF_LAUNCH_REVIEW.md)
+The buyback accounting and review controls exist; a reviewed trading executor still needs implementation before protocol purchases can be activated. There is no automated buying or promised return. Manual wallet purchases are separate from protocol-ledger buybacks; recorded allocations are not proof of a live funded wallet balance. [Full $REPOING readiness and policy →](docs/REPO_TOKEN.md) · [Ordinary launch economics and review →](docs/REPO_SELF_LAUNCH_REVIEW.md)
 
 ## Transparent protocol analytics
 
