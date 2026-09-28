@@ -21,7 +21,7 @@
 | Buyback reserve | Buyback allocations minus settled buyback spending | Existing platform revenue ledger |
 | Available liquidity reserve | Liquidity allocations minus open commitments and settled investment | Existing liquidity reserve summary |
 | Allocated to treasury | Cumulative treasury allocations, not a current wallet balance | `platform_revenue_allocations` |
-| Completed buybacks | Settled protocol buyback intents; excludes external manual purchases | `buyback_intents`; zero while protocol execution is inactive |
+| SOL bought back | Verified buyback receipt totals, gross SOL including trading fees | `app/lib/buyback-receipts.mjs`; launch and early team purchases excluded |
 
 Only canonical, confirmed, indexed, finalized markets enter the activity aggregates. DAMM events must match the same repository's durable graduation pool. Wrong-pool events, unindexed launches, pending payouts, liquidity deposits, and migration transfers are excluded. The launch purchase is counted through its swap event, never again as a synthetic volume row.
 
@@ -57,10 +57,10 @@ DATABASE_URL=postgres://postgres:launchtest@127.0.0.1:55432/repoing_analytics_te
 
 Requires the disposable local Postgres setup at that address. No mainnet transactions are submitted.
 
-## Reserve coverage and manual purchases
+## Reserve coverage and buyback receipts
 
-The ledger reconciliation label refers to accounting entries. Buyback and liquidity cards are recorded allocations after ledger spending, not live spendable balances. Stats separately checks the recorded platform receiving wallet using two finalized mainnet RPC balance reads. A shortage is displayed as **Reserve custody needs review**; RPC failure, disagreement, wrong network, slot drift over 150 slots, or multiple receiving wallets with unresolved attribution displays **not verified**. The check includes remaining buyback, liquidity and unallocated funds; historical treasury allocation is not an outstanding reserve obligation. RPC requests are bounded to 2.5 seconds and failed checks do not reuse a prior positive result.
+The ledger reconciliation label refers to accounting entries. Buyback and liquidity cards are recorded allocations after ledger spending, not live spendable balances. Stats separately checks the recorded platform receiving wallet using two finalized mainnet RPC balance reads. A shortage is displayed as **Reserve balances need reconciliation**; RPC failure, disagreement, wrong network, slot drift over 150 slots, or multiple receiving wallets with unresolved attribution displays **not verified**. The check includes remaining buyback, liquidity and unallocated funds; historical treasury allocation is not an outstanding reserve obligation. RPC requests are bounded to 2.5 seconds and failed checks do not reuse a prior positive result.
 
-This read-only display does not reconcile the purpose of external transfers, change allocations, or unlock financial execution. Multiple receiving wallets require per-allocation custody review before a combined funded status can be shown. Manual purchases need separately verified receipts and confirmed classification; they must not be inserted into the protocol executor ledger or deducted from its reserve merely because they bought the official mint.
+This read-only display does not reconcile the purpose of external transfers, change allocations, or unlock financial execution. Multiple receiving wallets require per-allocation custody review before a combined funded status can be shown. The public buyback card shows one SOL total from verified purchase receipts, with receipt links under a collapsed disclosure. No wallet is automatically listed from a discovered transfer. Publishing a receipt does not insert an executor intent or debit the platform reserve.
 
 [September 28 audit](BUYBACK_AUDIT_2026_09_28.md).
