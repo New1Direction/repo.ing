@@ -4,6 +4,7 @@ import { Keypair, PublicKey, Transaction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { launchBuyQuote } from './launch-buy.mjs'
+import { setLaunchWalletFees } from './launch-wallet-fees.mjs'
 
 export class DefinitiveLaunchError extends Error {}
 
@@ -15,7 +16,14 @@ export function prepareLaunchSigning(tx, launcher, creator, mint) {
     const signed = await signTransaction(tx)
     if (!(signed instanceof Transaction) || !Buffer.from(signed.serializeMessage()).equals(message) ||
         !signed.feePayer.equals(launcher)) {
-      throw new DefinitiveLaunchError('Launcher returned an altered transaction')
+      console.warn('launch_wallet_message_changed', {
+        validTransaction: signed instanceof Transaction,
+        blockhashChanged: signed?.recentBlockhash !== tx.recentBlockhash,
+        payerChanged: !signed?.feePayer?.equals(launcher),
+        expectedPrograms: tx.instructions.map(ix => ix.programId.toBase58()),
+        returnedPrograms: signed instanceof Transaction ? signed.instructions.map(ix => ix.programId.toBase58()) : [],
+      })
+      throw new DefinitiveLaunchError('Your wallet changed the launch transaction. Refresh this page and review the launch again.')
     }
     const launcherEntry = signed.signatures.find(entry => entry.publicKey.equals(launcher))
     if (!launcherEntry?.signature || !signed.verifySignatures(false)) {
@@ -60,6 +68,7 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
         firstBuyParam: { buyer: launcher, buyAmount: new BN(initialBuyLamports),
           minimumAmountOut: buy.minimumAmountOut, referralTokenAccount: null } })
         : await client.creator.createPool(createPoolParam)
+      setLaunchWalletFees(tx)
       const latest = await connection.getLatestBlockhash('confirmed')
       tx.feePayer = launcher
       tx.recentBlockhash = latest.blockhash

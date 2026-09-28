@@ -91,3 +91,45 @@ test('unsigned three-signer transaction still gets an exact pre-wallet simulatio
   assert.equal((await estimateLaunchCosts(rpc, f.tx, '0')).networkFee, '15000')
   assert.equal(f.cosigns(), 0)
 })
+
+// Model Phantom's documented unsigned/no-compute-budget auto-fee behavior.
+// The former launch reproduces the exact rejection; explicit reviewed fees
+// prevent the augmentation without accepting a changed financial instruction.
+import { ComputeBudgetProgram, ComputeBudgetInstruction } from '@solana/web3.js'
+import { setLaunchWalletFees } from '../src/launch-wallet-fees.mjs'
+function phantomAutoFees(tx, payer) {
+  if (tx.signatures.every(entry => entry.signature === null) &&
+      !tx.instructions.some(ix => ix.programId.equals(ComputeBudgetProgram.programId))) {
+    tx.instructions.unshift(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 }))
+  }
+  tx.partialSign(payer)
+  return tx
+}
+test('reproduces Phantom unsigned launch auto-fee mutation and rejects it', async () => {
+  const f = fixture()
+  await assert.rejects(f.sign(async tx => transport(phantomAutoFees(transport(tx), f.payer))), /wallet changed/)
+  assert.equal(f.cosigns(), 0)
+})
+test('explicit zero-price budget prevents Phantom auto-fee mutation with wallet-first signatures', async () => {
+  const f = fixture()
+  setLaunchWalletFees(f.tx)
+  const sign = prepareLaunchSigning(f.tx, f.payer.publicKey, f.creator, f.mint)
+  const reviewed = Buffer.from(f.tx.serializeMessage())
+  assert.equal(ComputeBudgetInstruction.decodeSetComputeUnitPrice(f.tx.instructions[1]).microLamports, 0n)
+  const result = await sign(async tx => transport(phantomAutoFees(transport(tx), f.payer)))
+  const final = Transaction.from(result.raw)
+  assert.deepEqual(final.serializeMessage(), reviewed)
+  assert.equal(final.verifySignatures(), true)
+  assert.throws(() => setLaunchWalletFees(f.tx), /exactly once/)
+})
+test('wallet cannot replace reviewed zero priority fee with a paid fee', async () => {
+  const f = fixture()
+  setLaunchWalletFees(f.tx)
+  const sign = prepareLaunchSigning(f.tx, f.payer.publicKey, f.creator, f.mint)
+  await assert.rejects(sign(async tx => {
+    const returned = transport(tx)
+    returned.instructions[1] = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000000 })
+    returned.partialSign(f.payer)
+    return transport(returned)
+  }), /wallet changed/)
+})
