@@ -64,7 +64,9 @@ test('graduation cards use exact canonical reserve/target and timestamp, reject 
 test('payout card requires a settled claim AND matching proven amount, signature and canonical repo', () => {
   const row = { status: 'settled', settledAt: new Date(), repoId: market.repoId, claimSignature: 'verified', amountBaseUnits: '123456789' }
   const proof = { status: 'settled', signature: 'verified', amountBaseUnits: 123456789n }
-  assert.equal(payoutShare(market, row, proof).metric, '0.123456789 SOL')
+  assert.equal(payoutShare(market, row, proof).metric, '≈ 0.1235 SOL')
+  assert.match(payoutShare(market, row, proof).caption, /0.123456789 SOL/)
+  assert.equal(payoutShare(market, { ...row, amountBaseUnits: '1' }, { ...proof, amountBaseUnits: 1n }).metric, '<0.0001 SOL')
   for (const r of [{ ...row, status: 'pending' }, { ...row, repoId: '1' }, { ...row, amountBaseUnits: '0' }]) assert.throws(() => payoutShare(market, r, proof))
   for (const p of [null, { ...proof, amountBaseUnits: 1n }, { ...proof, signature: 'wrong' }, { ...proof, status: 'aborted' }]) assert.throws(() => payoutShare(market, row, p))
 })
