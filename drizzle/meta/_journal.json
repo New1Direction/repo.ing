@@ -155,6 +155,13 @@
       "when": 1790542598550,
       "tag": "0021_builder_reminders",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790542598551,
+      "tag": "0022_agent_request_limits",
+      "breakpoints": true
     }
   ]
 }

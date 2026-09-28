@@ -4,8 +4,8 @@ import { useRouter } from 'next/navigation'
 import { ArrowRight } from 'lucide-react'
 import { GithubMark } from './github-mark'
 
-export function RepoSearch() {
-  const [url, setUrl] = useState('')
+export function RepoSearch({ initialUrl = '' }) {
+  const [url, setUrl] = useState(initialUrl)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const router = useRouter()

@@ -1,5 +1,10 @@
-import { bigint, boolean, check, integer, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, index, integer, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
+
+export const agentRequestLimits = pgTable('agent_request_limits', {
+  scope: text('scope').primaryKey(), hits: integer('hits').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, table => [check('agent_request_limits_hits_check', sql`${table.hits} > 0`), index('agent_request_limits_expiry').on(table.expiresAt)])
 
 export const builderReminders = pgTable('builder_reminders', {
   githubUserId: bigint('github_user_id', {mode:'bigint'}).primaryKey(),

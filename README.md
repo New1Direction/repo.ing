@@ -51,6 +51,8 @@ Paste an eligible public GitHub URL, review its identity, name, ticker, and proj
 
 Phantom, Backpack, MetaMask's Solana connection, and compatible Solana Wallet Standard wallets are supported. Availability depends on the wallet, browser, and required signing features. repo.ing never asks for a seed phrase.
 
+[Agent launch reviews and README shortcuts](docs/AGENT_LAUNCH.md) are prepared for the same launcher: an agent can find a repo and produce a review link, while the user reviews artwork and costs and approves with their wallet. MCP production activation is separate; agents receive no signing authority.
+
 ### Trade and graduate
 
 New markets use an **85 SOL real quote-reserve threshold** and begin on Meteora Dynamic Bonding Curve. Buys build reserve; sells can reduce it. **Volume is turnover, not reserve.** Virtual pricing reserves are not deposited SOL.

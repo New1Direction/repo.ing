@@ -10,6 +10,7 @@ Launch open source markets. Every trade pays the builders.
 | Manage earnings across repositories | [Builder dashboard](BUILDERS.md) |
 | Configure optional builder email reminders | [Reminders and consent](BUILDER_REMINDERS.md) — delivery disabled until configured |
 | Choose a token image | [Token artwork](TOKEN_IMAGES.md) |
+| Prepare a launch with an agent or add a README launch button | [Agent launch reviews](AGENT_LAUNCH.md) — MCP activation separate |
 | Find repositories by topic or activity | [Repository search](REPOSITORY_SEARCH.md) |
 | Understand discoverer earnings | [Discovery rewards](DISCOVERY_REWARDS.md) |
 | Understand liquidity and graduation | [Liquidity guide](LIQUIDITY.md) |

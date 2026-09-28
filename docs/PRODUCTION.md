@@ -35,6 +35,8 @@ Use [`.env.example`](../.env.example) and the [development environment reference
 
 A Git push saves source; it does not by itself establish a successful production rollout. Database migrations and deployment are separate operations. Documentation-only cleanup does not require a runtime deployment.
 
+Optional [agent launch reviews](AGENT_LAUNCH.md) require migration `0022`, a dedicated web-only `AGENT_LAUNCH_SECRET`, and `AGENT_LAUNCH_ENABLED=true`. Default is disabled. The new tools prepare review links and read indexed status; they never sign or submit a launch. Verify the endpoint and browser handoff before activation. Shared request quotas fail closed when the database is unavailable.
+
 ## Financial execution gates
 
 Keep these settings explicitly disabled until their separate activation requirements are met:

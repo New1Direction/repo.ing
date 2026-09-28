@@ -12,6 +12,7 @@ import { createTradeRecorder } from '../../../src/trade-evidence.mjs'
 import { resolvePublicRepository } from '../../../src/github.mjs'
 import { trendLaunchGuard } from '../../../src/trend-intake.mjs'
 import { database, chain, configAddress, creatorSigner, discoveryRewardsEnabled, builderAllocationEnabled } from '../../lib/server.mjs'
+import { checkAgentDraft } from '../../lib/agent-launch.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
 export const runtime = 'nodejs'
@@ -43,6 +44,7 @@ export async function POST(request) {
       return Response.json({ cancelled: true })
     }
     if (body.action === 'prepare') {
+      if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
       const pool = database(), config = configAddress(), creator = creatorSigner()
       if (!pool || !config || !creator) throw new Error('Local launch is not configured')
       if (!/^\d+$/.test(String(body.repoId))) throw new Error('Canonical repository ID required')

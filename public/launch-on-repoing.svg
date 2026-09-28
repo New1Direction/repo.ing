@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="32" viewBox="0 0 180 32" role="img" aria-label="Launch on repo.ing">
+  <rect x=".5" y=".5" width="179" height="31" rx="6" fill="#17191b" stroke="#464d52"/>
+  <path d="m14 12-4 4 4 4m12-8 4 4-4 4m-5-11-4 14" fill="none" stroke="#81e6ad" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="41" y="20.5" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Arial,sans-serif" font-size="13" font-weight="600" fill="#f4f6fa">Launch on <tspan fill="#81e6ad">repo.ing</tspan></text>
+</svg>

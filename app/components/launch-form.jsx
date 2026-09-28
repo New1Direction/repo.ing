@@ -20,14 +20,14 @@ async function launchRequest(body) {
   return result
 }
 
-export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision }) {
-  const [name, setName] = useState(repo.name.slice(0, 32))
-  const [symbol, setSymbol] = useState(repo.name.replace(/[^a-z0-9]/gi, '').slice(0, 10).toUpperCase())
+export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft }) {
+  const [name, setName] = useState(draft?.tokenName ?? repo.name.slice(0, 32))
+  const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? repo.name.replace(/[^a-z0-9]/gi, '').slice(0, 10).toUpperCase())
   const [stage, setStage] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const working = useRef(false)
-  const [choice, setChoice] = useState('none')
+  const [choice, setChoice] = useState(draft?.initialBuy ?? 'none')
   const [customBuy, setCustomBuy] = useState('')
   const [buyQuote, setBuyQuote] = useState(null)
   const [buyError, setBuyError] = useState(null)
@@ -89,7 +89,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       const address = wallet || await connect()
       setStage('Checking launch costs')
       const initialBuyLamports = noBuy ? '0' : quote.initialBuyLamports
-      const result = await launchRequest({ action: 'prepare', repoId: repo.repoId, trendRevision,
+      const result = await launchRequest({ action: 'prepare', repoId: repo.repoId, trendRevision, agentDraft: draft?.token,
         repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
         tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports })
       setReview({ ...result, wallet: address, quote }); setStage('')
@@ -121,6 +121,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   }
   if (launched) return <section className="launch-panel launch-success" aria-live="polite"><CheckCircle2 size={43}/><h2>Success — repo has been tokenized</h2><p>{repo.fullName} has a live market. Copy its token address or open the market.</p><CopyAddress address={launched.mint}/><ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId}/><InviteOwner repoId={repo.repoId} fullName={repo.fullName}/><Link className="button primary launch-submit" href={`/token/${launched.mint}`}>View market</Link></section>
   return <form className="launch-panel" onSubmit={prepare}>
+    {draft && <p className="agent-review-note" role="status">Prepared with an agent. Review these details, choose an image, and approve the final costs in your wallet. Your signing wallet receives discovery attribution.</p>}
     <div className="launch-columns">
       <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review}>
         <h2>Launch token</h2><p className="launch-subtitle">Create a market for this repository. Every trade pays the builders.</p>
