@@ -79,6 +79,9 @@ const sol = value => {
   return `${negative ? '-' : ''}${n / 1_000_000_000n}${fraction ? `.${fraction}` : ''} SOL`
 }
 export function reserveAlertText(id, detail) {
+  if (detail.role && detail.minimumLamports) return ['repo.ing · Low operating balance',detail.role,
+    `Balance: ${sol(detail.balanceLamports)}`,`Top-up threshold: ${sol(detail.minimumLamports)}`,
+    `Checked: ${detail.observedAt}`,`Alert #${id}`].join('\n')
   return [`repo.ing · ${detail.phase === 'GRADUATED' ? 'DAMM SOL reserve' : 'Curve reserve'} ${BigInt(detail.deltaLamports) > 0n ? 'up' : 'down'}`,
     detail.fullName, `${sol(detail.previousReserveLamports)} → ${sol(detail.reserveLamports)}`,
     `Net change: ${BigInt(detail.deltaLamports) > 0n ? '+' : ''}${sol(detail.deltaLamports)}`,
@@ -95,7 +98,7 @@ export function createReserveWebhookSender({ env = process.env, fetchImpl = fetc
     const { delivery: _delivery, ...movement } = detail
     const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
       headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `repoing-reserve-${id}` },
-      body: JSON.stringify({ event: 'reserve_moved', id, text, market: movement }) })
+      body: JSON.stringify(url.hostname === 'hooks.slack.com' ? { text } : { event: detail.role ? 'operating_wallet_low' : 'reserve_moved', id, text, market: movement }) })
     await response.body?.cancel()
     if (!response.ok) throw Error('NOTIFICATION_SEND_FAILED')
     return { accepted: true }
@@ -111,7 +114,7 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now }) {
     try {
       if (!(await db.query("select pg_try_advisory_lock(hashtextextended('reserve-alert-delivery',0)) as locked")).rows[0].locked) return { status: 'BUSY', sent: 0 }
       try {
-        const { rows } = await db.query(`select id,detail,created_at from graduation_alerts where kind='RESERVE_MOVED'
+        const { rows } = await db.query(`select id,detail,created_at from graduation_alerts where kind in ('RESERVE_MOVED','OPS_WALLET_LOW')
           and detail::jsonb->'delivery'->>'status' in ('pending','retry')
           and (detail::jsonb->'delivery'->>'nextAttemptAt')::timestamptz <= now() order by id limit 5`)
         const results = []

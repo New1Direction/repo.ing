@@ -9,6 +9,8 @@ export function TokenImagePicker({ repoId, value, onChange, onBusyChange, disabl
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const selected = useRef(value)
+  selected.current = value
   const input = useRef(null), version = useRef(0), uploadController = useRef(null)
   useEffect(() => {
     const controller = new AbortController(), current = version.current
@@ -17,7 +19,7 @@ export function TokenImagePicker({ repoId, value, onChange, onBusyChange, disabl
       .then(async response => { if (!response.ok) throw Error(); return response.json() })
       .then(result => {
         setImages(result.images)
-        if (result.images.length && current === version.current) onChange(result.images[0])
+        if (!selected.current && result.images.length && current === version.current) onChange(result.images[0])
         if (!result.images.length) setNotice('No suitable repository images found. Upload one below.')
       }).catch(cause => { if (cause.name !== 'AbortError') setNotice('Suggestions are unavailable. You can still upload an image.') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })

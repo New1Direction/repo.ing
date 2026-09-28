@@ -1,3 +1,4 @@
+import {createOperatingWalletMonitor} from '../src/operating-wallet-alerts.mjs'
 import {createBuilderReminders,createReminderSender,remindersConfigured} from '../src/builder-reminders.mjs'
 import {createReconciler} from '../src/reconcile.mjs'
 import pg from 'pg'
@@ -41,6 +42,13 @@ const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetry
   }})
 const graduation=createGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
+const operatingWallets=createOperatingWalletMonitor({pool,connections:process.env.GRADUATION_VERIFICATION_RPC_URL
+  ?[graduationRPC(rpc),graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL)]:[]})
+let operatingWalletTask=null,nextOperatingWalletCheck=0
+async function observeOperatingWallets(){
+  try{console.log(JSON.stringify({operatingWallets:await operatingWallets.runOnce()}))}
+  catch{console.log(JSON.stringify({operatingWalletError:'OPERATING_BALANCE_UNVERIFIED'}))}
+}
 let nextGraduationCheck=0,graduationTask=null
 const chartOrdering=createChartOrdering({pool,connection:graduationRPC(rpc),verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
@@ -110,6 +118,9 @@ try {
       if(once)await observeTrends()
       else if(!trendTask&&Date.now()>=nextTrendCheck)trendTask=observeTrends().finally(()=>{nextTrendCheck=Date.now()+60000;trendTask=null})
     }
+    if(once)await observeOperatingWallets()
+    else if(!operatingWalletTask&&Date.now()>=nextOperatingWalletCheck)
+      operatingWalletTask=observeOperatingWallets().finally(()=>{nextOperatingWalletCheck=Date.now()+300000;operatingWalletTask=null})
     // Notification network failures never block fee indexing or authorized recovery.
     if(reserveDelivery){
       if(once)await deliverReserveAlerts()
@@ -131,4 +142,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

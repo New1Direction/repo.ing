@@ -1,3 +1,4 @@
+import { launchFailure } from '../../../src/launch-failure.mjs'
 import { randomUUID } from 'node:crypto'
 import { PublicKey, Transaction } from '@solana/web3.js'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -17,10 +18,26 @@ import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
 export const runtime = 'nodejs'
 const sessions = globalThis.__gitfunLaunchSessions ??= new Map()
-const safeError = error => Response.json({ error: error.message || 'Launch failed' }, { status: 400 })
+const safeError = (error, action) => {
+  const result=launchFailure(error,action),supportCode=`LAUNCH-${result.code}-${randomUUID().slice(0,8)}`
+  console.warn('launch_request_failed',{supportCode,action,code:result.code})
+  return Response.json({...result,supportCode},{status:400,headers:{'Cache-Control':'no-store'}})
+}
+export async function GET(request) {
+  const repoId=new URL(request.url).searchParams.get('repo')
+  if(!/^[1-9]\d{0,18}$/.test(repoId??''))return Response.json({error:'Invalid repository'},{status:400})
+  try{
+    const row=(await database().query('select status,mint,indexed_at,launch_finality from markets where github_repo_id=$1',[repoId])).rows[0]
+    const live=row?.status==='confirmed'&&row.indexed_at&&row.launch_finality==='finalized'
+    return Response.json({state:live?'live':!row||row.status==='failed'?'retry':'pending',mint:live?row.mint:null},{headers:{'Cache-Control':'no-store'}})
+  }catch{return Response.json({error:'Launch status unavailable. Please check again shortly.'},{status:503})}
+}
+
 export async function POST(request) {
+  let action
   try {
     const body = JSON.parse((await readLimitedBody(request, 600_000)).toString('utf8'))
+    action = ['quote','cancel','prepare','submit'].includes(body.action) ? body.action : 'unknown'
     if (body.action === 'quote') {
       const config = configAddress()
       if (!config) throw new Error('Launch config is unavailable')
@@ -105,5 +122,5 @@ export async function POST(request) {
       return Response.json({ mint: market.mint, pool: market.pool, signature: market.launchSignature })
     }
     throw new Error('Unsupported launch action')
-  } catch (error) { return safeError(error) }
+  } catch (error) { return safeError(error, action) }
 }

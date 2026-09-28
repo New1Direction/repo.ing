@@ -36,7 +36,27 @@ The initial adapter accepts a trusted HTTPS receiver and POSTs JSON:
 
 The real `market` payload also contains the public proof fields listed above. It excludes delivery metadata and credentials. Requests have a 10-second timeout, reject redirects and accept only successful HTTP responses. Receiver acceptance is not proof that a human read the alert. Provider-specific Telegram/Discord formatting requires the chosen destination to be configured and tested; no credentials or destination have been supplied yet. Keep credentials in Railway worker variables or ignored secret files, never in Git or browser configuration.
 
-Pause with `RESERVE_ALERTS_ENABLED=false`; existing events remain durable. P3, P4 and buyback execution settings are untouched.
+Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; existing events remain durable. P3, P4 and buyback execution settings are untouched.
+
+## Slack and operating balances
+
+For Slack, set `RESERVE_ALERT_WEBHOOK_URL` to the incoming webhook for the chosen operator channel. HTTPS `hooks.slack.com` receivers receive Slack's `{ "text": "..." }` payload. Keep the webhook private in Railway worker variables. Destination setup and a successful delivery test are required before calling Slack notifications live.
+
+Set `OPS_PAYOUT_WALLET` and `OPS_COLLECTION_WALLET` on the worker to the public addresses of the existing payout and collection signers. No private signing key is needed for monitoring. Every five minutes the worker compares finalized balances from the two configured RPC providers. Disagreement fails closed and logs `OPERATING_BALANCE_UNVERIFIED`.
+
+- Payout signer: alert below **0.03 SOL**.
+- Collection signer: alert below **0.01 SOL**.
+- Each low role produces at most one durable `OPS_WALLET_LOW` alert per UTC day, using the same outbox and delivery retries as reserve alerts.
+- The operator page shows role, balance, threshold and delivery status. Monitoring never transfers funds or tops up a wallet.
+- Balance observation remains active when reserve delivery is paused; removing the monitoring public-address variables disables it.
+
+## Expired launch recovery
+
+An operator can inspect a blocked launch with `node scripts/recover-expired-launch.mjs --repo=<GitHub ID>`. The default is read-only. After reviewing the result, repeat with `--apply` to release only an expired, unlanded attempt.
+
+Both independent mainnet RPCs must agree: finalized height exceeds the transaction's last valid height by more than 150 blocks, blockhash is invalid, transaction and historical signature status are absent, and both mint and pool accounts are absent. Slot disagreement, stale evidence, existing accounts, or indexed launch evidence blocks recovery. The pool must derive from an approved config.
+
+Applying recovery holds the repository advisory lock and atomically records `LAUNCH_EXPIRED` evidence with its hash before changing the matching attempt to `failed`. A new launch can then be reviewed normally. The original signature and account identities remain in the durable audit. This command never signs or broadcasts a transaction; recovery is not scheduled automatically.
 
 ## Verification
 

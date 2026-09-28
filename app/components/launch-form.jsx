@@ -6,6 +6,7 @@ import { TokenImagePicker } from './token-image-picker'
 import { useWallet } from './wallet'
 import { LaunchSuccess } from './launch-success'
 import { TransactionStatus } from './ui'
+import { launchDraftKey, readLaunchDraft, saveLaunchDraft } from '../lib/launch-draft.mjs'
 import { formatUnits, parseUnits } from '../lib/format.mjs'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
@@ -14,7 +15,7 @@ const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: tru
 async function launchRequest(body) {
   const response = await fetch('/api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const result = await response.json()
-  if (!response.ok) throw new Error(result.error || 'Launch request failed')
+  if (!response.ok) throw Object.assign(new Error(result.error || 'Launch request failed'), {canRetry:result.canRetry,supportCode:result.supportCode})
   return result
 }
 
@@ -23,6 +24,10 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? repo.name.replace(/[^a-z0-9]/gi, '').slice(0, 10).toUpperCase())
   const [stage, setStage] = useState('')
   const [error, setError] = useState('')
+  const [failure, setFailure] = useState(null)
+  const [copied, setCopied] = useState(false)
+  const [draftReady, setDraftReady] = useState(null)
+  const [draftRestored, setDraftRestored] = useState(false)
   const [busy, setBusy] = useState(false)
   const working = useRef(false)
   const [choice, setChoice] = useState(draft?.initialBuy ?? 'none')
@@ -42,6 +47,32 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const quoteError = !noBuy && buyError?.key === quoteKey ? buyError.message : ''
   const quoting = !noBuy && !quote && !quoteError
   const initialBuy = choice === 'none' ? '' : choice === 'custom' ? customBuy : quote ? formatUnits(quote.initialBuyLamports) : ''
+
+  useEffect(() => {
+    let saved=null
+    try { if(!draft) saved=readLaunchDraft(window.sessionStorage,repo.repoId) } catch {}
+    if(saved){setName(saved.name);setSymbol(saved.symbol);setChoice(saved.choice);setCustomBuy(saved.customBuy);setTokenImage(saved.tokenImage);setDraftRestored(true)}
+    setDraftReady(repo.repoId)
+  }, [repo.repoId, draft])
+  useEffect(() => {
+    if(draftReady!==repo.repoId)return
+    try {
+      if(launched)window.sessionStorage.removeItem(launchDraftKey(repo.repoId))
+      else saveLaunchDraft(window.sessionStorage,repo.repoId,{name,symbol,choice,customBuy,tokenImage})
+    }catch{}
+  }, [draftReady,repo.repoId,name,symbol,choice,customBuy,tokenImage,launched])
+  async function checkLaunchStatus(){
+    setBusy(true)
+    try{
+      const r=await fetch(`/api/launch?repo=${encodeURIComponent(repo.repoId)}`,{cache:'no-store'}),v=await r.json()
+      if(!r.ok)throw Error(v.error)
+      if(v.state==='live'){window.location.assign(`/token/${v.mint}`);return}
+      if(v.state==='retry'){setFailure(null);setError('');setStage('');setDraftRestored(true)}
+      else setError('This launch is still being checked. Do not submit another transaction. Check status again shortly.')
+    }catch(cause){setError(cause.message||'Could not check launch status.')}
+    finally{setBusy(false)}
+  }
+  async function copySupport(){try{await navigator.clipboard.writeText(`repo.ing · Repo ${repo.repoId} · ${failure.supportCode} · ${error}`);setCopied(true)}catch{setCopied(false)}}
 
   useEffect(() => {
     if (noBuy) return
@@ -80,8 +111,8 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
 
   async function prepare(event) {
     event.preventDefault()
-    if (working.current || quoting || quoteError || imageBusy || !tokenImage) return
-    working.current = true; setBusy(true); setError('')
+    if (working.current || failure?.canRetry === false || quoting || quoteError || imageBusy || !tokenImage) return
+    working.current = true; setBusy(true); setError(''); setFailure(null); setCopied(false)
     try {
       if (!available) throw new Error('Launch is temporarily unavailable. Please try again shortly.')
       const address = wallet || await connect()
@@ -91,22 +122,24 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
         tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports })
       setReview({ ...result, wallet: address, quote }); setStage('')
-    } catch (cause) { setError(cause.message || 'Could not prepare launch'); setStage('Failed') }
+    } catch (cause) { setError(cause.message || 'Could not prepare launch'); setFailure({canRetry:cause.canRetry??true,supportCode:cause.supportCode??'LAUNCH-CONNECTION'}); setStage('Failed') }
     finally { working.current = false; setBusy(false) }
   }
   async function approve() {
+    let submitted=false
     if (working.current || !review || expired || wallet !== review.wallet) return
-    working.current = true; setBusy(true); setError('')
+    working.current = true; setBusy(true); setError(''); setFailure(null); setCopied(false)
     try {
       setStage('Waiting for wallet')
       const { Transaction } = await import('@solana/web3.js')
       const transaction = Transaction.from(Uint8Array.from(atob(review.transaction), c => c.charCodeAt(0)))
       const signed = await provider().signTransaction(transaction)
-      setStage('Submitted')
+      submitted=true
+      setStage('Checking submission')
       const result = await launchRequest({ action: 'submit', id: review.id,
         transaction: btoa(String.fromCharCode(...signed.serialize({ requireAllSignatures: false, verifySignatures: true }))) })
       setStage('Confirmed'); setLaunched(result); setReview(null)
-    } catch (cause) { setError(cause.message || 'Launch failed'); setStage('Failed'); setReview(null) }
+    } catch (cause) { setError(cause.message || 'Launch failed'); setFailure({canRetry:cause.canRetry??!submitted,supportCode:cause.supportCode??(submitted?'LAUNCH-CHECK-STATUS':'LAUNCH-WALLET')}); setStage('Failed'); setReview(null) }
     finally { working.current = false; setBusy(false) }
   }
   async function edit(refresh = false) {
@@ -119,6 +152,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   }
   if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image}/>
   return <form className="launch-panel" onSubmit={prepare}>
+    {draftRestored && <p className="form-fineprint" role="status">Your saved launch details have been restored. Review current costs before signing.</p>}
     {draft && <p className="agent-review-note" role="status">Prepared with an agent. Review these details, choose an image, and approve the final costs in your wallet. Your signing wallet receives discovery attribution.</p>}
     <div className="launch-columns">
       <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review}>
@@ -167,8 +201,9 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       {expired && <p role="status">This review expired. Edit and review again for a fresh transaction.</p>}
       <div className="launch-review-actions"><button type="button" className="button primary" onClick={approve} disabled={busy || expired || wallet !== review.wallet}>{busy ? stage : 'Approve in wallet'}</button>
         <button type="button" className="button outline" disabled={busy} onClick={() => edit(expired)}>{expired ? 'Refresh review' : 'Edit launch'}</button></div>
-    </section> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : 'Review launch'}</button>
+    </section> : failure?.canRetry === false ? <button type="button" className="button primary launch-submit" disabled={busy} onClick={checkLaunchStatus}>{busy?'Checking status…':'Check launch status'}</button> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : failure ? 'Refresh review' : 'Review launch'}</button>
       <p className="form-fineprint">Review the total before signing. No platform launch fee.</p></>}
     <TransactionStatus stage={stage} error={error}/>
+    {failure && <div className="launch-recovery"><p className="form-fineprint">{failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
   </form>
 }
