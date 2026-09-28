@@ -1,5 +1,6 @@
 'use client'
 import dynamic from 'next/dynamic'
+import { marketPrefetch } from '../lib/market-prefetch.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
@@ -27,6 +28,8 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
   useEffect(() => {
     let active = true, running = false, queued = false
     const controller = new AbortController()
+    const warmed = range === 'all' ? marketPrefetch.take(mint) : null
+    if (warmed) { setData(warmed); setRefreshing(false) }
     async function refresh() {
       if (running) { queued = true; return }
       running = true; setRefreshing(true)
@@ -47,9 +50,11 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
       setPendingSignature(event.detail.signature)
       void refresh()
     }
+    const onIndexed = event => { if (event.detail?.mint === mint && event.detail.kind !== 'curve') void refresh() }
+    window.addEventListener('repoing:market-updated', onIndexed)
     const stopPolling = visiblePolling(refresh, 15000)
     window.addEventListener('repoing:trade-confirmed', onTradeConfirmed)
-    return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTradeConfirmed) }
+    return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTradeConfirmed); window.removeEventListener('repoing:market-updated', onIndexed) }
   }, [mint, range, retry])
   useEffect(() => {
     if (pendingSignature && data?.trades.some(trade => trade.signature === pendingSignature)) setPendingSignature(null)

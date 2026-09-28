@@ -1,4 +1,5 @@
 'use client'
+import { watchMarketEvents } from '../lib/market-events.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { useEffect, useRef, useState } from 'react'
 import { PriceChart } from './price-chart'
@@ -6,6 +7,7 @@ import { TradePanel } from './trade-panel'
 import { GraduationProgress } from './graduation-progress'
 
 export function MarketTrading({ market, available, usdPerSol }) {
+  useEffect(() => watchMarketEvents(market.mint), [market.mint])
   const [solPrice, setSolPrice] = useState(usdPerSol)
   const [curve, setCurve] = useState(null), [error, setError] = useState(false)
   const curveEnded = useRef(null)
@@ -35,7 +37,8 @@ export function MarketTrading({ market, available, usdPerSol }) {
     const stopPolling = visiblePolling(refresh, 15000)
     const onTrade = event => { if (event.detail?.mint === market.mint) void refresh() }
     window.addEventListener('repoing:trade-confirmed', onTrade)
-    return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTrade) }
+    window.addEventListener('repoing:market-updated', onTrade)
+    return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTrade); window.removeEventListener('repoing:market-updated', onTrade) }
   }, [market.mint])
   return <><GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)}/>
     <div className="market-grid"><PriceChart key={`chart:${market.mint}`} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}/><TradePanel key={`trade:${market.mint}`} market={market} available={available} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/></div></>

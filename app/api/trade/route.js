@@ -37,6 +37,15 @@ export async function POST(request) {
       const quote = body.direction === 'sell' ? await engine.quoteSell(args) : await engine.quoteBuy(args)
       return Response.json(quote, { headers: { 'Cache-Control': 'no-store' } })
     }
+    if (body.action === 'costs') {
+      if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
+      const engine = trader()
+      const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
+        [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
+      const prepared = body.direction === 'sell' ? await engine.prepareSell(args) : await engine.prepareBuy(args)
+      // Read-only preview. Only prepare creates a signable session and simulates it.
+      return Response.json({ costs: await estimateTradeCosts(chain(), prepared) }, { headers: { 'Cache-Control': 'no-store' } })
+    }
     if (body.action === 'prepare') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
       const engine = trader()

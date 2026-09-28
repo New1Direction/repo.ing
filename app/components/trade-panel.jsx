@@ -1,4 +1,5 @@
 'use client'
+import { loadTradePreview } from '../lib/trade-preview.mjs'
 import { BuyPresets } from './buy-presets'
 import { LoadingSignal } from './loading-signal'
 import { TradeSizeGuide } from './trade-size-guide'
@@ -46,6 +47,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const [minimumOut, setMinimumOut] = useState(null)
   const [preparedCosts, setPreparedCosts] = useState(null)
   const [liveQuote, setLiveQuote] = useState(null)
+  const [costPreview, setCostPreview] = useState(null)
   const quoteRef = useRef(null)
   quoteRef.current = liveQuote
   const [quoteStatus, setQuoteStatus] = useState('')
@@ -139,6 +141,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
 
   useEffect(() => {
     setQuoteStatus('')
+    setCostPreview(null)
     if (!busy) setPreparedCosts(null)
     if (!available || (curve && curve.status !== 'active') || !amount || busy) { setLiveQuote(null); return }
     let input
@@ -153,20 +156,15 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     const keepEstimate = quoteRef.current?.inputKey === inputKey && Date.now() - quoteRef.current.receivedAt < 30000
     if (!keepEstimate) setLiveQuote(null)
     setQuoteStatus(keepEstimate ? 'Refreshing quote…' : 'Calculating quote…')
-    const timer = window.setTimeout(async () => {
-      try {
-        const response = await fetch('/api/trade', { method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ action: 'quote', githubRepoId: market.repoId, direction, wallet, amountBaseUnits: input }),
-          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]), cache: 'no-store' })
-        const result = await response.json()
-        if (!response.ok) throw new Error(result.error || 'Quote unavailable')
-        if (!/^\d+$/.test(result.outputAmount) || !/^\d+$/.test(result.minimumAmountOut)) throw new Error('Invalid quote')
-        if (controller.signal.aborted) return
-        setLiveQuote({ ...result, inputKey, receivedAt: Date.now() })
-        setQuoteStatus('')
-      } catch (cause) {
-        if (!controller.signal.aborted) { setLiveQuote(null); setQuoteStatus(cause.name === 'TimeoutError' ? 'Quote timed out. Please retry.' : cause.message || 'Quote unavailable') }
-      }
+    if (wallet) setCostPreview({ inputKey, loading: true })
+    const timer = window.setTimeout(() => {
+      void loadTradePreview({
+        request: { githubRepoId: market.repoId, direction, wallet, amountBaseUnits: input },
+        signal: controller.signal,
+        onQuote: result => { setLiveQuote({ ...result, inputKey, receivedAt: Date.now() }); setQuoteStatus('') },
+        onQuoteError: cause => { setLiveQuote(null); setQuoteStatus(cause.name === 'TimeoutError' ? 'Quote timed out. Please retry.' : cause.message || 'Quote unavailable') },
+        onCosts: result => setCostPreview({ ...result, inputKey }),
+      })
     }, 250)
     return () => { window.clearTimeout(timer); controller.abort() }
   }, [amount, available, balance, busy, direction, market.repoId, solBalance, curve?.status, quoteRefresh, wallet])
@@ -286,7 +284,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     try { buyExceedsBalance = BigInt(parseUnits(amount, 9)) >= BigInt(solBalance) } catch { /* The input validator handles malformed amounts. */ }
   }
 
-  const costs = busy ? preparedCosts : liveQuote?.costs
+  const currentCosts = liveQuote && costPreview?.inputKey === liveQuote.inputKey ? costPreview : null
+  const costs = busy ? preparedCosts : currentCosts?.costs
   const costShortfall = costs && BigInt(costs.shortfall) > 0n
   let usdAmount = null
   try { usdAmount = formatUsdEstimate(direction === 'buy' && amount ? parseUnits(amount, 9) : liveQuote?.outputAmount, usdPerSol) } catch { /* Wait for a valid amount. */ }
@@ -330,7 +329,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
         : 'Quote updates as you enter an amount. Fixed slippage: 1%.'}{direction === 'buy' && ' Leave SOL for network fees and token-account costs.'}</p>
       {(usdAmount || liveQuote) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div><div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div></>}</dl>}
       {(liveQuote || preparedCosts) && <div className="trade-cost-preview">
-        {costs ? <><dl className="trade-quote-details"><div><dt>Network fee</dt><dd>≈ {formatUnits(costs.networkFee)} SOL</dd></div><div><dt>Token account deposit</dt><dd>{formatUnits(costs.accountDeposits)} SOL</dd></div>{BigInt(costs.refundableDeposit) > 0n && <div><dt>Temporary deposit <small>(returned)</small></dt><dd>{formatUnits(costs.refundableDeposit)} SOL</dd></div>}<div className="trade-cost-total"><dt>{direction === 'buy' ? 'Total spend' : 'SOL costs'}</dt><dd>≈ {formatUnits(costs.total)} SOL</dd></div></dl><p className="trade-hint">{BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction. ` : ''}Estimate checked again before signing.</p></> : <p className="trade-hint">{wallet ? 'Network cost estimate unavailable. Checked again before wallet approval.' : 'Connect your wallet to preview network fees and account deposits.'}</p>}
+        {costs ? <><dl className="trade-quote-details"><div><dt>Network fee</dt><dd>≈ {formatUnits(costs.networkFee)} SOL</dd></div><div><dt>Token account deposit</dt><dd>{formatUnits(costs.accountDeposits)} SOL</dd></div>{BigInt(costs.refundableDeposit) > 0n && <div><dt>Temporary deposit <small>(returned)</small></dt><dd>{formatUnits(costs.refundableDeposit)} SOL</dd></div>}<div className="trade-cost-total"><dt>{direction === 'buy' ? 'Total spend' : 'SOL costs'}</dt><dd>≈ {formatUnits(costs.total)} SOL</dd></div></dl><p className="trade-hint">{BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction. ` : ''}Estimate checked again before signing.</p></> : <p className="trade-hint">{wallet ? currentCosts?.loading ? 'Checking network fees and account deposits…' : 'Network cost estimate unavailable. Checked again before wallet approval.' : 'Connect your wallet to preview network fees and account deposits.'}</p>}
         {costShortfall && <p className="trade-funding-note" role="status">You need ≈ {formatUnits((BigInt(costs.shortfall) + 999n) / 1000n * 1000n)} more SOL to cover this trade.</p>}
       </div>}
       {liveQuote?.priceImpactPercent >= 5 && <p className="trade-impact-warning" role="status">High price impact. This trade moves the execution price by about {liveQuote.priceImpactPercent.toFixed(2)}% before fees. Consider a smaller amount.</p>}

@@ -1,12 +1,10 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { CheckCircle2, Image as ImageIcon, Info } from 'lucide-react'
+import { Image as ImageIcon, Info } from 'lucide-react'
 import { TokenImagePicker } from './token-image-picker'
 import { useWallet } from './wallet'
-import { InviteOwner } from './invite-owner'
-import { ShareMarket } from './share-market'
-import { CopyAddress } from './copy-address'
+import { LaunchSuccess } from './launch-success'
 import { TransactionStatus } from './ui'
 import { formatUnits, parseUnits } from '../lib/format.mjs'
 
@@ -119,7 +117,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     working.current = false; setBusy(false)
     if (refresh) await prepare({ preventDefault() {} })
   }
-  if (launched) return <section className="launch-panel launch-success" aria-live="polite"><CheckCircle2 size={43}/><h2>Success — repo has been tokenized</h2><p>{repo.fullName} has a live market. Copy its token address or open the market.</p><CopyAddress address={launched.mint}/><ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId}/><InviteOwner repoId={repo.repoId} fullName={repo.fullName}/><Link className="button primary launch-submit" href={`/token/${launched.mint}`}>View market</Link></section>
+  if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image}/>
   return <form className="launch-panel" onSubmit={prepare}>
     {draft && <p className="agent-review-note" role="status">Prepared with an agent. Review these details, choose an image, and approve the final costs in your wallet. Your signing wallet receives discovery attribution.</p>}
     <div className="launch-columns">

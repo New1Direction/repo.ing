@@ -504,3 +504,43 @@
 @media(prefers-reduced-motion:reduce){.loading-signal i,.market-share-dialog[open]{animation:none}.loading-signal i{opacity:.7}}
 
 .market-share-dialog{text-align:left}.market-share-dialog .share-caption,.market-share-dialog>small{text-align:left}
+
+/* Git-inspired explanation and the payoff for a verified launch. */
+.repository-flow{border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:30px 0;background:var(--surface)}
+.flow-file{display:flex;align-items:center;gap:9px;padding:14px 22px;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted)}
+.flow-file-note{margin-left:auto;font-size:12px}
+.flow-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:30px 24px 22px}
+.flow-steps button{position:relative;isolation:isolate;display:flex;flex-direction:column;align-items:center;gap:10px;background:none;border:0;border-radius:7px;color:var(--muted);font:inherit;font-weight:600;cursor:pointer;padding:8px 4px}
+.flow-steps button::after{content:'';position:absolute;z-index:-1;top:32px;left:50%;width:100%;height:1px;background:var(--border-strong)}
+.flow-steps button:last-child::after{display:none}
+.flow-node{display:grid;place-items:center;width:49px;height:49px;border:1px solid var(--border-strong);border-radius:50%;background:var(--surface);transition:background 180ms,border-color 180ms,transform 180ms}
+.flow-steps button[aria-selected=true]{color:var(--text)}
+.flow-steps button[aria-selected=true] .flow-node{background:color-mix(in srgb,var(--green) 12%,var(--surface));border-color:var(--green);color:var(--green);transform:translateY(-2px);box-shadow:0 0 0 5px color-mix(in srgb,var(--green) 7%,transparent)}
+.flow-steps small{font:11px ui-monospace,monospace;color:var(--dim)}
+.flow-steps button:focus-visible,.flow-panel:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.flow-panel{display:flex;align-items:center;gap:30px;min-height:252px;border-top:1px solid var(--border);padding:30px 36px;background:var(--bg)}
+.flow-description{max-width:700px;animation:flow-reveal 200ms ease-out}
+.flow-description code{color:var(--green);font-size:12px}
+.flow-description h2{font-size:clamp(22px,3vw,29px);margin:12px 0;letter-spacing:-.6px}
+.flow-description p{color:var(--muted);line-height:1.65;margin:0 0 20px;max-width:650px}
+.flow-description .button{display:inline-flex;gap:9px;align-items:center;font-size:13px}
+.flow-commit{flex:1;display:flex;align-items:center;justify-content:center;color:var(--green)}
+.flow-commit span{height:1px;background:var(--border-strong);width:25px}
+.launch-transformation{display:flex;align-items:center;justify-content:center;width:min(100%,650px);margin-bottom:12px;gap:0}
+.launch-origin,.launch-token-card{width:210px;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:22px 14px;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--muted)}
+.launch-origin{min-height:130px;font-size:13px;overflow-wrap:anywhere}
+.launch-token-card{border-color:color-mix(in srgb,var(--green) 60%,var(--border));color:var(--text);animation:flow-reveal 250ms ease-out}
+.launch-token-card img{width:64px;height:64px;object-fit:contain;border-radius:12px}
+.launch-token-card strong{max-width:100%;overflow-wrap:anywhere;font-size:19px}
+.launch-token-card>span{display:flex;gap:5px;align-items:center;font-size:12px;color:var(--green)}
+.launch-commit-line{display:flex;align-items:center;flex:1;min-width:36px;max-width:130px;color:var(--green);transform-origin:left;animation:launch-connect 250ms ease-out}
+.launch-commit-line span{height:1px;flex:1;background:var(--green)}
+.launch-success>p{color:var(--muted)}
+.launch-success .launch-receipt{color:var(--muted);font-size:12px}
+.launch-success h2:focus{outline:none}
+#builder-payouts{scroll-margin-top:95px}
+@keyframes flow-reveal{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes launch-connect{from{opacity:0;transform:scaleX(.7)}to{opacity:1;transform:scaleX(1)}}
+@media(hover:hover){.flow-steps button:hover .flow-node{border-color:var(--green)}}
+@media(max-width:600px){.flow-file{padding:13px 16px}.flow-file-note{display:none}.flow-steps{padding:22px 10px 16px}.flow-steps button{font-size:13px}.flow-panel{padding:24px 20px;min-height:310px}.flow-commit{display:none}.launch-origin,.launch-token-card{padding:16px 8px;width:135px}.launch-origin{font-size:11px}.launch-token-card strong{font-size:16px}.launch-transformation{margin-bottom:8px}}
+@media(prefers-reduced-motion:reduce){.flow-description,.launch-token-card,.launch-commit-line{animation:none}.flow-node{transition:none}}

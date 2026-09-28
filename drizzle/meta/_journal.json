@@ -162,6 +162,13 @@
       "when": 1790542598551,
       "tag": "0022_agent_request_limits",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790542598552,
+      "tag": "0023_market_update_notifications",
+      "breakpoints": true
     }
   ]
 }

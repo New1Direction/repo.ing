@@ -1,5 +1,4 @@
 import BN from 'bn.js'
-import { estimateTradeCosts } from './trade-costs.mjs'
 import { estimateBuySizes } from './trade-depth.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { readChainPoint } from './chain-clock.mjs'
@@ -142,12 +141,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config }
     if (collectFeeMode !== 0) throw Error('Quote fee currency is unsupported')
     const display = quoteDisplay({ direction, input: amountIn.toString(), output: result.outputAmount.toString(),
       sqrtPrice: sqrtPrice.toString(), fee: result.tradingFee.add(result.protocolFee).add(result.referralFee).toString() })
-    let costs = null
-    if (request.wallet) {
-      try { costs = await estimateTradeCosts(connection, await prepare(request, direction, quoted)) }
-      catch { /* Keep the price quote visible; exact prepare preflight still gates signing. */ }
-    }
-    return { ...display, costs, outputAmount: result.outputAmount.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
+    return { ...display, outputAmount: result.outputAmount.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
       slippageBps: SLIPPAGE_BPS }
   }
   const depthCache = new Map()

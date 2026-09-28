@@ -130,3 +130,9 @@ Delivery is disabled until a verified sender is configured. [Operator setup and 
 Choose **Share card** on a market to download a 1200 × 630 PNG or copy a caption with the market link. Choose **Graduation progress** for a timestamped reserve/target snapshot, or **Builder payout** for the latest finalized payout. After a successful claim, **Share payout** selects that specific receipt.
 
 Graduation cards require fresh canonical indexed evidence and a reconciliation match. Payout cards recheck the finalized Solana receipt against the settled claim. Unavailable proof shows a retry state instead of an invented number. Cards are snapshots; they do not keep updating after download. Native sharing is available when the browser supports file sharing; otherwise use Download PNG and Copy caption.
+
+### Faster market feedback
+
+Hover or focus a market link to warm its public chart. Open markets refresh after indexed activity arrives, with polling as a fallback. An estimate can appear before the network/account cost preview finishes; both are checked again before you approve the transaction.
+
+[How it works](https://repo.ing/how-it-works) now has three selectable steps: Repository, Market, and Builder paid. The last step links to real settled payout receipts. After a verified launch, your chosen artwork appears in a market card with a direct View market action, copyable address, and transaction receipt.
