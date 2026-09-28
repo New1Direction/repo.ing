@@ -4,6 +4,8 @@ import { repositoryImageSuggestions } from '../../../lib/repo-images.mjs'
 import { normalizeTokenImage, readLimitedBody } from '../../../../src/token-image.mjs'
 
 import { repositoryImageContext } from '../../../../src/repository-image-context.mjs'
+import { publicError } from '../../../lib/public-error.mjs'
+const SAFE = /^(Choose|This image|Image|SVG references|Invalid repository|Archived repositories|Repository identity mismatch|Image service is temporarily unavailable)/
 
 export const runtime = 'nodejs'
 let uploads = 0
@@ -27,6 +29,6 @@ export async function POST(request, { params }) {
     await repository(params)
     const result = await normalizeTokenImage(await readLimitedBody(request))
     return Response.json({ image: result.image, label: 'Your upload' }, { headers: { 'Cache-Control': 'no-store' } })
-  } catch (error) { return Response.json({ error: error.message || 'Image could not be processed.' }, { status: 400 }) }
+  } catch (error) { return Response.json({ error: publicError(error, SAFE, 'Image could not be processed.', 'repo-images upload') }, { status: 400 }) }
   finally { uploads-- }
 }

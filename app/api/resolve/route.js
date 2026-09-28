@@ -1,4 +1,5 @@
-import { parseRepositoryUrl, resolvePublicRepository } from '../../../src/github.mjs'
+import { parseRepositoryUrl, resolvePublicRepository, RepositoryResolutionError } from '../../../src/github.mjs'
+import { publicError } from '../../lib/public-error.mjs'
 import { database } from '../../lib/server.mjs'
 export const runtime = 'nodejs'
 export async function POST(request) {
@@ -24,5 +25,9 @@ export async function POST(request) {
       repo.fullName, repo.description, repo.avatarUrl, repo.stars, repo.forks, repo.archived, repo.githubUpdatedAt])
     const { rows } = await pool.query(`select mint from markets where github_repo_id = $1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`, [repo.githubRepoId.toString()])
     return Response.json({ repoId: repo.githubRepoId.toString(), mint: rows[0]?.mint ?? null })
-  } catch (error) { return Response.json({ error: error.message }, { status: 400 }) }
+  } catch (error) {
+    const known = error instanceof RepositoryResolutionError
+    return Response.json({ error: publicError(error, () => known, 'Repository lookup is temporarily unavailable. Try again shortly.', 'resolve') },
+      { status: known ? 400 : 503 })
+  }
 }
