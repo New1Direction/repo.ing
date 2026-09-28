@@ -51,7 +51,7 @@ Paste an eligible public GitHub URL, review its identity, name, ticker, and proj
 
 Phantom, Backpack, MetaMask's Solana connection, and compatible Solana Wallet Standard wallets are supported. Availability depends on the wallet, browser, and required signing features. repo.ing never asks for a seed phrase.
 
-[Agent launch reviews and README shortcuts](docs/AGENT_LAUNCH.md) are prepared for the same launcher: an agent can find a repo and produce a review link, while the user reviews artwork and costs and approves with their wallet. MCP production activation is separate; agents receive no signing authority.
+[Agent launch reviews and README shortcuts](https://repo.ing/agents) use the same launcher: an agent can find a repo and produce a review link, while the user reviews artwork and costs and approves with their wallet. Agents receive no signing authority. [MCP setup and tools →](docs/AGENT_LAUNCH.md)
 
 ### Trade and graduate
 

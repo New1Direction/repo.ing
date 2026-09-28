@@ -1,6 +1,6 @@
 # Agent launch reviews
 
-Status: implemented and locally verified; production MCP activation is separate. Nothing in this feature authorizes an agent to sign transactions.
+Live on repo.ing as of September 27, 2026 (Pacific time). [Open launch tools](https://repo.ing/agents). Nothing in this feature authorizes an agent to sign transactions.
 
 ## One launch flow
 
@@ -12,7 +12,7 @@ No API key, wallet key, seed phrase, GitHub login, or server-side spending appro
 
 ## Connect
 
-Once activated, connect a client supporting MCP **Streamable HTTP** to:
+Connect a client supporting MCP **Streamable HTTP** to:
 
 ```text
 https://repo.ing/api/mcp
@@ -89,3 +89,5 @@ Stop new agent reviews by disabling `AGENT_LAUNCH_ENABLED`; ordinary manual laun
 `tests/agent-launch.test.mjs` covers signed-draft tampering/expiry/config binding, root-only links, withheld nonfinal receipts, official MCP client interaction, strict inputs, HTTP guards, real PostgreSQL quotas, no reservation during draft/retry, and canonical rename/duplicate behavior. PostgreSQL tests require `CHART_TEST_DATABASE_URL` on `127.0.0.1:55441` and use temporary tables. Existing launch-coordinator/cost tests cover unique launch locking and the signed transaction boundary.
 
 Protocol references: [official SDK](https://github.com/modelcontextprotocol/typescript-sdk), [web-standard serving](https://ts.sdk.modelcontextprotocol.io/v2/serving/web-standard.html), [MCP transports](https://modelcontextprotocol.io/specification/latest/basic/transports).
+
+Production verification: official MCP client listed all four tools, returned the existing canonical REPOING market without a draft, and created a No buy review for an already-indexed unlaunched candidate. The draft left zero market rows for that repository. The browser handoff displayed the correct details. All 30 finalized markets reconciled MATCH; buybacks, protocol liquidity, and Builder Reinvest remained disabled. No launch, trade, or payout was submitted during this check.
