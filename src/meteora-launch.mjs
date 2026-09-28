@@ -7,6 +7,27 @@ import { launchBuyQuote } from './launch-buy.mjs'
 
 export class DefinitiveLaunchError extends Error {}
 
+// Phantom must receive the transaction before the mint/creator co-signers sign.
+// Capture the reviewed bytes now; never authorize a wallet-modified message.
+export function prepareLaunchSigning(tx, launcher, creator, mint) {
+  const message = Buffer.from(tx.serializeMessage())
+  return async signTransaction => {
+    const signed = await signTransaction(tx)
+    if (!(signed instanceof Transaction) || !Buffer.from(signed.serializeMessage()).equals(message) ||
+        !signed.feePayer.equals(launcher)) {
+      throw new DefinitiveLaunchError('Launcher returned an altered transaction')
+    }
+    const launcherEntry = signed.signatures.find(entry => entry.publicKey.equals(launcher))
+    if (!launcherEntry?.signature || !signed.verifySignatures(false)) {
+      throw new DefinitiveLaunchError('Launcher signature missing or invalid')
+    }
+    // Only co-sign after checking the user's signature over the exact reviewed message.
+    signed.partialSign(creator, mint)
+    if (!signed.verifySignatures()) throw new DefinitiveLaunchError('Launch signatures are incomplete or invalid')
+    return { raw: signed.serialize(), signature: bs58.encode(signed.signature) }
+  }
+}
+
 // The config is created once using the curve in scripts/meteora-spike.mjs.
 // A launch may choose metadata, but never fee, curve, migration, or quote settings.
 export function createMeteoraLauncher({ connection, config, creator, metadataOrigin = null }) {
@@ -42,21 +63,10 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
       const latest = await connection.getLatestBlockhash('confirmed')
       tx.feePayer = launcher
       tx.recentBlockhash = latest.blockhash
-      tx.partialSign(creator, mint)
-      const message = Buffer.from(tx.serializeMessage())
       return {
         mint: mint.publicKey.toBase58(), pool: pool.toBase58(), initialBuyOutput: buy?.outputAmount.toString() ?? null,
         blockhash: latest.blockhash, lastValidBlockHeight: BigInt(latest.lastValidBlockHeight),
-        async sign(signTransaction) {
-          const signed = await signTransaction(tx)
-          if (!(signed instanceof Transaction) || !Buffer.from(signed.serializeMessage()).equals(message) ||
-              !signed.feePayer.equals(launcher) || !signed.verifySignatures()) {
-            throw new DefinitiveLaunchError('Launcher returned an altered or incompletely signed transaction')
-          }
-          const launcherEntry = signed.signatures.find(entry => entry.publicKey.equals(launcher))
-          if (!launcherEntry?.signature || !signed.signature) throw new DefinitiveLaunchError('Launcher signature missing')
-          return { raw: signed.serialize(), signature: bs58.encode(signed.signature) }
-        },
+        sign: prepareLaunchSigning(tx, launcher, creator, mint),
       }
     },
     async submit({ raw, signature, blockhash, lastValidBlockHeight }) {

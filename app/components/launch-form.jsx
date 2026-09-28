@@ -104,7 +104,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       const signed = await provider().signTransaction(transaction)
       setStage('Submitted')
       const result = await launchRequest({ action: 'submit', id: review.id,
-        transaction: btoa(String.fromCharCode(...signed.serialize())) })
+        transaction: btoa(String.fromCharCode(...signed.serialize({ requireAllSignatures: false, verifySignatures: true }))) })
       setStage('Confirmed'); setLaunched(result); setReview(null)
     } catch (cause) { setError(cause.message || 'Launch failed'); setStage('Failed'); setReview(null) }
     finally { working.current = false; setBusy(false) }
