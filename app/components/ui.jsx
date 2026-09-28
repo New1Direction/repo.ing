@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowUpRight, Check, ChevronRight, Star, GitFork, Clock3, Code2, Plus } from 'lucide-react'
+import { ArrowUpRight, Check, ChevronRight, Star, GitFork, Clock3, Code2 } from 'lucide-react'
 import { GithubMark } from './github-mark'
 import { BrandMark } from './brand-mark'
 import { WalletButton } from './wallet'
@@ -19,7 +19,7 @@ function MarketEarnings({ market, usdPerSol }) {
 export function AppHeader({ active = '' }) {
   return <header className="app-header"><div className="header-inner">
     <Link href="/" className="brand"><BrandMark size={32}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link>
-    <nav aria-label="Main navigation"><Link href="/launch" className={`nav-launch${active === 'launch' ? ' active' : ''}`} aria-current={active === 'launch' ? 'page' : undefined}><Plus size={16} aria-hidden="true"/>Launch</Link><Link href="/explore" className={active === 'explore' ? 'active' : ''}>Explore</Link><Link href="/builders" className={active === 'builders' ? 'active' : ''}>Builders</Link><Link href="/stats" className={active === 'stats' ? 'active' : ''}>Stats</Link><Link href={OFFICIAL_TOKEN.marketPath} className={active === 'repoing' ? 'active' : ''}>$REPOING</Link><Link href="/how-it-works" className={active === 'how-it-works' ? 'active' : ''}>How it works</Link></nav>
+    <nav aria-label="Main navigation"><Link href="/launch" className={`nav-launch${active === 'launch' ? ' active' : ''}`} aria-current={active === 'launch' ? 'page' : undefined}>Launch</Link><Link href="/explore" className={active === 'explore' ? 'active' : ''}>Explore</Link><Link href="/builders" className={active === 'builders' ? 'active' : ''}>Builders</Link><Link href="/stats" className={active === 'stats' ? 'active' : ''}>Stats</Link><Link href={OFFICIAL_TOKEN.marketPath} className={active === 'repoing' ? 'active' : ''}>$REPOING</Link><Link href="/how-it-works" className={active === 'how-it-works' ? 'active' : ''}>How it works</Link></nav>
     <div className="header-actions"><WatchNotifications/><ThemeToggle/><WalletButton /></div>
   </div></header>
 }

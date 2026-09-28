@@ -448,7 +448,7 @@
 }
 
 /* Launch invitation: one clear primary action, with readable reward terms. */
-.app-header nav a.nav-launch{align-self:center;display:inline-flex;align-items:center;gap:5px;height:34px;padding:0 12px;border-radius:6px;background:var(--green);color:#092519;font-weight:650;border:1px solid transparent;transition:background .12s}
+.app-header nav a.nav-launch{align-self:center;display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 14px;border-radius:6px;background:var(--green);color:#092519;font-size:14px;line-height:20px;font-weight:600;white-space:nowrap;border:1px solid color-mix(in srgb,var(--green) 85%,#092519);transition:background .12s,border-color .12s}
 .app-header nav a.nav-launch:hover{background:#a1efc3;color:#092519}
 .app-header nav a.nav-launch.active:after{display:none}
 .nav-launch:focus-visible,.launch-search button:focus-visible{outline:2px solid var(--text);outline-offset:3px}
@@ -469,7 +469,7 @@
 .launch-start .repo-search-wrap{margin-bottom:0}.launch-start .launch-find-link{margin-top:16px}
 [data-theme=light] .app-header nav a.nav-launch{color:#092519}
 [data-theme=light] .launch-find-link,[data-theme=light] .launch-reward-terms a,[data-theme=light] .launch-benefit-icon{color:#157347}
-@media(max-width:700px){.app-header nav a.nav-launch{height:29px;padding:0 9px}.launch-benefits ol{grid-template-columns:1fr;gap:20px;padding:20px}.launch-reward-terms{align-items:flex-start;flex-direction:column;gap:8px;padding:14px 20px}.repo-search.launch-search button{min-width:110px;padding:0 10px;font-size:13px}.repo-search.launch-search button svg{width:17px}.launch-find-link{font-size:13px}.launch-start{padding-top:32px}.launch-benefits.compact{margin-top:24px}.launch-benefits p{margin-top:3px}}
+@media(max-width:700px){.app-header nav a.nav-launch{height:32px;padding:0 12px}.launch-benefits ol{grid-template-columns:1fr;gap:20px;padding:20px}.launch-reward-terms{align-items:flex-start;flex-direction:column;gap:8px;padding:14px 20px}.repo-search.launch-search button{min-width:110px;padding:0 10px;font-size:13px}.repo-search.launch-search button svg{width:17px}.launch-find-link{font-size:13px}.launch-start{padding-top:32px}.launch-benefits.compact{margin-top:24px}.launch-benefits p{margin-top:3px}}
 
 .builder-reminder-card{margin-top:24px;padding:22px}.builder-reminder-card h2{display:flex;align-items:center;gap:8px;font-size:17px;margin:0}.builder-reminder-card p,.builder-reminder-card small,.reminder-link-card p{color:var(--muted);font-size:13px;line-height:1.6}.builder-reminder-card label{display:block;font-size:13px;margin-bottom:7px}.reminder-controls{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.reminder-controls input{min-width:0;max-width:340px;flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border-strong);border-radius:6px;padding:10px;font-size:16px}.reminder-controls span{overflow-wrap:anywhere;min-width:0}.builder-reminder-card small{display:block;margin-top:8px}.reminder-link-card{padding:26px}.reminder-link-card h1{font-size:28px}.graduation-explainer{font-size:13px;color:var(--muted);line-height:1.6}
 @media(max-width:550px){.reminder-controls{align-items:stretch;flex-direction:column}.reminder-controls input{max-width:none}}
