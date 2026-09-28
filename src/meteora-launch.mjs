@@ -5,16 +5,17 @@ import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { launchBuyQuote } from './launch-buy.mjs'
 import { setLaunchWalletFees } from './launch-wallet-fees.mjs'
+import { matchesReviewedLaunch } from './launch-wallet-assertions.mjs'
 
 export class DefinitiveLaunchError extends Error {}
 
 // Phantom must receive the transaction before the mint/creator co-signers sign.
-// Capture the reviewed bytes now; never authorize a wallet-modified message.
+// Capture the reviewed bytes; only trailing, constrained safety assertions may differ.
 export function prepareLaunchSigning(tx, launcher, creator, mint) {
   const message = Buffer.from(tx.serializeMessage())
   return async signTransaction => {
     const signed = await signTransaction(tx)
-    if (!(signed instanceof Transaction) || !Buffer.from(signed.serializeMessage()).equals(message) ||
+    if (!matchesReviewedLaunch(message, signed) ||
         !signed.feePayer.equals(launcher)) {
       console.warn('launch_wallet_message_changed', {
         validTransaction: signed instanceof Transaction,
@@ -22,6 +23,7 @@ export function prepareLaunchSigning(tx, launcher, creator, mint) {
         payerChanged: !signed?.feePayer?.equals(launcher),
         expectedPrograms: tx.instructions.map(ix => ix.programId.toBase58()),
         returnedPrograms: signed instanceof Transaction ? signed.instructions.map(ix => ix.programId.toBase58()) : [],
+        returnedInstructionKinds: signed instanceof Transaction ? signed.instructions.map(ix => ix.data[0]) : [],
       })
       throw new DefinitiveLaunchError('Your wallet changed the launch transaction. Refresh this page and review the launch again.')
     }
@@ -29,7 +31,7 @@ export function prepareLaunchSigning(tx, launcher, creator, mint) {
     if (!launcherEntry?.signature || !signed.verifySignatures(false)) {
       throw new DefinitiveLaunchError('Launcher signature missing or invalid')
     }
-    // Only co-sign after checking the user's signature over the exact reviewed message.
+    // Verify the user's signature over the whole returned message, assertions included.
     signed.partialSign(creator, mint)
     if (!signed.verifySignatures()) throw new DefinitiveLaunchError('Launch signatures are incomplete or invalid')
     return { raw: signed.serialize(), signature: bs58.encode(signed.signature) }

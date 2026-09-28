@@ -133,3 +133,42 @@ test('wallet cannot replace reviewed zero priority fee with a paid fee', async (
     return transport(returned)
   }), /wallet changed/)
 })
+
+import { PublicKey, TransactionInstruction } from '@solana/web3.js'
+import { LIGHTHOUSE_PROGRAM } from '../src/launch-wallet-assertions.mjs'
+const assertion = (key, kind = 5) => new TransactionInstruction({
+  programId: new PublicKey(LIGHTHOUSE_PROGRAM), keys: [{pubkey:key,isSigner:false,isWritable:false}],
+  // AssertAccountInfo / Silent / Executable(false): a real read-only assertion.
+  data: Buffer.from([kind,0,7,0,0]),
+})
+test('Phantom trailing assertions survive transport and keep the user signature while server co-signs', async()=>{
+ const f=fixture();let userSig
+ const result=await f.sign(async tx=>{
+  const returned=transport(tx);returned.add(assertion(f.payer.publicKey),assertion(f.mint.publicKey))
+  returned.partialSign(f.payer);userSig=Buffer.from(returned.signature);return transport(returned)
+ })
+ const final=Transaction.from(result.raw)
+ assert.ok(final.verifySignatures());assert.deepEqual(final.signature,userSig)
+ assert.equal(final.instructions.length,f.tx.instructions.length+2);assert.equal(f.cosigns(),2)
+})
+for(const mutation of ['memory write','memory close','unknown opcode','unknown program','new account','new signer','writable escalation','changed transfer','inserted assertion','changed blockhash','extra transfer']){
+ test(`assertion compatibility rejects ${mutation} before co-signing`,async()=>{
+  const f=fixture()
+  await assert.rejects(f.sign(async tx=>{
+   const returned=transport(tx),ix=assertion(f.payer.publicKey)
+   if(mutation==='memory write')ix.data[0]=0
+   if(mutation==='memory close')ix.data[0]=1
+   if(mutation==='unknown opcode')ix.data[0]=255
+   if(mutation==='unknown program')ix.programId=SystemProgram.programId
+   if(mutation==='new account')ix.keys[0].pubkey=Keypair.generate().publicKey
+   if(mutation==='new signer'){ix.keys[0].pubkey=TOKEN_PROGRAM_ID;ix.keys[0].isSigner=true}
+   if(mutation==='writable escalation'){ix.keys[0].pubkey=TOKEN_PROGRAM_ID;ix.keys[0].isWritable=true}
+   if(mutation==='changed transfer')returned.instructions[1].data[4]^=1
+   if(mutation==='changed blockhash')returned.recentBlockhash=Keypair.generate().publicKey.toBase58()
+   if(mutation==='inserted assertion')returned.instructions.unshift(ix);else returned.add(ix)
+   if(mutation==='extra transfer')returned.add(SystemProgram.transfer({fromPubkey:f.payer.publicKey,toPubkey:f.creator.publicKey,lamports:1000}))
+   returned.partialSign(f.payer);return returned
+  }),DefinitiveLaunchError)
+  assert.equal(f.cosigns(),0)
+ })
+}
