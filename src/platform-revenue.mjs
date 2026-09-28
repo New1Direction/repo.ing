@@ -250,7 +250,53 @@ export function createPlatformRevenue({ pool, partnerWallet }) {
     } finally { client.release() }
   }
 
-  return { createPolicy, activatePolicy, allocate, createIntent, reviewIntent, simulateIntent, executeIntent }
+  async function importBuyback({ signature, allocationGroup, createdBy, connection, mint }) {
+    // Records an operator-executed on-chain buyback into the same settled-intent
+    // ledger the reviewed flow uses. The chain receipt is the authority: SOL spent,
+    // destination mint and treasury account all come from the finalized transaction.
+    if (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(signature ?? '')) throw Error('Invalid buyback signature')
+    if (!connection) throw Error('A finalized chain connection is required to import a buyback')
+    const mintKey = mint && new PublicKey(mint)
+    if (!mintKey) throw Error('Canonical buyback mint is required')
+    const client = await pool.connect()
+    try {
+      await client.query('select pg_advisory_lock(hashtextextended($1, 0))', [REVENUE_LOCK])
+      try {
+        const receipt = await connection.getTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+        if (!receipt?.meta || receipt.meta.err) throw Error('Buyback transaction is not a finalized success')
+        const keys = receipt.transaction.message.accountKeys
+        const index = keys.findIndex(key => key.equals(partnerWallet))
+        if (index < 0) throw Error('Custody wallet is absent from the buyback transaction')
+        const spent = BigInt(receipt.meta.preBalances[index]) - BigInt(receipt.meta.postBalances[index]) - BigInt(receipt.meta.fee)
+        if (spent <= 0n) throw Error('Transaction did not spend custody SOL beyond its network fee')
+        const gained = (receipt.meta.postTokenBalances ?? []).find(b => (b.mint?.toBase58?.() ?? b.mint) === mint)
+        const before = gained && (receipt.meta.preTokenBalances ?? []).find(b => b.accountIndex === gained.accountIndex)
+        if (!gained || !before || BigInt(gained.uiTokenAmount.amount) <= BigInt(before.uiTokenAmount.amount))
+          throw Error('No canonical token gain for the custody wallet in this transaction')
+        if (gained.owner !== partnerWallet.toBase58()) throw Error('Bought tokens are held outside the custody wallet')
+        const group = allocationGroup ?? (await client.query(`select allocation_group from platform_revenue_allocations order by created_at desc limit 1`)).rows[0]?.allocation_group
+        const { rows: [policyRow] } = await client.query(`select policy_version from platform_revenue_allocations
+          where allocation_group=$1 limit 1`, [group])
+        if (!policyRow) throw Error('Unknown allocation group')
+        if (spent > await groupBuybackRemaining(client, group)) throw Error('Imported spend exceeds the remaining buyback reserve')
+        const idempotencyKey = `import.${signature.slice(0, 56)}`
+        const { rows: [intent] } = await client.query(`insert into buyback_intents
+          (idempotency_key, allocation_group, amount, wallet_source, destination_mint, destination_token_account,
+           expected_output, policy_version, network, status, expires_at, review, settled_at, signature, created_by)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,'mainnet','settled', now() + interval '30 minutes', $9,
+            to_timestamp($10), $11, $12)
+          on conflict (idempotency_key) do nothing returning id, idempotency_key as "idempotencyKey",
+            amount::text as amount, status, signature`, [idempotencyKey, group, spent.toString(), partnerWallet.toBase58(),
+            mint, keys[gained.accountIndex].toBase58(), gained.uiTokenAmount.amount, policyRow.policy_version,
+            JSON.stringify({ purpose: 'manual-buyback-import', importedBy: createdBy, signature, source: 'operator-executed swap' }),
+            receipt.blockTime, signature, createdBy])
+        if (!intent) throw Error('This buyback is already recorded')
+        return intent
+      } finally { await client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [REVENUE_LOCK]) }
+    } finally { client.release() }
+  }
+
+  return { createPolicy, activatePolicy, allocate, createIntent, reviewIntent, simulateIntent, executeIntent, importBuyback }
 }
 
 export async function reconcilePlatformRevenue(db) {
@@ -264,7 +310,11 @@ export async function reconcilePlatformRevenue(db) {
     where not exists (select 1 from platform_fee_claims c where c.signature = a.claim_signature and c.status='settled')`)
   if (orphans[0].n > 0) problems.push('Allocations reference claims that are not settled')
   const { rows: settled } = await db.query(`select count(*)::int as n from buyback_intents where status='settled'`)
-  if (!buybackExecutionConfigSafe()) { if (settled[0].n > 0) problems.push('Buybacks settled while execution is disabled') }
+  // Imported intents are operator-executed swaps verified against their on-chain
+  // receipts; the execution gate only bounds protocol-initiated buybacks.
+  const { rows: protocolSettled } = await db.query(`select count(*)::int as n from buyback_intents
+    where status='settled' and idempotency_key not like 'import.%'`)
+  if (!buybackExecutionConfigSafe()) { if (protocolSettled[0].n > 0) problems.push('Buybacks settled while execution is disabled') }
   else if (settled[0].n > 0) {
     const { rows: reserve } = await db.query(`select coalesce(sum(buyback_amount),0)::text as b from platform_revenue_allocations`)
     const { rows: spent } = await db.query(`select coalesce(sum(amount),0)::text as s from buyback_intents where status='settled'`)
