@@ -1,6 +1,6 @@
 import { requirePlatformOperator } from '../../lib/platform-operator.mjs'
-import { createPlatformRevenue, platformRevenueSummary, reconcilePlatformRevenue } from '../../../src/platform-revenue.mjs'
-import { database, partnerSigner } from '../../lib/server.mjs'
+import { createPlatformRevenue, platformRevenueSummary } from '../../../src/platform-revenue.mjs'
+import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
 import { platformTreasuryWallet } from '../../../src/platform-dbc-fees.mjs'
 import { assertSameOrigin, githubSessionCookie, readGithubSession, seal, unseal } from '../../lib/auth.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
@@ -10,7 +10,7 @@ const headers = { 'Cache-Control': 'private, no-store' }
 function service() {
   const partner = partnerSigner()
   if (!partner) throw Error('Platform revenue is not configured')
-  return createPlatformRevenue({ pool: database(), partnerWallet: platformTreasuryWallet(partner.publicKey) })
+  return createPlatformRevenue({ pool: database(), partnerWallet: platformTreasuryWallet(partner.publicKey), connection: chain() })
 }
 
 function session(request) {
@@ -37,7 +37,9 @@ export async function GET(request) {
     const allocate = summary.available !== '0' && summary.activePolicy ? seal({
       purpose: 'platform-revenue-allocate', sessionId: session(request).sessionId,
       policyVersion: summary.activePolicy.version, expiresAt: Date.now() + 10 * 60_000 }) : null
-    return Response.json({ ...summary, reconciliation, intents: intents.rows, reviews: { allocate } }, { headers })
+    return Response.json({ ...summary, reconciliation, intents: intents.rows, reviews: { allocate,
+      import: seal({ purpose: 'platform-revenue-intent.import', sessionId: session(request).sessionId,
+        expiresAt: Date.now() + 10 * 60_000 }) } }, { headers })
   } catch { return Response.json({ error: 'Platform revenue is temporarily unavailable. Try refreshing.' }, { status: 503, headers }) }
 }
 
@@ -58,6 +60,13 @@ export async function POST(request) {
         return service().activatePolicy({ version: Number(review.version), createdBy: current.githubUserId })
       },
       allocate: () => service().allocate({ review: reviewed(body, 'allocate', current), createdBy: current.githubUserId }),
+      'intent.import': () => {
+        reviewed(body, 'intent.import', current)
+        // Amount and destination are not reviewable before the fact: the finalized
+        // chain receipt is the authority, verified inside importBuyback.
+        return service().importBuyback({ signature: String(body.signature), allocationGroup: body.allocationGroup ?? null,
+          createdBy: current.githubUserId, mint: OFFICIAL_TOKEN.mint })
+      },
       'intent.create': () => {
         const review = reviewed(body, 'intent.create', current)
         if (review.allocationGroup !== body.allocationGroup || review.amount !== String(body.amount)) throw Error('Review expired')

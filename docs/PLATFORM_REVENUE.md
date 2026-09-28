@@ -29,6 +29,10 @@ Each allocation consumes settled platform fee claims under the advisory lock. A 
 
 Execution requires `REPO_BUYBACK_EXECUTION_ENABLED=true` **plus** a complete, consistent configuration: canonical mint, treasury token account, approved venue, slippage and impact bounds, and min/max size bounds (see `.env.example`). Anything missing or malformed stops execution with an explicit error — no fallbacks. Even with the full gate, no venue implementation exists yet, so execution is impossible by construction until one is reviewed and deployed.
 
+## Manual buyback import (2026-09-28)
+
+Operator-executed swaps are recorded into the same settled-intent ledger through `intent.import` on the reviewed platform-revenue API (UI: `/operations/fees`). The finalized chain receipt is the authority: the server verifies custody-wallet SOL spent (net of network fee), a token gain on the canonical $REPOING mint, and custody ownership of the destination token account, then inserts a settled intent (`idempotency_key` = `import.<signature>`) that decrements the buyback reserve. Imported intents are excluded from the execution-gate reconciliation check, because the gate bounds protocol-initiated buybacks, not operator swaps already proven on-chain. Reserve coverage and spend totals include them.
+
 ## Verification
 
 `tests/platform-revenue.test.mjs` (2 tests) proves the definition of done end to end on the local validator: both revenue phases accrue into the ledger → unclaimed revenue is unspendable → platform claim settles → policy versioning with immutable activation → exact 600/200/200 split (floor buyback and liquidity, treasury remainder) → double allocation rejected by the claim-unique index → overspend, duplicate idempotency key, review-amount mismatch, wrong-state transitions, expired reviews, and policy-version drift all rejected → dry run completes with the gate recorded as absent → execution rejected while $REPO configuration is missing → reconciliation `MATCH` with zero spend. The gate itself is unit-tested against partial and malformed configuration.
