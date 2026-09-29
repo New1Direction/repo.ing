@@ -64,8 +64,9 @@ function assertWallets(signer, destination) {
     throw Error(`Refusing transfer: destination is not the custody wallet ${BUYBACK_WALLETS.custody}`)
 }
 
-// Surplus above KEEP_LAMPORTS (after the network fee) from the partner wallet to custody.
-export async function transferSurplus({ connection, signer, destination = CUSTODY_WALLET, execute, extraLamports = 0n }) {
+// Surplus above KEEP_LAMPORTS (after the network fee) from the partner wallet to custody, capped at capLamports
+// (the buyback share still owed) so the liquidity and treasury shares stay in the partner wallet.
+export async function transferSurplus({ connection, signer, destination = CUSTODY_WALLET, execute, extraLamports = 0n, capLamports = null }) {
   assertWallets(signer, destination)
   const to = new PublicKey(destination)
   const balance = BigInt(await connection.getBalance(signer.publicKey, 'confirmed'))
@@ -76,7 +77,8 @@ export async function transferSurplus({ connection, signer, destination = CUSTOD
   const latest = await connection.getLatestBlockhash('confirmed')
   const fee = (await connection.getFeeForMessage(build(0n, latest.blockhash).compileMessage(), 'confirmed')).value
   if (fee == null) throw Error('Could not price the transfer network fee')
-  const amount = balance + BigInt(extraLamports) - KEEP_LAMPORTS - BigInt(fee)
+  const surplus = balance + BigInt(extraLamports) - KEEP_LAMPORTS - BigInt(fee)
+  const amount = capLamports != null && BigInt(capLamports) < surplus ? BigInt(capLamports) : surplus
   const base = { from: PARTNER_WALLET, to: destination, balance: sol(balance), keep: sol(KEEP_LAMPORTS), fee: String(fee) }
   if (amount < MIN_TRANSFER_LAMPORTS) return { ...base, status: 'skipped-below-minimum', amount: sol(amount > 0n ? amount : 0n) }
   if (!execute) return { ...base, status: 'planned', amount: sol(amount), estimated: extraLamports > 0n }
@@ -135,7 +137,13 @@ export async function runPlatformSweep({ execute = false, dbcEnabled, listFees, 
 
     const landsInPartner = execute ? 0n : report.claims.filter(c => c.status === 'planned' && c.receiver === PARTNER_WALLET)
       .reduce((sum, c) => sum + BigInt(c.available), 0n)
-    report.transfer = await transferSurplus({ connection, signer, execute, extraLamports: landsInPartner })
+    // Only the buyback share still owed moves to custody (signed outstanding = reserve - ahead, plus this run's
+    // planned buyback split in a dry run); liquidity and treasury stay with the partner wallet.
+    const latest = await summary()
+    const outstanding = BigInt(latest.buybackReserve) - BigInt(latest.buybackAhead ?? 0)
+      + (execute || !policy || unallocated <= 0n ? 0n : splitOf(unallocated, policy).buyback)
+    report.transfer = await transferSurplus({ connection, signer, execute, extraLamports: landsInPartner,
+      capLamports: outstanding > 0n ? outstanding : 0n })
     report.ok = true
   } catch (error) { report.error = error.message }
   try {

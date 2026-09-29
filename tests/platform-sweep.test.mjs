@@ -117,7 +117,8 @@ test('dry run performs no claims, allocations or sends and reports the buyback r
   assert.equal(report.allocation.status, 'planned')
   assert.deepEqual(report.allocation.split, { buyback: sol(6_000_000n), liquidity: sol(2_000_000n), treasury: sol(2_000_000n) })
   assert.equal(report.transfer.status, 'planned')
-  assert.equal(report.transfer.amount, sol(1_000_000_000n + 8_000_000n - KEEP_LAMPORTS - 5000n))
+  // Only the buyback share owed moves: current reserve plus this run's planned buyback split.
+  assert.equal(report.transfer.amount, sol(600_000_000n + 6_000_000n))
   assert.deepEqual(report.buyback, { reserve: '0.600000000', ahead: '0.000000000', custodyWallet: CUSTODY_WALLET, custodyBalance: '0.123000000' })
   assert.match(sweepHeadline(report), /BUY BACK: 0\.600000000 SOL of \$REPOING from FgzeY/)
 })
@@ -129,7 +130,7 @@ test('execute claims, allocates only unallocated revenue, transfers, and reports
   const allocations = []
   const report = await runPlatformSweep({ execute: true, dbcEnabled: false, listFees: async () => rows, feeService: fake.feeService,
     summary: summaryFake([summaryState({ available: '3000000' }),
-      summaryState({ allocated: { buyback: '1800000', liquidity: '600000', treasury: '600000' }, buybackReserve: '1800000' })]),
+      summaryState({ allocated: { buyback: '1800000', liquidity: '600000', treasury: '600000' }, buybackReserve: '300000000' })]),
     allocate: async args => { allocations.push(args); return { group: 'g', policyVersion: 1, claims: 1, claimedAmount: '3000000' } },
     connection: chainFake({ send: async () => 'transfer-sig' }), signer: partner, balanceOf: async () => 0 })
   assert.equal(report.ok, true, report.error)
@@ -140,7 +141,8 @@ test('execute claims, allocates only unallocated revenue, transfers, and reports
   assert.equal(allocations[0].review.policyVersion, 1)
   assert.deepEqual(report.allocation.split, { buyback: '0.001800000', liquidity: '0.000600000', treasury: '0.000600000' })
   assert.equal(report.transfer.signature, 'transfer-sig')
-  assert.equal(report.buyback.reserve, '0.001800000')
+  assert.equal(report.transfer.amount, sol(300_000_000n))
+  assert.equal(report.buyback.reserve, '0.300000000')
 
   const idle = await runPlatformSweep({ execute: true, dbcEnabled: false, listFees: async () => [], feeService: fake.feeService,
     summary: summaryFake([summaryState()]), allocate: forbidden('allocate'),
@@ -192,4 +194,13 @@ test('shared reviews keep the operator panel shape', () => {
     { purpose: 'platform-fee-review', sessionId: 's', repoId: '7', phase: 'DAMM', amount: '9', receiver: PARTNER_WALLET, expiresAt: 601000 })
   assert.deepEqual(allocationReview({ sessionId: 's', policyVersion: 2, now: 1000 }),
     { purpose: 'platform-revenue-allocate', sessionId: 's', policyVersion: 2, expiresAt: 601000 })
+})
+
+test('transfer is capped at the buyback share owed so liquidity and treasury stay in the partner wallet', async () => {
+  const capped = await transferSurplus({ connection: chainFake({ balance: 1_000_000_000 }), signer: partner, execute: false, capLamports: 250_000_000n })
+  assert.equal(capped.amount, sol(250_000_000n))
+  const nothingOwed = await transferSurplus({ connection: chainFake({ balance: 1_000_000_000 }), signer: partner, execute: false, capLamports: 0n })
+  assert.equal(nothingOwed.status, 'skipped-below-minimum')
+  const surplusSmaller = await transferSurplus({ connection: chainFake({ balance: 100_000_000 }), signer: partner, execute: false, capLamports: 900_000_000n })
+  assert.equal(surplusSmaller.amount, sol(100_000_000n - KEEP_LAMPORTS - 5000n))
 })
