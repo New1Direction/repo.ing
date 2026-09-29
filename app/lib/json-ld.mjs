@@ -1,3 +1,4 @@
+import { OFFICIAL_TOKEN } from './official-token.mjs'
 export const SITE_URL = 'https://repo.ing'
 const SOURCE_URL = 'https://github.com/New1Direction/repo.ing'
 const ORGANIZATION_ID = `${SITE_URL}/#organization`
@@ -13,7 +14,7 @@ export function serializeJsonLd(data) {
 export function siteJsonLd(lang = 'en') {
   return { '@context': 'https://schema.org', '@graph': [
     { '@type': 'Organization', '@id': ORGANIZATION_ID, name: 'repo.ing', url: SITE_URL, logo: `${SITE_URL}/apple-icon.png`,
-      slogan: 'The market layer for open source.', sameAs: [SOURCE_URL] },
+      slogan: 'The market layer for open source.', sameAs: [SOURCE_URL, OFFICIAL_TOKEN.xUrl] },
     { '@type': 'WebSite', '@id': WEBSITE_ID, name: 'repo.ing', url: SITE_URL, inLanguage: lang === 'ja' ? ['en', 'ja'] : 'en',
       description: 'The market layer for open source. Launch and trade tokens for public GitHub repositories — every trade pays the builders.',
       publisher: { '@id': ORGANIZATION_ID } },

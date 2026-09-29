@@ -3,6 +3,7 @@ import { MarketLink } from './market-link'
 import { LoadingSignal } from './loading-signal'
 import { ArrowUpRight, Check, ChevronRight, Star, GitFork, Clock3, Code2 } from 'lucide-react'
 import { GithubMark } from './github-mark'
+import { XMark } from './x-mark'
 import { BrandMark } from './brand-mark'
 import { WalletButton } from './wallet'
 import { ThemeToggle } from './theme-toggle'
@@ -25,7 +26,7 @@ export function AppHeader({ active = '' }) {
     <div className="header-actions"><WatchNotifications/><ThemeToggle/><WalletButton /></div>
   </div></header>
 }
-export function Footer() { return <footer className="footer"><div className="footer-inner"><Link href="/" className="footer-brand"><BrandMark size={29}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link><span>The market layer for open source.</span><div className="footer-spacer"/><Link href="/stats">Stats</Link><Link href="/how-it-works">How it works</Link><Link href="/about">About</Link><Link href="/ja" lang="ja" hrefLang="ja">日本語</Link><a href={OFFICIAL_TOKEN.githubUrl} target="_blank" rel="noreferrer" aria-label="repo.ing on GitHub"><GithubMark size={22}/></a></div></footer> }
+export function Footer() { return <footer className="footer"><div className="footer-inner"><Link href="/" className="footer-brand"><BrandMark size={29}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link><span>The market layer for open source.</span><div className="footer-spacer"/><Link href="/stats">Stats</Link><Link href="/how-it-works">How it works</Link><Link href="/about">About</Link><Link href="/ja" lang="ja" hrefLang="ja">日本語</Link><a href={OFFICIAL_TOKEN.xUrl} target="_blank" rel="noreferrer" aria-label="repo.ing on X"><XMark size={19}/></a><a href={OFFICIAL_TOKEN.githubUrl} target="_blank" rel="noreferrer" aria-label="repo.ing on GitHub"><GithubMark size={22}/></a></div></footer> }
 export function Button({ children, variant = 'outline', className = '', ...props }) { return <button className={`button ${variant} ${className}`} {...props}>{children}</button> }
 export function Badge({ children, tone = 'muted' }) { return <span className={`badge ${tone}`}>{tone === 'verified' && <Check size={12} strokeWidth={3}/>}<span>{children}</span></span> }
 function githubAvatarUrl(value, width) {

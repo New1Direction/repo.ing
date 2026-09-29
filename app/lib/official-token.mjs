@@ -5,5 +5,6 @@ export const OFFICIAL_TOKEN = Object.freeze({
   mint: '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be',
   marketPath: '/token/59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be',
   githubUrl: 'https://github.com/New1Direction/repo.ing',
+  xUrl: 'https://x.com/repodoting',
   teamWallet: '4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce',
 })
