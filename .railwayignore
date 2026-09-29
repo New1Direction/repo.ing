@@ -6,8 +6,8 @@ AGENTS.md
 CLAUDE.md
 docs/
 tests/
-videos/
-video/
+/videos/
+/video/
 *.zip
 secrets/
 .secrets/
