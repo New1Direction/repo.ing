@@ -58,7 +58,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
       if(!(await db.query('select pg_try_advisory_lock(hashtextextended($1,0)) as locked',[`graduation:${repoId}`])).rows[0].locked)return {repoId,status:'BUSY',alerts}
       try {
         const {rows:[previous]}=await db.query('select * from graduation_observations where github_repo_id=$1',[repoId])
-        const state=await readGraduationState({connection,verification,config,market,env})
+        const state=await readGraduationState({connection,verification,config,market,env,db:pool})
         const {rows:[existing]}=await db.query('select signature from graduation_events where github_repo_id=$1',[repoId])
         if(existing&&!state.migration)throw Error('GRADUATION_STATE_DISAGREEMENT')
         const reconciliation=await reconciler.reconcile(repoId)
@@ -82,7 +82,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         }
         if(state.p3.eligible){
           try {
-            const snapshot=await createGraduatedFees({connection,config}).read(market)
+            const snapshot=await createGraduatedFees({connection,config,db:pool}).read(market)
             await reinvestQuote(connection,{amm:snapshot.amm,state:snapshot.poolState,pool:snapshot.pool},state.p3.maximumInvestment)
           }catch{state.p3={eligible:false,reason:'Bounded liquidity quote unavailable; wait for a fresh review'}}
         }

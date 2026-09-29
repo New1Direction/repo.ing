@@ -45,7 +45,7 @@ export async function agreedFinalizedTransaction(connection,verification,signatu
 }
 
 // No in-process estimate/cache. The worker persists only independently verified finalized observations.
-export async function readGraduationState({connection,verification,config,market,env=process.env}) {
+export async function readGraduationState({connection,verification,config,market,env=process.env,db=null}) {
   if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
   const local=[connection,verification].every(c=>/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(c.rpcEndpoint))
   if(connection.rpcEndpoint===verification.rpcEndpoint&&!(local&&env.NODE_ENV!=='production'))throw Error('INDEPENDENT_RPC_REQUIRED')
@@ -71,7 +71,7 @@ export async function readGraduationState({connection,verification,config,market
     slots:reads.map(r=>r.snapshot.context.slot),accountEvidence:reads[0].evidence,destination:null}
   assertFreshGraduation(value)
   if(!state.isMigrated)return value
-  const snapshots=await Promise.all([connection,verification].map(c=>createGraduatedFees({connection:c,config}).read(market,{poolState:state},fixed)))
+  const snapshots=await Promise.all([connection,verification].map(c=>createGraduatedFees({connection:c,config,db}).read(market,{poolState:state},fixed)))
   if(snapshots.some(s=>!s))throw Error('GRADUATION_STATE_DISAGREEMENT')
   agreeGraduation(...snapshots.map(s=>({evidence:s.evidence,partner:s.partner.evidence})))
   const g=snapshots[0]

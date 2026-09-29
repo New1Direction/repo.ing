@@ -27,11 +27,63 @@ export function migrationPosition(transaction, market, config, target) {
   return null
 }
 
-export function createGraduatedFees({ connection, config }) {
+// The migrate instruction must name the curve, and a curve can migrate only once. Walking the
+// settled curve newest-first finds it after a handful of post-migration txs, regardless of how
+// busy the DAMM pool is or how many pre-migration txs touched the derivable pool address.
+async function findMigration(connection, loadTransaction, market, configKey, target) {
+  const curve = new PublicKey(market.pool)
+  let before
+  for (;;) {
+    const page = await connection.getSignaturesForAddress(curve, { limit: 1000, ...(before ? { before } : {}) }, 'finalized')
+    for (const item of page) {
+      if (item.err) continue
+      const tx = await loadTransaction(connection, item.signature)
+      const match = migrationPosition(tx, market, configKey, target)
+      if (match) return { ...match, signature: item.signature, slot: tx.slot }
+    }
+    if (page.length < 1000) return null
+    before = page.at(-1).signature
+  }
+}
+
+const proofRow = (market, configKey, target, proof) => ({ curve: market.pool, config: configKey.toBase58(), mint: market.mint,
+  pool: target.toBase58(), signature: proof.signature, slot: String(proof.slot),
+  creatorPosition: proof.position.toBase58(), creatorNftAccount: proof.nftAccount.toBase58(), creatorNftMint: proof.nftMint.toBase58(),
+  partnerPosition: proof.partner.position.toBase58(), partnerNftAccount: proof.partner.nftAccount.toBase58(), partnerNftMint: proof.partner.nftMint.toBase58() })
+const sameRow = (a, b) => Object.keys(a).every(key => String(a[key]) === String(b?.[key]))
+const PROOF_COLUMNS = `curve, config, mint, pool, signature, slot::text as slot, creator_position as "creatorPosition",
+  creator_nft_account as "creatorNftAccount", creator_nft_mint as "creatorNftMint", partner_position as "partnerPosition",
+  partner_nft_account as "partnerNftAccount", partner_nft_mint as "partnerNftMint"`
+
+export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const amm = new CpAmm(connection)
   const resolve = createMarketConfigResolver(config)
   const proven = verifiedMigrations
+  const repoId = market => market.githubRepoId ?? market.repoId
+  // A stored proof is only a pointer: its signature is reloaded from finalized chain state and must
+  // reproduce every stored account, so a stale or tampered row fails closed instead of paying.
+  async function storedProof(market, configKey, target) {
+    if (!db || repoId(market) == null) return null
+    const { rows: [row] } = await db.query(`select ${PROOF_COLUMNS} from graduated_migration_proofs where github_repo_id=$1`, [String(repoId(market))])
+    if (!row) return null
+    const tx = await loadTransaction(connection, row.signature)
+    const match = migrationPosition(tx, market, configKey, target)
+    const proof = match && { ...match, signature: row.signature, slot: tx.slot }
+    if (!proof || !sameRow(proofRow(market, configKey, target, proof), row)) throw Error('Stored graduated migration proof mismatch')
+    return { ...proof, stored: true }
+  }
+  async function storeProof(market, configKey, target, proof) {
+    if (!db || repoId(market) == null) return proof
+    const row = proofRow(market, configKey, target, proof)
+    await db.query(`insert into graduated_migration_proofs (github_repo_id, curve, config, mint, pool, signature, slot, creator_position,
+      creator_nft_account, creator_nft_mint, partner_position, partner_nft_account, partner_nft_mint)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) on conflict (github_repo_id) do nothing`,
+    [String(repoId(market)), ...Object.values(row)])
+    const { rows: [stored] } = await db.query(`select ${PROOF_COLUMNS} from graduated_migration_proofs where github_repo_id=$1`, [String(repoId(market))])
+    if (!sameRow(row, stored)) throw Error('Conflicting graduated migration proof; review required')
+    return { ...proof, stored: true }
+  }
   async function read(market, suppliedState, suppliedFixed) {
     const configKey = resolve(market)
     const state = suppliedState ?? await dbc.state.getPool(market.pool)
@@ -46,24 +98,12 @@ export function createGraduatedFees({ connection, config }) {
     const target = deriveDammV2PoolAddress(feeConfig, new PublicKey(market.mint), NATIVE_MINT)
     const cacheKey = `${connection.rpcEndpoint}:${market.pool}`
     let proof = proven.get(cacheKey)
+    if (!proof) proof = await storedProof(market, configKey, target)
     if (!proof) {
-      // The target pool is created by the canonical migration. Find that finalized instruction,
-      // following every page rather than trusting a recent transaction or a supplied position.
-      let before, oldest = []
-      for (;;) {
-        const page = await connection.getSignaturesForAddress(target, { limit: 1000, ...(before ? { before } : {}) }, 'finalized')
-        if (!page.length) break
-        oldest = page
-        if (page.length < 1000) break
-        before = page.at(-1).signature
-      }
-      for (const item of [...oldest].reverse()) {
-        if (item.err) continue
-        const tx = await loadFinalizedTransaction(connection, item.signature)
-        const match = migrationPosition(tx, market, configKey, target)
-        if (match) { proof = { ...match, signature: item.signature }; break }
-      }
+      proof = await findMigration(connection, loadTransaction, market, configKey, target)
       if (!proof) throw Error('Finalized canonical DAMM migration evidence unavailable')
+    }
+    if (!proven.has(cacheKey)) {
       if (proven.size >= 1000) proven.delete(proven.keys().next().value)
       proven.set(cacheKey, proof)
     }
@@ -93,6 +133,8 @@ export function createGraduatedFees({ connection, config }) {
     const available = BigInt(fees.feeTokenB.toString()), claimed = BigInt(positionState.metrics.totalClaimedBFee.toString())
     const partnerAvailable = BigInt(partnerFees.feeTokenB.toString()), partnerClaimed = BigInt(partnerState.metrics.totalClaimedBFee.toString())
     if (available < 0n || claimed < 0n || partnerAvailable < 0n || partnerClaimed < 0n) throw Error('Negative graduated fee state')
+    // Persist only a proof that was just proven from finalized history and passed every current check.
+    if (!proof.stored && db) proven.set(cacheKey, proof = await storeProof(market, configKey, target, proof))
     const evidence = { migration: proof.signature, accounts: snapshot.value.slice(0, 3).map((info, i) => ({
       address: accounts[i].toBase58(), owner: info.owner.toBase58(), data: info.data.toString('base64') })) }
     const partnerEvidence = { migration: proof.signature, accounts: [target, proof.partner.position, proof.partner.nftAccount]

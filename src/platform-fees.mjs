@@ -19,7 +19,7 @@ export async function platformFeeRecord(pool, repoId) {
 }
 
 export function createPlatformFees({ pool, connection, config, partner }) {
-  const graduatedFees = createGraduatedFees({ connection, config })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool })
 
   async function status(repoId) {
     const record = await platformFeeRecord(pool, repoId)

@@ -10,7 +10,7 @@ import { createGraduatedFees } from './graduated-fees.mjs'
 
 export function createReconciler({ pool, connection, config }) {
   const resolveConfig = createMarketConfigResolver(config)
-  const graduatedFees = createGraduatedFees({ connection, config })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
 
   const reconcile = async githubRepoId => {

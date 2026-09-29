@@ -26,8 +26,8 @@ export async function agreedTransaction(connection, verification, signature) {
   agree(...receipts.map(tx => tx && {slot: tx.slot, message: tx.transaction.message.serialize().toString('base64'), signatures: tx.transaction.signatures, meta: tx.meta}))
   return receipts[0]
 }
-export async function canonicalReinvestPool(connection, verification, config, market) {
-  const snapshots = await Promise.all([connection, verification].map(c => createGraduatedFees({connection: c, config}).read(market)))
+export async function canonicalReinvestPool(connection, verification, config, market, db = null) {
+  const snapshots = await Promise.all([connection, verification].map(c => createGraduatedFees({connection: c, config, db}).read(market)))
   if (snapshots.some(s => !s)) throw Error('Repository has not graduated')
   const [a,b] = snapshots
   agree(a.pool.toBase58(), b.pool.toBase58())

@@ -34,7 +34,7 @@ export function allocationReserveValid({ market, configKey, state, fixed, mint }
 export function createBuilderAllocation({ pool, connection, config, creator, githubVerifier }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const resolve = createMarketConfigResolver(config)
-  const graduation = createGraduatedFees({ connection, config })
+  const graduation = createGraduatedFees({ connection, config, db: pool })
   async function inspect(market) {
     const configKey = resolve(market)
     if (!allocationEnabled(configKey.toBase58())) throw Error('Allocation configuration is not approved')
