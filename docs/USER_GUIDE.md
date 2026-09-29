@@ -55,7 +55,7 @@ Open a market from Explore, a direct market link, or your wallet holdings. Check
 
 Slippage allowance and price impact describe different things. Slippage sets a minimum output relative to the quote; price impact describes how the proposed trade moves its execution price relative to the pool's spot price. A 1% slippage setting does not limit a large trade's price impact to 1%.
 
-For a graduated market, use **Continue on Meteora** once repo.ing has verified its destination pool. Review the quote and fees there. The native price chart includes DBC history and verified DAMM swap prices. Verified DAMM volume is included in the chart’s total volume, graduated-market status, and protocol analytics; graduated execution takes place on Meteora.
+For a graduated market, the same Buy/Sell panel trades in the repository’s verified Meteora DAMM v2 pool once repo.ing has verified the destination from the curve’s finalized migration. Quotes, the 1% minimum-receive limit, fees and network costs are shown the same way, your wallet signs the exact swap, and the receipt is checked against the canonical pool before it is shown as confirmed. **View pool on Meteora** stays available. The native price chart includes DBC history and verified DAMM swap prices, which appear once the DAMM trade indexer records the finalized swap.
 
 ## Claim builder fees
 

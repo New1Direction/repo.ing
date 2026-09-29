@@ -99,7 +99,9 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
     if (!sameRow(row, stored)) throw Error('Conflicting graduated migration proof; review required')
     return { ...proof, stored: true }
   }
-  async function read(market, suppliedState, suppliedFixed) {
+  // The canonical DAMM pool is derived from the fixed config and must be named by the curve's own
+  // finalized migrate instruction. Trading and fee accounting share this proof.
+  async function destination(market, suppliedState, suppliedFixed) {
     const configKey = resolve(market)
     const state = suppliedState ?? await dbc.state.getPool(market.pool)
     const fixed = suppliedFixed ?? await dbc.state.getPoolConfig(configKey)
@@ -122,6 +124,13 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
       if (proven.size >= 1000) proven.delete(proven.keys().next().value)
       proven.set(cacheKey, proof)
     }
+    return { configKey, fixed, target, proof, cacheKey }
+  }
+  async function read(market, suppliedState, suppliedFixed) {
+    const found = await destination(market, suppliedState, suppliedFixed)
+    if (!found) return null
+    const { configKey, fixed, target, cacheKey } = found
+    let { proof } = found
     // One finalized bank snapshot avoids mixing fee growth and claim checkpoints from different slots.
     const accounts = [target, proof.position, proof.nftAccount, proof.partner.position, proof.partner.nftAccount]
     const snapshot = await connection.getMultipleAccountsInfoAndContext(accounts, 'finalized')
@@ -162,7 +171,7 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
         available: partnerAvailable, claimed: partnerClaimed, earned: partnerAvailable + partnerClaimed, slot: snapshot.context.slot,
         evidence: partnerEvidence, hash: createHash('sha256').update(JSON.stringify(partnerEvidence)).digest('hex'), amm } }
   }
-  return { read }
+  return { read, destination }
 }
 
 // Caller holds the repository advisory lock. Credits are append-only finalized account evidence,

@@ -67,13 +67,16 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const { wallet, connect, provider } = useWallet()
   const router = useRouter()
   const lastChartRefreshSignature = useRef(null)
+  // A graduated market trades in its verified DAMM pool; migration without a verified destination stays closed.
+  const graduatedPool = curve?.status === 'graduated' ? curve.destination ?? null : null
+  const tradingOpen = !curve || curve.status === 'active' || Boolean(graduatedPool)
 
   useEffect(() => {
     if (!panelRef.current || !window.IntersectionObserver) return
     const observer = new IntersectionObserver(([entry]) => setPanelVisible(entry.isIntersecting), { threshold: 0.1 })
     observer.observe(panelRef.current)
     return () => observer.disconnect()
-  }, [curve?.status])
+  }, [tradingOpen])
 
   function openTrade(next) {
     if (busy) return
@@ -144,7 +147,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     setQuoteStatus('')
     setCostPreview(null)
     if (!busy) setPreparedCosts(null)
-    if (!available || (curve && curve.status !== 'active') || !amount || busy) { setLiveQuote(null); return }
+    if (!available || !tradingOpen || !amount || busy) { setLiveQuote(null); return }
     let input
     try { input = parseUnits(amount, direction === 'buy' ? 9 : 6) } catch (error) { setLiveQuote(null); setQuoteStatus(error.message); return }
     if (direction === 'sell' && balance !== null && BigInt(input) > BigInt(balance)) {
@@ -168,7 +171,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       })
     }, 250)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [amount, available, balance, busy, direction, market.repoId, solBalance, curve?.status, quoteRefresh, wallet])
+  }, [amount, available, balance, busy, direction, market.repoId, solBalance, tradingOpen, quoteRefresh, wallet])
 
   useEffect(() => {
     if (direction !== 'buy' || !wallet) {
@@ -290,12 +293,13 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const costShortfall = costs && BigInt(costs.shortfall) > 0n
   let usdAmount = null
   try { usdAmount = formatUsdEstimate(direction === 'buy' && amount ? parseUnits(amount, 9) : liveQuote?.outputAmount, usdPerSol) } catch { /* Wait for a valid amount. */ }
-  if (curve && curve.status !== 'active' && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>{curve.destination ? 'Continue trading in the verified Meteora pool. Review the current quote and fees there before signing.' : 'Bonding-curve trades have ended. We are checking the destination pool; this page updates automatically.'}</p>{curve.destination && <a className="button primary" href={curve.destination.url} target="_blank" rel="noopener noreferrer">Continue on Meteora ↗</a>}</div>
+  if (!tradingOpen && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>Bonding-curve trades have ended. We are checking the destination pool; trading resumes here once it is verified. This page updates automatically.</p></div>
   return <><div className="trade-card" id="trade-panel" ref={panelRef} tabIndex={-1} aria-label={`Trade ${market.symbol}`}>
     <div className="trade-tabs" role="tablist" aria-label="Trade direction">
       <button disabled={busy} role="tab" aria-selected={direction === 'buy'} className={direction === 'buy' ? 'selected' : ''} onClick={() => selectDirection('buy')}>Buy</button>
       <button disabled={busy} role="tab" aria-selected={direction === 'sell'} className={direction === 'sell' ? 'selected' : ''} onClick={() => selectDirection('sell')}>Sell</button>
     </div>
+    {graduatedPool && <p className="trade-venue-note">Trading in the graduated Meteora pool. <a href={graduatedPool.url} target="_blank" rel="noopener noreferrer">View pool on Meteora ↗</a></p>}
     <form onSubmit={submit} aria-busy={busy}>
       <label htmlFor="trade-amount">You {direction === 'buy' ? 'pay' : 'sell'}</label>
       <div className="asset-input"><input id="trade-amount" disabled={busy} aria-describedby="trade-quote-hint" inputMode="decimal" autoComplete="off" placeholder="0.00" value={amount} onChange={e => { setAmount(e.target.value); setMinimumOut(null); setLiveQuote(null) }} required/><span>{direction === 'buy' ? 'SOL' : market.symbol}</span></div>
@@ -335,7 +339,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
         {costShortfall && <p className="trade-funding-note" role="status">You need ≈ {formatUnits((BigInt(costs.shortfall) + 999n) / 1000n * 1000n)} more SOL to cover this trade.</p>}
       </div>}
       {liveQuote?.priceImpactPercent >= 5 && <p className="trade-impact-warning" role="status">High price impact. This trade moves the execution price by about {liveQuote.priceImpactPercent.toFixed(2)}% before fees. Consider a smaller amount.</p>}
-      <button className="button primary trade-submit" type="submit" disabled={busy || !available || (curve && curve.status !== 'active') || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
+      <button className="button primary trade-submit" type="submit" disabled={busy || !available || !tradingOpen || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
       <TransactionStatus stage={busy ? stage : ''}/>
     </form>
     <TradeResultCard result={resultCard} symbol={market.symbol} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)}/>
