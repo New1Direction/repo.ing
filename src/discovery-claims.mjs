@@ -6,6 +6,7 @@ import { Keypair, PublicKey, Transaction, TransactionInstruction } from '@solana
 import { ACCOUNT_SIZE, NATIVE_MINT, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { CollectFeeMode, DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { discoverySummary } from './discovery-rewards.mjs'
+import { provablyExpiredUnlanded } from './expiry-proof.mjs'
 
 const PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const MEMO = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
@@ -79,7 +80,7 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
     const status = (await connection.getSignatureStatuses([claim.signature], { searchTransactionHistory: true })).value[0]
     // A processed/confirmed result is still ambiguous, even after blockhash
     // expiry. Never replace it until finalized transaction evidence is available.
-    if (!status && await connection.getBlockHeight('finalized') > Number(claim.last_valid_block_height)) {
+    if (!status && await provablyExpiredUnlanded(connection, claim.signature, claim.last_valid_block_height)) {
       return abort(db, claim, 'Blockhash expired with no transaction in finalized history')
     }
     return { id: claim.id, status: 'pending', signature: claim.signature, amount: claim.amount }
@@ -219,7 +220,10 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
     const results = []
     for (const row of rows) {
       try { results.push({ repoId: row.repoId, ...await recover(row.repoId) }) }
-      catch { results.push({ repoId: row.repoId, status: 'review' }) }
+      catch (error) {
+        console.error('discovery recovery needs review', { repo: row.repoId, error: error.message })
+        results.push({ repoId: row.repoId, status: 'review' })
+      }
     }
     return results
   }

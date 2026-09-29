@@ -1,6 +1,7 @@
 import bs58 from 'bs58'
 import { PublicKey, Transaction } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { provablyExpiredUnlanded } from './expiry-proof.mjs'
 
 const AMOUNT = 10_000_000_000_000n
 export async function settleAllocation(client, connection, intent) {
@@ -50,7 +51,7 @@ export function createAllocationRecovery({ pool, connection }) {
             const status = (await connection.getSignatureStatuses([intent.signature], { searchTransactionHistory: true })).value[0]
             if (!status && BigInt(await connection.getBlockHeight('finalized')) > BigInt(intent.expiry)) {
               receipt = await settleAllocation(client, connection, intent)
-              if (!receipt && !(await connection.getSignatureStatuses([intent.signature], { searchTransactionHistory: true })).value[0]) {
+              if (!receipt && await provablyExpiredUnlanded(connection, intent.signature, intent.expiry)) {
                 await client.query("update builder_allocation_claims set status='aborted',resolution_reason='Expired without chain evidence' where signature=$1 and status='pending'", [intent.signature])
                 receipt = { status: 'aborted' }
               }
@@ -58,7 +59,10 @@ export function createAllocationRecovery({ pool, connection }) {
           }
           results.push({ githubRepoId: row.repo, status: receipt?.status ?? 'pending', signature: intent.signature })
         } finally { await client.query('select pg_advisory_unlock($1::bigint)', [row.repo]) }
-      } catch { results.push({ githubRepoId: row.repo, status: 'review' }) }
+      } catch (error) {
+        console.error('allocation recovery needs review', { repo: row.repo, error: error.message })
+        results.push({ githubRepoId: row.repo, status: 'review' })
+      }
       finally { client.release() }
     }
     return results
