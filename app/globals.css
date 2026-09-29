@@ -549,3 +549,5 @@
 @media(prefers-reduced-motion:reduce){.flow-description,.launch-token-card,.launch-commit-line{animation:none}.flow-node{transition:none}}
 .repo-name-heading{display:flex;margin:0;font:inherit;letter-spacing:inherit}
 .not-found-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+
+.flywheel-video{margin:48px 0}.flywheel-video h2{font-size:25px;margin:0 0 14px}.flywheel-video video{display:block;width:100%;height:auto;aspect-ratio:16/9;border-radius:12px;border:1px solid var(--border);background:#0b0f0e}.flywheel-video p{color:var(--muted);font-size:14px;max-width:760px;margin:12px 0 0}
