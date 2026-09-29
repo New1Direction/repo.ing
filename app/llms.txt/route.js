@@ -48,6 +48,7 @@ The tools prepare launch reviews only. They cannot trade, claim, sign, or submit
 
 ## Optional
 
+- [X](https://x.com/repodoting): Official repo.ing announcements.
 - [Source code](https://github.com/New1Direction/repo.ing): Open source under AGPL-3.0-only.
 - [Agent launch documentation](https://github.com/New1Direction/repo.ing/blob/main/docs/AGENT_LAUNCH.md): MCP setup, tool inputs, and the signing boundary.
 `

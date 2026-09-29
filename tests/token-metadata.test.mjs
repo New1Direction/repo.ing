@@ -12,7 +12,8 @@ test('metadata names the repository and links the market and GitHub for aggregat
   assert.equal(json.external_url, `${origin}/token/${mint}`)
   assert.equal(json.website, `${origin}/token/${mint}`)
   assert.equal(json.github, 'https://github.com/New1Direction/repo.ing')
-  assert.deepEqual(json.extensions, { website: json.website, github: json.github })
+  assert.equal(json.twitter, 'https://x.com/repodoting')
+  assert.deepEqual(json.extensions, { website: json.website, github: json.github, twitter: json.twitter })
   assert.equal(json.image, `${origin}/api/token-image/${mint}`)
 })
 
@@ -21,4 +22,10 @@ test('metadata without a synced repository keeps the numeric-id description and 
   assert.equal(json.description, 'Token for public GitHub repository 42 on repo.ing.')
   assert.equal(json.github, undefined)
   assert.equal(json.image, `${origin}/api/repo-logo/42?v=3`)
+})
+
+test('community tokens for other repositories never carry repo.ing\'s X account', () => {
+  const json = tokenMetadataJson({ mint: 'E859MeM9CYWAoQGcNLQYgg8qHPim1EQN4LYqveubrJ6A', origin, market: { repoId: '9', name: 'x', symbol: 'X', hasImage: true, fullName: 'someone/project' } })
+  assert.equal(json.twitter, undefined)
+  assert.equal(json.extensions.twitter, undefined)
 })

@@ -1,3 +1,4 @@
+import { OFFICIAL_TOKEN } from './official-token.mjs'
 // Off-chain token metadata (Metaplex JSON). Wallets, DEX Screener and Jupiter read the
 // description and links from here, so it names the repository and links back to it.
 export function tokenMetadataJson({ mint, origin, market }) {
@@ -8,7 +9,9 @@ export function tokenMetadataJson({ mint, origin, market }) {
       `Trading fees pay the repository's builders in SOL. ` +
       `Community launch: does not imply endorsement by the repository's maintainers.`
     : `Token for public GitHub repository ${market.repoId} on repo.ing.`
-  const links = { website: marketUrl, ...(githubUrl && { github: githubUrl }) }
+  // Only repo.ing's own token carries repo.ing's X account; other tokens are community launches for
+  // other people's repositories, and linking our account would read as an endorsement.
+  const links = { website: marketUrl, ...(githubUrl && { github: githubUrl }), ...(mint === OFFICIAL_TOKEN.mint && { twitter: OFFICIAL_TOKEN.xUrl }) }
   return {
     name: market.name,
     symbol: market.symbol,
