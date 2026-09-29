@@ -82,3 +82,9 @@ test('preview text is collapsed and clipped; slow or failing sources settle to t
   assert.equal(await settleWithin(Promise.reject(Error('down')), 50, 'fallback'), 'fallback')
   assert.equal(await settleWithin(new Promise(() => {}), 10, 'late'), 'late')
 })
+
+test('lifetime buyback summary counts platform and team receipts together', () => {
+  const all = buybackSummary(BUYBACK_RECEIPTS, null), custody = buybackSummary(BUYBACK_RECEIPTS)
+  assert.equal(all.count, BUYBACK_RECEIPTS.length)
+  assert.ok(BigInt(all.lamports) > BigInt(custody.lamports))
+})
