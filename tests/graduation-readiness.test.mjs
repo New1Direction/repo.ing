@@ -89,7 +89,9 @@ test('P5 detects one real local graduation, indexes actual DAMM trades, alerts a
   await pool.query('insert into platform_fee_events(github_repo_id,pool,position,slot,amount_base_units,cumulative_earned,cumulative_claimed,evidence_hash,evidence) values($1,$2,$3,1,1,999999999,0,$4,$5)',[repoId,snapshot.pool.toBase58(),snapshot.partner.position.toBase58(),'x'.repeat(64),'{}'])
   const mismatch=await monitor().runOnce()
   assert.equal(mismatch[0].reconciliation,'MISMATCH');assert.ok(mismatch[0].alerts.some(a=>a.kind==='RECONCILIATION_MISMATCH'))
-  const mismatchedRow=(await pool.query('select * from graduation_observations')).rows[0]
+  // Same shape the public curve route reads: the durable migration proof hash comes from graduation_events.
+  const mismatchedRow=(await pool.query(`select o.*,e.evidence_hash as migration_evidence_hash from graduation_observations o
+    left join graduation_events e on e.github_repo_id=o.github_repo_id`)).rows[0]
   // The operator alert above still fires; public progress stays visible for proven graduation.
   assert.equal(publicGraduation(mismatchedRow).phase,'GRADUATED')
   await pool.query('delete from platform_fee_events where evidence_hash=$1',['x'.repeat(64)])

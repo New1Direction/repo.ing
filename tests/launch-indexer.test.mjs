@@ -76,20 +76,36 @@ test('finalized launch indexes, survives process restart, and reconciles contrad
     assert.equal((await indexer.reconcileMarket({ ...restarted, launchSlot: restarted.launchSlot + 1n })).state, 'mismatch')
 
     const db = drizzle(pool)
-    await db.update(markets).set({ mint: wrongMint }).where(eq(markets.id, first.id))
+    // Simulate out-of-band row corruption. The protect_indexed_discoverer trigger (0017) rightly
+    // forbids rewriting an indexed launch, so bypass triggers for these fixture writes only.
+    const tamper = async values => {
+      const client = await pool.connect()
+      try {
+        await client.query('begin')
+        await client.query('set local session_replication_role = replica')
+        await drizzle(client).update(markets).set(values).where(eq(markets.id, first.id))
+        await client.query('commit')
+      } catch (error) {
+        await client.query('rollback')
+        throw error
+      } finally {
+        client.release()
+      }
+    }
+    await tamper({ mint: wrongMint })
     assert.equal((await indexer.runOnce())[0].state, 'mismatch')
     assert.equal((await db.select().from(markets))[0].mint, wrongMint)
-    await db.update(markets).set({ mint: first.mint, pool: Keypair.generate().publicKey.toBase58() }).where(eq(markets.id, first.id))
+    await tamper({ mint: first.mint, pool: Keypair.generate().publicKey.toBase58() })
     assert.equal((await indexer.runOnce())[0].state, 'mismatch')
-    await db.update(markets).set({ pool: first.pool, launchSignature: 'bad' }).where(eq(markets.id, first.id))
+    await tamper({ pool: first.pool, launchSignature: 'bad' })
     assert.equal((await indexer.runOnce())[0].state, 'invalid')
     assert.equal((await db.select().from(markets))[0].launchSignature, 'bad')
-    await db.update(markets).set({ launchSignature: first.launchSignature }).where(eq(markets.id, first.id))
-    await db.update(markets).set({ status: 'ambiguous', launchSignature: null, launchSlot: null,
-      launchFinality: null, indexedAt: null, lastVerifiedAt: null }).where(eq(markets.id, first.id))
+    await tamper({ launchSignature: first.launchSignature })
+    await tamper({ status: 'ambiguous', launchSignature: null, launchSlot: null,
+      launchFinality: null, indexedAt: null, lastVerifiedAt: null })
     assert.equal((await indexer.runOnce())[0].state, 'incomplete')
     assert.equal((await db.select().from(markets))[0].status, 'ambiguous')
-    await db.update(markets).set({ launchSignature: first.launchSignature }).where(eq(markets.id, first.id))
+    await tamper({ launchSignature: first.launchSignature })
     assert.equal((await indexer.runOnce())[0].state, 'recovered')
     const recovered = (await db.select().from(markets))[0]
     assert.equal(recovered.status, 'confirmed')
