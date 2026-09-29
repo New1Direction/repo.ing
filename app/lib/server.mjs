@@ -6,6 +6,7 @@ import bs58 from 'bs58'
 import { createReconciler } from '../../src/reconcile.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
+import { selectAboutToGraduate } from './about-to-graduate.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -69,6 +70,25 @@ async function loadMarkets() {
     return { markets: rows.map(row => ({ ...row, stars: Number(row.stars), forks: Number(row.forks),
       earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString() })) }
   } catch { return { markets: [], unavailable: 'Markets are temporarily unavailable.' } }
+}
+
+// Home and /explore: markets closest to graduation. One joined read; freshness is checked per row.
+const ABOUT_TO_GRADUATE_TTL_MS = 30_000
+export const aboutToGraduate = ttlMemo(loadAboutToGraduate, ABOUT_TO_GRADUATE_TTL_MS, { keep: result => !result.unavailable })
+
+async function loadAboutToGraduate() {
+  const pool = database()
+  if (!pool) return { markets: [], unavailable: 'Database is not configured.' }
+  try {
+    const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_name as "tokenName",
+        m.token_symbol as "symbol", r.full_name as "fullName", o.status, o.observation, o.error_code,
+        e.evidence_hash as migration_evidence_hash
+      from markets m join repositories r on r.github_repo_id = m.github_repo_id
+      join graduation_observations o on o.github_repo_id = m.github_repo_id
+      left join graduation_events e on e.github_repo_id = m.github_repo_id
+      where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and o.status = 'VERIFIED'`)
+    return { markets: selectAboutToGraduate(rows) }
+  } catch { return { markets: [], unavailable: 'Graduation progress is temporarily unavailable.' } }
 }
 
 export async function recentBuilderPayouts() {
