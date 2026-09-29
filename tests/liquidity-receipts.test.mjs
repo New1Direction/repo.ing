@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { LIQUIDITY_RECEIPTS, REPOING_POOL, liquidityTotals } from '../app/lib/liquidity-receipts.mjs'
 
-test('protocol liquidity totals match the verified deposit and report lock state', () => {
-  assert.deepEqual(liquidityTotals(), { solLamports: 1711400001n, tokenBaseUnits: 3011505954141n, allLocked: false })
+test('protocol liquidity totals match the verified deposits and report lock state', () => {
+  assert.deepEqual(liquidityTotals(), { solLamports: 1711400001n + 1741250001n, tokenBaseUnits: 3011505954141n + 2222128769339n, allLocked: false })
   assert.equal(liquidityTotals(LIQUIDITY_RECEIPTS.map(receipt => ({ ...receipt, locked: true }))).allLocked, true)
 })
 
