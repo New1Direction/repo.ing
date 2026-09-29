@@ -10,6 +10,11 @@ export const LIQUIDITY_RECEIPTS = Object.freeze([
     wallet: OFFICIAL_TOKEN.teamWallet, pool: REPOING_POOL, positionNft: '4Lf4xKDeCQAYBaYsvxYMFwTTdSs4T5PMMvStJ3cZgjzG',
     solLamports: '1711400001', tokenBaseUnits: '3011505954141', at: '2026-09-29T06:44:33.000Z', locked: false,
   }),
+  Object.freeze({
+    signature: '25GKQ2s44RdrGtPkSkp5JSBpSKDbmgndhRjGLaD27jJeZe4zxstUpAsknf643KteiqHS7APzXX5xaXZXxS1e1pZZ',
+    wallet: OFFICIAL_TOKEN.teamWallet, pool: REPOING_POOL, positionNft: '4Lf4xKDeCQAYBaYsvxYMFwTTdSs4T5PMMvStJ3cZgjzG',
+    solLamports: '1741250001', tokenBaseUnits: '2222128769339', at: '2026-09-29T20:40:45.000Z', locked: false,
+  }),
 ])
 
 export function liquidityTotals(receipts = LIQUIDITY_RECEIPTS) {
