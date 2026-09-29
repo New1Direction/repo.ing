@@ -6,6 +6,9 @@ export const LIGHTHOUSE_PROGRAM = 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95'
 // Source: github.com/Jac0xb/lighthouse/programs/lighthouse/src/instruction.rs
 const ASSERTIONS = new Set([2, 3, 5, 6, 7, 8, 9, 10])
 
+// Wallets (Phantom, esp. mobile) may append constrained Lighthouse safety assertions; accept only those.
+export const matchesReviewedTransaction = (reviewedBytes, returned) => matchesReviewedLaunch(reviewedBytes, returned)
+
 export function matchesReviewedLaunch(reviewedBytes, returned) {
   if (!(returned instanceof Transaction)) return false
   try {

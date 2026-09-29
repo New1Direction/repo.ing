@@ -32,10 +32,11 @@ test('priority price is the p75 of recent non-zero fees, clamped to the configur
   assert.equal(priorityFeeLamports({ units: 200_000, microLamports: 1 }), 1n)
 })
 
-test('compute limit is simulated use with 20% headroom inside floor and ceiling, else the fallback', () => {
-  assert.equal(computeUnitLimit(100_000), 120_000)
-  assert.equal(computeUnitLimit(100_001), 120_002)
-  assert.equal(computeUnitLimit(58_903), 73_903)
+test('compute limit is simulated use with 20% (at least +40k for wallet assertions) headroom inside floor and ceiling, else the fallback', () => {
+  assert.equal(computeUnitLimit(100_000), 140_000)
+  assert.equal(computeUnitLimit(100_001), 140_001)
+  assert.equal(computeUnitLimit(300_000), 360_000)
+  assert.equal(computeUnitLimit(58_903), 98_903)
   assert.equal(computeUnitLimit(1_000), CU_LIMIT_FLOOR)
   assert.equal(computeUnitLimit(900_000), CU_LIMIT_CEILING)
   for (const bad of [undefined, null, 0, -5, 1.5, NaN, '100000']) assert.equal(computeUnitLimit(bad), CU_LIMIT_FALLBACK)
@@ -61,11 +62,11 @@ test('withPriorityFee prepends exactly limit then price to the unchanged instruc
   assert.deepEqual(asked.lockedWritableAccounts, [pool])
   const out = result.transaction
   assert.equal(out.instructions.length, 3)
-  assert.deepEqual(readTradeComputeBudget(out.instructions), { count: 2, limit: 120_000, microLamports: 300_000n })
+  assert.deepEqual(readTradeComputeBudget(out.instructions), { count: 2, limit: 140_000, microLamports: 300_000n })
   assert.equal(out.instructions[2], tx.instructions[0])
   assert.equal(tx.instructions.length, 1)
   assert.ok(out.feePayer.equals(payer)); assert.equal(out.recentBlockhash, blockhash)
-  assert.equal(result.priorityFeeLamports, 36_000n)
+  assert.equal(result.priorityFeeLamports, 42_000n)
   await assert.rejects(withPriorityFee(rpc(), out, { feePayer: payer, blockhash, writableAccounts: [] }), /exactly once/)
 })
 
@@ -87,11 +88,12 @@ test('a Helius RPC prices from getPriorityFeeEstimate (High), clamped, and falls
   const { payer, tx } = trade(), endpoint = 'https://mainnet.helius-rpc.com/?api-key=k'
   let request
   const fetcher = async (url, init) => { request = { url, body: JSON.parse(init.body) }; return { ok: true, json: async () => ({ result: { priorityFeeEstimate: 423_456.4 } }) } }
-  const helius = await withPriorityFee(rpc({ rpcEndpoint: endpoint }), tx, { feePayer: payer, blockhash, writableAccounts: [], fetcher, log: () => {} })
+  const helius = await withPriorityFee(rpc({ rpcEndpoint: endpoint }), tx, { feePayer: payer, blockhash, writableAccounts: [payer], fetcher, log: () => {} })
   assert.equal(helius.microLamports, 423_457)
   assert.equal(request.url, endpoint); assert.equal(request.body.method, 'getPriorityFeeEstimate')
-  assert.deepEqual(request.body.params[0].options, { transactionEncoding: 'Base64', priorityLevel: 'High' })
-  assert.ok(Transaction.from(Buffer.from(request.body.params[0].transaction, 'base64')).instructions.length === 3)
+  assert.deepEqual(request.body.params[0].options, { priorityLevel: 'High' })
+  assert.ok(Array.isArray(request.body.params[0].accountKeys) && request.body.params[0].accountKeys.length > 0)
+  assert.deepEqual(request.body.params[0].accountKeys, [payer.toBase58()])
   const huge = async () => ({ ok: true, json: async () => ({ result: { priorityFeeEstimate: 9e12 } }) })
   assert.equal((await withPriorityFee(rpc({ rpcEndpoint: endpoint }), tx, { feePayer: payer, blockhash, writableAccounts: [], fetcher: huge, log: () => {} })).microLamports, CU_PRICE_MAX)
   for (const broken of [async () => { throw Error('timeout') }, async () => ({ ok: false, status: 429 }), async () => ({ ok: true, json: async () => ({ error: { code: -32602 } }) })]) {
@@ -232,4 +234,17 @@ test('rebroadcast stops at a chain failure, past lastValidBlockHeight, or the wa
   assert.equal(bounded.state, 'timeout'); assert.equal(slow.clock.t, 46_000); assert.ok(bounded.rebroadcastErrors > 0)
   const first = chain(); first.connection.sendRawTransaction = async () => { throw Error('Transaction simulation failed') }
   await assert.rejects(loop(first), /simulation failed/)
+})
+
+test('a trade signed with wallet-appended Lighthouse assertions is accepted; any other change is refused', async () => {
+  const { matchesReviewedTransaction, LIGHTHOUSE_PROGRAM } = await import('../src/launch-wallet-assertions.mjs')
+  const { PublicKey, TransactionInstruction } = await import('@solana/web3.js')
+  const { payer, tx } = trade()
+  tx.feePayer = payer; tx.recentBlockhash = '11111111111111111111111111111111'
+  const reviewed = Buffer.from(tx.serializeMessage())
+  const withAssertion = Transaction.populate(tx.compileMessage()).add(new TransactionInstruction({ programId: new PublicKey(LIGHTHOUSE_PROGRAM),
+    keys: [{ pubkey: payer, isSigner: false, isWritable: false }], data: Buffer.from([2, 0, 0, 0]) }))
+  assert.equal(matchesReviewedTransaction(reviewed, withAssertion), true)
+  const tampered = Transaction.populate(tx.compileMessage()).add(SystemProgram.transfer({ fromPubkey: payer, toPubkey: Keypair.generate().publicKey, lamports: 5 }))
+  assert.equal(matchesReviewedTransaction(reviewed, tampered), false)
 })
