@@ -13,7 +13,8 @@ import { readChainPoint } from './chain-clock.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
 import { dammSwapEvents } from './damm-trades.mjs'
 import { loadTransactionAt } from './finalized-transaction.mjs'
-import { resolveReferral } from './referral.mjs'
+import { keptWsolRent, resolveReferral } from './referral.mjs'
+import { createWsolAtaInstruction, isCreateWsolAta } from './wsol-account.mjs'
 
 // Same fixed 1% tolerance and floor rounding as curve trades.
 export const DAMM_SLIPPAGE_BPS = 100
@@ -60,14 +61,18 @@ export function messageFingerprint(message) {
 // Defense in depth against SDK drift: the unsigned transaction may contain only the user's own ATA setup,
 // the exact SOL wrap, one ExactIn swap2 on the proven pool, and the WSOL close back to the user.
 // The referral slot holds exactly the server-resolved referral account, or the program ID when there is none.
-export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral = null }) {
+// keepWsol: the wallet's WSOL ATA existed before the trade, so exactly one idempotent re-create of it follows the close.
+export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral = null, keepWsol = false }) {
   const mint = poolState.tokenAMint
   const tokenAta = getAssociatedTokenAddressSync(mint, wallet), wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, wallet)
   const [input, output] = direction === 'buy' ? [wsolAta, tokenAta] : [tokenAta, wsolAta]
-  let swaps = 0, wraps = 0, closes = 0
-  for (const ix of tx.instructions) {
+  let swaps = 0, wraps = 0, closes = 0, recreates = 0
+  for (const [position, ix] of tx.instructions.entries()) {
     const k = ix.keys.map(key => key.pubkey)
-    if (ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
+    if (closes > 0) {
+      if (!keepWsol || position !== tx.instructions.length - 1 || !isCreateWsolAta(ix, wallet)) throw Error('Trade transaction contains an unexpected instruction after the WSOL close')
+      recreates++
+    } else if (ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
       if (ix.data.length !== 1 || ix.data[0] !== 1 || !k[0]?.equals(wallet) || !k[2]?.equals(wallet) ||
           !(k[1]?.equals(tokenAta) && k[3]?.equals(mint) || k[1]?.equals(wsolAta) && k[3]?.equals(NATIVE_MINT))) throw Error('Trade transaction contains an unexpected account setup')
     } else if (ix.programId.equals(SystemProgram.programId)) {
@@ -88,13 +93,13 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
       swaps++
     } else throw Error('Trade transaction contains an unexpected program')
   }
-  if (swaps !== 1 || closes !== 1 || wraps !== (direction === 'buy' ? 1 : 0)) throw Error('Trade transaction swap does not match the quote')
+  if (swaps !== 1 || closes !== 1 || wraps !== (direction === 'buy' ? 1 : 0) || recreates !== (keepWsol ? 1 : 0)) throw Error('Trade transaction swap does not match the quote')
 }
 
 // Receipt checks for one confirmed/finalized transaction. `expected` holds what was prepared, never chain-derived values.
 export function verifyDammSwapReceipt(tx, expected, coder) {
   if (!tx?.meta || tx.meta.err) throw Error('Trade transaction is missing or failed')
-  const { wallet, pool, mint, tokenAVault, tokenBVault, direction, amountIn, minimumAmountOut, referral = null } = expected
+  const { wallet, pool, mint, tokenAVault, tokenBVault, direction, amountIn, minimumAmountOut, referral = null, wsolRent = null } = expected
   const message = tx.transaction.message
   if (tx.transaction.signatures?.[0] !== expected.signature || messageFingerprint(message) !== expected.fingerprint) {
     throw Error('Transaction does not match prepared trade')
@@ -134,9 +139,15 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
   }
   const lamports = i => BigInt(tx.meta.postBalances[i]) - BigInt(tx.meta.preBalances[i])
   const solDelta = lamports(0)
-  // Wallet SOL plus its own swap accounts, before the network fee: rent in and out nets to zero.
+  // Wallet SOL plus its own swap accounts, before the network fee: rent in and out nets to zero. Any WSOL already in a
+  // kept ATA (e.g. referral earnings) moves ATA -> wallet on close and the re-create moves rent wallet -> ATA; both are
+  // transfers inside this sum, so it stays exactly -amountIn (buy) or the SOL received (sell).
   const walletSwapSol = solDelta + lamports(solAccount) + lamports(tokenAccount) + BigInt(tx.meta.fee)
-  if (owner !== wallet.toBase58() || BigInt(tx.meta.postBalances[solAccount]) !== 0n) {
+  const solAccountAfter = BigInt(tx.meta.postBalances[solAccount])
+  const kept = tokenAt(tx.meta.postTokenBalances, solAccount, NATIVE_MINT)
+  // wsolRent: the ATA pre-existed and was re-created, so it must end holding exactly that rent and 0 WSOL.
+  const settled = wsolRent !== null ? solAccountAfter === wsolRent && kept.owner === wallet.toBase58() && kept.amount === 0n : solAccountAfter === 0n
+  if (owner !== wallet.toBase58() || !settled) {
     throw Error('Trade balances did not settle to the user wallet')
   }
   if (direction === 'buy') {
@@ -208,20 +219,22 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   const prepare = async (request, direction) => {
     const wallet = new PublicKey(request.wallet)
     const { market, pool, mint, poolState, amountIn, minimumAmountOut } = await quote(request, direction)
-    const referral = await resolveReferral(connection, request.referrer, wallet)
+    const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
+    const keepWsol = wsolRent !== null
     const tx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
       inputTokenMint: direction === 'buy' ? NATIVE_MINT : mint, outputTokenMint: direction === 'buy' ? mint : NATIVE_MINT,
       tokenAMint: mint, tokenBMint: NATIVE_MINT, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
       tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: referral,
       amountIn: new BN(amountIn.toString()), minimumAmountOut: new BN(minimumAmountOut.toString()) })
-    assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral })
+    if (keepWsol) tx.add(createWsolAtaInstruction(wallet))
+    assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral, keepWsol })
     const latest = await connection.getLatestBlockhash('confirmed')
     tx.feePayer = wallet
     tx.recentBlockhash = latest.blockhash
     const prepared = { transaction: tx, direction, amountIn, minimumAmountOut, lastValidBlockHeight: latest.lastValidBlockHeight,
       githubRepoId: market.githubRepoId, mint: market.mint, pool: pool.toBase58(), slippageBps: DAMM_SLIPPAGE_BPS, phase: 'graduated',
       referral: referral?.toBase58() ?? null }
-    preparedState.set(prepared, { wallet, marketId: market.id, curve: market.pool, mint, pool, referral,
+    preparedState.set(prepared, { wallet, marketId: market.id, curve: market.pool, mint, pool, referral, wsolRent,
       tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
       message: Buffer.from(tx.serializeMessage()), fingerprint: messageFingerprint(tx.compileMessage()),
       blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight })
@@ -240,7 +253,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     }
     const receipt = verifyDammSwapReceipt(tx, { signature, fingerprint: saved.fingerprint, wallet: saved.wallet, pool: saved.pool,
       mint: saved.mint, tokenAVault: saved.tokenAVault, tokenBVault: saved.tokenBVault, direction: prepared.direction,
-      amountIn: prepared.amountIn, minimumAmountOut: prepared.minimumAmountOut, referral: saved.referral }, amm._program.coder)
+      amountIn: prepared.amountIn, minimumAmountOut: prepared.minimumAmountOut, referral: saved.referral, wsolRent: saved.wsolRent }, amm._program.coder)
     return { signature, direction: prepared.direction, mint: market.mint, pool: prepared.pool, commitment,
       minimumAmountOut: prepared.minimumAmountOut, ...receipt }
   }

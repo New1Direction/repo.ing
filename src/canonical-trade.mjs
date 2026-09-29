@@ -10,7 +10,8 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { markets } from './db/schema.mjs'
-import { resolveReferral } from './referral.mjs'
+import { keptWsolRent, resolveReferral } from './referral.mjs'
+import { ATA_PROGRAM, createWsolAtaInstruction, isCreateWsolAta, TOKEN_PROGRAM, wsolAta } from './wsol-account.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
@@ -19,7 +20,8 @@ const REFERRAL_SLOT = 12
 
 // The one DBC swap must carry the quoted amounts, the canonical accounts, and in its referral slot exactly the
 // server-resolved referral account (or the program ID for none). No other instruction may touch that account.
-export function assertPreparedDbcSwap(tx, { wallet, pool, config, mint, amountIn, minimumAmountOut, referral = null }) {
+// Account setup is the wallet's own, and after the single WSOL close only the kept-ATA re-create may follow (keepWsol).
+export function assertPreparedDbcSwap(tx, { wallet, pool, config, mint, amountIn, minimumAmountOut, referral = null, keepWsol = false }) {
   const swaps = tx.instructions.filter(ix => ix.programId.equals(DBC_PROGRAM))
   const ix = swaps[0], k = ix?.keys.map(key => key.pubkey) ?? []
   if (swaps.length !== 1 || ix.data.length !== 24 || !ix.data.subarray(0, 8).equals(SWAP_DISCRIMINATOR) ||
@@ -30,6 +32,21 @@ export function assertPreparedDbcSwap(tx, { wallet, pool, config, mint, amountIn
   }
   if (referral && tx.instructions.some(other => other !== ix && other.keys.some(key => key.pubkey.equals(referral)))) {
     throw new Error('Trade transaction swap does not match the quote')
+  }
+  const wsol = wsolAta(wallet)
+  const closes = tx.instructions.flatMap((other, position) => other.programId.equals(TOKEN_PROGRAM) && other.data.length === 1 &&
+    other.data[0] === 9 ? [position] : [])
+  const close = tx.instructions[closes[0]]?.keys.map(key => key.pubkey) ?? []
+  if (closes.length !== 1 || !close[0]?.equals(wsol) || !close[1]?.equals(wallet) || !close[2]?.equals(wallet)) {
+    throw new Error('Trade transaction swap does not match the quote')
+  }
+  const after = tx.instructions.slice(closes[0] + 1)
+  if (after.length !== (keepWsol ? 1 : 0) || (keepWsol && !isCreateWsolAta(after[0], wallet))) {
+    throw new Error('Trade transaction contains an unexpected instruction after the WSOL close')
+  }
+  for (const setup of tx.instructions.slice(0, closes[0]).filter(other => other.programId.equals(ATA_PROGRAM))) {
+    const k = setup.keys.map(key => key.pubkey)
+    if (!k[0]?.equals(wallet) || !k[2]?.equals(wallet)) throw new Error('Trade transaction contains an unexpected account setup')
   }
 }
 
@@ -73,11 +90,13 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const wallet = new PublicKey(request.wallet)
     const { market, pool, amountIn, result } = quoted || await quote(request, direction)
     const mint = new PublicKey(market.mint)
-    const referral = await resolveReferral(connection, request.referrer, wallet)
+    const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
+    const keepWsol = wsolRent !== null
     const tx = await dbc.pool.swap({ owner: wallet, payer: wallet, pool, amountIn,
       minimumAmountOut: result.minimumAmountOut, swapBaseForQuote: direction === 'sell', referralTokenAccount: referral })
+    if (keepWsol) tx.add(createWsolAtaInstruction(wallet))
     assertPreparedDbcSwap(tx, { wallet, pool, config: resolveConfig(market), mint, amountIn: BigInt(amountIn.toString()),
-      minimumAmountOut: BigInt(result.minimumAmountOut.toString()), referral })
+      minimumAmountOut: BigInt(result.minimumAmountOut.toString()), referral, keepWsol })
     const latest = await connection.getLatestBlockhash('confirmed')
     tx.feePayer = wallet
     tx.recentBlockhash = latest.blockhash
@@ -85,7 +104,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       lastValidBlockHeight: latest.lastValidBlockHeight,
       githubRepoId: market.githubRepoId, mint: market.mint, pool: market.pool, slippageBps: SLIPPAGE_BPS,
       referral: referral?.toBase58() ?? null }
-    preparedState.set(prepared, { wallet, marketId: market.id, mint, pool, referral,
+    preparedState.set(prepared, { wallet, marketId: market.id, mint, pool, referral, wsolRent,
       message: Buffer.from(tx.serializeMessage()), blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight })
     return prepared
   }
@@ -117,6 +136,11 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       throw new Error('Transaction did not swap the canonical pool with the user wallet')
     }
     const solDelta = BigInt(tx.meta.postBalances[walletIndex]) - BigInt(tx.meta.preBalances[walletIndex])
+    // Wallet plus its WSOL ATA: WSOL unwrapped on close and rent re-paid to a kept ATA are transfers inside this sum.
+    const wsolIndex = keys.findIndex(key => key.equals(wsolAta(saved.wallet)))
+    const wsolAfter = wsolIndex < 0 ? 0n : BigInt(tx.meta.postBalances[wsolIndex])
+    const walletSol = solDelta + (wsolIndex < 0 ? 0n : wsolAfter - BigInt(tx.meta.preBalances[wsolIndex]))
+    if (saved.wsolRent !== null ? wsolAfter !== saved.wsolRent : wsolAfter !== 0n) throw new Error('Trade balances did not settle to the user wallet')
     const ata = getAssociatedTokenAddressSync(saved.mint, saved.wallet)
     const ataIndex = keys.findIndex(key => key.equals(ata))
     if (ataIndex < 0) throw new Error('Trade transaction omitted wallet token account')
@@ -132,11 +156,11 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       throw new Error('Canonical pool missing or changed after trade')
     }
     if (prepared.direction === 'buy') {
-      if (tokenDelta < prepared.minimumAmountOut || solDelta > -prepared.amountIn || quoteVaultDelta <= 0n) {
+      if (tokenDelta < prepared.minimumAmountOut || walletSol > -prepared.amountIn || quoteVaultDelta <= 0n) {
         throw new Error('Buy balances or canonical pool vault did not change as expected')
       }
-    } else if (tokenDelta !== -prepared.amountIn || solDelta <= 0n ||
-        solDelta + BigInt(tx.meta.fee) < prepared.minimumAmountOut || quoteVaultDelta >= 0n) {
+    } else if (tokenDelta !== -prepared.amountIn || walletSol <= 0n ||
+        walletSol + BigInt(tx.meta.fee) < prepared.minimumAmountOut || quoteVaultDelta >= 0n) {
       throw new Error('Sell balances or canonical pool vault did not change as expected')
     }
     return { signature, direction: prepared.direction, mint: market.mint, pool: market.pool,

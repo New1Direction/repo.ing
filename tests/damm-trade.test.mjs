@@ -87,7 +87,7 @@ test('SDK swap2 transaction passes the structural check and the cost estimate; t
     assert.throws(() => assertPreparedSwap(tx, { ...spec, pool: Keypair.generate().publicKey }), /does not match the quote/)
     const extra = await build()
     extra.add(SystemProgram.transfer({ fromPubkey: wallet, toPubkey: Keypair.generate().publicKey, lamports: 1 }))
-    assert.throws(() => assertPreparedSwap(extra, spec), /unexpected SOL transfer/)
+    assert.throws(() => assertPreparedSwap(extra, spec), /unexpected instruction after the WSOL close/)
   }
 })
 
