@@ -163,3 +163,47 @@ test('non-graduated markets and callers without a database are unchanged', async
   assert.equal(snapshot.evidence.migration, MIGRATION)
   assert.equal(bare.calls.signatures.length, 1)
 })
+
+const failing = (code, when = () => true) => {
+  const db = database(), query = db.query
+  db.query = async (text, params) => {
+    if (when(text)) { db.queries.push('failed'); throw Object.assign(Error(`db failure ${code}`), { code }) }
+    return query(text, params)
+  }
+  return db
+}
+
+test('a missing proof table falls back to the chain scan and logs once per process', async t => {
+  const logged = []
+  t.mock.method(console, 'error', message => logged.push(message))
+  const db = failing('42P01'), { connection, loadTransaction, calls } = chain({ endpoint: 'fake://missing-table' })
+  const fees = (await coldProcess())({ connection, config, db, loadTransaction })
+  const snapshot = await fees.read(market, state, fixed)
+  assert.equal(snapshot.evidence.migration, MIGRATION)
+  assert.equal(snapshot.position.toBase58(), position)
+  assert.equal(snapshot.partner.position.toBase58(), partnerPosition)
+  await fees.read(market, state, fixed)
+  assert.equal(calls.signatures.length, 1, 'the per-process cache still holds the scanned proof')
+  assert.deepEqual(db.queries, ['failed'])
+  assert.deepEqual(logged, ['graduated migration proof table missing; using chain scan'])
+  const insertOnly = failing('42P01', text => /^insert/.test(text.trim())), fresh = chain({ endpoint: 'fake://missing-on-insert' })
+  const again = await (await coldProcess())({ connection: fresh.connection, config, db: insertOnly, loadTransaction: fresh.loadTransaction }).read(market, state, fixed)
+  assert.equal(again.evidence.migration, MIGRATION)
+  assert.equal(insertOnly.rows.size, 0)
+})
+
+test('other database errors still fail the read', async t => {
+  t.mock.method(console, 'error', () => {})
+  for (const [code, when] of [['57P01', () => true], ['23505', text => /^insert/.test(text.trim())], [undefined, () => true]]) {
+    const db = failing(code, when), { connection, loadTransaction } = chain({ endpoint: `fake://db-error-${code}-${when.length}` })
+    await assert.rejects((await coldProcess())({ connection, config, db, loadTransaction }).read(market, state, fixed), /db failure/)
+  }
+})
+
+test('a mismatched stored row still throws when the fallback exists', async () => {
+  const db = database(), seed = chain({ endpoint: 'fake://fallback-mismatch-seed' })
+  await (await coldProcess())({ connection: seed.connection, config, db, loadTransaction: seed.loadTransaction }).read(market, state, fixed)
+  db.rows.set('1388219884', { ...db.rows.get('1388219884'), creatorPosition: Keypair.generate().publicKey.toBase58() })
+  const { connection, loadTransaction } = chain({ endpoint: 'fake://fallback-mismatch' })
+  await assert.rejects((await coldProcess())({ connection, config, db, loadTransaction }).read(market, state, fixed), /Stored graduated migration proof mismatch/)
+})
