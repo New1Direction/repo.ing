@@ -91,7 +91,7 @@ export function createBuilderReinvest({pool,connection,verification,config,githu
     await assertReinvestNetwork(connection,verification,env)
     return lock(pool,String(request.repoId),async db=>{
       await authority(db,request)
-      const snapshot=await canonicalReinvestPool(connection,verification,config,await market(db,request.repoId))
+      const snapshot=await canonicalReinvestPool(connection,verification,config,await market(db,request.repoId),pool)
       const funded=await funding(db,request.repoId,request.wallet,request.claimSignature)
       const {rows}=await db.query('select * from builder_reinvest_intents where claim_id=$1 order by id desc',[funded.claim.id])
       return {enabled,pool:snapshot.pool.toBase58(),claimAmount:String(funded.claim.amount_base_units),remaining:String(funded.remaining),
@@ -110,7 +110,7 @@ export function createBuilderReinvest({pool,connection,verification,config,githu
       const funded=await funding(db,request.repoId,request.wallet,request.claimSignature)
       if(budget>funded.remaining) throw Error('Reinvestment exceeds the remaining claimed wallet amount')
       if((await db.query("select 1 from builder_reinvest_intents where claim_id=$1 and status in ('prepared','cancelling','submitted')",[funded.claim.id])).rowCount) throw Error('An existing reinvestment needs resolution first')
-      const snapshot=await canonicalReinvestPool(connection,verification,config,await market(db,request.repoId))
+      const snapshot=await canonicalReinvestPool(connection,verification,config,await market(db,request.repoId),pool)
       // Do not nest the repository reconciler while holding its advisory lock on another connection.
       const quote=await reinvestQuote(connection,snapshot,budget)
       const built=await buildReinvestTransaction(connection,snapshot,request.wallet,quote)
@@ -148,7 +148,7 @@ export function createBuilderReinvest({pool,connection,verification,config,githu
       if(!tx.verifySignatures()||digest(tx.serializeMessage().toString('base64'))!==terms.message_hash||!tx.feePayer.equals(new PublicKey(row.wallet))) throw Error('Wallet signature or approved transaction mismatch')
       const funded=await funding(db,request.repoId,request.wallet,terms.claim_signature)
       if(funded.remaining<0n) throw Error('Claim is overcommitted')
-      const snapshot=await canonicalReinvestPool(connection,verification,config,await market(db,request.repoId))
+      const snapshot=await canonicalReinvestPool(connection,verification,config,await market(db,request.repoId),pool)
       if(snapshot.pool.toBase58()!==terms.pool||snapshot.state.tokenAMint.toBase58()!==terms.token_a_mint||terms.token_b_mint!==NATIVE_MINT.toBase58()) throw Error('Wrong canonical pool or mint')
       const fresh=await reinvestQuote(connection,snapshot,row.source_amount)
       assertFreshReinvestQuote(terms,fresh)

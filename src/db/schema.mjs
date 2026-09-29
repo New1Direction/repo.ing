@@ -50,6 +50,17 @@ export const graduationEvents = pgTable('graduation_events', {
   reconciliation: text('reconciliation').notNull(),
   recordedAt: timestamp('recorded_at',{withTimezone:true}).defaultNow().notNull(),
 },t=>[uniqueIndex('graduation_signature_unique').on(t.signature,t.githubRepoId),uniqueIndex('graduation_pool_unique').on(t.pool)])
+// Verified once from finalized history; every read reloads the signature and must reproduce the row.
+export const graduatedMigrationProofs = pgTable('graduated_migration_proofs', {
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).primaryKey().references(()=>markets.githubRepoId),
+  curve: varchar('curve',{length:44}).notNull(), config: varchar('config',{length:44}).notNull(),
+  mint: varchar('mint',{length:44}).notNull(), pool: varchar('pool',{length:44}).notNull(),
+  signature: varchar('signature',{length:88}).notNull(), slot: bigint('slot',{mode:'bigint'}).notNull(),
+  creatorPosition: varchar('creator_position',{length:44}).notNull(), creatorNftAccount: varchar('creator_nft_account',{length:44}).notNull(),
+  creatorNftMint: varchar('creator_nft_mint',{length:44}).notNull(), partnerPosition: varchar('partner_position',{length:44}).notNull(),
+  partnerNftAccount: varchar('partner_nft_account',{length:44}).notNull(), partnerNftMint: varchar('partner_nft_mint',{length:44}).notNull(),
+  recordedAt: timestamp('recorded_at',{withTimezone:true}).defaultNow().notNull(),
+},t=>[uniqueIndex('graduated_migration_proof_pool_unique').on(t.pool),uniqueIndex('graduated_migration_proof_signature_unique').on(t.signature)])
 export const graduationAlerts = pgTable('graduation_alerts', {
   id: serial('id').primaryKey(),
   eventKey: text('event_key').notNull(),

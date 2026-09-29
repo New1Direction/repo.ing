@@ -6,7 +6,7 @@ import { createTradeRecorder } from './trade-evidence.mjs'
 const PAGE_SIZE = 1000
 
 export function createExternalFeeIndexer({ pool: databasePool, connection, config }) {
-  const graduatedFees = createGraduatedFees({ connection, config })
+  const graduatedFees = createGraduatedFees({ connection, config, db: databasePool })
   const accrual = createFeeAccrual({ pool: databasePool, connection, config })
   const recordTrade = createTradeRecorder({ pool: databasePool, connection, config })
 

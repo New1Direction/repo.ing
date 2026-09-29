@@ -37,7 +37,7 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
   if (!githubVerifier?.verifyCallback && !githubVerifier?.verifyCurrentAuthority) throw new Error('Fresh GitHub App verifier required')
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const resolveConfig = createMarketConfigResolver(config)
-  const graduatedFees = createGraduatedFees({ connection, config })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool })
 
   const claim = async request => {
     const report = stage => { try { request.onProgress?.(stage) } catch { /* UI progress never changes payout settlement. */ } }

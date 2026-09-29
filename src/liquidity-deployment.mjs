@@ -58,7 +58,7 @@ export async function withLiquidityLock(pool, fn) {
 }
 export function createLiquidityDeployment({ pool, connection, config, partner }) {
   if (!partner) throw Error('Protected partner signer is required')
-  const graduated = createGraduatedFees({connection,config}), reconciler = createReconciler({pool,connection,config}), amm = new CpAmm(connection)
+  const graduated = createGraduatedFees({connection,config,db:pool}), reconciler = createReconciler({pool,connection,config}), amm = new CpAmm(connection)
   async function network() {
     if (/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint)) return 'localnet'
     if (await connection.getGenesisHash() !== MAINNET) throw Error('Liquidity execution requires the mainnet genesis')

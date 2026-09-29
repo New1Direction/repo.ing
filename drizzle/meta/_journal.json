@@ -169,6 +169,13 @@
       "when": 1790542598552,
       "tag": "0023_market_update_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790542598553,
+      "tag": "0024_graduated_migration_proofs",
+      "breakpoints": true
     }
   ]
 }
