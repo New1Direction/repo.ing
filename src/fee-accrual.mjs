@@ -7,7 +7,7 @@ import { CollectFeeMode, DynamicBondingCurveClient, deriveDbcPoolAddress } from 
 import { discoveryFeeEvents, feeEvents, markets } from './db/schema.mjs'
 import { eligibleDiscoveryFee } from './discovery-rewards.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
-import { canonicalDbcSwapEvents } from './trade-evidence.mjs'
+import { canonicalDbcSwapEvents, UnparseableTradeError } from './trade-evidence.mjs'
 
 const KIND = 'dbc_creator_quote'
 
@@ -53,7 +53,7 @@ export function createFeeAccrual({ pool: databasePool, connection, config }) {
         kind: KIND, slot: BigInt(transaction.slot) }] : []
     })
     if (events.length === 0 && (!allowNonSwap || (sawCanonicalSwap && !sawCanonicalFeeEvent))) {
-      throw new Error(`Trade ${signature} has no canonical DBC creator-fee event`)
+      throw new UnparseableTradeError(`Trade ${signature} has no canonical DBC creator-fee event`)
     }
     return { events, discoveryEvents }
   }
