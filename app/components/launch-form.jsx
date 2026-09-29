@@ -1,13 +1,14 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Image as ImageIcon, Info } from 'lucide-react'
+import { ChevronDown, Image as ImageIcon, Info } from 'lucide-react'
 import { TokenImagePicker } from './token-image-picker'
 import { useWallet } from './wallet'
 import { LaunchSuccess } from './launch-success'
 import { TransactionStatus } from './ui'
 import { launchDraftKey, readLaunchDraft, saveLaunchDraft } from '../lib/launch-draft.mjs'
 import { formatUnits, parseUnits } from '../lib/format.mjs'
+import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../lib/launch-defaults.mjs'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
 const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: true,
@@ -20,8 +21,8 @@ async function launchRequest(body) {
 }
 
 export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft }) {
-  const [name, setName] = useState(draft?.tokenName ?? repo.name.slice(0, 32))
-  const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? repo.name.replace(/[^a-z0-9]/gi, '').slice(0, 10).toUpperCase())
+  const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
+  const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
   const [error, setError] = useState('')
   const [failure, setFailure] = useState(null)
@@ -40,14 +41,19 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [launched, setLaunched] = useState(null)
   const [tokenImage, setTokenImage] = useState(null)
   const [imageBusy, setImageBusy] = useState(true)
+  // Agent drafts ask the user to confirm an image, so they start expanded.
+  const [customizing, setCustomizing] = useState(!!draft)
   const { wallet, connect, provider } = useWallet()
   const quoteKey = choice === 'custom' ? `custom:${customBuy}` : choice
   const noBuy = choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
   const quote = !noBuy && buyQuote?.key === quoteKey ? buyQuote : null
   const quoteError = !noBuy && buyError?.key === quoteKey ? buyError.message : ''
   const quoting = !noBuy && !quote && !quoteError
+  const isDefault = !draft && name === defaultTokenName(repo.name) && symbol === defaultTokenSymbol(repo.name)
+  const needsDetails = !tokenDetailsComplete({ name, symbol, image: tokenImage || imageBusy })
   const initialBuy = choice === 'none' ? '' : choice === 'custom' ? customBuy : quote ? formatUnits(quote.initialBuyLamports) : ''
 
+  useEffect(() => { if (needsDetails) setCustomizing(true) }, [needsDetails])
   useEffect(() => {
     let saved=null
     try { if(!draft) saved=readLaunchDraft(window.sessionStorage,repo.repoId) } catch {}
@@ -157,14 +163,23 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     <div className="launch-columns">
       <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review}>
         <h2>Launch token</h2><p className="launch-subtitle">Create a market for this repository. Every trade pays the builders.</p>
-        <label className="field-label" htmlFor="token-name">Token name</label>
-        <input id="token-name" className="field-input" maxLength={32} value={name} onChange={e => setName(e.target.value)} required/>
-        <div className="field-hint"><span>This will be the name of your token.</span><span>{name.length}/32</span></div>
-        <label className="field-label" htmlFor="token-symbol">Ticker</label>
-        <input id="token-symbol" className="field-input" maxLength={10} value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,''))} required/>
-        <div className="field-hint"><span>A short symbol for your token.</span><span>{symbol.length}/10</span></div>
-        <div className="field-label">Token image</div>
-        <TokenImagePicker repoId={repo.repoId} value={tokenImage} onChange={setTokenImage} onBusyChange={setImageBusy} disabled={busy || !!review}/>
+        <div className="launch-token-summary" role="group" aria-label="Token preview">
+          <div className="preview-avatar">{tokenImage ? <img src={tokenImage.image} alt="Token artwork preview"/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
+          <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Token name'}</span>{imageBusy && !tokenImage ? <small>Finding a repository image…</small> : isDefault && <small>Suggested from this repository</small>}</div>
+        </div>
+        <details className="launch-customize" open={customizing} onToggle={e => setCustomizing(e.currentTarget.open)}>
+          <summary><span>Customize name, ticker &amp; image</span><ChevronDown size={18} aria-hidden="true"/></summary>
+          <div className="launch-customize-body">
+            <label className="field-label" htmlFor="token-name">Token name</label>
+            <input id="token-name" className="field-input" maxLength={32} value={name} onChange={e => setName(e.target.value)} required/>
+            <div className="field-hint"><span>This will be the name of your token.</span><span>{name.length}/32</span></div>
+            <label className="field-label" htmlFor="token-symbol">Ticker</label>
+            <input id="token-symbol" className="field-input" maxLength={10} value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,''))} required/>
+            <div className="field-hint"><span>A short symbol for your token.</span><span>{symbol.length}/10</span></div>
+            <div className="field-label">Token image</div>
+            <TokenImagePicker repoId={repo.repoId} value={tokenImage} onChange={setTokenImage} onBusyChange={setImageBusy} disabled={busy || !!review}/>
+          </div>
+        </details>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className="launch-buy-presets" role="group" aria-label="Initial token allocation">
           {[[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]].map(([value, label]) =>
@@ -185,7 +200,6 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       <div className="launch-side">
         {allocationEnabled && <div className="inner-card discovery-launch"><h3>1% for the builders</h3><strong>10 million tokens reserved</strong><p>The verified repository admin can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>}
         {discoveryEnabled && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. Claim in SOL from the market page; your wallet pays network and account setup costs.</p></div>}
-        <div className="inner-card"><h3>Token preview</h3><div className="preview-token"><div className="preview-avatar">{tokenImage ? <img src={tokenImage.image} alt="Token artwork preview"/> : <ImageIcon size={30}/>}</div><div><strong>{symbol || 'TOKEN'}</strong><span>{name || 'Token name'}</span></div></div><div className="badge-line"><span className="small-chip">Repository token</span><span className="small-chip">Community owned</span></div></div>
         <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line"><span>Repository creator share<small>Accrues for the verified repository owner</small></span><strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div><div className="fee-note"><Info size={18}/><span>Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
       </div>
     </div>
