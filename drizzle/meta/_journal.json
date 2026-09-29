@@ -176,6 +176,13 @@
       "when": 1790542598553,
       "tag": "0024_graduated_migration_proofs",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790542598554,
+      "tag": "0025_buyback_receipts",
+      "breakpoints": true
     }
   ]
 }

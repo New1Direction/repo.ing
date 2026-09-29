@@ -1,4 +1,4 @@
-import { bigint, boolean, check, index, integer, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, index, integer, numeric, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 export const agentRequestLimits = pgTable('agent_request_limits', {
@@ -61,6 +61,19 @@ export const graduatedMigrationProofs = pgTable('graduated_migration_proofs', {
   partnerNftAccount: varchar('partner_nft_account',{length:44}).notNull(), partnerNftMint: varchar('partner_nft_mint',{length:44}).notNull(),
   recordedAt: timestamp('recorded_at',{withTimezone:true}).defaultNow().notNull(),
 },t=>[uniqueIndex('graduated_migration_proof_pool_unique').on(t.pool),uniqueIndex('graduated_migration_proof_signature_unique').on(t.signature)])
+// Public $REPOING buyback disclosures detected from finalized wallet history (disclosure only).
+export const buybackReceipts = pgTable('buyback_receipts', {
+  signature: varchar('signature',{length:88}).primaryKey(), source: varchar('source',{length:16}).notNull(),
+  wallet: varchar('wallet',{length:44}).notNull(), mint: varchar('mint',{length:44}).notNull(),
+  spentLamports: numeric('spent_lamports',{precision:20,scale:0}).notNull(), tokenBaseUnits: numeric('token_base_units',{precision:30,scale:0}).notNull(),
+  blockTime: timestamp('block_time',{withTimezone:true}).notNull(), slot: bigint('slot',{mode:'bigint'}).notNull(),
+  detectedAt: timestamp('detected_at',{withTimezone:true}).defaultNow().notNull(),
+},t=>[check('buyback_receipts_source_check',sql`${t.source} in ('custody','team')`),
+  check('buyback_receipts_spent_lamports_check',sql`${t.spentLamports} > 0`),check('buyback_receipts_token_base_units_check',sql`${t.tokenBaseUnits} > 0`)])
+export const buybackReceiptCursors = pgTable('buyback_receipt_cursors', {
+  wallet: varchar('wallet',{length:44}).primaryKey(), lastSignature: varchar('last_signature',{length:88}).notNull(),
+  lastSlot: bigint('last_slot',{mode:'bigint'}).notNull(), updatedAt: timestamp('updated_at',{withTimezone:true}).defaultNow().notNull(),
+})
 export const graduationAlerts = pgTable('graduation_alerts', {
   id: serial('id').primaryKey(),
   eventKey: text('event_key').notNull(),
