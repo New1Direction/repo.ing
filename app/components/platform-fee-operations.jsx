@@ -19,6 +19,10 @@ function PhaseCell({ phase, label, repo, busy, onClaim }) {
 }
 
 export function PlatformFeeOperations() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [log, setLog] = useState([])
   const [signatureInput, setSignatureInput] = useState('')
 
   async function refresh() {
