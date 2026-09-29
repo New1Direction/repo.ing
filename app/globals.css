@@ -613,3 +613,5 @@
 body{overflow-x:clip}
 @media(max-width:1050px){.market-title>div:first-child>.badge{margin-left:0}}
 @media(max-width:700px){.graduation-metrics>span{padding:0 18px}.graduation-metrics strong{font-size:17px}}
+
+.market-price .platform-token-link{display:block;margin-top:4px;font-size:13px;color:var(--green)}.market-price .platform-token-link:hover{text-decoration:underline}
