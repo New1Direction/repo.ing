@@ -95,6 +95,8 @@ const splitOf = (amount, policy) => {
   const liquidity = amount * BigInt(policy.liquidityPermille) / PERMILLE
   return { buyback, liquidity, treasury: amount - buyback - liquidity }
 }
+// '1.234000000' -> 1234000000n (inverse of sol()).
+const toLamports = value => { const [w, f = ''] = String(value).split('.'); return BigInt(w) * 1_000_000_000n + BigInt(f.padEnd(9, '0').slice(0, 9)) }
 const asSol = split => Object.fromEntries(Object.entries(split).map(([k, v]) => [k, sol(v)]))
 
 export async function runPlatformSweep({ execute = false, dbcEnabled, listFees, feeService, summary, allocate,
@@ -137,13 +139,15 @@ export async function runPlatformSweep({ execute = false, dbcEnabled, listFees, 
 
     const landsInPartner = execute ? 0n : report.claims.filter(c => c.status === 'planned' && c.receiver === PARTNER_WALLET)
       .reduce((sum, c) => sum + BigInt(c.available), 0n)
-    // Only the buyback share still owed moves to custody (signed outstanding = reserve - ahead, plus this run's
-    // planned buyback split in a dry run); liquidity and treasury stay with the partner wallet.
+    // Move only the buyback share of what THIS run allocated: earlier shares were already sent to custody (possibly
+    // not yet spent), so capping at the total still owed would send them twice. Never more than is still owed.
     const latest = await summary()
-    const outstanding = BigInt(latest.buybackReserve) - BigInt(latest.buybackAhead ?? 0)
-      + (execute || !policy || unallocated <= 0n ? 0n : splitOf(unallocated, policy).buyback)
-    report.transfer = await transferSurplus({ connection, signer, execute, extraLamports: landsInPartner,
-      capLamports: outstanding > 0n ? outstanding : 0n })
+    const owed = BigInt(latest.buybackReserve) + (execute || !policy || unallocated <= 0n ? 0n : splitOf(unallocated, policy).buyback)
+    const allocatedNow = !policy || unallocated <= 0n ? 0n
+      : execute ? BigInt(report.allocation?.status === 'allocated' ? toLamports(report.allocation.split.buyback) : 0n)
+      : splitOf(unallocated, policy).buyback
+    const cap = allocatedNow < owed ? allocatedNow : owed
+    report.transfer = await transferSurplus({ connection, signer, execute, extraLamports: landsInPartner, capLamports: cap > 0n ? cap : 0n })
     report.ok = true
   } catch (error) { report.error = error.message }
   try {
