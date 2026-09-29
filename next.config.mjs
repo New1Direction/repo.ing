@@ -13,6 +13,8 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  // app/(site) and app/(ja) are separate root layouts (for <html lang>), so unmatched URLs need app/global-not-found.jsx.
+  experimental: { globalNotFound: true },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },

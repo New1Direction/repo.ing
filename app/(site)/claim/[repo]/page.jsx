@@ -1,0 +1,82 @@
+import { Participation } from '../../../components/participation'
+import { BuilderAllocation } from '../../../components/builder-allocation'
+import Link from 'next/link'
+import { Suspense } from 'react'
+import { cookies } from 'next/headers'
+import { notFound } from 'next/navigation'
+import { ArrowLeft } from 'lucide-react'
+import { AppHeader, Footer, RepoIdentity, RepoStats, GitHubLink } from '../../../components/ui'
+import { ClaimSteps } from '../../../components/claim-steps'
+import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
+import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
+import { displayRepository } from '../../../lib/repository-display.mjs'
+import { formatUnits, formatUsdEstimate } from '../../../lib/format.mjs'
+import { solUsdPrice } from '../../../lib/sol-usd.mjs'
+import { githubSessionCookie, readGithubSession, seal } from '../../../lib/auth.mjs'
+import { Connection } from '@solana/web3.js'
+import { assertBuilderReinvestEnabled } from '../../../../src/builder-reinvest.mjs'
+import { configAddress } from '../../../lib/server.mjs'
+export const dynamic = 'force-dynamic'
+
+export default async function ClaimPage({ params, searchParams }) {
+  const { repo: repoId } = await params
+  const query = await searchParams
+  const { market } = await marketByRepo(repoId)
+  if (!market) notFound()
+  const repo = displayRepository(market)
+  return <><AppHeader/><main className="section-wrap claim-page">
+    <Link href={`/token/${market.mint}`} className="back-link"><ArrowLeft size={18}/>Back to repository</Link>
+    <div className="claim-intro"><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p></div>
+    <div className="claim-repo-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo}/></div><GitHubLink repo={repo}/></div>
+    <Suspense fallback={<div className="inner-card claim-loading" role="status" aria-busy="true">Checking available fees and GitHub access…</div>}>
+      <ClaimContent market={market} repo={repo} query={query}/>
+    </Suspense>
+    <Participation repoId={repoId}/>
+    {market.allocationVersion === 1 && <BuilderAllocation repoId={repoId}/>}
+  </main><Footer/></>
+}
+
+async function ClaimContent({ market, repo, query }) {
+  const repoId = market.repoId, pool = database()
+  const [fees, access, beneficiary, receipt, usdPerSol, funded, cookieStore] = await Promise.all([
+    feeStatus(repoId),
+    githubInstallationForRepository({ owner: repo.owner, name: repo.name }).then(value => value ? 'installed' : 'missing').catch(() => 'unknown'),
+    pool.query('select wallet, bound_at as "boundAt" from repo_beneficiaries where github_repo_id = $1', [repoId]).then(result => result.rows[0] ?? null),
+    pool.query(`select amount_base_units::text as amount, beneficiary_wallet as wallet, claim_signature as signature
+      from repo_claims where github_repo_id = $1 and status = 'settled'
+      and ($2::text is null or claim_signature = $2) order by settled_at desc limit 1`,
+      [repoId, typeof query.claimed === 'string' ? query.claimed : null]).then(result => result.rows[0] ?? null),
+    solUsdPrice(),
+    (async () => { try { const signer = creatorSigner(); return Boolean(signer && await chain().getBalance(signer.publicKey, 'confirmed') > 0) } catch { return false } })(),
+    cookies(),
+  ])
+  let appSettingsUrl = 'https://github.com/apps/repo-ing/installations/new'
+  if (access === 'missing') {
+    try { appSettingsUrl = await githubAppConfigurationUrl({ owner: repo.owner }) } catch {}
+  }
+  const session = readGithubSession(cookieStore.get(githubSessionCookie)?.value)
+  // Only the public identity is passed to the UI; the GitHub credential stays encrypted and HttpOnly.
+  const verifiedUser = session?.repoId === repoId ? { githubLogin: session.githubLogin, expiresAt: session.expiresAt } : null
+  const claimable = fees.status === 'MATCH' ? fees.onchainCreatorFee?.toString() ?? null : null
+  const review = verifiedUser && beneficiary && claimable && claimable !== '0' ? seal({
+    purpose: 'creator-claim-review', sessionId: session.sessionId, githubUserId: session.githubUserId,
+    repoId, wallet: beneficiary.wallet, boundAt: new Date(beneficiary.boundAt).toISOString(),
+    amount: claimable, includeGraduatedFees: fees.graduated === true, paid: market.claimed, expiresAt: Math.min(session.expiresAt, Date.now() + 10 * 60_000),
+  }) : null
+  const usdEstimate = claimable === null ? null : formatUsdEstimate(claimable, usdPerSol)
+  let reinvestEnabled = false
+  if (verifiedUser && process.env.BUILDER_REINVEST_ENABLED === 'true' && process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL) {
+    try {
+      await assertBuilderReinvestEnabled({pool, connection:chain(), verification:new Connection(process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL,'finalized'), config:configAddress()})
+      reinvestEnabled = true
+    } catch { /* Production remains closed until the pinned P3 proof and both RPCs verify. */ }
+  }
+  return <><div className="claim-amount-summary inner-card">
+    <div><span>Available to claim</span><strong>{claimable === null ? '—' : `${formatUnits(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
+    <div className="claim-fee-history"><span>Total earned <strong>{formatUnits(market.earned)} SOL</strong></span><span>Already paid <strong>{formatUnits(market.claimed)} SOL</strong></span></div>
+  </div><ClaimSteps repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
+    verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} claimable={claimable} usdEstimate={usdEstimate}
+    feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}
+    reinvestEnabled={reinvestEnabled} reinvestAfterClaim={query.reinvest === '1'}
+    graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}/></>
+}
