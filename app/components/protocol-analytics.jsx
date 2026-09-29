@@ -2,11 +2,12 @@ import Link from 'next/link'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
 import { AnalyticsActivityChart } from './analytics-activity-chart'
 import { ArrowUpRight } from 'lucide-react'
-import { formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
+import { formatSolDisplay, formatUnits, formatUsdEstimate } from '../lib/format.mjs'
 import { BuilderPayouts } from './builder-payouts'
 import { TeamTokenLocks } from './team-token-locks'
 import { ReserveCoverage } from './reserve-coverage'
 import { BUYBACK_RECEIPTS_BY_TIME, totalBuybackLamports } from '../lib/buyback-receipts.mjs'
+import { LIQUIDITY_RECEIPTS, liquidityTotals } from '../lib/liquidity-receipts.mjs'
 const BUYBACK_SOURCE = { custody: 'platform revenue', team: 'team wallet' }
 
 function Amount({ value, usdPerSol, hero = false }) {
@@ -34,8 +35,15 @@ export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS
       </>}
     </section>
     <section className="analytics-token" aria-labelledby="repo-title"><div><div className="eyebrow"><Link href={OFFICIAL_TOKEN.marketPath}>$REPOING ↗</Link></div><h2 id="repo-title">Buybacks</h2><p>Verified SOL spent buying back $REPOING, from platform revenue and the team wallet.</p><details className="analytics-data"><summary>View receipts</summary><ul>{buybacks.map(receipt => <li key={receipt.signature}><a href={`https://explorer.solana.com/tx/${receipt.signature}`} target="_blank" rel="noopener noreferrer">{formatSolDisplay(receipt.spentLamports)} SOL · {BUYBACK_SOURCE[receipt.source]} · {new Date(receipt.at).toLocaleDateString('en-US', { timeZone: 'UTC' })} ↗</a></li>)}</ul><p>Includes trading fees. Excludes network fees, the launch buy, and early team purchases. New buys into the canonical pool from these wallets are added automatically after finalization.</p></details></div><div className="analytics-token-state"><span>SOL bought back</span><strong>{formatSolDisplay(totalBuybackLamports(buybacks))} SOL</strong><small>{formatSolDisplay(totalBuybackLamports(buybacks, 'custody'))} from platform revenue · {formatSolDisplay(totalBuybackLamports(buybacks, 'team'))} from the team wallet</small></div></section>
+    <LiquidityReceipts/>
     <TeamTokenLocks/>
     <BuilderPayouts payouts={data.payouts} unavailable={false} usdPerSol={usdPerSol}/>
     <div className="protocol-bottom"><p>Indexed finalized DBC and verified DAMM activity. Trades use chain timestamps; fees use indexing time; payouts use settlement records. UTC chart buckets at the range edges may be partial. USD figures are estimates at today’s SOL price, not historical dollar proceeds. Updated {new Date(data.updatedAt).toLocaleString('en-US',{timeZone:'UTC'})} UTC.</p><Link href="/explore">Explore markets <ArrowUpRight size={16}/></Link></div>
   </>
+}
+
+function LiquidityReceipts() {
+  const totals = liquidityTotals()
+  const tokens = Number(formatUnits(totals.tokenBaseUnits, 6, 0).replaceAll(',', '')).toLocaleString('en-US')
+  return <section className="analytics-token" aria-labelledby="liquidity-title"><div><div className="eyebrow"><Link href={OFFICIAL_TOKEN.marketPath}>$REPOING ↗</Link></div><h2 id="liquidity-title">Protocol liquidity</h2><p>SOL and $REPOING added to the canonical $REPOING pool, the 20% liquidity share of platform revenue.</p><details className="analytics-data"><summary>View receipts</summary><ul>{LIQUIDITY_RECEIPTS.map(receipt => <li key={receipt.signature}><a href={`https://explorer.solana.com/tx/${receipt.signature}`} target="_blank" rel="noopener noreferrer">{formatSolDisplay(receipt.solLamports)} SOL + {Number(formatUnits(receipt.tokenBaseUnits, 6, 0).replaceAll(',', '')).toLocaleString('en-US')} REPOING · {receipt.locked ? 'permanently locked' : 'not locked yet'} · {new Date(receipt.at).toLocaleDateString('en-US', { timeZone: 'UTC' })} ↗</a></li>)}</ul><p>Amounts the pool vaults received, verified on-chain. One-time position rent is excluded.</p></details></div><div className="analytics-token-state"><span>Liquidity added</span><strong>{formatSolDisplay(totals.solLamports)} SOL</strong><small>+ {tokens} $REPOING · {totals.allLocked ? 'permanently locked' : 'not locked yet'}</small></div></section>
 }
