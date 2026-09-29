@@ -585,3 +585,4 @@
 .builder-setup .wallet-explainer{margin:10px 0 0}
 .claim-intro small{display:block;margin-top:8px;color:var(--muted);font-size:14px}
 @media(max-width:480px){.claim-checklist{display:grid;grid-template-columns:repeat(3,auto);justify-content:space-between;gap:8px;font-size:12px}.claim-checklist li{gap:6px}.claim-checklist li+li:before{display:none}}
+.trade-venue-note{margin:-6px 0 12px;color:var(--muted);font-size:12px}.trade-venue-note a{color:var(--text);text-decoration:underline;text-underline-offset:2px;white-space:nowrap}.trade-venue-note a:hover{color:var(--green)}

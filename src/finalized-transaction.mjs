@@ -19,11 +19,16 @@ export function normalizeFinalizedTransaction(raw, signature) {
     message: { ...raw.transaction.message, accountKeys: keys } } }
 }
 
-export async function loadFinalizedTransaction(connection, signature, fetchImpl = fetch) {
+export function loadFinalizedTransaction(connection, signature, fetchImpl = fetch) {
+  return loadTransactionAt(connection, signature, 'finalized', fetchImpl)
+}
+
+export async function loadTransactionAt(connection, signature, commitment, fetchImpl = fetch) {
+  if (!['confirmed', 'finalized'].includes(commitment)) throw new Error('Unsupported transaction commitment')
   const response = await fetchImpl(connection.rpcEndpoint, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTransaction',
-      params: [signature, { commitment: 'finalized', encoding: 'json', maxSupportedTransactionVersion: 1 }] }),
+      params: [signature, { commitment, encoding: 'json', maxSupportedTransactionVersion: 1 }] }),
     signal: AbortSignal.timeout(15_000),
   })
   if (!response.ok) throw new Error(`Solana RPC transaction read returned HTTP ${response.status}`)

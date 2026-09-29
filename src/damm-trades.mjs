@@ -34,7 +34,10 @@ export function dammSwapEvents(transaction,market,destination,coder) {
       if(!/^[1-9]\d*$/.test(nextSqrtPrice??'')||BigInt(nextSqrtPrice)>=(1n<<128n))throw Error('DAMM_SWAP_PRICE_INVALID')
       const tradedAt=new Date(Number(d.currentTimestamp.toString())*1000)
       if(!Number.isFinite(tradedAt.getTime()))throw Error('DAMM_SWAP_TIMESTAMP_INVALID')
-      result.push({eventIndex,direction,quoteAmount,nextSqrtPrice,tradedAt,evidence:{group:group.index,instruction:ix,quoteAmount,direction,nextSqrtPrice}})
+      // Token side for receipt checks only; indexed evidence is unchanged.
+      const baseAmount=(direction==='buy'?d.excludedTransferFeeAmountOut:d.includedTransferFeeAmountIn).toString()
+      const params={amount0:d.params.amount0.toString(),amount1:d.params.amount1.toString(),swapMode:d.params.swapMode}
+      result.push({eventIndex,direction,quoteAmount,baseAmount,params,group:group.index,nextSqrtPrice,tradedAt,evidence:{group:group.index,instruction:ix,quoteAmount,direction,nextSqrtPrice}})
     }
   }
   return result

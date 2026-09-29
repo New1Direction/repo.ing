@@ -3,11 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { createCanonicalTrader } from '../../../src/canonical-trade.mjs'
+import { createDammTrader, createTradeRouter } from '../../../src/canonical-damm-trade.mjs'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
 import { tradeStatus } from '../../lib/trade-status.mjs'
 import { publicError } from '../../lib/public-error.mjs'
-const SAFE = /^(Trading is not configured|Invalid trade|Invalid transaction signature|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
+const SAFE = /^(Trading is not configured|Invalid trade|Invalid transaction signature|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
 export const runtime = 'nodejs'
 const sessions = globalThis.__gitfunTradeSessions ??= new Map()
 const SESSION_LIFETIME_MS = 10 * 60 * 1000
@@ -15,7 +16,9 @@ function trader() {
   const pool = database(), config = configAddress()
   if (!pool || !config) throw new Error('Trading is not configured')
   if (!globalThis.__gitfunTrader || globalThis.__gitfunTraderConfig !== config) {
-    globalThis.__gitfunTrader = createCanonicalTrader({ pool, connection: chain(), config })
+    const connection = chain()
+    globalThis.__gitfunTrader = createTradeRouter({ curve: createCanonicalTrader({ pool, connection, config }),
+      graduated: createDammTrader({ pool, connection, config }) })
     globalThis.__gitfunTraderConfig = config
   }
   return globalThis.__gitfunTrader
@@ -30,10 +33,10 @@ export async function POST(request) {
     for (const [id, session] of sessions) {
       if (Date.now() - session.createdAt > SESSION_LIFETIME_MS) sessions.delete(id)
     }
-    if (body.action === 'depth') return Response.json(await trader().buyDepth(body.githubRepoId), { headers: { 'Cache-Control': 'no-store' } })
+    if (body.action === 'depth') return Response.json(await (await trader()(body.githubRepoId)).buyDepth(body.githubRepoId), { headers: { 'Cache-Control': 'no-store' } })
     if (body.action === 'quote') {
       if (body.direction !== 'buy' && body.direction !== 'sell') throw new Error('Invalid trade direction')
-      const engine = trader()
+      const engine = await trader()(body.githubRepoId)
       const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
       const quote = body.direction === 'sell' ? await engine.quoteSell(args) : await engine.quoteBuy(args)
@@ -41,7 +44,7 @@ export async function POST(request) {
     }
     if (body.action === 'costs') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
-      const engine = trader()
+      const engine = await trader()(body.githubRepoId)
       const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
       const prepared = body.direction === 'sell' ? await engine.prepareSell(args) : await engine.prepareBuy(args)
@@ -50,7 +53,7 @@ export async function POST(request) {
     }
     if (body.action === 'prepare') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
-      const engine = trader()
+      const engine = await trader()(body.githubRepoId)
       const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
       const prepared = body.direction === 'sell' ? await engine.prepareSell(args) : await engine.prepareBuy(args)
@@ -90,19 +93,33 @@ export async function POST(request) {
       let feeIndexing = 'pending'
       let creatorFee = null
       const connection = chain()
-      for (let attempt = 0; attempt < 120; attempt++) {
-        const finalized = await connection.getTransaction(result.signature,
-          { commitment: 'finalized', maxSupportedTransactionVersion: 0 }).catch(() => null)
-        if (finalized) {
-          try {
-            const accrued = await createFeeAccrual({ pool: database(), connection, config: configAddress() })
-              .recordTradeFees({ githubRepoId: session.prepared.githubRepoId, signatures: [result.signature] })
-            feeIndexing = 'recorded'
-            creatorFee = accrued.creditedBaseUnits.toString()
-          } catch (error) { console.error('trade fee indexing failed', { signature: result.signature, error: error.message }) }
-          break
+      // Graduated swaps reach charts through the DAMM trade indexer and fees through position checkpoints;
+      // recording them here would double count. Only re-verify the receipt once it is finalized.
+      if (session.prepared.phase === 'graduated') {
+        for (let attempt = 0; attempt < 120; attempt++) {
+          const status = (await connection.getSignatureStatuses([result.signature]).catch(() => null))?.value[0]
+          if (status?.confirmationStatus === 'finalized') {
+            try { await session.engine.verifyTrade(session.prepared, result.signature, { commitment: 'finalized' }) }
+            catch (error) { console.error('graduated trade finalized verification failed', { signature: result.signature, error: error.message }) }
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, 250))
         }
-        await new Promise(resolve => setTimeout(resolve, 250))
+      } else {
+        for (let attempt = 0; attempt < 120; attempt++) {
+          const finalized = await connection.getTransaction(result.signature,
+            { commitment: 'finalized', maxSupportedTransactionVersion: 0 }).catch(() => null)
+          if (finalized) {
+            try {
+              const accrued = await createFeeAccrual({ pool: database(), connection, config: configAddress() })
+                .recordTradeFees({ githubRepoId: session.prepared.githubRepoId, signatures: [result.signature] })
+              feeIndexing = 'recorded'
+              creatorFee = accrued.creditedBaseUnits.toString()
+            } catch (error) { console.error('trade fee indexing failed', { signature: result.signature, error: error.message }) }
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, 250))
+        }
       }
       session.result = { state: 'confirmed', signature: result.signature, tokenDelta: result.tokenDelta.toString(),
         solDelta: result.solDelta.toString(), feeIndexing, creatorFee }
