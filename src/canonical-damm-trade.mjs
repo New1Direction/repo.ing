@@ -13,6 +13,7 @@ import { readChainPoint } from './chain-clock.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
 import { dammSwapEvents } from './damm-trades.mjs'
 import { loadTransactionAt } from './finalized-transaction.mjs'
+import { resolveReferral } from './referral.mjs'
 
 // Same fixed 1% tolerance and floor rounding as curve trades.
 export const DAMM_SLIPPAGE_BPS = 100
@@ -58,7 +59,8 @@ export function messageFingerprint(message) {
 
 // Defense in depth against SDK drift: the unsigned transaction may contain only the user's own ATA setup,
 // the exact SOL wrap, one ExactIn swap2 on the proven pool, and the WSOL close back to the user.
-export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut }) {
+// The referral slot holds exactly the server-resolved referral account, or the program ID when there is none.
+export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral = null }) {
   const mint = poolState.tokenAMint
   const tokenAta = getAssociatedTokenAddressSync(mint, wallet), wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, wallet)
   const [input, output] = direction === 'buy' ? [wsolAta, tokenAta] : [tokenAta, wsolAta]
@@ -82,7 +84,7 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
       if (d.length !== 25 || d.subarray(0, 8).toString('hex') !== SWAP || d.readBigUInt64LE(8) !== amountIn ||
           d.readBigUInt64LE(16) !== minimumAmountOut || d[24] !== SwapMode.ExactIn || !k[1]?.equals(pool) ||
           !k[2]?.equals(input) || !k[3]?.equals(output) || !k[4]?.equals(poolState.tokenAVault) || !k[5]?.equals(poolState.tokenBVault) ||
-          !k[6]?.equals(mint) || !k[7]?.equals(NATIVE_MINT) || !k[8]?.equals(wallet)) throw Error('Trade transaction swap does not match the quote')
+          !k[6]?.equals(mint) || !k[7]?.equals(NATIVE_MINT) || !k[8]?.equals(wallet) || !k[11]?.equals(referral ?? CP_AMM_PROGRAM_ID)) throw Error('Trade transaction swap does not match the quote')
       swaps++
     } else throw Error('Trade transaction contains an unexpected program')
   }
@@ -92,7 +94,7 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
 // Receipt checks for one confirmed/finalized transaction. `expected` holds what was prepared, never chain-derived values.
 export function verifyDammSwapReceipt(tx, expected, coder) {
   if (!tx?.meta || tx.meta.err) throw Error('Trade transaction is missing or failed')
-  const { wallet, pool, mint, tokenAVault, tokenBVault, direction, amountIn, minimumAmountOut } = expected
+  const { wallet, pool, mint, tokenAVault, tokenBVault, direction, amountIn, minimumAmountOut, referral = null } = expected
   const message = tx.transaction.message
   if (tx.transaction.signatures?.[0] !== expected.signature || messageFingerprint(message) !== expected.fingerprint) {
     throw Error('Transaction does not match prepared trade')
@@ -103,7 +105,8 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
   const swaps = instructions.filter(({ ix }) => keys[ix.programIdIndex]?.equals(CP_AMM_PROGRAM_ID) && SWAPS.includes(disc(ix.data)))
   const a = swaps[0]?.ix.accounts.map(index => keys[index])
   if (swaps.length !== 1 || !swaps[0].outer || !keys[0]?.equals(wallet) || !a[1]?.equals(pool) || !a[4]?.equals(tokenAVault) ||
-      !a[5]?.equals(tokenBVault) || !a[6]?.equals(mint) || !a[7]?.equals(NATIVE_MINT) || !a[8]?.equals(wallet)) {
+      !a[5]?.equals(tokenBVault) || !a[6]?.equals(mint) || !a[7]?.equals(NATIVE_MINT) || !a[8]?.equals(wallet) ||
+      !a[11]?.equals(referral ?? CP_AMM_PROGRAM_ID)) {
     throw Error('Transaction did not swap the canonical pool exactly once with the user wallet')
   }
   const events = dammSwapEvents(tx, { mint: mint.toBase58() }, pool.toBase58(), coder)
@@ -112,7 +115,7 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
       BigInt(event.params.amount0) !== amountIn || BigInt(event.params.amount1) !== minimumAmountOut) {
     throw Error('Transaction did not swap the canonical pool in the prepared direction')
   }
-  const quoteAmount = BigInt(event.quoteAmount), baseAmount = BigInt(event.baseAmount)
+  const quoteAmount = BigInt(event.quoteAmount), baseAmount = BigInt(event.baseAmount), referralFee = BigInt(event.referralFee)
   const index = key => keys.findIndex(k => k.equals(key))
   const ix = swaps[0].ix.accounts
   const [solAccount, tokenAccount] = direction === 'buy' ? [ix[2], ix[3]] : [ix[3], ix[2]]
@@ -125,6 +128,10 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
   const owner = tokenAt(tx.meta.postTokenBalances, tokenAccount, mint).owner ?? tokenAt(tx.meta.preTokenBalances, tokenAccount, mint).owner
   const tokenDelta = tokenDeltaAt(tokenAccount, mint)
   const vaultA = tokenDeltaAt(index(tokenAVault), mint), vaultB = tokenDeltaAt(index(tokenBVault), NATIVE_MINT)
+  // The SOL referral share leaves the SOL vault to the prepared referral account only; without one it must be zero.
+  if (referral ? tokenDeltaAt(index(referral), NATIVE_MINT) !== referralFee : referralFee !== 0n) {
+    throw Error('Trade referral fee did not settle to the prepared referral account')
+  }
   const lamports = i => BigInt(tx.meta.postBalances[i]) - BigInt(tx.meta.preBalances[i])
   const solDelta = lamports(0)
   // Wallet SOL plus its own swap accounts, before the network fee: rent in and out nets to zero.
@@ -134,12 +141,12 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
   }
   if (direction === 'buy') {
     if (quoteAmount !== amountIn || baseAmount < minimumAmountOut || tokenDelta !== baseAmount ||
-        vaultA !== -baseAmount || vaultB !== amountIn || walletSwapSol > -amountIn) throw Error('Buy balances or canonical pool vault did not change as expected')
+        vaultA !== -baseAmount || vaultB !== amountIn - referralFee || walletSwapSol > -amountIn) throw Error('Buy balances or canonical pool vault did not change as expected')
   } else if (baseAmount !== amountIn || quoteAmount < minimumAmountOut || tokenDelta !== -amountIn ||
-      vaultA !== amountIn || vaultB !== -quoteAmount || walletSwapSol < minimumAmountOut || walletSwapSol > quoteAmount) {
+      vaultA !== amountIn || vaultB !== -(quoteAmount + referralFee) || walletSwapSol < minimumAmountOut || walletSwapSol > quoteAmount) {
     throw Error('Sell balances or canonical pool vault did not change as expected')
   }
-  return { tokenDelta, solDelta, quoteAmount, baseAmount, slot: BigInt(tx.slot) }
+  return { tokenDelta, solDelta, quoteAmount, baseAmount, referralFee, slot: BigInt(tx.slot) }
 }
 
 export function createDammTrader({ pool: databasePool, connection, config, graduatedFees = null, loadTransaction = loadTransactionAt, loadMarket: marketLoader = null }) {
@@ -201,18 +208,20 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   const prepare = async (request, direction) => {
     const wallet = new PublicKey(request.wallet)
     const { market, pool, mint, poolState, amountIn, minimumAmountOut } = await quote(request, direction)
+    const referral = await resolveReferral(connection, request.referrer, wallet)
     const tx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
       inputTokenMint: direction === 'buy' ? NATIVE_MINT : mint, outputTokenMint: direction === 'buy' ? mint : NATIVE_MINT,
       tokenAMint: mint, tokenBMint: NATIVE_MINT, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
-      tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: null,
+      tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: referral,
       amountIn: new BN(amountIn.toString()), minimumAmountOut: new BN(minimumAmountOut.toString()) })
-    assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut })
+    assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral })
     const latest = await connection.getLatestBlockhash('confirmed')
     tx.feePayer = wallet
     tx.recentBlockhash = latest.blockhash
     const prepared = { transaction: tx, direction, amountIn, minimumAmountOut, lastValidBlockHeight: latest.lastValidBlockHeight,
-      githubRepoId: market.githubRepoId, mint: market.mint, pool: pool.toBase58(), slippageBps: DAMM_SLIPPAGE_BPS, phase: 'graduated' }
-    preparedState.set(prepared, { wallet, marketId: market.id, curve: market.pool, mint, pool,
+      githubRepoId: market.githubRepoId, mint: market.mint, pool: pool.toBase58(), slippageBps: DAMM_SLIPPAGE_BPS, phase: 'graduated',
+      referral: referral?.toBase58() ?? null }
+    preparedState.set(prepared, { wallet, marketId: market.id, curve: market.pool, mint, pool, referral,
       tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
       message: Buffer.from(tx.serializeMessage()), fingerprint: messageFingerprint(tx.compileMessage()),
       blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight })
@@ -231,7 +240,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     }
     const receipt = verifyDammSwapReceipt(tx, { signature, fingerprint: saved.fingerprint, wallet: saved.wallet, pool: saved.pool,
       mint: saved.mint, tokenAVault: saved.tokenAVault, tokenBVault: saved.tokenBVault, direction: prepared.direction,
-      amountIn: prepared.amountIn, minimumAmountOut: prepared.minimumAmountOut }, amm._program.coder)
+      amountIn: prepared.amountIn, minimumAmountOut: prepared.minimumAmountOut, referral: saved.referral }, amm._program.coder)
     return { signature, direction: prepared.direction, mint: market.mint, pool: prepared.pool, commitment,
       minimumAmountOut: prepared.minimumAmountOut, ...receipt }
   }

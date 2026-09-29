@@ -11,6 +11,12 @@ const SAFE = /^(Trading is not configured|Invalid trade|Invalid transaction sign
 export const runtime = 'nodejs'
 const sessions = globalThis.__gitfunTradeSessions ??= new Map()
 const SESSION_LIFETIME_MS = 10 * 60 * 1000
+// The referrer is only a hint: each trader validates it and resolves the referral account itself.
+function prepareTrade(engine, body, referrer) {
+  const args = { githubRepoId: body.githubRepoId, wallet: body.wallet, referrer: typeof referrer === 'string' ? referrer : null,
+    [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
+  return body.direction === 'sell' ? engine.prepareSell(args) : engine.prepareBuy(args)
+}
 function validSignature(signature) {
   try { return typeof signature === 'string' && signature.length <= 88 && bs58.decode(signature).length === 64 }
   catch { return false }
@@ -33,20 +39,24 @@ export async function POST(request) {
     if (body.action === 'costs') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
       const engine = await trader()(body.githubRepoId)
-      const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
-        [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
-      const prepared = body.direction === 'sell' ? await engine.prepareSell(args) : await engine.prepareBuy(args)
+      const prepared = await prepareTrade(engine, body, null)
       // Read-only preview. Only prepare creates a signable session and simulates it.
       return Response.json({ costs: await estimateTradeCosts(chain(), prepared) }, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (body.action === 'prepare') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
       const engine = await trader()(body.githubRepoId)
-      const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
-        [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
-      const prepared = body.direction === 'sell' ? await engine.prepareSell(args) : await engine.prepareBuy(args)
-      const costs = await estimateTradeCosts(chain(), prepared)
-      await preflightTrade(chain(), prepared, costs)
+      const build = async referrer => {
+        const prepared = await prepareTrade(engine, body, referrer)
+        const costs = await estimateTradeCosts(chain(), prepared)
+        await preflightTrade(chain(), prepared, costs)
+        return { prepared, costs }
+      }
+      let built
+      // A referral must never cost the trader a trade: if anything fails with one, retry once without it.
+      try { built = await build(body.referrer) }
+      catch (error) { if (!body.referrer) throw error; built = await build(null) }
+      const { prepared, costs } = built
       const id = randomUUID()
       sessions.set(id, { prepared, engine, wallet: body.wallet, createdAt: Date.now() })
       return Response.json({ id, costs, transaction: prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
