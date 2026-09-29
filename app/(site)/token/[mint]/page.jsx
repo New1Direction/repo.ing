@@ -11,7 +11,9 @@ import { ShareMarket } from '../../../components/share-market'
 import { ActivityFeed } from '../../../components/activity-feed'
 import { DiscoveryRewards } from '../../../components/discovery-rewards'
 import { CopyAddress } from '../../../components/copy-address'
-import { marketByMint, feeStatus, tradeAvailable } from '../../../lib/server.mjs'
+import { marketByMint, feeStatus, tradeAvailable, listMarkets } from '../../../lib/server.mjs'
+import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
+import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../../lib/format.mjs'
 import { displayRepository, refreshDisplayRepository } from '../../../lib/repository-display.mjs'
 import { InviteOwner } from '../../../components/invite-owner'
@@ -56,6 +58,7 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}/>
+      <Suspense fallback={<MoreMarketsFallback featured={official}/>}><MoreMarketsContent mint={market.mint} featured={official}/></Suspense>
       <div className="market-bottom">
         <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense>
         <div className="inner-card token-details"><h3>Token details</h3><dl>
@@ -73,6 +76,12 @@ export default async function Token({ params, searchParams }) {
       {[1, 2].includes(market.discoveryVersion) && <DiscoveryRewards repoId={market.repoId}/>}
     </>}
   </main><Footer/></>
+}
+
+// Same memoized listMarkets() rows as the home tabs: no extra query per token page view.
+async function MoreMarketsContent({ mint, featured }) {
+  const { markets } = await listMarkets()
+  return <MoreMarkets markets={selectMoreMarkets(markets, { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured}/>
 }
 
 async function RepositoryEarnings({ market }) {
