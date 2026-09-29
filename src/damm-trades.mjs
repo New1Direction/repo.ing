@@ -3,6 +3,7 @@ import { PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { CpAmm, CP_AMM_PROGRAM_ID } from '@meteora-ag/cp-amm-sdk'
 import { agreedFinalizedTransaction, agreeGraduation, evidenceJSON } from './graduation-state.mjs'
+import { DAMM_SWAP_PAYER, swapTrader } from './swap-trader.mjs'
 
 const EVENT=Buffer.from('e445a52e51cb9a1d','hex')
 const SWAPS=['f8c69e91e17587c8','414b3f4ceb5b5b88']
@@ -20,7 +21,7 @@ export function dammSwapEvents(transaction,market,destination,coder) {
       if(!keys[ix.programIdIndex]?.equals(CP_AMM_PROGRAM_ID))continue
       const bytes=Buffer.from(bs58.decode(ix.data)),a=ix.accounts??[]
       if(SWAPS.includes(bytes.subarray(0,8).toString('hex'))){
-        if(keys[a[1]]?.toBase58()===destination&&keys[a[6]]?.toBase58()===market.mint&&keys[a[7]]?.equals(NATIVE_MINT))active.set(depth,true)
+        if(keys[a[1]]?.toBase58()===destination&&keys[a[6]]?.toBase58()===market.mint&&keys[a[7]]?.equals(NATIVE_MINT))active.set(depth,swapTrader(transaction,ix,DAMM_SWAP_PAYER))
         continue
       }
       if(!bytes.subarray(0,8).equals(EVENT))continue
@@ -34,11 +35,11 @@ export function dammSwapEvents(transaction,market,destination,coder) {
       if(!/^[1-9]\d*$/.test(nextSqrtPrice??'')||BigInt(nextSqrtPrice)>=(1n<<128n))throw Error('DAMM_SWAP_PRICE_INVALID')
       const tradedAt=new Date(Number(d.currentTimestamp.toString())*1000)
       if(!Number.isFinite(tradedAt.getTime()))throw Error('DAMM_SWAP_TIMESTAMP_INVALID')
-      // Token side for receipt checks only; indexed evidence is unchanged.
+      // Token side for receipt checks and wallet P&L; the stored evidence JSON is unchanged.
       const baseAmount=(direction==='buy'?d.excludedTransferFeeAmountOut:d.includedTransferFeeAmountIn).toString()
       const params={amount0:d.params.amount0.toString(),amount1:d.params.amount1.toString(),swapMode:d.params.swapMode}
       const referralFee=(d.swapResult?.referralFee??0).toString()
-      result.push({eventIndex,direction,quoteAmount,baseAmount,referralFee,params,group:group.index,nextSqrtPrice,tradedAt,evidence:{group:group.index,instruction:ix,quoteAmount,direction,nextSqrtPrice}})
+      result.push({eventIndex,direction,quoteAmount,baseAmount,trader:active.get(depth-1),referralFee,params,group:group.index,nextSqrtPrice,tradedAt,evidence:{group:group.index,instruction:ix,quoteAmount,direction,nextSqrtPrice}})
     }
   }
   return result
@@ -64,8 +65,8 @@ export async function indexDammTrades({db,connection,verification,market,graduat
       const tx=await agreedFinalizedTransaction(connection,verification,item.signature)
       if(tx.slot<graduation.slot)throw Error('DAMM_TRADE_PRECEDES_MIGRATION')
       for(const event of dammSwapEvents(tx,market,address,coder))await db.query(`insert into damm_trade_events
-        (github_repo_id,pool,signature,event_index,slot,traded_at,quote_amount,direction,evidence,next_sqrt_price) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        on conflict(signature,event_index) do nothing`,[repoId,address,item.signature,event.eventIndex,tx.slot,event.tradedAt,event.quoteAmount,event.direction,evidenceJSON(event.evidence),event.nextSqrtPrice])
+        (github_repo_id,pool,signature,event_index,slot,traded_at,quote_amount,direction,evidence,next_sqrt_price,trader,base_amount) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        on conflict(signature,event_index) do nothing`,[repoId,address,item.signature,event.eventIndex,tx.slot,event.tradedAt,event.quoteAmount,event.direction,evidenceJSON(event.evidence),event.nextSqrtPrice,event.trader,event.baseAmount])
     }
     await db.query(`insert into pool_fee_cursors(pool,last_signature,last_slot) values($1,$2,$3)
       on conflict(pool) do update set last_signature=excluded.last_signature,last_slot=excluded.last_slot,updated_at=now()`,[address,item.signature,item.slot])

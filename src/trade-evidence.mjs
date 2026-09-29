@@ -4,6 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
+import { DBC_SWAP_PAYER, swapTrader } from './swap-trader.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
@@ -31,6 +32,7 @@ export function canonicalDbcSwapEvents(transaction, market, config, dbc) {
   const configKey = new PublicKey(config)
   const found = []
   let swapCount = 0
+  const traders = []
   let sawCanonicalSwap = false
   for (const group of transaction.meta.innerInstructions ?? []) {
     const outer = transaction.transaction.message.instructions[group.index]
@@ -48,6 +50,7 @@ export function canonicalDbcSwapEvents(transaction, market, config, dbc) {
       const discriminator = bytes.subarray(0, 8)
       if (SWAP_DISCRIMINATORS.some(expected => discriminator.equals(expected))) {
         lastSwapId = swapCount++
+        traders[lastSwapId] = swapTrader(transaction, instruction, DBC_SWAP_PAYER)
         swapIds.set(depth ?? 2, lastSwapId)
         const accounts = instruction.accounts ?? []
         if (isKey(accounts[1], configKey) && isKey(accounts[2], pool) &&
@@ -79,14 +82,14 @@ export function canonicalDbcSwapEvents(transaction, market, config, dbc) {
     const data = legacy ? event.data : legacySwapData(event.data)
     if (!event.hasParentSwap || !data.pool.equals(pool) || !data.config.equals(configKey)) continue
     sawCanonicalFeeEvent = true
-    events.push({ eventIndex: ordinal, data })
+    events.push({ eventIndex: ordinal, data, trader: traders[event.swapId] ?? null })
   }
   return { events, sawCanonicalSwap, sawCanonicalFeeEvent }
 }
 
 export function canonicalTradeEvents(transaction, market, config, dbc) {
   const { events: swaps } = canonicalDbcSwapEvents(transaction, market, config, dbc)
-  return swaps.map(({ eventIndex, data }) => {
+  return swaps.map(({ eventIndex, data, trader }) => {
     const direction = data.tradeDirection === 1 ? 'buy' : data.tradeDirection === 0 ? 'sell' : null
     if (!direction) throw new UnparseableTradeError('Canonical DBC swap has an unknown direction')
     const { actualInputAmount, outputAmount, nextSqrtPrice } = data.swapResult
@@ -94,7 +97,7 @@ export function canonicalTradeEvents(transaction, market, config, dbc) {
     return { pool: market.pool, signature: market.signature, eventIndex,
       slot: transaction.slot, tradedAt: new Date(Number(data.currentTimestamp.toString()) * 1000),
       direction, inputBaseUnits: actualInputAmount.toString(), outputBaseUnits: outputAmount.toString(),
-      nextSqrtPrice: nextSqrtPrice.toString() }
+      nextSqrtPrice: nextSqrtPrice.toString(), trader }
   })
 }
 
@@ -106,10 +109,10 @@ export function createTradeRecorder({ pool, connection, config }) {
     const events = canonicalTradeEvents(transaction, { ...market, signature }, resolveConfig(market), dbc)
     for (const event of events) {
       await pool.query(`insert into trade_events (pool, signature, event_index, slot, traded_at, direction,
-        input_base_units, output_base_units, next_sqrt_price) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-        on conflict (signature, event_index) do nothing`,
+        input_base_units, output_base_units, next_sqrt_price, trader) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        on conflict (signature, event_index) do update set trader = excluded.trader where trade_events.trader is null`,
       [event.pool, event.signature, event.eventIndex, event.slot, event.tradedAt, event.direction,
-        event.inputBaseUnits, event.outputBaseUnits, event.nextSqrtPrice])
+        event.inputBaseUnits, event.outputBaseUnits, event.nextSqrtPrice, event.trader])
     }
     return events.length
   }
