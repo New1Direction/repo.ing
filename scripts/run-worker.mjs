@@ -16,6 +16,7 @@ import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
+import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
@@ -63,6 +64,13 @@ const reminders=remindersConfigured()?createBuilderReminders({pool,send:createRe
 async function deliverBuilderReminders(){
   try{console.log(JSON.stringify({builderReminders:await reminders.runOnce()}))}
   catch{console.log(JSON.stringify({builderReminderError:'REMINDERS_UNAVAILABLE'}))}
+}
+// Read-only disclosure: detects finalized $REPOING buybacks by the custody and team wallets.
+const buybackReceipts=createBuybackReceiptsJob({pool,connection:graduationRPC(rpc)})
+let buybackReceiptTask=null,nextBuybackReceiptCheck=0
+async function observeBuybackReceipts(){
+  try{console.log(JSON.stringify({buybackReceipts:await buybackReceipts.runOnce()}))}
+  catch{console.log(JSON.stringify({buybackReceiptError:'BUYBACK_RECEIPTS_UNAVAILABLE'}))}
 }
 const trends=createTrendIntake({pool})
 let trendTask=null,nextTrendCheck=0
@@ -118,6 +126,9 @@ try {
       if(once)await observeTrends()
       else if(!trendTask&&Date.now()>=nextTrendCheck)trendTask=observeTrends().finally(()=>{nextTrendCheck=Date.now()+60000;trendTask=null})
     }
+    if(once)await observeBuybackReceipts()
+    else if(!buybackReceiptTask&&Date.now()>=nextBuybackReceiptCheck)
+      buybackReceiptTask=observeBuybackReceipts().finally(()=>{nextBuybackReceiptCheck=Date.now()+180000;buybackReceiptTask=null})
     if(once)await observeOperatingWallets()
     else if(!operatingWalletTask&&Date.now()>=nextOperatingWalletCheck)
       operatingWalletTask=observeOperatingWallets().finally(()=>{nextOperatingWalletCheck=Date.now()+300000;operatingWalletTask=null})
@@ -142,4 +153,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

@@ -3,7 +3,8 @@ import { OFFICIAL_TOKEN } from './official-token.mjs'
 // Platform revenue custody (claimed partner fees under the 60/20/20 policy) and the team wallet.
 export const BUYBACK_WALLETS = Object.freeze({ custody: 'FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy', team: OFFICIAL_TOKEN.teamWallet })
 
-// Finalized buys into the canonical $REPOING pool (the DAMM SOL vault 9gu44z…), verified on-chain.
+// Finalized buys into the canonical $REPOING pools (DBC quote vault HM9dEZ… before graduation, then the
+// DAMM SOL vault 9gu44z…), verified on-chain. Later buys are detected by the worker (src/buyback-detection.mjs).
 // spentLamports is the swap input: trading and route fees included; network fees and refundable
 // token-account rent excluded. The launch buy and early team purchases are excluded.
 // These disclosures do not debit the platform revenue ledger or enable spending.
