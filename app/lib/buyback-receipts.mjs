@@ -56,6 +56,24 @@ export const BUYBACK_RECEIPTS = Object.freeze([
     spentLamports: '469505712', tokenBaseUnits: '2166645566321',
     at: '2026-09-29T01:35:02.000Z',
   }),
+  Object.freeze({
+    signature: '4rVhDPzQsMsCZddBhmKw3Zjpb9jGN4Ridi9LCM8N5fzmzw7CxmCYidvNRGpYbLStCv2pMag7xfg1fznUro3MbmmQ',
+    source: 'team', wallet: BUYBACK_WALLETS.team, mint: OFFICIAL_TOKEN.mint,
+    spentLamports: '2003273897', tokenBaseUnits: '8499743083899',
+    at: '2026-09-29T02:43:12.000Z',
+  }),
+  Object.freeze({
+    signature: '3TCQDMr8QVWAHwg54RB9xxktb5FQ2dL171yqsWy7DfZACPTwEFMXXEnUdrgtXSCiUFYVaFrq4MsZUhYiCjacHo27',
+    source: 'team', wallet: BUYBACK_WALLETS.team, mint: OFFICIAL_TOKEN.mint,
+    spentLamports: '1003273897', tokenBaseUnits: '1291556927314',
+    at: '2026-09-29T03:49:56.000Z',
+  }),
+  Object.freeze({
+    signature: '5VvriUmCGJ8PoMP6GWuhDLMvNbhRQC9HX7nVQAuVoQyeVgBULad8HMztuRQU1zq1KLxUB8i54MwsuborwUPDR9XX',
+    source: 'team', wallet: BUYBACK_WALLETS.team, mint: OFFICIAL_TOKEN.mint,
+    spentLamports: '1003273897', tokenBaseUnits: '2090101678713',
+    at: '2026-09-29T04:17:36.000Z',
+  }),
 ])
 
 export const BUYBACK_RECEIPTS_BY_TIME = Object.freeze([...BUYBACK_RECEIPTS].sort((a, b) => a.at.localeCompare(b.at)))
