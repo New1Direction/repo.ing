@@ -8,6 +8,8 @@ import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 export const GRADUATION_MAX_AGE_MS = 120_000
+// Read-only display tolerates one missed worker refresh (~140s cadence); gates stay strict.
+export const PUBLIC_GRADUATION_MAX_AGE_MS = 300_000
 // Providers may serialize object properties in different orders. Array order and
 // every economic/instruction value remain significant for agreement and hashes.
 export const evidenceJSON = value => JSON.stringify(value, (_key,v) => typeof v === 'bigint' ? String(v) :
@@ -24,9 +26,9 @@ export function graduationProgress(reserve, threshold, migrated = false) {
     reserveLamports:String(current),thresholdLamports:String(target),remainingLamports:String(migrated||current>=target?0n:target-current),
     progressPercent:migrated||current>=target?100:Number(current*10000n/target)/100}
 }
-export function assertFreshGraduation(value, now=Date.now()) {
+export function assertFreshGraduation(value, now=Date.now(), maxAge=GRADUATION_MAX_AGE_MS) {
   const checked=Date.parse(value?.checkedAt),chainTime=Date.parse(value?.chainTime)
-  if(!Number.isFinite(checked)||!Number.isFinite(chainTime)||now-checked>GRADUATION_MAX_AGE_MS||now-chainTime>GRADUATION_MAX_AGE_MS||checked>now+5000||chainTime>now+5000)throw Error('STALE_PROGRESS')
+  if(!Number.isFinite(checked)||!Number.isFinite(chainTime)||now-checked>maxAge||now-chainTime>maxAge||checked>now+5000||chainTime>now+5000)throw Error('STALE_PROGRESS')
   return value
 }
 const accountEvidence = (info,address) => {

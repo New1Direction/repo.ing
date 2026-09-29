@@ -6,7 +6,7 @@ import { createGraduatedFees } from './graduated-fees.mjs'
 import { reinvestQuote } from './builder-reinvest-chain.mjs'
 import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { indexDammTrades } from './damm-trades.mjs'
-import { readGraduationState, assertFreshGraduation, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
+import { readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
 import { persistGraduationObservation } from './reserve-alerts.mjs'
 
 export const graduationError = error => /^[A-Z][A-Z_]{3,60}$/.test(error?.message??'') ? error.message : 'EVIDENCE_UNAVAILABLE'
@@ -149,12 +149,12 @@ export function createGraduationMonitor({pool,connection,verification,config,env
 
 export function publicGraduation(row,now=Date.now()) {
   if(!row||row.status!=='VERIFIED'||!row.observation)throw Error(row?.error_code??'PROGRESS_NOT_INDEXED')
-  const state=assertFreshGraduation(JSON.parse(row.observation),now),reconciliation=JSON.parse(row.reconciliation)
+  const state=assertFreshGraduation(JSON.parse(row.observation),now,PUBLIC_GRADUATION_MAX_AGE_MS),reconciliation=JSON.parse(row.reconciliation)
   if(state.phase==='GRADUATED'&&reconciliation.status!=='MATCH')throw Error('RECONCILIATION_MISMATCH')
   assertDurableGraduation(row,state)
   const {phase,status,reserveLamports,thresholdLamports,remainingLamports,progressPercent,checkedAt,chainTime,destination,dammSolLamports,dammVolume24hLamports,protocolLiquidityAdded}=state
   return {phase,status,reserveLamports,thresholdLamports,remainingLamports,progressPercent,checkedAt,chainTime,destination,
-    ...(phase==='GRADUATED'?{dammSolLamports,dammVolume24hLamports,protocolLiquidityAdded}:{}),validUntil:new Date(Math.min(Date.parse(checkedAt),Date.parse(chainTime))+120000).toISOString()}
+    ...(phase==='GRADUATED'?{dammSolLamports,dammVolume24hLamports,protocolLiquidityAdded}:{}),validUntil:new Date(Math.min(Date.parse(checkedAt),Date.parse(chainTime))+PUBLIC_GRADUATION_MAX_AGE_MS).toISOString()}
 }
 function assertDurableGraduation(row,state){
   if(state.phase!=='GRADUATED')return
