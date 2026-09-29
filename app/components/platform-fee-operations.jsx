@@ -25,17 +25,20 @@ export function PlatformFeeOperations() {
   const [log, setLog] = useState([])
   const [signatureInput, setSignatureInput] = useState('')
 
+  async function load() {
+    const r = await fetch('/api/operations/platform-fees', { cache: 'no-store', signal: AbortSignal.timeout(120000) })
+    const v = await r.json()
+    if (!r.ok) throw Error(v.error)
+    return v
+  }
+
   async function refresh() {
-    try {
-      const r = await fetch('/api/operations/platform-fees', { cache: 'no-store', signal: AbortSignal.timeout(120000) })
-      const v = await r.json()
-      if (!r.ok) throw Error(v.error)
-      setData(v); setError('')
-    } catch (e) { setError(e.message || 'Platform fee overview is unavailable.') }
+    try { setData(await load()); setError('') }
+    catch (e) { setError(e.message || 'Platform fee overview is unavailable.') }
   }
   useEffect(() => { void refresh() }, [])
 
-  function note(message) { setLog(entries => [...entries.slice(-9), `${new Date().toLocaleTimeString()} · ${message}`]) }
+  function note(message) { setLog(entries => [...entries.slice(-49), `${new Date().toLocaleTimeString()} · ${message}`]) }
 
   async function post(payload) {
     const r = await fetch('/api/operations/platform-fees', {
@@ -45,12 +48,26 @@ export function PlatformFeeOperations() {
     return v.result
   }
 
+  // A reviewed claim must match the exact fees on chain. Active pools (graduated DAMM especially) accrue on
+  // every trade, so a review can go stale in seconds; re-review that one repository once and retry.
+  async function claimReviewed(repo, phase) {
+    const key = phase.toLowerCase()
+    const review = repo[key]?.review
+    if (!review) throw Error('Review expired — reload the list')
+    try { return await post({ action: 'claim', review }) }
+    catch (e) {
+      if (!/refresh|review/i.test(e.message)) throw e
+      const fresh = (await load()).repos.find(r => r.repoId === repo.repoId)?.[key]?.review
+      if (!fresh) throw Error('Nothing left to claim after re-review')
+      note(`${repo.fullName} ${phase}: fees changed since review; retrying with a fresh review`)
+      return post({ action: 'claim', review: fresh })
+    }
+  }
+
   async function claim(repo, phase) {
     setBusy(true)
     try {
-      const review = repo[phase.toLowerCase()]?.review
-      if (!review) throw Error('Review expired — reload the list')
-      const result = await post({ action: 'claim', review })
+      const result = await claimReviewed(repo, phase)
       note(`${repo.fullName} ${phase}: ${result?.status ?? 'submitted'} ${result?.signature ? `· ${result.signature.slice(0, 8)}…` : ''}`)
       await refresh()
     } catch (e) { note(`${repo.fullName} ${phase} FAILED: ${e.message}`) }
@@ -66,7 +83,7 @@ export function PlatformFeeOperations() {
       if (!targets.length) note('Nothing available to claim.')
       for (const { repo, phase } of targets) {
         try {
-          const result = await post({ action: 'claim', review: repo[phase.toLowerCase()].review })
+          const result = await claimReviewed(repo, phase)
           note(`${repo.fullName} ${phase}: ${result?.status ?? 'submitted'}`)
         } catch (e) { note(`${repo.fullName} ${phase} FAILED: ${e.message}`) }
       }
