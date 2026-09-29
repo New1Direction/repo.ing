@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import BN from 'bn.js'
 import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js'
-import { ACCOUNT_SIZE, AccountLayout, AccountState, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { ACCOUNT_SIZE, AccountLayout, AccountState, createCloseAccountInstruction, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { CpAmm, SwapMode } from '@meteora-ag/cp-amm-sdk'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { parseReferrer, resolveReferral } from '../src/referral.mjs'
@@ -111,7 +111,8 @@ test('DBC prepared-swap check accepts exactly the resolved referral account and 
     baseVault: Keypair.generate().publicKey, quoteVault: Keypair.generate().publicKey, config, poolAuthority: Keypair.generate().publicKey,
     referralTokenAccount, inputTokenAccount: getAssociatedTokenAddressSync(NATIVE_MINT, wallet),
     outputTokenAccount: getAssociatedTokenAddressSync(mint, wallet), payer: wallet,
-    tokenBaseProgram: TOKEN_PROGRAM_ID, tokenQuoteProgram: TOKEN_PROGRAM_ID }).instruction())
+    tokenBaseProgram: TOKEN_PROGRAM_ID, tokenQuoteProgram: TOKEN_PROGRAM_ID }).instruction(),
+    createCloseAccountInstruction(getAssociatedTokenAddressSync(NATIVE_MINT, wallet), wallet, wallet))
   const spec = { wallet, pool: curve, config, mint, amountIn, minimumAmountOut }
   const referred = await build(referral), plain = await build(null)
   assert.ok(plain.instructions[0].keys[12].pubkey.equals(DBC_PROGRAM))
