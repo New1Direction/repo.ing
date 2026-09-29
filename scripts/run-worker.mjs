@@ -17,6 +17,9 @@ import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
+import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
+import { createCanonicalTrader } from '../src/canonical-trade.mjs'
+import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
@@ -71,6 +74,15 @@ let buybackReceiptTask=null,nextBuybackReceiptCheck=0
 async function observeBuybackReceipts(){
   try{console.log(JSON.stringify({buybackReceipts:await buybackReceipts.runOnce()}))}
   catch{console.log(JSON.stringify({buybackReceiptError:'BUYBACK_RECEIPTS_UNAVAILABLE'}))}
+}
+// Operator-only trade canary: real prepare path, simulation only. Never signs or sends; the payer is unsigned.
+const canaryConnection=new Connection(rpc,'confirmed')
+const tradeCanary=process.env.TRADE_CANARY_ENABLED==='false'?null:createTradeCanary({db:pool,connection:canaryConnection,
+  router:createTradeRouter({curve:createCanonicalTrader({pool,connection:canaryConnection,config}),graduated:createDammTrader({pool,connection:canaryConnection,config})})})
+let tradeCanaryTask=null,nextTradeCanaryCheck=0
+async function observeTradeCanary(){
+  try{console.log(JSON.stringify({tradeCanary:await tradeCanary.runOnce()}))}
+  catch(error){console.log(JSON.stringify({tradeCanaryError:error?.code==='42P01'?'TRADE_CANARY_NOT_MIGRATED':'TRADE_CANARY_UNAVAILABLE'}))}
 }
 const trends=createTrendIntake({pool})
 let trendTask=null,nextTrendCheck=0
@@ -129,6 +141,11 @@ try {
     if(once)await observeBuybackReceipts()
     else if(!buybackReceiptTask&&Date.now()>=nextBuybackReceiptCheck)
       buybackReceiptTask=observeBuybackReceipts().finally(()=>{nextBuybackReceiptCheck=Date.now()+180000;buybackReceiptTask=null})
+    if(tradeCanary){
+      if(once)await observeTradeCanary()
+      else if(!tradeCanaryTask&&Date.now()>=nextTradeCanaryCheck)
+        tradeCanaryTask=observeTradeCanary().finally(()=>{nextTradeCanaryCheck=Date.now()+CANARY_INTERVAL_MS;tradeCanaryTask=null})
+    }
     if(once)await observeOperatingWallets()
     else if(!operatingWalletTask&&Date.now()>=nextOperatingWalletCheck)
       operatingWalletTask=observeOperatingWallets().finally(()=>{nextOperatingWalletCheck=Date.now()+300000;operatingWalletTask=null})
@@ -153,4 +170,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

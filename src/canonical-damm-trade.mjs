@@ -1,7 +1,7 @@
 import BN from 'bn.js'
 import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import bs58 from 'bs58'
-import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
+import { ComputeBudgetProgram, Message, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
@@ -17,6 +17,7 @@ import { loadTransactionAt } from './finalized-transaction.mjs'
 import { keptWsolRent, resolveReferral } from './referral.mjs'
 import { createWsolAtaInstruction, isCreateWsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
+import { preparedFromRecord, readTradeRecord, recordWithSignedMessage, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
 
 // Same fixed 1% tolerance and floor rounding as curve trades.
 export const DAMM_SLIPPAGE_BPS = 100
@@ -172,7 +173,6 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   const amm = new CpAmm(connection)
   const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool })
   const destinations = new Map()
-  const preparedState = new WeakMap()
   const loadMarket = marketLoader ?? (async repoId => {
     const market = (await drizzle(databasePool).select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
@@ -240,20 +240,19 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
       writableAccounts: [pool, poolState.tokenAVault, poolState.tokenBVault] })
     const tx = landing.transaction
     assertPreparedSwap(tx, expected)
-    const prepared = { transaction: tx, direction, amountIn, minimumAmountOut, lastValidBlockHeight: latest.lastValidBlockHeight,
-      githubRepoId: market.githubRepoId, mint: market.mint, pool: pool.toBase58(), slippageBps: DAMM_SLIPPAGE_BPS, phase: 'graduated',
-      referral: referral?.toBase58() ?? null, priorityFee: { computeUnitLimit: landing.computeUnitLimit,
-        microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } }
-    preparedState.set(prepared, { wallet, marketId: market.id, curve: market.pool, mint, pool, referral, wsolRent,
-      tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
-      message: Buffer.from(tx.serializeMessage()), fingerprint: messageFingerprint(tx.compileMessage()),
-      blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight })
-    return prepared
+    // Everything submit and verification need, as plain JSON: any instance can finish the trade (see trade-record.mjs).
+    const record = Object.freeze({ v: TRADE_RECORD_VERSION, phase: 'graduated', direction, wallet: wallet.toBase58(), marketId: market.id,
+      githubRepoId: String(market.githubRepoId), mint: market.mint, curve: market.pool, pool: pool.toBase58(),
+      tokenAVault: poolState.tokenAVault.toBase58(), tokenBVault: poolState.tokenBVault.toBase58(), referral: referral?.toBase58() ?? null,
+      wsolRent: wsolRent === null ? null : wsolRent.toString(), amountIn: amountIn.toString(), minimumAmountOut: minimumAmountOut.toString(),
+      message: Buffer.from(tx.serializeMessage()).toString('base64'), transaction: serializeUnsigned(tx),
+      blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps: DAMM_SLIPPAGE_BPS,
+      priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } })
+    return preparedFromRecord(record, tx)
   }
   const verifyTrade = async (prepared, signature, { commitment = 'confirmed' } = {}) => {
-    const saved = preparedState.get(prepared)
-    if (!saved) throw new Error('Trade was not prepared by this trader')
-    const market = await loadMarket(prepared.githubRepoId)
+    const saved = readTradeRecord(prepared?.record, 'graduated')
+    const market = await loadMarket(saved.githubRepoId)
     if (market.id !== saved.marketId || market.mint !== saved.mint.toBase58() || market.pool !== saved.curve ||
         !(await canonicalPool(market)).equals(saved.pool)) throw new Error('Canonical market changed before trade verification')
     let tx = null
@@ -261,27 +260,28 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
       tx = await loadTransaction(connection, signature, commitment)
       if (!tx) await new Promise(resolve => setTimeout(resolve, 100))
     }
-    const receipt = verifyDammSwapReceipt(tx, { signature, fingerprint: saved.fingerprint, wallet: saved.wallet, pool: saved.pool,
-      mint: saved.mint, tokenAVault: saved.tokenAVault, tokenBVault: saved.tokenBVault, direction: prepared.direction,
-      amountIn: prepared.amountIn, minimumAmountOut: prepared.minimumAmountOut, referral: saved.referral, wsolRent: saved.wsolRent }, amm._program.coder)
-    return { signature, direction: prepared.direction, mint: market.mint, pool: prepared.pool, commitment,
-      minimumAmountOut: prepared.minimumAmountOut, ...receipt }
+    // The landed message is the wallet-signed one (reviewed, plus any accepted wallet assertions) once known.
+    const fingerprint = messageFingerprint(Message.from(saved.signedMessage ?? saved.message))
+    const receipt = verifyDammSwapReceipt(tx, { signature, fingerprint, wallet: saved.wallet, pool: saved.pool,
+      mint: saved.mint, tokenAVault: saved.tokenAVault, tokenBVault: saved.tokenBVault, direction: saved.direction,
+      amountIn: saved.amountIn, minimumAmountOut: saved.minimumAmountOut, referral: saved.referral, wsolRent: saved.wsolRent }, amm._program.coder)
+    return { signature, direction: saved.direction, mint: market.mint, pool: saved.pool.toBase58(), commitment,
+      minimumAmountOut: saved.minimumAmountOut, ...receipt }
   }
   const submitTrade = async (prepared, signTransaction) => {
-    const saved = preparedState.get(prepared)
-    if (!saved) throw new Error('Trade was not prepared by this trader')
+    const saved = readTradeRecord(prepared?.record, 'graduated')
     const signed = await signTransaction(prepared.transaction)
     if (!(signed instanceof Transaction) || !matchesReviewedTransaction(saved.message, signed) ||
         !signed.feePayer.equals(saved.wallet) || !signed.verifySignatures()) {
       throw new Error('Wallet returned an altered or unsigned trade transaction')
     }
-    saved.fingerprint = messageFingerprint(signed.compileMessage())
+    const record = recordWithSignedMessage(prepared.record, signed)
     const signature = bs58.encode(signed.signature)
     await broadcastUntilSettled(connection, signed.serialize(), { signature, lastValidBlockHeight: saved.lastValidBlockHeight })
     const confirmation = await connection.confirmTransaction({ signature, blockhash: saved.blockhash,
       lastValidBlockHeight: saved.lastValidBlockHeight }, 'confirmed')
     if (confirmation.value.err) throw new Error(`Trade failed: ${JSON.stringify(confirmation.value.err)}`)
-    return verifyTrade(prepared, signature)
+    return verifyTrade({ ...prepared, record }, signature)
   }
   const publicQuote = async (request, direction) => {
     const { amountIn, outputAmount, minimumAmountOut, fee, poolState } = await quote(request, direction)
@@ -297,6 +297,8 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
 }
 
 // Curve markets keep the unchanged DBC trader; only a curve the chain reports as migrated uses the DAMM trader.
+// forPhase: the trader that prepared a stored record, whatever the market's phase is now.
 export function createTradeRouter({ curve, graduated }) {
-  return async repoId => (await graduated.isMigrated(repoId)) ? graduated : curve
+  return Object.assign(async repoId => (await graduated.isMigrated(repoId)) ? graduated : curve,
+    { forPhase: phase => phase === 'graduated' ? graduated : phase === 'curve' ? curve : null })
 }

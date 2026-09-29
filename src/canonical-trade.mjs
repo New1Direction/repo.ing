@@ -14,6 +14,7 @@ import { markets } from './db/schema.mjs'
 import { keptWsolRent, resolveReferral } from './referral.mjs'
 import { ATA_PROGRAM, createWsolAtaInstruction, isCreateWsolAta, TOKEN_PROGRAM, wsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
+import { preparedFromRecord, readTradeRecord, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
@@ -70,7 +71,6 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
   const db = drizzle(databasePool)
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
-  const preparedState = new WeakMap()
   const loadMarket = marketLoader ?? (async repoId => {
     const market = (await db.select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
@@ -121,19 +121,18 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       writableAccounts: [pool, vaults[5].pubkey, vaults[6].pubkey] })
     const tx = landing.transaction
     assertPreparedDbcSwap(tx, expected)
-    const prepared = { transaction: tx, direction, amountIn: BigInt(amountIn.toString()), minimumAmountOut: BigInt(result.minimumAmountOut.toString()),
-      lastValidBlockHeight: latest.lastValidBlockHeight,
-      githubRepoId: market.githubRepoId, mint: market.mint, pool: market.pool, slippageBps: SLIPPAGE_BPS,
-      referral: referral?.toBase58() ?? null, priorityFee: { computeUnitLimit: landing.computeUnitLimit,
-        microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } }
-    preparedState.set(prepared, { wallet, marketId: market.id, mint, pool, referral, wsolRent,
-      message: Buffer.from(tx.serializeMessage()), blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight })
-    return prepared
+    // Everything submit and verification need, as plain JSON: any instance can finish the trade (see trade-record.mjs).
+    const record = Object.freeze({ v: TRADE_RECORD_VERSION, phase: 'curve', direction, wallet: wallet.toBase58(), marketId: market.id,
+      githubRepoId: String(market.githubRepoId), mint: market.mint, pool: market.pool, referral: referral?.toBase58() ?? null,
+      wsolRent: wsolRent === null ? null : wsolRent.toString(), amountIn: amountIn.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
+      message: Buffer.from(tx.serializeMessage()).toString('base64'), transaction: serializeUnsigned(tx),
+      blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps: SLIPPAGE_BPS,
+      priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } })
+    return preparedFromRecord(record, tx)
   }
   const verifyTrade = async (prepared, signature) => {
-    const saved = preparedState.get(prepared)
-    if (!saved) throw new Error('Trade was not prepared by this trader')
-    const market = await loadMarket(prepared.githubRepoId)
+    const saved = readTradeRecord(prepared?.record, 'curve')
+    const market = await loadMarket(saved.githubRepoId)
     const configKey = resolveConfig(market)
     if (market.id !== saved.marketId || market.mint !== saved.mint.toBase58() || market.pool !== saved.pool.toBase58()) {
       throw new Error('Canonical market changed before trade verification')
@@ -177,14 +176,13 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     if (!afterPool || !afterPool.poolState.config.equals(configKey) || !afterPool.poolState.baseMint.equals(saved.mint)) {
       throw new Error('Canonical pool missing or changed after trade')
     }
-    assertDbcSettlement({ direction: prepared.direction, amountIn: prepared.amountIn, minimumAmountOut: prepared.minimumAmountOut,
+    assertDbcSettlement({ direction: saved.direction, amountIn: saved.amountIn, minimumAmountOut: saved.minimumAmountOut,
       tokenDelta, walletSol, fee: BigInt(tx.meta.fee), quoteVaultDelta })
-    return { signature, direction: prepared.direction, mint: market.mint, pool: market.pool,
-      tokenDelta, solDelta, quoteVaultDelta, slot: BigInt(tx.slot), minimumAmountOut: prepared.minimumAmountOut }
+    return { signature, direction: saved.direction, mint: market.mint, pool: market.pool,
+      tokenDelta, solDelta, quoteVaultDelta, slot: BigInt(tx.slot), minimumAmountOut: saved.minimumAmountOut }
   }
   const submitTrade = async (prepared, signTransaction) => {
-    const saved = preparedState.get(prepared)
-    if (!saved) throw new Error('Trade was not prepared by this trader')
+    const saved = readTradeRecord(prepared?.record, 'curve')
     const signed = await signTransaction(prepared.transaction)
     if (!(signed instanceof Transaction) || !matchesReviewedTransaction(saved.message, signed) ||
         !signed.feePayer.equals(saved.wallet) || !signed.verifySignatures()) {
