@@ -5,6 +5,7 @@ import bs58 from 'bs58'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
 import { tradeStatus } from '../../lib/trade-status.mjs'
+import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
 import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 const SAFE = /^(Trading is not configured|Invalid trade|Invalid transaction signature|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
@@ -88,37 +89,10 @@ export async function POST(request) {
           .catch(() => ({ state: 'pending', signature }))
         return Response.json(status, { headers: { 'Cache-Control': 'no-store' } })
       }
-      let feeIndexing = 'pending'
-      let creatorFee = null
       const connection = chain()
-      // Graduated swaps reach charts through the DAMM trade indexer and fees through position checkpoints;
-      // recording them here would double count. Only re-verify the receipt once it is finalized.
-      if (session.prepared.phase === 'graduated') {
-        for (let attempt = 0; attempt < 120; attempt++) {
-          const status = (await connection.getSignatureStatuses([result.signature]).catch(() => null))?.value[0]
-          if (status?.confirmationStatus === 'finalized') {
-            try { await session.engine.verifyTrade(session.prepared, result.signature, { commitment: 'finalized' }) }
-            catch (error) { console.error('graduated trade finalized verification failed', { signature: result.signature, error: error.message }) }
-            break
-          }
-          await new Promise(resolve => setTimeout(resolve, 250))
-        }
-      } else {
-        for (let attempt = 0; attempt < 120; attempt++) {
-          const finalized = await connection.getTransaction(result.signature,
-            { commitment: 'finalized', maxSupportedTransactionVersion: 0 }).catch(() => null)
-          if (finalized) {
-            try {
-              const accrued = await createFeeAccrual({ pool: database(), connection, config: configAddress() })
-                .recordTradeFees({ githubRepoId: session.prepared.githubRepoId, signatures: [result.signature] })
-              feeIndexing = 'recorded'
-              creatorFee = accrued.creditedBaseUnits.toString()
-            } catch (error) { console.error('trade fee indexing failed', { signature: result.signature, error: error.message }) }
-            break
-          }
-          await new Promise(resolve => setTimeout(resolve, 250))
-        }
-      }
+      const { feeIndexing, creatorFee } = await settleConfirmedTrade({ connection, db: database(), engine: session.engine,
+        prepared: session.prepared, signature: result.signature,
+        recordFees: args => createFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees(args) })
       session.result = { state: 'confirmed', signature: result.signature, tokenDelta: result.tokenDelta.toString(),
         solDelta: result.solDelta.toString(), feeIndexing, creatorFee }
       return Response.json(session.result, { headers: { 'Cache-Control': 'no-store' } })
