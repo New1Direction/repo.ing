@@ -3,6 +3,8 @@ import { Search, ShieldCheck, Users } from 'lucide-react'
 import { BrandMark } from '../../components/brand-mark'
 import styles from './page.module.css'
 import { siteImage } from '../../lib/site-metadata.mjs'
+import { JsonLd } from '../../components/json-ld'
+import { faqJsonLd, SITE_URL } from '../../lib/json-ld.mjs'
 
 const description = 'GitHubのOSSに市場を。公開リポジトリの市場づくりと、検証済みの開発者が取引手数料の一部を受け取る仕組みを紹介します。'
 export const metadata = {
@@ -35,7 +37,7 @@ export default function JapaneseLanding() {
         <article><ShieldCheck aria-hidden="true"/><span className={styles.number}>02</span><h2>受け取りには、権限の確認を。</h2><p>開発者向けの手数料を受け取れるのは、そのリポジトリの管理権限を確認できた方です。GitHubでの確認と、受取用ウォレットの設定が必要です。</p></article>
         <article><Users aria-hidden="true"/><span className={styles.number}>03</span><h2>市場の存在 ≠ 開発者の公認。</h2><p>コミュニティが作成した市場は、開発者による承認・提携・推奨を意味しません。</p></article>
       </section>
-      <section id="faq" className={styles.faq}><h2>よくある質問</h2>{questions.map(([question, answer]) => <details key={question}><summary>{question}</summary><p>{answer}</p></details>)}</section>
+      <section id="faq" className={styles.faq} aria-labelledby="ja-faq-title"><JsonLd data={faqJsonLd({ url: `${SITE_URL}/ja`, lang: 'ja', questions })}/><h2 id="ja-faq-title">よくある質問</h2>{questions.map(([question, answer]) => <details key={question}><summary>{question}</summary><p>{answer}</p></details>)}</section>
       <p className={styles.risk}>トークンの価格は変動し、購入額を失う可能性があります。取引量や収益は保証されません。</p>
     </main>
     <footer className={styles.footer}><Brand/><span>オープンソースのための市場。</span><Link href="/explore">市場を見る（英語）</Link><a href="https://github.com/New1Direction/repo.ing">GitHub</a></footer>
