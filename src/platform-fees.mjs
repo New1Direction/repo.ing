@@ -78,7 +78,7 @@ export function createPlatformFees({ pool, connection, config, partner }) {
         const receipt = await settlePlatformClaim(client, connection, intent)
         if (!receipt) throw Error('Platform fee submitted; final receipt is being checked')
         const settled = await graduatedFees.read(record)
-        if (settled?.partner && settled.partner.claimed - snapshot.partner.claimed !== outstanding)
+        if (settled?.partner && settled.partner.claimed - snapshot.partner.claimed !== BigInt(receipt.amount))
           throw Error('Partner claim checkpoint differs from the settled amount')
         return receipt
       } finally { await client.query('select pg_advisory_unlock($1::bigint)', [repoId]) }
@@ -93,12 +93,16 @@ export async function settlePlatformClaim(db, connection, intent) {
   const index = receipt.transaction.message.accountKeys.findIndex(key => key.equals(receiver))
   if (index < 0) throw Error('Receiver is absent from the settled platform fee transaction')
   const delta = BigInt(receipt.meta.postBalances[index] ?? 0) - BigInt(receipt.meta.preBalances[index] ?? 0)
-  // The fee payer may also fund the receiver's wrapped-SOL account rent; the exact
-  // amount is verified against the position claim checkpoint by the caller.
-  if (delta > BigInt(intent.amount) || delta + BigInt(receipt.meta.fee) + 5_000_000n < BigInt(intent.amount))
+  // claimPositionFee takes everything accrued at execution, so an active pool settles a little MORE than was
+  // reviewed. The receiver is the fee payer (it pays the network fee; wrapped-SOL rent nets to zero), so the
+  // claimed amount is delta + fee. Record what actually settled, within sane bounds; the caller checks it
+  // against the position claim checkpoint.
+  const reviewed = BigInt(intent.amount), claimed = delta + BigInt(receipt.meta.fee)
+  if (claimed + 5_000_000n < reviewed || claimed > reviewed * 3n + 1_000_000_000n)
     throw Error('Settled platform fee delta differs from the reviewed amount')
-  const { rows: [updated] } = await db.query(`update platform_fee_claims set status='settled', settled_at=now()
-    where signature=$1 and status='pending' returning status, signature, wallet, amount::text`, [intent.signature])
+  const settledAmount = claimed > reviewed ? claimed : reviewed
+  const { rows: [updated] } = await db.query(`update platform_fee_claims set status='settled', settled_at=now(), amount=$2
+    where signature=$1 and status='pending' returning status, signature, wallet, amount::text`, [intent.signature, settledAmount.toString()])
   return updated ?? null
 }
 
