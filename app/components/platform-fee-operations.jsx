@@ -114,7 +114,7 @@ export function PlatformFeeOperations() {
       <div className="operations-summary">
         <div className="inner-card"><span>Ready to allocate</span><strong>{sol(data.revenue.available)}</strong></div>
         <div className="inner-card"><span>Platform fees claimed</span><strong>{sol(data.revenue.claimed?.total)}</strong></div>
-        <div className="inner-card"><span>Buyback reserve</span><strong>{sol(data.revenue.buybackReserve)}</strong></div>
+        <div className="inner-card"><span>Buyback reserve</span><strong>{sol(data.revenue.buybackReserve)}</strong>{BigInt(data.revenue.buybackAhead ?? 0) > 0n ? <small>{sol(data.revenue.buybackAhead)} ahead of policy</small> : <small>After {sol(data.revenue.publishedSpent)} of published custody buybacks</small>}</div>
         <div className="inner-card"><span>Policy</span><strong>{data.revenue.activePolicy ? `${data.revenue.activePolicy.buybackPermille / 10}/${data.revenue.activePolicy.liquidityPermille / 10}/${(1000 - data.revenue.activePolicy.buybackPermille - data.revenue.activePolicy.liquidityPermille) / 10}` : 'None'}</strong></div>
       </div>
       {data.revenue.reviews.allocate && <div className="builder-claim-bar">

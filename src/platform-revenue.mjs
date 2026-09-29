@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
+import { loadBuybackReceipts } from '../app/lib/buyback-receipts-db.mjs'
 
 // Canonical platform-revenue accounting. Builder and repository earnings are never
 // touched here: this ledger only covers revenue repo.ing owns (partner fees).
@@ -54,6 +55,16 @@ export async function platformRevenueSummary(db) {
   const allocatedBuyback = BigInt(allocated[0].buyback), allocatedLiquidity = BigInt(allocated[0].liquidity)
   const allocatedTreasury = BigInt(allocated[0].treasury)
   const spentTotal = BigInt(spent[0].amount)
+  // Custody buybacks executed by hand and published as receipts (hand-verified + worker-detected) spend the
+  // same reserve; count each signature once, whether or not it was also imported as a settled intent.
+  // Only receipts from the wallet that actually received the claimed fees count against this ledger.
+  const { rows: imported } = await db.query(`select signature from buyback_intents where status='settled' and signature is not null`)
+  const { rows: custody } = await db.query(`select distinct wallet from platform_fee_claims where status='settled'`)
+  const importedSignatures = new Set(imported.map(row => row.signature)), custodyWallets = new Set(custody.map(row => row.wallet))
+  const publishedSpent = (custodyWallets.size ? await loadBuybackReceipts(db) : [])
+    .filter(receipt => receipt.source === 'custody' && custodyWallets.has(receipt.wallet) && !importedSignatures.has(receipt.signature))
+    .reduce((sum, receipt) => sum + BigInt(receipt.spentLamports), 0n)
+  const outstanding = allocatedBuyback - spentTotal - publishedSpent
   return {
     earned: { damm: (byPhase.damm ?? 0n).toString(), dbc: (byPhase.dbc ?? 0n).toString(),
       total: ((byPhase.damm ?? 0n) + (byPhase.dbc ?? 0n)).toString() },
@@ -62,7 +73,11 @@ export async function platformRevenueSummary(db) {
     allocated: { buyback: allocatedBuyback.toString(), liquidity: allocatedLiquidity.toString(),
       treasury: allocatedTreasury.toString(), total: (allocatedBuyback + allocatedLiquidity + allocatedTreasury).toString() },
     spent: spentTotal.toString(),
-    buybackReserve: (allocatedBuyback - spentTotal).toString(),
+    publishedSpent: publishedSpent.toString(),
+    // What the policy still owes to buybacks; buying beyond it is allowed and reported as buybackAhead.
+    buybackReserve: (outstanding > 0n ? outstanding : 0n).toString(),
+    buybackAhead: (outstanding < 0n ? -outstanding : 0n).toString(),
+    intentReserve: (allocatedBuyback - spentTotal).toString(),
     activePolicy: await activePolicy(db),
   }
 }
@@ -305,7 +320,8 @@ export async function reconcilePlatformRevenue(db) {
   const allocatedTotal = BigInt(summary.allocated.total)
   const claimedTotal = BigInt(summary.claimed.total)
   if (allocatedTotal > claimedTotal) problems.push('Allocations exceed claimed platform revenue')
-  if (BigInt(summary.buybackReserve) < 0n) problems.push('Buyback spend exceeds the buyback reserve')
+  // Only protocol-executed intents are bounded by the reserve; published manual buybacks may exceed policy.
+  if (BigInt(summary.intentReserve) < 0n) problems.push('Buyback spend exceeds the buyback reserve')
   const { rows: orphans } = await db.query(`select count(*)::int as n from platform_revenue_allocations a
     where not exists (select 1 from platform_fee_claims c where c.signature = a.claim_signature and c.status='settled')`)
   if (orphans[0].n > 0) problems.push('Allocations reference claims that are not settled')

@@ -80,7 +80,7 @@ export async function GET(request) {
     ])
     return Response.json({ repos, revenue: {
       available: revenue.available, claimed: revenue.claimed, allocated: revenue.allocated,
-      buybackReserve: revenue.buybackReserve, activePolicy: revenue.activePolicy,
+      buybackReserve: revenue.buybackReserve, buybackAhead: revenue.buybackAhead, publishedSpent: revenue.publishedSpent, activePolicy: revenue.activePolicy,
       reviews: { allocate: revenue.available !== '0' && revenue.activePolicy ? seal({
         purpose: 'platform-revenue-allocate', sessionId: operator.sessionId,
         policyVersion: revenue.activePolicy.version, expiresAt: Date.now() + 10 * 60_000 }) : null } },
