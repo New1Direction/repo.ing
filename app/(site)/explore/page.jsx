@@ -9,6 +9,7 @@ import { growthSurface } from '../../../src/discoverer-growth.mjs'
 import { database } from '../../lib/server.mjs'
 import { listMarkets } from '../../lib/server.mjs'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
+import { exploreGrowthView } from '../../lib/growth-view.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Explore markets · repo.ing', description: 'Browse live markets for open source repositories. Real repositories, real communities — every trade pays the builders.' }
 export default function Explore() {
@@ -24,5 +25,5 @@ async function Markets() {
 async function Highlights() {
   let growth
   try { growth = await growthSurface(database()) } catch {}
-  return growth ? <ExploreGrowth data={growth}/> : <p className="subtle-notice">Market highlights are temporarily unavailable.</p>
+  return growth ? <ExploreGrowth data={exploreGrowthView(growth)}/> : <p className="subtle-notice">Market highlights are temporarily unavailable.</p>
 }
