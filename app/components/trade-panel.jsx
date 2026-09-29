@@ -342,6 +342,6 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       <button className="button primary trade-submit" type="submit" disabled={busy || !available || !tradingOpen || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
       <TransactionStatus stage={busy ? stage : ''}/>
     </form>
-    <TradeResultCard result={resultCard} symbol={market.symbol} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)}/>
+    <TradeResultCard result={resultCard} symbol={market.symbol} mint={market.mint} fullName={market.fullName} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)}/>
   </div>{!panelVisible && !resultCard && <nav className="mobile-trade-actions" aria-label="Quick trade navigation"><span>${market.symbol}</span><button type="button" className="button primary" disabled={busy || !available} onClick={() => openTrade('buy')}>Buy</button><button type="button" className="button outline" disabled={busy || !available} onClick={() => openTrade('sell')}>Sell</button></nav>}</>
 }

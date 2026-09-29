@@ -7,12 +7,9 @@ import { database } from '../../lib/server.mjs'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import { analyticsWindow, readProtocolAnalytics } from '../../../src/protocol-analytics.mjs'
 import { readReserveCoverage } from '../../../src/reserve-coverage.mjs'
-import { loadBuybackReceipts } from '../../lib/buyback-receipts-db.mjs'
-import { ttlMemo } from '../../lib/ttl-memo.mjs'
+import { buybackReceipts } from '../../lib/buyback-feed.mjs'
 
 export const dynamic = 'force-dynamic'
-// Worker-detected receipts appear within a minute; loadBuybackReceipts never rejects.
-const buybackReceipts = ttlMemo(() => loadBuybackReceipts(database()), 30_000)
 export const metadata = { title: 'Protocol analytics · repo.ing', description: 'Trading activity, verified builder payouts, and platform revenue allocation on repo.ing.' }
 
 export default async function StatsPage({ searchParams }) {

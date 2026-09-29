@@ -586,3 +586,14 @@
 .claim-intro small{display:block;margin-top:8px;color:var(--muted);font-size:14px}
 @media(max-width:480px){.claim-checklist{display:grid;grid-template-columns:repeat(3,auto);justify-content:space-between;gap:8px;font-size:12px}.claim-checklist li{gap:6px}.claim-checklist li+li:before{display:none}}
 .trade-venue-note{margin:-6px 0 12px;color:var(--muted);font-size:12px}.trade-venue-note a{color:var(--text);text-decoration:underline;text-underline-offset:2px;white-space:nowrap}.trade-venue-note a:hover{color:var(--green)}
+.buyback-counter{display:flex;align-items:center;gap:14px;max-width:920px;min-height:50px;margin:14px auto 10px;padding:10px 18px;border:1px solid var(--border);border-radius:9px;background:var(--surface);text-align:left;font-size:14px}
+.buyback-counter-label{flex:none;padding-right:14px;border-right:1px solid var(--border);color:var(--muted);font-size:11px;font-weight:650;letter-spacing:.18em;text-transform:uppercase}
+.buyback-counter p{flex:1;min-width:0;margin:0;color:var(--muted);line-height:1.45}
+.buyback-counter strong{color:var(--text);font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
+.buyback-counter p>span[aria-hidden]{color:var(--green);padding:0 2px}
+.buyback-counter-pending{color:var(--dim)}
+.buyback-counter a{flex:none;display:inline-flex;align-items:center;gap:5px;color:var(--green);font-size:13px;font-weight:650}
+.buyback-counter a:hover{text-decoration:underline}
+@media(max-width:700px){.buyback-counter{display:grid;grid-template-columns:1fr auto;align-content:center;row-gap:6px;min-height:92px;margin-top:12px;padding:12px 14px;font-size:13px}.buyback-counter-label{padding:0;border:0}.buyback-counter p{grid-column:1/-1;grid-row:2}}
+.trade-result-actions .trade-result-share{gap:6px}
+.launch-success .launch-share-x{display:inline-flex;align-items:center;gap:8px}

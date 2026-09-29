@@ -1,8 +1,9 @@
 'use client'
 import { CheckCircle2, CircleAlert, Clock3, ExternalLink, RefreshCw, X } from 'lucide-react'
 import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
+import { ShareOnX } from './share-on-x'
 
-export function TradeResultCard({ result, symbol, onClose, onCheck }) {
+export function TradeResultCard({ result, symbol, mint, fullName, onClose, onCheck }) {
   if (!result) return null
   const { state, direction, signature } = result
   const action = direction === 'buy' ? 'Buy' : 'Sell'
@@ -32,6 +33,7 @@ export function TradeResultCard({ result, symbol, onClose, onCheck }) {
           View transaction <ExternalLink size={14}/>
         </a>}
         {checking && <button type="button" onClick={onCheck}><RefreshCw size={14}/> Check status</button>}
+        {confirmed && <ShareOnX className="trade-result-share" mint={mint} fullName={fullName} symbol={symbol} kind={direction}/>}
       </div>
     </div>
   </aside>
