@@ -22,7 +22,7 @@ export function formatSolRounded(raw) {
   if (raw === null || raw === undefined) return '—'
   const amount = Number(BigInt(raw)) / 1e9
   if (amount !== 0 && Math.abs(amount) < 0.00005) return amount < 0 ? '>-0.0001' : '<0.0001'
-  return amount.toLocaleString('en-US', { maximumFractionDigits: 4 })
+  return amount.toLocaleString('en-US', { maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4 })
 }
 export function formatUsdEstimate(lamports, usdPerSol) {
   if (lamports === null || lamports === undefined || !Number.isFinite(usdPerSol) || usdPerSol <= 0) return null
