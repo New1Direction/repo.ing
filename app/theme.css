@@ -100,3 +100,4 @@
 [data-theme=light] .claim-receipt p{color:#20362a}
 [data-theme=light] .claim-step-hint,[data-theme=light] .claim-wallet-details{color:#5a6d60}
 [data-theme=light] .claim-pause{background:#fff7ea;border-color:#e2bc7b;color:#715021}
+[data-theme=light] .trade-quick-actions button[aria-pressed=true],[data-theme=light] .trade-quick-actions button:hover:not(:disabled){color:#0f6b40;border-color:var(--green-dark)}

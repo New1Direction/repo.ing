@@ -12,6 +12,7 @@ import { TransactionStatus } from './ui'
 import { TradeResultCard } from './trade-result-card'
 import { formatSolDisplay, formatUnits, parseUnits, formatUsdEstimate } from '../lib/format.mjs'
 import { sellAmountForPercent, tokenBalanceLabel } from '../lib/token-balance.mjs'
+import { sameAmount } from '../lib/quick-amounts.mjs'
 
 async function fetchSolBalance(wallet, signal) {
   const response = await fetch(`/api/wallet/balance?wallet=${encodeURIComponent(wallet)}`, { cache: 'no-store', signal })
@@ -306,7 +307,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
         {wallet && solBalanceError && <button type="button" onClick={() => setBalanceRefresh(value => value + 1)}>Retry</button>}
       </div>}
       {direction === 'buy' && (!curve || curve.status === 'active') && <TradeSizeGuide repoId={market.repoId} disabled={busy} onSelect={value => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}/>}
-      {direction === 'buy' && <BuyPresets disabled={busy} onSelect={value => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}/>}
+      {direction === 'buy' && <BuyPresets disabled={busy} amount={amount} solBalance={solBalance} onSelect={value => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}/>}
       {direction === 'sell' && <>
         <div className="trade-balance-row">
           <span title={balance === null ? undefined : `${formatUnits(balance, 6)} ${market.symbol}`}>
@@ -315,9 +316,10 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
           {!wallet && <button type="button" onClick={() => connect().catch(() => {})}>Connect wallet</button>}
           {wallet && balanceError && <button type="button" onClick={() => setBalanceRefresh(value => value + 1)}>Retry</button>}
         </div>
-        <div className="trade-quick-actions" aria-label="Sell amount shortcuts">
-          {[25, 50, 100].map(percent => <button type="button" key={percent} disabled={busy || balance === null || BigInt(balance) * BigInt(percent) / 100n === 0n}
-            onClick={() => selectPercent(percent)} aria-label={`Sell ${percent}% of your token balance`}>{percent === 100 ? 'MAX' : `${percent}%`}</button>)}
+        <div className="trade-quick-actions" role="group" aria-label="Sell amount shortcuts">
+          {[25, 50, 100].map(percent => { const preset = balance === null ? '' : sellAmountForPercent(balance, percent)
+            return <button type="button" key={percent} disabled={busy || !preset} aria-pressed={!!preset && sameAmount(amount, preset, 6)}
+              onClick={() => selectPercent(percent)} aria-label={`Sell ${percent}% of your token balance`}>{percent === 100 ? 'MAX' : `${percent}%`}</button> })}
         </div>
       </>}
       <div className="trade-convert">↓</div>
