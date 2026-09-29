@@ -2,6 +2,9 @@ import { PublicKey } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { chain, database, listMarkets } from '../../../lib/server.mjs'
 import { walletMarkets, walletTokenBalances } from '../../../lib/wallet-overview.mjs'
+import { latestMarketPrices } from '../../../lib/portfolio-prices.mjs'
+import { portfolioSummary, withHoldingValues } from '../../../lib/portfolio.mjs'
+import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -13,7 +16,7 @@ export async function GET(request) {
   try {
     const db = database()
     if (!db) throw Error()
-    const [{ markets, unavailable }, rewards, sol, tokens] = await Promise.all([
+    const [{ markets, unavailable }, rewards, sol, tokens, usdPerSol] = await Promise.all([
       listMarkets(),
       db.query(`select m.github_repo_id::text as "repoId", m.discovery_version as version,
         coalesce((select sum(f.partner_amount) from discovery_fee_events f where f.github_repo_id=m.github_repo_id and f.discovery_eligible),0)::text as "partnerEarned",
@@ -22,11 +25,18 @@ export async function GET(request) {
         and m.status='confirmed' and m.launch_finality='finalized'`, [wallet]),
       chain().getBalance(owner, 'confirmed').catch(() => null),
       chain().getTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, { commitment: 'confirmed', dataSlice: { offset: 0, length: 72 } }).catch(() => null),
+      solUsdPrice().catch(() => null),
     ])
     if (unavailable) throw Error()
     const balances = tokens ? walletTokenBalances(tokens.value, wallet) : null
+    const rows = walletMarkets(markets, balances, wallet, rewards.rows)
+    const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
+    // Prices are best-effort: balances, launches and rewards still render if pricing fails.
+    const prices = await latestMarketPrices(db, held).catch(() => null)
+    const priced = withHoldingValues(rows, prices ?? new Map())
     return Response.json({ wallet, solBalance: Number.isSafeInteger(sol) && sol >= 0 ? String(sol) : null,
-      holdingsAvailable: Boolean(balances), markets: walletMarkets(markets, balances, wallet, rewards.rows), checkedAt: new Date().toISOString() },
+      holdingsAvailable: Boolean(balances), pricesAvailable: Boolean(prices), usdPerSol,
+      portfolio: portfolioSummary(priced), markets: priced, checkedAt: new Date().toISOString() },
     { headers: { 'Cache-Control': 'private, no-store' } })
   } catch { return Response.json({ error: 'Your wallet overview is temporarily unavailable. Please retry.' }, { status: 503 }) }
 }
