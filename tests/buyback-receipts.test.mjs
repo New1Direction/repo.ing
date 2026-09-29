@@ -3,10 +3,10 @@ import assert from 'node:assert/strict'
 import { BUYBACK_RECEIPTS, BUYBACK_RECEIPTS_BY_TIME, BUYBACK_WALLETS, totalBuybackLamports } from '../app/lib/buyback-receipts.mjs'
 
 test('buyback total splits into platform revenue (custody) and team wallet receipts', () => {
-  assert.equal(totalBuybackLamports(), '13631837631')
+  assert.equal(totalBuybackLamports(), '17641659322')
   assert.equal(totalBuybackLamports(undefined, 'custody'), '7469505712')
-  assert.equal(totalBuybackLamports(undefined, 'team'), '6162331919')
-  assert.equal(BUYBACK_RECEIPTS.length, 8)
+  assert.equal(totalBuybackLamports(undefined, 'team'), '10172153610')
+  assert.equal(BUYBACK_RECEIPTS.length, 11)
   assert.deepEqual(BUYBACK_RECEIPTS_BY_TIME.map(receipt => receipt.at), [...BUYBACK_RECEIPTS.map(receipt => receipt.at)].sort())
 })
 
