@@ -23,6 +23,8 @@ test('summary SOL amounts use 2 decimals from 1 SOL and ~4 significant digits be
   assert.equal(formatSolDisplay('342812345'), '0.3428')
   assert.equal(formatSolDisplay('41838730'), '0.04184')
   assert.equal(formatSolDisplay('-320732496000'), '-320.73')
+  assert.equal(formatSolRounded('14106900000'), '14.11')
+  assert.equal(formatSolRounded('342829000'), '0.3428')
 })
 
 test('SOL price is cached briefly and unavailable prices are omitted', async () => {
