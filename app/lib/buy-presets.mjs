@@ -1,6 +1,6 @@
 import { parseUnits } from './format.mjs'
 export const BUY_PRESETS_KEY = 'repoing:buy-presets:v1'
-export const DEFAULT_BUY_PRESETS = ['0.01', '0.05', '0.1']
+export const DEFAULT_BUY_PRESETS = ['0.1', '0.5', '1']
 export function validateBuyPresets(values) {
   if (!Array.isArray(values) || values.length !== 3) throw Error('Set three SOL amounts.')
   const result = values.map(value => {
