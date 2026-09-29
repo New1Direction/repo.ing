@@ -3,6 +3,8 @@ import { PublicKey, Transaction } from '@solana/web3.js'
 import { ACCOUNT_SIZE } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { CP_AMM_PROGRAM_ID, CpAmm } from '@meteora-ag/cp-amm-sdk'
+import { receiverPaid } from './claim-amounts.mjs'
+import { provablyExpiredUnlanded } from './expiry-proof.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const EVENT = Buffer.from('e445a52e51cb9a1d','hex')
@@ -42,7 +44,7 @@ export async function verifyClaimReceipt(connection, intent) {
   if (receiverIndex < 0) throw Error('Payout receiver missing from receipt')
   const receiverDelta = BigInt(tx.meta.postBalances[receiverIndex]) - BigInt(tx.meta.preBalances[receiverIndex])
   const rentRefund = BigInt(await connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE)) * BigInt(events)
-  if (receiverDelta !== dbcAmount + dammAmount + rentRefund) throw Error('Bound beneficiary did not receive the proven payout')
+  if (!receiverPaid(receiverDelta, dbcAmount + dammAmount, rentRefund)) throw Error('Bound beneficiary did not receive the proven payout')
   const amount = dbcAmount + dammAmount
   return { status: 'settled', signature: intent.claimSignature, amountBaseUnits: amount,
     dammAmountBaseUnits: dammAmount, receiverDeltaLamports: receiverDelta, rentRefundLamports: rentRefund, slot: BigInt(tx.slot) }
@@ -80,7 +82,7 @@ export function createClaimRecovery({ pool, connection }) {
             if (!status && BigInt(await connection.getBlockHeight('finalized')) > BigInt(intent.expiry)) {
               // Recheck history after observing expiry; an unavailable RPC throws rather than aborting.
               settled = await settleClaim(client, connection, intent)
-              if (!settled && !(await connection.getSignatureStatuses([intent.claimSignature], { searchTransactionHistory: true })).value[0]) {
+              if (!settled && await provablyExpiredUnlanded(connection, intent.claimSignature, intent.expiry)) {
                 await client.query("update repo_claims set status='aborted',resolved_at=now(),resolution_reason='Signed blockhash expired without chain evidence' where claim_signature=$1 and status='pending'",[intent.claimSignature])
                 settled = { status: 'aborted' }
               }
@@ -91,7 +93,10 @@ export function createClaimRecovery({ pool, connection }) {
           }
           results.push({ githubRepoId: row.repo, status: settled?.status ?? 'pending', signature: intent.claimSignature })
         } finally { await client.query('select pg_advisory_unlock($1::bigint)',[row.repo]) }
-      } catch { results.push({ githubRepoId: row.repo, status: 'review' }) }
+      } catch (error) {
+        console.error('claim recovery needs review', { repo: row.repo, error: error.message })
+        results.push({ githubRepoId: row.repo, status: 'review' })
+      }
       finally { client.release() }
     }
     return results

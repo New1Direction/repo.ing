@@ -1,9 +1,11 @@
 import BN from 'bn.js'
 import { createMarketConfigResolver } from './market-config.mjs'
-import { assertClaimSnapshot, reviewedClaimAmount } from './claim-review.mjs'
+import { assertClaimSnapshot } from './claim-review.mjs'
+import { claimAmounts } from './claim-amounts.mjs'
 import bs58 from 'bs58'
-import { PublicKey, Transaction } from '@solana/web3.js'
-import { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
+import { Keypair, PublicKey, Transaction } from '@solana/web3.js'
+import { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync,
+  createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq, sql } from 'drizzle-orm'
@@ -11,6 +13,25 @@ import { markets, repoBeneficiaries, repoClaims } from './db/schema.mjs'
 
 import { createGraduatedFees, recordGraduatedFees } from './graduated-fees.mjs'
 import { settleClaim } from './claim-settlement.mjs'
+
+// The creator's WSOL ATA is permissionless to create and fund, so routing payouts through it lets
+// anyone perturb a claim's receipt. Graduated fees unwrap through a one-time authority instead
+// (the SDK's claimPositionFee2 always uses the position owner's ATA).
+export async function graduatedClaimInstructions(graduated, { owner, receiver, temporary, tokenAProgram }) {
+  const p = graduated.poolState
+  if (!p.tokenBMint.equals(NATIVE_MINT)) throw new Error('Graduated pool quote is not SOL')
+  const tokenAAccount = getAssociatedTokenAddressSync(p.tokenAMint, receiver, true, tokenAProgram)
+  const tokenBAccount = getAssociatedTokenAddressSync(NATIVE_MINT, temporary, false, TOKEN_PROGRAM_ID)
+  return [
+    createAssociatedTokenAccountIdempotentInstruction(owner, tokenAAccount, receiver, p.tokenAMint, tokenAProgram),
+    createAssociatedTokenAccountIdempotentInstruction(owner, tokenBAccount, temporary, NATIVE_MINT, TOKEN_PROGRAM_ID),
+    await graduated.amm.buildClaimPositionFeeInstruction({ owner, poolAuthority: graduated.amm.poolAuthority, pool: graduated.pool,
+      position: graduated.position, positionNftAccount: graduated.nftAccount, tokenAAccount, tokenBAccount,
+      tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault, tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint,
+      tokenAProgram, tokenBProgram: TOKEN_PROGRAM_ID }),
+    createCloseAccountInstruction(tokenBAccount, receiver, temporary),
+  ]
+}
 
 export function createClaim({ pool, connection, config, creator, githubVerifier }) {
   if (!githubVerifier?.verifyCallback && !githubVerifier?.verifyCurrentAuthority) throw new Error('Fresh GitHub App verifier required')
@@ -77,36 +98,29 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
           .from(repoClaims).where(sql`${repoClaims.githubRepoId} = ${repoId} and ${repoClaims.status} = 'settled'`)
         if (request.review) assertClaimSnapshot(request.review, { repoId, beneficiary, paid: settled.paid })
         const outstanding = BigInt(ledger.earned) - BigInt(settled.paid)
-        if (outstanding <= 0n) throw new Error('No accrued creator fees remain to claim')
         const dbcFee = BigInt(state.poolState.creatorQuoteFee.toString())
-        const dammFee = graduated?.available ?? 0n
+        const { payoutAmount, dbcPayout, dammFee, surplus } = claimAmounts({ dbcFee, dammFee: graduated?.available ?? 0n, outstanding, review: request.review })
+        if (surplus > 0n) console.error('claim fee surplus: Meteora holds unindexed creator fees', { repo: repoId.toString(), surplus: surplus.toString() })
         const beforeFee = dbcFee + dammFee
-        if (beforeFee <= 0n) throw new Error('Meteora has no creator fee to claim')
-        if (beforeFee !== outstanding) throw new Error('Meteora creator fee differs from indexed unpaid accrual')
-        const graduatedClaim = dammFee > 0n
-        if (graduatedClaim && request.review && (request.review.includeGraduatedFees !== true || BigInt(request.review.amount) > beforeFee)) {
-          throw Error('Graduated fees require an updated claim review')
-        }
-        // DAMM claims all accrued SOL. Its review explicitly includes fees arriving before execution.
-        // DBC-only reviews retain their exact cap, including queued claims.
-        const payoutAmount = graduatedClaim ? beforeFee : reviewedClaimAmount(request.review, beforeFee)
-        const dbcPayout = graduatedClaim ? dbcFee : payoutAmount
         report('Repository fees match the Solana pools. Preparing payout…')
         const transaction = new Transaction()
-        if (dbcPayout > 0n) transaction.add(await dbc.creator.claimCreatorTradingFeeToReceiver({ creator: creator.publicKey,
-          payer: creator.publicKey, pool: poolKey, maxBaseAmount: new BN(0),
-          maxQuoteAmount: new BN(dbcPayout.toString()), receiver: receiverKey }))
-        if (graduatedClaim) {
-          const p = graduated.poolState
-          transaction.add(await graduated.amm.claimPositionFee2({ owner: creator.publicKey, feePayer: creator.publicKey,
-            receiver: receiverKey, pool: graduated.pool, position: graduated.position, positionNftAccount: graduated.nftAccount,
-            tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint, tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault,
-            tokenAProgram: fixed.tokenType === 0 ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID }))
+        const temporaries = []
+        if (dbcPayout > 0n) {
+          const temporary = Keypair.generate()
+          temporaries.push(temporary)
+          transaction.add(await dbc.creator.claimCreatorTradingFee({ creator: creator.publicKey, payer: creator.publicKey, pool: poolKey,
+            maxBaseAmount: new BN(0), maxQuoteAmount: new BN(dbcPayout.toString()), receiver: receiverKey, tempWSolAcc: temporary.publicKey }))
+        }
+        if (dammFee > 0n) {
+          const temporary = Keypair.generate()
+          temporaries.push(temporary)
+          transaction.add(...await graduatedClaimInstructions(graduated, { owner: creator.publicKey, receiver: receiverKey,
+            temporary: temporary.publicKey, tokenAProgram: fixed.tokenType === 0 ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID }))
         }
         const latest = await connection.getLatestBlockhash('confirmed')
         transaction.feePayer = creator.publicKey
         transaction.recentBlockhash = latest.blockhash
-        transaction.sign(creator)
+        transaction.sign(creator, ...temporaries)
         const signature = bs58.encode(transaction.signature)
         const simulation = await connection.simulateTransaction(transaction)
         if (simulation.value.err) throw new Error(`Claim preflight failed: ${JSON.stringify(simulation.value.err)}`)
