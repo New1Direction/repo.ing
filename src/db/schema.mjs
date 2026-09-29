@@ -350,6 +350,14 @@ export const repositoryParticipation = pgTable('repository_participation', {
   optedInAt: timestamp('opted_in_at', { withTimezone: true }).notNull(),
 })
 
+// Operator-reviewed maintainer invitations. Dismissal is permanent; an invite snoozes 30 days.
+export const maintainerInvites = pgTable('maintainer_invites', {
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).primaryKey().references(() => repositories.githubRepoId),
+  invitedAt: timestamp('invited_at', { withTimezone: true }), dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
+  operatorGithubUserId: bigint('operator_github_user_id', { mode: 'bigint' }).notNull(), operatorLogin: text('operator_login'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, table => [check('maintainer_invites_state_check', sql`${table.invitedAt} is not null or ${table.dismissedAt} is not null`)])
+
 export const repoClaims = pgTable('repo_claims', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
