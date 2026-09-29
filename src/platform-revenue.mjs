@@ -12,6 +12,9 @@ const PERMILLE = 1000n
 const REVENUE_LOCK = 'platform-revenue-allocation'
 // Claims settle to the partner wallet; the team moves the buyback share to the published custody wallet and buys
 // there. Receipts from a mapped custody wallet spend the reserve of the partner wallet that funds it.
+// Owner decision (2026-09-29): team-wallet buybacks from this point on also satisfy the buyback policy. Earlier team
+// buys predate the policy and stay separate, so they don't pre-pay future platform buybacks.
+export const TEAM_BUYBACKS_COUNT_FROM = '2026-09-29T23:00:00.000Z'
 export const CUSTODY_FUNDED_BY = Object.freeze({ H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3: BUYBACK_WALLETS.custody })
 
 export function buybackExecutionConfig(env = process.env) {
@@ -66,7 +69,8 @@ export async function platformRevenueSummary(db) {
   const { rows: custody } = await db.query(`select distinct wallet from platform_fee_claims where status='settled'`)
   const importedSignatures = new Set(imported.map(row => row.signature)), custodyWallets = new Set(custody.flatMap(row => [row.wallet, CUSTODY_FUNDED_BY[row.wallet]].filter(Boolean)))
   const publishedSpent = (custodyWallets.size ? await loadBuybackReceipts(db) : [])
-    .filter(receipt => receipt.source === 'custody' && custodyWallets.has(receipt.wallet) && !importedSignatures.has(receipt.signature))
+    .filter(receipt => !importedSignatures.has(receipt.signature) && (receipt.source === 'custody' ? custodyWallets.has(receipt.wallet)
+      : receipt.source === 'team' && receipt.at >= TEAM_BUYBACKS_COUNT_FROM))
     .reduce((sum, receipt) => sum + BigInt(receipt.spentLamports), 0n)
   const outstanding = allocatedBuyback - spentTotal - publishedSpent
   return {
