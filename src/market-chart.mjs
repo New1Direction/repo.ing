@@ -52,9 +52,10 @@ export function chartMigration(market, row) {
 const canonicalEvents = `with canonical_events as (
   select signature,event_index,slot,traded_at,direction,next_sqrt_price,
     (case when direction='buy' then input_base_units else output_base_units end)::numeric as quote_amount,
+    (case when direction='buy' then output_base_units else input_base_units end)::numeric as base_amount,
     'DBC'::text as venue from trade_events where pool=$1
   union all
-  select signature,event_index,slot,traded_at,direction,next_sqrt_price,quote_amount::numeric,'DAMM'::text as venue
+  select signature,event_index,slot,traded_at,direction,next_sqrt_price,quote_amount::numeric,base_amount::numeric,'DAMM'::text as venue
     from damm_trade_events where pool=$5 and github_repo_id=$6 and slot >= $7
 )`
 
@@ -86,7 +87,8 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
       from bars order by time`, params(window.start, window.end, window.interval)),
     db.query(`${canonicalEvents} select signature,event_index as "eventIndex",t.slot::text,direction,traded_at as "tradedAt",venue,
       array_position(b.signatures,t.signature::text) as "transactionIndex",
-      next_sqrt_price as "nextSqrtPrice" from canonical_events t left join finalized_chart_blocks b on b.slot=t.slot
+      next_sqrt_price as "nextSqrtPrice",quote_amount::text as "solLamports",base_amount::text as "tokenBaseUnits"
+      from canonical_events t left join finalized_chart_blocks b on b.slot=t.slot
       where traded_at <= $2 and $3::text is null and $4::text is null
       order by t.slot desc,"transactionIndex" desc,t.signature desc,t.event_index desc limit 120`, params(window.end, null, null)),
   ])
@@ -96,7 +98,8 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
     (new Set(latestTrades.map(t => t.signature)).size > 1 || (recent.length === 120 && latestTrades.length === 120))
   const trades = recent.reverse().map(row => ({ signature: row.signature, eventIndex: row.eventIndex,
     direction: row.direction, venue: row.venue, tradedAt: row.tradedAt.toISOString(),
-    priceSol: row.nextSqrtPrice ? chartSpotPrice(row.nextSqrtPrice) : null }))
+    priceSol: row.nextSqrtPrice ? chartSpotPrice(row.nextSqrtPrice) : null,
+    solLamports: row.solLamports ?? null, tokenBaseUnits: row.tokenBaseUnits ?? null }))
   return { ...window, candles: rows.map(chartBar), trades, volume24hLamports: summary.volume,
     totalTrades: Number(summary.count), latest: latestAmbiguous || !trades.at(-1)?.priceSol ? null : trades.at(-1),
     latestOrderingPending: latestAmbiguous, fetchedAt: new Date(now).toISOString(),

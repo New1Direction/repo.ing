@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Gift, Wallet } from 'lucide-react'
 import { useWallet } from './wallet'
-import { referralLink } from '../lib/referral.mjs'
+import { referralLink, referralStatus } from '../lib/referral.mjs'
 import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
 
 async function post(body) {
@@ -12,31 +12,21 @@ async function post(body) {
   return result
 }
 
-// Payouts land in the referrer's own wrapped-SOL ATA (4% of the trading fee, from Meteora's protocol share).
-export function ReferLink({ mint }) {
-  const { wallet, provider } = useWallet() ?? {}
-  const [copied, setCopied] = useState('')
+// Payout status (WSOL ATA + balance) and its one-time setup; shared by token pages and /wallet.
+export function useReferralPayouts(wallet, provider) {
   const [status, setStatus] = useState(null)
   const [setup, setSetup] = useState('')
-
   useEffect(() => {
     if (!wallet) return
     const controller = new AbortController()
     setStatus(null); setSetup('')
     fetch(`/api/referral?wallet=${encodeURIComponent(wallet)}`, { cache: 'no-store', signal: controller.signal })
-      .then(response => response.ok ? response.json() : null).then(result => {
-        if (result && typeof result.enabled === 'boolean' && /^\d+$/.test(result.earningsLamports) && /^\d+$/.test(result.setupLamports)) setStatus(result)
-      }).catch(() => {})
+      .then(response => response.ok ? response.json() : null).then(result => setStatus(referralStatus(result) ?? false))
+      .catch(() => { if (!controller.signal.aborted) setStatus(false) })
     return () => controller.abort()
   }, [wallet])
-
-  if (!wallet) return null
-  async function copy() {
-    try { await navigator.clipboard.writeText(referralLink(window.location.origin, mint, wallet)); setCopied('Referral link copied') }
-    catch { setCopied('Copy failed. Try again.') }
-  }
   async function enable() {
-    if (setup === 'busy') return
+    if (setup === 'busy' || !wallet) return
     setSetup('busy')
     try {
       const [{ PublicKey, Transaction }, { assertWsolSetupTransaction }] = await Promise.all([import('@solana/web3.js'), import('../../src/wsol-account.mjs')])
@@ -52,6 +42,20 @@ export function ReferLink({ mint }) {
       setStatus(current => ({ ...current, enabled: true }))
       setSetup('')
     } catch (error) { setSetup(error?.message || 'Setup failed. Try again.') }
+  }
+  return { status, setup, enable }
+}
+
+// Payouts land in the referrer's own wrapped-SOL ATA (4% of the trading fee, from Meteora's protocol share).
+export function ReferLink({ mint }) {
+  const { wallet, provider } = useWallet() ?? {}
+  const [copied, setCopied] = useState('')
+  const { status, setup, enable } = useReferralPayouts(wallet, provider)
+
+  if (!wallet) return null
+  async function copy() {
+    try { await navigator.clipboard.writeText(referralLink(window.location.origin, mint, wallet)); setCopied('Referral link copied') }
+    catch { setCopied('Copy failed. Try again.') }
   }
   const enabled = status?.enabled
   return <div className="refer-link">
