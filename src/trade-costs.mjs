@@ -1,5 +1,8 @@
 import { VersionedTransaction } from '@solana/web3.js'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, ACCOUNT_SIZE, NATIVE_MINT } from '@solana/spl-token'
+import { tradePriorityFee } from './trade-landing.mjs'
+
+const LAMPORTS_PER_SIGNATURE = 5000n
 
 const integer = value => {
   if (!Number.isSafeInteger(value) || value < 0) throw Error('Network cost estimate unavailable')
@@ -35,11 +38,16 @@ export async function estimateTradeCosts(connection, prepared) {
     if (ix.keys[3].pubkey.equals(NATIVE_MINT) && closesToPayer) refundableDeposit += deposit
     else accountDeposits += deposit
   })
-  const networkFee = integer(fee.value), walletBalance = integer(balance)
+  // Network fee = base signature fee + priority fee (limit × price). getFeeForMessage already includes the priority
+  // fee; the floor keeps the estimate whole if an RPC ever reports only the base fee.
+  const priorityFee = tradePriorityFee(tx.instructions)
+  const signatures = BigInt(tx.compileMessage().header.numRequiredSignatures)
+  const quoted = integer(fee.value), floor = signatures * LAMPORTS_PER_SIGNATURE + priorityFee
+  const networkFee = quoted > floor ? quoted : floor, walletBalance = integer(balance)
   const input = prepared.direction === 'buy' ? BigInt(prepared.amountIn) : 0n
   const total = input + networkFee + accountDeposits
   const required = total + refundableDeposit
-  return { networkFee: String(networkFee), accountDeposits: String(accountDeposits),
+  return { networkFee: String(networkFee), priorityFee: String(priorityFee), accountDeposits: String(accountDeposits),
     refundableDeposit: String(refundableDeposit), total: String(total), required: String(required),
     balance: String(walletBalance), shortfall: String(required > walletBalance ? required - walletBalance : 0n) }
 }

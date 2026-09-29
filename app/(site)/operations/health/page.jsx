@@ -15,7 +15,7 @@ const age = ms => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d 
 const when = value => `${new Date(value).toISOString().replace('T', ' ').slice(0, 16)} UTC`
 const short = value => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—'
 const monitorNote = { match: 'Worker alert watches this address', different: 'Worker alert watches a different address', unset: 'Worker alert not configured' }
-const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed' }
+const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed', TRADE_LANDING_DEGRADED: 'Trades expiring or failing' }
 
 function Section({ title, result, children }) {
   return <section className="inner-card operations-markets"><h2>{title}</h2>{result.ok ? children(result.data) : <p className="inline-error" role="status">{result.error}</p>}</section>
@@ -62,6 +62,23 @@ function Migrations({ result }) {
   return <Section title="Database migrations" result={result}>{m => <p>{m.status === 'UP_TO_DATE' ? <span className="badge ok">Up to date</span> : <span className="badge warn">{m.pending.length} pending</span>} {m.appliedCount} applied · {m.journalCount} in journal · latest applied {m.latestAppliedTag ?? m.latestApplied ?? 'none'}{m.pending.length > 0 && <small className="muted"> Pending: {m.pending.join(', ')}</small>}</p>}</Section>
 }
 
+const outcomeLabels = { confirmed: 'Confirmed', expired: 'Expired', failed: 'Failed', verification_failed: 'Verification failed' }
+const seconds = ms => ms === null ? '—' : `${(ms / 1000).toFixed(1)}s`
+
+function Trades({ result }) {
+  return <Section title="Trades (24h)" result={result}>{t => <><div className="operations-summary">
+    <div className="inner-card"><span>Prepared / submitted</span><strong>{t.counts.prepared} / {t.counts.submitted}</strong></div>
+    {Object.entries(outcomeLabels).map(([key, label]) => <div key={key} className={`inner-card${key !== 'confirmed' && t.settled[key] > 0 ? ' health-warn' : ''}`}><span>{label}</span><strong>{t.settled[key]}</strong></div>)}
+    <div className={`inner-card${t.successRate !== null && t.successRate < 0.9 ? ' health-warn' : ''}`}><span>Success rate</span><strong>{t.successRate === null ? '—' : `${(t.successRate * 100).toFixed(1)}%`}</strong></div>
+    <div className="inner-card"><span>Confirm time p50 / p95</span><strong>{seconds(t.confirmP50Ms)} / {seconds(t.confirmP95Ms)}</strong></div>
+  </div>{t.failures.length ? <div className="operations-table-wrap"><table><thead><tr><th>When</th><th>Outcome</th><th>Market</th><th>Priority fee</th><th>Error</th></tr></thead><tbody>
+    {t.failures.map((f, i) => <tr key={`${f.createdAt}-${i}`}><td>{when(f.createdAt)}{f.signature && <small><a href={`https://solscan.io/tx/${f.signature}`} target="_blank" rel="noreferrer">{short(f.signature)} ↗</a></small>}</td>
+      <td><span className="badge warn">{outcomeLabels[f.outcome] ?? f.outcome}</span></td>
+      <td>{f.mint ? <a href={`https://solscan.io/token/${f.mint}`} target="_blank" rel="noreferrer">{short(f.mint)}</a> : '—'}<small>{[f.phase, f.direction].filter(Boolean).join(' · ') || '—'}</small></td>
+      <td>{sol(f.priorityFeeLamports)}</td><td><small>{f.error ?? '—'}</small></td></tr>)}
+  </tbody></table></div> : <p>No expired or failed trades recorded.</p>}<p className="muted">Trades submitted through the site trade API, per attempt (best outcome). Success = confirmed / settled attempts. Alerts when an hour has 3+ expired/failed or under 90% success over 5+ attempts.</p></>}</Section>
+}
+
 function Csp({ result }) {
   return <Section title="CSP report-only" result={result}>{c => <>{c.total ? <div className="operations-table-wrap"><table><thead><tr><th>Blocked host</th><th>Reports</th></tr></thead><tbody>
     {c.hosts.map(h => <tr key={h.key}><td>{h.key}</td><td>{h.count}</td></tr>)}
@@ -72,8 +89,8 @@ export default async function OperationsHealthPage() {
   let access = false
   try { requirePlatformOperator(readGithubSession((await cookies()).get(githubSessionCookie)?.value)); access = true } catch {}
   const health = access ? await operationsHealth() : null
-  return <><AppHeader /><main className="section-wrap operations-page"><div className="growth-heading"><div><h1>Operations health</h1><p>Read-only status across wallets, launches, alerts, revenue, migrations, and CSP.</p></div></div>
-    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Migrations result={health.migrations}/><Csp result={health.csp}/>
+  return <><AppHeader /><main className="section-wrap operations-page"><div className="growth-heading"><div><h1>Operations health</h1><p>Read-only status across wallets, launches, alerts, revenue, trades, migrations, and CSP.</p></div></div>
+    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Trades result={health.trades}/><Migrations result={health.migrations}/><Csp result={health.csp}/>
       <p className="muted health-footer">Generated {when(health.generatedAt)} · <Link href="/operations/fees">Platform fees</Link> · <Link href="/operations/graduation">Graduation</Link> · <Link href="/operations/trends">Trends</Link> · <Link href="/operations/invites">Invites</Link></p></>
       : <div className="inner-card"><h2>Operator access required</h2><p>Sign in with the configured operator GitHub account.</p><Link className="button outline" href="/api/github/start?mode=builders">Verify with GitHub</Link><p>Return here after verification.</p></div>}
   </main><Footer /></>
