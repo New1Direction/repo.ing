@@ -29,7 +29,9 @@ test('stale, unproven, disagreeing or unreconciled graduation is never public an
   const now=Date.now(),state={...graduationProgress('1','100'),checkedAt:new Date(now).toISOString(),chainTime:new Date(now-15000).toISOString(),platform:{available:'999'},p3:{eligible:true},migration:{signature:'private-operator-evidence'}}
   const row={status:'VERIFIED',observation:JSON.stringify(state),reconciliation:'{"status":"MATCH"}'}
   assert.equal(publicGraduation(row,now).platform,undefined);assert.equal(publicGraduation(row,now).p3,undefined)
-  assert.throws(()=>publicGraduation(row,now+130000),/STALE_PROGRESS/)
+  assert.equal(publicGraduation(row,now+130000).status,state.status)
+  assert.throws(()=>publicGraduation(row,now+310000),/STALE_PROGRESS/)
+  assert.throws(()=>assertFreshGraduation(state,now+130000),/STALE_PROGRESS/)
   assert.throws(()=>publicGraduation({...row,status:'REVIEW',error_code:'RPC_DISAGREEMENT'}),/RPC_DISAGREEMENT/)
   assert.throws(()=>publicGraduation({...row,observation:JSON.stringify({...state,phase:'GRADUATED'}),reconciliation:'{"status":"MISMATCH"}'}),/RECONCILIATION_MISMATCH/)
   assert.throws(()=>publicGraduation({...row,observation:JSON.stringify({...state,phase:'GRADUATED'})}),/MIGRATION_EVIDENCE_INCOMPLETE/)
