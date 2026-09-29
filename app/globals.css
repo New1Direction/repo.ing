@@ -641,3 +641,15 @@ body{overflow-x:clip}
 
 /* The token column is hidden on phones, so the ticker rides along with the repo name there. */
 .table-repo-ticker{display:none}
+
+/* Token page: "More repo markets" strip. Fixed heading and card heights so the Suspense fallback matches. */
+.more-markets{margin-top:18px}.more-markets.featured{padding:16px;border:1px solid var(--border);border-radius:10px;background:rgba(129,230,173,.035)}
+.more-markets-heading{height:48px;display:flex;flex-direction:column;justify-content:center;gap:4px;margin-bottom:10px}.more-markets-heading h2{font-size:18px;line-height:1.2;margin:0}.more-markets-heading p{margin:0;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.more-markets-rail{list-style:none;margin:0;padding:0 0 6px;display:grid;grid-auto-flow:column;grid-auto-columns:minmax(200px,calc((100% - 60px)/6));gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;scrollbar-width:thin}
+.more-markets-card{height:136px;min-width:0;display:flex;flex-direction:column;gap:9px;padding:13px;border:1px solid var(--border);border-radius:8px;background:var(--surface);scroll-snap-align:start;transition:border-color .15s}.more-markets-card:hover,.more-markets-card:focus-within{border-color:var(--border-strong)}
+.more-markets-repo{display:flex;align-items:center;gap:10px;min-width:0}.more-markets-repo .repo-avatar{width:34px;height:34px;border-radius:7px}.more-markets-repo>span{min-width:0}.more-markets-repo strong{display:block;font-size:14px;font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.more-markets-repo small{display:flex;align-items:center;gap:6px;margin-top:2px;color:var(--muted);font-size:12px;white-space:nowrap}.more-markets-repo:hover strong{text-decoration:underline}
+.more-markets-new{padding:0 5px;border:1px solid currentColor;border-radius:4px;color:var(--green-dark);font-size:10px;font-weight:700;line-height:14px;letter-spacing:.04em;text-transform:uppercase}
+.more-markets-volume{display:flex;justify-content:space-between;gap:8px;margin:0;font-size:13px;font-variant-numeric:tabular-nums;white-space:nowrap}.more-markets-volume span{color:var(--muted)}
+.more-markets-card .more-markets-buy{margin-top:auto;width:100%;height:34px;min-height:34px;padding:0 10px;font-size:13px}
+.more-markets-fallback .more-markets-heading .skeleton-line{height:16px;width:190px}.more-markets-fallback .more-markets-heading .skeleton-line.short{height:12px;width:min(300px,80%)}.more-markets-fallback .more-markets-card{justify-content:center}.more-markets-fallback .more-markets-card .skeleton-line.short{width:55%}
+@media(max-width:700px){.more-markets.featured{padding:12px}.more-markets-rail{grid-auto-columns:minmax(200px,64%)}}
