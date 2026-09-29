@@ -1,8 +1,8 @@
 import { OFFICIAL_TOKEN } from './official-token.mjs'
-import { BUYBACK_RECEIPTS, BUYBACK_WALLETS } from './buyback-receipts.mjs'
+import { BUYBACK_RECEIPTS, isBuybackWallet } from './buyback-receipts.mjs'
 
 const AMOUNT = /^[1-9]\d*$/
-const valid = receipt => BUYBACK_WALLETS[receipt.source] === receipt.wallet && receipt.mint === OFFICIAL_TOKEN.mint &&
+const valid = receipt => isBuybackWallet(receipt.source, receipt.wallet) && receipt.mint === OFFICIAL_TOKEN.mint &&
   AMOUNT.test(receipt.spentLamports) && AMOUNT.test(receipt.tokenBaseUnits) && !!receipt.signature && !Number.isNaN(Date.parse(receipt.at))
 
 // Hand-verified receipts win over a detected row with the same signature. A detected row that fails

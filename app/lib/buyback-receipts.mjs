@@ -2,6 +2,10 @@ import { OFFICIAL_TOKEN } from './official-token.mjs'
 
 // Platform revenue custody (claimed partner fees under the 60/20/20 policy) and the team wallet.
 export const BUYBACK_WALLETS = Object.freeze({ custody: 'FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy', team: OFFICIAL_TOKEN.teamWallet })
+// Platform fee claims settle to the partner wallet; buys made directly from it are platform-revenue buybacks too.
+export const PLATFORM_FEE_WALLET = 'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3'
+export const BUYBACK_SOURCES = Object.freeze([['custody', BUYBACK_WALLETS.custody], ['custody', PLATFORM_FEE_WALLET], ['team', BUYBACK_WALLETS.team]])
+export const isBuybackWallet = (source, wallet) => BUYBACK_SOURCES.some(([s, w]) => s === source && w === wallet)
 
 // Finalized buys into the canonical $REPOING pools (DBC quote vault HM9dEZ… before graduation, then the
 // DAMM SOL vault 9gu44z…), verified on-chain. Later buys are detected by the worker (src/buyback-detection.mjs).
@@ -82,7 +86,7 @@ export const BUYBACK_RECEIPTS_BY_TIME = Object.freeze([...BUYBACK_RECEIPTS].sort
 export function totalBuybackLamports(receipts = BUYBACK_RECEIPTS, source = null) {
   const seen = new Set()
   return receipts.reduce((total, receipt) => {
-    if (BUYBACK_WALLETS[receipt.source] !== receipt.wallet || receipt.mint !== OFFICIAL_TOKEN.mint ||
+    if (!isBuybackWallet(receipt.source, receipt.wallet) || receipt.mint !== OFFICIAL_TOKEN.mint ||
         !/^[1-9]\d*$/.test(receipt.spentLamports) || !receipt.signature) throw Error('Invalid buyback receipt')
     if (seen.has(receipt.signature)) throw Error('Duplicate buyback receipt')
     seen.add(receipt.signature)

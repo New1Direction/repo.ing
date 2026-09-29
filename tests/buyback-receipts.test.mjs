@@ -57,3 +57,11 @@ test('/stats receipts fall back to the verified list when the database or table 
   assert.equal(errors.mock.callCount(), 1)
   assert.equal(mergeBuybackReceipts([]).length, 11)
 })
+
+test('buys from the platform fee wallet count as platform-revenue buybacks', async () => {
+  const { PLATFORM_FEE_WALLET, isBuybackWallet } = await import('../app/lib/buyback-receipts.mjs')
+  assert.equal(isBuybackWallet('custody', PLATFORM_FEE_WALLET), true)
+  assert.equal(isBuybackWallet('team', PLATFORM_FEE_WALLET), false)
+  const custody = BUYBACK_RECEIPTS.find(r => r.source === 'custody')
+  assert.equal(totalBuybackLamports([{ ...custody, signature: 'PartnerBuy', wallet: PLATFORM_FEE_WALLET }], 'custody'), custody.spentLamports)
+})

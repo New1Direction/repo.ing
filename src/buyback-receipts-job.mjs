@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
-import { BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
+import { BUYBACK_SOURCES } from '../app/lib/buyback-receipts.mjs'
 import { BUYBACK_SINCE, detectBuyback } from './buyback-detection.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 
@@ -23,7 +23,7 @@ async function receiptQuery(db, text, params) {
 const sol = lamports => `${lamports / 1_000_000_000n}.${String(lamports % 1_000_000_000n).padStart(9, '0')}`.replace(/\.?0+$/, '')
 
 export function createBuybackReceiptsJob({ pool, connection, loadTransaction = loadFinalizedTransaction,
-  wallets = BUYBACK_WALLETS, since = BUYBACK_SINCE, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, chunkSize = CHUNK_SIZE }) {
+  wallets = BUYBACK_SOURCES, since = BUYBACK_SINCE, pageSize = PAGE_SIZE, maxPages = MAX_PAGES, chunkSize = CHUNK_SIZE }) {
   // Newest-first signatures above the cursor (or, on the first run, back to `since`). Fails closed
   // instead of skipping history when the backlog exceeds the page budget.
   async function pending(wallet, cursor) {
@@ -74,7 +74,7 @@ export function createBuybackReceiptsJob({ pool, connection, loadTransaction = l
 
   async function runOnce() {
     const results = []
-    try { for (const [source, wallet] of Object.entries(wallets)) results.push(await scan(source, wallet)) }
+    try { for (const [source, wallet] of Array.isArray(wallets) ? wallets : Object.entries(wallets)) results.push(await scan(source, wallet)) }
     catch (error) { if (error instanceof TableMissing) return { skipped: 'TABLE_MISSING' }; throw error }
     return results
   }
