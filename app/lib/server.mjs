@@ -159,7 +159,7 @@ export async function repositoryById(repoId) {
     return { repoId: String(repo.id), owner: repo.owner.login, name: repo.name, fullName: repo.full_name,
       description: repo.description, avatarUrl: repo.owner.avatar_url, stars: repo.stargazers_count,
       forks: repo.forks_count, language: detail.language ?? null, license: detail.license?.spdx_id ?? null,
-      updatedAt: repo.updated_at, htmlUrl: repo.html_url }
+      updatedAt: repo.updated_at, htmlUrl: repo.html_url, hasIssues: typeof repo.has_issues === 'boolean' ? repo.has_issues : null }
   } catch { return row }
 }
 
