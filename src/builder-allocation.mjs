@@ -22,6 +22,15 @@ export async function allocationRecord(pool, repoId) {
     where github_repo_id=$1 order by id desc limit 1`, [String(repoId)])
   return { ...market, latest: latest ?? null }
 }
+// Fixed supply is proven by the immutable 1B launch config plus no mint authority. Current supply
+// may be lower: any holder can burn, and that must not block the builder allocation forever.
+export function allocationReserveValid({ market, configKey, state, fixed, mint }) {
+  return Boolean(state && fixed && fixed.leftoverReceiver.equals(new PublicKey(market.creatorWallet)) &&
+    state.poolState.creator.equals(fixed.leftoverReceiver) && fixed.quoteMint.equals(NATIVE_MINT) && fixed.tokenType === 0 &&
+    state.poolState.config.equals(configKey) && state.poolState.baseMint.toBase58() === market.mint &&
+    BigInt(fixed.preMigrationTokenSupply.toString()) === FIXED_SUPPLY && mint.supply <= FIXED_SUPPLY &&
+    mint.decimals === 6 && !mint.mintAuthority && !mint.freezeAuthority)
+}
 export function createBuilderAllocation({ pool, connection, config, creator, githubVerifier }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const resolve = createMarketConfigResolver(config)
@@ -32,10 +41,7 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
     const [state, fixed, mint] = await Promise.all([
       dbc.state.getPool(market.pool), dbc.state.getPoolConfig(configKey), getMint(connection, new PublicKey(market.mint), 'finalized'),
     ])
-    if (!state || !fixed || !fixed.leftoverReceiver.equals(new PublicKey(market.creatorWallet)) ||
-        !state.poolState.creator.equals(fixed.leftoverReceiver) || !fixed.quoteMint.equals(NATIVE_MINT) || fixed.tokenType !== 0 ||
-        !state.poolState.config.equals(configKey) || state.poolState.baseMint.toBase58() !== market.mint ||
-        mint.supply !== FIXED_SUPPLY || mint.decimals !== 6 || mint.mintAuthority || mint.freezeAuthority) throw Error('Allocation reserve configuration needs review')
+    if (!allocationReserveValid({ market, configKey, state, fixed, mint })) throw Error('Allocation reserve configuration needs review')
     const graduated = await graduation.read(market, state, fixed)
     return { state, fixed, graduated }
   }
