@@ -1,4 +1,4 @@
-import { activePolicy, reconcilePlatformRevenue } from './platform-revenue.mjs'
+import { activePolicy, platformRevenueSummary, reconcilePlatformRevenue } from './platform-revenue.mjs'
 import { reconcileLiquidity } from './liquidity-deployment.mjs'
 
 const PERMILLE = 1000n
@@ -46,18 +46,21 @@ let warned = false
 // Never rejects: the fees figure is null whenever the ledger is unavailable or not reconciled.
 export async function readBuybackStatus(db, receipts) {
   const last = lastBuyback(receipts)
-  if (!db) return { last, since: null }
+  if (!db) return { last, since: null, standing: null }
   try {
     const [revenue, liquidity] = [await reconcilePlatformRevenue(db), await reconcileLiquidity(db)]
-    if (revenue.status !== 'MATCH' || liquidity.status !== 'MATCH') return { last, since: null }
+    if (revenue.status !== 'MATCH' || liquidity.status !== 'MATCH') return { last, since: null, standing: null }
     const policy = await activePolicy(db)
     const { rows } = await db.query(`select c.amount::text as amount, c.settled_at as "settledAt", a.buyback_amount::text as "buybackAmount"
       from platform_fee_claims c left join platform_revenue_allocations a on a.claim_signature = c.signature
       where c.status = 'settled' and ($1::timestamptz is null or c.settled_at > $1) order by c.settled_at limit 5000`, [last?.at ?? null])
     const claims = rows.map(({ settledAt, ...row }) => ({ ...row, at: new Date(settledAt).toISOString() }))
-    return { last, since: feesSinceBuyback(claims, last, policy) }
+    // Where buybacks stand against the published policy (team-wallet buys since the cutoff count too).
+    const summary = await platformRevenueSummary(db)
+    const standing = { owedLamports: summary.buybackReserve, aheadLamports: summary.buybackAhead ?? '0' }
+    return { last, since: feesSinceBuyback(claims, last, policy), standing }
   } catch (error) {
     if (!warned) { warned = true; console.error('buyback status fees unavailable', error?.code ?? error?.message ?? 'error') }
-    return { last, since: null }
+    return { last, since: null, standing: null }
   }
 }
