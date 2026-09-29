@@ -8,6 +8,7 @@ import { LaunchBenefits } from './components/launch-benefits'
 import { HomeMarkets } from './components/home-markets'
 import { listMarkets, discoveryRewardsEnabled } from './lib/server.mjs'
 import { solUsdPrice } from './lib/sol-usd.mjs'
+import { homeMarketTabs } from './lib/market-order.mjs'
 
 export const dynamic = 'force-dynamic'
 export default function Home() {
@@ -17,5 +18,5 @@ export default function Home() {
 
 async function MarketContent() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
-  return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<HomeMarkets markets={markets} usdPerSol={usdPerSol}/></>
+  return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<HomeMarkets tabs={homeMarketTabs(markets)} usdPerSol={usdPerSol}/></>
 }

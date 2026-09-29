@@ -1,6 +1,6 @@
 import { PublicKey } from '@solana/web3.js'
 import { database } from '../../../lib/server.mjs'
-import { tokenImageResponse } from '../../../../src/token-image.mjs'
+import { TOKEN_IMAGE_WIDTHS, tokenImageResponse } from '../../../../src/token-image.mjs'
 
 export const runtime = 'nodejs'
 export async function GET(request, { params }) {
@@ -16,7 +16,8 @@ export async function GET(request, { params }) {
     // ?w= selects an avatar-sized WebP; without it the canonical 512px PNG (used by token metadata) is served.
     const width = Number(new URL(request.url).searchParams.get('w')) || null
     if (rows[0].token_image) return await tokenImageResponse(rows[0].token_image, width)
-    return new Response(null, { status: 302, headers: { Location: `/api/repo-logo/${rows[0].repo}?v=3`, 'Cache-Control': 'public, max-age=300' } })
+    const sized = TOKEN_IMAGE_WIDTHS.includes(width) ? `&w=${width}` : ''
+    return new Response(null, { status: 302, headers: { Location: `/api/repo-logo/${rows[0].repo}?v=3${sized}`, 'Cache-Control': 'public, max-age=300' } })
   } catch (error) {
     console.error('token-image failed', { mint, error: error.message })
     return new Response(null, { status: 503 })

@@ -12,7 +12,7 @@ export function watchMarketEvents(mint, { page = document, target = window, Even
         if (data.mint === mint && ['trade','curve','resync'].includes(data.kind)) target.dispatchEvent(new CustomEvent('repoing:market-updated', { detail: data }))
       } catch { /* Polling continues if an event cannot be used. */ }
     })
-    // Native EventSource reconnects; 15s polling still covers lost notifications.
+    // Native EventSource reconnects (each reconnect resyncs); 60s polling still covers lost notifications.
   }
   update(); page.addEventListener('visibilitychange', update)
   return () => { stopped = true; source?.close(); page.removeEventListener('visibilitychange', update) }

@@ -28,9 +28,13 @@ export function AppHeader({ active = '' }) {
 export function Footer() { return <footer className="footer"><div className="footer-inner"><Link href="/" className="footer-brand"><BrandMark size={29}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link><span>The market layer for open source.</span><div className="footer-spacer"/><Link href="/stats">Stats</Link><Link href="/how-it-works">How it works</Link><Link href="/about">About</Link><Link href="/ja" lang="ja" hrefLang="ja">日本語</Link><a href={OFFICIAL_TOKEN.githubUrl} target="_blank" rel="noreferrer" aria-label="repo.ing on GitHub"><GithubMark size={22}/></a></div></footer> }
 export function Button({ children, variant = 'outline', className = '', ...props }) { return <button className={`button ${variant} ${className}`} {...props}>{children}</button> }
 export function Badge({ children, tone = 'muted' }) { return <span className={`badge ${tone}`}>{tone === 'verified' && <Check size={12} strokeWidth={3}/>}<span>{children}</span></span> }
+function githubAvatarUrl(value, width) {
+  try { const url = new URL(value); if (url.hostname !== 'avatars.githubusercontent.com') return value; url.searchParams.set('s', String(width)); return url.href }
+  catch { return value }
+}
 export function RepoAvatar({ repo, size = 'normal' }) {
-  const large = size === 'large'
-  const image = repo?.mint ? `/api/token-image/${repo.mint}?w=${large ? 256 : 128}` : repo?.repoId ? `/api/repo-logo/${repo.repoId}?v=3` : repo?.avatarUrl
+  const large = size === 'large', width = large ? 256 : 128
+  const image = repo?.mint ? `/api/token-image/${repo.mint}?w=${width}` : repo?.repoId ? `/api/repo-logo/${repo.repoId}?v=3&w=${width}` : repo?.avatarUrl && githubAvatarUrl(repo.avatarUrl, width)
   const px = large ? 126 : 52
   return <div className={`repo-avatar ${size}`}>{image ? <img src={image} alt="" width={px} height={px} loading={large ? 'eager' : 'lazy'} decoding="async" /> : <GithubMark size={large ? 56 : 24}/>}</div>
 }
