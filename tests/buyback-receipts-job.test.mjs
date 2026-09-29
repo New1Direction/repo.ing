@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
-import { BUYBACK_RECEIPTS, BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
+import { BUYBACK_RECEIPTS, BUYBACK_SOURCES, BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 
 const TXS = JSON.parse(readFileSync(new URL('./fixtures/repoing-buyback-transactions.json', import.meta.url), 'utf8'))
 const signer = raw => raw.transaction.message.accountKeys[0]
@@ -43,7 +43,7 @@ function fakeDb() {
 }
 
 function setup(extra = {}) {
-  const histories = Object.fromEntries(Object.values(BUYBACK_WALLETS).map(wallet => [wallet, history(wallet)]))
+  const histories = Object.fromEntries(BUYBACK_SOURCES.map(([, wallet]) => [wallet, history(wallet)]))
   const connection = fakeConnection(histories), db = fakeDb(), loaded = []
   const loadTransaction = async (_, signature) => {
     loaded.push(signature)
@@ -67,7 +67,8 @@ test('first run records every buyback, stops at the window, and advances cursors
   for (const prefix of ['3tbwZgax', '3U4NMJFg', '23QNS75c']) assert.ok(!loaded.some(signature => signature.startsWith(prefix)))
   assert.equal(log.mock.callCount(), 11)
   assert.match(log.mock.calls.map(call => call.arguments[0]).join('\n'), /"signature":"phvk[^"]+","source":"custody","sol":"5"/)
-  assert.deepEqual(results.map(result => result.receipts.length).sort(), [4, 7])
+  // The platform fee wallet is scanned too; it has no buybacks in the fixtures.
+  assert.deepEqual(results.map(result => result.receipts.length).sort(), [0, 4, 7])
 })
 
 test('re-running is idempotent and reads only signatures above the cursor', async t => {
@@ -78,8 +79,8 @@ test('re-running is idempotent and reads only signatures above the cursor', asyn
   const results = await job.runOnce()
   assert.deepEqual(loaded, [])
   assert.equal(db.receipts.size, 11)
-  assert.deepEqual(results.map(result => result.scanned), [0, 0])
-  assert.ok(connection.calls.slice(-2).every(call => call.until))
+  assert.deepEqual(results.map(result => result.scanned), [0, 0, 0])
+  assert.ok(connection.calls.slice(-3).filter(call => call.wallet !== 'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3').every(call => call.until))
   // Dropping a cursor re-scans history without duplicating receipts.
   db.cursors.clear()
   await job.runOnce()
