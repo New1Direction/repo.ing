@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Compass } from 'lucide-react'
 import { useWallet } from './wallet'
 import { CopyAddress } from './copy-address'
-import { formatSolDisplay } from '../lib/format.mjs'
+import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
 
 export function DiscoveryRewards({ repoId }) {
   const { wallet, connect, changeWallet, provider } = useWallet()
@@ -104,8 +104,8 @@ export function DiscoveryRewards({ repoId }) {
         !wallet ? <button type="button" className="button outline" onClick={() => connect().catch(cause => setError(cause.message))}>Connect launcher wallet</button> :
           wallet !== data.wallet ? <button type="button" className="button outline" onClick={() => changeWallet().catch(cause => setError(cause.message))}>Switch to launcher wallet</button> :
             offer ? <div className="discovery-review" role="status"><strong>Review your claim</strong>
-              <p>Reward: {formatSolDisplay(offer.amount)} SOL<br/>Network fee: {formatSolDisplay(offer.networkFee)} SOL
-                {BigInt(offer.accountSetupFee) > 0n && <><br/>One-time token account deposit: {formatSolDisplay(offer.accountSetupFee)} SOL</>}</p>
+              <p>Reward: {formatUnits(offer.amount)} SOL<br/>Network fee: {formatUnits(offer.networkFee)} SOL
+                {BigInt(offer.accountSetupFee) > 0n && <><br/>One-time token account deposit: {formatUnits(offer.accountSetupFee)} SOL</>}</p>
               {claimCost >= BigInt(offer.amount) && <p className="inline-error">The costs exceed this reward. You can wait for more fees to accrue.</p>}
               <button type="button" className="button primary" onClick={() => claim(true)}>Approve in wallet</button>
               <button type="button" className="claim-text-button" onClick={() => setOffer(null)}>Cancel</button></div> :

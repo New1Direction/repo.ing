@@ -7,6 +7,8 @@ const date = (value, exact = false) => new Intl.DateTimeFormat('en-US', {
   timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric',
   ...(exact ? { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' } : {}),
 }).format(new Date(value))
+// Release amounts are recorded exactly (they sum to the deposit); show them rounded, exact on hover.
+const tokens = value => Number(value.replaceAll(',', '')).toLocaleString('en-US', { maximumFractionDigits: 2 })
 
 export function TeamTokenLocks() {
   return <section id="team-locks" className="inner-card team-locks" aria-labelledby="team-locks-title">
@@ -16,7 +18,7 @@ export function TeamTokenLocks() {
       <div className="card-heading"><h3>{lock.name}</h3><span>{lock.supplyPercent} of supply</span></div>
       <div className="team-lock-amount"><strong>{lock.deposited}</strong><span>REPOING deposited</span></div>
       <dl><div><dt>First release</dt><dd><time dateTime={lock.releases[0].at}>{date(lock.releases[0].at)}</time></dd></div><div><dt>Final release</dt><dd><time dateTime={lock.releases.at(-1).at}>{date(lock.releases.at(-1).at)}</time></dd></div></dl>
-      <details><summary>Release schedule · UTC</summary><ol>{lock.releases.map(release => <li key={release.at}><time dateTime={release.at}>{date(release.at, true)} UTC</time><strong>{release.amount} REPOING</strong></li>)}</ol></details>
+      <details><summary>Release schedule · UTC</summary><ol>{lock.releases.map(release => <li key={release.at}><time dateTime={release.at}>{date(release.at, true)} UTC</time><strong title={`${release.amount} REPOING`}>{tokens(release.amount)} REPOING</strong></li>)}</ol></details>
       <a className="button outline" href={`https://lock.jup.ag/escrow/${lock.escrow}`} target="_blank" rel="noopener noreferrer" aria-label={`View ${lock.name} on Jupiter Lock`}>View on Jupiter Lock <ArrowUpRight size={15} aria-hidden="true"/></a>
     </article>)}</div>
     <div className="team-locks-wallet"><span>Creator & recipient · team wallet</span><CopyAddress address={OFFICIAL_TOKEN.teamWallet} label="team wallet address" compact/></div>

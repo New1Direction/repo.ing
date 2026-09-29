@@ -10,7 +10,7 @@ import { ClaimSteps } from '../../../components/claim-steps'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
 import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
-import { formatUnits, formatUsdEstimate } from '../../../lib/format.mjs'
+import { formatUnits, formatSolDisplay, formatUsdEstimate } from '../../../lib/format.mjs'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { githubSessionCookie, readGithubSession, seal } from '../../../lib/auth.mjs'
 import { Connection } from '@solana/web3.js'
@@ -72,8 +72,8 @@ async function ClaimContent({ market, repo, query }) {
     } catch { /* Production remains closed until the pinned P3 proof and both RPCs verify. */ }
   }
   return <><div className="claim-amount-summary inner-card">
-    <div><span>Available to claim</span><strong>{claimable === null ? '—' : `${formatUnits(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
-    <div className="claim-fee-history"><span>Total earned <strong>{formatUnits(market.earned)} SOL</strong></span><span>Already paid <strong>{formatUnits(market.claimed)} SOL</strong></span></div>
+    <div><span>Available to claim</span><strong title={claimable === null ? undefined : `${formatUnits(claimable)} SOL`}>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
+    <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
   </div><ClaimSteps repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
     verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} claimable={claimable} usdEstimate={usdEstimate}
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}
