@@ -1,5 +1,7 @@
-// Baseline security headers. A full script/style CSP is intentionally deferred: wallet adapters
-// and the inline theme script need a nonce-based policy tested against every wallet first.
+import { reportOnlyPolicy } from './app/lib/csp.mjs'
+
+// Baseline security headers. A full script/style CSP is intentionally not enforced yet: wallet adapters
+// and the inline theme script need testing against every wallet, so it ships report-only first.
 const securityHeaders = [
   // Users sign wallet transactions here, so the site must never be framed (clickjacking).
   { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
@@ -8,6 +10,7 @@ const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
   { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), payment=()' },
+  { key: 'Content-Security-Policy-Report-Only', value: reportOnlyPolicy({ dev: process.env.NODE_ENV !== 'production' }) },
 ]
 
 /** @type {import('next').NextConfig} */
