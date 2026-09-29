@@ -8,7 +8,19 @@ import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
 const SWAP2_DISCRIMINATOR = Buffer.from([65, 75, 63, 76, 235, 91, 91, 136])
+const SWAP2_TRANSFER_HOOK_DISCRIMINATOR = Buffer.from([183, 93, 153, 40, 24, 230, 194, 151])
+const SWAP_DISCRIMINATORS = [SWAP_DISCRIMINATOR, SWAP2_DISCRIMINATOR, SWAP2_TRANSFER_HOOK_DISCRIMINATOR]
+const SWAP2_EVENTS = new Set(['evtSwap2', 'evtSwap2WithTransferHook'])
 const EVENT_CPI_PREFIX = Buffer.from('e445a52e51cb9a1d', 'hex')
+
+// Deterministic: retrying the same finalized transaction can never succeed. Callers may quarantine it.
+export class UnparseableTradeError extends Error {}
+
+// swap and swap2 emit evtSwap then evtSwap2 for one trade (verified on mainnet); swap2WithTransferHook emits
+// only evtSwap2WithTransferHook. Same fee fields; SwapResult2::get_swap_result maps actual input to excluded-fee input.
+const legacySwapData = data => ({ pool: data.pool, config: data.config, tradeDirection: data.tradeDirection,
+  hasReferral: data.hasReferral, currentTimestamp: data.currentTimestamp,
+  swapResult: { ...data.swapResult, actualInputAmount: data.swapResult.excludedFeeInputAmount } })
 
 export function canonicalDbcSwapEvents(transaction, market, config, dbc) {
   if (!transaction?.meta || transaction.meta.err) throw new Error('Finalized trade transaction is unavailable or failed')
@@ -17,24 +29,26 @@ export function canonicalDbcSwapEvents(transaction, market, config, dbc) {
   const pool = new PublicKey(market.pool)
   const mint = new PublicKey(market.mint)
   const configKey = new PublicKey(config)
-  const events = []
-  let eventIndex = 0
+  const found = []
+  let swapCount = 0
   let sawCanonicalSwap = false
-  let sawCanonicalFeeEvent = false
   for (const group of transaction.meta.innerInstructions ?? []) {
     const outer = transaction.transaction.message.instructions[group.index]
     const activeSwaps = new Map()
+    const swapIds = new Map()
+    let lastSwapId
     for (const [position, instruction] of [outer, ...group.instructions].entries()) {
       if (!instruction) continue
       const depth = position === 0 ? 1 : Number.isInteger(instruction.stackHeight) ? instruction.stackHeight : null
-      if (depth !== null) for (const activeDepth of activeSwaps.keys()) {
-        if (activeDepth >= depth) activeSwaps.delete(activeDepth)
+      if (depth !== null) for (const active of [activeSwaps, swapIds]) for (const activeDepth of active.keys()) {
+        if (activeDepth >= depth) active.delete(activeDepth)
       }
       if (!isKey(instruction.programIdIndex, DBC_PROGRAM)) continue
       const bytes = Buffer.from(bs58.decode(instruction.data))
       const discriminator = bytes.subarray(0, 8)
-      const isSwap = discriminator.equals(SWAP_DISCRIMINATOR) || discriminator.equals(SWAP2_DISCRIMINATOR)
-      if (isSwap) {
+      if (SWAP_DISCRIMINATORS.some(expected => discriminator.equals(expected))) {
+        lastSwapId = swapCount++
+        swapIds.set(depth ?? 2, lastSwapId)
         const accounts = instruction.accounts ?? []
         if (isKey(accounts[1], configKey) && isKey(accounts[2], pool) &&
             isKey(accounts[7], mint) && isKey(accounts[8], NATIVE_MINT)) {
@@ -43,15 +57,29 @@ export function canonicalDbcSwapEvents(transaction, market, config, dbc) {
         }
         continue
       }
-      if (!bytes.subarray(0, 8).equals(EVENT_CPI_PREFIX)) continue
-      const decoded = dbc.state.getProgram().coder.events.decode(bytes.subarray(8).toString('base64'))
-      if (decoded?.name !== 'evtSwap') continue
-      const ordinal = eventIndex++
-      const hasParentSwap = depth === null ? activeSwaps.size > 0 : activeSwaps.has(depth - 1)
-      if (!hasParentSwap || !decoded.data.pool.equals(pool) || !decoded.data.config.equals(configKey)) continue
-      sawCanonicalFeeEvent = true
-      events.push({ eventIndex: ordinal, data: decoded.data })
+      if (!discriminator.equals(EVENT_CPI_PREFIX)) continue
+      let decoded
+      try { decoded = dbc.state.getProgram().coder.events.decode(bytes.subarray(8).toString('base64')) }
+      catch (error) { throw new UnparseableTradeError(`DBC event CPI does not decode: ${error.message}`) }
+      if (decoded?.name !== 'evtSwap' && !SWAP2_EVENTS.has(decoded?.name)) continue
+      found.push({ name: decoded.name, data: decoded.data, swapId: depth === null ? lastSwapId : swapIds.get(depth - 1),
+        hasParentSwap: depth === null ? activeSwaps.size > 0 : activeSwaps.has(depth - 1) })
     }
+  }
+  // Ordinals count evtSwap exactly as before, so stored fee_events keys stay stable. evtSwap2 is used (and
+  // takes an ordinal) only when its own swap emitted no evtSwap: crediting both would double-count one trade.
+  const legacySwapIds = new Set(found.filter(event => event.name === 'evtSwap').map(event => event.swapId))
+  const events = []
+  let eventIndex = 0
+  let sawCanonicalFeeEvent = false
+  for (const event of found) {
+    const legacy = event.name === 'evtSwap'
+    if (!legacy && (event.swapId === undefined || legacySwapIds.has(event.swapId))) continue
+    const ordinal = eventIndex++
+    const data = legacy ? event.data : legacySwapData(event.data)
+    if (!event.hasParentSwap || !data.pool.equals(pool) || !data.config.equals(configKey)) continue
+    sawCanonicalFeeEvent = true
+    events.push({ eventIndex: ordinal, data })
   }
   return { events, sawCanonicalSwap, sawCanonicalFeeEvent }
 }
@@ -60,9 +88,9 @@ export function canonicalTradeEvents(transaction, market, config, dbc) {
   const { events: swaps } = canonicalDbcSwapEvents(transaction, market, config, dbc)
   return swaps.map(({ eventIndex, data }) => {
     const direction = data.tradeDirection === 1 ? 'buy' : data.tradeDirection === 0 ? 'sell' : null
-    if (!direction) throw new Error('Canonical DBC swap has an unknown direction')
+    if (!direction) throw new UnparseableTradeError('Canonical DBC swap has an unknown direction')
     const { actualInputAmount, outputAmount, nextSqrtPrice } = data.swapResult
-    if (nextSqrtPrice.isZero() || outputAmount.isZero()) throw new Error('Canonical DBC swap has no price or output')
+    if (nextSqrtPrice.isZero() || outputAmount.isZero()) throw new UnparseableTradeError('Canonical DBC swap has no price or output')
     return { pool: market.pool, signature: market.signature, eventIndex,
       slot: transaction.slot, tradedAt: new Date(Number(data.currentTimestamp.toString()) * 1000),
       direction, inputBaseUnits: actualInputAmount.toString(), outputBaseUnits: outputAmount.toString(),

@@ -1,14 +1,24 @@
 import { createGraduatedFees, recordGraduatedFees, recordPlatformFees } from './graduated-fees.mjs'
 import { PublicKey } from '@solana/web3.js'
 import { createFeeAccrual } from './fee-accrual.mjs'
-import { createTradeRecorder } from './trade-evidence.mjs'
+import { createTradeRecorder, UnparseableTradeError } from './trade-evidence.mjs'
 
 const PAGE_SIZE = 1000
+const QUARANTINE = 'FEE_EVIDENCE_QUARANTINED'
 
-export function createExternalFeeIndexer({ pool: databasePool, connection, config }) {
-  const graduatedFees = createGraduatedFees({ connection, config, db: databasePool })
-  const accrual = createFeeAccrual({ pool: databasePool, connection, config })
-  const recordTrade = createTradeRecorder({ pool: databasePool, connection, config })
+// One unparseable finalized trade must not freeze a pool's cursor. It becomes a durable operator alert,
+// is retried each run until acknowledged, and crediting stays idempotent on (signature, event_index, kind).
+export async function quarantineTrade(db, market, signature, slot, error) {
+  const detail = { code: 'FEE_EVIDENCE_UNPARSEABLE', pool: market.pool, signature, slot: String(slot), reason: error.message }
+  const { rowCount } = await db.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values($1,$2,$3,$4)
+    on conflict(event_key) do nothing`, [`fee-quarantine:${market.pool}:${signature}`, String(market.repoId), QUARANTINE, JSON.stringify(detail)])
+  if (rowCount) console.error(`Fee evidence quarantined for review: ${signature} (${market.pool}): ${error.message}`)
+}
+
+export function createExternalFeeIndexer({ pool: databasePool, connection, config,
+  graduatedFees = createGraduatedFees({ connection, config, db: databasePool }),
+  accrual = createFeeAccrual({ pool: databasePool, connection, config }),
+  recordTrade = createTradeRecorder({ pool: databasePool, connection, config }) }) {
 
   async function processMarket(market) {
     const client = await databasePool.connect()
@@ -18,11 +28,37 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
       const lock = await client.query('select pg_try_advisory_lock(hashtextextended($1, 0)) as locked', [market.pool])
       if (!lock.rows[0].locked) return { githubRepoId: market.repoId, pool: market.pool, status: 'BUSY' }
       try {
+        let creditedBaseUnits = 0n
+        const eventKeys = []
+        const quarantined = []
+        const credit = async (signature, slot, fees = true) => {
+          try {
+            if (fees) {
+              const result = await accrual.recordTradeFees({ githubRepoId: repoId, signatures: [signature], allowNonSwap: true })
+              creditedBaseUnits += result.creditedBaseUnits
+              eventKeys.push(...result.eventKeys)
+            }
+            await recordTrade(market, signature)
+            return true
+          } catch (error) {
+            if (!(error instanceof UnparseableTradeError)) throw error
+            await quarantineTrade(client, market, signature, slot, error)
+            quarantined.push(signature)
+            return false
+          }
+        }
         // Upgrade existing markets and recover a crash between fee credit and chart write.
-        const uncharted = await client.query(`select distinct f.signature from fee_events f
+        const uncharted = await client.query(`select f.signature, max(f.slot)::text as slot from fee_events f
           where f.pool = $1 and not exists (select 1 from trade_events t where t.signature = f.signature)
-          order by f.signature limit 100`, [market.pool])
-        for (const row of uncharted.rows) await recordTrade(market, row.signature)
+          group by f.signature order by f.signature limit 100`, [market.pool])
+        for (const row of uncharted.rows) await credit(row.signature, row.slot, false)
+        const review = await client.query(`select id, detail from graduation_alerts where kind = $1 and github_repo_id = $2
+          and acknowledged_at is null order by id limit 100`, [QUARANTINE, String(repoId)])
+        for (const row of review.rows) {
+          const { signature, slot } = JSON.parse(row.detail)
+          if (await credit(signature, slot)) await client.query(`update graduation_alerts set acknowledged_at = now(),
+            acknowledged_by = 'external-fee-indexer' where id = $1 and acknowledged_at is null`, [row.id])
+        }
         const previous = (await client.query('select last_signature, last_slot::text from pool_fee_cursors where pool = $1',
           [market.pool])).rows[0] ?? null
         const boundary = previous?.last_signature ?? market.launchSignature
@@ -44,16 +80,8 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
         }
         if (!foundBoundary) throw new Error(`Finalized pool history does not contain cursor or launch signature for ${market.pool}`)
 
-        let creditedBaseUnits = 0n
-        const eventKeys = []
         for (const item of [...(!previous ? [boundaryItem] : []), ...discovered.reverse()]) {
-          if (!item.err) {
-            const result = await accrual.recordTradeFees({ githubRepoId: repoId,
-              signatures: [item.signature], allowNonSwap: true })
-            creditedBaseUnits += result.creditedBaseUnits
-            eventKeys.push(...result.eventKeys)
-            await recordTrade(market, item.signature)
-          }
+          if (!item.err) await credit(item.signature, item.slot)
           await client.query(`insert into pool_fee_cursors (pool, last_signature, last_slot) values ($1, $2, $3)
             on conflict (pool) do update set last_signature = excluded.last_signature,
               last_slot = excluded.last_slot, updated_at = now()`,
@@ -70,7 +98,7 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
         const cursor = (await client.query('select last_signature, last_slot::text from pool_fee_cursors where pool = $1',
           [market.pool])).rows[0] ?? null
         return { githubRepoId: market.repoId, pool: market.pool, status: 'OK',
-          discovered: discovered.length, creditedBaseUnits, graduatedCredit, platformCredit, eventKeys,
+          discovered: discovered.length, creditedBaseUnits, quarantined, graduatedCredit, platformCredit, eventKeys,
           cursorBefore: previous ? { signature: previous.last_signature, slot: previous.last_slot } : null,
           cursorAfter: cursor ? { signature: cursor.last_signature, slot: cursor.last_slot } : null }
       } finally { await client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [market.pool]) }
