@@ -52,7 +52,8 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
     }
     const onIndexed = event => { if (event.detail?.mint === mint && event.detail.kind !== 'curve') void refresh() }
     window.addEventListener('repoing:market-updated', onIndexed)
-    const stopPolling = visiblePolling(refresh, 15000)
+    // Indexed trades arrive over SSE (repoing:market-updated); polling is only the fallback.
+    const stopPolling = visiblePolling(refresh, 60000)
     window.addEventListener('repoing:trade-confirmed', onTradeConfirmed)
     return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTradeConfirmed); window.removeEventListener('repoing:market-updated', onIndexed) }
   }, [mint, range, retry])

@@ -7,3 +7,12 @@ export function orderMarkets(markets, tab = 'Trending') {
     return new Date(b.indexedAt) - new Date(a.indexedAt) || a.mint.localeCompare(b.mint)
   })
 }
+
+export const HOME_MARKET_TABS = ['Trending', 'New']
+export const HOME_MARKET_LIMIT = 5
+// Only the fields MarketTable, RepoAvatar and WatchButton read, so the home page ships no unused rows.
+const HOME_MARKET_FIELDS = ['repoId', 'mint', 'fullName', 'description', 'symbol', 'tokenName', 'wasVerified', 'volume24hLamports', 'earned', 'claimed', 'remaining', 'stars']
+export function homeMarketTabs(markets) {
+  return Object.fromEntries(HOME_MARKET_TABS.map(tab => [tab, orderMarkets(markets, tab).slice(0, HOME_MARKET_LIMIT)
+    .map(market => Object.fromEntries(HOME_MARKET_FIELDS.map(key => [key, market[key]])))]))
+}

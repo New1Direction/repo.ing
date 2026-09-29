@@ -5,6 +5,7 @@ import { Connection, Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { createReconciler } from '../../src/reconcile.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
+import { ttlMemo } from './ttl-memo.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -40,7 +41,11 @@ export function builderAllocationEnabled() { return allocationEnabled(configAddr
 export function launchAvailable() { return Boolean(database() && configAddress() && creatorSigner()) }
 export function tradeAvailable() { return Boolean(database() && configAddress()) }
 
-export async function listMarkets() {
+// Home, /explore and the wallet overview render per request; share one market aggregate per 15 s.
+const MARKETS_TTL_MS = 15_000
+export const listMarkets = ttlMemo(loadMarkets, MARKETS_TTL_MS, { keep: result => !result.unavailable })
+
+async function loadMarkets() {
   const pool = database()
   if (!pool) return { markets: [], unavailable: 'Database is not configured.' }
   try {

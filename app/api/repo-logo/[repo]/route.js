@@ -1,22 +1,35 @@
 import { database } from '../../../lib/server.mjs'
 import { githubApiHeaders } from '../../../../src/github-app-auth.mjs'
 import { repositoryAssetDirectory, repositoryLogoFromAssets, repositoryLogoFromReadme, safeGithubImageUrl } from '../../../../src/repo-logo.mjs'
+import { githubImageVariant, githubImageVariantResponse, imageWidthParam } from '../../../../src/token-image.mjs'
 
 export const runtime = 'nodejs'
 const logoCache = new Map()
 const imageResponse = target => new Response(null, { status: 302, headers: { Location: target,
   'Cache-Control': 'public, max-age=3600, s-maxage=3600' } })
 
-export async function GET(_request, { params }) {
+// ?w= serves a resized WebP for in-app avatars; without it the redirect stays canonical for token metadata.
+export async function GET(request, { params }) {
   const { repo } = await params
   if (!/^\d+$/.test(repo)) return new Response(null, { status: 404 })
+  const width = request ? imageWidthParam(new URL(request.url).searchParams.get('w')) : null
+  if (width === undefined) return new Response(null, { status: 400 })
+  const target = await logoTarget(repo)
+  if (target instanceof Response) return target
+  if (!target) return new Response(null, { status: 404 })
+  if (!width) return imageResponse(target)
+  try { return githubImageVariantResponse(await githubImageVariant(target, width)) }
+  catch { return imageResponse(target) }
+}
+
+async function logoTarget(repo) {
   const cached = logoCache.get(repo)
-  if (cached && cached.expiresAt > Date.now()) return imageResponse(cached.url)
+  if (cached && cached.expiresAt > Date.now()) return cached.url
   const pool = database()
   if (!pool) return new Response(null, { status: 503 })
   const { rows } = await pool.query('select owner, name, avatar_url from repositories where github_repo_id = $1', [repo])
   const record = rows[0]
-  if (!record) return new Response(null, { status: 404 })
+  if (!record) return null
   let image = null
   try {
     const headers = await githubApiHeaders('repo.ing-repository-logo')
@@ -41,8 +54,8 @@ export async function GET(_request, { params }) {
     }
   } catch { /* A missing README or GitHub outage falls back to the owner avatar. */ }
   const target = safeGithubImageUrl(image) || safeGithubImageUrl(record.avatar_url)
-  if (!target) return new Response(null, { status: 404 })
+  if (!target) return null
   if (logoCache.size > 1000) logoCache.clear()
   logoCache.set(repo, { url: target, expiresAt: Date.now() + (image ? 6 * 60 : 10) * 60_000 })
-  return imageResponse(target)
+  return target
 }

@@ -34,7 +34,8 @@ export function MarketTrading({ market, available, usdPerSol }) {
         if (active) { if (result.status !== 'active') curveEnded.current = market.mint; setCurve(result); setError(false) }
       } catch { if (active) {setError(true);setCurve(null)} } finally { running = false }
     }
-    const stopPolling = visiblePolling(refresh, 15000)
+    // Trades and ~30 s graduation observations arrive over SSE; polling is only the fallback.
+    const stopPolling = visiblePolling(refresh, 60000)
     const onTrade = event => { if (event.detail?.mint === market.mint) void refresh() }
     window.addEventListener('repoing:trade-confirmed', onTrade)
     window.addEventListener('repoing:market-updated', onTrade)

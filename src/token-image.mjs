@@ -45,13 +45,14 @@ export async function fetchGithubImage(value, fetchImpl = fetch) {
   throw Error('Too many image redirects')
 }
 
+const isRasterImage = bytes => bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ||
+  (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) ||
+  /^GIF8[79]a/.test(bytes.subarray(0, 6).toString('ascii')) ||
+  (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP')
+
 export async function normalizeTokenImage(bytes, { allowSvg = false } = {}) {
   if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw Error('Choose an image up to 2 MB.')
-  const raster = bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ||
-    (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) ||
-    /^GIF8[79]a/.test(bytes.subarray(0, 6).toString('ascii')) ||
-    (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP')
-  if (!raster) {
+  if (!isRasterImage(bytes)) {
     const svg = bytes.toString('utf8')
     if (!allowSvg || !/<svg\b/i.test(svg)) throw Error('This image could not be read. Choose PNG, JPEG, WebP, or GIF.')
     // Check before invoking the SVG decoder, including its metadata parser.
@@ -125,4 +126,40 @@ export async function tokenImageResponse(value, width = null) {
     'Cache-Control': 'public, max-age=31536000, immutable',
     'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox",
     ETag: `"${digest}${variant ? `-w${width}` : ''}"` } })
+}
+
+// Resized WebP of a remote GitHub logo. Repository logos can change, so entries expire.
+const GITHUB_VARIANT_TTL_MS = 60 * 60_000
+const githubVariants = new Map()
+
+export function imageWidthParam(value) {
+  if (value === null || value === undefined) return null
+  const width = Number(value)
+  return TOKEN_IMAGE_WIDTHS.includes(width) && String(width) === value ? width : undefined
+}
+
+async function renderGithubImage(value, width, fetchImpl) {
+  const url = new URL(value)
+  if (url.hostname === 'avatars.githubusercontent.com') url.searchParams.set('s', String(width))
+  const bytes = await fetchGithubImage(url.href, fetchImpl)
+  // SVG is never decoded here: README SVGs are untrusted and the caller falls back to a redirect.
+  if (!isRasterImage(bytes)) throw Error('Unsupported image format')
+  return sharp(bytes, options).timeout({ seconds: 5 }).resize(width, width, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer()
+}
+
+export async function githubImageVariant(value, width, { fetchImpl = fetch, now = Date.now() } = {}) {
+  const key = `${width}:${value}`
+  const cached = githubVariants.get(key)
+  if (cached && cached.expiresAt > now) return cached.pending
+  const pending = renderGithubImage(value, width, fetchImpl)
+  githubVariants.delete(key)
+  githubVariants.set(key, { pending, expiresAt: now + GITHUB_VARIANT_TTL_MS })
+  pending.catch(() => { if (githubVariants.get(key)?.pending === pending) githubVariants.delete(key) })
+  if (githubVariants.size > VARIANT_CACHE_LIMIT) githubVariants.delete(githubVariants.keys().next().value)
+  return pending
+}
+
+export function githubImageVariantResponse(body) {
+  return new Response(body, { headers: { 'Content-Type': 'image/webp', 'Content-Length': String(body.length),
+    'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox" } })
 }
