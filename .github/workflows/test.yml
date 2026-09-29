@@ -1,0 +1,102 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: '22'
+  SOLANA_VERSION: '4.0.1'
+
+jobs:
+  tests:
+    name: node --test (PostgreSQL + solana-test-validator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: launchtest
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Cache Solana CLI
+        id: solana-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: solana-cli-${{ runner.os }}-${{ env.SOLANA_VERSION }}
+
+      - name: Install Solana CLI
+        if: steps.solana-cache.outputs.cache-hit != 'true'
+        run: sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+
+      - name: Add Solana CLI to PATH
+        run: |
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Meteora program fixtures
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/validator/fixtures
+          key: meteora-fixtures-${{ hashFiles('scripts/ci/start-validator.sh') }}
+
+      - name: Start solana-test-validator
+        run: |
+          solana --version
+          scripts/ci/start-validator.sh "$RUNNER_TEMP/validator"
+
+      - name: Run full test suite
+        run: node scripts/ci/run-tests.mjs
+
+      - name: Validator log
+        if: failure()
+        run: tail -200 "$RUNNER_TEMP/validator/validator.log" || true
+
+  build:
+    name: next build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      - uses: actions/cache@v4
+        with:
+          path: .next/cache
+          key: next-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: next-cache-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+
+      - run: npx next build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
