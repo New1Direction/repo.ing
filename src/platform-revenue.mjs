@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { loadBuybackReceipts } from '../app/lib/buyback-receipts-db.mjs'
+import { BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 
 // Canonical platform-revenue accounting. Builder and repository earnings are never
 // touched here: this ledger only covers revenue repo.ing owns (partner fees).
@@ -9,6 +10,9 @@ import { loadBuybackReceipts } from '../app/lib/buyback-receipts-db.mjs'
 
 const PERMILLE = 1000n
 const REVENUE_LOCK = 'platform-revenue-allocation'
+// Claims settle to the partner wallet; the team moves the buyback share to the published custody wallet and buys
+// there. Receipts from a mapped custody wallet spend the reserve of the partner wallet that funds it.
+export const CUSTODY_FUNDED_BY = Object.freeze({ H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3: BUYBACK_WALLETS.custody })
 
 export function buybackExecutionConfig(env = process.env) {
   if (env.REPO_BUYBACK_EXECUTION_ENABLED !== 'true') return null
@@ -57,10 +61,10 @@ export async function platformRevenueSummary(db) {
   const spentTotal = BigInt(spent[0].amount)
   // Custody buybacks executed by hand and published as receipts (hand-verified + worker-detected) spend the
   // same reserve; count each signature once, whether or not it was also imported as a settled intent.
-  // Only receipts from the wallet that actually received the claimed fees count against this ledger.
+  // Only receipts from the fee-receiving wallet, or the custody wallet it funds, count against this ledger.
   const { rows: imported } = await db.query(`select signature from buyback_intents where status='settled' and signature is not null`)
   const { rows: custody } = await db.query(`select distinct wallet from platform_fee_claims where status='settled'`)
-  const importedSignatures = new Set(imported.map(row => row.signature)), custodyWallets = new Set(custody.map(row => row.wallet))
+  const importedSignatures = new Set(imported.map(row => row.signature)), custodyWallets = new Set(custody.flatMap(row => [row.wallet, CUSTODY_FUNDED_BY[row.wallet]].filter(Boolean)))
   const publishedSpent = (custodyWallets.size ? await loadBuybackReceipts(db) : [])
     .filter(receipt => receipt.source === 'custody' && custodyWallets.has(receipt.wallet) && !importedSignatures.has(receipt.signature))
     .reduce((sum, receipt) => sum + BigInt(receipt.spentLamports), 0n)

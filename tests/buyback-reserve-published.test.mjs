@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { platformRevenueSummary } from '../src/platform-revenue.mjs'
+import { platformRevenueSummary, CUSTODY_FUNDED_BY } from '../src/platform-revenue.mjs'
 import { BUYBACK_RECEIPTS, BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 
 const custodyTotal = BUYBACK_RECEIPTS.filter(r => r.source === 'custody').reduce((sum, r) => sum + BigInt(r.spentLamports), 0n)
-function fakeDb({ allocatedBuyback, intentSpent = '0', imported = [], wallets = [BUYBACK_WALLETS.custody] }) {
+function fakeDb({ allocatedBuyback, intentSpent = '0', imported = [], wallets = Object.keys(CUSTODY_FUNDED_BY) }) {
   return { query: async sql => {
     if (sql.includes('from platform_revenue group')) return { rows: [] }
     if (sql.includes('group by phase')) return { rows: [] }
@@ -34,4 +34,8 @@ test('receipts from other wallets or already imported as intents are not double 
   const importedOne = await platformRevenueSummary(fakeDb({ allocatedBuyback: String(custodyTotal * 2n), intentSpent: first.spentLamports, imported: [first.signature] }))
   assert.equal(BigInt(importedOne.publishedSpent), custodyTotal - BigInt(first.spentLamports))
   assert.equal(BigInt(importedOne.buybackReserve), custodyTotal)
+})
+
+test('the partner wallet that receives claims maps to the published custody buyback wallet', () => {
+  assert.equal(CUSTODY_FUNDED_BY.H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3, BUYBACK_WALLETS.custody)
 })
