@@ -10,10 +10,14 @@ const date = (value, exact = false) => new Intl.DateTimeFormat('en-US', {
 // Release amounts are recorded exactly (they sum to the deposit); show them rounded, exact on hover.
 const tokens = value => Number(value.replaceAll(',', '')).toLocaleString('en-US', { maximumFractionDigits: 2 })
 
+// Totals derive from the published locks so a new lock only needs adding to the list.
+const lockedTotal = OFFICIAL_TEAM_LOCKS.reduce((sum, lock) => sum + Number(lock.deposited.replaceAll(',', '')), 0)
+const FIXED_SUPPLY = 1_000_000_000
+
 export function TeamTokenLocks() {
   return <section id="team-locks" className="inner-card team-locks" aria-labelledby="team-locks-title">
-    <div className="team-locks-heading"><div><h2 id="team-locks-title"><LockKeyhole size={18} aria-hidden="true"/>Team token locks</h2><p>45,000,000 $REPOING deposited into Jupiter Lock.</p></div><span className="badge">4.5% of fixed supply</span></div>
-    <p className="team-locks-terms">Both locks disable cancellation and recipient changes. Tokens become claimable on the schedules below.</p>
+    <div className="team-locks-heading"><div><h2 id="team-locks-title"><LockKeyhole size={18} aria-hidden="true"/>Token locks</h2><p>{lockedTotal.toLocaleString('en-US')} $REPOING deposited into Jupiter Lock.</p></div><span className="badge">{+(lockedTotal / FIXED_SUPPLY * 100).toFixed(2)}% of fixed supply</span></div>
+    <p className="team-locks-terms">Every lock disables cancellation and recipient changes. Tokens become claimable on the schedules below.</p>
     <div className="team-locks-grid">{OFFICIAL_TEAM_LOCKS.map(lock => <article key={lock.escrow} className="team-lock">
       <div className="card-heading"><h3>{lock.name}</h3><span>{lock.supplyPercent} of supply</span></div>
       <div className="team-lock-amount"><strong>{lock.deposited}</strong><span>REPOING deposited</span></div>
