@@ -29,3 +29,9 @@ export function storedReferral(storage, wallet, now = Date.now()) {
 export function referralLink(origin, mint, wallet) {
   return `${origin}/token/${encodeURIComponent(mint)}?ref=${encodeURIComponent(wallet)}`
 }
+
+// GET /api/referral payload, or null when malformed.
+export function referralStatus(result) {
+  if (!result || typeof result.enabled !== 'boolean' || !/^\d+$/.test(result.earningsLamports) || !/^\d+$/.test(result.setupLamports)) return null
+  return { enabled: result.enabled, earningsLamports: result.earningsLamports, setupLamports: result.setupLamports }
+}

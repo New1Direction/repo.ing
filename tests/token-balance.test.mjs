@@ -23,6 +23,21 @@ test('sell shortcuts use exact base units and produce an input without grouping 
   assert.equal(sellAmountForPercent('1', 100), '0.000001')
 })
 
+test('sell shortcuts round down, stay exact beyond float precision and round-trip through parseUnits', async () => {
+  const { parseUnits } = await import('../app/lib/format.mjs')
+  assert.equal(sellAmountForPercent('3', 50), '0.000001')
+  assert.equal(sellAmountForPercent('7', 25), '0.000001')
+  assert.equal(sellAmountForPercent('1000000', 25), '0.25')
+  assert.equal(sellAmountForPercent('0', 100), '')
+  const huge = '18446744073709551615'
+  assert.equal(sellAmountForPercent(huge, 100), '18446744073709.551615')
+  assert.equal(sellAmountForPercent(huge, 25), '4611686018427.387903')
+  assert.equal(sellAmountForPercent('123456789', 50, 9), '0.061728394')
+  for (const percent of [25, 50, 100]) assert.ok(BigInt(parseUnits(sellAmountForPercent(huge, percent), 6)) <= BigInt(huge))
+  assert.equal(parseUnits(sellAmountForPercent(huge, 100), 6), huge)
+  assert.throws(() => sellAmountForPercent('100', 33), /Unsupported/)
+})
+
 test('balance label stays readable without hiding small nonzero balances', () => {
   assert.equal(tokenBalanceLabel('9775865476267'), '9,775,865.47')
   assert.equal(tokenBalanceLabel('1'), '<0.01')

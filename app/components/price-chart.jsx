@@ -4,6 +4,7 @@ import { marketPrefetch } from '../lib/market-prefetch.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
+import { RecentTrades } from './recent-trades'
 import { formatSolDisplay } from '../lib/format.mjs'
 import { formatUsdMarketCap } from '../lib/market-display.mjs'
 import { CHART_PERIODS, chartPriceLabel, chartTradeAge } from '../lib/chart-display.mjs'
@@ -97,7 +98,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
   const tradeAge = chartTradeAge(latest?.tradedAt, now)
   const empty = !current?.candles.length
   const emptyMessage = <><strong>{error && !current ? 'Trade history is unavailable' : data?.totalTrades ? 'No trades in this period' : 'Waiting for the first trade'}</strong><span>{error && !current ? 'Your trade form is still available. Retry the chart below.' : data?.totalTrades ? 'Choose All to see the market’s full history.' : 'Your first finalized trade will appear here once indexed.'}</span>{range !== 'all' && !error && <button className="button outline" onClick={() => { setRange('all'); setRefreshing(true) }}>View all history</button>}</>
-  return <section className="chart-card market-chart-card" aria-label={`${symbol} market chart`}>
+  return <><section className="chart-card market-chart-card" aria-label={`${symbol} market chart`}>
     <div className="chart-summary"><div className="chart-heading"><span className="chart-symbol">${symbol} <span className="chart-unit">{capMode ? 'Market cap · USD estimate' : 'Price · SOL'}</span></span>
       <div className="chart-headline"><strong>{latestValue && !capUnavailable ? capMode ? formatUsdMarketCap(latestValue * capMultiplier) : chartPriceLabel(latestValue) : '—'}</strong>{change !== null && <span className={change >= 0 ? 'chart-up' : 'chart-down'} title="Change from the first to last recorded price in the displayed period">{change > 0 ? '+' : ''}{change.toFixed(2)}% <small>{periodLabel(current.range)}</small></span>}</div>
     </div><div className="chart-metrics"><span>{data?.graduation ? '24h total volume' : ended ? '24h curve volume' : '24h volume'}<strong>{data ? `${formatSolDisplay(data.volume24hLamports)} SOL` : <span className="skeleton-text"/>}</strong></span><span>{historyOnly ? 'Last curve cap' : 'Market cap'}<strong>{latestValue && capMultiplier ? formatUsdMarketCap(latestValue * capMultiplier) : '—'}</strong></span><span>Holders<strong>{historyOnly || freshMetrics?.holders == null ? '—' : freshMetrics.holders.toLocaleString('en-US')}</strong></span></div></div>
@@ -116,5 +117,5 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
       {validBars.length > 0 && <div className="chart-data-scroll"><table><caption>Most recent price bars · SOL per token</caption><thead><tr><th>UTC</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume (SOL)</th></tr></thead><tbody>{validBars.slice(-20).reverse().map(bar => <tr key={bar.time}><td>{new Date(bar.time * 1000).toISOString().slice(0, 16).replace('T', ' ')}</td>{['open', 'high', 'low', 'close'].map(key => <td key={key}>{chartPriceLabel(bar[key])}</td>)}<td>{formatSolDisplay(bar.volumeLamports)}</td></tr>)}</tbody></table></div>}
       <p>Charts powered by <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™</a>. Copyright (с) 2025 TradingView, Inc.</p>
     </details>
-  </section>
+  </section><RecentTrades mint={mint} symbol={symbol} trades={data?.trades ?? null} failed={error && !data}/></>
 }
