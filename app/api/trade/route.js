@@ -2,27 +2,15 @@ import { estimateTradeCosts, preflightTrade } from '../../../src/trade-costs.mjs
 import { randomUUID } from 'node:crypto'
 import { Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { createCanonicalTrader } from '../../../src/canonical-trade.mjs'
-import { createDammTrader, createTradeRouter } from '../../../src/canonical-damm-trade.mjs'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
 import { tradeStatus } from '../../lib/trade-status.mjs'
+import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 const SAFE = /^(Trading is not configured|Invalid trade|Invalid transaction signature|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
 export const runtime = 'nodejs'
 const sessions = globalThis.__gitfunTradeSessions ??= new Map()
 const SESSION_LIFETIME_MS = 10 * 60 * 1000
-function trader() {
-  const pool = database(), config = configAddress()
-  if (!pool || !config) throw new Error('Trading is not configured')
-  if (!globalThis.__gitfunTrader || globalThis.__gitfunTraderConfig !== config) {
-    const connection = chain()
-    globalThis.__gitfunTrader = createTradeRouter({ curve: createCanonicalTrader({ pool, connection, config }),
-      graduated: createDammTrader({ pool, connection, config }) })
-    globalThis.__gitfunTraderConfig = config
-  }
-  return globalThis.__gitfunTrader
-}
 function validSignature(signature) {
   try { return typeof signature === 'string' && signature.length <= 88 && bs58.decode(signature).length === 64 }
   catch { return false }

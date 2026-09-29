@@ -15,18 +15,18 @@ const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
 const SLIPPAGE_BPS = 100
 
-export function createCanonicalTrader({ pool: databasePool, connection, config }) {
+export function createCanonicalTrader({ pool: databasePool, connection, config, loadMarket: marketLoader = null }) {
   const db = drizzle(databasePool)
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const preparedState = new WeakMap()
-  const loadMarket = async repoId => {
+  const loadMarket = marketLoader ?? (async repoId => {
     const market = (await db.select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
       throw new Error('Repository has no indexed canonical market')
     }
     return market
-  }
+  })
   const quote = async (request, direction) => {
     if ('pool' in request || 'mint' in request || 'market' in request) throw new Error('Pool and mint are selected by canonical repository ID only')
     const input = BigInt(direction === 'buy' ? request.amountLamports : request.amountBaseUnits)
