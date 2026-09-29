@@ -571,3 +571,17 @@
 .launch-customize-body{padding:0 14px 16px}
 .launch-customize-body>.field-label:first-child{margin-top:8px}
 @media(prefers-reduced-motion:reduce){.launch-customize summary svg{transition:none}}
+.claim-checklist{display:flex;flex-wrap:wrap;align-items:center;gap:8px 0;list-style:none;margin:0 0 20px;padding:0;font-size:13px;color:var(--dim)}
+.claim-checklist li{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.claim-checklist li+li:before{content:'';width:22px;height:1px;margin:0 10px;background:var(--border-strong)}
+.claim-checklist-mark{width:20px;height:20px;border:1px solid var(--border-strong);border-radius:50%;display:grid;place-items:center;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.claim-checklist .done{color:var(--muted)}.claim-checklist .done .claim-checklist-mark{border-color:var(--green-dark);color:var(--green-dark)}
+.claim-checklist .current{color:var(--text);font-weight:650}.claim-checklist .current .claim-checklist-mark{border-color:var(--green);background:var(--green);color:#101713}
+.claim-page .claim-checklist{margin:22px 0 0}
+.wallet-explainer{display:block;margin:0 0 14px;font-size:13px;color:var(--muted)}
+.wallet-explainer summary{width:fit-content;cursor:pointer;color:var(--green-dark);text-decoration:underline;text-underline-offset:2px}
+.wallet-explainer summary:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:2px}
+.wallet-explainer p{margin:8px 0 0;max-width:560px;line-height:1.5}
+.builder-setup .wallet-explainer{margin:10px 0 0}
+.claim-intro small{display:block;margin-top:8px;color:var(--muted);font-size:14px}
+@media(max-width:480px){.claim-checklist{display:grid;grid-template-columns:repeat(3,auto);justify-content:space-between;gap:8px;font-size:12px}.claim-checklist li{gap:6px}.claim-checklist li+li:before{display:none}}
