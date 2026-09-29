@@ -15,7 +15,7 @@ const age = ms => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d 
 const when = value => `${new Date(value).toISOString().replace('T', ' ').slice(0, 16)} UTC`
 const short = value => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—'
 const monitorNote = { match: 'Worker alert watches this address', different: 'Worker alert watches a different address', unset: 'Worker alert not configured' }
-const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry' }
+const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed' }
 
 function Section({ title, result, children }) {
   return <section className="inner-card operations-markets"><h2>{title}</h2>{result.ok ? children(result.data) : <p className="inline-error" role="status">{result.error}</p>}</section>

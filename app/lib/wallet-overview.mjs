@@ -1,11 +1,26 @@
 import { PublicKey } from '@solana/web3.js'
 import { discoveryEarned } from '../../src/discovery-rewards.mjs'
 
-export function walletTokenBalances(accounts, wallet) {
+// SPL Token accounts are 165 bytes (the wallet API reads a 72-byte slice: mint, owner, amount). Token-2022 accounts
+// share that base layout and may append an account-type byte (2 = Account) plus extensions, so the API reads one
+// byte past the base to tell them apart. Mint, owner and amount sit at the same offsets for both programs.
+const BASE_ACCOUNT_LENGTH = 165
+const ACCOUNT_TYPE_ACCOUNT = 2
+export const SPL_ACCOUNT_SLICE = { offset: 0, length: 72 }
+export const TOKEN_2022_ACCOUNT_SLICE = { offset: 0, length: BASE_ACCOUNT_LENGTH + 1 }
+
+function validAccountData(data, token2022) {
+  if (!Buffer.isBuffer(data)) return false
+  if (data.length === SPL_ACCOUNT_SLICE.length || data.length === BASE_ACCOUNT_LENGTH) return true
+  return token2022 && data.length > BASE_ACCOUNT_LENGTH && data[BASE_ACCOUNT_LENGTH] === ACCOUNT_TYPE_ACCOUNT
+}
+
+// Sums balances per mint across the SPL Token and Token-2022 accounts the wallet owns.
+export function walletTokenBalances(accounts, wallet, token2022Accounts = []) {
   const balances = new Map()
-  for (const { account } of accounts) {
-    const data = account.data
-    if (!Buffer.isBuffer(data) || data.length !== 72) throw new Error('Invalid token account data')
+  const entries = [...accounts.map(({ account }) => [account.data, false]), ...token2022Accounts.map(({ account }) => [account.data, true])]
+  for (const [data, token2022] of entries) {
+    if (!validAccountData(data, token2022)) throw new Error('Invalid token account data')
     if (new PublicKey(data.subarray(32, 64)).toBase58() !== wallet) throw new Error('Token account owner mismatch')
     const mint = new PublicKey(data.subarray(0, 32)).toBase58()
     balances.set(mint, (balances.get(mint) ?? 0n) + data.readBigUInt64LE(64))
