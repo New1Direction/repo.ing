@@ -15,6 +15,16 @@ test('small fee balances stay readable without showing a nonzero balance as zero
   assert.equal(formatUsdEstimate('99400', null), null)
 })
 
+test('summary SOL amounts use 2 decimals from 1 SOL and ~4 significant digits below', () => {
+  assert.equal(formatSolDisplay('320732496000'), '320.73')
+  assert.equal(formatSolDisplay('2217021660653'), '2,217.02')
+  assert.equal(formatSolDisplay('13750800000'), '13.75')
+  assert.equal(formatSolDisplay('1000000000'), '1')
+  assert.equal(formatSolDisplay('342812345'), '0.3428')
+  assert.equal(formatSolDisplay('41838730'), '0.04184')
+  assert.equal(formatSolDisplay('-320732496000'), '-320.73')
+})
+
 test('SOL price is cached briefly and unavailable prices are omitted', async () => {
   let calls = 0
   const price = async () => { calls++; return { ok: true, json: async () => ({ solana: { usd: 117.06 } }) } }

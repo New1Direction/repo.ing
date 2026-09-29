@@ -8,11 +8,15 @@ export function formatUnits(raw, decimals = 9, maxFraction = decimals) {
   const fraction = (value % base).toString().padStart(decimals, '0').slice(0, maxFraction).replace(/0+$/, '')
   return `${sign}${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''}`
 }
+// Readable SOL for summaries: 2 decimals from 1 SOL up, ~4 significant digits below (never
+// showing a nonzero balance as 0). Amounts a user signs or pays should use formatUnits instead.
 export function formatSolDisplay(raw) {
   if (raw === null || raw === undefined) return '—'
   const amount = BigInt(raw)
   if (amount !== 0n && amount > -1000n && amount < 1000n) return '<0.000001'
-  return formatUnits(raw, 9, 6)
+  const sol = Number(amount) / 1e9, size = Math.abs(sol)
+  const decimals = size >= 1 || size === 0 ? 2 : Math.min(6, 3 - Math.floor(Math.log10(size)))
+  return sol.toLocaleString('en-US', { maximumFractionDigits: decimals })
 }
 export function formatSolRounded(raw) {
   if (raw === null || raw === undefined) return '—'
