@@ -10,7 +10,7 @@
 @media(max-width:1050px){.header-actions{gap:16px}}
 @media(max-width:700px){.header-actions{gap:7px}.theme-toggle{width:32px;height:32px}}
 
-:root[data-theme=light]{color-scheme:light;--bg:#f7f9f7;--surface:#fff;--surface2:#eef3ef;--border:#d4ddd6;--border-strong:#b7c5ba;--text:#19221c;--muted:#59685d;--dim:#69776c;--green:#2ec47c;--green-dark:#14955a;--red:#bc454f}
+:root[data-theme=light]{color-scheme:light;--bg:#f7f9f7;--surface:#fff;--surface2:#eef3ef;--border:#d4ddd6;--border-strong:#b7c5ba;--text:#19221c;--muted:#59685d;--dim:#637066;--green:#2ec47c;--green-dark:#14955a;--red:#bc454f}
 [data-theme=light] .app-header{border-color:var(--border)}
 [data-theme=light] .brand-accent{color:#168b59}
 [data-theme=light] .app-header nav,[data-theme=light] .footer-inner,[data-theme=light] .eyebrow{color:#536258}

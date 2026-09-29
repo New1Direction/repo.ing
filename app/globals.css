@@ -547,3 +547,5 @@
 @media(hover:hover){.flow-steps button:hover .flow-node{border-color:var(--green)}}
 @media(max-width:600px){.flow-file{padding:13px 16px}.flow-file-note{display:none}.flow-steps{padding:22px 10px 16px}.flow-steps button{font-size:13px}.flow-panel{padding:24px 20px;min-height:310px}.flow-commit{display:none}.launch-origin,.launch-token-card{padding:16px 8px;width:135px}.launch-origin{font-size:11px}.launch-token-card strong{font-size:16px}.launch-transformation{margin-bottom:8px}}
 @media(prefers-reduced-motion:reduce){.flow-description,.launch-token-card,.launch-commit-line{animation:none}.flow-node{transition:none}}
+.repo-name-heading{display:flex;margin:0;font:inherit;letter-spacing:inherit}
+.not-found-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
