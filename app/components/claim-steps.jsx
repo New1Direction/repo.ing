@@ -11,8 +11,10 @@ import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { MarketShareCard } from './market-share-card'
 import { LoadingSignal } from './loading-signal'
 import { BuilderReinvest } from './builder-reinvest'
+import { ClaimChecklist, WalletExplainer } from './claim-checklist'
+import { claimPageStep } from '../lib/claim-checklist.mjs'
 
-export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
+export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -35,7 +37,7 @@ export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false
   const walletDiffers = Boolean(wallet && bound && wallet !== bound)
   const appReady = appAccess === 'installed'
   const appMissing = appAccess === 'missing'
-  const currentStep = !githubReady || !appReady ? 1 : !walletMatches ? 2 : 3
+  const currentStep = claimPageStep({ githubReady, appReady, walletMatches })
   const canClaim = Boolean(currentStep === 3 && claimable && claimable !== '0' && feeStatus === 'MATCH' && payoutReady && review && !awaitingReview)
   const claimAmount = claimable === null ? '—' : `${formatUnits(claimable)} SOL`
   const open = step => currentStep === step || expanded === step
@@ -94,7 +96,7 @@ export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false
       {done && currentStep !== step && <button type="button" className="claim-text-button" aria-expanded={expanded === step} aria-controls={`claim-step-${step}`} onClick={() => setExpanded(expanded === step ? null : step)}>{expanded === step ? 'Done' : 'Review'}</button>}</div>
   }
 
-  return <div className="claim-steps">
+  return <><ClaimChecklist current={currentStep}/>{summary}<div className="claim-steps">
     {(pendingAction || busy) && <div className="claim-progress" role="status" aria-live="polite"><LoadingSignal/><span><strong>{pendingAction === 'claim' ? 'Processing your claim…' : pendingAction === 'verify' ? 'Opening GitHub…' : stage}</strong><small>{pendingAction === 'claim' ? 'Checking current admin access and settling the payout on Solana. Keep this page open.' : pendingAction === 'verify' ? 'You’ll return here after GitHub verification.' : 'Wait for confirmation here.'}</small></span></div>}
     {settledClaim && <div className="claim-receipt" role="status"><Check size={24} aria-hidden="true"/><div>
       <h2>{justClaimed ? 'Claim complete' : 'Latest payout'}</h2><p>{formatUnits(settledClaim.amount)} SOL paid to your verified payout wallet.</p>
@@ -110,10 +112,10 @@ export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false
       <div className="step-content">{stepHeading(1, 'Verify GitHub', githubReady && appReady, `Verified as ${verifiedUser?.githubLogin || 'repository admin'}`)}
         <div id="claim-step-1" hidden={!open(1)}>
           <p>Only a current repository admin can claim. repo.ing requests read-only metadata access and cannot change your code.</p>
-          {appMissing ? <div className="claim-app-access"><p>Allow repo.ing to read <strong>{repoName}</strong> in GitHub’s Repository access settings, then return here. This page checks again automatically.</p><a className="button outline" href={appSettingsUrl} target="_blank" rel="noopener noreferrer">Set up read-only access ↗</a><button className="claim-text-button" type="button" onClick={() => router.refresh()}>Check again</button></div> :
-            !appReady ? <><p>GitHub access is temporarily unavailable.</p><button className="button outline" type="button" onClick={() => router.refresh()}>Retry access check</button></> :
+          {appMissing ? <div className="claim-app-access"><p>Allow repo.ing to read <strong>{repoName}</strong> in GitHub’s Repository access settings, then return here. This page checks again automatically.</p><a className="button primary" href={appSettingsUrl} target="_blank" rel="noopener noreferrer">Set up read-only access ↗</a><button className="claim-text-button" type="button" onClick={() => router.refresh()}>Check again</button></div> :
+            !appReady ? <><p>GitHub access is temporarily unavailable.</p><button className="button primary" type="button" onClick={() => router.refresh()}>Retry access check</button></> :
               githubReady ? <p className="positive"><Check size={17}/>Verified as {verifiedUser.githubLogin}</p> :
-                <a className={`button outline ${pendingAction ? 'disabled-link' : ''}`} aria-disabled={Boolean(pendingAction)} onClick={event => startNavigation('verify', event)} href={`/api/github/start?repo=${repoId}&mode=verify`}>{pendingAction === 'verify' ? 'Opening GitHub…' : 'Verify with GitHub'}</a>}
+                <a className={`button primary ${pendingAction ? 'disabled-link' : ''}`} aria-disabled={Boolean(pendingAction)} onClick={event => startNavigation('verify', event)} href={`/api/github/start?repo=${repoId}&mode=verify`}>{pendingAction === 'verify' ? 'Opening GitHub…' : 'Verify with GitHub'}</a>}
           {githubReady && <p className="claim-step-hint">Your session lasts up to one hour. Current admin access is checked again before every payout.</p>}
         </div>
       </div>
@@ -121,14 +123,15 @@ export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false
     <div className={`claim-step ${currentStep === 2 ? 'current' : ''}`}>
       <div className={`step-number ${walletMatches ? 'done' : ''}`}>{walletMatches ? <Check size={18}/> : 2}</div>
       <div className="step-content">{stepHeading(2, 'Set payout wallet', walletMatches, walletMatches ? `Wallet set · ${bound.slice(0, 6)}…${bound.slice(-4)}` : 'Connect a wallet after verifying GitHub.')}
-        <div id="claim-step-2" hidden={!open(2)}><p>Sign a message to prove this wallet is yours. It does not spend SOL or grant access to your funds.</p>
+        <div id="claim-step-2" hidden={!open(2)}><p>Choose the Solana wallet that receives your SOL. You sign a message to prove it’s yours; it does not spend SOL or grant access to your funds.</p>
+          {!bound && <WalletExplainer/>}
           {bound && <div className="claim-wallet-details"><span>Payout address</span><CopyAddress address={bound} label="payout wallet"/></div>}
-          {!wallet ? <button className="button outline" type="button" onClick={() => connectWallet()}>Connect wallet</button> :
+          {!wallet ? <button className="button primary" type="button" onClick={() => connectWallet()}>Connect wallet</button> :
             !bound ? <button className="button primary" type="button" disabled={!githubReady || busy} onClick={bind}>{busy ? 'Setting wallet…' : 'Use this wallet for payouts'}</button> :
-              <button className="button outline" type="button" onClick={() => connectWallet(true)}>Switch connected wallet</button>}
+              <button className={`button ${walletDiffers && !confirmChange ? 'primary' : 'outline'}`} type="button" onClick={() => connectWallet(true)}>Switch connected wallet</button>}
           {!bound && wallet && <div className="claim-wallet-details"><span>Connected wallet</span><CopyAddress address={wallet} label="connected wallet"/></div>}
           {walletDiffers && <div className="claim-wallet-warning"><p>The connected wallet differs from the payout address. Switch wallets or explicitly replace the payout address.</p>
-            {!confirmChange ? <button className="claim-text-button" type="button" disabled={!githubReady} onClick={() => setConfirmChange(true)}>Change payout address instead</button> : <><p>Replace it with <strong>{wallet.slice(0, 6)}…{wallet.slice(-4)}</strong>? This requires a fresh admin check and wallet signature.</p><button className="button outline" type="button" disabled={!githubReady || busy} onClick={bind}>Confirm payout wallet change</button><button className="claim-text-button" type="button" onClick={() => setConfirmChange(false)}>Cancel</button></>}
+            {!confirmChange ? <button className="claim-text-button" type="button" disabled={!githubReady} onClick={() => setConfirmChange(true)}>Change payout address instead</button> : <><p>Replace it with <strong>{wallet.slice(0, 6)}…{wallet.slice(-4)}</strong>? This requires a fresh admin check and wallet signature.</p><button className="button primary" type="button" disabled={!githubReady || busy} onClick={bind}>Confirm payout wallet change</button><button className="claim-text-button" type="button" onClick={() => setConfirmChange(false)}>Cancel</button></>}
           </div>}
         </div>
       </div>
@@ -137,7 +140,7 @@ export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false
       <div className="step-number">3</div><div className="step-content">{stepHeading(3, 'Review and claim', false, 'Review your fees and payout address before claiming.')}
         {currentStep === 3 && <div className="claim-review"><strong className="claim-review-amount">{claimAmount}</strong>{usdEstimate && <span className="muted">≈ {usdEstimate}</span>}
           <div className="claim-wallet-details"><span>Paid to</span><CopyAddress address={bound} label="payout wallet"/></div>
-          <p>GitHub admin access and pool fees are checked again before payout.{graduated && ' Graduated pool payouts include all SOL fees accrued before confirmation.'}</p>
+          <p>SOL is sent only to this payout wallet. GitHub admin access and pool fees are checked again before payout.{graduated && ' Graduated pool payouts include all SOL fees accrued before confirmation.'}</p>
           {canClaim ? <form action="/api/claim" method="post" onSubmit={event => startNavigation('claim', event)}><input type="hidden" name="repoId" value={repoId}/><input type="hidden" name="review" value={review}/>
             {reinvestEnabled && <p>Claim pays your wallet. Reinvest claims first, then lets you choose an amount and approve a separate liquidity transaction.</p>}
             <div className="reinvest-actions"><button className="button primary" type="submit" disabled={Boolean(pendingAction) || busy}>{pendingAction === 'claim' ? 'Processing claim…' : reinvestEnabled ? 'Claim' : `Claim ${claimAmount}`}</button>
@@ -151,5 +154,5 @@ export function ClaimSteps({ reinvestEnabled = false, reinvestAfterClaim = false
     <p className="claim-disclaimer"><Info size={18}/>Fees settle in SOL. USD values are estimates. A payout receipt appears only after settlement is confirmed.</p>
     {stage && !busy && <p className="transaction-status" role="status">{stage}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
-  </div>
+  </div></>
 }

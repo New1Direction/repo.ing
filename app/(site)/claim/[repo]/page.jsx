@@ -26,7 +26,7 @@ export default async function ClaimPage({ params, searchParams }) {
   const repo = displayRepository(market)
   return <><AppHeader/><main className="section-wrap claim-page">
     <Link href={`/token/${market.mint}`} className="back-link"><ArrowLeft size={18}/>Back to repository</Link>
-    <div className="claim-intro"><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p></div>
+    <div className="claim-intro"><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p><small>Part of each trade fee is set aside for this repository, whether or not you’ve signed up.</small></div>
     <div className="claim-repo-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo}/></div><GitHubLink repo={repo}/></div>
     <Suspense fallback={<div className="inner-card claim-loading" role="status" aria-busy="true">Checking available fees and GitHub access…</div>}>
       <ClaimContent market={market} repo={repo} query={query}/>
@@ -71,12 +71,13 @@ async function ClaimContent({ market, repo, query }) {
       reinvestEnabled = true
     } catch { /* Production remains closed until the pinned P3 proof and both RPCs verify. */ }
   }
-  return <><div className="claim-amount-summary inner-card">
+  const summary = <div className="claim-amount-summary inner-card">
     <div><span>Available to claim</span><strong title={claimable === null ? undefined : `${formatUnits(claimable)} SOL`}>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
     <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
-  </div><ClaimSteps repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
+  </div>
+  return <ClaimSteps summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
     verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} claimable={claimable} usdEstimate={usdEstimate}
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}
     reinvestEnabled={reinvestEnabled} reinvestAfterClaim={query.reinvest === '1'}
-    graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}/></>
+    graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}/>
 }
