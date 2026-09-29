@@ -96,8 +96,12 @@ export const dammTradeEvents = pgTable('damm_trade_events', {
   nextSqrtPrice: text('next_sqrt_price'),
   direction: varchar('direction',{length:4}).notNull(),
   evidence: text('evidence').notNull(),
+  trader: varchar('trader',{length:44}),
+  baseAmount: bigint('base_amount',{mode:'bigint'}),
 },t=>[uniqueIndex('damm_trade_chain_event_unique').on(t.signature,t.eventIndex),
-  check('damm_trade_amount_check',sql`${t.quoteAmount}>0`),check('damm_trade_direction_check',sql`${t.direction} in ('buy','sell')`)])
+  index('damm_trade_trader_repo').on(t.trader,t.githubRepoId).where(sql`${t.trader} is not null`),
+  check('damm_trade_amount_check',sql`${t.quoteAmount}>0`),check('damm_trade_direction_check',sql`${t.direction} in ('buy','sell')`),
+  check('damm_trade_base_amount_check',sql`${t.baseAmount} is null or ${t.baseAmount}>=0`)])
 
 export const trendCandidates = pgTable('trend_candidates', {
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).primaryKey(),
@@ -278,8 +282,10 @@ export const tradeEvents = pgTable('trade_events', {
   inputBaseUnits: varchar('input_base_units', { length: 20 }).notNull(),
   outputBaseUnits: varchar('output_base_units', { length: 20 }).notNull(),
   nextSqrtPrice: varchar('next_sqrt_price', { length: 40 }).notNull(),
+  trader: varchar('trader', { length: 44 }),
 }, (table) => [
   uniqueIndex('trade_events_chain_event_unique').on(table.signature, table.eventIndex),
+  index('trade_events_trader_pool').on(table.trader, table.pool).where(sql`${table.trader} is not null`),
   check('trade_events_direction_check', sql`${table.direction} in ('buy', 'sell')`),
 ])
 

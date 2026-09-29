@@ -4,6 +4,7 @@ import { chain, database, listMarkets } from '../../../lib/server.mjs'
 import { walletMarkets, walletTokenBalances } from '../../../lib/wallet-overview.mjs'
 import { latestMarketPrices } from '../../../lib/portfolio-prices.mjs'
 import { portfolioSummary, withHoldingValues } from '../../../lib/portfolio.mjs'
+import { walletTrades, withHoldingPnl } from '../../../lib/holding-pnl.mjs'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -31,9 +32,11 @@ export async function GET(request) {
     const balances = tokens ? walletTokenBalances(tokens.value, wallet) : null
     const rows = walletMarkets(markets, balances, wallet, rewards.rows)
     const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
-    // Prices are best-effort: balances, launches and rewards still render if pricing fails.
-    const prices = await latestMarketPrices(db, held).catch(() => null)
-    const priced = withHoldingValues(rows, prices ?? new Map())
+    // Prices and P&L are best-effort: balances, launches and rewards still render if either fails.
+    const [prices, trades] = await Promise.all([latestMarketPrices(db, held).catch(() => null),
+      walletTrades(db, wallet, held).catch(() => null)])
+    const valued = withHoldingValues(rows, prices ?? new Map())
+    const priced = trades ? withHoldingPnl(valued, trades) : valued
     return Response.json({ wallet, solBalance: Number.isSafeInteger(sol) && sol >= 0 ? String(sol) : null,
       holdingsAvailable: Boolean(balances), pricesAvailable: Boolean(prices), usdPerSol,
       portfolio: portfolioSummary(priced), markets: priced, checkedAt: new Date().toISOString() },

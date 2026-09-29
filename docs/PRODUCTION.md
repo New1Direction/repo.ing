@@ -73,6 +73,10 @@ The chart joins this evidence to finalized swaps to recover candle opens and clo
 
 If the verification provider has pruned an old block, keep its prices withheld. A bounded operator backfill may use another independently operated mainnet RPC with `verifyChartBlock` and `recordChartBlock`; the exact same genesis, finalized block, signature membership, and ordering checks still apply. The September 27 backfill used Solana’s public mainnet RPC to corroborate OHIYO slot `450228550`, which the normal secondary had pruned. No production RPC or financial gates were changed.
 
+## Wallet P&L attribution
+
+Migration `0026_trade_traders` adds nullable `trader` to `trade_events` and `damm_trade_events` plus `base_amount` on DAMM rows. The worker records the swap's signing payer, or the transaction fee payer when an aggregator routes through a non-signing authority. `/wallet` shows average-cost P&L per holding from those rows only; unexplained tokens are marked partial and never counted as profit. Rows indexed earlier stay NULL until `node scripts/backfill-trade-traders.mjs` (read-only RPC, `--dry-run` first) replays their signatures; it only fills NULL columns and refuses rows whose replayed amounts differ.
+
 ## Market display updates
 
 Migration `0023_market_update_notifications` adds commit-time invalidation triggers to finalized indexed trade and graduation-observation tables. The web service shares one dedicated PostgreSQL `LISTEN` connection across its viewers, and `/api/market/[mint]/events` streams only public market identifiers and change types. Stream events request a fresh read through the existing canonical APIs; they never set a price, balance, fee credit, or settlement state themselves.
