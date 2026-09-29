@@ -1,24 +1,21 @@
-import { estimateTradeCosts, preflightTrade } from '../../../src/trade-costs.mjs'
+import { estimateTradeCosts } from '../../../src/trade-costs.mjs'
+import { prepareCheckedTrade } from '../../../src/trade-prepare.mjs'
+import { acceptSignedTrade, TRADE_WINDOW_CLOSED } from '../../../src/trade-sessions.mjs'
 import { randomUUID } from 'node:crypto'
-import { Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { matchesReviewedTransaction } from '../../../src/launch-wallet-assertions.mjs'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
 import { tradeStatus } from '../../lib/trade-status.mjs'
 import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
 import { tradeRouter as trader } from '../../lib/trader.mjs'
+import { tradeSessions } from '../../lib/trade-sessions.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { statusOutcome, submitOutcome, trackTradeOutcome } from '../../lib/trade-tracking.mjs'
 const SAFE = /^(The trade window closed|Trading is not configured|Invalid trade|Invalid transaction signature|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
 export const runtime = 'nodejs'
-const sessions = globalThis.__gitfunTradeSessions ??= new Map()
-const SESSION_LIFETIME_MS = 10 * 60 * 1000
-const SUBMIT_WINDOW_MS = 120000
-// A missing session (deploy restart, another replica, or a slow approval) means nothing was broadcast: the client
-// shows this as not submitted and its next attempt prepares a fresh transaction.
-const TRADE_WINDOW_CLOSED = 'TRADE_WINDOW_CLOSED'
-const windowClosed = () => Object.assign(new Error('The trade window closed — please try again'), { code: TRADE_WINDOW_CLOSED })
+// Sessions live in trade_sessions (see src/trade-sessions.mjs), so a deploy or another replica can finish a trade.
+// A missing or expired session (or a slow approval) means nothing was broadcast: the client shows this as not
+// submitted and its next attempt prepares a fresh transaction.
 const track = (fields, session) => trackTradeOutcome(database(), fields, { session })
 // The referrer is only a hint: each trader validates it and resolves the referral account itself.
 function prepareTrade(engine, body, referrer) {
@@ -33,9 +30,6 @@ function validSignature(signature) {
 export async function POST(request) {
   try {
     const body = await request.json()
-    for (const [id, session] of sessions) {
-      if (Date.now() - session.createdAt > SESSION_LIFETIME_MS) sessions.delete(id)
-    }
     if (body.action === 'depth') return Response.json(await (await trader()(body.githubRepoId)).buyDepth(body.githubRepoId), { headers: { 'Cache-Control': 'no-store' } })
     if (body.action === 'quote') {
       if (body.direction !== 'buy' && body.direction !== 'sell') throw new Error('Invalid trade direction')
@@ -55,28 +49,23 @@ export async function POST(request) {
     if (body.action === 'prepare') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
       const engine = await trader()(body.githubRepoId)
-      const build = async referrer => {
-        const prepared = await prepareTrade(engine, body, referrer)
-        const costs = await estimateTradeCosts(chain(), prepared)
-        await preflightTrade(chain(), prepared, costs)
-        return { prepared, costs }
-      }
+      const build = referrer => prepareCheckedTrade({ engine, connection: chain(), direction: body.direction, githubRepoId: body.githubRepoId,
+        wallet: body.wallet, amountBaseUnits: body.amountBaseUnits, referrer })
       let built
       // A referral must never cost the trader a trade: if anything fails with one, retry once without it.
       try { built = await build(body.referrer) }
       catch (error) { if (!body.referrer) throw error; built = await build(null) }
       const { prepared, costs } = built
       const id = randomUUID()
-      const session = { prepared, engine, wallet: body.wallet, createdAt: Date.now() }
-      sessions.set(id, session)
+      const session = await tradeSessions().create(id, { prepared, wallet: prepared.record.wallet })
       await track({ attemptKey: id, outcome: 'prepared', prepared }, session)
-      return Response.json({ id, costs, transaction: prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
+      return Response.json({ id, costs, transaction: prepared.record.transaction,
         minimumAmountOut: prepared.minimumAmountOut.toString(), slippageBps: prepared.slippageBps,
         lastValidBlockHeight: prepared.lastValidBlockHeight }, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (body.action === 'status') {
       if (!validSignature(body.signature)) throw new Error('Invalid transaction signature')
-      const session = sessions.get(body.id)
+      const session = await tradeSessions().load(body.id).catch(() => null)
       if (session?.signature && session.signature !== body.signature) throw new Error('Transaction does not match prepared trade')
       const status = await tradeStatus(chain(), body.signature, session, body.lastValidBlockHeight)
       const outcome = statusOutcome(status.state, { hasSession: Boolean(session) })
@@ -85,17 +74,12 @@ export async function POST(request) {
       return Response.json(status, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (body.action === 'submit') {
-      const session = sessions.get(body.id)
-      if (!session || Date.now() - session.createdAt > SUBMIT_WINDOW_MS) throw windowClosed()
-      const signed = Transaction.from(Buffer.from(body.transaction, 'base64'))
-      if (!signed.signature || !matchesReviewedTransaction(Buffer.from(session.prepared.transaction.serializeMessage()), signed) ||
-          signed.feePayer?.toBase58() !== session.wallet || !signed.verifySignatures()) {
-        throw new Error('Wallet returned an altered or unsigned trade transaction')
-      }
-      const signature = bs58.encode(signed.signature)
-      if (session.signature && session.signature !== signature) throw new Error('Prepared trade already has a different signature')
-      session.signature = signature
-      session.submittedAt ??= Date.now()
+      const store = tradeSessions()
+      const loaded = await store.load(body.id)
+      // Checked against the exact reviewed message bytes stored at prepare, not a rebuilt transaction.
+      const { signed, signature, signedMessage } = acceptSignedTrade(loaded, body.transaction)
+      // Recorded (first signature wins across replicas) before anything is broadcast, so any instance can verify it.
+      let session = await store.markSubmitted(loaded, { signature, signedMessage })
       const attempt = { attemptKey: body.id, prepared: session.prepared, signature }
       await track({ ...attempt, outcome: 'submitted', prepareToSignMs: session.submittedAt - session.createdAt }, session)
       let result
@@ -113,8 +97,8 @@ export async function POST(request) {
       const { feeIndexing, creatorFee } = await settleConfirmedTrade({ connection, db: database(), engine: session.engine,
         prepared: session.prepared, signature: result.signature,
         recordFees: args => createFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees(args) })
-      session.result = { state: 'confirmed', signature: result.signature, tokenDelta: result.tokenDelta.toString(),
-        solDelta: result.solDelta.toString(), feeIndexing, creatorFee }
+      session = await store.saveResult(session, { state: 'confirmed', signature: result.signature, tokenDelta: result.tokenDelta.toString(),
+        solDelta: result.solDelta.toString(), feeIndexing, creatorFee })
       return Response.json(session.result, { headers: { 'Cache-Control': 'no-store' } })
     }
     throw new Error('Unsupported trade action')

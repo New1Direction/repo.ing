@@ -1,4 +1,4 @@
-import { bigint, boolean, check, index, integer, numeric, pgTable, serial, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 export const agentRequestLimits = pgTable('agent_request_limits', {
@@ -621,3 +621,24 @@ export const tradeOutcomes = pgTable('trade_outcomes', {
 },t=>[uniqueIndex('trade_outcomes_attempt_outcome_unique').on(t.attemptKey,t.outcome),index('trade_outcomes_created_at').on(t.createdAt),
   check('trade_outcomes_outcome_check',sql`${t.outcome} in ('prepared','submitted','confirmed','expired','failed','verification_failed')`),
   check('trade_outcomes_direction_check',sql`${t.direction} is null or ${t.direction} in ('buy','sell')`)])
+
+// Prepared trade sessions shared by every web instance (see drizzle/0029_trade_sessions.sql). Deleted after 10 minutes.
+export const tradeSessions = pgTable('trade_sessions', {
+  id: uuid('id').primaryKey(), wallet: varchar('wallet',{length:44}).notNull(), phase: varchar('phase',{length:16}).notNull(),
+  direction: varchar('direction',{length:4}).notNull(), githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull(),
+  transaction: text('transaction').notNull(), message: text('message').notNull(),
+  amountIn: numeric('amount_in',{precision:20,scale:0}).notNull(), minimumAmountOut: numeric('minimum_amount_out',{precision:20,scale:0}).notNull(),
+  blockhash: varchar('blockhash',{length:44}).notNull(), lastValidBlockHeight: bigint('last_valid_block_height',{mode:'bigint'}).notNull(),
+  record: jsonb('record').notNull(), signature: varchar('signature',{length:88}), signedMessage: text('signed_message'),
+  submittedAt: timestamp('submitted_at',{withTimezone:true}), result: jsonb('result'),
+  createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(),
+},t=>[index('trade_sessions_created_at').on(t.createdAt),
+  check('trade_sessions_phase_check',sql`${t.phase} in ('curve','graduated')`),
+  check('trade_sessions_direction_check',sql`${t.direction} in ('buy','sell')`)])
+
+// Operator-only trade canary: latest simulated 0.01 SOL buy per market (never signed or sent).
+export const tradeCanaryStatus = pgTable('trade_canary_status', {
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).primaryKey(), symbol: varchar('symbol',{length:16}), phase: varchar('phase',{length:16}),
+  ok: boolean('ok').notNull(), consecutiveFailures: integer('consecutive_failures').notNull().default(0), lastError: text('last_error'),
+  detail: jsonb('detail'), lastRunAt: timestamp('last_run_at',{withTimezone:true}).notNull(), lastOkAt: timestamp('last_ok_at',{withTimezone:true}),
+})

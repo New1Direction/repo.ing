@@ -15,7 +15,7 @@ const age = ms => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d 
 const when = value => `${new Date(value).toISOString().replace('T', ' ').slice(0, 16)} UTC`
 const short = value => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—'
 const monitorNote = { match: 'Worker alert watches this address', different: 'Worker alert watches a different address', unset: 'Worker alert not configured' }
-const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed', TRADE_LANDING_DEGRADED: 'Trades expiring or failing' }
+const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed', TRADE_LANDING_DEGRADED: 'Trades expiring or failing', TRADE_CANARY_FAILING: 'Trade canary failing' }
 
 function Section({ title, result, children }) {
   return <section className="inner-card operations-markets"><h2>{title}</h2>{result.ok ? children(result.data) : <p className="inline-error" role="status">{result.error}</p>}</section>
@@ -79,6 +79,18 @@ function Trades({ result }) {
   </tbody></table></div> : <p>No expired or failed trades recorded.</p>}<p className="muted">Trades submitted through the site trade API, per attempt (best outcome). Success = confirmed / settled attempts. Alerts when an hour has 3+ expired/failed or under 90% success over 5+ attempts.</p></>}</Section>
 }
 
+const CANARY_STALE_MS = 15 * 60 * 1000
+
+function Canary({ result }) {
+  return <Section title="Canary" result={result}>{c => <>{c.markets.length ? <><p>Last run {when(c.lastRunAt)}{Date.now() - new Date(c.lastRunAt).getTime() > CANARY_STALE_MS && <> <span className="badge warn">Stale</span></>}</p>
+    <div className="operations-table-wrap"><table><thead><tr><th>Market</th><th>Status</th><th>Last run</th><th>Compute units</th><th>Last error</th></tr></thead><tbody>
+    {c.markets.map(m => <tr key={m.repoId}><td><Link href={`/launch/${m.repoId}`}>{m.symbol ? `$${m.symbol}` : `Repo ${m.repoId}`}</Link><small>{m.phase ?? '—'}</small></td>
+      <td>{m.ok ? <span className="badge ok">OK</span> : <span className="badge warn">Fail{m.consecutiveFailures > 1 ? ` ×${m.consecutiveFailures}` : ''}</span>}</td>
+      <td>{when(m.lastRunAt)}<small>{m.lastOkAt ? `Last OK ${when(m.lastOkAt)}` : 'Never OK'}</small></td>
+      <td>{m.detail ? `${m.detail.unitsWithAssertion} / ${m.detail.computeUnitLimit}` : '—'}</td><td><small>{m.lastError ?? '—'}</small></td></tr>)}
+  </tbody></table></div></> : <p>No canary results in the last day. The worker runs it every 5 minutes.</p>}<p className="muted">Worker-simulated 0.01 SOL buys (never signed or sent) through the real prepare path on $REPOING and the two most-traded curve markets, including a wallet-appended Lighthouse assertion. Alerts after 2 consecutive failures of a market, or when every market fails.</p></>}</Section>
+}
+
 function Csp({ result }) {
   return <Section title="CSP report-only" result={result}>{c => <>{c.total ? <div className="operations-table-wrap"><table><thead><tr><th>Blocked host</th><th>Reports</th></tr></thead><tbody>
     {c.hosts.map(h => <tr key={h.key}><td>{h.key}</td><td>{h.count}</td></tr>)}
@@ -90,7 +102,7 @@ export default async function OperationsHealthPage() {
   try { requirePlatformOperator(readGithubSession((await cookies()).get(githubSessionCookie)?.value)); access = true } catch {}
   const health = access ? await operationsHealth() : null
   return <><AppHeader /><main className="section-wrap operations-page"><div className="growth-heading"><div><h1>Operations health</h1><p>Read-only status across wallets, launches, alerts, revenue, trades, migrations, and CSP.</p></div></div>
-    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Trades result={health.trades}/><Migrations result={health.migrations}/><Csp result={health.csp}/>
+    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Trades result={health.trades}/><Canary result={health.canary}/><Migrations result={health.migrations}/><Csp result={health.csp}/>
       <p className="muted health-footer">Generated {when(health.generatedAt)} · <Link href="/operations/fees">Platform fees</Link> · <Link href="/operations/graduation">Graduation</Link> · <Link href="/operations/trends">Trends</Link> · <Link href="/operations/invites">Invites</Link></p></>
       : <div className="inner-card"><h2>Operator access required</h2><p>Sign in with the configured operator GitHub account.</p><Link className="button outline" href="/api/github/start?mode=builders">Verify with GitHub</Link><p>Return here after verification.</p></div>}
   </main><Footer /></>
