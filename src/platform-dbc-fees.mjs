@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { broadcastUntilSettled } from './trade-landing.mjs'
 import BN from 'bn.js'
 import bs58 from 'bs58'
 import { Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction } from '@solana/web3.js'
@@ -120,7 +121,7 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
         signature, signedTransaction, latest.lastValidBlockHeight, JSON.stringify(evidence)])
       const intent = { signature, signedTransaction, wallet: current.receiver, amount: current.available, pool: current.pool, phase: 'DBC', evidence: JSON.stringify(evidence) }
       // Use the same bank commitment as the fresh blockhash; settlement remains finalized.
-      await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed' })
+      await broadcastUntilSettled(connection, tx.serialize(), { signature, lastValidBlockHeight: latest.lastValidBlockHeight })
       await connection.confirmTransaction({ signature, ...latest }, 'finalized')
       const receipt = await settleDbcPlatformClaim(db, connection, intent)
       if (!receipt) throw Error('Platform collection submitted; final receipt is pending')
