@@ -105,3 +105,4 @@
 [data-theme=light] .app-header .mobile-nav-panel a.active:after{background:var(--green-dark)}
 [data-theme=light] .buyback-counter>a,[data-theme=light] .buyback-counter p>span[aria-hidden]{color:#157347}
 :root[data-theme=light] .return-share h1 .gain{color:var(--green-dark)}
+[data-theme=light] .market-row .table-repo-ticker{color:#16834c}

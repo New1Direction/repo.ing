@@ -258,6 +258,7 @@
   .market-table-scroll{overflow:visible}.market-head{display:none}
   .market-row{min-width:0;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:16px}
   .market-row .row-index,.market-row .table-token{display:none}
+  .market-row .table-repo-ticker{display:inline;font-size:13px;font-weight:650;color:var(--green)}
   .market-row .table-repo{grid-column:1/-1;min-width:0;padding:0}
   .market-row .table-repo>span{min-width:0}.market-row .table-repo-name{flex-wrap:wrap;gap:5px}
   .market-row .table-repo-name strong{font-size:14px;overflow-wrap:anywhere;white-space:normal}
@@ -637,3 +638,6 @@ body{overflow-x:clip}
 .graduating-card .table-action{margin:auto 0 0;width:100%;height:34px;min-height:34px;padding:0 10px;font-size:13px}.graduating-card .table-action svg{display:block}
 .graduating-fallback .graduating-card{justify-content:center}.graduating-fallback .graduating-card .skeleton-line{width:80%}.graduating-fallback .graduating-card .skeleton-line.short{width:55%}
 @media(max-width:700px){.graduating{margin:0 0 24px}.graduating .section-heading,.graduating-fallback-heading{min-height:68px}.graduating-rail{grid-auto-columns:minmax(232px,72%)}}
+
+/* The token column is hidden on phones, so the ticker rides along with the repo name there. */
+.table-repo-ticker{display:none}
