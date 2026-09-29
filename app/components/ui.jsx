@@ -7,6 +7,7 @@ import { XMark } from './x-mark'
 import { BrandMark } from './brand-mark'
 import { WalletButton } from './wallet'
 import { ThemeToggle } from './theme-toggle'
+import { MobileNav } from './mobile-nav'
 import { WatchButton, WatchNotifications } from './watchlist'
 import { formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
@@ -19,10 +20,11 @@ function MarketEarnings({ market, usdPerSol }) {
   </span>
 }
 
+const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }]
 export function AppHeader({ active = '' }) {
   return <header className="app-header"><div className="header-inner">
     <Link href="/" className="brand"><BrandMark size={32}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link>
-    <nav aria-label="Main navigation"><Link href="/launch" className={`nav-launch${active === 'launch' ? ' active' : ''}`} aria-current={active === 'launch' ? 'page' : undefined}>Launch</Link><Link href="/explore" className={active === 'explore' ? 'active' : ''}>Explore</Link><Link href="/builders" className={active === 'builders' ? 'active' : ''}>Builders</Link><Link href="/stats" className={active === 'stats' ? 'active' : ''}>Stats</Link><Link href={OFFICIAL_TOKEN.marketPath} className={active === 'repoing' ? 'active' : ''}>$REPOING</Link><Link href="/how-it-works" className={active === 'how-it-works' ? 'active' : ''}>How it works</Link></nav>
+    <nav aria-label="Main navigation">{NAV_LINKS.map(link => <Link key={link.key} href={link.href} className={[link.key === 'launch' && 'nav-launch', active === link.key && 'active'].filter(Boolean).join(' ') || undefined} aria-current={active === link.key ? 'page' : undefined}>{link.label}</Link>)}<MobileNav links={NAV_LINKS} active={active}/></nav>
     <div className="header-actions"><WatchNotifications/><ThemeToggle/><WalletButton /></div>
   </div></header>
 }

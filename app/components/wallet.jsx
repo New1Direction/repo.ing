@@ -49,7 +49,8 @@ export function WalletProvider({ children }) {
   const [choosing, setChoosing] = useState(false)
   const [loadingWallets, setLoadingWallets] = useState(false)
   const [connectingId, setConnectingId] = useState(null)
-  const [restoring, setRestoring] = useState(true)
+  // Only a real silent reconnect of a remembered wallet shows "Connecting…"; SSR and first paint say "Connect wallet".
+  const [restoring, setRestoring] = useState(false)
   const selectedProvider = useRef(null)
   const selectedChoice = useRef(null)
   const unsubscribe = useRef(null)
@@ -100,6 +101,7 @@ export function WalletProvider({ children }) {
         available.find(item => item.name === remembered.name)
       if (!choice) { setRestoring(false); return }
       restoreAttempted.current = true
+      setRestoring(true)
       const attempt = generation.current
       const feedbackTimer = window.setTimeout(() => { if (active) setRestoring(false) }, 2000)
       void (async () => {
