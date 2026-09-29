@@ -18,6 +18,8 @@ import { InviteOwner } from '../../../components/invite-owner'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { OFFICIAL_TOKEN } from '../../../lib/official-token.mjs'
 import { TeamTokenLocks } from '../../../components/team-token-locks'
+import { JsonLd } from '../../../components/json-ld'
+import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,7 +45,7 @@ export default async function Token({ params, searchParams }) {
   const repo = { ...displayRepository(market), mint: market.mint }
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
-  return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page">
+  return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Team token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <div className="market-title"><div><RepoIdentity repo={repo} heading/><RepoStats repo={repo} detailed/><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense></div>
       <div className="market-price"><strong>${market.symbol}</strong><span>Repository market</span><CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}/></div>
