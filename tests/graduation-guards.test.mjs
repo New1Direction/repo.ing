@@ -33,7 +33,8 @@ test('stale, unproven, disagreeing or unreconciled graduation is never public an
   assert.throws(()=>publicGraduation(row,now+310000),/STALE_PROGRESS/)
   assert.throws(()=>assertFreshGraduation(state,now+130000),/STALE_PROGRESS/)
   assert.throws(()=>publicGraduation({...row,status:'REVIEW',error_code:'RPC_DISAGREEMENT'}),/RPC_DISAGREEMENT/)
-  assert.throws(()=>publicGraduation({...row,observation:JSON.stringify({...state,phase:'GRADUATED'}),reconciliation:'{"status":"MISMATCH"}'}),/RECONCILIATION_MISMATCH/)
+  // Reconciliation drift no longer hides progress, but graduation without durable migration proof is still never public.
+  assert.throws(()=>publicGraduation({...row,observation:JSON.stringify({...state,phase:'GRADUATED'}),reconciliation:'{"status":"MISMATCH"}'}),/MIGRATION_EVIDENCE_INCOMPLETE/)
   assert.throws(()=>publicGraduation({...row,observation:JSON.stringify({...state,phase:'GRADUATED'})}),/MIGRATION_EVIDENCE_INCOMPLETE/)
   assert.throws(()=>assertFreshGraduation({...state,chainTime:new Date(now-121000).toISOString()},now),/STALE_PROGRESS/)
   assert.throws(()=>agreeGraduation({slot:1},{slot:2}),/RPC_DISAGREEMENT/)

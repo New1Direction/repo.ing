@@ -90,7 +90,8 @@ test('P5 detects one real local graduation, indexes actual DAMM trades, alerts a
   const mismatch=await monitor().runOnce()
   assert.equal(mismatch[0].reconciliation,'MISMATCH');assert.ok(mismatch[0].alerts.some(a=>a.kind==='RECONCILIATION_MISMATCH'))
   const mismatchedRow=(await pool.query('select * from graduation_observations')).rows[0]
-  assert.throws(()=>publicGraduation(mismatchedRow),/RECONCILIATION_MISMATCH/)
+  // The operator alert above still fires; public progress stays visible for proven graduation.
+  assert.equal(publicGraduation(mismatchedRow).phase,'GRADUATED')
   await pool.query('delete from platform_fee_events where evidence_hash=$1',['x'.repeat(64)])
   await cycle()
   assert.equal((await pool.query('select count(*)::int as n from graduation_events')).rows[0].n,1)
