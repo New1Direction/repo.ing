@@ -7,7 +7,7 @@ import { database } from '../../lib/server.mjs'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import { analyticsWindow, readProtocolAnalytics } from '../../../src/protocol-analytics.mjs'
 import { readReserveCoverage } from '../../../src/reserve-coverage.mjs'
-import { buybackReceipts } from '../../lib/buyback-feed.mjs'
+import { buybackReceipts, buybackStatus } from '../../lib/buyback-feed.mjs'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Protocol analytics · repo.ing', description: 'Trading activity, verified builder payouts, and platform revenue allocation on repo.ing.' }
@@ -22,7 +22,7 @@ export default async function StatsPage({ searchParams }) {
 }
 
 async function Analytics({ range }) {
-  const [result, price, buybacks] = await Promise.allSettled([readProtocolAnalytics(database(), { range }), solUsdPrice(), buybackReceipts()])
+  const [result, price, buybacks, status] = await Promise.allSettled([readProtocolAnalytics(database(), { range }), solUsdPrice(), buybackReceipts(), buybackStatus()])
   if (result.status === 'fulfilled') result.value.platform.coverage = await readReserveCoverage(result.value.platform)
-  return result.status === 'fulfilled' ? <ProtocolAnalytics data={result.value} usdPerSol={price.status === 'fulfilled' ? price.value : null} buybacks={buybacks.status === 'fulfilled' ? buybacks.value : undefined}/> : <div className="state-card error" role="status">Protocol analytics are temporarily unavailable. Please try again shortly.</div>
+  return result.status === 'fulfilled' ? <ProtocolAnalytics data={result.value} usdPerSol={price.status === 'fulfilled' ? price.value : null} buybacks={buybacks.status === 'fulfilled' ? buybacks.value : undefined} buybackStatus={status.status === 'fulfilled' ? status.value : null}/> : <div className="state-card error" role="status">Protocol analytics are temporarily unavailable. Please try again shortly.</div>
 }

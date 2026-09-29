@@ -29,7 +29,7 @@ export async function loadBuybackReceipts(db) {
   if (!db) return mergeBuybackReceipts([])
   try {
     const { rows } = await db.query(`select signature, source, wallet, mint, spent_lamports::text as "spentLamports",
-      token_base_units::text as "tokenBaseUnits", block_time as "blockTime" from buyback_receipts order by block_time limit 5000`)
+      token_base_units::text as "tokenBaseUnits", slot::text as slot, block_time as "blockTime" from buyback_receipts order by block_time limit 5000`)
     return mergeBuybackReceipts(rows.map(({ blockTime, ...row }) => ({ ...row, at: new Date(blockTime).toISOString() })))
   } catch (error) {
     if (!warned) { warned = true; console.error('buyback receipts unavailable; using verified list', error?.code ?? 'error') }
