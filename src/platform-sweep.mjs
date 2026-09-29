@@ -115,7 +115,9 @@ export async function runPlatformSweep({ execute = false, dbcEnabled, listFees, 
         const result = await claimOne(item, { feeService, partner: signer, now })
         report.claims.push(result)
         if (result.status === 'claimed') claimed += BigInt(result.amount)
-      } catch (error) { report.claims.push({ ...(error.claim ?? item), status: 'failed', error: error.message }); throw error }
+      // One repo's failed claim (expired, busy pool) must not block the others, allocation or the transfer; an
+      // expired claim moved nothing and the recovery job resolves any pending one.
+      } catch (error) { report.claims.push({ ...(error.claim ?? item), status: 'failed', error: error.message }); report.claimErrors = (report.claimErrors ?? 0) + 1 }
     }
     const planned = report.claims.filter(c => c.status === 'planned').reduce((sum, c) => sum + BigInt(c.available), 0n)
     report.claimedTotal = sol(execute ? claimed : planned)
@@ -172,6 +174,7 @@ export function sweepHeadline(report) {
   if (unreadable) parts.push(`${unreadable} repo/phase(s) unreadable, see claims`)
   const lines = [parts.join('; ')]
   if (report.buyback) lines.push(`BUY BACK: ${report.buyback.reserve} SOL of $REPOING from ${report.buyback.custodyWallet} (custody balance ${report.buyback.custodyBalance} SOL)`)
+  for (const c of report.claims.filter(c => c.status === 'failed')) lines.push(`SKIPPED ${c.phase ?? ''} ${c.fullName ?? c.repoId ?? ''}: ${c.error}`)
   if (report.error) lines.push(`STOPPED: ${report.error}`)
   return lines.join('\n')
 }

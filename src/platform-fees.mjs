@@ -1,4 +1,5 @@
 import bs58 from 'bs58'
+import { broadcastUntilSettled } from './trade-landing.mjs'
 import { PublicKey, Transaction } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { createGraduatedFees, recordPlatformFees } from './graduated-fees.mjs'
@@ -73,7 +74,7 @@ export function createPlatformFees({ pool, connection, config, partner }) {
           (github_repo_id, pool, wallet, amount, status, signature, signed_transaction, last_valid_block_height)
           values ($1,$2,$3,$4,'pending',$5,$6,$7)`, [repoId, intent.pool, intent.wallet, intent.amount,
           signature, signedTransaction, latest.lastValidBlockHeight])
-        await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false })
+        await broadcastUntilSettled(connection, tx.serialize(), { signature, lastValidBlockHeight: latest.lastValidBlockHeight })
         await connection.confirmTransaction({ signature, ...latest }, 'finalized')
         const receipt = await settlePlatformClaim(client, connection, intent)
         if (!receipt) throw Error('Platform fee submitted; final receipt is being checked')

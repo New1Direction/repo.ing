@@ -152,15 +152,16 @@ test('execute claims, allocates only unallocated revenue, transfers, and reports
   assert.equal(idle.transfer.status, 'skipped-below-minimum')
 })
 
-test('any error stops the remaining steps and marks the run failed; a wrong signer stops before claiming', async () => {
-  const fake = feeFake([{ enrolled: true, available: '3000000' }], [Error('Platform fee preflight failed')])
+test('a failed claim is skipped and reported while the rest runs; a wrong signer stops before claiming', async () => {
+  const fake = feeFake([{ enrolled: true, available: '3000000' }], [Error('Signature X has expired: block height exceeded.')])
   const report = await runPlatformSweep({ execute: true, dbcEnabled: false, listFees: async () => rows, feeService: fake.feeService,
-    summary: summaryFake([summaryState()]), allocate: forbidden('allocate'), connection: chainFake(), signer: partner, balanceOf: async () => 0 })
-  assert.equal(report.ok, false)
-  assert.match(report.error, /Claim DAMM repo 1 failed: Platform fee preflight failed/)
+    summary: summaryFake([summaryState()]), allocate: forbidden('allocate'), connection: chainFake({ send: forbidden('send') }), signer: partner, balanceOf: async () => 0 })
+  assert.equal(report.ok, true, report.error)
+  assert.equal(report.claimErrors, 1)
   assert.equal(report.claims.find(c => c.status === 'failed').repoId, '1')
-  assert.equal(report.allocation, null)
-  assert.equal(report.transfer, null)
+  assert.equal(report.allocation.status, 'nothing-to-allocate')
+  assert.equal(report.transfer.status, 'skipped-below-minimum')
+  assert.match(sweepHeadline(report), /SKIPPED DAMM .*expired/)
   assert.equal(report.buyback.reserve, '0.600000000')
 
   const wrong = await runPlatformSweep({ execute: true, dbcEnabled: true, listFees: forbidden('listFees'), feeService: fake.feeService,
