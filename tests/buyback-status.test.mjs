@@ -69,10 +69,10 @@ test('zero states: no claims, no buyback, zero-percent policy', () => {
 
 test('status read keeps the last buyback and withholds fees without a verified ledger', async t => {
   const last = lastBuyback(BUYBACK_RECEIPTS)
-  assert.deepEqual(await readBuybackStatus(null, BUYBACK_RECEIPTS), { last, since: null })
+  assert.deepEqual(await readBuybackStatus(null, BUYBACK_RECEIPTS), { last, since: null, standing: null })
   const errors = t.mock.method(console, 'error', () => {})
   const failing = { async query() { throw Object.assign(Error('missing'), { code: '42P01' }) } }
-  assert.deepEqual(await readBuybackStatus(failing, BUYBACK_RECEIPTS), { last, since: null })
+  assert.deepEqual(await readBuybackStatus(failing, BUYBACK_RECEIPTS), { last, since: null, standing: null })
   assert.equal(errors.mock.callCount(), 1)
 })
 
