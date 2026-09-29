@@ -1,9 +1,9 @@
 import { cookies } from 'next/headers'
 import Link from 'next/link'
-import { AppHeader, Footer } from '../../components/ui'
-import { PlatformFeeOperations } from '../../components/platform-fee-operations'
-import { requirePlatformOperator } from '../../lib/platform-operator.mjs'
-import { githubSessionCookie, readGithubSession } from '../../lib/auth.mjs'
+import { AppHeader, Footer } from '../../../components/ui'
+import { PlatformFeeOperations } from '../../../components/platform-fee-operations'
+import { requirePlatformOperator } from '../../../lib/platform-operator.mjs'
+import { githubSessionCookie, readGithubSession } from '../../../lib/auth.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Platform fees — repo.ing', robots: { index: false, follow: false } }
 export default async function PlatformFeesPage() {
