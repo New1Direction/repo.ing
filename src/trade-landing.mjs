@@ -10,7 +10,8 @@ export const CU_LIMIT_FLOOR = 60_000
 export const CU_LIMIT_CEILING = 400_000
 export const CU_LIMIT_FALLBACK = 300_000
 const CU_HEADROOM_TENTHS = 12n
-const CU_HEADROOM_MIN = 15_000n
+// Extra room for wallet-appended Lighthouse assertions (Phantom), which the simulation cannot see.
+const CU_HEADROOM_MIN = 40_000n
 const SIMULATION_CU_LIMIT = 1_400_000
 
 // Price in microlamports per compute unit. p75 of recent non-zero fees on the pool's writable accounts (or Helius's
@@ -86,12 +87,13 @@ export const isHeliusEndpoint = endpoint => {
 
 // Helius's own estimator reads the whole transaction's writable accounts. The endpoint URL carries the API key, so
 // only the error class is ever logged.
-async function heliusEstimate(endpoint, transaction, fetcher) {
-  const serialized = transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
+async function heliusEstimate(endpoint, writableAccounts, fetcher) {
+  // Account-key form: the serialized-transaction form failed for unsigned probes in production.
+  const accountKeys = writableAccounts.map(key => (typeof key === 'string' ? key : key.toBase58()))
   const response = await fetcher(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' },
     signal: AbortSignal.timeout(FEE_LOOKUP_TIMEOUT_MS),
     body: JSON.stringify({ jsonrpc: '2.0', id: 'repoing-priority-fee', method: 'getPriorityFeeEstimate',
-      params: [{ transaction: serialized, options: { transactionEncoding: 'Base64', priorityLevel: 'High' } }] }) })
+      params: [{ accountKeys, options: { priorityLevel: 'High' } }] }) })
   if (!response.ok) throw Error(`Helius priority fee HTTP ${response.status}`)
   const price = clampComputeUnitPrice((await response.json())?.result?.priorityFeeEstimate)
   if (price === null) throw Error('Helius priority fee estimate missing')
@@ -100,7 +102,7 @@ async function heliusEstimate(endpoint, transaction, fetcher) {
 
 export async function chooseComputeUnitPrice(connection, { probe, writableAccounts, fetcher = globalThis.fetch, log = console.warn }) {
   if (isHeliusEndpoint(connection.rpcEndpoint)) {
-    try { return await heliusEstimate(connection.rpcEndpoint, probe, fetcher) }
+    try { return await heliusEstimate(connection.rpcEndpoint, writableAccounts, fetcher) }
     catch (error) { log('priority fee: Helius estimate unavailable, using recent fees', error?.name ?? 'error') }
   }
   try { return selectComputeUnitPrice(await connection.getRecentPrioritizationFees({ lockedWritableAccounts: writableAccounts })) }

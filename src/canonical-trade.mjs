@@ -1,4 +1,5 @@
 import BN from 'bn.js'
+import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import { estimateBuySizes } from './trade-depth.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { readChainPoint } from './chain-clock.mjs'
@@ -185,7 +186,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const saved = preparedState.get(prepared)
     if (!saved) throw new Error('Trade was not prepared by this trader')
     const signed = await signTransaction(prepared.transaction)
-    if (!(signed instanceof Transaction) || !Buffer.from(signed.serializeMessage()).equals(saved.message) ||
+    if (!(signed instanceof Transaction) || !matchesReviewedTransaction(saved.message, signed) ||
         !signed.feePayer.equals(saved.wallet) || !signed.verifySignatures()) {
       throw new Error('Wallet returned an altered or unsigned trade transaction')
     }

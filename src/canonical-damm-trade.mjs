@@ -1,4 +1,5 @@
 import BN from 'bn.js'
+import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import bs58 from 'bs58'
 import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
@@ -270,10 +271,11 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     const saved = preparedState.get(prepared)
     if (!saved) throw new Error('Trade was not prepared by this trader')
     const signed = await signTransaction(prepared.transaction)
-    if (!(signed instanceof Transaction) || !Buffer.from(signed.serializeMessage()).equals(saved.message) ||
+    if (!(signed instanceof Transaction) || !matchesReviewedTransaction(saved.message, signed) ||
         !signed.feePayer.equals(saved.wallet) || !signed.verifySignatures()) {
       throw new Error('Wallet returned an altered or unsigned trade transaction')
     }
+    saved.fingerprint = messageFingerprint(signed.compileMessage())
     const signature = bs58.encode(signed.signature)
     await broadcastUntilSettled(connection, signed.serialize(), { signature, lastValidBlockHeight: saved.lastValidBlockHeight })
     const confirmation = await connection.confirmTransaction({ signature, blockhash: saved.blockhash,

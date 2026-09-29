@@ -2,6 +2,7 @@ import { estimateTradeCosts, preflightTrade } from '../../../src/trade-costs.mjs
 import { randomUUID } from 'node:crypto'
 import { Transaction } from '@solana/web3.js'
 import bs58 from 'bs58'
+import { matchesReviewedTransaction } from '../../../src/launch-wallet-assertions.mjs'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
 import { tradeStatus } from '../../lib/trade-status.mjs'
@@ -87,7 +88,7 @@ export async function POST(request) {
       const session = sessions.get(body.id)
       if (!session || Date.now() - session.createdAt > SUBMIT_WINDOW_MS) throw windowClosed()
       const signed = Transaction.from(Buffer.from(body.transaction, 'base64'))
-      if (!signed.signature || !Buffer.from(signed.serializeMessage()).equals(Buffer.from(session.prepared.transaction.serializeMessage())) ||
+      if (!signed.signature || !matchesReviewedTransaction(Buffer.from(session.prepared.transaction.serializeMessage()), signed) ||
           signed.feePayer?.toBase58() !== session.wallet || !signed.verifySignatures()) {
         throw new Error('Wallet returned an altered or unsigned trade transaction')
       }
