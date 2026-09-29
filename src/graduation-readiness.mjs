@@ -149,8 +149,9 @@ export function createGraduationMonitor({pool,connection,verification,config,env
 
 export function publicGraduation(row,now=Date.now()) {
   if(!row||row.status!=='VERIFIED'||!row.observation)throw Error(row?.error_code??'PROGRESS_NOT_INDEXED')
-  const state=assertFreshGraduation(JSON.parse(row.observation),now,PUBLIC_GRADUATION_MAX_AGE_MS),reconciliation=JSON.parse(row.reconciliation)
-  if(state.phase==='GRADUATED'&&reconciliation.status!=='MATCH')throw Error('RECONCILIATION_MISMATCH')
+  // Fee reconciliation trails the chain during active trading; it gates payouts and operator actions (and raises
+  // RECONCILIATION_MISMATCH alerts), not public progress. Migration itself must still be durably proven below.
+  const state=assertFreshGraduation(JSON.parse(row.observation),now,PUBLIC_GRADUATION_MAX_AGE_MS)
   assertDurableGraduation(row,state)
   const {phase,status,reserveLamports,thresholdLamports,remainingLamports,progressPercent,checkedAt,chainTime,destination,dammSolLamports,dammVolume24hLamports,protocolLiquidityAdded}=state
   return {phase,status,reserveLamports,thresholdLamports,remainingLamports,progressPercent,checkedAt,chainTime,destination,
