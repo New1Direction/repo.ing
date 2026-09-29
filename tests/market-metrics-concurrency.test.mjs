@@ -28,3 +28,20 @@ test('concurrent FX reads share one request and never return an expired price af
   assert.equal(reads, 1)
   assert.equal(await solUsdPrice(async () => ({ ok: false }), 400000), null)
 })
+
+test('FX falls back to independent USD sources when CoinGecko is rate limited', async () => {
+  const seen = []
+  const fetcher = async url => { seen.push(new URL(url).host)
+    if (url.includes('coingecko')) return { ok: false, status: 429 }
+    if (url.includes('jup.ag')) return { ok: true, json: async () => ({ So11111111111111111111111111111111111111112: { usdPrice: 119.19 } }) }
+    throw Error('unexpected') }
+  assert.equal(await solUsdPrice(fetcher, 10_000_000), 119.19)
+  assert.deepEqual(seen, ['api.coingecko.com', 'lite-api.jup.ag'])
+  const coinbase = async url => url.includes('coinbase') ? { ok: true, json: async () => ({ data: { amount: '118.5' } }) } : { ok: false }
+  assert.equal(await solUsdPrice(coinbase, 20_000_000), 118.5)
+  let calls = 0
+  const down = async () => { calls++; return { ok: false } }
+  assert.equal(await solUsdPrice(down, 30_000_000), null)
+  assert.equal(await solUsdPrice(down, 30_010_000), null)
+  assert.equal(calls, 3)
+})
