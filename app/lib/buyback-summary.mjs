@@ -35,3 +35,13 @@ export function formatTokenCompact(baseUnits, decimals = TOKEN_DECIMALS) {
   }
   return whole.toLocaleString('en-US')
 }
+
+const AGO_UNITS = [['day', 86_400], ['hour', 3_600], ['minute', 60]]
+const relative = new Intl.RelativeTimeFormat('en', { numeric: 'always' })
+// '3 hours ago'. Whole units, floored, so a buyback never reads as more recent than it was.
+export function formatAgo(at, now = Date.now()) {
+  const seconds = Math.floor((now - Date.parse(at)) / 1000)
+  if (Number.isNaN(seconds)) return null
+  for (const [unit, size] of AGO_UNITS) if (seconds >= size) return relative.format(-Math.floor(seconds / size), unit)
+  return 'just now'
+}

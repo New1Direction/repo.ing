@@ -6,6 +6,7 @@ import { formatSolDisplay, formatUnits, formatUsdEstimate } from '../lib/format.
 import { BuilderPayouts } from './builder-payouts'
 import { TeamTokenLocks } from './team-token-locks'
 import { ReserveCoverage } from './reserve-coverage'
+import { BuybackStatus, receiptUrl } from './buyback-status'
 import { BUYBACK_RECEIPTS_BY_TIME, totalBuybackLamports } from '../lib/buyback-receipts.mjs'
 import { LIQUIDITY_RECEIPTS, liquidityTotals } from '../lib/liquidity-receipts.mjs'
 const BUYBACK_SOURCE = { custody: 'platform revenue', team: 'team wallet' }
@@ -14,7 +15,7 @@ function Amount({ value, usdPerSol, hero = false }) {
   const usd = formatUsdEstimate(value, usdPerSol)
   return <div className={`analytics-amount${hero ? ' analytics-amount-large' : ''}`}><strong>{usd ? `≈ ${usd}` : `${formatSolDisplay(value)} SOL`}</strong>{usd && <span>{formatSolDisplay(value)} SOL</span>}</div>
 }
-export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS_BY_TIME }) {
+export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS_BY_TIME, buybackStatus = null }) {
   const { totals, platform } = data
   const rangeLabel = { '24h': 'Past 24 hours', '7d': 'Past 7 days', '30d': 'Past 30 days', all: 'All time' }[data.range]
   return <>
@@ -34,7 +35,8 @@ export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS
         <p className="analytics-note">The policy applies when eligible claimed platform fees are allocated. Unclaimed fees and discoverer obligations are excluded. These are ledger allocations after recorded spending, not live wallet balances. External wallet transfers require separate reconciliation.</p>
       </>}
     </section>
-    <section className="analytics-token" aria-labelledby="repo-title"><div><div className="eyebrow"><Link href={OFFICIAL_TOKEN.marketPath}>$REPOING ↗</Link></div><h2 id="repo-title">Buybacks</h2><p>Verified SOL spent buying back $REPOING, from platform revenue and the team wallet.</p><details className="analytics-data"><summary>View receipts</summary><ul>{buybacks.map(receipt => <li key={receipt.signature}><a href={`https://explorer.solana.com/tx/${receipt.signature}`} target="_blank" rel="noopener noreferrer">{formatSolDisplay(receipt.spentLamports)} SOL · {BUYBACK_SOURCE[receipt.source]} · {new Date(receipt.at).toLocaleDateString('en-US', { timeZone: 'UTC' })} ↗</a></li>)}</ul><p>Includes trading fees. Excludes network fees, the launch buy, and early team purchases. New buys into the canonical pool from these wallets are added automatically after finalization.</p></details></div><div className="analytics-token-state"><span>SOL bought back</span><strong>{formatSolDisplay(totalBuybackLamports(buybacks))} SOL</strong><small>{formatSolDisplay(totalBuybackLamports(buybacks, 'custody'))} from platform revenue · {formatSolDisplay(totalBuybackLamports(buybacks, 'team'))} from the team wallet</small></div></section>
+    <section className="analytics-token" aria-labelledby="repo-title"><div><div className="eyebrow"><Link href={OFFICIAL_TOKEN.marketPath}>$REPOING ↗</Link></div><h2 id="repo-title">Buybacks</h2><p>Verified SOL spent buying back $REPOING, from platform revenue and the team wallet.</p><details className="analytics-data"><summary>View receipts</summary><ul>{buybacks.map(receipt => <li key={receipt.signature}><a href={receiptUrl(receipt.signature)} target="_blank" rel="noopener noreferrer">{formatSolDisplay(receipt.spentLamports)} SOL · {BUYBACK_SOURCE[receipt.source]} · {new Date(receipt.at).toLocaleDateString('en-US', { timeZone: 'UTC' })} ↗</a></li>)}</ul><p>Includes trading fees. Excludes network fees, the launch buy, and early team purchases. New buys into the canonical pool from these wallets are added automatically after finalization.</p></details></div><div className="analytics-token-state"><span>SOL bought back</span><strong>{formatSolDisplay(totalBuybackLamports(buybacks))} SOL</strong><small>{formatSolDisplay(totalBuybackLamports(buybacks, 'custody'))} from platform revenue · {formatSolDisplay(totalBuybackLamports(buybacks, 'team'))} from the team wallet</small></div></section>
+    <BuybackStatus status={buybackStatus}/>
     <LiquidityReceipts/>
     <TeamTokenLocks/>
     <BuilderPayouts payouts={data.payouts} unavailable={false} usdPerSol={usdPerSol}/>
