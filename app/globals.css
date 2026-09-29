@@ -594,9 +594,6 @@
 .buyback-status-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:22px}.buyback-status-grid strong{font-size:26px;letter-spacing:-.03em}.buyback-status-grid small{font-size:12px;color:var(--muted);line-height:1.55}.buyback-status-grid a{color:var(--green);font-weight:650;white-space:nowrap}.buyback-status-grid a:hover{text-decoration:underline}
 @media(max-width:500px){.buyback-status-grid{grid-template-columns:1fr}}
 .buyback-counter p{margin:0;color:var(--muted);line-height:1.45}
-.buyback-counter .buyback-counter-latest{margin-top:2px;font-size:12px;color:var(--dim)}
-.buyback-counter-latest a{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
-.buyback-counter-latest a:hover{color:var(--text)}
 .buyback-counter strong{color:var(--text);font-weight:700;white-space:nowrap;font-variant-numeric:tabular-nums}
 .buyback-counter p>span[aria-hidden]{color:var(--green);padding:0 2px}
 .buyback-counter-pending{color:var(--dim)}

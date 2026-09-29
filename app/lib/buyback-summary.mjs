@@ -4,15 +4,15 @@ import { formatSolDisplay } from './format.mjs'
 const TOKEN_DECIMALS = 6n
 const AMOUNT = /^\d+$/
 
-// Headline for the homepage counter, from the same receipts /stats lists. Platform revenue
-// ('custody') only: team-wallet buys are not platform fees. Returns null when nothing is recorded.
+// Totals from the same receipts /stats lists. source 'custody' is platform revenue only; null counts
+// every published buyback (platform revenue and team wallet). Returns null when nothing is recorded.
 export function buybackSummary(receipts, source = 'custody') {
   if (!Array.isArray(receipts)) return null
   let lamports, tokens = 0n, count = 0
   try {
     lamports = BigInt(totalBuybackLamports(receipts, source))
     for (const receipt of receipts) {
-      if (receipt.source !== source) continue
+      if (source && receipt.source !== source) continue
       if (!AMOUNT.test(String(receipt.tokenBaseUnits))) return null
       tokens += BigInt(receipt.tokenBaseUnits); count++
     }
