@@ -19,7 +19,7 @@ const rpc = overrides => ({ getBalance: async () => 100000000,
   getMultipleAccountsInfo: async () => [null, null], ...overrides })
 
 test('buy costs include rent up front, separate refundable wrap rent, never add the included trading fee again', async () => {
-  assert.deepEqual(await estimateTradeCosts(rpc(), trade()), { networkFee: '5000', accountDeposits: '2039280', refundableDeposit: '2039280',
+  assert.deepEqual(await estimateTradeCosts(rpc(), trade()), { networkFee: '5000', priorityFee: '0', accountDeposits: '2039280', refundableDeposit: '2039280',
     total: '12044280', required: '14083560', balance: '100000000', shortfall: '0' })
 })
 test('existing ATAs cost zero setup; prefunded empty accounts only require the rent shortfall', async () => {

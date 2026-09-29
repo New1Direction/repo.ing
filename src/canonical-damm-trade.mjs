@@ -1,6 +1,6 @@
 import BN from 'bn.js'
 import bs58 from 'bs58'
-import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
+import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
@@ -15,6 +15,7 @@ import { dammSwapEvents } from './damm-trades.mjs'
 import { loadTransactionAt } from './finalized-transaction.mjs'
 import { keptWsolRent, resolveReferral } from './referral.mjs'
 import { createWsolAtaInstruction, isCreateWsolAta } from './wsol-account.mjs'
+import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
 
 // Same fixed 1% tolerance and floor rounding as curve trades.
 export const DAMM_SLIPPAGE_BPS = 100
@@ -62,7 +63,9 @@ export function messageFingerprint(message) {
 // the exact SOL wrap, one ExactIn swap2 on the proven pool, and the WSOL close back to the user.
 // The referral slot holds exactly the server-resolved referral account, or the program ID when there is none.
 // keepWsol: the wallet's WSOL ATA existed before the trade, so exactly one idempotent re-create of it follows the close.
+// Compute budget: at most one unit limit and one unit price, both first and within the configured maximums.
 export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral = null, keepWsol = false }) {
+  readTradeComputeBudget(tx.instructions)
   const mint = poolState.tokenAMint
   const tokenAta = getAssociatedTokenAddressSync(mint, wallet), wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, wallet)
   const [input, output] = direction === 'buy' ? [wsolAta, tokenAta] : [tokenAta, wsolAta]
@@ -72,6 +75,8 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
     if (closes > 0) {
       if (!keepWsol || position !== tx.instructions.length - 1 || !isCreateWsolAta(ix, wallet)) throw Error('Trade transaction contains an unexpected instruction after the WSOL close')
       recreates++
+    } else if (ix.programId.equals(ComputeBudgetProgram.programId)) {
+      continue
     } else if (ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
       if (ix.data.length !== 1 || ix.data[0] !== 1 || !k[0]?.equals(wallet) || !k[2]?.equals(wallet) ||
           !(k[1]?.equals(tokenAta) && k[3]?.equals(mint) || k[1]?.equals(wsolAta) && k[3]?.equals(NATIVE_MINT))) throw Error('Trade transaction contains an unexpected account setup')
@@ -221,19 +226,23 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     const { market, pool, mint, poolState, amountIn, minimumAmountOut } = await quote(request, direction)
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
-    const tx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
+    const swapTx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
       inputTokenMint: direction === 'buy' ? NATIVE_MINT : mint, outputTokenMint: direction === 'buy' ? mint : NATIVE_MINT,
       tokenAMint: mint, tokenBMint: NATIVE_MINT, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
       tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: referral,
       amountIn: new BN(amountIn.toString()), minimumAmountOut: new BN(minimumAmountOut.toString()) })
-    if (keepWsol) tx.add(createWsolAtaInstruction(wallet))
-    assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral, keepWsol })
+    if (keepWsol) swapTx.add(createWsolAtaInstruction(wallet))
+    const expected = { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral, keepWsol }
+    assertPreparedSwap(swapTx, expected)
     const latest = await connection.getLatestBlockhash('confirmed')
-    tx.feePayer = wallet
-    tx.recentBlockhash = latest.blockhash
+    const landing = await withPriorityFee(connection, swapTx, { feePayer: wallet, blockhash: latest.blockhash,
+      writableAccounts: [pool, poolState.tokenAVault, poolState.tokenBVault] })
+    const tx = landing.transaction
+    assertPreparedSwap(tx, expected)
     const prepared = { transaction: tx, direction, amountIn, minimumAmountOut, lastValidBlockHeight: latest.lastValidBlockHeight,
       githubRepoId: market.githubRepoId, mint: market.mint, pool: pool.toBase58(), slippageBps: DAMM_SLIPPAGE_BPS, phase: 'graduated',
-      referral: referral?.toBase58() ?? null }
+      referral: referral?.toBase58() ?? null, priorityFee: { computeUnitLimit: landing.computeUnitLimit,
+        microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } }
     preparedState.set(prepared, { wallet, marketId: market.id, curve: market.pool, mint, pool, referral, wsolRent,
       tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
       message: Buffer.from(tx.serializeMessage()), fingerprint: messageFingerprint(tx.compileMessage()),
@@ -266,7 +275,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
       throw new Error('Wallet returned an altered or unsigned trade transaction')
     }
     const signature = bs58.encode(signed.signature)
-    await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false })
+    await broadcastUntilSettled(connection, signed.serialize(), { signature, lastValidBlockHeight: saved.lastValidBlockHeight })
     const confirmation = await connection.confirmTransaction({ signature, blockhash: saved.blockhash,
       lastValidBlockHeight: saved.lastValidBlockHeight }, 'confirmed')
     if (confirmation.value.err) throw new Error(`Trade failed: ${JSON.stringify(confirmation.value.err)}`)

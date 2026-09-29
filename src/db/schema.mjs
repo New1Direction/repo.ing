@@ -609,3 +609,15 @@ export const builderReinvestIntents = pgTable('builder_reinvest_intents', {
   check('builder_reinvest_status_check', sql`${table.status} in ('prepared','cancelling','submitted','settled','aborted')`),
   check('builder_reinvest_settlement_check', sql`(${table.status} = 'settled' and ${table.settledAt} is not null and ${table.signature} is not null and ${table.signedTransaction} is not null and ${table.settledDebit} is not null and ${table.settlement} is not null) or (${table.status} <> 'settled' and ${table.settledAt} is null and ${table.settledDebit} is null)`),
 ])
+// Operator-only trade landing telemetry (see drizzle/0028_trade_outcomes.sql). No wallet or key material.
+export const tradeOutcomes = pgTable('trade_outcomes', {
+  id: serial('id').primaryKey(), attemptKey: varchar('attempt_key',{length:100}).notNull(), outcome: varchar('outcome',{length:24}).notNull(),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}), mint: varchar('mint',{length:44}), phase: varchar('phase',{length:16}),
+  direction: varchar('direction',{length:4}), amountIn: numeric('amount_in',{precision:20,scale:0}),
+  priorityFeeLamports: bigint('priority_fee_lamports',{mode:'bigint'}), cuPriceMicroLamports: bigint('cu_price_micro_lamports',{mode:'bigint'}),
+  cuLimit: integer('cu_limit'), signature: varchar('signature',{length:88}), error: text('error'),
+  prepareToSignMs: integer('prepare_to_sign_ms'), signToConfirmMs: integer('sign_to_confirm_ms'),
+  createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(),
+},t=>[uniqueIndex('trade_outcomes_attempt_outcome_unique').on(t.attemptKey,t.outcome),index('trade_outcomes_created_at').on(t.createdAt),
+  check('trade_outcomes_outcome_check',sql`${t.outcome} in ('prepared','submitted','confirmed','expired','failed','verification_failed')`),
+  check('trade_outcomes_direction_check',sql`${t.direction} is null or ${t.direction} in ('buy','sell')`)])

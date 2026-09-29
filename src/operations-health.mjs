@@ -1,6 +1,7 @@
 import { OPERATING_WALLETS } from './operating-wallet-alerts.mjs'
 import { platformRevenueSummary } from './platform-revenue.mjs'
 import { liquidityReserveSummary } from './liquidity-deployment.mjs'
+import { tradeOutcomeSummary } from './trade-outcomes.mjs'
 
 // Read-only operator health view. Every section settles on its own so one failing RPC or query
 // never blanks the others; nothing here signs, spends, or mutates state.
@@ -84,7 +85,7 @@ async function walletRow(connection, wallet, readToken) {
 export async function loadOperationsHealth({ db, connection, wallets, readToken, loadBuybacks, cspStats, journal, now = Date.now, timeoutMs, log } = {}) {
   const needDb = () => { if (!db) throw exposed('DATABASE_URL is not configured') }
   const options = { timeoutMs, log }
-  const [walletSection, launches, alerts, revenue, migrations, csp] = await Promise.all([
+  const [walletSection, launches, alerts, revenue, migrations, csp, trades] = await Promise.all([
     settleSection('Wallets', async () => {
       if (!connection) throw exposed('SOLANA_RPC_URL is not configured')
       return Promise.all((await wallets()).map(w => walletRow(connection, w, readToken)))
@@ -115,6 +116,11 @@ export async function loadOperationsHealth({ db, connection, wallets, readToken,
       return migrationStatus(journal, row)
     }, options),
     settleSection('CSP reports', () => cspStats.snapshot(), options),
+    settleSection('Trades', async () => {
+      needDb()
+      try { return await tradeOutcomeSummary(db) }
+      catch (error) { if (error?.code === '42P01') throw exposed('trade_outcomes table not migrated yet'); throw error }
+    }, options),
   ])
-  return { generatedAt: new Date(now()).toISOString(), wallets: walletSection, launches, alerts, revenue, migrations, csp }
+  return { generatedAt: new Date(now()).toISOString(), wallets: walletSection, launches, alerts, revenue, migrations, csp, trades }
 }
