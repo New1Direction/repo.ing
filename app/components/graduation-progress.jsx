@@ -1,7 +1,8 @@
 import {formatUnits} from '../lib/format.mjs'
 export function GraduationProgress({curve,error=false}){
   const exact=n=>formatUnits(n,9,9)
-  const sol=n=>BigInt(n)>0n&&BigInt(n)<10000000n?'<0.01':Number(exact(n)).toLocaleString('en-US',{maximumFractionDigits:2})
+  // Divide the raw lamports; formatUnits output has thousands separators that Number() cannot parse.
+  const sol=n=>BigInt(n)>0n&&BigInt(n)<10000000n?'<0.01':(Number(BigInt(n))/1e9).toLocaleString('en-US',{maximumFractionDigits:2})
   return <section className="inner-card bonding-card" aria-label="Graduation progress">
     <div className="card-heading"><h3>Graduation Progress</h3><span className="badge">{curve?.phase??'Checking'}</span></div>
     {curve?curve.phase==='GRADUATED'?<>

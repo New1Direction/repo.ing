@@ -599,3 +599,17 @@
 .launch-success .launch-share-x{display:inline-flex;align-items:center;gap:8px}
 .share-market .refer-link{display:grid;justify-items:end;gap:0;margin-top:8px;max-width:290px;margin-left:auto}.refer-link-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}.share-market .refer-link .refer-link-earned{display:inline;color:var(--green)}.refer-link-earned svg{vertical-align:-1px}.share-market .refer-link small{text-align:right}
 @media(max-width:700px){.share-market .refer-link{justify-items:start;margin-left:0}.refer-link-actions{justify-content:flex-start}.share-market .refer-link small{text-align:left}}
+
+.market-title>div:first-child>.badge{margin:14px 0 0 166px}
+.bonding-card p.positive{margin:0;font-size:15px;font-weight:600;color:var(--green)}
+.bonding-card p.positive+.graduation-explainer{margin:4px 0 0}
+.graduation-metrics{gap:0;margin:18px 0 0;padding:14px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.graduation-metrics>span{padding:0 32px;border-left:1px solid var(--border)}
+.graduation-metrics>span:first-child{padding-left:0;border-left:0}
+.graduation-metrics strong{font-size:20px;margin-top:4px;font-variant-numeric:tabular-nums}
+.graduation-metrics small{margin-top:2px}
+.bonding-card .graduation-metrics+.button{margin-top:16px}
+/* The full-bleed market nav is sized with 100vw, which includes the scrollbar; clip that sliver instead of scrolling. */
+body{overflow-x:clip}
+@media(max-width:1050px){.market-title>div:first-child>.badge{margin-left:0}}
+@media(max-width:700px){.graduation-metrics>span{padding:0 18px}.graduation-metrics strong{font-size:17px}}
