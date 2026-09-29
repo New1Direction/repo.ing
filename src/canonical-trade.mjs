@@ -10,10 +10,28 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { markets } from './db/schema.mjs'
+import { resolveReferral } from './referral.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
 const SLIPPAGE_BPS = 100
+const REFERRAL_SLOT = 12
+
+// The one DBC swap must carry the quoted amounts, the canonical accounts, and in its referral slot exactly the
+// server-resolved referral account (or the program ID for none). No other instruction may touch that account.
+export function assertPreparedDbcSwap(tx, { wallet, pool, config, mint, amountIn, minimumAmountOut, referral = null }) {
+  const swaps = tx.instructions.filter(ix => ix.programId.equals(DBC_PROGRAM))
+  const ix = swaps[0], k = ix?.keys.map(key => key.pubkey) ?? []
+  if (swaps.length !== 1 || ix.data.length !== 24 || !ix.data.subarray(0, 8).equals(SWAP_DISCRIMINATOR) ||
+      ix.data.readBigUInt64LE(8) !== amountIn || ix.data.readBigUInt64LE(16) !== minimumAmountOut ||
+      !k[1]?.equals(config) || !k[2]?.equals(pool) || !k[7]?.equals(mint) || !k[8]?.equals(NATIVE_MINT) || !k[9]?.equals(wallet) ||
+      !k[REFERRAL_SLOT]?.equals(referral ?? DBC_PROGRAM) || (referral && !ix.keys[REFERRAL_SLOT].isWritable)) {
+    throw new Error('Trade transaction swap does not match the quote')
+  }
+  if (referral && tx.instructions.some(other => other !== ix && other.keys.some(key => key.pubkey.equals(referral)))) {
+    throw new Error('Trade transaction swap does not match the quote')
+  }
+}
 
 export function createCanonicalTrader({ pool: databasePool, connection, config, loadMarket: marketLoader = null }) {
   const db = drizzle(databasePool)
@@ -55,15 +73,19 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const wallet = new PublicKey(request.wallet)
     const { market, pool, amountIn, result } = quoted || await quote(request, direction)
     const mint = new PublicKey(market.mint)
+    const referral = await resolveReferral(connection, request.referrer, wallet)
     const tx = await dbc.pool.swap({ owner: wallet, payer: wallet, pool, amountIn,
-      minimumAmountOut: result.minimumAmountOut, swapBaseForQuote: direction === 'sell', referralTokenAccount: null })
+      minimumAmountOut: result.minimumAmountOut, swapBaseForQuote: direction === 'sell', referralTokenAccount: referral })
+    assertPreparedDbcSwap(tx, { wallet, pool, config: resolveConfig(market), mint, amountIn: BigInt(amountIn.toString()),
+      minimumAmountOut: BigInt(result.minimumAmountOut.toString()), referral })
     const latest = await connection.getLatestBlockhash('confirmed')
     tx.feePayer = wallet
     tx.recentBlockhash = latest.blockhash
     const prepared = { transaction: tx, direction, amountIn: BigInt(amountIn.toString()), minimumAmountOut: BigInt(result.minimumAmountOut.toString()),
       lastValidBlockHeight: latest.lastValidBlockHeight,
-      githubRepoId: market.githubRepoId, mint: market.mint, pool: market.pool, slippageBps: SLIPPAGE_BPS }
-    preparedState.set(prepared, { wallet, marketId: market.id, mint, pool,
+      githubRepoId: market.githubRepoId, mint: market.mint, pool: market.pool, slippageBps: SLIPPAGE_BPS,
+      referral: referral?.toBase58() ?? null }
+    preparedState.set(prepared, { wallet, marketId: market.id, mint, pool, referral,
       message: Buffer.from(tx.serializeMessage()), blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight })
     return prepared
   }
@@ -89,7 +111,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       Buffer.from(bs58.decode(ix.data)).subarray(0, 8).equals(SWAP_DISCRIMINATOR) &&
       keyAt(ix.accounts[1], configKey) && keyAt(ix.accounts[2], saved.pool) &&
       keyAt(ix.accounts[7], saved.mint) && keyAt(ix.accounts[8], NATIVE_MINT) &&
-      keyAt(ix.accounts[9], saved.wallet))
+      keyAt(ix.accounts[9], saved.wallet) && keyAt(ix.accounts[REFERRAL_SLOT], saved.referral ?? DBC_PROGRAM))
     const walletIndex = keys.findIndex(key => key.equals(saved.wallet))
     if (!swap || walletIndex < 0 || walletIndex >= message.header.numRequiredSignatures) {
       throw new Error('Transaction did not swap the canonical pool with the user wallet')

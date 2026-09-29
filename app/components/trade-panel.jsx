@@ -13,6 +13,9 @@ import { TradeResultCard } from './trade-result-card'
 import { formatSolDisplay, formatUnits, parseUnits, formatUsdEstimate } from '../lib/format.mjs'
 import { sellAmountForPercent, tokenBalanceLabel } from '../lib/token-balance.mjs'
 import { sameAmount } from '../lib/quick-amounts.mjs'
+import { captureReferral, storedReferral } from '../lib/referral.mjs'
+
+function localStore() { try { return window.localStorage } catch { return null } }
 
 async function fetchSolBalance(wallet, signal) {
   const response = await fetch(`/api/wallet/balance?wallet=${encodeURIComponent(wallet)}`, { cache: 'no-store', signal })
@@ -70,6 +73,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   // A graduated market trades in its verified DAMM pool; migration without a verified destination stays closed.
   const graduatedPool = curve?.status === 'graduated' ? curve.destination ?? null : null
   const tradingOpen = !curve || curve.status === 'active' || Boolean(graduatedPool)
+
+  useEffect(() => { const store = localStore(); if (store) captureReferral(window.location.search, store) }, [])
 
   useEffect(() => {
     if (!panelRef.current || !window.IntersectionObserver) return
@@ -256,7 +261,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       setStage('Preparing quote')
       const preparedResponse = await fetch('/api/trade', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'prepare', githubRepoId: market.repoId, wallet: address,
-          direction, amountBaseUnits: input }) })
+          direction, amountBaseUnits: input, referrer: localStore() ? storedReferral(localStore(), address) : null }) })
       const prepared = await preparedResponse.json()
       if (!preparedResponse.ok) throw new Error(prepared.error)
       setPreparedCosts(prepared.costs)
