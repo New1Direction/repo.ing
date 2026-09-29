@@ -616,3 +616,5 @@ body{overflow-x:clip}
 @media(max-width:700px){.graduation-metrics>span{padding:0 18px}.graduation-metrics strong{font-size:17px}}
 
 .market-price .platform-token-link{display:block;margin-top:4px;font-size:13px;color:var(--green)}.market-price .platform-token-link:hover{text-decoration:underline}
+.return-share-page{padding-block:40px;min-height:calc(100vh - 220px)}.return-share{max-width:720px;margin:0 auto;padding:32px}.return-share .eyebrow{margin:0;font-size:12px}.return-share h1{display:flex;flex-direction:column;gap:8px;font-size:30px;margin:12px 0 14px}.return-share h1 strong{font-size:clamp(56px,12vw,104px);line-height:1;letter-spacing:-.045em;font-variant-numeric:tabular-nums}.return-share h1 .gain{color:var(--green)}.return-share h1 .loss{color:var(--red)}.return-share>p.muted{font-size:15px;line-height:1.5;margin:0 0 24px}
+@media(max-width:700px){.return-share-page{padding-block:24px}.return-share{padding:20px}.return-share h1{font-size:24px}}
