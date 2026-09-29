@@ -42,29 +42,57 @@ const clean = value => {
 }
 
 // Accepts the legacy report-uri body ({"csp-report": {...}}) and Reporting API arrays.
-export function summarizeCspReport(text) {
+export function cspReportEntries(text) {
   let parsed
   try { parsed = JSON.parse(text) } catch { return null }
   const reports = Array.isArray(parsed) ? parsed.filter(r => r?.type === 'csp-violation').map(r => r.body) : [parsed?.['csp-report']]
-  const lines = reports.filter(r => r && typeof r === 'object').slice(0, 10).map(r => {
-    const directive = r['effective-directive'] ?? r.effectiveDirective ?? r['violated-directive']
-    const blocked = r['blocked-uri'] ?? r.blockedURL
-    const page = r['document-uri'] ?? r.documentURL
-    const source = r['source-file'] ?? r.sourceFile
+  const entries = reports.filter(r => r && typeof r === 'object').slice(0, 10).map(r => {
     const line = r['line-number'] ?? r.lineNumber
-    return `csp-report directive=${clean(directive)} blocked=${clean(blocked)} page=${clean(page)} source=${clean(source)}${line ? `:${clean(line)}` : ''}`
+    return { directive: clean(r['effective-directive'] ?? r.effectiveDirective ?? r['violated-directive']), blocked: clean(r['blocked-uri'] ?? r.blockedURL),
+      page: clean(r['document-uri'] ?? r.documentURL), source: clean(r['source-file'] ?? r.sourceFile), line: line ? clean(line) : null }
   })
-  return lines.length ? lines : null
+  return entries.length ? entries : null
 }
+
+const entryLine = e => `csp-report directive=${e.directive} blocked=${e.blocked} page=${e.page} source=${e.source}${e.line ? `:${e.line}` : ''}`
+export function summarizeCspReport(text) { return cspReportEntries(text)?.map(entryLine) ?? null }
+
+const blockedHost = blocked => { try { return new URL(blocked).host || blocked } catch { return blocked } }
+
+// Per-process view for /operations/health. Holds only the already-logged fields, bounded by maxReports
+// and maxKeys, and resets on restart.
+export function createCspStats({ maxReports = 200, maxKeys = 500, now = Date.now } = {}) {
+  const since = now(), recent = [], hosts = new Map(), directives = new Map()
+  let total = 0
+  const bump = (map, key) => { if (map.has(key) || map.size < maxKeys) map.set(key, (map.get(key) ?? 0) + 1) }
+  const top = (map, limit) => [...map].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, limit).map(([key, count]) => ({ key, count }))
+  return {
+    record(entries) {
+      for (const { directive, blocked, page } of entries) {
+        total++
+        bump(hosts, blockedHost(blocked)); bump(directives, directive)
+        recent.push({ at: new Date(now()).toISOString(), directive, blocked, page })
+        if (recent.length > maxReports) recent.shift()
+      }
+    },
+    snapshot({ limit = 10 } = {}) {
+      return { since: new Date(since).toISOString(), total, hosts: top(hosts, limit), directives: top(directives, limit), recent: recent.slice(-limit).reverse() }
+    },
+  }
+}
+
+// Route handlers and pages can load separate module copies, so the process-wide instance lives on globalThis.
+export function cspStats() { return globalThis.__repoingCspStats ??= createCspStats() }
 
 const clientKey = request => request.headers.get('x-forwarded-for')?.split(',')[0].trim() || request.headers.get('x-real-ip') || 'unknown'
 
-export async function handleCspReport(request, { limiter, log = console.error } = {}) {
+export async function handleCspReport(request, { limiter, log = console.error, stats = null } = {}) {
   if (!limiter(clientKey(request))) return new Response(null, { status: 429 })
   const text = await readLimitedText(request)
   if (text === null) return new Response(null, { status: 413 })
-  const lines = summarizeCspReport(text)
-  if (!lines) return new Response(null, { status: 400 })
-  for (const line of lines) log(line)
+  const entries = cspReportEntries(text)
+  if (!entries) return new Response(null, { status: 400 })
+  for (const entry of entries) log(entryLine(entry))
+  stats?.record(entries)
   return new Response(null, { status: 204 })
 }

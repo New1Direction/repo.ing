@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { CSP_REPORT_MAX_BYTES, createRateLimiter, handleCspReport, readLimitedText, summarizeCspReport } from '../app/lib/csp-report.mjs'
+import { CSP_REPORT_MAX_BYTES, createCspStats, createRateLimiter, handleCspReport, readLimitedText, summarizeCspReport } from '../app/lib/csp-report.mjs'
 import { reportOnlyPolicy } from '../app/lib/csp.mjs'
 
 const report = (body, headers = {}) => new Request('http://localhost/api/csp-report', { method: 'POST', body, headers: { 'content-type': 'application/csp-report', ...headers } })
@@ -11,6 +11,16 @@ test('csp report handler logs a compact line without query strings and returns 2
   const response = await handleCspReport(report(legacy), { limiter: () => true, log: line => lines.push(line) })
   assert.equal(response.status, 204)
   assert.deepEqual(lines, ['csp-report directive=script-src-elem blocked=https://evil.example/x.js page=https://repo.ing/launch/1 source=https://repo.ing/_next/a.js:3'])
+})
+
+test('csp report handler records accepted reports into stats and keeps 204', async () => {
+  const stats = createCspStats()
+  assert.equal((await handleCspReport(report(legacy), { limiter: () => true, log() {}, stats })).status, 204)
+  assert.equal((await handleCspReport(report('not json'), { limiter: () => true, log() {}, stats })).status, 400)
+  const snap = stats.snapshot()
+  assert.equal(snap.total, 1)
+  assert.deepEqual(snap.hosts, [{ key: 'evil.example', count: 1 }])
+  assert.equal(snap.recent[0].page, 'https://repo.ing/launch/1')
 })
 
 test('csp report handler rejects oversized bodies with 413 before logging', async () => {
