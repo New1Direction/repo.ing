@@ -156,13 +156,25 @@ async function singleMarket(column, value) {
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
       (select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)::text
         from trade_events where pool = m.pool and traded_at >= now() - interval '24 hours') as "volume24hLamports",
-      exists(select 1 from repo_verifications where github_repo_id = m.github_repo_id and permission = 'admin') as "wasVerified"
+      exists(select 1 from repo_verifications where github_repo_id = m.github_repo_id and permission = 'admin') as "wasVerified",
+      case when coalesce(dp.slot, -1) > coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice",
+      o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"
       from markets m join repositories r on r.github_repo_id = m.github_repo_id
       left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
+      left join lateral (select slot, next_sqrt_price from trade_events where pool = m.pool
+        order by slot desc, event_index desc limit 1) cp on true
+      left join lateral (select slot, next_sqrt_price from damm_trade_events where github_repo_id = m.github_repo_id
+        and next_sqrt_price is not null order by slot desc, event_index desc limit 1) dp on true
+      left join graduation_observations o on o.github_repo_id = m.github_repo_id
+      left join graduation_events e on e.github_repo_id = m.github_repo_id
       where m.${column} = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [value])
-    const row = rows[0]
-    return { market: row ? { ...row, stars: Number(row.stars), forks: Number(row.forks),
-      remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString() } : null }
+    const [row] = rows
+    if (!row) return { market: null }
+    // Same row fields as the market list (price, bonding progress), so either read can back a market card.
+    const { lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...market } = row
+    return { market: { ...market, stars: Number(market.stars), forks: Number(market.forks),
+      remaining: (BigInt(market.earned) - BigInt(market.claimed)).toString(),
+      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, Date.now()) } }
   } catch { return { market: null, unavailable: 'Market is temporarily unavailable.' } }
 }
 // React cache is scoped to the render: metadata and page share one read, without caching payout state.
