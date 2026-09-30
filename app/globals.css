@@ -764,3 +764,4 @@ body{overflow-x:clip}
   .market-hero-main>*:not(.repo-identity),.market-hero .repo-identity p,.market-hero .market-hero-ticker{grid-column:1/-1}
   .market-hero .repo-identity p{margin-top:12px;font-size:14px}.market-hero .repo-stats{gap:6px 15px;margin-top:12px;font-size:13px}
   .market-hero-pills{margin-top:12px}.market-hero-actions{margin:0}.market-hero .share-market small{text-align:left}}
+@media(max-width:480px){.explore-navigation .explore-nav-long{display:none}}

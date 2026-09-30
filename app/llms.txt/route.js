@@ -24,6 +24,7 @@ A community launch does not imply maintainer endorsement. A repository token giv
 - [Explore markets](https://repo.ing/explore): Browse live repository markets.
 - [Parts funds](https://repo.ing/parts): Hardware lists from verified maintainers, backed all-or-nothing in USDC or SOL.
 - [Launch a repository](https://repo.ing/launch): Review a repository's token and costs, then launch with your wallet.
+- [Waiting for maintainers](https://repo.ing/waiting): Repositories with builder fees accrued but not yet claimed, ranked by amount.
 - [Find repos](https://repo.ing/find-repos): Repositories gaining attention, from an evidence-backed trend feed.
 - [How it works](https://repo.ing/how-it-works): Launching, trading, graduation, and discovery rewards.
 - [About](https://repo.ing/about): One repo, one token; fees for the repo; a launch is not an endorsement.
