@@ -22,6 +22,8 @@ assert.equal(process.env.SOLANA_RPC_URL, 'http://127.0.0.1:8909', 'Disposable lo
 const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed')
 const pool = new pg.Pool({ connectionString: databaseUrl })
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
+// Large enough that each platform claim clears the dust floor (20x its priority-fee network cost).
+const FIXTURE_TRADE_LAMPORTS = '1000000000'
 const send = (tx, signers) => sendAndConfirmTransaction(connection, tx, signers, { commitment: 'finalized' })
 const wrap = changes => new Proxy(connection, { get(target, key) {
   if (changes[key]) return changes[key]
@@ -40,7 +42,7 @@ test('DBC treasury collection preserves discovery and builder fees, refunds rent
   t.after(() => pool.end())
   await pool.query('truncate repositories restart identity cascade')
   const creator = Keypair.generate(), launcher = Keypair.generate(), treasury = Keypair.generate()
-  const sig = await connection.requestAirdrop(launcher.publicKey, 10e9)
+  const sig = await connection.requestAirdrop(launcher.publicKey, 20e9)
   await connection.confirmTransaction({ signature: sig, ...await connection.getLatestBlockhash() }, 'confirmed')
   const treasuryFunding = await connection.requestAirdrop(treasury.publicKey, 1e9)
   await connection.confirmTransaction({ signature: treasuryFunding, ...await connection.getLatestBlockhash() }, 'confirmed')
@@ -62,6 +64,7 @@ test('DBC treasury collection preserves discovery and builder fees, refunds rent
     await finalized(m.launchSignature)
     assert.equal((await createLaunchIndexer({ pool, verify: createLaunchEvidenceVerifier({ connection, config }) }).processMarket(BigInt(repoId))).state, 'indexed')
     await accrual.recordTradeFees({ githubRepoId: repoId, signatures: [m.launchSignature] })
+    await buy(m)
     return m
   }
   const legacy = await launch(996001, false), enrolled = await launch(996002, true)
@@ -70,7 +73,7 @@ test('DBC treasury collection preserves discovery and builder fees, refunds rent
     expiresAt: Date.now() + 120_000, maxNetworkFeeLamports: String(DBC_MAX_NETWORK_FEE_LAMPORTS) })
   async function buy(m) {
     const tx = await dbc.pool.swap2({ owner: launcher.publicKey, payer: launcher.publicKey, pool: new PublicKey(m.pool),
-      amountIn: new BN('10000000'), minimumAmountOut: new BN(1), swapBaseForQuote: false,
+      amountIn: new BN(FIXTURE_TRADE_LAMPORTS), minimumAmountOut: new BN(1), swapBaseForQuote: false,
       swapMode: SwapMode.ExactIn, referralTokenAccount: null })
     const signature = await send(tx, [launcher])
     await accrual.recordTradeFees({ githubRepoId: m.githubRepoId, signatures: [signature] })
