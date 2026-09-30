@@ -1,4 +1,4 @@
-import { bigint, boolean, check, index, integer, jsonb, numeric, pgTable, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, bigserial, boolean, check, index, integer, jsonb, numeric, pgTable, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 export const agentRequestLimits = pgTable('agent_request_limits', {
@@ -672,3 +672,17 @@ export const repoTips = pgTable('repo_tips', {
   index('repo_tips_donor').on(t.donorWallet,t.status),index('repo_tips_transfer').on(t.transferId),
   index('repo_tips_open').on(t.status,t.createdAt).where(sql`${t.status} in ('prepared','submitted')`),
   check('repo_tips_status_check',sql`${t.status} in ('prepared','submitted','confirmed','expired','failed','paid','refunded')`)])
+
+// "Why I bought" holder notes and their single-use signature nonces (see drizzle/0031_holder_notes.sql, src/holder-notes.mjs).
+export const holderNotes = pgTable('holder_notes', {
+  id: bigserial('id',{mode:'bigint'}).primaryKey(), mint: varchar('mint',{length:44}).notNull().references(() => markets.mint),
+  wallet: varchar('wallet',{length:44}).notNull(), body: text('body').notNull(),
+  balanceAtPost: numeric('balance_at_post',{precision:20,scale:0}).notNull(),
+  createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(), updatedAt: timestamp('updated_at',{withTimezone:true}).defaultNow().notNull(),
+  hiddenAt: timestamp('hidden_at',{withTimezone:true}), hiddenBy: text('hidden_by'),
+},t=>[uniqueIndex('holder_notes_mint_wallet_unique').on(t.mint,t.wallet),
+  index('holder_notes_public').on(t.mint,t.updatedAt.desc(),t.id.desc()).where(sql`${t.hiddenAt} is null`),index('holder_notes_recent').on(t.updatedAt.desc()),
+  check('holder_notes_body_check',sql`char_length(${t.body}) between 1 and 280`),check('holder_notes_balance_check',sql`${t.balanceAtPost} >= 0`)])
+export const holderNoteNonces = pgTable('holder_note_nonces', {
+  nonce: varchar('nonce',{length:32}).primaryKey(), expiresAt: timestamp('expires_at',{withTimezone:true}).notNull(),
+},t=>[index('holder_note_nonces_expiry').on(t.expiresAt)])

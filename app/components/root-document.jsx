@@ -1,6 +1,7 @@
 import '../globals.css'
 import '../theme.css'
 import '../tips.css'
+import '../holder-notes.css'
 import { WalletProvider } from './wallet'
 import { WatchlistProvider } from './watchlist'
 import { THEME_SCRIPT } from '../lib/theme-script.mjs'
