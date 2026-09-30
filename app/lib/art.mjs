@@ -10,4 +10,6 @@ export const ART = {
   'verified-shield-02': { size: 320 },
 }
 
-export const artSource = name => `/art/${name}.webp`
+// Bump when files in public/art change: they are served with a 4h browser cache under stable names.
+export const ART_VERSION = 2
+export const artSource = name => `/art/${name}.webp?v=${ART_VERSION}`
