@@ -750,3 +750,15 @@ export const partsUpdates = pgTable('parts_updates', {
   body: varchar('body',{length:1000}).notNull(), images: jsonb('images').notNull().default(sql`'[]'::jsonb`), createdBy: text('created_by').notNull(),
   createdAt: tz('created_at').defaultNow().notNull(),
 },t=>[index('parts_updates_fund').on(t.fundId,t.createdAt.desc()),index('parts_updates_repo').on(t.githubRepoId,t.createdAt.desc())])
+
+// Public "new market launched" posts, claimed before sending (see drizzle/0034_launch_alerts.sql, src/launch-alerts.mjs).
+export const launchAlerts = pgTable('launch_alerts', {
+  id: bigserial('id',{mode:'bigint'}).primaryKey(),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  mint: varchar('mint',{length:44}).notNull(), channel: varchar('channel',{length:16}).notNull(), status: varchar('status',{length:16}).notNull(),
+  attempts: smallint('attempts').default(1).notNull(), messageId: varchar('message_id',{length:64}), messageUrl: varchar('message_url',{length:300}),
+  error: varchar('error',{length:300}), nextAttemptAt: tz('next_attempt_at'),
+  createdAt: tz('created_at').defaultNow().notNull(), updatedAt: tz('updated_at').defaultNow().notNull(), sentAt: tz('sent_at'),
+},t=>[uniqueIndex('launch_alerts_repo_channel_unique').on(t.githubRepoId,t.channel),index('launch_alerts_channel_recent').on(t.channel,t.updatedAt.desc()),
+  check('launch_alerts_channel_check',sql`${t.channel} in ('telegram','x')`),check('launch_alerts_status_check',sql`${t.status} in ('sending','sent','failed','unknown')`),
+  check('launch_alerts_sent_check',sql`(${t.status} = 'sent' and ${t.sentAt} is not null and ${t.messageId} is not null) or (${t.status} <> 'sent' and ${t.sentAt} is null)`)])
