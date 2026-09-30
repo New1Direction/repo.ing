@@ -24,7 +24,7 @@ export const PRIORITY_FEE_PERCENTILE = 75
 export const MAX_PRIORITY_FEE_LAMPORTS = 1_000_000n
 const MICRO = 1_000_000n
 const FEE_LOOKUP_TIMEOUT_MS = 2500
-if (BigInt(CU_LIMIT_CEILING) * BigInt(CU_PRICE_MAX) / MICRO > MAX_PRIORITY_FEE_LAMPORTS) throw Error('Priority fee bounds exceed the cap')
+if ((BigInt(CU_LIMIT_CEILING) * BigInt(CU_PRICE_MAX) + MICRO - 1n) / MICRO > MAX_PRIORITY_FEE_LAMPORTS) throw Error('Priority fee bounds exceed the cap')
 
 // Rebroadcast the same signed bytes every ~2s, bounded in wall time; the blockhash expiry ends it earlier.
 export const REBROADCAST_INTERVAL_MS = 2000
@@ -133,6 +133,29 @@ export async function withPriorityFee(connection, transaction, { feePayer, block
   const tx = budgeted(transaction.instructions, { feePayer, blockhash, units, microLamports })
   return { transaction: tx, computeUnitLimit: units, microLamports,
     priorityFeeLamports: priorityFeeLamports({ units, microLamports }) }
+}
+
+// Server-signed payouts (platform fee claims, builder fee payouts): the same landing budget, signed by every signer.
+// Their network fee is bounded by one base fee per signature plus CU_LIMIT_CEILING × CU_PRICE_MAX (0.0008 SOL);
+// getFeeForMessage and the receipt's meta.fee both include the priority fee.
+export const LAMPORTS_PER_SIGNATURE = 5000n
+export const MAX_PAYOUT_PRIORITY_FEE_LAMPORTS = BigInt(CU_LIMIT_CEILING) * BigInt(CU_PRICE_MAX) / MICRO
+export const maxPayoutNetworkFee = signatures => BigInt(signatures) * LAMPORTS_PER_SIGNATURE + MAX_PAYOUT_PRIORITY_FEE_LAMPORTS
+// A claim worth less than 20× its own network fee is left to accrue rather than paid for.
+export const PAYOUT_DUST_FEE_MULTIPLE = 20n
+export const isDustPayout = (amount, networkFee) => BigInt(amount) < PAYOUT_DUST_FEE_MULTIPLE * BigInt(networkFee)
+
+const writableKeys = instructions => [...new Map(instructions.flatMap(ix => ix.keys.filter(k => k.isWritable)
+  .map(k => [k.pubkey.toBase58(), k.pubkey]))).values()]
+
+// Rebuilds [limit, price, ...instructions] and signs it with every signer (fee payer first); all signatures must verify.
+export async function signedWithPriorityFee(connection, transaction, { feePayer, blockhash, signers, fetcher, log = console.warn }) {
+  if (!signers?.[0]?.publicKey.equals(feePayer)) throw Error('Payout fee payer must sign first')
+  const landing = await withPriorityFee(connection, transaction, { feePayer, blockhash,
+    writableAccounts: writableKeys(transaction.instructions), fetcher, log })
+  landing.transaction.sign(...signers)
+  if (!landing.transaction.verifySignatures()) throw Error('Payout transaction signatures are incomplete')
+  return landing
 }
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms))

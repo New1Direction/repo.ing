@@ -12,7 +12,7 @@ import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 import { createFeeAccrual } from '../src/fee-accrual.mjs'
 import { discoverySummary } from '../src/discovery-rewards.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
-import { createDbcPlatformFees, dbcPlatformEntitlement, settleDbcPlatformClaim } from '../src/platform-dbc-fees.mjs'
+import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees, dbcPlatformEntitlement, settleDbcPlatformClaim } from '../src/platform-dbc-fees.mjs'
 import { createPlatformFeeRecovery } from '../src/platform-fees.mjs'
 import { createPlatformRevenue, platformRevenueSummary, reconcilePlatformRevenue, assertPlatformReserveCustody } from '../src/platform-revenue.mjs'
 
@@ -67,7 +67,7 @@ test('DBC treasury collection preserves discovery and builder fees, refunds rent
   const legacy = await launch(996001, false), enrolled = await launch(996002, true)
   const review = state => ({ purpose: 'platform-fee-review', phase: 'DBC', repoId: state.repoId,
     amount: state.available, receiver: state.receiver, termsHash: state.termsHash,
-    expiresAt: Date.now() + 120_000, maxNetworkFeeLamports: '20000' })
+    expiresAt: Date.now() + 120_000, maxNetworkFeeLamports: String(DBC_MAX_NETWORK_FEE_LAMPORTS) })
   async function buy(m) {
     const tx = await dbc.pool.swap2({ owner: launcher.publicKey, payer: launcher.publicKey, pool: new PublicKey(m.pool),
       amountIn: new BN('10000000'), minimumAmountOut: new BN(1), swapBaseForQuote: false,

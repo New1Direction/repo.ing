@@ -13,6 +13,7 @@ import { markets, repoBeneficiaries, repoClaims } from './db/schema.mjs'
 
 import { createGraduatedFees, recordGraduatedFees } from './graduated-fees.mjs'
 import { settleClaim } from './claim-settlement.mjs'
+import { broadcastUntilSettled, signedWithPriorityFee } from './trade-landing.mjs'
 
 // The creator's WSOL ATA is permissionless to create and fund, so routing payouts through it lets
 // anyone perturb a claim's receipt. Graduated fees unwrap through a one-time authority instead
@@ -103,24 +104,24 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         if (surplus > 0n) console.error('claim fee surplus: Meteora holds unindexed creator fees', { repo: repoId.toString(), surplus: surplus.toString() })
         const beforeFee = dbcFee + dammFee
         report('Repository fees match the Solana pools. Preparing payout…')
-        const transaction = new Transaction()
+        const payout = new Transaction()
         const temporaries = []
         if (dbcPayout > 0n) {
           const temporary = Keypair.generate()
           temporaries.push(temporary)
-          transaction.add(await dbc.creator.claimCreatorTradingFee({ creator: creator.publicKey, payer: creator.publicKey, pool: poolKey,
+          payout.add(await dbc.creator.claimCreatorTradingFee({ creator: creator.publicKey, payer: creator.publicKey, pool: poolKey,
             maxBaseAmount: new BN(0), maxQuoteAmount: new BN(dbcPayout.toString()), receiver: receiverKey, tempWSolAcc: temporary.publicKey }))
         }
         if (dammFee > 0n) {
           const temporary = Keypair.generate()
           temporaries.push(temporary)
-          transaction.add(...await graduatedClaimInstructions(graduated, { owner: creator.publicKey, receiver: receiverKey,
+          payout.add(...await graduatedClaimInstructions(graduated, { owner: creator.publicKey, receiver: receiverKey,
             temporary: temporary.publicKey, tokenAProgram: fixed.tokenType === 0 ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID }))
         }
         const latest = await connection.getLatestBlockhash('confirmed')
-        transaction.feePayer = creator.publicKey
-        transaction.recentBlockhash = latest.blockhash
-        transaction.sign(creator, ...temporaries)
+        // The platform creator signer pays the network fee (base + priority); the beneficiary's receipt is unaffected.
+        const { transaction } = await signedWithPriorityFee(connection, payout, { feePayer: creator.publicKey,
+          blockhash: latest.blockhash, signers: [creator, ...temporaries] })
         const signature = bs58.encode(transaction.signature)
         const simulation = await connection.simulateTransaction(transaction)
         if (simulation.value.err) throw new Error(`Claim preflight failed: ${JSON.stringify(simulation.value.err)}`)
@@ -129,7 +130,7 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         await db.insert(repoClaims).values({ githubRepoId: repoId, beneficiaryWallet: beneficiary.wallet,
           amountBaseUnits: payoutAmount, dammAmountBaseUnits: dammFee, asset: NATIVE_MINT.toBase58(), claimSignature: signature, status: 'pending',
           signedTransaction: transaction.serialize().toString('base64'), lastValidBlockHeight: BigInt(latest.lastValidBlockHeight) })
-        await connection.sendRawTransaction(transaction.serialize(), { skipPreflight: false })
+        await broadcastUntilSettled(connection, transaction.serialize(), { signature, lastValidBlockHeight: latest.lastValidBlockHeight })
         report('Payout submitted. Waiting for Solana finality…')
         const confirmation = await connection.confirmTransaction({ signature, ...latest }, 'finalized')
         if (confirmation.value.err) throw new Error(`Meteora claim failed: ${JSON.stringify(confirmation.value.err)}`)

@@ -1,6 +1,6 @@
 import { requirePlatformOperator } from '../../../lib/platform-operator.mjs'
 import { createPlatformFees } from '../../../../src/platform-fees.mjs'
-import { createDbcPlatformFees } from '../../../../src/platform-dbc-fees.mjs'
+import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from '../../../../src/platform-dbc-fees.mjs'
 import { Connection } from '@solana/web3.js'
 import { database, chain, configAddress, partnerSigner } from '../../../lib/server.mjs'
 import { assertSameOrigin, githubSessionCookie, readGithubSession, seal, unseal } from '../../../lib/auth.mjs'
@@ -27,7 +27,7 @@ export async function GET(request, { params }) {
     if (data.enrolled === false) return Response.json(data, { headers })
     const review = BigInt(data.available) > 0n ? seal({ purpose: 'platform-fee-review', sessionId: session.sessionId,
       repoId: repo, phase, amount: data.available, receiver: data.receiver || partnerSigner().publicKey.toBase58(),
-      ...(phase === 'DBC' ? { termsHash: data.termsHash, maxNetworkFeeLamports: '20000' } : {}),
+      ...(phase === 'DBC' ? { termsHash: data.termsHash, maxNetworkFeeLamports: String(DBC_MAX_NETWORK_FEE_LAMPORTS) } : {}),
       expiresAt: Math.min(session.expiresAt, Date.now() + 10 * 60_000) }) : null
     return Response.json({ ...data, review }, { headers })
   } catch (error) { return Response.json({ error: error.status ? error.message : 'Platform fees are temporarily unavailable. Try refreshing.' }, { status: error.status ?? 503, headers }) }

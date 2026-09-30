@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { broadcastUntilSettled } from './trade-landing.mjs'
+import { broadcastUntilSettled, isDustPayout, maxPayoutNetworkFee, signedWithPriorityFee } from './trade-landing.mjs'
 import BN from 'bn.js'
 import bs58 from 'bs58'
 import { Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction } from '@solana/web3.js'
@@ -12,6 +12,8 @@ const PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const MAINNET = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const EVENT_PREFIX = Buffer.from('e445a52e51cb9a1d', 'hex')
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+// Two signatures (partner fee payer + temporary WSOL authority) plus the bounded priority fee: 0.00081 SOL.
+export const DBC_MAX_NETWORK_FEE_LAMPORTS = maxPayoutNetworkFee(2)
 const local = connection => /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint)
 
 export function platformTreasuryWallet(partner, env = process.env) {
@@ -90,23 +92,26 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
       const receivingAccount = await connection.getAccountInfo(new PublicKey(current.receiver), 'finalized')
       if (!PublicKey.isOnCurve(new PublicKey(current.receiver)) || (receivingAccount &&
         (receivingAccount.executable || !receivingAccount.owner.equals(SystemProgram.programId)))) throw Error('Treasury must be a normal Solana wallet')
-      if (!/^[1-9]\d*$/.test(String(review.maxNetworkFeeLamports)) || BigInt(review.maxNetworkFeeLamports) > 100_000n) throw Error('Invalid reviewed network fee limit')
+      if (!/^[1-9]\d*$/.test(String(review.maxNetworkFeeLamports)) || BigInt(review.maxNetworkFeeLamports) > DBC_MAX_NETWORK_FEE_LAMPORTS) throw Error('Invalid reviewed network fee limit')
       // Fresh temporary ATAs keep the claim from closing any existing wallet
       // token account. Both rent deposits return to the fee payer atomically.
       const temporary = Keypair.generate(), receiver = new PublicKey(current.receiver)
-      const tx = await dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
+      const claimTx = await dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
         receiver: temporary.publicKey, tempWSolAcc: temporary.publicKey, pool: new PublicKey(current.pool),
         maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) })
       const rent = await connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE)
       const baseAccount = getAssociatedTokenAddressSync(new PublicKey(current.mint), temporary.publicKey)
       const quoteAccount = getAssociatedTokenAddressSync(NATIVE_MINT, temporary.publicKey)
-      tx.add(SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: receiver, lamports: amount }),
+      claimTx.add(SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: receiver, lamports: amount }),
         SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: partner.publicKey, lamports: rent }),
         createCloseAccountInstruction(baseAccount, partner.publicKey, temporary.publicKey))
       const latest = await connection.getLatestBlockhash('confirmed')
-      tx.feePayer = partner.publicKey; tx.recentBlockhash = latest.blockhash; tx.sign(partner, temporary)
+      // Rebuilt as [limit, price, ...claim] and signed by both the partner (fee payer) and the temporary authority.
+      const { transaction: tx } = await signedWithPriorityFee(connection, claimTx, { feePayer: partner.publicKey,
+        blockhash: latest.blockhash, signers: [partner, temporary] })
       const fee = (await connection.getFeeForMessage(tx.compileMessage(), 'confirmed')).value
       if (fee == null || BigInt(fee) > BigInt(review.maxNetworkFeeLamports) || amount <= BigInt(fee)) throw Error('Claim does not cover its reviewed network cost')
+      if (isDustPayout(amount, fee)) return { ...current, networkFee: String(fee), status: 'skipped-dust', broadcast: false }
       if (await connection.getBalance(partner.publicKey, 'confirmed') < rent * 2 + fee) throw Error('Partner signer needs operating SOL for temporary deposits')
       const simulation = await connection.simulateTransaction(VersionedTransaction.deserialize(tx.serialize()), { sigVerify: true, commitment: 'confirmed' })
       if (simulation.value.err) throw Error(`DBC platform collection preflight failed: ${JSON.stringify(simulation.value.err)}`)
