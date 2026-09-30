@@ -42,6 +42,7 @@ Start with [Architecture](ARCHITECTURE.md), [Development](DEVELOPMENT.md), [Cont
 | Builder Reinvest | [Claim-first design](BUILDER_REINVEST_PLAN.md), [local verification](BUILDER_REINVEST_VERIFICATION.md) — production disabled |
 | Discovery | [Trend sources, scoring, and review](TREND_DISCOVERY.md) |
 | Interface | [Charts](CHARTS_AND_RESPONSIVENESS.md), [market usability](MARKET_USABILITY.md), [watchlists and badges](DISCOVERY_UX.md), [claim sessions](PERFORMANCE_AND_CLAIMS.md) |
+| Donation escrow (devnet only, unaudited) | [Program, build, and devnet deploy](../programs/README.md) |
 | Local chain fixtures | [Meteora setup](METEORA_SPIKE.md#reproduce), [curve comparison](LIQUIDITY_REVIEW.md) |
 
 ## Reading verification records

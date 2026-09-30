@@ -1,0 +1,25 @@
+# Anchor workspace for repo.ing on-chain programs.
+# DEVNET / LOCALNET ONLY. There is intentionally no mainnet entry.
+[toolchain]
+anchor_version = "1.0.2"
+solana_version = "4.0.1"
+
+[features]
+resolution = true
+skip-lint = false
+
+[programs.localnet]
+repo_donation_escrow = "EYWsnGsXdyozWYuTY2CxYjCrPxyDFHvhxarn2Qcwzv51"
+
+[programs.devnet]
+repo_donation_escrow = "EYWsnGsXdyozWYuTY2CxYjCrPxyDFHvhxarn2Qcwzv51"
+
+[workspace]
+members = ["repo-donation-escrow"]
+
+[provider]
+cluster = "localnet"
+wallet = "./target/deploy/devnet-deployer-keypair.json"
+
+[scripts]
+test = "cargo test -p repo-donation-escrow --test escrow"

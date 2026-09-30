@@ -49,6 +49,7 @@ test-ledger/
 *-ledger/
 
 # Generated output
+/programs/target/
 artifacts/
 build/
 dist/
