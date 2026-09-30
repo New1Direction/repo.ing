@@ -41,7 +41,8 @@ test('parseBuyAmount converts decimal SOL to exact lamports and enforces the cap
 test('parseAccount accepts wallets and rejects malformed or off-curve addresses', () => {
   assert.equal(parseAccount(wallet.toBase58()).toBase58(), wallet.toBase58())
   const [pda] = PublicKey.findProgramAddressSync([Buffer.from('x')], SystemProgram.programId)
-  for (const bad of [undefined, 42, '', 'not-a-key', `${wallet.toBase58()}x`, pda.toBase58()])
+  for (const bad of [undefined, 42, '', 'not-a-key', // Two extra characters: a 43-char address plus one can still decode to a valid 32-byte key.
+    `${wallet.toBase58()}xx`, pda.toBase58()])
     assert.throws(() => parseAccount(bad), /Invalid account/)
 })
 
