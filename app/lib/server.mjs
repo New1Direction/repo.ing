@@ -7,6 +7,7 @@ import { createReconciler } from '../../src/reconcile.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
 import { selectAboutToGraduate } from './about-to-graduate.mjs'
+import { marketRowStats } from './market-row-stats.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -58,8 +59,16 @@ async function loadMarkets() {
         coalesce(t.volume, 0)::text as "volume24hLamports",
         b.wallet as "beneficiaryWallet", exists (
           select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin'
-        ) as "wasVerified"
+        ) as "wasVerified",
+        case when coalesce(dp.slot, -1) > coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice",
+        o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"
       from markets m join repositories r on r.github_repo_id = m.github_repo_id
+      left join (select distinct on (pool) pool, slot, next_sqrt_price from trade_events
+        order by pool, slot desc, event_index desc) cp on cp.pool = m.pool
+      left join (select distinct on (github_repo_id) github_repo_id, slot, next_sqrt_price from damm_trade_events
+        where next_sqrt_price is not null order by github_repo_id, slot desc, event_index desc) dp on dp.github_repo_id = m.github_repo_id
+      left join graduation_observations o on o.github_repo_id = m.github_repo_id
+      left join graduation_events e on e.github_repo_id = m.github_repo_id
       left join (select github_repo_id, sum(amount_base_units) earned from builder_fee_credits group by github_repo_id) f on f.github_repo_id = m.github_repo_id
       left join (select github_repo_id, sum(amount_base_units) claimed from repo_claims where status = 'settled' group by github_repo_id) c on c.github_repo_id = m.github_repo_id
       left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
@@ -67,8 +76,11 @@ async function loadMarkets() {
         from trade_events where traded_at >= now() - interval '24 hours' group by pool) t on t.pool = m.pool
       where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
       order by m.indexed_at desc`)
-    return { markets: rows.map(row => ({ ...row, stars: Number(row.stars), forks: Number(row.forks),
-      earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString() })) }
+    const now = Date.now()
+    return { markets: rows.map(({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...row }) => ({ ...row,
+      stars: Number(row.stars), forks: Number(row.forks),
+      earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString(),
+      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) })) }
   } catch { return { markets: [], unavailable: 'Markets are temporarily unavailable.' } }
 }
 

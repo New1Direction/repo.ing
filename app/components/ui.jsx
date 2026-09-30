@@ -11,6 +11,7 @@ import { MobileNav } from './mobile-nav'
 import { WatchButton, WatchNotifications } from './watchlist'
 import { formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
+import { bondingProgress, marketCapDisplay } from '../lib/market-display.mjs'
 
 function MarketEarnings({ market, usdPerSol }) {
   const usd = formatUsdEstimate(market.earned, usdPerSol)
@@ -18,6 +19,17 @@ function MarketEarnings({ market, usdPerSol }) {
     <strong>{usd ?? `${formatSolDisplay(market.earned)} SOL`}</strong>
     <small>{BigInt(market.claimed) > 0n ? `${formatSolDisplay(market.claimed)} SOL paid` : `${formatSolDisplay(market.remaining)} SOL available`}</small>
   </span>
+}
+function MarketCap({ market, usdPerSol }) {
+  const cap = marketCapDisplay(market.priceSol, usdPerSol)
+  return <span className="table-mcap" title={cap?.title ?? 'No trades recorded yet'}>{cap?.value ?? '—'}</span>
+}
+// One thin line on the row's bottom edge; nothing is drawn when progress is unknown or stale.
+function BondingLine({ market }) {
+  const progress = bondingProgress(market)
+  if (!progress) return null
+  return <span className={`market-bonding${progress.percent >= 100 ? ' complete' : ''}`} role="progressbar" aria-label={progress.label} aria-valuemin={0} aria-valuemax={100}
+    aria-valuenow={Math.floor(progress.percent)} title={progress.label}><span style={{ transform: `scaleX(${progress.percent / 100})` }}/></span>
 }
 
 const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }]
@@ -52,4 +64,4 @@ export function GitHubLink({ repo }) { return <a className="button outline githu
 export function LoadingState({ children = 'Loading…' }) { return <div className="state-card" role="status"><LoadingSignal/>{children}</div> }
 export function ErrorState({ children }) { return <div className="state-card error" role="alert">{children}</div> }
 export function TransactionStatus({ stage, error }) { if (!stage && !error) return null; return <div className={`transaction-status ${error ? 'error' : ''}`} role="status">{!error && <LoadingSignal/>}{error || stage}</div> }
-export function MarketTable({ markets = [], usdPerSol = null, empty = 'No indexed markets yet.' }) { return <div className="market-table-scroll"><div className="market-table"><div className="market-head"><span>#</span><span>Repository</span><span>Token</span><span>24h Volume</span><span>Repo Earnings</span><span>Stars</span><span className="actions-heading">Action</span></div>{markets.length ? markets.map((market, index) => <div className="market-row" key={market.mint}><span className="row-index">{index + 1}</span><MarketLink mint={market.mint} className="table-repo"><RepoAvatar repo={market}/><span><span className="table-repo-name"><strong>{market.fullName}</strong><span className="table-repo-ticker">${market.symbol}</span><Badge tone={market.wasVerified ? 'verified' : 'muted'}>{market.wasVerified ? 'Verified' : 'Unverified'}</Badge></span><small>{market.description || 'Public repository'}</small></span></MarketLink><span className="table-token"><strong>{market.symbol}</strong><small>{market.tokenName}</small></span><span className="table-volume">{formatSolDisplay(market.volume24hLamports)} SOL</span><MarketEarnings market={market} usdPerSol={usdPerSol}/><span className="table-stars"><Star size={15}/>{typeof market.stars === 'number' ? market.stars.toLocaleString('en-US') : '—'}</span><span className="table-actions"><WatchButton market={market} compact/><MarketLink mint={market.mint} className="button outline table-action">Trade<ChevronRight size={15}/></MarketLink></span></div>) : <div className="table-empty">{empty}</div>}</div></div> }
+export function MarketTable({ markets = [], usdPerSol = null, empty = 'No indexed markets yet.' }) { return <div className="market-table-scroll"><div className="market-table"><div className="market-head"><span>#</span><span>Repository</span><span>Token</span><span>Market cap</span><span>24h Volume</span><span>Repo Earnings</span><span>Stars</span><span className="actions-heading">Action</span></div>{markets.length ? markets.map((market, index) => <div className="market-row" key={market.mint}><span className="row-index">{index + 1}</span><MarketLink mint={market.mint} className="table-repo"><RepoAvatar repo={market}/><span><span className="table-repo-name"><strong>{market.fullName}</strong><span className="table-repo-ticker">${market.symbol}</span><Badge tone={market.wasVerified ? 'verified' : 'muted'}>{market.wasVerified ? 'Verified' : 'Unverified'}</Badge></span><small>{market.description || 'Public repository'}</small></span></MarketLink><span className="table-token"><strong>{market.symbol}</strong><small>{market.tokenName}</small></span><MarketCap market={market} usdPerSol={usdPerSol}/><span className="table-volume">{formatSolDisplay(market.volume24hLamports)} SOL</span><MarketEarnings market={market} usdPerSol={usdPerSol}/><span className="table-stars"><Star size={15}/>{typeof market.stars === 'number' ? market.stars.toLocaleString('en-US') : '—'}</span><span className="table-actions"><WatchButton market={market} compact/><MarketLink mint={market.mint} className="button outline table-action">Trade<ChevronRight size={15}/></MarketLink></span><BondingLine market={market}/></div>) : <div className="table-empty">{empty}</div>}</div></div> }
