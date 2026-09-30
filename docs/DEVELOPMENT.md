@@ -57,6 +57,11 @@ Set `DATABASE_URL` explicitly. Drizzle's fallback database is an older test defa
 | `PLATFORM_OPERATOR_GITHUB_IDS` | Web | Immutable GitHub user IDs allowed to manage platform treasury actions; empty denies access |
 | `REPO_LIQUIDITY_*` | Web | Explicit execution gate and reviewed [protocol liquidity limits](PROTOCOL_LIQUIDITY.md); disabled by default and off in production (current liquidity is added manually) |
 | `REPO_BUYBACK_*`, `REPO_TOKEN_MINT`, `REPO_TREASURY_TOKEN_ACCOUNT` | Web | Separate [buyback configuration](PLATFORM_REVENUE.md); execution remains disabled (current buybacks are manual; see `scripts/platform-sweep.mjs`) |
+| `LAUNCH_ALERTS_ENABLED` | Worker | `true` turns on public [launch alerts](PRODUCTION.md#launch-alerts); also needs the cutoff and a configured channel |
+| `LAUNCH_ALERTS_SINCE` | Worker | ISO timestamp; only markets indexed at/after it (and within 24 hours) are posted |
+| `LAUNCH_ALERTS_MAX_PER_DAY` | Worker | Optional per-channel cap over 24 hours (default 15) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Worker | Telegram launch alerts: bot token and `@channel` or numeric chat id |
+| `X_BOT_API_KEY`, `X_BOT_API_SECRET`, `X_BOT_ACCESS_TOKEN`, `X_BOT_ACCESS_SECRET` | Worker | X launch alerts (OAuth 1.0a user context, Read and Write); separate from `X_CLIENT_ID`/`X_CLIENT_SECRET` |
 
 Secrets are server-only. The worker needs database/RPC/config access and signed-intent records, not either signer secret. Turning off discovery enrollment does not cancel existing reward obligations. The backup service has separate credentials described in [Backups](BACKUPS.md).
 

@@ -20,6 +20,7 @@ import { createTipTransferRecovery, createTipWalletMonitor } from '../src/tip-tr
 import { createPartsFundJobs } from '../src/parts-settlement.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
+import { createLaunchAlerts, createLaunchAlertSenders, createLaunchAlertStore, LaunchAlertConfigError, launchAlertsConfig } from '../src/launch-alerts.mjs'
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
@@ -101,6 +102,19 @@ let buybackReceiptTask=null,nextBuybackReceiptCheck=0
 async function observeBuybackReceipts(){
   try{console.log(JSON.stringify({buybackReceipts:await buybackReceipts.runOnce()}))}
   catch{console.log(JSON.stringify({buybackReceiptError:'BUYBACK_RECEIPTS_UNAVAILABLE'}))}
+}
+// Public "new market launched" posts to Telegram/X. Off unless LAUNCH_ALERTS_ENABLED=true, LAUNCH_ALERTS_SINCE and a
+// channel's credentials are set; silent when off. Posts are claimed in launch_alerts before sending (never twice).
+let launchAlerts=null,launchAlertTask=null,nextLaunchAlertCheck=0
+try{
+  const launchAlertConfig=launchAlertsConfig()
+  if(launchAlertConfig)launchAlerts=createLaunchAlerts({store:createLaunchAlertStore(pool),config:launchAlertConfig,senders:createLaunchAlertSenders(launchAlertConfig)})
+}catch(error){console.log(JSON.stringify({launchAlertError:error instanceof LaunchAlertConfigError?error.message:'LAUNCH_ALERTS_CONFIG_INVALID'}))}
+async function deliverLaunchAlerts(){
+  try{
+    const r=await launchAlerts.runOnce()
+    if(r.posts?.length||r.interrupted?.length||r.skipped==='LAUNCH_ALERTS_NOT_MIGRATED')console.log(JSON.stringify({launchAlerts:r}))
+  }catch{console.log(JSON.stringify({launchAlertError:'LAUNCH_ALERTS_UNAVAILABLE'}))}
 }
 // Operator-only trade canary: real prepare path, simulation only. Never signs or sends; the payer is unsigned.
 const canaryConnection=new Connection(rpc,'confirmed')
@@ -191,6 +205,11 @@ try {
       else if(!reserveDeliveryTask&&Date.now()>=nextReserveDeliveryCheck)
         reserveDeliveryTask=deliverReserveAlerts().finally(()=>{nextReserveDeliveryCheck=Date.now()+30000;reserveDeliveryTask=null})
     }
+    if(launchAlerts){
+      if(once)await deliverLaunchAlerts()
+      else if(!launchAlertTask&&Date.now()>=nextLaunchAlertCheck)
+        launchAlertTask=deliverLaunchAlerts().finally(()=>{nextLaunchAlertCheck=Date.now()+60000;launchAlertTask=null})
+    }
     if(reminders){
       if(once)await deliverBuilderReminders()
       else if(!reminderTask&&Date.now()>=nextReminderCheck)
@@ -206,4 +225,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(launchAlertTask)await launchAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

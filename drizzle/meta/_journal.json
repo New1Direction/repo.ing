@@ -239,6 +239,13 @@
       "when": 1790542598562,
       "tag": "0033_parts_funds",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790542598563,
+      "tag": "0034_launch_alerts",
+      "breakpoints": true
     }
   ]
 }
