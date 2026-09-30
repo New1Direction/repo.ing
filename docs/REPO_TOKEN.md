@@ -4,7 +4,15 @@
 
 **Status checked September 27, 2026:** the canonical market has launched and its mint is verified. The revenue policy is active. Buyback execution is off, and `REPO_TOKEN_MINT` remains unconfigured in the inspected production release.
 
-The canonical repository market is live with ticker **REPOING**. Earlier planning used `$REPO`. See the [verified identity, transaction, and initial-purchase disclosure](REPO_IDENTITY.md). Buyback execution remains disabled and the production executor mint setting is still unconfigured at the launch checkpoint.
+**Update, September 30, 2026:** the in-app buyback executor (`REPO_BUYBACK_*`), the P3 liquidity executor (`REPO_LIQUIDITY_*`), and P4 Builder Reinvest are still not enabled. The team now carries out the V1 policy manually from published wallets:
+
+- `scripts/platform-sweep.mjs`, run on the web service, claims platform fees to the partner fee wallet `H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3`, allocates 60/20/20, and moves only the buyback share still owed to the custody buyback wallet `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`. The liquidity and treasury shares stay in the partner wallet.
+- Buybacks are swapped manually from the buyback wallet (platform revenue) and from the team wallet `4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce` (team buybacks on top of the policy). The worker detects finalized $REPOING buys from these wallets and the partner fee wallet and publishes them as receipts.
+- Liquidity is added manually by the team wallet to the canonical $REPOING DAMM v2 pool `FHw49kTEEjzBhRuMff9F1Xw1bLcBpwvsaSboaAWpAcaT`. These positions are not permanently locked yet.
+
+[Stats](https://repo.ing/stats) lists every buyback and liquidity deposit with its on-chain receipt, the running buyback total, and where buybacks stand against the policy (SOL ahead or due).
+
+The canonical repository market is live with ticker **REPOING**. Earlier planning used `$REPO`. See the [verified identity, transaction, and initial-purchase disclosure](REPO_IDENTITY.md). At the launch checkpoint, buyback execution was disabled and the production executor mint setting was unconfigured; the in-app executor remains off, and buybacks are now made manually as described above.
 
 **Accepted design:** [$REPOING as the ordinary market for the repo.ing repository](REPO_SELF_LAUNCH_REVIEW.md), inheriting the current 1 billion supply, 1% builder allocation and normal discovery/fee rules. Finalized addresses and the launch receipt are recorded in [Official identity](REPO_IDENTITY.md). Publishing the mint does not enable spending. The revenue policy below is unchanged.
 
@@ -46,7 +54,7 @@ Already implemented:
 - bounded, expiring intents, operator review, and idempotency checks;
 - a disabled execution gate with required mint, destination, venue, and size/slippage settings.
 
-Still required before protocol-executed buybacks:
+Still required before in-app, protocol-executed buybacks (manual buybacks from the published wallets do not use this path):
 
 1. Bind the [verified canonical mint and launch details](REPO_IDENTITY.md) into the reviewed runtime buyback configuration. Mint verification is complete; executor configuration remains pending.
 2. Implement and review the trading route; the present executor deliberately rejects execution because no approved venue implementation exists.
@@ -66,6 +74,6 @@ The original 50/50 migrated positions are permanently locked. Later P3 positions
 
 ## Public transparency
 
-[Protocol analytics](https://repo.ing/stats) reports verified indexed activity, settled builder payouts, and reconciled revenue reserves. Its public buyback section lists every published buyback with its on-chain receipt and a running SOL total, and its token-locks section lists every $REPOING Jupiter Lock escrow. The launch purchase is excluded. [First buyback audit](BUYBACK_AUDIT_2026_09_28.md). USD figures are current-price estimates; accounting remains in SOL lamports.
+[Protocol analytics](https://repo.ing/stats) reports verified indexed activity, settled builder payouts, and reconciled revenue reserves. Its public buyback section lists every published buyback with its on-chain receipt, a running SOL total, and the standing against the buyback policy; its liquidity section lists manual deposits into the $REPOING pool; and its token-locks section lists every $REPOING Jupiter Lock escrow. The launch purchase is excluded. [First buyback audit](BUYBACK_AUDIT_2026_09_28.md). USD figures are current-price estimates; accounting remains in SOL lamports.
 
 For exact implementation and operator steps, read [platform revenue](PLATFORM_REVENUE.md), [active policy](REVENUE_POLICY_V1.md), [first P3 deployment](P3_FIRST_LIVE_RUNBOOK.md), and [P4 preparation](BUILDER_REINVEST_PLAN.md).

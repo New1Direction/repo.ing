@@ -55,8 +55,8 @@ Set `DATABASE_URL` explicitly. Drizzle's fallback database is an older test defa
 | `PLATFORM_PARTNER_SECRET_KEY` | Web | Partner authority for discovery payout signing |
 | `DISCOVERY_REWARDS_ENABLED` | Web | Enables enrollment for new launches when the partner signer is configured |
 | `PLATFORM_OPERATOR_GITHUB_IDS` | Web | Immutable GitHub user IDs allowed to manage platform treasury actions; empty denies access |
-| `REPO_LIQUIDITY_*` | Web | Explicit execution gate and reviewed [protocol liquidity limits](PROTOCOL_LIQUIDITY.md); disabled by default |
-| `REPO_BUYBACK_*`, `REPO_TOKEN_MINT`, `REPO_TREASURY_TOKEN_ACCOUNT` | Web | Separate [buyback configuration](PLATFORM_REVENUE.md); execution remains disabled |
+| `REPO_LIQUIDITY_*` | Web | Explicit execution gate and reviewed [protocol liquidity limits](PROTOCOL_LIQUIDITY.md); disabled by default and off in production (current liquidity is added manually) |
+| `REPO_BUYBACK_*`, `REPO_TOKEN_MINT`, `REPO_TREASURY_TOKEN_ACCOUNT` | Web | Separate [buyback configuration](PLATFORM_REVENUE.md); execution remains disabled (current buybacks are manual; see `scripts/platform-sweep.mjs`) |
 
 Secrets are server-only. The worker needs database/RPC/config access and signed-intent records, not either signer secret. Turning off discovery enrollment does not cancel existing reward obligations. The backup service has separate credentials described in [Backups](BACKUPS.md).
 

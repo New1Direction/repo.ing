@@ -4,6 +4,8 @@
 
 **Status: deployed with execution disabled. No canonical $REPO mint is configured in the checked production release, and no buyback can execute.** Builder and repository earnings are never part of this system; it only accounts for revenue repo.ing owns.
 
+**Status update, 2026-09-30:** the canonical $REPOING mint now exists (`59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be`; see [Official identity](REPO_IDENTITY.md)). The in-app executor described below is still disabled. Buybacks are made manually by the team: `scripts/platform-sweep.mjs` claims, allocates, and moves the owed buyback share to the custody wallet, the swap is made from that wallet (or the team wallet, on top of the policy), and the worker (`src/buyback-receipts-job.mjs`) detects and publishes the receipt. Every buyback, the running total, and the policy standing are on [Stats](https://repo.ing/stats). [Current $REPOING operations →](REPO_TOKEN.md)
+
 **Policy update, 2026-09-26:** [V1 is approved and active](REVENUE_POLICY_V1.md): **60% buyback reserve / 20% protocol liquidity / 20% treasury**. Allocation and execution remain operator-triggered; no claimed platform fees were available at activation.
 
 ## Canonical ledger (P2.1)

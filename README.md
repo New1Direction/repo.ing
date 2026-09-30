@@ -95,15 +95,15 @@ The active V1 policy allocates eligible **claimed platform revenue** as follows:
 
 | Allocation | Share | Current meaning |
 | --- | ---: | --- |
-| **$REPOING buyback reserve** | **60%** | Recorded allocation for reviewed protocol buybacks; protocol execution is inactive. |
-| **Protocol liquidity** | **20%** | Reserve for bounded, manually reviewed liquidity deployments. Execution is off. |
+| **$REPOING buyback reserve** | **60%** | Bought back manually by the team from the published buyback wallet; the in-app buyback executor is off. |
+| **Protocol liquidity** | **20%** | Added manually by the team to the canonical $REPOING pool; the in-app liquidity executor is off. |
 | **Treasury** | **20%** | Retained platform allocation for operations. |
 
 The allocation path consumes **settled platform-fee claims**: DBC collections reserve unpaid discovery rewards before payment; DAMM claims use the platform partner position. Builder earnings and discoverer obligations are separate. See [fee collection and treasury custody](docs/DBC_PLATFORM_COLLECTION.md). An accrued fee is not spendable revenue, and an allocation is not an executed purchase.
 
 **$REPOING is live through the ordinary repository launch path.** This repository was tokenized with the same 1 billion supply, 1% builder allocation and normal discovery/fee rules as other new markets. Its immutable on-chain ticker is **REPOING**; earlier planning used `$REPO`. The launch/team wallet purchased approximately **3%** for **0.856011397 SOL**, excluding launch account/network costs. The normal 1% builder allocation is separate and unlocks after verified graduation. Builder earnings remain separate from the 60/20/20 policy; eligible partner-fee claims enter that policy like other markets. [Verified mint, launch receipt, and wallet disclosure →](docs/REPO_IDENTITY.md)
 
-The buyback accounting and review controls exist; a reviewed trading executor still needs implementation before protocol purchases can be activated. There is no automated buying or promised return. Every $REPOING buyback made so far (platform revenue and team wallet) is published with its on-chain receipt and running total on [Stats](https://repo.ing/stats); the [first audit](docs/BUYBACK_AUDIT_2026_09_28.md) covers the initial two purchases. Recorded revenue allocations remain separate from the purchase total and are not proof of a live funded wallet balance. [Full $REPOING readiness and policy →](docs/REPO_TOKEN.md) · [Ordinary launch economics and review →](docs/REPO_SELF_LAUNCH_REVIEW.md)
+**Current operations:** the in-app buyback and liquidity executors are not enabled. The team runs the policy manually from published wallets: a platform-fee sweep claims fees to the partner fee wallet, allocates 60/20/20, and moves the buyback share still owed to the custody buyback wallet; buybacks are swapped from that wallet (platform revenue) and from the team wallet (team buybacks on top of the policy); liquidity is added by the team wallet to the canonical $REPOING DAMM v2 pool. A worker detects and publishes buyback receipts from those wallets. There is no automated buying or promised return. Every $REPOING buyback made so far (platform revenue and team wallet) is published with its on-chain receipt and running total on [Stats](https://repo.ing/stats); Stats also shows where buybacks stand against the policy (SOL ahead or due) and the published liquidity deposits. The [first audit](docs/BUYBACK_AUDIT_2026_09_28.md) covers the initial two purchases. Recorded revenue allocations remain separate from the purchase total and are not proof of a live funded wallet balance. [Full $REPOING readiness and policy →](docs/REPO_TOKEN.md) · [Ordinary launch economics and review →](docs/REPO_SELF_LAUNCH_REVIEW.md)
 
 ## Transparent protocol analytics
 
@@ -121,9 +121,10 @@ USD figures use the current SOL price; they are estimates, not historical dollar
 | 1% builder allocation and 2.5 SOL discovery cap | **Active for new enrolled launches**; allocation unlock requires verified graduation |
 | Find repos, discoverer leaderboard, graduation progress, protocol stats | **Live** |
 | Graduated fee capture and 60/20/20 revenue controls | **Deployed**; first real graduation remains the production milestone |
-| Protocol liquidity deployment | **Built, execution off**; first manual proof capped at 0.05 SOL investment + 0.012 SOL overhead |
-| Builder Reinvest | **Prepared, execution off** until protocol liquidity has one verified non-zero mainnet deployment and reconciliation `MATCH` |
-| $REPOING buyback execution | **Not active**; runtime mint configuration, reviewed executor, and activation still required |
+| $REPOING buybacks | **Manual, published**: the team swaps from the buyback and team wallets; receipts, running total, and policy standing on [Stats](https://repo.ing/stats). The in-app buyback executor is **off** (reviewed executor and activation still required) |
+| $REPOING protocol liquidity | **Manual, published**: the team wallet adds liquidity to the canonical $REPOING DAMM v2 pool; deposits on [Stats](https://repo.ing/stats), positions not yet locked |
+| In-app protocol liquidity executor (P3) | **Built, execution off**; first bounded run capped at 0.05 SOL investment + 0.012 SOL overhead |
+| Builder Reinvest | **Prepared, execution off** until the P3 executor has one verified non-zero mainnet deployment and reconciliation `MATCH` |
 
 No automated market launches, trading, wash-volume incentives, or spending are introduced by the discovery and analytics features.
 
