@@ -23,6 +23,14 @@ const EMPTY = {
   funded: { title: 'No funded parts lists yet', body: 'Lists that reach their goal are paid to the maintainer’s verified payout wallet and land here, with their build updates on the token page.' },
   closed: { title: 'No closed parts lists', body: 'Lists that miss their goal or are cancelled refund every backer automatically, then land here.' },
 }
+// Art from public/parts (2x WebP). Width/height are the display size; each file is twice that.
+const EMPTY_ART = { src: '/parts/empty-cat-box.webp', width: 156, height: 134 }
+const PART_KINDS = [
+  { label: 'Micro\u00ADcontrollers', src: '/parts/microcontroller.webp', width: 82, height: 66 },
+  { label: 'Motor drivers', src: '/parts/motor-driver.webp', width: 64, height: 74 },
+  { label: 'Sensors', src: '/parts/sensor.webp', width: 92, height: 52 },
+  { label: 'Robot arms', src: '/parts/arm.webp', width: 88, height: 75 },
+]
 const plural = (count, word) => `${count.toLocaleString('en-US')} ${count === 1 ? word : `${word}s`}`
 const IMAGE = /^https:\/\/pbs\.twimg\.com\//
 const tabHref = state => state === 'open' ? '/parts' : `/parts?state=${state}`
@@ -32,6 +40,9 @@ export function PartsHeader() {
     <span className="parts-browse-mark" aria-hidden="true"><Cpu size={22}/></span>
     <div><h1>Parts</h1>
       <p>Hardware lists from verified open-source maintainers. All-or-nothing: funded → paid to the builder, missed → everyone refunded.</p></div>
+    <figure className="parts-kinds"><figcaption>What people list</figcaption>
+      <ul>{PART_KINDS.map(({ label, src, width, height }) => <li key={label}>
+        <img src={src} alt="" width={width} height={height} decoding="async"/><span>{label}</span></li>)}</ul></figure>
   </header>
 }
 
@@ -89,9 +100,8 @@ function PartsRow({ fund, now, links }) {
 
 function BlankSlate({ state }) {
   const { title, body } = EMPTY[state]
-  const { Icon } = TABS.find(tab => tab.state === state)
   return <div className={`parts-blank is-${state}`}>
-    <span className="parts-blank-icon" aria-hidden="true"><Icon size={26}/></span>
+    <img className="parts-blank-art" src={EMPTY_ART.src} alt="" width={EMPTY_ART.width} height={EMPTY_ART.height} decoding="async"/>
     <h3>{title}</h3><p>{body}</p>
     <div className="parts-blank-actions">
       <Link href="/builders" className="button primary">Verify your repo</Link>
