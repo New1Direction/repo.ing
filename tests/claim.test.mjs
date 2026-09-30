@@ -128,6 +128,8 @@ test('fresh admin check sends accrued creator fees directly to bound beneficiary
   const checksBefore = githubChecks
   const originalSimulate = connection.simulateTransaction.bind(connection)
   connection.simulateTransaction = async (...args) => {
+    // One-shot hook: restore first, because preparing the side trade simulates too (trade-landing CU sizing).
+    connection.simulateTransaction = originalSimulate
     const simulation = await originalSimulate(...args)
     const canonicalTrader = createCanonicalTrader({ pool, connection, config })
     const prepared = await canonicalTrader.prepareBuy({ githubRepoId: repoId, wallet: trader.publicKey.toBase58(), amountLamports: 10_000_000n })
@@ -140,7 +142,6 @@ test('fresh admin check sends accrued creator fees directly to bound beneficiary
     const updated = await new DynamicBondingCurveClient(connection, 'finalized').state.getPool(market.pool)
     laterAccrued = BigInt(updated.poolState.creatorQuoteFee.toString()) - accrued.earnedBaseUnits
     assert.ok(laterAccrued > 0n)
-    connection.simulateTransaction = originalSimulate
     return simulation
   }
   const sessionService = createClaim({ pool, connection, config, creator, githubVerifier: {
