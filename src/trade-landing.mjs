@@ -145,14 +145,33 @@ export const maxPayoutNetworkFee = signatures => BigInt(signatures) * LAMPORTS_P
 export const PAYOUT_DUST_FEE_MULTIPLE = 20n
 export const isDustPayout = (amount, networkFee) => BigInt(amount) < PAYOUT_DUST_FEE_MULTIPLE * BigInt(networkFee)
 
+// Solana's max serialized transaction size, the default per-instruction compute budget and the per-transaction cap.
+export const PACKET_DATA_SIZE = 1232
+const DEFAULT_CU_PER_INSTRUCTION = 200_000
+const CU_LIMIT_MAX_TX = 1_400_000
+const serializedSize = tx => { const message = tx.compileMessage(); return 1 + 64 * message.header.numRequiredSignatures + message.serialize().length }
+
 const writableKeys = instructions => [...new Map(instructions.flatMap(ix => ix.keys.filter(k => k.isWritable)
   .map(k => [k.pubkey.toBase58(), k.pubkey]))).values()]
 
 // Rebuilds [limit, price, ...instructions] and signs it with every signer (fee payer first); all signatures must verify.
 export async function signedWithPriorityFee(connection, transaction, { feePayer, blockhash, signers, fetcher, log = console.warn }) {
   if (!signers?.[0]?.publicKey.equals(feePayer)) throw Error('Payout fee payer must sign first')
-  const landing = await withPriorityFee(connection, transaction, { feePayer, blockhash,
+  let landing = await withPriorityFee(connection, transaction, { feePayer, blockhash,
     writableAccounts: writableKeys(transaction.instructions), fetcher, log })
+  // A combined DBC + DAMM builder claim sits within bytes of Solana's packet limit. If both budget
+  // instructions overflow it, keep only the price (default limit: 200k CU per instruction), capping the
+  // price so the priority fee stays inside the same payout ceiling.
+  if (serializedSize(landing.transaction) > PACKET_DATA_SIZE) {
+    const units = Math.min(CU_LIMIT_MAX_TX, DEFAULT_CU_PER_INSTRUCTION * (transaction.instructions.length + 1))
+    const cap = Number(MAX_PAYOUT_PRIORITY_FEE_LAMPORTS * MICRO / BigInt(units))
+    const microLamports = Math.min(landing.microLamports, cap)
+    const tx = new Transaction({ feePayer, recentBlockhash: blockhash })
+      .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports }), ...transaction.instructions)
+    landing = { transaction: tx, computeUnitLimit: units, microLamports,
+      priorityFeeLamports: priorityFeeLamports({ units, microLamports }), limitDropped: true }
+  }
+  if (serializedSize(landing.transaction) > PACKET_DATA_SIZE) throw Error('Payout transaction exceeds the Solana packet size')
   landing.transaction.sign(...signers)
   if (!landing.transaction.verifySignatures()) throw Error('Payout transaction signatures are incomplete')
   return landing
@@ -167,7 +186,9 @@ const LANDED = ['confirmed', 'finalized']
 // node) are expected and never alter the outcome, so they are counted, not thrown.
 export async function broadcastUntilSettled(connection, raw, { signature, lastValidBlockHeight, intervalMs = REBROADCAST_INTERVAL_MS,
   maxMs = REBROADCAST_MAX_MS, sleep = pause, now = Date.now } = {}) {
-  await connection.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 0 })
+  // Preflight against the bank the blockhash came from ('confirmed'), not the connection's default commitment:
+  // a finalized connection has not seen a fresh confirmed blockhash yet ("Blockhash not found").
+  await connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 0 })
   const deadline = now() + maxMs
   let sends = 1, rebroadcastErrors = 0
   while (now() < deadline) {

@@ -219,7 +219,7 @@ const loop = (c, extra = {}) => broadcastUntilSettled(c.connection, Buffer.from(
 test('rebroadcast resends the same signed bytes every interval and stops once confirmed', async () => {
   const c = chain({ confirmAt: 3 })
   assert.deepEqual(await loop(c), { state: 'confirmed', sends: 3, rebroadcastErrors: 0 })
-  assert.deepEqual(c.sends[0].options, { skipPreflight: false, maxRetries: 0 })
+  assert.deepEqual(c.sends[0].options, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 0 })
   assert.ok(c.sends.slice(1).every(s => s.options.skipPreflight === true && s.options.maxRetries === 0))
   assert.ok(c.sends.every(s => s.raw.equals(Buffer.from([1, 2, 3]))))
   assert.equal(c.clock.t, 6000)
