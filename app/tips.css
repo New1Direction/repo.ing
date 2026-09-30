@@ -97,3 +97,32 @@
   .my-tips-state{justify-content:flex-start}
 }
 @media(prefers-reduced-motion:reduce){.tip-tokens button{transition:none}.tip-tokens button:active:not(:disabled){transform:none}}
+
+/* Token page tip jar: header pill (always above the fold) and the card under the trade panel. */
+.tip-jar-slot{margin-top:10px;min-height:32px}
+.tip-jar-pill{display:inline-flex;align-items:center;gap:6px;height:32px;min-width:128px;max-width:100%;padding:0 13px;border:1px solid color-mix(in srgb,var(--green) 45%,var(--border));border-radius:999px;background:color-mix(in srgb,var(--green) 11%,transparent);color:var(--text);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;transition:background-color .15s,border-color .15s}
+.tip-jar-pill svg{flex:none;color:var(--green)}
+.market-price .tip-jar-pill span{display:inline;color:var(--muted);font-size:13px}
+.market-price .tip-jar-pill b{color:var(--dim);font-weight:400}
+.market-price .tip-jar-pill strong{display:inline;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.tip-jar-pill:hover{background:color-mix(in srgb,var(--green) 18%,transparent);border-color:var(--green)}
+.tip-jar-pill:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.tip-jar-pill.is-loading{cursor:default;opacity:.7}
+.tip-jar-card{margin-top:0;display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:18px 20px;min-height:236px}
+.tip-jar-top{display:flex;flex-direction:column;gap:4px}
+.tip-jar-top h3{display:flex;align-items:center;gap:7px;margin:0;font-size:13px;font-weight:600;color:var(--muted)}
+.tip-jar-top h3 svg{color:var(--green)}
+.tip-jar-total{font-size:30px;line-height:1.15;letter-spacing:-.03em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.tip-jar-card .tip-breakdown{gap:6px;order:0}
+.tip-jar-card .tip-breakdown li{flex-direction:row;align-items:baseline;gap:8px;padding:6px 10px}
+.tip-jar-card .tip-breakdown strong{font-size:13px}
+.tip-jar-empty{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+.tip-jar-status{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;color:var(--muted)}
+.tip-jar-status>span{flex:none;width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.tip-jar-status>span.is-verified{background:var(--green)}
+.tip-jar-card .tip-jar-cta{width:100%;justify-content:center;margin-top:auto}
+.tip-jar-links{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 16px;font-size:13px}
+.tip-jar-links a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+.tip-jar-links a:hover{color:var(--text)}
+@media(max-width:700px){.tip-jar-card{padding:16px;min-height:220px}.tip-jar-total{font-size:26px}}
+@media(prefers-reduced-motion:reduce){.tip-jar-pill{transition:none}}

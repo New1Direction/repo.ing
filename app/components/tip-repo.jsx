@@ -18,7 +18,7 @@ const KIND_LABEL = { native: 'Crypto', stable: 'Stablecoin', xstock: 'Stock' }
 
 // "Tip this repo": pick an approved token and amount, approve one transaction in your wallet. The tip is held by the
 // repo.ing tip wallet until the verified maintainer claims it (or refundable to you after 90 days if unclaimed).
-export function TipRepo({ repoId, fullName, className = 'button outline' }) {
+export function TipRepo({ repoId, fullName, className = 'button outline', label = null, ariaLabel }) {
   const router = useRouter()
   const { wallet, connect, provider } = useWallet()
   const [open, setOpen] = useState(false)
@@ -81,7 +81,7 @@ export function TipRepo({ repoId, fullName, className = 'button outline' }) {
   }
 
   return <>
-    <button ref={trigger} type="button" className={className} onClick={() => setOpen(true)}><Gift size={16} aria-hidden="true"/>Tip this repo</button>
+    <button ref={trigger} type="button" className={className} aria-label={ariaLabel} aria-haspopup="dialog" onClick={() => setOpen(true)}><Gift size={16} aria-hidden="true"/>{label ?? 'Tip this repo'}</button>
     {open && <div className="wallet-overlay" onMouseDown={event => { if (event.target === event.currentTarget) close() }}>
       <div ref={dialog} className="wallet-dialog tip-dialog" role="dialog" aria-modal="true" aria-labelledby="tip-dialog-title">
         <div className="wallet-dialog-heading"><div><span>Tip the maintainer</span><h2 id="tip-dialog-title">{fullName}</h2></div><button type="button" aria-label="Close tip dialog" disabled={busy} onClick={close}><X size={21}/></button></div>

@@ -659,3 +659,52 @@ body{overflow-x:clip}
 @media(max-width:900px){.buyback-status-grid{grid-template-columns:1fr}}
 .buyback-mission{margin:10px 0 0;max-width:880px;line-height:1.6}
 .buyback-status-grid .positive{display:block;white-space:normal}
+
+/* Token page declutter: trade column, share menu, slim graduation bar, tabbed details. */
+.market-side{display:grid;gap:18px;align-content:start;min-width:0}
+@media(min-width:1051px){.market-grid>.market-side{grid-column:2;grid-row:1/span 2}}
+.share-market-actions{align-items:center}
+.share-menu{position:relative;display:inline-flex}
+.share-menu-caret{transition:transform .15s}
+.share-menu>[aria-expanded=true] .share-menu-caret,.share-menu-panel [aria-expanded=true] .share-menu-caret{transform:rotate(180deg)}
+.share-menu-panel{position:absolute;z-index:50;right:0;top:calc(100% + 8px);width:272px;max-width:calc(100vw - 32px);display:grid;gap:2px;padding:6px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);box-shadow:0 12px 32px #0000004d;text-align:left}
+.share-menu-panel>button{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:6px;background:none;color:var(--text);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.share-menu-panel>button svg{flex:none;color:var(--muted)}
+.share-menu-panel>button .share-menu-caret{margin-left:auto}
+.share-menu-panel>button:hover,.share-menu-panel>button:focus-visible{background:var(--surface2)}
+.share-menu-panel>button:focus-visible{outline:2px solid var(--green);outline-offset:-2px}
+.share-menu-panel .badge-panel{padding:10px;margin-top:4px;border-top:1px solid var(--border)}
+.share-menu-panel .badge-panel p{font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 10px}
+.share-menu-panel .badge-panel .menu-heading{display:none}
+@media(max-width:700px){.market-price .share-menu{position:static}.market-price .share-menu-panel{left:0;right:auto;width:min(300px,100%)}}
+.market-page .graduation-bar{position:relative;margin:0 0 16px;padding:10px 16px;min-height:50px;display:flex;flex-direction:column;justify-content:center;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.012)}
+.graduation-row{display:flex;align-items:center;gap:8px 14px;min-height:28px}
+.graduation-row h3{margin:0;font-size:13px;font-weight:600;white-space:nowrap}
+.graduation-row .bonding-track{flex:1 1 160px;min-width:0}
+.graduation-percent{font-size:13px;font-variant-numeric:tabular-nums}
+.graduation-to-go,.graduation-pending{margin:0;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.graduation-pending{white-space:normal}
+.graduation-pool{font-size:13px;color:var(--green)}.graduation-pool:hover{text-decoration:underline}
+.graduation-details{margin-left:auto;font-size:12px;color:var(--muted)}
+.graduation-details summary{cursor:pointer;white-space:nowrap}
+.graduation-details>div{position:absolute;z-index:20;right:0;top:calc(100% + 6px);width:min(440px,100%);padding:14px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface);box-shadow:0 12px 32px #0000004d;line-height:1.55}
+.graduation-details p{margin:0 0 8px;color:var(--text);overflow-wrap:anywhere}
+.graduation-details small{display:block;color:var(--muted);font-size:12px}
+.graduation-details small strong{color:var(--text)}
+.graduation-details dl{display:grid;gap:6px;margin:0}.graduation-details dl>div{display:flex;justify-content:space-between;gap:12px}.graduation-details dd{margin:0;color:var(--text);font-variant-numeric:tabular-nums}
+.graduation-migrating{margin:8px 0 0;font-size:13px;color:var(--muted)}
+@media(max-width:700px){.market-page .graduation-bar{padding:10px 14px}.graduation-row{flex-wrap:wrap}.graduation-row .bonding-track{order:5;flex-basis:100%}}
+.market-details{margin-top:26px}
+.market-details>h2{margin:0;font-size:18px}
+.details-tabs{display:flex;gap:2px;margin:10px 0 14px;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none}
+.details-tabs button{flex:none;padding:10px 14px;margin-bottom:-1px;border:0;border-bottom:2px solid transparent;background:none;color:var(--muted);font:inherit;font-size:14px;font-weight:500;cursor:pointer}
+.details-tabs button:hover{color:var(--text)}
+.details-tabs button[aria-selected=true]{color:var(--text);border-bottom-color:var(--green)}
+.details-tabs button:focus-visible,.details-panel:focus-visible{outline:2px solid var(--green);outline-offset:-2px;border-radius:4px}
+.details-panel .inner-card{min-width:0}
+.details-panel .inner-card h3{margin-bottom:16px}
+.details-rewards{display:grid;gap:16px}
+@media(min-width:1051px){.details-panel .earnings-card{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,360px);column-gap:40px;align-items:start}.details-panel .earnings-card>*{grid-column:1}.details-panel .earnings-card>.earnings-claim{grid-column:2;grid-row:1/span 2;align-self:center}.details-panel .earnings-card>.invite-owner{grid-column:2;grid-row:3/span 2}}
+.details-rewards>section{margin:0}
+[data-theme=light] .share-menu-panel,[data-theme=light] .graduation-details>div{box-shadow:0 12px 32px rgba(25,34,28,.14)}
+@media(prefers-reduced-motion:reduce){.share-menu-caret{transition:none}}

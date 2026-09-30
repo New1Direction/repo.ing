@@ -20,7 +20,9 @@ import { InviteOwner } from '../../../components/invite-owner'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { OFFICIAL_TOKEN } from '../../../lib/official-token.mjs'
 import { TeamTokenLocks } from '../../../components/team-token-locks'
-import { RepoTips } from '../../../components/repo-tips'
+import { RepoTips, RepoTipsFallback, TipJarPill, TipJarPillFallback } from '../../../components/repo-tips'
+import { tipsEnabled } from '../../../lib/tips.mjs'
+import { DetailsTabs } from '../../../components/details-tabs'
 import { JsonLd } from '../../../components/json-ld'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 
@@ -48,36 +50,47 @@ export default async function Token({ params, searchParams }) {
   const repo = { ...displayRepository(market), mint: market.mint }
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
+  const tips = tipsEnabled()
+  const rewards = market.allocationVersion === 1 || [1, 2].includes(market.discoveryVersion)
+  const tabs = [
+    { id: 'repository', anchor: 'repository', label: 'Repository', content: <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense> },
+    { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
+    { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
+      <RepositoryEarnings market={market}/></Suspense> },
+    ...rewards ? [{ id: 'rewards', label: 'Rewards', content: <div className="details-rewards">
+      {market.allocationVersion === 1 && <BuilderAllocation repoId={market.repoId}/>}
+      {[1, 2].includes(market.discoveryVersion) && <DiscoveryRewards repoId={market.repoId}/>}</div> }] : [],
+  ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <div className="market-title"><div><RepoIdentity repo={repo} heading/><RepoStats repo={repo} detailed/><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense></div>
-      <div className="market-price"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}<CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}/></div>
+      <div className="market-price"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}
+        {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
+        <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}/></div>
     </div>
     <div className="market-nav"><Link className={!activity ? 'active' : ''} href={`/token/${mint}`}>Market</Link>
-      <Link href={`/token/${mint}#repository`}>Repository</Link>
+      {/* A plain same-page anchor fires hashchange, which opens the Details "Repository" tab. */}
+      <a href={activity ? `/token/${mint}#repository` : '#repository'}>Repository</a>
       <Link className={activity ? 'active' : ''} href={`/token/${mint}?view=activity`}>Activity</Link>
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
-      <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}/>
-      <Suspense fallback={<MoreMarketsFallback featured={official}/>}><MoreMarketsContent mint={market.mint} featured={official}/></Suspense>
-      <div className="market-bottom">
-        <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense>
-        <div className="inner-card token-details"><h3>Token details</h3><dl>
-          <div><dt>Token name</dt><dd>{market.tokenName}</dd></div><div><dt>Ticker</dt><dd>{market.symbol}</dd></div>
-          <div><dt>Mint address</dt><dd><CopyAddress address={market.mint}/></dd></div>
-          <div><dt>Decimals</dt><dd>6</dd></div>
-          <div><dt>Pool</dt><dd title={market.pool}>{market.pool.slice(0,6)}…{market.pool.slice(-4)}</dd></div>
-        </dl></div>
-        <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
-          <RepositoryEarnings market={market}/>
-        </Suspense>
-      </div>
-      <Suspense fallback={null}><RepoTips market={market}/></Suspense>
+      <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}
+        aside={tips ? <Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense> : null}/>
+      <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
+        <DetailsTabs tabs={tabs} initial="earnings" label={`${market.symbol} details`}/></section>
       {official && <TeamTokenLocks/>}
-      {market.allocationVersion === 1 && <BuilderAllocation repoId={market.repoId}/>}
-      {[1, 2].includes(market.discoveryVersion) && <DiscoveryRewards repoId={market.repoId}/>}
+      <Suspense fallback={<MoreMarketsFallback featured={official}/>}><MoreMarketsContent mint={market.mint} featured={official}/></Suspense>
     </>}
   </main><Footer/></>
+}
+
+function TokenDetails({ market }) {
+  return <div className="inner-card token-details"><h3>Token details</h3><dl>
+    <div><dt>Token name</dt><dd>{market.tokenName}</dd></div><div><dt>Ticker</dt><dd>{market.symbol}</dd></div>
+    <div><dt>Mint address</dt><dd><CopyAddress address={market.mint}/></dd></div>
+    <div><dt>Decimals</dt><dd>6</dd></div>
+    <div><dt>Pool</dt><dd title={market.pool}>{market.pool.slice(0,6)}…{market.pool.slice(-4)}</dd></div>
+  </dl></div>
 }
 
 // Same memoized listMarkets() rows as the home tabs: no extra query per token page view.
