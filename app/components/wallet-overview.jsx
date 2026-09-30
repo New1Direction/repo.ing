@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useWallet } from './wallet'
 import { CopyAddress } from './copy-address'
@@ -16,6 +16,7 @@ export function WalletOverview() {
   const { wallet, connect, restoring, provider } = useWallet()
   const [data, setData] = useState(null), [error, setError] = useState(''), [refresh, setRefresh] = useState(0)
   const [tab, setTab] = useState('Holdings')
+  const tabsRef = useRef(null)
   useEffect(() => {
     setData(null); setError('')
     if (!wallet) return
@@ -46,9 +47,12 @@ export function WalletOverview() {
   return <><div className="wallet-overview-heading"><CopyAddress address={wallet} compact label="wallet address"/><button className="button outline" onClick={() => setRefresh(v => v + 1)}>Refresh</button></div>
     {error && <p role="alert" className="inline-error">{error} {current && 'Values below are from the last successful refresh.'}</p>}
     {!current ? <p role="status">{error ? 'Wallet data unavailable.' : 'Loading balances and rewards…'}</p> : <>
-      <div className="wallet-summary">{current.holdingsAvailable && portfolio && <div className="inner-card wallet-portfolio"><span>Portfolio value</span><strong>{current.pricesAvailable ? `${formatSolDisplay(portfolio.valueLamports)} SOL` : '—'}</strong>{current.pricesAvailable && totalUsd && <em>≈ {totalUsd}</em>}<small>{portfolioNote(portfolio, current.pricesAvailable)}</small></div>}<div className="inner-card"><span>SOL balance</span><strong>{formatSolDisplay(current.solBalance)} SOL</strong></div><div className="inner-card"><span>Markets launched</span><strong>{rows.filter(m => m.launchedByYou).length}</strong></div><LauncherRewards totals={current.launcherRewards} onClaim={() => setTab('Rewards')}/></div>
+      <div className="wallet-summary">{current.holdingsAvailable && portfolio && <div className="inner-card wallet-portfolio"><span>Portfolio value</span><strong>{current.pricesAvailable ? `${formatSolDisplay(portfolio.valueLamports)} SOL` : '—'}</strong>{current.pricesAvailable && totalUsd && <em>≈ {totalUsd}</em>}<small>{portfolioNote(portfolio, current.pricesAvailable)}</small></div>}<div className="inner-card"><span>SOL balance</span><strong>{formatSolDisplay(current.solBalance)} SOL</strong></div><div className="inner-card"><span>Markets launched</span><strong>{rows.filter(m => m.launchedByYou).length}</strong></div><LauncherRewards totals={current.launcherRewards} claimable={rows.filter(m => BigInt(m.discovery?.remaining ?? '0') > 0n)} onShowAll={() => {
+        // The tabs sit below the fold on phones: switch and bring the claim list into view.
+        setTab('Rewards'); requestAnimationFrame(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+      }}/></div>
       <ReferralEarnings wallet={wallet} provider={provider}/>
-      <div className="segmented" role="tablist" aria-label="Your markets">{['Holdings', 'Launched', 'Rewards'].map(name => <button key={name} role="tab" aria-selected={tab === name} className={tab === name ? 'selected' : ''} onClick={() => setTab(name)}>{name}</button>)}</div>
+      <div className="segmented" role="tablist" aria-label="Your markets" ref={tabsRef}>{['Holdings', 'Launched', 'Rewards'].map(name => <button key={name} role="tab" aria-selected={tab === name} className={tab === name ? 'selected' : ''} onClick={() => setTab(name)}>{name}</button>)}</div>
       {tab === 'Holdings' && !current.holdingsAvailable ? <p role="status" className="state-card">Token balances are temporarily unavailable. Your launches and rewards are still available in their tabs.</p> : shown.length ? <div className="wallet-market-list">{shown.map(m => <article className="inner-card wallet-market" key={m.mint}>
         <Link className="wallet-market-title" href={`/token/${m.mint}`}><img src={`/api/repo-logo/${m.repoId}?v=3&w=128`} alt="" width={44} height={44} loading="lazy" decoding="async"/><div><strong>${m.symbol}</strong><span>{m.fullName}</span></div></Link>
         <div className="wallet-market-values"><span>You hold<strong>{tokenBalanceLabel(m.balanceBaseUnits)} {m.symbol}</strong></span>{BigInt(m.balanceBaseUnits ?? '0') > 0n && <span className="wallet-market-value">Value<strong>{m.valueLamports === null ? '—' : `${formatSolDisplay(m.valueLamports)} SOL`}</strong><small>{m.priceSol === null ? 'Price pending' : `${formatUsdEstimate(m.valueLamports, usdPerSol) ? `≈ ${formatUsdEstimate(m.valueLamports, usdPerSol)} · ` : ''}${chartPriceLabel(m.priceSol)} SOL each`}</small></span>}{m.discovery && <span className={BigInt(m.discovery.remaining) > 0n ? 'wallet-launcher-claimable' : ''}>{BigInt(m.discovery.remaining) > 0n ? 'You earned as launcher' : 'Launcher rewards'}<strong>{formatSolDisplay(m.discovery.remaining)} SOL to claim</strong><small>{formatSolDisplay(m.discovery.earned)} SOL earned · {formatSolDisplay(m.discovery.paid)} SOL paid</small></span>}{m.builderWallet && <span>Builder fees available<strong>{formatSolDisplay(m.builderAvailable)} SOL</strong><small>Eligibility is checked when claiming.</small></span>}{m.launchedByYou && !m.discovery && <span className="muted">Launched before discovery rewards</span>}</div>
@@ -60,14 +64,17 @@ export function WalletOverview() {
 }
 
 // Launcher (discovery) rewards across every market this wallet launched. Claims stay per market on each
-// token page, where the launcher wallet signs; this tile only totals them and points there.
-function LauncherRewards({ totals, onClaim }) {
+// token page, where the launcher wallet signs; this tile totals them and opens the claim: the token page's
+// rewards tab for one market, or the Rewards list (one Claim button per market) for several.
+function LauncherRewards({ totals, claimable: markets, onShowAll }) {
   if (!totals) return <div className="inner-card"><span>Launcher rewards</span><strong>—</strong><small>Temporarily unavailable.</small></div>
   const claimable = BigInt(totals.claimable) > 0n
   return <div className={`inner-card wallet-launcher${claimable ? ' is-claimable' : ''}`}><span>Launcher rewards to claim</span>
     <strong>{formatSolDisplay(totals.claimable)} SOL</strong>
     <small>{totals.markets ? `${formatSolDisplay(totals.earned)} SOL earned · ${formatSolDisplay(totals.paid)} SOL paid · ${totals.markets} ${totals.markets === 1 ? 'market' : 'markets'}` : 'Launch a repository to earn 50% of repo.ing’s partner trading fees on it until graduation.'}</small>
-    {claimable && <button type="button" className="button primary" onClick={onClaim}>Claim {totals.claimableMarkets > 1 ? `from ${totals.claimableMarkets} markets` : 'now'}</button>}</div>
+    {claimable && (markets.length === 1
+      ? <Link className="button primary" href={`/token/${markets[0].mint}#rewards`}>Claim now</Link>
+      : <button type="button" className="button primary" onClick={onShowAll}>Claim from {totals.claimableMarkets} markets</button>)}</div>
 }
 
 const byClaimable = rows => [...rows].sort((a, b) => {
