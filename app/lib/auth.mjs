@@ -65,17 +65,18 @@ export function readBuilderReview(value, session) {
   return review
 }
 // Pins the payout wallet a maintainer reviewed before claiming tips; the server re-checks it against the current binding.
-export function readTipReview(value, session) {
+// `purpose` 'parts-collect-review' pins the same wallet review for a parts fund's close & collect (with its fundId).
+export function readTipReview(value, session, purpose = 'tip-claim-review') {
   const review = unseal(value)
-  if (!session || review?.purpose !== 'tip-claim-review' || review.sessionId !== session.sessionId ||
+  if (!session || review?.purpose !== purpose || review.sessionId !== session.sessionId ||
       review.githubUserId !== session.githubUserId || !/^[1-9]\d*$/.test(review.repoId || '') ||
       (session.scope !== 'builders' && review.repoId !== session.repoId) || !review.wallet || !review.boundAt) {
     throw new Error('Tip claim review expired. Refresh and review again.')
   }
   return review
 }
-export function sealTipReview(session, { repoId, wallet, boundAt }) {
-  return seal({ purpose: 'tip-claim-review', sessionId: session.sessionId, githubUserId: session.githubUserId, repoId: String(repoId),
+export function sealTipReview(session, { repoId, wallet, boundAt, fundId }, purpose = 'tip-claim-review') {
+  return seal({ purpose, sessionId: session.sessionId, githubUserId: session.githubUserId, repoId: String(repoId), ...(fundId ? { fundId } : {}),
     wallet, boundAt: new Date(boundAt).toISOString(), expiresAt: Math.min(session.expiresAt, Date.now() + 30 * 60_000) })
 }
 export function assertSameOrigin(request, origin) {
