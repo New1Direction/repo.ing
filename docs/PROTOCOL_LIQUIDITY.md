@@ -6,6 +6,8 @@
 
 **Subsequent policy and first-run lock:** [V1 60/20/20](REVENUE_POLICY_V1.md) is active. The [first-live runbook](P3_FIRST_LIVE_RUNBOOK.md) locks investment to **at most 0.05 SOL** plus **at most 0.012 SOL overhead**, with one manual, operator-reviewed attempt. Claimed platform revenue remains zero; the last finalized check of 16 indexed markets found none graduated. Execution remains off and no live LP deployment has occurred.
 
+**Update, 2026-09-30:** the P3 executor described here is still off and has made no deployment. Separately, the team adds the policy's liquidity share manually from the team wallet to the canonical $REPOING DAMM v2 pool `FHw49kTEEjzBhRuMff9F1Xw1bLcBpwvsaSboaAWpAcaT`. Those deposits do not use this feature; their receipts are published on [Stats](https://repo.ing/stats) and recorded in `app/lib/liquidity-receipts.mjs`. The positions are not permanently locked yet.
+
 ## What it does
 
 An operator can use the liquidity portion of **settled platform fee claims** to deepen a repository's canonical graduated DAMM v2 pool. An atomic transaction swaps part of the reviewed SOL budget for that pool's token, then deposits both assets into a new LP position. Existing builder earnings, discovery entitlements, unclaimed fees, and buyback allocations cannot fund the economic budget. Any purchased tokens left after the bounded deposit remain in the protected partner wallet.

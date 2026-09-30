@@ -20,12 +20,12 @@ Launch open source markets. Every trade pays the builders.
 ## $REPOING and platform economics
 
 - [Official identity](REPO_IDENTITY.md) — finalized mint, launch wallet, transaction, and initial purchase.
-- [$REPOING and revenue policy](REPO_TOKEN.md) — ordinary repository-market rules; buyback execution inactive.
+- [$REPOING and revenue policy](REPO_TOKEN.md) — ordinary repository-market rules; buybacks run manually from published wallets, in-app executor off.
 - [Self-launch economics](REPO_SELF_LAUNCH_REVIEW.md) — supply, fees, positions, and separation of builder and platform earnings.
 - [60 / 20 / 20 allocation policy](REVENUE_POLICY_V1.md) — buyback reserve, protocol liquidity, and treasury.
 - [Platform fee collection](DBC_PLATFORM_COLLECTION.md) — discovery reserves, receiving treasury, and verified receipts.
 
-A reserve allocation is not an executed buyback. Protocol liquidity spending and Builder Reinvest remain disabled pending their documented activation requirements.
+A reserve allocation is not an executed buyback. The team currently executes buybacks and $REPOING liquidity manually from published wallets, with every receipt on [Stats](https://repo.ing/stats). The in-app buyback executor, the P3 protocol liquidity executor, and Builder Reinvest remain disabled pending their documented activation requirements.
 
 ## Develop and operate
 
@@ -38,7 +38,7 @@ Start with [Architecture](ARCHITECTURE.md), [Development](DEVELOPMENT.md), [Cont
 | Trading and fees | [Trading](TRADE.md), [DBC fees](FEE_CONFIG.md), [accrual](FEE_ACCRUAL.md), [external swaps](EXTERNAL_FEE_INDEXER.md), [graduated fees](GRADUATED_FEES.md) |
 | Identity and claims | [GitHub authority](GITHUB_VERIFICATION.md), [wallet binding](WALLET_BINDING.md), [claims](CLAIM.md), [reconciliation](RECONCILE.md) |
 | Graduation operations | [Readiness](FIRST_GRADUATION_READINESS.md), [first-graduation runbook](FIRST_GRADUATION_RUNBOOK.md), [reserve alerts](RESERVE_ALERTS.md) |
-| Revenue and liquidity | [Revenue accounting](PLATFORM_REVENUE.md), [protocol liquidity](PROTOCOL_LIQUIDITY.md), [first bounded deployment](P3_FIRST_LIVE_RUNBOOK.md) |
+| Revenue and liquidity | [Revenue accounting](PLATFORM_REVENUE.md), [protocol liquidity](PROTOCOL_LIQUIDITY.md), [first bounded deployment](P3_FIRST_LIVE_RUNBOOK.md) — in-app executors off; manual operations published on [Stats](https://repo.ing/stats) |
 | Builder Reinvest | [Claim-first design](BUILDER_REINVEST_PLAN.md), [local verification](BUILDER_REINVEST_VERIFICATION.md) — production disabled |
 | Discovery | [Trend sources, scoring, and review](TREND_DISCOVERY.md) |
 | Interface | [Charts](CHARTS_AND_RESPONSIVENESS.md), [market usability](MARKET_USABILITY.md), [watchlists and badges](DISCOVERY_UX.md), [claim sessions](PERFORMANCE_AND_CLAIMS.md) |

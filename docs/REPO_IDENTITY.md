@@ -57,6 +57,8 @@ GitHub confirmed that `New1Direction/repo.ing` is public and retains ID **138821
 - The verified mint is now published here. Production `REPO_TOKEN_MINT` remains unconfigured at this checkpoint; publishing an identity does not configure or activate an executor.
 - Buybacks, protocol liquidity spending, and Builder Reinvest remain **disabled**. There is no burn announcement, additional team allocation, or special launch configuration.
 
+> **Update 2026-09-30:** the block and list above record the launch checkpoint. The in-app buyback executor, P3 protocol liquidity executor, and Builder Reinvest are still disabled. The team now executes buybacks and $REPOING liquidity manually from published wallets under the 60/20/20 policy: buybacks from the custody buyback wallet `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy` and the team wallet, liquidity from the team wallet into the canonical DAMM v2 pool. Every action is published with its on-chain receipt on [Stats](https://repo.ing/stats). [Current operations →](REPO_TOKEN.md)
+
 Use **$REPOING** and the verified mint in announcements. A matching name or ticker alone does not establish identity. Updating off-chain display text would not rename immutable on-chain metadata.
 
 ## Token locks
