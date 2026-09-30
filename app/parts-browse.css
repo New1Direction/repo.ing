@@ -4,11 +4,23 @@
   --parts-mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;padding-block:52px 84px}
 [data-theme=light] .parts-browse{--parts-open:var(--green-dark);--parts-funded:#8250df;--parts-cancelled:#6b776f}
 
-.parts-browse-header{display:flex;align-items:flex-start;gap:16px;max-width:780px}
+.parts-browse-header{display:flex;align-items:flex-start;gap:16px}
+.parts-browse-header>div{min-width:0;max-width:720px}
 .parts-browse-mark{flex:none;display:grid;place-items:center;width:48px;height:48px;margin-top:4px;border-radius:12px;border:1px solid color-mix(in srgb,var(--parts-open) 35%,var(--border));
   background:color-mix(in srgb,var(--parts-open) 10%,var(--surface));color:var(--parts-open)}
 .parts-browse-header h1{margin:0;font-size:clamp(34px,3.6vw,46px);line-height:1.05;letter-spacing:-.04em}
 .parts-browse-header p{margin:10px 0 0;color:var(--muted);font-size:16px;line-height:1.5;max-width:62ch}
+
+/* "What people list": four part illustrations on small surface tiles, so the dark renders read on both themes. */
+.parts-kinds{flex:none;margin:4px 0 0 auto}
+.parts-kinds figcaption{margin:0 0 8px;color:var(--dim);font:600 11px/1 var(--parts-mono);letter-spacing:.06em;text-transform:uppercase}
+.parts-kinds ul{list-style:none;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0;padding:0}
+.parts-kinds li{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:7px;min-width:0;width:104px;padding:12px 6px 9px;border:1px solid var(--border);border-radius:10px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--parts-open) 5%,var(--surface)),var(--surface))}
+.parts-kinds img{display:block;width:auto;max-width:100%;height:52px;object-fit:contain;filter:drop-shadow(0 5px 7px rgb(0 0 0 / .35))}
+.parts-kinds span{color:var(--muted);font-size:11.5px;line-height:1.2;text-align:center;hyphens:manual}
+[data-theme=light] .parts-kinds li{background:linear-gradient(180deg,#fff,color-mix(in srgb,var(--parts-open) 4%,var(--surface2)));box-shadow:0 1px 2px rgb(16 24 20 / .06)}
+[data-theme=light] .parts-kinds img{filter:drop-shadow(0 5px 6px rgb(16 24 20 / .2))}
 
 .parts-browse-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start;margin-top:34px}
 .parts-browse-grid>.content-skeleton{border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:8px 16px}
@@ -73,10 +85,9 @@
 
 /* Blank slate, per tab. */
 .parts-blank{display:flex;flex-direction:column;align-items:center;gap:10px;padding:56px 24px 60px;text-align:center}
-.parts-blank-icon{display:grid;place-items:center;width:58px;height:58px;margin-bottom:6px;border-radius:50%;border:1px dashed color-mix(in srgb,var(--parts-open) 55%,var(--border));
-  background:color-mix(in srgb,var(--parts-open) 8%,transparent);color:var(--parts-open)}
-.parts-blank.is-funded .parts-blank-icon{color:var(--parts-funded);border-color:color-mix(in srgb,var(--parts-funded) 55%,var(--border));background:color-mix(in srgb,var(--parts-funded) 8%,transparent)}
-.parts-blank.is-closed .parts-blank-icon{color:var(--parts-cancelled);border-color:var(--border-strong);background:var(--surface2)}
+.parts-blank-art{display:block;width:156px;max-width:60%;height:auto;margin-bottom:4px;filter:drop-shadow(0 12px 22px color-mix(in srgb,var(--parts-open) 16%,transparent))}
+[data-theme=light] .parts-blank-art{filter:drop-shadow(0 10px 14px rgb(16 24 20 / .2))}
+.parts-blank.is-closed .parts-blank-art{filter:saturate(.3);opacity:.85}
 .parts-blank h3{margin:0;font-size:21px;letter-spacing:-.02em}
 .parts-blank p{margin:0;max-width:54ch;color:var(--muted);font-size:14px;line-height:1.55}
 .parts-blank-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-top:10px}
@@ -96,12 +107,15 @@
 .parts-readme-cta{margin:18px 0 10px;padding:10px 12px;border-radius:8px;border:1px solid color-mix(in srgb,var(--parts-open) 30%,var(--border));background:color-mix(in srgb,var(--parts-open) 7%,transparent);color:var(--text);font-size:13px;line-height:1.5}
 .parts-readme .button{min-height:36px;padding:0 14px;font-size:13px}
 
-@media(max-width:1000px){.parts-browse-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:1000px){.parts-browse-grid{grid-template-columns:minmax(0,1fr)}
+  .parts-browse-header{flex-wrap:wrap}.parts-kinds{flex:1 1 100%;margin:8px 0 0}.parts-kinds li{width:auto}}
 @media(max-width:700px){
   .parts-browse{padding-block:34px 60px}
   .parts-browse-header{gap:12px}
   .parts-browse-mark{width:40px;height:40px;border-radius:10px}
   .parts-browse-header p{font-size:15px}
+  .parts-kinds ul{gap:6px}.parts-kinds li{padding:10px 4px 8px}.parts-kinds img{height:40px}.parts-kinds span{font-size:11px}
+  .parts-blank-art{width:128px}
   .parts-browse-grid{margin-top:24px;gap:18px}
   .parts-box-head{padding:0 4px}
   .parts-tabs a{padding:12px 9px;font-size:13px;gap:5px}
