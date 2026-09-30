@@ -29,6 +29,7 @@ import { JsonLd } from '../../../components/json-ld'
 import { XHandle } from '../../../components/x-handle'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
+import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([feeStatus(repoId), solUsdPrice()]))
@@ -64,6 +65,7 @@ export default async function Token({ params, searchParams }) {
     { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
       <RepositoryEarnings market={market}/></Suspense> },
+    { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
     // #rewards (linked from /wallet) opens this tab so a launcher lands on the claim button.
     ...rewards ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards">
       {market.allocationVersion === 1 && <BuilderAllocation repoId={market.repoId}/>}
@@ -77,7 +79,8 @@ export default async function Token({ params, searchParams }) {
           <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
           {market.beneficiaryWallet && <Suspense fallback={null}><XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/></Suspense>}
-          {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}</div></div>
+          {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}
+          <Suspense fallback={null}><BackersPill market={market} href={activity ? `/token/${mint}#backers` : '#backers'}/></Suspense></div></div>
       <div className="market-hero-actions">
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
         <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
