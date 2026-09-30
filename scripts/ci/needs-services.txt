@@ -1,0 +1,33 @@
+# Test files that need PostgreSQL and/or solana-test-validator. They run only in the full suite (after merge).
+# Every other tests/*.test.mjs runs in the required "quick tests" check with no services; add a new file here if it needs them.
+builder-allocation
+builder-binding
+builder-payouts
+builder-reinvest
+claim
+config-rotation
+discovery-claims
+external-fee-indexer
+fee-accrual
+github-verification
+graduated-fees
+graduation-guards
+graduation-migration
+graduation-readiness
+launch-chain
+launch-coordinator
+launch-curve
+launch-first-buy
+launch-indexer
+liquidity-deployment
+market-lookup
+platform-dbc-fees
+platform-fees
+platform-revenue
+protocol-analytics
+reconcile
+referral
+reserve-alerts-integration
+trade
+trend-integration
+wallet-binding
