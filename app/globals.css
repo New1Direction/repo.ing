@@ -212,11 +212,17 @@
 .watch-error{position:absolute;z-index:30;right:0;top:calc(100% + 5px);width:220px;white-space:normal;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px;color:var(--text);font-size:12px}
 .table-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;padding-right:12px}
 .table-actions .table-action{margin:0;min-height:34px;padding:0 11px;font-size:13px}
-.market-head,.market-row{grid-template-columns:42px minmax(250px,1fr) 112px 125px 148px 76px 145px}
+.market-head,.market-row{grid-template-columns:42px minmax(230px,1fr) 104px 100px 116px 148px 72px 145px}
 .market-head .actions-heading{padding-right:15px;text-align:right}
 .market-table{min-width:0;overflow:visible}
-.market-head,.market-row{min-width:930px}
+.market-head,.market-row{min-width:990px}
 .market-table-scroll{overflow-x:auto;border-radius:8px}
+.table-mcap{white-space:nowrap;font-variant-numeric:tabular-nums}
+/* Bonding-curve progress: one thin line over the row's bottom border. Graduated rows read full. */
+.market-row{position:relative}
+.market-bonding{position:absolute;left:0;right:0;bottom:-1px;height:2px;overflow:hidden;background:var(--border)}
+.market-bonding>span{display:block;height:100%;background:var(--green);transform-origin:left center;transition:transform .3s ease}
+@media(prefers-reduced-motion:reduce){.market-bonding>span{transition:none}}
 .watchlist-settings{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 18px;border:1px solid var(--border);background:var(--surface);border-radius:6px;padding:16px;margin-bottom:20px}
 .watchlist-settings strong{font-size:14px}.watchlist-settings p{margin:5px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
 .watchlist-settings label{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
@@ -254,7 +260,7 @@
 @media(prefers-reduced-motion:reduce){.watch-button,.menu-details>summary{transition:none}}
 @media(max-width:700px){
   .market-table-scroll{overflow:visible}.market-head{display:none}
-  .market-row{min-width:0;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:16px}
+  .market-row{min-width:0;grid-template-columns:minmax(0,1fr) auto auto;gap:12px 16px;padding:16px}
   .market-row .row-index,.market-row .table-token{display:none}
   .market-row .table-repo-ticker{display:inline;font-size:13px;font-weight:650;color:var(--green)}
   .market-row .table-repo{grid-column:1/-1;min-width:0;padding:0}
@@ -262,11 +268,14 @@
   .market-row .table-repo-name strong{font-size:14px;overflow-wrap:anywhere;white-space:normal}
   .market-row .table-repo small{max-width:100%;font-size:12px}
   .market-row .table-stars{grid-row:2;grid-column:1;font-size:12px}
-  .market-row .table-actions{grid-row:2;grid-column:2;padding:0}
+  .market-row .table-actions{grid-row:2;grid-column:1/-1;justify-self:end;padding:0}
+  .market-row .table-mcap,.market-row .table-volume{padding:0}
   .market-row .table-earnings{grid-row:3;grid-column:1;min-width:0;font-size:13px}
   .market-row .table-earnings:before{content:'Builders earned';display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
   .market-row .table-earnings strong{font-size:17px}
-  .market-row .table-volume{grid-row:3;grid-column:2;text-align:right;font-size:13px}
+  .market-row .table-mcap{grid-row:3;grid-column:2;min-width:0;text-align:right;font-size:13px}
+  .market-row .table-mcap:before{content:'Market cap';display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
+  .market-row .table-volume{grid-row:3;grid-column:3;min-width:0;text-align:right;font-size:13px}
   .market-row .table-volume:before{content:'24h volume';display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
   .market-row .table-earnings small{font-size:10px}.market-table .table-empty{padding:28px 18px;white-space:normal;line-height:1.6}
 }

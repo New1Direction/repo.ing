@@ -109,3 +109,4 @@
 [data-theme=light] .wallet-market-values>.wallet-launcher-claimable strong,[data-theme=light] .discovery-note .claim-text-button{color:#16834c}
 [data-theme=light] .table-earnings.has-earnings strong,[data-theme=light] .market-hero-ticker strong{color:var(--green-dark)}
 [data-theme=light] .earnings-headline-action.verify{border-color:var(--green-dark);color:#0f6b40}[data-theme=light] .earnings-headline-action.verify:hover{background:#e6f5ec}
+[data-theme=light] .market-bonding>span{background:var(--green-dark)}
