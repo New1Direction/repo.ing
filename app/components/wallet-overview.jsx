@@ -10,6 +10,7 @@ import { tokenBalanceLabel } from '../lib/token-balance.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { xReturnShareUrl } from '../lib/share-links.mjs'
 import { XMark } from './x-mark'
+import { ArtTile } from './art-tile'
 import { useReferralPayouts } from './refer-link'
 
 export function WalletOverview() {
@@ -58,7 +59,7 @@ export function WalletOverview() {
         <div className="wallet-market-values"><span>You hold<strong>{tokenBalanceLabel(m.balanceBaseUnits)} {m.symbol}</strong></span>{BigInt(m.balanceBaseUnits ?? '0') > 0n && <span className="wallet-market-value">Value<strong>{m.valueLamports === null ? '—' : `${formatSolDisplay(m.valueLamports)} SOL`}</strong><small>{m.priceSol === null ? 'Price pending' : `${formatUsdEstimate(m.valueLamports, usdPerSol) ? `≈ ${formatUsdEstimate(m.valueLamports, usdPerSol)} · ` : ''}${chartPriceLabel(m.priceSol)} SOL each`}</small></span>}{m.discovery && <span className={BigInt(m.discovery.remaining) > 0n ? 'wallet-launcher-claimable' : ''}>{BigInt(m.discovery.remaining) > 0n ? 'You earned as launcher' : 'Launcher rewards'}<strong>{formatSolDisplay(m.discovery.remaining)} SOL to claim</strong><small>{formatSolDisplay(m.discovery.earned)} SOL earned · {formatSolDisplay(m.discovery.paid)} SOL paid</small></span>}{m.builderWallet && <span>Builder fees available<strong>{formatSolDisplay(m.builderAvailable)} SOL</strong><small>Eligibility is checked when claiming.</small></span>}{m.launchedByYou && !m.discovery && <span className="muted">Launched before discovery rewards</span>}</div>
         {BigInt(m.balanceBaseUnits ?? '0') > 0n && m.pnl && <HoldingPnl pnl={m.pnl} symbol={m.symbol}/>}
         <div className="wallet-market-actions"><Link className="button outline" href={`/token/${m.mint}`}>Trade</Link>{BigInt(m.balanceBaseUnits ?? '0') > 0n && <ShareReturn market={m}/>}{m.discovery && <Link className={BigInt(m.discovery.remaining) > 0n ? 'button primary' : 'button outline'} href={`/token/${m.mint}#rewards`}>{BigInt(m.discovery.remaining) > 0n ? `Claim ${formatSolDisplay(m.discovery.remaining)} SOL` : 'View rewards'}</Link>}{m.builderWallet && <Link className="button outline" href={`/claim/${m.repoId}`}>Claim builder fees</Link>}</div>
-      </article>)}</div> : <div className="state-card"><h3>{tab === 'Holdings' ? 'No repo.ing tokens in this wallet yet' : tab === 'Launched' ? 'Your launches will appear here' : 'No rewards for this wallet yet'}</h3><p>{tab === 'Rewards' ? 'Launch a new repository market to start earning discovery rewards from eligible trades.' : 'Explore markets or paste a GitHub repository on the homepage to launch one.'}</p><Link className="button outline" href={tab === 'Holdings' ? '/explore' : '/'}>{tab === 'Holdings' ? 'Explore markets' : 'Launch a repository'}</Link></div>}
+      </article>)}</div> : <div className="state-card has-art"><ArtTile name={EMPTY_ART[tab]} size={112}/><div><h3>{tab === 'Holdings' ? 'No repo.ing tokens in this wallet yet' : tab === 'Launched' ? 'Your launches will appear here' : 'No rewards for this wallet yet'}</h3><p>{tab === 'Rewards' ? 'Launch a new repository market to start earning discovery rewards from eligible trades.' : 'Explore markets or paste a GitHub repository on the homepage to launch one.'}</p><Link className="button outline" href={tab === 'Holdings' ? '/explore' : '/'}>{tab === 'Holdings' ? 'Explore markets' : 'Launch a repository'}</Link></div></div>}
       <p className="muted wallet-updated">Updated {new Date(current.checkedAt).toLocaleTimeString()} · Shows repo.ing markets only. Values use each market’s latest finalized trade price; USD is an estimate. P&amp;L uses average cost from this wallet’s indexed trades, before network fees.</p>
     </>}</>
 }
@@ -76,6 +77,9 @@ function LauncherRewards({ totals, claimable: markets, onShowAll }) {
       ? <Link className="button primary" href={`/token/${markets[0].mint}#rewards`}>Claim now</Link>
       : <button type="button" className="button primary" onClick={onShowAll}>Claim from {totals.claimableMarkets} markets</button>)}</div>
 }
+
+// Decorative art for each tab's empty state; the heading beside it says what is missing.
+const EMPTY_ART = { Holdings: 'repo-coin-01', Launched: 'rocket', Rewards: 'earnings-wallet' }
 
 const byClaimable = rows => [...rows].sort((a, b) => {
   const x = BigInt(a.discovery?.remaining ?? '0'), y = BigInt(b.discovery?.remaining ?? '0')

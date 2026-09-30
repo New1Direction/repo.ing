@@ -5,6 +5,7 @@ import { RepoAvatar } from './ui'
 import { GithubMark } from './github-mark'
 import { XMark } from './x-mark'
 import { WaitingCopyLink } from './waiting-copy-link'
+import { ArtTile } from './art-tile'
 import { amountDisplay, tagIntentUrl, waitingAnchor } from '../lib/waiting.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
 
@@ -13,7 +14,7 @@ const AMOUNT_NOTE = 'Builders earned from trades and not yet claimed — the sam
 export function WaitingHeader({ total, count, usdPerSol }) {
   const amount = amountDisplay(total, usdPerSol)
   const empty = count === 0
-  return <header className="waiting-intro" aria-labelledby="waiting-title">
+  return <header className="waiting-intro has-art" aria-labelledby="waiting-title"><div className="waiting-intro-copy">
     <div className="eyebrow">WAITING FOR MAINTAINERS</div>
     <h1 id="waiting-title">{empty ? 'No builder fees are waiting right now.' : <><span className="waiting-total">{amount.value}</span> is waiting for open-source maintainers</>}</h1>
     <p>Every trade on repo.ing pays the repository’s builders. A current GitHub admin verifies with GitHub, sets a payout wallet, and claims in SOL.</p>
@@ -22,7 +23,7 @@ export function WaitingHeader({ total, count, usdPerSol }) {
       <strong>How to help</strong>
       <span>Know a maintainer below? <b>Tag them on X</b> — the post links straight to their claim page.</span>
     </aside>}
-  </header>
+  </div><ArtTile name="maintainer-card" size={176} eager/></header>
 }
 
 function WaitingRow({ market, rank, usdPerSol }) {
