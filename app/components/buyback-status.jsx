@@ -12,8 +12,8 @@ export function LastBuybackTime({ last, now }) {
 
 // What the fees-since figure is, in words that match how it was computed.
 export function feesSinceLabel(since, hasLast) {
-  const when = hasLast ? 'since the last buyback' : 'so far'
-  return since.basis === 'policy' ? `Allocated to buybacks ${when}` : `Platform fees collected ${when}`
+  const when = hasLast ? 'since the last platform-wallet buyback' : 'so far'
+  return since.basis === 'policy' ? `Buyback share of fees ${when}` : `Platform fees collected ${when}`
 }
 
 // /stats: last platform-revenue buyback, fees since it, and how buybacks happen.
@@ -29,7 +29,7 @@ export function BuybackStatus({ status, now = Date.now() }) {
         : <><strong>None yet</strong><small>No platform-revenue buyback has been recorded.</small></>}</div>
       <div><span>{since ? feesSinceLabel(since, !!last) : 'Platform fees since the last buyback'}</span>{since
         ? <><strong>{formatSolDisplay(since.lamports)} SOL</strong><small>{since.basis === 'policy'
-          ? `${since.permille / 10}% buyback share of ${formatSolDisplay(since.totalLamports)} SOL in claimed platform fees, under the revenue policy above`
+          ? `${since.permille / 10}% of ${formatSolDisplay(since.totalLamports)} SOL in claimed platform fees. Team-wallet buybacks aren't subtracted here; see the policy standing for the net figure.`
           : 'Total claimed platform fees. No allocation policy is active, so no buyback share is applied.'}</small></>
         : <><strong>—</strong><small>Unavailable while platform accounting is being verified.</small></>}</div>
       <div><span>Against the buyback policy</span>{standing
