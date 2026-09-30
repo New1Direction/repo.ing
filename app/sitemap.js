@@ -4,7 +4,7 @@ const SITE = 'https://repo.ing'
 // Public, indexable pages. /builders and /wallet are noindex; operator and claim pages are private.
 const PAGES = [
   ['/', 1, 'hourly'], ['/explore', 0.9, 'hourly'], ['/launch', 0.8, 'daily'], ['/find-repos', 0.7, 'daily'],
-  ['/stats', 0.7, 'daily'], ['/parts', 0.7, 'daily'], ['/discoverers', 0.6, 'daily'], ['/how-it-works', 0.6, 'monthly'],
+  ['/stats', 0.7, 'daily'], ['/waiting', 0.7, 'hourly'], ['/parts', 0.7, 'daily'], ['/discoverers', 0.6, 'daily'], ['/how-it-works', 0.6, 'monthly'],
   ['/about', 0.5, 'monthly'], ['/ja', 0.5, 'monthly'],
 ]
 
