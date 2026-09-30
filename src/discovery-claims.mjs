@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHmac, randomUUID } from 'node:crypto'
 import { createMarketConfigResolver } from './market-config.mjs'
 import BN from 'bn.js'
 import bs58 from 'bs58'
@@ -7,6 +7,7 @@ import { ACCOUNT_SIZE, NATIVE_MINT, getAssociatedTokenAddressSync } from '@solan
 import { CollectFeeMode, DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { discoverySummary } from './discovery-rewards.mjs'
 import { provablyExpiredUnlanded } from './expiry-proof.mjs'
+import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 
 const PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const MEMO = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
@@ -16,9 +17,15 @@ const fail = message => { throw new DiscoveryClaimError(message) }
 const decode = value => Transaction.from(Buffer.from(value, 'base64'))
 const unsigned = tx => tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
 
-// The recipient pays and signs. The partner adds its signature only after wallet
-// verification, and the fully signed intent is committed BEFORE any broadcast.
+// The recipient pays and signs FIRST: wallets (Phantom) block transactions that arrive already
+// partially signed, and cannot append their Lighthouse safety assertions to them. The temporary
+// WSOL authority and the partner sign only after wallet verification, and the fully signed intent
+// is committed BEFORE any broadcast.
 export function createDiscoveryClaims({ pool, connection, config, partner = null }) {
+  // Derived per claim, so the offer can be sent unsigned and signed later without storing a key.
+  // It only authorises this claim's temporary WSOL account; nothing moves without the partner.
+  const temporaryAuthority = id => Keypair.fromSeed(createHmac('sha256', Buffer.from(partner.secretKey))
+    .update(`repo.ing discovery temporary WSOL v1:${id}`).digest())
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const withLock = async (repoId, callback) => {
@@ -140,13 +147,12 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
       }
       const receiver = new PublicKey(market.wallet)
       if (receiver.equals(partner.publicKey)) fail('The platform fee authority cannot claim discovery rewards')
-      // A unique temporary authority avoids closing either party's existing WSOL
-      // account. Its partial signature is harmless without the partner signature.
-      const temporary = Keypair.generate()
+      // A unique temporary authority avoids closing either party's existing WSOL account.
+      const id = randomUUID()
+      const temporary = temporaryAuthority(id)
       const transaction = await dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey,
         payer: receiver, receiver, tempWSolAcc: temporary.publicKey, pool: new PublicKey(market.pool),
         maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) })
-      const id = randomUUID()
       const latest = await connection.getLatestBlockhash('confirmed')
       transaction.feePayer = receiver
       transaction.recentBlockhash = latest.blockhash
@@ -155,7 +161,6 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
         `Repository ID: ${repoId}`, `Wallet: ${market.wallet}`, `Claim: ${id}`,
         `Reward lamports: ${amount}`, `Expires at block height: ${latest.lastValidBlockHeight}`,
       ].join('\n')) }))
-      transaction.partialSign(temporary)
       const estimate = await costs(transaction, market)
       const { rows } = await db.query(`insert into discovery_claims
         (id, github_repo_id, wallet, amount, status, transaction, last_valid_block_height)
@@ -179,15 +184,22 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
       const transaction = decode(encoded)
       const original = decode(claim.transaction)
       const userSignature = transaction.signatures.find(item => item.publicKey.toBase58() === market.wallet)?.signature
+      // The saved offer exactly, or it plus constrained, trailing Lighthouse assertions from the wallet.
       if (!userSignature || !transaction.verifySignatures(false) ||
-          !transaction.serializeMessage().equals(original.serializeMessage()) || claim.wallet !== market.wallet) {
+          !matchesReviewedTransaction(Buffer.from(original.serializeMessage()), transaction) || claim.wallet !== market.wallet) {
         fail('Wallet signature or discovery payout transaction does not match the saved offer')
       }
       if (await connection.getBlockHeight('confirmed') > Number(claim.last_valid_block_height)) {
         await abort(db, claim, 'Unsigned wallet offer expired')
         fail('Wallet approval expired; prepare the claim again')
       }
+      // Offers prepared before this change arrive with the temporary signature already present.
+      const temporary = temporaryAuthority(claim.id)
+      if (transaction.signatures.some(item => item.publicKey.equals(temporary.publicKey) && !item.signature)) {
+        transaction.partialSign(temporary)
+      }
       transaction.partialSign(partner)
+      if (!transaction.verifySignatures()) fail('Discovery claim signatures are incomplete or invalid')
       const signature = bs58.encode(transaction.signature)
       const raw = transaction.serialize()
       const simulation = await connection.simulateTransaction(transaction)

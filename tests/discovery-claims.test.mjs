@@ -16,6 +16,7 @@ import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { discoverySummary } from '../src/discovery-rewards.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { readBondingStatus } from '../app/lib/bonding-status.mjs'
+import { lighthouseAssertion } from '../src/trade-canary.mjs'
 
 const databaseUrl = process.env.DATABASE_URL
 assert.match(databaseUrl ?? '', /^postgres:\/\/discoverytest@127\.0\.0\.1:55439\/discovery_test$/,
@@ -101,7 +102,16 @@ test('discovery rewards: canonical enrollment, exact fees, wallet authorization,
     prepared = offers[0]
     const tx = Transaction.from(Buffer.from(prepared.transaction, 'base64'))
     assert.equal(tx.signatures.find(s => s.publicKey.equals(partner.publicKey)).signature, null)
+    // Wallets block offers that arrive partially signed: the wallet must be the first signer.
+    assert.ok(tx.signatures.every(s => s.signature === null))
     await assert.rejects(claims.submit({ repoId, id: prepared.id, transaction: prepared.transaction }), /Wallet signature/)
+    // A wallet-appended Lighthouse assertion passes the offer check. The local validator has no Lighthouse
+    // program, so it then stops at simulation, before anything is recorded or broadcast.
+    const asserted = Transaction.from(Buffer.from(prepared.transaction, 'base64')).add(lighthouseAssertion(launcher.publicKey))
+    asserted.partialSign(launcher)
+    await assert.rejects(claims.submit({ repoId, id: prepared.id,
+      transaction: asserted.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64') }), /could not be simulated/)
+    assert.equal((await pool.query('select status from discovery_claims where id = $1', [prepared.id])).rows[0].status, 'prepared')
     tx.instructions.push(SystemProgram.transfer({ fromPubkey: launcher.publicKey, toPubkey: buyer.publicKey, lamports: 1 }))
     tx.partialSign(launcher)
     await assert.rejects(claims.submit({ repoId, id: prepared.id,
