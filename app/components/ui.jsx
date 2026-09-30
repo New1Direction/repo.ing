@@ -32,7 +32,7 @@ function BondingLine({ market }) {
     aria-valuenow={Math.floor(progress.percent)} title={progress.label}><span style={{ transform: `scaleX(${progress.percent / 100})` }}/></span>
 }
 
-const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }]
+const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'parts', href: '/parts', label: 'Parts' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }]
 export function AppHeader({ active = '' }) {
   return <header className="app-header"><div className="header-inner">
     <Link href="/" className="brand"><BrandMark size={32}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link>
