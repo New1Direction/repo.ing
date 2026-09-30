@@ -7,7 +7,7 @@ import { notFound } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import { AppHeader, Footer, RepoIdentity, RepoStats, GitHubLink } from '../../../components/ui'
 import { ClaimSteps } from '../../../components/claim-steps'
-import { ArtTile } from '../../../components/art-tile'
+import { IconArt } from '../../../components/icon-art'
 import { ClaimPageTips } from '../../../components/repo-tips'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
 import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
@@ -28,7 +28,7 @@ export default async function ClaimPage({ params, searchParams }) {
   const repo = displayRepository(market)
   return <><AppHeader/><main className="section-wrap claim-page">
     <Link href={`/token/${market.mint}`} className="back-link"><ArrowLeft size={18}/>Back to repository</Link>
-    <div className="claim-intro has-art"><div><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p><small>Part of each trade fee is set aside for this repository, whether or not you’ve signed up.</small></div><ArtTile name="earnings-wallet" size={132}/></div>
+    <div className="claim-intro has-art"><div><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p><small>Part of each trade fee is set aside for this repository, whether or not you’ve signed up.</small></div><IconArt name="earnings-wallet" size={132}/></div>
     <div className="claim-repo-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo}/></div><GitHubLink repo={repo}/></div>
     <Suspense fallback={<div className="inner-card claim-loading" role="status" aria-busy="true">Checking available fees and GitHub access…</div>}>
       <ClaimContent market={market} repo={repo} query={query}/>

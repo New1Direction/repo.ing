@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { ArrowRight, BookOpen, ChartNoAxesCombined, CircleCheck, GitCommitHorizontal } from 'lucide-react'
-import { ArtTile } from './art-tile'
+import { IconArt } from './icon-art'
 
 const steps = [
   { label: 'Repository', icon: BookOpen, title: 'Start with something people build.', body: 'Paste a public GitHub repository. We check its identity and open its existing market, or help you launch one with your chosen artwork, name, and ticker.', href: '/launch', action: 'Find a repository', code: '01 / resolve repository', art: 'repository-search' },
@@ -27,7 +27,7 @@ export function RepositoryFlow() {
     </div>
     <div className="flow-panel" id="flow-panel" role="tabpanel" aria-labelledby={`flow-tab-${selected}`} tabIndex={0}>
       <div key={selected} className="flow-description"><code>{current.code}</code><h2>{current.title}</h2><p>{current.body}</p><Link href={current.href} className="button outline">{current.action}<ArrowRight size={16}/></Link></div>
-      <div className="flow-commit" aria-hidden="true"><span/><ArtTile key={current.art} name={current.art} size={184}/><span/></div>
+      <div className="flow-commit" aria-hidden="true"><span/><IconArt key={current.art} name={current.art} size={184}/><span/></div>
     </div>
   </section>
 }
