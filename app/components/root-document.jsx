@@ -1,6 +1,7 @@
 import '../globals.css'
 import '../theme.css'
 import '../tips.css'
+import '../parts-fund.css'
 import '../holder-notes.css'
 import '../x-links.css'
 import { WalletProvider } from './wallet'

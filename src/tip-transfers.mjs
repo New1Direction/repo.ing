@@ -22,8 +22,8 @@ export const transferMemo = (kind, id) => `repoing-tip-${kind}:${id}`
 const native = row => row.tokenProgram === SYSTEM_PROGRAM
 const symbolFor = mint => TIP_TOKENS.find(t => t.mint === mint)?.symbol ?? `${mint.slice(0, 4)}…`
 
-export function transferInstructions({ kind, id, source, recipient, mint, tokenProgram, decimals, amount }) {
-  const memo = new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [], data: Buffer.from(transferMemo(kind, id), 'utf8') })
+export function transferInstructions({ kind, id, source, recipient, mint, tokenProgram, decimals, amount, memo: text = transferMemo(kind, id) }) {
+  const memo = new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [], data: Buffer.from(text, 'utf8') })
   if (tokenProgram === SYSTEM_PROGRAM) return [SystemProgram.transfer({ fromPubkey: source, toPubkey: recipient, lamports: amount }), memo]
   const program = new PublicKey(tokenProgram), mintKey = new PublicKey(mint)
   const from = getAssociatedTokenAddressSync(mintKey, source, false, program)
@@ -44,11 +44,15 @@ export async function tipWalletBalance(connection, wallet, { mint, tokenProgram 
   return account.amount
 }
 
-// Confirmed tips are liabilities until a settled transfer marks them paid or refunded (a pending transfer's tips still
-// count: their tokens have not left yet).
+// Confirmed tips and confirmed parts-fund pledges are liabilities of the one tip wallet until a settled transfer marks
+// them paid or refunded (a pending transfer's rows still count: their tokens have not left yet).
 export async function tipLiabilities(db, wallet) {
-  const { rows } = await db.query(`select mint, token_program as "tokenProgram", decimals, coalesce(sum(received_amount),0)::text as amount,
-    count(*)::int as tips from repo_tips where tip_wallet=$1 and status='confirmed' group by mint, token_program, decimals`, [wallet])
+  const { rows } = await db.query(`select mint, token_program as "tokenProgram", decimals, coalesce(sum(amount),0)::text as amount,
+      count(*) filter (where ledger='tip')::int as tips, count(*) filter (where ledger='pledge')::int as pledges from (
+      select 'tip' as ledger, mint, token_program, decimals, received_amount as amount from repo_tips where tip_wallet=$1 and status='confirmed'
+      union all
+      select 'pledge', mint, token_program, decimals, received_amount from parts_pledges where tip_wallet=$1 and status='confirmed') owed
+    group by mint, token_program, decimals`, [wallet])
   return rows
 }
 
@@ -59,12 +63,12 @@ export async function tipWalletCoverage(db, connection, wallet) {
   const mints = new Map(TIP_TOKENS.map(t => [t.mint, { mint: t.mint, tokenProgram: t.program, decimals: t.decimals, symbol: t.symbol }]))
   for (const row of owed.values()) if (!mints.has(row.mint)) mints.set(row.mint, { ...row, symbol: symbolFor(row.mint) })
   return Promise.all([...mints.values()].map(async m => {
-    const liability = BigInt(owed.get(m.mint)?.amount ?? 0), tips = owed.get(m.mint)?.tips ?? 0
+    const liability = BigInt(owed.get(m.mint)?.amount ?? 0), tips = owed.get(m.mint)?.tips ?? 0, pledges = owed.get(m.mint)?.pledges ?? 0
     try {
       const balance = await tipWalletBalance(connection, key, m)
-      return { ...m, liability: liability.toString(), tips, balance: balance.toString(), short: balance < liability,
+      return { ...m, liability: liability.toString(), tips, pledges, balance: balance.toString(), short: balance < liability,
         surplus: (balance > liability ? balance - liability : 0n).toString() }
-    } catch { return { ...m, liability: liability.toString(), tips, balance: null, short: null, surplus: null } }
+    } catch { return { ...m, liability: liability.toString(), tips, pledges, balance: null, short: null, surplus: null } }
   }))
 }
 
@@ -81,7 +85,8 @@ export async function recordTipShortfall(db, wallet, rows, now = Date.now) {
 }
 
 // Session-level lock: if the unlock fails the connection is destroyed, never returned to the pool still holding it.
-async function withTipWalletLock(pool, fn) {
+// Tips and parts-fund transfers share it: they spend the same wallet against the same combined liabilities.
+export async function withTipWalletLock(pool, fn) {
   const db = await pool.connect()
   let broken = false
   try {
@@ -111,12 +116,16 @@ const groupTips = rows => {
   return [...groups.values()].map(g => ({ ...g, tips: g.tips.slice(0, MAX_TIPS_PER_TRANSFER) }))
 }
 
-async function abortTransfer(db, id, reason) {
+// The two ledgers the tip wallet pays from: same transfer lifecycle. Identifiers are these constants, never input.
+export const TIP_LEDGER = Object.freeze({ name: 'tip', transfers: 'tip_transfers', rows: 'repo_tips', count: 'tip_count', review: 'TIP_TRANSFER_REVIEW' })
+export const PARTS_LEDGER = Object.freeze({ name: 'parts', transfers: 'parts_transfers', rows: 'parts_pledges', count: 'pledge_count', review: 'PARTS_TRANSFER_REVIEW' })
+
+export async function abortTransfer(db, id, reason, ledger = TIP_LEDGER) {
   await db.query('begin')
   try {
-    const { rowCount } = await db.query(`update tip_transfers set status='aborted', resolved_at=now(), resolution_reason=$2
+    const { rowCount } = await db.query(`update ${ledger.transfers} set status='aborted', resolved_at=now(), resolution_reason=$2
       where id=$1 and status='pending'`, [id, reason])
-    if (rowCount) await db.query(`update repo_tips set transfer_id=null where transfer_id=$1 and status='confirmed'`, [id])
+    if (rowCount) await db.query(`update ${ledger.rows} set transfer_id=null where transfer_id=$1 and status='confirmed'`, [id])
     await db.query('commit')
   } catch (error) { await db.query('rollback'); throw error }
   return { id, status: 'aborted', reason }
@@ -154,21 +163,21 @@ export function verifyTransferReceipt(tx, transfer) {
   return { signature: transfer.signature, slot: tx.slot, amount: amount.toString(), networkFee: fee.toString() }
 }
 
-const TRANSFER_COLUMNS = `id, kind, github_repo_id::text as "githubRepoId", mint, token_program as "tokenProgram", decimals, source_wallet as "sourceWallet",
-  recipient, amount::text, tip_count as "tipCount", status, signature, signed_transaction as "signedTransaction",
+export const transferColumns = (ledger = TIP_LEDGER) => `id, kind, github_repo_id::text as "githubRepoId", mint, token_program as "tokenProgram", decimals,
+  source_wallet as "sourceWallet", recipient, amount::text, ${ledger.count} as "tipCount", status, signature, signed_transaction as "signedTransaction",
   last_valid_block_height::text as "lastValidBlockHeight", created_at as "createdAt", settled_at as "settledAt"`
 
-export async function settleTransfer(db, connection, transfer) {
+export async function settleTransfer(db, connection, transfer, ledger = TIP_LEDGER) {
   const tx = await connection.getTransaction(transfer.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
   if (!tx) return null
-  if (tx.meta?.err) return abortTransfer(db, transfer.id, 'Finalized transaction failed')
+  if (tx.meta?.err) return abortTransfer(db, transfer.id, 'Finalized transaction failed', ledger)
   const receipt = verifyTransferReceipt(tx, transfer)
   await db.query('begin')
   try {
-    const { rowCount } = await db.query(`update tip_transfers set status='settled', settled_at=now(), receipt=$2 where id=$1 and status='pending'`,
+    const { rowCount } = await db.query(`update ${ledger.transfers} set status='settled', settled_at=now(), receipt=$2 where id=$1 and status='pending'`,
       [transfer.id, JSON.stringify(receipt)])
     if (rowCount) {
-      const { rows: [paid] } = await db.query(`with t as (update repo_tips set status=$2, resolved_at=now() where transfer_id=$1 and status='confirmed'
+      const { rows: [paid] } = await db.query(`with t as (update ${ledger.rows} set status=$2, resolved_at=now() where transfer_id=$1 and status='confirmed'
         returning received_amount) select count(*)::int as count, coalesce(sum(received_amount),0)::text as amount from t`,
       [transfer.id, transfer.kind === 'refund' ? 'refunded' : 'paid'])
       if (paid.count !== transfer.tipCount || paid.amount !== String(transfer.amount)) throw Error('Settled tip transfer does not match its reserved tips')
@@ -176,6 +185,38 @@ export async function settleTransfer(db, connection, transfer) {
     await db.query('commit')
   } catch (error) { await db.query('rollback'); throw error }
   return { id: transfer.id, status: 'settled', mint: transfer.mint, kind: transfer.kind, ...receipt }
+}
+
+// Guard shared by every tip-wallet send: the wallet holds every confirmed liability of this mint (all tips and
+// pledges), keeps SOL for costs above SOL owed, and the mint is still safe to move.
+export async function assertTipWalletCovers(db, connection, wallet, group, now = Date.now) {
+  const liabilities = await tipLiabilities(db, wallet.toBase58())
+  const owed = mint => BigInt(liabilities.find(l => l.mint === mint)?.amount ?? 0)
+  const balance = await tipWalletBalance(connection, wallet, group)
+  if (balance < owed(group.mint)) {
+    await recordTipShortfall(db, wallet.toBase58(), [{ mint: group.mint, symbol: symbolFor(group.mint), balance: balance.toString(), liability: owed(group.mint).toString(), short: true }], now)
+    throw Error('Tip wallet balance is below confirmed tips; payouts are paused for review')
+  }
+  const lamports = BigInt(await connection.getBalance(wallet, 'confirmed'))
+  if (lamports < owed(TIP_TOKENS[0].mint) + TIP_OPERATING_RESERVE_LAMPORTS) throw Error('Tip payouts are paused while network funds are replenished')
+  if (group.tokenProgram !== SYSTEM_PROGRAM) await checkTipMint(connection, { mint: group.mint, program: group.tokenProgram, decimals: group.decimals })
+}
+
+// Builds and signs one tip-wallet transfer with the landing budget; refused unless a signature-verified simulation
+// succeeds. Nothing is persisted or sent here.
+export async function signTipWalletTransfer(connection, signer, { kind, id, recipient, group, amount, memo, fetcher, log }) {
+  const wallet = signer.publicKey
+  if (recipient.equals(wallet)) throw Error('Tips cannot be sent to the tip wallet')
+  if (!PublicKey.isOnCurve(recipient.toBytes())) throw Error('Recipient must be a normal Solana wallet')
+  const latest = await connection.getLatestBlockhash('confirmed')
+  const base = new Transaction({ feePayer: wallet, recentBlockhash: latest.blockhash })
+    .add(...transferInstructions({ kind, id, source: wallet, recipient, mint: group.mint, tokenProgram: group.tokenProgram, decimals: group.decimals, amount, memo }))
+  const { transaction } = await withPriorityFee(connection, base, { feePayer: wallet, blockhash: latest.blockhash,
+    writableAccounts: base.instructions.flatMap(ix => ix.keys.filter(k => k.isWritable).map(k => k.pubkey)), fetcher, log })
+  transaction.sign(signer)
+  const simulation = await connection.simulateTransaction(VersionedTransaction.deserialize(transaction.serialize()), { sigVerify: true, commitment: 'confirmed' })
+  if (simulation.value.err) throw Error(`Tip ${kind} preflight failed: ${JSON.stringify(simulation.value.err)}`)
+  return { latest, raw: transaction.serialize(), signature: bs58.encode(transaction.signature) }
 }
 
 // Builds, guards, signs, persists (with its reservation) and broadcasts one transfer of a group of confirmed tips.
@@ -189,27 +230,10 @@ async function sendGroup(db, { connection, signer, kind, group, recipient, reque
   const { rows: [open] } = await db.query(`select coalesce(sum(received_amount),0)::text as amount from repo_tips
     where github_repo_id=$1 and mint=$2 and tip_wallet=$3 and status='confirmed' and transfer_id is null`, [group.githubRepoId, group.mint, wallet.toBase58()])
   if (amount > BigInt(open.amount)) throw Error('Tip transfer exceeds confirmed unpaid tips')
-  // Guard 2: the wallet must hold every confirmed liability for this mint (all repositories), and SOL for costs.
-  const liabilities = await tipLiabilities(db, wallet.toBase58())
-  const owed = mint => BigInt(liabilities.find(l => l.mint === mint)?.amount ?? 0)
-  const balance = await tipWalletBalance(connection, wallet, group)
-  if (balance < owed(group.mint)) {
-    await recordTipShortfall(db, wallet.toBase58(), [{ mint: group.mint, symbol: symbolFor(group.mint), balance: balance.toString(), liability: owed(group.mint).toString(), short: true }], now)
-    throw Error('Tip wallet balance is below confirmed tips; payouts are paused for review')
-  }
-  const lamports = BigInt(await connection.getBalance(wallet, 'confirmed'))
-  if (lamports < owed(TIP_TOKENS[0].mint) + TIP_OPERATING_RESERVE_LAMPORTS) throw Error('Tip payouts are paused while network funds are replenished')
-  if (group.tokenProgram !== SYSTEM_PROGRAM) await checkTipMint(connection, { mint: group.mint, program: group.tokenProgram, decimals: group.decimals })
+  // Guard 2: every confirmed liability of this mint (tips and pledges, all repositories) stays covered.
+  await assertTipWalletCovers(db, connection, wallet, group, now)
   const id = randomUUID()
-  const latest = await connection.getLatestBlockhash('confirmed')
-  const base = new Transaction({ feePayer: wallet, recentBlockhash: latest.blockhash })
-    .add(...transferInstructions({ kind, id, source: wallet, recipient, mint: group.mint, tokenProgram: group.tokenProgram, decimals: group.decimals, amount }))
-  const { transaction } = await withPriorityFee(connection, base, { feePayer: wallet, blockhash: latest.blockhash,
-    writableAccounts: base.instructions.flatMap(ix => ix.keys.filter(k => k.isWritable).map(k => k.pubkey)), fetcher, log })
-  transaction.sign(signer)
-  const simulation = await connection.simulateTransaction(VersionedTransaction.deserialize(transaction.serialize()), { sigVerify: true, commitment: 'confirmed' })
-  if (simulation.value.err) throw Error(`Tip ${kind} preflight failed: ${JSON.stringify(simulation.value.err)}`)
-  const signature = bs58.encode(transaction.signature), raw = transaction.serialize()
+  const { latest, raw, signature } = await signTipWalletTransfer(connection, signer, { kind, id, recipient, group, amount, fetcher, log })
   const transfer = { id, kind, githubRepoId: group.githubRepoId, mint: group.mint, tokenProgram: group.tokenProgram, decimals: group.decimals,
     sourceWallet: wallet.toBase58(), recipient: recipient.toBase58(), amount: amount.toString(), tipCount: group.tips.length, status: 'pending',
     signature, signedTransaction: raw.toString('base64'), lastValidBlockHeight: String(latest.lastValidBlockHeight) }
@@ -287,42 +311,50 @@ export function createTipRefunds({ pool, connection, signer, now = Date.now, fet
 
 // Worker: settles or aborts pending transfers from their durable signed bytes only (no key needed), and checks
 // tip-wallet coverage. A transfer is aborted only on a finalized failure or a provably expired, unlanded blockhash.
-export function createTipTransferRecovery({ pool, connection, now = Date.now }) {
+// Parts-fund transfers (PARTS_LEDGER) recover through the same loop, under the same lock.
+export function createTipTransferRecovery({ pool, connection, now = Date.now, ledgers = [TIP_LEDGER, PARTS_LEDGER] }) {
   return { async runOnce() {
     const db = await pool.connect()
     const results = []
     try {
       const { rows: [lock] } = await db.query('select pg_try_advisory_lock($1::bigint) as locked', [TIP_WALLET_LOCK])
       if (!lock.locked) return results
-      try {
-        const { rows } = await db.query(`select ${TRANSFER_COLUMNS} from tip_transfers where status='pending' order by created_at`)
-        for (const transfer of rows) {
-          try {
-            let result = await settleTransfer(db, connection, transfer)
-            if (!result) {
-              const status = (await connection.getSignatureStatuses([transfer.signature], { searchTransactionHistory: true })).value[0]
-              if (!status && BigInt(await connection.getBlockHeight('finalized')) > BigInt(transfer.lastValidBlockHeight)) {
-                result = await settleTransfer(db, connection, transfer)
-                if (!result && await provablyExpiredUnlanded(connection, transfer.signature, transfer.lastValidBlockHeight)) {
-                  result = await abortTransfer(db, transfer.id, 'Signed blockhash expired without chain evidence')
-                }
-              } else if (!status) {
-                // Re-broadcast only the identical, previously authorized bytes.
-                await connection.sendRawTransaction(Buffer.from(transfer.signedTransaction, 'base64'), { skipPreflight: false }).catch(() => null)
-              }
-            }
-            results.push({ id: transfer.id, kind: transfer.kind, status: result?.status ?? 'pending', signature: transfer.signature })
-          } catch (error) {
-            console.error('tip transfer needs review', { id: transfer.id, error: error.message })
-            // Reserved tips stay reserved (never paid twice); an operator reconciles this intent.
-            await recordTipReview(pool, 'TIP_TRANSFER_REVIEW', transfer.id, { id: transfer.id, kind: transfer.kind, signature: transfer.signature, error: error.message }, now)
-            results.push({ id: transfer.id, kind: transfer.kind, status: 'review' })
-          }
-        }
-      } finally { await db.query('select pg_advisory_unlock($1::bigint)', [TIP_WALLET_LOCK]) }
+      try { for (const ledger of ledgers) results.push(...await recoverPending(db, pool, connection, ledger, now)) }
+      finally { await db.query('select pg_advisory_unlock($1::bigint)', [TIP_WALLET_LOCK]) }
     } finally { db.release() }
     return results
   } }
+}
+
+// Caller holds TIP_WALLET_LOCK on `db`.
+export async function recoverPending(db, pool, connection, ledger, now = Date.now) {
+  const results = []
+  const tag = ledger === TIP_LEDGER ? {} : { ledger: ledger.name }
+  const { rows } = await db.query(`select ${transferColumns(ledger)} from ${ledger.transfers} where status='pending' order by created_at`)
+  for (const transfer of rows) {
+    try {
+      let result = await settleTransfer(db, connection, transfer, ledger)
+      if (!result) {
+        const status = (await connection.getSignatureStatuses([transfer.signature], { searchTransactionHistory: true })).value[0]
+        if (!status && BigInt(await connection.getBlockHeight('finalized')) > BigInt(transfer.lastValidBlockHeight)) {
+          result = await settleTransfer(db, connection, transfer, ledger)
+          if (!result && await provablyExpiredUnlanded(connection, transfer.signature, transfer.lastValidBlockHeight)) {
+            result = await abortTransfer(db, transfer.id, 'Signed blockhash expired without chain evidence', ledger)
+          }
+        } else if (!status) {
+          // Re-broadcast only the identical, previously authorized bytes.
+          await connection.sendRawTransaction(Buffer.from(transfer.signedTransaction, 'base64'), { skipPreflight: false }).catch(() => null)
+        }
+      }
+      results.push({ id: transfer.id, kind: transfer.kind, ...tag, status: result?.status ?? 'pending', signature: transfer.signature })
+    } catch (error) {
+      console.error('tip transfer needs review', { id: transfer.id, ledger: ledger.name, error: error.message })
+      // Reserved rows stay reserved (never paid twice); an operator reconciles this intent.
+      await recordTipReview(pool, ledger.review, transfer.id, { id: transfer.id, kind: transfer.kind, signature: transfer.signature, error: error.message }, now)
+      results.push({ id: transfer.id, kind: transfer.kind, ...tag, status: 'review' })
+    }
+  }
+  return results
 }
 
 export function createTipWalletMonitor({ pool, connection, wallets, now = Date.now }) {

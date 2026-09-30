@@ -39,8 +39,9 @@ export function readTipWallet(env = process.env) {
 export const validTipId = id => typeof id === 'string' && UUID.test(id)
 
 // The exact instructions of a tip: [transfer or (idempotent tip-wallet ATA, transfer_checked)], then the memo.
-export function tipInstructions({ token, donor, tipWallet, amount, id }) {
-  const memo = new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [], data: Buffer.from(tipMemo(id), 'utf8') })
+// `memo` defaults to this tip's memo; parts-fund pledges pass their own (src/parts-pledges.mjs).
+export function tipInstructions({ token, donor, tipWallet, amount, id, memo: text = tipMemo(id) }) {
+  const memo = new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [], data: Buffer.from(text, 'utf8') })
   if (isNativeTip(token)) return [SystemProgram.transfer({ fromPubkey: donor, toPubkey: tipWallet, lamports: amount }), memo]
   const program = new PublicKey(token.program), mint = new PublicKey(token.mint)
   const destination = getAssociatedTokenAddressSync(mint, tipWallet, false, program)
@@ -122,7 +123,7 @@ export function acceptSignedTip(tip, transactionBase64) {
 const accountKeys = message => message.staticAccountKeys ?? message.accountKeys
 
 // Finalized receipt check for a submitted tip. Returns the received amount or throws with the mismatch.
-export function verifyTipReceipt(tx, tip) {
+export function verifyTipReceipt(tx, tip, memo = tipMemo(tip.id)) {
   if (!tx?.meta) throw Error('Tip receipt is unavailable')
   if (tx.meta.err) throw Error('Tip transaction failed')
   if (tx.transaction.signatures[0] !== tip.signature) throw Error('Tip receipt signature mismatch')
@@ -130,7 +131,6 @@ export function verifyTipReceipt(tx, tip) {
   if (!Buffer.from(signed.serializeMessage()).equals(Buffer.from(tx.transaction.message.serialize()))) throw Error('Tip receipt differs from the signed transaction')
   const message = tx.transaction.message, keys = accountKeys(message)
   if (keys[0].toBase58() !== tip.donorWallet || !message.isAccountSigner(0)) throw Error('Tip was not signed by the donor')
-  const memo = tipMemo(tip.id)
   const memos = message.compiledInstructions.filter(ix => keys[ix.programIdIndex].equals(MEMO_PROGRAM))
   if (memos.length !== 1 || Buffer.from(memos[0].data).toString('utf8') !== memo) throw Error('Tip memo is missing')
   const token = { mint: tip.mint, program: tip.tokenProgram, decimals: tip.decimals }

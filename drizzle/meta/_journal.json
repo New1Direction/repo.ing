@@ -232,6 +232,13 @@
       "when": 1790542598561,
       "tag": "0032_x_links",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790542598562,
+      "tag": "0033_parts_funds",
+      "breakpoints": true
     }
   ]
 }

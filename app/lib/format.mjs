@@ -52,3 +52,9 @@ export function formatTokenAmount(raw, decimals) {
   if (value > 0n && value < 10n ** BigInt(Math.max(0, decimals - 4))) return '<0.0001'
   return formatUnits(value, decimals, Math.min(decimals, 4))
 }
+// Whole USD cents (parts-fund goals and pledges): "$120", "$12.50".
+export function formatCents(cents) {
+  const value = Number(cents)
+  if (!Number.isFinite(value)) return '—'
+  return `$${(value / 100).toLocaleString('en-US', { minimumFractionDigits: value % 100 ? 2 : 0, maximumFractionDigits: 2 })}`
+}
