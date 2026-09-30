@@ -40,4 +40,16 @@ export const OFFICIAL_TEAM_LOCKS = [
       { at: '2026-12-05T11:00:00Z', amount: '10,000,000' },
     ],
   },
+  {
+    // Second bought-back REPOING lock from the custody buyback wallet (creator and recipient FgzeY…), 2026-09-30.
+    // Tx 2mgXckenKuBpcEdxNXK4A3e8Symw63X8uZoUHv8fokvUJo8YDVx84CXmJr5CNew8kY3KuhwTVCSNtVBJSxWp3uYN; cancel_mode=0, update_recipient_mode=0.
+    name: 'Bought-back REPOING 2',
+    escrow: 'DySLi6B9AUSeSx1gDrEAyovetF6AktaxcxAMJNLMUj5Q',
+    deposited: '12,000,000',
+    supplyPercent: '1.2%',
+    releases: [
+      { at: '2026-10-02T02:54:46Z', amount: '200,000' },
+      { at: '2026-11-01T12:54:46Z', amount: '11,800,000' },
+    ],
+  },
 ]
