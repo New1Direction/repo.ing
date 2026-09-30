@@ -1,7 +1,7 @@
 import { ParticipationBadge } from '../../../components/participation-badge'
 import { latestRelease } from '../../../lib/releases.mjs'
 import { BuilderAllocation } from '../../../components/builder-allocation'
-import { Suspense } from 'react'
+import { Suspense, cache } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowUpRight, Info } from 'lucide-react'
@@ -28,6 +28,10 @@ import { HolderNotes, HolderNotesFallback } from '../../../components/holder-not
 import { JsonLd } from '../../../components/json-ld'
 import { XHandle } from '../../../components/x-handle'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
+import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
+
+// Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
+const earningsEvidence = cache(repoId => Promise.all([feeStatus(repoId), solUsdPrice()]))
 
 export const dynamic = 'force-dynamic'
 
@@ -68,8 +72,9 @@ export default async function Token({ params, searchParams }) {
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <header className="market-hero">
-      <div className="market-hero-symbol"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div>
-      <div className="market-hero-main"><RepoIdentity repo={repo} heading/><RepoStats repo={repo} detailed/>
+      <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><EarningsHeadline market={market}/></Suspense></div>
+      <div className="market-hero-main"><RepoIdentity repo={repo} heading>
+          <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
           {market.beneficiaryWallet && <Suspense fallback={null}><XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/></Suspense>}
           {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}</div></div>
@@ -113,8 +118,32 @@ async function MoreMarketsContent({ mint, featured }) {
   return <MoreMarkets markets={selectMoreMarkets(markets, { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured}/>
 }
 
+// Fixed-size placeholder: the resolved headline occupies exactly this box, so streaming it in never shifts layout.
+function EarningsHeadlineFallback({ busy = true }) {
+  return <div className="earnings-headline pending" aria-busy={busy || undefined}>
+    <span className="earnings-headline-label">Earned by builders</span>
+    <strong className="earnings-headline-value"><span className="skeleton-line"/></strong>
+    <span className="earnings-headline-detail" role="status">Verifying builder earnings…</span>
+    <span className="earnings-headline-action note"><span className="skeleton-line"/></span>
+  </div>
+}
+
+async function EarningsHeadline({ market }) {
+  const [fees, usdPerSol] = await earningsEvidence(market.repoId)
+  const view = builderEarningsHeadline(market, fees, usdPerSol)
+  if (!view) return <EarningsHeadlineFallback busy={false}/>
+  const { action } = view
+  return <div className="earnings-headline">
+    <span className="earnings-headline-label">Earned by builders</span>
+    <strong className="earnings-headline-value">{view.value}</strong>
+    <span className="earnings-headline-detail">{view.detail}</span>
+    {action.href ? <Link className={`button ${action.kind === 'claim' ? 'primary' : 'outline'} earnings-headline-action ${action.kind}`} href={action.href}>{action.label}<ArrowUpRight size={16}/></Link>
+      : <span className="earnings-headline-action note">{action.label}</span>}
+  </div>
+}
+
 async function RepositoryEarnings({ market }) {
-  const [fees, usdPerSol] = await Promise.all([feeStatus(market.repoId), solUsdPrice()])
+  const [fees, usdPerSol] = await earningsEvidence(market.repoId)
   const claimable = fees.status === 'MATCH' ? fees.onchainCreatorFee : null
   const verifiedEarned=fees.status==='MATCH'?market.earned:null
   const usdEstimate = verifiedEarned===null?null:formatUsdEstimate(verifiedEarned, usdPerSol)

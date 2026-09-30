@@ -14,7 +14,7 @@ import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
 
 function MarketEarnings({ market, usdPerSol }) {
   const usd = formatUsdEstimate(market.earned, usdPerSol)
-  return <span className="table-earnings" title={`${formatSolDisplay(market.earned)} SOL earned in total · ${formatSolDisplay(market.claimed)} SOL paid · ${formatSolDisplay(market.remaining)} SOL available. USD estimate at the current SOL price.`}>
+  return <span className={`table-earnings${BigInt(market.earned ?? 0) > 0n ? ' has-earnings' : ''}`} title={`${formatSolDisplay(market.earned)} SOL earned in total · ${formatSolDisplay(market.claimed)} SOL paid · ${formatSolDisplay(market.remaining)} SOL available. USD estimate at the current SOL price.`}>
     <strong>{usd ?? `${formatSolDisplay(market.earned)} SOL`}</strong>
     <small>{BigInt(market.claimed) > 0n ? `${formatSolDisplay(market.claimed)} SOL paid` : `${formatSolDisplay(market.remaining)} SOL available`}</small>
   </span>
@@ -41,11 +41,11 @@ export function RepoAvatar({ repo, size = 'normal' }) {
   const px = large ? 126 : 52
   return <div className={`repo-avatar ${size}`}>{image ? <img src={image} alt="" width={px} height={px} loading={large ? 'eager' : 'lazy'} decoding="async" /> : <GithubMark size={large ? 56 : 24}/>}</div>
 }
-export function RepoIdentity({ repo, compact = false, heading = false }) {
+export function RepoIdentity({ repo, compact = false, heading = false, children = null }) {
   const fullName = repo?.fullName ?? `${repo?.owner}/${repo?.name}`
   const slash = fullName.indexOf('/')
   const displayName = slash < 0 ? fullName : <>{fullName.slice(0, slash + 1)}<wbr/>{fullName.slice(slash + 1)}</>
-  return <div className={`repo-identity ${compact ? 'compact' : ''}`}><RepoAvatar repo={repo} size={compact ? 'normal' : 'large'} /><div className="repo-identity-copy"><div className="repo-name-line">{heading ? <h1 className="repo-name-heading"><strong>{displayName}</strong></h1> : <strong>{displayName}</strong>}{!compact && <Badge>Public</Badge>}</div><p>{repo?.description || 'Public GitHub repository'}</p></div></div>
+  return <div className={`repo-identity ${compact ? 'compact' : ''}`}><RepoAvatar repo={repo} size={compact ? 'normal' : 'large'} /><div className="repo-identity-copy"><div className="repo-name-line">{heading ? <h1 className="repo-name-heading"><strong>{displayName}</strong></h1> : <strong>{displayName}</strong>}{!compact && <Badge>Public</Badge>}</div>{children}<p>{repo?.description || 'Public GitHub repository'}</p></div></div>
 }
 export function RepoStats({ repo, detailed = false }) { return <div className="repo-stats"><span><Star size={18}/>{typeof repo?.stars === 'number' ? repo.stars.toLocaleString() : '—'}</span><span><GitFork size={18}/>{typeof repo?.forks === 'number' ? repo.forks.toLocaleString() : '—'}</span>{detailed && <><span><Code2 size={18}/>{repo?.language || '—'}</span><span><Clock3 size={18}/>{repo?.updatedAt ? new Date(repo.updatedAt).toLocaleDateString() : '—'}</span></>}</div> }
 export function GitHubLink({ repo }) { return <a className="button outline github-link" href={repo?.htmlUrl || `https://github.com/${repo?.fullName}`} target="_blank" rel="noreferrer"><GithubMark size={16}/>View on GitHub<ArrowUpRight size={16}/></a> }
