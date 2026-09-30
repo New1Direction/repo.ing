@@ -8,6 +8,7 @@ import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import { analyticsWindow, readProtocolAnalytics } from '../../../src/protocol-analytics.mjs'
 import { readReserveCoverage } from '../../../src/reserve-coverage.mjs'
 import { buybackReceipts, buybackStatus } from '../../lib/buyback-feed.mjs'
+import { TipStats } from '../../components/tip-stats'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Protocol analytics · repo.ing', description: 'Trading activity, verified builder payouts, and platform revenue allocation on repo.ing.' }
@@ -18,6 +19,7 @@ export default async function StatsPage({ searchParams }) {
     <div className="protocol-intro"><div><div className="eyebrow">PROTOCOL ANALYTICS</div><h1>Open source, in numbers.</h1><p>Real markets. Builder earnings. Transparent revenue.</p></div><span className="protocol-network"><span/>Solana mainnet</span></div>
     <div className="analytics-toolbar"><span>Activity</span><nav aria-label="Analytics period">{[['24h','24h'],['7d','7d'],['30d','30d'],['all','All time']].map(([value,label])=><Link key={value} href={`/stats${value==='all'?'':`?range=${value}`}`} aria-current={range===value?'page':undefined} scroll={false}>{label}</Link>)}</nav></div>
     <Suspense key={range} fallback={<ContentSkeleton label="Loading analytics for this period"/>}><Analytics range={range}/></Suspense>
+    <Suspense fallback={null}><TipStats/></Suspense>
   </main><Footer/></>
 }
 

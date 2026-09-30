@@ -7,6 +7,7 @@ import { githubSessionCookie, readGithubSession } from '../../../lib/auth.mjs'
 import { operationsHealth } from '../../../lib/operations-health.mjs'
 import { formatSolDisplay } from '../../../lib/format.mjs'
 import { tokenBalanceLabel } from '../../../lib/token-balance.mjs'
+import { formatUnits } from '../../../lib/format.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Operations health — repo.ing', robots: { index: false, follow: false } }
 
@@ -15,7 +16,7 @@ const age = ms => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d 
 const when = value => `${new Date(value).toISOString().replace('T', ' ').slice(0, 16)} UTC`
 const short = value => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—'
 const monitorNote = { match: 'Worker alert watches this address', different: 'Worker alert watches a different address', unset: 'Worker alert not configured' }
-const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed', TRADE_LANDING_DEGRADED: 'Trades expiring or failing', TRADE_CANARY_FAILING: 'Trade canary failing' }
+const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed', TRADE_LANDING_DEGRADED: 'Trades expiring or failing', TRADE_CANARY_FAILING: 'Trade canary failing', TIP_WALLET_SHORTFALL: 'Tip wallet below tip liabilities', TIP_RECEIPT_REVIEW: 'Landed tip does not reconcile', TIP_TRANSFER_REVIEW: 'Tip payout/refund needs reconciliation' }
 
 function Section({ title, result, children }) {
   return <section className="inner-card operations-markets"><h2>{title}</h2>{result.ok ? children(result.data) : <p className="inline-error" role="status">{result.error}</p>}</section>
@@ -91,6 +92,16 @@ function Canary({ result }) {
   </tbody></table></div></> : <p>No canary results in the last day. The worker runs it every 5 minutes.</p>}<p className="muted">Worker-simulated 0.01 SOL buys (never signed or sent) through the real prepare path on $REPOING and the two most-traded curve markets, including a wallet-appended Lighthouse assertion. Alerts after 2 consecutive failures of a market, or when every market fails.</p></>}</Section>
 }
 
+function Tips({ result }) {
+  return <Section title="Tip wallet" result={result}>{t => !t?.enabled ? <p>Tips are disabled (TIP_WALLET_SECRET_KEY is not set).</p> : <>
+    <p><CopyAddress address={t.wallet} compact label="tip wallet address"/> <a href={`https://solscan.io/account/${t.wallet}`} target="_blank" rel="noreferrer">Solscan ↗</a> · {t.pendingTransfers} payout/refund intent(s) pending · {t.openTips} tip(s) awaiting confirmation</p>
+    <div className="operations-table-wrap"><table><thead><tr><th>Token</th><th>Owed (confirmed, unpaid)</th><th>Tips</th><th>Wallet balance</th><th>Status</th></tr></thead><tbody>
+    {t.coverage.map(c => <tr key={c.mint}><td><strong>{c.symbol}</strong><small>{short(c.mint)}</small></td>
+      <td>{formatUnits(c.liability, c.decimals)}</td><td>{c.tips}</td><td>{c.balance === null ? '—' : formatUnits(c.balance, c.decimals)}</td>
+      <td>{c.short === null ? <span className="badge warn">Unreadable</span> : c.short ? <span className="badge warn">Below liabilities</span> : <span className="badge ok">Covered</span>}</td></tr>)}
+  </tbody></table></div><p className="muted">SOL balance also pays payout network fees and recipient token-account rent; payouts pause when it is under SOL tips owed + 0.01 SOL. The worker raises TIP_WALLET_SHORTFALL when any token balance falls below what is owed (issuer permanent-delegate action, a leak, or a payout outside this ledger).</p></>}</Section>
+}
+
 function Csp({ result }) {
   return <Section title="CSP report-only" result={result}>{c => <>{c.total ? <div className="operations-table-wrap"><table><thead><tr><th>Blocked host</th><th>Reports</th></tr></thead><tbody>
     {c.hosts.map(h => <tr key={h.key}><td>{h.key}</td><td>{h.count}</td></tr>)}
@@ -102,7 +113,7 @@ export default async function OperationsHealthPage() {
   try { requirePlatformOperator(readGithubSession((await cookies()).get(githubSessionCookie)?.value)); access = true } catch {}
   const health = access ? await operationsHealth() : null
   return <><AppHeader /><main className="section-wrap operations-page"><div className="growth-heading"><div><h1>Operations health</h1><p>Read-only status across wallets, launches, alerts, revenue, trades, migrations, and CSP.</p></div></div>
-    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Trades result={health.trades}/><Canary result={health.canary}/><Migrations result={health.migrations}/><Csp result={health.csp}/>
+    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Trades result={health.trades}/><Canary result={health.canary}/><Tips result={health.tips}/><Migrations result={health.migrations}/><Csp result={health.csp}/>
       <p className="muted health-footer">Generated {when(health.generatedAt)} · <Link href="/operations/fees">Platform fees</Link> · <Link href="/operations/graduation">Graduation</Link> · <Link href="/operations/trends">Trends</Link> · <Link href="/operations/invites">Invites</Link></p></>
       : <div className="inner-card"><h2>Operator access required</h2><p>Sign in with the configured operator GitHub account.</p><Link className="button outline" href="/api/github/start?mode=builders">Verify with GitHub</Link><p>Return here after verification.</p></div>}
   </main><Footer /></>

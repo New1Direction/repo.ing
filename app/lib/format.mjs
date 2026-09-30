@@ -39,3 +39,16 @@ export function parseUnits(input, decimals) {
   if (amount <= 0n) throw new Error('Enter a positive amount')
   return amount.toString()
 }
+// A USD estimate already in dollars (tips in mixed tokens). null/invalid → null so callers can show '—'.
+export function formatUsdValue(value) {
+  if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return null
+  if (value > 0 && value < 0.01) return '<$0.01'
+  return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+// Token amounts for tip UIs: up to 4 decimals (xStocks have 8), never rounding a nonzero amount to 0.
+export function formatTokenAmount(raw, decimals) {
+  if (raw === null || raw === undefined) return '—'
+  const value = BigInt(raw)
+  if (value > 0n && value < 10n ** BigInt(Math.max(0, decimals - 4))) return '<0.0001'
+  return formatUnits(value, decimals, Math.min(decimals, 4))
+}

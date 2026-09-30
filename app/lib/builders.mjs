@@ -1,6 +1,7 @@
 import { createGitHubAppVerifier } from '../../src/github-verification.mjs'
 import { database, feeStatus, chain, creatorSigner } from './server.mjs'
-import { seal } from './auth.mjs'
+import { seal, sealTipReview } from './auth.mjs'
+import { repoTipSummary } from './tips.mjs'
 import { publicOrigin } from './origin.mjs'
 import { mapLimited } from '../../src/builder-queue.mjs'
 
@@ -27,7 +28,11 @@ export async function builderOverview(session) {
     const review = ready ? seal({ purpose: 'builder-claim-review', sessionId: session.sessionId,
       githubUserId: session.githubUserId, repoId: row.repoId, wallet: row.wallet,
       boundAt: new Date(row.boundAt).toISOString(), amount: available, includeGraduatedFees: fees.graduated === true, paid: row.paid, expiresAt }) : null
-    return { ...row, available, review, expiresAt, feeStatus: fees.status }
+    // Tips waiting (hidden when tips are disabled); claimable once a payout wallet is set and no tip payout is in flight.
+    const tips = await repoTipSummary(row.repoId)
+    const tipReview = tips?.waiting.length && row.wallet && !tips.waiting.some(t => t.inFlight)
+      ? sealTipReview(session, { repoId: row.repoId, wallet: row.wallet, boundAt: row.boundAt }) : null
+    return { ...row, available, review, expiresAt, feeStatus: fees.status, tips, tipReview }
   })
   return { repositories, payoutReady, githubLogin: session.githubLogin, expiresAt: session.expiresAt }
 }

@@ -12,6 +12,8 @@ import { formatUnits, formatSolDisplay } from '../lib/format.mjs'
 import { claimBuilderQueue } from '../../src/builder-queue.mjs'
 import { ClaimChecklist, WalletExplainer } from './claim-checklist'
 import { builderClaimStep } from '../lib/claim-checklist.mjs'
+import { ClaimTips } from './claim-tips'
+import { formatTokenAmount, formatUsdValue } from '../lib/format.mjs'
 
 export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   const { wallet, connect, provider } = useWallet()
@@ -109,6 +111,10 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
             const state=result?.status==='settled'?'Paid':result?.status==='already-settled'?'Already paid':result?.status==='pending'||repo.pendingSignature?'Checking payout':result?.status==='queued'?'Queued':result?.status==='unknown'?'Check confirmation':result?.status==='failed'?'Needs attention':!repo.wallet?'Set payout wallet':repo.available===null?'Balance unavailable':repo.available==='0'?'Up to date':repo.expiresAt<=now?'Refresh review':!repo.review?'Payouts paused':'Ready to claim'
             return <article className="builder-repo-row" key={repo.repoId}><div className="builder-repo-name"><Link href={`/token/${repo.mint}`}>{repo.fullName}</Link><span className={`builder-row-state ${result?.status==='settled'?'paid':''}`}>{state}</span>{result?.error&&<small>{result.error}</small>}</div>
               <div className="builder-repo-balance"><span>Available</span><strong title={repo.available===null?undefined:`${formatUnits(repo.available)} SOL`}>{repo.available===null?'—':`${formatSolDisplay(repo.available)} SOL`}</strong><small>{formatSolDisplay(repo.earned)} SOL earned · {formatSolDisplay(repo.paid)} SOL paid</small></div>
+              {repo.tips?.waiting.length > 0 && <div className="builder-repo-tips"><span>Tips waiting{repo.tips.usd !== null ? ` · ≈ ${formatUsdValue(repo.tips.usd)}` : ''}</span>
+                <strong>{repo.tips.waiting.map(t => `${formatTokenAmount(t.amount, t.decimals)} ${t.symbol}`).join(' · ')}</strong>
+                {repo.tipReview ? <ClaimTips review={repo.tipReview} compact symbols={Object.fromEntries(repo.tips.waiting.map(t => [t.mint, t.symbol]))}/> :
+                  <small>{repo.wallet ? 'A tip payout is confirming.' : 'Set a payout wallet to claim tips.'}</small>}</div>}
               <div className="builder-repo-wallet"><span>Payout wallet</span>{repo.wallet?<CopyAddress address={repo.wallet} compact label="payout wallet"/>:<span>Not set</span>}</div>
               <div className="builder-repo-actions">{receipt?<a className="button outline" target="_blank" rel="noreferrer" href={`https://solscan.io/tx/${receipt}`}>Receipt ↗</a>:<button className="button outline" disabled={busy||loading||!actionable(repo)} onClick={()=>claim([repo])}>Claim</button>}<Link href={`/claim/${repo.repoId}`}>Manage</Link></div>
             </article>

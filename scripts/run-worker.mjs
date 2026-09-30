@@ -15,6 +15,8 @@ import { createLaunchEvidenceVerifier } from '../src/launch-evidence.mjs'
 import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
+import { createTipExpiry, readTipWallet } from '../src/tips.mjs'
+import { createTipTransferRecovery, createTipWalletMonitor } from '../src/tip-transfers.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
@@ -36,6 +38,16 @@ const reinvest = process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL ? createBuild
   verification:new Connection(process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL,'finalized')}) : null
 const claims = createClaimRecovery({ pool, connection })
 const platformFees = createPlatformFeeRecovery({ pool, connection })
+// Tips: settle/abort already-signed tip-wallet transfers and resolve abandoned tips. Never signs; no key needed.
+const tipTransfers = createTipTransferRecovery({ pool, connection })
+const tipExpiry = createTipExpiry({ pool, connection })
+const tipWalletAddress = () => { try { return process.env.TIP_WALLET_ADDRESS?.trim() || readTipWallet()?.publicKey.toBase58() || null } catch { return null } }
+const tipMonitor = createTipWalletMonitor({ pool, connection, wallets: () => [tipWalletAddress()].filter(Boolean) })
+let tipMonitorTask=null,nextTipMonitorCheck=0
+async function observeTipWallet(){
+  try{console.log(JSON.stringify({tipWallet:await tipMonitor.runOnce()}))}
+  catch(error){console.log(JSON.stringify({tipWalletError:error?.code==='42P01'?'TIPS_NOT_MIGRATED':'TIP_WALLET_UNVERIFIED'}))}
+}
 const allocations = createAllocationRecovery({ pool, connection })
 const discovery = createDiscoveryClaims({ pool, connection, config })
 const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true,
@@ -126,6 +138,11 @@ try {
     catch { result.reinvestError = 'Builder reinvestment recovery unavailable' }
     try { result.platformFees = await platformFees.runOnce() }
     catch { result.platformFeeError = 'Platform fee recovery unavailable' }
+    try { result.tipTransfers = await tipTransfers.runOnce(); result.tips = await tipExpiry.runOnce() }
+    catch (error) { result.tipError = error?.code === '42P01' ? null : 'Tip recovery unavailable' }
+    if(once)await observeTipWallet()
+    else if(!tipMonitorTask&&Date.now()>=nextTipMonitorCheck)
+      tipMonitorTask=observeTipWallet().finally(()=>{nextTipMonitorCheck=Date.now()+300000;tipMonitorTask=null})
     // Keep paced verification from delaying trading indexes and already-approved recovery.
     if(once)await observeChartOrdering()
     else if(!chartOrderingTask&&Date.now()>=nextChartOrderingCheck)
@@ -165,9 +182,9 @@ try {
       if (['error', 'reason', 'launchError', 'feeError'].includes(key) && typeof value === 'string') return 'Indexer error'
       return value
     }))
-    if (result.reinvestError || result.reinvest?.some(item => item.status === 'review') || result.liquidityError || result.liquidity?.some(item => item.status === 'review') || result.platformFeeError || result.platformFees?.some(item => item.status === 'review' || item.status === 'error') || result.allocationError || result.allocations?.some(item => item.status === 'review') || result.launchError || result.feeError || result.claimError || result.claims?.some(item => item.status === 'review') || result.discoveryError || result.discovery?.some(item => item.status === 'review') ||
+    if (result.tipError || result.tipTransfers?.some(item => item.status === 'review') || result.tips?.some(item => item.state === 'review') || result.reinvestError || result.reinvest?.some(item => item.status === 'review') || result.liquidityError || result.liquidity?.some(item => item.status === 'review') || result.platformFeeError || result.platformFees?.some(item => item.status === 'review' || item.status === 'error') || result.allocationError || result.allocations?.some(item => item.status === 'review') || result.launchError || result.feeError || result.claimError || result.claims?.some(item => item.status === 'review') || result.discoveryError || result.discovery?.some(item => item.status === 'review') ||
         result.launches?.some(item => ['invalid', 'mismatch', 'missing', 'unavailable'].includes(item.state)) ||
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

@@ -139,7 +139,7 @@ async function singleMarket(column, value) {
       m.token_name as "tokenName", m.token_symbol as symbol, m.indexed_at as "indexedAt",
       m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
       r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl",
-      r.stars, r.forks, r.github_updated_at as "updatedAt", b.wallet as "beneficiaryWallet",
+      r.stars, r.forks, r.github_updated_at as "updatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
       (select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)::text

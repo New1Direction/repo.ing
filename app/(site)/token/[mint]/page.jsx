@@ -20,6 +20,7 @@ import { InviteOwner } from '../../../components/invite-owner'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { OFFICIAL_TOKEN } from '../../../lib/official-token.mjs'
 import { TeamTokenLocks } from '../../../components/team-token-locks'
+import { RepoTips } from '../../../components/repo-tips'
 import { JsonLd } from '../../../components/json-ld'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 
@@ -71,6 +72,7 @@ export default async function Token({ params, searchParams }) {
           <RepositoryEarnings market={market}/>
         </Suspense>
       </div>
+      <Suspense fallback={null}><RepoTips market={market}/></Suspense>
       {official && <TeamTokenLocks/>}
       {market.allocationVersion === 1 && <BuilderAllocation repoId={market.repoId}/>}
       {[1, 2].includes(market.discoveryVersion) && <DiscoveryRewards repoId={market.repoId}/>}

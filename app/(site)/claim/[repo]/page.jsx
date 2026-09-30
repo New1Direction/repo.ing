@@ -7,6 +7,7 @@ import { notFound } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 import { AppHeader, Footer, RepoIdentity, RepoStats, GitHubLink } from '../../../components/ui'
 import { ClaimSteps } from '../../../components/claim-steps'
+import { ClaimPageTips } from '../../../components/repo-tips'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
 import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
@@ -31,9 +32,15 @@ export default async function ClaimPage({ params, searchParams }) {
     <Suspense fallback={<div className="inner-card claim-loading" role="status" aria-busy="true">Checking available fees and GitHub access…</div>}>
       <ClaimContent market={market} repo={repo} query={query}/>
     </Suspense>
+    <Suspense fallback={null}><ClaimTipsSection market={market}/></Suspense>
     <Participation repoId={repoId}/>
     {market.allocationVersion === 1 && <BuilderAllocation repoId={repoId}/>}
   </main><Footer/></>
+}
+
+async function ClaimTipsSection({ market }) {
+  const session = readGithubSession((await cookies()).get(githubSessionCookie)?.value)
+  return <ClaimPageTips market={market} session={session}/>
 }
 
 async function ClaimContent({ market, repo, query }) {
