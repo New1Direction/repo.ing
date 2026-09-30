@@ -4,6 +4,7 @@ import { useWallet } from './wallet'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { formatAgo } from '../lib/buyback-summary.mjs'
 import { NOTE_MAX, holdingLabel, shortWallet } from '../lib/holder-note-format.mjs'
+import { XHandleLink } from './x-handle-link'
 
 async function call(url, init) {
   const response = await fetch(url, { cache: 'no-store', ...init })
@@ -17,14 +18,14 @@ const merge = (current, next) => [...current, ...next.filter(n => !current.some(
 function Note({ note, symbol }) {
   return <li className="holder-note">
     <p className="holder-note-body">{note.body}</p>
-    <p className="holder-note-meta"><span className="holder-note-wallet" title={note.wallet}>{shortWallet(note.wallet)}</span>
+    <p className="holder-note-meta"><span className="holder-note-who"><XHandleLink link={note.x}/><span className="holder-note-wallet" title={note.wallet}>{shortWallet(note.wallet)}</span></span>
       <span className={note.sold ? 'holder-note-hold is-sold' : 'holder-note-hold'}>{note.sold ? 'sold' : `holds ${holdingLabel(note.balance)} $${symbol}`}</span>
       <time dateTime={note.updatedAt} suppressHydrationWarning>{formatAgo(note.updatedAt)}</time></p>
   </li>
 }
 
 // Public list (server-rendered first page) plus the signed composer for the connected wallet.
-export function HolderNotesList({ mint, symbol, initial }) {
+export function HolderNotesList({ mint, symbol, initial, xEnabled = false }) {
   const { wallet, provider, connect } = useWallet()
   const [notes, setNotes] = useState(initial.notes), [hasMore, setHasMore] = useState(initial.hasMore)
   const [own, setOwn] = useState(null), [open, setOpen] = useState(false), [text, setText] = useState('')
@@ -80,7 +81,7 @@ export function HolderNotesList({ mint, symbol, initial }) {
       <div className="holder-note-form-row"><small className={length > NOTE_MAX ? 'is-over' : ''} aria-live="polite">{length}/{NOTE_MAX}</small>
         {own && <button type="button" className="holder-note-delete" disabled={Boolean(busy)} onClick={() => { void sign('delete') }}>{busy === 'delete' ? 'Deleting…' : 'Delete'}</button>}
         <button type="submit" className="button primary" disabled={Boolean(busy) || !text.trim() || length > NOTE_MAX}>{busy === 'post' ? 'Signing…' : own ? 'Update note' : 'Post note'}</button></div>
-      <p className="holder-note-fineprint">Holders who bought here can post one note. Plain text, links only to github.com. Signing is free.</p>
+      <p className="holder-note-fineprint">Holders who bought here can post one note. Plain text, links only to github.com. Signing is free.{xEnabled && !notes.some(n => n.wallet === wallet && n.x) && <> <a className="holder-note-x" href="/wallet#x-account">Show your X handle →</a></>}</p>
     </form>}
     {notice && <p className="transaction-status" role="status">{notice}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}

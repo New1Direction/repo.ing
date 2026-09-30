@@ -44,11 +44,11 @@ export async function tipStats(db = database()) {
       coalesce(sum(received_amount) filter (where status='confirmed'),0)::text as waiting
       from repo_tips where tip_wallet=$1 group by mint, symbol, decimals having count(*) filter (where status in ('confirmed','paid','refunded')) > 0
       order by mint`, [wallet]),
-    db.query(`(select 'tip' as kind, t.signature, t.received_amount::text as amount, t.mint, t.symbol, t.decimals, t.confirmed_at as at, r.full_name as "fullName", m.mint as "marketMint"
+    db.query(`(select 'tip' as kind, t.signature, t.received_amount::text as amount, t.mint, t.symbol, t.decimals, t.confirmed_at as at, r.full_name as "fullName", m.mint as "marketMint", t.donor_wallet as wallet
         from repo_tips t join repositories r on r.github_repo_id=t.github_repo_id left join markets m on m.github_repo_id=t.github_repo_id
         where t.tip_wallet=$1 and t.status in ('confirmed','paid','refunded') order by t.confirmed_at desc limit 12)
       union all
-      (select x.kind, x.signature, x.amount::text, x.mint, null as symbol, x.decimals, x.settled_at as at, r.full_name as "fullName", m.mint as "marketMint"
+      (select x.kind, x.signature, x.amount::text, x.mint, null as symbol, x.decimals, x.settled_at as at, r.full_name as "fullName", m.mint as "marketMint", null as wallet
         from tip_transfers x join repositories r on r.github_repo_id=x.github_repo_id left join markets m on m.github_repo_id=x.github_repo_id
         where x.source_wallet=$1 and x.status='settled' order by x.settled_at desc limit 12)
       order by at desc limit 12`, [wallet]),

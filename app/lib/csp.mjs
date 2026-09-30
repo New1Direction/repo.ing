@@ -10,7 +10,7 @@ export function reportOnlyPolicy({ dev = false } = {}) {
     'default-src': ["'self'"],
     'script-src': ["'self'", "'unsafe-inline'", 'https://static.cloudflareinsights.com', ...(dev ? ["'unsafe-eval'"] : [])],
     'style-src': ["'self'", "'unsafe-inline'"],
-    'img-src': ["'self'", 'data:', 'blob:', 'https://avatars.githubusercontent.com', 'https://raw.githubusercontent.com'],
+    'img-src': ["'self'", 'data:', 'blob:', 'https://avatars.githubusercontent.com', 'https://raw.githubusercontent.com', 'https://pbs.twimg.com'],
     'font-src': ["'self'", 'data:'],
     'connect-src': ["'self'", 'https://cloudflareinsights.com', 'https://mm-sdk-analytics.api.cx.metamask.io', 'wss://mm-sdk-relay.api.cx.metamask.io', ...(dev ? ['ws:'] : [])],
     'worker-src': ["'self'", 'blob:'],

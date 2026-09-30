@@ -5,6 +5,7 @@ import { chain, database } from './server.mjs'
 import { sumTokenAccountBalances } from './token-balance.mjs'
 import { createBalanceCache, readAtaBalances } from './holder-note-balances.mjs'
 import { publicNote } from './holder-note-format.mjs'
+import { xHandlesFor } from './x-links.mjs'
 export { publicNote }
 
 const MAX_OFFSET = 500
@@ -40,6 +41,7 @@ export async function holderNotesPage(mint, offset = 0) {
   if (!service) return { notes: [], hasMore: false, unavailable: true }
   const start = Math.min(Math.max(0, Math.trunc(Number(offset) || 0)), MAX_OFFSET)
   const { notes, hasMore } = await service.store.list(mint, { offset: start, limit: NOTE_PAGE_SIZE })
-  const balances = notes.length ? await cachedBalances()(mint, notes.map(n => n.wallet)) : new Map()
-  return { notes: notes.map(note => publicNote(note, balances.get(note.wallet) ?? null)), hasMore: hasMore && start + NOTE_PAGE_SIZE < MAX_OFFSET }
+  const wallets = notes.map(n => n.wallet)
+  const [balances, handles] = notes.length ? await Promise.all([cachedBalances()(mint, wallets), xHandlesFor(wallets).catch(() => new Map())]) : [new Map(), new Map()]
+  return { notes: notes.map(note => ({ ...publicNote(note, balances.get(note.wallet) ?? null), x: handles.get(note.wallet) ?? null })), hasMore: hasMore && start + NOTE_PAGE_SIZE < MAX_OFFSET }
 }

@@ -686,3 +686,18 @@ export const holderNotes = pgTable('holder_notes', {
 export const holderNoteNonces = pgTable('holder_note_nonces', {
   nonce: varchar('nonce',{length:32}).primaryKey(), expiresAt: timestamp('expires_at',{withTimezone:true}).notNull(),
 },t=>[index('holder_note_nonces_expiry').on(t.expiresAt)])
+
+// Optional "Connect X": wallet ↔ X account links, X sign-ins awaiting a wallet signature, unlink nonces (see drizzle/0032_x_links.sql, src/x-links.mjs).
+export const xLinks = pgTable('x_links', {
+  wallet: varchar('wallet',{length:44}).primaryKey(), xUserId: varchar('x_user_id',{length:20}).notNull(), username: varchar('username',{length:15}).notNull(),
+  name: varchar('name',{length:64}), profileImageUrl: varchar('profile_image_url',{length:300}), verified: boolean('verified').default(false).notNull(),
+  linkedAt: timestamp('linked_at',{withTimezone:true}).defaultNow().notNull(),
+},t=>[uniqueIndex('x_links_x_user_unique').on(t.xUserId),check('x_links_username_check',sql`${t.username} ~ '^[A-Za-z0-9_]{1,15}$'`)])
+export const xLinkPending = pgTable('x_link_pending', {
+  id: varchar('id',{length:32}).primaryKey(), wallet: varchar('wallet',{length:44}).notNull(), xUserId: varchar('x_user_id',{length:20}).notNull(),
+  username: varchar('username',{length:15}).notNull(), name: varchar('name',{length:64}), profileImageUrl: varchar('profile_image_url',{length:300}),
+  verified: boolean('verified').default(false).notNull(), expiresAt: timestamp('expires_at',{withTimezone:true}).notNull(),
+},t=>[index('x_link_pending_expiry').on(t.expiresAt)])
+export const xLinkNonces = pgTable('x_link_nonces', {
+  nonce: varchar('nonce',{length:32}).primaryKey(), expiresAt: timestamp('expires_at',{withTimezone:true}).notNull(),
+},t=>[index('x_link_nonces_expiry').on(t.expiresAt)])

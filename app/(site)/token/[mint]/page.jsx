@@ -25,6 +25,7 @@ import { tipsEnabled } from '../../../lib/tips.mjs'
 import { DetailsTabs } from '../../../components/details-tabs'
 import { HolderNotes, HolderNotesFallback } from '../../../components/holder-notes'
 import { JsonLd } from '../../../components/json-ld'
+import { XHandle } from '../../../components/x-handle'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 
 export const dynamic = 'force-dynamic'
@@ -115,7 +116,7 @@ async function RepositoryEarnings({ market }) {
           <strong className="earnings-amount">{verifiedEarned===null?'Checking…':usdEstimate ? `≈ ${usdEstimate}` : `${formatSolDisplay(verifiedEarned)} SOL`}</strong>
           {usdEstimate && <span className="earnings-sol" title={`${market.earned} lamports earned in total`}>≈ {formatSolRounded(market.earned)} SOL earned</span>}
           <div className="earnings-breakdown"><span>Already paid<strong>{verifiedEarned===null?'—':`${formatSolDisplay(market.claimed)} SOL`}</strong></span><span>Available to claim<strong>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
-          <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge></div>
+          <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{market.beneficiaryWallet && <XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/>}</div>
           <p>{earningsNote}</p><Link className="button white earnings-claim" href={`/claim/${market.repoId}`}>Claim builder fees<ArrowUpRight size={16}/></Link>
           {!market.beneficiaryWallet && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
         </div>)

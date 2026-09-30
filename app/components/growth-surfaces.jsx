@@ -2,6 +2,7 @@
 import Link from 'next/link'
 import { useEffect,useState } from 'react'
 import { CopyAddress } from './copy-address'
+import { XHandleLink } from './x-handle-link'
 import { formatSolRounded } from '../lib/format.mjs'
 
 const sol=value=>value===null?'Being verified':`${formatSolRounded(value)} SOL`
@@ -17,10 +18,10 @@ export function TrendReasons({candidate}){
     {candidate.latestObservation&&<p><a href={candidate.latestObservation.sources.identity} target="_blank" rel="noreferrer">GitHub identity ↗</a> · <a href={candidate.latestObservation.sources.commits} target="_blank" rel="noreferrer">Commit evidence ↗</a></p>}
   </details>
 }
-export function DiscovererTable({leaders,compact=false}){
+export function DiscovererTable({leaders,compact=false,handles={}}){
   if(!leaders.length)return <p className="subtle-notice">No verified discoverer activity yet.</p>
   return <div className="growth-table-wrap"><table className="growth-table"><thead><tr><th>Discoverer</th><th>Fees earned</th><th>Reward-period volume</th><th>Launched</th><th>Graduated</th></tr></thead><tbody>{leaders.slice(0,compact?3:100).map(row=><tr key={row.wallet}>
-    <td><CopyAddress address={row.wallet} label="discoverer wallet" compact/>{!compact&&<details><summary>Markets & attribution</summary><ul className="discoverer-markets">{row.markets.map(m=><li key={m.repoId}><Link href={`/token/${m.mint}`}>{m.fullName}</Link><p>{m.enrolled?`Earned ${sol(m.earned)} · cap ${sol(m.cap)} · paid ${sol(m.paid)}`:'Launched before discovery enrollment'}</p><p>{m.enrolled?`Reward window: ${new Date(m.launchedAt).toLocaleString()} — ${new Date(m.expiresAt).toLocaleString()} (ends earlier at graduation or cap)`:`Launched ${new Date(m.launchedAt).toLocaleString()}`}</p><a href={`https://explorer.solana.com/tx/${m.signature}`} target="_blank" rel="noreferrer">Finalized launch ↗</a></li>)}</ul></details>}</td>
+    <td><CopyAddress address={row.wallet} label="discoverer wallet" compact/><XHandleLink link={handles[row.wallet]} className="discoverer-x"/>{!compact&&<details><summary>Markets & attribution</summary><ul className="discoverer-markets">{row.markets.map(m=><li key={m.repoId}><Link href={`/token/${m.mint}`}>{m.fullName}</Link><p>{m.enrolled?`Earned ${sol(m.earned)} · cap ${sol(m.cap)} · paid ${sol(m.paid)}`:'Launched before discovery enrollment'}</p><p>{m.enrolled?`Reward window: ${new Date(m.launchedAt).toLocaleString()} — ${new Date(m.expiresAt).toLocaleString()} (ends earlier at graduation or cap)`:`Launched ${new Date(m.launchedAt).toLocaleString()}`}</p><a href={`https://explorer.solana.com/tx/${m.signature}`} target="_blank" rel="noreferrer">Finalized launch ↗</a></li>)}</ul></details>}</td>
     <td>{sol(row.earned)}</td><td>{sol(row.volume)}</td><td>{row.launched}</td><td>{row.graduated}</td>
   </tr>)}</tbody></table></div>
 }

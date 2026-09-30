@@ -1,0 +1,48 @@
+/* Connect X: the shared @handle chip and the /wallet "X account" card. */
+.x-handle{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;color:var(--text);font-size:12.5px;font-weight:600;line-height:1.3;white-space:nowrap;vertical-align:middle}
+.x-handle>svg{flex:none;color:var(--muted)}
+.x-handle>img{flex:none;width:18px;height:18px;border-radius:50%;object-fit:cover;background:var(--surface2)}
+.x-handle>span:not(.x-handle-check){overflow:hidden;text-overflow:ellipsis}
+.x-handle:hover>span:not(.x-handle-check){text-decoration:underline;text-underline-offset:2px}
+.x-handle:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:3px}
+.x-handle-check{flex:none;display:inline-grid;place-items:center;width:14px;height:14px;border-radius:50%;background:color-mix(in srgb,var(--green) 22%,transparent);color:var(--green);font-size:9px;font-weight:800}
+
+.holder-note-who{display:inline-flex;align-items:baseline;gap:7px;min-width:0}
+.holder-note-who .x-handle{font-size:12px;align-self:center}
+.holder-note-x{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
+.holder-note-x:hover{color:var(--text)}
+.earnings-status{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.maintainer-x{padding:3px 9px 3px 7px;border:1px solid var(--border);border-radius:15px;font-size:12px}
+.tip-stats-from{color:var(--muted);font-size:13px}
+.discoverer-x{display:flex;width:max-content;margin-top:4px}
+
+.x-account{margin:0 0 18px;padding:18px 20px;background:var(--surface)}
+.x-account-head{display:flex;align-items:flex-start;gap:12px}
+.x-account-head h2{display:flex;align-items:baseline;gap:8px;margin:0 0 3px;font-size:17px}
+.x-account-head h2 small{color:var(--dim);font-size:12px;font-weight:500;letter-spacing:0}
+.x-account-head p{margin:0;color:var(--muted);font-size:13.5px}
+.x-account-mark,.x-account-avatar{flex:none;display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--border);border-radius:9px;background:var(--surface2);color:var(--text)}
+.x-account-avatar{width:40px;height:40px;border-radius:50%}
+.x-account-connect,.x-account-confirm .button.primary{gap:8px}
+.x-account-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px}
+.x-account-actions .button{min-height:38px;padding:0 16px}
+.x-account-actions .x-account-status{flex:1 1 220px;margin:0}
+.x-account-status{color:var(--muted);font-size:13px;margin:12px 0 0}
+.x-account-warning{margin:14px 0 0;padding:11px 13px;border:1px solid color-mix(in srgb,#f3c48c 45%,var(--border));border-radius:8px;background:color-mix(in srgb,#f3c48c 8%,transparent);color:var(--muted);font-size:13px;line-height:1.5}
+.x-account-warning strong{color:var(--text);font-weight:650}
+.x-account-profile{display:flex;align-items:center;gap:11px;min-width:0}
+.x-account-profile>img{flex:none;width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--surface2)}
+.x-account-profile>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.x-account-profile .x-handle{font-size:15px}
+.x-account-profile .x-handle>svg{display:none}
+.x-account-name{color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.x-account-pending,.x-account-linked{margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.x-account-linked{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px}
+.x-account-linked .x-account-profile{flex:1 1 200px}
+.x-account-since{color:var(--dim);font-size:12.5px}
+.x-account-linked .button{min-height:36px;padding:0 14px}
+.x-account .transaction-status,.x-account .inline-error{margin:12px 0 0}
+@media(max-width:700px){.x-account{padding:15px}.x-account-actions .button{flex:1 1 auto}}
+[data-theme=light] .x-handle-check{color:var(--green-dark)}
+[data-theme=light] .x-account-warning{border-color:#e2c39a;background:#fdf6ec;color:#5b5041}
+[data-theme=light] .x-account-warning strong{color:#3b2f1f}
