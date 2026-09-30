@@ -1,16 +1,32 @@
 'use client'
-import { useState } from 'react'
-import { Share2, Copy, Check, Zap } from 'lucide-react'
+import { useEffect, useId, useRef, useState } from 'react'
+import { Share2, Zap, ChevronDown, Image as ImageIcon, Code2, Link2 } from 'lucide-react'
 import { dialToUrl } from '../lib/blink-links.mjs'
 import { ReferLink } from './refer-link'
-import { ReadmeBadge } from './readme-badge'
+import { ReadmeBadgePanel } from './readme-badge'
 import { MarketShareCard } from './market-share-card'
 import { WatchButton } from './watchlist'
 
+// Watch stays a button; every share action lives in one disclosure menu (Escape closes, focus returns to "Share").
 export function ShareMarket({ mint, symbol, fullName, repoId }) {
   const [state, setState] = useState('')
+  const [open, setOpen] = useState(false), [badge, setBadge] = useState(false), [card, setCard] = useState(false)
+  const root = useRef(null), trigger = useRef(null), panel = useRef(null), refocus = useRef(false)
+  const id = useId(), panelId = `${id}-share`, badgeId = `${id}-badge`
   // The plain market URL is the Blink on X once actions.json is registered; dial.to works in any app.
   const url = () => `${window.location.origin}/token/${encodeURIComponent(mint)}`
+
+  useEffect(() => {
+    if (!open) { setBadge(false); if (refocus.current) trigger.current?.focus(); refocus.current = false; return }
+    panel.current?.querySelector('button')?.focus()
+    const outside = event => { if (!root.current?.contains(event.target)) setOpen(false) }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('focusin', outside)
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside) }
+  }, [open])
+
+  const close = () => { refocus.current = true; setOpen(false) }
+  const act = fn => async () => { close(); await fn() }
   async function copy() {
     try { await navigator.clipboard.writeText(url()); setState('Link copied') }
     catch { setState('Copy failed. Copy the link from your address bar.') }
@@ -24,5 +40,33 @@ export function ShareMarket({ mint, symbol, fullName, repoId }) {
     try { await navigator.share({ title: `$${symbol} — ${fullName}`, text: `${fullName} on repo.ing`, url: url() }); setState('') }
     catch (error) { if (error.name !== 'AbortError') await copy() }
   }
-  return <div className="share-market"><div>{repoId && <WatchButton market={{ mint, fullName, repoId }}/>}<button className="button outline" type="button" onClick={share}><Share2 size={15}/>Share</button><button className="button outline" type="button" onClick={copy} aria-label="Copy market link">{state === 'Link copied' ? <Check size={15}/> : <Copy size={15}/>}</button><button className="button outline" type="button" onClick={copyBlink} aria-label="Copy Blink link (buy from any app via dial.to)" title="Copy Blink link">{state === 'Blink link copied' ? <Check size={15}/> : <Zap size={15}/>}</button><MarketShareCard mint={mint}/>{repoId && <ReadmeBadge repoId={repoId} mint={mint}/>}</div>{state && <small role="status">{state}</small>}<ReferLink mint={mint}/></div>
+  function onKeyDown(event) {
+    if (event.key === 'Escape' && open) { event.stopPropagation(); close(); return }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key) || !panel.current) return
+    const items = [...panel.current.querySelectorAll(':scope > button')]
+    const at = items.indexOf(document.activeElement)
+    if (at < 0 && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (at + (event.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
+    items[next]?.focus()
+  }
+
+  return <div className="share-market" ref={root} onKeyDown={onKeyDown}>
+    <div className="share-market-actions">{repoId && <WatchButton market={{ mint, fullName, repoId }}/>}
+      <div className="share-menu"><button ref={trigger} className="button outline" type="button" aria-expanded={open} aria-controls={panelId} onClick={() => open ? close() : setOpen(true)}>
+        <Share2 size={15} aria-hidden="true"/>Share<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>
+        {open && <div id={panelId} ref={panel} className="share-menu-panel" aria-label="Share this market" role="group">
+          <button type="button" onClick={act(share)}><Share2 size={15} aria-hidden="true"/>Share…</button>
+          <button type="button" onClick={act(copy)}><Link2 size={15} aria-hidden="true"/>Copy link</button>
+          <button type="button" onClick={act(copyBlink)} title="Buy from any app via dial.to"><Zap size={15} aria-hidden="true"/>Copy Blink link</button>
+          <button type="button" onClick={() => { setOpen(false); setCard(true) }}><ImageIcon size={15} aria-hidden="true"/>Share card</button>
+          {repoId && <button type="button" aria-expanded={badge} aria-controls={badgeId} onClick={() => setBadge(value => !value)}><Code2 size={15} aria-hidden="true"/>README badge<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>}
+          {repoId && badge && <ReadmeBadgePanel id={badgeId} repoId={repoId} mint={mint}/>}
+        </div>}
+      </div>
+    </div>
+    {state && <small role="status">{state}</small>}
+    <ReferLink mint={mint}/>
+    <MarketShareCard mint={mint} open={card} onOpenChange={value => { setCard(value); if (!value) trigger.current?.focus() }}/>
+  </div>
 }

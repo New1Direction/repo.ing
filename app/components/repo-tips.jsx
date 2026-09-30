@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { cache } from 'react'
 import { Gift } from 'lucide-react'
 import { TipRepo } from './tip-repo'
 import { ClaimTips } from './claim-tips'
@@ -32,18 +33,36 @@ export async function ClaimPageTips({ market, session }) {
   </section>
 }
 
-// Token page: tips waiting for this repository's maintainer, plus the tip action. Hidden entirely when tips are off.
+// Token page: one memoized summary per request feeds both the header pill and the tip card.
+const tokenPageTips = cache(repoId => repoTipSummary(repoId))
+const jarLabel = summary => !summary?.waiting.length ? null : formatUsdValue(summary.usd) ?? `${summary.count} ${summary.count === 1 ? 'tip' : 'tips'}`
+
+// Header pill: "Tip jar · $X" that opens the tip dialog. The page renders it only when tips are enabled.
+export async function TipJarPill({ market }) {
+  const jar = jarLabel(await tokenPageTips(market.repoId))
+  return <TipRepo repoId={market.repoId} fullName={market.fullName} className="tip-jar-pill" ariaLabel={jar ? `Tip jar: ${jar} waiting. Tip this repo` : 'Tip jar is empty. Be the first to tip this repo'}
+    label={<><span>Tip jar</span><b aria-hidden="true">·</b><strong>{jar ?? 'Be the first to tip'}</strong></>}/>
+}
+export const TipJarPillFallback = () => <span className="tip-jar-pill is-loading" aria-hidden="true"><span>Tip jar</span><b>·</b><strong>…</strong></span>
+
+// Token page tip card, under the trade panel. Hidden entirely when tips are off.
 export async function RepoTips({ market }) {
-  if (!tipsEnabled()) return null
-  const summary = await repoTipSummary(market.repoId)
+  const summary = await tokenPageTips(market.repoId)
   const waiting = summary?.waiting ?? []
-  const usd = formatUsdValue(summary?.usd)
-  return <section className="inner-card repo-tips" aria-labelledby="repo-tips-title">
-    <div className="repo-tips-heading"><span className="repo-tips-icon" aria-hidden="true"><Gift size={20}/></span><div><h3 id="repo-tips-title">Tips for the maintainer</h3>
-      <p>{waiting.length ? <><strong>{usd ? `${usd} in tips waiting` : `${summary.count} ${summary.count === 1 ? 'tip' : 'tips'} waiting`}</strong>{market.beneficiaryWallet ? ' — the maintainer can claim them now.' : ' — verify to claim.'}</>
-        : 'Say thanks with SOL, USDC or tokenized stocks. Tips are held until a verified maintainer claims them.'}</p></div></div>
-    <div className="repo-tips-actions"><TipRepo repoId={market.repoId} fullName={market.fullName} className="button primary"/>
-      {waiting.length > 0 && <Link href={`/claim/${market.repoId}#tips`}>{market.beneficiaryWallet ? 'Claim tips' : 'Maintainer? Verify to claim'} →</Link>}</div>
-    {waiting.length > 0 && <TipBreakdown waiting={waiting}/>}
+  const jar = jarLabel(summary)
+  const status = !market.beneficiaryWallet ? 'Waiting for the maintainer to verify on repo.ing' : waiting.length ? 'Maintainer verified · ready to claim' : 'Paid to the verified maintainer'
+  const earned = /^\d+$/.test(String(market.earned ?? '')) && BigInt(market.earned) > 0n
+  return <section id="tips" className="inner-card repo-tips tip-jar-card" aria-labelledby="repo-tips-title">
+    <div className="tip-jar-top"><h3 id="repo-tips-title"><Gift size={16} aria-hidden="true"/>Tip jar</h3>
+      <strong className="tip-jar-total">{jar ?? '$0'}</strong></div>
+    {waiting.length > 0 ? <TipBreakdown waiting={waiting}/> : <p className="tip-jar-empty">Say thanks with SOL, USDC or tokenized stocks.</p>}
+    <p className="tip-jar-status"><span className={market.beneficiaryWallet ? 'is-verified' : ''} aria-hidden="true"/>{status}</p>
+    <TipRepo repoId={market.repoId} fullName={market.fullName} className="button primary tip-jar-cta"/>
+    {(waiting.length > 0 || earned) && <div className="tip-jar-links">
+      {waiting.length > 0 && <Link href={`/claim/${market.repoId}#tips`}>{market.beneficiaryWallet ? 'Claim tips' : 'Maintainer? Verify to claim'} →</Link>}
+      {earned && <Link href={`/claim/${market.repoId}`}>Claim builder fees →</Link>}</div>}
   </section>
 }
+export const RepoTipsFallback = () => <section className="inner-card repo-tips tip-jar-card" aria-busy="true" aria-label="Tip jar">
+  <div className="tip-jar-top"><h3><Gift size={16} aria-hidden="true"/>Tip jar</h3><strong className="tip-jar-total">…</strong></div>
+  <p className="tip-jar-empty loading-placeholder">Checking tips…</p></section>
