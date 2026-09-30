@@ -14,7 +14,7 @@ Scope explicitly approved by the operator on 2026-09-25. This extends the MVP's 
 - The launcher earns **50% of actual partner trading fees** for canonical DBC swaps from pool creation until the first of curve completion/graduation, 30 days, or **1 SOL earned in total**. The swap completing the curve is included. Subsequent DAMM trades are excluded.
 - `min(floor(sum(eligible partner lamports) / 2), 1_000_000_000)` defines lifetime earnings. Aggregate rounding makes batching and backfill order irrelevant. Paid rewards count toward the cap.
 - The start is the finalized DBC pool's immutable `activationPoint`, using the timestamp activation mode and the same Solana Clock as swap events. RPC estimated block timestamps are not used for this boundary. The end timestamp is exclusive.
-- Earned rewards remain claimable after expiry or graduation. There is no minimum reward claim. The wallet pays network and account setup costs; the UI previews costs and warns if they exceed the reward.
+- Earned rewards remain claimable after expiry or graduation. **Since 2026-09-30** a claim needs at least **0.002 SOL** available (smaller rewards stay accrued), the launcher wallet only signs a plain-text message, and the platform's partner signer pays the network fee and every temporary deposit (see *Claim and recovery*). Before that change the wallet signed and paid for the claim transaction.
 - Fixed total fees and builder shares are unchanged. For the current nominal split, half of the 0.406% partner share is about 0.203% of trading volume. Accounting always uses actual finalized fee events, including integer rounding, rather than that displayed percentage.
 
 ## Evidence and isolation
@@ -29,21 +29,44 @@ Primary references: [Meteora fee accounting](https://github.com/MeteoraAg/dynami
 
 ## Claim and recovery
 
-1. Load accrued minus settled rewards under the same per-repository Postgres advisory lock used by launch and fee accrual. Validate the canonical pool, partner authority, SOL quote config, and sufficient on-chain partner fees.
-2. Prepare a bounded `claimPartnerTradingFee` transaction to the stored launch wallet, with zero base-token withdrawal. The recipient is the fee payer. A fresh temporary WSOL authority keeps existing user and platform WSOL accounts untouched; its account rent returns to the recipient.
-3. Save a `prepared` intent with a unique ID, amount, exact message, and last valid block height. Its memo binds repo.ing, Solana genesis, repository, wallet, amount, intent ID, and block-height expiry. It has **no partner signature**, so a prepared offer cannot be broadcast successfully outside the application.
-4. Show reward and costs; ask the user's wallet to sign. Verify its required signature and byte-for-byte message equality on submit. Only then add the server's partner signature and simulate.
-5. Save the complete signed transaction and signature as `pending` before broadcasting. A unique partial index allows only one prepared/pending intent per repository. Retries reuse the same signature and bytes.
-6. The worker or claim-status check rebroadcasts that intent after a restart. It marks `settled` only when a successful finalized transaction matches the saved message and its canonical `evtClaimTradingFee` proves exactly the recorded quote amount and zero base amount. Concurrent trades do not affect this transaction-local proof.
-7. A finalized failed transaction can be aborted. A signed intent with no history is aborted only after its last valid block height has passed on the finalized chain. Any processed/confirmed status, missing finalized receipt, or contradiction remains pending for review. An unsigned expired offer can be safely replaced.
+**Message authorization (2026-09-30, migration `0035_discovery_claim_messages`).** The launcher wallet never signs a transaction. Phantom blocked the earlier wallet-signed claim ("Request blocked · This dApp could be malicious") because it had three signers and Phantom could not predict its outcome; a signed message does not trigger that warning.
 
-The wallet transaction itself proves control. GitHub authorization is deliberately not needed for discovery, and remains mandatory for builder claims. There is no automatic payout at launch or trade time.
+1. **Prepare.** Under the per-repository Postgres advisory lock (shared with launch, fee accrual and DBC platform collection), load accrued minus settled rewards, require at least 0.002 SOL, and validate the canonical pool, partner authority, SOL quote config, SPL base token, and sufficient on-chain partner fees. Save a `prepared` claim with a unique ID, the amount, the exact message below and an expiry five minutes out. A unique partial index allows only one prepared/pending claim per repository; repeated or concurrent preparations return the same unexpired message.
+
+   ```text
+   repo.ing wants you to confirm a launcher reward claim.
+
+   Repository ID: <github repo id>
+   Market: <owner/repo>
+   Wallet: <launcher wallet>
+   Amount: <SOL> SOL (<lamports> lamports)
+   Claim: <uuid>
+   Chain: Solana mainnet 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d
+   Expires: <ISO-8601 UTC>
+
+   This does not authorize any transaction from your wallet.
+   ```
+
+2. **Sign.** The browser calls the wallet's `signMessage` on those UTF-8 bytes and submits `{ id, signature }` (base58).
+3. **Verify.** Under the lock, the server verifies the ed25519 signature against the **stored** message and the stored launcher wallet before any chain read. It refuses a wrong wallet, altered message, expired confirmation (the claim is aborted), changed launcher, less remaining reward than the signed amount, or insufficient on-chain partner fees.
+4. **Build and sign the payout (server keys only).** `claimPartnerTradingFee` claims exactly the signed amount (zero base tokens) to a per-claim temporary authority derived from the partner key and claim ID, with the **partner as fee payer**. The same transaction transfers exactly the amount to the launcher wallet, returns the temporary WSOL account deposit to the partner, closes the temporary base-token account to the partner, and adds a memo naming the claim. No account of the launcher's is created or closed and the launcher is not a signer. Landing uses the shared priority-fee helpers (`src/trade-landing.mjs`); the claim is refused if the network fee exceeds the 2-signature payout ceiling (0.00081 SOL) or the 20× dust rule, and it is simulated with signature verification.
+5. **Durable intent.** The fully signed bytes, signature, last valid block height and the wallet's message signature are saved as `pending` **before** the first broadcast. Concurrent submits serialize on the lock; the second sees `pending` and returns the same signature. Nothing ever re-signs a claim once it is pending.
+6. **Recovery.** The worker or claim-status check rebroadcasts those exact bytes. `settled` requires a successful finalized transaction matching the saved message, exactly one canonical `evtClaimTradingFee` with the claimed quote amount and zero base, the stored payout shape (server fee payer, launcher not a signer, one transfer of exactly the amount to the launcher), a launcher balance change of exactly the amount, and a fee-payer change of exactly the network fee.
+7. A finalized failed transaction is aborted. A signed intent with no history is aborted only after its last valid block height has passed on the finalized chain (`provablyExpiredUnlanded`). Any processed/confirmed status, missing finalized receipt, or contradiction remains pending for review. An expired, never-signed message confirmation is aborted and can be replaced.
+
+**Legacy rows.** Claims prepared before migration 0035 hold an unsigned wallet transaction and no message. A legacy `prepared` offer never received a partner signature and can never land, so the next preparation (or a submit) aborts it and issues a message offer. Legacy `pending` rows keep settling through the original path (event proof, same bytes, provable expiry).
+
+The message signature proves control of the launch wallet. GitHub authorization is deliberately not needed for discovery, and remains mandatory for builder claims. There is no automatic payout at launch or trade time.
+
+**Costs.** The platform pays the network fee (two signatures plus priority fee; about 0.000034 SOL in the local validator run) out of partner operating SOL. The temporary WSOL and base-token account deposits are paid and refunded within the same transaction. The launcher receives exactly the claimed amount. A failed or forged submit costs the platform only a database read and a signature check.
 
 ## Operations
 
 - Apply additive migration `0009_discovery_rewards` before deploying the new worker and web versions.
 - Web only: provision `PLATFORM_PARTNER_SECRET_KEY` from the existing protected DBC partner wallet. Verify its public key equals the config's `feeClaimer`. Never put it in a `NEXT_PUBLIC_` variable, build output, docs, logs, or worker environment.
-- Worker recovery uses fully signed, user-authorized intents and needs **no partner secret**.
+- Worker recovery uses fully signed, message-authorized intents and needs **no partner secret**.
+- The partner signer pays each payout's network fee and needs a small operating SOL balance (two token-account deposits plus the fee, refunded within the transaction except for the fee). Claims fail closed with "temporarily unavailable" when it runs low.
+- Apply migration `0035_discovery_claim_messages` before deploying the web version that issues message claims.
 - Enable new enrollment with `DISCOVERY_REWARDS_ENABLED=true` only after migration and the new worker are running. Disabling that flag stops new enrollment; it does not erase already-earned obligations or disable existing claims.
 - **Do not sweep partner fees backing discovery liabilities.** Keep at least earned-minus-paid rewards in each enrolled DBC pool. Preparation fails closed if its fee balance is below the reward due. Investigate withdrawals/history; never reduce the ledger to hide a shortfall.
 - This is a platform-managed reward obligation. The partner key controls withdrawal; there is no custom escrow contract enforcing the split. Preserve the database and signed-intent history in the existing encrypted backups. An operator rebuilding fee evidence must also restore settled payouts before allowing new claims.

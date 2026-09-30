@@ -4,6 +4,7 @@ import { discoverySummary } from '../../../../src/discovery-rewards.mjs'
 import { chain, configAddress, database, partnerSigner } from '../../../lib/server.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { createMarketConfigResolver } from '../../../../src/market-config.mjs'
+import { MIN_DISCOVERY_CLAIM_LAMPORTS } from '../../../../src/discovery-claim-message.mjs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -32,7 +33,8 @@ export async function GET(_request, { params }) {
     } catch { /* Accrued ledger remains visible during a temporary RPC outage. */ }
     return json({ enrolled: true, version: summary.version, cap: summary.cap, wallet: summary.wallet, earned: summary.earned, paid: summary.paid,
       remaining: summary.remaining, expiresAt: summary.expiresAt, capped: summary.capped, expired: summary.expired,
-      graduated, latestClaim: summary.latestClaim, payoutReady: Boolean(process.env.PLATFORM_PARTNER_SECRET_KEY) })
+      graduated, latestClaim: summary.latestClaim, payoutReady: Boolean(process.env.PLATFORM_PARTNER_SECRET_KEY),
+      minClaim: MIN_DISCOVERY_CLAIM_LAMPORTS.toString() })
   } catch (error) { return problem(error) }
 }
 
@@ -45,7 +47,7 @@ export async function POST(request, { params }) {
     const body = await request.json()
     const claims = createDiscoveryClaims({ ...service(), partner: partnerSigner() })
     if (body.action === 'prepare') return json(await claims.prepare({ repoId: repo, wallet: body.wallet }))
-    if (body.action === 'submit') return json(await claims.submit({ repoId: repo, id: body.id, transaction: body.transaction }))
+    if (body.action === 'submit') return json(await claims.submit({ repoId: repo, id: body.id, signature: body.signature, transaction: body.transaction }))
     if (body.action === 'check') return json(await claims.recover(repo) ?? { status: 'idle' })
     throw new DiscoveryClaimError('Unsupported discovery claim action')
   } catch (error) { return problem(error) }

@@ -5,6 +5,7 @@ import { CheckCircle2, Compass } from 'lucide-react'
 import { useWallet } from './wallet'
 import { CopyAddress } from './copy-address'
 import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
+import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 
 export function DiscoveryRewards({ repoId }) {
   const { wallet, connect, changeWallet, provider } = useWallet()
@@ -65,13 +66,12 @@ export function DiscoveryRewards({ repoId }) {
         setOffer(prepared)
         setStage('')
       } else {
-        setStage('Approve the discovery claim in your wallet…')
-        const { Transaction } = await import('@solana/web3.js')
-        const transaction = Transaction.from(Uint8Array.from(atob(prepared.transaction), character => character.charCodeAt(0)))
-        const signed = await provider().signTransaction(transaction)
-        const raw = signed.serialize({ requireAllSignatures: false, verifySignatures: false })
-        setStage('Submitting your claim…')
-        await request({ action: 'submit', id: prepared.id, transaction: btoa(String.fromCharCode(...raw)) })
+        // A message signature only: the wallet never signs a transaction. repo.ing builds, pays for and sends the payout.
+        setStage('Sign the claim message in your wallet…')
+        const signature = walletSignatureBytes(await provider().signMessage(new TextEncoder().encode(prepared.message)))
+        const { default: bs58 } = await import('bs58')
+        setStage('Sending your reward…')
+        await request({ action: 'submit', id: prepared.id, signature: bs58.encode(signature) })
         setOffer(null)
         setStage('Payout submitted. Waiting for Solana finality…')
       }
@@ -87,11 +87,12 @@ export function DiscoveryRewards({ repoId }) {
   if (data?.enrolled === false) return null
   const pending = data?.latestClaim?.status === 'pending'
   const receipt = data?.latestClaim?.status === 'settled' ? data.latestClaim : null
-  const failed = data?.latestClaim?.status === 'aborted' ? data.latestClaim : null
+  // Only a signed payout that failed is shown as a failure; an unsigned confirmation that simply expired is not.
+  const failed = data?.latestClaim?.status === 'aborted' && data.latestClaim.signature ? data.latestClaim : null
   const ended = data?.capped || data?.expired || data?.graduated
-  const claimCost = offer ? BigInt(offer.networkFee) + BigInt(offer.accountSetupFee) : 0n
   const launcher = Boolean(data?.wallet) && wallet === data.wallet
   const claimable = data?.remaining ? BigInt(data.remaining) > 0n : false
+  const tooSmall = claimable && BigInt(data.remaining) < BigInt(data.minClaim ?? '0')
   return <section className="inner-card discovery-rewards" aria-labelledby="discovery-heading">
     <div className="card-heading"><h3 id="discovery-heading"><Compass size={19}/> Discovery rewards</h3>
       {data && <span className="small-chip">{data.capped ? `${formatSolDisplay(data.cap)} SOL cap reached` : data.graduated ? 'Graduated' : data.expired ? 'Earning period ended' : data.graduated === null ? 'Checking pool status' : 'Earning'}</span>}</div>
@@ -101,19 +102,18 @@ export function DiscoveryRewards({ repoId }) {
         <div><span>Already paid</span><strong>{formatSolDisplay(data.paid)} SOL</strong></div>
         <div><span>Available to claim</span><strong>{formatSolDisplay(data.remaining)} SOL</strong></div></div>
       <div className="discovery-recipient"><span>Launcher wallet</span><CopyAddress address={data.wallet} label="launcher wallet"/></div>
-      <p className="discovery-note">{ended ? 'Earning has ended. Your accrued rewards remain claimable.' : `Earning ends no later than ${new Date(data.expiresAt).toLocaleDateString()}.`} Builder earnings stay separate. Your wallet pays Solana’s network and any account setup fees.</p>
+      <p className="discovery-note">{ended ? 'Earning has ended. Your accrued rewards remain claimable.' : `Earning ends no later than ${new Date(data.expiresAt).toLocaleDateString()}.`} Builder earnings stay separate. You only sign a message to claim; repo.ing pays the network fee.</p>
       {pending || busy ? <div className="claim-progress" role="status"><span className="claim-spinner" aria-hidden="true"/><span>{pending ? 'Payout submitted. Waiting for Solana finality…' : stage}</span></div> :
         !wallet ? <button type="button" className="button outline" onClick={() => connect().catch(cause => setError(cause.message))}>Launched this repo? Connect to claim</button> :
           !launcher ? <p className="discovery-note">Only the launcher wallet above can claim. Launched this repo from another wallet? <button type="button" className="claim-text-button" onClick={() => changeWallet().catch(cause => setError(cause.message))}>Switch wallet</button></p> :
             offer ? <div className="discovery-review" role="status"><strong>Review your claim</strong>
-              <p>Reward: {formatUnits(offer.amount)} SOL<br/>Network fee: {formatUnits(offer.networkFee)} SOL
-                {BigInt(offer.accountSetupFee) > 0n && <><br/>One-time token account deposit: {formatUnits(offer.accountSetupFee)} SOL</>}</p>
-              {claimCost >= BigInt(offer.amount) && <p className="inline-error">The costs exceed this reward. You can wait for more fees to accrue.</p>}
-              <button type="button" className="button primary" onClick={() => claim(true)}>Approve in wallet</button>
+              <p>Reward: {formatUnits(offer.amount)} SOL, sent to your launcher wallet.<br/>Sign a message to confirm — repo.ing sends the reward to your wallet and pays the network fee. Your wallet does not sign a transaction.</p>
+              <button type="button" className="button primary" onClick={() => claim(true)}>Sign message to claim</button>
               <button type="button" className="claim-text-button" onClick={() => setOffer(null)}>Cancel</button></div> :
               claimable ? <div className="discovery-cta"><div><strong>You earned {formatSolDisplay(data.earned)} SOL as launcher</strong>
                 <span>{formatSolDisplay(data.remaining)} SOL is ready to claim to this wallet.</span></div>
-                <button type="button" className="button primary" disabled={!data.payoutReady} onClick={() => claim()}>Claim {formatSolDisplay(data.remaining)} SOL</button></div> :
+                {tooSmall ? <span className="discovery-note">Reward too small to claim yet. At least {formatSolDisplay(data.minClaim)} SOL must accrue first.</span> :
+                  <button type="button" className="button primary" disabled={!data.payoutReady} onClick={() => claim()}>Claim {formatSolDisplay(data.remaining)} SOL</button>}</div> :
                 <p className="discovery-note">{BigInt(data.earned) > 0n ? 'All launcher rewards earned so far have been paid to this wallet.' : 'Nothing to claim yet. Rewards appear here as this market trades.'}</p>}
       {!data.payoutReady && <p role="status">Payouts are temporarily unavailable. Your recorded rewards are preserved.</p>}
       {(pending || receipt) && <div className={`discovery-receipt ${receipt ? 'positive' : ''}`} role="status">
