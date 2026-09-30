@@ -146,3 +146,25 @@ test('DBC settlement holds exact SOL deltas when meta.fee includes the priority 
   const short = await dbcReceipt({ fee, treasuryDelta: 50_000_000n, sourceDelta: -10_000n })
   await assert.rejects(settleDbcPlatformClaim(noopDb, short.connection, short.intent), /delta mismatch/)
 })
+
+test('a payout that would overflow the packet with both budget ixs keeps only a capped price and fits', async () => {
+  const { signedWithPriorityFee, PACKET_DATA_SIZE, MAX_PAYOUT_PRIORITY_FEE_LAMPORTS } = await import('../src/trade-landing.mjs')
+  const { Keypair: K, Transaction: T, TransactionInstruction: I, PublicKey: P } = await import('@solana/web3.js')
+  const payer = K.generate(), program = new P('Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo')
+  const connection = { rpcEndpoint: 'http://127.0.0.1:8899',
+    simulateTransaction: async () => ({ value: { err: null, unitsConsumed: 150_000 } }),
+    getRecentPrioritizationFees: async () => [{ slot: 1, prioritizationFee: 2_000_000 }] }
+  const build = bytes => new T().add(new I({ programId: program, keys: [{ pubkey: payer.publicKey, isSigner: true, isWritable: true }], data: Buffer.alloc(bytes, 1) }))
+  const size = tx => { const m = tx.compileMessage(); return 1 + 64 * m.header.numRequiredSignatures + m.serialize().length }
+  // Find a payload that fits with a price ix only but not with limit + price.
+  let bytes = 900, landing
+  for (; bytes < 1200; bytes++) {
+    landing = await signedWithPriorityFee(connection, build(bytes), { feePayer: payer.publicKey, blockhash: '11111111111111111111111111111111', signers: [payer], log: () => {} })
+    if (landing.limitDropped) break
+  }
+  assert.equal(landing.limitDropped, true)
+  assert.ok(size(landing.transaction) <= PACKET_DATA_SIZE)
+  assert.ok(landing.priorityFeeLamports <= MAX_PAYOUT_PRIORITY_FEE_LAMPORTS)
+  assert.equal(landing.transaction.instructions.filter(ix => ix.programId.toBase58() === 'ComputeBudget111111111111111111111111111111').length, 1)
+  assert.ok(landing.transaction.verifySignatures())
+})
