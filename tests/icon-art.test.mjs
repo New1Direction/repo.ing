@@ -21,7 +21,7 @@ function webpSize(bytes) {
 
 test('every icon-pack illustration ships as a small, square, transparent WebP of its declared size', () => {
   for (const [name, { size }] of Object.entries(ART)) {
-    const file = `public${artSource(name)}`
+    const file = `public${artSource(name).split("?")[0]}`
     const bytes = readFileSync(file)
     assert.equal(bytes.subarray(0, 4).toString('ascii'), 'RIFF', name)
     assert.equal(bytes.subarray(8, 12).toString('ascii'), 'WEBP', name)
