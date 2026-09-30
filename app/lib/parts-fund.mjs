@@ -25,6 +25,13 @@ export async function partsFundById(id, db = database(), now = Date.now()) {
   return fund ? fundView(fund, db, now) : null
 }
 
+// Server-only: the largest backers' wallets, used to look up linked X @handles (the API strips this field).
+function topBackers(pledges, limit = 20) {
+  const totals = new Map()
+  for (const p of pledges) totals.set(p.donorWallet, (totals.get(p.donorWallet) ?? 0) + p.usdCents)
+  return [...totals].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([wallet]) => wallet)
+}
+
 async function fundView(fund, db, now) {
   const [{ rows: items }, { rows: pledges }, { rows: updates }, prices] = await Promise.all([
     db.query(`select id, position, name, url, unit_price_cents::int as "unitPriceCents", quantity from parts_fund_items where fund_id=$1 order by position`, [fund.id]),
@@ -51,7 +58,7 @@ async function fundView(fund, db, now) {
     closedAt: fund.closedAt ? new Date(fund.closedAt).toISOString() : null, settledAt: fund.settledAt ? new Date(fund.settledAt).toISOString() : null,
     items: items.map(item => ({ ...item, domain: item.url ? linkDomain(item.url) : null, ...fill.get(item.id) })),
     pledgedCents, percent: fundPercent(pledgedCents, fund.goalCents), goalMet: pledgedCents >= fund.goalCents,
-    backers: new Set(counted.map(p => p.donorWallet)).size, daysLeft: daysLeft(fund.deadline, now),
+    backers: new Set(counted.map(p => p.donorWallet)).size, backerWallets: topBackers(counted), daysLeft: daysLeft(fund.deadline, now),
     holdings, usdToday: holdings.every(h => h.usdToday === null) ? null : holdings.reduce((sum, h) => sum + (h.usdToday ?? 0), 0),
     updates: updates.map(u => ({ id: u.id, body: u.body, images: Array.isArray(u.images) ? u.images.length : 0, createdAt: new Date(u.createdAt).toISOString() })),
   }
