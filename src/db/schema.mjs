@@ -232,18 +232,28 @@ export const discoveryClaims = pgTable('discovery_claims', {
   wallet: varchar('wallet', { length: 44 }).notNull(),
   amount: bigint('amount', { mode: 'bigint' }).notNull(),
   status: varchar('status', { length: 16 }).notNull(),
-  transaction: text('transaction').notNull(),
+  // Null while a message-authorized claim is 'prepared'; the server-signed payout once 'pending' (0035).
+  transaction: text('transaction'),
   signature: varchar('signature', { length: 88 }),
-  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }).notNull(),
+  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   settledAt: timestamp('settled_at', { withTimezone: true }),
   resolutionReason: text('resolution_reason'),
+  // The exact message the launcher wallet signs, its expiry, and the wallet's signature (null on legacy rows).
+  authMessage: text('auth_message'),
+  authExpiresAt: timestamp('auth_expires_at', { withTimezone: true }),
+  authSignature: varchar('auth_signature', { length: 88 }),
 }, table => [
   uniqueIndex('discovery_claims_signature_unique').on(table.signature),
   uniqueIndex('discovery_claims_one_active').on(table.githubRepoId).where(sql`${table.status} in ('prepared', 'pending')`),
   check('discovery_claims_amount_check', sql`${table.amount} > 0 and ${table.amount} <= 2500000000`),
   check('discovery_claims_status_check', sql`${table.status} in ('prepared', 'pending', 'settled', 'aborted')`),
   check('discovery_claims_evidence_check', sql`(${table.status} not in ('pending', 'settled') or ${table.signature} is not null) and (${table.status} <> 'settled' or ${table.settledAt} is not null)`),
+  check('discovery_claims_authorization_check', sql`(${table.authMessage} is null and ${table.authExpiresAt} is null and ${table.authSignature} is null
+    and ${table.transaction} is not null and ${table.lastValidBlockHeight} is not null) or
+    (${table.authMessage} is not null and ${table.authExpiresAt} is not null and (
+      (${table.status} in ('prepared', 'aborted') and ${table.transaction} is null and ${table.lastValidBlockHeight} is null and ${table.authSignature} is null) or
+      (${table.status} in ('pending', 'settled', 'aborted') and ${table.transaction} is not null and ${table.lastValidBlockHeight} is not null and ${table.authSignature} is not null)))`),
 ])
 
 export const feeEvents = pgTable('fee_events', {

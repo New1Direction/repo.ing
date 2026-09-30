@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
 import BN from 'bn.js'
-import { Connection, Keypair, PublicKey, Transaction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js'
+import { randomUUID, sign } from 'node:crypto'
+import bs58 from 'bs58'
+import { Connection, Keypair, PublicKey, Transaction, SystemInstruction, SystemProgram, sendAndConfirmTransaction } from '@solana/web3.js'
 import { DynamicBondingCurveClient, SwapMode, deriveDbcPoolAuthority, DAMM_V2_MIGRATION_FEE_ADDRESS, MigrationFeeOption } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { NATIVE_MINT, createAssociatedTokenAccountInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { createFixedConfig } from './fixed-config.mjs'
@@ -16,7 +18,7 @@ import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { discoverySummary } from '../src/discovery-rewards.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { readBondingStatus } from '../app/lib/bonding-status.mjs'
-import { lighthouseAssertion } from '../src/trade-canary.mjs'
+import { MIN_DISCOVERY_CLAIM_LAMPORTS, discoveryClaimMessage } from '../src/discovery-claim-message.mjs'
 
 const databaseUrl = process.env.DATABASE_URL
 assert.match(databaseUrl ?? '', /^postgres:\/\/discoverytest@127\.0\.0\.1:55439\/discovery_test$/,
@@ -25,6 +27,9 @@ const rpc = process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899'
 assert.match(rpc, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/)
 const connection = new Connection(rpc, 'confirmed')
 const pool = new pg.Pool({ connectionString: databaseUrl })
+// What a wallet's signMessage does: a detached ed25519 signature over the UTF-8 bytes.
+const signMessage = (keypair, message) => bs58.encode(sign(null, Buffer.from(message, 'utf8'), { format: 'der', type: 'pkcs8',
+  key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(keypair.secretKey.subarray(0, 32))]) }))
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function finalized(signature) {
   for (let i = 0; i < 160; i++) {
@@ -35,7 +40,7 @@ async function finalized(signature) {
   throw new Error(`Local transaction did not finalize: ${signature}`)
 }
 
-test('discovery rewards: canonical enrollment, exact fees, wallet authorization, payout recovery, and graduation', { timeout: 240_000 }, async t => {
+test('discovery rewards: canonical enrollment, exact fees, message authorization, server-paid payout recovery, and graduation', { timeout: 240_000 }, async t => {
   await pool.query('truncate repositories restart identity cascade')
   const { config, partner } = await createFixedConfig(connection)
   const nextConfig = (await createFixedConfig(connection, 'balanced')).config
@@ -94,61 +99,114 @@ test('discovery rewards: canonical enrollment, exact fees, wallet authorization,
     await accrual.recordTradeFees({ githubRepoId: repoId, signatures: [market.launchSignature, market.launchSignature] })
     assert.equal((await discoverySummary(pool, repoId)).earned, before.earned)
   })
+  await t.test('a reward below the claim minimum stays accrued until more fees arrive', async () => {
+    assert.ok(BigInt((await discoverySummary(pool, repoId)).remaining) < MIN_DISCOVERY_CLAIM_LAMPORTS)
+    await assert.rejects(claims.prepare({ repoId, wallet }), /too small/)
+    assert.equal((await pool.query('select count(*)::int as n from discovery_claims')).rows[0].n, 0)
+    await buy(2_000_000_000n)
+    assert.ok(BigInt((await discoverySummary(pool, repoId)).remaining) >= MIN_DISCOVERY_CLAIM_LAMPORTS)
+  })
   let prepared
-  await t.test('rejects another wallet; simultaneous preparations reuse one immutable intent', async () => {
+  const walletSign = (keypair, message) => signMessage(keypair, message)
+  const row = async id => (await pool.query('select * from discovery_claims where id = $1', [id])).rows[0]
+  await t.test('rejects another wallet; simultaneous preparations reuse one message; the wallet is never sent a transaction', async () => {
     await assert.rejects(claims.prepare({ repoId, wallet: buyer.publicKey.toBase58() }), /wallet that launched/)
     const offers = await Promise.all([claims.prepare({ repoId, wallet }), claims.prepare({ repoId, wallet })])
     assert.equal(offers[0].id, offers[1].id)
     prepared = offers[0]
-    const tx = Transaction.from(Buffer.from(prepared.transaction, 'base64'))
-    assert.equal(tx.signatures.find(s => s.publicKey.equals(partner.publicKey)).signature, null)
-    // Wallets block offers that arrive partially signed: the wallet must be the first signer.
-    assert.ok(tx.signatures.every(s => s.signature === null))
-    await assert.rejects(claims.submit({ repoId, id: prepared.id, transaction: prepared.transaction }), /Wallet signature/)
-    // A wallet-appended Lighthouse assertion passes the offer check. The local validator has no Lighthouse
-    // program, so it then stops at simulation, before anything is recorded or broadcast.
-    const asserted = Transaction.from(Buffer.from(prepared.transaction, 'base64')).add(lighthouseAssertion(launcher.publicKey))
-    asserted.partialSign(launcher)
+    assert.equal(prepared.status, 'prepared')
+    assert.equal(prepared.transaction, undefined)
+    const summary = await discoverySummary(pool, repoId)
+    assert.equal(prepared.amount, summary.remaining)
+    assert.equal(prepared.message, discoveryClaimMessage({ repoId, market: `octocat/reward-${repoId}`, wallet, amount: prepared.amount,
+      claimId: prepared.id, genesis: await connection.getGenesisHash(), expiresAt: prepared.expiresAt }))
+    const stored = await row(prepared.id)
+    assert.equal(stored.transaction, null)
+    assert.equal(stored.auth_message, prepared.message)
+    // Wrong wallet, tampered message, garbage and a stale transaction-style submit are all refused before any payout.
+    await assert.rejects(claims.submit({ repoId, id: prepared.id, signature: walletSign(buyer, prepared.message) }), /Wallet signature/)
     await assert.rejects(claims.submit({ repoId, id: prepared.id,
-      transaction: asserted.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64') }), /could not be simulated/)
-    assert.equal((await pool.query('select status from discovery_claims where id = $1', [prepared.id])).rows[0].status, 'prepared')
-    tx.instructions.push(SystemProgram.transfer({ fromPubkey: launcher.publicKey, toPubkey: buyer.publicKey, lamports: 1 }))
-    tx.partialSign(launcher)
-    await assert.rejects(claims.submit({ repoId, id: prepared.id,
-      transaction: tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64') }), /does not match/)
+      signature: walletSign(launcher, prepared.message.replace(/\d+ lamports/, '2500000000 lamports')) }), /Wallet signature/)
+    await assert.rejects(claims.submit({ repoId, id: prepared.id, signature: 'not-a-signature' }), /Wallet signature/)
+    await assert.rejects(claims.submit({ repoId, id: prepared.id, transaction: 'AAAA' }), /Reload/)
+    await assert.rejects(claims.submit({ repoId, id: 'not-a-claim', signature: walletSign(launcher, prepared.message) }), /not found/)
+    const after = await row(prepared.id)
+    assert.equal(after.status, 'prepared')
+    assert.equal(after.signature, null)
   })
-  await t.test('expired unsigned offer can be replaced without authorizing a payout', async () => {
-    // A prepared offer has no partner signature and cannot settle anywhere.
-    await pool.query('update discovery_claims set last_valid_block_height = 1 where id = $1', [prepared.id])
-    const result = await claims.recover(repoId)
-    assert.equal(result.status, 'aborted')
+  await t.test('expired confirmation is refused and replaced without a payout', async () => {
+    await pool.query("update discovery_claims set auth_expires_at = now() - interval '1 second' where id = $1", [prepared.id])
+    await assert.rejects(claims.submit({ repoId, id: prepared.id, signature: walletSign(launcher, prepared.message) }), /expired/)
+    assert.equal((await row(prepared.id)).status, 'aborted')
+    assert.equal((await row(prepared.id)).transaction, null)
+    const next = await claims.prepare({ repoId, wallet })
+    assert.notEqual(next.id, prepared.id)
+    // The worker also retires an expired, never-signed confirmation.
+    await pool.query("update discovery_claims set auth_expires_at = now() - interval '1 second' where id = $1", [next.id])
+    assert.equal((await claims.recover(repoId)).status, 'aborted')
+  })
+  await t.test('legacy transaction-style offers are aborted and replaced by message offers', async () => {
+    const legacyTransaction = new Transaction({ feePayer: launcher.publicKey, recentBlockhash: (await connection.getLatestBlockhash()).blockhash })
+      .add(SystemProgram.transfer({ fromPubkey: launcher.publicKey, toPubkey: buyer.publicKey, lamports: 1 }))
+      .serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
+    const insertLegacy = async () => {
+      const id = randomUUID()
+      await pool.query(`insert into discovery_claims (id, github_repo_id, wallet, amount, status, transaction, last_valid_block_height)
+        values ($1,$2,$3,$4,'prepared',$5,$6)`, [id, repoId, wallet, (await discoverySummary(pool, repoId)).remaining, legacyTransaction, '999999999'])
+      return id
+    }
+    const legacyA = await insertLegacy()
+    const replacement = await claims.prepare({ repoId, wallet })
+    assert.notEqual(replacement.id, legacyA)
+    assert.equal((await row(legacyA)).status, 'aborted')
+    assert.match(replacement.message, /does not authorize any transaction/)
+    await pool.query("update discovery_claims set status = 'aborted' where id = $1", [replacement.id])
+    const legacyB = await insertLegacy()
+    await assert.rejects(claims.submit({ repoId, id: legacyB, transaction: legacyTransaction }), /out of date/)
+    assert.equal((await row(legacyB)).status, 'aborted')
     prepared = await claims.prepare({ repoId, wallet })
   })
-  let submitted, beforeCreator, beforePartner
-  await t.test('durable signed intent survives a lost broadcast; no new claim can pay around it', async () => {
+  let submitted, beforeCreator, beforePartnerFee, beforeLauncher, beforePartner
+  await t.test('concurrent submits sign one durable payout; a lost broadcast leaves it pending', async () => {
     // Existing user WSOL must never be closed by a reward claim.
     const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, launcher.publicKey)
     await sendAndConfirmTransaction(connection, new Transaction().add(createAssociatedTokenAccountInstruction(
       launcher.publicKey, wsol, launcher.publicKey, NATIVE_MINT)), [launcher])
     const state = await dbc.state.getPool(market.pool)
     beforeCreator = state.poolState.creatorQuoteFee.toString()
-    beforePartner = BigInt(state.poolState.partnerQuoteFee.toString())
-    const tx = Transaction.from(Buffer.from(prepared.transaction, 'base64'))
-    tx.partialSign(launcher)
+    beforePartnerFee = BigInt(state.poolState.partnerQuoteFee.toString())
+    beforeLauncher = BigInt(await connection.getBalance(launcher.publicKey, 'confirmed'))
+    beforePartner = BigInt(await connection.getBalance(partner.publicKey, 'confirmed'))
+    let sends = 0
     const losingConnection = new Proxy(connection, { get(target, key) {
-      if (key === 'sendRawTransaction') return async () => { throw new Error('Simulated connection loss before broadcast') }
+      if (key === 'sendRawTransaction') return async () => { sends++; throw new Error('Simulated connection loss before broadcast') }
       const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value
     } })
-    submitted = await createDiscoveryClaims({ pool, connection: losingConnection, config, partner }).submit({ repoId,
-      id: prepared.id, transaction: tx.serialize({ requireAllSignatures: false }).toString('base64') })
+    const signature = walletSign(launcher, prepared.message)
+    const results = await Promise.all([1, 2].map(() => createDiscoveryClaims({ pool, connection: losingConnection, config, partner })
+      .submit({ repoId, id: prepared.id, signature })))
+    submitted = results[0]
     assert.equal(submitted.status, 'pending')
+    assert.equal(results[1].signature, submitted.signature)
+    assert.equal(sends, 1, 'only one payout is ever broadcast')
     assert.equal((await claims.prepare({ repoId, wallet })).id, submitted.id)
-    const stored = (await pool.query('select * from discovery_claims where id = $1', [prepared.id])).rows[0]
-    assert.ok(Transaction.from(Buffer.from(stored.transaction, 'base64')).verifySignatures())
+    const stored = await row(prepared.id)
+    assert.equal(stored.auth_signature, signature)
+    const tx = Transaction.from(Buffer.from(stored.transaction, 'base64'))
+    assert.ok(tx.verifySignatures())
+    // Server keys only: the partner pays; the launcher never signs and receives exactly the reward by transfer.
+    assert.ok(tx.feePayer.equals(partner.publicKey))
+    assert.equal(tx.signatures.length, 2)
+    assert.ok(!tx.signatures.some(item => item.publicKey.equals(launcher.publicKey)))
+    const toLauncher = tx.instructions.filter(ix => ix.programId.equals(SystemProgram.programId) &&
+      SystemInstruction.decodeInstructionType(ix) === 'Transfer').map(ix => SystemInstruction.decodeTransfer(ix))
+      .filter(item => item.toPubkey.equals(launcher.publicKey))
+    assert.equal(toLauncher.length, 1)
+    assert.equal(BigInt(toLauncher[0].lamports), BigInt(prepared.amount))
     assert.equal(await connection.getTransaction(submitted.signature, { commitment: 'finalized' }), null)
+    assert.equal((await claims.submit({ repoId, id: prepared.id, signature })).signature, submitted.signature)
   })
-  await t.test('fresh worker rebroadcasts same signature and records one proven payout', async () => {
-    const receiverBefore = await connection.getBalance(launcher.publicKey, 'confirmed')
+  await t.test('fresh worker rebroadcasts the same signature and records one proven payout', async () => {
     const restarted = createDiscoveryClaims({ pool, connection, config })
     const results = await restarted.runOnce()
     assert.equal(results[0].signature, submitted.signature)
@@ -160,21 +218,35 @@ test('discovery rewards: canonical enrollment, exact fees, wallet authorization,
       const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value
     } })
     await assert.rejects(createDiscoveryClaims({ pool, connection: missingReceipt, config }).recover(repoId), /receipt/)
+    // A receipt whose balances do not show exactly the reward reaching the launcher is refused too.
+    const launcherIndex = settledTx.transaction.message.accountKeys.findIndex(key => key.equals(launcher.publicKey))
+    const shortPaid = new Proxy(connection, { get(target, key) {
+      if (key === 'getTransaction') return async () => ({ ...settledTx, meta: { ...settledTx.meta,
+        postBalances: settledTx.meta.postBalances.map((value, i) => i === launcherIndex ? value - 1 : value) } })
+      const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value
+    } })
+    await assert.rejects(createDiscoveryClaims({ pool, connection: shortPaid, config }).recover(repoId), /receipt/)
     const result = await restarted.recover(repoId)
     assert.equal(result.status, 'settled')
     assert.equal(result.signature, submitted.signature)
-    const receiverAfter = await connection.getBalance(launcher.publicKey, 'confirmed')
-    assert.equal(BigInt(receiverAfter - receiverBefore + settledTx.meta.fee), BigInt(prepared.amount))
+    const launcherAfter = BigInt(await connection.getBalance(launcher.publicKey, 'finalized'))
+    const partnerAfter = BigInt(await connection.getBalance(partner.publicKey, 'finalized'))
+    // The launcher gains exactly the reward; the partner pays exactly the network fee and gets every deposit back.
+    assert.equal(launcherAfter - beforeLauncher, BigInt(prepared.amount))
+    assert.equal(beforePartner - partnerAfter, BigInt(settledTx.meta.fee))
     const state = await dbc.state.getPool(market.pool)
     assert.equal(state.poolState.creatorQuoteFee.toString(), beforeCreator)
-    assert.equal(BigInt(state.poolState.partnerQuoteFee.toString()), beforePartner - BigInt(prepared.amount))
+    assert.equal(BigInt(state.poolState.partnerQuoteFee.toString()), beforePartnerFee - BigInt(prepared.amount))
     assert.ok(await connection.getAccountInfo(getAssociatedTokenAddressSync(NATIVE_MINT, launcher.publicKey)))
     assert.equal((await discoverySummary(pool, repoId)).remaining, '0')
     assert.equal((await discoverySummary(pool, repoId)).paid, prepared.amount)
     await assert.rejects(claims.prepare({ repoId, wallet }), /No discovery rewards/)
-    assert.equal((await claims.submit({ repoId, id: prepared.id, transaction: '' })).status, 'settled')
+    assert.equal((await claims.submit({ repoId, id: prepared.id, signature: '' })).status, 'settled')
     assert.equal(await restarted.recover(repoId), null)
     assert.equal((await pool.query("select count(*)::int as n from discovery_claims where status = 'settled'")).rows[0].n, 1)
+    console.log(JSON.stringify({ payoutLamports: { amount: prepared.amount, networkFee: settledTx.meta.fee,
+      launcherDelta: String(launcherAfter - beforeLauncher), partnerDelta: String(partnerAfter - beforePartner),
+      signatures: settledTx.transaction.signatures.length } }))
   })
   await t.test('later fees accrue again and graduation stops DBC trading without deleting earned rewards', async () => {
     await buy(10_000_000n)
@@ -213,10 +285,7 @@ test('discovery rewards: canonical enrollment, exact fees, wallet authorization,
     assert.ok(bonding.destination?.url.startsWith('https://app.meteora.ag/dammv2/'))
     // Earned pre-graduation rewards still have a supported DBC claim path.
     const finalOffer = await claims.prepare({ repoId, wallet })
-    const transaction = Transaction.from(Buffer.from(finalOffer.transaction, 'base64'))
-    transaction.partialSign(launcher)
-    const finalClaim = await claims.submit({ repoId, id: finalOffer.id,
-      transaction: transaction.serialize({ requireAllSignatures: false }).toString('base64') })
+    const finalClaim = await claims.submit({ repoId, id: finalOffer.id, signature: walletSign(launcher, finalOffer.message) })
     await finalized(finalClaim.signature)
     assert.equal((await claims.recover(repoId)).status, 'settled')
     assert.equal((await discoverySummary(pool, repoId)).remaining, '0')

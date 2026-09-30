@@ -55,10 +55,10 @@ The current `DBC_CONFIG` selects future launches. `DBC_LEGACY_CONFIGS` retains p
 
 | Authority | What it controls |
 | --- | --- |
-| User wallet | User-signed launches, trades, discovery claims, and wallet-binding messages |
+| User wallet | User-signed launches and trades; discovery claim and wallet-binding messages |
 | Current GitHub admin | Eligibility to bind or change the repository payout recipient and request builder claims |
 | Protected creator signer | On-chain creator fee claims and the creator's migrated LP position |
-| Protected partner signer | Partner fee claims, including authorized discovery payouts |
+| Protected partner signer | Partner fee claims, including message-authorized discovery payouts (fee payer) |
 
 GitHub authorization is enforced by the application. Meteora verifies its on-chain signing authorities; it does not independently check GitHub identity. Builder and discovery payouts therefore depend on the platform's signer custody and authorization logic. The 50/50 migrated liquidity principal is permanently locked on chain, while position fees remain claimable.
 

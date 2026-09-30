@@ -64,7 +64,7 @@ export function WalletOverview() {
 }
 
 // Launcher (discovery) rewards across every market this wallet launched. Claims stay per market on each
-// token page, where the launcher wallet signs; this tile totals them and opens the claim: the token page's
+// token page, where the launcher wallet signs a claim message; this tile totals them and opens the claim: the token page's
 // rewards tab for one market, or the Rewards list (one Claim button per market) for several.
 function LauncherRewards({ totals, claimable: markets, onShowAll }) {
   if (!totals) return <div className="inner-card"><span>Launcher rewards</span><strong>—</strong><small>Temporarily unavailable.</small></div>

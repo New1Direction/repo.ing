@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
+import bs58 from 'bs58'
+import { sign } from 'node:crypto'
 import BN from 'bn.js'
 import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from '@solana/web3.js'
 import { DynamicBondingCurveClient, SwapMode } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -124,9 +126,10 @@ test('DBC treasury collection preserves discovery and builder fees, refunds rent
   await t.test('discoverer can claim every reserved lamport after platform collection', async () => {
     const claims = createDiscoveryClaims({ pool, connection, config, partner })
     const offer = await claims.prepare({ repoId: enrolled.githubRepoId, wallet: launcher.publicKey.toBase58() })
-    const tx = Transaction.from(Buffer.from(offer.transaction, 'base64')); tx.partialSign(launcher)
-    const submitted = await claims.submit({ repoId: enrolled.githubRepoId, id: offer.id,
-      transaction: tx.serialize({ requireAllSignatures: false }).toString('base64') })
+    // The launcher only signs the claim message; the partner builds, signs and pays for the payout.
+    const signature = bs58.encode(sign(null, Buffer.from(offer.message, 'utf8'), { format: 'der', type: 'pkcs8',
+      key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(launcher.secretKey.subarray(0, 32))]) }))
+    const submitted = await claims.submit({ repoId: enrolled.githubRepoId, id: offer.id, signature })
     await finalized(submitted.signature)
     assert.equal((await claims.recover(enrolled.githubRepoId)).status, 'settled')
     assert.equal((await discoverySummary(pool, enrolled.githubRepoId)).remaining, '0')

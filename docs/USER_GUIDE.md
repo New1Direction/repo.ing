@@ -98,7 +98,7 @@ Builder SOL fees remain separate and can be claimed before graduation. [Allocati
 
 An eligible market's original launch wallet earns half of actual partner DBC fees until curve completion, 30 days, or its stored lifetime cap (**2.5 SOL for new v2 markets; 1 SOL for earlier v1 markets**), whichever comes first. Existing markets were not retroactively enrolled. Reward details appear on eligible market and wallet views.
 
-Connect the original launch wallet, review the available reward and transaction costs, select **Claim discovery rewards**, and sign the prepared transaction. This payout uses your wallet signature and the platform partner signature. GitHub ownership is not required. Your wallet pays network and account costs, so a small reward may cost more to claim than it pays.
+Connect the original launch wallet, select **Claim**, review the reward, and select **Sign message to claim**. Your wallet signs a short message confirming the claim; it never signs a transaction. repo.ing then sends the reward to your wallet and pays the network fee, so you receive the full amount. GitHub ownership is not required. Rewards below 0.002 SOL stay accrued until more fees arrive.
 
 Already-earned rewards remain claimable after the earning window closes. Discovery payouts are separate from builder earnings and do not reduce their share. [Full rules](DISCOVERY_REWARDS.md).
 
