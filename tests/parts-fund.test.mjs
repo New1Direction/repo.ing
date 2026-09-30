@@ -16,6 +16,7 @@ import { createPartsFundJobs, decideDueFunds, finalizeFunds, sendFundTransfers }
 import { fetchUpdateImage, renderUpdateImage } from '../src/parts-images.mjs'
 import sharp from 'sharp'
 import { fakeChain, splMint } from './fixtures/tip-chain.mjs'
+import { loadPartsLists, partsBrowseView } from '../app/lib/parts-fund.mjs'
 
 const SOL = tipToken(NATIVE_MINT.toBase58())
 const USDC = tipToken('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
@@ -469,4 +470,57 @@ dbTest('parts transfer recovery: lost broadcast stays reserved, rebroadcasts the
     token_program as "tokenProgram" from parts_transfers where id=$1`, [second.id])
   assert.throws(() => verifyTransferReceipt(connection.receipts.get(second.signature), { ...row, amount: '9000001' }), /delta mismatch/)
   assert.deepEqual((await finalizeFunds({ pool: p })).map(r => r.status), ['cancelled'])
+})
+
+dbTest('/parts: one query lists every live market\'s lists with repo, token, verified opener, parts, backers and totals', async () => {
+  const p = await resetDb()
+  const wallet = () => Keypair.generate().publicKey
+  const [payout, launcher, top, small, tipWallet] = [wallet(), wallet(), wallet(), wallet(), wallet()]
+  // 4301 has a live market and a verified maintainer; 4302's market never finalized, so its list stays off /parts.
+  await p.query(`insert into markets(github_repo_id, status, mint, pool, launcher_wallet, creator_wallet, token_name, token_symbol, launch_signature,
+      indexed_at, launch_slot, launch_finality, last_verified_at)
+    values(4301,'confirmed',$1,$2,$3,$3,'Parts','PRTS',$4,now(),1,'finalized',now()), (4302,'submitted',null,null,$3,$3,'Other','OTHR',null,null,null,null,null)`,
+  [wallet().toBase58(), wallet().toBase58(), launcher.toBase58(), bs58.encode(Buffer.alloc(64, 7))])
+  await p.query(`insert into repo_verifications(github_repo_id, github_user_id, github_login, permission) values(4301, 77, 'octo-maintainer', 'admin')`)
+  await p.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet) values(4301, 77, $1)`, [payout.toBase58()])
+  const CLOSE = { open: [null, false, null], funded: ['collected', true, payout.toBase58()], failed: ['deadline_missed', true, null], cancelled: ['cancelled', true, null] }
+  const fund = async (repo, status) => {
+    const id = crypto.randomUUID()
+    const [reason, settled, payoutWallet] = CLOSE[status]
+    await p.query(`insert into parts_funds(id, github_repo_id, title, goal_cents, deadline, status, closed_at, close_reason, settled_at, payout_wallet, created_by, created_at)
+      values($1, $2, $3, 10000, now() + interval '5 days', $4, case when $5::text is null then null else now() - interval '1 day' end, $5, case when $6::boolean then now() end, $7,
+        'github:77', now() - interval '2 days')`, [id, repo, `${status} list`, status, reason, settled, payoutWallet])
+    await p.query(`insert into parts_fund_items(id, fund_id, position, name, unit_price_cents, quantity) values($1,$2,0,'Board',5000,1), ($3,$2,1,'Servo',1000,5)`,
+      [crypto.randomUUID(), id, crypto.randomUUID()])
+    return id
+  }
+  try {
+    // One list per repo may be unsettled at a time, so the closed ones are settled.
+    const funded = await fund(4301, 'funded')
+    const missed = await fund(4301, 'failed')
+    const open = await fund(4301, 'open')
+    const hidden = await fund(4302, 'open')
+    const connection = fakeChain({ mints: { [USDC.mint]: splMint() } })
+    await confirmedPledge(p, connection, { fundId: open, token: USDC, amount: 30_000_000, usdCents: 3000, tipWallet, donor: top })
+    await confirmedPledge(p, connection, { fundId: open, token: USDC, amount: 1_000_000, usdCents: 100, tipWallet, donor: small })
+    await confirmedPledge(p, connection, { fundId: open, token: USDC, amount: 500_000, usdCents: 50, tipWallet, donor: small })
+    await confirmedPledge(p, connection, { fundId: hidden, repo: 4302, token: USDC, amount: 1_000_000, usdCents: 100, tipWallet, donor: top })
+
+    const { rows, unavailable } = await loadPartsLists(p)
+    assert.equal(unavailable, undefined)
+    assert.deepEqual(rows.map(r => r.id).sort(), [funded, missed, open].sort())
+    const view = partsBrowseView(rows, 'open')
+    assert.deepEqual(view.counts, { open: 1, funded: 1, closed: 1 })
+    const [row] = view.lists
+    assert.deepEqual([row.fullName, row.symbol, row.openedBy, row.maintainerWallet, row.parts, row.backers, row.pledgedCents, row.goalCents, row.percent, row.daysLeft],
+      ['fixture/parts-4301', 'PRTS', 'octo-maintainer', payout.toBase58(), 2, 2, 3150, 10_000, 31, 5])
+    // Largest backer first.
+    assert.deepEqual(row.backerWallets, [top.toBase58(), small.toBase58()])
+    const [unbacked] = partsBrowseView(rows, 'funded').lists
+    assert.deepEqual([unbacked.backers, unbacked.pledgedCents, unbacked.backerWallets, unbacked.daysLeft, unbacked.parts], [0, 0, [], null, 2])
+  } finally {
+    for (const sql of ['delete from parts_pledges', 'delete from parts_fund_items', 'delete from parts_funds',
+      'delete from repo_beneficiaries where github_repo_id in (4301, 4302)', 'delete from repo_verifications where github_repo_id in (4301, 4302)',
+      'delete from markets where github_repo_id in (4301, 4302)']) await p.query(sql)
+  }
 })

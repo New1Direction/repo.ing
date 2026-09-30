@@ -22,6 +22,7 @@ A community launch does not imply maintainer endorsement. A repository token giv
 
 - [Home](https://repo.ing/): Paste a public GitHub repository link to find or launch its market.
 - [Explore markets](https://repo.ing/explore): Browse live repository markets.
+- [Parts funds](https://repo.ing/parts): Hardware lists from verified maintainers, backed all-or-nothing in USDC or SOL.
 - [Launch a repository](https://repo.ing/launch): Review a repository's token and costs, then launch with your wallet.
 - [Find repos](https://repo.ing/find-repos): Repositories gaining attention, from an evidence-backed trend feed.
 - [How it works](https://repo.ing/how-it-works): Launching, trading, graduation, and discovery rewards.
