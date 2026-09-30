@@ -1,4 +1,4 @@
-import { bigint, boolean, check, index, integer, jsonb, numeric, pgTable, serial, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, index, integer, jsonb, numeric, pgTable, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 export const agentRequestLimits = pgTable('agent_request_limits', {
@@ -642,3 +642,33 @@ export const tradeCanaryStatus = pgTable('trade_canary_status', {
   ok: boolean('ok').notNull(), consecutiveFailures: integer('consecutive_failures').notNull().default(0), lastError: text('last_error'),
   detail: jsonb('detail'), lastRunAt: timestamp('last_run_at',{withTimezone:true}).notNull(), lastOkAt: timestamp('last_ok_at',{withTimezone:true}),
 })
+
+// Repository tips held by the custodial tip wallet, and its payouts/refunds (see drizzle/0030_repo_tips.sql, src/tips.mjs).
+export const tipTransfers = pgTable('tip_transfers', {
+  id: uuid('id').primaryKey(), kind: varchar('kind',{length:8}).notNull(),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  mint: varchar('mint',{length:44}).notNull(), tokenProgram: varchar('token_program',{length:44}).notNull(), decimals: smallint('decimals').notNull(),
+  sourceWallet: varchar('source_wallet',{length:44}).notNull(), recipient: varchar('recipient',{length:44}).notNull(),
+  amount: numeric('amount',{precision:20,scale:0}).notNull(), tipCount: integer('tip_count').notNull(), requestedBy: text('requested_by').notNull(),
+  status: varchar('status',{length:16}).notNull(), signature: varchar('signature',{length:88}).notNull(), signedTransaction: text('signed_transaction').notNull(),
+  lastValidBlockHeight: bigint('last_valid_block_height',{mode:'bigint'}).notNull(), receipt: jsonb('receipt'),
+  createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(), settledAt: timestamp('settled_at',{withTimezone:true}),
+  resolvedAt: timestamp('resolved_at',{withTimezone:true}), resolutionReason: text('resolution_reason'),
+},t=>[uniqueIndex('tip_transfers_signature_unique').on(t.signature),index('tip_transfers_pending').on(t.status).where(sql`${t.status} = 'pending'`),
+  check('tip_transfers_kind_check',sql`${t.kind} in ('payout','refund')`),check('tip_transfers_amount_check',sql`${t.amount} > 0`),
+  check('tip_transfers_tip_count_check',sql`${t.tipCount} > 0`),check('tip_transfers_status_check',sql`${t.status} in ('pending','settled','aborted')`)])
+export const repoTips = pgTable('repo_tips', {
+  id: uuid('id').primaryKey(), githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  donorWallet: varchar('donor_wallet',{length:44}).notNull(), tipWallet: varchar('tip_wallet',{length:44}).notNull(),
+  mint: varchar('mint',{length:44}).notNull(), tokenProgram: varchar('token_program',{length:44}).notNull(), decimals: smallint('decimals').notNull(),
+  symbol: varchar('symbol',{length:16}).notNull(), requestedAmount: numeric('requested_amount',{precision:20,scale:0}).notNull(),
+  receivedAmount: numeric('received_amount',{precision:20,scale:0}), status: varchar('status',{length:16}).notNull(),
+  message: text('message').notNull(), transaction: text('transaction').notNull(), lastValidBlockHeight: bigint('last_valid_block_height',{mode:'bigint'}).notNull(),
+  signature: varchar('signature',{length:88}), signedTransaction: text('signed_transaction'), transferId: uuid('transfer_id').references(() => tipTransfers.id),
+  createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(), submittedAt: timestamp('submitted_at',{withTimezone:true}),
+  confirmedAt: timestamp('confirmed_at',{withTimezone:true}), resolvedAt: timestamp('resolved_at',{withTimezone:true}),
+  refundAfter: timestamp('refund_after',{withTimezone:true}).notNull(),
+},t=>[uniqueIndex('repo_tips_signature_unique').on(t.signature),index('repo_tips_repo_status').on(t.githubRepoId,t.status),
+  index('repo_tips_donor').on(t.donorWallet,t.status),index('repo_tips_transfer').on(t.transferId),
+  index('repo_tips_open').on(t.status,t.createdAt).where(sql`${t.status} in ('prepared','submitted')`),
+  check('repo_tips_status_check',sql`${t.status} in ('prepared','submitted','confirmed','expired','failed','paid','refunded')`)])

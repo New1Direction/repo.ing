@@ -64,6 +64,20 @@ export function readBuilderReview(value, session) {
   }
   return review
 }
+// Pins the payout wallet a maintainer reviewed before claiming tips; the server re-checks it against the current binding.
+export function readTipReview(value, session) {
+  const review = unseal(value)
+  if (!session || review?.purpose !== 'tip-claim-review' || review.sessionId !== session.sessionId ||
+      review.githubUserId !== session.githubUserId || !/^[1-9]\d*$/.test(review.repoId || '') ||
+      (session.scope !== 'builders' && review.repoId !== session.repoId) || !review.wallet || !review.boundAt) {
+    throw new Error('Tip claim review expired. Refresh and review again.')
+  }
+  return review
+}
+export function sealTipReview(session, { repoId, wallet, boundAt }) {
+  return seal({ purpose: 'tip-claim-review', sessionId: session.sessionId, githubUserId: session.githubUserId, repoId: String(repoId),
+    wallet, boundAt: new Date(boundAt).toISOString(), expiresAt: Math.min(session.expiresAt, Date.now() + 30 * 60_000) })
+}
 export function assertSameOrigin(request, origin) {
   if (request.headers.get('origin') !== origin || request.headers.get('sec-fetch-site') === 'cross-site') {
     throw new Error('Open the claim page on repo.ing and try again')

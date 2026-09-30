@@ -83,10 +83,10 @@ async function walletRow(connection, wallet, readToken) {
     error: balance.status === 'rejected' ? 'Balance unavailable' : null }
 }
 
-export async function loadOperationsHealth({ db, connection, wallets, readToken, loadBuybacks, cspStats, journal, now = Date.now, timeoutMs, log } = {}) {
+export async function loadOperationsHealth({ db, connection, wallets, readToken, loadBuybacks, loadTips = async () => null, cspStats, journal, now = Date.now, timeoutMs, log } = {}) {
   const needDb = () => { if (!db) throw exposed('DATABASE_URL is not configured') }
   const options = { timeoutMs, log }
-  const [walletSection, launches, alerts, revenue, migrations, csp, trades, canary] = await Promise.all([
+  const [walletSection, launches, alerts, revenue, migrations, csp, trades, canary, tips] = await Promise.all([
     settleSection('Wallets', async () => {
       if (!connection) throw exposed('SOLANA_RPC_URL is not configured')
       return Promise.all((await wallets()).map(w => walletRow(connection, w, readToken)))
@@ -127,6 +127,11 @@ export async function loadOperationsHealth({ db, connection, wallets, readToken,
       try { return await tradeCanarySummary(db) }
       catch (error) { if (error?.code === '42P01') throw exposed('trade_canary_status table not migrated yet'); throw error }
     }, options),
+    settleSection('Tips', async () => {
+      needDb()
+      try { return await loadTips() }
+      catch (error) { if (error?.code === '42P01') throw exposed('repo_tips table not migrated yet'); throw error }
+    }, options),
   ])
-  return { generatedAt: new Date(now()).toISOString(), wallets: walletSection, launches, alerts, revenue, migrations, csp, trades, canary }
+  return { generatedAt: new Date(now()).toISOString(), wallets: walletSection, launches, alerts, revenue, migrations, csp, trades, canary, tips }
 }

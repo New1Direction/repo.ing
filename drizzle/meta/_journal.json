@@ -211,6 +211,13 @@
       "when": 1790542598558,
       "tag": "0029_trade_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1790542598559,
+      "tag": "0030_repo_tips",
+      "breakpoints": true
     }
   ]
 }

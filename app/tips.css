@@ -1,0 +1,99 @@
+/* Tip this repo: token-page card, tip dialog, claim/builder tip rows, wallet refunds and /stats tip wallet. */
+.repo-tips{margin-top:20px;padding:22px 24px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px 28px;align-items:center;border-color:color-mix(in srgb,var(--green) 26%,var(--border))}
+.repo-tips-heading{display:flex;gap:14px;align-items:flex-start;min-width:0}
+.repo-tips-heading h2,.repo-tips-heading h3{margin:0 0 5px;font-size:17px}
+.repo-tips-heading p{margin:0;color:var(--muted);font-size:14px;line-height:1.5}
+.repo-tips-heading p strong{color:var(--text);font-variant-numeric:tabular-nums}
+.repo-tips-icon{flex:none;width:40px;height:40px;border-radius:10px;display:grid;place-items:center;color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent);border:1px solid color-mix(in srgb,var(--green) 30%,transparent)}
+.repo-tips-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:flex-end}
+.repo-tips-actions>a{font-size:13px;color:var(--muted);text-decoration:underline;text-underline-offset:3px}
+.repo-tips-actions>a:hover{color:var(--text)}
+.repo-tips .button{display:inline-flex;align-items:center;gap:8px}
+.tip-breakdown{grid-column:1/-1;list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+.tip-breakdown li{display:flex;flex-direction:column;gap:3px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);min-width:0}
+.tip-breakdown strong{font-size:14px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.tip-breakdown span{font-size:12px;color:var(--muted)}
+.claim-page-tips{margin-top:24px}
+.claim-page-tips .claim-tips,.claim-page-tips .claim-next,.claim-page-tips .tip-fineprint,.claim-page-tips .repo-tips-actions{grid-column:1/-1;justify-content:flex-start}
+.claim-page-tips .claim-next{margin:0;color:var(--muted);font-size:14px}
+.claim-tips{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.claim-tips small{color:var(--muted);font-size:12px;line-height:1.5}
+.claim-tips-results{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px}
+.claim-tips-results a{color:var(--green-dark);text-decoration:underline;text-underline-offset:3px}
+.claim-tips.compact .button{min-height:30px;padding:0 10px;font-size:12px}
+.tip-fineprint{margin:14px 0 0;color:var(--dim);font-size:12px;line-height:1.55}
+.tip-fineprint a{color:var(--muted);text-decoration:underline}
+.claim-page-tips .tip-fineprint{margin:0}
+
+/* Dialog: reuses the wallet chooser shell. */
+.tip-dialog{width:min(100%,480px)}
+.tip-dialog .wallet-dialog-heading h2{font-size:21px;overflow-wrap:anywhere}
+.tip-loading{color:var(--muted);font-size:14px}
+.tip-tokens{border:0;margin:0 0 18px;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.tip-tokens legend{padding:0;margin-bottom:8px;font-size:12px;font-weight:600;color:var(--muted)}
+.tip-tokens button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface2);color:var(--text);cursor:pointer;text-align:left;transition:border-color .15s,background-color .15s,transform .15s}
+.tip-tokens button strong{font-size:14px}
+.tip-tokens button small{font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.tip-tokens button:hover:not(:disabled){border-color:var(--border-strong)}
+.tip-tokens button:active:not(:disabled){transform:scale(.97)}
+.tip-tokens button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.tip-tokens button.selected{border-color:var(--green);background:color-mix(in srgb,var(--green) 12%,var(--surface2))}
+.tip-tokens button.selected small{color:var(--green-dark)}
+.tip-tokens button:disabled{opacity:.45;cursor:not-allowed}
+.tip-amount{display:block;margin-bottom:16px}
+.tip-amount>span:first-child{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:8px}
+.tip-amount .asset-input{border-color:var(--border-strong)}
+.tip-amount .asset-input input{color:var(--text);font-size:20px;font-variant-numeric:tabular-nums}
+.tip-amount .asset-input>span:last-child{flex:none;font-weight:600;color:var(--muted)}
+.tip-amount small{display:block;margin-top:8px;font-size:12px;color:var(--muted)}
+.tip-amount small.tip-warning{color:var(--red)}
+.tip-submit{width:100%;justify-content:center}
+.tip-done{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding-top:14px}
+.tip-done>svg{color:var(--green)}
+.tip-done h3{margin:0;font-size:20px}
+.tip-done p{margin:0;color:var(--muted);line-height:1.5}
+.tip-done a{color:var(--green-dark);text-decoration:underline;font-size:14px}
+
+/* Builder dashboard row: spans the full row under the balances. */
+.builder-repo-tips{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:6px 16px;padding:10px 12px;border:1px dashed color-mix(in srgb,var(--green) 35%,var(--border));border-radius:8px;font-size:12px}
+.builder-repo-tips>span{color:var(--muted)}
+.builder-repo-tips>strong{font-size:13px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.builder-repo-tips>small{color:var(--dim)}
+.builder-repo-tips .claim-tips{margin-left:auto;flex-direction:row;align-items:center}
+
+/* Wallet page refunds. */
+.my-tips{margin-top:24px;padding:22px 24px}
+.my-tips h2{margin:0 0 12px;font-size:19px}
+.my-tips ul{list-style:none;margin:0;padding:0}
+.my-tips li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0;border-top:1px solid var(--border)}
+.my-tips li>div:first-child{display:flex;flex-direction:column;gap:4px;min-width:0}
+.my-tips li>div:first-child span{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.my-tips li>div:first-child a{text-decoration:underline}
+.my-tips-state{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end;font-size:12px;color:var(--muted)}
+.my-tips-state a{text-decoration:underline}
+.my-tips-state .button{min-height:30px;padding:0 12px;font-size:12px}
+
+/* /stats tip wallet. */
+.tip-stats .copy-address{margin-top:14px}
+.tip-stats-link{font-size:12px;color:var(--muted);text-decoration:underline;margin-left:6px}
+.tip-stats-table{margin-top:16px}
+.tip-stats-table table{border-collapse:collapse;font-size:13px;min-width:460px;font-variant-numeric:tabular-nums}
+.tip-stats-table th{color:var(--muted);font-weight:500;text-align:left}
+.tip-stats-table th,.tip-stats-table td{padding:8px 18px 8px 0;border-bottom:1px solid var(--border)}
+.tip-stats-table small{display:block;color:var(--dim);font-size:11px;margin-top:2px}
+
+@media(max-width:700px){
+  .repo-tips{grid-template-columns:minmax(0,1fr);padding:18px}
+  .repo-tips-actions{justify-content:flex-start;order:2}
+  .repo-tips .tip-breakdown{order:1}
+  .repo-tips-actions .button{flex:1 1 100%;justify-content:center}
+  .tip-tokens{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tip-amount .asset-input input{font-size:16px}
+  .builder-repo-tips .claim-tips{margin-left:0}
+  .tip-stats-table table{min-width:0;width:100%;font-size:12px}
+  .tip-stats-table th,.tip-stats-table td{padding-right:10px}
+  .my-tips{padding:18px}
+  .my-tips li{flex-direction:column;align-items:flex-start;gap:8px}
+  .my-tips-state{justify-content:flex-start}
+}
+@media(prefers-reduced-motion:reduce){.tip-tokens button{transition:none}.tip-tokens button:active:not(:disabled){transform:none}}
