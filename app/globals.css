@@ -708,3 +708,6 @@ body{overflow-x:clip}
 .details-rewards>section{margin:0}
 [data-theme=light] .share-menu-panel,[data-theme=light] .graduation-details>div{box-shadow:0 12px 32px rgba(25,34,28,.14)}
 @media(prefers-reduced-motion:reduce){.share-menu-caret{transition:none}}
+
+/* Compact referral buttons: short labels, details in the helper line. */
+.refer-link .button{min-height:34px;height:34px;padding:0 12px;font-size:13px;gap:6px}

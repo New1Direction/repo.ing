@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Check, Gift, Wallet } from 'lucide-react'
 import { useWallet } from './wallet'
 import { referralLink, referralStatus } from '../lib/referral.mjs'
-import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
+import { formatSolDisplay } from '../lib/format.mjs'
 
 async function post(body) {
   const response = await fetch('/api/referral', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' })
@@ -61,9 +61,9 @@ export function ReferLink({ mint }) {
   return <div className="refer-link">
     <div className="refer-link-actions">
       <button className="button outline" type="button" onClick={copy}>{copied === 'Referral link copied' ? <Check size={15}/> : <Gift size={15}/>}Copy referral link</button>
-      {status && !enabled && <button className="button outline" type="button" onClick={enable} disabled={setup === 'busy'}><Wallet size={15}/>{setup === 'busy' ? 'Enabling…' : `Enable referral payouts (~${formatUnits(status.setupLamports, 9, 5)} SOL one-time, refundable)`}</button>}
+      {status && !enabled && <button className="button outline" type="button" onClick={enable} disabled={setup === 'busy'}><Wallet size={15}/>{setup === 'busy' ? 'Enabling…' : 'Enable payouts'}</button>}
     </div>
-    <small role="status">{copied || (setup && setup !== 'busy' ? setup : 'Earn 4% of the trading fee on trades from your link, paid in SOL.')}</small>
+    <small role="status">{copied || (setup && setup !== 'busy' ? setup : `Earn 4% of the trading fee on trades from your link, paid in SOL.${status && !enabled ? ` Enabling payouts costs ≈${(Number(status.setupLamports) / 1e9).toFixed(4)} SOL once (refundable).` : ''}`)}</small>
     {enabled && <small className="refer-link-earned"><Check size={12}/> Referral payouts enabled · {formatSolDisplay(status.earningsLamports)} SOL earned so far, held as wrapped SOL in your wallet. Trading on repo.ing unwraps your referral earnings to SOL.</small>}
   </div>
 }
