@@ -23,7 +23,7 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('gitfun_bind'), launchtest('gitfun_verify'), launchtest('gitfun_lookup'),
   launchtest('gitfun_external_fees'), trusted(55443, 'repoing_builders'),
   // Opt-in real-PostgreSQL suites (skipped when their URL variable is unset); see DEFAULT_ENV.
-  launchtest('repoing_tips_test'), launchtest('repoing_trade_sessions_test'),
+  launchtest('repoing_tips_test'), launchtest('repoing_trade_sessions_test'), launchtest('repoing_x_links_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -34,6 +34,7 @@ export const DEFAULT_ENV = {
   TEST_DATABASE_URL: scratchDb,
   TIP_TEST_DATABASE_URL: launchtest('repoing_tips_test'),
   TRADE_SESSIONS_TEST_DATABASE_URL: launchtest('repoing_trade_sessions_test'),
+  X_LINKS_TEST_DATABASE_URL: launchtest('repoing_x_links_test'),
   // Production default; graduation-guards asserts the ambient environment keeps P3 execution off.
   REPO_LIQUIDITY_EXECUTION_ENABLED: 'false',
 }

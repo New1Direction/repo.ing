@@ -1,5 +1,6 @@
 import { HolderNotesList } from './holder-notes-list'
 import { holderNotesPage } from '../lib/holder-notes.mjs'
+import { xLinksEnabled } from '../lib/x-links.mjs'
 
 // Token page: "Why holders bought". Streams in behind a same-size fallback; below recent trades on desktop,
 // after the tip card on mobile.
@@ -7,7 +8,7 @@ export async function HolderNotes({ market }) {
   let initial
   try { initial = await holderNotesPage(market.mint) } catch { initial = { notes: [], hasMore: false, unavailable: true } }
   return <section className="inner-card holder-notes" aria-labelledby="holder-notes-title">
-    <HolderNotesList mint={market.mint} symbol={market.symbol} initial={initial}/>
+    <HolderNotesList mint={market.mint} symbol={market.symbol} initial={initial} xEnabled={xLinksEnabled()}/>
   </section>
 }
 
