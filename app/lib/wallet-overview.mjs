@@ -41,3 +41,17 @@ export function walletMarkets(markets, balances, wallet, rewards) {
       builderAvailable: m.beneficiaryWallet === wallet ? m.remaining : null,
       discovery: m.launcherWallet === wallet ? byRepo.get(m.repoId) ?? null : null }))
 }
+
+// One wallet's discovery rewards across every enrolled market it launched. Rows are re-checked so a
+// ledger inconsistency is surfaced rather than summed into an overstated claimable total.
+export function launcherRewardTotals(rows) {
+  let markets = 0, earned = 0n, paid = 0n, claimable = 0n, claimableMarkets = 0
+  for (const { discovery } of rows) {
+    if (!discovery) continue
+    const e = BigInt(discovery.earned), p = BigInt(discovery.paid), r = BigInt(discovery.remaining)
+    if (p < 0n || p > e || r !== e - p) throw new Error('Discovery balance needs review')
+    markets++; earned += e; paid += p; claimable += r
+    if (r > 0n) claimableMarkets++
+  }
+  return { markets, earned: String(earned), paid: String(paid), claimable: String(claimable), claimableMarkets }
+}

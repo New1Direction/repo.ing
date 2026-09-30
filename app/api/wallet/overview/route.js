@@ -1,7 +1,7 @@
 import { PublicKey } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { chain, database, listMarkets } from '../../../lib/server.mjs'
-import { SPL_ACCOUNT_SLICE, TOKEN_2022_ACCOUNT_SLICE, walletMarkets, walletTokenBalances } from '../../../lib/wallet-overview.mjs'
+import { SPL_ACCOUNT_SLICE, TOKEN_2022_ACCOUNT_SLICE, launcherRewardTotals, walletMarkets, walletTokenBalances } from '../../../lib/wallet-overview.mjs'
 import { latestMarketPrices } from '../../../lib/portfolio-prices.mjs'
 import { portfolioSummary, withHoldingValues } from '../../../lib/portfolio.mjs'
 import { walletTrades, withHoldingPnl } from '../../../lib/holding-pnl.mjs'
@@ -41,7 +41,7 @@ export async function GET(request) {
     const priced = trades ? withHoldingPnl(valued, trades) : valued
     return Response.json({ wallet, solBalance: Number.isSafeInteger(sol) && sol >= 0 ? String(sol) : null,
       holdingsAvailable: Boolean(balances), pricesAvailable: Boolean(prices), usdPerSol,
-      portfolio: portfolioSummary(priced), markets: priced, checkedAt: new Date().toISOString() },
+      portfolio: portfolioSummary(priced), launcherRewards: launcherRewardTotals(rows), markets: priced, checkedAt: new Date().toISOString() },
     { headers: { 'Cache-Control': 'private, no-store' } })
   } catch { return Response.json({ error: 'Your wallet overview is temporarily unavailable. Please retry.' }, { status: 503 }) }
 }

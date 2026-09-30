@@ -57,7 +57,8 @@ export default async function Token({ params, searchParams }) {
     { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
       <RepositoryEarnings market={market}/></Suspense> },
-    ...rewards ? [{ id: 'rewards', label: 'Rewards', content: <div className="details-rewards">
+    // #rewards (linked from /wallet) opens this tab so a launcher lands on the claim button.
+    ...rewards ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards">
       {market.allocationVersion === 1 && <BuilderAllocation repoId={market.repoId}/>}
       {[1, 2].includes(market.discoveryVersion) && <DiscoveryRewards repoId={market.repoId}/>}</div> }] : [],
   ]

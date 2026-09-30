@@ -90,6 +90,8 @@ export function DiscoveryRewards({ repoId }) {
   const failed = data?.latestClaim?.status === 'aborted' ? data.latestClaim : null
   const ended = data?.capped || data?.expired || data?.graduated
   const claimCost = offer ? BigInt(offer.networkFee) + BigInt(offer.accountSetupFee) : 0n
+  const launcher = Boolean(data?.wallet) && wallet === data.wallet
+  const claimable = data?.remaining ? BigInt(data.remaining) > 0n : false
   return <section className="inner-card discovery-rewards" aria-labelledby="discovery-heading">
     <div className="card-heading"><h3 id="discovery-heading"><Compass size={19}/> Discovery rewards</h3>
       {data && <span className="small-chip">{data.capped ? `${formatSolDisplay(data.cap)} SOL cap reached` : data.graduated ? 'Graduated' : data.expired ? 'Earning period ended' : data.graduated === null ? 'Checking pool status' : 'Earning'}</span>}</div>
@@ -101,15 +103,18 @@ export function DiscoveryRewards({ repoId }) {
       <div className="discovery-recipient"><span>Launcher wallet</span><CopyAddress address={data.wallet} label="launcher wallet"/></div>
       <p className="discovery-note">{ended ? 'Earning has ended. Your accrued rewards remain claimable.' : `Earning ends no later than ${new Date(data.expiresAt).toLocaleDateString()}.`} Builder earnings stay separate. Your wallet pays Solana’s network and any account setup fees.</p>
       {pending || busy ? <div className="claim-progress" role="status"><span className="claim-spinner" aria-hidden="true"/><span>{pending ? 'Payout submitted. Waiting for Solana finality…' : stage}</span></div> :
-        !wallet ? <button type="button" className="button outline" onClick={() => connect().catch(cause => setError(cause.message))}>Connect launcher wallet</button> :
-          wallet !== data.wallet ? <button type="button" className="button outline" onClick={() => changeWallet().catch(cause => setError(cause.message))}>Switch to launcher wallet</button> :
+        !wallet ? <button type="button" className="button outline" onClick={() => connect().catch(cause => setError(cause.message))}>Launched this repo? Connect to claim</button> :
+          !launcher ? <p className="discovery-note">Only the launcher wallet above can claim. Launched this repo from another wallet? <button type="button" className="claim-text-button" onClick={() => changeWallet().catch(cause => setError(cause.message))}>Switch wallet</button></p> :
             offer ? <div className="discovery-review" role="status"><strong>Review your claim</strong>
               <p>Reward: {formatUnits(offer.amount)} SOL<br/>Network fee: {formatUnits(offer.networkFee)} SOL
                 {BigInt(offer.accountSetupFee) > 0n && <><br/>One-time token account deposit: {formatUnits(offer.accountSetupFee)} SOL</>}</p>
               {claimCost >= BigInt(offer.amount) && <p className="inline-error">The costs exceed this reward. You can wait for more fees to accrue.</p>}
               <button type="button" className="button primary" onClick={() => claim(true)}>Approve in wallet</button>
               <button type="button" className="claim-text-button" onClick={() => setOffer(null)}>Cancel</button></div> :
-              <button type="button" className="button primary" disabled={!data.payoutReady || BigInt(data.remaining) === 0n} onClick={() => claim()}>Claim discovery rewards</button>}
+              claimable ? <div className="discovery-cta"><div><strong>You earned {formatSolDisplay(data.earned)} SOL as launcher</strong>
+                <span>{formatSolDisplay(data.remaining)} SOL is ready to claim to this wallet.</span></div>
+                <button type="button" className="button primary" disabled={!data.payoutReady} onClick={() => claim()}>Claim {formatSolDisplay(data.remaining)} SOL</button></div> :
+                <p className="discovery-note">{BigInt(data.earned) > 0n ? 'All launcher rewards earned so far have been paid to this wallet.' : 'Nothing to claim yet. Rewards appear here as this market trades.'}</p>}
       {!data.payoutReady && <p role="status">Payouts are temporarily unavailable. Your recorded rewards are preserved.</p>}
       {(pending || receipt) && <div className={`discovery-receipt ${receipt ? 'positive' : ''}`} role="status">
         {receipt && <><CheckCircle2 size={19}/><span>{formatSolDisplay(receipt.amount)} SOL discovery reward claimed.</span></>}
