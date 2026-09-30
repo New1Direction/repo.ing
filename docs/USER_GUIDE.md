@@ -30,7 +30,7 @@ Prices come from finalized pool swaps. Empty periods stay empty, and a delayed u
 
 Each market's Graduation Progress shows finalized SOL reserves against that market's on-chain target. Buys add SOL after trading fees; sells reduce reserves and progress. Trading volume counts activity in both directions, while graduation requires SOL to remain in the curve. The displayed remaining reserve is not an executable purchase quote. Once the target is reached, the site waits for verified migration before linking the same token's DAMM pool.
 
-The official $REPOING market and Stats also show the team's two Jupiter vesting escrows: original deposits, share of fixed supply, exact UTC release schedules, fixed recipient, and source links. These are separate from the builder allocation and do not represent all team holdings. Read [the verified lock disclosure](REPO_IDENTITY.md#team-token-vesting--verified-september-28-2026); Jupiter shows current claim status.
+The official $REPOING market and Stats also show every $REPOING Jupiter Lock escrow (team deposits and bought-back tokens): original deposits, share of fixed supply, exact UTC release schedules, each lock's fixed creator and recipient wallet, and source links. These are separate from the builder allocation and do not represent all team or buyback-wallet holdings. Read [the verified lock disclosure](REPO_IDENTITY.md#token-locks); Jupiter shows current claim status.
 
 ### Launch steps
 
