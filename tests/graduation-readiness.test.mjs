@@ -23,6 +23,8 @@ assert.equal(process.env.SOLANA_RPC_URL,'http://127.0.0.1:8909')
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL})
 const connection=new Connection(process.env.SOLANA_RPC_URL,'confirmed'),verification=new Connection(process.env.SOLANA_RPC_URL,'finalized')
 const env={...JSON.parse(readFileSync('docs/P3_FIRST_LIVE_SETTINGS.json')),BUILDER_REINVEST_ENABLED:'false',NODE_ENV:'test'}
+// Large enough that the DAMM platform claim clears the dust floor (20x its priority-fee network cost).
+const DAMM_TRADE_LAMPORTS='5000000000'
 const proxy=(original,overrides)=>new Proxy(original,{get(target,key){if(key in overrides)return overrides[key];const v=Reflect.get(target,key);return typeof v==='function'?v.bind(target):v}})
 
 test('P5 detects one real local graduation, indexes actual DAMM trades, alerts and reaches review eligibility without spending',{timeout:600000},async t=>{
@@ -61,10 +63,10 @@ test('P5 detects one real local graduation, indexes actual DAMM trades, alerts a
   let view=await graduationOperatorView(pool,env)
   assert.equal(view.markets[0].phase,'GRADUATED');assert.equal(view.markets[0].p3.eligible,false)
   const snapshot=await createGraduatedFees({connection,config}).read(market),p=snapshot.poolState
-  const trade=await send(await snapshot.amm.swap2({payer:trader.publicKey,pool:snapshot.pool,inputTokenMint:NATIVE_MINT,outputTokenMint:p.tokenAMint,tokenAMint:p.tokenAMint,tokenBMint:p.tokenBMint,tokenAVault:p.tokenAVault,tokenBVault:p.tokenBVault,tokenAProgram:TOKEN_PROGRAM_ID,tokenBProgram:TOKEN_PROGRAM_ID,referralTokenAccount:null,swapMode:SwapMode.ExactIn,amountIn:new BN(100000000),minimumAmountOut:new BN(1)}),[trader])
+  const trade=await send(await snapshot.amm.swap2({payer:trader.publicKey,pool:snapshot.pool,inputTokenMint:NATIVE_MINT,outputTokenMint:p.tokenAMint,tokenAMint:p.tokenAMint,tokenBMint:p.tokenBMint,tokenAVault:p.tokenAVault,tokenBVault:p.tokenBVault,tokenAProgram:TOKEN_PROGRAM_ID,tokenBProgram:TOKEN_PROGRAM_ID,referralTokenAccount:null,swapMode:SwapMode.ExactIn,amountIn:new BN(DAMM_TRADE_LAMPORTS),minimumAmountOut:new BN(1)}),[trader])
   await cycle();await cycle()
   const {rows:trades}=await pool.query('select * from damm_trade_events')
-  assert.equal(trades.length,1);assert.equal(trades[0].signature,trade);assert.equal(trades[0].quote_amount,'100000000')
+  assert.equal(trades.length,1);assert.equal(trades[0].signature,trade);assert.equal(trades[0].quote_amount,DAMM_TRADE_LAMPORTS)
   const platform=createPlatformFees({pool,connection,config,partner}),status=await platform.status(repoId)
   assert.ok(BigInt(status.available)>0n)
   const claim=await platform.claim({review:{purpose:'platform-fee-review',repoId,amount:status.available,receiver:partner.publicKey.toBase58(),expiresAt:Date.now()+60000}})
