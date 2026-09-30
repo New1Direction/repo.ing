@@ -151,6 +151,16 @@
 .discovery-review { padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
 .discovery-review p { margin: 10px 0; color: var(--muted); font-size: 14px; }
 .discovery-review .claim-text-button { margin-left: 16px; }
+.discovery-note { color: var(--muted); font-size: 14px; line-height: 1.6; }
+.discovery-note .claim-text-button { margin-left: 4px; font-size: 14px; }
+.discovery-cta { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px 20px; margin-top: 18px; padding: 16px 18px; border: 1px solid var(--green); border-radius: 8px; background: color-mix(in srgb, var(--green) 9%, transparent); }
+.discovery-cta > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.discovery-cta strong { font-size: 17px; overflow-wrap: anywhere; }
+.discovery-cta span { color: var(--muted); font-size: 13px; }
+.wallet-summary .wallet-launcher.is-claimable { border-color: var(--green); }
+.wallet-summary .wallet-launcher .button { align-self: flex-start; min-height: 34px; margin-top: 4px; padding: 0 14px; font-size: 13px; }
+.wallet-market-values > .wallet-launcher-claimable strong { color: var(--green); }
+@media (max-width: 700px) { .discovery-cta .button { width: 100%; } }
 @media (max-width: 600px) {
   .discovery-totals { grid-template-columns: 1fr; gap: 16px; }
   .discovery-totals div { flex-direction: row; justify-content: space-between; align-items: baseline; }

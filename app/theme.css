@@ -106,3 +106,4 @@
 [data-theme=light] .buyback-counter>a,[data-theme=light] .buyback-counter p>span[aria-hidden]{color:#157347}
 :root[data-theme=light] .return-share h1 .gain{color:var(--green-dark)}
 [data-theme=light] .market-row .table-repo-ticker{color:#16834c}
+[data-theme=light] .wallet-market-values>.wallet-launcher-claimable strong,[data-theme=light] .discovery-note .claim-text-button{color:#16834c}
