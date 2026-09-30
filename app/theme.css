@@ -52,7 +52,7 @@
 [data-theme=light] .segmented button,[data-theme=light] .trade-tabs button{color:#425247;background:#fff}
 [data-theme=light] .segmented button.selected,[data-theme=light] .trade-tabs button.selected{background:#e5efe8;color:#17291e}
 
-[data-theme=light] .repo-hero-card,[data-theme=light] .launch-panel,[data-theme=light] .inner-card,[data-theme=light] .chart-card,[data-theme=light] .trade-card,[data-theme=light] .claim-repo-card,[data-theme=light] .claim-step-card,[data-theme=light] .info-card,[data-theme=light] .step-card,[data-theme=light] .info-note,[data-theme=light] .info-closing{background:#fff}
+[data-theme=light] .repo-hero-card,[data-theme=light] .market-hero,[data-theme=light] .launch-panel,[data-theme=light] .inner-card,[data-theme=light] .chart-card,[data-theme=light] .trade-card,[data-theme=light] .claim-repo-card,[data-theme=light] .claim-step-card,[data-theme=light] .info-card,[data-theme=light] .step-card,[data-theme=light] .info-note,[data-theme=light] .info-closing{background:#fff}
 [data-theme=light] .field-input,[data-theme=light] .input-suffix,[data-theme=light] .asset-input{border-color:#bac8bd;color:var(--text);background:#fff}
 [data-theme=light] .input-suffix input,[data-theme=light] .asset-input input{color:var(--text)}
 [data-theme=light] .input-suffix span,[data-theme=light] .asset-input>span:last-child{color:#405548}
@@ -73,7 +73,7 @@
 [data-theme=light] .trade-result-card.failed .trade-result-actions a{color:#8d2a36}
 [data-theme=light] .state-card{color:#506157}
 
-[data-theme=light] .market-price span,[data-theme=light] .market-nav,[data-theme=light] .chart-metrics,[data-theme=light] .trade-card label,[data-theme=light] .trade-hint,[data-theme=light] .repo-meta-grid,[data-theme=light] .token-details dt,[data-theme=light] .earnings-card p{color:#607168}
+[data-theme=light] .market-nav,[data-theme=light] .chart-metrics,[data-theme=light] .trade-card label,[data-theme=light] .trade-hint,[data-theme=light] .repo-meta-grid,[data-theme=light] .token-details dt,[data-theme=light] .earnings-card p{color:#607168}
 [data-theme=light] .market-nav .active{color:var(--text);border-color:var(--text)}
 [data-theme=light] .market-nav .disabled{color:#88968c}
 [data-theme=light] .chart-metrics strong,[data-theme=light] .repo-meta-grid strong{color:var(--text)}

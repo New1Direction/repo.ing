@@ -1,14 +1,16 @@
 'use client'
 import { useEffect, useId, useRef, useState } from 'react'
-import { Share2, Zap, ChevronDown, Image as ImageIcon, Code2, Link2 } from 'lucide-react'
+import { Share2, Zap, ChevronDown, Image as ImageIcon, Code2, Link2, Ellipsis } from 'lucide-react'
 import { dialToUrl } from '../lib/blink-links.mjs'
 import { ReferLink } from './refer-link'
 import { ReadmeBadgePanel } from './readme-badge'
 import { MarketShareCard } from './market-share-card'
 import { WatchButton } from './watchlist'
+import { MenuDetails } from './menu-details'
 
-// Watch stays a button; every share action lives in one disclosure menu (Escape closes, focus returns to "Share").
-export function ShareMarket({ mint, symbol, fullName, repoId }) {
+// Watch stays a button; every share action (referral link included) lives in one disclosure menu (Escape closes, focus
+// returns to "Share"). `more` holds secondary links for the "⋯" menu.
+export function ShareMarket({ mint, symbol, fullName, repoId, more }) {
   const [state, setState] = useState('')
   const [open, setOpen] = useState(false), [badge, setBadge] = useState(false), [card, setCard] = useState(false)
   const root = useRef(null), trigger = useRef(null), panel = useRef(null), refocus = useRef(false)
@@ -62,11 +64,12 @@ export function ShareMarket({ mint, symbol, fullName, repoId }) {
           <button type="button" onClick={() => { setOpen(false); setCard(true) }}><ImageIcon size={15} aria-hidden="true"/>Share card</button>
           {repoId && <button type="button" aria-expanded={badge} aria-controls={badgeId} onClick={() => setBadge(value => !value)}><Code2 size={15} aria-hidden="true"/>README badge<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>}
           {repoId && badge && <ReadmeBadgePanel id={badgeId} repoId={repoId} mint={mint}/>}
+          <ReferLink mint={mint}/>
         </div>}
       </div>
+      {more && <MenuDetails className="share-more" label="More actions" summary={<Ellipsis size={16} aria-hidden="true"/>}><div className="menu-panel share-more-panel">{more}</div></MenuDetails>}
     </div>
     {state && <small role="status">{state}</small>}
-    <ReferLink mint={mint}/>
     <MarketShareCard mint={mint} open={card} onOpenChange={value => { setCard(value); if (!value) trigger.current?.focus() }}/>
   </div>
 }

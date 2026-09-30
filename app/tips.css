@@ -102,9 +102,9 @@
 .tip-jar-slot{margin-top:10px;min-height:32px}
 .tip-jar-pill{display:inline-flex;align-items:center;gap:6px;height:32px;min-width:128px;max-width:100%;padding:0 13px;border:1px solid color-mix(in srgb,var(--green) 45%,var(--border));border-radius:999px;background:color-mix(in srgb,var(--green) 11%,transparent);color:var(--text);font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;transition:background-color .15s,border-color .15s}
 .tip-jar-pill svg{flex:none;color:var(--green)}
-.market-price .tip-jar-pill span{display:inline;color:var(--muted);font-size:13px}
-.market-price .tip-jar-pill b{color:var(--dim);font-weight:400}
-.market-price .tip-jar-pill strong{display:inline;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.market-hero-actions .tip-jar-pill span{display:inline;color:var(--muted);font-size:13px}
+.market-hero-actions .tip-jar-pill b{color:var(--dim);font-weight:400}
+.market-hero-actions .tip-jar-pill strong{display:inline;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
 .tip-jar-pill:hover{background:color-mix(in srgb,var(--green) 18%,transparent);border-color:var(--green)}
 .tip-jar-pill:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .tip-jar-pill.is-loading{cursor:default;opacity:.7}

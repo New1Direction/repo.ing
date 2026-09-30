@@ -58,14 +58,13 @@
 .parts-share{display:flex;gap:14px}
 
 /* Title badge, next to "Maintainer joined". */
-.parts-badge{display:inline-flex;align-items:center;gap:6px;margin:14px 0 0 166px;height:26px;padding:0 10px;border-radius:999px;font-size:12px;color:var(--text);
+.parts-badge{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:999px;font-size:12px;color:var(--text);
   border:1px solid color-mix(in srgb,var(--green) 45%,var(--border));background:color-mix(in srgb,var(--green) 10%,transparent);transition:background-color .15s,border-color .15s}
 .parts-badge svg{color:var(--green)}
 .parts-badge b{color:var(--dim);font-weight:400}
 .parts-badge strong{font-variant-numeric:tabular-nums}
 .parts-badge:hover{border-color:var(--green);background:color-mix(in srgb,var(--green) 17%,transparent)}
 .parts-badge:focus-visible{outline:2px solid var(--green);outline-offset:2px}
-.market-title>div:first-child>.badge+.parts-badge{margin-left:8px}
 
 /* Dialogs. */
 .parts-dialog{width:min(100%,480px)}
@@ -106,7 +105,6 @@
 .parts-stats-grid small{color:var(--dim);font-size:11px}
 .activity-type.parts-update,.activity-type.parts-pledge{color:var(--green-dark)}
 
-@media(max-width:1050px){.parts-badge{margin-left:0}}
 @media(max-width:700px){
   .parts-card{padding:16px}
   .parts-item-row{grid-template-columns:minmax(0,1fr) 92px 54px 32px;row-gap:6px}
