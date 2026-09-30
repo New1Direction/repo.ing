@@ -6,6 +6,8 @@ import { PartsFundActions, PartsFundEditor, PartsUpdateShare } from './parts-fun
 import { githubSessionCookie, readGithubSession, sealTipReview } from '../lib/auth.mjs'
 import { formatCents as centsLabel, formatTokenAmount, formatUsdValue } from '../lib/format.mjs'
 import { partsEnabled, repoPartsFund } from '../lib/parts-fund.mjs'
+import { xHandlesFor } from '../lib/x-links.mjs'
+import { XHandleLink } from './x-handle-link'
 
 // One memoized read per request feeds the title badge and the card.
 const pageFund = cache(repoId => repoPartsFund(repoId).catch(error => {
@@ -54,7 +56,11 @@ export async function PartsFundCard({ market }) {
   return <FundBody fund={fund} market={market} manage={maintainer ? { repoId: String(market.repoId), review } : null}/>
 }
 
-function FundBody({ fund, market, manage = null }) {
+async function FundBody({ fund: full, market, manage = null }) {
+  // Backer wallets stay on the server: only @handles of backers who linked X (Connect X) are shown.
+  const { backerWallets, ...fund } = full
+  let handles = []
+  try { handles = [...(await xHandlesFor(backerWallets)).values()].filter(Boolean).slice(0, 6) } catch { handles = [] }
   const holdings = fund.holdings.filter(h => BigInt(h.amount) > 0n)
   return <section id="parts-fund" className={`inner-card parts-card is-${fund.status}`} aria-labelledby="parts-fund-title">
     <div className="parts-top"><h3 id="parts-fund-title"><Cpu size={16} aria-hidden="true"/>Parts fund</h3><span className={`parts-state is-${fund.status}`}>{STATE[fund.status](fund)}</span></div>
@@ -63,6 +69,8 @@ function FundBody({ fund, market, manage = null }) {
     <div className="parts-progress" role="progressbar" aria-label="Pledged toward the goal" aria-valuemin={0} aria-valuemax={100} aria-valuenow={fund.percent}
       aria-valuetext={`${centsLabel(fund.pledgedCents)} of ${centsLabel(fund.goalCents)}`}><span style={{ transform: `scaleX(${fund.percent / 100})` }}/></div>
     <p className="parts-figures"><strong>{centsLabel(fund.pledgedCents)}</strong> of {centsLabel(fund.goalCents)} · {fund.backers} {fund.backers === 1 ? 'backer' : 'backers'}</p>
+    {handles.length > 0 && <p className="parts-backers">Backed by {handles.map(link => <XHandleLink key={link.username} link={link}/>)}
+      {fund.backers > handles.length && <span>+{fund.backers - handles.length} more</span>}</p>}
     {holdings.length > 0 && <p className="parts-holdings">Held: {holdings.map(h => `${formatTokenAmount(h.amount, h.decimals)} ${h.symbol}`).join(' · ')}
       {fund.usdToday !== null && <> · ≈ {formatUsdValue(fund.usdToday)} today</>}<small>Progress counts each pledge at its USD value when pledged.</small></p>}
     <ul className="parts-items">{fund.items.map(item => <li key={item.id} className={item.funded ? 'is-funded' : ''}>

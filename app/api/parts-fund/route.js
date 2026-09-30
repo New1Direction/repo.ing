@@ -33,7 +33,8 @@ export async function POST(request) {
       if (!validUuid(body.fundId)) throw Error('Parts list not found')
       const [fund, tokens] = await Promise.all([partsFundById(body.fundId, pool), tokenOptions()])
       if (!fund) throw Error('Parts list not found')
-      return Response.json({ fund, tokens, minimumUsd: PARTS_MIN_PLEDGE_USD }, { headers })
+      const { backerWallets, ...publicFund } = fund
+      return Response.json({ fund: publicFund, tokens, minimumUsd: PARTS_MIN_PLEDGE_USD }, { headers })
     }
     if (body.action === 'prepare') {
       if (!byClient(clientKey(request)) || !byWallet(String(body.wallet ?? '').slice(0, 44))) throw Error('Too many pledge attempts. Try again in a minute.')
