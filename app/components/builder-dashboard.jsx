@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, RefreshCw, Search } from 'lucide-react'
 import { BuilderReminders } from './builder-reminders'
 import { GithubMark } from './github-mark'
-import { ArtTile } from './art-tile'
+import { IconArt } from './icon-art'
 import { CopyAddress } from './copy-address'
 import { useWallet } from './wallet'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
@@ -96,7 +96,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   return <div className="builder-dashboard">
     <ClaimChecklist current={step}/>
     {error && <div className="state-card error" role="alert">{error}{signedIn && !needsLogin && <button className="button outline" disabled={busy||loading} onClick={refresh}>Try again</button>}</div>}
-    {needsLogin ? <div className="builder-connect inner-card"><ArtTile name="verified-shield-02" size={128} eager/><h2>Connect GitHub to collect your earnings</h2><p>See all tokenized repositories you administer, then claim their ready fees together. Fees set aside for your repositories collect even before you sign up.</p><a className="button primary" href="/api/github/start?mode=builders"><GithubMark size={18}/>Connect GitHub</a><small>Read-only metadata access. repo.ing cannot change your code.</small></div> : <>
+    {needsLogin ? <div className="builder-connect inner-card"><IconArt name="verified-shield-02" size={128} eager/><h2>Connect GitHub to collect your earnings</h2><p>See all tokenized repositories you administer, then claim their ready fees together. Fees set aside for your repositories collect even before you sign up.</p><a className="button primary" href="/api/github/start?mode=builders"><GithubMark size={18}/>Connect GitHub</a><small>Read-only metadata access. repo.ing cannot change your code.</small></div> : <>
       <div className="builder-account"><span><GithubMark size={17}/>{data?.githubLogin || githubLogin}</span><div><a href="https://github.com/apps/repo-ing/installations/new" target="_blank" rel="noreferrer">Manage GitHub access ↗</a><a href="/api/github/start?mode=builders">Reconnect</a><button className="button outline" onClick={refresh} disabled={busy||loading}><RefreshCw size={14} aria-hidden="true"/>{loading?'Checking…':'Refresh'}</button></div></div>
       {loading && !data && <div className="builder-empty" role="status"><span className="claim-spinner" aria-hidden="true"/>Checking your repositories and available fees…</div>}
       {data && <>

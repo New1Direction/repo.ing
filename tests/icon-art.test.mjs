@@ -3,9 +3,12 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { ART, artSource } from '../app/lib/art.mjs'
 
-const MAX_BYTES = 35 * 1024
+const MAX_BYTES = 40 * 1024
 const USERS = ['app/components/waiting-board.jsx', 'app/components/wallet-overview.jsx', 'app/components/find-repos.jsx',
   'app/components/builder-dashboard.jsx', 'app/components/repository-flow.jsx', 'app/(site)/claim/[repo]/page.jsx']
+
+// VP8X header flag bit set when the WebP carries an alpha channel.
+const VP8X_ALPHA = 0x10
 
 // Width and height of a lossy (VP8) or lossless (VP8L) WebP.
 function webpSize(bytes) {
@@ -16,15 +19,18 @@ function webpSize(bytes) {
   throw new Error(`unknown WebP chunk ${chunk}`)
 }
 
-test('every icon-pack illustration ships as a small, square WebP of its declared size', () => {
-  for (const [name, { size, background }] of Object.entries(ART)) {
+test('every icon-pack illustration ships as a small, square, transparent WebP of its declared size', () => {
+  for (const [name, { size }] of Object.entries(ART)) {
     const file = `public${artSource(name)}`
     const bytes = readFileSync(file)
     assert.equal(bytes.subarray(0, 4).toString('ascii'), 'RIFF', name)
     assert.equal(bytes.subarray(8, 12).toString('ascii'), 'WEBP', name)
     assert.ok(statSync(file).size < MAX_BYTES, `${name} is ${statSync(file).size} bytes`)
     assert.deepEqual(webpSize(bytes), [size, size], name)
-    assert.match(background, /^#[0-9a-f]{6}$/, name)
+    // Cutouts, not opaque tiles: an extended (VP8X) file with the alpha flag and an ALPH chunk.
+    assert.equal(bytes.subarray(12, 16).toString('ascii'), 'VP8X', `${name} has no alpha`)
+    assert.ok(bytes[20] & VP8X_ALPHA, `${name} alpha flag`)
+    assert.ok(bytes.includes(Buffer.from('ALPH')), `${name} alpha chunk`)
   }
 })
 

@@ -5,7 +5,7 @@ import { RepoAvatar } from './ui'
 import { GithubMark } from './github-mark'
 import { XMark } from './x-mark'
 import { WaitingCopyLink } from './waiting-copy-link'
-import { ArtTile } from './art-tile'
+import { IconArt } from './icon-art'
 import { amountDisplay, tagIntentUrl, waitingAnchor } from '../lib/waiting.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
 
@@ -23,7 +23,7 @@ export function WaitingHeader({ total, count, usdPerSol }) {
       <strong>How to help</strong>
       <span>Know a maintainer below? <b>Tag them on X</b> — the post links straight to their claim page.</span>
     </aside>}
-  </div><ArtTile name="maintainer-card" size={176} eager/></header>
+  </div><IconArt name="maintainer-card" size={176} eager/></header>
 }
 
 function WaitingRow({ market, rank, usdPerSol }) {

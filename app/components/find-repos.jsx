@@ -6,7 +6,7 @@ import { Search, Star, GitFork, X, ArrowUpRight } from 'lucide-react'
 import { TrendReasons } from './growth-surfaces'
 import { ACTIVITY_FILTERS, MARKET_FILTERS, SEARCH_EXAMPLES, QUERY_LIMIT, matchesSearchFilters, searchRepositoryUrl } from '../../src/repo-search.mjs'
 import { TREND_FRESH_MS } from '../../src/trend-rules.mjs'
-import { ArtTile } from './art-tile'
+import { IconArt } from './icon-art'
 
 const number = value => Number(value).toLocaleString('en-US', { notation: 'compact', maximumFractionDigits: 1 })
 export function FindRepos({ initial, smartSearch }) {
@@ -105,7 +105,7 @@ export function FindRepos({ initial, smartSearch }) {
           <span>Checked {Math.max(0, Math.floor((now - Date.parse(c.observedAt))/60000))}m ago</span>
         </div><TrendReasons candidate={c}/>
       </article>)}
-      {!visible.length && <div className="finder-empty"><ArtTile name="repository-search" size={120}/><h2>{filtered ? 'No matching repositories yet.' : 'New repositories are being checked.'}</h2><p>{filtered ? 'Try a broader topic or clear a filter. This searches our tracked repos, not all of GitHub.' : 'Fresh candidates appear as public attention is verified.'}</p><div>{filtered && <button type="button" className="button outline" onClick={clear}>Show all repos</button>}<Link className="button outline" href="/launch">Have a repo? Launch it</Link></div></div>}
+      {!visible.length && <div className="finder-empty"><IconArt name="repository-search" size={120}/><h2>{filtered ? 'No matching repositories yet.' : 'New repositories are being checked.'}</h2><p>{filtered ? 'Try a broader topic or clear a filter. This searches our tracked repos, not all of GitHub.' : 'Fresh candidates appear as public attention is verified.'}</p><div>{filtered && <button type="button" className="button outline" onClick={clear}>Show all repos</button>}<Link className="button outline" href="/launch">Have a repo? Launch it</Link></div></div>}
     </div>
     <p className="growth-footnote">Discover a repo early. Eligible launchers earn a share of curve fees for up to 30 days, capped at 2.5 SOL. <Link href="/discoverers">See discoverers →</Link></p>
   </div>

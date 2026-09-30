@@ -1,13 +1,9 @@
-/* Icon-pack art (app/components/art-tile.jsx). The illustrations have opaque light studio backgrounds, so each one is
-   presented as a deliberate light card: its own background colour behind the image, a rounded frame, a soft shadow.
-   In the dark theme the card gets a faint mounted rim and a deeper shadow, and is dimmed a touch to avoid glare. */
-.art-tile{display:block;flex:none;width:var(--art-size);max-width:100%;aspect-ratio:1;border-radius:18%;overflow:hidden;
-  background:var(--art-bg);border:1px solid rgba(25,34,28,.09);
-  box-shadow:0 1px 2px rgba(25,34,28,.06),0 14px 28px -16px rgba(25,34,28,.28)}
-.art-tile img{display:block;width:100%;height:100%;object-fit:contain}
-:root:not([data-theme=light]) .art-tile{border-color:rgba(255,255,255,.2);
-  box-shadow:0 0 0 5px rgba(255,255,255,.04),0 22px 44px -18px rgba(0,0,0,.85)}
-:root:not([data-theme=light]) .art-tile img{filter:brightness(.93)}
+/* Icon-pack art (app/components/icon-art.jsx): transparent cutouts drawn straight onto the page, no tile. The baked
+   studio floor shadow was removed from the files; a soft drop shadow that follows the art's own silhouette grounds it
+   instead — faint and warm on the light theme, deeper on the dark one. */
+.icon-art{display:block;flex:none;width:var(--art-size);max-width:100%;height:auto;aspect-ratio:1;object-fit:contain;
+  filter:drop-shadow(0 6px 8px rgba(25,34,28,.14))}
+:root:not([data-theme=light]) .icon-art{filter:drop-shadow(0 8px 12px rgba(0,0,0,.5))}
 
 /* /waiting header */
 .waiting-intro.has-art{display:flex;align-items:center;justify-content:space-between;gap:48px;max-width:none}
@@ -18,22 +14,22 @@
 .state-card.has-art h3{margin-top:0}
 
 /* /builders connect card and Find repos empty state: centred art above the heading */
-.builder-connect>.art-tile,.finder-empty>.art-tile{display:block;margin:0 auto}
+.builder-connect>.icon-art,.finder-empty>.icon-art{display:block;margin:0 auto}
 
 /* Claim page header */
 .claim-intro.has-art{display:flex;align-items:center;justify-content:space-between;gap:40px}
 
 /* How it works: the step's illustration is the commit node between the two rails */
-.flow-commit .art-tile{margin:0 6px}
+.flow-commit .icon-art{margin:0 6px}
 
 @media(max-width:700px){
   .waiting-intro.has-art{flex-direction:column-reverse;align-items:flex-start;gap:18px}
-  .waiting-intro.has-art .art-tile{width:88px}
+  .waiting-intro.has-art .icon-art{width:88px}
   .state-card.has-art{gap:16px;align-items:flex-start}
-  .state-card.has-art .art-tile{width:72px}
-  .claim-intro.has-art .art-tile{display:none}
+  .state-card.has-art .icon-art{width:72px}
+  .claim-intro.has-art .icon-art{display:none}
   .flow-panel .flow-commit{display:flex;order:-1;flex:none;justify-content:flex-start}
   .flow-panel .flow-commit span{display:none}
-  .flow-panel .flow-commit .art-tile{width:96px;margin:0}
+  .flow-panel .flow-commit .icon-art{width:96px;margin:0}
   .flow-panel:has(.flow-commit){flex-direction:column;align-items:flex-start;gap:18px}
 }
