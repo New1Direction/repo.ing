@@ -67,12 +67,19 @@ export default async function Token({ params, searchParams }) {
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
-    <div className="market-title"><div><RepoIdentity repo={repo} heading/><RepoStats repo={repo} detailed/><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
-      {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}</div>
-      <div className="market-price"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}
+    <header className="market-hero">
+      <div className="market-hero-symbol"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div>
+      <div className="market-hero-main"><RepoIdentity repo={repo} heading/><RepoStats repo={repo} detailed/>
+        <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
+          {market.beneficiaryWallet && <Suspense fallback={null}><XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/></Suspense>}
+          {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}</div></div>
+      <div className="market-hero-actions">
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
-        <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}/></div>
-    </div>
+        <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
+          more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
+            <a href={`https://solscan.io/token/${market.mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
+            <Link href={`/claim/${market.repoId}`}>Claim builder fees</Link></>}/></div>
+    </header>
     <div className="market-nav"><Link className={!activity ? 'active' : ''} href={`/token/${mint}`}>Market</Link>
       {/* A plain same-page anchor fires hashchange, which opens the Details "Repository" tab. */}
       <a href={activity ? `/token/${mint}#repository` : '#repository'}>Repository</a>
