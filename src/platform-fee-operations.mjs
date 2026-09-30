@@ -1,6 +1,6 @@
 import { Connection } from '@solana/web3.js'
 import { createPlatformFees } from './platform-fees.mjs'
-import { createDbcPlatformFees } from './platform-dbc-fees.mjs'
+import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from './platform-dbc-fees.mjs'
 
 // Shared by the operator panel (app/api/operations/platform-fees) and scripts/platform-sweep.mjs:
 // one source of truth for which repo/phase has claimable platform fees and what a claim review pins.
@@ -20,7 +20,7 @@ export function platformFeeReview({ sessionId, repoId, phase, data, partner, ses
   return { purpose: 'platform-fee-review', sessionId,
     repoId: String(repoId), phase, amount: data.available,
     receiver: data.receiver || partner.toBase58(),
-    ...(phase === 'DBC' ? { termsHash: data.termsHash, maxNetworkFeeLamports: '20000' } : {}),
+    ...(phase === 'DBC' ? { termsHash: data.termsHash, maxNetworkFeeLamports: String(DBC_MAX_NETWORK_FEE_LAMPORTS) } : {}),
     expiresAt: Math.min(sessionExpiresAt ?? now + REVIEW_TTL_MS, now + REVIEW_TTL_MS) }
 }
 

@@ -49,6 +49,9 @@ export async function claimOne(item, { feeService, partner, now = Date.now }) {
       partner: partner.publicKey, now: now() })
     try {
       const receipt = await service.claim({ review })
+      // The claim service skips a claim its priority-adjusted network fee would eat (under 20× the fee).
+      if (receipt?.status === 'skipped-dust') return { ...item, available: data.available, status: 'skipped-dust',
+        networkFee: receipt.networkFee, attempts: attempt }
       return { ...item, status: 'claimed', amount: String(receipt?.amount ?? data.available),
         signature: receipt?.signature ?? null, attempts: attempt }
     } catch (error) {

@@ -5,6 +5,7 @@ import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk
 import { createMarketConfigResolver } from './market-config.mjs'
 import { createGraduatedFees } from './graduated-fees.mjs'
 import { settleAllocation } from './builder-allocation-settlement.mjs'
+import { broadcastUntilSettled, signedWithPriorityFee } from './trade-landing.mjs'
 
 export const BUILDER_ALLOCATION = 10_000_000_000_000n
 export const FIXED_SUPPLY = 1_000_000_000_000_000n
@@ -79,19 +80,20 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
         const mint = new PublicKey(market.mint), recipient = new PublicKey(beneficiary.wallet)
         const source = getAssociatedTokenAddressSync(mint, creator.publicKey)
         const destination = getAssociatedTokenAddressSync(mint, recipient)
-        const tx = new Transaction()
+        const grant = new Transaction()
         if (!state.poolState.isWithdrawLeftover) {
-          tx.add(await dbc.migration.withdrawLeftover({ pool: new PublicKey(market.pool), payer: creator.publicKey }))
+          grant.add(await dbc.migration.withdrawLeftover({ pool: new PublicKey(market.pool), payer: creator.publicKey }))
         } else {
           // Withdrawal is permissionless but always pays the immutable protected receiver.
           // A third party performing it cannot change the grant's recipient or create a second grant.
           const reserve = await getAccount(connection, source, 'finalized')
           if (reserve.amount < BUILDER_ALLOCATION || reserve.delegate || !reserve.owner.equals(creator.publicKey)) throw Error('Builder token reserve needs review')
         }
-        tx.add(createAssociatedTokenAccountIdempotentInstruction(creator.publicKey, destination, recipient, mint),
+        grant.add(createAssociatedTokenAccountIdempotentInstruction(creator.publicKey, destination, recipient, mint),
           createTransferCheckedInstruction(source, mint, destination, creator.publicKey, BUILDER_ALLOCATION, 6))
         const latest = await connection.getLatestBlockhash('confirmed')
-        tx.feePayer = creator.publicKey; tx.recentBlockhash = latest.blockhash; tx.sign(creator)
+        const { transaction: tx } = await signedWithPriorityFee(connection, grant, { feePayer: creator.publicKey,
+          blockhash: latest.blockhash, signers: [creator] })
         const simulation = await connection.simulateTransaction(tx)
         if (simulation.value.err) throw Error('Allocation preflight failed; reserve or network funds need checking')
         if (Date.now() - checkedAt > 60000 || review.expiresAt <= Date.now()) throw Error('Allocation review expired')
@@ -100,7 +102,7 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
         await client.query(`insert into builder_allocation_claims
           (github_repo_id, github_user_id, mint, wallet, amount, status, signature, signed_transaction, last_valid_block_height)
           values($1,$2,$3,$4,$5,'pending',$6,$7,$8)`, [repoId, String(github.githubUserId), market.mint, beneficiary.wallet, intent.amount, signature, signedTransaction, latest.lastValidBlockHeight])
-        await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false })
+        await broadcastUntilSettled(connection, tx.serialize(), { signature, lastValidBlockHeight: latest.lastValidBlockHeight })
         await connection.confirmTransaction({ signature, ...latest }, 'finalized')
         const receipt = await settleAllocation(client, connection, intent)
         if (!receipt) throw Error('Allocation submitted; final receipt is being checked')

@@ -1,5 +1,5 @@
 import bs58 from 'bs58'
-import { broadcastUntilSettled } from './trade-landing.mjs'
+import { broadcastUntilSettled, isDustPayout, maxPayoutNetworkFee, signedWithPriorityFee } from './trade-landing.mjs'
 import { PublicKey, Transaction } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { createGraduatedFees, recordPlatformFees } from './graduated-fees.mjs'
@@ -53,17 +53,20 @@ export function createPlatformFees({ pool, connection, config, partner }) {
         const receiver = new PublicKey(review.receiver)
         if (!receiver.equals(partner.publicKey)) throw Error('Platform fees pay the protected partner wallet')
         const p = snapshot.partner.poolState
-        const tx = new Transaction()
-        tx.add(await snapshot.amm.claimPositionFee2({ owner: partner.publicKey, feePayer: partner.publicKey,
+        const claimTx = new Transaction()
+        claimTx.add(await snapshot.amm.claimPositionFee2({ owner: partner.publicKey, feePayer: partner.publicKey,
           receiver, pool: snapshot.partner.pool, position: snapshot.partner.position,
           positionNftAccount: snapshot.partner.nftAccount,
           tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint,
           tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault,
           tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID }))
         const latest = await connection.getLatestBlockhash('confirmed')
-        tx.feePayer = partner.publicKey
-        tx.recentBlockhash = latest.blockhash
-        tx.sign(partner)
+        // The partner pays the network fee (base + priority) out of the claim it receives.
+        const { transaction: tx } = await signedWithPriorityFee(connection, claimTx, { feePayer: partner.publicKey,
+          blockhash: latest.blockhash, signers: [partner] })
+        const fee = (await connection.getFeeForMessage(tx.compileMessage(), 'confirmed')).value
+        if (fee == null || BigInt(fee) > maxPayoutNetworkFee(1)) throw Error('Platform fee network cost is unavailable or above its ceiling')
+        if (isDustPayout(outstanding, fee)) return { status: 'skipped-dust', broadcast: false, amount: outstanding.toString(), networkFee: String(fee) }
         const simulation = await connection.simulateTransaction(tx)
         if (simulation.value.err) throw Error('Platform fee preflight failed')
         if (review.expiresAt <= Date.now()) throw Error('Platform fee review expired')

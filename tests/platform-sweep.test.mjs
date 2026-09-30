@@ -65,7 +65,7 @@ test('claim failures surface: a non-stale error is not retried, a second stale e
   const twice = feeFake([{ enrolled: true, available: '3000000', termsHash: 'h' }], [stale, stale])
   await assert.rejects(claimOne({ repoId: '1', phase: 'DBC' }, { feeService: twice.feeService, partner }), /refresh and review again/)
   assert.equal(twice.claimed.length, 2)
-  assert.equal(twice.claimed[0].maxNetworkFeeLamports, '20000')
+  assert.equal(twice.claimed[0].maxNetworkFeeLamports, '810000')
 })
 
 test('claim re-read below dust is skipped without claiming', async () => {
@@ -190,7 +190,7 @@ test('shared listing keeps the panel rows: enrolment, errors, reviews only for p
 test('shared reviews keep the operator panel shape', () => {
   const partnerKey = new PublicKey(PARTNER_WALLET)
   assert.deepEqual(platformFeeReview({ sessionId: 's', repoId: 7, phase: 'DBC', data: { available: '9', receiver: 'R', termsHash: 'h' }, partner: partnerKey, now: 1000 }),
-    { purpose: 'platform-fee-review', sessionId: 's', repoId: '7', phase: 'DBC', amount: '9', receiver: 'R', termsHash: 'h', maxNetworkFeeLamports: '20000', expiresAt: 601000 })
+    { purpose: 'platform-fee-review', sessionId: 's', repoId: '7', phase: 'DBC', amount: '9', receiver: 'R', termsHash: 'h', maxNetworkFeeLamports: '810000', expiresAt: 601000 })
   assert.deepEqual(platformFeeReview({ sessionId: 's', repoId: '7', phase: 'DAMM', data: { available: '9' }, partner: partnerKey, now: 1000 }),
     { purpose: 'platform-fee-review', sessionId: 's', repoId: '7', phase: 'DAMM', amount: '9', receiver: PARTNER_WALLET, expiresAt: 601000 })
   assert.deepEqual(allocationReview({ sessionId: 's', policyVersion: 2, now: 1000 }),
