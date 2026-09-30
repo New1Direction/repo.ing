@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { ArrowUpRight, RefreshCw } from 'lucide-react'
-import { formatUnits, formatSolDisplay } from '../lib/format.mjs'
+import { formatCents, formatTokenAmount, formatUnits, formatSolDisplay } from '../lib/format.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { ContentSkeleton } from './loading-skeleton'
 
@@ -12,6 +12,8 @@ function eventText(event, symbol) {
   if (event.type === 'buy') return { label: 'Buy', detail: `${formatSolDisplay(event.inputBaseUnits)} SOL → ${tokenAmount(event.outputBaseUnits)} ${symbol}` }
   if (event.type === 'sell') return { label: 'Sell', detail: `${tokenAmount(event.inputBaseUnits)} ${symbol} → ${formatSolDisplay(event.outputBaseUnits)} SOL` }
   if (event.type === 'fee') return { label: 'Creator fee', detail: `${formatSolDisplay(event.amountBaseUnits)} SOL earned` }
+  if (event.type === 'parts-pledge') return { label: 'Parts pledge', detail: `${formatTokenAmount(event.amountBaseUnits, event.decimals)} ${event.symbol} (${formatCents(event.usdCents)}) pledged to the parts fund` }
+  if (event.type === 'parts-update') return { label: 'Build update', detail: event.body }
   return { label: 'Claim paid', detail: `${formatSolDisplay(event.amountBaseUnits)} SOL sent to the payout wallet` }
 }
 
@@ -41,7 +43,9 @@ export function ActivityFeed({ mint, symbol }) {
     {!error && events?.length === 0 && <p className="activity-message">No finalized activity yet. Trades and fee payouts appear here once indexed.</p>}
     {events?.length > 0 && <div className="activity-list">{events.map((event, index) => {
       const copy = eventText(event, symbol)
-      return <div className="activity-row" key={`${event.type}-${event.signature}-${event.eventIndex ?? index}`}><span className={`activity-type ${event.type}`}>{copy.label}</span><span className="activity-detail">{copy.detail}</span><time dateTime={event.occurredAt} title={new Date(event.occurredAt).toLocaleString()}>{new Date(event.occurredAt).toLocaleString()}</time><a href={`https://explorer.solana.com/tx/${event.signature}`} target="_blank" rel="noopener noreferrer" aria-label={`View ${copy.label.toLowerCase()} transaction on Solana Explorer`}>Explorer<ArrowUpRight size={14}/></a></div>
+      return <div className="activity-row" key={`${event.type}-${event.signature ?? event.ref}-${event.eventIndex ?? index}`}><span className={`activity-type ${event.type}`}>{copy.label}</span><span className="activity-detail">{copy.detail}</span><time dateTime={event.occurredAt} title={new Date(event.occurredAt).toLocaleString()}>{new Date(event.occurredAt).toLocaleString()}</time>
+        {event.signature ? <a href={`https://explorer.solana.com/tx/${event.signature}`} target="_blank" rel="noopener noreferrer" aria-label={`View ${copy.label.toLowerCase()} transaction on Solana Explorer`}>Explorer<ArrowUpRight size={14}/></a>
+          : <a href={`/token/${encodeURIComponent(mint)}#parts-update-${event.ref}`} aria-label="Open this build update on the market page">View<ArrowUpRight size={14}/></a>}</div>
     })}</div>}
   </section>
 }

@@ -7,7 +7,7 @@ import { githubSessionCookie, readGithubSession } from '../../../lib/auth.mjs'
 import { operationsHealth } from '../../../lib/operations-health.mjs'
 import { formatSolDisplay } from '../../../lib/format.mjs'
 import { tokenBalanceLabel } from '../../../lib/token-balance.mjs'
-import { formatUnits } from '../../../lib/format.mjs'
+import { formatCents, formatUnits } from '../../../lib/format.mjs'
 import { holderNotesService } from '../../../lib/holder-notes.mjs'
 import { HideNoteButton } from '../../../components/holder-note-moderation'
 export const dynamic = 'force-dynamic'
@@ -18,7 +18,7 @@ const age = ms => { const m = Math.floor(ms / 60000), h = Math.floor(m / 60), d 
 const when = value => `${new Date(value).toISOString().replace('T', ' ').slice(0, 16)} UTC`
 const short = value => value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—'
 const monitorNote = { match: 'Worker alert watches this address', different: 'Worker alert watches a different address', unset: 'Worker alert not configured' }
-const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed', TRADE_LANDING_DEGRADED: 'Trades expiring or failing', TRADE_CANARY_FAILING: 'Trade canary failing', TIP_WALLET_SHORTFALL: 'Tip wallet below tip liabilities', TIP_RECEIPT_REVIEW: 'Landed tip does not reconcile', TIP_TRANSFER_REVIEW: 'Tip payout/refund needs reconciliation' }
+const alertTitles = { OPS_WALLET_LOW: 'Operating wallet needs SOL', FEE_EVIDENCE_QUARANTINED: 'Trade fee evidence needs review', RESERVE_MOVED: 'Reserve moved', RECONCILIATION_MISMATCH: 'Reconciliation needs review', GRADUATION_REVIEW: 'Graduation evidence needs review', LAUNCH_EXPIRED: 'Expired launch released for retry', TRADE_VERIFICATION_FAILED: 'Trade verification failed', TRADE_LANDING_DEGRADED: 'Trades expiring or failing', TRADE_CANARY_FAILING: 'Trade canary failing', TIP_WALLET_SHORTFALL: 'Tip wallet below tip liabilities', TIP_RECEIPT_REVIEW: 'Landed tip does not reconcile', TIP_TRANSFER_REVIEW: 'Tip payout/refund needs reconciliation', PARTS_TRANSFER_REVIEW: 'Parts fund payout/refund needs reconciliation', PARTS_TRANSFER_FAILED: 'Parts fund payout/refund not sent (retrying)', PARTS_PLEDGE_REVIEW: 'Landed pledge does not reconcile', PARTS_FUND_REVIEW: 'Funded parts list has no payout wallet' }
 
 function Section({ title, result, children }) {
   return <section className="inner-card operations-markets"><h2>{title}</h2>{result.ok ? children(result.data) : <p className="inline-error" role="status">{result.error}</p>}</section>
@@ -97,11 +97,18 @@ function Canary({ result }) {
 function Tips({ result }) {
   return <Section title="Tip wallet" result={result}>{t => !t?.enabled ? <p>Tips are disabled (TIP_WALLET_SECRET_KEY is not set).</p> : <>
     <p><CopyAddress address={t.wallet} compact label="tip wallet address"/> <a href={`https://solscan.io/account/${t.wallet}`} target="_blank" rel="noreferrer">Solscan ↗</a> · {t.pendingTransfers} payout/refund intent(s) pending · {t.openTips} tip(s) awaiting confirmation</p>
-    <div className="operations-table-wrap"><table><thead><tr><th>Token</th><th>Owed (confirmed, unpaid)</th><th>Tips</th><th>Wallet balance</th><th>Status</th></tr></thead><tbody>
+    <div className="operations-table-wrap"><table><thead><tr><th>Token</th><th>Owed (confirmed, unpaid)</th><th>Tips</th><th>Pledges</th><th>Wallet balance</th><th>Status</th></tr></thead><tbody>
     {t.coverage.map(c => <tr key={c.mint}><td><strong>{c.symbol}</strong><small>{short(c.mint)}</small></td>
-      <td>{formatUnits(c.liability, c.decimals)}</td><td>{c.tips}</td><td>{c.balance === null ? '—' : formatUnits(c.balance, c.decimals)}</td>
+      <td>{formatUnits(c.liability, c.decimals)}</td><td>{c.tips}</td><td>{c.pledges ?? 0}</td><td>{c.balance === null ? '—' : formatUnits(c.balance, c.decimals)}</td>
       <td>{c.short === null ? <span className="badge warn">Unreadable</span> : c.short ? <span className="badge warn">Below liabilities</span> : <span className="badge ok">Covered</span>}</td></tr>)}
-  </tbody></table></div><p className="muted">SOL balance also pays payout network fees and recipient token-account rent; payouts pause when it is under SOL tips owed + 0.01 SOL. The worker raises TIP_WALLET_SHORTFALL when any token balance falls below what is owed (issuer permanent-delegate action, a leak, or a payout outside this ledger).</p></>}</Section>
+  </tbody></table></div><p className="muted">Owed = confirmed tips plus confirmed parts-fund pledges. SOL balance also pays payout/refund network fees and recipient token-account rent; transfers pause when it is under SOL owed + 0.01 SOL. The worker raises TIP_WALLET_SHORTFALL when any token balance falls below what is owed (issuer permanent-delegate action, a leak, or a payout outside these ledgers).</p>
+    {t.parts && <PartsFunds p={t.parts}/>}</>}</Section>
+}
+
+function PartsFunds({ p }) {
+  return <><h3>Parts funds</h3><p>{p.openLists} open list(s) · {formatCents(p.heldCents)} confirmed pledges held · {p.openPledges} pledge(s) awaiting confirmation · {p.closingLists} closed list(s) paying out or refunding · {p.pendingTransfers} parts transfer intent(s) pending</p>
+    {(p.overdueLists > 0 || p.stuckLists > 0) && <p className="inline-error" role="status">{p.overdueLists > 0 && `${p.overdueLists} list(s) are past their deadline but undecided (worker down, or pledges still in flight). `}
+      {p.stuckLists > 0 && `${p.stuckLists} closed list(s) have waited over an hour for payouts/refunds: check PARTS_TRANSFER_FAILED alerts and that the worker has TIP_WALLET_SECRET_KEY.`}</p>}</>
 }
 
 function Csp({ result }) {

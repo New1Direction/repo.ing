@@ -17,6 +17,7 @@ import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
 import { createTipExpiry, readTipWallet } from '../src/tips.mjs'
 import { createTipTransferRecovery, createTipWalletMonitor } from '../src/tip-transfers.mjs'
+import { createPartsFundJobs } from '../src/parts-settlement.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
@@ -47,6 +48,20 @@ let tipMonitorTask=null,nextTipMonitorCheck=0
 async function observeTipWallet(){
   try{console.log(JSON.stringify({tipWallet:await tipMonitor.runOnce()}))}
   catch(error){console.log(JSON.stringify({tipWalletError:error?.code==='42P01'?'TIPS_NOT_MIGRATED':'TIP_WALLET_UNVERIFIED'}))}
+}
+// Parts funds: expire abandoned pledges, decide lists past their deadline and mark finished lists settled (keyless).
+// All-or-nothing payouts/refunds are signed here only when this worker also has TIP_WALLET_SECRET_KEY; without it,
+// maintainers' "Send now" on the token page sends them and /operations/health flags lists left waiting.
+const partsSigner = (() => { try { return readTipWallet() } catch { return null } })()
+const partsFunds = createPartsFundJobs({ pool, connection, signer: partsSigner })
+let partsTask=null,nextPartsCheck=0
+async function observePartsFunds(){
+  try{
+    const r=await partsFunds.runOnce()
+    console.log(JSON.stringify({partsFunds:{signer:Boolean(partsSigner),pledges:r.pledges,decided:r.decided,settled:r.settled,
+      transfers:r.transfers?.map(t=>({fundId:t.fundId,kind:t.kind,mint:t.mint,status:t.status,signature:t.signature}))}}))
+    if(r.pledges.some(p=>p.state==='review')||r.decided.some(d=>d.status==='review')||r.transfers?.some(t=>t.status==='failed'))process.exitCode=1
+  }catch(error){console.log(JSON.stringify({partsFundError:error?.code==='42P01'?'PARTS_NOT_MIGRATED':'PARTS_FUND_UNAVAILABLE'}))}
 }
 const allocations = createAllocationRecovery({ pool, connection })
 const discovery = createDiscoveryClaims({ pool, connection, config })
@@ -140,6 +155,10 @@ try {
     catch { result.platformFeeError = 'Platform fee recovery unavailable' }
     try { result.tipTransfers = await tipTransfers.runOnce(); result.tips = await tipExpiry.runOnce() }
     catch (error) { result.tipError = error?.code === '42P01' ? null : 'Tip recovery unavailable' }
+    // Paced like the other observers so a batch of refunds never delays indexing or tip recovery.
+    if(once)await observePartsFunds()
+    else if(!partsTask&&Date.now()>=nextPartsCheck)
+      partsTask=observePartsFunds().finally(()=>{nextPartsCheck=Date.now()+30000;partsTask=null})
     if(once)await observeTipWallet()
     else if(!tipMonitorTask&&Date.now()>=nextTipMonitorCheck)
       tipMonitorTask=observeTipWallet().finally(()=>{nextTipMonitorCheck=Date.now()+300000;tipMonitorTask=null})
@@ -187,4 +206,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

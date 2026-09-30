@@ -9,6 +9,7 @@ import { analyticsWindow, readProtocolAnalytics } from '../../../src/protocol-an
 import { readReserveCoverage } from '../../../src/reserve-coverage.mjs'
 import { buybackReceipts, buybackStatus } from '../../lib/buyback-feed.mjs'
 import { TipStats } from '../../components/tip-stats'
+import { PartsFundStats } from '../../components/parts-fund-stats'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Protocol analytics · repo.ing', description: 'Trading activity, verified builder payouts, and platform revenue allocation on repo.ing.' }
@@ -20,6 +21,7 @@ export default async function StatsPage({ searchParams }) {
     <div className="analytics-toolbar"><span>Activity</span><nav aria-label="Analytics period">{[['24h','24h'],['7d','7d'],['30d','30d'],['all','All time']].map(([value,label])=><Link key={value} href={`/stats${value==='all'?'':`?range=${value}`}`} aria-current={range===value?'page':undefined} scroll={false}>{label}</Link>)}</nav></div>
     <Suspense key={range} fallback={<ContentSkeleton label="Loading analytics for this period"/>}><Analytics range={range}/></Suspense>
     <Suspense fallback={null}><TipStats/></Suspense>
+    <Suspense fallback={null}><PartsFundStats/></Suspense>
   </main><Footer/></>
 }
 

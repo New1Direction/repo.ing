@@ -22,6 +22,7 @@ import { OFFICIAL_TOKEN } from '../../../lib/official-token.mjs'
 import { TeamTokenLocks } from '../../../components/team-token-locks'
 import { RepoTips, RepoTipsFallback, TipJarPill, TipJarPillFallback } from '../../../components/repo-tips'
 import { tipsEnabled } from '../../../lib/tips.mjs'
+import { PartsFundBadge, PartsFundCard } from '../../../components/parts-fund'
 import { DetailsTabs } from '../../../components/details-tabs'
 import { HolderNotes, HolderNotesFallback } from '../../../components/holder-notes'
 import { JsonLd } from '../../../components/json-ld'
@@ -66,7 +67,8 @@ export default async function Token({ params, searchParams }) {
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
-    <div className="market-title"><div><RepoIdentity repo={repo} heading/><RepoStats repo={repo} detailed/><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense></div>
+    <div className="market-title"><div><RepoIdentity repo={repo} heading/><RepoStats repo={repo} detailed/><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
+      {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}</div>
       <div className="market-price"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
         <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}/></div>
@@ -78,7 +80,8 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}
-        aside={tips ? <Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense> : null}
+        aside={tips ? <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
+          <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></> : null}
         below={<Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
         <DetailsTabs tabs={tabs} initial="earnings" label={`${market.symbol} details`}/></section>

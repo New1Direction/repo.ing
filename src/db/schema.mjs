@@ -1,4 +1,4 @@
-import { bigint, bigserial, boolean, check, index, integer, jsonb, numeric, pgTable, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, bigserial, boolean, check, doublePrecision, index, integer, jsonb, numeric, pgTable, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 export const agentRequestLimits = pgTable('agent_request_limits', {
@@ -701,3 +701,52 @@ export const xLinkPending = pgTable('x_link_pending', {
 export const xLinkNonces = pgTable('x_link_nonces', {
   nonce: varchar('nonce',{length:32}).primaryKey(), expiresAt: timestamp('expires_at',{withTimezone:true}).notNull(),
 },t=>[index('x_link_nonces_expiry').on(t.expiresAt)])
+// Parts funds: all-or-nothing hardware lists backed into the tip wallet (see drizzle/0033_parts_funds.sql, src/parts-fund.mjs).
+const tz = name => timestamp(name,{withTimezone:true})
+export const partsFunds = pgTable('parts_funds', {
+  id: uuid('id').primaryKey(), githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  revision: integer('revision').notNull().default(1), title: varchar('title',{length:100}).notNull(), description: varchar('description',{length:1000}),
+  goalCents: bigint('goal_cents',{mode:'number'}).notNull(), deadline: tz('deadline').notNull(), status: varchar('status',{length:16}).notNull(),
+  closeReason: varchar('close_reason',{length:16}), payoutWallet: varchar('payout_wallet',{length:44}), createdBy: text('created_by').notNull(),
+  createdAt: tz('created_at').defaultNow().notNull(), updatedAt: tz('updated_at').defaultNow().notNull(), closedAt: tz('closed_at'),
+  settledAt: tz('settled_at'), nextAttemptAt: tz('next_attempt_at'),
+},t=>[uniqueIndex('parts_funds_one_active').on(t.githubRepoId).where(sql`${t.settledAt} is null`),index('parts_funds_repo').on(t.githubRepoId,t.createdAt.desc()),
+  index('parts_funds_unsettled').on(t.status,t.deadline).where(sql`${t.settledAt} is null`),
+  check('parts_funds_status_check',sql`${t.status} in ('open','funded','failed','cancelled')`),check('parts_funds_goal_check',sql`${t.goalCents} > 0 and ${t.goalCents} <= 500000`)])
+export const partsFundItems = pgTable('parts_fund_items', {
+  id: uuid('id').primaryKey(), fundId: uuid('fund_id').notNull().references(() => partsFunds.id, { onDelete: 'cascade' }), position: smallint('position').notNull(),
+  name: varchar('name',{length:80}).notNull(), url: varchar('url',{length:500}), unitPriceCents: integer('unit_price_cents').notNull(), quantity: smallint('quantity').notNull(),
+},t=>[uniqueIndex('parts_fund_items_position').on(t.fundId,t.position)])
+export const partsTransfers = pgTable('parts_transfers', {
+  id: uuid('id').primaryKey(), kind: varchar('kind',{length:8}).notNull(), fundId: uuid('fund_id').notNull().references(() => partsFunds.id),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  mint: varchar('mint',{length:44}).notNull(), tokenProgram: varchar('token_program',{length:44}).notNull(), decimals: smallint('decimals').notNull(),
+  sourceWallet: varchar('source_wallet',{length:44}).notNull(), recipient: varchar('recipient',{length:44}).notNull(),
+  amount: numeric('amount',{precision:20,scale:0}).notNull(), pledgeCount: integer('pledge_count').notNull(), requestedBy: text('requested_by').notNull(),
+  status: varchar('status',{length:16}).notNull(), signature: varchar('signature',{length:88}).notNull(), signedTransaction: text('signed_transaction').notNull(),
+  lastValidBlockHeight: bigint('last_valid_block_height',{mode:'bigint'}).notNull(), receipt: jsonb('receipt'),
+  createdAt: tz('created_at').defaultNow().notNull(), settledAt: tz('settled_at'), resolvedAt: tz('resolved_at'), resolutionReason: text('resolution_reason'),
+},t=>[uniqueIndex('parts_transfers_signature_unique').on(t.signature),index('parts_transfers_pending').on(t.status).where(sql`${t.status} = 'pending'`),
+  index('parts_transfers_fund').on(t.fundId)])
+export const partsPledges = pgTable('parts_pledges', {
+  id: uuid('id').primaryKey(), fundId: uuid('fund_id').notNull().references(() => partsFunds.id),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  itemId: uuid('item_id').references(() => partsFundItems.id, { onDelete: 'set null' }),
+  donorWallet: varchar('donor_wallet',{length:44}).notNull(), tipWallet: varchar('tip_wallet',{length:44}).notNull(),
+  mint: varchar('mint',{length:44}).notNull(), tokenProgram: varchar('token_program',{length:44}).notNull(), decimals: smallint('decimals').notNull(),
+  symbol: varchar('symbol',{length:16}).notNull(), requestedAmount: numeric('requested_amount',{precision:20,scale:0}).notNull(),
+  receivedAmount: numeric('received_amount',{precision:20,scale:0}), usdCents: bigint('usd_cents',{mode:'number'}).notNull(),
+  usdPrice: doublePrecision('usd_price').notNull(), status: varchar('status',{length:16}).notNull(),
+  message: text('message').notNull(), transaction: text('transaction').notNull(), lastValidBlockHeight: bigint('last_valid_block_height',{mode:'bigint'}).notNull(),
+  signature: varchar('signature',{length:88}), signedTransaction: text('signed_transaction'), transferId: uuid('transfer_id').references(() => partsTransfers.id),
+  createdAt: tz('created_at').defaultNow().notNull(), submittedAt: tz('submitted_at'), confirmedAt: tz('confirmed_at'), resolvedAt: tz('resolved_at'),
+},t=>[uniqueIndex('parts_pledges_signature_unique').on(t.signature),index('parts_pledges_fund_status').on(t.fundId,t.status),
+  index('parts_pledges_donor').on(t.donorWallet,t.status),index('parts_pledges_transfer').on(t.transferId),
+  index('parts_pledges_open').on(t.status,t.createdAt).where(sql`${t.status} in ('prepared','submitted')`),
+  check('parts_pledges_status_check',sql`${t.status} in ('prepared','submitted','confirmed','expired','failed','paid','refunded')`)])
+export const partsUpdates = pgTable('parts_updates', {
+  id: uuid('id').primaryKey(), fundId: uuid('fund_id').notNull().references(() => partsFunds.id),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  body: varchar('body',{length:1000}).notNull(), images: jsonb('images').notNull().default(sql`'[]'::jsonb`), createdBy: text('created_by').notNull(),
+  createdAt: tz('created_at').defaultNow().notNull(),
+},t=>[index('parts_updates_fund').on(t.fundId,t.createdAt.desc()),index('parts_updates_repo').on(t.githubRepoId,t.createdAt.desc())])
