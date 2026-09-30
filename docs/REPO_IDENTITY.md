@@ -59,25 +59,36 @@ GitHub confirmed that `New1Direction/repo.ing` is public and retains ID **138821
 
 Use **$REPOING** and the verified mint in announcements. A matching name or ticker alone does not establish identity. Updating off-chain display text would not rename immutable on-chain metadata.
 
-## Team token vesting — verified September 28, 2026
+## Token locks
 
-The team deposited **45,000,000 REPOING (4.5% of the fixed 1 billion supply)** into the two Jupiter Lock escrows below. These are existing-supply tokens, separate from the normal 1% builder allocation after graduation. This disclosure covers these escrows, not every token the team wallet may hold.
+**90,000,000 REPOING (9% of the fixed 1 billion supply)** sits in five Jupiter Lock escrows. All are existing-supply tokens, separate from the normal 1% builder allocation after graduation. This disclosure covers these escrows, not every token the team or buyback wallets may hold.
 
-Both finalized escrow accounts name the canonical REPOING mint and `4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce` as creator and recipient. Both have **cancellation disabled and recipient changes disabled** (`cancel_mode=0`, `update_recipient_mode=0`). They are scheduled vesting locks, not permanent burns or permanently locked liquidity.
+- **Team deposits (45,000,000, 4.5%):** two escrows whose creator and recipient is the team wallet `4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce`. Terms verified September 28, 2026.
+- **Bought-back REPOING (45,000,000, 4.5%):** three escrows funded with $REPOING bought back by the custody buyback wallet `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`, which is also their creator and recipient. Terms verified September 30, 2026.
 
-| Escrow | Original deposit | First release (UTC) | Final release (UTC) |
-| --- | ---: | --- | --- |
-| [repo.ing team](https://lock.jup.ag/escrow/2g8rPU4cm7DpETb9Df1q96FL5eShCnAf57AN4Hf2NnSb) | 20,000,000 | Nov 27, 2026, 22:00:00 | Feb 27, 2027, 04:00:00 |
-| [Repo.ing team 2](https://lock.jup.ag/escrow/FKy62zAHFhhg25bGNTRBQ2sT1dGnB6BSiwSQWXmyR9f7) | 25,000,000 | Nov 1, 2026, 03:28:37 | Dec 31, 2026, 23:28:37 |
+Every finalized escrow account names the canonical REPOING mint, and every escrow has **cancellation disabled and recipient changes disabled** (`cancel_mode=0`, `update_recipient_mode=0`). They are scheduled vesting locks, not permanent burns or permanently locked liquidity.
+
+| Escrow | Creator & recipient | Original deposit | First release (UTC) | Final release (UTC) |
+| --- | --- | ---: | --- | --- |
+| [repo.ing team](https://lock.jup.ag/escrow/2g8rPU4cm7DpETb9Df1q96FL5eShCnAf57AN4Hf2NnSb) | team wallet | 20,000,000 | Nov 27, 2026, 22:00:00 | Feb 27, 2027, 04:00:00 |
+| [Repo.ing team 2](https://lock.jup.ag/escrow/FKy62zAHFhhg25bGNTRBQ2sT1dGnB6BSiwSQWXmyR9f7) | team wallet | 25,000,000 | Nov 1, 2026, 03:28:37 | Dec 31, 2026, 23:28:37 |
+| [Bought-back REPOING](https://lock.jup.ag/escrow/4LKFWNwfiKTjMEfEPvq2rD5ZVKkBjmnmJXvNuADjHyJt) | buyback wallet | 23,000,000 | Oct 5, 2026, 15:00:00 | Dec 5, 2026, 11:00:00 |
+| [Bought-back REPOING 2](https://lock.jup.ag/escrow/DySLi6B9AUSeSx1gDrEAyovetF6AktaxcxAMJNLMUj5Q) | buyback wallet | 12,000,000 | Oct 2, 2026, 02:54:46 | Nov 1, 2026, 12:54:46 |
+| [Bought-back REPOING 3](https://lock.jup.ag/escrow/9SFbDcqyhRQc6WX2sR1mSQcrzFETDLV3XpT7rEs8To9x) | buyback wallet | 10,000,000 | Oct 16, 2026, 06:40:02 | Nov 15, 2026, 16:40:02 |
 
 Exact release amounts:
 
 - **20 million escrow:** 3,000,000.000002 on Nov 27, 2026 at 22:00:00 UTC; 5,666,666.666666 each on Dec 28, 2026 at 08:00:00 UTC, Jan 27, 2027 at 18:00:00 UTC, and Feb 27, 2027 at 04:00:00 UTC.
 - **25 million escrow:** 5,000,000 on Nov 1, 2026 at 03:28:37 UTC; 10,000,000 each on Dec 1, 2026 at 13:28:37 UTC and Dec 31, 2026 at 23:28:37 UTC.
+- **23 million bought-back escrow:** 3,000,000 on Oct 5, 2026 at 15:00:00 UTC; 10,000,000 each on Nov 5, 2026 at 01:00:00 UTC and Dec 5, 2026 at 11:00:00 UTC.
+- **12 million bought-back escrow:** 200,000 on Oct 2, 2026 at 02:54:46 UTC; 11,800,000 on Nov 1, 2026 at 12:54:46 UTC.
+- **10 million bought-back escrow:** 1,000,000 on Oct 16, 2026 at 06:40:02 UTC; 9,000,000 on Nov 15, 2026 at 16:40:02 UTC.
 
 The program's period is exactly **2,628,000 seconds**, so releases are not assumed to fall on the same calendar day each month. Jupiter may display dates in the viewer's local time; repo.ing uses UTC explicitly.
 
 ### Verification evidence
+
+Team escrows (September 28, 2026):
 
 - Two independent finalized RPC reads agreed on both escrow account bytes at slots **451210237 / 451210236**, checked **2026-09-28T04:22:48.708Z**.
 - Owner program: `LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn`; `VestingEscrow` layout and discriminator from the [official Jupiter starter IDL](https://github.com/jup-ag/jup-lock-starter/blob/main/idl/idl.json).
@@ -85,5 +96,11 @@ The program's period is exactly **2,628,000 seconds**, so releases are not assum
 - Finalized token-account and mint reads agreed at slots **451210429 / 451210428**, checked **2026-09-28T04:23:38.794Z**. Escrow-owned SPL token accounts held the full deposits, with no delegates or close authorities; mint supply was `1000000000000000` base units at 6 decimals, with no mint or freeze authority.
 - 20M escrow token account: `2kzKH6q3TsjoTa2ui86BA2VCgRf63WB8VxWiqVX46VFu`, amount `20000000000000` base units.
 - 25M escrow token account: `9kJwT78qRZup9k3xCEF6m8JEcQ64ZHbcxmnErr3KkanP`, amount `25000000000000` base units.
+
+Bought-back escrows (September 30, 2026):
+
+- A finalized `getMultipleAccounts` read of all five escrow accounts confirmed owner program `LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn`, the canonical mint, `cancel_mode=0` and `update_recipient_mode=0` for each. The three bought-back escrows name `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy` as both creator and recipient; the two team escrows still name the team wallet.
+- Each decoded schedule (cliff time and amount, 2,628,000-second period, amount per period, period count) matches the published release table exactly; `cancelled_at` and `total_claimed_amount` were zero.
+- Creation transactions: `5o2bVi8himm1jEsoQBHaFX5RyuxcSxMCxEUQYqDDQYq5Txx2AwjHmusYaKBvXB7HJEdVdphfSqVhWorEwQGKnFSX` (23M), `2mgXckenKuBpcEdxNXK4A3e8Symw63X8uZoUHv8fokvUJo8YDVx84CXmJr5CNew8kY3KuhwTVCSNtVBJSxWp3uYN` (12M), `3rwockyqB1FH5qr8wUJghAik5DnWvcpTkzpyLuRGxRdkk2wMsdXkKzuk6ca3tyzttKuACRvPerPDkgsy8bpPnMwu` (10M).
 
 The public cards disclose original deposits and verified release terms, not a live remaining-locked or claimable balance. Follow each Jupiter link for current claim status. Token locks do not increase the curve's SOL reserve or enable buybacks, P3, or P4.

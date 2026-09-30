@@ -66,6 +66,6 @@ The original 50/50 migrated positions are permanently locked. Later P3 positions
 
 ## Public transparency
 
-[Protocol analytics](https://repo.ing/stats) reports verified indexed activity, settled builder payouts, and reconciled revenue reserves. Its public buyback card shows **1.9 SOL bought back** from two verified receipts. Launch and early team purchases are excluded. [Receipts and scope](BUYBACK_AUDIT_2026_09_28.md). USD figures are current-price estimates; accounting remains in SOL lamports.
+[Protocol analytics](https://repo.ing/stats) reports verified indexed activity, settled builder payouts, and reconciled revenue reserves. Its public buyback section lists every published buyback with its on-chain receipt and a running SOL total, and its token-locks section lists every $REPOING Jupiter Lock escrow. The launch purchase is excluded. [First buyback audit](BUYBACK_AUDIT_2026_09_28.md). USD figures are current-price estimates; accounting remains in SOL lamports.
 
 For exact implementation and operator steps, read [platform revenue](PLATFORM_REVENUE.md), [active policy](REVENUE_POLICY_V1.md), [first P3 deployment](P3_FIRST_LIVE_RUNBOOK.md), and [P4 preparation](BUILDER_REINVEST_PLAN.md).
