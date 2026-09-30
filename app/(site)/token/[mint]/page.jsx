@@ -23,6 +23,7 @@ import { TeamTokenLocks } from '../../../components/team-token-locks'
 import { RepoTips, RepoTipsFallback, TipJarPill, TipJarPillFallback } from '../../../components/repo-tips'
 import { tipsEnabled } from '../../../lib/tips.mjs'
 import { DetailsTabs } from '../../../components/details-tabs'
+import { HolderNotes, HolderNotesFallback } from '../../../components/holder-notes'
 import { JsonLd } from '../../../components/json-ld'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 
@@ -76,7 +77,8 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}
-        aside={tips ? <Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense> : null}/>
+        aside={tips ? <Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense> : null}
+        below={<Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
         <DetailsTabs tabs={tabs} initial="earnings" label={`${market.symbol} details`}/></section>
       {official && <TeamTokenLocks/>}

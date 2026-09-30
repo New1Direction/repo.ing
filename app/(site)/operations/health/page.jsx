@@ -8,6 +8,8 @@ import { operationsHealth } from '../../../lib/operations-health.mjs'
 import { formatSolDisplay } from '../../../lib/format.mjs'
 import { tokenBalanceLabel } from '../../../lib/token-balance.mjs'
 import { formatUnits } from '../../../lib/format.mjs'
+import { holderNotesService } from '../../../lib/holder-notes.mjs'
+import { HideNoteButton } from '../../../components/holder-note-moderation'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Operations health — repo.ing', robots: { index: false, follow: false } }
 
@@ -108,12 +110,24 @@ function Csp({ result }) {
   </tbody></table></div> : <p>No reports received.</p>}<p className="muted">{c.total} reports since last web restart ({when(c.since)}), this web process only. Top directives: {c.directives.map(d => `${d.key} (${d.count})`).join(', ') || 'none'}.</p></>}</Section>
 }
 
+// Latest holder notes, hidden ones included, with a hide/unhide action. Notes are plain text; links are never rendered.
+async function HolderNotesModeration() {
+  let rows = null
+  try { rows = await holderNotesService()?.store.recent(30) ?? [] } catch { rows = null }
+  return <section className="inner-card operations-markets"><h2>Holder notes</h2>{rows === null ? <p className="inline-error" role="status">Holder notes are temporarily unavailable.</p>
+    : rows.length ? <div className="operations-table-wrap"><table><thead><tr><th>When</th><th>Market</th><th>Wallet</th><th>Note</th><th>Moderation</th></tr></thead><tbody>
+    {rows.map(n => <tr key={n.id}><td>{when(n.updatedAt)}</td><td><Link href={`/token/${n.mint}`}>${n.symbol}</Link></td>
+      <td><a href={`https://solscan.io/account/${n.wallet}`} target="_blank" rel="noreferrer">{short(n.wallet)}</a></td>
+      <td><small>{n.body}</small></td><td><HideNoteButton id={n.id} hidden={Boolean(n.hiddenAt)}/>{n.hiddenBy && <small>{n.hiddenBy}</small>}</td></tr>)}
+  </tbody></table></div> : <p>No holder notes yet.</p>}<p className="muted">Latest 30 notes across markets. Hidden notes disappear from token pages; editing or re-posting keeps them hidden.</p></section>
+}
+
 export default async function OperationsHealthPage() {
   let access = false
   try { requirePlatformOperator(readGithubSession((await cookies()).get(githubSessionCookie)?.value)); access = true } catch {}
   const health = access ? await operationsHealth() : null
   return <><AppHeader /><main className="section-wrap operations-page"><div className="growth-heading"><div><h1>Operations health</h1><p>Read-only status across wallets, launches, alerts, revenue, trades, migrations, and CSP.</p></div></div>
-    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Trades result={health.trades}/><Canary result={health.canary}/><Tips result={health.tips}/><Migrations result={health.migrations}/><Csp result={health.csp}/>
+    {health ? <><Wallets result={health.wallets}/><Launches result={health.launches}/><Alerts result={health.alerts}/><Revenue result={health.revenue}/><Trades result={health.trades}/><Canary result={health.canary}/><Tips result={health.tips}/><Migrations result={health.migrations}/><Csp result={health.csp}/><HolderNotesModeration/>
       <p className="muted health-footer">Generated {when(health.generatedAt)} · <Link href="/operations/fees">Platform fees</Link> · <Link href="/operations/graduation">Graduation</Link> · <Link href="/operations/trends">Trends</Link> · <Link href="/operations/invites">Invites</Link></p></>
       : <div className="inner-card"><h2>Operator access required</h2><p>Sign in with the configured operator GitHub account.</p><Link className="button outline" href="/api/github/start?mode=builders">Verify with GitHub</Link><p>Return here after verification.</p></div>}
   </main><Footer /></>
