@@ -1,6 +1,7 @@
 import { database, listMarkets, recentBuilderPayouts } from './server.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
 import { recentlyClaimed, selectWaiting, waitingTotal, WAITING_LIMIT } from './waiting.mjs'
+import { promotionExcludedRepoIds } from './promotion-exclusions.mjs'
 
 // /waiting: the shared market list (already memoized) plus one small read of maintainers who asked not
 // to be contacted. No per-row RPC. Fails closed: without the opt-out list nothing is shown.
@@ -8,9 +9,10 @@ const WAITING_TTL_MS = 30_000
 const EMPTY = { waiting: [], count: 0, total: '0', claimed: [] }
 export const waitingBoard = ttlMemo(loadWaitingBoard, WAITING_TTL_MS, { keep: result => !result.unavailable })
 
+// Dismissed invites plus the operator's do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS).
 async function optedOutRepos(pool) {
   const { rows } = await pool.query('select github_repo_id::text as "repoId" from maintainer_invites where dismissed_at is not null')
-  return new Set(rows.map(row => row.repoId))
+  return new Set([...rows.map(row => row.repoId), ...promotionExcludedRepoIds()])
 }
 
 async function loadWaitingBoard() {

@@ -116,3 +116,7 @@ Setup (worker variables only; nothing posts until every step is done):
 3. Set `LAUNCH_ALERTS_SINCE` to the current UTC time, e.g. `2026-10-01T00:00:00Z`, so existing markets are never announced, then set `LAUNCH_ALERTS_ENABLED=true`. A channel with only some of its variables, or a missing/invalid cutoff, logs `launchAlertError` once at startup and posts nothing.
 
 Verify: the worker logs `{"launchAlerts":{"posts":[…]}}` only when it posts (status `sent` with the post URL, `failed` with the provider error, or `unknown`); it is silent otherwise. Check rows with `select channel, status, attempts, message_url, error, created_at from launch_alerts order by id desc limit 20`. For an `unknown` row, look at the channel: if the post is missing and should go out, delete the row to allow one new attempt; if it posted, leave the row. Setting `LAUNCH_ALERTS_ENABLED=false` stops new posts immediately on the next worker restart.
+
+## Do-not-promote list
+
+`PROMOTION_EXCLUDED_REPO_IDS` (web and worker) is a comma-separated list of GitHub repository IDs that repo.ing must never promote: they are hidden from `/waiting` (no "Tag them on X" prompt) and must be skipped by any feature that features or announces markets. Their markets and builder fees are unaffected. Use it when a maintainer asks not to be contacted or promoted, or when promoting a repository would be inappropriate.
