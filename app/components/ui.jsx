@@ -32,11 +32,16 @@ function BondingLine({ market }) {
     aria-valuenow={Math.floor(progress.percent)} title={progress.label}><span style={{ transform: `scaleX(${progress.percent / 100})` }}/></span>
 }
 
-const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'parts', href: '/parts', label: 'Parts' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }]
+const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'parts', href: '/parts', label: 'Parts' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }]
+const NAV_CLASSES = { launch: 'nav-launch', repoing: 'nav-token' }
+// $REPOING is repo.ing's own token: a green pill with the brand cat, kept beside Launch on phones instead of in the menu.
+const navLabel = link => link.key === 'repoing'
+  ? <><img src="/brand-cat.webp" alt="" width={22} height={22} decoding="async" fetchPriority="low"/>{link.label}<span className="sr-only">, repo.ing's official token</span></>
+  : link.label
 export function AppHeader({ active = '' }) {
   return <header className="app-header"><div className="header-inner">
     <Link href="/" className="brand"><BrandMark size={32}/><span className="brand-wordmark"><span>repo.</span><span className="brand-accent">ing</span></span></Link>
-    <nav aria-label="Main navigation">{NAV_LINKS.map(link => <Link key={link.key} href={link.href} className={[link.key === 'launch' && 'nav-launch', active === link.key && 'active'].filter(Boolean).join(' ') || undefined} aria-current={active === link.key ? 'page' : undefined}>{link.label}</Link>)}<MobileNav links={NAV_LINKS} active={active}/></nav>
+    <nav aria-label="Main navigation">{NAV_LINKS.map(link => <Link key={link.key} href={link.href} className={[NAV_CLASSES[link.key], active === link.key && 'active'].filter(Boolean).join(' ') || undefined} aria-current={active === link.key ? 'page' : undefined} title={link.key === 'repoing' ? "repo.ing's official token" : undefined}>{navLabel(link)}</Link>)}<MobileNav links={NAV_LINKS.filter(link => link.key !== 'repoing')} active={active}/></nav>
     <div className="header-actions"><WatchNotifications/><ThemeToggle/><WalletButton /></div>
   </div></header>
 }
