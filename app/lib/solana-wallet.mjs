@@ -99,6 +99,31 @@ export function findSolanaWallet(browserWindow) {
   return candidates.find(candidate => candidate.publicKey) ?? candidates[0] ?? null
 }
 
+// Phone browsers (Safari, Chrome) have no injected wallet. These universal links reopen the page inside the wallet
+// app's own browser, where the wallet is injected and connects normally.
+const WALLET_BROWSE_LINKS = [
+  ['Phantom', 'https://phantom.app/ul/browse/'],
+  ['Solflare', 'https://solflare.com/ul/v1/browse/'],
+  ['Backpack', 'https://backpack.app/ul/v1/browse/'],
+]
+
+export function walletBrowseLinks(pageUrl) {
+  const { href, origin } = new URL(pageUrl)
+  return WALLET_BROWSE_LINKS.map(([name, base]) =>
+    ({ name, href: `${base}${encodeURIComponent(href)}?ref=${encodeURIComponent(origin)}` }))
+}
+
+export function isPhoneBrowser(browserWindow) {
+  const nav = browserWindow?.navigator
+  if (!nav) return false
+  if (nav.userAgentData?.mobile) return true
+  // iPadOS Safari reports a desktop Mac user agent; only the touch points give it away
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(nav.userAgent ?? '') || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1)
+}
+
+// Inside Phantom, Solflare or Backpack's own browser the wallet is already listed, so no app link is needed
+export const hasWalletAppBrowser = choices => choices.some(choice => /phantom|solflare|backpack/i.test(choice.name))
+
 export function walletSignatureBytes(result) {
   const signature = result?.signature ?? result
   if (!(signature instanceof Uint8Array)) throw new Error('Wallet returned an invalid message signature')

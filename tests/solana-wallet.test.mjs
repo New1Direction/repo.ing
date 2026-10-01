@@ -109,3 +109,30 @@ test('legacy wallet restore never requests a new connection without a trusted se
   assert.equal((await createWalletProvider({ legacy: phantom }).connect({ silent: true })).publicKey.toBase58(), 'PhantomAddress')
   assert.deepEqual(options, { onlyIfTrusted: true })
 })
+
+test('phone wallet links reopen the current page inside each wallet app browser', async () => {
+  const { walletBrowseLinks } = await import('../app/lib/solana-wallet.mjs')
+  const links = walletBrowseLinks('https://repo.ing/token/59PX?ref=x#chart')
+  assert.deepEqual(links.map(link => link.name), ['Phantom', 'Solflare', 'Backpack'])
+  assert.equal(links[0].href, 'https://phantom.app/ul/browse/https%3A%2F%2Frepo.ing%2Ftoken%2F59PX%3Fref%3Dx%23chart?ref=https%3A%2F%2Frepo.ing')
+  assert.equal(links[1].href, 'https://solflare.com/ul/v1/browse/https%3A%2F%2Frepo.ing%2Ftoken%2F59PX%3Fref%3Dx%23chart?ref=https%3A%2F%2Frepo.ing')
+  assert.equal(links[2].href, 'https://backpack.app/ul/v1/browse/https%3A%2F%2Frepo.ing%2Ftoken%2F59PX%3Fref%3Dx%23chart?ref=https%3A%2F%2Frepo.ing')
+})
+
+test('phone detection covers iPhone, Android and iPadOS but not desktop browsers', async () => {
+  const { isPhoneBrowser } = await import('../app/lib/solana-wallet.mjs')
+  const browser = navigator => ({ navigator })
+  assert.equal(isPhoneBrowser(browser({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1' })), true)
+  assert.equal(isPhoneBrowser(browser({ userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/130 Mobile Safari/537.36' })), true)
+  assert.equal(isPhoneBrowser(browser({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15', platform: 'MacIntel', maxTouchPoints: 5 })), true)
+  assert.equal(isPhoneBrowser(browser({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/154 Safari/537.36', platform: 'MacIntel', maxTouchPoints: 0 })), false)
+  assert.equal(isPhoneBrowser(browser({ userAgent: 'x', userAgentData: { mobile: true } })), true)
+  assert.equal(isPhoneBrowser({}), false)
+})
+
+test('app links stay hidden inside a wallet app browser that already lists its wallet', async () => {
+  const { hasWalletAppBrowser } = await import('../app/lib/solana-wallet.mjs')
+  assert.equal(hasWalletAppBrowser([{ name: 'MetaMask' }]), false)
+  assert.equal(hasWalletAppBrowser([{ name: 'MetaMask' }, { name: 'Phantom' }]), true)
+  assert.equal(hasWalletAppBrowser([{ name: 'Solflare' }]), true)
+})
