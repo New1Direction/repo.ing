@@ -9,6 +9,7 @@ import { TransactionStatus } from './ui'
 import { launchDraftKey, readLaunchDraft, saveLaunchDraft } from '../lib/launch-draft.mjs'
 import { formatUnits, parseUnits } from '../lib/format.mjs'
 import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../lib/launch-defaults.mjs'
+import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
 const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: true,
@@ -20,7 +21,8 @@ async function launchRequest(body) {
   return result
 }
 
-export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft }) {
+// launchFee: launchFeeTerms() of the config this launch will use, or null when its fee is a flat 1.75%.
+export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee = null }) {
   const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
@@ -188,7 +190,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         <div className="input-suffix"><input id="initial-buy" placeholder={quoting ? 'Getting quote…' : '0.00'} inputMode="decimal" autoComplete="off" value={initialBuy}
           onChange={e => { setCustomBuy(e.target.value); setChoice('custom') }} aria-describedby="initial-buy-hint"/><span>SOL</span></div>
         <div className="field-hint">{wallet ? balance?.wallet === wallet ? balance.unavailable ? 'Wallet balance temporarily unavailable.' : `Wallet balance: ${sol(balance.lamports)}` : 'Checking wallet SOL balance…' : 'Connect your wallet to review launch costs.'}</div>
-        <div id="initial-buy-hint" className="launch-buy-hint">Buy up to 3% of supply in the launch transaction. This limit applies to the initial buy; later market purchases are separate.</div>
+        <div id="initial-buy-hint" className="launch-buy-hint">Buy up to 3% of supply in the launch transaction. This limit applies to the initial buy; later market purchases are separate.{launchFee?.launcherBuyPercent && ` Your initial buy pays the regular ${launchFee.launcherBuyPercent} fee; the launch fee applies only to later trades.`}</div>
         <div className="launch-buy-quote" role="status" aria-live="polite">
           {quoting ? 'Calculating your initial buy…' : quote ? <>
             <strong>≈ {formatUnits(quote.tokenBaseUnits, 6, 0)} tokens · {(quote.supplyBps / 100).toFixed(2)}% of supply</strong>
@@ -200,7 +202,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       <div className="launch-side">
         {allocationEnabled && <div className="inner-card discovery-launch"><h3>1% for the builders</h3><strong>10 million tokens reserved</strong><p>The verified repository admin can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>}
         {discoveryEnabled && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. Claim in SOL from the market page by signing a message; repo.ing sends the reward and pays the network fee.</p></div>}
-        <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line"><span>Repository creator share<small>Accrues for the verified repository owner</small></span><strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div><div className="fee-note"><Info size={18}/><span>Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
+        <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line"><span>Repository creator share<small>Accrues for the verified repository owner</small></span><strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>{launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}<div className="fee-note"><Info size={18}/><span>{launchFee ? `${launchFeeSentence(launchFee)} ${LAUNCH_FEE_SPLIT} ${launcherBuySentence(launchFee) ?? ''} ` : ''}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
       </div>
     </div>
     {review ? <section className="launch-review inner-card" aria-labelledby="launch-review-heading" aria-live="polite">

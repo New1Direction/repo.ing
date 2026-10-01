@@ -33,6 +33,7 @@ import { Backers, BackersFallback, BackersPill } from '../../../components/backe
 import { TrustPanel } from '../../../components/trust-panel'
 import { MarketsToWatch, MarketsToWatchFallback, MarketsToWatchLists } from '../../../components/markets-to-watch'
 import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-race.mjs'
+import { marketLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([feeStatus(repoId), solUsdPrice()]))
@@ -59,6 +60,8 @@ export default async function Token({ params, searchParams }) {
   const { market } = await marketByMint(mint)
   if (!market) notFound()
   const repo = { ...displayRepository(market), mint: market.mint }
+  // Non-null only when this market's own config charges the launch fee (config read once, then cached).
+  const launchFee = await marketLaunchFeeTerms(market)
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
   const tips = tipsEnabled()
@@ -98,7 +101,7 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}
-        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
+        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market} launchFee={launchFee}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>

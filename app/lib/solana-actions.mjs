@@ -4,6 +4,7 @@ import { formatUnits } from './format.mjs'
 import { readLimitedText } from './csp-report.mjs'
 import { publicError } from './public-error.mjs'
 import { SITE_ORIGIN, blinkApiPath } from './blink-links.mjs'
+import { launchFeeNotice } from '../../src/launch-fee-copy.mjs'
 
 // Solana Actions spec v2.4 (github.com/solana-developers/solana-actions). Hand-rolled: the @solana/actions
 // helpers add an identity memo we do not want next to a canonically-proven swap, and the rest is plain JSON.
@@ -120,8 +121,10 @@ export async function handleBuyPost(request, rawMint, { loadMarket, prepareBuy }
         !prepared.transaction.feePayer?.equals(account)) throw new Error('Prepared action trade does not match the request')
     const transaction = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
     const sol = formatUnits(lamports)
+    // A buy inside a new market's launch-fee window says so: the minimum output already includes that fee.
+    const launchFee = launchFeeNotice(prepared.launchFee)
     return actionJson({ type: 'transaction', transaction,
-      message: `Buying $${market.symbol} with ${sol} SOL · at least ${formatUnits(prepared.minimumAmountOut, 6)} $${market.symbol} (1% max slippage).`,
+      message: `Buying $${market.symbol} with ${sol} SOL · at least ${formatUnits(prepared.minimumAmountOut, 6)} $${market.symbol} (1% max slippage).${launchFee ? ` ${launchFee}` : ''}`,
       links: { next: { type: 'inline', action: { type: 'completed', icon: `${SITE_ORIGIN}/api/token-image/${market.mint}`,
         title: `$${market.symbol} bought`, label: 'Done',
         description: `Your ${sol} SOL buy is confirmed on Solana. See the market at ${SITE_ORIGIN}/token/${market.mint}` } } } })

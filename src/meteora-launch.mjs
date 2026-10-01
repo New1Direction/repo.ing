@@ -4,6 +4,7 @@ import { Keypair, PublicKey, Transaction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { launchBuyQuote } from './launch-buy.mjs'
+import { isApprovedLaunchFee } from './launch-fee.mjs'
 import { setLaunchWalletFees } from './launch-wallet-fees.mjs'
 import { matchesReviewedLaunch } from './launch-wallet-assertions.mjs'
 
@@ -49,9 +50,10 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
       const launcher = new PublicKey(launcherWallet)
       if (launcher.equals(creator.publicKey)) throw new Error('Launcher and platform creator must differ')
       const fixed = await client.state.getPoolConfig(configKey)
+      // Base fee: the proven flat 1.75%, or exactly the approved launch-fee schedule whose launcher first buy
+      // pays 1.75% (src/launch-fee.mjs). Any other schedule could charge the launcher or traders differently.
       if (!fixed || !fixed.quoteMint.equals(NATIVE_MINT) || fixed.tokenType !== 0 || fixed.tokenDecimal !== 6 ||
-          fixed.collectFeeMode !== 0 || fixed.migrationOption !== 1 ||
-          fixed.poolFees.baseFee.cliffFeeNumerator.toString() !== '17500000' ||
+          fixed.collectFeeMode !== 0 || fixed.migrationOption !== 1 || !isApprovedLaunchFee(fixed) ||
           fixed.poolFees.dynamicFee.initialized !== 0 || fixed.poolCreationFee.toString() !== '0' ||
           fixed.creatorTradingFeePercentage !== 71 || fixed.creatorPermanentLockedLiquidityPercentage !== 50 ||
           fixed.partnerPermanentLockedLiquidityPercentage !== 50 || fixed.creatorLiquidityPercentage !== 0 ||

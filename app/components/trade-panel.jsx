@@ -14,6 +14,7 @@ import { formatSolDisplay, formatUnits, parseUnits, formatUsdEstimate } from '..
 import { sellAmountForPercent, tokenBalanceLabel } from '../lib/token-balance.mjs'
 import { sameAmount } from '../lib/quick-amounts.mjs'
 import { captureReferral, storedReferral } from '../lib/referral.mjs'
+import { feePercentLabel, launchFeeTradeNote } from '../../src/launch-fee-copy.mjs'
 
 function localStore() { try { return window.localStorage } catch { return null } }
 
@@ -295,6 +296,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     try { buyExceedsBalance = BigInt(parseUnits(amount, 9)) >= BigInt(solBalance) } catch { /* The input validator handles malformed amounts. */ }
   }
 
+  // Only markets on a launch-fee config return launchFee; it is active during their first minutes.
+  const launchFeeNote = liveQuote ? launchFeeTradeNote(liveQuote.launchFee) : null
   const currentCosts = liveQuote && costPreview?.inputKey === liveQuote.inputKey ? costPreview : null
   const costs = busy ? preparedCosts : currentCosts?.costs
   const costShortfall = costs && BigInt(costs.shortfall) > 0n
@@ -340,11 +343,12 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       <p className="trade-hint" id="trade-quote-hint">{liveQuote || minimumOut
         ? `Minimum after 1% slippage: ${formatUnits(minimumOut || liveQuote.minimumAmountOut, direction === 'buy' ? 6 : 9, 6)} ${direction === 'buy' ? market.symbol : 'SOL'}. Refreshed before wallet confirmation.`
         : 'Quote updates as you enter an amount. Fixed slippage: 1%.'}{direction === 'buy' && ' Leave SOL for network fees and token-account costs.'}</p>
-      {(usdAmount || liveQuote) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div><div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div></>}</dl>}
+      {(usdAmount || liveQuote) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div>{launchFeeNote && <div><dt>Launch fee <small>(at this quote)</small></dt><dd>{feePercentLabel(liveQuote.launchFee.feeNumerator)}</dd></div>}<div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div></>}</dl>}
       {(liveQuote || preparedCosts) && <div className="trade-cost-preview">
         {costs ? <><dl className="trade-quote-details"><div><dt>Network + priority fee</dt><dd>≈ {formatUnits(costs.networkFee)} SOL</dd></div><div><dt>Token account deposit</dt><dd>{formatUnits(costs.accountDeposits)} SOL</dd></div>{BigInt(costs.refundableDeposit) > 0n && <div><dt>Temporary deposit <small>(returned)</small></dt><dd>{formatUnits(costs.refundableDeposit)} SOL</dd></div>}<div className="trade-cost-total"><dt>{direction === 'buy' ? 'Total spend' : 'SOL costs'}</dt><dd>≈ {formatUnits(costs.total)} SOL</dd></div></dl><p className="trade-hint">{BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction. ` : ''}Estimate checked again before signing.</p></> : <p className="trade-hint">{wallet ? currentCosts?.loading ? 'Checking network fees and account deposits…' : 'Network cost estimate unavailable. Checked again before wallet approval.' : 'Connect your wallet to preview network fees and account deposits.'}</p>}
         {costShortfall && <p className="trade-funding-note" role="status">You need ≈ {formatUnits((BigInt(costs.shortfall) + 999n) / 1000n * 1000n)} more SOL to cover this trade.</p>}
       </div>}
+      {launchFeeNote && <p className="trade-impact-warning trade-launch-fee" role="status">{launchFeeNote}</p>}
       {liveQuote?.priceImpactPercent >= 5 && <p className="trade-impact-warning" role="status">High price impact. This trade moves the execution price by about {liveQuote.priceImpactPercent.toFixed(2)}% before fees. Consider a smaller amount.</p>}
       <button className="button primary trade-submit" type="submit" disabled={busy || !available || !tradingOpen || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
       <TransactionStatus stage={busy ? stage : ''}/>

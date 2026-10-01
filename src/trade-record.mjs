@@ -44,7 +44,7 @@ export function preparedFromRecord(record, transaction = null) {
   return { transaction: transaction ?? Transaction.from(saved.transaction), direction: saved.direction, amountIn: saved.amountIn,
     minimumAmountOut: saved.minimumAmountOut, lastValidBlockHeight: saved.lastValidBlockHeight, githubRepoId: saved.githubRepoId,
     mint: saved.mint.toBase58(), pool: saved.pool.toBase58(), slippageBps: record.slippageBps, phase: record.phase,
-    referral: saved.referral?.toBase58() ?? null, priorityFee: record.priorityFee ?? null, record }
+    referral: saved.referral?.toBase58() ?? null, priorityFee: record.priorityFee ?? null, launchFee: record.launchFee ?? null, record }
 }
 
 // The record after the wallet signed: the signed message (reviewed + any accepted assertions) is what lands on chain.

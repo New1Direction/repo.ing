@@ -19,6 +19,7 @@ graduation-readiness
 launch-chain
 launch-coordinator
 launch-curve
+launch-fee-chain
 launch-first-buy
 launch-indexer
 liquidity-deployment

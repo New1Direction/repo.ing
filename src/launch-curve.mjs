@@ -2,6 +2,7 @@ import {
   ActivationType, BaseFeeMode, buildCurve, buildCurveWithCustomSqrtPrices, CollectFeeMode,
   createSqrtPrices, MigrationFeeOption, MigrationOption, TokenAuthorityOption, TokenDecimal, TokenType,
 } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { launchFeeBaseFee } from './launch-fee.mjs'
 
 // Operator-selected profiles for review. Nothing imports these into production
 // launch selection: activation still requires a new on-chain config and rollout.
@@ -9,6 +10,8 @@ export const CURVE_PROFILES = Object.freeze({
   legacy: { label: 'Existing curve' },
   balanced: { label: '85 SOL graduation', migrationQuoteThreshold: 85 },
   builders: { label: '85 SOL graduation with 1% builder allocation', migrationQuoteThreshold: 85 },
+  // The builders profile with the anti-sniper launch fee (src/launch-fee.mjs); every other parameter is identical.
+  'launch-fee': { label: '85 SOL graduation with 1% builder allocation and launch fee', migrationQuoteThreshold: 85 },
   deeper: { label: '170 SOL graduation', migrationQuoteThreshold: 170 },
   deepest: { label: '340 SOL graduation', migrationQuoteThreshold: 340 },
 })
@@ -16,14 +19,15 @@ export const CURVE_PROFILES = Object.freeze({
 export function buildLaunchCurve(profile = 'balanced') {
   const selected = CURVE_PROFILES[profile]
   if (!selected) throw Error('Unknown launch curve profile')
+  const launchFee = profile === 'launch-fee'
   const common = {
     token: { tokenType: TokenType.SPLToken, tokenBaseDecimal: TokenDecimal.SIX,
       tokenQuoteDecimal: TokenDecimal.NINE, tokenAuthorityOption: TokenAuthorityOption.Immutable,
-      totalTokenSupply: 1_000_000_000, leftover: profile === 'builders' ? 10_001_000 : 1000 },
+      totalTokenSupply: 1_000_000_000, leftover: profile === 'builders' || launchFee ? 10_001_000 : 1000 },
     fee: { baseFeeParams: { baseFeeMode: BaseFeeMode.FeeSchedulerLinear,
       feeSchedulerParam: { startingFeeBps: 175, endingFeeBps: 175, numberOfPeriod: 0, totalDuration: 0 } },
       dynamicFeeEnabled: false, collectFeeMode: CollectFeeMode.QuoteToken,
-      creatorTradingFeePercentage: 71, poolCreationFee: 0, enableFirstSwapWithMinFee: false },
+      creatorTradingFeePercentage: 71, poolCreationFee: 0, enableFirstSwapWithMinFee: launchFee },
     migration: { migrationOption: MigrationOption.MET_DAMM_V2,
       migrationFeeOption: MigrationFeeOption.FixedBps100,
       migrationFee: { feePercentage: 0, creatorFeePercentage: 0 } },
@@ -36,6 +40,9 @@ export function buildLaunchCurve(profile = 'balanced') {
   if (profile === 'legacy') return buildCurveWithCustomSqrtPrices({ ...common,
     sqrtPrices: createSqrtPrices([0.000000001, 0.00000000105, 0.000000002, 0.000001], 6, 9),
     liquidityWeights: [2, 1, 1] })
-  return buildCurve({ ...common, percentageSupplyOnMigration: 20,
+  const curve = buildCurve({ ...common, percentageSupplyOnMigration: 20,
     migrationQuoteThreshold: selected.migrationQuoteThreshold })
+  // The curve, supply and migration math never read the fee. The exact scheduler cliff (50.44%) is not a whole
+  // basis-point value, so it replaces the flat 175 bps base fee after the curve is built.
+  return launchFee ? { ...curve, poolFees: { ...curve.poolFees, baseFee: launchFeeBaseFee() } } : curve
 }

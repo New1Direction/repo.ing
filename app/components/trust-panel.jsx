@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
-import { BadgeCheck, CircleDashed, Coins, Info, PieChart, Rocket } from 'lucide-react'
+import { BadgeCheck, CircleDashed, Coins, Info, PieChart, Rocket, Timer } from 'lucide-react'
+import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
 import { XHandle } from './x-handle'
 import { holderSnapshot, launcherSummary } from '../lib/trust-panel.mjs'
 import { graduationLabel, launcherLines, maintainerStatus, percentLabel, TOP_HOLDERS } from '../../src/trust-signals.mjs'
@@ -88,13 +89,22 @@ async function HoldersRows({ market }) {
   </>
 }
 
+// Only for markets whose on-chain config has the launch fee (launchFee: launchFeeTerms of the market's config).
+function LaunchFeeRow({ terms }) {
+  return <Row id="trust-launch-fee" icon={Timer} title={`Launch fee: first ${terms.durationLabel}`}
+    lines={[`${terms.startPercent} at launch, falling every second to ${terms.endPercent}`, 'Split like the regular fee']}
+    tip={[launchFeeSentence(terms), LAUNCH_FEE_SPLIT, launcherBuySentence(terms),
+      'It makes buying in the first seconds and selling to later buyers costly.'].filter(Boolean).join(' ')}/>
+}
+
 // Token page trust panel: who maintains it, what the launcher did, how concentrated holdings are, and the mint facts.
 // Only the maintainer row is known at render time; the rest stream in without changing the card's height.
-export function TrustPanel({ market }) {
+export function TrustPanel({ market, launchFee = null }) {
   return <section className="inner-card trust-panel" aria-labelledby="trust-panel-title">
     <div className="trust-heading"><h3 id="trust-panel-title">Launch facts</h3><span>On-chain and repo.ing data</span></div>
     <ul className="trust-rows">
       <MaintainerRow market={market}/>
+      {launchFee && <LaunchFeeRow terms={launchFee}/>}
       <Suspense fallback={<LauncherFallback/>}><LauncherRow market={market}/></Suspense>
       <Suspense fallback={<HoldersFallback/>}><HoldersRows market={market}/></Suspense>
     </ul>
