@@ -1,5 +1,5 @@
 import bs58 from 'bs58'
-import { createMarketConfigResolver } from './market-config.mjs'
+import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { PublicKey } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { ActivationType, DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -35,7 +35,7 @@ export function createLaunchEvidenceVerifier({ connection, config }) {
         connection.getTransaction(market.launchSignature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }),
         dbc.state.getPool(pool),
         connection.getAccountInfo(mint, 'finalized'),
-        market.discoveryVersion ? dbc.state.getPoolConfig(configKey) : null,
+        market.discoveryVersion ? readPoolConfig(dbc, configKey) : null,
       ])
     } catch (error) {
       return { state: 'unavailable', reason: `Solana RPC verification failed: ${error.message}` }

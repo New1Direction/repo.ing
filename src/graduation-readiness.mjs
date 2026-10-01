@@ -8,6 +8,7 @@ import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { indexDammTrades } from './damm-trades.mjs'
 import { readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
 import { persistGraduationObservation } from './reserve-alerts.mjs'
+import { readGenesisHash } from './rpc-usage.mjs'
 
 export const graduationError = error => /^[A-Z][A-Z_]{3,60}$/.test(error?.message??'') ? error.message : 'EVIDENCE_UNAVAILABLE'
 const publicMarketSQL=`select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",r.full_name as "fullName"
@@ -121,7 +122,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     // One provider outage should not block the other worker recovery jobs once per market.
     try {
       if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
-      agreeGraduation(...await Promise.all([connection,verification].map(c=>c.getGenesisHash())))
+      agreeGraduation(...await Promise.all([connection,verification].map(c=>readGenesisHash(c))))
       await Promise.all([connection,verification].map(c=>c.getSlot('finalized')))
     }catch(error){
       const code=graduationError(error)

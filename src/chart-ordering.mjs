@@ -1,4 +1,5 @@
 import bs58 from 'bs58'
+import { readGenesisHash } from './rpc-usage.mjs'
 
 const MAINNET = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const fail = code => { throw Error(code) }
@@ -21,7 +22,7 @@ export function chartBlockEvidence(slot, block, requiredSignatures) {
 
 export async function verifyChartBlock({ connection, verification, slot, signatures }) {
   if (!verification || connection.rpcEndpoint === verification.rpcEndpoint) fail('CHART_VERIFICATION_REQUIRED')
-  const genesis = await Promise.all([connection, verification].map(c => c.getGenesisHash()))
+  const genesis = await Promise.all([connection, verification].map(c => readGenesisHash(c)))
   if (genesis.some(value => value !== MAINNET)) fail('CHART_NETWORK_MISMATCH')
   const blocks = await Promise.all([connection, verification].map(async c =>
     chartBlockEvidence(slot, await c.getBlockSignatures(slot, 'finalized'), signatures)))

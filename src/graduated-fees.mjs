@@ -4,7 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, unpackAccount } from '@solana/spl-token'
 import { DynamicBondingCurveClient, DAMM_V2_MIGRATION_FEE_ADDRESS, deriveDammV2PoolAddress, MigrationOption } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { CpAmm, CP_AMM_PROGRAM_ID, getUnClaimLpFee } from '@meteora-ag/cp-amm-sdk'
-import { createMarketConfigResolver } from './market-config.mjs'
+import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
@@ -104,7 +104,7 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
   async function destination(market, suppliedState, suppliedFixed) {
     const configKey = resolve(market)
     const state = suppliedState ?? await dbc.state.getPool(market.pool)
-    const fixed = suppliedFixed ?? await dbc.state.getPoolConfig(configKey)
+    const fixed = suppliedFixed ?? await readPoolConfig(dbc, configKey)
     if (!state || !fixed || !state.poolState.config.equals(configKey) ||
         state.poolState.baseMint.toBase58() !== market.mint || state.poolState.creator.toBase58() !== market.creatorWallet) throw Error('Invalid canonical creator pool')
     if (!state.poolState.isMigrated) return null

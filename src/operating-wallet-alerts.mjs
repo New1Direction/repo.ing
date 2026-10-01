@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
+import { readGenesisHash } from './rpc-usage.mjs'
 const MAINNET='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 export const OPERATING_WALLETS=[
   {key:'OPS_PAYOUT_WALLET',role:'Builder payout signer',minimumLamports:'30000000'},
@@ -16,7 +17,7 @@ export function createOperatingWalletMonitor({pool,connections,env=process.env,n
     for(const {key,role,minimumLamports} of OPERATING_WALLETS){
       const wallet=new PublicKey(env[key])
       const readings=await Promise.all(connections.map(async c=>{
-        const [genesis,balance]=await Promise.all([c.getGenesisHash(),c.getBalanceAndContext(wallet,'finalized')])
+        const [genesis,balance]=await Promise.all([readGenesisHash(c),c.getBalanceAndContext(wallet,'finalized')])
         return {genesis,slot:balance.context.slot,balance:balance.value}
       }))
       const state=operatingWalletObservation(role,minimumLamports,readings),time=now()

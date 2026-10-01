@@ -123,6 +123,22 @@ export function createRpcMeter({ now = Date.now, random = Math.random, sleep = m
     backoff: provider => Math.max(0, stateOf(provider).until - now()) }
 }
 
+// A provider's genesis hash names its cluster and never changes, so network checks re-read it hourly per
+// connection object (concurrent checks share one request) instead of once per market per pass.
+const GENESIS_TTL_MS = 3_600_000
+const genesisHashes = new WeakMap()
+export function readGenesisHash(connection, { now = Date.now, ttlMs = GENESIS_TTL_MS } = {}) {
+  const hit = genesisHashes.get(connection)
+  if (hit?.pending) return hit.pending
+  if (hit && now() < hit.expiresAt) return Promise.resolve(hit.value)
+  const pending = connection.getGenesisHash().then(value => {
+    genesisHashes.set(connection, { value, expiresAt: now() + ttlMs })
+    return value
+  }, error => { genesisHashes.delete(connection); throw error })
+  genesisHashes.set(connection, { pending })
+  return pending
+}
+
 // Raw JSON-RPC fetches (finalized-transaction.mjs) find their provider's metered fetch by endpoint URL. Kept on
 // globalThis so bundlers that load this module more than once in a process still share one registry.
 const endpointFetches = globalThis.__repoingRpcEndpoints ??= new Map()

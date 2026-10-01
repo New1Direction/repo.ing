@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@solana/web3.js'
-import { loadFinalizedTransaction, normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
+import { clearFinalizedTransactionCache, loadFinalizedTransaction, loadTransactionAt, normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
+import { registerRpcEndpoint } from '../src/rpc-usage.mjs'
 
 const key = () => Keypair.generate().publicKey.toBase58()
 const signature = 'test-finalized-signature'
@@ -49,4 +50,28 @@ test('HTTP 429 is retried with backoff, then fails closed if it persists', async
   calls = 0
   await assert.rejects(loadFinalizedTransaction({ rpcEndpoint: 'https://example.invalid' }, 'sig', async () => { calls++; return limited }, [1, 1]), /HTTP 429/)
   assert.equal(calls, 3)
+})
+
+test('finalized transactions are kept per endpoint; misses, confirmed reads and injected fetches always read', async () => {
+  clearFinalizedTransactionCache()
+  const raw = transaction(0, [key(), key()])
+  raw.transaction.message.instructions[0].programIdIndex = 1
+  let result = null
+  const calls = { a: 0, b: 0, injected: 0 }
+  const rpc = name => async () => { calls[name]++; return { ok: true, status: 200, json: async () => ({ result }) } }
+  registerRpcEndpoint('https://cache-a.invalid', rpc('a'))
+  registerRpcEndpoint('https://cache-b.invalid', rpc('b'))
+  const a = { rpcEndpoint: 'https://cache-a.invalid' }, b = { rpcEndpoint: 'https://cache-b.invalid' }
+  assert.equal(await loadFinalizedTransaction(a, signature), null)
+  result = raw
+  const first = await loadFinalizedTransaction(a, signature)
+  assert.equal(await loadFinalizedTransaction(a, signature), first)
+  assert.equal(calls.a, 2, 'the miss was not kept; the found transaction was')
+  await loadFinalizedTransaction(b, signature)
+  assert.equal(calls.b, 1, 'each provider answers for itself')
+  await loadTransactionAt(a, signature, 'confirmed')
+  assert.equal(calls.a, 3, 'confirmed reads are never served from the cache')
+  await loadFinalizedTransaction(a, signature, rpc('injected'))
+  assert.equal(calls.injected, 1, 'an injected fetch always reads')
+  clearFinalizedTransactionCache()
 })

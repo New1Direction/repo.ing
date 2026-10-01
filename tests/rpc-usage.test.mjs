@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { backoffDelay, createRpcMeter, creditsFor, retryAfterMs, rpcFetch, registerRpcEndpoint,
+import { backoffDelay, createRpcMeter, creditsFor, readGenesisHash, retryAfterMs, rpcFetch, registerRpcEndpoint,
   rpcMethods, RpcLimitedError } from '../src/rpc-usage.mjs'
 
 const call = (method, id = 1) => JSON.stringify({ jsonrpc: '2.0', id, method, params: [] })
@@ -114,4 +114,20 @@ test('raw fetches find their provider by endpoint; unknown endpoints use the glo
   registerRpcEndpoint('https://rpc.example/', metered)
   assert.equal(rpcFetch('https://rpc.example'), metered)
   assert.equal(rpcFetch('https://other.example'), globalThis.fetch)
+})
+
+test('genesis hash is read once per connection and TTL, concurrent reads share it, failures are not kept', async () => {
+  let clock = 0, calls = 0, fail = true
+  const connection = { getGenesisHash: async () => { calls++; if (fail) throw Error('down'); return 'genesis' } }
+  const now = () => clock
+  await assert.rejects(readGenesisHash(connection, { now }), /down/)
+  fail = false
+  const [a, b] = await Promise.all([readGenesisHash(connection, { now }), readGenesisHash(connection, { now })])
+  assert.deepEqual([a, b, calls], ['genesis', 'genesis', 2])
+  assert.equal(await readGenesisHash(connection, { now }), 'genesis')
+  assert.equal(calls, 2)
+  clock += 3_600_000
+  await readGenesisHash(connection, { now })
+  assert.equal(calls, 3, 'expired after an hour')
+  assert.equal(await readGenesisHash({ getGenesisHash: async () => 'other' }, { now }), 'other', 'per connection object')
 })
