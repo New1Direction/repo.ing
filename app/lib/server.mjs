@@ -4,6 +4,7 @@ import pg from 'pg'
 import { Connection, Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { createReconciler } from '../../src/reconcile.mjs'
+import { createRpcMeter, registerRpcEndpoint } from '../../src/rpc-usage.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
 import { readGraduationRace } from './graduation-race.mjs'
@@ -15,9 +16,23 @@ export function database() {
   return globalThis.__gitfunPool
 }
 
+// One RPC meter per web process: a {"rpcUsage":…} line per minute while pages read the chain, and a provider
+// answering HTTP 429 (rate limit or exhausted credits) is backed off instead of retried by every request.
+function rpcFetchFor(url) {
+  if (!globalThis.__repoingRpcMeter) {
+    const meter = createRpcMeter()
+    meter.report(60_000)
+    globalThis.__repoingRpcMeter = { meter, fetch: meter.fetchFor('primary') }
+    // Raw JSON-RPC reads (finalized-transaction.mjs) share the same meter and backoff.
+    registerRpcEndpoint(url, globalThis.__repoingRpcMeter.fetch)
+  }
+  return globalThis.__repoingRpcMeter.fetch
+}
+
 export function chain() {
   if (!process.env.SOLANA_RPC_URL && process.env.NODE_ENV === 'production') throw new Error('SOLANA_RPC_URL is required in production')
-  return new Connection(process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899', 'confirmed')
+  const url = process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899'
+  return new Connection(url, { commitment: 'confirmed', fetch: rpcFetchFor(url) })
 }
 
 export function configAddress() { return process.env.DBC_CONFIG || null }
