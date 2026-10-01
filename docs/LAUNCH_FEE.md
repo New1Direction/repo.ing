@@ -2,7 +2,7 @@
 
 [Documentation](README.md) / Launch fee
 
-**Status: prepared, not created on mainnet, not active.** New launches still use the flat 1.75% config `2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M`. The code accepts both configs; nothing changes until an operator creates the new config and switches `DBC_CONFIG` ([rollout](#mainnet-rollout)).
+**Status: active since 2026-10-01.** New launches use the launch-fee config `8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3`, created by the partner wallet in transaction `Ygik7j3dyp2PxG192TzamKP2cxV8mgP6mSmw1T9i6PURAP8RzNCsqRwFneP4UZjhXXzRNrC9iwnpmuAPRTF5VwP` (5,984,080 lamports; finalized account owned by the DBC program, 1,048 bytes; only the six fee fields differ from `2YbBp7…`). `DBC_CONFIG` is the new config on web and worker; `2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M` and the two older configs stay in `DBC_LEGACY_CONFIGS` for existing markets, and `BUILDER_ALLOCATION_CONFIGS` lists both `2YbBp7…` and the new config. No market has launched on it yet; step 7 of the [rollout](#mainnet-rollout) applies to the first one.
 
 ## Why
 
