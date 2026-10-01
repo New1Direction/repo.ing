@@ -32,7 +32,8 @@ function rpcFetchFor(url) {
 export function chain() {
   if (!process.env.SOLANA_RPC_URL && process.env.NODE_ENV === 'production') throw new Error('SOLANA_RPC_URL is required in production')
   const url = process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899'
-  return new Connection(url, { commitment: 'confirmed', fetch: rpcFetchFor(url) })
+  // The meter paces a rate-limited provider; web3.js's own 429 retries would only stack on top of it.
+  return new Connection(url, { commitment: 'confirmed', disableRetryOnRateLimit: true, fetch: rpcFetchFor(url) })
 }
 
 export function configAddress() { return process.env.DBC_CONFIG || null }

@@ -16,7 +16,7 @@ function provider(name, slot) {
       calls.accounts.push(keys.map(key => key.toBase58()))
       return { context: { slot }, value: keys.map(key => ({ owner: config, data: Buffer.from(`${name}:${key.toBase58()}`) })) }
     },
-    getBlockTime: async at => { calls.times++; assert.equal(at, slot); return 1_700_000_000 } }
+    getBlockTime: async at => { calls.times++; assert.equal(at, slot); return calls.noTime ? null : 1_700_000_000 } }
 }
 
 test('one graduation pass reads every curve pool and config in one call per provider, per batch window', async () => {
@@ -29,10 +29,10 @@ test('one graduation pass reads every curve pool and config in one call per prov
   assert.deepEqual(first.map(r => r.snapshot.value.map(info => info.data.toString())), [
     [`primary:${markets[0].pool}`, `primary:${config.toBase58()}`], [`verification:${markets[0].pool}`, `verification:${config.toBase58()}`]])
   assert.deepEqual(first.map(r => [r.snapshot.context.slot, r.time]), [[10, 1_700_000_000], [11, 1_700_000_000]])
-  clock += 29_000
+  clock += 14_000
   const later = await reads.read(markets[3])
   assert.equal(later[1].snapshot.value[0].data.toString(), `verification:${markets[3].pool}`)
-  assert.equal(primary.calls.accounts.length, 1, 'still inside the 30 s window')
+  assert.equal(primary.calls.accounts.length, 1, 'still inside the 15 s window')
   clock += 1_000
   await reads.read(markets[4])
   assert.deepEqual(primary.calls.accounts.at(-1), [markets[4].pool, config.toBase58()], 'expired: reload from this market on')
@@ -51,4 +51,14 @@ test('batches stop at the account limit, skip unapproved markets and still serve
   const third = await reads.read(markets[2])
   assert.equal(third[0].snapshot.value[0].data.toString(), `primary:${markets[2].pool}`)
   assert.deepEqual(primary.calls.accounts[1], [markets[2].pool, config.toBase58(), markets[3].pool])
+})
+
+test('a batch whose block time is unavailable fails closed and is not reused', async () => {
+  const markets = Array.from({ length: 2 }, market), primary = provider('primary', 7), verification = provider('verification', 7)
+  const reads = createCurveReads({ connection: primary, verification, config, markets })
+  verification.calls.noTime = true
+  await assert.rejects(reads.read(markets[0]), /STALE_PROGRESS/)
+  verification.calls.noTime = false
+  await reads.read(markets[1])
+  assert.equal(primary.calls.accounts.length, 2, 'the next market reads a fresh batch')
 })

@@ -4,7 +4,7 @@ import { NATIVE_MINT } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { createGraduatedFees, migrationPosition } from './graduated-fees.mjs'
-import { loadFinalizedTransaction } from './finalized-transaction.mjs'
+import { forgetFinalizedTransaction, loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { readGenesisHash } from './rpc-usage.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
@@ -42,7 +42,9 @@ export async function agreedFinalizedTransaction(connection,verification,signatu
   const canonical=tx=>tx&&{slot:tx.slot,blockTime:tx.blockTime,version:tx.version,transaction:tx.transaction,error:tx.meta.err,
     preBalances:tx.meta.preBalances,postBalances:tx.meta.postBalances,preTokenBalances:tx.meta.preTokenBalances,
     postTokenBalances:tx.meta.postTokenBalances,innerInstructions:tx.meta.innerInstructions,fee:tx.meta.fee}
-  agreeGraduation(...receipts.map(canonical))
+  // A kept answer that disagrees is dropped on both sides, so the next pass re-reads instead of repeating it.
+  try{agreeGraduation(...receipts.map(canonical))}
+  catch(error){for(const c of [connection,verification])forgetFinalizedTransaction(c,signature);throw error}
   if(!receipts[0]?.meta||receipts[0].meta.err)throw Error('MIGRATION_EVIDENCE_INCOMPLETE')
   return receipts[0]
 }
@@ -50,8 +52,8 @@ export async function agreedFinalizedTransaction(connection,verification,signatu
 // The finalized curve pool and config accounts of a pass's markets, read per provider in one getMultipleAccounts
 // plus one getBlockTime per batch instead of per market. A batch serves markets for at most maxAgeMs, so each
 // observation still carries the slot and chain time it was actually read at; agreement and freshness are checked
-// per market exactly as for a single read.
-export function createCurveReads({connection,verification,config,markets,maxAgeMs=30_000,maxAccounts=100,now=Date.now}) {
+// per market exactly as for a single read. A batch without a block time is never kept.
+export function createCurveReads({connection,verification,config,markets,maxAgeMs=15_000,maxAccounts=100,now=Date.now}) {
   const resolve=createMarketConfigResolver(config)
   let batch=null
   // This market first, then the ones processed after it, up to maxAccounts accounts.
@@ -69,6 +71,7 @@ export function createCurveReads({connection,verification,config,markets,maxAgeM
       const snapshot=await c.getMultipleAccountsInfoAndContext(keys,'finalized')
       return {snapshot,time:await c.getBlockTime(snapshot.context.slot)}
     }))
+    if(reads.some(r=>!r.time))throw Error('STALE_PROGRESS')
     return {at,index,reads}
   }
   return {async read(market) {
@@ -80,7 +83,7 @@ export function createCurveReads({connection,verification,config,markets,maxAgeM
 }
 
 // No estimates. The worker persists only independently verified finalized observations; within one graduation pass,
-// curveReads may supply both providers' pool/config reads from a batch at most 30 s old.
+// curveReads may supply both providers' pool/config reads from a batch at most 15 s old.
 export async function readGraduationState({connection,verification,config,market,env=process.env,db=null,curveReads=null}) {
   if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
   const local=[connection,verification].every(c=>/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(c.rpcEndpoint))

@@ -143,3 +143,28 @@ test('config activity feed overflow wakes everything; a failed read is retried f
   assert.equal((await h.feed.poll(h.pools)).all, false)
   assert.equal(h.requests.at(-1).until, 'y')
 })
+
+test('config activity feed keeps every cursor until all configs were read, and wakes all for an unreadable transaction', async () => {
+  const [configA, configB, poolA] = [0, 1, 2].map(() => Keypair.generate().publicKey)
+  const histories = { [configA.toBase58()]: [{ signature: 'a1', err: null }], [configB.toBase58()]: [{ signature: 'b1', err: null }] }
+  let clock = 0, failB = false, missing = false
+  const connection = { getSignaturesForAddress: async (address, options) => {
+    const items = histories[address.toBase58()]
+    if (failB && address.equals(configB)) throw Error('RPC down')
+    const end = options.until ? items.findIndex(item => item.signature === options.until) : items.length
+    return items.slice(0, end === -1 ? items.length : end).slice(0, options.limit)
+  } }
+  const loadTransaction = async (_connection, signature) => missing ? null
+    : { transaction: { message: { accountKeys: signature === 'a2' ? [poolA, configA] : [configB] } } }
+  const feed = createConfigActivityFeed({ connection, configs: [configA, configB], loadTransaction, now: () => clock })
+  const pools = [poolA.toBase58()]
+  await feed.poll(pools)
+  histories[configA.toBase58()].unshift({ signature: 'a2', err: null })
+  failB = true; clock += 10_000
+  await assert.rejects(feed.poll(pools), /RPC down/)
+  failB = false; clock += 10_000
+  assert.deepEqual([...(await feed.poll(pools)).pools], pools, 'config A is re-read after config B failed')
+  histories[configB.toBase58()].unshift({ signature: 'b2', err: null })
+  missing = true; clock += 10_000
+  assert.equal((await feed.poll(pools)).all, true, 'a listed transaction that cannot be read yet wakes every market')
+})
