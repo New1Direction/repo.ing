@@ -2,7 +2,22 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq, inArray } from 'drizzle-orm'
 import { markets } from './db/schema.mjs'
 
-export function createLaunchIndexer({ pool, verify }) {
+export const settledLaunch = market => market.status === 'confirmed' && market.indexedAt !== null && market.launchFinality === 'finalized'
+
+// Launches still settling (submitted, ambiguous, or confirmed but not yet indexed as finalized) are verified every
+// run. An indexed finalized launch rests on immutable chain evidence, so it is re-checked only once its
+// last_verified_at is reverifyAfterMs old, at most maxReverify per run (oldest first), and not before retryAt.
+export function launchesToVerify(candidates, { now = Date.now(), reverifyAfterMs, maxReverify = 5, retryAt = new Map() }) {
+  const stale = market => !market.lastVerifiedAt || now - market.lastVerifiedAt.getTime() >= reverifyAfterMs
+  const reverify = candidates.filter(market => settledLaunch(market) && stale(market) && !((retryAt.get(market.githubRepoId.toString()) ?? 0) > now))
+    .sort((a, b) => (a.lastVerifiedAt?.getTime() ?? 0) - (b.lastVerifiedAt?.getTime() ?? 0)).slice(0, maxReverify)
+  return [...candidates.filter(market => !settledLaunch(market)), ...reverify]
+}
+
+// reverifyAfterMs (worker) enables launchesToVerify; a failed re-check of a settled launch waits retryMs. Without it
+// every launch is verified on every run (one-shot scripts and tests).
+export function createLaunchIndexer({ pool, verify, reverifyAfterMs = null, maxReverify = 5, retryMs = 15 * 60_000, now = Date.now }) {
+  const retryAt = new Map()
   const reconcileMarket = async market => {
     const result = await verify(market)
     if (result.state !== 'match') return result
@@ -49,10 +64,22 @@ export function createLaunchIndexer({ pool, verify }) {
     processMarket,
     async runOnce() {
       const db = drizzle(pool)
-      const candidates = await db.select({ githubRepoId: markets.githubRepoId }).from(markets)
+      const candidates = await db.select({ githubRepoId: markets.githubRepoId, status: markets.status, indexedAt: markets.indexedAt,
+        launchFinality: markets.launchFinality, lastVerifiedAt: markets.lastVerifiedAt }).from(markets)
         .where(inArray(markets.status, ['confirmed', 'submitted', 'ambiguous']))
       const results = []
-      for (const candidate of candidates) results.push(await processMarket(candidate.githubRepoId))
+      if (reverifyAfterMs === null) {
+        for (const candidate of candidates) results.push(await processMarket(candidate.githubRepoId))
+        return results
+      }
+      const at = now()
+      for (const candidate of launchesToVerify(candidates, { now: at, reverifyAfterMs, maxReverify, retryAt })) {
+        const result = await processMarket(candidate.githubRepoId)
+        const key = candidate.githubRepoId.toString()
+        if (settledLaunch(candidate) && !['verified', 'indexed', 'recovered'].includes(result.state)) retryAt.set(key, at + retryMs)
+        else retryAt.delete(key)
+        results.push(result)
+      }
       return results
     },
   }

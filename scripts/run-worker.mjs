@@ -45,7 +45,8 @@ if (process.env.GRADUATION_VERIFICATION_RPC_URL) providerFetch(process.env.GRADU
 const rpcConnection = (url, commitment, provider = 'primary') => new Connection(url, { commitment, disableRetryOnRateLimit: true, fetch: providerFetch(url, provider) })
 const connection = rpcConnection(rpc, 'finalized')
 const verify = createLaunchEvidenceVerifier({ connection, config })
-const launches = createLaunchIndexer({ pool, verify })
+// A launch still settling is verified every cycle; an indexed finalized launch is re-checked hourly.
+const launches = createLaunchIndexer({ pool, verify, reverifyAfterMs: 3_600_000 })
 const fees = createExternalFeeIndexer({ pool, connection, config })
 // Recovery only needs already authorized, signed intents. No partner key here.
 const liquidity = createLiquidityRecovery({ pool, connection })
