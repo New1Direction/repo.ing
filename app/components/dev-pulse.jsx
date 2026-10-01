@@ -46,6 +46,7 @@ export function DevPulse({ mint, initial, repoUrl }) {
         <strong>{formatCount(pulse.hn.points)} pts</strong><ArrowUpRight size={15} aria-hidden="true"/></a>}
       <div className="dev-pulse-stats">
         <Stat kind="commits" value={formatCount(pulse.commits24h)} label={pulse.commits24h === 1 ? 'commit today' : 'commits today'} sub={`${formatCount(pulse.commits7d)} this week`}/>
+        <Stat kind="devs" value={formatCount(pulse.devs7d ?? 0)} label={pulse.devs7d === 1 ? 'developer this week' : 'developers this week'}/>
         <Stat kind="release" value={pulse.release?.title ?? 'None yet'} label={pulse.release ? `released ${pulseAgo(pulse.release.at, now)}` : 'latest release'} href={pulse.release?.url}/>
         <Stat kind="stars" value={today ?? (pulse.stars ? formatCount(pulse.stars.total) : '—')} label={today ? 'stars today' : 'stars'} sub={today && pulse.stars ? `${formatCount(pulse.stars.total)} total` : null}/>
         <Stat kind="merge" value={formatCount(pulse.merged7d)} label={pulse.merged7d === 1 ? 'PR merged this week' : 'PRs merged this week'}/>

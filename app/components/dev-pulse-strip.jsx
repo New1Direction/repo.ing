@@ -9,6 +9,7 @@ export function DevPulseStrip({ pulse, now = Date.now() }) {
   const facts = [
     pulse.commits24h > 0 ? `${formatCount(pulse.commits24h)} commit${pulse.commits24h === 1 ? '' : 's'} today`
       : pulse.commits7d > 0 ? `${formatCount(pulse.commits7d)} commit${pulse.commits7d === 1 ? '' : 's'} this week` : null,
+    pulse.devs7d >= 2 ? `${formatCount(pulse.devs7d)} devs this week` : null,
     pulse.release && now - Date.parse(pulse.release.at) < RECENT ? `${pulse.release.title} · ${pulseAgo(pulse.release.at, now)}` : null,
     today && pulse.stars.today > 0 ? `${today} stars today` : null,
     pulse.hn ? 'on Hacker News' : null,

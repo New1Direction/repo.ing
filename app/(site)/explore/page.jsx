@@ -10,6 +10,7 @@ import { listMarkets, graduationRace } from '../../lib/server.mjs'
 import { GraduationRace, GraduationRaceBoard, GraduationRaceFallback } from '../../components/graduation-race'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import { exploreGrowthView } from '../../lib/growth-view.mjs'
+import { withPulse } from '../../lib/pulse-index.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Explore markets · repo.ing', description: 'Browse live markets for open source repositories. Real repositories, real communities — every trade pays the builders.' }
 export default function Explore() {
@@ -20,11 +21,11 @@ export default function Explore() {
 }
 async function Markets() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
-  return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<ExploreList markets={markets} usdPerSol={usdPerSol}/></>
+  return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<ExploreList markets={await withPulse(markets)} usdPerSol={usdPerSol}/></>
 }
 async function Graduating() {
   const { markets, unavailable } = await graduationRace()
-  return <GraduationRaceBoard markets={markets} unavailable={unavailable}/>
+  return <GraduationRaceBoard markets={await withPulse(markets)} unavailable={unavailable}/>
 }
 async function Highlights() {
   let growth

@@ -124,3 +124,6 @@
 [data-theme=light] .pulse-pin-count{color:#fff}
 [data-theme=light] .pulse-tip{box-shadow:0 14px 32px rgba(25,34,28,.16)}
 [data-theme=light] .pulse-tip-meta a,[data-theme=light] .chart-pulse-toggle[aria-pressed=true] svg{color:var(--green-dark)}
+[data-theme=light] .pulse-kind-devs{--pulse:#0f766e}
+[data-theme=light] .pulse-badge.is-shipping,[data-theme=light] .shipping-name small,[data-theme=light] .shipping-rank{color:var(--green-dark)}
+[data-theme=light] .shipping-card{background:var(--surface)}

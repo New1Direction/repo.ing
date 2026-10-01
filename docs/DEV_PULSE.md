@@ -4,6 +4,8 @@
 
 Dev Pulse shows what each live market's repository developers are shipping, from public GitHub activity: a one-line status under the token hero ("Shipping now · 34 commits today · v1.0.0 · 3h ago"), a Dev Pulse card under the chart (commits today and this week, latest release, stars, merged pull requests this week, maintainer status, commits per day for 14 days, and a recent-activity feed), pins on the price chart at the time of each event, and a "Live from GitHub" ticker on the home page.
 
+On market lists, every row (home, Explore, the graduation race) carries a badge: "34 commits today" when the repository shipped in the last 24 hours, "Active this week" within 7 days. Explore has a **Shipping** view ranked by code shipped this week (each commit and merged pull request counts once, a release three; ties go to more developers, then 24h volume), and the home page shows the three community repositories shipping hardest this week ($REPOING and do-not-promote repositories excluded). "Developers this week" counts distinct human authors of commits and merged pull requests (GitHub login, or the git name when unlinked); bots such as Dependabot and Renovate are not counted. The list numbers come from one aggregate (`loadPulseIndex`) cached for 30 seconds per web process.
+
 ## Data
 
 The worker (`src/dev-pulse.mjs`, every 2 minutes, at most 12 due repositories per run) reads each live market's repository with the GitHub App installation token. Every read is a conditional request (`If-None-Match`), so an unchanged repository costs nothing against the rate limit:
@@ -12,7 +14,7 @@ The worker (`src/dev-pulse.mjs`, every 2 minutes, at most 12 due repositories pe
 | --- | --- | --- |
 | `GET /repositories/{id}` (rename-safe) | every check | `repo_pulse_state` (name, default branch, stars, `pushed_at`), one star snapshot per UTC hour in `repo_pulse_star_hours`, star milestones (10 … 100k) |
 | `GET /repos/{name}/releases` | every check | `release` events (drafts skipped) |
-| `GET /repos/{name}/commits?sha={default}&since={14 days}` | when `pushed_at` moved; the first read of a day pages back up to 500 commits | `commit` events |
+| `GET /repos/{name}/commits?sha={default}&since={14 days}` | when `pushed_at` moved; the first read of a day pages back up to 1,000 commits | `commit` events |
 | `GET /repos/{name}/pulls?state=closed` | when `pushed_at` moved | `merge` events (merged pull requests only) |
 | Hacker News (public Algolia API) | every 30 minutes | `hn` events for stories linking the repository with at least 10 points |
 
