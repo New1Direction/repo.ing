@@ -4,8 +4,9 @@ import { deriveDbcTokenVaultAddress } from '@meteora-ag/dynamic-bonding-curve-sd
 
 const cache = new Map()
 const inFlight = new Map()
-// Keep holder counts close to the chart's 15-second polling cycle after launches and transfers.
-const CACHE_MS = 30 * 1000
+// Holder counts scan every token account of the mint (getProgramAccounts: 10 Helius credits per call), and supply
+// barely moves, so one read per mint per 5 minutes serves every viewer of this process.
+const CACHE_MS = 5 * 60 * 1000
 
 export function uniqueHolderCount(accounts, vaultAddress) {
   const owners = new Set()
