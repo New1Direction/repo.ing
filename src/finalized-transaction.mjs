@@ -29,8 +29,30 @@ export function loadFinalizedTransaction(connection, signature, fetchImpl, delay
 const RATE_LIMIT_DELAYS_MS = [500, 1_000, 2_000, 4_000]
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-export async function loadTransactionAt(connection, signature, commitment, fetchImpl = rpcFetch(connection.rpcEndpoint), delays = RATE_LIMIT_DELAYS_MS) {
+// A finalized transaction never changes, so each provider's answer is kept per process (bounded, oldest evicted).
+// Keys include the endpoint: two-provider agreement still compares each provider's own answer. Only found
+// transactions read through the default (metered) fetch are kept; an injected fetch always reads.
+const FINALIZED_CACHE_MAX = 1000
+const finalizedCache = new Map()
+const cacheKey = (connection, signature) => `${connection.rpcEndpoint}\n${signature}`
+export function clearFinalizedTransactionCache() { finalizedCache.clear() }
+
+export async function loadTransactionAt(connection, signature, commitment, fetchImpl, delays = RATE_LIMIT_DELAYS_MS) {
   if (!['confirmed', 'finalized'].includes(commitment)) throw new Error('Unsupported transaction commitment')
+  const cacheable = commitment === 'finalized' && fetchImpl === undefined
+  if (cacheable) {
+    const cached = finalizedCache.get(cacheKey(connection, signature))
+    if (cached) return cached
+  }
+  const transaction = await readTransactionAt(connection, signature, commitment, fetchImpl ?? rpcFetch(connection.rpcEndpoint), delays)
+  if (cacheable && transaction) {
+    if (finalizedCache.size >= FINALIZED_CACHE_MAX) finalizedCache.delete(finalizedCache.keys().next().value)
+    finalizedCache.set(cacheKey(connection, signature), transaction)
+  }
+  return transaction
+}
+
+async function readTransactionAt(connection, signature, commitment, fetchImpl, delays) {
   let response
   for (let attempt = 0; ; attempt++) {
     response = await fetchImpl(connection.rpcEndpoint, {

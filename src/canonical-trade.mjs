@@ -1,7 +1,7 @@
 import BN from 'bn.js'
 import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import { estimateBuySizes } from './trade-depth.mjs'
-import { createMarketConfigResolver } from './market-config.mjs'
+import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { readChainPoint } from './chain-clock.mjs'
 import { launchFeeJson, poolFeeFacts, quotePoint } from './launch-fee.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
@@ -92,7 +92,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     if (!state || !state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(mint) || state.poolState.isMigrated !== 0) {
       throw new Error('Canonical DBC pool is missing, changed, or migrated')
     }
-    const fixed = await dbc.state.getPoolConfig(configKey)
+    const fixed = await readPoolConfig(dbc, configKey)
     if (!fixed) throw new Error('Fixed DBC config is missing')
     const amountIn = new BN(input.toString())
     // The fee a launch-fee pool charges falls every second after activation, so quote at the chain's confirmed
@@ -217,7 +217,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const cached = depthCache.get(key)
     if (cached && cached.expiresAt > Date.now()) return cached.value
     const market = await loadMarket(repoId), configKey = resolveConfig(market)
-    const [state, fixed] = await Promise.all([dbc.state.getPool(market.pool), dbc.state.getPoolConfig(configKey)])
+    const [state, fixed] = await Promise.all([dbc.state.getPool(market.pool), readPoolConfig(dbc, configKey)])
     if (!state || !fixed || state.poolState.isMigrated || !state.poolState.config.equals(configKey) ||
         state.poolState.baseMint.toBase58() !== market.mint || fixed.collectFeeMode !== 0) throw Error('Trade size guide unavailable')
     const currentPoint = quotePoint(await readChainPoint(connection, fixed.activationType), state.poolState.activationPoint)

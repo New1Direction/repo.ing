@@ -5,6 +5,7 @@ import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk
 import { createMarketConfigResolver } from './market-config.mjs'
 import { createGraduatedFees, migrationPosition } from './graduated-fees.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
+import { readGenesisHash } from './rpc-usage.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 export const GRADUATION_MAX_AGE_MS = 120_000
@@ -51,7 +52,7 @@ export async function readGraduationState({connection,verification,config,market
   if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
   const local=[connection,verification].every(c=>/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(c.rpcEndpoint))
   if(connection.rpcEndpoint===verification.rpcEndpoint&&!(local&&env.NODE_ENV!=='production'))throw Error('INDEPENDENT_RPC_REQUIRED')
-  const genesis=agreeGraduation(...await Promise.all([connection,verification].map(c=>c.getGenesisHash())))
+  const genesis=agreeGraduation(...await Promise.all([connection,verification].map(c=>readGenesisHash(c))))
   if(genesis!=='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'&&!(local&&env.NODE_ENV!=='production'))throw Error('NETWORK_MISMATCH')
   const configKey=createMarketConfigResolver(config)(market),poolKey=new PublicKey(market.pool)
   const addresses=[poolKey,configKey]

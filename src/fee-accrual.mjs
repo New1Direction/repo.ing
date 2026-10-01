@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
-import { createMarketConfigResolver } from './market-config.mjs'
+import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { and, eq, sql } from 'drizzle-orm'
@@ -68,7 +68,7 @@ export function createFeeAccrual({ pool: databasePool, connection, config }) {
         const market = await loadMarket(lockedDb, repoId)
         const configKey = resolveConfig(market)
         const state = await dbc.state.getPool(market.pool)
-        const fixed = await dbc.state.getPoolConfig(configKey)
+        const fixed = await readPoolConfig(dbc, configKey)
         if (!state || !fixed || !state.poolState.creator.equals(new PublicKey(market.creatorWallet)) ||
             !state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(new PublicKey(market.mint)) ||
             !fixed.quoteMint.equals(NATIVE_MINT) || fixed.collectFeeMode !== CollectFeeMode.QuoteToken ||
