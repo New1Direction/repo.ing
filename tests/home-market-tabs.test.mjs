@@ -14,6 +14,6 @@ test('home tabs match the client ordering, top 5 only, with only rendered fields
     assert.deepEqual(tabs[tab].map(m => m.mint), orderMarkets(markets, tab).slice(0, 5).map(m => m.mint))
   }
   assert.notDeepEqual(tabs.Trending.map(m => m.mint), tabs.New.map(m => m.mint))
-  assert.deepEqual(Object.keys(tabs.New[0]).sort(), ['claimed', 'description', 'earned', 'fullName', 'mint', 'remaining', 'repoId', 'stars', 'symbol', 'tokenName', 'volume24hLamports', 'wasVerified', 'priceSol', 'bondingPercent', 'graduated'].sort())
+  assert.deepEqual(Object.keys(tabs.New[0]).sort(), ['claimed', 'description', 'earned', 'fullName', 'mint', 'remaining', 'repoId', 'stars', 'symbol', 'tokenName', 'volume24hLamports', 'wasVerified', 'priceSol', 'bondingPercent', 'graduated', 'pulse'].sort())
   assert.deepEqual(homeMarketTabs([]), { Trending: [], New: [] })
 })

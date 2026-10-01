@@ -1,4 +1,5 @@
 import { promotionExcludedRepoIds } from './promotion-exclusions.mjs'
+import { activeDevelopers, isBotAuthor, pulseBadge } from './pulse-rank.mjs'
 
 // Dev Pulse read side: what a repository's developers did on GitHub (collected by the worker, src/dev-pulse.mjs) plus
 // repo.ing's own maintainer events, summarized for the token page, the price chart pins and the home ticker.
@@ -74,6 +75,7 @@ export function summarizePulse({ now = Date.now(), state, events = [], release =
   return {
     status, lastCodeAt: Number.isFinite(lastCodeAt) ? iso(lastCodeAt) : null, fullName: state.fullName ?? null,
     commits24h: after(commits, since(1)).length, commits7d: after(commits, since(7)).length, days,
+    devs7d: activeDevelopers(after([...commits, ...merges], since(7))),
     merged7d: after(merges, since(7)).length, release: latestRelease, stars,
     hn: hn ? { title: hn.title, points: hn.amount, url: hn.url, at: hn.at } : null,
     maintainer: { verified: Boolean(boundAt), since: boundAt ? at(boundAt) : null, claimHref: repoId ? `/claim/${repoId}` : null },
@@ -152,6 +154,30 @@ export async function readPulseTicker(pool, { now = Date.now(), excluded = promo
     return selectTicker([...events.rows, ...commits.rows, ...verified.rows], { excluded, limit })
   } catch (error) {
     if (error?.code === '42P01') return []
+    throw error
+  }
+}
+
+// One row per repository with activity in the last 14 days: the week's numbers behind the market-list badge, the Explore
+// "Shipping" order and the home leaders. Bots (Dependabot, Renovate, …) are not counted as developers.
+export async function loadPulseIndex(pool, now = Date.now()) {
+  if (!pool) return new Map()
+  try {
+    const { rows } = await pool.query(`select github_repo_id::text as "repoId",
+        count(*) filter (where kind = 'commit' and occurred_at >= $1)::int as "commits24h",
+        count(*) filter (where kind = 'commit' and occurred_at >= $2)::int as "commits7d",
+        count(*) filter (where kind = 'merge' and occurred_at >= $2)::int as "merged7d",
+        count(*) filter (where kind = 'release' and occurred_at >= $2)::int as "releases7d",
+        coalesce(array_agg(distinct lower(trim(detail))) filter (where kind in ('commit', 'merge') and occurred_at >= $2 and detail is not null), '{}') as authors,
+        max(occurred_at) filter (where kind in ('commit', 'merge', 'release')) as "lastCodeAt"
+      from repo_pulse_events where occurred_at >= $3 and occurred_at <= $4 group by github_repo_id`,
+      [iso(now - DAY), iso(now - 7 * DAY), iso(now - PULSE_DAYS * DAY), iso(now + 5 * 60_000)])
+    return new Map(rows.map(({ authors, lastCodeAt, ...row }) => {
+      const pulse = { ...row, devs7d: authors.filter(name => !isBotAuthor(name)).length, lastCodeAt: at(lastCodeAt) }
+      return [row.repoId, { ...pulse, badge: pulseBadge(pulse, now) }]
+    }))
+  } catch (error) {
+    if (error?.code === '42P01') return new Map()
     throw error
   }
 }

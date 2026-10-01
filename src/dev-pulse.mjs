@@ -9,7 +9,7 @@ const MINUTE = 60_000, HOUR = 3_600_000, DAY = 86_400_000
 export const PULSE_WINDOW_DAYS = 14
 export const STAR_SPIKE = 10
 const STAR_MILESTONES = [10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000]
-const HN_MIN_POINTS = 10, HN_EVERY = 30 * MINUTE, COMMIT_PAGE = 100, MAX_COMMIT_PAGES = 5
+const HN_MIN_POINTS = 10, HN_EVERY = 30 * MINUTE, COMMIT_PAGE = 100, MAX_COMMIT_PAGES = 10
 // GitHub requests this installation keeps in reserve for the web's own reads (repository refreshes, verification).
 const RATE_FLOOR = 800
 
