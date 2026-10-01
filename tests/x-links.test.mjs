@@ -86,7 +86,7 @@ test('callback state is checked against the sealed cookie (CSRF), expiry, cancel
   const key = wallet().publicKey.toBase58()
   const { state } = startAuthorization({ config: CONFIG, origin: ORIGIN, wallet: key })
   assert.deepEqual(checkCallback(state, params({ state: state.state, code: 'abc' })), { code: 'abc', verifier: state.verifier, wallet: key })
-  throws(() => checkCallback(state, params({ state: `${state.state.slice(0, -1)}x`, code: 'abc' })), /could not be verified/)
+  throws(() => checkCallback(state, params({ state: `${state.state.slice(0, -1)}${state.state.endsWith('x') ? 'y' : 'x'}`, code: 'abc' })), /could not be verified/)
   throws(() => checkCallback(state, params({ state: 'short', code: 'abc' })), /could not be verified/)
   throws(() => checkCallback(state, params({ code: 'abc' })), /could not be verified/)
   throws(() => checkCallback(state, params({ state: state.state })), /could not be verified/)
