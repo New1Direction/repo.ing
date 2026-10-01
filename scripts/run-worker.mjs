@@ -27,6 +27,9 @@ import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
 import { createRpcMeter, registerRpcEndpoint } from '../src/rpc-usage.mjs'
+import { createActivitySchedule, createConfigActivityFeed } from '../src/indexer-schedule.mjs'
+import { approvedConfigs } from '../src/market-config.mjs'
+import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
@@ -47,7 +50,9 @@ const connection = rpcConnection(rpc, 'finalized')
 const verify = createLaunchEvidenceVerifier({ connection, config })
 // A launch still settling is verified every cycle; an indexed finalized launch is re-checked hourly.
 const launches = createLaunchIndexer({ pool, verify, reverifyAfterMs: 3_600_000 })
-const fees = createExternalFeeIndexer({ pool, connection, config })
+// Idle markets are checked less often; new config-account signatures and repo.ing trades wake them early.
+const fees = createExternalFeeIndexer({ pool, connection, config, schedule: createActivitySchedule(),
+  feed: createConfigActivityFeed({ connection, configs: approvedConfigs(config), loadTransaction: loadFinalizedTransaction }) })
 // Recovery only needs already authorized, signed intents. No partner key here.
 const liquidity = createLiquidityRecovery({ pool, connection })
 // Only recover already issued/approved intents. Never prepare or sign a builder action.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Keypair } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
-import { createMarketConfigResolver, readPoolConfig } from '../src/market-config.mjs'
+import { approvedConfigs, createMarketConfigResolver, readPoolConfig } from '../src/market-config.mjs'
 
 test('config rotation preserves legacy markets and rejects unapproved pools', () => {
   const current = Keypair.generate().publicKey, legacy = Keypair.generate().publicKey, other = Keypair.generate().publicKey
@@ -16,6 +16,11 @@ test('config rotation preserves legacy markets and rejects unapproved pools', ()
   assert.throws(() => createMarketConfigResolver(current, '')(market(legacy)), /approved DBC config/)
   assert.throws(() => resolve({ ...market(legacy), mint: other.toBase58() }), /approved DBC config/)
   assert.throws(() => createMarketConfigResolver(current, 'invalid'))
+})
+
+test('approved configs list the current config first, then distinct legacy configs', () => {
+  const current = Keypair.generate().publicKey, legacy = Keypair.generate().publicKey
+  assert.deepEqual(approvedConfigs(current, ` ${legacy},${current},${legacy} `).map(key => key.toBase58()), [current.toBase58(), legacy.toBase58()])
 })
 
 test('DBC config reads are shared per endpoint and commitment; misses and failures are not kept', async () => {
