@@ -227,6 +227,12 @@ test('only markets indexed after the cutoff and within 24 hours are announced, o
   assert.equal(sent.length, 4)
 })
 
+test('repos on the do-not-promote list are never announced', async () => {
+  const { job, sent } = setup({ markets: [market(3, 5), market(4, 1)], config: { excluded: new Set(['3']) } })
+  await job.runOnce()
+  assert.deepEqual(sent, [['telegram', '4']])
+})
+
 test('a backlog is capped per run and per day', async () => {
   const markets = Array.from({ length: 10 }, (_, i) => market(i + 1, 10 - i))
   const { job, sent, tick } = setup({ markets, config: { maxPerRun: 3, maxPerDay: 5 } })
