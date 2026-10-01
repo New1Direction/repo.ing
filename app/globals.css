@@ -762,3 +762,9 @@ body{overflow-x:clip}
   .market-hero .repo-identity p{margin-top:12px;font-size:14px}.market-hero .repo-stats{gap:6px 15px;margin-top:12px;font-size:13px}
   .market-hero-pills{margin-top:12px}.market-hero-actions{margin:0}.market-hero .share-market small{text-align:left}}
 @media(max-width:480px){.explore-navigation .explore-nav-long{display:none}}
+/* $REPOING tab: repo.ing's own token, set apart from the plain links in brand green; stays beside Launch on phones. */
+.app-header nav a.nav-token{align-self:center;display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 13px 0 5px;border-radius:999px;border:1px solid color-mix(in srgb,var(--green) 45%,transparent);background:color-mix(in srgb,var(--green) 11%,transparent);color:var(--green);font-weight:650;white-space:nowrap;transition:background .12s,border-color .12s}
+.app-header nav a.nav-token img{width:22px;height:22px;border-radius:50%;flex:none}
+.app-header nav a.nav-token:hover,.app-header nav a.nav-token.active{background:color-mix(in srgb,var(--green) 20%,transparent);border-color:var(--green)}
+.app-header nav a.nav-token.active:after{display:none}
+@media(max-width:700px){.app-header nav>a.nav-token{display:inline-flex;height:32px}}
