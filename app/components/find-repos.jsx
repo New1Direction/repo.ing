@@ -87,20 +87,20 @@ export function FindRepos({ initial, smartSearch }) {
     <p id="finder-help" className="finder-help">Search repositories tracked by repo.ing. {smartSearch ? 'Descriptions are matched with AI; trend scores come from public evidence. Search text is processed by TypeSafe.' : 'Search names and descriptions, or narrow the list with filters.'}</p>
     <div className="finder-toolbar">
       <div className="finder-tabs" role="group" aria-label="Market status">{Object.entries(MARKET_FILTERS).map(([value, label]) => <button type="button" key={value} disabled={busy} aria-pressed={market === value} onClick={() => { setMarket(value); setReadyOnly(false) }}>{label}</button>)}</div>
-      <button type="button" className="finder-ready-filter" aria-pressed={readyOnly} disabled={busy} onClick={() => { setReadyOnly(value => !value); setMarket('all') }}>Ready to launch <span>{readyCount}</span></button>
+      <button type="button" className="finder-ready-filter" aria-pressed={readyOnly} disabled={busy} onClick={() => { setReadyOnly(value => !value); setMarket('all') }}>Reviewed <span>{readyCount}</span></button>
       <label className="finder-activity"><span className="sr-only">Repository activity</span><select value={activity} disabled={busy} onChange={event => setActivity(event.target.value)}>{Object.entries(ACTIVITY_FILTERS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       {filtered && <button type="button" className="finder-clear" onClick={clear}><X size={14} aria-hidden="true"/> Clear</button>}
     </div>
-    <div className="finder-summary" role="status" aria-live="polite">{busy ? 'Finding matching repositories…' : <>{visible.length} {visible.length === 1 ? 'repository' : 'repositories'}{result ? <> for “{result.query}”</> : readyOnly ? ' ready to launch' : ' gaining attention'} · {market !== 'all' ? `${MARKET_FILTERS[market]} · ` : ''}{activity !== 'any' ? `${ACTIVITY_FILTERS[activity]} · ` : ''}Reviewed launches first, then trend evidence</>}</div>
+    <div className="finder-summary" role="status" aria-live="polite">{busy ? 'Finding matching repositories…' : <>{visible.length} {visible.length === 1 ? 'repository' : 'repositories'}{result ? <> for “{result.query}”</> : readyOnly ? ' reviewed by repo.ing' : ' gaining attention'} · {market !== 'all' ? `${MARKET_FILTERS[market]} · ` : ''}{activity !== 'any' ? `${ACTIVITY_FILTERS[activity]} · ` : ''}Reviewed launches first, then trend evidence</>}</div>
     {error && <p className="inline-error" role="alert">{error}</p>}
     {result?.notice && <p className="finder-help">{result.notice}</p>}
     <div className="inner-card growth-trending finder-results" aria-busy={busy}>
       {visible.map(c => <article key={c.repoId}>
         <div className="growth-heading"><div className="finder-repository"><a href={`https://github.com/${c.fullName}`} target="_blank" rel="noreferrer"><strong>{c.fullName}</strong><ArrowUpRight size={15} aria-hidden="true"/></a><p>{c.description}</p></div>
-          {c.mint ? <Link className="button outline" href={`/token/${c.mint}`}>View market</Link> : c.ready ? <Link className="button primary" href={`/launch/${c.repoId}?from=trend`}>Review & launch</Link> : <a className="button outline" href={`https://github.com/${c.fullName}`} target="_blank" rel="noreferrer">View repository ↗</a>}
+          {c.mint ? <Link className="button outline" href={`/token/${c.mint}`}>View market</Link> : c.ready ? <Link className="button primary" href={`/launch/${c.repoId}?from=trend`}>Review & launch</Link> : c.marketState === 'unlaunched' && c.launchable ? <Link className="button primary" href={`/launch/${c.repoId}`} aria-label={`Launch ${c.fullName}`}>Launch</Link> : <a className="button outline" href={`https://github.com/${c.fullName}`} target="_blank" rel="noreferrer">View repository ↗</a>}
         </div>
         <div className="finder-meta">{c.stars !== null && <span title={`${c.stars} GitHub stars`}><Star size={14} aria-hidden="true"/>{number(c.stars)}</span>}{c.forks !== null && <span title={`${c.forks} GitHub forks`}><GitFork size={14} aria-hidden="true"/>{number(c.forks)}</span>}
-          <span className={`finder-market-state${c.ready ? ' positive' : ''}`}>{c.marketState === 'live' ? 'Market live' : c.marketState === 'pending' ? 'Launch in progress' : c.ready ? 'Reviewed · Ready to launch' : 'Awaiting launch review'}</span>
+          <span className={`finder-market-state${c.ready ? ' positive' : ''}`}>{c.marketState === 'live' ? 'Market live' : c.marketState === 'pending' ? 'Launch in progress' : c.ready ? 'Reviewed · Ready to launch' : 'No market yet'}</span>
           {c.score.inputs.stars?.delta > 0 && <span>+{c.score.inputs.stars.delta} stars / {c.score.inputs.stars.hours.toFixed(1)}h</span>}
           <span>Checked {Math.max(0, Math.floor((now - Date.parse(c.observedAt))/60000))}m ago</span>
         </div><TrendReasons candidate={c}/>

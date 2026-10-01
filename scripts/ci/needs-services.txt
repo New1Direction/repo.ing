@@ -32,5 +32,6 @@ replica-state
 reserve-alerts-integration
 trade
 trend-integration
+trend-launchable-db
 trust-signals-db
 wallet-binding

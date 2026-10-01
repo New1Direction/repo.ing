@@ -1,6 +1,7 @@
 import { database } from '../../lib/server.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 import { repositoryCandidates } from '../../lib/repo-discovery.mjs'
+import { searchList } from '../../lib/trending-launches.mjs'
 import { normalizeSearch } from '../../../src/repo-search.mjs'
 import { createRepoSearch, readSearchJson } from '../../../src/jev-repo-search.mjs'
 import { TREND_FRESH_MS } from '../../../src/trend-rules.mjs'
@@ -10,8 +11,9 @@ export const dynamic = 'force-dynamic'
 const headers = { 'Cache-Control': 'no-store' }
 const search = createRepoSearch()
 let active = 0
+// The list matches /find-repos: no do-not-promote repos, and "Launch" only where the trending-launch policy allows it.
 export async function GET() {
-  try { return Response.json({ candidates: await repositoryCandidates(database()) }, { headers }) }
+  try { return Response.json({ candidates: await searchList(await repositoryCandidates(database())) }, { headers }) }
   catch { return Response.json({ error: 'Repositories are temporarily unavailable. Please try again.' }, { status: 503, headers }) }
 }
 export async function POST(request) {
@@ -26,7 +28,7 @@ export async function POST(request) {
     const result = await search(query, candidates)
     // A provider call must not keep an observation alive past its expiry.
     const fresh = candidates.filter(c => Date.now() - Date.parse(c.observedAt) <= TREND_FRESH_MS)
-    return Response.json({ ...result, query, candidates: fresh, searched: fresh.length }, { headers })
+    return Response.json({ ...result, query, candidates: await searchList(fresh), searched: fresh.length }, { headers })
   } catch { return Response.json({ error: 'Search is temporarily unavailable. Please try again.' }, { status: 503, headers }) }
   finally { active-- }
 }
