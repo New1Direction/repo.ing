@@ -116,6 +116,8 @@ export function createPlatformFeeRecovery({ pool, connection }) {
       signed_transaction as "signedTransaction", wallet, amount::text, pool, phase, evidence,
       last_valid_block_height::text as "lastValidBlockHeight" from platform_fee_claims where status='pending'`)
     const results = []
+    // No pending claim, no chain read: this runs every worker cycle.
+    if (!pending.length) return results
     const height = BigInt(await connection.getBlockHeight('finalized'))
     for (const intent of pending) {
       if (intent.phase === 'DBC') {

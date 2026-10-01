@@ -232,7 +232,7 @@ try {
       graduationTask=observeGraduation().finally(()=>{nextGraduationCheck=Date.now()+30000;graduationTask=null})
     if(process.env.TREND_INTAKE_ENABLED==='true'){
       if(once)await observeTrends()
-      else if(!trendTask&&Date.now()>=nextTrendCheck)trendTask=observeTrends().finally(()=>{nextTrendCheck=Date.now()+60000;trendTask=null})
+      else if(!trendTask&&Date.now()>=nextTrendCheck)trendTask=observeTrends().finally(()=>{nextTrendCheck=Date.now()+300000;trendTask=null})
     }
     if(once)await observeBuybackReceipts()
     else if(!buybackReceiptTask&&Date.now()>=nextBuybackReceiptCheck)
@@ -244,12 +244,12 @@ try {
     }
     if(once)await observeOperatingWallets()
     else if(!operatingWalletTask&&Date.now()>=nextOperatingWalletCheck)
-      operatingWalletTask=observeOperatingWallets().finally(()=>{nextOperatingWalletCheck=Date.now()+300000;operatingWalletTask=null})
+      operatingWalletTask=observeOperatingWallets().finally(()=>{nextOperatingWalletCheck=Date.now()+900000;operatingWalletTask=null})
     // Notification network failures never block fee indexing or authorized recovery.
     if(reserveDelivery){
       if(once)await deliverReserveAlerts()
       else if(!reserveDeliveryTask&&Date.now()>=nextReserveDeliveryCheck)
-        reserveDeliveryTask=deliverReserveAlerts().finally(()=>{nextReserveDeliveryCheck=Date.now()+30000;reserveDeliveryTask=null})
+        reserveDeliveryTask=deliverReserveAlerts().finally(()=>{nextReserveDeliveryCheck=Date.now()+120000;reserveDeliveryTask=null})
     }
     if(launchAlerts){
       if(once)await deliverLaunchAlerts()
