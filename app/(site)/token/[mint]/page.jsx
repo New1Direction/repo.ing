@@ -30,6 +30,7 @@ import { XHandle } from '../../../components/x-handle'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
 import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
+import { TrustPanel } from '../../../components/trust-panel'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([feeStatus(repoId), solUsdPrice()]))
@@ -95,8 +96,8 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}
-        aside={tips ? <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
-          <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></> : null}
+        aside={<><TrustPanel market={market}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
+          <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
         <DetailsTabs tabs={tabs} initial="earnings" label={`${market.symbol} details`}/></section>
