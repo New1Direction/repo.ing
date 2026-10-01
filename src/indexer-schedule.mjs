@@ -86,11 +86,12 @@ export function createConfigActivityFeed({ connection, configs, loadTransaction,
   const cursors = new Map()
   let polledAt = -Infinity
   return {
-    // { all: true } on the first poll and on overflow; otherwise the market pools named by new successful transactions.
+    // { all: true } on the first poll, on overflow and when a listed transaction cannot be read yet; otherwise the
+    // market pools named by new successful transactions.
     async poll(pools) {
       if (now() - polledAt < pollEveryMs) return { all: false, pools: new Set() }
       polledAt = now()
-      const watched = new Set(pools), woken = new Set()
+      const watched = new Set(pools), woken = new Set(), advanced = new Map()
       let all = false
       for (const key of keys) {
         const address = key.toBase58(), cursor = cursors.get(address)
@@ -99,14 +100,16 @@ export function createConfigActivityFeed({ connection, configs, loadTransaction,
         else for (const item of page) {
           if (item.err) continue
           const tx = await loadTransaction(connection, item.signature)
-          for (const account of tx?.transaction.message.accountKeys ?? []) {
+          if (!tx) { all = true; continue }
+          for (const account of tx.transaction.message.accountKeys) {
             const pool = account.toBase58()
             if (watched.has(pool)) woken.add(pool)
           }
         }
-        // Advance only after this config's transactions were read; a failed poll is retried from the same point.
-        if (page.length) cursors.set(address, page[0].signature)
+        if (page.length) advanced.set(address, page[0].signature)
       }
+      // Cursors move only once every config was read: a failed poll is retried whole (waking twice is harmless).
+      for (const [address, signature] of advanced) cursors.set(address, signature)
       return { all, pools: woken }
     },
   }

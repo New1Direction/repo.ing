@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { Keypair } from '@solana/web3.js'
 import { clearFinalizedTransactionCache, loadFinalizedTransaction, loadTransactionAt, normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { registerRpcEndpoint } from '../src/rpc-usage.mjs'
+import { agreedFinalizedTransaction } from '../src/graduation-state.mjs'
 
 const key = () => Keypair.generate().publicKey.toBase58()
 const signature = 'test-finalized-signature'
@@ -54,7 +55,7 @@ test('HTTP 429 is retried with backoff, then fails closed if it persists', async
 
 test('finalized transactions are kept per endpoint; misses, confirmed reads and injected fetches always read', async () => {
   clearFinalizedTransactionCache()
-  const raw = transaction(0, [key(), key()])
+  const raw = { ...transaction(0, [key(), key()]), blockTime: 1_700_000_000 }
   raw.transaction.message.instructions[0].programIdIndex = 1
   let result = null
   const calls = { a: 0, b: 0, injected: 0 }
@@ -73,5 +74,30 @@ test('finalized transactions are kept per endpoint; misses, confirmed reads and 
   assert.equal(calls.a, 3, 'confirmed reads are never served from the cache')
   await loadFinalizedTransaction(a, signature, rpc('injected'))
   assert.equal(calls.injected, 1, 'an injected fetch always reads')
+  clearFinalizedTransactionCache()
+})
+
+test('an answer without a block time is not kept, and a disagreement drops both providers\' kept answers', async () => {
+  clearFinalizedTransactionCache()
+  const raw = transaction(0, [key(), key()])
+  raw.transaction.message.instructions[0].programIdIndex = 1
+  const answers = { a: { ...raw, blockTime: null }, b: { ...raw, blockTime: 1_700_000_000 } }
+  const calls = { a: 0, b: 0 }
+  for (const name of ['a', 'b']) registerRpcEndpoint(`https://agree-${name}.invalid`, async () => {
+    calls[name]++
+    return { ok: true, status: 200, json: async () => ({ result: answers[name] }) }
+  })
+  const a = { rpcEndpoint: 'https://agree-a.invalid' }, b = { rpcEndpoint: 'https://agree-b.invalid' }
+  await loadFinalizedTransaction(a, signature)
+  await loadFinalizedTransaction(a, signature)
+  assert.equal(calls.a, 2, 'no block time yet: read again next time')
+  answers.a = { ...raw, blockTime: 1_699_999_999 }
+  await assert.rejects(agreedFinalizedTransaction(a, b, signature), /RPC_DISAGREEMENT/)
+  answers.a = { ...raw, blockTime: 1_700_000_000 }
+  const agreed = await agreedFinalizedTransaction(a, b, signature)
+  assert.equal(agreed.blockTime, 1_700_000_000, 'both sides were re-read after the disagreement')
+  assert.deepEqual(calls, { a: 4, b: 2 })
+  await agreedFinalizedTransaction(a, b, signature)
+  assert.deepEqual(calls, { a: 4, b: 2 }, 'agreed answers are kept')
   clearFinalizedTransactionCache()
 })

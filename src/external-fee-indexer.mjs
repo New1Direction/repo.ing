@@ -165,6 +165,8 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
       try { result = await processMarket(market, { readGraduated }) }
       catch (error) { result = { githubRepoId: market.repoId, pool: market.pool, status: 'ERROR', error: error.message } }
       if (result.status === 'OK' && result.graduatedRead !== false) graduatedReads.set(market.pool, { at: startedAt, graduated: result.graduated })
+      // The cursor may have moved past the transactions that made a graduated read due: read on the next good check.
+      else if (result.status === 'ERROR') graduatedReads.delete(market.pool)
       if (result.status !== 'BUSY') schedule.checked(market.pool, { startedAt, active: result.discovered > 0, error: result.status === 'ERROR' })
       results.push(result)
     }

@@ -15,7 +15,7 @@ function harness() {
     curveActivityAt: null, dammPool: name === 'G' ? address() : null, dammActivityAt: null, sessionAt: null }))
   const byPool = new Map(markets.map(market => [market.pool, market]))
   const history = new Map(markets.map(market => [market.pool, [{ signature: market.launchSignature, slot: 1, err: null }]]))
-  const cursors = new Map(), checked = [], reads = [], failing = new Set()
+  const cursors = new Map(), checked = [], reads = [], failing = new Set(), failingReads = new Set()
   const query = async (sql, params = []) => {
     if (/advisory/.test(sql)) return { rows: [{ locked: true }] }
     if (/^select github_repo_id::text as "repoId"/.test(sql)) {
@@ -40,10 +40,15 @@ function harness() {
   const indexer = createExternalFeeIndexer({ pool: db, connection, config: {}, now: () => clock, log: () => {},
     schedule: createActivitySchedule({ now: () => clock, random: () => 1 }), feed,
     accrual: { recordTradeFees: async () => ({ creditedBaseUnits: 1n, eventKeys: [] }) }, recordTrade: async () => 1,
-    graduatedFees: { read: async market => { reads.push(byPool.get(market.pool).name); return null } } })
+    graduatedFees: { read: async market => {
+      const name = byPool.get(market.pool).name
+      reads.push(name)
+      if (failingReads.has(name)) { failingReads.delete(name); throw Error('DAMM read unavailable') }
+      return null
+    } } })
   const run = async () => { checked.length = 0; reads.length = 0; const results = await indexer.runOnce(); return { results, checked: [...checked], reads: [...reads] } }
   const get = name => markets.find(market => market.name === name)
-  return { run, get, advance: ms => { clock += ms }, now: () => clock, failing,
+  return { run, get, advance: ms => { clock += ms }, now: () => clock, failing, failingReads,
     trade: name => { const pool = get(name).pool; history.get(pool).unshift({ signature: `${name}-${history.get(pool).length}`, slot: 2, err: null }) },
     wake: (...names) => { woken = { all: false, pools: new Set(names.map(name => get(name).pool)) } } }
 }
@@ -100,4 +105,17 @@ test('a failing market backs off instead of being retried every cycle, then reco
   const recovered = await h.run()
   assert.deepEqual(recovered.checked, ['B'], 'the pending wake survives the failure')
   assert.equal(recovered.results[0].status, 'OK')
+})
+
+test('a graduated read that fails after the cursor moved is retried on the next good check', async () => {
+  const h = harness()
+  await h.run()
+  h.trade('A'); h.wake('A'); h.failingReads.add('A'); h.advance(1000)
+  const failed = await h.run()
+  assert.deepEqual([failed.checked, failed.reads, failed.results[0].status], [['A'], ['A'], 'ERROR'])
+  h.advance(5000)
+  const retried = await h.run()
+  assert.deepEqual(retried.checked, ['A'], 'the pending wake survives the failure')
+  assert.equal(retried.results[0].discovered, 0, 'the cursor had already moved')
+  assert.deepEqual(retried.reads, ['A'], 'the graduated snapshot is still read')
 })
