@@ -25,7 +25,7 @@
 [data-theme=light] .button.white{background:#193e2a;border-color:#193e2a;color:#fff}
 [data-theme=light] .button.white:hover{background:#28563b}
 [data-theme=light] .wallet-error{background:#fff1f1;border-color:#dfafb3;color:#8a242d}
-[data-theme=light] .wallet-options button:hover:not(:disabled){background:#e1f1e6}
+[data-theme=light] .wallet-options button:hover:not(:disabled),[data-theme=light] .wallet-options a:hover{background:#e1f1e6}
 [data-theme=light] .wallet-option-icon{background:#dcebe0;color:#168b59}
 
 [data-theme=light] .hero>p,[data-theme=light] .section-heading p,[data-theme=light] .search-helper,[data-theme=light] .page-intro p,[data-theme=light] .launch-subtitle,[data-theme=light] .info-intro p{color:#53645a}

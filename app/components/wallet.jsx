@@ -3,9 +3,9 @@
 import Link from 'next/link'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { getWallets } from '@wallet-standard/app'
-import { ArrowRight, ChevronDown, LogOut, Wallet, X } from 'lucide-react'
+import { ArrowRight, ChevronDown, LogOut, Smartphone, Wallet, X } from 'lucide-react'
 import { CopyAddress } from './copy-address'
-import { createWalletProvider, listSolanaWallets } from '../lib/solana-wallet.mjs'
+import { createWalletProvider, hasWalletAppBrowser, isPhoneBrowser, listSolanaWallets, walletBrowseLinks } from '../lib/solana-wallet.mjs'
 
 const WalletContext = createContext(null)
 const registry = getWallets()
@@ -49,6 +49,7 @@ export function WalletProvider({ children }) {
   const [choosing, setChoosing] = useState(false)
   const [loadingWallets, setLoadingWallets] = useState(false)
   const [connectingId, setConnectingId] = useState(null)
+  const [appLinks, setAppLinks] = useState(null)
   // Only a real silent reconnect of a remembered wallet shows "Connecting…"; SSR and first paint say "Connect wallet".
   const [restoring, setRestoring] = useState(false)
   const selectedProvider = useRef(null)
@@ -155,6 +156,7 @@ export function WalletProvider({ children }) {
     generation.current++
     setRestoring(false)
     setChoices(listSolanaWallets(registry.get(), window))
+    setAppLinks(isPhoneBrowser(window) ? walletBrowseLinks(window.location.href) : null)
     setError('')
     setChoosing(true)
     setLoadingWallets(true)
@@ -230,6 +232,7 @@ export function WalletProvider({ children }) {
     try { await provider?.disconnect?.() } catch { /* The site connection is cleared even if the extension refuses. */ }
   }
 
+  const showAppLinks = Boolean(appLinks) && !hasWalletAppBrowser(choices)
   return <WalletContext.Provider value={{ wallet, walletName, walletIcon, error, restoring,
     connect, changeWallet, disconnect, provider: () => selectedProvider.current }}>
     {children}
@@ -237,12 +240,22 @@ export function WalletProvider({ children }) {
       <div ref={dialog} className="wallet-dialog" role="dialog" aria-modal="true" aria-labelledby="wallet-dialog-title">
         <div className="wallet-dialog-heading"><div><span>Solana mainnet</span><h2 id="wallet-dialog-title">Connect a wallet</h2></div><button type="button" aria-label="Close wallet chooser" onClick={cancelChoice}><X size={21}/></button></div>
         <p>Choose a wallet to trade and claim. You approve every transaction in your wallet.</p>
-        <div className="wallet-list-label">Available wallets <span>{choices.length ? `${choices.length} option${choices.length === 1 ? '' : 's'}` : loadingWallets ? 'Checking…' : 'None found'}</span></div>
-        <div className="wallet-options">{choices.map(choice => <button type="button" key={choice.id} disabled={Boolean(connectingId)} onClick={() => { void selectWallet(choice) }}>
-          {choice.icon ? <img src={choice.icon} alt=""/> : <span className="wallet-option-icon"><Wallet size={20}/></span>}
-          <span className="wallet-option-name">{choice.name}</span><span className="wallet-option-state">{connectingId === choice.id ? 'Connecting…' : 'Connect'}</span><ArrowRight size={17} aria-hidden="true"/>
-        </button>)}</div>
-        {!choices.length && <p className="wallet-empty" role="status">{loadingWallets ? 'Checking supported wallets…' : 'Install a Solana wallet, then return here to connect.'}</p>}
+        {showAppLinks && <div className="wallet-app-links">
+          <div className="wallet-list-label">Open in your wallet app <span>On your phone</span></div>
+          <p>Phone browsers can't reach wallet apps. Open this page in your wallet's browser, then tap Connect wallet there.</p>
+          <div className="wallet-options">{appLinks.map(link => <a key={link.name} href={link.href} rel="noopener noreferrer">
+            <span className="wallet-option-icon"><Smartphone size={20}/></span>
+            <span className="wallet-option-name">{link.name}</span><span className="wallet-option-state">Open app</span><ArrowRight size={17} aria-hidden="true"/>
+          </a>)}</div>
+        </div>}
+        {(!showAppLinks || choices.length > 0) && <>
+          <div className="wallet-list-label">{showAppLinks ? 'Other wallets' : 'Available wallets'} <span>{choices.length ? `${choices.length} option${choices.length === 1 ? '' : 's'}` : loadingWallets ? 'Checking…' : 'None found'}</span></div>
+          <div className="wallet-options">{choices.map(choice => <button type="button" key={choice.id} disabled={Boolean(connectingId)} onClick={() => { void selectWallet(choice) }}>
+            {choice.icon ? <img src={choice.icon} alt=""/> : <span className="wallet-option-icon"><Wallet size={20}/></span>}
+            <span className="wallet-option-name">{choice.name}</span><span className="wallet-option-state">{connectingId === choice.id ? 'Connecting…' : 'Connect'}</span><ArrowRight size={17} aria-hidden="true"/>
+          </button>)}</div>
+          {!choices.length && <p className="wallet-empty" role="status">{loadingWallets ? 'Checking supported wallets…' : 'Install a Solana wallet, then return here to connect.'}</p>}
+        </>}
         {error && <p className="wallet-dialog-error" role="alert">{error}</p>}
         <div className="wallet-downloads"><span>Need a wallet?</span>{walletDownloads.map(item => <a key={item.name} href={item.url} target="_blank" rel="noopener noreferrer">{item.name} ↗</a>)}</div>
       </div>

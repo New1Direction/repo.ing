@@ -75,13 +75,15 @@
 .wallet-list-label{display:flex;justify-content:space-between;gap:10px;color:var(--text);font-size:13px;font-weight:700;margin-bottom:10px}
 .wallet-list-label span{color:var(--dim);font-size:12px;font-weight:500}
 .wallet-options{display:grid;gap:8px}
-.wallet-options button{width:100%;min-height:60px;border:1px solid var(--border);border-radius:11px;background:var(--surface2);color:var(--text);display:flex;align-items:center;gap:12px;padding:10px 13px;text-align:left;transition:border-color .15s,background .15s,transform .15s}
-.wallet-options button:hover:not(:disabled){border-color:var(--green);background:#26312b;transform:translateY(-1px)}
+.wallet-options button,.wallet-options a{width:100%;min-height:60px;border:1px solid var(--border);border-radius:11px;background:var(--surface2);color:var(--text);display:flex;align-items:center;gap:12px;padding:10px 13px;text-align:left;text-decoration:none;transition:border-color .15s,background .15s,transform .15s}
+.wallet-options button:hover:not(:disabled),.wallet-options a:hover{border-color:var(--green);background:#26312b;transform:translateY(-1px)}
+.wallet-app-links{margin-bottom:21px}
+.wallet-app-links>p{color:var(--muted);font-size:13px;line-height:1.5;margin:0 0 12px}
 .wallet-options button img,.wallet-option-icon{width:32px;height:32px;object-fit:contain;display:grid;place-items:center;border-radius:7px;flex:none}
 .wallet-option-icon{background:#303a36;color:var(--green)}
 .wallet-option-name{flex:1;font-size:15px;font-weight:650}
 .wallet-option-state{color:var(--green-dark);font-size:12px}
-.wallet-options button>svg{color:var(--dim)}
+.wallet-options button>svg,.wallet-options a>svg{color:var(--dim)}
 .wallet-dialog .wallet-empty{margin:0 0 4px;padding:16px;border:1px dashed var(--border-strong);border-radius:10px;color:var(--muted)}
 .wallet-dialog .wallet-dialog-error{color:var(--red);margin:12px 0 0;font-size:13px}
 .wallet-downloads{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border-top:1px solid var(--border);margin-top:21px;padding-top:17px;font-size:12px}
