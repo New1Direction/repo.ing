@@ -12,11 +12,13 @@ export function isAfter(entry, mark) {
   return Date.parse(entry.at) > Date.parse(mark.at)
 }
 
-// Most recent platform-revenue buyback. Team-wallet buys are not paid from platform fees,
-// so they never reset the fees-since figure.
+// Most recent buyback from one source (default: platform revenue), or from any source when source is null.
+// Team-wallet buys are not paid from platform fees, so they never reset the fees-since figure.
 export function lastBuyback(receipts, source = 'custody') {
   let last = null
-  for (const receipt of Array.isArray(receipts) ? receipts : []) if (receipt.source === source && isAfter(receipt, last)) last = receipt
+  for (const receipt of Array.isArray(receipts) ? receipts : []) {
+    if ((source === null || receipt.source === source) && isAfter(receipt, last)) last = receipt
+  }
   return last
 }
 
@@ -45,11 +47,12 @@ let warned = false
 // Last buyback from the shared receipts, plus fees since it from the same ledger /stats verifies.
 // Never rejects: the fees figure is null whenever the ledger is unavailable or not reconciled.
 export async function readBuybackStatus(db, receipts) {
-  const last = lastBuyback(receipts)
-  if (!db) return { last, since: null, standing: null }
+  // last: the latest platform-revenue buyback (fees-since is measured from it); latest: the newest from any wallet.
+  const last = lastBuyback(receipts), latest = lastBuyback(receipts, null)
+  if (!db) return { last, latest, since: null, standing: null }
   try {
     const [revenue, liquidity] = [await reconcilePlatformRevenue(db), await reconcileLiquidity(db)]
-    if (revenue.status !== 'MATCH' || liquidity.status !== 'MATCH') return { last, since: null, standing: null }
+    if (revenue.status !== 'MATCH' || liquidity.status !== 'MATCH') return { last, latest, since: null, standing: null }
     const policy = await activePolicy(db)
     const { rows } = await db.query(`select c.amount::text as amount, c.settled_at as "settledAt", a.buyback_amount::text as "buybackAmount"
       from platform_fee_claims c left join platform_revenue_allocations a on a.claim_signature = c.signature
@@ -58,9 +61,9 @@ export async function readBuybackStatus(db, receipts) {
     // Where buybacks stand against the published policy (team-wallet buys since the cutoff count too).
     const summary = await platformRevenueSummary(db)
     const standing = { owedLamports: summary.buybackReserve, aheadLamports: summary.buybackAhead ?? '0' }
-    return { last, since: feesSinceBuyback(claims, last, policy), standing }
+    return { last, latest, since: feesSinceBuyback(claims, last, policy), standing }
   } catch (error) {
     if (!warned) { warned = true; console.error('buyback status fees unavailable', error?.code ?? error?.message ?? 'error') }
-    return { last, since: null, standing: null }
+    return { last, latest, since: null, standing: null }
   }
 }

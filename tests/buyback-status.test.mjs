@@ -68,11 +68,11 @@ test('zero states: no claims, no buyback, zero-percent policy', () => {
 })
 
 test('status read keeps the last buyback and withholds fees without a verified ledger', async t => {
-  const last = lastBuyback(BUYBACK_RECEIPTS)
-  assert.deepEqual(await readBuybackStatus(null, BUYBACK_RECEIPTS), { last, since: null, standing: null })
+  const last = lastBuyback(BUYBACK_RECEIPTS), latest = lastBuyback(BUYBACK_RECEIPTS, null)
+  assert.deepEqual(await readBuybackStatus(null, BUYBACK_RECEIPTS), { last, latest, since: null, standing: null })
   const errors = t.mock.method(console, 'error', () => {})
   const failing = { async query() { throw Object.assign(Error('missing'), { code: '42P01' }) } }
-  assert.deepEqual(await readBuybackStatus(failing, BUYBACK_RECEIPTS), { last, since: null, standing: null })
+  assert.deepEqual(await readBuybackStatus(failing, BUYBACK_RECEIPTS), { last, latest, since: null, standing: null })
   assert.equal(errors.mock.callCount(), 1)
 })
 
@@ -84,4 +84,12 @@ test('time ago floors to whole units', () => {
   assert.equal(formatAgo('2026-09-27T11:00:00.000Z', now), '2 days ago')
   assert.equal(formatAgo('2026-09-29T12:00:05.000Z', now), 'just now')
   assert.equal(formatAgo('nope', now), null)
+})
+
+test('lastBuyback with source null returns the newest buyback from any wallet', () => {
+  const team = buyback('2026-09-30T20:00:00.000Z', { source: 'team', signature: 't' })
+  const custody = buyback('2026-09-30T08:00:00.000Z', { source: 'custody', signature: 'c' })
+  assert.equal(lastBuyback([custody, team], null).signature, 't')
+  assert.equal(lastBuyback([custody, team]).signature, 'c')
+  assert.equal(lastBuyback([], null), null)
 })

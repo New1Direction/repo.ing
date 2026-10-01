@@ -16,17 +16,19 @@ export function feesSinceLabel(since, hasLast) {
   return since.basis === 'policy' ? `Buyback share of fees ${when}` : `Platform fees collected ${when}`
 }
 
-// /stats: last platform-revenue buyback, fees since it, and how buybacks happen.
+const SOURCE_LABEL = { custody: 'buyback wallet', team: 'team wallet' }
+
+// /stats: the latest buyback from any wallet, fees since the last platform-revenue buyback, and how buybacks happen.
 export function BuybackStatus({ status, now = Date.now() }) {
-  const last = status?.last ?? null, since = status?.since ?? null, standing = status?.standing ?? null
+  const last = status?.last ?? null, latest = status?.latest ?? last, since = status?.since ?? null, standing = status?.standing ?? null
   const ahead = standing ? BigInt(standing.aheadLamports) : 0n
   return <section className="analytics-revenue buyback-status" aria-labelledby="buyback-status-title">
     <div className="analytics-section-heading"><div><h2 id="buyback-status-title">Buyback status</h2><p>{BUYBACK_NOTE}</p></div></div>
     <p className="analytics-note buyback-mission">{MISSION_NOTE}</p>
     <div className="analytics-reserves buyback-status-grid">
-      <div><span>Last platform-revenue buyback</span>{last
-        ? <><strong><LastBuybackTime last={last} now={now}/></strong><small>{formatSolDisplay(last.spentLamports)} SOL spent · {formatTokenCompact(last.tokenBaseUnits)} ${OFFICIAL_TOKEN.symbol} bought · <a href={receiptUrl(last.signature)} target="_blank" rel="noopener noreferrer">Receipt ↗</a></small></>
-        : <><strong>None yet</strong><small>No platform-revenue buyback has been recorded.</small></>}</div>
+      <div><span>Last buyback</span>{latest
+        ? <><strong><LastBuybackTime last={latest} now={now}/></strong><small>{formatSolDisplay(latest.spentLamports)} SOL spent · {formatTokenCompact(latest.tokenBaseUnits)} ${OFFICIAL_TOKEN.symbol} bought{SOURCE_LABEL[latest.source] ? ` · ${SOURCE_LABEL[latest.source]}` : ''} · <a href={receiptUrl(latest.signature)} target="_blank" rel="noopener noreferrer">Receipt ↗</a></small></>
+        : <><strong>None yet</strong><small>No buyback has been recorded.</small></>}</div>
       <div><span>{since ? feesSinceLabel(since, !!last) : 'Platform fees since the last buyback'}</span>{since
         ? <><strong>{formatSolDisplay(since.lamports)} SOL</strong><small>{since.basis === 'policy'
           ? `${since.permille / 10}% of ${formatSolDisplay(since.totalLamports)} SOL in claimed platform fees. Team-wallet buybacks aren't subtracted here; see the policy standing for the net figure.`
