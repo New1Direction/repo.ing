@@ -111,3 +111,16 @@
 [data-theme=light] .earnings-headline-action.verify{border-color:var(--green-dark);color:#0f6b40}[data-theme=light] .earnings-headline-action.verify:hover{background:#e6f5ec}
 [data-theme=light] .market-bonding>span{background:var(--green-dark)}
 [data-theme=light] .app-header nav a.nav-token{color:var(--green-dark)}
+[data-theme=light] .pulse-kind-release,[data-theme=light] .pulse-kind-paid{--pulse:var(--green-dark)}[data-theme=light] .pulse-kind-merge{--pulse:#6d4fd6}[data-theme=light] .pulse-kind-commits{--pulse:#3d6f9e}[data-theme=light] .pulse-kind-stars{--pulse:#a86b12}[data-theme=light] .pulse-kind-hn{--pulse:#cf5419}
+[data-theme=light] .pulse-status.is-shipping,[data-theme=light] .pulse-status.is-active,[data-theme=light] .dev-pulse-strip.is-shipping strong,[data-theme=light] .dev-pulse-strip.is-active strong,[data-theme=light] .pulse-ticker-label,[data-theme=light] .pulse-ticker-track em{color:var(--green-dark)}
+[data-theme=light] .dev-pulse,[data-theme=light] .pulse-ticker{background:var(--surface)}
+[data-theme=light] :is(.pulse-pin,.pulse-guide,.pulse-tip-row):is(.is-release,.is-paid){--pulse:var(--green-dark)}
+[data-theme=light] :is(.pulse-pin,.pulse-guide,.pulse-tip-row).is-merge{--pulse:#6d4fd6}
+[data-theme=light] :is(.pulse-pin,.pulse-guide,.pulse-tip-row).is-commits{--pulse:#3d6f9e}
+[data-theme=light] :is(.pulse-pin,.pulse-guide,.pulse-tip-row).is-stars{--pulse:#a86b12}
+[data-theme=light] :is(.pulse-pin,.pulse-guide,.pulse-tip-row).is-hn{--pulse:#cf5419}
+[data-theme=light] .pulse-pin{box-shadow:0 0 0 2px var(--surface),0 2px 8px rgba(25,34,28,.16)}
+[data-theme=light] .pulse-pin:hover,[data-theme=light] .pulse-pin:focus-visible,[data-theme=light] .pulse-pin.is-open{box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--pulse) 30%,transparent),0 4px 12px rgba(25,34,28,.2)}
+[data-theme=light] .pulse-pin-count{color:#fff}
+[data-theme=light] .pulse-tip{box-shadow:0 14px 32px rgba(25,34,28,.16)}
+[data-theme=light] .pulse-tip-meta a,[data-theme=light] .chart-pulse-toggle[aria-pressed=true] svg{color:var(--green-dark)}

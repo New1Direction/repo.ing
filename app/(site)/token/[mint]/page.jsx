@@ -11,7 +11,7 @@ import { ShareMarket } from '../../../components/share-market'
 import { ActivityFeed } from '../../../components/activity-feed'
 import { DiscoveryRewards } from '../../../components/discovery-rewards'
 import { CopyAddress } from '../../../components/copy-address'
-import { marketByMint, displayFeeStatus, tradeAvailable, listMarkets, graduationRace } from '../../../lib/server.mjs'
+import { marketByMint, displayFeeStatus, tradeAvailable, listMarkets, graduationRace, database } from '../../../lib/server.mjs'
 import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
 import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../../lib/format.mjs'
@@ -35,6 +35,10 @@ import { TrustPanel } from '../../../components/trust-panel'
 import { MarketsToWatch, MarketsToWatchFallback, MarketsToWatchLists } from '../../../components/markets-to-watch'
 import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-race.mjs'
 import { marketLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
+import { DevPulse } from '../../../components/dev-pulse'
+import { DevPulseStrip } from '../../../components/dev-pulse-strip'
+import { readRepoPulse } from '../../../lib/dev-pulse.mjs'
+import { isPromotionExcluded } from '../../../lib/promotion-exclusions.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -63,6 +67,9 @@ export default async function Token({ params, searchParams }) {
   const repo = { ...displayRepository(market), mint: market.mint }
   // Non-null only when this market's own config charges the launch fee (config read once, then cached).
   const launchFee = await timed('launchFeeTerms', () => marketLaunchFeeTerms(market))
+  // Dev Pulse: public GitHub activity from the worker's tables (one indexed read). Never shown for do-not-promote repos.
+  const pulse = isPromotionExcluded(market.repoId) ? null
+    : await timed('devPulse', () => readRepoPulse(database(), market.repoId)).catch(error => { console.error('dev-pulse read failed', { mint, error: error.message }); return null })
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
   const tips = tipsEnabled()
@@ -87,7 +94,8 @@ export default async function Token({ params, searchParams }) {
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
           {market.beneficiaryWallet && <Suspense fallback={null}><XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/></Suspense>}
           {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}
-          <Suspense fallback={null}><BackersPill market={market} href={activity ? `/token/${mint}#backers` : '#backers'}/></Suspense></div></div>
+          <Suspense fallback={null}><BackersPill market={market} href={activity ? `/token/${mint}#backers` : '#backers'}/></Suspense></div>
+        {!activity && <DevPulseStrip pulse={pulse}/>}</div>
       <div className="market-hero-actions">
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
         <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
@@ -101,10 +109,11 @@ export default async function Token({ params, searchParams }) {
       <Link className={activity ? 'active' : ''} href={`/token/${mint}?view=activity`}>Activity</Link>
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
-      <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}
+      <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
         aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market} launchFee={launchFee}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
-        below={<Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense>}/>
+        below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}
+          <Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense></div>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
         <DetailsTabs tabs={tabs} initial="earnings" label={`${market.symbol} details`}/></section>
       {official && <TeamTokenLocks/>}

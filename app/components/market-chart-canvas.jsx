@@ -3,16 +3,22 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
 import { chartPriceLabel, chartSeries, chartScaleRange, chartUpdatePlan, chartInitialRange } from '../lib/chart-display.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
+import { pulsePins } from '../lib/pulse-chart.mjs'
+import { ChartPulsePins } from './chart-pulse-pins'
 
 // price-chart already starts this download while the page hydrates; this reuses the same module request.
 const loadLightweightCharts = () => import('lightweight-charts')
 
-export default function MarketChartCanvas({ data, multiplier, unit, style, symbol, children }) {
+export default function MarketChartCanvas({ data, multiplier, unit, style, symbol, pulse = null, showPulse = true, children }) {
   const container = useRef(null), api = useRef(null), latest = useRef(null)
   const [ready, setReady] = useState(false), [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0), [hoverTime, setHoverTime] = useState(null)
+  const [chartApi, setChartApi] = useState(null)
   const series = useMemo(() => chartSeries(data, multiplier), [data, multiplier])
   const byTime = useMemo(() => new Map(data.candles.map(bar => [bar.time, bar])), [data.candles])
+  // Every series time, whitespace included, so an event in a quiet hour keeps its place instead of joining the last trade.
+  const pins = useMemo(() => showPulse && pulse?.length ? pulsePins(pulse, series.prices.map(bar => bar.time), { interval: data.interval }) : [],
+    [pulse, showPulse, series, data.interval])
   latest.current = { data, series, style }
 
   function resetView() {
@@ -59,9 +65,10 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
         frame = requestAnimationFrame(() => { frame = null; lastHover = nextHover; setHoverTime(nextHover) })
       })
       api.current = { chart, line, candles, volume, fitKey: null, series: null }
+      setChartApi(chart)
       setReady(true)
     }).catch(() => { if (!disposed) setFailed(true) })
-    return () => { disposed = true; observer?.disconnect(); cancelAnimationFrame(frame); chart?.remove(); api.current = null }
+    return () => { disposed = true; observer?.disconnect(); cancelAnimationFrame(frame); setChartApi(null); chart?.remove(); api.current = null }
   }, [retry])
 
   useEffect(() => {
@@ -126,7 +133,10 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
       <time>{current ? `${new Date(current.time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC` : 'Finalized trade history'}</time>
       <div className="chart-readout-values">{['open', 'high', 'low', 'close'].map(key => <span key={key}>{key[0].toUpperCase()} <b>{current && !current.orderingPending ? label(current[key]) : '—'}</b></span>)}<span>Vol <b>{current ? `${formatSolDisplay(current.volumeLamports)} SOL` : '—'}</b></span></div>
     </div>
-    <div ref={container} className="market-chart-canvas" tabIndex={0} role="region" aria-label={`${symbol} ${unit === 'USD' ? 'estimated market cap' : 'SOL price'} chart. Drag to pan, pinch to zoom, or use plus, minus and Home. Exact prices are in the chart data table below.`} onKeyDown={keyboard}/>
+    <div className="market-chart-stage">
+      <div ref={container} className="market-chart-canvas" tabIndex={0} role="region" aria-label={`${symbol} ${unit === 'USD' ? 'estimated market cap' : 'SOL price'} chart. Drag to pan, pinch to zoom, or use plus, minus and Home. Exact prices are in the chart data table below.`} onKeyDown={keyboard}/>
+      {ready && chartApi && pins.length > 0 && <ChartPulsePins chart={chartApi} pins={pins}/>}
+    </div>
     {!ready && <div className="chart-overlay" role="status">{failed ? <><span>Chart could not load.</span><button className="button outline" onClick={() => setRetry(value => value + 1)}>Retry chart</button></> : <><span className="claim-spinner" aria-hidden="true"/>Preparing chart…</>}</div>}
     <div className="chart-zoom" aria-label="Chart zoom controls"><button onClick={() => zoom(1.4)} aria-label="Zoom chart out"><Minus size={14}/></button><button onClick={() => zoom(0.7)} aria-label="Zoom chart in"><Plus size={14}/></button><button onClick={resetView} aria-label="Reset chart view"><RotateCcw size={14}/></button></div>
     {children}
