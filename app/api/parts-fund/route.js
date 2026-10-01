@@ -4,16 +4,17 @@ import { minimumTipBaseUnits, tipTokenPrices } from '../../../src/tip-tokens.mjs
 import { chain, database } from '../../lib/server.mjs'
 import { tipSigner } from '../../lib/tips.mjs'
 import { partsFundById } from '../../lib/parts-fund.mjs'
-import { createRateLimiter } from '../../lib/csp-report.mjs'
+import { takeQuota } from '../../../src/request-quota.mjs'
 import { clientKey } from '../../lib/holder-notes.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 export const runtime = 'nodejs'
 
 const SAFE = /^(Parts funds are not enabled|Parts funds accept|Parts list not found|This parts list is|The parts list changed|Only \$|Finish or wait|Choose a part|Invalid (pledge|tip) amount|Invalid parts action|Connect a Solana wallet|The tip wallet|Pledges start at|Token (price|mint|has|accounts|transfers|is non)|This repository has no market|Your wallet does not hold|Pledge (simulation|was not prepared)|Wallet returned an altered|This pledge already|Too many pledge)/
 const headers = { 'Cache-Control': 'no-store' }
-// Per instance: prepare builds and simulates a transaction, so it is the one action worth throttling hard.
-const byClient = createRateLimiter({ limit: 12, globalLimit: 240 })
-const byWallet = createRateLimiter({ limit: 6, globalLimit: 240 })
+// Prepare builds and simulates a transaction, so it is the one action worth throttling hard. The quotas live in
+// PostgreSQL so they hold across replicas: 240/min overall, 12/min per client and 6/min per wallet.
+const pledgeQuota = (pool, request, wallet) => takeQuota(pool, [['parts-pledge:global', 240, 60],
+  [`parts-pledge:client:${clientKey(request)}`, 12, 60], [`parts-pledge:wallet:${String(wallet ?? '').slice(0, 44)}`, 6, 60]])
 
 async function tokenOptions() {
   const prices = await tipTokenPrices()
@@ -37,7 +38,7 @@ export async function POST(request) {
       return Response.json({ fund: publicFund, tokens, minimumUsd: PARTS_MIN_PLEDGE_USD }, { headers })
     }
     if (body.action === 'prepare') {
-      if (!byClient(clientKey(request)) || !byWallet(String(body.wallet ?? '').slice(0, 44))) throw Error('Too many pledge attempts. Try again in a minute.')
+      if (!await pledgeQuota(pool, request, body.wallet)) throw Error('Too many pledge attempts. Try again in a minute.')
       const prepared = await preparePledge({ pool, connection: chain(), tipWallet: signer.publicKey, prices: await tipTokenPrices(),
         fundId: body.fundId, revision: body.revision, itemId: body.itemId ?? null, wallet: body.wallet, mint: body.mint, amountBaseUnits: body.amountBaseUnits })
       return Response.json(prepared, { headers })

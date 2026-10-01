@@ -77,8 +77,21 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
       return {
         mint: mint.publicKey.toBase58(), pool: pool.toBase58(), initialBuyOutput: buy?.outputAmount.toString() ?? null,
         blockhash: latest.blockhash, lastValidBlockHeight: BigInt(latest.lastValidBlockHeight),
+        // For a review persisted across requests: the unsigned transaction the wallet reviews and the mint secret,
+        // which the caller must store only sealed (src/launch-sessions.mjs).
+        transaction: tx, mintSecretKey: mint.secretKey,
         sign: prepareLaunchSigning(tx, launcher, creator, mint),
       }
+    },
+    // Rebuilds a prepared launch on any replica from the reviewed unsigned transaction (base64, exactly as the wallet
+    // received it) and the mint secret. Signing keeps every check of prepareLaunchSigning against those exact bytes.
+    restore({ transaction, mintSecretKey, mint, launcherWallet, blockhash, lastValidBlockHeight }) {
+      const tx = Transaction.from(Buffer.from(transaction, 'base64'))
+      const launcher = new PublicKey(launcherWallet)
+      const mintKeypair = Keypair.fromSecretKey(mintSecretKey)
+      if (mintKeypair.publicKey.toBase58() !== mint) throw new DefinitiveLaunchError('Prepared launch mint does not match its key')
+      if (!tx.feePayer?.equals(launcher) || tx.recentBlockhash !== blockhash) throw new DefinitiveLaunchError('Prepared launch transaction does not match its review')
+      return { mint, blockhash, lastValidBlockHeight: BigInt(lastValidBlockHeight), sign: prepareLaunchSigning(tx, launcher, creator, mintKeypair) }
     },
     async submit({ raw, signature, blockhash, lastValidBlockHeight }) {
       await connection.sendRawTransaction(raw, { skipPreflight: false })

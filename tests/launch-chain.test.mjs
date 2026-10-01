@@ -1,11 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
-import { Connection, Keypair } from '@solana/web3.js'
+import { Connection, Keypair, Transaction } from '@solana/web3.js'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { markets } from '../src/db/schema.mjs'
 import { createLaunchCoordinator } from '../src/launch-coordinator.mjs'
 import { createMeteoraLauncher } from '../src/meteora-launch.mjs'
+import { createLaunchSessionStore, launchSessionKey } from '../src/launch-sessions.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
 
 test('real Meteora DBC launch records only verified chain evidence', async () => {
@@ -42,4 +43,52 @@ test('real Meteora DBC launch records only verified chain evidence', async () =>
       creator: market.creatorWallet, launcher: market.launcherWallet, signature: market.launchSignature,
       mint: market.mint, pool: market.pool, duplicateId: duplicate.id }))
   } finally { await pool.end() }
+})
+
+test('real launch prepared on one replica is signed by the wallet and submitted from another', async () => {
+  const rpc = process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899'
+  assert.match(rpc, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/)
+  const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:launchtest@127.0.0.1:55432/gitfun_launch'
+  const poolA = new pg.Pool({ connectionString: databaseUrl }), poolB = new pg.Pool({ connectionString: databaseUrl })
+  try {
+    await poolA.query('truncate markets, repositories restart identity cascade')
+    const { config } = await createFixedConfig(new Connection(rpc, 'confirmed'))
+    const creatorSecret = Keypair.generate().secretKey, payer = Keypair.generate()
+    const setup = new Connection(rpc, 'confirmed')
+    const airdrop = await setup.requestAirdrop(payer.publicKey, 5_000_000_000)
+    await setup.confirmTransaction({ signature: airdrop, ...await setup.getLatestBlockhash('confirmed') }, 'confirmed')
+    const fakeFetch = async () => ({ ok: true, status: 200, json: async () => ({
+      id: 1300192, name: 'Spoon-Knife', full_name: 'octocat/Spoon-Knife',
+      owner: { login: 'octocat', avatar_url: 'https://github.com/images/error/octocat_happy.gif' },
+      description: 'Fork me', stargazers_count: 1, forks_count: 1,
+      archived: false, private: false, visibility: 'public', updated_at: '2026-01-01T00:00:00Z',
+    }) })
+    // Each replica has its own connection, launcher, creator Keypair object and pool; nothing but the database is shared.
+    const replica = db => {
+      const creator = Keypair.fromSecretKey(creatorSecret), launcher = createMeteoraLauncher({ connection: new Connection(rpc, 'confirmed'), config, creator })
+      const store = createLaunchSessionStore({ pool: db, key: launchSessionKey(creator.secretKey) })
+      return { launcher, store, coordinator: createLaunchCoordinator({ pool: db, launcher, fetchImpl: fakeFetch, pendingReview: m => store.pending(m.id) }) }
+    }
+    const a = replica(poolA), b = replica(poolB), id = crypto.randomUUID()
+    let transaction
+    await a.coordinator.prepareLaunch({ repositoryUrl: 'https://github.com/octocat/Spoon-Knife', tokenName: 'Spoon Repo', tokenSymbol: 'SPOON',
+      launcherWallet: payer.publicKey.toBase58(), onPrepared: async ({ market, prepared, repo }) => {
+        transaction = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
+        await a.store.create({ id, market, repoFullName: repo.fullName, config: config.toBase58(), transaction, mintSecretKey: prepared.mintSecretKey,
+          blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight })
+      } })
+    // The wallet signs the bytes it was shown, exactly as the browser does, and posts them to replica B.
+    const walletSigned = Transaction.from(Buffer.from(transaction, 'base64'))
+    walletSigned.partialSign(payer)
+    const posted = walletSigned.serialize({ requireAllSignatures: false }).toString('base64')
+    const session = await b.store.consume(id)
+    const market = await b.coordinator.submitPrepared({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,
+      repo: { githubRepoId: BigInt(session.githubRepoId), fullName: session.repoFullName }, prepared: b.launcher.restore(session),
+      signTransaction: async () => Transaction.from(Buffer.from(posted, 'base64')) })
+    assert.equal(market.status, 'confirmed')
+    assert.equal(market.githubRepoId, 1300192n)
+    assert.equal(market.launcherWallet, payer.publicKey.toBase58())
+    assert.ok(await a.launcher.inspect(market))
+    assert.equal(await a.store.consume(id), null)
+  } finally { await poolA.end(); await poolB.end() }
 })

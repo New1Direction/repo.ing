@@ -772,3 +772,17 @@ export const launchAlerts = pgTable('launch_alerts', {
 },t=>[uniqueIndex('launch_alerts_repo_channel_unique').on(t.githubRepoId,t.channel),index('launch_alerts_channel_recent').on(t.channel,t.updatedAt.desc()),
   check('launch_alerts_channel_check',sql`${t.channel} in ('telegram','x')`),check('launch_alerts_status_check',sql`${t.status} in ('sending','sent','failed','unknown')`),
   check('launch_alerts_sent_check',sql`(${t.status} = 'sent' and ${t.sentAt} is not null and ${t.messageId} is not null) or (${t.status} <> 'sent' and ${t.sentAt} is null)`)])
+
+// Launch reviews awaiting the wallet signature, shared by every web replica (see src/launch-sessions.mjs).
+export const launchSessions = pgTable('launch_sessions', {
+  id: uuid('id').primaryKey(), marketId: integer('market_id').notNull().references(() => markets.id, { onDelete: 'cascade' }),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull(), repoFullName: text('repo_full_name').notNull(),
+  mint: varchar('mint',{length:44}).notNull(), launcherWallet: varchar('launcher_wallet',{length:44}).notNull(),
+  config: varchar('config',{length:44}).notNull(), transaction: text('transaction').notNull(), mintSecret: text('mint_secret'),
+  blockhash: varchar('blockhash',{length:44}).notNull(), lastValidBlockHeight: bigint('last_valid_block_height',{mode:'bigint'}).notNull(),
+  initialBuyLamports: numeric('initial_buy_lamports',{precision:20,scale:0}).notNull().default('0'), trendRevision: integer('trend_revision'),
+  createdAt: tz('created_at').defaultNow().notNull(), expiresAt: tz('expires_at').notNull(), consumedAt: tz('consumed_at'),
+},t=>[index('launch_sessions_open_market').on(t.marketId).where(sql`${t.consumedAt} is null`),index('launch_sessions_expires_at').on(t.expiresAt),
+  check('launch_sessions_initial_buy_lamports_check',sql`${t.initialBuyLamports} >= 0`),
+  check('launch_sessions_trend_revision_check',sql`${t.trendRevision} is null or ${t.trendRevision} > 0`),
+  check('launch_sessions_secret_check',sql`(${t.consumedAt} is null) = (${t.mintSecret} is not null)`)])

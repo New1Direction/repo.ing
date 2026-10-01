@@ -16,8 +16,11 @@ import { database, chain, configAddress, creatorSigner, discoveryRewardsEnabled,
 import { checkAgentDraft } from '../../lib/agent-launch.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
+import { createLaunchSessionStore, launchSessionKey } from '../../../src/launch-sessions.mjs'
 export const runtime = 'nodejs'
-const sessions = globalThis.__gitfunLaunchSessions ??= new Map()
+// Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
+const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
+const sweep = store => store.expire().catch(error => console.warn('launch_session_sweep_failed', { code: error?.code ?? error?.name ?? 'error' }))
 const safeError = (error, action) => {
   const result=launchFailure(error,action),supportCode=`LAUNCH-${result.code}-${randomUUID().slice(0,8)}`
   console.warn('launch_request_failed',{supportCode,action,code:result.code})
@@ -52,11 +55,12 @@ export async function POST(request) {
         tradingFeeLamports: quote?.tradingFee.toString() ?? '0' })
     }
     if (body.action === 'cancel') {
-      const session = sessions.get(body.id)
-      if (session) {
-        sessions.delete(body.id); clearTimeout(session.timeout)
-        session.rejectSigned(new Error('Launch review cancelled before signing'))
-        await session.job.catch(() => {})
+      const pool = database(), creator = creatorSigner()
+      // Best effort, as before: an uncancelled review still expires (and releases its market) after two minutes.
+      if (pool && creator) {
+        const store = launchSessions(pool, creator)
+        await store.cancel(body.id).catch(error => console.warn('launch_session_cancel_failed', { code: error?.code ?? error?.name ?? 'error' }))
+        await sweep(store)
       }
       return Response.json({ cancelled: true })
     }
@@ -71,36 +75,49 @@ export async function POST(request) {
       const connection = chain()
       const metadataOrigin = process.env.APP_ORIGIN ? publicOrigin(request.url) : null
       if (process.env.NODE_ENV === 'production' && !metadataOrigin) throw new Error('Token metadata origin is not configured')
+      const store = launchSessions(pool, creator)
+      await sweep(store)
       const launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin })
-      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled() })
+      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
+        pendingReview: market => store.pending(market.id) })
       if (body.trendRevision !== undefined && (!Number.isSafeInteger(body.trendRevision) || body.trendRevision < 1)) throw Error('Invalid trend approval')
       const launchGuard = body.trendRevision === undefined ? undefined : trendLaunchGuard({ pool, repoId: String(body.repoId),
         revision: body.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
-      let offerUnsigned, resolveSigned, rejectSigned
-      const unsigned = new Promise(resolve => { offerUnsigned = resolve })
-      const signed = new Promise((resolve, reject) => { resolveSigned = resolve; rejectSigned = reject })
-      const job = coordinator.launch({ repositoryUrl: body.repositoryUrl, tokenName: body.tokenName,
-        tokenSymbol: body.tokenSymbol, tokenImage: body.tokenImage, launcherWallet: body.launcherWallet,
-        initialBuyLamports: body.initialBuyLamports ?? '0', launchGuard,
-        signTransaction: async transaction => { offerUnsigned(transaction); return signed } })
-      job.catch(() => {})
-      const transaction = await Promise.race([unsigned, job.then(() => { throw new Error('No wallet signature requested') })])
-      let costs
-      try { costs = await estimateLaunchCosts(connection, transaction, body.initialBuyLamports ?? '0') }
-      catch (error) { rejectSigned(error); await job.catch(() => {}); throw error }
-      const id = randomUUID()
-      const timeout = setTimeout(() => { rejectSigned(new Error('Wallet signing timed out')); sessions.delete(id) }, 120000)
-      sessions.set(id, { job, resolveSigned, rejectSigned, timeout, pool, connection, config, repoId: body.repoId,
-        initialBuyLamports: body.initialBuyLamports ?? '0' })
-      return Response.json({ id, costs, transaction: transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64') })
+      const id = randomUUID(), initialBuyLamports = body.initialBuyLamports ?? '0'
+      let costs, transaction
+      // Runs under the repository lock: a failure here releases the market as 'failed' (nothing is stored or signed).
+      const { prepared } = await coordinator.prepareLaunch({ repositoryUrl: body.repositoryUrl,
+        tokenName: body.tokenName, tokenSymbol: body.tokenSymbol, tokenImage: body.tokenImage, launcherWallet: body.launcherWallet,
+        initialBuyLamports, launchGuard, onPrepared: async ({ market, prepared, repo }) => {
+          costs = await estimateLaunchCosts(connection, prepared.transaction, initialBuyLamports)
+          transaction = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
+          await store.create({ id, market, repoFullName: repo.fullName, config, transaction, mintSecretKey: prepared.mintSecretKey,
+            blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight, initialBuyLamports,
+            trendRevision: body.trendRevision ?? null })
+        } })
+      if (!prepared) throw new Error('No wallet signature requested')
+      return Response.json({ id, costs, transaction })
     }
     if (body.action === 'submit') {
-      const session = sessions.get(body.id)
+      const pool = database(), creator = creatorSigner()
+      if (!pool || !creator) throw new Error('Local launch is not configured')
+      const store = launchSessions(pool, creator)
+      // Single use on every replica: whoever consumes the review first submits it; it is never available again.
+      const session = await store.consume(body.id)
       if (!session) throw new Error('Prepared launch expired; reload before trying again')
-      sessions.delete(body.id); clearTimeout(session.timeout)
-      session.resolveSigned(Transaction.from(Buffer.from(body.transaction, 'base64')))
-      const market = await session.job
-      const verify = createLaunchEvidenceVerifier({ connection: session.connection, config: session.config })
+      const connection = chain(), config = session.config, repoId = BigInt(session.githubRepoId)
+      const launcher = createMeteoraLauncher({ connection, config, creator })
+      let prepared
+      try { prepared = launcher.restore(session) }
+      catch (error) { await store.release(session); throw error }
+      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled() })
+      const launchGuard = session.trendRevision === null ? undefined : trendLaunchGuard({ pool, repoId: session.githubRepoId,
+        revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
+      // Parsed inside the signing step so a malformed body fails the review (market 'failed') like a wallet mismatch.
+      const market = await coordinator.submitPrepared({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,
+        repo: { githubRepoId: repoId, fullName: session.repoFullName }, prepared, launchGuard,
+        signTransaction: async () => Transaction.from(Buffer.from(body.transaction, 'base64')) })
+      const verify = createLaunchEvidenceVerifier({ connection, config })
       let result
       for (let attempt = 0; attempt < 120; attempt++) {
         result = await verify(market)
@@ -108,13 +125,13 @@ export async function POST(request) {
         await new Promise(resolve => setTimeout(resolve, 250))
       }
       if (result?.state !== 'match') throw new Error('Launch confirmed but final indexing is not ready')
-      const indexed = await createLaunchIndexer({ pool: session.pool, verify }).processMarket(BigInt(session.repoId))
+      const indexed = await createLaunchIndexer({ pool, verify }).processMarket(repoId)
       if (!['indexed', 'verified'].includes(indexed.state)) throw new Error('Canonical market did not index')
       if (BigInt(session.initialBuyLamports) > 0n) {
         try {
-          await createFeeAccrual({ pool: session.pool, connection: session.connection, config: session.config })
-            .recordTradeFees({ githubRepoId: BigInt(session.repoId), signatures: [market.launchSignature] })
-          await createTradeRecorder({ pool: session.pool, connection: session.connection, config: session.config })(market, market.launchSignature)
+          await createFeeAccrual({ pool, connection, config })
+            .recordTradeFees({ githubRepoId: repoId, signatures: [market.launchSignature] })
+          await createTradeRecorder({ pool, connection, config })(market, market.launchSignature)
         } catch (error) {
           console.error('Launch first-buy indexing will retry in the worker:', error.message)
         }

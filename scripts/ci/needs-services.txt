@@ -28,6 +28,7 @@ platform-revenue
 protocol-analytics
 reconcile
 referral
+replica-state
 reserve-alerts-integration
 trade
 trend-integration

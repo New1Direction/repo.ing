@@ -18,8 +18,10 @@ export async function waitForLaunchEvidence(inspect, market, attempts = 120, ret
   return false
 }
 
+// pendingReview(market) → true while a persisted launch review (src/launch-sessions.mjs) still owns a 'prepared'
+// market; a second prepare is then refused instead of replacing the mint the first wallet is reviewing.
 export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
-  evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false }) {
+  evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null }) {
   async function withRepoLock(id, callback) {
     const client = await pool.connect()
     try {
@@ -35,6 +37,96 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       set: { ...repo, syncedAt: new Date() },
     })
   }
+  const markFailed = (db, market) => db.update(markets).set({ status: 'failed' }).where(eq(markets.id, market.id))
+
+  async function checkRequest({ repositoryUrl, tokenName, tokenSymbol, tokenImage, launcherWallet, signTransaction, requireSigner }) {
+    if (!tokenName || tokenName.length > 32 || !tokenSymbol || tokenSymbol.length > 10) {
+      throw new Error('Token name (1–32) and symbol (1–10) are required')
+    }
+    const image = tokenImage === null ? null : await validateTokenImage(tokenImage)
+    if (requireSigner && typeof signTransaction !== 'function') throw new Error('Launcher signTransaction callback required')
+    const wallet = new PublicKey(launcherWallet).toBase58()
+    if (wallet === launcher.creatorWallet) throw new Error('Launcher wallet cannot be the platform creator authority')
+    const repo = await resolvePublicRepository(repositoryUrl, fetchImpl)
+    return { image, wallet, repo }
+  }
+
+  // Under the repository lock: { existing } for a launched (or recovered) market, otherwise the freshly reserved row.
+  async function reserve(db, repo, { wallet, tokenName, tokenSymbol, image }) {
+    await saveRepo(db, repo)
+    let market = await findMarket(db, repo.githubRepoId)
+    if (market?.status === 'confirmed') return { existing: market }
+    if (market && ['submitted', 'ambiguous'].includes(market.status)) {
+      if (market.launchSignature && await launcher.inspect(market)) {
+        ;[market] = await db.update(markets).set({ status: 'confirmed' }).where(eq(markets.id, market.id)).returning()
+        return { existing: market }
+      }
+      throw new IncompleteLaunchError(`Repository ${repo.githubRepoId} has an incomplete launch (${market.status}); inspect chain evidence before retrying`)
+    }
+    if (market?.status === 'prepared' && pendingReview && await pendingReview(market)) {
+      throw new Error('This repository already has a launch awaiting wallet approval. Try again in a couple of minutes.')
+    }
+    const values = {
+      githubRepoId: repo.githubRepoId, status: 'reserved', mint: null, pool: null,
+      launcherWallet: wallet, creatorWallet: launcher.creatorWallet,
+      tokenName, tokenSymbol, tokenImage: image, launchSignature: null,
+      blockhash: null, lastValidBlockHeight: null,
+      discoveryVersion: discoveryEnabled ? DISCOVERY_VERSION : null, launchBlockTime: null,
+      builderAllocationVersion: builderAllocationEnabled ? 1 : null,
+    }
+    if (market) {
+      ;[market] = await db.update(markets).set(values).where(eq(markets.id, market.id)).returning()
+    } else {
+      ;[market] = await db.insert(markets).values(values).returning()
+    }
+    return { market }
+  }
+
+  // Under the repository lock: reserved → prepared. Any failure releases the reservation as 'failed'.
+  async function prepareReserved(db, market, { repo, wallet, tokenName, tokenSymbol, initialBuyLamports, launchGuard }) {
+    try {
+      const prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports })
+      ;[market] = await db.update(markets).set({
+        status: 'prepared', mint: prepared.mint, pool: prepared.pool,
+        blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight,
+      }).where(eq(markets.id, market.id)).returning()
+      if (launchGuard) await launchGuard({ repo, market, stage: 'prepare' })
+      return { market, prepared }
+    } catch (error) {
+      await markFailed(db, market)
+      throw error
+    }
+  }
+
+  // Under the repository lock with the market 'prepared': wallet signature → co-sign → submit → chain evidence.
+  async function finish(db, market, prepared, { repo, signTransaction, launchGuard }) {
+    try {
+      const signed = await prepared.sign(signTransaction)
+      if (launchGuard) await launchGuard({ repo, market, stage: 'submit' })
+      ;[market] = await db.update(markets).set({ status: 'submitted', launchSignature: signed.signature })
+        .where(eq(markets.id, market.id)).returning()
+      try {
+        await launcher.submit({ ...signed, blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight })
+      } catch (error) {
+        if (error instanceof DefinitiveLaunchError) {
+          await db.update(markets).set({ status: 'failed' }).where(eq(markets.id, market.id))
+        } else {
+          await db.update(markets).set({ status: 'ambiguous' }).where(eq(markets.id, market.id))
+        }
+        throw error
+      }
+      if (!await waitForLaunchEvidence(launcher.inspect, market, evidenceAttempts, evidenceRetryMs)) {
+        await db.update(markets).set({ status: 'ambiguous' }).where(eq(markets.id, market.id))
+        throw new IncompleteLaunchError('Transaction submitted; pool evidence is still pending. Do not retry this launch.')
+      }
+      ;[market] = await db.update(markets).set({ status: 'confirmed' }).where(eq(markets.id, market.id)).returning()
+      return market
+    } catch (error) {
+      if (market.status === 'prepared') await markFailed(db, market)
+      throw error
+    }
+  }
+
   return {
     resolveRepository: (url) => resolvePublicRepository(url, fetchImpl),
     async checkExistingLaunch(url) {
@@ -45,73 +137,38 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
         return market?.status === 'confirmed' ? market : null
       })
     },
+    // One call in one process: the repository lock is held from reservation through the wallet signature to the result.
     async launch({ repositoryUrl, tokenName, tokenSymbol, tokenImage = null, launcherWallet, initialBuyLamports = '0', signTransaction, launchGuard }) {
-      if (!tokenName || tokenName.length > 32 || !tokenSymbol || tokenSymbol.length > 10) {
-        throw new Error('Token name (1–32) and symbol (1–10) are required')
-      }
-      const image = tokenImage === null ? null : await validateTokenImage(tokenImage)
-      if (typeof signTransaction !== 'function') throw new Error('Launcher signTransaction callback required')
-      const wallet = new PublicKey(launcherWallet).toBase58()
-      if (wallet === launcher.creatorWallet) throw new Error('Launcher wallet cannot be the platform creator authority')
-      const repo = await resolvePublicRepository(repositoryUrl, fetchImpl)
+      const { image, wallet, repo } = await checkRequest({ repositoryUrl, tokenName, tokenSymbol, tokenImage, launcherWallet, signTransaction, requireSigner: true })
       return withRepoLock(repo.githubRepoId, async db => {
-        await saveRepo(db, repo)
-        let market = await findMarket(db, repo.githubRepoId)
-        if (market?.status === 'confirmed') return market
-        if (market && ['submitted', 'ambiguous'].includes(market.status)) {
-          if (market.launchSignature && await launcher.inspect(market)) {
-            ;[market] = await db.update(markets).set({ status: 'confirmed' }).where(eq(markets.id, market.id)).returning()
-            return market
-          }
-          throw new IncompleteLaunchError(`Repository ${repo.githubRepoId} has an incomplete launch (${market.status}); inspect chain evidence before retrying`)
+        const reserved = await reserve(db, repo, { wallet, tokenName, tokenSymbol, image })
+        if (reserved.existing) return reserved.existing
+        const { market, prepared } = await prepareReserved(db, reserved.market, { repo, wallet, tokenName, tokenSymbol, initialBuyLamports, launchGuard })
+        return finish(db, market, prepared, { repo, signTransaction, launchGuard })
+      })
+    },
+    // Two requests, possibly on different replicas. prepareLaunch reserves and prepares under the repository lock and
+    // runs onPrepared (which persists the review) before releasing it; { market } alone means nothing needs signing.
+    async prepareLaunch({ repositoryUrl, tokenName, tokenSymbol, tokenImage = null, launcherWallet, initialBuyLamports = '0', launchGuard, onPrepared }) {
+      const { image, wallet, repo } = await checkRequest({ repositoryUrl, tokenName, tokenSymbol, tokenImage, launcherWallet, requireSigner: false })
+      return withRepoLock(repo.githubRepoId, async db => {
+        const reserved = await reserve(db, repo, { wallet, tokenName, tokenSymbol, image })
+        if (reserved.existing) return { market: reserved.existing, repo }
+        const { market, prepared } = await prepareReserved(db, reserved.market, { repo, wallet, tokenName, tokenSymbol, initialBuyLamports, launchGuard })
+        try { if (onPrepared) await onPrepared({ market, prepared, repo }) }
+        catch (error) { await markFailed(db, market); throw error }
+        return { market, prepared, repo }
+      })
+    },
+    // `prepared` is restored from the persisted review (launcher.restore). The market must still be the one reviewed.
+    async submitPrepared({ marketId, githubRepoId, mint, repo, prepared, signTransaction, launchGuard }) {
+      if (typeof signTransaction !== 'function') throw new Error('Launcher signTransaction callback required')
+      return withRepoLock(BigInt(githubRepoId), async db => {
+        const market = (await db.select().from(markets).where(eq(markets.id, marketId)).limit(1))[0]
+        if (!market || market.status !== 'prepared' || market.mint !== mint || market.githubRepoId !== BigInt(githubRepoId)) {
+          throw new Error('Prepared launch expired; reload before trying again')
         }
-        const values = {
-          githubRepoId: repo.githubRepoId, status: 'reserved', mint: null, pool: null,
-          launcherWallet: wallet, creatorWallet: launcher.creatorWallet,
-          tokenName, tokenSymbol, tokenImage: image, launchSignature: null,
-          blockhash: null, lastValidBlockHeight: null,
-          discoveryVersion: discoveryEnabled ? DISCOVERY_VERSION : null, launchBlockTime: null,
-          builderAllocationVersion: builderAllocationEnabled ? 1 : null,
-        }
-        if (market) {
-          ;[market] = await db.update(markets).set(values).where(eq(markets.id, market.id)).returning()
-        } else {
-          ;[market] = await db.insert(markets).values(values).returning()
-        }
-        let prepared
-        try {
-          prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports })
-          ;[market] = await db.update(markets).set({
-            status: 'prepared', mint: prepared.mint, pool: prepared.pool,
-            blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight,
-          }).where(eq(markets.id, market.id)).returning()
-          if (launchGuard) await launchGuard({ repo, market, stage: 'prepare' })
-          const signed = await prepared.sign(signTransaction)
-          if (launchGuard) await launchGuard({ repo, market, stage: 'submit' })
-          ;[market] = await db.update(markets).set({ status: 'submitted', launchSignature: signed.signature })
-            .where(eq(markets.id, market.id)).returning()
-          try {
-            await launcher.submit({ ...signed, blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight })
-          } catch (error) {
-            if (error instanceof DefinitiveLaunchError) {
-              await db.update(markets).set({ status: 'failed' }).where(eq(markets.id, market.id))
-            } else {
-              await db.update(markets).set({ status: 'ambiguous' }).where(eq(markets.id, market.id))
-            }
-            throw error
-          }
-          if (!await waitForLaunchEvidence(launcher.inspect, market, evidenceAttempts, evidenceRetryMs)) {
-            await db.update(markets).set({ status: 'ambiguous' }).where(eq(markets.id, market.id))
-            throw new IncompleteLaunchError('Transaction submitted; pool evidence is still pending. Do not retry this launch.')
-          }
-          ;[market] = await db.update(markets).set({ status: 'confirmed' }).where(eq(markets.id, market.id)).returning()
-          return market
-        } catch (error) {
-          if (!prepared || market.status === 'prepared') {
-            await db.update(markets).set({ status: 'failed' }).where(eq(markets.id, market.id))
-          }
-          throw error
-        }
+        return finish(db, market, prepared, { repo, signTransaction, launchGuard })
       })
     },
   }
