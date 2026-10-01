@@ -1,4 +1,5 @@
 import { assertTrendIdentity, commitActivity, repoLink, DAY, TREND_FRESH_MS } from './trend-rules.mjs'
+import { safeGithubImageUrl } from './repo-logo.mjs'
 
 // Public, read-only endpoints. No credential is sent to a third-party source.
 // Five repository refreshes + one search per half-hour <= 42 GitHub API calls/hour.
@@ -77,7 +78,9 @@ export function createTrendSources({ fetchImpl = fetch, now = () => Date.now(), 
     const commits=await request(`${base}/commits?since=${encodeURIComponent(new Date(nowMs-2*DAY).toISOString())}&per_page=100`,{missing:true})
     const releaseAt=release.data?.published_at??null
     if(releaseAt&&(!Number.isFinite(Date.parse(releaseAt))||Date.parse(releaseAt)>nowMs+60000))throw Error('INVALID_RELEASE_EVIDENCE')
-    return {repo:{id:String(named.id),fullName:named.full_name,description:named.description??null,stars:named.stargazers_count,forks:named.forks_count},
+    // Language and owner avatar come with the identity response at no extra call; public lists show them from storage.
+    return {repo:{id:String(named.id),fullName:named.full_name,description:named.description??null,stars:named.stargazers_count,forks:named.forks_count,
+      language:typeof named.language==='string'?named.language.slice(0,64):null,avatarUrl:safeGithubImageUrl(named.owner?.avatar_url)},
       observedAt:new Date(nowMs).toISOString(),stars:named.stargazers_count,forks:named.forks_count,releaseAt,
       activity:commitActivity(commits.data??[],commits.complete,nowMs),
       sources:{identity:`${base}`,immutableIdentity:`https://api.github.com/repositories/${named.id}`,release:release.data?.html_url??`${canonical}/releases`,

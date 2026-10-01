@@ -1,0 +1,107 @@
+/* "Launch a trending repo": the /find-repos section and the /launch strip (app/components/trending-launches.jsx).
+   Theme tokens come from globals/theme; --tl-accent is the green used for text, darkened on the light theme. */
+.trend-launches,.trend-launch-strip{--tl-accent:var(--green);--tl-mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+[data-theme=light] .trend-launches,[data-theme=light] .trend-launch-strip{--tl-accent:#157347}
+
+.trend-launches{margin:30px 0 44px;scroll-margin-top:24px}
+.trend-launches-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,440px);align-items:end;gap:16px 48px;margin-bottom:18px}
+.trend-launches-intro h2{margin:0 0 8px;font-size:clamp(26px,1.1rem + 1.2vw,34px);line-height:1.1}
+.trend-launches-intro p{margin:0;max-width:62ch;color:var(--muted);font-size:15px;line-height:1.6}
+.trend-launch-terms{margin:0;padding:12px 16px;border:1px solid var(--border);border-left:3px solid var(--tl-accent);border-radius:4px 10px 10px 4px;background:var(--surface);color:var(--muted);font-size:13px;line-height:1.6}
+.trend-launch-terms strong{color:var(--text)}
+.trend-launch-terms a,.trend-launch-strip-head a{color:var(--tl-accent);font-weight:600}
+.trend-launch-terms a:hover,.trend-launch-strip-head a:hover{text-decoration:underline;text-underline-offset:3px}
+
+.trend-launch-board{border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden}
+.trend-launch-list{list-style:none;margin:0;padding:0}
+.trend-launch-row{display:grid;grid-template-columns:28px 44px minmax(0,1fr) 140px 200px;grid-template-areas:"rank avatar main stat action";align-items:center;gap:8px 18px;padding:18px 22px;border-top:1px solid var(--border);transition:background-color .15s}
+.trend-launch-board>.trend-launch-list>.trend-launch-row:first-child{border-top:0}
+@media(hover:hover){.trend-launch-row:hover{background:var(--surface2)}}
+.trend-launch-rank{grid-area:rank;font:600 14px/1 var(--tl-mono);color:var(--dim);text-align:right;font-variant-numeric:tabular-nums}
+.trend-launch-board>.trend-launch-list:first-child>.trend-launch-row:nth-child(-n+3) .trend-launch-rank{color:var(--tl-accent);font-size:16px}
+.trend-launch-avatar{grid-area:avatar;display:flex}
+.trend-launch-avatar .repo-avatar{width:44px;height:44px;border-radius:10px}
+
+.trend-launch-main{grid-area:main;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.trend-launch-name{max-width:100%;color:var(--text);font-size:16px;line-height:1.35;overflow-wrap:anywhere;text-wrap:balance}
+.trend-launch-owner{color:var(--muted)}
+.trend-launch-name strong{font-weight:680}
+.trend-launch-name svg{display:inline-block;margin-left:4px;vertical-align:-1px;color:var(--dim)}
+.trend-launch-name:hover strong{text-decoration:underline;text-underline-offset:3px}
+.trend-launch-description{margin:0;color:var(--muted);font-size:13.5px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
+.trend-launch-signals{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12px;color:var(--muted)}
+.trend-launch-signals ul{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
+.trend-launch-signals li{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border:1px solid var(--border);border-radius:999px;white-space:nowrap}
+.trend-launch-signals li.growth{color:var(--tl-accent);border-color:color-mix(in srgb,var(--tl-accent) 40%,var(--border));background:color-mix(in srgb,var(--tl-accent) 8%,transparent);font-weight:650;font-variant-numeric:tabular-nums}
+.trend-launch-meta{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 12px}
+.trend-launch-meta>span{display:inline-flex;align-items:center;gap:4px}
+
+.trend-launch-stat{grid-area:stat;display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;font-variant-numeric:tabular-nums;min-width:0}
+.trend-launch-stat strong{font-size:22px;line-height:1.1;letter-spacing:-.02em;color:var(--text)}
+.trend-launch-stat.growing strong{color:var(--tl-accent)}
+.trend-launch-stat>span{font-size:12px;color:var(--muted)}
+.trend-launch-total{display:inline-flex;align-items:center;gap:4px;margin-top:3px}
+
+.trend-launch-action{grid-area:action;display:flex;flex-direction:column;align-items:stretch;gap:7px;min-width:0}
+.trend-launch-action .button{min-height:40px;padding:0 18px;font-size:14px}
+.trend-launch-action .button svg{transition:transform .15s}
+.trend-launch-action .button:hover svg{transform:translateX(2px)}
+.trend-launch-reward{color:var(--muted);font-size:12px;line-height:1.4;text-align:center}
+
+.trend-launch-more{border-top:1px solid var(--border)}
+.trend-launch-more>summary{display:flex;align-items:center;justify-content:center;gap:8px;min-height:50px;padding:0 20px;list-style:none;cursor:pointer;color:var(--text);font-size:14px;font-weight:600}
+.trend-launch-more>summary::-webkit-details-marker{display:none}
+.trend-launch-more>summary:hover{background:var(--surface2)}
+.trend-launch-more>summary:focus-visible{outline:2px solid var(--tl-accent);outline-offset:-4px}
+.trend-launch-more>summary svg{transition:transform .2s}
+.trend-launch-more[open]>summary svg{transform:rotate(180deg)}
+.trend-launch-more .trend-launch-list{border-top:1px solid var(--border)}
+.trend-launch-more .trend-launch-row:first-child{border-top:0}
+
+.trend-launch-empty{display:flex;align-items:center;gap:24px;padding:26px 28px}
+.trend-launch-empty h3{margin:0 0 6px;font-size:18px}
+.trend-launch-empty p{margin:0 0 14px;max-width:60ch;color:var(--muted);font-size:14px;line-height:1.6}
+.trend-launch-empty .button{min-height:38px;font-size:13px}
+.trend-launches-note{margin:12px 0 0;max-width:110ch;color:var(--muted);font-size:12.5px;line-height:1.6}
+.explore-page .finder-heading{margin:0 0 14px;font-size:21px;letter-spacing:-.015em}
+/* The search list's button rule sets light text; primary launch actions need the dark-on-green pairing to stay legible. */
+.finder-results .growth-heading>.button.primary{color:#101713}
+[data-theme=light] .finder-results .growth-heading>.button.primary{color:#10291b}
+.repo-finder .growth-footnote a{text-decoration:underline;text-underline-offset:3px}
+[data-theme=light] .repo-finder .growth-footnote a{color:#157347}
+
+/* /launch strip: compact rows, no rank or description; growth moves into the evidence chips. */
+.trend-launch-strip{margin:28px 0 0;border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden}
+.trend-launch-strip-head{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 16px;padding:16px 20px 12px}
+.trend-launch-strip-head h2{margin:0;font-size:17px;letter-spacing:-.01em}
+.trend-launch-strip-head a{display:inline-flex;align-items:center;gap:5px;font-size:13px}
+.trend-launch-strip .trend-launch-row{grid-template-columns:36px minmax(0,1fr) auto;grid-template-areas:"avatar main action";gap:6px 14px;padding:12px 20px}
+.trend-launch-strip .trend-launch-avatar .repo-avatar{width:36px;height:36px;border-radius:8px}
+.trend-launch-strip .trend-launch-name{font-size:15px}
+.trend-launch-strip .trend-launch-action{flex-direction:row;align-items:center;gap:12px}
+.trend-launch-strip .trend-launch-action .button{min-height:36px;padding:0 14px;font-size:13px}
+.trend-launch-strip .trend-launch-reward{max-width:140px;text-align:left}
+.trend-launch-strip-terms{margin:0;padding:10px 20px 13px;border-top:1px solid var(--border);color:var(--muted);font-size:12.5px;line-height:1.6}
+
+@media(max-width:1100px){
+  .trend-launch-row{grid-template-columns:28px 44px minmax(0,1fr) 180px;grid-template-areas:"rank avatar main action" "rank avatar stat action"}
+  .trend-launch-stat{flex-direction:row;flex-wrap:wrap;align-items:baseline;justify-content:flex-start;gap:2px 7px;text-align:left}
+  .trend-launch-stat strong{font-size:16px}
+  .trend-launch-total{margin:0 0 0 4px}
+}
+@media(max-width:800px){.trend-launches-head{grid-template-columns:1fr;align-items:start}}
+@media(max-width:700px){
+  .trend-launches{margin-top:22px}
+  .trend-launch-row{grid-template-columns:44px minmax(0,1fr);grid-template-areas:"avatar main" "stat stat" "action action";align-items:start;gap:10px 14px;padding:16px}
+  .trend-launch-rank{display:none}
+  .trend-launch-action{flex-direction:row;align-items:center;gap:12px}
+  .trend-launch-action .button{flex:none}
+  .trend-launch-reward{text-align:left}
+  .trend-launch-empty{flex-direction:column;align-items:flex-start;gap:12px;padding:20px}
+  .trend-launch-empty .icon-art{width:64px}
+  .trend-launch-strip .trend-launch-row{grid-template-areas:"avatar main action";align-items:center;padding:12px 16px}
+  .trend-launch-strip-head{padding:14px 16px 10px}
+  .trend-launch-strip-terms{padding:10px 16px 12px}
+}
+@media(max-width:550px){.trend-launch-strip .trend-launch-reward{display:none}}
+@media(prefers-reduced-motion:reduce){.trend-launch-row,.trend-launch-action .button svg,.trend-launch-more>summary svg{transition:none}}
