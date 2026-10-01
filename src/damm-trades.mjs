@@ -7,6 +7,7 @@ import { DAMM_SWAP_PAYER, swapTrader } from './swap-trader.mjs'
 
 const EVENT=Buffer.from('e445a52e51cb9a1d','hex')
 const SWAPS=['f8c69e91e17587c8','414b3f4ceb5b5b88']
+const FIRST_PAGE=100
 export function dammSwapEvents(transaction,market,destination,coder) {
   if(!transaction?.meta||transaction.meta.err)throw Error('DAMM_TRADE_EVIDENCE_MISSING')
   const keys=transaction.transaction.message.accountKeys,result=[];let ordinal=0
@@ -53,9 +54,11 @@ export async function indexDammTrades({db,connection,verification,market,graduat
   async function history(rpc){
     const result=[];let before
     for(;;){
-      const page=await rpc.getSignaturesForAddress(new PublicKey(address),{limit:1000,...(before?{before}:{})},'finalized')
+      // The cursor is normally among the newest few signatures: a small first page keeps idle passes light.
+      const limit=before?1000:FIRST_PAGE
+      const page=await rpc.getSignaturesForAddress(new PublicKey(address),{limit,...(before?{before}:{})},'finalized')
       for(const item of page){if(item.signature===boundary)return result;result.push({signature:item.signature,slot:item.slot,err:item.err})}
-      if(page.length<1000)throw Error('DAMM_HISTORY_INCOMPLETE')
+      if(page.length<limit)throw Error('DAMM_HISTORY_INCOMPLETE')
       before=page.at(-1).signature
     }
   }
