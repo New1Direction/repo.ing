@@ -4,6 +4,9 @@ import { Minus, Plus, RotateCcw } from 'lucide-react'
 import { chartPriceLabel, chartSeries, chartScaleRange, chartUpdatePlan, chartInitialRange } from '../lib/chart-display.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
 
+// price-chart already starts this download while the page hydrates; this reuses the same module request.
+const loadLightweightCharts = () => import('lightweight-charts')
+
 export default function MarketChartCanvas({ data, multiplier, unit, style, symbol, children }) {
   const container = useRef(null), api = useRef(null), latest = useRef(null)
   const [ready, setReady] = useState(false), [failed, setFailed] = useState(false)
@@ -20,7 +23,7 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
   useEffect(() => {
     let disposed = false, chart, observer, frame, nextHover = null, lastHover = null
     setReady(false); setFailed(false)
-    import('lightweight-charts').then(({ createChart, AreaSeries, CandlestickSeries, HistogramSeries, ColorType }) => {
+    loadLightweightCharts().then(({ createChart, AreaSeries, CandlestickSeries, HistogramSeries, ColorType }) => {
       if (disposed) return
       chart = createChart(container.current, {
         autoSize: true,
