@@ -19,7 +19,12 @@ const nextConfig = {
   // app/(site) and app/(ja) are separate root layouts (for <html lang>), so unmatched URLs need app/global-not-found.jsx.
   experimental: { globalNotFound: true },
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }]
+    return [
+      { source: '/:path*', headers: securityHeaders },
+      // Icon-pack art is always requested as /art/<name>.webp?v=<ART_VERSION> (app/lib/art.mjs); a new export bumps
+      // the version, so a versioned URL never changes content and can be cached for good.
+      { source: '/art/:file*', has: [{ type: 'query', key: 'v' }], headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] },
+    ]
   },
 }
 
