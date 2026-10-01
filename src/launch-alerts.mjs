@@ -8,6 +8,7 @@
 //   never retried automatically; only a provider rejection (4xx/connection refused) becomes 'failed' and is retried.
 // - Runs are serialized with an advisory lock, capped per run and per 24 hours, and spaced out between posts.
 // Channel configuration, delivery and the locked run below are shared with milestone alerts (src/milestone-alerts.mjs).
+import { promotionExcludedRepoIds } from '../app/lib/promotion-exclusions.mjs'
 import { buildLaunchMessage, tokenUrl } from './launch-alerts-message.mjs'
 import { createTelegramSender, createXSender } from './launch-alerts-senders.mjs'
 
@@ -70,7 +71,7 @@ export function launchAlertsConfig(env = process.env) {
   const since = alertSince(env, 'LAUNCH_ALERTS_SINCE')
   const origin = alertOrigin(env)
   const maxPerDay = alertMaxPerDay(env, 'LAUNCH_ALERTS_MAX_PER_DAY', LAUNCH_ALERT_DEFAULTS.maxPerDay)
-  return { ...LAUNCH_ALERT_DEFAULTS, channels, since, origin, maxPerDay, telegram, x }
+  return { ...LAUNCH_ALERT_DEFAULTS, channels, since, origin, maxPerDay, telegram, x, excluded: promotionExcludedRepoIds(env) }
 }
 
 export function createLaunchAlertSenders(config, { fetchImpl = fetch } = {}) {
@@ -187,7 +188,9 @@ export function createLaunchAlerts({ store, config, senders, sleep = wait, now =
   async function runChannel(channel) {
     const budget = Math.min(config.maxPerRun, config.maxPerDay - await store.sentRecently(channel))
     if (budget <= 0) return []
-    const markets = await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts, limit: budget })
+    // Repos on the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS) are never announced.
+    const markets = (await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts, limit: budget }))
+      .filter(market => !config.excluded?.has(String(market.githubRepoId)))
     return postInTurn({ items: markets, config, sleep, now,
       claim: market => store.claim({ channel, market, maxAttempts: config.maxAttempts }),
       deliver: market => deliverAlert({ sender: senders[channel], url: tokenUrl(config.origin, market.mint),
