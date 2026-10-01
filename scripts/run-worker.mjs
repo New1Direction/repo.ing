@@ -176,9 +176,10 @@ async function observeTrends(){
   try{console.log(JSON.stringify({trends:await trends.runOnce()}))}
   catch{console.log(JSON.stringify({trendError:'Trend intake unavailable'}))}
 }
-// Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other".
+// Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch and
+// milestone alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
 for(const [job,worker] of Object.entries({launches,fees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
-  tipMonitor,partsFunds,chartOrdering,graduation,operatingWallets,buybackReceipts,tradeCanary,reminders})){
+  tipMonitor,partsFunds,chartOrdering,graduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts})){
   if(!worker)continue
   const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
 }

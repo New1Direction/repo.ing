@@ -3,6 +3,7 @@ import { PublicKey } from '@solana/web3.js'
 import { createFeeAccrual } from './fee-accrual.mjs'
 import { createTradeRecorder, UnparseableTradeError } from './trade-evidence.mjs'
 import { graduatedReadDue } from './indexer-schedule.mjs'
+import { createMarketConfigResolver } from './market-config.mjs'
 
 const PAGE_SIZE = 1000
 const FIRST_PAGE = 100
@@ -38,7 +39,14 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
   recordTrade = createTradeRecorder({ pool: databasePool, connection, config }),
   schedule = null, feed = null, now = Date.now, log = line => console.log(line) }) {
   const graduatedReads = new Map()
-  let feedLoggedAt = -Infinity
+  let feedLoggedAt = -Infinity, resolveConfig
+  // The approved configs (current and legacy) that the indexed markets were launched on; null lists them all.
+  const configsWithMarkets = rows => {
+    try { resolveConfig ??= createMarketConfigResolver(config) } catch { return null }
+    const used = new Set()
+    for (const market of rows) { try { used.add(resolveConfig(market).toBase58()) } catch { /* not an approved market */ } }
+    return used
+  }
 
   async function processMarket(market, { readGraduated = () => true } = {}) {
     const client = await databasePool.connect()
@@ -147,7 +155,7 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
     if (feed) {
       // Hints only: on failure every market keeps its tier schedule.
       try {
-        const woken = await feed.poll(rows.map(market => market.pool))
+        const woken = await feed.poll(rows.map(market => market.pool), configsWithMarkets(rows))
         for (const market of rows) if (woken.all || woken.pools.has(market.pool)) schedule.wake(market.pool)
       } catch (error) {
         if (now() - feedLoggedAt >= 600_000) { feedLoggedAt = now(); log(JSON.stringify({ feeActivityFeedError: error?.message ?? 'unavailable' })) }
