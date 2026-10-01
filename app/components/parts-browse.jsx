@@ -25,6 +25,8 @@ const EMPTY = {
 }
 // Art from public/parts (2x WebP). Width/height are the display size; each file is twice that.
 const EMPTY_ART = { src: '/parts/empty-cat-box.webp', width: 156, height: 134 }
+// fetchPriority="low" also stops React from emitting a preload hint for these decorative images, which every
+// prefetch of /parts (the main nav links it on every page) would otherwise make the browser download.
 const PART_KINDS = [
   { label: 'Micro\u00ADcontrollers', src: '/parts/microcontroller.webp', width: 82, height: 66 },
   { label: 'Motor drivers', src: '/parts/motor-driver.webp', width: 64, height: 74 },
@@ -42,7 +44,7 @@ export function PartsHeader() {
       <p>Hardware lists from verified open-source maintainers. All-or-nothing: funded → paid to the builder, missed → everyone refunded.</p></div>
     <figure className="parts-kinds"><figcaption>What people list</figcaption>
       <ul>{PART_KINDS.map(({ label, src, width, height }) => <li key={label}>
-        <img src={src} alt="" width={width} height={height} decoding="async"/><span>{label}</span></li>)}</ul></figure>
+        <img src={src} alt="" width={width} height={height} decoding="async" fetchPriority="low"/><span>{label}</span></li>)}</ul></figure>
   </header>
 }
 
