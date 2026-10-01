@@ -60,7 +60,7 @@ export function DevPulse({ mint, initial, repoUrl }) {
       </div>
       {pulse.feed?.length ? <ol className="dev-pulse-feed" aria-label="Recent developer activity">{pulse.feed.map(item => <li key={item.id} className={`pulse-kind-${item.kind}`}>
         <span className="pulse-dot"><PulseIcon kind={item.kind} size={14}/></span>
-        <div className="pulse-copy"><strong>{item.title}</strong><small>{[item.detail, pulseAgo(item.at, now)].filter(Boolean).join(' · ')}</small></div>
+        <div className="pulse-copy"><strong>{item.title}</strong><small><time dateTime={item.at}>{pulseAgo(item.at, now)}</time>{item.detail && <> · {item.detail}</>}</small></div>
         {item.url ? <a href={item.url} target="_blank" rel="noreferrer" aria-label={`Open ${item.title}`}><ArrowUpRight size={15} aria-hidden="true"/></a> : <span/>}
       </li>)}</ol> : <p className="dev-pulse-note">No public commits, merged pull requests or releases in the last 30 days.</p>}
     </>}
