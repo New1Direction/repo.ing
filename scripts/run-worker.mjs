@@ -26,12 +26,24 @@ import { createMilestoneAlerts, createMilestoneAlertStore, milestoneAlertsConfig
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
+import { createRpcMeter, registerRpcEndpoint } from '../src/rpc-usage.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
 const once = process.argv.includes('--once')
 const pool = new pg.Pool({ connectionString: databaseUrl })
-const connection = new Connection(rpc, 'finalized')
+// Every Solana RPC request goes through one meter per provider: a compact {"rpcUsage":…} line per minute, and a
+// provider answering HTTP 429 (rate limit or exhausted credits) is backed off exponentially instead of hammered.
+const meter = createRpcMeter()
+const providerFetches = new Map()
+const providerFetch = (url, provider) => {
+  if (!providerFetches.has(url)) { providerFetches.set(url, meter.fetchFor(provider)); registerRpcEndpoint(url, providerFetches.get(url)) }
+  return providerFetches.get(url)
+}
+providerFetch(rpc, 'primary')
+if (process.env.GRADUATION_VERIFICATION_RPC_URL) providerFetch(process.env.GRADUATION_VERIFICATION_RPC_URL, 'verification')
+const rpcConnection = (url, commitment, provider = 'primary') => new Connection(url, { commitment, disableRetryOnRateLimit: true, fetch: providerFetch(url, provider) })
+const connection = rpcConnection(rpc, 'finalized')
 const verify = createLaunchEvidenceVerifier({ connection, config })
 const launches = createLaunchIndexer({ pool, verify })
 const fees = createExternalFeeIndexer({ pool, connection, config })
@@ -39,7 +51,7 @@ const fees = createExternalFeeIndexer({ pool, connection, config })
 const liquidity = createLiquidityRecovery({ pool, connection })
 // Only recover already issued/approved intents. Never prepare or sign a builder action.
 const reinvest = process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL ? createBuilderReinvestRecovery({pool,connection,
-  verification:new Connection(process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL,'finalized')}) : null
+  verification:rpcConnection(process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL,'finalized','reinvestVerification')}) : null
 const claims = createClaimRecovery({ pool, connection })
 const platformFees = createPlatformFeeRecovery({ pool, connection })
 // Tips: settle/abort already-signed tip-wallet transfers and resolve abandoned tips. Never signs; no key needed.
@@ -68,9 +80,12 @@ async function observePartsFunds(){
 }
 const allocations = createAllocationRecovery({ pool, connection })
 const discovery = createDiscoveryClaims({ pool, connection, config })
+// The 15 s timeout starts after any backoff wait, so a short rate-limit pause never eats the request's own budget.
+const timedFetch=(url,options)=>fetch(url,{...options,signal:AbortSignal.timeout(15000)})
+const graduationFetches={primary:meter.fetchFor('primary',timedFetch),verification:meter.fetchFor('verification',timedFetch)}
 const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true,
   fetch:async(url,options)=>{
-    const response=await fetch(url,{...options,signal:AbortSignal.timeout(15000)})
+    const response=await graduationFetches[url===rpc?'primary':'verification'](url,options)
     if(!response.ok){await response.body?.cancel();throw Error(response.status===429?'RPC_RATE_LIMITED':'RPC_UNAVAILABLE')}
     return response
   }})
@@ -132,7 +147,7 @@ async function deliverMilestoneAlerts(){
   }catch{console.log(JSON.stringify({milestoneAlertError:'GRADUATION_ALERTS_UNAVAILABLE'}))}
 }
 // Operator-only trade canary: real prepare path, simulation only. Never signs or sends; the payer is unsigned.
-const canaryConnection=new Connection(rpc,'confirmed')
+const canaryConnection=rpcConnection(rpc,'confirmed')
 const tradeCanary=process.env.TRADE_CANARY_ENABLED==='false'?null:createTradeCanary({db:pool,connection:canaryConnection,
   router:createTradeRouter({curve:createCanonicalTrader({pool,connection:canaryConnection,config}),graduated:createDammTrader({pool,connection:canaryConnection,config})})})
 let tradeCanaryTask=null,nextTradeCanaryCheck=0
@@ -155,6 +170,13 @@ async function observeTrends(){
   try{console.log(JSON.stringify({trends:await trends.runOnce()}))}
   catch{console.log(JSON.stringify({trendError:'Trend intake unavailable'}))}
 }
+// Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other".
+for(const [job,worker] of Object.entries({launches,fees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
+  tipMonitor,partsFunds,chartOrdering,graduation,operatingWallets,buybackReceipts,tradeCanary,reminders})){
+  if(!worker)continue
+  const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
+}
+const stopUsageReport=once?null:meter.report(60_000)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function observeGraduation(){
   const result={}
@@ -248,4 +270,5 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
+  stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }
