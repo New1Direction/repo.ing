@@ -35,7 +35,7 @@ Start with [Architecture](ARCHITECTURE.md), [Development](DEVELOPMENT.md), [Cont
 | --- | --- |
 | Deployment and recovery | [Production setup](PRODUCTION.md), [encrypted backups](BACKUPS.md) |
 | Canonical launch | [Launch coordinator](LAUNCH_COORDINATOR.md), [indexing](LAUNCH_INDEXER.md), [first-buy review](LAUNCH_REVIEW.md) |
-| Trading and fees | [Trading](TRADE.md), [DBC fees](FEE_CONFIG.md), [accrual](FEE_ACCRUAL.md), [external swaps](EXTERNAL_FEE_INDEXER.md), [graduated fees](GRADUATED_FEES.md) |
+| Trading and fees | [Trading](TRADE.md), [DBC fees](FEE_CONFIG.md), [launch fee](LAUNCH_FEE.md) (prepared, not active), [accrual](FEE_ACCRUAL.md), [external swaps](EXTERNAL_FEE_INDEXER.md), [graduated fees](GRADUATED_FEES.md) |
 | Identity and claims | [GitHub authority](GITHUB_VERIFICATION.md), [wallet binding](WALLET_BINDING.md), [claims](CLAIM.md), [reconciliation](RECONCILE.md) |
 | Graduation operations | [Readiness](FIRST_GRADUATION_READINESS.md), [first-graduation runbook](FIRST_GRADUATION_RUNBOOK.md), [reserve alerts](RESERVE_ALERTS.md) |
 | Revenue and liquidity | [Revenue accounting](PLATFORM_REVENUE.md), [protocol liquidity](PROTOCOL_LIQUIDITY.md), [first bounded deployment](P3_FIRST_LIVE_RUNBOOK.md) — in-app executors off; manual operations published on [Stats](https://repo.ing/stats) |

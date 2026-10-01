@@ -65,6 +65,7 @@ export const PINNED_GROUPS = [
   { files: ['reserve-alerts-integration'], databaseUrl: launchtest('repoing_reserve_alert_test'), selfManaged: true },
   { files: ['trend-integration'], databaseUrl: launchtest('repoing_p6_test'), selfManaged: true },
   { files: ['config-rotation'], databaseUrl: launchtest('repoing_config_rotation_test') },
+  { files: ['launch-fee-chain'], databaseUrl: launchtest('repoing_launch_fee_test') },
   { files: ['discovery-claims'], databaseUrl: trusted(55439, 'discovery_test', 'discoverytest') },
   { files: ['platform-dbc-fees'], databaseUrl: trusted(55459, 'repoing_dbc_collection_test', 'dbc_test') },
 ]

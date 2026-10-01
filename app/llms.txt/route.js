@@ -1,5 +1,11 @@
+import { activeLaunchFeeTerms } from '../lib/launch-fee.mjs'
+import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
+
 // llmstxt.org index for LLMs and agents. Keep figures in sync with README.md and /how-it-works.
 export const dynamic = 'force-static'
+// Hourly, so the launch-fee line follows the config new launches use (DBC_CONFIG).
+export const revalidate = 3600
+const FEE_LINE = "- Trading fee before graduation: 1.75% of each fee-paying trade. 0.994% goes to the repository's builders, 0.406% to repo.ing, and 0.35% to the Meteora protocol."
 
 const LLMS_TXT = `# repo.ing
 
@@ -55,6 +61,14 @@ The tools prepare launch reviews only. They cannot trade, claim, sign, or submit
 - [Agent launch documentation](https://github.com/New1Direction/repo.ing/blob/main/docs/AGENT_LAUNCH.md): MCP setup, tool inputs, and the signing boundary.
 `
 
-export function GET() {
-  return new Response(LLMS_TXT, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+// The index text, with a launch-fee line under the fee line when new launches use a launch-fee config.
+function llmsText(launchFee) {
+  if (!launchFee) return LLMS_TXT
+  const line = [`- Launch fee on new markets: ${launchFeeSentence(launchFee)}`, LAUNCH_FEE_SPLIT, launcherBuySentence(launchFee),
+    'Markets launched earlier keep a flat 1.75%.'].filter(Boolean).join(' ')
+  return LLMS_TXT.replace(FEE_LINE, `${FEE_LINE}\n${line}`)
+}
+
+export async function GET() {
+  return new Response(llmsText(await activeLaunchFeeTerms()), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
 }

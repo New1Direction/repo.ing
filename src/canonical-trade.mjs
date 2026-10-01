@@ -3,6 +3,7 @@ import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import { estimateBuySizes } from './trade-depth.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { readChainPoint } from './chain-clock.mjs'
+import { launchFeeJson, poolFeeFacts, quotePoint } from './launch-fee.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
 import bs58 from 'bs58'
 import { PublicKey, Transaction } from '@solana/web3.js'
@@ -94,17 +95,21 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const fixed = await dbc.state.getPoolConfig(configKey)
     if (!fixed) throw new Error('Fixed DBC config is missing')
     const amountIn = new BN(input.toString())
+    // The fee a launch-fee pool charges falls every second after activation, so quote at the chain's confirmed
+    // clock (never later than the slot that executes the trade): the executed fee can only be lower, so the
+    // output can only be higher than quoted and the 1% minimum stays safe. Flat configs ignore the point.
+    const currentPoint = quotePoint(await readChainPoint(connection, fixed.activationType), state.poolState.activationPoint)
     const result = dbc.pool.swapQuote({ virtualPool: state, config: fixed,
       swapBaseForQuote: direction === 'sell', amountIn, slippageBps: SLIPPAGE_BPS,
-      hasReferral: false, eligibleForFirstSwapWithMinFee: false,
-      currentPoint: await readChainPoint(connection, fixed.activationType),
+      hasReferral: false, eligibleForFirstSwapWithMinFee: false, currentPoint,
     })
     if (!result.minimumAmountOut?.gt(new BN(0))) throw new Error('No executable output quote')
-    return { market, pool, amountIn, result, sqrtPrice: state.poolState.sqrtPrice, collectFeeMode: fixed.collectFeeMode }
+    const fees = poolFeeFacts(fixed, state.poolState.activationPoint, currentPoint)
+    return { market, pool, amountIn, result, sqrtPrice: state.poolState.sqrtPrice, collectFeeMode: fixed.collectFeeMode, ...fees }
   }
   const prepare = async (request, direction, quoted = null) => {
     const wallet = new PublicKey(request.wallet)
-    const { market, pool, amountIn, result } = quoted || await quote(request, direction)
+    const { market, pool, amountIn, result, launchFee } = quoted || await quote(request, direction)
     const mint = new PublicKey(market.mint)
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
@@ -127,7 +132,9 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       wsolRent: wsolRent === null ? null : wsolRent.toString(), amountIn: amountIn.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
       message: Buffer.from(tx.serializeMessage()).toString('base64'), transaction: serializeUnsigned(tx),
       blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps: SLIPPAGE_BPS,
-      priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } })
+      priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() },
+      // Display only (Solana Actions message): the launch fee quoted for this trade while the window is open.
+      launchFee: launchFee?.active ? launchFeeJson(launchFee) : null })
     return preparedFromRecord(record, tx)
   }
   const verifyTrade = async (prepared, signature) => {
@@ -197,12 +204,12 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
   }
   const publicQuote = async (request, direction) => {
     const quoted = await quote(request, direction)
-    const { result, amountIn, sqrtPrice, collectFeeMode } = quoted
+    const { result, amountIn, sqrtPrice, collectFeeMode, feeNumerator, launchFee } = quoted
     if (collectFeeMode !== 0) throw Error('Quote fee currency is unsupported')
     const display = quoteDisplay({ direction, input: amountIn.toString(), output: result.outputAmount.toString(),
       sqrtPrice: sqrtPrice.toString(), fee: result.tradingFee.add(result.protocolFee).add(result.referralFee).toString() })
     return { ...display, outputAmount: result.outputAmount.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
-      slippageBps: SLIPPAGE_BPS }
+      slippageBps: SLIPPAGE_BPS, feeNumerator: feeNumerator?.toString() ?? null, launchFee: launchFeeJson(launchFee) }
   }
   const depthCache = new Map()
   async function buyDepth(repoId) {
@@ -213,7 +220,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const [state, fixed] = await Promise.all([dbc.state.getPool(market.pool), dbc.state.getPoolConfig(configKey)])
     if (!state || !fixed || state.poolState.isMigrated || !state.poolState.config.equals(configKey) ||
         state.poolState.baseMint.toBase58() !== market.mint || fixed.collectFeeMode !== 0) throw Error('Trade size guide unavailable')
-    const currentPoint = await readChainPoint(connection, fixed.activationType)
+    const currentPoint = quotePoint(await readChainPoint(connection, fixed.activationType), state.poolState.activationPoint)
     const sizes = estimateBuySizes(BigInt(fixed.migrationQuoteThreshold.toString()) * 2n, input => {
       const result = dbc.pool.swapQuote({ virtualPool: state, config: fixed, swapBaseForQuote: false,
         amountIn: new BN(String(input)), slippageBps: SLIPPAGE_BPS, hasReferral: false,

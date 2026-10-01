@@ -5,6 +5,15 @@ const MAX_U64 = 18446744073709551615n
 // The fixed mainnet config mints one billion base tokens with six decimals.
 const FIXED_SUPPLY_BASE_UNITS = 1_000_000_000_000_000n
 
+// The launch buy is the pool's first swap, in the pool-creation transaction. On a config with
+// enableFirstSwapWithMinFee the program charges it the scheduler's minimum fee (1.75% for the launch-fee
+// config), not the launch fee; flat configs charge their one fee either way. Quoting with the same rule keeps
+// the 3% cap exact, and the exact (zero-slippage) minimum output makes the whole launch transaction fail
+// rather than ever charge a launcher the launch fee.
+export function launchBuyMinFee(config) {
+  return config.enableFirstSwapWithMinFee === true || Number(config.enableFirstSwapWithMinFee) === 1
+}
+
 // Choose the largest whole-lamport input whose output stays at or below the
 // requested percentage. Rounding an exact-output quote up can breach the cap.
 export function launchBuyPreset(client, config, supplyBps) {
@@ -15,7 +24,7 @@ export function launchBuyPreset(client, config, supplyBps) {
   const target = FIXED_SUPPLY_BASE_UNITS * BigInt(supplyBps) / 10_000n
   const output = amount => BigInt(client.pool.getQuoteFromInputAmount({ config, swapBaseForQuote: false,
     amountIn: new BN(amount.toString()), slippageBps: 0, hasReferral: false,
-    eligibleForFirstSwapWithMinFee: false }).outputAmount.toString())
+    eligibleForFirstSwapWithMinFee: launchBuyMinFee(config) }).outputAmount.toString())
   let low = 0n, high = 1_000_000n
   while (output(high) <= target) {
     low = high; high *= 2n
@@ -40,7 +49,7 @@ export function launchBuyQuote(client, config, rawLamports) {
   }
   const quote = client.pool.getQuoteFromInputAmount({ config, swapBaseForQuote: false,
     amountIn: new BN(amount.toString()), slippageBps: 0, hasReferral: false,
-    eligibleForFirstSwapWithMinFee: false })
+    eligibleForFirstSwapWithMinFee: launchBuyMinFee(config) })
   const output = BigInt(quote.outputAmount.toString())
   if (output <= 0n) throw new Error('Initial buy has no executable token output')
   if (output * 10_000n > FIXED_SUPPLY_BASE_UNITS * BigInt(INITIAL_BUY_CAP_BPS)) {
