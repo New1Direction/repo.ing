@@ -38,3 +38,15 @@ test('wrong signature and unsupported versions fail closed', () => {
   assert.throws(() => normalizeFinalizedTransaction(raw, 'different-signature'), /unsupported or incomplete/)
   assert.throws(() => normalizeFinalizedTransaction({ ...raw, version: 2 }, signature), /unsupported or incomplete/)
 })
+
+test('HTTP 429 is retried with backoff, then fails closed if it persists', async () => {
+  const ok = { ok: true, status: 200, headers: new Headers(), json: async () => ({ result: null }) }
+  const limited = { ok: false, status: 429, headers: new Headers(), json: async () => ({}) }
+  let calls = 0
+  const flaky = async () => (++calls < 3 ? limited : ok)
+  assert.equal(await loadFinalizedTransaction({ rpcEndpoint: 'https://example.invalid' }, 'sig', flaky, [1, 1, 1]), null)
+  assert.equal(calls, 3)
+  calls = 0
+  await assert.rejects(loadFinalizedTransaction({ rpcEndpoint: 'https://example.invalid' }, 'sig', async () => { calls++; return limited }, [1, 1]), /HTTP 429/)
+  assert.equal(calls, 3)
+})
