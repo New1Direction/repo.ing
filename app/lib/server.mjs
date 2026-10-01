@@ -6,7 +6,7 @@ import bs58 from 'bs58'
 import { createReconciler } from '../../src/reconcile.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
-import { selectAboutToGraduate } from './about-to-graduate.mjs'
+import { readGraduationRace } from './graduation-race.mjs'
 import { marketRowStats } from './market-row-stats.mjs'
 
 export function database() {
@@ -84,23 +84,16 @@ async function loadMarkets() {
   } catch { return { markets: [], unavailable: 'Markets are temporarily unavailable.' } }
 }
 
-// Home and /explore: markets closest to graduation. One joined read; freshness is checked per row.
-const ABOUT_TO_GRADUATE_TTL_MS = 30_000
-export const aboutToGraduate = ttlMemo(loadAboutToGraduate, ABOUT_TO_GRADUATE_TTL_MS, { keep: result => !result.unavailable })
+// Home, /explore and the $REPOING page: every curve market ranked by verified graduation progress (one joined read;
+// freshness is checked per row). Callers take the top they need.
+const GRADUATION_RACE_TTL_MS = 30_000
+export const graduationRace = ttlMemo(loadGraduationRace, GRADUATION_RACE_TTL_MS, { keep: result => !result.unavailable })
 
-async function loadAboutToGraduate() {
+async function loadGraduationRace() {
   const pool = database()
   if (!pool) return { markets: [], unavailable: 'Database is not configured.' }
-  try {
-    const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_name as "tokenName",
-        m.token_symbol as "symbol", r.full_name as "fullName", o.status, o.observation, o.error_code,
-        e.evidence_hash as migration_evidence_hash
-      from markets m join repositories r on r.github_repo_id = m.github_repo_id
-      join graduation_observations o on o.github_repo_id = m.github_repo_id
-      left join graduation_events e on e.github_repo_id = m.github_repo_id
-      where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and o.status = 'VERIFIED'`)
-    return { markets: selectAboutToGraduate(rows) }
-  } catch { return { markets: [], unavailable: 'Graduation progress is temporarily unavailable.' } }
+  try { return { markets: await readGraduationRace(pool) } }
+  catch { return { markets: [], unavailable: 'Graduation progress is temporarily unavailable.' } }
 }
 
 export async function recentBuilderPayouts() {

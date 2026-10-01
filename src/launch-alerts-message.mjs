@@ -22,8 +22,8 @@ export function cleanDescription(value) {
   return value.replace(INVISIBLE, ' ').replace(LINKS, ' ').replace(TAG_PREFIXES, '').replace(/\s+/gu, ' ').trim()
 }
 
-const cleanRepoName = value => String(value ?? '').replace(/[^A-Za-z0-9._/-]/g, '').slice(0, 140)
-const cleanSymbol = value => String(value ?? '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16)
+export const cleanRepoName = value => String(value ?? '').replace(/[^A-Za-z0-9._/-]/g, '').slice(0, 140)
+export const cleanSymbol = value => String(value ?? '').replace(/[^A-Za-z0-9]/g, '').slice(0, 16)
 
 export function formatStars(stars) {
   const n = Math.max(0, Math.floor(Number(stars) || 0))

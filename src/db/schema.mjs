@@ -1,4 +1,4 @@
-import { bigint, bigserial, boolean, check, doublePrecision, index, integer, jsonb, numeric, pgTable, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, bigserial, boolean, check, doublePrecision, index, integer, jsonb, numeric, pgTable, primaryKey, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 export const agentRequestLimits = pgTable('agent_request_limits', {
@@ -786,3 +786,22 @@ export const launchSessions = pgTable('launch_sessions', {
   check('launch_sessions_initial_buy_lamports_check',sql`${t.initialBuyLamports} >= 0`),
   check('launch_sessions_trend_revision_check',sql`${t.trendRevision} is null or ${t.trendRevision} > 0`),
   check('launch_sessions_secret_check',sql`(${t.consumedAt} is null) = (${t.mintSecret} is not null)`)])
+
+// Public graduation-milestone posts (25/50/75/90% and graduation), claimed before sending, and the per-channel marks
+// that keep old crossings from ever being posted (see drizzle/0037_milestone_alerts.sql, src/milestone-alerts.mjs).
+export const milestoneAlerts = pgTable('milestone_alerts', {
+  id: bigserial('id',{mode:'bigint'}).primaryKey(),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  mint: varchar('mint',{length:44}).notNull(), channel: varchar('channel',{length:16}).notNull(), milestone: smallint('milestone').notNull(),
+  status: varchar('status',{length:16}).notNull(), attempts: smallint('attempts').default(1).notNull(),
+  messageId: varchar('message_id',{length:64}), messageUrl: varchar('message_url',{length:300}), error: varchar('error',{length:300}), nextAttemptAt: tz('next_attempt_at'),
+  createdAt: tz('created_at').defaultNow().notNull(), updatedAt: tz('updated_at').defaultNow().notNull(), sentAt: tz('sent_at'),
+},t=>[uniqueIndex('milestone_alerts_repo_channel_milestone_unique').on(t.githubRepoId,t.channel,t.milestone),index('milestone_alerts_channel_recent').on(t.channel,t.updatedAt.desc()),
+  check('milestone_alerts_channel_check',sql`${t.channel} in ('telegram','x')`),check('milestone_alerts_milestone_check',sql`${t.milestone} in (25,50,75,90,100)`),
+  check('milestone_alerts_status_check',sql`${t.status} in ('sending','sent','failed','unknown')`),check('milestone_alerts_attempts_check',sql`${t.attempts} between 1 and 100`),
+  check('milestone_alerts_sent_check',sql`(${t.status} = 'sent' and ${t.sentAt} is not null and ${t.messageId} is not null) or (${t.status} <> 'sent' and ${t.sentAt} is null)`)])
+export const milestoneAlertMarks = pgTable('milestone_alert_marks', {
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
+  channel: varchar('channel',{length:16}).notNull(), milestone: smallint('milestone').notNull(), markedAt: tz('marked_at').defaultNow().notNull(),
+},t=>[primaryKey({name:'milestone_alert_marks_pkey',columns:[t.githubRepoId,t.channel]}),
+  check('milestone_alert_marks_channel_check',sql`${t.channel} in ('telegram','x')`),check('milestone_alert_marks_milestone_check',sql`${t.milestone} in (0,25,50,75,90,100)`)])

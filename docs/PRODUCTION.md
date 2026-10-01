@@ -119,4 +119,31 @@ Verify: the worker logs `{"launchAlerts":{"posts":[…]}}` only when it posts (s
 
 ## Do-not-promote list
 
-`PROMOTION_EXCLUDED_REPO_IDS` (web and worker) is a comma-separated list of GitHub repository IDs that repo.ing must never promote: they are hidden from `/waiting` (no "Tag them on X" prompt) and must be skipped by any feature that features or announces markets. Their markets and builder fees are unaffected. Use it when a maintainer asks not to be contacted or promoted, or when promoting a repository would be inappropriate.
+`PROMOTION_EXCLUDED_REPO_IDS` (web and worker) is a comma-separated list of GitHub repository IDs that repo.ing must never promote: they are hidden from `/waiting` (no "Tag them on X" prompt) and must be skipped by any feature that features or announces markets. The graduation race (home and `/explore`) and the $REPOING page's "Repo markets to watch" leave them out, and graduation milestone alerts never post them. Their markets and builder fees are unaffected. Use it when a maintainer asks not to be contacted or promoted, or when promoting a repository would be inappropriate.
+
+## Graduation milestone alerts
+
+The worker can also post when a market first passes 25, 50, 75 or 90% of its graduation target, and when it graduates, to the same Telegram/X channels as launch alerts (`src/milestone-alerts.mjs`, migration `0037_milestone_alerts`). Posts read like:
+
+```text
+📈 $RCAT passed 50% of the way to graduating on repo.ing — 42.5 SOL to go.
+New1Direction/webmcp-anything
+https://repo.ing/token/<mint>
+
+🎓 $RCAT graduated to Meteora after reaching its 85 SOL target on repo.ing.
+New1Direction/webmcp-anything
+https://repo.ing/token/<mint>
+```
+
+Progress comes only from the graduation monitor's `VERIFIED` observations that pass the public curve endpoint's freshness gate (at most five minutes old), compared as exact lamport ratios against each market's own target. A stale or under-review market is skipped until it is fresh again. A curve that reached its target but has not migrated posts nothing until the migration evidence is recorded; then it posts the graduation. Repositories on the [do-not-promote list](#do-not-promote-list) are never posted and keep no milestone marks (each run drops them, including marks taken before the repository was listed), so one taken off the list starts from a fresh mark and nothing from its excluded time is announced.
+
+Old crossings are never posted. The first time a channel sees a market (fresh, at or after `GRADUATION_ALERTS_SINCE`), the job records the milestone the market has already reached in `milestone_alert_marks` and posts nothing. So turning the job on, or adding a channel later, announces nothing that already happened, and a market first seen at 30% gets no 25% post. After that, a milestone is posted only when it is above the mark and above every milestone already claimed on that channel: a jump from 20% to 80% posts 75% only, and falling back and re-crossing posts nothing. Marks recorded before the current `GRADUATION_ALERTS_SINCE` are re-taken (never lowered), so moving the cutoff forward when re-enabling after a pause also skips crossings from the pause.
+
+Each post is claimed in `milestone_alerts` (unique per repository, channel and milestone) before it is sent, under its own advisory lock, with the same outcome handling as launch alerts: `failed` retries at least five minutes apart (or after the provider's rate-limit reset), up to 3 attempts; `unknown` is never retried; at most 2 posts per channel per run (about once a minute), 10 seconds apart. `GRADUATION_ALERTS_MAX_PER_DAY` (default 10) caps milestone posts per channel per 24 hours, separately from `LAUNCH_ALERTS_MAX_PER_DAY`; keep the two caps' sum within your X API tier's daily posting limit.
+
+Setup (worker variables only; the channel credentials are the launch-alert ones above, and the two switches are independent):
+
+1. Apply migration `0037_milestone_alerts`.
+2. Set `GRADUATION_ALERTS_SINCE` to the current UTC time, e.g. `2026-10-01T00:00:00Z`, then set `GRADUATION_ALERTS_ENABLED=true`. A channel with only some of its variables, or a missing/invalid cutoff, logs `milestoneAlertError` once at startup and posts nothing. The job does nothing at all before the cutoff.
+
+Verify: the first run posts nothing and fills `milestone_alert_marks` (`select channel, milestone, count(*) from milestone_alert_marks group by 1, 2 order by 1, 2`). The worker logs `{"milestoneAlerts":{"posts":[…]}}` only when it posts; it is silent otherwise. Check rows with `select channel, milestone, status, attempts, message_url, error, created_at from milestone_alerts order by id desc limit 20`. For an `unknown` row, look at the channel: if the post is missing and should go out, delete the row to allow one new attempt; if it posted, leave the row. Setting `GRADUATION_ALERTS_ENABLED=false` stops new posts on the next worker restart.

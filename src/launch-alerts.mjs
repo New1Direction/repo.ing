@@ -7,6 +7,7 @@
 //   redeploys never post twice. A post that may have gone out (timeout, 5xx, crash mid-send) becomes 'unknown' and is
 //   never retried automatically; only a provider rejection (4xx/connection refused) becomes 'failed' and is retried.
 // - Runs are serialized with an advisory lock, capped per run and per 24 hours, and spaced out between posts.
+// Channel configuration, delivery and the locked run below are shared with milestone alerts (src/milestone-alerts.mjs).
 import { buildLaunchMessage, tokenUrl } from './launch-alerts-message.mjs'
 import { createTelegramSender, createXSender } from './launch-alerts-senders.mjs'
 
@@ -20,10 +21,12 @@ const LOCK_KEYS = [0x7265706f, 0x616c7274]
 
 export class LaunchAlertConfigError extends Error {}
 
-// null when alerts are off. Throws LaunchAlertConfigError (no secret values in the message) when half-configured.
-export function launchAlertsConfig(env = process.env) {
-  if (env.LAUNCH_ALERTS_ENABLED !== 'true') return null
-  const value = key => env[key]?.trim() || ''
+const envValue = (env, key) => env[key]?.trim() || ''
+
+// Channels whose credentials are all set; shared with milestone alerts. Throws LaunchAlertConfigError (no secret values
+// in the message) when a channel is half-configured.
+export function alertChannels(env = process.env) {
+  const value = key => envValue(env, key)
   const channelSet = (name, keys) => {
     const present = keys.filter(value)
     if (present.length && present.length < keys.length) throw new LaunchAlertConfigError(`${name} alerts need ${keys.join(', ')}`)
@@ -32,19 +35,42 @@ export function launchAlertsConfig(env = process.env) {
   const channels = []
   if (channelSet('Telegram', TELEGRAM_KEYS)) channels.push('telegram')
   if (channelSet('X', X_KEYS)) channels.push('x')
-  if (!channels.length) return null
-  const sinceText = value('LAUNCH_ALERTS_SINCE')
-  const since = /^\d{4}-\d{2}-\d{2}T/.test(sinceText) ? new Date(sinceText) : null
-  if (!since || Number.isNaN(since.getTime())) throw new LaunchAlertConfigError('LAUNCH_ALERTS_SINCE must be an ISO timestamp, e.g. 2026-10-01T00:00:00Z')
-  let origin
-  try { origin = new URL(value('APP_ORIGIN') || 'https://repo.ing') } catch { throw new LaunchAlertConfigError('APP_ORIGIN is not a URL') }
-  if (origin.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(origin.hostname)) throw new LaunchAlertConfigError('APP_ORIGIN must be HTTPS')
-  const maxPerDay = value('LAUNCH_ALERTS_MAX_PER_DAY') ? Number(value('LAUNCH_ALERTS_MAX_PER_DAY')) : LAUNCH_ALERT_DEFAULTS.maxPerDay
-  if (!Number.isInteger(maxPerDay) || maxPerDay < 1 || maxPerDay > 500) throw new LaunchAlertConfigError('LAUNCH_ALERTS_MAX_PER_DAY must be an integer from 1 to 500')
-  return { ...LAUNCH_ALERT_DEFAULTS, channels, since, origin: origin.origin, maxPerDay,
+  return { channels,
     telegram: channels.includes('telegram') ? { token: value('TELEGRAM_BOT_TOKEN'), chatId: value('TELEGRAM_CHAT_ID') } : null,
     x: channels.includes('x') ? { apiKey: value('X_BOT_API_KEY'), apiSecret: value('X_BOT_API_SECRET'),
       accessToken: value('X_BOT_ACCESS_TOKEN'), accessSecret: value('X_BOT_ACCESS_SECRET') } : null }
+}
+
+// Required cutoff (an ISO timestamp): nothing from before it is ever posted.
+export function alertSince(env, key) {
+  const text = envValue(env, key)
+  const since = /^\d{4}-\d{2}-\d{2}T/.test(text) ? new Date(text) : null
+  if (!since || Number.isNaN(since.getTime())) throw new LaunchAlertConfigError(`${key} must be an ISO timestamp, e.g. 2026-10-01T00:00:00Z`)
+  return since
+}
+
+export function alertOrigin(env = process.env) {
+  let origin
+  try { origin = new URL(envValue(env, 'APP_ORIGIN') || 'https://repo.ing') } catch { throw new LaunchAlertConfigError('APP_ORIGIN is not a URL') }
+  if (origin.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(origin.hostname)) throw new LaunchAlertConfigError('APP_ORIGIN must be HTTPS')
+  return origin.origin
+}
+
+export function alertMaxPerDay(env, key, fallback) {
+  const maxPerDay = envValue(env, key) ? Number(envValue(env, key)) : fallback
+  if (!Number.isInteger(maxPerDay) || maxPerDay < 1 || maxPerDay > 500) throw new LaunchAlertConfigError(`${key} must be an integer from 1 to 500`)
+  return maxPerDay
+}
+
+// null when alerts are off. Throws LaunchAlertConfigError (no secret values in the message) when half-configured.
+export function launchAlertsConfig(env = process.env) {
+  if (env.LAUNCH_ALERTS_ENABLED !== 'true') return null
+  const { channels, telegram, x } = alertChannels(env)
+  if (!channels.length) return null
+  const since = alertSince(env, 'LAUNCH_ALERTS_SINCE')
+  const origin = alertOrigin(env)
+  const maxPerDay = alertMaxPerDay(env, 'LAUNCH_ALERTS_MAX_PER_DAY', LAUNCH_ALERT_DEFAULTS.maxPerDay)
+  return { ...LAUNCH_ALERT_DEFAULTS, channels, since, origin, maxPerDay, telegram, x }
 }
 
 export function createLaunchAlertSenders(config, { fetchImpl = fetch } = {}) {
@@ -110,50 +136,72 @@ export function createLaunchAlertStore(pool) {
 // ---------- job ----------
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-export function createLaunchAlerts({ store, config, senders, sleep = wait, now = () => Date.now() }) {
-  async function deliver(channel, market) {
-    let text
-    try { text = buildLaunchMessage(market, { channel, origin: config.origin }) }
-    catch (error) { return { status: 'failed', error: String(error.message).slice(0, 200) } }
-    try { return await senders[channel]({ text, url: tokenUrl(config.origin, market.mint) }) }
-    catch { return { status: 'unknown', error: 'sender threw' } }
-  }
+// Builds the text and sends it; never throws. Text that cannot be built is 'failed' (nothing was sent); a sender that
+// throws may have posted, so that is 'unknown'. Shared with milestone alerts.
+export async function deliverAlert({ sender, build, url }) {
+  let text
+  try { text = build() }
+  catch (error) { return { status: 'failed', error: String(error.message).slice(0, 200) } }
+  try { return await sender({ text, url }) }
+  catch { return { status: 'unknown', error: 'sender threw' } }
+}
 
+// One channel's posts in order, shared with milestone alerts: claim, space out, send, record. An item another run has
+// already claimed is skipped. A 'failed' post waits at least retryDelayMs (or the provider's rate-limit reset).
+export async function postInTurn({ items, claim, deliver, finish, describe, config, sleep, now }) {
+  const results = []
+  for (const item of items) {
+    const id = await claim(item)
+    if (!id) continue
+    if (results.length) await sleep(config.spacingMs)
+    const outcome = await deliver(item)
+    const nextAttemptAt = outcome.status === 'failed' ? new Date(now() + Math.max(config.retryDelayMs, outcome.retryAfterMs ?? 0)) : null
+    await finish(id, { ...outcome, nextAttemptAt })
+    results.push({ ...describe(item), status: outcome.status,
+      ...(outcome.messageUrl ? { url: outcome.messageUrl } : {}), ...(outcome.error ? { error: outcome.error } : {}) })
+    // Any failure pauses this channel until the next run instead of hammering the provider.
+    if (outcome.status !== 'sent') break
+  }
+  return results
+}
+
+// Runs work (returning the run's posts) under the store's advisory lock, after expiring claims a crashed run left
+// 'sending'. A missing table (migration not run yet) skips quietly with notMigrated. Shared with milestone alerts.
+export async function runAlertsLocked({ store, config, notMigrated }, work) {
+  let result
+  try {
+    result = await store.withLock(async () => {
+      const interrupted = await store.expireStale(config.staleSendingMs)
+      const posts = await work()
+      return { posts, interrupted: interrupted.map(row => ({ channel: row.channel, mint: row.mint, status: 'unknown' })) }
+    })
+  } catch (error) {
+    if (error?.code === '42P01') return { skipped: notMigrated }
+    throw error
+  }
+  if (!result.locked) return { skipped: 'LOCKED' }
+  return result.value
+}
+
+export function createLaunchAlerts({ store, config, senders, sleep = wait, now = () => Date.now() }) {
   async function runChannel(channel) {
-    const results = []
     const budget = Math.min(config.maxPerRun, config.maxPerDay - await store.sentRecently(channel))
-    if (budget <= 0) return results
+    if (budget <= 0) return []
     const markets = await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts, limit: budget })
-    for (const market of markets) {
-      const id = await store.claim({ channel, market, maxAttempts: config.maxAttempts })
-      if (!id) continue
-      if (results.length) await sleep(config.spacingMs)
-      const outcome = await deliver(channel, market)
-      const nextAttemptAt = outcome.status === 'failed' ? new Date(now() + Math.max(config.retryDelayMs, outcome.retryAfterMs ?? 0)) : null
-      await store.finish(id, { ...outcome, nextAttemptAt })
-      results.push({ channel, repo: market.fullName, mint: market.mint, status: outcome.status,
-        ...(outcome.messageUrl ? { url: outcome.messageUrl } : {}), ...(outcome.error ? { error: outcome.error } : {}) })
-      // Any failure pauses this channel until the next run instead of hammering the provider.
-      if (outcome.status !== 'sent') break
-    }
-    return results
+    return postInTurn({ items: markets, config, sleep, now,
+      claim: market => store.claim({ channel, market, maxAttempts: config.maxAttempts }),
+      deliver: market => deliverAlert({ sender: senders[channel], url: tokenUrl(config.origin, market.mint),
+        build: () => buildLaunchMessage(market, { channel, origin: config.origin }) }),
+      finish: (id, outcome) => store.finish(id, outcome),
+      describe: market => ({ channel, repo: market.fullName, mint: market.mint }) })
   }
 
   async function runOnce() {
-    let result
-    try {
-      result = await store.withLock(async () => {
-        const interrupted = await store.expireStale(config.staleSendingMs)
-        const posts = []
-        for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel))
-        return { posts, interrupted: interrupted.map(row => ({ channel: row.channel, mint: row.mint, status: 'unknown' })) }
-      })
-    } catch (error) {
-      if (error?.code === '42P01') return { skipped: 'LAUNCH_ALERTS_NOT_MIGRATED' }
-      throw error
-    }
-    if (!result.locked) return { skipped: 'LOCKED' }
-    return result.value
+    return runAlertsLocked({ store, config, notMigrated: 'LAUNCH_ALERTS_NOT_MIGRATED' }, async () => {
+      const posts = []
+      for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel))
+      return posts
+    })
   }
   return { runOnce }
 }
