@@ -47,8 +47,41 @@ export async function agreedFinalizedTransaction(connection,verification,signatu
   return receipts[0]
 }
 
-// No in-process estimate/cache. The worker persists only independently verified finalized observations.
-export async function readGraduationState({connection,verification,config,market,env=process.env,db=null}) {
+// The finalized curve pool and config accounts of a pass's markets, read per provider in one getMultipleAccounts
+// plus one getBlockTime per batch instead of per market. A batch serves markets for at most maxAgeMs, so each
+// observation still carries the slot and chain time it was actually read at; agreement and freshness are checked
+// per market exactly as for a single read.
+export function createCurveReads({connection,verification,config,markets,maxAgeMs=30_000,maxAccounts=100,now=Date.now}) {
+  const resolve=createMarketConfigResolver(config)
+  let batch=null
+  // This market first, then the ones processed after it, up to maxAccounts accounts.
+  async function load(first) {
+    const addresses=[],index=new Map(),start=markets.findIndex(m=>m.pool===first.pool)
+    for(const market of [first,...(start<0?[]:markets.slice(start+1))]){
+      let keys
+      try{keys=[new PublicKey(market.pool).toBase58(),resolve(market).toBase58()]}catch{continue}
+      const missing=keys.filter(key=>!index.has(key))
+      if(addresses.length+missing.length>maxAccounts)break
+      for(const key of missing){index.set(key,addresses.length);addresses.push(key)}
+    }
+    const at=now(),keys=addresses.map(address=>new PublicKey(address))
+    const reads=await Promise.all([connection,verification].map(async c=>{
+      const snapshot=await c.getMultipleAccountsInfoAndContext(keys,'finalized')
+      return {snapshot,time:await c.getBlockTime(snapshot.context.slot)}
+    }))
+    return {at,index,reads}
+  }
+  return {async read(market) {
+    const pool=new PublicKey(market.pool).toBase58(),configKey=resolve(market).toBase58()
+    if(!batch||now()-batch.at>=maxAgeMs||!batch.index.has(pool)||!batch.index.has(configKey))batch=await load(market)
+    const {index,reads}=batch
+    return reads.map(({snapshot,time})=>({snapshot:{context:snapshot.context,value:[snapshot.value[index.get(pool)],snapshot.value[index.get(configKey)]]},time}))
+  }}
+}
+
+// No estimates. The worker persists only independently verified finalized observations; within one graduation pass,
+// curveReads may supply both providers' pool/config reads from a batch at most 30 s old.
+export async function readGraduationState({connection,verification,config,market,env=process.env,db=null,curveReads=null}) {
   if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
   const local=[connection,verification].every(c=>/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(c.rpcEndpoint))
   if(connection.rpcEndpoint===verification.rpcEndpoint&&!(local&&env.NODE_ENV!=='production'))throw Error('INDEPENDENT_RPC_REQUIRED')
@@ -56,14 +89,16 @@ export async function readGraduationState({connection,verification,config,market
   if(genesis!=='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'&&!(local&&env.NODE_ENV!=='production'))throw Error('NETWORK_MISMATCH')
   const configKey=createMarketConfigResolver(config)(market),poolKey=new PublicKey(market.pool)
   const addresses=[poolKey,configKey]
-  const reads=await Promise.all([connection,verification].map(async c=>{
+  const fetched=curveReads?await curveReads.read(market):await Promise.all([connection,verification].map(async c=>{
     const snapshot=await c.getMultipleAccountsInfoAndContext(addresses,'finalized')
-    const time=await c.getBlockTime(snapshot.context.slot)
+    return {snapshot,time:await c.getBlockTime(snapshot.context.slot)}
+  }))
+  const reads=fetched.map(({snapshot,time})=>{
     if(!time)throw Error('STALE_PROGRESS')
     const evidence=snapshot.value.map((info,i)=>accountEvidence(info,addresses[i]))
     if(snapshot.value.some(a=>!a?.owner.equals(DBC)))throw Error('CONFIG_OR_POOL_OWNER_MISMATCH')
     return {snapshot,evidence,time}
-  }))
+  })
   agreeGraduation(...reads.map(r=>r.evidence))
   const dbc=new DynamicBondingCurveClient(connection,'finalized'),coder=dbc.state.getProgram().coder.accounts
   const state=coder.decode('virtualPool',reads[0].snapshot.value[0].data).poolState,fixed=coder.decode('poolConfig',reads[0].snapshot.value[1].data)

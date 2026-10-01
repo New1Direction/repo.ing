@@ -6,7 +6,7 @@ import { createGraduatedFees } from './graduated-fees.mjs'
 import { reinvestQuote } from './builder-reinvest-chain.mjs'
 import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { indexDammTrades } from './damm-trades.mjs'
-import { readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
+import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
 import { persistGraduationObservation } from './reserve-alerts.mjs'
 import { readGenesisHash } from './rpc-usage.mjs'
 
@@ -52,14 +52,14 @@ export async function recordGraduationEvidence(db,state,previous,reconciliation)
 
 export function createGraduationMonitor({pool,connection,verification,config,env=process.env}) {
   const reconciler=createReconciler({pool,connection,config})
-  async function processMarket(market,global) {
+  async function processMarket(market,global,curveReads=null) {
     const db=await pool.connect(),repoId=String(market.githubRepoId),alerts=[]
     const notify=async(kind,key,detail)=>{const a=await emitAlert(db,repoId,kind,key,detail);if(a)alerts.push(a)}
     try {
       if(!(await db.query('select pg_try_advisory_lock(hashtextextended($1,0)) as locked',[`graduation:${repoId}`])).rows[0].locked)return {repoId,status:'BUSY',alerts}
       try {
         const {rows:[previous]}=await db.query('select * from graduation_observations where github_repo_id=$1',[repoId])
-        const state=await readGraduationState({connection,verification,config,market,env,db:pool})
+        const state=await readGraduationState({connection,verification,config,market,env,db:pool,curveReads})
         const {rows:[existing]}=await db.query('select signature from graduation_events where github_repo_id=$1',[repoId])
         if(existing&&!state.migration)throw Error('GRADUATION_STATE_DISAGREEMENT')
         const reconciliation=await reconciler.reconcile(repoId)
@@ -135,8 +135,10 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     // Parsing disabled-gate settings for a read-only readiness check never changes the execution environment.
     try{rules=liquidityConfig({...env,REPO_LIQUIDITY_EXECUTION_ENABLED:'true'})}catch{}
     const global={revenue:{...revenue,reconciliation:revenueCheck},reserve,liquidity,rules},results=[]
+    // Curve markets share batched pool/config reads; each market is still agreed and freshness-checked on its own.
+    const curveReads=createCurveReads({connection,verification,config,markets})
     for(const market of markets){
-      results.push(await processMarket(market,global))
+      results.push(await processMarket(market,global,curveReads))
       if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,2000))
     }
     if(revenueCheck.status!=='MATCH'||liquidity.status!=='MATCH'){
