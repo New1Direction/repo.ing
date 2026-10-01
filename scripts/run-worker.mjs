@@ -30,6 +30,8 @@ import { createRpcMeter, registerRpcEndpoint } from '../src/rpc-usage.mjs'
 import { createActivitySchedule, createConfigActivityFeed } from '../src/indexer-schedule.mjs'
 import { approvedConfigs } from '../src/market-config.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
+import { createDevPulseCollector } from '../src/dev-pulse.mjs'
+import { promotionExcludedRepoIds } from '../app/lib/promotion-exclusions.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
@@ -163,6 +165,16 @@ async function observeTradeCanary(){
 }
 const trends=createTrendIntake({pool})
 let trendTask=null,nextTrendCheck=0
+// Dev Pulse reads public GitHub activity with the GitHub App's installation token (read-only metadata); it stays off
+// without that token or with DEV_PULSE_ENABLED=false. Do-not-promote repositories are never read.
+const devPulse=process.env.DEV_PULSE_ENABLED!=='false'&&process.env.GITHUB_APP_PRIVATE_KEY_BASE64&&process.env.GITHUB_APP_INSTALLATION_ID
+  ?createDevPulseCollector({pool,excluded:promotionExcludedRepoIds()}):null
+if(!devPulse)console.log(JSON.stringify({devPulse:'disabled'}))
+let devPulseTask=null,nextDevPulseCheck=0
+async function observeDevPulse(){
+  try{console.log(JSON.stringify({devPulse:await devPulse.runOnce()}))}
+  catch(error){console.log(JSON.stringify({devPulseError:String(error?.message??'DEV_PULSE_UNAVAILABLE').slice(0,120)}))}
+}
 let reserveDelivery=null,reserveDeliveryTask=null,nextReserveDeliveryCheck=0
 if(process.env.RESERVE_ALERTS_ENABLED==='true'){
   try{reserveDelivery=createReserveAlertDelivery({pool,send:createReserveWebhookSender()})}
@@ -235,6 +247,12 @@ try {
       if(once)await observeTrends()
       else if(!trendTask&&Date.now()>=nextTrendCheck)trendTask=observeTrends().finally(()=>{nextTrendCheck=Date.now()+300000;trendTask=null})
     }
+    // GitHub reads are paced by each repository's own schedule; a run checks at most 12 due repositories.
+    if(devPulse){
+      if(once)await observeDevPulse()
+      else if(!devPulseTask&&Date.now()>=nextDevPulseCheck)
+        devPulseTask=observeDevPulse().finally(()=>{nextDevPulseCheck=Date.now()+120000;devPulseTask=null})
+    }
     if(once)await observeBuybackReceipts()
     else if(!buybackReceiptTask&&Date.now()>=nextBuybackReceiptCheck)
       buybackReceiptTask=observeBuybackReceipts().finally(()=>{nextBuybackReceiptCheck=Date.now()+180000;buybackReceiptTask=null})
@@ -277,5 +295,5 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
+} finally { if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }

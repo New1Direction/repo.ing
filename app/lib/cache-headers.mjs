@@ -21,6 +21,8 @@ export const MARKET_METRICS_CACHE = publicCacheHeaders(10, 20)
 // Trend candidates and Explore highlights: rebuilt at most every 15 s per process anyway.
 export const REPO_SEARCH_CACHE = publicCacheHeaders(15, 45)
 export const GROWTH_CACHE = publicCacheHeaders(15, 45)
+// Dev Pulse: the worker refreshes GitHub activity every 10–30 minutes per repository; the page polls every 2 minutes.
+export const PULSE_CACHE = publicCacheHeaders(30, 60)
 
 export const wantsFresh = request => new URL(request.url).searchParams.has('fresh')
 export const marketCacheHeaders = (request, headers) => wantsFresh(request) ? NO_STORE : headers

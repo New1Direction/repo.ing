@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic'
 import { marketPrefetch } from '../lib/market-prefetch.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { useEffect, useState } from 'react'
-import { RefreshCw } from 'lucide-react'
+import { Code2, RefreshCw } from 'lucide-react'
 import { RecentTrades } from './recent-trades'
 import { formatSolDisplay } from '../lib/format.mjs'
 import { formatUsdMarketCap } from '../lib/market-display.mjs'
@@ -18,18 +18,32 @@ if (typeof window !== 'undefined') for (const load of [loadChartCanvas, () => im
 const ChartCanvas = dynamic(loadChartCanvas, { ssr: false,
   loading: () => <div className="chart-skeleton" role="status"><span className="claim-spinner" aria-hidden="true"/>Preparing chart…</div> })
 
-export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
+// pulse: the server-rendered GitHub events for this market; the Dev Pulse card's live refreshes replace them through
+// the 'repoing:pulse-updated' window event ({ mint, events }).
+export function PriceChart({ mint, symbol, curveStatus, onSolUsd, pulse = null }) {
   const [range, setRange] = useState('all'), [style, setStyle] = useState(null), [metric, setMetric] = useState('cap')
   const [data, setData] = useState(null), [metrics, setMetrics] = useState(null)
   const [error, setError] = useState(false), [metricsError, setMetricsError] = useState(false), [refreshing, setRefreshing] = useState(true)
   const [retry, setRetry] = useState(0), [pendingSignature, setPendingSignature] = useState(null)
   const [now, setNow] = useState(Date.now())
+  const [livePulse, setLivePulse] = useState(null), [showPulse, setShowPulse] = useState(true)
+  const pulseEvents = livePulse?.mint === mint ? livePulse.events : pulse
   useEffect(() => {
     try { const saved = localStorage.getItem('repoing:chart-style'); if (['line', 'candles'].includes(saved)) setStyle(saved) } catch { /* Storage is optional. */ }
+    try { if (localStorage.getItem('repoing:chart-pulse') === 'off') setShowPulse(false) } catch { /* Storage is optional. */ }
   }, [])
+  useEffect(() => {
+    const onPulse = event => { if (event.detail?.mint === mint && Array.isArray(event.detail.events)) setLivePulse({ mint, events: event.detail.events }) }
+    window.addEventListener('repoing:pulse-updated', onPulse)
+    return () => window.removeEventListener('repoing:pulse-updated', onPulse)
+  }, [mint])
   function chooseStyle(value) {
     setStyle(value)
     try { localStorage.setItem('repoing:chart-style', value) } catch { /* Keep the choice for this visit. */ }
+  }
+  function choosePulse(value) {
+    setShowPulse(value)
+    try { localStorage.setItem('repoing:chart-pulse', value ? 'on' : 'off') } catch { /* Keep the choice for this visit. */ }
   }
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(timer) }, [])
   useEffect(() => {
@@ -117,9 +131,10 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
       <div className="chart-headline"><strong>{latestValue && !capUnavailable ? capMode ? formatUsdMarketCap(latestValue * capMultiplier) : chartPriceLabel(latestValue) : '—'}</strong>{change !== null && <span className={change >= 0 ? 'chart-up' : 'chart-down'} title="Change from the first to last recorded price in the displayed period">{change > 0 ? '+' : ''}{change.toFixed(2)}% <small>{periodLabel(current.range)}</small></span>}</div>
     </div><div className="chart-metrics"><span>{data?.graduation ? '24h total volume' : ended ? '24h curve volume' : '24h volume'}<strong>{data ? `${formatSolDisplay(data.volume24hLamports)} SOL` : <span className="skeleton-text"/>}</strong></span><span>{historyOnly ? 'Last curve cap' : 'Market cap'}<strong>{latestValue && capMultiplier ? formatUsdMarketCap(latestValue * capMultiplier) : '—'}</strong></span><span>Holders<strong>{historyOnly || freshMetrics?.holders == null ? '—' : freshMetrics.holders.toLocaleString('en-US')}</strong></span></div></div>
     <div className="chart-toolbar"><div className="chart-control-group" aria-label="Chart period">{CHART_PERIODS.map(([value, label]) => <button key={value} aria-pressed={range === value} onClick={() => { if (value !== range) { setRange(value); setRefreshing(true); setError(false) } }}>{label}</button>)}</div>
-      <div className="chart-options"><div className="chart-control-group" aria-label="Chart value"><button aria-pressed={!capMode} onClick={() => setMetric('price')}>Price</button><button aria-pressed={capMode} disabled={!capMultiplier && !capMode} onClick={() => setMetric('cap')}>MCap</button></div><div className="chart-control-group" aria-label="Chart style"><button aria-pressed={style === 'line'} onClick={() => chooseStyle('line')}>Line</button><button aria-pressed={style === 'candles'} onClick={() => chooseStyle('candles')}>Candles</button></div></div>
+      <div className="chart-options"><div className="chart-control-group" aria-label="Chart value"><button aria-pressed={!capMode} onClick={() => setMetric('price')}>Price</button><button aria-pressed={capMode} disabled={!capMultiplier && !capMode} onClick={() => setMetric('cap')}>MCap</button></div><div className="chart-control-group" aria-label="Chart style"><button aria-pressed={style === 'line'} onClick={() => chooseStyle('line')}>Line</button><button aria-pressed={style === 'candles'} onClick={() => chooseStyle('candles')}>Candles</button></div>
+        {pulseEvents?.length > 0 && <div className="chart-control-group" aria-label="GitHub events"><button className="chart-pulse-toggle" aria-pressed={showPulse} onClick={() => choosePulse(!showPulse)} title={showPulse ? 'Hide GitHub releases, merges and commits on the chart' : 'Show GitHub releases, merges and commits on the chart'}><Code2 size={13} aria-hidden="true"/>Dev</button></div>}</div>
     </div>
-    {current ? <ChartCanvas data={current} multiplier={capMode ? capMultiplier : 1} unit={capMode ? 'USD' : 'SOL'} style={style ?? 'line'} symbol={symbol}>
+    {current ? <ChartCanvas data={current} multiplier={capMode ? capMultiplier : 1} unit={capMode ? 'USD' : 'SOL'} style={style ?? 'line'} symbol={symbol} pulse={pulseEvents} showPulse={showPulse}>
       {empty ? <div className="chart-overlay chart-empty" role="status">{emptyMessage}</div> : capUnavailable && <div className="chart-overlay chart-empty" role="status"><strong>{metricsError || metrics ? 'USD estimate is unavailable' : 'Loading market cap…'}</strong><span>SOL prices are available independently.</span><button className="button outline" onClick={() => setMetric('price')}>Show SOL price</button></div>}
       {awaitingRange && <div className="chart-period-status" role="status">{refreshing && <span className="claim-spinner" aria-hidden="true"/>}{refreshing ? `Loading ${periodLabel(range)}` : `${periodLabel(range)} unavailable`} · showing {periodLabel(current.range)}</div>}
     </ChartCanvas> : <div className="chart-skeleton is-loading" role="status">{refreshing ? <><span className="claim-spinner" aria-hidden="true"/>Loading finalized prices…</> : emptyMessage}</div>}

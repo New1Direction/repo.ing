@@ -9,7 +9,8 @@ import { GraduationProgress } from './graduation-progress'
 
 // `aside` (server-rendered, e.g. the tip card) sits under the trade panel: right column on desktop, right after it on mobile.
 // `below` (server-rendered, e.g. holder notes) sits under recent trades on desktop and after the side column on mobile.
-export function MarketTrading({ market, available, usdPerSol, aside = null, below = null }) {
+// `pulse` (server-read GitHub events) becomes pins on the price chart.
+export function MarketTrading({ market, available, usdPerSol, aside = null, below = null, pulse = null }) {
   useEffect(() => watchMarketEvents(market.mint), [market.mint])
   const [solPrice, setSolPrice] = useState(usdPerSol)
   const [curve, setCurve] = useState(null), [error, setError] = useState(false)
@@ -50,5 +51,5 @@ export function MarketTrading({ market, available, usdPerSol, aside = null, belo
     return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTrade); window.removeEventListener('repoing:market-updated', onTrade) }
   }, [market.mint])
   return <><GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)}/>
-    <div className="market-grid"><PriceChart key={`chart:${market.mint}`} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}/><div className="market-side"><TradePanel key={`trade:${market.mint}`} market={market} available={available} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/>{aside}</div>{below}</div></>
+    <div className="market-grid"><PriceChart key={`chart:${market.mint}`} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice} pulse={pulse}/><div className="market-side"><TradePanel key={`trade:${market.mint}`} market={market} available={available} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/>{aside}</div>{below}</div></>
 }
