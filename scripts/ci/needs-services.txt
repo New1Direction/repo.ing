@@ -14,6 +14,7 @@ github-verification
 graduated-fees
 graduation-guards
 graduation-migration
+graduation-race-db
 graduation-readiness
 launch-chain
 launch-coordinator
@@ -22,6 +23,7 @@ launch-first-buy
 launch-indexer
 liquidity-deployment
 market-lookup
+milestone-alerts-db
 platform-dbc-fees
 platform-fees
 platform-revenue

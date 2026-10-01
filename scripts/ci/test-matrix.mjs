@@ -26,6 +26,7 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_tips_test'), launchtest('repoing_trade_sessions_test'), launchtest('repoing_x_links_test'),
   launchtest('repoing_parts_test'), launchtest('repoing_backers_test'), launchtest('repoing_launch_alerts_test'),
   launchtest('repoing_trust_test'), launchtest('repoing_trending_test'),
+  launchtest('repoing_graduation_race_test'), launchtest('repoing_milestone_alerts_test'),
   // Required (not opt-in) by replica-state, which is listed in needs-services.txt.
   launchtest('repoing_launch_sessions_test'),
 ]
@@ -44,6 +45,8 @@ export const DEFAULT_ENV = {
   LAUNCH_ALERTS_TEST_DATABASE_URL: launchtest('repoing_launch_alerts_test'),
   TRUST_TEST_DATABASE_URL: launchtest('repoing_trust_test'),
   TRENDING_TEST_DATABASE_URL: launchtest('repoing_trending_test'),
+  GRADUATION_RACE_TEST_DATABASE_URL: launchtest('repoing_graduation_race_test'),
+  MILESTONE_ALERTS_TEST_DATABASE_URL: launchtest('repoing_milestone_alerts_test'),
   LAUNCH_SESSIONS_TEST_DATABASE_URL: launchtest('repoing_launch_sessions_test'),
   // Production default; graduation-guards asserts the ambient environment keeps P3 execution off.
   REPO_LIQUIDITY_EXECUTION_ENABLED: 'false',

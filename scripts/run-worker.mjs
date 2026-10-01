@@ -22,6 +22,7 @@ import { createPartsFundJobs } from '../src/parts-settlement.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
 import { createLaunchAlerts, createLaunchAlertSenders, createLaunchAlertStore, LaunchAlertConfigError, launchAlertsConfig } from '../src/launch-alerts.mjs'
+import { createMilestoneAlerts, createMilestoneAlertStore, milestoneAlertsConfig } from '../src/milestone-alerts.mjs'
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
@@ -116,6 +117,19 @@ async function deliverLaunchAlerts(){
     const r=await launchAlerts.runOnce()
     if(r.posts?.length||r.interrupted?.length||r.skipped==='LAUNCH_ALERTS_NOT_MIGRATED')console.log(JSON.stringify({launchAlerts:r}))
   }catch{console.log(JSON.stringify({launchAlertError:'LAUNCH_ALERTS_UNAVAILABLE'}))}
+}
+// Public graduation-milestone posts (25/50/75/90% and graduation) to the same channels. Off unless
+// GRADUATION_ALERTS_ENABLED=true and GRADUATION_ALERTS_SINCE are set; claimed in milestone_alerts before sending.
+let milestoneAlerts=null,milestoneAlertTask=null,nextMilestoneAlertCheck=0
+try{
+  const milestoneAlertConfig=milestoneAlertsConfig()
+  if(milestoneAlertConfig)milestoneAlerts=createMilestoneAlerts({store:createMilestoneAlertStore(pool),config:milestoneAlertConfig,senders:createLaunchAlertSenders(milestoneAlertConfig)})
+}catch(error){console.log(JSON.stringify({milestoneAlertError:error instanceof LaunchAlertConfigError?error.message:'GRADUATION_ALERTS_CONFIG_INVALID'}))}
+async function deliverMilestoneAlerts(){
+  try{
+    const r=await milestoneAlerts.runOnce()
+    if(r.posts?.length||r.interrupted?.length||r.skipped==='MILESTONE_ALERTS_NOT_MIGRATED')console.log(JSON.stringify({milestoneAlerts:r}))
+  }catch{console.log(JSON.stringify({milestoneAlertError:'GRADUATION_ALERTS_UNAVAILABLE'}))}
 }
 // Operator-only trade canary: real prepare path, simulation only. Never signs or sends; the payer is unsigned.
 const canaryConnection=new Connection(rpc,'confirmed')
@@ -214,6 +228,11 @@ try {
       else if(!launchAlertTask&&Date.now()>=nextLaunchAlertCheck)
         launchAlertTask=deliverLaunchAlerts().finally(()=>{nextLaunchAlertCheck=Date.now()+60000;launchAlertTask=null})
     }
+    if(milestoneAlerts){
+      if(once)await deliverMilestoneAlerts()
+      else if(!milestoneAlertTask&&Date.now()>=nextMilestoneAlertCheck)
+        milestoneAlertTask=deliverMilestoneAlerts().finally(()=>{nextMilestoneAlertCheck=Date.now()+60000;milestoneAlertTask=null})
+    }
     if(reminders){
       if(once)await deliverBuilderReminders()
       else if(!reminderTask&&Date.now()>=nextReminderCheck)
@@ -229,4 +248,4 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(launchAlertTask)await launchAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }
+} finally { if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end() }

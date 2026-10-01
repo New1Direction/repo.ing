@@ -11,7 +11,7 @@ import { ShareMarket } from '../../../components/share-market'
 import { ActivityFeed } from '../../../components/activity-feed'
 import { DiscoveryRewards } from '../../../components/discovery-rewards'
 import { CopyAddress } from '../../../components/copy-address'
-import { marketByMint, feeStatus, tradeAvailable, listMarkets } from '../../../lib/server.mjs'
+import { marketByMint, feeStatus, tradeAvailable, listMarkets, graduationRace } from '../../../lib/server.mjs'
 import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
 import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../../lib/format.mjs'
@@ -31,6 +31,8 @@ import { tokenJsonLd } from '../../../lib/json-ld.mjs'
 import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
 import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
 import { TrustPanel } from '../../../components/trust-panel'
+import { MarketsToWatch, MarketsToWatchFallback, MarketsToWatchLists } from '../../../components/markets-to-watch'
+import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-race.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([feeStatus(repoId), solUsdPrice()]))
@@ -96,7 +98,7 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null}
-        aside={<><TrustPanel market={market}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
+        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
@@ -114,6 +116,15 @@ function TokenDetails({ market }) {
     <div><dt>Decimals</dt><dd>6</dd></div>
     <div><dt>Pool</dt><dd title={market.pool}>{market.pool.slice(0,6)}…{market.pool.slice(-4)}</dd></div>
   </dl></div>
+}
+
+// $REPOING page: the graduation race's top three and the three newest launches, from the same memoized reads as the
+// home page (no extra query per view). The official market itself is never listed.
+async function MarketsToWatchContent() {
+  const [{ markets: race, unavailable: raceUnavailable }, { markets, unavailable }] = await Promise.all([graduationRace(), listMarkets()])
+  const excludeMints = [OFFICIAL_TOKEN.mint]
+  return <MarketsToWatchLists race={topOfRace(race, { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
+    newest={newestLaunches(markets, { excludeMints })} newestUnavailable={unavailable}/>
 }
 
 // Same memoized listMarkets() rows as the home tabs: no extra query per token page view.
