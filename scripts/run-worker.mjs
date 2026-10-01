@@ -13,6 +13,7 @@ import { createPlatformFeeRecovery } from '../src/platform-fees.mjs'
 import { Connection } from '@solana/web3.js'
 import { createLaunchEvidenceVerifier } from '../src/launch-evidence.mjs'
 import { createLaunchIndexer } from '../src/launch-indexer.mjs'
+import { expireLaunchSessions } from '../src/launch-sessions.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
 import { createTipExpiry, readTipWallet } from '../src/tips.mjs'
@@ -153,6 +154,9 @@ try {
     const result = {}
     try { result.launches = await launches.runOnce() }
     catch (error) { result.launchError = error.message }
+    // Expired launch reviews release their 'prepared' market even when no web request arrives to sweep them.
+    try { const swept = await expireLaunchSessions(pool); if (swept.removed) result.launchSessions = swept }
+    catch (error) { if (error?.code !== '42P01') result.launchSessionError = 'Launch session expiry unavailable' }
     try { result.claims = await claims.runOnce() }
     catch { result.claimError = 'Claim recovery unavailable' }
     try { result.allocations = await allocations.runOnce() }

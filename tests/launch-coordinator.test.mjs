@@ -9,6 +9,7 @@ import { parseRepositoryUrl, RepositoryResolutionError } from '../src/github.mjs
 import { DefinitiveLaunchError } from '../src/meteora-launch.mjs'
 import sharp from 'sharp'
 import { normalizeTokenImage, validateTokenImage } from '../src/token-image.mjs'
+import { createLaunchSessionStore, launchSessionKey } from '../src/launch-sessions.mjs'
 
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:launchtest@127.0.0.1:55432/gitfun_launch'
 const testDatabase = new URL(databaseUrl)
@@ -41,9 +42,10 @@ const fakeLauncher = (overrides = {}) => ({
   submit: async () => {}, inspect: async () => true, ...overrides,
 })
 
+const replicaPool = new pg.Pool({ connectionString: databaseUrl })
 test.before(async () => { await pool.query('select 1') })
 test.beforeEach(async () => { await pool.query('truncate markets, repositories restart identity cascade'); serial = 0 })
-test.after(async () => { await pool.end() })
+test.after(async () => { await pool.end(); await replicaPool.end() })
 
 test('public repo resolves and URL parser rejects unsupported forms', async () => {
   const coordinator = createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: fakeFetch })
@@ -171,4 +173,79 @@ test('unvalidated image input cannot reserve a market or reach wallet signing', 
   await assert.rejects(coordinator.launch({ ...request(), tokenImage: 'https://example.test/mutable.svg' }), /image/)
   assert.equal(serial, 0)
   assert.equal((await pool.query('select count(*) from markets')).rows[0].count, '0')
+})
+
+// ---------- Split prepare/submit across replicas (the /api/launch route) ----------
+// Two pools stand in for two web replicas; the review travels only through launch_sessions.
+const sessionKey = launchSessionKey(Keypair.generate().secretKey)
+function replica(db, launcher, options = {}) {
+  const store = createLaunchSessionStore({ pool: db, key: sessionKey })
+  return { store, coordinator: createLaunchCoordinator({ pool: db, launcher, fetchImpl: fakeFetch, pendingReview: market => store.pending(market.id), ...options }) }
+}
+function splitLauncher(overrides = {}) {
+  const launcher = fakeLauncher(overrides)
+  const prepare = launcher.prepare
+  launcher.prepare = async input => { const mint = Keypair.generate(); return { ...await prepare(input), mint: mint.publicKey.toBase58(), mintSecretKey: mint.secretKey } }
+  return launcher
+}
+async function prepareReview(side, extra = {}) {
+  const id = crypto.randomUUID()
+  const result = await side.coordinator.prepareLaunch({ ...request(), ...extra, onPrepared: async ({ market, prepared, repo }) => {
+    assert.equal((await pool.query('select status from markets where id=$1', [market.id])).rows[0].status, 'prepared')
+    await side.store.create({ id, market, repoFullName: repo.fullName, config: Keypair.generate().publicKey.toBase58(), transaction: 'dW5zaWduZWQ=',
+      mintSecretKey: prepared.mintSecretKey, blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight })
+  } })
+  return { id, ...result }
+}
+const restored = (session, sign = async signTransaction => { await signTransaction(); return { raw: Buffer.from([1]), signature: Keypair.generate().publicKey.toBase58() } }) =>
+  ({ blockhash: session.blockhash, lastValidBlockHeight: BigInt(session.lastValidBlockHeight), sign })
+const submitArgs = (session, prepared = restored(session)) => ({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,
+  repo: { githubRepoId: BigInt(session.githubRepoId), fullName: session.repoFullName }, prepared, signTransaction: async () => 'wallet-signed' })
+
+test('a launch prepared on one replica is submitted from another; a second prepare waits for the open review', async () => {
+  const launcher = splitLauncher(), a = replica(pool, launcher), b = replica(replicaPool, launcher)
+  const { id, market, prepared } = await prepareReview(a)
+  assert.equal(market.status, 'prepared')
+  assert.equal(market.mint, prepared.mint)
+  await assert.rejects(prepareReview(b), /awaiting wallet approval/)
+  assert.equal(serial, 1)
+  const session = await b.store.consume(id)
+  const confirmed = await b.coordinator.submitPrepared(submitArgs(session))
+  assert.equal(confirmed.status, 'confirmed')
+  assert.equal(confirmed.mint, market.mint)
+  assert.equal((await a.coordinator.prepareLaunch(request())).market.id, confirmed.id, 'a launched market needs no new review')
+  assert.equal(serial, 1)
+  assert.equal((await pool.query('select count(*)::int as n from markets')).rows[0].n, 1)
+})
+
+test('a stale review cannot submit over a newer prepare of the same repository', async () => {
+  const launcher = splitLauncher(), a = replica(pool, launcher), b = replica(replicaPool, launcher)
+  const first = await prepareReview(a)
+  const stale = await a.store.consume(first.id)
+  const second = await prepareReview(b)
+  assert.notEqual(second.market.mint, first.market.mint)
+  await assert.rejects(a.coordinator.submitPrepared(submitArgs(stale)), /Prepared launch expired/)
+  const market = (await drizzle(pool).select().from(markets))[0]
+  assert.equal(market.status, 'prepared')
+  assert.equal(market.mint, second.market.mint)
+  assert.equal((await b.coordinator.submitPrepared(submitArgs(await b.store.consume(second.id)))).status, 'confirmed')
+})
+
+test('split launch failures release the market exactly like the one-call launch', async () => {
+  const launcher = splitLauncher(), a = replica(pool, launcher)
+  await assert.rejects(a.coordinator.prepareLaunch({ ...request(), onPrepared: async () => { throw Error('cost estimate failed') } }), /cost estimate failed/)
+  assert.equal((await drizzle(pool).select().from(markets))[0].status, 'failed')
+  assert.equal((await pool.query('select count(*)::int as n from launch_sessions')).rows[0].n, 0)
+
+  const { id } = await prepareReview(a)
+  const session = await a.store.consume(id)
+  await assert.rejects(a.coordinator.submitPrepared(submitArgs(session, restored(session, async () => {
+    throw new DefinitiveLaunchError('Your wallet changed the launch transaction.') }))), DefinitiveLaunchError)
+  assert.equal((await drizzle(pool).select().from(markets))[0].status, 'failed')
+  await assert.rejects(a.coordinator.submitPrepared(submitArgs(session)), /Prepared launch expired/)
+
+  const ambiguous = replica(pool, splitLauncher({ submit: async () => { throw Error('RPC timeout') } }))
+  const next = await prepareReview(ambiguous)
+  await assert.rejects(ambiguous.coordinator.submitPrepared(submitArgs(await ambiguous.store.consume(next.id))), /RPC timeout/)
+  assert.equal((await drizzle(pool).select().from(markets))[0].status, 'ambiguous')
 })
