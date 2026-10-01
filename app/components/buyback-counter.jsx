@@ -15,8 +15,9 @@ export async function BuybackCounter() {
 
 export function BuybackFrame({ children = <span className="buyback-counter-pending">Loading buyback totals…</span> }) {
   return <aside className="buyback-counter" aria-label={`${OFFICIAL_TOKEN.symbol} buybacks`}>
+    <img className="buyback-counter-art" src="/launch-icons/buybacks.webp?v=1" alt="" width={64} height={64} decoding="async" fetchPriority="low"/>
     <span className="buyback-counter-label">Buybacks</span>
     <div className="buyback-counter-body"><p>{children}</p></div>
-    <Link href="/stats#repo-title">Receipts <ArrowRight size={14} aria-hidden="true"/></Link>
+    <Link href="/stats#repo-title"><img src="/launch-icons/receipts-ui.webp?v=1" alt="" width={18} height={18} decoding="async" fetchPriority="low"/>Receipts <ArrowRight size={14} aria-hidden="true"/></Link>
   </aside>
 }
