@@ -11,7 +11,7 @@ import { ShareMarket } from '../../../components/share-market'
 import { ActivityFeed } from '../../../components/activity-feed'
 import { DiscoveryRewards } from '../../../components/discovery-rewards'
 import { CopyAddress } from '../../../components/copy-address'
-import { marketByMint, feeStatus, tradeAvailable, listMarkets, graduationRace } from '../../../lib/server.mjs'
+import { marketByMint, displayFeeStatus, tradeAvailable, listMarkets, graduationRace } from '../../../lib/server.mjs'
 import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
 import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../../lib/format.mjs'
@@ -36,7 +36,7 @@ import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-
 import { marketLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
-const earningsEvidence = cache(repoId => Promise.all([feeStatus(repoId), solUsdPrice()]))
+const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
 
 export const dynamic = 'force-dynamic'
 

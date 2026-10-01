@@ -7,7 +7,8 @@ import { chain, database } from './server.mjs'
 
 // On-chain holder snapshot per mint: three batched RPC reads (largest token accounts; the mint plus those accounts;
 // their owners' program ids, no data), shared by every token page view for SNAPSHOT_MS with in-flight dedupe.
-const SNAPSHOT_MS = 60_000
+// Concentration moves slowly; five minutes keeps a busy page to three reads per mint per window.
+const SNAPSHOT_MS = 300_000
 // A failed read is remembered briefly so a slow or rate-limited RPC is not retried by every page view.
 const FAILURE_MS = 15_000
 const RPC_TIMEOUT_MS = 6_000

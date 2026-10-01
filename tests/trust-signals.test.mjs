@@ -169,7 +169,7 @@ test('holder snapshot is cached per mint, deduplicated in flight, and never thro
   const [first, second] = await Promise.all([holderSnapshot(market, { connection, now: () => clock }), holderSnapshot(market, { connection, now: () => clock })])
   assert.equal(first, second)
   assert.equal(connection.calls.filter(call => call === 'largest').length, 1)
-  clock += 59_000
+  clock += 299_000
   await holderSnapshot(market, { connection, now: () => clock })
   assert.equal(connection.calls.filter(call => call === 'largest').length, 1)
   clock += 2_000

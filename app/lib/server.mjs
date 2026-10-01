@@ -222,3 +222,21 @@ export async function feeStatus(repoId) {
   try { return await createReconciler({ pool, connection: chain(), config }).reconcile(repoId) }
   catch { return { status: 'UNAVAILABLE', onchainCreatorFee: null } }
 }
+
+// Token pages display fee status on every view; one chain reconciliation per repository per 30 s (10 s while it is
+// unavailable) serves every viewer of this process. Claim and payout paths call feeStatus and always read fresh.
+const DISPLAY_FEE_STATUS_MS = 30_000
+const DISPLAY_FEE_UNAVAILABLE_MS = 10_000
+const displayFeeStatuses = new Map()
+export function displayFeeStatus(repoId, { now = Date.now, read = feeStatus } = {}) {
+  const key = String(repoId), hit = displayFeeStatuses.get(key)
+  if (hit?.pending) return hit.pending
+  if (hit && now() < hit.expiresAt) return Promise.resolve(hit.value)
+  const pending = read(key).then(value => {
+    if (displayFeeStatuses.size >= 500) displayFeeStatuses.delete(displayFeeStatuses.keys().next().value)
+    displayFeeStatuses.set(key, { value, expiresAt: now() + (value?.status === 'UNAVAILABLE' ? DISPLAY_FEE_UNAVAILABLE_MS : DISPLAY_FEE_STATUS_MS) })
+    return value
+  }, error => { displayFeeStatuses.delete(key); throw error })
+  displayFeeStatuses.set(key, { pending })
+  return pending
+}
