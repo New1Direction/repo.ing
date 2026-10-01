@@ -31,4 +31,5 @@ referral
 reserve-alerts-integration
 trade
 trend-integration
+trust-signals-db
 wallet-binding
