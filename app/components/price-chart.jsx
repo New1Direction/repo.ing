@@ -33,17 +33,19 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
   }
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(timer) }, [])
   useEffect(() => {
-    let active = true, running = false, queued = false
+    let active = true, running = false, queued = false, queuedFresh = false
     const controller = new AbortController()
     const warmed = range === 'all' ? marketPrefetch.take(mint) : null
     if (warmed) { setData(warmed); setRefreshing(false) }
-    async function refresh() {
-      if (running) { queued = true; return }
+    // fresh: prompted by a trade (live hint or the viewer's own), so the API skips any shared edge copy.
+    async function refresh(fresh = false) {
+      if (running) { queued = true; queuedFresh ||= fresh === true; return }
       running = true; setRefreshing(true)
       try {
-        let result = range === 'all' ? await takeEarlyChart(mint, 'trades') : null
+        const early = range === 'all' ? takeEarlyChart(mint, 'trades') : null
+        let result = early && fresh !== true ? await early : null
         if (!result) {
-          const response = await fetch(marketTradesUrl(mint, range), { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
+          const response = await fetch(marketTradesUrl(mint, range, { fresh: fresh === true }), { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
           if (!response.ok) throw Error('Trade history unavailable')
           result = await response.json()
         }
@@ -53,14 +55,14 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
           setStyle(value => value ?? (result.candles.filter(bar => !bar.orderingPending).length < 12 ? 'line' : 'candles'))
         }
       } catch { if (active) setError(true) }
-      finally { running = false; if (active) { setRefreshing(false); if (queued) { queued = false; void refresh() } } }
+      finally { running = false; if (active) { setRefreshing(false); if (queued) { const again = queuedFresh; queued = false; queuedFresh = false; void refresh(again) } } }
     }
     function onTradeConfirmed(event) {
       if (event.detail?.mint !== mint || !event.detail.signature) return
       setPendingSignature(event.detail.signature)
-      void refresh()
+      void refresh(true)
     }
-    const onIndexed = event => { if (event.detail?.mint === mint && event.detail.kind !== 'curve') void refresh() }
+    const onIndexed = event => { if (event.detail?.mint === mint && event.detail.kind !== 'curve') void refresh(true) }
     window.addEventListener('repoing:market-updated', onIndexed)
     // Indexed trades arrive over SSE (repoing:market-updated); polling is only the fallback.
     const stopPolling = visiblePolling(refresh, 60000)

@@ -1,5 +1,5 @@
 import { database } from '../../../../lib/server.mjs'
-import { createMarketNotifications } from '../../../../../src/market-notifications.mjs'
+import { marketNotificationHub } from '../../../../lib/market-hub.mjs'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -12,7 +12,7 @@ export async function GET(request, { params }) {
     const result = await db.query("select 1 from markets where mint=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'", [mint])
     if (!result.rowCount) return new Response(null, { status: 404, headers })
   } catch { return new Response(null, { status: 503, headers }) }
-  const hub = globalThis.__repoingMarketNotifications ??= createMarketNotifications({ connectionString: process.env.DATABASE_URL })
+  const hub = marketNotificationHub()
   const encoder = new TextEncoder()
   let cleanup = () => {}
   const stream = new ReadableStream({

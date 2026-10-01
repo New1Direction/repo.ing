@@ -39,7 +39,23 @@ export async function recordChartBlock(db, proof) {
       Number(stored.parent_slot) !== proof.parentSlot || JSON.stringify(stored.signatures) !== JSON.stringify(proof.signatures)) {
     fail('CHART_EVIDENCE_CONFLICT')
   }
+  // Chart reads order trades by these stored positions instead of searching the block's whole signature list.
+  await db.query(`insert into finalized_chart_positions(slot,signature,transaction_index)
+    select $1::bigint,s.signature,s.ord from unnest($2::text[]) with ordinality as s(signature,ord)
+    where s.signature in (select signature from trade_events where slot=$1 union select signature from damm_trade_events where slot=$1)
+    on conflict do nothing`, [proof.slot, proof.signatures])
 }
+
+// Positions for trades indexed after their block was recorded. Only trades without a stored position read the block's
+// signature list; a trade absent from its recorded block (an evidence conflict) stays without one.
+const SYNC_POSITIONS = `insert into finalized_chart_positions(slot,signature,transaction_index)
+  select slot,signature,transaction_index from (
+    select t.slot,t.signature,array_position(b.signatures,t.signature::text) as transaction_index
+    from (select slot,signature from trade_events union select slot,signature from damm_trade_events) t
+    join finalized_chart_blocks b on b.slot=t.slot
+    where not exists (select 1 from finalized_chart_positions p where p.slot=t.slot and p.signature=t.signature)
+    offset 0) missing
+  where transaction_index is not null on conflict do nothing`
 
 // Auxiliary chart evidence only. Never changes trade amounts, fees, or financial intents.
 export function createChartOrdering({ pool, connection, verification, now = Date.now }) {
@@ -52,12 +68,16 @@ export function createChartOrdering({ pool, connection, verification, now = Date
       const { rows: [lock] } = await db.query("select pg_try_advisory_lock(hashtext('chart-block-ordering')) as locked")
       locked = lock.locked
       if (!locked) return { status: 'locked', verified: 0 }
+      await db.query(SYNC_POSITIONS)
+      // Multi-transaction slots without a recorded block, or with a trade missing from it (no stored position after the
+      // sync above). Never reads the blocks' signature lists, which used to be de-TOASTed in full on every pass.
       const { rows } = await db.query(`with all_trades as (
         select slot,signature from trade_events union all select slot,signature from damm_trade_events
         ) select t.slot::text,array_agg(distinct t.signature) as signatures
         from all_trades t left join finalized_chart_blocks b on b.slot=t.slot
-        group by t.slot,b.slot,b.signatures having count(distinct t.signature)>1
-        and (b.slot is null or not b.signatures @> array_agg(distinct t.signature)::text[])
+        left join finalized_chart_positions p on p.slot=t.slot and p.signature=t.signature
+        group by t.slot,b.slot having count(distinct t.signature)>1
+        and (b.slot is null or count(distinct p.signature)<count(distinct t.signature))
         order by t.slot desc`)
       const result = { status: 'checked', verified: 0, pending: rows.length, errors: [] }
       let attempted = 0

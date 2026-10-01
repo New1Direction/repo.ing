@@ -1,6 +1,7 @@
 'use client'
 import { watchMarketEvents } from '../lib/market-events.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
+import { marketCurveUrl } from '../lib/market-chart-urls.mjs'
 import { useEffect, useRef, useState } from 'react'
 import { PriceChart } from './price-chart'
 import { TradePanel } from './trade-panel'
@@ -24,21 +25,26 @@ export function MarketTrading({ market, available, usdPerSol, aside = null, belo
     return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', update) }
   }, [curve])
   useEffect(() => {
-    let active = true, running = false
+    let active = true, running = false, queuedFresh = false
     const controller = new AbortController()
-    async function refresh() {
-      if (running) return
+    // fresh: prompted by a live hint or the viewer's own trade, so the API skips any shared edge copy. A hint that lands
+    // while a read is running gets one more fresh read after it.
+    async function refresh(fresh = false) {
+      if (running) { queuedFresh ||= fresh === true; return }
       running = true
       try {
-        const response = await fetch(`/api/market/${market.mint}/curve`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
+        const response = await fetch(marketCurveUrl(market.mint, { fresh: fresh === true }), { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
         if (!response.ok) throw Error()
         const result = await response.json()
         if (active) { if (result.status !== 'active') curveEnded.current = market.mint; setCurve(result); setError(false) }
-      } catch { if (active) {setError(true);setCurve(null)} } finally { running = false }
+      } catch { if (active) {setError(true);setCurve(null)} } finally {
+        running = false
+        if (active && queuedFresh) { queuedFresh = false; void refresh(true) }
+      }
     }
     // Trades and ~30 s graduation observations arrive over SSE; polling is only the fallback.
     const stopPolling = visiblePolling(refresh, 60000)
-    const onTrade = event => { if (event.detail?.mint === market.mint) void refresh() }
+    const onTrade = event => { if (event.detail?.mint === market.mint) void refresh(true) }
     window.addEventListener('repoing:trade-confirmed', onTrade)
     window.addEventListener('repoing:market-updated', onTrade)
     return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTrade); window.removeEventListener('repoing:market-updated', onTrade) }

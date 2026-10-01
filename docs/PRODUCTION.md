@@ -77,7 +77,7 @@ From migration `0036_launch_sessions` on, the web service is replica-safe: no re
 - **Trades** (`trade_sessions`, above), **wallet challenges**, **holder-note / X-link / agent quotas** and the **Parts pledge prepare throttle** (`agent_request_limits`; 240/min overall, 12/min per client, 6/min per wallet) are database-backed. GitHub and X OAuth state rides in sealed cookies.
 - **Live market updates** come from PostgreSQL `NOTIFY` triggers; each replica holds its own `LISTEN` connection, so every replica sees every update.
 
-Per replica by design (correct with any number of replicas): short-TTL read caches (market list 15 s, holder counts 30 s, X handles 60 s — an unlinked handle can show on another replica for up to a minute — holder balances, repository images/logos, SOL price, release notes), the per-process concurrency caps (repo search 4, image uploads 2, 500 live-update viewers), the CSP-report limiter, and the CSP counters on `/operations/health` (they describe only the replica that served the page). If PostgreSQL is unreachable at trade prepare, that one trade falls back to in-process memory and can only be submitted on the same replica. Each replica opens its own connection pool plus one `LISTEN` connection; size `max_connections` for the replica count.
+Per replica by design (correct with any number of replicas): short-TTL read caches (market list 15 s, Explore growth surface 15 s, chart payloads 3 s (dropped on the replica's own trade hint), holder counts 30 s, X handles 60 s — an unlinked handle can show on another replica for up to a minute — holder balances, repository images/logos, SOL price, release notes), the per-process concurrency caps (repo search 4, image uploads 2, 500 live-update viewers), the CSP-report limiter, and the CSP counters on `/operations/health` (they describe only the replica that served the page). If PostgreSQL is unreachable at trade prepare, that one trade falls back to in-process memory and can only be submitted on the same replica. Each replica opens its own connection pool plus one `LISTEN` connection; size `max_connections` for the replica count.
 
 ## Chart ordering verification
 
@@ -147,3 +147,56 @@ Setup (worker variables only; the channel credentials are the launch-alert ones 
 2. Set `GRADUATION_ALERTS_SINCE` to the current UTC time, e.g. `2026-10-01T00:00:00Z`, then set `GRADUATION_ALERTS_ENABLED=true`. A channel with only some of its variables, or a missing/invalid cutoff, logs `milestoneAlertError` once at startup and posts nothing. The job does nothing at all before the cutoff.
 
 Verify: the first run posts nothing and fills `milestone_alert_marks` (`select channel, milestone, count(*) from milestone_alert_marks group by 1, 2 order by 1, 2`). The worker logs `{"milestoneAlerts":{"posts":[…]}}` only when it posts; it is silent otherwise. Check rows with `select channel, milestone, status, attempts, message_url, error, created_at from milestone_alerts order by id desc limit 20`. For an `unknown` row, look at the channel: if the post is missing and should go out, delete the row to allow one new attempt; if it posted, leave the row. Setting `GRADUATION_ALERTS_ENABLED=false` stops new posts on the next worker restart.
+
+## Response speed: indexes, caches, edge caching and real-user vitals
+
+Migration `0038_server_speed` must be applied before this web and worker version (the Railway pre-deploy `npm run db:migrate` does it). It adds the read indexes the per-market queries need (`trade_events` by pool and slot / time, `damm_trade_events` by repository and slot, `fee_events` by repository and by pool, `damm_fee_events` and `platform_fee_events` by repository, open `graduation_alerts` by market and kind), creates `finalized_chart_positions` and fills it from the existing blocks (each indexed trade's position in its finalized block; about a second for ~1.5K blocks), and creates `web_vitals`. Everything is additive; rolling the application back leaves the new objects unused.
+
+- **Chart ordering.** Charts and the ordering worker read trade positions from `finalized_chart_positions` instead of searching each block's full signature list (`finalized_chart_blocks` keeps the complete agreed evidence, ~170 MB, and is no longer de-TOASTed on every chart request and every 30-second worker pass). The worker stores positions when it records a block and fills in trades indexed after their block was recorded; until then a chart read falls back to the stored list, so results are identical.
+- **Per-process caches** (per replica, like the other short read caches above): the public Explore growth surface 15 s (shared by `/explore` and `/api/growth`), built chart payloads 3 s per mint and range, dropped as soon as the market's `LISTEN` trade hint arrives, and the SOL/USD price refreshed in the background during the last minute of its 5-minute validity (an expired price is still never served).
+- **Slow loader log.** Server data loaders (market list and row, chart, growth surface, trend candidates, graduation race, SOL price, token metrics, GitHub repository/release reads, launch-fee terms) are timed. One compact line `{"slowLoader":{"label":"chart","ms":412,"foldedSlow":3,"foldedMaxMs":530}}` is logged when a loader takes over 150 ms, at most once per loader per minute (`foldedSlow` counts the slow calls since the previous line). Set `SERVER_TIMING_SLOW_MS` (web) to a lower threshold temporarily when investigating. The public market APIs, `/api/growth` and `/api/repo-search` also return a `Server-Timing` header (loader names and milliseconds only), visible in browser devtools.
+
+### Edge caching for public JSON
+
+These GET endpoints return the same body for every visitor (they read no cookie, wallet or other header), so they carry `Cache-Control: public, max-age=0, s-maxage=N` plus `CDN-Cache-Control: max-age=N[, stale-while-revalidate=M]`. Browsers never reuse a copy (`max-age=0`, and the app's own fetches use `cache: 'no-store'`); the CDN may keep one for `N` seconds. Cloudflare disables `stale-while-revalidate` whenever `s-maxage` is present, so the CDN's stale window travels in `CDN-Cache-Control`, which Cloudflare reads ahead of `Cache-Control` and browsers ignore. Errors and wallet-specific responses stay `no-store`.
+
+| Path | CDN copy | Notes |
+| --- | --- | --- |
+| `/api/market/<mint>/trades?range=…` | 2 s | A refetch prompted by a live trade hint adds `fresh=1` and is answered `no-store`, so a just-indexed trade is never hidden by an edge copy. |
+| `/api/market/<mint>/curve` | 2 s | Same `fresh=1` rule. |
+| `/api/market/<mint>/activity` | 5 s | |
+| `/api/market/<mint>/metrics` | 10 s, stale 20 s | `no-store` when the chain read failed. |
+| `/api/repo-search` (GET) | 15 s, stale 45 s | The POST search is never cached. |
+| `/api/growth` | 15 s, stale 45 s | |
+
+Cloudflare does not cache JSON unless a Cache Rule makes it eligible. In the Cloudflare dashboard (nothing here changes Cloudflare automatically):
+
+1. Select the `repo.ing` zone → **Caching** → **Cache Rules** → **Create rule**. Name it `Public JSON APIs (origin Cache-Control)`.
+2. Under **When incoming requests match**, choose **Custom filter expression** → **Edit expression** and paste:
+   ```txt
+   (http.request.method eq "GET" and ((starts_with(http.request.uri.path, "/api/market/") and (ends_with(http.request.uri.path, "/trades") or ends_with(http.request.uri.path, "/curve") or ends_with(http.request.uri.path, "/activity") or ends_with(http.request.uri.path, "/metrics"))) or http.request.uri.path in {"/api/repo-search" "/api/growth"}))
+   ```
+   This deliberately leaves out `/api/market/<mint>/events` (the live stream must never be buffered or cached), `/balance` (per wallet), `/share-card` and every other API.
+3. Under **Then** → **Cache eligibility**, select **Eligible for cache**.
+4. **Edge TTL**: **Use cache-control header if present, bypass cache if not**.
+5. **Browser TTL**: **Respect origin**. Required: otherwise the zone's Browser Cache TTL (4 hours by default) would rewrite `max-age=0` and browsers would keep API copies for hours.
+6. **Cache key**: leave the defaults, query string included (`range` and `fresh` must stay part of the key; never enable "Ignore query string"). Leave **Serve stale content while revalidating** on.
+7. **Deploy**. If another Cache Rule bypasses the cache for `/api/*`, place this one after it: for each setting, the last matching rule wins.
+
+Verify (replace `<mint>` with a live market):
+
+```sh
+U="https://repo.ing/api/market/<mint>/trades?range=all"
+curl -s -D - -o /dev/null "$U" | grep -iE '^(cf-cache-status|age|cache-control|cdn-cache-control):'   # MISS, then:
+curl -s -D - -o /dev/null "$U" | grep -iE '^(cf-cache-status|age|cache-control):'                     # HIT within 2 s, cache-control still max-age=0
+curl -s -D - -o /dev/null "$U&fresh=1" | grep -iE '^(cf-cache-status|cache-control):'                 # BYPASS, no-store
+curl -s -D - -o /dev/null "https://repo.ing/api/market/<mint>/events" --max-time 2 | grep -iE '^cf-cache-status:'  # DYNAMIC
+```
+
+Browsers must keep seeing `cache-control: public, max-age=0, s-maxage=…`; if it shows `max-age=14400`, fix step 5. To undo, disable the rule: the origin headers are harmless without it.
+
+### Real-user Core Web Vitals
+
+About 25% of page loads report LCP, INP, CLS, FCP and TTFB (Next.js `useReportWebVitals`, `app/components/web-vitals.jsx`) in one `navigator.sendBeacon` to `POST /api/vitals` when the page is hidden. The beacon carries only the route pattern (for example `/token/[mint]`, never the URL, query or mint) and the values; the server derives the standard rating, keeps a mobile/desktop class from a User-Agent heuristic and stores nothing else (no cookie, IP, wallet or User-Agent). Beacons are validated strictly (1 KB maximum, known routes and metrics only, bounded values) and rate-limited in `agent_request_limits` (3000 per minute overall, 30 per minute per client, keyed by a hash of the client address). Rows older than 14 days are deleted by the web service (at most once an hour per replica). CLS and INP accumulate across client-side navigations and are attributed to the route a visit landed on.
+
+`/operations/vitals` (platform operators only, like `/operations/health`) shows the 75th percentile per route and metric for the last 24 hours and 7 days with sample counts, for all devices or mobile/desktop only.

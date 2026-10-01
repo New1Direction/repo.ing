@@ -66,6 +66,7 @@ Set `DATABASE_URL` explicitly. Drizzle's fallback database is an older test defa
 | `GRADUATION_ALERTS_SINCE` | Worker | ISO timestamp; nothing runs before it, and the first sight of each market after it only records the milestone already reached (no backfill) |
 | `GRADUATION_ALERTS_MAX_PER_DAY` | Worker | Optional per-channel cap on milestone posts over 24 hours (default 10), separate from the launch-alert cap |
 | `PROMOTION_EXCLUDED_REPO_IDS` | Web, worker | [Do-not-promote list](PRODUCTION.md#do-not-promote-list): comma-separated GitHub repository IDs left out of `/waiting`, the graduation race, "Repo markets to watch" and milestone alerts |
+| `SERVER_TIMING_SLOW_MS` | Web | Optional: log `slowLoader` lines for data loaders slower than this many milliseconds (default 150; see [response speed](PRODUCTION.md#response-speed-indexes-caches-edge-caching-and-real-user-vitals)) |
 
 Secrets are server-only. The worker needs database/RPC/config access and signed-intent records, not either signer secret. Turning off discovery enrollment does not cancel existing reward obligations. The backup service has separate credentials described in [Backups](BACKUPS.md).
 
@@ -95,6 +96,7 @@ Many integration tests truncate tables, seed canonical markets, or create local 
 | Discovery | [Dedicated database and chain setup](DISCOVERY_REWARDS.md#local-verification) |
 | Platform revenue and LP deployment | [Revenue controls](PLATFORM_REVENUE.md), [liquidity settlement and recovery](PROTOCOL_LIQUIDITY.md) |
 | Graduation race and milestone alerts | `tests/graduation-race-db.test.mjs` and `tests/milestone-alerts-db.test.mjs` with `GRADUATION_RACE_TEST_DATABASE_URL` / `MILESTONE_ALERTS_TEST_DATABASE_URL` pointing at local databases named `repoing_graduation_race_test` / `repoing_milestone_alerts_test`; their pure logic runs in the quick suite (`node scripts/ci/run-quick-tests.mjs`) |
+| Read indexes, chart block positions, trend view and web vitals | `tests/server-speed-db.test.mjs` with `SERVER_SPEED_TEST_DATABASE_URL` pointing at a local database named `repoing_server_speed_test` (migrates it, seeds, checks EXPLAIN plans); the pure helpers run in the quick suite |
 
 Review a suite's prerequisites before running its npm command. `scripts/mvp-acceptance-local.mjs` is a historical, operator-specific live-GitHub rehearsal; it is not a generic setup script.
 

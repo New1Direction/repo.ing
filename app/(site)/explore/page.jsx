@@ -5,8 +5,7 @@ import { AppHeader, Footer } from '../../components/ui'
 import { ExploreList } from '../../components/explore-list'
 import { ExploreGrowth } from '../../components/growth-surfaces'
 import { ExploreNavigation } from '../../components/explore-navigation'
-import { growthSurface } from '../../../src/discoverer-growth.mjs'
-import { database } from '../../lib/server.mjs'
+import { publicGrowth } from '../../lib/growth.mjs'
 import { listMarkets, graduationRace } from '../../lib/server.mjs'
 import { GraduationRace, GraduationRaceBoard, GraduationRaceFallback } from '../../components/graduation-race'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
@@ -29,6 +28,6 @@ async function Graduating() {
 }
 async function Highlights() {
   let growth
-  try { growth = await growthSurface(database()) } catch {}
+  try { growth = await publicGrowth() } catch {}
   return growth ? <ExploreGrowth data={exploreGrowthView(growth)}/> : <p className="subtle-notice">Market highlights are temporarily unavailable.</p>
 }
