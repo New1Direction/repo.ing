@@ -144,6 +144,32 @@ test('config activity feed overflow wakes everything; a failed read is retried f
   assert.equal(h.requests.at(-1).until, 'y')
 })
 
+test('the feed lists only configs that have markets, every 10 s while they trade and every 60 s once quiet', async () => {
+  const [busy, quiet, unused, pool] = [0, 1, 2, 3].map(() => Keypair.generate().publicKey)
+  const histories = new Map([busy, quiet, unused].map(key => [key.toBase58(), [{ signature: `${key.toBase58()}-0`, err: null }]]))
+  let clock = 0
+  const listed = []
+  const connection = { getSignaturesForAddress: async (address, options) => {
+    listed.push(address.toBase58())
+    const items = histories.get(address.toBase58())
+    const end = options.until ? items.findIndex(item => item.signature === options.until) : items.length
+    return items.slice(0, end).slice(0, options.limit)
+  } }
+  const trade = () => histories.get(busy.toBase58()).unshift({ signature: `busy-${clock}`, err: null })
+  const feed = createConfigActivityFeed({ connection, configs: [busy, quiet, unused], now: () => clock,
+    loadTransaction: async () => ({ transaction: { message: { accountKeys: [pool, busy] } } }) })
+  const withMarkets = new Set([busy.toBase58(), quiet.toBase58()])
+  const poll = async () => { listed.length = 0; const result = await feed.poll([pool.toBase58()], withMarkets); return { ...result, listed: [...listed] } }
+  assert.deepEqual((await poll()).listed, [busy.toBase58(), quiet.toBase58()], 'a config without markets is never listed')
+  clock = 11 * MIN; trade()
+  const woken = await poll()
+  assert.deepEqual([woken.listed.length, [...woken.pools]], [2, [pool.toBase58()]])
+  clock += 10_000; trade()
+  assert.deepEqual((await poll()).listed, [busy.toBase58()], 'the quiet config waits 60 s, the busy one 10 s')
+  clock = 12 * MIN
+  assert.deepEqual((await poll()).listed, [busy.toBase58(), quiet.toBase58()])
+})
+
 test('config activity feed keeps every cursor until all configs were read, and wakes all for an unreadable transaction', async () => {
   const [configA, configB, poolA] = [0, 1, 2].map(() => Keypair.generate().publicKey)
   const histories = { [configA.toBase58()]: [{ signature: 'a1', err: null }], [configB.toBase58()]: [{ signature: 'b1', err: null }] }

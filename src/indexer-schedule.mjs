@@ -80,21 +80,25 @@ export function graduatedReadDue({ now = Date.now(), lastReadAt = null, lastRead
 // Every DBC swap and migration names its config account, so one finalized signature list per approved config shows
 // which canonical pools traded since the last poll. Hints only: a miss or failure falls back to the tier schedule,
 // and the per-pool cursor walk stays the source of truth. Transactions read here are the ones the indexer then
-// credits, so the finalized-transaction cache serves them again for free.
-export function createConfigActivityFeed({ connection, configs, loadTransaction, limit = 100, pollEveryMs = 10_000, now = Date.now }) {
+// credits, so the finalized-transaction cache serves them again for free. Every approved config (current and
+// DBC_LEGACY_CONFIGS) that has markets is listed: every 10 s while it saw activity in the last 10 minutes,
+// otherwise every 60 s.
+export function createConfigActivityFeed({ connection, configs, loadTransaction, limit = 100, activeEveryMs = 10_000,
+  idleEveryMs = 60_000, activeWindowMs = 10 * 60_000, now = Date.now }) {
   const keys = configs.map(config => new PublicKey(config))
-  const cursors = new Map()
-  let polledAt = -Infinity
+  const states = new Map()
   return {
-    // { all: true } on the first poll, on overflow and when a listed transaction cannot be read yet; otherwise the
-    // market pools named by new successful transactions.
-    async poll(pools) {
-      if (now() - polledAt < pollEveryMs) return { all: false, pools: new Set() }
-      polledAt = now()
-      const watched = new Set(pools), woken = new Set(), advanced = new Map()
+    // pools: the market pools to watch; withMarkets: configs (base58) that have markets, all approved when omitted.
+    // { all: true } on a config's first listing, on overflow and when a listed transaction cannot be read yet;
+    // otherwise the market pools named by new successful transactions.
+    async poll(pools, withMarkets = null) {
+      const at = now(), watched = new Set(pools), woken = new Set(), staged = new Map()
       let all = false
       for (const key of keys) {
-        const address = key.toBase58(), cursor = cursors.get(address)
+        const address = key.toBase58(), state = states.get(address) ?? { cursor: null, polledAt: -Infinity, activeAt: -Infinity }
+        if (withMarkets && !withMarkets.has(address)) continue
+        if (at - state.polledAt < (at - state.activeAt < activeWindowMs ? activeEveryMs : idleEveryMs)) continue
+        const { cursor } = state
         const page = await connection.getSignaturesForAddress(key, { limit: cursor ? limit : 1, ...(cursor ? { until: cursor } : {}) }, 'finalized')
         if (!cursor || page.length >= limit) all = true
         else for (const item of page) {
@@ -106,10 +110,10 @@ export function createConfigActivityFeed({ connection, configs, loadTransaction,
             if (watched.has(pool)) woken.add(pool)
           }
         }
-        if (page.length) advanced.set(address, page[0].signature)
+        staged.set(address, { cursor: page[0]?.signature ?? cursor, polledAt: at, activeAt: page.length ? at : state.activeAt })
       }
-      // Cursors move only once every config was read: a failed poll is retried whole (waking twice is harmless).
-      for (const [address, signature] of advanced) cursors.set(address, signature)
+      // Cursors move only once every due config was read: a failed poll is retried whole (waking twice is harmless).
+      for (const [address, state] of staged) states.set(address, state)
       return { all, pools: woken }
     },
   }
