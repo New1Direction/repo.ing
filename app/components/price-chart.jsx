@@ -8,8 +8,14 @@ import { RecentTrades } from './recent-trades'
 import { formatSolDisplay } from '../lib/format.mjs'
 import { formatUsdMarketCap } from '../lib/market-display.mjs'
 import { CHART_PERIODS, chartPriceLabel, chartTradeAge } from '../lib/chart-display.mjs'
+import { marketMetricsUrl, marketTradesUrl } from '../lib/market-chart-urls.mjs'
+import { earlyChartScript, takeEarlyChart } from '../lib/early-chart.mjs'
 
-const ChartCanvas = dynamic(() => import('./market-chart-canvas'), { ssr: false,
+// Start downloading the chart code while the page hydrates, in parallel, instead of one after another once the first
+// trades response arrives. next/dynamic and the canvas reuse these same module requests.
+const loadChartCanvas = () => import('./market-chart-canvas')
+if (typeof window !== 'undefined') for (const load of [loadChartCanvas, () => import('lightweight-charts')]) void load().catch(() => {})
+const ChartCanvas = dynamic(loadChartCanvas, { ssr: false,
   loading: () => <div className="chart-skeleton" role="status"><span className="claim-spinner" aria-hidden="true"/>Preparing chart…</div> })
 
 export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
@@ -35,9 +41,12 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
       if (running) { queued = true; return }
       running = true; setRefreshing(true)
       try {
-        const response = await fetch(`/api/market/${encodeURIComponent(mint)}/trades?range=${range}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
-        if (!response.ok) throw Error('Trade history unavailable')
-        const result = await response.json()
+        let result = range === 'all' ? await takeEarlyChart(mint, 'trades') : null
+        if (!result) {
+          const response = await fetch(marketTradesUrl(mint, range), { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
+          if (!response.ok) throw Error('Trade history unavailable')
+          result = await response.json()
+        }
         if (result.range !== range) throw Error('Chart period mismatch')
         if (active) {
           setData(result); setError(false); setNow(Date.now())
@@ -66,9 +75,12 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
     const controller = new AbortController()
     const stop = visiblePolling(async () => {
       try {
-        const response = await fetch(`/api/market/${encodeURIComponent(mint)}/metrics`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
-        if (!response.ok) throw Error()
-        const result = await response.json()
+        let result = await takeEarlyChart(mint, 'metrics')
+        if (!result) {
+          const response = await fetch(marketMetricsUrl(mint), { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(12000)]) })
+          if (!response.ok) throw Error()
+          result = await response.json()
+        }
         if (active) { setMetrics(result); setMetricsError(false); onSolUsd?.(result.solUsd ?? null) }
       } catch { if (active) { setMetricsError(true); onSolUsd?.(null) } }
     }, 30000)
@@ -98,7 +110,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd }) {
   const tradeAge = chartTradeAge(latest?.tradedAt, now)
   const empty = !current?.candles.length
   const emptyMessage = <><strong>{error && !current ? 'Trade history is unavailable' : data?.totalTrades ? 'No trades in this period' : 'Waiting for the first trade'}</strong><span>{error && !current ? 'Your trade form is still available. Retry the chart below.' : data?.totalTrades ? 'Choose All to see the market’s full history.' : 'Your first finalized trade will appear here once indexed.'}</span>{range !== 'all' && !error && <button className="button outline" onClick={() => { setRange('all'); setRefreshing(true) }}>View all history</button>}</>
-  return <><section className="chart-card market-chart-card" aria-label={`${symbol} market chart`}>
+  return <><script dangerouslySetInnerHTML={{ __html: earlyChartScript(mint) }}/><section className="chart-card market-chart-card" aria-label={`${symbol} market chart`}>
     <div className="chart-summary"><div className="chart-heading"><span className="chart-symbol">${symbol} <span className="chart-unit">{capMode ? 'Market cap · USD estimate' : 'Price · SOL'}</span></span>
       <div className="chart-headline"><strong>{latestValue && !capUnavailable ? capMode ? formatUsdMarketCap(latestValue * capMultiplier) : chartPriceLabel(latestValue) : '—'}</strong>{change !== null && <span className={change >= 0 ? 'chart-up' : 'chart-down'} title="Change from the first to last recorded price in the displayed period">{change > 0 ? '+' : ''}{change.toFixed(2)}% <small>{periodLabel(current.range)}</small></span>}</div>
     </div><div className="chart-metrics"><span>{data?.graduation ? '24h total volume' : ended ? '24h curve volume' : '24h volume'}<strong>{data ? `${formatSolDisplay(data.volume24hLamports)} SOL` : <span className="skeleton-text"/>}</strong></span><span>{historyOnly ? 'Last curve cap' : 'Market cap'}<strong>{latestValue && capMultiplier ? formatUsdMarketCap(latestValue * capMultiplier) : '—'}</strong></span><span>Holders<strong>{historyOnly || freshMetrics?.holders == null ? '—' : freshMetrics.holders.toLocaleString('en-US')}</strong></span></div></div>
