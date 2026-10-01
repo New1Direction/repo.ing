@@ -1,9 +1,9 @@
-import { database } from '../../lib/server.mjs'
-import { growthSurface } from '../../../src/discoverer-growth.mjs'
+import { publicGrowth } from '../../lib/growth.mjs'
+import { GROWTH_CACHE, NO_STORE } from '../../lib/cache-headers.mjs'
+import { withServerTiming } from '../../lib/server-timing.mjs'
 export const dynamic='force-dynamic'
 export const runtime='nodejs'
-const headers={'Cache-Control':'no-store'}
-export async function GET(){
-  try{return Response.json(await growthSurface(database()),{headers})}
-  catch{return Response.json({error:'Discovery surfaces are temporarily unavailable.'},{status:503,headers})}
-}
+export const GET=withServerTiming(async()=>{
+  try{return Response.json(await publicGrowth(),{headers:GROWTH_CACHE})}
+  catch{return Response.json({error:'Discovery surfaces are temporarily unavailable.'},{status:503,headers:NO_STORE})}
+})

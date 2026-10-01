@@ -49,6 +49,7 @@ test('real PostgreSQL chart aggregation: canonical pool, 120+ history, OHLC, sam
     await client.query('begin')
     await client.query(`create temporary table trade_events(pool text,signature text,event_index integer,slot bigint,traded_at timestamptz,direction text,input_base_units text,output_base_units text,next_sqrt_price text)`)
     await client.query(`create temporary table finalized_chart_blocks(slot bigint primary key,blockhash text,previous_blockhash text,parent_slot bigint,signatures text[],checked_at timestamptz default now())`)
+    await client.query('create temporary table finalized_chart_positions(slot bigint,signature text,transaction_index integer,primary key(slot,signature))')
     await client.query('create temporary table damm_trade_events(github_repo_id bigint,pool text,signature text,event_index integer,slot bigint,traded_at timestamptz,quote_amount bigint,direction text,next_sqrt_price text,base_amount bigint)')
     await client.query('create temporary table graduation_events(github_repo_id bigint,pool text,signature text,slot bigint,evidence text,evidence_hash text)')
     const insert = async (pool, signature, index, slot, at, direction, input, output, price) => client.query('insert into trade_events values($1,$2,$3,$4,$5,$6,$7,$8,$9)', [pool, signature, index, slot, at, direction, input, output, String(price)])
@@ -83,6 +84,9 @@ test('real PostgreSQL chart aggregation: canonical pool, 120+ history, OHLC, sam
     await recordChartBlock(client, proof)
     await recordChartBlock(client, proof)
     assert.equal((await client.query('select count(*)::integer as n from finalized_chart_blocks')).rows[0].n,1)
+    // The indexed trades' places in the block are stored once, so chart reads never search the full signature list.
+    assert.deepEqual((await client.query('select signature,transaction_index from finalized_chart_positions order by transaction_index')).rows,
+      [{signature:'second-tx',transaction_index:1},{signature:'one-tx',transaction_index:2}])
     const resolved = await readMarketChart(client,market,'1h',now)
     assert.equal(resolved.latestOrderingPending,false)
     assert.equal(resolved.latest.signature,'one-tx')

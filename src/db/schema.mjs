@@ -28,6 +28,14 @@ export const finalizedChartBlocks = pgTable('finalized_chart_blocks', {
   signatures: text('signatures').array().notNull(),
   checkedAt: timestamp('checked_at', { withTimezone: true }).defaultNow().notNull(),
 })
+// Each indexed trade's position in its recorded block (derived from finalized_chart_blocks, so immutable): chart reads
+// order trades without de-TOASTing the full signature list.
+export const finalizedChartPositions = pgTable('finalized_chart_positions', {
+  slot: bigint('slot', { mode: 'bigint' }).notNull().references(() => finalizedChartBlocks.slot),
+  signature: varchar('signature', { length: 88 }).notNull(),
+  transactionIndex: integer('transaction_index').notNull(),
+}, t => [primaryKey({ name: 'finalized_chart_positions_pkey', columns: [t.slot, t.signature] }),
+  check('finalized_chart_positions_transaction_index_check', sql`${t.transactionIndex} > 0`)])
 
 // P5 observations are derived read models. Migration evidence and alerts are durable;
 // none of these tables credits revenue or authorizes spending.
@@ -83,7 +91,9 @@ export const graduationAlerts = pgTable('graduation_alerts', {
   createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(),
   acknowledgedAt: timestamp('acknowledged_at',{withTimezone:true}),
   acknowledgedBy: text('acknowledged_by'),
-},t=>[uniqueIndex('graduation_alert_event_unique').on(t.eventKey)])
+},t=>[uniqueIndex('graduation_alert_event_unique').on(t.eventKey),
+  index('graduation_alerts_open_repo_kind').on(t.githubRepoId,t.kind,t.id).where(sql`${t.acknowledgedAt} is null`),
+  index('graduation_alerts_kind').on(t.kind,t.id)])
 export const dammTradeEvents = pgTable('damm_trade_events', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(()=>markets.githubRepoId),
@@ -100,6 +110,8 @@ export const dammTradeEvents = pgTable('damm_trade_events', {
   baseAmount: bigint('base_amount',{mode:'bigint'}),
 },t=>[uniqueIndex('damm_trade_chain_event_unique').on(t.signature,t.eventIndex),
   index('damm_trade_trader_repo').on(t.trader,t.githubRepoId).where(sql`${t.trader} is not null`),
+  // INCLUDE (quote_amount) in migration 0038: per-repository volume sums read the index only.
+  index('damm_trade_events_repo_slot').on(t.githubRepoId,t.slot.desc(),t.eventIndex.desc()),
   check('damm_trade_amount_check',sql`${t.quoteAmount}>0`),check('damm_trade_direction_check',sql`${t.direction} in ('buy','sell')`),
   check('damm_trade_base_amount_check',sql`${t.baseAmount} is null or ${t.baseAmount}>=0`)])
 
@@ -270,6 +282,9 @@ export const feeEvents = pgTable('fee_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   uniqueIndex('fee_events_chain_event_unique').on(table.signature, table.eventIndex, table.kind),
+  // INCLUDE (amount_base_units) in migration 0038: builder_fee_credits sums read the index only.
+  index('fee_events_repo_slot').on(table.githubRepoId, table.slot.desc(), table.eventIndex.desc()),
+  index('fee_events_pool_signature').on(table.pool, table.signature),
   check('fee_events_positive_amount_check', sql`${table.amountBaseUnits} > 0`),
   check('fee_events_kind_check', sql`${table.kind} = 'dbc_creator_quote'`),
 ])
@@ -296,6 +311,8 @@ export const tradeEvents = pgTable('trade_events', {
 }, (table) => [
   uniqueIndex('trade_events_chain_event_unique').on(table.signature, table.eventIndex),
   index('trade_events_trader_pool').on(table.trader, table.pool).where(sql`${table.trader} is not null`),
+  index('trade_events_pool_slot').on(table.pool, table.slot.desc(), table.eventIndex.desc()),
+  index('trade_events_pool_time').on(table.pool, table.tradedAt),
   check('trade_events_direction_check', sql`${table.direction} in ('buy', 'sell')`),
 ])
 
@@ -405,7 +422,9 @@ export const dammFeeEvents = pgTable('damm_fee_events', {
   evidenceHash: varchar('evidence_hash', { length: 64 }).notNull(),
   evidence: text('evidence').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-}, table => [uniqueIndex('damm_fee_events_position_cumulative_earned_key').on(table.position, table.cumulativeEarned)])
+}, table => [uniqueIndex('damm_fee_events_position_cumulative_earned_key').on(table.position, table.cumulativeEarned),
+  // INCLUDE (amount_base_units) in migration 0038.
+  index('damm_fee_events_repo').on(table.githubRepoId)])
 
 // Finalized account checkpoints for the permanently locked DAMM partner position.
 // Platform revenue only; never combined with builder credits or discovery rewards.
@@ -423,6 +442,8 @@ export const platformFeeEvents = pgTable('platform_fee_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, table => [
   uniqueIndex('platform_fee_events_position_cumulative_earned_key').on(table.position, table.cumulativeEarned),
+  // INCLUDE (amount_base_units) in migration 0038.
+  index('platform_fee_events_repo').on(table.githubRepoId),
   check('platform_fee_events_positive_amount_check', sql`${table.amountBaseUnits} > 0`),
 ])
 
@@ -805,3 +826,18 @@ export const milestoneAlertMarks = pgTable('milestone_alert_marks', {
   channel: varchar('channel',{length:16}).notNull(), milestone: smallint('milestone').notNull(), markedAt: tz('marked_at').defaultNow().notNull(),
 },t=>[primaryKey({name:'milestone_alert_marks_pkey',columns:[t.githubRepoId,t.channel]}),
   check('milestone_alert_marks_channel_check',sql`${t.channel} in ('telegram','x')`),check('milestone_alert_marks_milestone_check',sql`${t.milestone} in (0,25,50,75,90,100)`)])
+
+// Real-user Core Web Vitals samples (POST /api/vitals); route patterns only, deleted after 14 days.
+export const webVitals = pgTable('web_vitals', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  route: varchar('route', { length: 64 }).notNull(),
+  metric: varchar('metric', { length: 4 }).notNull(),
+  value: doublePrecision('value').notNull(),
+  rating: varchar('rating', { length: 17 }).notNull(),
+  device: varchar('device', { length: 7 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('web_vitals_created_at').on(t.createdAt),
+  check('web_vitals_metric_check', sql`${t.metric} in ('LCP', 'INP', 'CLS', 'FCP', 'TTFB')`),
+  check('web_vitals_value_check', sql`${t.value} >= 0 and ${t.value} <= 600000`),
+  check('web_vitals_rating_check', sql`${t.rating} in ('good', 'needs-improvement', 'poor')`),
+  check('web_vitals_device_check', sql`${t.device} in ('mobile', 'desktop')`)])

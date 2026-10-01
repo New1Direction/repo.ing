@@ -28,6 +28,7 @@ import { HolderNotes, HolderNotesFallback } from '../../../components/holder-not
 import { JsonLd } from '../../../components/json-ld'
 import { XHandle } from '../../../components/x-handle'
 import { tokenJsonLd } from '../../../lib/json-ld.mjs'
+import { timed } from '../../../lib/server-timing.mjs'
 import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
 import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
 import { TrustPanel } from '../../../components/trust-panel'
@@ -61,7 +62,7 @@ export default async function Token({ params, searchParams }) {
   if (!market) notFound()
   const repo = { ...displayRepository(market), mint: market.mint }
   // Non-null only when this market's own config charges the launch fee (config read once, then cached).
-  const launchFee = await marketLaunchFeeTerms(market)
+  const launchFee = await timed('launchFeeTerms', () => marketLaunchFeeTerms(market))
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
   const tips = tipsEnabled()
@@ -180,8 +181,8 @@ async function RepositoryEarnings({ market }) {
 }
 
 async function FreshRepositoryDetails({ repo }) {
-  const refreshed = await refreshDisplayRepository(repo)
-  const release = await latestRelease(refreshed)
+  const refreshed = await timed('githubRepository', () => refreshDisplayRepository(repo))
+  const release = await timed('githubRelease', () => latestRelease(refreshed))
   return <RepositoryDetails repo={{ ...refreshed, mint: repo.mint }} release={release}/>
 }
 function RepositoryDetails({ repo, release }) {

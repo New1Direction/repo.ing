@@ -267,6 +267,13 @@
       "when": 1790542598566,
       "tag": "0037_milestone_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1790542598567,
+      "tag": "0038_server_speed",
+      "breakpoints": true
     }
   ]
 }

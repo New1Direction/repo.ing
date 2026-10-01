@@ -46,20 +46,22 @@ export function discovererAttribution(market,events,claims,trades=events) {
 
 export async function discovererLeaderboard(pool,config=process.env.DBC_CONFIG,legacy=process.env.DBC_LEGACY_CONFIGS??''){
   const resolveConfig=createMarketConfigResolver(config,legacy)
-  const {rows:markets}=await pool.query(`select m.github_repo_id::text as "repoId",r.full_name as "fullName",m.mint,m.pool,
+  // Four independent reads, issued together (a pool runs them on separate connections).
+  const [{rows:markets},{rows:events},{rows:claims},{rows:trades}]=await Promise.all([
+    pool.query(`select m.github_repo_id::text as "repoId",r.full_name as "fullName",m.mint,m.pool,
     m.launcher_wallet as wallet,m.launch_signature as signature,m.launch_slot::text as slot,m.launch_finality as finality,
     m.indexed_at as "indexedAt",m.launch_block_time as "launchedAt",m.discovery_version as version,
     exists(select 1 from graduation_events g where g.github_repo_id=m.github_repo_id) as graduated
-    from markets m join repositories r using(github_repo_id) where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'`)
-  const {rows:events}=await pool.query(`select f.github_repo_id::text as "repoId",f.pool,f.partner_amount::text as "partnerAmount",f.slot::text,
+    from markets m join repositories r using(github_repo_id) where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'`),
+    pool.query(`select f.github_repo_id::text as "repoId",f.pool,f.partner_amount::text as "partnerAmount",f.slot::text,
     f.traded_at as "tradedAt",f.event_index as "eventIndex",t.signature as "tradeSignature",
     (case when t.direction='buy' then t.input_base_units else t.output_base_units end) as "quoteAmount"
-    from discovery_fee_events f left join trade_events t on t.signature=f.signature and t.event_index=f.event_index and t.pool=f.pool and t.slot=f.slot and t.traded_at=f.traded_at where f.discovery_eligible`)
-  const {rows:claims}=await pool.query(`select github_repo_id::text as "repoId",wallet,amount::text from discovery_claims where status='settled'`)
-  const {rows:trades}=await pool.query(`select m.github_repo_id::text as "repoId",t.pool,t.signature,t.slot::text,t.event_index as "eventIndex",t.traded_at as "tradedAt",
+    from discovery_fee_events f left join trade_events t on t.signature=f.signature and t.event_index=f.event_index and t.pool=f.pool and t.slot=f.slot and t.traded_at=f.traded_at where f.discovery_eligible`),
+    pool.query(`select github_repo_id::text as "repoId",wallet,amount::text from discovery_claims where status='settled'`),
+    pool.query(`select m.github_repo_id::text as "repoId",t.pool,t.signature,t.slot::text,t.event_index as "eventIndex",t.traded_at as "tradedAt",
     (case when t.direction='buy' then t.input_base_units else t.output_base_units end) as "quoteAmount"
     from trade_events t join markets m on m.pool=t.pool where m.discovery_version in(1,2) and m.indexed_at is not null
-    and t.traded_at>=m.launch_block_time and t.traded_at<m.launch_block_time + interval '30 days'`)
+    and t.traded_at>=m.launch_block_time and t.traded_at<m.launch_block_time + interval '30 days'`)])
   const byWallet=new Map(),attributions=[],excluded=[]
   for(const market of markets){
     try{
@@ -78,15 +80,14 @@ export async function discovererLeaderboard(pool,config=process.env.DBC_CONFIG,l
 }
 
 export async function growthSurface(pool,{operator=false}={}){
-  const trends=await trendOperatorView(pool),discovery=await discovererLeaderboard(pool)
-  const {rows}=await pool.query(`select m.github_repo_id::text as "repoId",r.full_name as "fullName",m.mint,m.launcher_wallet as wallet,
+  const [trends,discovery,{rows}]=await Promise.all([trendOperatorView(pool),discovererLeaderboard(pool),pool.query(`select m.github_repo_id::text as "repoId",r.full_name as "fullName",m.mint,m.launcher_wallet as wallet,
     m.launch_block_time as "launchedAt",coalesce((select sum(amount_base_units) from builder_fee_credits b where b.github_repo_id=m.github_repo_id),0)::text as earned,
     (coalesce((select sum((case when direction='buy' then input_base_units else output_base_units end)::numeric) from trade_events t where t.pool=m.pool),0)+
       coalesce((select sum(quote_amount) from damm_trade_events d where d.github_repo_id=m.github_repo_id),0))::text as volume,
     o.status,o.observation,o.reconciliation,o.error_code,g.evidence_hash as migration_evidence_hash,
     exists(select 1 from trend_launches l where l.mint=m.mint) as "fromTrend"
     from markets m join repositories r using(github_repo_id) left join graduation_observations o using(github_repo_id)
-    left join graduation_events g using(github_repo_id) where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'`)
+    left join graduation_events g using(github_repo_id) where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'`)])
   const markets=rows.map(row=>{
     let graduation=null
     try{graduation=publicGraduation(row)}catch{}

@@ -5,6 +5,8 @@ import { searchList } from '../../lib/trending-launches.mjs'
 import { normalizeSearch } from '../../../src/repo-search.mjs'
 import { createRepoSearch, readSearchJson } from '../../../src/jev-repo-search.mjs'
 import { TREND_FRESH_MS } from '../../../src/trend-rules.mjs'
+import { REPO_SEARCH_CACHE } from '../../lib/cache-headers.mjs'
+import { withServerTiming } from '../../lib/server-timing.mjs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,10 +14,11 @@ const headers = { 'Cache-Control': 'no-store' }
 const search = createRepoSearch()
 let active = 0
 // The list matches /find-repos: no do-not-promote repos, and "Launch" only where the trending-launch policy allows it.
-export async function GET() {
-  try { return Response.json({ candidates: await searchList(await repositoryCandidates(database())) }, { headers }) }
+// It is the same for every visitor, so an edge may share it briefly (searches are POSTs and never cached).
+export const GET = withServerTiming(async () => {
+  try { return Response.json({ candidates: await searchList(await repositoryCandidates(database())) }, { headers: REPO_SEARCH_CACHE }) }
   catch { return Response.json({ error: 'Repositories are temporarily unavailable. Please try again.' }, { status: 503, headers }) }
-}
+})
 export async function POST(request) {
   if (request.headers.get('origin') !== publicOrigin(request.url)) return Response.json({ error: 'Open search on repo.ing.' }, { status: 403, headers })
   if (active >= 4) return Response.json({ error: 'Search is busy. Please try again shortly.' }, { status: 429, headers })

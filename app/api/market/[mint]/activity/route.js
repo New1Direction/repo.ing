@@ -1,13 +1,15 @@
 import { database, marketByMint } from '../../../../lib/server.mjs'
+import { MARKET_ACTIVITY_CACHE, NO_STORE } from '../../../../lib/cache-headers.mjs'
+import { withServerTiming } from '../../../../lib/server-timing.mjs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(_request, { params }) {
+export const GET = withServerTiming(async (_request, { params }) => {
   const { mint } = await params
   const { market } = await marketByMint(mint)
   const pool = database()
-  if (!market || !pool) return Response.json({ error: 'Market unavailable' }, { status: 404 })
+  if (!market || !pool) return Response.json({ error: 'Market unavailable' }, { status: 404, headers: NO_STORE })
   try {
     const [trades, fees, claims, parts] = await Promise.all([
       pool.query(`select signature, event_index as "eventIndex", direction, traded_at as "occurredAt",
@@ -42,6 +44,6 @@ export async function GET(_request, { params }) {
       ...parts.rows.map(row => ({ type: row.type, signature: row.signature, ref: row.ref, occurredAt: row.occurredAt?.toISOString(),
         ...(row.type === 'parts-pledge' ? { amountBaseUnits: row.amountBaseUnits, symbol: row.symbol, decimals: row.decimals, usdCents: row.usdCents } : { body: row.body }) })),
     ].sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt)).slice(0, 40)
-    return Response.json({ events }, { headers: { 'Cache-Control': 'no-store' } })
-  } catch { return Response.json({ error: 'Activity is temporarily unavailable' }, { status: 503 }) }
-}
+    return Response.json({ events }, { headers: MARKET_ACTIVITY_CACHE })
+  } catch { return Response.json({ error: 'Activity is temporarily unavailable' }, { status: 503, headers: NO_STORE }) }
+})

@@ -58,6 +58,12 @@ const canonicalEvents = `with canonical_events as (
   select signature,event_index,slot,traded_at,direction,next_sqrt_price,quote_amount::numeric,base_amount::numeric,'DAMM'::text as venue
     from damm_trade_events where pool=$5 and github_repo_id=$6 and slot >= $7
 )`
+// A trade's place in its finalized block: the stored position (finalized_chart_positions), else the block's full
+// signature list. The list is joined (and de-TOASTed) only for a trade indexed after its block was recorded, until the
+// ordering worker stores that position; null while the block is unverified or the trade is not in it.
+const blockPosition = t => `coalesce(p.transaction_index,array_position(b.signatures,${t}.signature::text))`
+const blockJoins = t => `left join finalized_chart_positions p on p.slot=${t}.slot and p.signature=${t}.signature
+  left join finalized_chart_blocks b on b.slot=${t}.slot and p.slot is null`
 
 export async function readMarketChart(db, market, range = 'all', now = Date.now()) {
   const migration = market.repoId ? chartMigration(market, (await db.query('select * from graduation_events where github_repo_id=$1', [market.repoId])).rows[0]) : null
@@ -69,9 +75,9 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
   const window = chartWindow(range, summary.first, now, summary.last)
   const [{ rows }, { rows: recent }] = await Promise.all([
     db.query(`${canonicalEvents}, events as (
-      select t.*, array_position(b.signatures,t.signature::text) as transaction_index,
+      select t.*, ${blockPosition('t')} as transaction_index,
         floor(extract(epoch from traded_at)/$4)::bigint*$4 as bucket
-      from canonical_events t left join finalized_chart_blocks b on b.slot=t.slot
+      from canonical_events t ${blockJoins('t')}
       where traded_at >= $2 and traded_at <= $3
     ), bars as (
       select bucket as time, min(slot) as first_slot, max(slot) as last_slot,
@@ -81,14 +87,18 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
         sum(quote_amount)::text as volume, bool_or(next_sqrt_price is null) as missing_price,
         count(*)::text as count
       from events group by bucket
-    ) select bars.*, exists(select 1 from events e where e.bucket=bars.time
-      and e.slot in (bars.first_slot,bars.last_slot) group by e.slot
-      having count(distinct e.signature)>1 and bool_or(e.transaction_index is null)) as ambiguous
+    ), unordered_slots as materialized (
+      -- Slots holding several transactions whose block order is not yet proven. Grouped once: a per-bar scan of every
+      -- event made long histories quadratic (~0.3 s for ~460 bars over ~8.6K trades).
+      select bucket, slot from events group by bucket, slot
+      having count(distinct signature)>1 and bool_or(transaction_index is null)
+    ) select bars.*, exists(select 1 from unordered_slots u where u.bucket=bars.time
+      and u.slot in (bars.first_slot,bars.last_slot)) as ambiguous
       from bars order by time`, params(window.start, window.end, window.interval)),
-    db.query(`${canonicalEvents} select signature,event_index as "eventIndex",t.slot::text,direction,traded_at as "tradedAt",venue,
-      array_position(b.signatures,t.signature::text) as "transactionIndex",
+    db.query(`${canonicalEvents} select t.signature,t.event_index as "eventIndex",t.slot::text,direction,traded_at as "tradedAt",venue,
+      ${blockPosition('t')} as "transactionIndex",
       next_sqrt_price as "nextSqrtPrice",quote_amount::text as "solLamports",base_amount::text as "tokenBaseUnits"
-      from canonical_events t left join finalized_chart_blocks b on b.slot=t.slot
+      from canonical_events t ${blockJoins('t')}
       where traded_at <= $2 and $3::text is null and $4::text is null
       order by t.slot desc,"transactionIndex" desc,t.signature desc,t.event_index desc limit 120`, params(window.end, null, null)),
   ])

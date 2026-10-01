@@ -14,18 +14,47 @@ const candidateSQL = `select c.github_repo_id::text as "repoId",c.full_name as "
   exists(select 1 from repositories r where r.github_repo_id=c.github_repo_id) as "repoIndexed"
   from trend_candidates c left join markets m on m.github_repo_id=c.github_repo_id`
 
-export async function trendCandidate(db, repoId, now=Date.now()) {
-  const {rows:[candidate]} = await db.query(`${candidateSQL} where c.github_repo_id=$1`,[repoId])
-  if(!candidate)return null
-  const {rows:observations}=await db.query(`select evidence from trend_observations where github_repo_id=$1 order by observed_at desc limit 100`,[repoId])
-  const {rows:signals}=await db.query(`select source,url,note,occurred_at as "occurredAt",expires_at as "expiresAt",detected_at as "detectedAt",operator
-    from trend_signals where github_repo_id=$1 order by occurred_at desc limit 100`,[repoId])
+const OBSERVATION_LIMIT = 100, SIGNAL_LIMIT = 100
+const signalColumns = `source,url,note,occurred_at as "occurredAt",expires_at as "expiresAt",detected_at as "detectedAt",operator`
+
+// observations: evidence JSON strings, newest first; signals: trend_signals rows, newest first.
+function trendCandidateView(candidate, observations, signals, now) {
   let ready=true,reason=null
   try{assertFreshTrend(candidate,now)}catch(error){ready=false;reason=trendError(error)}
   if(candidate.marketStatus&&candidate.marketStatus!=='failed'){ready=false;reason='MARKET_ALREADY_EXISTS'}
-  return {...candidate,signals,score:trendScore(observations.map(o=>JSON.parse(o.evidence)),signals,now),
-    latestObservation:observations[0]?JSON.parse(observations[0].evidence):null,
+  return {...candidate,signals,score:trendScore(observations.map(evidence=>JSON.parse(evidence)),signals,now),
+    latestObservation:observations[0]?JSON.parse(observations[0]):null,
     ready:ready&&candidate.state==='approved',reason:reason??(candidate.state==='approved'?null:'OPERATOR_REVIEW_REQUIRED')}
+}
+
+export async function trendCandidate(db, repoId, now=Date.now()) {
+  const {rows:[candidate]} = await db.query(`${candidateSQL} where c.github_repo_id=$1`,[repoId])
+  if(!candidate)return null
+  const {rows:observations}=await db.query(`select evidence from trend_observations where github_repo_id=$1 order by observed_at desc limit ${OBSERVATION_LIMIT}`,[repoId])
+  const {rows:signals}=await db.query(`select ${signalColumns}
+    from trend_signals where github_repo_id=$1 order by occurred_at desc,id desc limit ${SIGNAL_LIMIT}`,[repoId])
+  return trendCandidateView(candidate,observations.map(o=>o.evidence),signals,now)
+}
+
+// The same view as trendCandidate for many candidates in three queries (not three per candidate): the public explore,
+// find-repos and search surfaces read up to 200 candidates per refresh.
+async function trendCandidates(db, repoIds, now) {
+  if(!repoIds.length)return []
+  const [{rows:candidates},{rows:observations},{rows:signals}]=await Promise.all([
+    db.query(`${candidateSQL} where c.github_repo_id=any($1::bigint[])`,[repoIds]),
+    db.query(`select ids.id::text as "repoId",o.evidence from unnest($1::bigint[]) as ids(id)
+      cross join lateral (select evidence,observed_at from trend_observations where github_repo_id=ids.id
+        order by observed_at desc limit ${OBSERVATION_LIMIT}) o order by ids.id,o.observed_at desc`,[repoIds]),
+    db.query(`select ids.id::text as "repoId",s.* from unnest($1::bigint[]) as ids(id)
+      cross join lateral (select id as "signalId",${signalColumns} from trend_signals where github_repo_id=ids.id
+        order by occurred_at desc,id desc limit ${SIGNAL_LIMIT}) s order by ids.id,s."occurredAt" desc,s."signalId" desc`,[repoIds]),
+  ])
+  const evidence=new Map(),signalRows=new Map()
+  const add=(map,key,value)=>{const list=map.get(key);if(list)list.push(value);else map.set(key,[value])}
+  for(const {repoId,evidence:value} of observations)add(evidence,repoId,value)
+  for(const {repoId,signalId,...signal} of signals)add(signalRows,repoId,signal)
+  const byId=new Map(candidates.map(candidate=>[candidate.repoId,candidate]))
+  return repoIds.flatMap(id=>byId.has(id)?[trendCandidateView(byId.get(id),evidence.get(id)??[],signalRows.get(id)??[],now)]:[])
 }
 async function recordSignal(db,repoId,signal,operator=null){
   await db.query(`insert into trend_signals(github_repo_id,source,url,note,occurred_at,expires_at,operator) values($1,$2,$3,$4,$5,$6,$7)
@@ -190,11 +219,11 @@ export async function syncTrendLaunches(db){
   }
 }
 
-export async function trendOperatorView(pool){
-  const {rows:ids}=await pool.query('select github_repo_id::text as id from trend_candidates order by detected_at desc limit 200')
-  const candidates=[]
-  for(const {id} of ids)candidates.push(await trendCandidate(pool,id))
+export async function trendOperatorView(pool,now=Date.now()){
+  const [{rows:ids},{rows:sources}]=await Promise.all([
+    pool.query('select github_repo_id::text as id from trend_candidates order by detected_at desc limit 200'),
+    pool.query('select source,status,checked_at as "checkedAt",detail from trend_source_health order by source')])
+  const candidates=await trendCandidates(pool,ids.map(row=>row.id),now)
   candidates.sort((a,b)=>b.score.total-a.score.total||(BigInt(a.repoId)<BigInt(b.repoId)?-1:1))
-  const {rows:sources}=await pool.query('select source,status,checked_at as "checkedAt",detail from trend_source_health order by source')
   return {checkedAt:new Date().toISOString(),candidates,sources:sources.map(s=>({...s,detail:JSON.parse(s.detail)}))}
 }

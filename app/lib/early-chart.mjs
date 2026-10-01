@@ -10,8 +10,10 @@ export function earlyChartScript(mint) {
   const urls = { trades: marketTradesUrl(mint), metrics: marketMetricsUrl(mint) }
   // JSON is safe inside <script> once "<" is escaped; mints are base58 anyway.
   const args = JSON.stringify([mint, urls]).replace(/</g, '\\u003c')
+  // cache:"no-store" like every other chart read: these APIs may be shared from the CDN edge for a few seconds, but a
+  // browser must never reuse its own copy (whatever a CDN does to the browser-facing Cache-Control).
   return `(function(a){var m=a[0],u=a[1],s=window.${STORE}=window.${STORE}||{};function go(){${KINDS.map(kind =>
-    `var k=m+":${kind}";if(!s[k])s[k]=fetch(u.${kind}).then(function(r){return r.ok?r.json():null}).catch(function(){return null});`).join('')}}` +
+    `var k=m+":${kind}";if(!s[k])s[k]=fetch(u.${kind},{cache:"no-store"}).then(function(r){return r.ok?r.json():null}).catch(function(){return null});`).join('')}}` +
     `requestAnimationFrame(function(){requestAnimationFrame(go)})})(${args})`
 }
 

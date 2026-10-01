@@ -33,6 +33,7 @@ reconcile
 referral
 replica-state
 reserve-alerts-integration
+server-speed-db
 trade
 trend-integration
 trend-launchable-db

@@ -9,6 +9,7 @@ import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
 import { readGraduationRace } from './graduation-race.mjs'
 import { marketRowStats } from './market-row-stats.mjs'
+import { timed } from './server-timing.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -61,7 +62,7 @@ export function tradeAvailable() { return Boolean(database() && configAddress())
 
 // Home, /explore and the wallet overview render per request; share one market aggregate per 15 s.
 const MARKETS_TTL_MS = 15_000
-export const listMarkets = ttlMemo(loadMarkets, MARKETS_TTL_MS, { keep: result => !result.unavailable })
+export const listMarkets = ttlMemo(() => timed('listMarkets', loadMarkets), MARKETS_TTL_MS, { keep: result => !result.unavailable })
 
 async function loadMarkets() {
   const pool = database()
@@ -103,7 +104,7 @@ async function loadMarkets() {
 // Home, /explore and the $REPOING page: every curve market ranked by verified graduation progress (one joined read;
 // freshness is checked per row). Callers take the top they need.
 const GRADUATION_RACE_TTL_MS = 30_000
-export const graduationRace = ttlMemo(loadGraduationRace, GRADUATION_RACE_TTL_MS, { keep: result => !result.unavailable })
+export const graduationRace = ttlMemo(() => timed('graduationRace', loadGraduationRace), GRADUATION_RACE_TTL_MS, { keep: result => !result.unavailable })
 
 async function loadGraduationRace() {
   const pool = database()
@@ -187,9 +188,9 @@ async function singleMarket(column, value) {
   } catch { return { market: null, unavailable: 'Market is temporarily unavailable.' } }
 }
 // React cache is scoped to the render: metadata and page share one read, without caching payout state.
-export const marketByMint = cache(mint => singleMarket('mint', mint))
+export const marketByMint = cache(mint => timed('market', () => singleMarket('mint', mint)))
 export const marketByRepo = cache(repoId => /^\d+$/.test(String(repoId))
-  ? singleMarket('github_repo_id', String(repoId)) : Promise.resolve({ market: null }))
+  ? timed('market', () => singleMarket('github_repo_id', String(repoId))) : Promise.resolve({ market: null }))
 
 export async function repositoryById(repoId) {
   if (!/^\d+$/.test(String(repoId))) return null
