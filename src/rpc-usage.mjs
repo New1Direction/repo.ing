@@ -36,6 +36,68 @@ export function retryAfterMs(value, now = Date.now()) {
   return Number.isFinite(at) ? Math.max(0, at - now) : null
 }
 
+// Why an RPC error is worth another try, or null when it is not: HTTP 429 (a rate limit, or Helius's exhausted
+// credits) and the meter's RPC_RATE_LIMITED, 408 and 5xx gateway or server errors (Cloudflare's 520-524 included), an
+// unhealthy or lagging node (JSON-RPC -32005), and timed-out or dropped connections. web3.js reports an HTTP failure
+// as "<status> <statusText>: <body>", sometimes inside a method's own message ("failed to get info about account …:
+// Error: 429 …"), which also drops the error's code; only that leading status counts, never one quoted in a body.
+// Raw JSON-RPC reads (finalized-transaction.mjs) attach the status instead.
+const TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524])
+const HTTP_FAILURE = /(?:^|Error: )(\d{3}) [^:\n]*:/
+const NETWORK_FAILURE = /fetch failed|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN/
+const NODE_UNHEALTHY = -32005
+const NODE_UNHEALTHY_MESSAGE = /Node is (?:behind by \d+ slots?|unhealthy)/
+export function transientRpcReason(error) {
+  const message = String(error?.message ?? '')
+  if (error?.code === RPC_RATE_LIMITED || message.includes(RPC_RATE_LIMITED)) return 'rate limited'
+  const status = Number(error?.status) || Number(HTTP_FAILURE.exec(message)?.[1])
+  if (TRANSIENT_HTTP_STATUSES.has(status)) return `HTTP ${status}`
+  if (error?.code === NODE_UNHEALTHY || NODE_UNHEALTHY_MESSAGE.test(message)) return 'node unhealthy'
+  if (error?.name === 'TimeoutError') return 'timeout'
+  if (NETWORK_FAILURE.test(message) || NETWORK_FAILURE.test(String(error?.cause?.code ?? ''))) return 'network'
+  return null
+}
+
+// Shared by the reads of one run: once `breakAfter` reads in a row have used up their retries on transient errors (a
+// provider that is down or out of credits rather than bursting), later reads get a single try until one succeeds.
+export function createRetryCircuit({ breakAfter = 3, onOpen = () => {} } = {}) {
+  let streak = 0
+  return {
+    isOpen: () => streak >= breakAfter,
+    succeeded: () => { streak = 0 },
+    exhausted: () => { if (++streak === breakAfter) onOpen({ breakAfter }) },
+  }
+}
+
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+// Retries a read on a transient RPC error (transientRpcReason): `attempts` tries in all (one while `circuit` is open),
+// waiting an exponential backoff with jitter (baseMs doubling up to maxMs) and never less than a backing-off meter
+// asked for (RpcLimitedError.retryInMs, which includes any Retry-After), each wait capped at maxWaitMs. A request the
+// meter does send still waits out the rest of its window, so Retry-After holds either way. Any other error, and the
+// last transient one, is thrown unchanged. Only for reads and preparation that sign and send nothing: never a broadcast.
+export async function retryRpcRead(read, { attempts = 4, baseMs = 2000, maxMs = 8000, maxWaitMs = 10_000,
+  random = Math.random, sleep = pause, onRetry = () => {}, circuit = null } = {}) {
+  const tries = circuit?.isOpen() ? 1 : attempts
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const value = await read()
+      circuit?.succeeded()
+      return value
+    } catch (error) {
+      const reason = transientRpcReason(error)
+      if (reason === null) throw error
+      if (attempt >= tries) { circuit?.exhausted(); throw error }
+      // The meter refuses without sending only while its window is longer than its own wait cap; a method that
+      // re-wraps the refusal loses retryInMs, so wait the longest single wait then.
+      const asked = reason === 'rate limited' ? Number(error?.retryInMs) || maxWaitMs : 0
+      const delayMs = Math.min(maxWaitMs, Math.max(backoffDelay(attempt, { baseMs, maxMs, random }), asked))
+      onRetry({ attempt, attempts: tries, delayMs, reason })
+      await sleep(delayMs)
+    }
+  }
+}
+
 // JSON-RPC method names in a request body (one call or a batch). Unparseable bodies count as 'unknown'.
 export function rpcMethods(body) {
   try {

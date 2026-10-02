@@ -1,6 +1,7 @@
 import { Connection } from '@solana/web3.js'
 import { createPlatformFees } from './platform-fees.mjs'
 import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from './platform-dbc-fees.mjs'
+import { retryRpcRead } from './rpc-usage.mjs'
 
 // Shared by the operator panel (app/api/operations/platform-fees) and scripts/platform-sweep.mjs:
 // one source of truth for which repo/phase has claimable platform fees and what a claim review pins.
@@ -8,9 +9,11 @@ import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from './platform-
 export const REVIEW_TTL_MS = 10 * 60_000
 export const PLATFORM_FEE_PHASES = Object.freeze(['DBC', 'DAMM'])
 
-export function platformFeeService(phase = 'DBC', { pool, connection, config, partner, env = process.env }) {
+// `verification` overrides the DBC verification connection otherwise made from GRADUATION_VERIFICATION_RPC_URL
+// (the sweep passes one that goes through its RPC meter).
+export function platformFeeService(phase = 'DBC', { pool, connection, config, partner, env = process.env, verification }) {
   if (phase === 'DBC') return createDbcPlatformFees({ pool, connection, config, partner,
-    verification: env.GRADUATION_VERIFICATION_RPC_URL ? new Connection(env.GRADUATION_VERIFICATION_RPC_URL, 'finalized') : null })
+    verification: verification ?? (env.GRADUATION_VERIFICATION_RPC_URL ? new Connection(env.GRADUATION_VERIFICATION_RPC_URL, 'finalized') : null) })
   if (phase === 'DAMM') return createPlatformFees({ pool, connection, config, partner })
   throw Error('Invalid fee phase')
 }
@@ -29,8 +32,11 @@ export function allocationReview({ sessionId, policyVersion, now = Date.now() })
 }
 
 // Every finalized market's uncollected platform fees. On-chain inspection is read-only;
-// `review` is only asked for rows with a positive balance.
-export async function listPlatformFees({ pool, feeService, review = () => null, concurrency = 4 }) {
+// `review` is only asked for rows with a positive balance. The panel reads four markets at once without retries.
+// The sweep reads one market at a time, `paceMs` apart, and passes `retry` (retryRpcRead options) so a transient RPC
+// error is retried; an entry then carries the `retries` it spent, also when it still failed.
+export async function listPlatformFees({ pool, feeService, review = () => null, concurrency = 4, paceMs = 0, retry = null,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const db = await pool.connect()
   try {
     const { rows: repos } = await db.query(`select m.github_repo_id::text as "repoId", m.mint,
@@ -41,18 +47,27 @@ export async function listPlatformFees({ pool, feeService, review = () => null, 
       order by m.github_repo_id`)
     const queue = [...repos], results = []
     const worker = async () => {
+      let started = false
       while (queue.length) {
         const repo = queue.shift()
+        if (started && paceMs > 0) await sleep(paceMs)
+        started = true
         const row = { repoId: repo.repoId, mint: repo.mint, fullName: repo.fullName, dbc: null, damm: null }
         for (const phase of ['DBC', ...(repo.graduated ? ['DAMM'] : [])]) {
+          let retries = 0
+          const read = () => feeService(phase).status(repo.repoId)
+          const spent = entry => (retries ? { ...entry, retries } : entry)
           try {
-            const data = await feeService(phase).status(repo.repoId)
-            if (data.enrolled === false) { row[phase.toLowerCase()] = { enrolled: false, available: '0', review: null }; continue }
+            const data = await (retry ? retryRpcRead(read, { ...retry, onRetry: info => {
+              retries++
+              retry.onRetry?.({ ...info, repoId: repo.repoId, fullName: repo.fullName, phase })
+            } }) : read())
+            if (data.enrolled === false) { row[phase.toLowerCase()] = spent({ enrolled: false, available: '0', review: null }); continue }
             const available = BigInt(data.available)
-            row[phase.toLowerCase()] = { enrolled: true, available: data.available,
+            row[phase.toLowerCase()] = spent({ enrolled: true, available: data.available,
               receiver: data.receiver, state: data.state, latest: data.latest ?? null,
-              review: available > 0n ? review(repo.repoId, phase, data) : null }
-          } catch (error) { row[phase.toLowerCase()] = { enrolled: true, error: error.message, available: null, review: null } }
+              review: available > 0n ? review(repo.repoId, phase, data) : null })
+          } catch (error) { row[phase.toLowerCase()] = spent({ enrolled: true, error: error.message, available: null, review: null }) }
         }
         if (!row.damm) row.damm = { enrolled: false, available: '0', review: null }
         results.push(row)

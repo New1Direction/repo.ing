@@ -67,7 +67,8 @@ async function readTransactionAt(connection, signature, commitment, fetchImpl, d
     const retryAfter = Number(response.headers?.get?.('retry-after')) * 1000
     await wait(Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : delays[attempt], 10_000))
   }
-  if (!response.ok) throw new Error(`Solana RPC transaction read returned HTTP ${response.status}`)
+  // The status rides along so callers can tell a rate limit or outage (worth retrying) from other failures.
+  if (!response.ok) throw Object.assign(new Error(`Solana RPC transaction read returned HTTP ${response.status}`), { status: response.status })
   const payload = await response.json()
   if (payload.error) throw new Error(`Solana RPC transaction read failed with code ${payload.error.code ?? 'unknown'}`)
   return normalizeFinalizedTransaction(payload.result, signature)

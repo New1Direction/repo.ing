@@ -77,35 +77,37 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
     return { ...terms, termsHash: hash(terms), slot: reads[0].context.slot, quoteVault: s.quoteVault.toBase58(),
       creatorUnclaimed: s.creatorQuoteFee.toString(), enrolled: true, state: 'available' }
   }
-  async function claim({ review, simulateOnly = false }) {
+  // `retryRead` wraps each read made before the claim is signed (the sweep retries transient RPC errors there).
+  // Signing, the fee and balance checks, simulation, the durable intent, broadcast and settlement never use it.
+  async function claim({ review, simulateOnly = false, retryRead = read => read() }) {
     if (env.PLATFORM_DBC_COLLECTION_ENABLED !== 'true') throw Error('DBC platform collection is disabled')
     if (!review || review.purpose !== 'platform-fee-review' || review.phase !== 'DBC' ||
       !Number.isFinite(review.expiresAt) || review.expiresAt <= Date.now()) throw Error('Platform fee review expired')
-    const genesis = await connection.getGenesisHash()
+    const genesis = await retryRead(() => connection.getGenesisHash())
     if (!local(connection) && genesis !== MAINNET) throw Error('Platform collection requires Solana mainnet')
-    if (verification && await verification.getGenesisHash() !== genesis) throw Error('RPC network disagreement')
+    if (verification && await retryRead(() => verification.getGenesisHash()) !== genesis) throw Error('RPC network disagreement')
     return withLock(review.repoId, async db => {
-      const current = await inspect(db, review.repoId)
+      const current = await retryRead(() => inspect(db, review.repoId))
       if (review.receiver !== current.receiver || review.termsHash !== current.termsHash || String(review.amount) !== current.available) throw Error('Platform claim terms changed; refresh and review again')
       const amount = BigInt(current.available)
       if (amount <= 0n) throw Error('No platform fees remain to claim')
-      const receivingAccount = await connection.getAccountInfo(new PublicKey(current.receiver), 'finalized')
+      const receivingAccount = await retryRead(() => connection.getAccountInfo(new PublicKey(current.receiver), 'finalized'))
       if (!PublicKey.isOnCurve(new PublicKey(current.receiver)) || (receivingAccount &&
         (receivingAccount.executable || !receivingAccount.owner.equals(SystemProgram.programId)))) throw Error('Treasury must be a normal Solana wallet')
       if (!/^[1-9]\d*$/.test(String(review.maxNetworkFeeLamports)) || BigInt(review.maxNetworkFeeLamports) > DBC_MAX_NETWORK_FEE_LAMPORTS) throw Error('Invalid reviewed network fee limit')
       // Fresh temporary ATAs keep the claim from closing any existing wallet
       // token account. Both rent deposits return to the fee payer atomically.
       const temporary = Keypair.generate(), receiver = new PublicKey(current.receiver)
-      const claimTx = await dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
+      const claimTx = await retryRead(() => dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
         receiver: temporary.publicKey, tempWSolAcc: temporary.publicKey, pool: new PublicKey(current.pool),
-        maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) })
-      const rent = await connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE)
+        maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) }))
+      const rent = await retryRead(() => connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE))
       const baseAccount = getAssociatedTokenAddressSync(new PublicKey(current.mint), temporary.publicKey)
       const quoteAccount = getAssociatedTokenAddressSync(NATIVE_MINT, temporary.publicKey)
       claimTx.add(SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: receiver, lamports: amount }),
         SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: partner.publicKey, lamports: rent }),
         createCloseAccountInstruction(baseAccount, partner.publicKey, temporary.publicKey))
-      const latest = await connection.getLatestBlockhash('confirmed')
+      const latest = await retryRead(() => connection.getLatestBlockhash('confirmed'))
       // Rebuilt as [limit, price, ...claim] and signed by both the partner (fee payer) and the temporary authority.
       const { transaction: tx } = await signedWithPriorityFee(connection, claimTx, { feePayer: partner.publicKey,
         blockhash: latest.blockhash, signers: [partner, temporary] })
