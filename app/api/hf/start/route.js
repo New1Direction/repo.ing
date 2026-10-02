@@ -1,5 +1,5 @@
 import { isMarketId, marketSource } from '../../../../src/market-identity.mjs'
-import { hfMarketsEnabled } from '../../../../src/hf-verification.mjs'
+import { hfMarketsEnabled } from '../../../../src/hf-launch.mjs'
 import { isHfModelPath } from '../../../../src/hf-url.mjs'
 import { database, marketByRepo } from '../../../lib/server.mjs'
 import { hfRedirect, hfStateCookie, sealHfState } from '../../../lib/hf-auth.mjs'

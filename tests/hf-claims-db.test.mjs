@@ -11,11 +11,12 @@ import { Connection, Keypair, PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createHfClient } from '../src/hf-api.mjs'
-import { createHfOAuth, createHfVerifier, registerModel } from '../src/hf-verification.mjs'
-import { createWalletBinding } from '../src/wallet-binding.mjs'
+import { createHfOAuth, createHfVerifier } from '../src/hf-verification.mjs'
+import { HF_OPT_OUT_ERROR, hfLaunchGuard, registerModel } from '../src/hf-launch.mjs'
+import { createWalletBinding, modelBeneficiary } from '../src/wallet-binding.mjs'
 import { createClaim } from '../src/claim.mjs'
 import { activateDuePayoutAddresses, createPayoutAddresses } from '../src/payout-address.mjs'
-import { activeDecision, assertLaunchAllowed, createMaintainerDecisions, MODEL_OPT_OUT_ERROR } from '../src/maintainer-opt-outs.mjs'
+import { activeDecision, createMaintainerDecisions } from '../src/maintainer-opt-outs.mjs'
 import { createPromotionExclusions } from '../app/lib/promotion-exclusions.mjs'
 import { recorded, startFakeHf } from './fixtures/hf-server.mjs'
 
@@ -230,6 +231,13 @@ test('real PostgreSQL: a model wallet is bound only after a fresh recorded owner
     assert.deepEqual([orgBound.authoritySubject, orgBound.authorityOwnerSubject], [ORG_ADMIN, ORG])
     assert.deepEqual((await pool.query('select role, owner_kind, owner_subject from model_verifications where github_repo_id = $1', [orgMarket])).rows,
       [{ role: 'admin', owner_kind: 'org', owner_subject: ORG }, { role: 'admin', owner_kind: 'org', owner_subject: ORG }])
+    // The lookup by market id (and Hugging Face user) that pays these bindings, the counterpart of repo_beneficiaries.github_user_id.
+    assert.deepEqual(await modelBeneficiary(pool, orgMarket, { subject: ORG_ADMIN }),
+      { wallet: orgBound.wallet, boundAt: orgBound.boundAt, method: 'signature', subject: ORG_ADMIN, ownerSubject: ORG })
+    assert.deepEqual((await modelBeneficiary(pool, marketId)).ownerSubject, OWNER)
+    assert.equal(await modelBeneficiary(pool, orgMarket, { subject: STRANGER }), null, 'another user’s binding is not theirs')
+    await assert.rejects(modelBeneficiary(pool, '9701'), /Not a Hugging Face market ID/)
+    await assert.rejects(modelBeneficiary(pool, orgMarket, { subject: 'ORG' }), /Invalid Hugging Face user ID/)
     // Checks expire after five minutes.
     await pool.query("update model_verifications set verified_at = now() - interval '6 minutes'")
     await assert.rejects(binder.requestChallenge({ githubRepoId: marketId, wallet: signer.address, authority }), /Recent Hugging Face owner verification required/)
@@ -351,19 +359,21 @@ test('real PostgreSQL: model owners and org admins decline or opt out by registr
     // A model without a market: registered by its _id, then opted out by an admin of the organization that owns it.
     const found = await verifier.lookupModel('https://huggingface.co/openai-community/gpt2')
     assert.deepEqual([found.hfId, found.owner.id, found.owner.kind], [GPT2, ORG, 'org'])
-    const unlaunched = await registerModel(pool, found)
-    assert.equal(await registerModel(pool, found), unlaunched, 'one registry id per model _id')
+    const unlaunched = String(await registerModel(pool, found, found.owner))
+    assert.equal(String(await registerModel(pool, found, found.owner)), unlaunched, 'one registry id per model _id')
     await assert.rejects(decisionsAs(TOKENS.stranger, STRANGER).create({ repoId: unlaunched, kind: 'opt_out' }), error => error.status === 403)
     await assert.rejects(decisionsAs(TOKENS.orgAdmin, ORG_ADMIN).create({ repoId: unlaunched, kind: 'decline' }), error => error.status === 409 && /no market/.test(error.message))
     const optedOut = await decisionsAs(TOKENS.orgAdmin, ORG_ADMIN).create({ repoId: unlaunched, kind: 'opt_out', note: 'Please do not launch our model.' })
     assert.deepEqual([optedOut.repoId, optedOut.kind, optedOut.note], [unlaunched, 'opt_out', 'Please do not launch our model.'])
-    await assert.rejects(assertLaunchAllowed(pool, unlaunched), error => error.message === MODEL_OPT_OUT_ERROR && error.code === 'MAINTAINER_OPTED_OUT')
+    // Model launches read it like a repository's decision: the launch guard (src/hf-launch.mjs) refuses the model.
+    const launchGuard = hfLaunchGuard({ pool, hf: createHfClient({ fetchImpl: server.fetchImpl, sleep: async () => {} }), enabled: () => true })
+    await assert.rejects(launchGuard({ market: { githubRepoId: unlaunched } }), error => error.message === HF_OPT_OUT_ERROR && error.code === 'MAINTAINER_OPTED_OUT')
     assert.equal((await pool.query('select count(*)::int as n from model_verifications where github_repo_id = $1', [unlaunched])).rows[0].n, 0, 'no market, nothing recorded')
 
     // A launched model: its owner declines the market, then withdraws.
     const declined = await decisionsAs(TOKENS.owner, OWNER).create({ repoId: live, kind: 'decline' })
-    assert.deepEqual([declined.kind, declined.source, (await activeDecision(pool, live)).source], ['decline', 'huggingface', 'huggingface'],
-      'a model decision says so, for the banners that word it')
+    assert.equal(declined.kind, 'decline')
+    assert.deepEqual(await activeDecision(pool, live), declined, 'read like a repository decision')
     assert.deepEqual((await pool.query(`select authority_source as source, github_user_id as "githubUser", actor_subject as actor
       from maintainer_opt_outs where github_repo_id = $1`, [live])).rows, [{ source: 'huggingface', githubUser: null, actor: OWNER }])
 

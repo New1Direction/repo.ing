@@ -17,7 +17,8 @@ import { assertHfMarketId } from './market-identity.mjs'
 // IP or token policy), else it fails closed.
 //
 // Nothing here stores a token. The caller keeps the access token only in the sealed, HttpOnly session cookie, for at most
-// HF_SESSION_SECONDS (app/lib/hf-auth.mjs). Every Hugging Face behavior is gated by HF_MARKETS_ENABLED (default off).
+// HF_SESSION_SECONDS (app/lib/hf-auth.mjs). Every Hugging Face behavior is gated by HF_MARKETS_ENABLED (default off;
+// hfMarketsEnabled in src/hf-launch.mjs).
 
 export const HF_OAUTH_SCOPES = Object.freeze(['openid', 'profile', 'read-memberships'])
 export const HF_SESSION_SECONDS = 3600
@@ -26,7 +27,6 @@ const STATE = /^[0-9a-f]{64}$/
 const CODE_VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/
 const MAX_BODY_BYTES = 256_000
 
-export const hfMarketsEnabled = (env = process.env) => env.HF_MARKETS_ENABLED === 'true'
 export const isHfSubject = value => typeof value === 'string' && OBJECT_ID.test(value)
 
 // code: stable, for callers and tests; status: the HTTP status a route should answer with.
@@ -291,13 +291,15 @@ export function createHfVerifier({ pool, hf, oauth = null, now = Date.now }) {
       ownerHandle: resolved.owner.handle, verifiedAt }
   }
 
-  // A model named by its URL, before it has a registry row or a market (maintainer opt-outs): its public identity and owner.
+  // A model named by its URL, before it has a registry row or a market (maintainer opt-outs): its public identity and owner,
+  // with the fields registerModel (src/hf-launch.mjs) records, so registering it here matches a launch's registration.
   async function lookupModel(input) {
     let path
     try { path = parseHfModelUrl(input).path } catch (error) { throw modelError(error, String(input).slice(0, 200)) }
     const found = await model(path)
     const current = await owner(found.owner.handle)
-    return { hfId: found.hfId, path: found.path, gated: found.gated, owner: current }
+    return { hfId: found.hfId, path: found.path, gated: found.gated, private: found.private, disabled: found.disabled,
+      baseModels: found.baseModels ?? null, owner: current }
   }
 
   // The signed-in user's authority over a model looked up by URL: { authorized, role, reason, message, subject, username }.
@@ -327,20 +329,8 @@ export function createHfVerifier({ pool, hf, oauth = null, now = Date.now }) {
   return { source: 'huggingface', resolveMarketModel, verifyMarketAuthority, lookupModel, modelAuthority, repoint }
 }
 
-// The market id a model has (or gets): registry rows are keyed by the model repo's stable _id, so a model is registered
-// once whatever path it is reached by. Used for maintainer decisions on models without a market; launches register
-// models the same way. found: lookupModel() output.
-export async function registerModel(pool, found) {
-  if (!isHfSubject(found?.hfId) || !isHfSubject(found.owner?.id) || !['user', 'org'].includes(found.owner.kind)) throw new TypeError('Invalid model')
-  const { rows: [row] } = await pool.query(`insert into hf_models(hf_id, repo_path, owner_handle, owner_kind, owner_subject, gated)
-      values ($1, $2, $3, $4, $5, $6)
-    on conflict (hf_id) do update set repo_path = excluded.repo_path, owner_handle = excluded.owner_handle, owner_kind = excluded.owner_kind,
-      owner_subject = excluded.owner_subject, gated = excluded.gated, path_confirmed_at = now()
-    returning market_ref::text as "marketId"`, [found.hfId, found.path, found.owner.handle, found.owner.kind, found.owner.id, found.gated !== false])
-  return row.marketId
-}
-
-// A model's market id without registering it: null if repo.ing has never seen the model.
+// A model's market id without registering it: null if repo.ing has never seen the model. (registerModel in
+// src/hf-launch.mjs registers one: registry rows are keyed by the model repo's stable _id, whatever path reached it.)
 export async function registeredMarketId(pool, hfId) {
   if (!isHfSubject(hfId)) return null
   const { rows: [row] } = await pool.query('select market_ref::text as "marketId" from hf_models where hf_id = $1', [hfId])

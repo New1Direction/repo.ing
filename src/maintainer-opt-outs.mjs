@@ -7,9 +7,9 @@ import { isMarketId, marketSource } from './market-identity.mjs'
 // new market can be launched for it. An existing market keeps trading so holders can exit, and its builder fees stay
 // claimable by the verified maintainer exactly as before. Withdrawing restores normal behavior; old rows stay as history.
 // Hugging Face models (drizzle/0050_model_opt_outs.sql) have the same two decisions, keyed by the model's registry market
-// id (hf_models.market_ref) and made by its current owner or an admin of its organization (source 'huggingface').
+// id (hf_models.market_ref) and made by its current owner or an admin of its organization (source 'huggingface'). They
+// read exactly like a repository's: model launches refuse an opted-out model with HF_OPT_OUT_ERROR (src/hf-launch.mjs).
 export const OPT_OUT_ERROR = 'The maintainer has opted this repository out of repo.ing'
-export const MODEL_OPT_OUT_ERROR = 'The model’s owner has opted it out of repo.ing'
 export const DECISION_KINDS = Object.freeze(['decline', 'opt_out'])
 const REPO_ID = /^[1-9]\d{0,18}$/
 const SUBJECT = /^[0-9a-f]{24}$/
@@ -23,9 +23,7 @@ const repoIdOf = value => {
   return String(value)
 }
 const iso = value => value instanceof Date ? value.toISOString() : value
-// source is present only on a Hugging Face model's decision (0050), so a repository's decision reads exactly as before.
-const decisionOf = row => row ? { repoId: row.repoId, kind: row.kind, note: row.note ?? null, createdAt: iso(row.createdAt),
-  ...(row.source === 'huggingface' ? { source: 'huggingface' } : {}) } : null
+const decisionOf = row => row ? { repoId: row.repoId, kind: row.kind, note: row.note ?? null, createdAt: iso(row.createdAt) } : null
 
 // The optional public note follows the holder-note rules: plain text, at most 280 characters, no links except github.com.
 // Blank means no note.
@@ -34,9 +32,7 @@ export function decisionNote(value) {
   try { return sanitizeNote(value) } catch (error) { throw new DecisionError(error instanceof NoteError ? error.message : 'Invalid note.') }
 }
 
-// to_jsonb: also readable on a database the 0050 migration has not reached (worker deploys do not migrate).
-const ACTIVE = `select github_repo_id::text as "repoId", kind, note, created_at as "createdAt",
-  to_jsonb(maintainer_opt_outs) ->> 'authority_source' as source from maintainer_opt_outs
+const ACTIVE = `select github_repo_id::text as "repoId", kind, note, created_at as "createdAt" from maintainer_opt_outs
   where withdrawn_at is null`
 
 // Reads of maintainer_opt_outs only. A database the migration has not reached yet has no such table (42P01), so it holds
@@ -64,13 +60,9 @@ export async function activeOptOutRepoIds(pool) {
   return rows.map(row => row.repoId)
 }
 
-// Every launch path (/api/resolve, /api/launch prepare, agent drafts) calls this for a repository without a market. A model
-// launch passes the model's registry market id (a model repo.ing has never registered has no decision to find).
+// Every launch path (/api/resolve, /api/launch prepare, agent drafts) calls this for a repository without a market.
 export async function assertLaunchAllowed(pool, repoId) {
-  if (await activeDecision(pool, repoId)) {
-    const model = isMarketId(repoId) && marketSource(repoId) === 'huggingface'
-    throw new DecisionError(model ? MODEL_OPT_OUT_ERROR : OPT_OUT_ERROR, 403, 'MAINTAINER_OPTED_OUT')
-  }
+  if (await activeDecision(pool, repoId)) throw new DecisionError(OPT_OUT_ERROR, 403, 'MAINTAINER_OPTED_OUT')
 }
 
 // The canonical public market, as the token and claim pages and the claim verifier define it.
@@ -110,7 +102,7 @@ export function createMaintainerDecisions({ pool, verifyAdmin, source = 'github'
   }
   const insertDecision = (id, kind, actor, text) => model
     ? pool.query(`insert into maintainer_opt_outs (github_repo_id, kind, github_user_id, note, authority_source, actor_subject)
-        values ($1, $2, null, $3, 'huggingface', $4) returning github_repo_id::text as "repoId", kind, note, created_at as "createdAt", authority_source as source`, [id, kind, text, actor.subject])
+        values ($1, $2, null, $3, 'huggingface', $4) returning github_repo_id::text as "repoId", kind, note, created_at as "createdAt"`, [id, kind, text, actor.subject])
     : pool.query(`insert into maintainer_opt_outs (github_repo_id, kind, github_user_id, note) values ($1, $2, $3, $4)
           returning github_repo_id::text as "repoId", kind, note, created_at as "createdAt"`, [id, kind, actor.githubUserId, text])
   return {

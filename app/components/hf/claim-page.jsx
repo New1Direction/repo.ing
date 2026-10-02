@@ -6,7 +6,9 @@ import { AppHeader, Footer } from '../ui'
 import { ModelClaimSteps } from './claim-steps'
 import { HF_DISCLAIMER } from '../../../src/hf-copy.mjs'
 import { hfModelUrl, isHfModelPath } from '../../../src/hf-url.mjs'
-import { HfAuthorityError, hfMarketsEnabled } from '../../../src/hf-verification.mjs'
+import { HfAuthorityError } from '../../../src/hf-verification.mjs'
+import { hfMarketsEnabled } from '../../../src/hf-launch.mjs'
+import { modelBeneficiary } from '../../../src/wallet-binding.mjs'
 import { chain, creatorSigner, database, feeStatus } from '../../lib/server.mjs'
 import { formatSolDisplay, formatUnits, formatUsdEstimate } from '../../lib/format.mjs'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
@@ -83,8 +85,7 @@ async function ModelClaimContent({ market, query }) {
   const [fees, destination, bindingOwner, receipt, usdPerSol, funded, cookieStore] = await Promise.all([
     feeStatus(repoId),
     currentPayoutDestinations(pool, [repoId]).then(destinations => destinations.get(String(repoId)) ?? { active: null, pending: null }),
-    pool.query('select authority_owner_subject as "ownerSubject" from repo_beneficiaries where github_repo_id = $1', [repoId])
-      .then(result => result.rows[0]?.ownerSubject ?? null).catch(() => null),
+    modelBeneficiary(pool, repoId).then(binding => binding?.ownerSubject ?? null).catch(() => null),
     pool.query(`select amount_base_units::text as amount, beneficiary_wallet as wallet, claim_signature as signature
       from repo_claims where github_repo_id = $1 and status = 'settled'
       and ($2::text is null or claim_signature = $2) order by settled_at desc limit 1`,

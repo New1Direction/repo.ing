@@ -1,17 +1,12 @@
-import { createHfClient } from '../../src/hf-api.mjs'
 import { HfAuthorityError, createHfOAuth, createHfVerifier, hfOAuthConfig } from '../../src/hf-verification.mjs'
+import { hfClient } from './hf-client.mjs'
 import { database } from './server.mjs'
 import { publicOrigin } from './origin.mjs'
 
 // Web wiring for Hugging Face sign-in and model authority (src/hf-verification.mjs), the counterpart of
-// app/lib/github-session.mjs. Calls go through globalThis.fetch at call time.
+// app/lib/github-session.mjs. Model and owner reads use the process's one anonymous Hub client (app/lib/hf-client.mjs,
+// shared with launches, so its rate-limit pacing covers every request). OAuth calls go through globalThis.fetch at call time.
 const lateFetch = (url, init) => globalThis.fetch(url, init)
-
-// One anonymous Hub client per process, so its rate-limit pacing covers every request this replica makes. Web requests
-// never wait long for a window: past 3 s they answer "try again" instead.
-export function hfClient() {
-  return globalThis.__repoingHfClient ??= createHfClient({ fetchImpl: lateFetch, timeoutMs: 8_000, retries: 1, maxWaitMs: 3_000 })
-}
 
 // The OAuth client, or a clean refusal while HF_OAUTH_* is unset or its redirect URI is not this origin's callback.
 export function hfOAuth(requestUrl) {
