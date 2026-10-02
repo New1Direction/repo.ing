@@ -122,7 +122,7 @@ export function PasteAddressForm({ repoIds, replacing = false, onSaved, onClose 
       <input id={`${id}-confirm`} name="payout-address-confirm" className={styles.confirmInput} value={confirm} disabled={busy}
         onChange={event => setConfirm(event.target.value)} maxLength={CONFIRM_CHARACTERS} autoComplete="off" autoCapitalize="off"
         autoCorrect="off" spellCheck={false} aria-describedby={`${id}-confirm-hint`}/>
-      <small id={`${id}-confirm-hint`}>Read them in your wallet, not in the box above. This catches a wrong or altered paste.</small>
+      <small id={`${id}-confirm-hint`}>Read them in your wallet, not in the box above, so a wrong paste is caught.</small>
     </div>
     <p className={styles.holdNote}><Clock size={15} aria-hidden="true"/>
       <span>A pasted address waits {PASTED_ADDRESS_HOLD_HOURS} hours before it can receive payouts. {until} Any admin of {scope} can cancel it during the wait, and signing with a wallet replaces it at once.</span></p>

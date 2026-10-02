@@ -61,18 +61,28 @@ const binding = async (pool, repoId) => (await pool.query(`select wallet, method
 const signatureBinding = (pool, repoId, address, daysAgo = 3) => pool.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at)
   values ($1, $2, $3, now() - make_interval(days => $4))`, [repoId, MAINTAINER, address, daysAgo])
 
-// Simulates the hold passing for a request the service created (its terms are otherwise immutable): a superuser session
-// with triggers off shifts both timestamps back, keeping the 48-hour gap the check constraint requires.
-async function elapseHold(pool, requestId) {
+// Time travel for tests only. Requests are otherwise stamped by the database when stored and never change, so a superuser
+// session with triggers off moves both timestamps back, keeping the 48-hour gap the check constraint still enforces.
+async function withoutTriggers(pool, work) {
   const client = await pool.connect()
   try {
     await client.query('begin')
     await client.query('set local session_replication_role = replica')
-    await client.query(`update payout_address_requests set requested_at = requested_at - interval '49 hours',
-      active_at = active_at - interval '49 hours' where id = $1`, [requestId])
+    const result = await work(client)
     await client.query('commit')
+    return result
+  } catch (error) {
+    await client.query('rollback').catch(() => {})
+    throw error
   } finally { client.release() }
 }
+const elapseHold = (pool, requestId) => withoutTriggers(pool, client => client.query(`update payout_address_requests
+  set requested_at = requested_at - interval '49 hours', active_at = active_at - interval '49 hours' where id = $1`, [requestId]))
+// A request stored 49 hours ago, recording the binding it would replace as the insert trigger does.
+const insertDueRequest = (pool, repoId, address, userId = MAINTAINER) => withoutTriggers(pool, async client => (await client.query(`insert into
+  payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login, requested_at, active_at, replaces_bound_at)
+  values ($1, $2, $3, 'maintainer', now() - interval '49 hours', now() - interval '1 hour',
+    (select bound_at from repo_beneficiaries where github_repo_id = $1)) returning id::text as id`, [repoId, address, userId])).rows[0].id)
 
 test('real PostgreSQL: pasting, replacing and cancelling a payout address take a current admin and leave an audit trail', { skip: !url }, async () => {
   requireDisposableDatabase()
@@ -132,8 +142,11 @@ test('real PostgreSQL: pasting, replacing and cancelling a payout address take a
       await service.request({ githubRepoId: '9101', address: next, confirm: last4(next), verifyAuthority: authority(pool, MAINTAINER) })
     }
     const sixth = wallet()
-    await assert.rejects(service.request({ githubRepoId: '9101', address: sixth, confirm: last4(sixth), verifyAuthority: authority(pool, MAINTAINER) }),
-      error => error.code === 'RATE_LIMITED' && error.status === 429)
+    let asked = 0
+    await assert.rejects(service.request({ githubRepoId: '9101', address: sixth, confirm: last4(sixth),
+      verifyAuthority: async input => { asked++; return authority(pool, MAINTAINER)(input) } }),
+    error => error.code === 'RATE_LIMITED' && error.status === 429)
+    assert.equal(asked, 0, 'refused before any GitHub (or Solana) call')
   } finally { await pool.end() }
 })
 
@@ -154,22 +167,28 @@ test('real PostgreSQL: a pasted address activates only after its hold, and the d
     assert.deepEqual(await activateDuePayoutAddresses(pool), [])
     assert.equal((await binding(pool, 9201)).wallet, signed, 'the previous binding keeps receiving claims during the hold')
 
-    // No code path can shorten the hold, activate early, or bind a pasted address that is not an activated request.
+    // No writer can shorten the hold, activate early, or bind a pasted address that is not an activated request. An
+    // insert is stamped by the database: a backdated or short hold is not kept, and nothing is stored already resolved.
     await assert.rejects(pool.query('update payout_address_requests set active_at = now() where id = $1', [request.id]), /terms cannot change/)
     await assert.rejects(pool.query("update payout_address_requests set status = 'activated', resolved_at = now() where id = $1", [request.id]), /hold has not ended/)
-    await assert.rejects(pool.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login, active_at)
-      values (9202, $1, $2, 'x', now() + interval '47 hours 59 minutes')`, [wallet(), MAINTAINER]), /payout_address_requests_hold_check/)
+    const { rows: [stamped] } = await pool.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id,
+        requested_by_login, requested_at, active_at) values (9202, $1, $2, 'x', now() - interval '49 hours', now() - interval '1 hour')
+      returning id, extract(epoch from (active_at - requested_at))::int as hold, requested_at >= now() as fresh`, [wallet(), MAINTAINER])
+    assert.deepEqual([stamped.hold, stamped.fresh], [48 * 3600, true], 'the hold runs 48 hours from the moment the row is stored')
+    await pool.query("update payout_address_requests set status = 'cancelled', resolved_at = now(), resolution_reason = 'test' where id = $1", [stamped.id])
+    await assert.rejects(pool.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login,
+      active_at, status, resolved_at) values (9202, $1, $2, 'x', now(), 'activated', now())`, [wallet(), MAINTAINER]), /starts pending/)
+    await assert.rejects(withoutTriggers(pool, client => client.query(`insert into payout_address_requests(github_repo_id, wallet,
+      requested_by_github_user_id, requested_by_login, active_at) values (9202, $1, $2, 'x', now() + interval '47 hours 59 minutes')`,
+    [wallet(), MAINTAINER])), /payout_address_requests_hold_check/, 'the check holds even with triggers off')
     await assert.rejects(pool.query(`update repo_beneficiaries set wallet = $1, method = 'pasted', payout_request_id = $2, github_user_id = $3
       where github_repo_id = 9201`, [pasted, request.id, MAINTAINER]), /Pasted payout address is not active/)
     await assert.rejects(pool.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, method, payout_request_id)
       values (9202, $1, $2, 'pasted', $3)`, [MAINTAINER, pasted, request.id]), /Pasted payout address is not active/)
     await assert.rejects(pool.query('update repo_beneficiaries set payout_request_id = $1 where github_repo_id = 9201', [request.id]),
       /repo_beneficiaries_method_check/)
-    await assert.rejects(pool.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login,
-      requested_at, active_at) values (9202, $1, $2, 'x', now() - interval '49 hours', now() - interval '1 hour')`, [pasted, MAINTAINER])
-      .then(() => pool.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login,
-        requested_at, active_at) values (9202, $1, $2, 'x', now() - interval '49 hours', now() - interval '1 hour')`, [wallet(), MAINTAINER])),
-    /payout_address_requests_one_pending/, 'one waiting address per repository')
+    await insertDueRequest(pool, 9202, pasted)
+    await assert.rejects(insertDueRequest(pool, 9202, wallet()), /payout_address_requests_one_pending/, 'one waiting address per repository')
     assert.equal((await binding(pool, 9201)).wallet, signed)
 
     await elapseHold(pool, request.id)
@@ -203,6 +222,40 @@ test('real PostgreSQL: a pasted address activates only after its hold, and the d
   } finally { await pool.end() }
 })
 
+test('real PostgreSQL: a binding changed after a request wins over it, whatever the clocks say; a busy lock refuses promptly', { skip: !url }, async () => {
+  requireDisposableDatabase()
+  const pool = new pg.Pool({ connectionString: url })
+  try {
+    await reset(pool)
+    await seed(pool, 9601)
+    const service = createPayoutAddresses({ pool, connection: freshWallet })
+    const original = wallet(), pasted = wallet(), other = wallet()
+    await signatureBinding(pool, 9601, original)
+    const change = await service.request({ githubRepoId: '9601', address: pasted, confirm: last4(pasted), verifyAuthority: authority(pool, MAINTAINER) })
+    // Once the hold has passed, another writer replaces the binding without superseding the request, stamping bound_at
+    // from a clock running behind the database's: the new bound_at is EARLIER than the request's requested_at. A
+    // timestamp comparison would let the pasted address activate over it; the recorded replaces_bound_at does not.
+    await elapseHold(pool, change.id)
+    await pool.query(`update repo_beneficiaries set wallet = $1, bound_at = (select requested_at - interval '1 minute'
+      from payout_address_requests where id = $2) where github_repo_id = 9601`, [other, change.id])
+    assert.deepEqual((await activateDuePayoutAddresses(pool, { repoIds: ['9601'] })).map(r => r.status), ['superseded'])
+    assert.equal((await binding(pool, 9601)).wallet, other)
+    assert.deepEqual((await requests(pool, 9601)).map(r => [r.status, r.reason]), [['superseded', 'A newer payout binding replaced it']])
+    assert.deepEqual((await events(pool, 9601)).map(e => [e.event, e.user]), [['requested', String(MAINTAINER)], ['superseded', String(MAINTAINER)]])
+
+    // A claim (or another change) holding the repository's lock makes a paste fail fast, saving nothing.
+    const holder = await pool.connect()
+    try {
+      await holder.query('select pg_advisory_lock(9601)')
+      const quick = createPayoutAddresses({ pool, connection: freshWallet, lockTimeoutMs: 200 })
+      const next = wallet()
+      await assert.rejects(quick.request({ githubRepoId: '9601', address: next, confirm: last4(next), verifyAuthority: authority(pool, MAINTAINER) }),
+        error => error.code === 'BUSY' && error.status === 409)
+    } finally { await holder.query('select pg_advisory_unlock(9601)'); holder.release() }
+    assert.equal((await requests(pool, 9601)).length, 1, 'nothing was saved')
+  } finally { await pool.end() }
+})
+
 test('real PostgreSQL: a wallet signature replaces a waiting pasted address at once; batch setup treats a due one as set', { skip: !url }, async () => {
   requireDisposableDatabase()
   const pool = new pg.Pool({ connectionString: url })
@@ -230,8 +283,7 @@ test('real PostgreSQL: a wallet signature replaces a waiting pasted address at o
     for (const id of [9302, 9303]) {
       await pool.query(`insert into repo_verifications(github_repo_id, github_user_id, github_login, permission) values ($1, $2, 'maintainer', 'admin')`, [id, MAINTAINER])
     }
-    await pool.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login, requested_at, active_at)
-      values (9303, $1, $2, 'maintainer', now() - interval '49 hours', now() - interval '1 hour')`, [wallet(), MAINTAINER])
+    await insertDueRequest(pool, 9303, wallet())
     const batch = await binder.requestBatchChallenge({ githubRepoIds: ['9302', '9303'], githubUserId: String(MAINTAINER), wallet: signer })
     await assert.rejects(binder.bindBatch({ nonces: batch.nonces, githubUserId: String(MAINTAINER), wallet: signer, signature: signMessage(batch.message) }),
       /Payout wallet changed/)

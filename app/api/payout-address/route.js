@@ -1,6 +1,7 @@
 import { createPayoutAddresses, PayoutAddressError } from '../../../src/payout-address.mjs'
 import { createBuilderReminders, createReminderSender } from '../../../src/builder-reminders.mjs'
-import { chain, creatorSigner, database, partnerSigner } from '../../lib/server.mjs'
+import { chain, database } from '../../lib/server.mjs'
+import { backerLabels } from '../../lib/backers.mjs'
 import { githubSessionCookie, readGithubSession, assertSameOrigin } from '../../lib/auth.mjs'
 import { sessionVerifier } from '../../lib/github-session.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
@@ -16,10 +17,9 @@ const ACTIONS = new Set(['paste', 'paste-batch', 'cancel'])
 const DENIED = /^(Open the claim page|GitHub session|Current GitHub|Recent GitHub|Repository verification mismatch|Connect GitHub)/
 const SAFE = error => error instanceof PayoutAddressError || DENIED.test(error?.message ?? '') || /^(Invalid payout address action)/.test(error?.message ?? '')
 
-function reserved() {
-  try { return [creatorSigner()?.publicKey, partnerSigner()?.publicKey].filter(Boolean).map(key => key.toBase58()) }
-  catch { return [] }
-}
+// repo.ing's own wallets as the backers list labels them: team, buyback, fee wallet, launch signer, the configured
+// creator and partner signers, and the tip wallet. Each is read on its own, so one unreadable key never drops the others.
+const reserved = () => [...backerLabels().keys()]
 
 // Opted-in builders hear about the change at once. Started after the request is saved and not awaited (the web service
 // is a long-running Node server): email never delays, blocks or undoes the change.

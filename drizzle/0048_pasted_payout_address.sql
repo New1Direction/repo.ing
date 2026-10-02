@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS "payout_address_requests" (
   "requested_by_login" text NOT NULL,
   "requested_at" timestamptz DEFAULT now() NOT NULL,
   "active_at" timestamptz NOT NULL,
+  -- bound_at of the binding this request would replace, as stored when it was made (null if none): activation detects
+  -- any later binding change exactly, with no clock comparison.
+  "replaces_bound_at" timestamptz,
   "status" varchar(16) DEFAULT 'pending' NOT NULL,
   "resolved_at" timestamptz,
   "resolved_by_github_user_id" bigint,
@@ -20,7 +23,7 @@ CREATE TABLE IF NOT EXISTS "payout_address_requests" (
   CONSTRAINT "payout_address_requests_status_check" CHECK ("status" IN ('pending', 'activated', 'cancelled', 'superseded')),
   CONSTRAINT "payout_address_requests_wallet_check" CHECK ("wallet" ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'),
   CONSTRAINT "payout_address_requests_user_check" CHECK ("requested_by_github_user_id" > 0),
-  -- The hold is a floor here as well, so no code path can store a shorter one.
+  -- With start_payout_address_request below, the hold runs at least 48 hours from the moment the row was stored.
   CONSTRAINT "payout_address_requests_hold_check" CHECK ("active_at" >= "requested_at" + interval '48 hours'),
   CONSTRAINT "payout_address_requests_resolution_check" CHECK (("status" = 'pending') = ("resolved_at" IS NULL)),
   CONSTRAINT "payout_address_requests_reason_check" CHECK ("status" NOT IN ('cancelled', 'superseded') OR "resolution_reason" IS NOT NULL)
@@ -30,14 +33,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS "payout_address_requests_one_pending" ON "payo
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "payout_address_requests_due" ON "payout_address_requests" ("active_at") WHERE "status" = 'pending';
 --> statement-breakpoint
+-- Whatever a writer supplies, a request starts pending, its hold starts when the row is stored (the database clock),
+-- and it records the binding it would replace.
+CREATE OR REPLACE FUNCTION start_payout_address_request() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW."status" <> 'pending' OR NEW."resolved_at" IS NOT NULL OR NEW."resolved_by_github_user_id" IS NOT NULL
+      OR NEW."resolution_reason" IS NOT NULL THEN
+    RAISE EXCEPTION 'A payout address request starts pending';
+  END IF;
+  NEW."requested_at" := clock_timestamp();
+  NEW."active_at" := greatest(NEW."active_at", NEW."requested_at" + interval '48 hours');
+  NEW."replaces_bound_at" := (SELECT b."bound_at" FROM "repo_beneficiaries" b WHERE b."github_repo_id" = NEW."github_repo_id");
+  RETURN NEW;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'start_payout_address_request'
+      AND tgrelid = '"payout_address_requests"'::regclass) THEN
+    CREATE TRIGGER start_payout_address_request BEFORE INSERT ON "payout_address_requests" FOR EACH ROW
+      EXECUTE FUNCTION start_payout_address_request();
+  END IF;
+END $$;
+--> statement-breakpoint
 -- A request's terms never change, a resolved request never reopens, and none activates before its hold has passed.
 CREATE OR REPLACE FUNCTION guard_payout_address_request() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF OLD."status" <> 'pending' THEN
     RAISE EXCEPTION 'A resolved payout address request cannot change';
   END IF;
-  IF (NEW."github_repo_id", NEW."wallet", NEW."requested_by_github_user_id", NEW."requested_at", NEW."active_at")
-      IS DISTINCT FROM (OLD."github_repo_id", OLD."wallet", OLD."requested_by_github_user_id", OLD."requested_at", OLD."active_at") THEN
+  IF (NEW."github_repo_id", NEW."wallet", NEW."requested_by_github_user_id", NEW."requested_at", NEW."active_at", NEW."replaces_bound_at")
+      IS DISTINCT FROM (OLD."github_repo_id", OLD."wallet", OLD."requested_by_github_user_id", OLD."requested_at", OLD."active_at", OLD."replaces_bound_at") THEN
     RAISE EXCEPTION 'Payout address request terms cannot change';
   END IF;
   IF NEW."status" = 'activated' AND OLD."active_at" > now() THEN
