@@ -19,6 +19,9 @@ export const runtime = 'nodejs'
 // A missing or expired session (or a slow approval) means nothing was broadcast: the client shows this as not
 // submitted and its next attempt prepares a fresh transaction.
 const track = (fields, session) => trackTradeOutcome(database(), fields, { session })
+// A swap stopped by its own minimum (the market moved past the trader's chosen limit) is not a landing failure: it gets no
+// terminal outcome, so it never counts toward TRADE_LANDING_DEGRADED or the health page's success rate.
+const landingOutcome = (outcome, status) => status.reason === 'slippage' ? null : outcome
 // Best effort, after the swap is verified: a referred trade feeds the public referral leaderboard.
 const recordReferral = (session, signature) => recordReferredTrade(database(), session.prepared, signature)
 // The referrer is only a hint: each trader validates it and resolves the referral account itself.
@@ -75,7 +78,7 @@ export async function POST(request) {
       const session = await tradeSessions().load(body.id).catch(() => null)
       if (session?.signature && session.signature !== body.signature) throw new Error('Transaction does not match prepared trade')
       const status = await tradeStatus(chain(), body.signature, session, body.lastValidBlockHeight)
-      const outcome = statusOutcome(status.state, { hasSession: Boolean(session) })
+      const outcome = landingOutcome(statusOutcome(status.state, { hasSession: Boolean(session) }), status)
       if (outcome) await track({ attemptKey: session ? body.id : `sig:${body.signature}`, outcome, prepared: session?.prepared ?? null,
         signature: body.signature, signToConfirmMs: outcome === 'confirmed' && session?.submittedAt ? Date.now() - session.submittedAt : null }, session)
       // Only a receipt verified against this session's own prepared record counts toward the leaderboard.
@@ -97,8 +100,7 @@ export async function POST(request) {
       try { result = await session.engine.submitTrade(session.prepared, async () => signed) }
       catch (error) {
         // The RPC node simulated the signed swap, saw the price already past its minimum and never forwarded it. Only a first
-        // submission can say so. No terminal outcome is tracked: a market moving past the trader's own limit is not a landing
-        // failure, and must not raise the landing alert.
+        // submission can say so. Like any slippage stop (see landingOutcome), it records no terminal outcome.
         if (firstSubmission && isPreflightSlippageError(error, swapInstructionIndex(session.prepared.transaction.instructions))) {
           const slippageBps = session.prepared.slippageBps ?? DEFAULT_SLIPPAGE_BPS
           return Response.json({ error: `The price moved more than your ${slippageLabel(slippageBps)} slippage limit before this trade was sent, so it was stopped. Nothing was spent.`,
@@ -106,7 +108,7 @@ export async function POST(request) {
         }
         const status = await tradeStatus(chain(), signature, session, session.prepared.lastValidBlockHeight)
           .catch(() => ({ state: 'pending', signature }))
-        const outcome = submitOutcome(status.state)
+        const outcome = landingOutcome(submitOutcome(status.state), status)
         if (outcome) await track({ ...attempt, outcome, error: outcome === 'confirmed' ? null : error,
           signToConfirmMs: outcome === 'confirmed' ? Date.now() - session.submittedAt : null }, session)
         if (status.state === 'confirmed') await recordReferral(session, signature)
