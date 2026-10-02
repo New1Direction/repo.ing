@@ -22,12 +22,15 @@ import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
 import { featuredMarkets, labeledRacers, featuredTicker } from '../lib/repo-quality.mjs'
 import { officialLaunches } from '../lib/official-launch.mjs'
 import { OfficialLaunches } from '../components/official-launches'
+import { hfMarketsEnabled, shownMarkets } from '../lib/hf-markets.mjs'
+import { selectModelStrip } from '../lib/hf-model-display.mjs'
+import { ModelsStrip } from '../components/hf/models-strip'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { alternates: { canonical: '/', languages: { en: '/', ja: '/ja', 'x-default': '/' } } }
 export default function Home() {
   const discoveryEnabled = discoveryRewardsEnabled()
-  return <><AppHeader/><main><section className="hero" aria-labelledby="home-title"><div className="eyebrow">OPEN SOURCE MARKETS</div><h1 id="home-title">Launch open source markets.</h1><p><span className="hero-lead">Tokenize any GitHub repo.</span><span>Every trade pays the builders.</span></p><RepoSearch/><Link href="/find-repos" className="launch-find-link">Need inspiration? Find repos gaining attention <ArrowRight size={15} aria-hidden="true"/></Link><LaunchBenefits discoveryEnabled={discoveryEnabled} compact/><Suspense fallback={<BuybackFrame/>}><BuybackCounter/></Suspense></section><div className="section-wrap"><Suspense fallback={null}><PulseTickerContent/></Suspense><Suspense fallback={null}><ShippingLeadersContent/></Suspense><Suspense fallback={null}><OfficialLaunchesContent/></Suspense><GraduationRace><Suspense fallback={<GraduationRaceFallback/>}><GraduationRaceContent/></Suspense></GraduationRace></div><section className="section-wrap trending"><div className="section-heading"><div><h2>Explore repositories</h2><p>Open source projects. Real markets. Real builders.</p></div><Link href="/explore" className="view-all">View all <ArrowRight size={20}/></Link></div><Suspense fallback={<ContentSkeleton label="Loading markets"/>}><MarketContent/></Suspense><Link href="/waiting" className="launch-find-link">Builder fees waiting for maintainers <ArrowRight size={15} aria-hidden="true"/></Link></section><div className="section-wrap"><FlywheelVideo id="home-flywheel-video"/></div></main><Footer/></>
+  return <><AppHeader/><main><section className="hero" aria-labelledby="home-title"><div className="eyebrow">OPEN SOURCE MARKETS</div><h1 id="home-title">Launch open source markets.</h1><p><span className="hero-lead">Tokenize any GitHub repo.</span><span>Every trade pays the builders.</span></p><RepoSearch/><Link href="/find-repos" className="launch-find-link">Need inspiration? Find repos gaining attention <ArrowRight size={15} aria-hidden="true"/></Link><LaunchBenefits discoveryEnabled={discoveryEnabled} compact/><Suspense fallback={<BuybackFrame/>}><BuybackCounter/></Suspense></section><div className="section-wrap"><Suspense fallback={null}><PulseTickerContent/></Suspense><Suspense fallback={null}><ShippingLeadersContent/></Suspense><Suspense fallback={null}><OfficialLaunchesContent/></Suspense><GraduationRace><Suspense fallback={<GraduationRaceFallback/>}><GraduationRaceContent/></Suspense></GraduationRace></div>{hfMarketsEnabled() && <Suspense fallback={null}><ModelsStripContent/></Suspense>}<section className="section-wrap trending"><div className="section-heading"><div><h2>Explore repositories</h2><p>Open source projects. Real markets. Real builders.</p></div><Link href="/explore" className="view-all">View all <ArrowRight size={20}/></Link></div><Suspense fallback={<ContentSkeleton label="Loading markets"/>}><MarketContent/></Suspense><Link href="/waiting" className="launch-find-link">Builder fees waiting for maintainers <ArrowRight size={15} aria-hidden="true"/></Link></section><div className="section-wrap"><FlywheelVideo id="home-flywheel-video"/></div></main><Footer/></>
 }
 
 // Home lists promote: never a do-not-promote or maintainer-declined repository (nothing when that list is unreadable), and
@@ -35,23 +38,30 @@ export default function Home() {
 // /explore still lists every market.
 async function MarketContent() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
-  const promotable = await promotableMarkets(markets)
+  const promotable = await promotableMarkets(shownMarkets(markets))
   const notice = unavailable || (!promotable && 'Markets are temporarily unavailable.')
   return <>{notice && <p className="subtle-notice">{notice}</p>}<HomeMarkets tabs={homeMarketTabs(await withPulse(featuredMarkets(promotable ?? [])))} usdPerSol={usdPerSol}/></>
+}
+
+// Hugging Face model markets (HF_MARKETS_ENABLED only), under the same do-not-promote rule as the lists; nothing without one.
+async function ModelsStripContent() {
+  const { markets } = await listMarkets()
+  const promotable = await promotableMarkets(markets)
+  return promotable ? <ModelsStrip markets={selectModelStrip(promotable)}/> : null
 }
 
 // The race ranks by verified reserves and keeps new repositories in place, labeled (labeledRacers); the market list is
 // read only for those labels, so its outage never hides a racer.
 async function GraduationRaceContent() {
   const [{ markets, unavailable }, listed] = await Promise.all([graduationRace(), listMarkets()])
-  return <GraduationRaceBoard markets={await withPulse(labeledRacers(markets, listed.markets))} unavailable={unavailable}/>
+  return <GraduationRaceBoard markets={await withPulse(labeledRacers(shownMarkets(markets), listed.markets))} unavailable={unavailable}/>
 }
 
 // Markets the repository's own verified maintainer launched; hidden while there are none, and while the do-not-promote set
 // (operator list and maintainer opt-outs) cannot be read.
 async function OfficialLaunchesContent() {
   const [{ markets }, excluded] = await Promise.all([listMarkets(), promotionExcluded()])
-  return excluded ? <OfficialLaunches markets={officialLaunches(markets, { excluded })}/> : null
+  return excluded ? <OfficialLaunches markets={officialLaunches(shownMarkets(markets), { excluded })}/> : null
 }
 
 // Live from GitHub: the newest releases, merges, star spikes and Hacker News stories across live markets that earned
@@ -67,7 +77,7 @@ async function PulseTickerContent() {
 async function ShippingLeadersContent() {
   const [{ markets }, index, excluded] = await Promise.all([listMarkets(), pulseIndex(), promotionExcluded()])
   if (!excluded) return null
-  const leaders = shippingLeaders(featuredMarkets(markets).map(market => ({ ...market, pulse: index.get(String(market.repoId)) ?? null })),
+  const leaders = shippingLeaders(featuredMarkets(shownMarkets(markets)).map(market => ({ ...market, pulse: index.get(String(market.repoId)) ?? null })),
     { excluded, skipMints: [OFFICIAL_TOKEN.mint] })
   return <ShippingLeaders markets={leaders}/>
 }
