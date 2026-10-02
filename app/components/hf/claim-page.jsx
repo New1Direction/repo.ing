@@ -48,16 +48,28 @@ function ModelCard({ market, model }) {
   </div>{isHfModelPath(path) && <a className="button outline github-link" href={hfModelUrl(path)} target="_blank" rel="noopener noreferrer">View on Hugging Face ↗</a>}</div>
 }
 
-// For display only, so it skips the second model read; every change re-checks in full.
-async function authorityStatus(session, repoId) {
+// For display only: no second model read and no registry write, and remembered per session, market and registry path
+// (a re-point changes the path) for a minute (15 s when it failed), so page views and refreshes cannot spend the shared
+// Hugging Face budget. Every change and payout re-checks in full.
+const STATUS_TTL_MS = 60_000, STATUS_FAILED_TTL_MS = 15_000, STATUS_ENTRIES = 500
+const statuses = globalThis.__repoingHfAuthorityStatus ??= new Map()
+async function checkAuthority(session, repoId) {
   try {
     const result = await hfVerifier().verifyMarketAuthority({ marketId: repoId, accessToken: session.accessToken, expectedSubject: session.subject,
-      record: false, recheck: false })
+      record: false, recheck: false, update: false })
     return { ok: true, role: result.role, ownerHandle: result.ownerHandle, ownerKind: result.ownerKind, ownerSubject: result.ownerSubject }
   } catch (error) {
     return { ok: false, code: error instanceof HfAuthorityError ? error.code : 'HF_UPSTREAM',
       message: error instanceof HfAuthorityError ? error.message : 'Hugging Face could not be checked right now. Refresh to try again.' }
   }
+}
+async function authorityStatus(session, repoId, path) {
+  const key = `${session.sessionId}:${repoId}:${path ?? ''}`, now = Date.now(), hit = statuses.get(key)
+  if (hit && hit.expiresAt > now) return hit.value
+  const value = await checkAuthority(session, repoId)
+  if (statuses.size >= STATUS_ENTRIES) statuses.delete(statuses.keys().next().value)
+  statuses.set(key, { value, expiresAt: now + (value.ok ? STATUS_TTL_MS : STATUS_FAILED_TTL_MS) })
+  return value
 }
 
 async function ModelClaimContent({ market, query }) {
@@ -83,13 +95,14 @@ async function ModelClaimContent({ market, query }) {
   ])
   const stored = readHfSession(cookieStore.get(hfSessionCookie)?.value)
   const session = stored?.mode === 'claim' && stored.marketId === String(repoId) ? stored : null
-  const authority = session ? await authorityStatus(session, repoId) : null
+  const authority = session ? await authorityStatus(session, repoId, model?.path) : null
   const beneficiary = destination.active
   // A binding made for a previous owner is never paid (src/claim.mjs); the current owner sets a new one first.
   const staleBinding = Boolean(beneficiary && authority?.ok && bindingOwner && bindingOwner !== authority.ownerSubject)
   const claimable = fees.status === 'MATCH' ? fees.onchainCreatorFee?.toString() ?? null : null
   const review = session && authority?.ok && !staleBinding && beneficiary && claimable && claimable !== '0'
-    ? sealHfClaimReview(session, { repoId, wallet: beneficiary.wallet, boundAt: beneficiary.boundAt, amount: claimable, paid: market.claimed }) : null
+    ? sealHfClaimReview(session, { repoId, wallet: beneficiary.wallet, boundAt: beneficiary.boundAt, amount: claimable, paid: market.claimed,
+      includeGraduatedFees: fees.graduated === true }) : null
   const usdEstimate = claimable === null ? null : formatUsdEstimate(claimable, usdPerSol)
   const summary = <div className="claim-amount-summary inner-card">
     <div><span>Available to claim</span><strong title={claimable === null ? undefined : `${formatUnits(claimable)} SOL`}>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
@@ -101,6 +114,6 @@ async function ModelClaimContent({ market, query }) {
       code: authority.code ?? null, message: authority.message ?? null }}
     beneficiaryWallet={beneficiary?.wallet ?? null} beneficiaryMethod={beneficiary?.method ?? 'signature'} beneficiaryBoundAt={beneficiary?.boundAt ?? null}
     staleBinding={staleBinding} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate} feeStatus={fees.status}
-    payoutReady={funded} settledClaim={receipt} review={review} errorCode={typeof query.error === 'string' ? query.error : null}
+    payoutReady={funded} settledClaim={receipt} review={review} graduated={fees.graduated === true} errorCode={typeof query.error === 'string' ? query.error : null}
     justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed}/></>
 }

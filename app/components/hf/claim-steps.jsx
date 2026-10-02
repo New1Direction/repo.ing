@@ -67,7 +67,7 @@ function Repoint({ repoId, onMoved }) {
 }
 
 export function ModelClaimSteps({ summary, repoId, signedIn, authority, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, staleBinding = false,
-  pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
+  pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, graduated = false }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -76,21 +76,23 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
   const [stage, setStage] = useState('')
   const [busy, setBusy] = useState(false)
   const [confirmChange, setConfirmChange] = useState(false)
+  // After a payout change the sealed review names the previous recipient until the page refreshes it.
+  const [awaitingReview, setAwaitingReview] = useState(false)
   const [claiming, setClaiming] = useState(false)
   const [expired, setExpired] = useState(false)
-  const [error, setError] = useState(ERRORS[errorCode] ?? (errorCode ? 'This step could not finish. Refresh and try again.' : ''))
+  const [error, setError] = useState(errorCode && Object.hasOwn(ERRORS, errorCode) ? ERRORS[errorCode] : errorCode ? 'This step could not finish. Refresh and try again.' : '')
   const ready = Boolean(signedIn && !expired && authority?.ok)
   const walletMatches = Boolean(wallet && bound && wallet === bound)
   const pastedActive = Boolean(bound && boundMethod === 'pasted')
   const destinationReady = (walletMatches || pastedActive) && !staleBinding
   const current = !ready ? 1 : !destinationReady ? 2 : 3
-  const canClaim = Boolean(current === 3 && claimable && claimable !== '0' && feeStatus === 'MATCH' && payoutReady && review)
+  const canClaim = Boolean(current === 3 && claimable && claimable !== '0' && feeStatus === 'MATCH' && payoutReady && review && !awaitingReview)
   const claimAmount = claimable === null ? '—' : `${formatUnits(claimable)} SOL`
   const moved = authority?.code === 'HF_MODEL_MOVED' || errorCode === 'model-moved'
   const signIn = `/api/hf/start?mode=claim&market=${repoId}`
   const role = authority?.role === 'owner' ? 'owner' : authority?.role === 'admin' ? `admin of ${authority.ownerHandle}` : null
 
-  useEffect(() => { setBound(beneficiaryWallet); setBoundMethod(beneficiaryMethod); setStage('') }, [beneficiaryWallet, beneficiaryMethod, review])
+  useEffect(() => { setBound(beneficiaryWallet); setBoundMethod(beneficiaryMethod); setAwaitingReview(false); setStage('') }, [beneficiaryWallet, beneficiaryMethod, review])
   useEffect(() => {
     setExpired(false)
     if (!signedIn) return
@@ -109,7 +111,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
       const signature = walletSignatureBytes(await provider().signMessage(new TextEncoder().encode(challenge.message)))
       setStage('Verifying and saving your payout wallet…')
       const result = await post({ action: 'bind', marketId: repoId, wallet: address, nonce: challenge.nonce, signature: btoa(String.fromCharCode(...signature)) })
-      setBound(result.wallet); setBoundMethod('signature'); setPasteOpen(false); setConfirmChange(false)
+      setAwaitingReview(true); setBound(result.wallet); setBoundMethod('signature'); setPasteOpen(false); setConfirmChange(false)
       setStage('Payout wallet set. Refreshing your claim review…'); router.refresh()
     } catch (cause) { setError(cause.message || 'Could not set the payout wallet'); setStage('') }
     finally { setBusy(false) }
@@ -156,7 +158,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
             <button className="claim-text-button" type="button" onClick={() => setConfirmChange(false)}>Cancel</button></>}
         </div>}
         {ready && (pasteOpen ? <PasteAddressForm repoIds={[repoId]} replacing={Boolean(bound)} endpoint={BIND_ENDPOINT} noun="model"
-          onSaved={result => { setPasteOpen(false); setStage(pasteSavedMessage(result)); router.refresh() }} onClose={() => setPasteOpen(false)}/> :
+          onSaved={result => { setAwaitingReview(true); setPasteOpen(false); setStage(pasteSavedMessage(result)); router.refresh() }} onClose={() => setPasteOpen(false)}/> :
           <p className="claim-paste-toggle"><button className="claim-text-button" type="button" onClick={() => { setError(''); setPasteOpen(true) }}>
             {bound || pendingAddress ? 'Paste a different payout address' : 'No Solana wallet extension? Paste a payout address instead'}</button></p>)}
       </div>
@@ -166,7 +168,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
       <div className="step-number">3</div><div className="step-content"><div className="claim-step-heading"><div><h2>Review and claim</h2></div></div>
         {current === 3 && <div className="claim-review"><strong className="claim-review-amount">{claimAmount}</strong>{usdEstimate && <span className="muted">≈ {usdEstimate}</span>}
           <div className="claim-wallet-details"><span>Paid to</span><CopyAddress address={bound} label="payout wallet"/><small>{bindingLabel({ wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt })}</small></div>
-          <p>SOL is sent only to this payout wallet. Hugging Face ownership and pool fees are checked again before payout.</p>
+          <p>SOL is sent only to this payout wallet. Hugging Face ownership and pool fees are checked again before payout.{graduated && ' Graduated pool payouts include all SOL fees accrued before confirmation.'}</p>
           {pendingAddress && <p className="claim-next">A pasted address replaces this one from {formatUtcDateTime(pendingAddress.activeAt)} unless it is cancelled. Claims before then still pay the address above.</p>}
           {canClaim ? <form action="/api/hf/claim" method="post" onSubmit={() => setClaiming(true)}><input type="hidden" name="repoId" value={repoId}/><input type="hidden" name="review" value={review}/>
             <button className="button primary" type="submit" disabled={claiming || busy}>{claiming ? 'Processing claim…' : `Claim ${claimAmount}`}</button></form> :

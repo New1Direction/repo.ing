@@ -148,9 +148,10 @@ export async function readPulseTicker(pool, { now = Date.now(), excluded, limit 
         from repo_pulse_events e join ${live} m on m.github_repo_id = e.github_repo_id join repositories r on r.github_repo_id = e.github_repo_id
         where e.kind = 'commit' and e.occurred_at >= $1 group by e.github_repo_id, m.mint, m.token_symbol, r.full_name
         having count(*) >= 2 order by max(e.occurred_at) desc limit 30`, [iso(now - DAY)]),
+      // Dev Pulse is GitHub's: a model market's payout binding (Hugging Face authority) is not a verified maintainer here.
       pool.query(`select b.github_repo_id::text as "repoId", 'verified' as kind, b.bound_at as at, m.mint, m.token_symbol as symbol, r.full_name as "fullName"
         from repo_beneficiaries b join ${live} m on m.github_repo_id = b.github_repo_id join repositories r on r.github_repo_id = b.github_repo_id
-        where b.bound_at >= $1`, [iso(now - 7 * DAY)]),
+        where b.bound_at >= $1 and r.source = 'github'`, [iso(now - 7 * DAY)]),
       excluded ?? promotionExclusions(pool),
     ])
     return selectTicker([...events.rows, ...commits.rows, ...verified.rows], { excluded: skip, limit })

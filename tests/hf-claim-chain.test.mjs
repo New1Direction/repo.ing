@@ -126,13 +126,23 @@ test('a model market claim pays its Hugging Face-bound wallet and reconciles MAT
       return { purpose, repoId: repoId.toString(), wallet: bound.wallet, boundAt: bound.boundAt.toISOString(), paid: totals.paid,
         amount: (BigInt(totals.earned) - BigInt(totals.paid)).toString(), expiresAt: Date.now() + 600_000 }
     }
+    // The model review goes through the claim page's real seal and the claim route's real read (app/lib/hf-auth.mjs).
+    const savedSecret = process.env.HF_OAUTH_CLIENT_SECRET
+    process.env.HF_OAUTH_CLIENT_SECRET = 'test-only-hf-chain-secret'
+    const auth = await import('../app/lib/hf-auth.mjs')
+    const session = auth.newHfSession({ subject: OWNER, username: 'TheBloke', accessToken: TOKEN, expiresAt: Date.now() + 600_000, mode: 'claim', marketId })
+    const sealed = async repoId => {
+      const plain = await reviewFor(repoId, 'model-claim-review')
+      try { return auth.readHfClaimReview(auth.sealHfClaimReview(session, { ...plain, includeGraduatedFees: false }), session) }
+      finally { if (savedSecret === undefined) delete process.env.HF_OAUTH_CLIENT_SECRET; else process.env.HF_OAUTH_CLIENT_SECRET = savedSecret }
+    }
     const reconciler = createReconciler({ pool, connection, config })
     const results = {}
     for (const [repoId, githubVerifier, purpose] of [
       [BigInt(marketId), hfAuthority, 'model-claim-review'],
       [GITHUB_REPO, { verifyCurrentAuthority: async ({ githubRepoId }) => ({ verified: true, permission: 'admin', githubRepoId, githubUserId: 285551516n, verifiedAt: new Date() }) }, 'creator-claim-review'],
     ]) {
-      const review = await reviewFor(repoId, purpose)
+      const review = purpose === 'model-claim-review' ? await sealed(repoId) : await reviewFor(repoId, purpose)
       const result = await createClaim({ pool, connection, config, creator, githubVerifier }).claim({ githubRepoId: repoId, githubAuthorization: { session: true }, review })
       assert.equal(result.amountBaseUnits, accrued[repoId])
       assert.equal(result.receiverDeltaLamports - result.rentRefundLamports, result.amountBaseUnits)

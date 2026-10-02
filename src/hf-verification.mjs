@@ -266,11 +266,11 @@ export function createHfVerifier({ pool, hf, oauth = null, now = Date.now }) {
   // The fresh check behind every bind, pasted address and claim (verifyCurrentAuthority in app/lib/hf-session.mjs). The
   // model is read again after the decision, so a transfer while it runs fails the check. record: write model_verifications
   // (binding and pasted addresses require one from the last five minutes; a model without a market has no row to name).
-  // recheck false (display only, never before a change): skip the second read.
-  async function verifyMarketAuthority({ marketId, accessToken, expectedSubject, record = true, recheck = true }) {
+  // recheck and update false (display only, never before a change): skip the second read and the registry write.
+  async function verifyMarketAuthority({ marketId, accessToken, expectedSubject, record = true, recheck = true, update = true }) {
     const id = assertHfMarketId(marketId)
     const user = await signedInUser(accessToken, expectedSubject)
-    const resolved = await resolveMarketModel(id)
+    const resolved = await resolveMarketModel(id, { update })
     const decision = decideModelAuthority(user, resolved.owner)
     if (!decision.authorized) {
       fail('HF_NOT_AUTHORIZED', authorityMessage(decision.reason, { username: user.username, owner: resolved.owner }), 403, { reason: decision.reason })

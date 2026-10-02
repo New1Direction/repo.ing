@@ -37,7 +37,7 @@ export async function GET(request) {
     const [live, decision, mint] = marketId ? await Promise.all([hasLiveMarket(pool, marketId), activeDecision(pool, marketId),
       pool.query(`select mint from markets where github_repo_id = $1 and status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized'`, [marketId])
         .then(result => result.rows[0]?.mint ?? null)]) : [false, null, null]
-    return reply({ username: session.username, model: { hfId: found.hfId, path: found.path, owner: { handle: found.owner.handle, kind: found.owner.kind } },
+    return reply({ username: session.username, model: { hfId: found.hfId, path: found.path, owner: { handle: found.owner.handle, kind: found.owner.kind, id: found.owner.id } },
       marketId, mint, live, decision, authority: { authorized: authority.authorized, role: authority.role, message: authority.message } })
   } catch (error) { return failed(error, 'model opt-out lookup') }
 }
