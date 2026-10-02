@@ -31,7 +31,8 @@ export async function POST(request) {
     if (latest?.status === 'settled' && BigInt(snapshotPaid.rows[0]?.paid ?? '0') > BigInt(review.paid)) {
       return Response.json({ status: 'already-settled', signature: latest.signature, error: 'This repository already has a newer payout. Refresh for its current balance.' }, { headers })
     }
-    const message = /GitHub|permission|authority/.test(error.message) ? 'GitHub access needs checking. Reconnect GitHub or review this repository.' :
+    const message = /48-hour hold/.test(error.message) ? 'This repository’s pasted payout address is still in its 48-hour hold. Claims open when it becomes active.' :
+      /GitHub|permission|authority/.test(error.message) ? 'GitHub access needs checking. Reconnect GitHub or review this repository.' :
       /review|amount changed|details changed/i.test(error.message) ? 'Payout details changed. Refresh to review the latest balance.' :
       /No accrued|no creator fee/.test(error.message) ? 'No fees remain to claim.' :
       /signer needs SOL/.test(error.message) ? 'Payouts are paused while network funds are replenished.' :
