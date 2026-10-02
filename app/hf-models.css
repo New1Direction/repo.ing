@@ -1,0 +1,84 @@
+/* Hugging Face model markets (app/components/hf/*): the source label, the disclaimer, model facts, the home Models strip
+   and the /stats source split. Text labels only: never the Hugging Face logo or its yellow. */
+:root{--model:#b4a6ff;--model-text:#d3cbff;--model-bg:rgba(180,166,255,.08);--model-border:rgba(180,166,255,.34);--model-caution:#f1cf8b}
+:root[data-theme=light]{--model:#5a45c8;--model-text:#4936ad;--model-bg:#f4f1ff;--model-border:#cdc3f3;--model-caution:#86580a}
+
+.source-chip{display:inline-flex;align-items:center;flex:none;height:22px;padding:0 9px;border:1px solid var(--model-border);border-radius:999px;background:var(--model-bg);color:var(--model-text);font-size:12px;font-weight:600;line-height:1;white-space:nowrap}
+.source-chip.compact{height:18px;padding:0 7px;font-size:11px}
+.badge.community-launch{background:transparent;border:1px solid var(--border-strong);color:var(--muted);padding:2px 9px}
+
+/* The full disclaimer: a quiet line under lists and cards, a banner above the token page hero. */
+.model-disclaimer{display:flex;align-items:flex-start;gap:8px;margin:12px 2px 0;color:var(--muted);font-size:12.5px;line-height:1.5}
+.model-disclaimer svg{flex:none;margin-top:2px;color:var(--model)}
+.model-disclaimer.is-banner{margin:22px 0 0;padding:11px 14px;border:1px solid var(--model-border);border-radius:9px;background:var(--model-bg);color:var(--text);font-size:14px}
+.model-disclaimer.is-banner+.market-hero{margin-top:12px}
+
+/* Market tables: a model's likes cell links to its Hugging Face page. */
+.table-likes{color:var(--muted)}
+a.table-likes{transition:color .15s}
+a.table-likes:hover,a.table-likes:focus-visible{color:var(--text)}
+a.table-likes:hover svg{color:var(--red)}
+.table-disclaimer{margin-top:10px}
+.table-repo-name .source-chip{height:20px;font-size:11px}
+@media(max-width:700px){.market-row.is-model .table-earnings:before{content:'Owner earned'}}
+
+/* Model facts: likes, downloads, task; gated, license and derivative badges. */
+.model-stats small{margin-left:-4px;color:var(--muted);font-size:.86em;font-weight:450}
+.model-badges{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0}
+.market-hero .model-hero-facts{min-width:0}
+.market-hero .model-badges{margin-top:12px}
+.badge.model-gated{color:var(--model-caution);background:color-mix(in srgb,var(--model-caution) 13%,transparent)}
+.badge.model-derivative{max-width:100%;min-width:0}
+.badge.model-derivative span{overflow:hidden;text-overflow:ellipsis}
+a.badge.model-derivative{border:1px solid transparent;transition:border-color .15s,color .15s}
+a.badge.model-derivative:hover,a.badge.model-derivative:focus-visible{border-color:var(--model-border);color:var(--text)}
+.model-link{gap:7px}
+
+/* Details → Model card. */
+.model-card .card-heading{margin-bottom:4px}
+.model-card dl{margin:0}
+.model-card dl>div{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px}
+.model-card dt{flex:none;color:var(--muted)}
+.model-card dd{min-width:0;margin:0;text-align:right;overflow-wrap:anywhere}
+.model-card dd small{margin-left:6px;color:var(--muted)}
+.model-card dd a{color:var(--model-text)}
+.model-card dd a:hover{text-decoration:underline}
+.model-card-note{margin:12px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5}
+
+/* Model Pulse (display only; filled by app/lib/model-pulse.mjs once it ships). */
+.model-pulse h3{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:16px}
+.model-pulse dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin:0}
+.model-pulse dl>div{display:grid;gap:4px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg)}
+.model-pulse dt{color:var(--muted);font-size:12px}
+.model-pulse dd{margin:0;font-size:18px;font-weight:650;font-variant-numeric:tabular-nums}
+.model-pulse dd small{display:block;margin-top:2px;color:var(--muted);font-size:12px;font-weight:450}
+.model-pulse-foot{margin:12px 0 0;color:var(--muted);font-size:12px}
+
+/* Market cards: a model card carries the disclaimer badge on its own line, so rails with a model grow to fit it (every
+   card in the row stretches to the same height). */
+.model-card-badge{margin:-3px 0 0;color:var(--muted);font-size:11.5px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.more-markets.has-models .more-markets-card,.models-strip .more-markets-card{height:auto;min-height:136px}
+
+/* Home: the Models strip, cards shaped like the token page's "More markets" rail, a little wider for owner/name paths. */
+.models-strip{padding-top:26px}
+.models-strip .more-markets-rail{grid-auto-columns:minmax(230px,calc((100% - 48px)/5))}
+.models-strip-likes{display:inline-flex;align-items:center;gap:3px}
+
+/* /stats: the same figures split between GitHub repositories and Hugging Face models. */
+.source-split{margin-top:18px;padding:22px 26px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.source-split-heading h2{margin:0 0 4px;font-size:16px;font-weight:600}
+.source-split-heading p{margin:0;color:var(--muted);font-size:12.5px}
+.source-split-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:18px}
+.source-split-grid h3{margin:0 0 10px;font-size:13px;font-weight:550;color:var(--muted)}
+.source-split-bar{display:flex;height:6px;overflow:hidden;border-radius:999px;background:var(--model)}
+.source-split-bar>span{display:block;min-width:0;background:var(--green)}
+.source-split-bar.is-empty{background:color-mix(in srgb,var(--muted) 38%,transparent)}
+.source-split dl{display:grid;gap:6px;margin:10px 0 0}
+.source-split dl>div{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:13px}
+.source-split dt{display:inline-flex;align-items:center;gap:7px;min-width:0;color:var(--muted)}
+.source-split dt i{width:8px;height:8px;flex:none;border-radius:2px;background:var(--green)}
+.source-split dt i.is-model{background:var(--model)}
+.source-split dd{display:inline-flex;align-items:baseline;gap:8px;margin:0;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.source-split dd small{min-width:42px;color:var(--muted);font-size:12px;font-weight:500;text-align:right}
+@media(max-width:800px){.source-split-grid{grid-template-columns:1fr;gap:20px}}
+@media(max-width:500px){.source-split{padding:18px 16px}}
