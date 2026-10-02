@@ -1,4 +1,5 @@
 import { OFFICIAL_TOKEN } from './official-token.mjs'
+import { HF_DISCLAIMER, isModelMarket, modelPageUrl } from './hf-model-display.mjs'
 export const SITE_URL = 'https://repo.ing'
 const SOURCE_URL = 'https://github.com/New1Direction/repo.ing'
 const ORGANIZATION_ID = `${SITE_URL}/#organization`
@@ -28,6 +29,7 @@ export function faqJsonLd({ url, lang, questions }) {
 
 // Deliberately no price, offer, or rating markup: this describes the page and the repository, not an investment.
 export function tokenJsonLd(market) {
+  if (isModelMarket(market)) return modelJsonLd(market)
   const url = `${SITE_URL}/token/${market.mint}`
   const codeRepository = `https://github.com/${market.fullName}`
   return { '@context': 'https://schema.org', '@type': 'WebPage', '@id': url, url, inLanguage: 'en',
@@ -35,4 +37,16 @@ export function tokenJsonLd(market) {
     about: { '@type': 'SoftwareSourceCode', name: market.fullName, url: codeRepository, codeRepository,
       ...(market.description ? { description: market.description } : {}),
       identifier: { '@type': 'PropertyValue', propertyID: 'GitHub repository ID', value: String(market.repoId) } } }
+}
+
+// A Hugging Face model market page. The description leads with the disclaimer; the model is a CreativeWork (schema.org has
+// no model type) linked to its Hugging Face page and identified by its repo.ing market id.
+function modelJsonLd(market) {
+  const url = `${SITE_URL}/token/${market.mint}`, modelUrl = modelPageUrl(market.fullName)
+  return { '@context': 'https://schema.org', '@type': 'WebPage', '@id': url, url, inLanguage: 'en',
+    name: `$${market.symbol} · ${market.fullName} — repo.ing`, isPartOf: { '@id': WEBSITE_ID },
+    description: `${HF_DISCLAIMER} $${market.symbol} is the repo.ing market for the Hugging Face model ${market.fullName}.`,
+    about: { '@type': 'CreativeWork', name: market.fullName, ...(modelUrl ? { url: modelUrl } : {}),
+      ...(market.description ? { description: market.description } : {}),
+      identifier: { '@type': 'PropertyValue', propertyID: 'repo.ing model market ID', value: String(market.repoId) } } }
 }

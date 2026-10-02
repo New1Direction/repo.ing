@@ -1,9 +1,11 @@
 import { validReferrer } from './referral.mjs'
+import { HF_DISCLAIMER_SHORT } from '../../src/hf-copy.mjs'
 
 // Public share links only: no amount or signature goes into a post, and a wallet address only as the sharer's own ?ref.
 export const SITE_ORIGIN = 'https://repo.ing'
 export const X_HANDLE = 'repodoting'
 const PAYS = "every trade pays the repo's builders in SOL"
+const MODEL_PAYS = "every trade pays the model's owner in SOL"
 
 // ?ref=<connected wallet> on a link that wallet shares, so trades it brings pay it a referral (src/referral.mjs).
 // Anything that is not a wallet address is left off.
@@ -24,10 +26,13 @@ export function captionWithReferral(caption, mint, ref) {
   return validReferrer(ref) ? String(caption).split('\n').map(line => line === plain ? tokenPageUrl(mint, SITE_ORIGIN, ref) : line).join('\n') : caption
 }
 
-export function shareText({ fullName, symbol, kind = 'buy' } = {}) {
-  const name = String(fullName || (symbol ? `$${symbol}` : '') || 'an open source repo').slice(0, 100)
+// source 'huggingface': a model market's post says who it pays and carries the disclaimer; its name is cut shorter so the
+// post and its link still fit X's 280 characters.
+export function shareText({ fullName, symbol, kind = 'buy', source = 'github' } = {}) {
+  const model = source === 'huggingface'
+  const name = String(fullName || (symbol ? `$${symbol}` : '') || (model ? 'a Hugging Face model' : 'an open source repo')).slice(0, model ? 80 : 100)
   const lead = kind === 'launch' ? `I just launched a market for ${name}` : kind === 'sell' ? `I'm trading ${name}` : `I just backed ${name}`
-  return `${lead} on @${X_HANDLE} — ${PAYS}`
+  return model ? `${lead} on @${X_HANDLE} — ${MODEL_PAYS}. ${HF_DISCLAIMER_SHORT}` : `${lead} on @${X_HANDLE} — ${PAYS}`
 }
 
 export function xShareUrl({ mint, origin = SITE_ORIGIN, ref = null, ...details }) {

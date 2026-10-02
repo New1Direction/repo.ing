@@ -6,6 +6,7 @@ import { publicError } from './public-error.mjs'
 import { SITE_ORIGIN, blinkApiPath, sellApiPath } from './blink-links.mjs'
 import { launchFeeNotice } from '../../src/launch-fee-copy.mjs'
 import { parseReferrer } from '../../src/referral.mjs'
+import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
 
 // Solana Actions spec v2.4 (github.com/solana-developers/solana-actions). Hand-rolled: the @solana/actions
 // helpers add an identity memo we do not want next to a canonically-proven swap, and the rest is plain JSON.
@@ -109,7 +110,10 @@ export function buyAction(market, { tradingEnabled = true, ref = null } = {}) {
     type: 'action',
     icon: tokenIcon(market),
     title: `$${market.symbol} · ${repo}`,
-    description: `${(market.description || `Open source market for ${repo}.`).slice(0, 180)} Every trade pays the builders. Trades use the canonical repo.ing pool with 1% max slippage.`,
+    // A Hugging Face model market's Blink leads with the disclaimer and names who its fees pay.
+    description: isModelMarket(market)
+      ? `${HF_DISCLAIMER_SHORT}. Market for the Hugging Face model ${repo}. Every trade pays the model's owner. Trades use the canonical repo.ing pool with 1% max slippage.`
+      : `${(market.description || `Open source market for ${repo}.`).slice(0, 180)} Every trade pays the builders. Trades use the canonical repo.ing pool with 1% max slippage.`,
     label: 'Buy',
     ...disabledUnless(tradingEnabled),
     links: { actions: [
@@ -127,7 +131,9 @@ export function sellAction(market, { tradingEnabled = true, ref = null } = {}) {
     type: 'action',
     icon: tokenIcon(market),
     title: `Sell $${market.symbol} · ${repoName(market)}`,
-    description: `Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage. Every trade pays the builders.`,
+    description: isModelMarket(market)
+      ? `Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage. Every trade pays the model's owner. ${HF_DISCLAIMER_SHORT}.`
+      : `Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage. Every trade pays the builders.`,
     label: 'Sell',
     ...disabledUnless(tradingEnabled),
     links: { actions: sellLinks(market, ref) },

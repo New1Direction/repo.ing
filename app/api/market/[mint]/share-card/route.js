@@ -4,6 +4,8 @@ import { database, chain, marketByMint } from '../../../../lib/server.mjs'
 import { MarketShareArtwork } from '../../../../components/market-share-artwork'
 import { graduationShare, payoutShare } from '../../../../../src/market-share.mjs'
 import { verifyClaimReceipt } from '../../../../../src/claim-settlement.mjs'
+import { HF_DISCLAIMER_SHORT, isModelMarket } from '../../../../lib/hf-model-display.mjs'
+import { hfMarketsEnabled } from '../../../../lib/hf-markets.mjs'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export async function GET(request, { params }) {
@@ -12,7 +14,8 @@ export async function GET(request, { params }) {
     const { mint } = await params
     if (typeof mint !== 'string' || mint.length > 44 || bs58.decode(mint).length !== 32) return Response.json({ error: 'Invalid market' }, { status: 400, headers })
     const { market } = await marketByMint(mint)
-    if (!market) return Response.json({ error: 'Market not found' }, { status: 404, headers })
+    const model = Boolean(market) && isModelMarket(market)
+    if (!market || (model && !hfMarketsEnabled())) return Response.json({ error: 'Market not found' }, { status: 404, headers })
     const query = new URL(request.url).searchParams, kind = query.get('kind') || 'graduation'
     let snapshot
     if (kind === 'graduation') {
@@ -30,6 +33,9 @@ export async function GET(request, { params }) {
       if (!row?.signedTransaction) throw Error('No verified builder payout is available for this market yet')
       snapshot = payoutShare(market, row, await verifyClaimReceipt(chain(), row))
     } else return Response.json({ error: 'Unsupported card type' }, { status: 400, headers })
+    // A Hugging Face model market's card names who was paid, and its caption carries the disclaimer under its own lines.
+    if (model) snapshot = { ...snapshot, caption: `${snapshot.caption}\n${HF_DISCLAIMER_SHORT}`,
+      ...(snapshot.kind === 'payout' ? { headline: 'Model owner paid.', detail: 'Fees paid to the model owner’s verified payout wallet' } : {}) }
     const result = new ImageResponse(<MarketShareArtwork market={market} snapshot={snapshot}/>, { width: 1200, height: 630 })
     // Materialize before responding so a renderer failure cannot masquerade as a PNG.
     return new Response(await result.arrayBuffer(), { headers: { ...headers, 'Content-Type': 'image/png',

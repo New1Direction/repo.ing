@@ -4,6 +4,8 @@ import { settleWithin } from '../../../../../../lib/og-card.mjs'
 import { parseReturnParam } from '../../../../../../lib/share-links.mjs'
 import { SOURCE_MS, cardCache, fallback, marketLogo, renderPng } from '../../../../../../lib/og-image'
 import { ReturnCard } from '../../../../../../lib/og-return-card'
+import { isModelMarket } from '../../../../../../lib/hf-model-display.mjs'
+import { hfMarketsEnabled } from '../../../../../../lib/hf-markets.mjs'
 export const runtime = 'nodejs'
 // The URL holds only { mint, pct }: no wallet, amount or position size. Anyone can edit pct, so the
 // card states it as the sharer's own reported return rather than a verified figure.
@@ -17,7 +19,7 @@ export async function GET(_request, { params }) {
     const key = `${mint}/${raw}`, cached = cards.get(key)
     if (cached) return cached
     const { market } = await marketByMint(mint)
-    if (!market) return fallback()
+    if (!market || (isModelMarket(market) && !hfMarketsEnabled())) return fallback()
     const logo = await settleWithin(marketLogo(market), SOURCE_MS)
     return cards.put(key, await renderPng(<ReturnCard market={market} logo={logo} pct={pct}/>), Boolean(logo))
   } catch {

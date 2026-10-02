@@ -14,7 +14,7 @@ function slippageCopy(result, action) {
     message: `The price moved more than ${limit} before your ${action.toLowerCase()} could land, so it was stopped. ${spent}${next ? '' : ' Try a smaller amount.'}` }
 }
 
-export function TradeResultCard({ result, symbol, mint, fullName, onClose, onCheck, onRetry = null }) {
+export function TradeResultCard({ result, symbol, mint, fullName, source, onClose, onCheck, onRetry = null }) {
   if (!result) return null
   const { state, direction, signature } = result
   const action = direction === 'buy' ? 'Buy' : 'Sell'
@@ -48,7 +48,7 @@ export function TradeResultCard({ result, symbol, mint, fullName, onClose, onChe
           View transaction <ExternalLink size={14}/>
         </a>}
         {checking && <button type="button" onClick={onCheck}><RefreshCw size={14}/> Check status</button>}
-        {confirmed && <ShareOnX className="trade-result-share" mint={mint} fullName={fullName} symbol={symbol} kind={direction}/>}
+        {confirmed && <ShareOnX className="trade-result-share" mint={mint} fullName={fullName} symbol={symbol} kind={direction} source={source}/>}
       </div>
     </div>
   </aside>
