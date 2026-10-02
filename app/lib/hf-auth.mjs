@@ -37,9 +37,12 @@ function decrypt(purpose, value, maxSeconds) {
     if (typeof value !== 'string' || !value || value.length > 4096) return null
     const [version, iv, body, tag, extra] = value.split('.')
     if (version !== 'h1' || extra !== undefined || !iv || !body || !tag) return null
-    const decipher = createDecipheriv('aes-256-gcm', key(purpose), Buffer.from(iv, 'base64url'))
+    // A full 16-byte tag and the 12-byte IV only: GCM would otherwise accept a truncated tag, which is far easier to forge.
+    const ivBytes = Buffer.from(iv, 'base64url'), tagBytes = Buffer.from(tag, 'base64url')
+    if (ivBytes.length !== 12 || tagBytes.length !== 16) return null
+    const decipher = createDecipheriv('aes-256-gcm', key(purpose), ivBytes, { authTagLength: 16 })
     decipher.setAAD(Buffer.from(`repo.ing hugging face ${purpose} v1`))
-    decipher.setAuthTag(Buffer.from(tag, 'base64url'))
+    decipher.setAuthTag(tagBytes)
     const decoded = JSON.parse(Buffer.concat([decipher.update(Buffer.from(body, 'base64url')), decipher.final()]).toString('utf8'))
     if (!decoded || typeof decoded !== 'object' || !Number.isFinite(decoded.expiresAt) || decoded.expiresAt <= Date.now() ||
         decoded.expiresAt > Date.now() + maxSeconds * 1000) return null
@@ -77,10 +80,25 @@ export function readHfSession(value) {
 // Public fields only, for pages: the access token never reaches a client component.
 export const publicHfUser = session => session ? { username: session.username, expiresAt: session.expiresAt } : null
 
-// A claim review sealed for one session and market (app/components/hf/claim-page.jsx → /api/hf/claim).
-export function sealHfClaimReview(session, { repoId, wallet, boundAt, amount, paid }) {
+// A redirect that sets (maxAge > 0) or clears (maxAge 0) Hugging Face cookies, as a plain Response, so the sign-in and claim
+// routes run the same under Next and in node tests. Values are this module's sealed strings (base64url and dots only).
+export function hfRedirect(location, { status = 307, cookies = [] } = {}) {
+  const headers = new Headers({ Location: String(location), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' })
+  const { secure } = hfCookieOptions()
+  for (const [name, value, maxAge] of cookies) {
+    const seconds = Math.max(0, Math.floor(maxAge))
+    headers.append('Set-Cookie', [`${name}=${value}`, 'Path=/', `Max-Age=${seconds}`, ...seconds ? [] : ['Expires=Thu, 01 Jan 1970 00:00:00 GMT'],
+      'HttpOnly', 'SameSite=Lax', ...secure ? ['Secure'] : []].join('; '))
+  }
+  return new Response(null, { status, headers })
+}
+export const readHfCookie = (request, name) => request.cookies?.get(name)?.value
+
+// A claim review sealed for one session and market (app/components/hf/claim-page.jsx → /api/hf/claim). includeGraduatedFees:
+// the market has graduated, so its claim also takes the DAMM position's fees (src/claim-amounts.mjs requires the flag then).
+export function sealHfClaimReview(session, { repoId, wallet, boundAt, amount, paid, includeGraduatedFees = false }) {
   return encrypt('claim review', { purpose: 'model-claim-review', sessionId: session.sessionId, subject: session.subject, repoId: String(repoId),
-    wallet, boundAt: new Date(boundAt).toISOString(), amount: String(amount), paid: String(paid),
+    wallet, boundAt: new Date(boundAt).toISOString(), amount: String(amount), paid: String(paid), includeGraduatedFees: includeGraduatedFees === true,
     expiresAt: Math.min(session.expiresAt, Date.now() + REVIEW_SECONDS * 1000) })
 }
 export function readHfClaimReview(value, session) {

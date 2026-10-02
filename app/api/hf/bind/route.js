@@ -22,6 +22,7 @@ export const dynamic = 'force-dynamic'
 const headers = { 'Cache-Control': 'private, no-store' }
 const ACTIONS = new Set(['challenge', 'bind', 'paste', 'cancel', 'repoint'])
 const CHANGES_PER_HOUR = 60
+const REPOINTS_PER_HOUR = 10, MARKET_REPOINTS_PER_HOUR = 30
 const BINDING_ERRORS = /^(Fresh Hugging Face|Recent Hugging Face|Model verification mismatch|Invalid wallet|Invalid Solana|Invalid public key|Wallet challenge|Non-base58|Invalid public key input)/
 class BindError extends Error { constructor(message, status = 400) { super(message); this.status = status } }
 const reply = (body, status = 200) => Response.json(body, { status, headers })
@@ -41,6 +42,11 @@ export async function POST(request) {
     const authority = hfSessionAuthority(session, request.url)
     const marketId = session.marketId
     if (body.action === 'repoint') {
+      // Open to any session for this market (no owner can be checked while the registry path is stale) and harmless (only
+      // the same _id is accepted), but each one reads Hugging Face: its own limits, per user and per market.
+      if (!await takeQuota(pool, [[`hf-repoint:${session.subject}`, REPOINTS_PER_HOUR, 3600], [`hf-repoint-market:${marketId}`, MARKET_REPOINTS_PER_HOUR, 3600]])) {
+        throw new BindError('Too many address checks. Try again later.', 429)
+      }
       const moved = await authority.verifier.repoint({ marketId, url: body.url })
       return reply({ path: moved.path, previousPath: moved.previousPath })
     }

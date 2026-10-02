@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync, randomBytes, sign } from 'node:crypto'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
@@ -76,9 +79,18 @@ async function seedRepository(pool, id) {
     values ($1, 'octo', $2, $3, 1, 0, false, now())`, [id, `repo-${id}`, `octo/repo-${id}`])
 }
 
-// The recorded Hub plus OAuth userinfo for the four test accounts.
+// The recorded Hub plus OAuth for the four test accounts: the token endpoint issues the owner's token for the code
+// 'owner-code' (and refuses anything else), userinfo answers per token.
 async function hub() {
   const server = await startFakeHf()
+  server.route('/oauth/token', async (_, request) => {
+    let body = ''
+    for await (const chunk of request) body += chunk
+    const form = new URLSearchParams(body)
+    return form.get('code') === 'owner-code' && /^[A-Za-z0-9_-]{43}$/.test(form.get('code_verifier') ?? '')
+      ? { status: 200, headers: {}, body: { access_token: TOKENS.owner, token_type: 'Bearer', expires_in: 28800, scope: 'openid profile read-memberships' } }
+      : { status: 400, headers: {}, body: { error: 'invalid_grant' } }
+  })
   server.route('/oauth/userinfo', (_, request) => {
     const info = USERINFO.get(String(request.headers.authorization ?? '').replace(/^Bearer /, ''))
     return info ? { status: 200, headers: {}, body: info } : { status: 401, headers: {}, body: { error: 'invalid_token' } }
@@ -239,7 +251,7 @@ test('real PostgreSQL: a model claim pays only a binding made by the current own
     const request = { githubRepoId: marketId, githubAuthorization: { session: true } }
 
     await assert.rejects(claimAs(TOKENS.owner, OWNER).claim(request), /no bound beneficiary/)
-    await bindAs(pool, verifier, marketId, TOKENS.owner, OWNER)
+    const first = await bindAs(pool, verifier, marketId, TOKENS.owner, OWNER)
     await assert.rejects(claimAs(TOKENS.owner, OWNER).claim(request), new RegExp(sentinel), 'the owner of a current binding goes on to the chain')
     assert.ok(rpc.length > 0); rpc.length = 0
     // Not the owner, or a GitHub authority: refused before any chain read.
@@ -259,6 +271,16 @@ test('real PostgreSQL: a model claim pays only a binding made by the current own
     assert.deepEqual(rpc, [], 'no chain read in any refusal')
     const { rows: [registry] } = await pool.query('select repo_path, owner_subject from hf_models where market_ref = $1', [marketId])
     assert.deepEqual(registry, { repo_path: 'new-owner/Llama-2-7B-GGUF', owner_subject: NEW_OWNER }, 'the registry follows the same _id to its new path')
+
+    // The previous owner's binding does not count as the new owner's: the new owner may paste that same address under
+    // their own authority (it starts its own hold), and only then does a repeat count as already waiting.
+    const addresses = createPayoutAddresses({ pool, connection: { getAccountInfo: async () => null } })
+    const newOwner = Object.assign(input => check(verifier, input.githubRepoId, TOKENS.newOwner, NEW_OWNER), { source: 'huggingface' })
+    const repasted = await addresses.request({ githubRepoId: marketId, address: first.wallet, confirm: last4(first.wallet), verifyAuthority: newOwner })
+    assert.equal(repasted.previousWallet, first.wallet)
+    assert.deepEqual((await pool.query('select requested_by_subject as s, requested_by_owner_subject as o from payout_address_requests where id = $1', [repasted.id])).rows[0],
+      { s: NEW_OWNER, o: NEW_OWNER })
+    await assert.rejects(addresses.request({ githubRepoId: marketId, address: first.wallet, confirm: last4(first.wallet), verifyAuthority: newOwner }), code('ALREADY_PENDING'))
 
     const rebound = await bindAs(pool, verifier, marketId, TOKENS.newOwner, NEW_OWNER)
     assert.deepEqual([rebound.authoritySubject, rebound.authorityOwnerSubject], [NEW_OWNER, NEW_OWNER])
@@ -340,7 +362,8 @@ test('real PostgreSQL: model owners and org admins decline or opt out by registr
 
     // A launched model: its owner declines the market, then withdraws.
     const declined = await decisionsAs(TOKENS.owner, OWNER).create({ repoId: live, kind: 'decline' })
-    assert.equal(declined.kind, 'decline')
+    assert.deepEqual([declined.kind, declined.source, (await activeDecision(pool, live)).source], ['decline', 'huggingface', 'huggingface'],
+      'a model decision says so, for the banners that word it')
     assert.deepEqual((await pool.query(`select authority_source as source, github_user_id as "githubUser", actor_subject as actor
       from maintainer_opt_outs where github_repo_id = $1`, [live])).rows, [{ source: 'huggingface', githubUser: null, actor: OWNER }])
 
@@ -361,8 +384,9 @@ test('real PostgreSQL: model owners and org admins decline or opt out by registr
   } finally { console.warn = warn; await server.close(); await pool.end() }
 })
 
-test('real PostgreSQL routes: /api/hf/bind and /api/opt-out/hf need the flag, the same origin, a Hugging Face session and the current owner', { skip: !url }, async t => {
-  const pool = await prepare(), server = await hub()
+// The web routes' environment: this database behind database(), the Hugging Face OAuth settings, and a fetch that sends
+// huggingface.co to the local stand-in and answers the Solana RPC (an unused fresh account). Restored after the test.
+async function routeEnvironment(t, pool, server) {
   const saved = { env: { ...process.env }, pool: globalThis.__gitfunPool, fetch: globalThis.fetch, hf: globalThis.__repoingHfClient }
   const KEYS = ['DATABASE_URL', 'APP_ORIGIN', 'HF_MARKETS_ENABLED', 'HF_OAUTH_CLIENT_ID', 'HF_OAUTH_CLIENT_SECRET', 'HF_OAUTH_REDIRECT_URI', 'SOLANA_RPC_URL']
   t.after(async () => {
@@ -370,7 +394,6 @@ test('real PostgreSQL routes: /api/hf/bind and /api/opt-out/hf need the flag, th
     globalThis.__gitfunPool = saved.pool; globalThis.fetch = saved.fetch; globalThis.__repoingHfClient = saved.hf
     await server.close(); await pool.end()
   })
-  const { marketId, mint } = await seedGguf(pool)
   const rpc = 'http://127.0.0.1:8998'
   Object.assign(process.env, { DATABASE_URL: url, APP_ORIGIN: 'https://repo.ing', HF_OAUTH_CLIENT_ID: OAUTH.clientId, HF_OAUTH_CLIENT_SECRET: OAUTH.clientSecret,
     HF_OAUTH_REDIRECT_URI: OAUTH.redirectUri, SOLANA_RPC_URL: rpc })
@@ -391,6 +414,13 @@ test('real PostgreSQL routes: /api/hf/bind and /api/opt-out/hf need the flag, th
     }
     return saved.fetch(input, init) // the local stand-in for huggingface.co itself
   }
+  return { calls }
+}
+
+test('real PostgreSQL routes: /api/hf/bind and /api/opt-out/hf need the flag, the same origin, a Hugging Face session and the current owner', { skip: !url }, async t => {
+  const pool = await prepare(), server = await hub()
+  const { calls } = await routeEnvironment(t, pool, server)
+  const { marketId, mint } = await seedGguf(pool)
   const { POST: bind } = await import('../app/api/hf/bind/route.js')
   const optOut = await import('../app/api/opt-out/hf/route.js')
   const { encryptHfSession, newHfSession, hfSessionCookie } = await import('../app/lib/hf-auth.mjs')
@@ -435,6 +465,10 @@ test('real PostgreSQL routes: /api/hf/bind and /api/opt-out/hf need the flag, th
   assert.equal(result.status, 200); assert.equal(result.body.cancelled, true)
   result = await send(bind, '/api/hf/bind', owner, { action: 'repoint', marketId, url: 'https://huggingface.co/openai-community/gpt2' })
   assert.equal(result.status, 409); assert.equal(result.body.code, 'HF_REPOINT_MISMATCH')
+  // Re-pointing is open to any session for the market (no owner can be checked while the registry path is stale) and only
+  // ever accepts the same _id: a non-owner can confirm the model's true address, never change which model it is.
+  result = await send(bind, '/api/hf/bind', session(TOKENS.stranger, STRANGER, 'stranger'), { action: 'repoint', marketId, url: 'huggingface.co/TheBloke/Llama-2-7B-GGUF' })
+  assert.equal(result.status, 200); assert.equal(result.body.path, 'TheBloke/Llama-2-7B-GGUF')
 
   // /opt-out: any Hugging Face session may look a model up; changes need the current owner and the reviewed _id.
   const models = encryptHfSession(newHfSession({ subject: OWNER, username: 'TheBloke', accessToken: TOKENS.owner, expiresAt: Date.now() + 600_000, mode: 'models' }))
@@ -455,4 +489,185 @@ test('real PostgreSQL routes: /api/hf/bind and /api/opt-out/hf need the flag, th
   assert.equal(result.status, 403)
   result = await send(optOut.POST, '/api/opt-out/hf', models, { action: 'withdraw', model: 'TheBloke/Llama-2-7B-GGUF', hfId: GGUF })
   assert.equal(result.status, 200); assert.equal(result.body.decision, null)
+})
+
+test('real PostgreSQL routes: sign-in start and callback, and the claim form', { skip: !url }, async t => {
+  const pool = await prepare(), server = await hub()
+  const { calls } = await routeEnvironment(t, pool, server)
+  const { marketId } = await seedGguf(pool), { marketId: orgMarket } = await seedGpt2(pool)
+  const start = (await import('../app/api/hf/start/route.js')).GET
+  const callback = (await import('../app/api/hf/callback/route.js')).GET
+  const claim = (await import('../app/api/hf/claim/route.js')).POST
+  const auth = await import('../app/lib/hf-auth.mjs')
+  const request = (path, { jar = {}, origin = 'https://repo.ing', form = {} } = {}) => ({ url: `https://repo.ing${path}`,
+    headers: new Headers({ origin, 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '203.0.113.7' }),
+    cookies: { get: name => jar[name] === undefined ? undefined : { value: jar[name] } },
+    formData: async () => { const data = new FormData(); for (const [key, value] of Object.entries(form)) data.append(key, value); return data } })
+  const setCookies = response => Object.fromEntries(response.headers.getSetCookie().map(line => {
+    const [pair, ...attributes] = line.split('; ')
+    return [pair.slice(0, pair.indexOf('=')), { value: pair.slice(pair.indexOf('=') + 1), attributes }]
+  }))
+  const location = response => new URL(response.headers.get('location'))
+
+  for (const response of [await start(request(`/api/hf/start?mode=claim&market=${marketId}`)), await callback(request('/api/hf/callback?code=owner-code&state=x')),
+    await claim(request('/api/hf/claim', { form: { repoId: marketId } }))]) assert.equal(response.status, 404, 'dormant while HF_MARKETS_ENABLED is off')
+  process.env.HF_MARKETS_ENABLED = 'true'
+
+  // Start: PKCE S256 with the three scopes; the owning organization's _id from the registry (no Hugging Face call), or from ?org=.
+  let response = await start(request(`/api/hf/start?mode=claim&market=${marketId}`))
+  assert.equal(response.status, 307)
+  let authorize = location(response)
+  assert.equal(`${authorize.origin}${authorize.pathname}`, 'https://huggingface.co/oauth/authorize')
+  assert.deepEqual([authorize.searchParams.get('scope'), authorize.searchParams.get('code_challenge_method'), authorize.searchParams.get('orgIds'),
+    authorize.searchParams.get('redirect_uri')], ['openid profile read-memberships', 'S256', null, OAUTH.redirectUri])
+  const stateCookie = setCookies(response)[auth.hfStateCookie]
+  assert.deepEqual(stateCookie.attributes, ['Path=/', 'Max-Age=600', 'HttpOnly', 'SameSite=Lax'])
+  const state = authorize.searchParams.get('state')
+  assert.equal(auth.readHfState(stateCookie.value).state, state)
+  authorize = location(await start(request(`/api/hf/start?mode=claim&market=${orgMarket}`)))
+  assert.equal(authorize.searchParams.get('orgIds'), ORG, 'an organization-owned model asks for that organization')
+  authorize = location(await start(request(`/api/hf/start?mode=models&model=openai-community/gpt2&org=${ORG}`)))
+  assert.equal(authorize.searchParams.get('orgIds'), ORG)
+  assert.equal(location(await start(request('/api/hf/start?mode=models&org=openai-community'))).searchParams.get('orgIds'), null)
+  for (const market of ['1384142609', String(BigInt(marketId) + 7n), 'abc']) {
+    assert.equal(location(await start(request(`/api/hf/start?mode=claim&market=${market}`))).pathname, '/explore', market)
+  }
+  assert.deepEqual(calls, [], 'starting a sign-in never calls Hugging Face')
+
+  // Callback: nothing is honoured without the matching state, not even an error, and no cookie changes then.
+  const jar = { [auth.hfStateCookie]: stateCookie.value, [auth.hfSessionCookie]: 'an-earlier-session' }
+  response = await callback(request(`/api/hf/callback?code=owner-code&state=${'f'.repeat(64)}`, { jar }))
+  assert.deepEqual([location(response).searchParams.get('error'), response.headers.getSetCookie()], ['hf-sign-in-failed', []])
+  response = await callback(request(`/api/hf/callback?error=access_denied&state=${state}`, { jar }))
+  assert.equal(location(response).searchParams.get('error'), 'hf-denied')
+  assert.deepEqual(Object.keys(setCookies(response)), [auth.hfStateCookie], 'the state is spent; an earlier session is left alone')
+  assert.equal(setCookies(response)[auth.hfStateCookie].attributes[1], 'Max-Age=0')
+  response = await callback(request(`/api/hf/callback?code=wrong-code&state=${state}`, { jar }))
+  assert.deepEqual([location(response).searchParams.get('error'), Object.keys(setCookies(response))], ['hf-sign-in-failed', [auth.hfStateCookie]])
+  response = await callback(request(`/api/hf/callback?code=owner-code&state=${state}`, { jar }))
+  assert.deepEqual([location(response).pathname, location(response).searchParams.get('hf')], [`/claim/${marketId}`, 'signed-in'])
+  const sessionCookie = setCookies(response)[auth.hfSessionCookie]
+  const maxAge = Number(sessionCookie.attributes.find(a => a.startsWith('Max-Age=')).slice(8))
+  assert.ok(maxAge > 3500 && maxAge <= 3600, `at most an hour, whatever the token allows (${maxAge})`)
+  const signedIn = auth.readHfSession(sessionCookie.value)
+  assert.deepEqual([signedIn.subject, signedIn.username, signedIn.mode, signedIn.marketId], [OWNER, 'TheBloke', 'claim', marketId])
+  assert.ok(!sessionCookie.value.includes(TOKENS.owner), 'the token is sealed')
+
+  // The claim form: same origin, this market's session, and a review sealed for that session and market.
+  const claimJar = { [auth.hfSessionCookie]: sessionCookie.value }
+  response = await claim(request('/api/hf/claim', { jar: claimJar, origin: 'https://evil.example', form: { repoId: marketId } }))
+  assert.equal(response.status, 403)
+  response = await claim(request('/api/hf/claim', { form: { repoId: marketId, review: 'x' } }))
+  assert.deepEqual([response.status, location(response).searchParams.get('error')], [303, 'verification-failed'])
+  response = await claim(request('/api/hf/claim', { jar: claimJar, form: { repoId: marketId, review: 'forged' } }))
+  assert.deepEqual([response.status, location(response).searchParams.get('error')], [303, 'review-changed'])
+  const review = auth.sealHfClaimReview(signedIn, { repoId: marketId, wallet: Keypair.generate().publicKey.toBase58(), boundAt: new Date(), amount: '1', paid: '0' })
+  response = await claim(request('/api/hf/claim', { jar: { [auth.hfSessionCookie]: auth.encryptHfSession({ ...signedIn, marketId: orgMarket }) },
+    form: { repoId: orgMarket, review } }))
+  assert.equal(location(response).searchParams.get('error'), 'review-changed', 'a review is good only for its own market and session')
+  response = await claim(request('/api/hf/claim', { jar: claimJar, form: { repoId: marketId, review } }))
+  assert.equal(response.status, 200)
+  const page = await response.text()
+  assert.ok(page.includes('Checking Hugging Face ownership and the current claim state'))
+  assert.ok(page.includes(`location.replace("https://repo.ing/claim/${marketId}?error=payout-unavailable")`), 'it reaches the claim (no payout signer here)')
+})
+
+// The tables 0050/0051 change, with the columns they had before; rows are compared on exactly those columns.
+const UPGRADED = ['maintainer_opt_outs', 'payout_address_events', 'payout_address_requests', 'repo_beneficiaries', 'wallet_binding_challenges']
+async function rowChecksums(pool, columns) {
+  const sums = {}
+  for (const [name, list] of Object.entries(columns)) {
+    const { rows: [row] } = await pool.query(`select count(*)::int as n, md5(coalesce(string_agg(r, E'\\n' order by r), '')) as sum
+      from (select row(${list.map(column => `"${column}"`).join(', ')})::text as r from "${name}") rows`)
+    sums[name] = `${row.n}:${row.sum}`
+  }
+  return sums
+}
+
+test('real PostgreSQL: 0050 and 0051 upgrade GitHub history unchanged, re-apply as a no-op, and GitHub activation runs on either schema', { skip: !url }, async () => {
+  requireDisposableDatabase()
+  const adminUrl = new URL(url), targetUrl = new URL(url)
+  adminUrl.pathname = '/postgres'; targetUrl.pathname = '/repoing_hf_upgrade_test'
+  const admin = new pg.Pool({ connectionString: adminUrl.toString() })
+  const folder = await mkdtemp(join(tmpdir(), 'repoing-0051-'))
+  let pool
+  try {
+    await admin.query('drop database if exists repoing_hf_upgrade_test with (force)')
+    await admin.query('create database repoing_hf_upgrade_test')
+    pool = new pg.Pool({ connectionString: targetUrl.toString() })
+    // The database as main has it: every migration before 0050.
+    const journal = JSON.parse(await readFile(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8'))
+    const at = journal.entries.findIndex(entry => entry.tag === '0050_model_opt_outs')
+    assert.ok(at > 0 && journal.entries[at + 1]?.tag === '0051_model_authority' && at + 2 === journal.entries.length, '0050 and 0051 are the last two entries')
+    await mkdir(join(folder, 'meta'))
+    const baseline = { ...journal, entries: journal.entries.slice(0, at) }
+    await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify(baseline))
+    for (const entry of baseline.entries) await copyFile(new URL(`../drizzle/${entry.tag}.sql`, import.meta.url), join(folder, `${entry.tag}.sql`))
+    await migrate(drizzle(pool), { migrationsFolder: folder })
+
+    // GitHub history of every shape these tables hold, stored as it was written (triggers off for the backdated rows).
+    const W = () => Keypair.generate().publicKey.toBase58()
+    const client = await pool.connect()
+    try {
+      await client.query('begin'); await client.query('set local session_replication_role = replica')
+      for (const id of [9801, 9802, 9803]) {
+        await client.query(`insert into repositories(github_repo_id, owner, name, full_name, stars, forks, archived, github_updated_at)
+          values ($1, 'octo', $2, $3, 1, 0, false, now())`, [id, `repo-${id}`, `octo/repo-${id}`])
+      }
+      const request = async (repo, status, extra = {}) => (await client.query(`insert into payout_address_requests(github_repo_id, wallet,
+          requested_by_github_user_id, requested_by_login, requested_at, active_at, status, resolved_at, resolved_by_github_user_id, resolution_reason)
+        values ($1, $2, 501, 'maintainer', now() - interval '49 hours', now() - interval '1 hour', $3, $4, $5, $6) returning id::text as id, wallet`,
+      [repo, extra.wallet ?? W(), status, status === 'pending' ? null : new Date(), extra.by ?? null, extra.reason ?? null])).rows[0]
+      const activated = await request(9803, 'activated'), cancelled = await request(9801, 'cancelled', { by: 502, reason: 'Cancelled by co-admin' })
+      const superseded = await request(9801, 'superseded', { by: 502, reason: 'Replaced by a newer pasted address' })
+      await request(9802, 'pending')
+      await client.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at) values (9801, 501, $1, now() - interval '3 days')`, [W()])
+      await client.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at, method, payout_request_id)
+        values (9803, 501, $1, now() - interval '1 hour', 'pasted', $2)`, [activated.wallet, activated.id])
+      const event = (requestId, repo, kind, user, wallet) => client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, wallet)
+        values ($1, $2, $3, $4, $5)`, [requestId, repo, kind, user, wallet])
+      await event(activated.id, 9803, 'requested', 501, activated.wallet); await event(activated.id, 9803, 'activated', null, activated.wallet)
+      await event(cancelled.id, 9801, 'requested', 501, cancelled.wallet); await event(cancelled.id, 9801, 'cancelled', 502, cancelled.wallet)
+      await event(superseded.id, 9801, 'requested', 501, superseded.wallet); await event(superseded.id, 9801, 'superseded', 502, superseded.wallet)
+      await client.query(`insert into wallet_binding_challenges(github_repo_id, github_user_id, wallet, nonce, expires_at, consumed_at)
+        values (9801, 501, $1, repeat('a', 48), now(), now())`, [W()])
+      await client.query(`insert into maintainer_opt_outs(github_repo_id, kind, github_user_id, note) values (9801, 'decline', 501, 'Not ours')`)
+      await client.query(`insert into maintainer_opt_outs(github_repo_id, kind, github_user_id, created_at, withdrawn_at, withdrawn_by_github_user_id)
+        values (9803, 'opt_out', 501, now() - interval '2 days', now() - interval '1 day', 502)`)
+      await client.query('commit')
+    } finally { client.release() }
+
+    // This code on a database 0050/0051 have not reached (the worker deploys without migrating): GitHub activation and
+    // decision reads work, through exactly the 0048 statements.
+    assert.deepEqual((await activateDuePayoutAddresses(pool, { repoIds: ['9802'] })).map(result => result.status), ['activated'])
+    const decision = await activeDecision(pool, '9801')
+    assert.deepEqual({ ...decision, createdAt: typeof decision.createdAt }, { repoId: '9801', kind: 'decline', note: 'Not ours', createdAt: 'string' },
+      'a GitHub decision reads exactly as before (no source field)')
+
+    const { rows } = await pool.query(`select table_name as name, array_agg(column_name::text order by ordinal_position) as columns
+      from information_schema.columns where table_schema = 'public' and table_name = any($1) group by table_name`, [UPGRADED])
+    const columns = Object.fromEntries(rows.map(row => [row.name, row.columns]))
+    const before = await rowChecksums(pool, columns)
+    await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
+    for (const tag of ['0050_model_opt_outs', '0051_model_authority']) {
+      for (const statement of (await readFile(new URL(`../drizzle/${tag}.sql`, import.meta.url), 'utf8')).split('--> statement-breakpoint')) await pool.query(statement)
+    }
+    assert.deepEqual(await rowChecksums(pool, columns), before, 'every existing row reads back identically')
+    assert.equal((await pool.query('select count(*)::int as n from drizzle.__drizzle_migrations')).rows[0].n, journal.entries.length)
+    const { rows: constraints } = await pool.query(`select conname as name, convalidated as valid, pg_get_constraintdef(oid) as def from pg_constraint
+      where conname = any($1) order by 1`, [['maintainer_opt_outs_actor_check', 'maintainer_opt_outs_source_range', 'maintainer_opt_outs_withdrawn_check',
+      'payout_address_events_actor_check', 'payout_address_requests_authority_check', 'payout_address_requests_source_range', 'repo_beneficiaries_authority_check',
+      'repo_beneficiaries_source_range', 'wallet_binding_challenges_authority_check', 'wallet_binding_challenges_hf_range']])
+    assert.equal(constraints.length, 10)
+    assert.ok(constraints.every(constraint => constraint.valid), 'validated against the existing rows')
+    assert.match(constraints.find(c => c.name === 'maintainer_opt_outs_withdrawn_check').def, /withdrawn_by_subject/)
+    assert.match(constraints.find(c => c.name === 'payout_address_events_actor_check').def, /actor_subject/)
+    const { rows: [sources] } = await pool.query(`select (select array_agg(distinct authority_source) from repo_beneficiaries) as beneficiaries,
+      (select array_agg(distinct authority_source) from payout_address_requests) as requests, (select array_agg(distinct authority_source) from maintainer_opt_outs) as decisions`)
+    assert.deepEqual(sources, { beneficiaries: ['github'], requests: ['github'], decisions: ['github'] })
+  } finally {
+    await pool?.end()
+    await admin.query('drop database if exists repoing_hf_upgrade_test with (force)')
+    await admin.end(); await rm(folder, { recursive: true, force: true })
+  }
 })

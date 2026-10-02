@@ -14,6 +14,8 @@ const NOTE_LIMIT = 280
 const ERRORS = { 'hf-unavailable': 'Hugging Face sign-in is unavailable right now. Try again later.', 'hf-denied': 'Hugging Face sign-in was cancelled.',
   'hf-sign-in-failed': 'Hugging Face sign-in could not finish. Please try again.' }
 const dayLabel = value => new Date(value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+// Sign in again for this model; an organization's _id asks Hugging Face to offer sharing that organization.
+const signInFor = model => `/api/hf/start?mode=models&model=${encodeURIComponent(model.path)}${model.owner.kind === 'org' && /^[0-9a-f]{24}$/.test(model.owner.id ?? '') ? `&org=${model.owner.id}` : ''}`
 
 async function request(url, init) {
   const response = await fetch(url, { ...init, cache: 'no-store', signal: AbortSignal.timeout(45_000) })
@@ -88,7 +90,7 @@ function ModelDecision({ found, onChanged }) {
 
 export function ModelOptOut({ signedIn, initialModel = null, errorCode = null }) {
   const [query, setQuery] = useState(initialModel ?? ''), [found, setFound] = useState(null), [loading, setLoading] = useState(false)
-  const [error, setError] = useState(ERRORS[errorCode] ?? ''), [needsLogin, setNeedsLogin] = useState(!signedIn)
+  const [error, setError] = useState(errorCode && Object.hasOwn(ERRORS, errorCode) ? ERRORS[errorCode] : ''), [needsLogin, setNeedsLogin] = useState(!signedIn)
   const lookup = useCallback(async value => {
     if (!value.trim()) return
     setLoading(true); setError(''); setFound(null)
@@ -113,12 +115,13 @@ export function ModelOptOut({ signedIn, initialModel = null, errorCode = null })
             autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={event => setQuery(event.target.value)}/></label>
         <button type="submit" className="button outline" disabled={loading || !query.trim()}>{loading ? 'Checking…' : 'Look up'}</button>
       </form>
+      <div aria-live="polite" aria-busy={loading || undefined}>{loading && <p className="decision-hint">Checking the model on Hugging Face…</p>}
       {found && <div className={`opt-out-repo ${styles.found}`}>
         <div className="opt-out-repo-name"><a href={hfModelUrl(found.model.path)} target="_blank" rel="noopener noreferrer">{found.model.path}</a>
           <small>Owned by {found.model.owner.handle} ({found.model.owner.kind === 'org' ? 'organization' : 'user'}) · {found.mint ? <>Has a market · <Link href={`/token/${found.mint}`}>View it</Link></> : 'No market on repo.ing'}</small></div>
-        {found.authority.authorized ? <ModelDecision key={`${found.model.hfId}:${found.decision?.createdAt ?? 'none'}`} found={found} onChanged={setFound}/>
-          : <p className="decision-hint" role="status">{found.authority.message}{found.model.owner.kind === 'org' && <> <a href={`/api/hf/start?mode=models&model=${encodeURIComponent(found.model.path)}`}>Sign in again</a></>}</p>}
-      </div>}
+        {found.authority.authorized ? <ModelDecision key={found.model.hfId} found={found} onChanged={setFound}/>
+          : <p className="decision-hint">{found.authority.message}{found.model.owner.kind === 'org' && <> <a href={signInFor(found.model)}>Sign in again</a></>}</p>}
+      </div>}</div>
     </>}
   </section>
 }

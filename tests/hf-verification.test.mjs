@@ -9,6 +9,7 @@ import { HF_OAUTH_SCOPES, HfAuthorityError, authorityMessage, createHfOAuth, cre
 import { createGitHubAppVerifier } from '../src/github-verification.mjs'
 import { createWalletBinding, modelBindingMessage } from '../src/wallet-binding.mjs'
 import { assertBindingAuthority } from '../src/claim.mjs'
+import { claimAmounts } from '../src/claim-amounts.mjs'
 import { startFakeHf } from './fixtures/hf-server.mjs'
 
 // Hugging Face authority (src/hf-verification.mjs) with no network and no database: the decision matrix, OIDC with PKCE,
@@ -286,7 +287,8 @@ test('the model binding message has its own domain and names the market, the mod
   assert.ok(!message.startsWith('repo.ing repository beneficiar'), 'never a GitHub binding message')
 })
 
-test('a claim pays a model binding only while its owner is still the model owner', () => {
+// The claim wiring itself (refusal before any chain read, under the market's lock) is in tests/hf-claims-db.test.mjs.
+test('assertBindingAuthority: a model binding counts only for the owner it was made for', () => {
   const binding = { wallet: 'W', authoritySource: 'huggingface', authorityOwnerSubject: USER }
   assert.doesNotThrow(() => assertBindingAuthority(binding, 'huggingface', { ownerSubject: USER }))
   assert.throws(() => assertBindingAuthority(binding, 'huggingface', { ownerSubject: OTHER_USER }), /owner changed since this payout wallet was set/)
@@ -296,6 +298,22 @@ test('a claim pays a model binding only while its owner is still the model owner
   // GitHub bindings are unchanged: rows read before the column existed count as GitHub's.
   assert.doesNotThrow(() => assertBindingAuthority({ wallet: 'W' }, 'github', {}))
   assert.doesNotThrow(() => assertBindingAuthority({ wallet: 'W', authoritySource: 'github' }, 'github', {}))
+})
+
+test('a graduated model market is claimable: its sealed review carries includeGraduatedFees through to claimAmounts', async () => {
+  const saved = process.env.HF_OAUTH_CLIENT_SECRET
+  process.env.HF_OAUTH_CLIENT_SECRET = 'test-only-hf-review-secret'
+  try {
+    const auth = await import('../app/lib/hf-auth.mjs')
+    const session = auth.newHfSession({ subject: USER, username: 'TheBloke', accessToken: 'hf_oauth_test_only_token_value', expiresAt: Date.now() + 600_000,
+      mode: 'claim', marketId: HF_MARKET })
+    const seal = includeGraduatedFees => auth.readHfClaimReview(auth.sealHfClaimReview(session, { repoId: HF_MARKET, wallet: 'W',
+      boundAt: '2026-10-01T00:00:00Z', amount: '1000', paid: '0', includeGraduatedFees }), session)
+    const graduated = { dbcFee: 300n, dammFee: 700n, outstanding: 1000n }
+    assert.equal(claimAmounts({ ...graduated, review: seal(true) }).payoutAmount, 1000n, 'a graduated market pays its DBC and DAMM fees')
+    assert.throws(() => claimAmounts({ ...graduated, review: seal(false) }), /Graduated fees require an updated claim review/)
+    assert.equal(claimAmounts({ dbcFee: 1000n, dammFee: 0n, outstanding: 1000n, review: seal(false) }).payoutAmount, 1000n, 'a curve-only market is unaffected')
+  } finally { if (saved === undefined) delete process.env.HF_OAUTH_CLIENT_SECRET; else process.env.HF_OAUTH_CLIENT_SECRET = saved }
 })
 
 test('the do-not-promote list resolves "hf:" entries to registry ids on the same read, and fails closed with it', async () => {
@@ -348,6 +366,13 @@ test('Hugging Face cookies: their own key, purpose-bound, at most an hour, and u
     assert.deepEqual({ ...auth.readHfState(state), expiresAt: 0 }, { state: 'a'.repeat(64), codeVerifier: 'v'.repeat(43), mode: 'models', marketId: null, model: 'openai-community/gpt2', expiresAt: 0 })
     const review = auth.sealHfClaimReview(session, { repoId: HF_MARKET, wallet: 'W', boundAt: '2026-10-01T00:00:00Z', amount: '5', paid: '0' })
     assert.equal(auth.readHfClaimReview(review, session).wallet, 'W')
+    // GCM accepts a truncated tag unless its length is pinned: only the full 16-byte tag (and the 12-byte IV) opens.
+    const [v, iv, body, tag] = sealed.split('.')
+    for (const bytes of [4, 8, 12, 15]) {
+      const short = Buffer.from(tag, 'base64url').subarray(0, bytes).toString('base64url')
+      assert.equal(auth.readHfSession([v, iv, body, short].join('.')), null, `a ${bytes}-byte tag`)
+    }
+    assert.equal(auth.readHfSession([v, Buffer.alloc(16).toString('base64url'), body, tag].join('.')), null, 'a 16-byte IV')
     assert.throws(() => auth.readHfClaimReview(review, { ...session, sessionId: 'b'.repeat(48) }), /review expired/)
     assert.throws(() => auth.readHfClaimReview(review, { ...session, marketId: String(HF_MARKET + 1n) }), /review expired/)
     process.env.HF_OAUTH_CLIENT_SECRET = 'rotated-hf-secret'

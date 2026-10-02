@@ -23,7 +23,9 @@ const repoIdOf = value => {
   return String(value)
 }
 const iso = value => value instanceof Date ? value.toISOString() : value
-const decisionOf = row => row ? { repoId: row.repoId, kind: row.kind, note: row.note ?? null, createdAt: iso(row.createdAt) } : null
+// source is present only on a Hugging Face model's decision (0050), so a repository's decision reads exactly as before.
+const decisionOf = row => row ? { repoId: row.repoId, kind: row.kind, note: row.note ?? null, createdAt: iso(row.createdAt),
+  ...(row.source === 'huggingface' ? { source: 'huggingface' } : {}) } : null
 
 // The optional public note follows the holder-note rules: plain text, at most 280 characters, no links except github.com.
 // Blank means no note.
@@ -32,7 +34,9 @@ export function decisionNote(value) {
   try { return sanitizeNote(value) } catch (error) { throw new DecisionError(error instanceof NoteError ? error.message : 'Invalid note.') }
 }
 
-const ACTIVE = `select github_repo_id::text as "repoId", kind, note, created_at as "createdAt" from maintainer_opt_outs
+// to_jsonb: also readable on a database the 0050 migration has not reached (worker deploys do not migrate).
+const ACTIVE = `select github_repo_id::text as "repoId", kind, note, created_at as "createdAt",
+  to_jsonb(maintainer_opt_outs) ->> 'authority_source' as source from maintainer_opt_outs
   where withdrawn_at is null`
 
 // Reads of maintainer_opt_outs only. A database the migration has not reached yet has no such table (42P01), so it holds
@@ -106,7 +110,7 @@ export function createMaintainerDecisions({ pool, verifyAdmin, source = 'github'
   }
   const insertDecision = (id, kind, actor, text) => model
     ? pool.query(`insert into maintainer_opt_outs (github_repo_id, kind, github_user_id, note, authority_source, actor_subject)
-        values ($1, $2, null, $3, 'huggingface', $4) returning github_repo_id::text as "repoId", kind, note, created_at as "createdAt"`, [id, kind, text, actor.subject])
+        values ($1, $2, null, $3, 'huggingface', $4) returning github_repo_id::text as "repoId", kind, note, created_at as "createdAt", authority_source as source`, [id, kind, text, actor.subject])
     : pool.query(`insert into maintainer_opt_outs (github_repo_id, kind, github_user_id, note) values ($1, $2, $3, $4)
           returning github_repo_id::text as "repoId", kind, note, created_at as "createdAt"`, [id, kind, actor.githubUserId, text])
   return {

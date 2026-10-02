@@ -126,32 +126,52 @@ const byRepoId = (a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ?
 // signature, which normally supersedes the request itself), the newer binding wins instead; replaces_bound_at makes that
 // exact, with no comparison between the app's and the database's clocks. The caller holds the repository's advisory lock
 // inside an open transaction.
+// A model market's request (drizzle/0051_model_authority.sql) carries its Hugging Face authority into the binding. Those
+// columns are read through to_jsonb and GitHub requests keep exactly the 0048 statements, so this pass (which the worker
+// runs, and worker deploys do not migrate) also works on a database the 0051 migration has not reached yet.
 export async function activateDueWithin(client, repoId) {
   const { rows: [due] } = await client.query(`select r.id::text as id, r.wallet, r.requested_by_github_user_id::text as "requestedBy",
-      r.authority_source as "authoritySource", r.requested_by_subject as "requestedBySubject", r.requested_by_owner_subject as "requestedByOwnerSubject",
-      b.wallet as "currentWallet", b.github_user_id::text as "currentUser", b.authority_subject as "currentSubject",
+      to_jsonb(r) ->> 'authority_source' as "authoritySource", to_jsonb(r) ->> 'requested_by_subject' as "requestedBySubject",
+      to_jsonb(r) ->> 'requested_by_owner_subject' as "requestedByOwnerSubject",
+      b.wallet as "currentWallet", b.github_user_id::text as "currentUser", to_jsonb(b) ->> 'authority_subject' as "currentSubject",
       (b.github_repo_id is not null and b.bound_at is distinct from r.replaces_bound_at) as "newerBinding"
     from payout_address_requests r left join repo_beneficiaries b on b.github_repo_id = r.github_repo_id
     where r.github_repo_id = $1 and r.status = 'pending' and r.active_at <= now()
     for update of r`, [repoId])
   if (!due) return null
+  const model = due.authoritySource === 'huggingface'
   if (due.newerBinding) {
-    await client.query(`update payout_address_requests set status = 'superseded', resolved_at = now(), resolved_by_github_user_id = $2,
-      resolved_by_subject = $3, resolution_reason = 'A newer payout binding replaced it' where id = $1`, [due.id, due.currentUser, due.currentSubject ?? null])
-    await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, actor_subject, wallet, previous_wallet)
-      values ($1, $2, 'superseded', $3, $4, $5, $6)`, [due.id, repoId, due.currentUser, due.currentSubject ?? null, due.wallet, due.currentWallet])
+    if (model) {
+      await client.query(`update payout_address_requests set status = 'superseded', resolved_at = now(), resolved_by_subject = $2,
+        resolution_reason = 'A newer payout binding replaced it' where id = $1`, [due.id, due.currentSubject])
+      await client.query(`insert into payout_address_events(request_id, github_repo_id, event, actor_subject, wallet, previous_wallet)
+        values ($1, $2, 'superseded', $3, $4, $5)`, [due.id, repoId, due.currentSubject, due.wallet, due.currentWallet])
+    } else {
+      await client.query(`update payout_address_requests set status = 'superseded', resolved_at = now(), resolved_by_github_user_id = $2,
+      resolution_reason = 'A newer payout binding replaced it' where id = $1`, [due.id, due.currentUser])
+      await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, wallet, previous_wallet)
+      values ($1, $2, 'superseded', $3, $4, $5)`, [due.id, repoId, due.currentUser, due.wallet, due.currentWallet])
+    }
     return { status: 'superseded', repoId, requestId: due.id }
   }
   await client.query(`update payout_address_requests set status = 'activated', resolved_at = now() where id = $1`, [due.id])
-  // The binding inherits the request's authority: its GitHub user, or its Hugging Face user and the model owner's _id.
-  await client.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at, method, payout_request_id,
-      authority_source, authority_subject, authority_owner_subject)
-    values ($1, $2, $3, now(), 'pasted', $4, $5, $6, $7)
+  if (model) {
+    // The binding inherits the request's Hugging Face user and the model owner's _id (claims refuse it after a transfer).
+    await client.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at, method, payout_request_id,
+        authority_source, authority_subject, authority_owner_subject)
+      values ($1, null, $2, now(), 'pasted', $3, 'huggingface', $4, $5)
+      on conflict (github_repo_id) do update set github_user_id = excluded.github_user_id, wallet = excluded.wallet,
+        bound_at = excluded.bound_at, method = excluded.method, payout_request_id = excluded.payout_request_id,
+        authority_source = excluded.authority_source, authority_subject = excluded.authority_subject,
+        authority_owner_subject = excluded.authority_owner_subject`,
+    [repoId, due.wallet, due.id, due.requestedBySubject, due.requestedByOwnerSubject])
+  } else {
+    await client.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at, method, payout_request_id)
+    values ($1, $2, $3, now(), 'pasted', $4)
     on conflict (github_repo_id) do update set github_user_id = excluded.github_user_id, wallet = excluded.wallet,
-      bound_at = excluded.bound_at, method = excluded.method, payout_request_id = excluded.payout_request_id,
-      authority_source = excluded.authority_source, authority_subject = excluded.authority_subject,
-      authority_owner_subject = excluded.authority_owner_subject`,
-  [repoId, due.requestedBy, due.wallet, due.id, due.authoritySource ?? 'github', due.requestedBySubject ?? null, due.requestedByOwnerSubject ?? null])
+      bound_at = excluded.bound_at, method = excluded.method, payout_request_id = excluded.payout_request_id`,
+    [repoId, due.requestedBy, due.wallet, due.id])
+  }
   await client.query(`insert into payout_address_events(request_id, github_repo_id, event, wallet, previous_wallet)
     values ($1, $2, 'activated', $3, $4)`, [due.id, repoId, due.wallet, due.currentWallet])
   return { status: 'activated', repoId, requestId: due.id, wallet: due.wallet, previousWallet: due.currentWallet }
@@ -185,7 +205,8 @@ export async function resolvePayoutRecipient(client, repoId) {
   const id = repoIdOf(repoId)
   await activateDuePayoutAddress(client, id)
   const { rows: [binding] } = await client.query(`select wallet, bound_at as "boundAt", method, github_user_id::text as "githubUserId",
-      authority_source as "authoritySource", authority_owner_subject as "authorityOwnerSubject"
+      to_jsonb(repo_beneficiaries) ->> 'authority_source' as "authoritySource",
+      to_jsonb(repo_beneficiaries) ->> 'authority_owner_subject' as "authorityOwnerSubject"
     from repo_beneficiaries where github_repo_id = $1`, [id])
   if (binding) return binding
   const pending = await pendingPayoutAddress(client, id)
@@ -344,12 +365,17 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
     return inRepoLocks(pool, [repoId], async client => {
       await requireRecentAuthority(client, repoId, actor)
       await activateDueWithin(client, repoId)
-      const { rows: [active] } = await client.query(`select wallet, github_user_id::text as "githubUserId"
+      const { rows: [active] } = await client.query(`select wallet, github_user_id::text as "githubUserId",
+          to_jsonb(repo_beneficiaries) ->> 'authority_owner_subject' as "ownerSubject"
         from repo_beneficiaries where github_repo_id = $1 for update`, [repoId])
-      if (active?.wallet === wallet) fail('ALREADY_ACTIVE', 'That address already receives this repository’s payouts.', 409)
-      const { rows: [pending] } = await client.query(`select id::text as id, wallet, requested_by_github_user_id::text as "requestedBy"
+      const { rows: [pending] } = await client.query(`select id::text as id, wallet, requested_by_github_user_id::text as "requestedBy",
+          to_jsonb(payout_address_requests) ->> 'requested_by_owner_subject' as "ownerSubject"
         from payout_address_requests where github_repo_id = $1 and status = 'pending' for update`, [repoId])
-      if (pending?.wallet === wallet) fail('ALREADY_PENDING', 'That address is already waiting to become this repository’s payout address.', 409)
+      // On a model market, a binding or request made for a previous owner does not count: the current owner may set the same
+      // address again, under their own authority (claims refuse the stale one meanwhile).
+      const current = row => actor.source !== 'huggingface' || row.ownerSubject === actor.ownerSubject
+      if (active?.wallet === wallet && current(active)) fail('ALREADY_ACTIVE', 'That address already receives this repository’s payouts.', 409)
+      if (pending?.wallet === wallet && current(pending)) fail('ALREADY_PENDING', 'That address is already waiting to become this repository’s payout address.', 409)
       await assertRequestRate(client, [repoId])
       if (pending) {
         await client.query(`update payout_address_requests set status = 'superseded', resolved_at = now(), resolved_by_github_user_id = $2,
