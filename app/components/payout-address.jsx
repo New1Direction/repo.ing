@@ -8,9 +8,11 @@ import { CONFIRM_CHARACTERS, PASTED_ADDRESS_HOLD_HOURS, PAYOUT_ADDRESS_WARNING, 
 import styles from './payout-address.module.css'
 
 // Presentation and requests only. /api/payout-address re-checks the GitHub session, current admin permission, the
-// address and the chain; a pasted address can receive payouts only after its hold (src/payout-address.mjs).
-async function postPayoutAddress(body) {
-  const response = await fetch('/api/payout-address', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+// address and the chain; a pasted address can receive payouts only after its hold (src/payout-address.mjs). A model
+// market's claim page passes endpoint '/api/hf/bind' (the same actions behind a Hugging Face session) and noun 'model'.
+const DEFAULT_ENDPOINT = '/api/payout-address'
+async function postPayoutAddress(body, endpoint = DEFAULT_ENDPOINT) {
+  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const result = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(result.error || 'The payout address could not be saved. Refresh and try again.')
   return result
@@ -40,14 +42,14 @@ export function HoldCountdown({ activeAt, onElapsed }) {
 
 // The repository's payout destination: the active binding and how it was set, and a pasted address waiting out its hold
 // (with cancel for a verified admin).
-export function PayoutDestination({ repoId, active, pending, canManage = false, onChanged, compact = false }) {
+export function PayoutDestination({ repoId, active, pending, canManage = false, onChanged, compact = false, endpoint = DEFAULT_ENDPOINT, noun = 'repository' }) {
   const [confirming, setConfirming] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState('')
   if (!active && !pending) return null
   async function cancel() {
     if (busy) return
     setBusy(true); setError('')
     try {
-      await postPayoutAddress({ action: 'cancel', repoId, requestId: pending.id })
+      await postPayoutAddress({ action: 'cancel', repoId, requestId: pending.id }, endpoint)
       setConfirming(false)
       onChanged?.('cancelled')
     } catch (cause) { setError(cause.message) }
@@ -67,7 +69,7 @@ export function PayoutDestination({ repoId, active, pending, canManage = false, 
       <CopyAddress address={pending.wallet} compact={compact} label="pending payout address"/>
       <p className={styles.pendingNote}>{active ? 'Until then, payouts keep going to the current address.' : 'Claims open when it becomes active.'}
         <HoldCountdown activeAt={pending.activeAt} onElapsed={() => onChanged?.('elapsed')}/></p>
-      {canManage && pending.requestedByLogin && <small className={styles.requested}>Pasted by {pending.requestedByLogin} on {formatUtcDateTime(pending.requestedAt)}. Any admin of this repository can cancel it until then.</small>}
+      {canManage && pending.requestedByLogin && <small className={styles.requested}>Pasted by {pending.requestedByLogin} on {formatUtcDateTime(pending.requestedAt)}. {noun === 'model' ? 'The model’s owner, or an admin of its organization,' : 'Any admin of this repository'} can cancel it until then.</small>}
       {confirming && <div className={styles.confirmCancel}>
         <p>Cancel this pasted address? {active ? 'Payouts stay with the current address.' : 'Claims stay closed until a payout address is set.'}</p>
         <button type="button" className="button outline" disabled={busy} onClick={cancel}>{busy ? 'Cancelling…' : 'Yes, cancel it'}</button>
@@ -79,7 +81,7 @@ export function PayoutDestination({ repoId, active, pending, canManage = false, 
 }
 
 // Paste an address for one repository (claim page, a Builders row) or, on the dashboard, for every repository without one.
-export function PasteAddressForm({ repoIds, replacing = false, onSaved, onClose }) {
+export function PasteAddressForm({ repoIds, replacing = false, onSaved, onClose, endpoint = DEFAULT_ENDPOINT, noun = 'repository' }) {
   const id = useId()
   const [address, setAddress] = useState(''), [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
@@ -97,13 +99,13 @@ export function PasteAddressForm({ repoIds, replacing = false, onSaved, onClose 
     setBusy(true)
     try {
       const result = await postPayoutAddress(batch ? { action: 'paste-batch', repoIds, address: value, confirm: typed }
-        : { action: 'paste', repoId: repoIds[0], address: value, confirm: typed })
+        : { action: 'paste', repoId: repoIds[0], address: value, confirm: typed }, endpoint)
       setAddress(''); setConfirm('')
       onSaved?.(result)
     } catch (cause) { setError(cause.message) }
     finally { setBusy(false) }
   }
-  const scope = batch ? 'each repository' : 'this repository'
+  const scope = batch ? 'each repository' : `this ${noun}`
   const until = replacing ? 'Your current payout address keeps receiving claims until then.' : 'Claims open then.'
   return <form className={styles.form} onSubmit={submit} aria-busy={busy} noValidate>
     <div>
@@ -125,7 +127,7 @@ export function PasteAddressForm({ repoIds, replacing = false, onSaved, onClose 
       <small id={`${id}-confirm-hint`}>Read them in your wallet, not in the box above, so a wrong paste is caught.</small>
     </div>
     <p className={styles.holdNote}><Clock size={15} aria-hidden="true"/>
-      <span>A pasted address waits {PASTED_ADDRESS_HOLD_HOURS} hours before it can receive payouts. {until} Any admin of {scope} can cancel it during the wait, and signing with a wallet replaces it at once.</span></p>
+      <span>A pasted address waits {PASTED_ADDRESS_HOLD_HOURS} hours before it can receive payouts. {until} {noun === 'model' ? 'The model’s owner, or an admin of its organization,' : `Any admin of ${scope}`} can cancel it during the wait, and signing with a wallet replaces it at once.</span></p>
     <div className={styles.actions}>
       <button type="submit" className="button primary" disabled={busy || !shapeOk || typed.length !== CONFIRM_CHARACTERS}>
         {busy ? 'Checking and saving…' : batch ? `Save for ${repoIds.length} repositories` : 'Save pasted address'}</button>

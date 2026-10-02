@@ -1,0 +1,11 @@
+/* Hugging Face sign-in surfaces: the model claim page (claim-page.jsx, claim-steps.jsx) and the /opt-out model section
+   (model-opt-out.jsx). Everything else comes from the shared claim and opt-out styles. */
+.disclaimer{margin:0 0 16px;color:var(--muted);font-size:13px;line-height:1.5}
+.section{width:100%;margin-top:18px;scroll-margin-top:90px}
+.search{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;max-width:640px}
+.search>label{flex:1 1 260px}
+.search>label input{width:100%}
+.found{width:100%;padding:16px 0 0;border-top:1px solid var(--border)}
+.repoint{display:flex;flex-direction:column;align-items:flex-start;gap:8px;max-width:520px;margin:0 0 14px}
+.repoint label{color:var(--muted);font-size:14px;line-height:1.5}
+.repoint input{width:100%}

@@ -9,7 +9,8 @@ import '../maintainer-opt-out.css'
 const APP_ACCESS_URL = 'https://github.com/apps/repo-ing/installations/new'
 
 // /opt-out: the signed-in maintainer's admin repositories (the builder dashboard's listing), each with its opt-out or decline.
-export function MaintainerOptOut({ signedIn, githubLogin, errorCode }) {
+// models: the page also has the Hugging Face model section (app/components/hf/model-opt-out.jsx), so point model owners to it.
+export function MaintainerOptOut({ signedIn, githubLogin, errorCode, models = false }) {
   const [data, setData] = useState(null), [loading, setLoading] = useState(signedIn)
   const [error, setError] = useState(errorCode ? 'GitHub sign-in could not finish. Please try again.' : '')
   const [needsLogin, setNeedsLogin] = useState(!signedIn), [search, setSearch] = useState('')
@@ -32,6 +33,7 @@ export function MaintainerOptOut({ signedIn, githubLogin, errorCode }) {
     <p>repo.ing lists the public repositories you administer that are shared with its read-only GitHub App. Signing in grants no access to your code.</p>
     <a className="button primary" href="/api/github/start?mode=opt-out"><GithubMark size={18}/>Sign in with GitHub</a>
     <small>Repository missing? Share it with the app under <a href={APP_ACCESS_URL} target="_blank" rel="noopener noreferrer">GitHub access settings ↗</a>. You can remove the app after opting out; the opt-out stays.</small>
+    {models && <small>Own a Hugging Face model instead? <a href="#models">Opt it out with Hugging Face below.</a></small>}
   </section>
 
   const repos = data?.repositories ?? []
