@@ -32,7 +32,9 @@ export function createPlatformFees({ pool, connection, config, partner }) {
       onchainAvailable: snapshot.partner.available.toString(), state: 'available', latest: record.claims[0] ?? null }
   }
 
-  async function claim({ review }) {
+  // `retryRead` wraps each chain read made before the claim is signed (the sweep retries transient RPC errors there).
+  // Signing, the fee check, simulation, the durable intent, broadcast and settlement never use it.
+  async function claim({ review, retryRead = read => read() }) {
     if (!partner || !review || review.purpose !== 'platform-fee-review' || review.expiresAt <= Date.now()) throw Error('Platform fee review expired')
     const repoId = String(review.repoId)
     if (!/^[1-9]\d*$/.test(repoId)) throw Error('Invalid repository')
@@ -47,20 +49,20 @@ export function createPlatformFees({ pool, connection, config, partner }) {
         if (pending) throw Error('A platform fee claim is already in flight')
         if (outstanding <= 0n) throw Error('No platform fees remain to claim')
         if (BigInt(review.amount) !== outstanding) throw Error('Reviewed amount differs from indexed fees; refresh and review again')
-        const snapshot = await graduatedFees.read(record)
+        const snapshot = await retryRead(() => graduatedFees.read(record))
         if (!snapshot?.partner) throw Error('Graduated partner position is unavailable')
         if (snapshot.partner.available !== outstanding) throw Error('Partner fees differ from indexed accrual; indexing must catch up')
         const receiver = new PublicKey(review.receiver)
         if (!receiver.equals(partner.publicKey)) throw Error('Platform fees pay the protected partner wallet')
         const p = snapshot.partner.poolState
         const claimTx = new Transaction()
-        claimTx.add(await snapshot.amm.claimPositionFee2({ owner: partner.publicKey, feePayer: partner.publicKey,
+        claimTx.add(await retryRead(() => snapshot.amm.claimPositionFee2({ owner: partner.publicKey, feePayer: partner.publicKey,
           receiver, pool: snapshot.partner.pool, position: snapshot.partner.position,
           positionNftAccount: snapshot.partner.nftAccount,
           tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint,
           tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault,
-          tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID }))
-        const latest = await connection.getLatestBlockhash('confirmed')
+          tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID })))
+        const latest = await retryRead(() => connection.getLatestBlockhash('confirmed'))
         // The partner pays the network fee (base + priority) out of the claim it receives.
         const { transaction: tx } = await signedWithPriorityFee(connection, claimTx, { feePayer: partner.publicKey,
           blockhash: latest.blockhash, signers: [partner] })

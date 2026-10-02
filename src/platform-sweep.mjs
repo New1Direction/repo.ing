@@ -2,6 +2,7 @@ import { PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
 import { BUYBACK_WALLETS, PLATFORM_FEE_WALLET } from '../app/lib/buyback-receipts.mjs'
 import { CUSTODY_FUNDED_BY } from './platform-revenue.mjs'
 import { allocationReview, platformFeeReview } from './platform-fee-operations.mjs'
+import { createRetryCircuit, retryRpcRead } from './rpc-usage.mjs'
 
 // One-command platform-fee sweep: claim every repo/phase, allocate under the active policy,
 // move the partner wallet's surplus to the published custody wallet, report what to buy back.
@@ -13,8 +14,13 @@ export const KEEP_LAMPORTS = 50_000_000n
 export const MIN_TRANSFER_LAMPORTS = 10_000_000n
 export const PARTNER_WALLET = PLATFORM_FEE_WALLET
 export const CUSTODY_WALLET = BUYBACK_WALLETS.custody
+// Markets are read (and claimed) one at a time with this pause between them, so a full sweep never bursts the RPC.
+export const SWEEP_PACE_MS = 250
 const STALE = /refresh and review again|indexing must catch up/i
 const PERMILLE = 1000n
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms))
+// An entry with the RPC retries spent on it in this step added to any it already carries.
+const withRetries = (entry, retries) => (retries ? { ...entry, retries: (entry.retries ?? 0) + retries } : entry)
 
 export function sol(lamports) {
   const value = BigInt(lamports), sign = value < 0n ? '-' : '', abs = value < 0n ? -value : value
@@ -27,7 +33,7 @@ export function claimPlan(rows, { dbcEnabled }) {
   for (const row of rows) for (const phase of ['DBC', 'DAMM']) {
     const entry = row[phase.toLowerCase()]
     if (!entry || entry.enrolled === false) continue
-    const base = { repoId: row.repoId, fullName: row.fullName, phase, receiver: entry.receiver || PARTNER_WALLET }
+    const base = withRetries({ repoId: row.repoId, fullName: row.fullName, phase, receiver: entry.receiver || PARTNER_WALLET }, entry.retries)
     if (entry.error) { plan.push({ ...base, status: 'unreadable', error: entry.error }); continue }
     const available = BigInt(entry.available)
     if (available <= 0n) continue
@@ -38,25 +44,35 @@ export function claimPlan(rows, { dbcEnabled }) {
   return plan
 }
 
-// Fresh read immediately before each claim; one re-read and retry when the pool moved in between.
-export async function claimOne(item, { feeService, partner, now = Date.now }) {
+// Fresh read immediately before each claim; one re-read and retry when the pool moved in between. With the sweep's
+// `retry` policy, that read and every read the claim makes before it signs (its `retryRead`) are retried on a
+// transient RPC error. Signing, the durable intent and the broadcast are never retried. Results carry the retries spent.
+export async function claimOne(item, { feeService, partner, now = Date.now, retry = null }) {
   const service = feeService(item.phase)
+  let retries = 0
+  const retryRead = read => (retry ? retryRpcRead(read, { ...retry, onRetry: info => {
+    retries++
+    retry.onRetry?.({ ...info, repoId: item.repoId, fullName: item.fullName, phase: item.phase })
+  } }) : read())
+  const result = fields => withRetries({ ...item, ...fields }, retries)
   for (let attempt = 1; ; attempt++) {
-    const data = await service.status(item.repoId)
-    if (data.enrolled === false) return { ...item, status: 'skipped-unenrolled', attempts: attempt }
-    if (BigInt(data.available) < DUST_LAMPORTS) return { ...item, available: data.available, status: 'skipped-dust', attempts: attempt }
+    let data
+    try { data = await retryRead(() => service.status(item.repoId)) }
+    catch (error) { throw retries ? Object.assign(Error(error.message), { claim: result({}) }) : error }
+    if (data.enrolled === false) return result({ status: 'skipped-unenrolled', attempts: attempt })
+    if (BigInt(data.available) < DUST_LAMPORTS) return result({ available: data.available, status: 'skipped-dust', attempts: attempt })
     const review = platformFeeReview({ sessionId: SWEEP_ACTOR, repoId: item.repoId, phase: item.phase, data,
       partner: partner.publicKey, now: now() })
     try {
-      const receipt = await service.claim({ review })
+      const receipt = await service.claim({ review, retryRead })
       // The claim service skips a claim its priority-adjusted network fee would eat (under 20× the fee).
-      if (receipt?.status === 'skipped-dust') return { ...item, available: data.available, status: 'skipped-dust',
-        networkFee: receipt.networkFee, attempts: attempt }
-      return { ...item, status: 'claimed', amount: String(receipt?.amount ?? data.available),
-        signature: receipt?.signature ?? null, attempts: attempt }
+      if (receipt?.status === 'skipped-dust') return result({ available: data.available, status: 'skipped-dust',
+        networkFee: receipt.networkFee, attempts: attempt })
+      return result({ status: 'claimed', amount: String(receipt?.amount ?? data.available),
+        signature: receipt?.signature ?? null, attempts: attempt })
     } catch (error) {
       if (attempt < 2 && STALE.test(error.message)) continue
-      throw Object.assign(Error(`Claim ${item.phase} repo ${item.repoId} failed: ${error.message}`), { claim: { ...item, attempts: attempt } })
+      throw Object.assign(Error(`Claim ${item.phase} repo ${item.repoId} failed: ${error.message}`), { claim: result({ attempts: attempt }) })
     }
   }
 }
@@ -102,20 +118,32 @@ const splitOf = (amount, policy) => {
 const toLamports = value => { const [w, f = ''] = String(value).split('.'); return BigInt(w) * 1_000_000_000n + BigInt(f.padEnd(9, '0').slice(0, 9)) }
 const asSol = split => Object.fromEntries(Object.entries(split).map(([k, v]) => [k, sol(v)]))
 
+// `listFees(options)` lists every repo/phase (listPlatformFees) with the sweep's pacing and retry options. A dry run
+// reads exactly as an execute does. `retry` tunes the retryRpcRead backoff; `sleep` paces markets and retry waits.
 export async function runPlatformSweep({ execute = false, dbcEnabled, listFees, feeService, summary, allocate,
-  connection, signer, balanceOf, now = Date.now, log = () => {} }) {
+  connection, signer, balanceOf, now = Date.now, log = () => {}, retry = {}, paceMs = SWEEP_PACE_MS, sleep = pause }) {
   const report = { mode: execute ? 'execute' : 'dry-run', startedAt: new Date(now()).toISOString(),
-    claims: [], claimedTotal: '0.000000000', allocation: null, transfer: null, buyback: null, ok: false, error: null }
+    claims: [], claimedTotal: '0.000000000', rpcRetries: 0, allocation: null, transfer: null, buyback: null, ok: false, error: null }
+  // Every retry (listing or claim) is logged and counted for the whole run; entries carry their own count. When the
+  // RPC stays limited read after read (down or out of credits, not bursting), the circuit stops paying for retries.
+  const circuit = createRetryCircuit({ onOpen: ({ breakAfter }) =>
+    log(`retries paused: ${breakAfter} reads in a row stayed limited; reads get one try until one succeeds`) })
+  const retryPolicy = { ...retry, sleep, circuit, onRetry: ({ attempt, attempts, delayMs, reason, phase, fullName, repoId }) => {
+    report.rpcRetries++
+    log(`retry ${attempt} of ${attempts - 1}: ${phase} ${fullName ?? repoId} in ${(delayMs / 1000).toFixed(1)}s after ${reason}`)
+  } }
   let claimed = 0n
   try {
     // Transfer guards run first so a misconfigured signer stops the sweep before anything moves.
     assertWallets(signer, CUSTODY_WALLET)
-    const plan = claimPlan(await listFees(), { dbcEnabled })
+    const plan = claimPlan(await listFees({ concurrency: 1, paceMs, retry: retryPolicy, sleep }), { dbcEnabled })
+    let claimsStarted = 0
     for (const item of plan) {
       if (item.status !== 'planned' || !execute) { report.claims.push(item); continue }
+      if (claimsStarted++ && paceMs > 0) await sleep(paceMs)
       log(`claiming ${item.phase} ${item.fullName} (${sol(item.available)} SOL)`)
       try {
-        const result = await claimOne(item, { feeService, partner: signer, now })
+        const result = await claimOne(item, { feeService, partner: signer, now, retry: retryPolicy })
         report.claims.push(result)
         if (result.status === 'claimed') claimed += BigInt(result.amount)
       // One repo's failed claim (expired, busy pool) must not block the others, allocation or the transfer; an
@@ -168,13 +196,17 @@ export async function runPlatformSweep({ execute = false, dbcEnabled, listFees, 
 
 export function sweepHeadline(report) {
   const claimed = report.claims.filter(c => c.status === (report.mode === 'execute' ? 'claimed' : 'planned')).length
-  const unreadable = report.claims.filter(c => c.status === 'unreadable').length
+  const unreadable = report.claims.filter(c => c.status === 'unreadable')
   const parts = [`${report.mode === 'execute' ? 'Claimed' : 'Would claim'} ${claimed} repo/phase(s), ${report.claimedTotal} SOL`]
   if (report.allocation?.split) parts.push(`allocation buyback ${report.allocation.split.buyback} / liquidity ${report.allocation.split.liquidity} / treasury ${report.allocation.split.treasury} SOL`)
   else if (report.allocation) parts.push(`allocation ${report.allocation.status}`)
   if (report.transfer) parts.push(report.transfer.signature ? `sent ${report.transfer.amount} SOL to custody (${report.transfer.signature})`
     : `transfer ${report.transfer.status} ${report.transfer.amount} SOL`)
-  if (unreadable) parts.push(`${unreadable} repo/phase(s) unreadable, see claims`)
+  if (unreadable.length) {
+    const spent = unreadable.reduce((sum, c) => sum + (c.retries ?? 0), 0)
+    parts.push(`${unreadable.length} repo/phase(s) unreadable${spent ? ` after ${spent} retries` : ''}, see claims`)
+  }
+  if (report.rpcRetries) parts.push(`${report.rpcRetries} RPC retries`)
   const lines = [parts.join('; ')]
   if (report.buyback) lines.push(`BUY BACK: ${report.buyback.reserve} SOL of $REPOING from ${report.buyback.custodyWallet} (custody balance ${report.buyback.custodyBalance} SOL)`)
   for (const c of report.claims.filter(c => c.status === 'failed')) lines.push(`SKIPPED ${c.phase ?? ''} ${c.fullName ?? c.repoId ?? ''}: ${c.error}`)

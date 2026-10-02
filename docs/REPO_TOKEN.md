@@ -6,7 +6,7 @@
 
 **Update, September 30, 2026:** the in-app buyback executor (`REPO_BUYBACK_*`), the P3 liquidity executor (`REPO_LIQUIDITY_*`), and P4 Builder Reinvest are still not enabled. The team now carries out the V1 policy manually from published wallets:
 
-- `scripts/platform-sweep.mjs`, run on the web service, claims platform fees to the partner fee wallet `H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3`, allocates 60/20/20, and moves only the buyback share still owed to the custody buyback wallet `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`. The liquidity and treasury shares stay in the partner wallet.
+- `scripts/platform-sweep.mjs`, run on the web service, claims platform fees to the partner fee wallet `H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3`, allocates 60/20/20, and moves only the buyback share still owed to the custody buyback wallet `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`. The liquidity and treasury shares stay in the partner wallet. Since October 2, 2026 it reads markets one at a time and retries an RPC rate limit (HTTP 429) or other transient error with backoff, honouring Retry-After (retries pause while the RPC stays limited read after read); a market still unreadable after its retries is reported with the retries spent and is claimed on a later run.
 - Buybacks are swapped manually from the buyback wallet (platform revenue) and from the team wallet `4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce` (team buybacks on top of the policy). The worker detects finalized $REPOING buys from these wallets and the partner fee wallet and publishes them as receipts.
 - Liquidity is added manually by the team wallet to the canonical $REPOING DAMM v2 pool `FHw49kTEEjzBhRuMff9F1Xw1bLcBpwvsaSboaAWpAcaT`. These positions are not permanently locked yet.
 
