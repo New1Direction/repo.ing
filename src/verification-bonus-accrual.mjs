@@ -1,4 +1,5 @@
 import { githubApiHeaders } from './github-app-auth.mjs'
+import { activeDecision } from './maintainer-opt-outs.mjs'
 import { ACCRUAL_GRACE_MS, BONUS_WINDOW_MS, MIN_OTHER_VOLUME_LAMPORTS, MIN_REPO_AGE_MS, MIN_REPO_STARS, VERIFICATION_BONUS_RULES_VERSION,
   VOLUME_SETTLE_MS, evaluateVerificationBonus, failureReason, readSelfLaunchFacts } from './verification-bonus.mjs'
 
@@ -79,9 +80,10 @@ export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRe
   async function accrue(repoId) {
     const market = await marketFacts(pool, repoId)
     if (!market) return { repoId: String(repoId), status: 'not-enrolled' }
-    const [wallets, volume] = await Promise.all([readSelfLaunchFacts(pool, { repoId, verifierGithubUserId: market.verifierGithubUserId,
-      launcherWallet: market.launcherWallet }), readVolumeFacts(pool, { pool: market.pool, launcherWallet: market.launcherWallet, before: market.verifiedAt })])
-    const facts = { activatedAt: market.activatedAt, verifiedAt: market.verifiedAt, launcherWallet: market.launcherWallet, wallets, volume }
+    const [wallets, volume, decision] = await Promise.all([readSelfLaunchFacts(pool, { repoId, verifierGithubUserId: market.verifierGithubUserId,
+      launcherWallet: market.launcherWallet }), readVolumeFacts(pool, { pool: market.pool, launcherWallet: market.launcherWallet, before: market.verifiedAt }),
+    activeDecision(pool, market.repoId)])
+    const facts = { activatedAt: market.activatedAt, verifiedAt: market.verifiedAt, launcherWallet: market.launcherWallet, wallets, volume, decision }
     let result = evaluateVerificationBonus(facts), repository = null
     // GitHub is read only when the local rules pass; a failure here leaves no row and the next pass retries.
     if (!result.complete) {
@@ -99,7 +101,7 @@ export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRe
         minOtherVolumeLamports: MIN_OTHER_VOLUME_LAMPORTS.toString() },
       activatedAt: new Date(market.activatedAt).toISOString(), verifiedAt: new Date(market.verifiedAt).toISOString(),
       verification: { id: market.verificationId, githubUserId: market.verifierGithubUserId, login: market.verifierLogin },
-      wallets: { launcher: market.launcherWallet, ...wallets }, volume, repository, failures: result.failures }
+      wallets: { launcher: market.launcherWallet, ...wallets }, volume, maintainerDecision: decision, repository, failures: result.failures }
     const { rowCount } = await pool.query(`insert into verification_bonuses (github_repo_id, status, amount, launcher_wallet,
         verification_id, verifier_github_user_id, verifier_login, verified_at, activated_at, evidence, reason)
       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) on conflict (github_repo_id) do nothing`,

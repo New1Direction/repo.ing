@@ -45,6 +45,7 @@ function WalletsCell({ bonus }) {
   return <td><CopyAddress address={bonus.launcherWallet} compact label="launcher wallet"/>
     <small>Repo payout wallet: {bonus.repoPayoutWallet ? `${short(bonus.repoPayoutWallet)}, set by ${boundBy}` : 'not set yet'}</small>
     <span className="bonus-ops-flags">{selfLaunch && <span className="badge warn">Verifier is linked to the launcher wallet</span>}
+      {bonus.maintainerDecision && <span className="badge warn">{bonus.maintainerDecision === 'opt_out' ? 'Maintainer opted out' : 'Maintainer declined this market'}</span>}
       {!bonus.repoPayoutWallet && <span className="badge">Maintainer has no payout wallet yet</span>}</span></td>
 }
 
@@ -168,7 +169,7 @@ export function VerificationBonusOperations() {
       <ReviewTable title="Approved" id="bonus-approved-heading" rows={bonuses.filter(b => b.status === 'approved')} busy={busy}
         payoutsEnabled={payoutsEnabled} onAction={act} empty="No approved bonuses are waiting to be paid."/>
       <Decided rows={bonuses.filter(b => !['pending_review', 'approved'].includes(b.status))}/>
-      <p className="muted">Rules (each failure is recorded as ineligible): first maintainer verification within 30 days of launch, repository created 30+ days before launch with 10+ stars, 1+ SOL of curve volume from wallets other than the launcher before the verification, and no wallet link between the verifier and the launcher. Approval and payment re-check the wallet link. See docs/VERIFICATION_BONUS.md.</p>
+      <p className="muted">Rules (each failure is recorded as ineligible): first maintainer verification within 30 days of launch, repository created 30+ days before launch with 10+ stars, 1+ SOL of curve volume from wallets other than the launcher before the verification, no wallet link between the verifier and the launcher, and no active maintainer decline. Approval and payment re-check the wallet link and the maintainer decision. See docs/VERIFICATION_BONUS.md.</p>
     </>}
   </>
 }

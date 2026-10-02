@@ -16,7 +16,7 @@ const iso = ms => new Date(ms).toISOString()
 // Every rule passing: verified 5 days after launch, a year-old repo with 10 stars, exactly 1 SOL from other wallets.
 const facts = (overrides = {}) => ({ activatedAt: new Date(LAUNCH), verifiedAt: new Date(LAUNCH + 5 * DAY), launcherWallet: 'Launcher',
   wallets: { repoPayoutWallet: 'Maintainer', verifierBoundLauncher: false, verifierSignedForLauncher: false },
-  volume: { other: '1000000000', launcher: '0', unattributed: '0' },
+  volume: { other: '1000000000', launcher: '0', unattributed: '0' }, decision: null,
   repository: { createdAt: iso(LAUNCH - 365 * DAY), stars: 10 }, ...overrides })
 
 test('new launches are stamped only with a valid VERIFICATION_BONUS_LAMPORTS between 0.001 and 1 SOL', () => {
@@ -60,6 +60,8 @@ test('each rule failing in turn makes the bonus ineligible with its own reason',
     ['repo_age', { repository: { createdAt: iso(LAUNCH + DAY), stars: 500 } }, /created after the launch/],
     ['stars', { repository: { createdAt: iso(LAUNCH - 365 * DAY), stars: 9 } }, /has 9 stars \(minimum 10\)/],
     ['repository', { repository: { missing: 'GitHub no longer serves this repository publicly (HTTP 404)' } }, /HTTP 404/],
+    ['declined', { decision: { kind: 'decline' } }, /^The maintainer declined this market$/],
+    ['declined', { decision: { kind: 'opt_out' } }, /opted this repository out/],
   ]
   for (const [rule, change, reason] of cases) {
     const result = evaluateVerificationBonus(facts(change))
@@ -78,6 +80,9 @@ test('GitHub is read only when the local rules pass, and every failing rule is r
     volume: { other: '0' }, repository: { createdAt: iso(LAUNCH), stars: 0 } }))
   assert.deepEqual(many.failures.map(f => f.rule), ['window', 'self_launch', 'volume', 'repo_age', 'stars'])
   assert.equal(failureReason(many.failures).split('; ').length, 5)
+  // A maintainer who verified only to decline the market decides the bonus without a GitHub read.
+  assert.deepEqual(evaluateVerificationBonus(facts({ repository: undefined, decision: { kind: 'decline' } })).complete, true)
+  assert.throws(() => evaluateVerificationBonus(facts({ decision: undefined })), /maintainer decision is required/)
   assert.throws(() => evaluateVerificationBonus(facts({ verifiedAt: 'not a date' })), /timestamp/)
   // Missing facts never pass a rule silently.
   assert.throws(() => evaluateVerificationBonus(facts({ wallets: undefined })), /wallet facts are required/)

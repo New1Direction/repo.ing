@@ -33,7 +33,11 @@ function requireDisposableDatabase() {
 }
 
 const reset = pool => pool.query(`truncate verification_bonus_payouts, verification_bonuses, wallet_binding_challenges, repo_beneficiaries,
-  repo_verifications, trade_events, platform_revenue_allocations, platform_fee_claims, markets, repositories restart identity cascade`)
+  repo_verifications, trade_events, platform_revenue_allocations, platform_fee_claims, maintainer_opt_outs, markets, repositories
+  restart identity cascade`)
+const decline = (pool, id) => pool.query(`insert into maintainer_opt_outs(github_repo_id, kind, github_user_id) values ($1, 'decline', 501)`, [id])
+const withdraw = (pool, id) => pool.query(`update maintainer_opt_outs set withdrawn_at = now(), withdrawn_by_github_user_id = 501
+  where github_repo_id = $1 and withdrawn_at is null`, [id])
 
 async function seedMarket(pool, id, { launcher, activatedAt, stamp = AMOUNT, discovery = 2 }) {
   await pool.query(`insert into repositories(github_repo_id, owner, name, full_name, stars, forks, archived, github_updated_at)
@@ -398,6 +402,29 @@ test('real PostgreSQL: verification bonus stamping, accrual, review and payout i
       // Enough for one more bonus only if the payout still in flight were ignored.
       chain.state.balance = AMOUNT + BigInt(FEE) + 50_000_000n + 1_960_000_000n
       await assert.rejects(payouts.pay({ repoId: '9309', operator, expected: terms(9309) }), /needs 0\.25 SOL more: .* 0\.25 SOL is in flight/)
+    })
+
+    await t.test('a maintainer who declines the market earns the launcher nothing: accrual, approval and payment all check', async () => {
+      // Declining a market records an admin verification; the bonus accrued from it is ineligible.
+      await eligibleMarket(9310)
+      await decline(pool, 9310)
+      const declined = await accrual.accrue('9310')
+      assert.deepEqual([declined.status, declined.reason], ['ineligible', 'The maintainer declined this market'])
+      assert.equal((await bonusRow(pool, 9310)).evidence.maintainerDecision.kind, 'decline')
+      // A decline after accrual blocks approval until it is withdrawn.
+      await eligibleMarket(9311)
+      assert.equal((await accrual.accrue('9311')).status, 'pending_review')
+      await decline(pool, 9311)
+      await assert.rejects(review.approve({ repoId: '9311', operator, expected: terms(9311) }), /declined this market\. Reject this bonus instead/)
+      assert.equal((await review.list()).bonuses.find(bonus => bonus.repoId === '9311').maintainerDecision, 'decline')
+      await withdraw(pool, 9311)
+      assert.equal((await review.approve({ repoId: '9311', operator, expected: terms(9311) })).status, 'approved')
+      // A decline after approval blocks payment.
+      await decline(pool, 9311)
+      const payouts = createVerificationBonusPayouts({ pool, connection: scriptedChain().connection, partner: Keypair.generate(),
+        env: { VERIFICATION_BONUS_PAYOUTS_ENABLED: 'true' }, submitBroadcastMs: 0 })
+      await assert.rejects(payouts.pay({ repoId: '9311', operator, expected: terms(9311) }), /declined this market\. Reject this bonus instead of paying it/)
+      assert.deepEqual(await payoutRows(pool, 9311), [])
     })
 
     await t.test('a held bonus lock makes operator actions refuse promptly and the worker skip, never wait', async () => {
