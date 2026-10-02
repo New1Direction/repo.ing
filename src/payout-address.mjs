@@ -4,6 +4,7 @@ import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { parseReferrer } from './referral.mjs'
 import { mapLimited } from './builder-queue.mjs'
 import { CONFIRM_CHARACTERS, PASTED_ADDRESS_HOLD_MS, PAYOUT_ADDRESS_WARNING, confirmsAddress } from './payout-address-policy.mjs'
+import { assertAuthoritySource } from './market-identity.mjs'
 
 export { PASTED_ADDRESS_HOLD_MS, PAYOUT_ADDRESS_WARNING }
 
@@ -296,9 +297,11 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
   }
 
   // One repository: becomes pending; an existing binding keeps receiving claims until it activates. A newer paste
-  // replaces an older waiting one (which is recorded as superseded); the hold starts again.
+  // replaces an older waiting one (which is recorded as superseded); the hold starts again. The authority's source must be
+  // the market's (src/market-identity.mjs; a verifyAuthority without one is GitHub's), checked before any other call.
   async function request({ githubRepoId, address, confirm, verifyAuthority }) {
     const repoId = repoIdOf(githubRepoId)
+    assertAuthoritySource(verifyAuthority, repoId)
     const key = prepare(address, confirm), wallet = key.toBase58()
     await assertRequestRate(pool, [repoId])
     const { userId, login } = await authorize(repoId, verifyAuthority, now)
@@ -333,6 +336,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
     }
     const ids = githubRepoIds.map(repoIdOf)
     if (new Set(ids).size !== ids.length) fail('INVALID_REPOSITORIES', `Choose up to ${MAX_BATCH_REPOSITORIES} distinct repositories.`)
+    for (const id of ids) assertAuthoritySource(verifyAuthority, id)
     const key = prepare(address, confirm), wallet = key.toBase58()
     await assertRequestRate(pool, ids)
     const authorities = await mapLimited(ids, 3, id => authorize(id, verifyAuthority, now))
@@ -360,6 +364,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
   // replaced (by a wallet signature, or another pasted address with its own hold).
   async function cancel({ githubRepoId, requestId, verifyAuthority }) {
     const repoId = repoIdOf(githubRepoId)
+    assertAuthoritySource(verifyAuthority, repoId)
     const id = String(requestId ?? '')
     if (!REPO_ID.test(id)) fail('INVALID_REQUEST', 'Invalid payout address request.')
     const { userId, login } = await authorize(repoId, verifyAuthority, now)
