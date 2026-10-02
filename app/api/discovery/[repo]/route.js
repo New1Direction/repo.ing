@@ -5,6 +5,7 @@ import { chain, configAddress, database, partnerSigner } from '../../../lib/serv
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { createMarketConfigResolver } from '../../../../src/market-config.mjs'
 import { MIN_DISCOVERY_CLAIM_LAMPORTS } from '../../../../src/discovery-claim-message.mjs'
+import { readVerificationBonusView } from '../../../../src/verification-bonus.mjs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -22,8 +23,10 @@ export async function GET(_request, { params }) {
     const { repo } = await params
     if (!/^\d{1,18}$/.test(repo)) throw new DiscoveryClaimError('Valid repository ID required')
     const options = service()
-    const summary = await discoverySummary(options.pool, repo)
-    if (!summary) return json({ enrolled: false })
+    // The one-time verification bonus shares this card; its status is best effort and never blocks the reward ledger.
+    const [summary, verificationBonus] = await Promise.all([discoverySummary(options.pool, repo),
+      readVerificationBonusView(options.pool, repo).catch(() => null)])
+    if (!summary) return json({ enrolled: false, verificationBonus })
     const dbc = new DynamicBondingCurveClient(options.connection, 'finalized')
     let graduated = null
     try {
@@ -34,7 +37,7 @@ export async function GET(_request, { params }) {
     return json({ enrolled: true, version: summary.version, cap: summary.cap, wallet: summary.wallet, earned: summary.earned, paid: summary.paid,
       remaining: summary.remaining, expiresAt: summary.expiresAt, capped: summary.capped, expired: summary.expired,
       graduated, latestClaim: summary.latestClaim, payoutReady: Boolean(process.env.PLATFORM_PARTNER_SECRET_KEY),
-      minClaim: MIN_DISCOVERY_CLAIM_LAMPORTS.toString() })
+      minClaim: MIN_DISCOVERY_CLAIM_LAMPORTS.toString(), verificationBonus })
   } catch (error) { return problem(error) }
 }
 

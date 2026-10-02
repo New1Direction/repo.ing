@@ -6,6 +6,7 @@ import { latestMarketPrices } from '../../../lib/portfolio-prices.mjs'
 import { portfolioSummary, withHoldingValues } from '../../../lib/portfolio.mjs'
 import { walletTrades, withHoldingPnl } from '../../../lib/holding-pnl.mjs'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
+import { readWalletVerificationBonuses } from '../../../../src/verification-bonus.mjs'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -17,7 +18,7 @@ export async function GET(request) {
   try {
     const db = database()
     if (!db) throw Error()
-    const [{ markets, unavailable }, rewards, sol, tokens, tokens2022, usdPerSol] = await Promise.all([
+    const [{ markets, unavailable }, rewards, sol, tokens, tokens2022, usdPerSol, bonuses] = await Promise.all([
       listMarkets(),
       db.query(`select m.github_repo_id::text as "repoId", m.discovery_version as version,
         coalesce((select sum(f.partner_amount) from discovery_fee_events f where f.github_repo_id=m.github_repo_id and f.discovery_eligible),0)::text as "partnerEarned",
@@ -28,11 +29,14 @@ export async function GET(request) {
       chain().getTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, { commitment: 'confirmed', dataSlice: SPL_ACCOUNT_SLICE }).catch(() => null),
       chain().getTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }, { commitment: 'confirmed', dataSlice: TOKEN_2022_ACCOUNT_SLICE }).catch(() => null),
       solUsdPrice().catch(() => null),
+      // One-time verification bonus per launched market; best effort, never blocks the overview.
+      readWalletVerificationBonuses(db, wallet).catch(() => new Map()),
     ])
     if (unavailable) throw Error()
     // Holdings are all-or-nothing: a missing program's accounts would silently understate balances.
     const balances = tokens && tokens2022 ? walletTokenBalances(tokens.value, wallet, tokens2022.value) : null
     const rows = walletMarkets(markets, balances, wallet, rewards.rows)
+      .map(row => row.launchedByYou && bonuses.get(row.repoId) ? { ...row, verificationBonus: bonuses.get(row.repoId) } : row)
     const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
     // Prices and P&L are best-effort: balances, launches and rewards still render if either fails.
     const [prices, trades] = await Promise.all([latestMarketPrices(db, held).catch(() => null),

@@ -6,6 +6,7 @@ import { useWallet } from './wallet'
 import { CopyAddress } from './copy-address'
 import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
+import { VerificationBonusStatus } from './verification-bonus-status'
 
 export function DiscoveryRewards({ repoId }) {
   const { wallet, connect, changeWallet, provider } = useWallet()
@@ -84,7 +85,10 @@ export function DiscoveryRewards({ repoId }) {
     } finally { working.current = false; setBusy(false) }
   }
 
-  if (data?.enrolled === false) return null
+  // A market can carry the one-time verification bonus without discovery rewards; show just the bonus then.
+  if (data?.enrolled === false) return data.verificationBonus ? <section className="inner-card discovery-rewards verification-bonus-only" aria-labelledby="discovery-heading">
+    <div className="card-heading"><h3 id="discovery-heading"><Compass size={19}/> Launcher rewards</h3></div>
+    <VerificationBonusStatus bonus={data.verificationBonus} repoId={repoId}/></section> : null
   const pending = data?.latestClaim?.status === 'pending'
   const receipt = data?.latestClaim?.status === 'settled' ? data.latestClaim : null
   // Only a signed payout that failed is shown as a failure; an unsigned confirmation that simply expired is not.
@@ -122,6 +126,7 @@ export function DiscoveryRewards({ repoId }) {
       </div>}
       {failed && <div className="discovery-receipt inline-error" role="alert"><span>Claim did not complete. Your reward remains available to claim again.</span>
         {failed.signature && <a href={`https://explorer.solana.com/tx/${failed.signature}`} target="_blank" rel="noopener noreferrer">View transaction ↗</a>}</div>}
+      <VerificationBonusStatus bonus={data.verificationBonus} repoId={repoId}/>
     </>}
     {error && <p className="inline-error" role="alert">{error}</p>}
   </section>
