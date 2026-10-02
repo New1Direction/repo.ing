@@ -32,6 +32,7 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_launch_sessions_test'),
   launchtest('repoing_verification_bonus_test'),
   launchtest('repoing_payout_address_test'),
+  launchtest('repoing_hf_model_ui_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -57,6 +58,7 @@ export const DEFAULT_ENV = {
   LAUNCH_SESSIONS_TEST_DATABASE_URL: launchtest('repoing_launch_sessions_test'),
   VERIFICATION_BONUS_TEST_DATABASE_URL: launchtest('repoing_verification_bonus_test'),
   PAYOUT_ADDRESS_TEST_DATABASE_URL: launchtest('repoing_payout_address_test'),
+  HF_MODEL_UI_TEST_DATABASE_URL: launchtest('repoing_hf_model_ui_test'),
   // Production default; graduation-guards asserts the ambient environment keeps P3 execution off.
   REPO_LIQUIDITY_EXECUTION_ENABLED: 'false',
 }
