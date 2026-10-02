@@ -9,6 +9,7 @@ import { useWallet } from './wallet'
 import { formatUnits } from '../lib/format.mjs'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { MarketShareCard } from './market-share-card'
+import { SharePayout, ShareRow } from './payout-share'
 import { LoadingSignal } from './loading-signal'
 import { BuilderReinvest } from './builder-reinvest'
 import { ClaimChecklist, WalletExplainer } from './claim-checklist'
@@ -102,7 +103,7 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
       <h2>{justClaimed ? 'Claim complete' : 'Latest payout'}</h2><p>{formatUnits(settledClaim.amount)} SOL paid to your verified payout wallet.</p>
       <CopyAddress address={settledClaim.wallet} label="payout wallet"/>
       <a href={`https://explorer.solana.com/tx/${settledClaim.signature}`} target="_blank" rel="noopener noreferrer">View transaction ↗</a>
-      <MarketShareCard mint={mint} signature={settledClaim.signature}/>
+      <ShareRow>{justClaimed && <SharePayout amount={settledClaim.amount} fullName={repoName} mint={mint} className="button primary"/>}<MarketShareCard mint={mint} signature={settledClaim.signature}/></ShareRow>
       {justClaimed && !reinvestChosen && <div className="claim-badge-next"><p>Show your repository’s earnings in its README.</p><ReadmeBadge repoId={repoId} mint={mint}/></div>}
       {reinvestEnabled && graduated && !reinvestChosen && <button className="button outline" type="button" onClick={() => setReinvestChosen(true)}>Reinvest this payout</button>}
     </div></div>}

@@ -38,8 +38,9 @@ The official $REPOING market and Stats also show every $REPOING Jupiter Lock esc
 2. If the repository already has a canonical market, open that market. A rename does not create a new repository identity.
 3. Review the repository, token name, ticker, and suggested image. Use **Change image** to choose another project logo or owner avatar, or **Upload image** for your own PNG, JPEG, WebP, or GIF up to 2 MB. The preview fits the full image without cropping; the selected artwork is saved at launch. [Image details](TOKEN_IMAGES.md).
 4. Choose **No buy**, a 1% or 2% preset, or **Max 3%** for the optional first purchase. The percentage refers to total token supply.
-5. Review the simulated launch cost and allocation, then approve the transaction in your wallet.
+5. Review the simulated launch cost and allocation, then approve the transaction in your wallet. The network fee includes a small priority fee (at most 0.001 SOL) so the launch lands when Solana is busy; the review total is exactly what your wallet pays.
 6. Wait for confirmation and open the market from the success card. If the transaction is pending, check its receipt before submitting another launch.
+7. Use the **Launch kit** on the success card: **Post on X** (prefilled with the ticker, repository and market link), **Copy README badge**, **Copy link**, and, while no maintainer has verified the repository, **Invite the maintainer**.
 
 The launcher does not need to own the repository. Launching creates a market; it does not prove endorsement by its maintainers or grant rights to the code or builder fees. New launches use the [85 SOL liquidity profile](LIQUIDITY.md). The first-buy cap applies only to the purchase bundled into launch.
 
@@ -76,6 +77,14 @@ GitHub's authorization screen describes the App acting on your behalf because re
 The Builders dashboard lists matching tokenized repositories where your account has current admin access. For repositories without a payout wallet, **Set wallet** can bind the same wallet with one message covering up to 100 repositories. Existing saved wallets must be changed individually.
 
 Review the ready total and each saved recipient, then select **Claim all ready fees**. The site submits a small queue of separate claims and shows a receipt or issue for each repository. Keep the page open while it submits the queue. A partial failure does not undo completed payouts; check the displayed results before starting again.
+
+After a payout, **Share your payout** opens an X post with the exact amount paid, the repository and its market link (on the claim page and on each paid dashboard row).
+
+### Sponsor button and live building streams
+
+On the claim page (once the repository is verified) and under **Sponsor button & live stream** on each dashboard row, copy the `.github/FUNDING.yml` line `custom: ["https://repo.ing/token/<mint>"]`. Committing it puts repo.ing on the repository's GitHub Sponsor button.
+
+A verified admin can also link where the build is streamed: an https link on YouTube, Twitch, X or Kick. The market page then shows a **Building live** card with a **Watch** link (it never embeds the stream). Switch on **Live now** to show a LIVE badge; it turns itself off after six hours. Every change rechecks your current GitHub admin access.
 
 ### Earnings after a claim
 
@@ -139,13 +148,13 @@ Delivery is disabled until a verified sender is configured. [Operator setup and 
 
 ## Share a market or builder payout
 
-Choose **Share card** on a market to download a 1200 × 630 PNG or copy a caption with the market link. Choose **Graduation progress** for a timestamped reserve/target snapshot, or **Builder payout** for the latest finalized payout. After a successful claim, **Share payout** selects that specific receipt.
+Choose **Share card** on a market to download a 1200 × 630 PNG or copy a caption with the market link. Choose **Graduation progress** for a timestamped reserve/target snapshot, or **Builder payout** for the latest finalized payout. After a successful claim, **Payout card** selects that specific receipt.
 
 Graduation cards require fresh canonical indexed evidence and a reconciliation match. Payout cards recheck the finalized Solana receipt against the settled claim. Unavailable proof shows a retry state instead of an invented number. Cards are snapshots; they do not keep updating after download. Native sharing is available when the browser supports file sharing; otherwise use Download PNG and Copy caption.
 
 ### Referrals
 
-[Referrals](https://repo.ing/referrals) gives you a link carrying `?ref=` with your wallet. Once your referral payouts are set up, the market links you share (Copy link, Share on X, the Blink link and share-card captions) carry it too. A note beside them says so, because the link contains your wallet address, and lets you share without it; that choice is remembered on this device. For 30 days after someone opens your link, their trades on repo.ing name you as referrer (the last link they opened wins); trades from a Blink you shared do too. Each such trade pays you 4% of its trading fee in SOL, carved from Meteora’s protocol share, so traders, builders and repo.ing pay nothing extra. The Referrals page also shows the one-time payout setup (a wrapped-SOL account in your wallet; without it no referral can be paid), your earnings and a public leaderboard of estimated earnings from settled repo.ing trades.
+[Referrals](https://repo.ing/referrals) gives you a link carrying `?ref=` with your wallet. Once your referral payouts are set up, the market links you share (Copy link, Share on X, the Blink link, share-card captions, and the launch kit's and Share your payout's posts and links) carry it too. A note beside them says so, because the link contains your wallet address, and lets you share without it; that choice is remembered on this device. For 30 days after someone opens your link, their trades on repo.ing name you as referrer (the last link they opened wins); trades from a Blink you shared do too. Each such trade pays you 4% of its trading fee in SOL, carved from Meteora’s protocol share, so traders, builders and repo.ing pay nothing extra. The Referrals page also shows the one-time payout setup (a wrapped-SOL account in your wallet; without it no referral can be paid), your earnings and a public leaderboard of estimated earnings from settled repo.ing trades.
 
 ### Faster market feedback
 

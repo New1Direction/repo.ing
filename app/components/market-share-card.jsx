@@ -49,7 +49,7 @@ export function MarketShareCard({ mint, signature = null, open: controlledOpen, 
       else { await copy(); setMessage('Caption copied. Download the PNG to attach to your post.') }
     } catch (cause) { if (cause.name !== 'AbortError') setMessage('Sharing unavailable. Download the PNG and copy the caption instead.') }
   }
-  return <>{!controlled && <button type="button" className="button outline" onClick={() => setOpen(true)}><ImageIcon size={15}/>{signature ? 'Share payout' : 'Share card'}</button>}
+  return <>{!controlled && <button type="button" className="button outline" onClick={() => setOpen(true)}><ImageIcon size={15}/>{signature ? 'Payout card' : 'Share card'}</button>}
     <dialog ref={dialog} className="market-share-dialog" aria-labelledby={`share-title-${signature ? 'payout' : 'market'}`} onCancel={close} onClose={() => setOpen(false)} onClick={event => { if (event.target === dialog.current) { const r = dialog.current.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) close() } }}>
       <div className="share-dialog-heading"><h2 id={`share-title-${signature ? 'payout' : 'market'}`}>Share this market</h2><button type="button" aria-label="Close share card" onClick={close}><X size={20}/></button></div>
       {!signature && <div className="share-card-tabs" aria-label="Card type">{[['graduation', 'Graduation progress'], ['payout', 'Builder payout']].map(([value, label]) => <button type="button" key={value} aria-pressed={kind === value} onClick={() => setKind(value)}>{label}</button>)}</div>}

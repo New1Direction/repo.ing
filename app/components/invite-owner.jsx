@@ -4,7 +4,7 @@ import { Copy, Share2 } from 'lucide-react'
 import { MenuDetails } from './menu-details'
 import { ownerInvitation } from '../lib/owner-invitation.mjs'
 
-export function InviteOwner({ repoId, fullName, available = null }) {
+export function InviteOwner({ repoId, fullName, available = null, label = 'Invite repository owner' }) {
   const [amount, setAmount] = useState(available), [loading, setLoading] = useState(false), [message, setMessage] = useState('')
   const pending = useRef(false)
   const text = ownerInvitation({ repoId, fullName, available: amount })
@@ -27,7 +27,7 @@ export function InviteOwner({ repoId, fullName, available = null }) {
     try { await navigator.share({ title: `${fullName} · builder fees`, text }); setMessage('') }
     catch (error) { if (error.name !== 'AbortError') await copy() }
   }
-  return <MenuDetails className="invite-owner" label="Invite repository owner" onToggle={refresh} summary={<><Share2 size={15}/>Invite repository owner</>}>
+  return <MenuDetails className="invite-owner" label={label} onToggle={refresh} summary={<><Share2 size={15}/>{label}</>}>
     <div className="menu-panel invite-panel"><strong>Let the builders know</strong><p>Send the repository owner a direct link to claim their fees.</p>
       <label htmlFor={`invite-${repoId}`}>Invitation</label><textarea id={`invite-${repoId}`} readOnly value={text} onFocus={event => event.target.select()}/>
       <div className="invite-actions"><button className="button outline" type="button" disabled={loading} onClick={copy}><Copy size={14}/>Copy invitation</button><button className="button outline" type="button" disabled={loading} onClick={share}><Share2 size={14}/>Share</button></div>
