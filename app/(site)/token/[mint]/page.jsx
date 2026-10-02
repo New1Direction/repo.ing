@@ -44,6 +44,7 @@ import { isPromotionExcluded } from '../../../lib/promotion-exclusions.mjs'
 import { maintainerDecision, promotionExcluded } from '../../../lib/maintainer-opt-outs.mjs'
 import { DeclinedBanner } from '../../../components/maintainer-declined'
 import { PhoneMarketSummary } from '../../../components/phone-market-summary'
+import { BuildingLive, readPageStream } from '../../../components/building-live'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -70,6 +71,9 @@ export default async function Token({ params, searchParams }) {
   const { market } = await marketByMint(mint)
   if (!market) notFound()
   const repo = { ...displayRepository(market), mint: market.mint }
+  // The maintainer's stream link, shown under the same rule as Dev Pulse. Started now, awaited after the reads below (it
+  // never rejects).
+  const streamRead = activity || isPromotionExcluded(market.repoId) ? null : timed('repoStream', () => readPageStream(market.repoId))
   // Non-null only when this market's own config charges the launch fee (config read once, then cached).
   const launchFee = await timed('launchFeeTerms', () => marketLaunchFeeTerms(market))
   // A current GitHub admin declined this market (src/maintainer-opt-outs.mjs). undefined: unreadable, so nothing here
@@ -78,6 +82,7 @@ export default async function Token({ params, searchParams }) {
   // Dev Pulse: public GitHub activity from the worker's tables (one indexed read). Never shown for do-not-promote repos.
   const pulse = isPromotionExcluded(market.repoId) || decision !== null ? null
     : await timed('devPulse', () => readRepoPulse(database(), market.repoId)).catch(error => { console.error('dev-pulse read failed', { mint, error: error.message }); return null })
+  const stream = decision === null ? await streamRead : null
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
   const tips = tipsEnabled()
@@ -123,7 +128,7 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
-        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
+        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<BuildingLive stream={stream}/><TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}
           <Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense></div>}/>

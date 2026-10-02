@@ -138,7 +138,11 @@ export async function POST(request) {
           console.error('Launch first-buy indexing will retry in the worker:', error.message)
         }
       }
-      return Response.json({ mint: market.mint, pool: market.pool, signature: market.launchSignature })
+      // The launch kit offers "Invite the maintainer" unless an admin has verified this repository (best effort: unknown is not verified).
+      const verified = await pool.query(`select exists(select 1 from repo_verifications where github_repo_id = $1 and permission = 'admin')
+        or exists(select 1 from repo_beneficiaries where github_repo_id = $1) as verified`, [session.githubRepoId])
+        .then(result => result.rows[0]?.verified === true, () => false)
+      return Response.json({ mint: market.mint, pool: market.pool, signature: market.launchSignature, verified })
     }
     throw new Error('Unsupported launch action')
   } catch (error) { return safeError(error, action) }

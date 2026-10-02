@@ -4,8 +4,7 @@ import { useEffect, useRef } from 'react'
 import { ArrowRight, BookOpen, CircleCheck, GitCommitHorizontal } from 'lucide-react'
 import { CopyAddress } from './copy-address'
 import { ShareMarket } from './share-market'
-import { InviteOwner } from './invite-owner'
-import { ShareOnX } from './share-on-x'
+import { LaunchKit } from './launch-kit'
 
 // Mounted only after the launch API verifies the canonical on-chain pool.
 export function LaunchSuccess({ repo, launched, symbol, image }) {
@@ -20,10 +19,9 @@ export function LaunchSuccess({ repo, launched, symbol, image }) {
     <h2 ref={heading} tabIndex={-1}>Success — repo has been tokenized</h2>
     <p>{repo.fullName} now has a live market.</p>
     <Link className="button primary launch-submit" href={`/token/${launched.mint}`}>View market <ArrowRight size={18}/></Link>
-    <ShareOnX className="button outline launch-share-x" mint={launched.mint} fullName={repo.fullName} symbol={symbol} kind="launch"/>
+    <LaunchKit repoId={repo.repoId} fullName={repo.fullName} mint={launched.mint} symbol={symbol} verified={launched.verified === true}/>
     <CopyAddress address={launched.mint}/>
     {launched.signature && <a className="launch-receipt" href={`https://solscan.io/tx/${launched.signature}`} target="_blank" rel="noreferrer">View launch transaction ↗</a>}
     <ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId}/>
-    <InviteOwner repoId={repo.repoId} fullName={repo.fullName}/>
   </section>
 }

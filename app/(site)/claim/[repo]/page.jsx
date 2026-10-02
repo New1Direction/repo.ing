@@ -10,6 +10,7 @@ import { ClaimSteps } from '../../../components/claim-steps'
 import { IconArt } from '../../../components/icon-art'
 import { ClaimPageTips } from '../../../components/repo-tips'
 import { ClaimPageDecision } from '../../../components/maintainer-declined'
+import { ClaimBuilderTools } from '../../../components/builder-tools'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
 import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
@@ -34,6 +35,7 @@ export default async function ClaimPage({ params, searchParams }) {
     <Suspense fallback={<div className="inner-card claim-loading" role="status" aria-busy="true">Checking available fees and GitHub access…</div>}>
       <ClaimContent market={market} repo={repo} query={query}/>
     </Suspense>
+    <Suspense fallback={null}><ClaimBuilderTools market={market}/></Suspense>
     <Suspense fallback={null}><ClaimTipsSection market={market}/></Suspense>
     <Participation repoId={repoId}/>
     <Suspense fallback={null}><ClaimPageDecision market={market}/></Suspense>

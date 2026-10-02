@@ -35,6 +35,7 @@ reconcile
 referral
 referral-leaderboard-db
 replica-state
+repo-streams-db
 reserve-alerts-integration
 server-speed-db
 trade

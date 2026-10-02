@@ -1,0 +1,88 @@
+/* Launch kit, GitHub Sponsor snippet, live building streams and payout sharing. Colors come from the theme variables,
+   so light and dark both follow the site; the live red is the one new color and is used only for "live". */
+.kit{--live:#ff5a5f;width:min(100%,640px);margin:6px 0 2px;padding:20px 22px;border:1px solid color-mix(in srgb,var(--green) 38%,var(--border));border-radius:12px;background:linear-gradient(180deg,color-mix(in srgb,var(--green) 7%,transparent),transparent 70%);text-align:left}
+.eyebrow{display:block;margin:0 0 4px;color:var(--green);font-size:11px;font-weight:750;letter-spacing:.09em;text-transform:uppercase}
+.kit h3{margin:0;font-size:19px;letter-spacing:-.02em}
+.kit h3+p{margin:6px 0 0;color:var(--muted);font-size:14px;line-height:1.5}
+.kitActions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:16px}
+.kitActions>a,.kitActions>button,.kitActions>details>summary{width:100%;min-height:44px;justify-content:flex-start;padding:0 14px}
+.kitActions>details{position:relative;display:block;min-width:0;margin:0}
+.kitActions svg{flex:none}
+.kitNote{margin-top:10px}
+.badgeStrip{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);color:var(--dim);font-size:12px}
+.badgeStrip img{display:block;height:24px;width:auto}
+/* .kit-qualified: the launch success card styles every paragraph at 16px. */
+.status,.kit .status{min-height:18px;margin:10px 0 0;color:var(--muted);font-size:13px;line-height:1.45}
+.fallback{display:block;width:100%;margin-top:8px;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--bg);color:var(--text);font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+
+/* .github/FUNDING.yml snippet */
+.sponsor{min-width:0}
+.fileHead{display:flex;align-items:center;gap:8px;padding:8px 8px 8px 12px;border:1px solid var(--border-strong);border-bottom:0;border-radius:8px 8px 0 0;background:var(--surface2);font-size:12.5px}
+.fileHead code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text)}
+.fileHead button{margin-left:auto;min-height:30px;padding:0 10px;font-size:12.5px}
+.snippet{margin:0;padding:12px 14px;border:1px solid var(--border-strong);border-radius:0 0 8px 8px;background:var(--bg);color:var(--green);font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.note{margin:9px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+
+/* Live building stream settings */
+.stream{--live:#ff5a5f;min-width:0}
+.streamHead{display:flex;align-items:center;gap:8px;margin:0 0 10px;font-size:15px}
+.streamHead svg{color:var(--muted)}
+.field{display:block;margin:0 0 6px;color:var(--muted);font-size:12.5px;font-weight:600}
+.inputRow{display:flex;gap:8px}
+.inputRow input{flex:1;min-width:0;height:40px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg);color:var(--text);font-size:14px}
+.inputRow input:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+.inputRow button{min-height:40px;padding:0 16px}
+.hint{margin:7px 0 0;color:var(--dim);font-size:12px;line-height:1.5}
+.liveRow{display:flex;align-items:center;flex-wrap:wrap;gap:10px 14px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)}
+.switch{display:inline-flex;align-items:center;gap:10px;min-height:36px;padding:0 12px 0 6px;border:1px solid var(--border-strong);border-radius:999px;background:transparent;color:var(--text);font-weight:650;font-size:13.5px}
+.switch:hover:not(:disabled){background:var(--surface2)}
+.switch:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.track{position:relative;width:34px;height:20px;border-radius:999px;background:var(--border-strong);transition:background .15s}
+.track:after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:var(--text);transition:transform .15s}
+.switch[aria-checked=true] .track{background:var(--live)}
+.switch[aria-checked=true] .track:after{transform:translateX(14px);background:#fff}
+.liveNote{color:var(--muted);font-size:12.5px;line-height:1.45}
+.textButton{margin-left:auto;padding:0;border:0;background:none;color:var(--muted);font-size:12.5px;text-decoration:underline;text-underline-offset:3px}
+.textButton:hover:not(:disabled){color:var(--text)}
+.error{margin:10px 0 0;color:var(--red);font-size:13px}
+
+/* LIVE badge: a red dot that pulses (still under reduced motion) */
+.liveBadge{--live:#ff5a5f;display:inline-flex;align-items:center;gap:6px;padding:2px 8px 2px 7px;border-radius:999px;background:color-mix(in srgb,var(--live) 16%,transparent);color:var(--live);font-size:11px;font-weight:800;letter-spacing:.08em;line-height:16px}
+.liveBadge:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 0 0 color-mix(in srgb,var(--live) 70%,transparent);animation:pulse 1.6s ease-out infinite}
+@keyframes pulse{to{box-shadow:0 0 0 7px transparent}}
+
+/* Token page "Building live" card (side column) */
+.building{--live:#ff5a5f;display:flex;flex-direction:column;gap:12px;padding:18px 20px}
+.building.isLive{border-color:color-mix(in srgb,var(--live) 45%,var(--border));background:linear-gradient(180deg,color-mix(in srgb,var(--live) 8%,transparent),transparent 65%)}
+.buildingTop{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.buildingTop h3{display:flex;align-items:center;gap:8px;margin:0;font-size:16px}
+.buildingTop h3 svg{color:var(--muted)}
+.building.isLive .buildingTop h3 svg{color:var(--live)}
+.building p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.5}
+.watch{width:100%}
+.host{overflow:hidden;color:var(--dim);font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+
+/* Builders dashboard row: tools under the balances, opened on demand */
+.rowTools{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0}
+.rowTools>a,.rowTools>button{min-height:32px;padding:0 12px;font-size:12.5px}
+.rowPanel{order:2;flex-basis:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px 22px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.rowPanel>p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
+.rowPanel h3,.tools h3{margin:0 0 10px;font-size:15px}
+.flipped{transform:rotate(180deg)}
+
+/* Claim page section */
+.tools{margin-top:24px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 28px;align-items:start}
+.tools>h2{grid-column:1/-1;margin:0;font-size:20px}
+
+/* "Share your payout" also sits in the claim receipt, whose links are underlined inline text. */
+.shareLink.shareLink{display:inline-flex;margin:0;text-decoration:none}
+.shareRow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:12px}
+/* The referral disclosure (share-referral.jsx) takes its own line under a share button. */
+.shareNote{order:1;flex-basis:100%;margin:0}
+
+@media(max-width:700px){
+  .kit{padding:16px}
+  .kitActions,.rowPanel,.tools{grid-template-columns:minmax(0,1fr)}
+  .inputRow input{font-size:16px}
+}
+@media(prefers-reduced-motion:reduce){.liveBadge:before{animation:none}.track,.track:after{transition:none}}
