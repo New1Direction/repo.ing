@@ -2,6 +2,7 @@ import { ImageResponse } from 'next/og'
 import sharp from 'sharp'
 import { database } from './server.mjs'
 import { GET as repositoryLogo } from '../api/repo-logo/[repo]/route'
+import { isModelMarket } from './hf-model-display.mjs'
 
 // Shared pieces of repo.ing's 1200×630 link-preview cards: frame, logo loading, PNG caching, fallback.
 export const size = { width: 1200, height: 630 }
@@ -45,6 +46,7 @@ export async function marketLogo(market) {
     const { rows } = await database().query('select token_image from markets where mint=$1', [market.mint])
     if (rows[0]?.token_image) return rows[0].token_image
   } catch { /* Legacy markets can still resolve their repository artwork below. */ }
+  if (isModelMarket(market)) return modelLogo(market)
   const result = await repositoryLogo(null, { params: Promise.resolve({ repo: market.repoId }) })
   const location = result.headers.get('location')
   if (!location) return null
@@ -63,15 +65,26 @@ export async function marketLogo(market) {
   return `data:image/png;base64,${image.toString('base64')}`
 }
 
+// A model owner's avatar only as the logo route's resized raster (its Hub host allowlist checks every hop; SVGs and
+// failures come back as a redirect, and the card then shows the ticker letter instead).
+async function modelLogo(market) {
+  const response = await repositoryLogo(new Request(`https://repo.ing/api/repo-logo/${market.repoId}?w=256`), { params: Promise.resolve({ repo: String(market.repoId) }) })
+  if (response.status !== 200 || response.headers.get('content-type') !== 'image/webp') return null
+  const image = await sharp(Buffer.from(await response.arrayBuffer()), { limitInputPixels: 10_000_000 })
+    .resize(LOGO, LOGO, { fit: 'contain', background: colors.surface }).png().toBuffer()
+  return `data:image/png;base64,${image.toString('base64')}`
+}
+
 function Wordmark() {
   return <span style={{ display: 'flex', fontSize: 34, fontWeight: 700, letterSpacing: '-1px' }}>repo<span style={{ color: colors.green }}>.ing</span></span>
 }
 
-export function Frame({ children }) {
+// tagline and footer: a model market's card names models and who they pay (app/(site)/token/[mint]/opengraph-image).
+export function Frame({ children, tagline = 'Open source markets', footer = 'Every trade pays the repo’s builders in SOL.' }) {
   return <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: colors.bg, color: colors.text, padding: '48px 64px', fontFamily: 'sans-serif' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 26, borderBottom: `1px solid ${colors.border}` }}><Wordmark/><span style={{ fontSize: 22, color: colors.muted }}>Open source markets</span></div>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 26, borderBottom: `1px solid ${colors.border}` }}><Wordmark/><span style={{ fontSize: 22, color: colors.muted }}>{tagline}</span></div>
     {children}
-    <div style={{ display: 'flex', marginTop: 'auto', paddingTop: 22, borderTop: `1px solid ${colors.border}`, fontSize: 24, color: colors.green }}>Every trade pays the repo’s builders in SOL.</div>
+    <div style={{ display: 'flex', marginTop: 'auto', paddingTop: 22, borderTop: `1px solid ${colors.border}`, fontSize: 24, color: colors.green }}>{footer}</div>
   </div>
 }
 

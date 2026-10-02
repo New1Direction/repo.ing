@@ -1,14 +1,17 @@
 import { ogText } from './og-card.mjs'
 import { formatReturn } from './share-links.mjs'
 import { Frame, MarketLogo, colors } from './og-image'
+import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
 
-// Link-preview card for a shared return. It is labelled as the sharer's own figure: the URL is editable.
+// Link-preview card for a shared return. It is labelled as the sharer's own figure: the URL is editable. A Hugging Face
+// model market's card names who its fees pay and carries the disclaimer in its footer.
 const LOGO = 112
+const MODEL_FRAME = { tagline: 'Hugging Face model market', footer: HF_DISCLAIMER_SHORT }
 
 export function ReturnCard({ market, logo, pct }) {
   const symbol = ogText(market.symbol, 14), name = ogText(market.fullName, 52), value = formatReturn(pct)
   const color = pct > 0 ? colors.green : pct < 0 ? colors.red : colors.text
-  return <Frame>
+  return <Frame {...(isModelMarket(market) ? MODEL_FRAME : {})}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 28, marginTop: 36 }}>
       <MarketLogo logo={logo} symbol={symbol} size={LOGO}/>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: 880 }}>
