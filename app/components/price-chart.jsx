@@ -10,6 +10,7 @@ import { formatUsdMarketCap } from '../lib/market-display.mjs'
 import { CHART_PERIODS, chartPriceLabel, chartTradeAge } from '../lib/chart-display.mjs'
 import { marketMetricsUrl, marketTradesUrl } from '../lib/market-chart-urls.mjs'
 import { earlyChartScript, takeEarlyChart } from '../lib/early-chart.mjs'
+import { publishMarketSnapshot } from '../lib/market-snapshot.mjs'
 
 // Start downloading the chart code while the page hydrates, in parallel, instead of one after another once the first
 // trades response arrives. next/dynamic and the canvas reuse these same module requests.
@@ -86,6 +87,11 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, pulse = null }
   useEffect(() => {
     if (pendingSignature && data?.trades.some(trade => trade.signature === pendingSignature)) setPendingSignature(null)
   }, [data, pendingSignature])
+  // The phone summary atop the page reuses these reads. A 1h window cannot give a 24h change, so it only updates price and volume.
+  useEffect(() => {
+    if (data) publishMarketSnapshot(mint, { latest: data.latest, volume24hLamports: data.volume24hLamports, ...(data.range === '1h' ? {} : { chart: data }) })
+  }, [mint, data])
+  useEffect(() => { if (metrics) publishMarketSnapshot(mint, { metrics }) }, [mint, metrics])
   useEffect(() => {
     let active = true
     const controller = new AbortController()
