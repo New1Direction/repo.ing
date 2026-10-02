@@ -25,6 +25,7 @@ launch-indexer
 liquidity-deployment
 maintainer-opt-outs-db
 market-lookup
+market-quality-db
 milestone-alerts-db
 platform-dbc-fees
 platform-fees

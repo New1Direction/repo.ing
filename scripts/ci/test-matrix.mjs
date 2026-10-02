@@ -25,7 +25,7 @@ export const DEFAULT_GROUP_DATABASES = [
   // Opt-in real-PostgreSQL suites (skipped when their URL variable is unset); see DEFAULT_ENV.
   launchtest('repoing_tips_test'), launchtest('repoing_trade_sessions_test'), launchtest('repoing_referrals_test'), launchtest('repoing_x_links_test'),
   launchtest('repoing_parts_test'), launchtest('repoing_backers_test'), launchtest('repoing_launch_alerts_test'),
-  launchtest('repoing_trust_test'), launchtest('repoing_trending_test'),
+  launchtest('repoing_trust_test'), launchtest('repoing_trending_test'), launchtest('repoing_market_quality_test'),
   launchtest('repoing_graduation_race_test'), launchtest('repoing_milestone_alerts_test'), launchtest('repoing_server_speed_test'),
   launchtest('repoing_opt_outs_test'),
   // Required (not opt-in) by replica-state, which is listed in needs-services.txt.
@@ -47,6 +47,7 @@ export const DEFAULT_ENV = {
   LAUNCH_ALERTS_TEST_DATABASE_URL: launchtest('repoing_launch_alerts_test'),
   TRUST_TEST_DATABASE_URL: launchtest('repoing_trust_test'),
   TRENDING_TEST_DATABASE_URL: launchtest('repoing_trending_test'),
+  MARKET_QUALITY_TEST_DATABASE_URL: launchtest('repoing_market_quality_test'),
   GRADUATION_RACE_TEST_DATABASE_URL: launchtest('repoing_graduation_race_test'),
   MILESTONE_ALERTS_TEST_DATABASE_URL: launchtest('repoing_milestone_alerts_test'),
   SERVER_SPEED_TEST_DATABASE_URL: launchtest('repoing_server_speed_test'),
