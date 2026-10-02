@@ -1,0 +1,3 @@
+.refer-link small a{color:var(--green);font-weight:600;white-space:nowrap}
+.refer-link small a:hover{text-decoration:underline}
+[data-theme=light] .refer-link small a{color:var(--green-dark)}

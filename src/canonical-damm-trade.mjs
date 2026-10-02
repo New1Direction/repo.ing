@@ -14,7 +14,7 @@ import { readChainPoint } from './chain-clock.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
 import { dammSwapEvents } from './damm-trades.mjs'
 import { loadTransactionAt } from './finalized-transaction.mjs'
-import { keptWsolRent, resolveReferral } from './referral.mjs'
+import { keptWsolRent, parseReferrer, resolveReferral } from './referral.mjs'
 import { createWsolAtaInstruction, isCreateWsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
 import { preparedFromRecord, readTradeRecord, recordWithSignedMessage, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
@@ -227,7 +227,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   }
   const prepare = async (request, direction) => {
     const wallet = new PublicKey(request.wallet)
-    const { market, pool, mint, poolState, amountIn, minimumAmountOut, slippageBps } = await quote(request, direction)
+    const { market, pool, mint, poolState, amountIn, minimumAmountOut, slippageBps, fee } = await quote(request, direction)
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
     const swapTx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
@@ -250,7 +250,9 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
       wsolRent: wsolRent === null ? null : wsolRent.toString(), amountIn: amountIn.toString(), minimumAmountOut: minimumAmountOut.toString(),
       message: Buffer.from(tx.serializeMessage()).toString('base64'), transaction: serializeUnsigned(tx),
       blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps,
-      priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } })
+      priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() },
+      // Referral leaderboard only (estimated earnings): the wallet behind `referral` and the quoted SOL trading fee.
+      referrer: referral ? parseReferrer(request.referrer).toBase58() : null, tradingFeeLamports: fee.toString() })
     return preparedFromRecord(record, tx)
   }
   const verifyTrade = async (prepared, signature, { commitment = 'confirmed' } = {}) => {

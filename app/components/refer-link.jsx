@@ -1,9 +1,11 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Check, Gift, Wallet } from 'lucide-react'
+import Link from 'next/link'
+import { Check, Wallet } from 'lucide-react'
 import { useWallet } from './wallet'
-import { referralLink, referralStatus } from '../lib/referral.mjs'
+import { referralStatus } from '../lib/referral.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
+import '../refer-link.css'
 
 async function post(body) {
   const response = await fetch('/api/referral', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' })
@@ -46,24 +48,17 @@ export function useReferralPayouts(wallet, provider) {
   return { status, setup, enable }
 }
 
-// Payouts land in the referrer's own wrapped-SOL ATA (4% of the trading fee, from Meteora's protocol share).
-export function ReferLink({ mint }) {
+// Share menu footer. A connected wallet's shared links already carry its ?ref; payouts land in its own wrapped-SOL ATA
+// (4% of the trading fee, from Meteora's protocol share), which needs a one-time setup. /referrals has the rest.
+export function ReferLink() {
   const { wallet, provider } = useWallet() ?? {}
-  const [copied, setCopied] = useState('')
   const { status, setup, enable } = useReferralPayouts(wallet, provider)
-
-  if (!wallet) return null
-  async function copy() {
-    try { await navigator.clipboard.writeText(referralLink(window.location.origin, mint, wallet)); setCopied('Referral link copied') }
-    catch { setCopied('Copy failed. Try again.') }
-  }
+  const more = <Link href="/referrals">Referrals →</Link>
+  if (!wallet) return <div className="refer-link"><small>Connect your wallet and the links you share earn you 4% of the trading fee on trades they bring. {more}</small></div>
   const enabled = status?.enabled
   return <div className="refer-link">
-    <div className="refer-link-actions">
-      <button className="button outline" type="button" onClick={copy}>{copied === 'Referral link copied' ? <Check size={15}/> : <Gift size={15}/>}Copy referral link</button>
-      {status && !enabled && <button className="button outline" type="button" onClick={enable} disabled={setup === 'busy'}><Wallet size={15}/>{setup === 'busy' ? 'Enabling…' : 'Enable payouts'}</button>}
-    </div>
-    <small role="status">{copied || (setup && setup !== 'busy' ? setup : `Earn 4% of the trading fee on trades from your link, paid in SOL.${status && !enabled ? ` Enabling payouts costs ≈${(Number(status.setupLamports) / 1e9).toFixed(4)} SOL once (refundable).` : ''}`)}</small>
-    {enabled && <small className="refer-link-earned"><Check size={12}/> Referral payouts enabled · {formatSolDisplay(status.earningsLamports)} SOL earned so far, held as wrapped SOL in your wallet. Trading on repo.ing unwraps your referral earnings to SOL.</small>}
+    {status && !enabled && <div className="refer-link-actions"><button className="button outline" type="button" onClick={enable} disabled={setup === 'busy'}><Wallet size={15}/>{setup === 'busy' ? 'Enabling…' : 'Enable payouts'}</button></div>}
+    <small role="status">{setup && setup !== 'busy' ? setup : `These links include your referral: earn 4% of the trading fee on trades they bring, paid in SOL.${status && !enabled ? ` Enable payouts first (≈${(Number(status.setupLamports) / 1e9).toFixed(4)} SOL once, refundable).` : ''}`} {more}</small>
+    {enabled && <small className="refer-link-earned"><Check size={12}/> Payouts enabled · {formatSolDisplay(status.earningsLamports)} SOL earned so far</small>}
   </div>
 }

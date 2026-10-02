@@ -140,6 +140,10 @@ Choose **Share card** on a market to download a 1200 × 630 PNG or copy a captio
 
 Graduation cards require fresh canonical indexed evidence and a reconciliation match. Payout cards recheck the finalized Solana receipt against the settled claim. Unavailable proof shows a retry state instead of an invented number. Cards are snapshots; they do not keep updating after download. Native sharing is available when the browser supports file sharing; otherwise use Download PNG and Copy caption.
 
+### Referrals
+
+While your wallet is connected, every market link you share (Copy link, Share on X, the Blink link and share-card captions) carries `?ref=` with your wallet. For 30 days after someone opens it, their trades on repo.ing name you as referrer (the last link they opened wins); trades from a Blink you shared do too. Each such trade pays you 4% of its trading fee in SOL, carved from Meteora’s protocol share, so traders, builders and repo.ing pay nothing extra. [Referrals](https://repo.ing/referrals) shows your link, the one-time payout setup (a wrapped-SOL account in your wallet; without it no referral can be paid), your earnings and a public leaderboard of estimated earnings from settled repo.ing trades.
+
 ### Faster market feedback
 
 Hover or focus a market link to warm its public chart. Open markets refresh after indexed activity arrives, with polling as a fallback. An estimate can appear before the network/account cost preview finishes; both are checked again before you approve the transaction.

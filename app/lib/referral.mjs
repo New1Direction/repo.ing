@@ -30,6 +30,11 @@ export function referralLink(origin, mint, wallet) {
   return `${origin}/token/${encodeURIComponent(mint)}?ref=${encodeURIComponent(wallet)}`
 }
 
+// The wallet's site-wide link (/referrals): any page captures ?ref, so it works from the home page too.
+export function siteReferralLink(origin, wallet) {
+  return `${origin}/?ref=${encodeURIComponent(wallet)}`
+}
+
 // GET /api/referral payload, or null when malformed.
 export function referralStatus(result) {
   if (!result || typeof result.enabled !== 'boolean' || !/^\d+$/.test(result.earningsLamports) || !/^\d+$/.test(result.setupLamports)) return null
