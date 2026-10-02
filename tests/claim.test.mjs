@@ -15,6 +15,7 @@ import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createFeeAccrual } from '../src/fee-accrual.mjs'
 import { createClaim } from '../src/claim.mjs'
 import { claimBuilderQueue } from '../src/builder-queue.mjs'
+import { createPayoutAddresses } from '../src/payout-address.mjs'
 
 const rpc = process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899'
 assert.match(rpc, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/)
@@ -233,4 +234,71 @@ test('claim-all settles two canonical repositories once and leaves unreviewed fe
   const first=await reconciler.reconcile(repoId),secondStatus=await reconciler.reconcile(secondId)
   assert.equal(first.status,'MATCH');assert.equal(secondStatus.status,'MATCH');assert.equal(first.onchainCreatorFee.toString(),requests[0].review.amount);assert.equal(secondStatus.onchainCreatorFee,0n)
   console.log(JSON.stringify({builderQueueProof:results,repositories:requests.map(r=>r.repoId),remainingFirst:first.onchainCreatorFee.toString(),reconciliation:[first.status,secondStatus.status]}))
+})
+
+test('a pasted payout address is never paid during its hold, then receives the next claim once active', async () => {
+  // Real local-validator payouts: the signature-bound wallet keeps receiving claims while a pasted address waits; when
+  // the hold passes, the claim activates it under the repository lock, refuses the review of the old recipient without
+  // moving funds, and pays the pasted address on a new review.
+  const pasted = Keypair.generate().publicKey, holder = 285551516n
+  // The signature binding predates the request (this fixture bound it minutes ago; the hold below moves the request back
+  // 49 hours). A binding newer than a request would win over it instead.
+  await pool.query("update repo_beneficiaries set bound_at = bound_at - interval '3 days' where github_repo_id = $1", [repoId.toString()])
+  const verifyAuthority = async ({ githubRepoId }) => {
+    await db.insert(repoVerifications).values({ githubRepoId, githubUserId: holder, githubLogin: 'local-test-admin', permission: 'admin' })
+    return { verified: true, permission: 'admin', githubRepoId, githubUserId: holder, githubLogin: 'local-test-admin', verifiedAt: new Date() }
+  }
+  // The real finalized account read: a fresh address with no account passes.
+  const change = await createPayoutAddresses({ pool, connection }).request({ githubRepoId: String(repoId), address: pasted.toBase58(),
+    confirm: pasted.toBase58().slice(-4), verifyAuthority })
+  const service = createClaim({ pool, connection, config, creator, githubVerifier: { verifyCurrentAuthority: async ({ githubRepoId }) =>
+    ({ verified: true, permission: 'admin', githubRepoId, githubUserId: holder, verifiedAt: new Date() }) } })
+  const snapshot = async () => {
+    const [bound] = await db.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, repoId))
+    const { rows: [totals] } = await pool.query(`select (select coalesce(sum(amount_base_units),0)::text from builder_fee_credits where github_repo_id=$1) earned,
+      (select coalesce(sum(amount_base_units),0)::text from repo_claims where github_repo_id=$1 and status='settled') paid`, [repoId.toString()])
+    return { bound, paid: totals.paid, outstanding: BigInt(totals.earned) - BigInt(totals.paid) }
+  }
+  const review = (current, amount) => ({ purpose: 'builder-claim-review', repoId: repoId.toString(), wallet: current.bound.wallet,
+    boundAt: current.bound.boundAt.toISOString(), paid: current.paid, amount: amount.toString(), expiresAt: Date.now() + 600_000 })
+  const claimWith = item => service.claim({ githubRepoId: repoId, githubAuthorization: { session: true }, review: item })
+
+  let current = await snapshot()
+  assert.equal(current.bound.wallet, beneficiary.publicKey.toBase58())
+  assert.ok(current.outstanding > 1n)
+  const half = current.outstanding / 2n
+  const during = await claimWith(review(current, half))
+  assert.equal(during.beneficiaryWallet, beneficiary.publicKey.toBase58(), 'the previous binding keeps receiving claims during the hold')
+  assert.equal(during.amountBaseUnits, half)
+  assert.equal(await connection.getBalance(pasted, 'confirmed'), 0, 'the waiting address received nothing')
+
+  // The hold passes (both timestamps shift back; the request's terms are otherwise immutable).
+  const client = await pool.connect()
+  try {
+    await client.query('begin'); await client.query('set local session_replication_role = replica')
+    await client.query(`update payout_address_requests set requested_at = requested_at - interval '49 hours', active_at = active_at - interval '49 hours'
+      where id = $1`, [change.id])
+    await client.query('commit')
+  } finally { client.release() }
+  const stale = await snapshot()
+  assert.equal(stale.bound.wallet, beneficiary.publicKey.toBase58())
+  const before = await connection.getBalance(beneficiary.publicKey, 'confirmed')
+  await assert.rejects(claimWith(review(stale, stale.outstanding)), /Payout details changed/)
+  assert.equal(await connection.getBalance(beneficiary.publicKey, 'confirmed'), before)
+  assert.equal(await connection.getBalance(pasted, 'confirmed'), 0)
+
+  current = await snapshot()
+  assert.deepEqual([current.bound.wallet, current.bound.method, String(current.bound.payoutRequestId)], [pasted.toBase58(), 'pasted', change.id])
+  const after = await claimWith(review(current, current.outstanding))
+  assert.equal(after.beneficiaryWallet, pasted.toBase58())
+  assert.equal(after.amountBaseUnits, current.outstanding)
+  assert.equal(after.receiverDeltaLamports - after.rentRefundLamports, after.amountBaseUnits)
+  assert.equal(BigInt(await connection.getBalance(pasted, 'finalized')), after.receiverDeltaLamports)
+  const [row] = await db.select().from(repoClaims).where(eq(repoClaims.claimSignature, after.signature))
+  assert.deepEqual([row.status, row.beneficiaryWallet], ['settled', pasted.toBase58()])
+  const { createReconciler } = await import('../src/reconcile.mjs')
+  const reconciled = await createReconciler({ pool, connection, config }).reconcile(repoId)
+  assert.equal(reconciled.status, 'MATCH'); assert.equal(reconciled.onchainCreatorFee, 0n)
+  console.log(JSON.stringify({ pastedPayoutProof: { duringHold: { to: during.beneficiaryWallet, lamports: during.amountBaseUnits.toString(), signature: during.signature },
+    afterHold: { to: after.beneficiaryWallet, lamports: after.amountBaseUnits.toString(), signature: after.signature, slot: after.slot.toString() } } }))
 })
