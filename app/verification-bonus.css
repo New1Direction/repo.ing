@@ -1,0 +1,26 @@
+/* One-time verification bonus: launcher-rewards card (token page), wallet market rows, operator review. */
+.verification-bonus{display:flex;gap:12px;align-items:flex-start;margin-top:18px;padding:14px 16px;border:1px solid var(--border);border-radius:8px}
+.verification-bonus>svg{flex:none;margin-top:2px;color:var(--muted)}
+.verification-bonus.is-good{border-color:color-mix(in srgb,var(--green) 50%,var(--border));background:color-mix(in srgb,var(--green) 7%,transparent)}
+.verification-bonus.is-good>svg{color:var(--green)}
+.verification-bonus p{margin:0;font-size:14px;line-height:1.55;overflow-wrap:anywhere}
+.verification-bonus-line strong,.verification-bonus-line span{color:var(--text)}
+.verification-bonus.is-muted .verification-bonus-line span{color:var(--muted)}
+.verification-bonus-detail{margin-top:4px!important;color:var(--muted)}
+.verification-bonus a,.wallet-verification-bonus a{text-decoration:underline;text-underline-offset:3px}
+.wallet-verification-bonus.is-good strong{color:var(--green)}
+.wallet-verification-bonus small{max-width:320px;overflow-wrap:anywhere}
+.verification-bonus-only{margin-top:20px}
+.verification-bonus-only .verification-bonus{margin-top:12px}
+
+.bonus-ops-policy{display:flex;flex-wrap:wrap;gap:8px 20px;margin:0 0 16px;color:var(--muted);font-size:13px}
+.bonus-ops-policy strong{color:var(--text);font-weight:600}
+.bonus-ops-note{display:block;margin-top:6px;color:var(--muted);font-size:12px}
+.bonus-ops-row td:last-child{min-width:240px}
+.bonus-ops-flags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bonus-ops-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bonus-ops-actions .button{min-height:34px;padding:0 12px;font-size:12px}
+.bonus-ops-reject{display:grid;gap:8px;width:100%;margin-top:8px}
+.bonus-ops-reject textarea{width:100%;min-height:64px;resize:vertical;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font:inherit;font-size:13px;line-height:1.5}
+.bonus-ops-reject textarea:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.bonus-ops-result{margin:8px 0 0;font-size:12px;color:var(--muted)}
