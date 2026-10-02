@@ -14,6 +14,9 @@ export { PASTED_ADDRESS_HOLD_MS, PAYOUT_ADDRESS_WARNING }
 // passed. Until then the previous binding keeps receiving claims, any current admin can cancel the request, and a
 // wallet-signature binding (src/wallet-binding.mjs) replaces it. Every change runs under the repository's advisory lock,
 // the same lock the claim path holds while it resolves the recipient.
+// A Hugging Face model market works the same way with a Hugging Face authority (verifyAuthority.source 'huggingface',
+// app/lib/hf-session.mjs): the model's current owner or an admin of its organization, recorded in model_verifications
+// (drizzle/0051_model_authority.sql). The request names that user and the owner's _id, and its binding inherits both.
 
 export const MAX_BATCH_REPOSITORIES = 100
 const AUTHORITY_MAX_AGE_MS = 60_000
@@ -21,6 +24,7 @@ const VERIFICATION_MAX_AGE = '5 minutes'
 // Requests per repository per hour; each one can email the repository's builders.
 const MAX_REQUESTS_PER_HOUR = 5
 const REPO_ID = /^[1-9]\d{0,18}$/
+const SUBJECT = /^[0-9a-f]{24}$/
 
 export class PayoutAddressError extends Error {
   constructor(code, message, status = 400) {
@@ -124,7 +128,8 @@ const byRepoId = (a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ?
 // inside an open transaction.
 export async function activateDueWithin(client, repoId) {
   const { rows: [due] } = await client.query(`select r.id::text as id, r.wallet, r.requested_by_github_user_id::text as "requestedBy",
-      b.wallet as "currentWallet", b.github_user_id::text as "currentUser",
+      r.authority_source as "authoritySource", r.requested_by_subject as "requestedBySubject", r.requested_by_owner_subject as "requestedByOwnerSubject",
+      b.wallet as "currentWallet", b.github_user_id::text as "currentUser", b.authority_subject as "currentSubject",
       (b.github_repo_id is not null and b.bound_at is distinct from r.replaces_bound_at) as "newerBinding"
     from payout_address_requests r left join repo_beneficiaries b on b.github_repo_id = r.github_repo_id
     where r.github_repo_id = $1 and r.status = 'pending' and r.active_at <= now()
@@ -132,17 +137,21 @@ export async function activateDueWithin(client, repoId) {
   if (!due) return null
   if (due.newerBinding) {
     await client.query(`update payout_address_requests set status = 'superseded', resolved_at = now(), resolved_by_github_user_id = $2,
-      resolution_reason = 'A newer payout binding replaced it' where id = $1`, [due.id, due.currentUser])
-    await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, wallet, previous_wallet)
-      values ($1, $2, 'superseded', $3, $4, $5)`, [due.id, repoId, due.currentUser, due.wallet, due.currentWallet])
+      resolved_by_subject = $3, resolution_reason = 'A newer payout binding replaced it' where id = $1`, [due.id, due.currentUser, due.currentSubject ?? null])
+    await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, actor_subject, wallet, previous_wallet)
+      values ($1, $2, 'superseded', $3, $4, $5, $6)`, [due.id, repoId, due.currentUser, due.currentSubject ?? null, due.wallet, due.currentWallet])
     return { status: 'superseded', repoId, requestId: due.id }
   }
   await client.query(`update payout_address_requests set status = 'activated', resolved_at = now() where id = $1`, [due.id])
-  await client.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at, method, payout_request_id)
-    values ($1, $2, $3, now(), 'pasted', $4)
+  // The binding inherits the request's authority: its GitHub user, or its Hugging Face user and the model owner's _id.
+  await client.query(`insert into repo_beneficiaries(github_repo_id, github_user_id, wallet, bound_at, method, payout_request_id,
+      authority_source, authority_subject, authority_owner_subject)
+    values ($1, $2, $3, now(), 'pasted', $4, $5, $6, $7)
     on conflict (github_repo_id) do update set github_user_id = excluded.github_user_id, wallet = excluded.wallet,
-      bound_at = excluded.bound_at, method = excluded.method, payout_request_id = excluded.payout_request_id`,
-  [repoId, due.requestedBy, due.wallet, due.id])
+      bound_at = excluded.bound_at, method = excluded.method, payout_request_id = excluded.payout_request_id,
+      authority_source = excluded.authority_source, authority_subject = excluded.authority_subject,
+      authority_owner_subject = excluded.authority_owner_subject`,
+  [repoId, due.requestedBy, due.wallet, due.id, due.authoritySource ?? 'github', due.requestedBySubject ?? null, due.requestedByOwnerSubject ?? null])
   await client.query(`insert into payout_address_events(request_id, github_repo_id, event, wallet, previous_wallet)
     values ($1, $2, 'activated', $3, $4)`, [due.id, repoId, due.wallet, due.currentWallet])
   return { status: 'activated', repoId, requestId: due.id, wallet: due.wallet, previousWallet: due.currentWallet }
@@ -171,11 +180,12 @@ export async function pendingPayoutAddress(executor, repoId) {
 
 // The claim path's recipient (src/claim.mjs), resolved while the caller holds the repository's session lock: a due pasted
 // address is activated first; then only the active binding is returned. A repository whose only address is still in its
-// hold is refused with the time claims open.
+// hold is refused with the time claims open. The binding's authority comes with it (a model market's names the owner).
 export async function resolvePayoutRecipient(client, repoId) {
   const id = repoIdOf(repoId)
   await activateDuePayoutAddress(client, id)
-  const { rows: [binding] } = await client.query(`select wallet, bound_at as "boundAt", method, github_user_id::text as "githubUserId"
+  const { rows: [binding] } = await client.query(`select wallet, bound_at as "boundAt", method, github_user_id::text as "githubUserId",
+      authority_source as "authoritySource", authority_owner_subject as "authorityOwnerSubject"
     from repo_beneficiaries where github_repo_id = $1`, [id])
   if (binding) return binding
   const pending = await pendingPayoutAddress(client, id)
@@ -226,9 +236,10 @@ export async function readPayoutDestinations(pool, repoIds) {
 }
 
 // verifyAuthority: the fresh GitHub admin check of the builder routes (app/lib/github-session.mjs), at most a minute old,
-// for this repository and the signed-in user.
+// for this repository and the signed-in user. → the actor: who the request, cancel or audit event names.
 async function authorize(repoId, verifyAuthority, now) {
   if (typeof verifyAuthority !== 'function') fail('GITHUB_REQUIRED', 'Current GitHub admin permission required', 403)
+  if (verifyAuthority.source === 'huggingface') return authorizeModel(repoId, verifyAuthority, now)
   const github = await verifyAuthority({ githubRepoId: BigInt(repoId) })
   const checkedAt = new Date(github?.verifiedAt).getTime()
   if (github?.verified !== true || github.permission !== 'admin' || String(github.githubRepoId) !== repoId ||
@@ -237,7 +248,21 @@ async function authorize(repoId, verifyAuthority, now) {
     fail('GITHUB_REQUIRED', 'Current GitHub admin permission required', 403)
   }
   const login = typeof github.githubLogin === 'string' && /^[A-Za-z0-9-]{1,39}$/.test(github.githubLogin) ? github.githubLogin : `user ${github.githubUserId}`
-  return { userId: String(github.githubUserId), login }
+  return { source: 'github', userId: String(github.githubUserId), login, subject: null, ownerSubject: null }
+}
+
+// A model market: the fresh Hugging Face check (src/hf-verification.mjs), at most a minute old, naming the signed-in user
+// and the model's current owner. Its own refusals (model moved, private, not the owner) pass through as they are.
+async function authorizeModel(repoId, verifyAuthority, now) {
+  const result = await verifyAuthority({ githubRepoId: BigInt(repoId) })
+  const checkedAt = new Date(result?.verifiedAt).getTime()
+  if (result?.verified !== true || result.source !== 'huggingface' || result.permission !== 'admin' || String(result.githubRepoId) !== repoId ||
+      !SUBJECT.test(result.subject ?? '') || !SUBJECT.test(result.ownerSubject ?? '') || !Number.isFinite(checkedAt) ||
+      now() - checkedAt > AUTHORITY_MAX_AGE_MS || checkedAt > now() + 5_000) {
+    fail('HF_REQUIRED', 'Current Hugging Face owner permission required', 403)
+  }
+  const login = typeof result.username === 'string' && /^[\w.-]{1,96}$/.test(result.username) ? result.username : `Hugging Face user ${result.subject}`
+  return { source: 'huggingface', userId: null, login, subject: result.subject, ownerSubject: result.ownerSubject }
 }
 
 // The same recorded admin verification the wallet-signature binding requires, checked inside the transaction.
@@ -245,6 +270,14 @@ async function requireRecentAdmin(client, repoId, userId) {
   const { rows } = await client.query(`select 1 from repo_verifications where github_repo_id = $1 and github_user_id = $2
     and permission = 'admin' and verified_at >= now() - interval '${VERIFICATION_MAX_AGE}' limit 1`, [repoId, userId])
   if (!rows.length) fail('GITHUB_REQUIRED', 'Recent GitHub admin verification required', 403)
+}
+
+// The actor's recorded verification: GitHub's above, or a model_verifications row for the same user and current owner.
+async function requireRecentAuthority(client, repoId, actor) {
+  if (actor.source !== 'huggingface') return requireRecentAdmin(client, repoId, actor.userId)
+  const { rows } = await client.query(`select 1 from model_verifications where github_repo_id = $1 and subject = $2 and owner_subject = $3
+    and verified_at >= now() - interval '${VERIFICATION_MAX_AGE}' limit 1`, [repoId, actor.subject, actor.ownerSubject])
+  if (!rows.length) fail('HF_REQUIRED', 'Recent Hugging Face owner verification required', 403)
 }
 
 // A claim holds its repository's lock until the payout settles. A paste or cancel waits a bounded time for it, so it
@@ -269,13 +302,14 @@ async function inRepoLocks(pool, repoIds, work, lockTimeoutMs) {
 
 // The database stamps requested_at, raises active_at to at least 48 hours after it and records the binding the request
 // would replace (trigger start_payout_address_request); a longer PASTED_ADDRESS_HOLD_MS is kept as given.
-async function insertRequest(client, { repoId, wallet, userId, login, previousWallet }) {
+async function insertRequest(client, { repoId, wallet, actor, previousWallet }) {
   const { rows: [created] } = await client.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id,
-      requested_by_login, active_at) values ($1, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 millisecond')
+      requested_by_login, active_at, authority_source, requested_by_subject, requested_by_owner_subject)
+    values ($1, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 millisecond', $6, $7, $8)
     returning id::text as id, wallet, requested_at as "requestedAt", active_at as "activeAt"`,
-  [repoId, wallet, userId, login, PASTED_ADDRESS_HOLD_MS])
-  await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, wallet, previous_wallet)
-    values ($1, $2, 'requested', $3, $4, $5, $6)`, [created.id, repoId, userId, login, wallet, previousWallet])
+  [repoId, wallet, actor.userId, actor.login, PASTED_ADDRESS_HOLD_MS, actor.source, actor.subject, actor.ownerSubject])
+  await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, actor_subject, wallet, previous_wallet)
+    values ($1, $2, 'requested', $3, $4, $5, $6, $7)`, [created.id, repoId, actor.userId, actor.login, actor.subject, wallet, previousWallet])
   return { id: created.id, repoId, wallet, requestedAt: created.requestedAt.toISOString(), activeAt: created.activeAt.toISOString() }
 }
 
@@ -304,10 +338,11 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
     assertAuthoritySource(verifyAuthority, repoId)
     const key = prepare(address, confirm), wallet = key.toBase58()
     await assertRequestRate(pool, [repoId])
-    const { userId, login } = await authorize(repoId, verifyAuthority, now)
+    const actor = await authorize(repoId, verifyAuthority, now)
+    const { userId, login } = actor
     await checkPayoutAccount(connection, key)
     return inRepoLocks(pool, [repoId], async client => {
-      await requireRecentAdmin(client, repoId, userId)
+      await requireRecentAuthority(client, repoId, actor)
       await activateDueWithin(client, repoId)
       const { rows: [active] } = await client.query(`select wallet, github_user_id::text as "githubUserId"
         from repo_beneficiaries where github_repo_id = $1 for update`, [repoId])
@@ -318,11 +353,12 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
       await assertRequestRate(client, [repoId])
       if (pending) {
         await client.query(`update payout_address_requests set status = 'superseded', resolved_at = now(), resolved_by_github_user_id = $2,
-          resolution_reason = 'Replaced by a newer pasted address' where id = $1`, [pending.id, userId])
-        await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, wallet, previous_wallet)
-          values ($1, $2, 'superseded', $3, $4, $5, $6)`, [pending.id, repoId, userId, login, pending.wallet, active?.wallet ?? null])
+          resolved_by_subject = $3, resolution_reason = 'Replaced by a newer pasted address' where id = $1`, [pending.id, userId, actor.subject])
+        await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, actor_subject, wallet, previous_wallet)
+          values ($1, $2, 'superseded', $3, $4, $5, $6, $7)`, [pending.id, repoId, userId, login, actor.subject, pending.wallet, active?.wallet ?? null])
       }
-      const created = await insertRequest(client, { repoId, wallet, userId, login, previousWallet: active?.wallet ?? null })
+      const created = await insertRequest(client, { repoId, wallet, actor, previousWallet: active?.wallet ?? null })
+      // Change notices go to GitHub builders' reminder emails; Hugging Face users have none (every id here is null then).
       return { ...created, requestedByLogin: login, previousWallet: active?.wallet ?? null, replacedWallet: pending?.wallet ?? null,
         notify: [...new Set([userId, active?.githubUserId, pending?.requestedBy].filter(Boolean))] }
     }, lockTimeoutMs)
@@ -336,12 +372,14 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
     }
     const ids = githubRepoIds.map(repoIdOf)
     if (new Set(ids).size !== ids.length) fail('INVALID_REPOSITORIES', `Choose up to ${MAX_BATCH_REPOSITORIES} distinct repositories.`)
+    // The dashboard is GitHub's; a model market's address is set on its own claim page.
+    if (verifyAuthority?.source === 'huggingface') fail('INVALID_REPOSITORIES', 'Set a model’s payout address on its claim page.')
     for (const id of ids) assertAuthoritySource(verifyAuthority, id)
     const key = prepare(address, confirm), wallet = key.toBase58()
     await assertRequestRate(pool, ids)
     const authorities = await mapLimited(ids, 3, id => authorize(id, verifyAuthority, now))
     if (new Set(authorities.map(a => a.userId)).size !== 1) fail('GITHUB_REQUIRED', 'Current GitHub admin permission required', 403)
-    const { userId, login } = authorities[0]
+    const actor = authorities[0], { userId, login } = actor
     await checkPayoutAccount(connection, key)
     return inRepoLocks(pool, ids, async client => {
       for (const repoId of [...ids].sort(byRepoId)) {
@@ -355,7 +393,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
       }
       await assertRequestRate(client, ids)
       const requests = []
-      for (const repoId of ids) requests.push(await insertRequest(client, { repoId, wallet, userId, login, previousWallet: null }))
+      for (const repoId of ids) requests.push(await insertRequest(client, { repoId, wallet, actor, previousWallet: null }))
       return { count: requests.length, wallet, requestedByLogin: login, activeAt: requests[0].activeAt, requests, notify: [userId] }
     }, lockTimeoutMs)
   }
@@ -367,19 +405,20 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
     assertAuthoritySource(verifyAuthority, repoId)
     const id = String(requestId ?? '')
     if (!REPO_ID.test(id)) fail('INVALID_REQUEST', 'Invalid payout address request.')
-    const { userId, login } = await authorize(repoId, verifyAuthority, now)
+    const actor = await authorize(repoId, verifyAuthority, now)
+    const { userId, login } = actor
     return inRepoLocks(pool, [repoId], async client => {
-      await requireRecentAdmin(client, repoId, userId)
+      await requireRecentAuthority(client, repoId, actor)
       await activateDueWithin(client, repoId)
       const { rows: [row] } = await client.query(`update payout_address_requests set status = 'cancelled', resolved_at = now(),
-          resolved_by_github_user_id = $3, resolution_reason = $4
-        where id = $1 and github_repo_id = $2 and status = 'pending' returning id::text as id, wallet`, [id, repoId, userId, `Cancelled by ${login}`])
+          resolved_by_github_user_id = $3, resolved_by_subject = $5, resolution_reason = $4
+        where id = $1 and github_repo_id = $2 and status = 'pending' returning id::text as id, wallet`, [id, repoId, userId, `Cancelled by ${login}`, actor.subject])
       if (!row) {
         fail('NOT_PENDING', 'That pasted address is no longer waiting: it was cancelled, replaced, or its hold ended and it is now active. Refresh to see the current payout address.', 409)
       }
       const { rows: [active] } = await client.query('select wallet from repo_beneficiaries where github_repo_id = $1', [repoId])
-      await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, wallet, previous_wallet)
-        values ($1, $2, 'cancelled', $3, $4, $5, $6)`, [row.id, repoId, userId, login, row.wallet, active?.wallet ?? null])
+      await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, actor_subject, wallet, previous_wallet)
+        values ($1, $2, 'cancelled', $3, $4, $5, $6, $7)`, [row.id, repoId, userId, login, actor.subject, row.wallet, active?.wallet ?? null])
       return { repoId, requestId: row.id, wallet: row.wallet, cancelledBy: login }
     }, lockTimeoutMs)
   }

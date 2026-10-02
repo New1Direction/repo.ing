@@ -36,8 +36,21 @@ export async function graduatedClaimInstructions(graduated, { owner, receiver, t
   ]
 }
 
+// A model market's binding names the model owner's _id when it was made (drizzle/0051_model_authority.sql). After a
+// transfer, the new owner's fees must never go to the previous owner's wallet: the claim is refused until they bind one.
+export function assertBindingAuthority(beneficiary, source, authority) {
+  if ((beneficiary.authoritySource ?? 'github') !== source) throw new Error('Payout binding authority mismatch')
+  if (source === 'huggingface' && beneficiary.authorityOwnerSubject !== authority.ownerSubject) {
+    throw new Error('The model’s owner changed since this payout wallet was set. The current owner must set a payout wallet before claiming.')
+  }
+}
+
+// githubVerifier: the market's payout authority. GitHub's (no source field) for repositories; a Hugging Face model market
+// takes one with source 'huggingface' (app/lib/hf-session.mjs), whose fresh check also names the model's current owner.
 export function createClaim({ pool, connection, config, creator, githubVerifier }) {
   if (!githubVerifier?.verifyCallback && !githubVerifier?.verifyCurrentAuthority) throw new Error('Fresh GitHub App verifier required')
+  const source = githubVerifier.source ?? 'github'
+  const authorityName = source === 'huggingface' ? 'Hugging Face owner' : 'GitHub admin'
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const resolveConfig = createMarketConfigResolver(config)
   const graduatedFees = createGraduatedFees({ connection, config, db: pool })
@@ -79,15 +92,17 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         const checkedAt = new Date(github.verifiedAt)
         if (github.verified !== true || github.permission !== 'admin' || BigInt(github.githubRepoId) !== repoId ||
             !Number.isFinite(checkedAt.getTime()) || Date.now() - checkedAt.getTime() > 60_000 ||
-            checkedAt.getTime() > Date.now() + 5_000) {
-          throw new Error('Current GitHub admin authority required')
+            checkedAt.getTime() > Date.now() + 5_000 ||
+            (source === 'huggingface' && (github.source !== 'huggingface' || !/^[0-9a-f]{24}$/.test(github.ownerSubject ?? '')))) {
+          throw new Error(`Current ${authorityName} authority required`)
         }
-        report('GitHub admin access verified. Checking accrued fees…')
+        report(`${authorityName} access verified. Checking accrued fees…`)
 
         // Only the active binding is ever a recipient. A pasted address whose hold has passed becomes it here, under this
         // repository's lock, with a new bound_at, so a review of the previous recipient no longer matches; one still in
         // its hold is never paid (src/payout-address.mjs).
         const beneficiary = await resolvePayoutRecipient(client, repoId)
+        assertBindingAuthority(beneficiary, source, github)
         // Settled payouts change only under this lock. The review's recipient, binding time and paid revision are checked
         // before any chain read.
         const [settled] = await db.select({ paid: sql`coalesce(sum(${repoClaims.amountBaseUnits}), 0)::text` })
@@ -132,7 +147,7 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         const signature = bs58.encode(transaction.signature)
         const simulation = await connection.simulateTransaction(transaction)
         if (simulation.value.err) throw new Error(`Claim preflight failed: ${JSON.stringify(simulation.value.err)}`)
-        if (Date.now() - checkedAt.getTime() > 60_000) throw Error('GitHub authority check expired; retry the claim')
+        if (Date.now() - checkedAt.getTime() > 60_000) throw Error(`${source === 'huggingface' ? 'Hugging Face' : 'GitHub'} authority check expired; retry the claim`)
         // The pending signature is durable before broadcast. An uncertain submission blocks a new payout.
         await db.insert(repoClaims).values({ githubRepoId: repoId, beneficiaryWallet: beneficiary.wallet,
           amountBaseUnits: payoutAmount, dammAmountBaseUnits: dammFee, asset: NATIVE_MINT.toBase58(), claimSignature: signature, status: 'pending',
@@ -149,7 +164,8 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         const afterState = await dbc.state.getPool(poolKey)
         const afterGraduated = await graduatedFees.read(market, afterState, fixed)
         await recordGraduatedFees(client, market, afterGraduated)
-        return { ...receipt, githubRepoId: repoId, githubUserId: BigInt(github.githubUserId),
+        return { ...receipt, githubRepoId: repoId, githubUserId: source === 'github' ? BigInt(github.githubUserId) : null,
+          ...(source === 'huggingface' ? { authoritySubject: github.subject, ownerSubject: github.ownerSubject } : {}),
           permission: github.permission, beneficiaryWallet: beneficiary.wallet, pool: market.pool,
           mint: market.mint, creatorFeeBefore: beforeFee,
           creatorFeeAfter: BigInt(afterState.poolState.creatorQuoteFee.toString()) + (afterGraduated?.available ?? 0n) }
