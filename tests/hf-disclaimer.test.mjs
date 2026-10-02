@@ -130,6 +130,25 @@ const SURFACES = {
     assert.ok(shareText({ fullName: 'a'.repeat(100), kind: 'launch', source: 'huggingface' }).length + 1 + 23 <= 280)
     assert.ok(returnShareText({ symbol: 'S'.repeat(20), fullName: 'a'.repeat(100), pct: -99.9, source: 'huggingface' }).length + 1 + 23 <= 280)
   },
+  // The launch flow (#136): the model's launch page and review, the success screen and its launch-kit post.
+  'app/components/hf/model-launch.jsx': () => {
+    assert.match(readFileSync('app/components/hf/model-launch.jsx', 'utf8'), /<p className="community-launch-note" role="note">.*<strong>\{HF_DISCLAIMER\}<\/strong>/)
+  },
+  'app/components/launch-form.jsx': () => {
+    assert.match(readFileSync('app/components/launch-form.jsx', 'utf8'), /\{model && <p className="launch-review-disclaimer" role="note"><strong>\{HF_DISCLAIMER\}<\/strong><\/p>\}/)
+  },
+  'app/components/launch-success.jsx': async () => {
+    const { LaunchSuccess } = await appModule('app/components/launch-success.jsx')
+    full(html(h(LaunchSuccess, { repo: { source: 'huggingface', fullName: MODEL.fullName, repoId: MODEL_ID }, launched: { mint: MINT, verified: false }, symbol: 'GPT2', image: null }),
+      { wallet: true }))
+    // Its share menu's system share sheet text, as on the model's token page.
+    assert.match(readFileSync('app/components/launch-success.jsx', 'utf8'), /shareText=\{model \? modelShareText\(repo\) : null\}/)
+  },
+  'app/lib/model-share.mjs': async () => {
+    const { modelLaunchPostText, modelLaunchPostUrl } = await import('../app/lib/model-share.mjs')
+    short(modelLaunchPostText({ symbol: 'GPT2', path: MODEL.fullName }))
+    short(new URL(modelLaunchPostUrl({ mint: 'E859MeM9CYWAoQGcNLQYgg8qHPim1EQN4LYqveubrJ6A', symbol: 'GPT2', path: MODEL.fullName })).searchParams.get('text'))
+  },
 }
 
 const EXEMPT = {
@@ -152,6 +171,10 @@ const EXEMPT = {
   'app/components/wallet-overview.jsx': 'passes the market’s source to the return share (checked under share-links.mjs)',
   'app/api/wallet/overview/route.js': 'flag filtering only',
   'app/lib/waiting-board.mjs': 'leaves model markets out of /waiting',
+  'app/(site)/launch/[repo]/page.jsx': 'routes a model id to ModelLaunch (hf/model-launch.jsx, checked above)',
+  'app/api/repo-images/[repo]/route.js': 'image suggestions only',
+  'app/lib/hf-launch.mjs': 'launch reads, lookup quotas and avatar fetches; renders nothing',
+  'app/lib/csp.mjs': 'admits the Hub avatar hosts to img-src; renders nothing',
 }
 
 const sources = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
