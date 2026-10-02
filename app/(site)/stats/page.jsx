@@ -10,6 +10,7 @@ import { readReserveCoverage } from '../../../src/reserve-coverage.mjs'
 import { buybackReceipts, buybackStatus } from '../../lib/buyback-feed.mjs'
 import { TipStats } from '../../components/tip-stats'
 import { PartsFundStats } from '../../components/parts-fund-stats'
+import { VerificationBonusStats } from '../../components/verification-bonus-stats'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Protocol analytics · repo.ing', description: 'Trading activity, verified builder payouts, and platform revenue allocation on repo.ing.' }
@@ -22,6 +23,7 @@ export default async function StatsPage({ searchParams }) {
     <Suspense key={range} fallback={<ContentSkeleton label="Loading analytics for this period"/>}><Analytics range={range}/></Suspense>
     <Suspense fallback={null}><TipStats/></Suspense>
     <Suspense fallback={null}><PartsFundStats/></Suspense>
+    <Suspense fallback={null}><VerificationBonusStats/></Suspense>
   </main><Footer/></>
 }
 

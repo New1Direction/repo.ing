@@ -10,6 +10,7 @@ import { checkAgentDraft } from '../../../lib/agent-launch.mjs'
 import { activeLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
 import { maintainerDecision } from '../../../lib/maintainer-opt-outs.mjs'
 import { LaunchBlocked } from '../../../components/maintainer-declined'
+import { verificationBonusLamports } from '../../../../src/verification-bonus.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { referrer: 'no-referrer', robots: { index: false, follow: false } }
 export default async function Launch({ params, searchParams }) {
@@ -35,5 +36,5 @@ export default async function Launch({ params, searchParams }) {
   }
   // Explained only when the config new launches use has a launch fee (read once per config, then cached).
   const launchFee = await activeLaunchFeeTerms()
-  return <><AppHeader active="launch"/><main className="section-wrap launch-page"><Link href="/explore" className="back-link"><ArrowLeft size={18}/>Back to explore</Link><div className="repo-hero-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo} detailed/></div><div className="repo-hero-right"><GitHubLink repo={repo}/><div className="repo-details"><span>{repo.language || 'Language unavailable'}</span><span>{repo.license || 'License unavailable'}</span><span>{repo.updatedAt ? `Updated ${new Date(repo.updatedAt).toLocaleDateString()}` : 'Update date unavailable'}</span></div></div></div><LaunchRepoFacts repo={repo}/><LaunchForm key={`${repoId}:${query.draft || "manual"}`} repo={repo} draft={draft ? { token: query.draft, tokenName: draft.tokenName, tokenSymbol: draft.tokenSymbol, initialBuy: draft.initialBuy } : undefined} trendRevision={trendRevision} available={launchAvailable()} discoveryEnabled={discoveryRewardsEnabled()} allocationEnabled={builderAllocationEnabled()} launchFee={launchFee}/></main><Footer/></>
+  return <><AppHeader active="launch"/><main className="section-wrap launch-page"><Link href="/explore" className="back-link"><ArrowLeft size={18}/>Back to explore</Link><div className="repo-hero-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo} detailed/></div><div className="repo-hero-right"><GitHubLink repo={repo}/><div className="repo-details"><span>{repo.language || 'Language unavailable'}</span><span>{repo.license || 'License unavailable'}</span><span>{repo.updatedAt ? `Updated ${new Date(repo.updatedAt).toLocaleDateString()}` : 'Update date unavailable'}</span></div></div></div><LaunchRepoFacts repo={repo}/><LaunchForm key={`${repoId}:${query.draft || "manual"}`} repo={repo} draft={draft ? { token: query.draft, tokenName: draft.tokenName, tokenSymbol: draft.tokenSymbol, initialBuy: draft.initialBuy } : undefined} trendRevision={trendRevision} available={launchAvailable()} discoveryEnabled={discoveryRewardsEnabled()} allocationEnabled={builderAllocationEnabled()} launchFee={launchFee} verificationBonus={verificationBonusLamports()?.toString() ?? null}/></main><Footer/></>
 }

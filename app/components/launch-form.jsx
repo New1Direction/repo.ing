@@ -10,6 +10,7 @@ import { launchDraftKey, readLaunchDraft, saveLaunchDraft } from '../lib/launch-
 import { formatUnits, parseUnits } from '../lib/format.mjs'
 import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../lib/launch-defaults.mjs'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
+import { verificationBonusTerms } from '../lib/verification-bonus-copy.mjs'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
 const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: true,
@@ -22,7 +23,8 @@ async function launchRequest(body) {
 }
 
 // launchFee: launchFeeTerms() of the config this launch will use, or null when its fee is a flat 1.75%.
-export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee = null }) {
+// verificationBonus: lamports this launch would be stamped with (VERIFICATION_BONUS_LAMPORTS), or null.
+export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee = null, verificationBonus = null }) {
   const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
@@ -202,6 +204,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       <div className="launch-side">
         {allocationEnabled && <div className="inner-card discovery-launch"><h3>1% for the builders</h3><strong>10 million tokens reserved</strong><p>The verified repository admin can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>}
         {discoveryEnabled && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. Claim in SOL from the market page by signing a message; repo.ing sends the reward and pays the network fee.</p></div>}
+        {verificationBonus && <div className="inner-card discovery-launch"><p style={{ margin: 0 }}><strong>Verification bonus:</strong> {verificationBonusTerms(verificationBonus)}</p></div>}
         <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line"><span>Repository creator share<small>Accrues for the verified repository owner</small></span><strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>{launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}<div className="fee-note"><Info size={18}/><span>{launchFee ? `${launchFeeSentence(launchFee)} ${LAUNCH_FEE_SPLIT} ${launcherBuySentence(launchFee) ?? ''} ` : ''}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
       </div>
     </div>

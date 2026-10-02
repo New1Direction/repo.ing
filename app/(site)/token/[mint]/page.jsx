@@ -86,7 +86,9 @@ export default async function Token({ params, searchParams }) {
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
   const tips = tipsEnabled()
-  const rewards = market.allocationVersion === 1 || [1, 2].includes(market.discoveryVersion)
+  // The launcher-rewards card also carries the one-time verification bonus, which a market may have without discovery.
+  const launcherRewards = [1, 2].includes(market.discoveryVersion) || market.verificationBonusLamports != null
+  const rewards = market.allocationVersion === 1 || launcherRewards
   // "Launch facts" repository row: age, stars and repo score (GitHub's live numbers when the display cache has them).
   const repoFacts = repoFactsView({ stars: repo.stars, forks: repo.forks, githubCreatedAt: repo.githubCreatedAt ?? market.githubCreatedAt }, pulse, Date.now(),
     { promoted: market.promoted })
@@ -99,7 +101,7 @@ export default async function Token({ params, searchParams }) {
     // #rewards (linked from /wallet) opens this tab so a launcher lands on the claim button.
     ...rewards ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards">
       {market.allocationVersion === 1 && <BuilderAllocation repoId={market.repoId}/>}
-      {[1, 2].includes(market.discoveryVersion) && <DiscoveryRewards repoId={market.repoId}/>}</div> }] : [],
+      {launcherRewards && <DiscoveryRewards repoId={market.repoId}/>}</div> }] : [],
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
