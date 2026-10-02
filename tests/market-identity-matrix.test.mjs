@@ -13,6 +13,7 @@ import { readRepositoryFacts } from '../src/verification-bonus-accrual.mjs'
 import { rewardStamps } from '../src/launch-coordinator.mjs'
 import { createClaim } from '../src/claim.mjs'
 import { createWalletBinding } from '../src/wallet-binding.mjs'
+import { createPayoutAddresses } from '../src/payout-address.mjs'
 import { repositoryById } from '../app/lib/server.mjs'
 import { repositoryImageSuggestions } from '../app/lib/repo-images.mjs'
 import { GET as repoLogo } from '../app/api/repo-logo/[repo]/route.js'
@@ -119,6 +120,26 @@ test('wallet binding refuses a Hugging Face market before any database read or w
   assert.deepEqual(calls, [])
   await assert.rejects(binder.requestChallenge({ githubRepoId: GITHUB, githubUserId: 1n, wallet }), error => !(error instanceof MarketIdentityError))
   assert.equal(calls.length, 1, 'a GitHub market goes on to the admin verification read')
+})
+
+test('pasted payout addresses refuse an authority from another source before any database, chain or GitHub call', async () => {
+  const { calls, pool } = recorder(), rpc = [], verified = []
+  const connection = { getAccountInfo: async () => { rpc.push('getAccountInfo'); throw Error('chain reached') } }
+  const github = async args => { verified.push(args); throw Error('verifier reached') }
+  const huggingface = Object.assign(async args => { verified.push(args); throw Error('verifier reached') }, { source: 'huggingface' })
+  const addresses = createPayoutAddresses({ pool, connection })
+  const wallet = Keypair.generate().publicKey.toBase58(), confirm = wallet.slice(-4)
+  for (const id of forms(HF)) {
+    await assert.rejects(addresses.request({ githubRepoId: id, address: wallet, confirm, verifyAuthority: github }), MarketIdentityError)
+    await assert.rejects(addresses.cancel({ githubRepoId: id, requestId: '1', verifyAuthority: github }), MarketIdentityError)
+  }
+  await assert.rejects(addresses.requestBatch({ githubRepoIds: ['1001', String(HF)], address: wallet, confirm, verifyAuthority: github }), MarketIdentityError)
+  await assert.rejects(addresses.request({ githubRepoId: GITHUB, address: wallet, confirm, verifyAuthority: huggingface }),
+    /A huggingface authority cannot act for a github market/)
+  assert.deepEqual([calls, rpc, verified], [[], [], []])
+  // A verifier without a source is GitHub's: for a GitHub market the request goes on to its rate check.
+  await assert.rejects(addresses.request({ githubRepoId: GITHUB, address: wallet, confirm, verifyAuthority: github }), /database reached/)
+  assert.equal(calls.length, 1)
 })
 
 test('a reservation stamps no verification bonus or builder allocation on a Hugging Face market, whatever is enabled', () => {
