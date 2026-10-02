@@ -11,15 +11,16 @@ import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { tradeSessions } from '../../lib/trade-sessions.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { statusOutcome, submitOutcome, trackTradeOutcome } from '../../lib/trade-tracking.mjs'
-const SAFE = /^(The trade window closed|Trading is not configured|Invalid trade|Invalid transaction signature|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
+import { DEFAULT_SLIPPAGE_BPS, isPreflightSlippageError, parseSlippageBps, SLIPPAGE_EXCEEDED, slippageLabel, swapInstructionIndex } from '../../../src/trade-slippage.mjs'
+const SAFE = /^(The trade window closed|Trading is not configured|Invalid trade|Invalid transaction signature|Invalid slippage|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
 export const runtime = 'nodejs'
 // Sessions live in trade_sessions (see src/trade-sessions.mjs), so a deploy or another replica can finish a trade.
 // A missing or expired session (or a slow approval) means nothing was broadcast: the client shows this as not
 // submitted and its next attempt prepares a fresh transaction.
 const track = (fields, session) => trackTradeOutcome(database(), fields, { session })
 // The referrer is only a hint: each trader validates it and resolves the referral account itself.
-function prepareTrade(engine, body, referrer) {
-  const args = { githubRepoId: body.githubRepoId, wallet: body.wallet, referrer: typeof referrer === 'string' ? referrer : null,
+function prepareTrade(engine, body, referrer, slippageBps) {
+  const args = { githubRepoId: body.githubRepoId, wallet: body.wallet, referrer: typeof referrer === 'string' ? referrer : null, slippageBps,
     [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
   return body.direction === 'sell' ? engine.prepareSell(args) : engine.prepareBuy(args)
 }
@@ -33,24 +34,27 @@ export async function POST(request) {
     if (body.action === 'depth') return Response.json(await (await trader()(body.githubRepoId)).buyDepth(body.githubRepoId), { headers: { 'Cache-Control': 'no-store' } })
     if (body.action === 'quote') {
       if (body.direction !== 'buy' && body.direction !== 'sell') throw new Error('Invalid trade direction')
+      const slippageBps = parseSlippageBps(body.slippageBps)
       const engine = await trader()(body.githubRepoId)
-      const args = { githubRepoId: body.githubRepoId, wallet: body.wallet,
+      const args = { githubRepoId: body.githubRepoId, wallet: body.wallet, slippageBps,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
       const quote = body.direction === 'sell' ? await engine.quoteSell(args) : await engine.quoteBuy(args)
       return Response.json(quote, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (body.action === 'costs') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
+      const slippageBps = parseSlippageBps(body.slippageBps)
       const engine = await trader()(body.githubRepoId)
-      const prepared = await prepareTrade(engine, body, null)
+      const prepared = await prepareTrade(engine, body, null, slippageBps)
       // Read-only preview. Only prepare creates a signable session and simulates it.
       return Response.json({ costs: await estimateTradeCosts(chain(), prepared) }, { headers: { 'Cache-Control': 'no-store' } })
     }
     if (body.action === 'prepare') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
+      const slippageBps = parseSlippageBps(body.slippageBps)
       const engine = await trader()(body.githubRepoId)
       const build = referrer => prepareCheckedTrade({ engine, connection: chain(), direction: body.direction, githubRepoId: body.githubRepoId,
-        wallet: body.wallet, amountBaseUnits: body.amountBaseUnits, referrer })
+        wallet: body.wallet, amountBaseUnits: body.amountBaseUnits, referrer, slippageBps })
       let built
       // A referral must never cost the trader a trade: if anything fails with one, retry once without it.
       try { built = await build(body.referrer) }
@@ -78,6 +82,8 @@ export async function POST(request) {
       const loaded = await store.load(body.id)
       // Checked against the exact reviewed message bytes stored at prepare, not a rebuilt transaction.
       const { signed, signature, signedMessage } = acceptSignedTrade(loaded, body.transaction)
+      // A repeat of an earlier submit of this signature may follow a broadcast that is still in flight.
+      const firstSubmission = !loaded.signature
       // Recorded (first signature wins across replicas) before anything is broadcast, so any instance can verify it.
       let session = await store.markSubmitted(loaded, { signature, signedMessage })
       const attempt = { attemptKey: body.id, prepared: session.prepared, signature }
@@ -85,6 +91,14 @@ export async function POST(request) {
       let result
       try { result = await session.engine.submitTrade(session.prepared, async () => signed) }
       catch (error) {
+        // The RPC node simulated the signed swap, saw the price already past its minimum and never forwarded it. Only a first
+        // submission can say so. No terminal outcome is tracked: a market moving past the trader's own limit is not a landing
+        // failure, and must not raise the landing alert.
+        if (firstSubmission && isPreflightSlippageError(error, swapInstructionIndex(session.prepared.transaction.instructions))) {
+          const slippageBps = session.prepared.slippageBps ?? DEFAULT_SLIPPAGE_BPS
+          return Response.json({ error: `The price moved more than your ${slippageLabel(slippageBps)} slippage limit before this trade was sent, so it was stopped. Nothing was spent.`,
+            code: SLIPPAGE_EXCEEDED, slippageBps }, { status: 409, headers: { 'Cache-Control': 'no-store' } })
+        }
         const status = await tradeStatus(chain(), signature, session, session.prepared.lastValidBlockHeight)
           .catch(() => ({ state: 'pending', signature }))
         const outcome = submitOutcome(status.state)

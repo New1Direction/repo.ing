@@ -18,16 +18,17 @@ import { keptWsolRent, resolveReferral } from './referral.mjs'
 import { createWsolAtaInstruction, isCreateWsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
 import { preparedFromRecord, readTradeRecord, recordWithSignedMessage, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
+import { DEFAULT_SLIPPAGE_BPS, minimumOutAfterSlippage, parseSlippageBps } from './trade-slippage.mjs'
 
-// Same fixed 1% tolerance and floor rounding as curve trades.
-export const DAMM_SLIPPAGE_BPS = 100
+// Same tolerance (1% unless the trader chose another) and floor rounding as curve trades.
+export const DAMM_SLIPPAGE_BPS = DEFAULT_SLIPPAGE_BPS
 const SWAP = '414b3f4ceb5b5b88'
 const SWAPS = ['f8c69e91e17587c8', SWAP]
 const U64_MAX = 18446744073709551615n
 const disc = data => Buffer.from(bs58.decode(data)).subarray(0, 8).toString('hex')
 const big = value => BigInt(value.toString())
 
-export const dammMinimumOut = output => BigInt(output) * BigInt(10000 - DAMM_SLIPPAGE_BPS) / 10000n
+export const dammMinimumOut = (output, slippageBps = DAMM_SLIPPAGE_BPS) => minimumOutAfterSlippage(output, slippageBps)
 
 // Only the migrated SOL pair with SOL-only fees, classic SPL vaults and swaps enabled is tradable here.
 export function assertTradablePool(poolState, pool, mint) {
@@ -39,11 +40,11 @@ export function assertTradablePool(poolState, pool, mint) {
   }
 }
 
-export function dammQuote({ amm, poolState, direction, amountIn, currentPoint }) {
+export function dammQuote({ amm, poolState, direction, amountIn, currentPoint, slippageBps = DAMM_SLIPPAGE_BPS }) {
   const quote = amm.getQuote2({ inputTokenMint: direction === 'buy' ? NATIVE_MINT : poolState.tokenAMint, poolState, currentPoint,
-    amountIn: new BN(String(amountIn)), slippage: DAMM_SLIPPAGE_BPS, swapMode: SwapMode.ExactIn,
+    amountIn: new BN(String(amountIn)), slippage: slippageBps, swapMode: SwapMode.ExactIn,
     tokenADecimal: 6, tokenBDecimal: 9, hasReferral: false })
-  const outputAmount = big(quote.outputAmount), minimumAmountOut = dammMinimumOut(outputAmount)
+  const outputAmount = big(quote.outputAmount), minimumAmountOut = dammMinimumOut(outputAmount, slippageBps)
   // The SDK slippage argument is basis points; an independent floor must agree before anything is signed.
   if (!quote.amountLeft.isZero() || outputAmount <= 0n || minimumAmountOut <= 0n || big(quote.minimumAmountOut) !== minimumAmountOut) {
     throw Error('No executable output quote')
@@ -215,16 +216,18 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   }
   const quote = async (request, direction) => {
     if ('pool' in request || 'mint' in request || 'market' in request) throw new Error('Pool and mint are selected by canonical repository ID only')
+    const slippageBps = parseSlippageBps(request.slippageBps)
     const input = BigInt(direction === 'buy' ? request.amountLamports : request.amountBaseUnits)
     if (input <= 0n || input > U64_MAX) throw new Error('Input amount must be a positive u64 base-unit integer')
     const market = await loadMarket(request.githubRepoId)
     const { pool, mint, poolState } = await poolSnapshot(market)
     const currentPoint = await readChainPoint(connection, poolState.activationType)
-    return { market, pool, mint, poolState, amountIn: input, ...dammQuote({ amm, poolState, direction, amountIn: input, currentPoint }) }
+    return { market, pool, mint, poolState, amountIn: input, slippageBps,
+      ...dammQuote({ amm, poolState, direction, amountIn: input, currentPoint, slippageBps }) }
   }
   const prepare = async (request, direction) => {
     const wallet = new PublicKey(request.wallet)
-    const { market, pool, mint, poolState, amountIn, minimumAmountOut } = await quote(request, direction)
+    const { market, pool, mint, poolState, amountIn, minimumAmountOut, slippageBps } = await quote(request, direction)
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
     const swapTx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
@@ -246,7 +249,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
       tokenAVault: poolState.tokenAVault.toBase58(), tokenBVault: poolState.tokenBVault.toBase58(), referral: referral?.toBase58() ?? null,
       wsolRent: wsolRent === null ? null : wsolRent.toString(), amountIn: amountIn.toString(), minimumAmountOut: minimumAmountOut.toString(),
       message: Buffer.from(tx.serializeMessage()).toString('base64'), transaction: serializeUnsigned(tx),
-      blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps: DAMM_SLIPPAGE_BPS,
+      blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps,
       priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() } })
     return preparedFromRecord(record, tx)
   }
@@ -284,11 +287,11 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     return verifyTrade({ ...prepared, record }, signature)
   }
   const publicQuote = async (request, direction) => {
-    const { amountIn, outputAmount, minimumAmountOut, fee, poolState } = await quote(request, direction)
+    const { amountIn, outputAmount, minimumAmountOut, fee, poolState, slippageBps } = await quote(request, direction)
     const display = quoteDisplay({ direction, input: amountIn.toString(), output: outputAmount.toString(),
       sqrtPrice: poolState.sqrtPrice.toString(), fee: fee.toString() })
     return { ...display, outputAmount: outputAmount.toString(), minimumAmountOut: minimumAmountOut.toString(),
-      slippageBps: DAMM_SLIPPAGE_BPS, venue: 'damm' }
+      slippageBps, venue: 'damm' }
   }
   return { phase: 'graduated', isMigrated, buyDepth: async () => { throw Error('Trade size guide unavailable') },
     quoteBuy: request => publicQuote(request, 'buy'), quoteSell: request => publicQuote(request, 'sell'),

@@ -75,7 +75,7 @@ Both portions are **permanently locked**, with zero immediately withdrawable liq
 
 The protected repo.ing creator signer controls the creator position and routes builder payouts after current GitHub authority and wallet checks. Verifying a repository does not transfer its position NFT to the user's wallet. Builder entitlement and payout enforcement are application-managed; the liquidity lock is enforced on chain. See [architecture](ARCHITECTURE.md#authorities-and-trust).
 
-Meteora provides a migrator service and a manual migration fallback. Threshold completion and successful migration are separate states. repo.ing shows a transition state until it verifies the destination pool, then trades that pool on-site (DAMM v2 `swap2`, ExactIn, 1% minimum out) with a **View pool on Meteora** link. [Official migration flow](https://github.com/MeteoraAg/dynamic-bonding-curve-sdk/blob/main/packages/dynamic-bonding-curve/README.md#flow).
+Meteora provides a migrator service and a manual migration fallback. Threshold completion and successful migration are separate states. repo.ing shows a transition state until it verifies the destination pool, then trades that pool on-site (DAMM v2 `swap2`, ExactIn, minimum out at the trader's max slippage, 1% by default) with a **View pool on Meteora** link. [Official migration flow](https://github.com/MeteoraAg/dynamic-bonding-curve-sdk/blob/main/packages/dynamic-bonding-curve/README.md#flow).
 
 ## Fees and rewards
 

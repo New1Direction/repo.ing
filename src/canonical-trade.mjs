@@ -16,11 +16,21 @@ import { keptWsolRent, resolveReferral } from './referral.mjs'
 import { ATA_PROGRAM, createWsolAtaInstruction, isCreateWsolAta, TOKEN_PROGRAM, wsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
 import { preparedFromRecord, readTradeRecord, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
+import { DEFAULT_SLIPPAGE_BPS, minimumOutAfterSlippage, parseSlippageBps } from './trade-slippage.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
-const SLIPPAGE_BPS = 100
 const REFERRAL_SLOT = 12
+
+// One exact-input curve quote at the trader's tolerance. The SDK's minimum output must equal an independent floor of
+// its output at the same tolerance before anything is signed (the same agreement check the DAMM trader makes).
+export function dbcSwapQuote({ dbc, virtualPool, config, direction, amountIn, currentPoint, slippageBps }) {
+  const result = dbc.pool.swapQuote({ virtualPool, config, swapBaseForQuote: direction === 'sell', amountIn, slippageBps,
+    hasReferral: false, eligibleForFirstSwapWithMinFee: false, currentPoint })
+  const output = BigInt(result.outputAmount?.toString() ?? '0'), minimum = BigInt(result.minimumAmountOut?.toString() ?? '0')
+  if (output <= 0n || minimum <= 0n || minimum !== minimumOutAfterSlippage(output, slippageBps)) throw new Error('No executable output quote')
+  return result
+}
 
 // The one DBC swap must carry the quoted amounts, the canonical accounts, and in its referral slot exactly the
 // server-resolved referral account (or the program ID for none). No other instruction may touch that account.
@@ -81,6 +91,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
   })
   const quote = async (request, direction) => {
     if ('pool' in request || 'mint' in request || 'market' in request) throw new Error('Pool and mint are selected by canonical repository ID only')
+    const slippageBps = parseSlippageBps(request.slippageBps)
     const input = BigInt(direction === 'buy' ? request.amountLamports : request.amountBaseUnits)
     if (input <= 0n || input > 18446744073709551615n) throw new Error('Input amount must be a positive u64 base-unit integer')
     const market = await loadMarket(request.githubRepoId)
@@ -97,19 +108,15 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const amountIn = new BN(input.toString())
     // The fee a launch-fee pool charges falls every second after activation, so quote at the chain's confirmed
     // clock (never later than the slot that executes the trade): the executed fee can only be lower, so the
-    // output can only be higher than quoted and the 1% minimum stays safe. Flat configs ignore the point.
+    // output can only be higher than quoted and the minimum stays safe. Flat configs ignore the point.
     const currentPoint = quotePoint(await readChainPoint(connection, fixed.activationType), state.poolState.activationPoint)
-    const result = dbc.pool.swapQuote({ virtualPool: state, config: fixed,
-      swapBaseForQuote: direction === 'sell', amountIn, slippageBps: SLIPPAGE_BPS,
-      hasReferral: false, eligibleForFirstSwapWithMinFee: false, currentPoint,
-    })
-    if (!result.minimumAmountOut?.gt(new BN(0))) throw new Error('No executable output quote')
+    const result = dbcSwapQuote({ dbc, virtualPool: state, config: fixed, direction, amountIn, currentPoint, slippageBps })
     const fees = poolFeeFacts(fixed, state.poolState.activationPoint, currentPoint)
-    return { market, pool, amountIn, result, sqrtPrice: state.poolState.sqrtPrice, collectFeeMode: fixed.collectFeeMode, ...fees }
+    return { market, pool, amountIn, result, slippageBps, sqrtPrice: state.poolState.sqrtPrice, collectFeeMode: fixed.collectFeeMode, ...fees }
   }
   const prepare = async (request, direction, quoted = null) => {
     const wallet = new PublicKey(request.wallet)
-    const { market, pool, amountIn, result, launchFee } = quoted || await quote(request, direction)
+    const { market, pool, amountIn, result, slippageBps, launchFee } = quoted || await quote(request, direction)
     const mint = new PublicKey(market.mint)
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
@@ -131,7 +138,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       githubRepoId: String(market.githubRepoId), mint: market.mint, pool: market.pool, referral: referral?.toBase58() ?? null,
       wsolRent: wsolRent === null ? null : wsolRent.toString(), amountIn: amountIn.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
       message: Buffer.from(tx.serializeMessage()).toString('base64'), transaction: serializeUnsigned(tx),
-      blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps: SLIPPAGE_BPS,
+      blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps,
       priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() },
       // Display only (Solana Actions message): the launch fee quoted for this trade while the window is open.
       launchFee: launchFee?.active ? launchFeeJson(launchFee) : null })
@@ -204,12 +211,12 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
   }
   const publicQuote = async (request, direction) => {
     const quoted = await quote(request, direction)
-    const { result, amountIn, sqrtPrice, collectFeeMode, feeNumerator, launchFee } = quoted
+    const { result, amountIn, slippageBps, sqrtPrice, collectFeeMode, feeNumerator, launchFee } = quoted
     if (collectFeeMode !== 0) throw Error('Quote fee currency is unsupported')
     const display = quoteDisplay({ direction, input: amountIn.toString(), output: result.outputAmount.toString(),
       sqrtPrice: sqrtPrice.toString(), fee: result.tradingFee.add(result.protocolFee).add(result.referralFee).toString() })
     return { ...display, outputAmount: result.outputAmount.toString(), minimumAmountOut: result.minimumAmountOut.toString(),
-      slippageBps: SLIPPAGE_BPS, feeNumerator: feeNumerator?.toString() ?? null, launchFee: launchFeeJson(launchFee) }
+      slippageBps, feeNumerator: feeNumerator?.toString() ?? null, launchFee: launchFeeJson(launchFee) }
   }
   const depthCache = new Map()
   async function buyDepth(repoId) {
@@ -223,7 +230,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const currentPoint = quotePoint(await readChainPoint(connection, fixed.activationType), state.poolState.activationPoint)
     const sizes = estimateBuySizes(BigInt(fixed.migrationQuoteThreshold.toString()) * 2n, input => {
       const result = dbc.pool.swapQuote({ virtualPool: state, config: fixed, swapBaseForQuote: false,
-        amountIn: new BN(String(input)), slippageBps: SLIPPAGE_BPS, hasReferral: false,
+        amountIn: new BN(String(input)), slippageBps: DEFAULT_SLIPPAGE_BPS, hasReferral: false,
         eligibleForFirstSwapWithMinFee: false, currentPoint })
       if (result.minimumAmountOut.lten(0)) throw Error('No executable output')
       return quoteDisplay({ direction: 'buy', input: String(input), output: result.outputAmount.toString(),

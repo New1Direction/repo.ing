@@ -15,8 +15,15 @@ import { sellAmountForPercent, tokenBalanceLabel } from '../lib/token-balance.mj
 import { sameAmount } from '../lib/quick-amounts.mjs'
 import { captureReferral, storedReferral } from '../lib/referral.mjs'
 import { feePercentLabel, launchFeeTradeNote } from '../../src/launch-fee-copy.mjs'
+import { DEFAULT_SLIPPAGE_BPS, parseSlippageBps, SLIPPAGE_EXCEEDED, slippageLabel } from '../../src/trade-slippage.mjs'
+import { SlippageSetting } from './slippage-setting'
 
+const SLIPPAGE_KEY = 'repoing:slippage-bps'
 function localStore() { try { return window.localStorage } catch { return null } }
+// This browser's last chosen max slippage, or the 1% default.
+function savedSlippage() {
+  try { return parseSlippageBps(Number(localStore()?.getItem(SLIPPAGE_KEY))) } catch { return DEFAULT_SLIPPAGE_BPS }
+}
 
 async function fetchSolBalance(wallet, signal) {
   const response = await fetch(`/api/wallet/balance?wallet=${encodeURIComponent(wallet)}`, { cache: 'no-store', signal })
@@ -50,6 +57,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const [panelVisible, setPanelVisible] = useState(false)
   const [amount, setAmount] = useState('')
   const [minimumOut, setMinimumOut] = useState(null)
+  const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
+  const [preparedSlippage, setPreparedSlippage] = useState(null)
   const [preparedCosts, setPreparedCosts] = useState(null)
   const [liveQuote, setLiveQuote] = useState(null)
   const [costPreview, setCostPreview] = useState(null)
@@ -76,6 +85,13 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const tradingOpen = !curve || curve.status === 'active' || Boolean(graduatedPool)
 
   useEffect(() => { const store = localStore(); if (store) captureReferral(window.location.search, store) }, [])
+  useEffect(() => setSlippageBps(savedSlippage()), [])
+
+  function chooseSlippage(bps) {
+    setSlippageBps(bps)
+    setMinimumOut(null)
+    try { localStore()?.setItem(SLIPPAGE_KEY, String(bps)) } catch { /* Keep the choice for this visit. */ }
+  }
 
   useEffect(() => {
     if (!panelRef.current || !window.IntersectionObserver) return
@@ -162,14 +178,14 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       return
     }
     const controller = new AbortController()
-    const inputKey = `${market.repoId}:${direction}:${input}:${wallet ?? ""}`
+    const inputKey = `${market.repoId}:${direction}:${input}:${wallet ?? ""}:${slippageBps}`
     const keepEstimate = quoteRef.current?.inputKey === inputKey && Date.now() - quoteRef.current.receivedAt < 30000
     if (!keepEstimate) setLiveQuote(null)
     setQuoteStatus(keepEstimate ? 'Refreshing quote…' : 'Calculating quote…')
     if (wallet) setCostPreview({ inputKey, loading: true })
     const timer = window.setTimeout(() => {
       void loadTradePreview({
-        request: { githubRepoId: market.repoId, direction, wallet, amountBaseUnits: input },
+        request: { githubRepoId: market.repoId, direction, wallet, amountBaseUnits: input, slippageBps },
         signal: controller.signal,
         onQuote: result => { setLiveQuote({ ...result, inputKey, receivedAt: Date.now() }); setQuoteStatus('') },
         onQuoteError: cause => { setLiveQuote(null); setQuoteStatus(cause.name === 'TimeoutError' ? 'Quote timed out. Please retry.' : cause.message || 'Quote unavailable') },
@@ -177,7 +193,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       })
     }, 250)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [amount, available, balance, busy, direction, market.repoId, solBalance, tradingOpen, quoteRefresh, wallet])
+  }, [amount, available, balance, busy, direction, market.repoId, solBalance, tradingOpen, quoteRefresh, wallet, slippageBps])
 
   useEffect(() => {
     if (direction !== 'buy' || !wallet) {
@@ -237,23 +253,37 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     if (selected) { setAmount(selected); setMinimumOut(null); setLiveQuote(null) }
   }
 
-  async function submit(event) {
+  function submit(event) {
     event.preventDefault()
+    void trade(slippageBps, direction, amount)
+  }
+
+  // One tap after a slippage failure: the same trade again at the next preset. Only that trade is looser; the saved
+  // setting stays what the trader chose.
+  function retryWithSlippage(next) {
+    const failed = resultCard
+    if (!failed?.amount || busy) return
+    setDirection(failed.direction)
+    setAmount(failed.amount)
+    void trade(next, failed.direction, failed.amount)
+  }
+
+  async function trade(tolerance, side, value) {
     if (submitting.current) return
     submitting.current = true
-    setBusy(true); setPreparedCosts(null); setResultCard(null); setMinimumOut(null); setLiveQuote(null)
+    setBusy(true); setPreparedCosts(null); setResultCard(null); setMinimumOut(null); setLiveQuote(null); setPreparedSlippage(null)
     let signedTrade = null
     try {
       if (!available) throw new Error('Trading is unavailable until the canonical pool and local RPC are configured.')
       const address = wallet || await connect()
-      const input = parseUnits(amount, direction === 'buy' ? 9 : 6)
-      if (direction === 'buy') {
+      const input = parseUnits(value, side === 'buy' ? 9 : 6)
+      if (side === 'buy') {
         setStage('Checking SOL balance')
         const currentSolBalance = await fetchSolBalance(address)
         // The exact prepared transaction checks input, network costs and rent together.
         setSolBalance(currentSolBalance)
       }
-      if (direction === 'sell') {
+      if (side === 'sell') {
         setStage('Checking token balance')
         const currentTokenBalance = await fetchTokenBalance(address, market.mint)
         if (BigInt(input) > BigInt(currentTokenBalance)) throw new Error('Amount exceeds your token balance')
@@ -261,31 +291,35 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       }
       setStage('Preparing quote')
       const preparedResponse = await fetch('/api/trade', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'prepare', githubRepoId: market.repoId, wallet: address,
-          direction, amountBaseUnits: input, referrer: localStore() ? storedReferral(localStore(), address) : null }) })
+        body: JSON.stringify({ action: 'prepare', githubRepoId: market.repoId, wallet: address, direction: side, amountBaseUnits: input,
+          slippageBps: tolerance, referrer: localStore() ? storedReferral(localStore(), address) : null }) })
       const prepared = await preparedResponse.json()
       if (!preparedResponse.ok) throw new Error(prepared.error)
       setPreparedCosts(prepared.costs)
       setMinimumOut(prepared.minimumAmountOut)
+      setPreparedSlippage(prepared.slippageBps)
       setStage('Waiting for wallet')
       const { Transaction } = await import('@solana/web3.js')
       const tx = Transaction.from(Uint8Array.from(atob(prepared.transaction), c => c.charCodeAt(0)))
       const signed = await provider().signTransaction(tx)
       if (!signed.signature) throw new Error('Wallet did not sign the transaction')
-      signedTrade = { state: 'pending', direction, signature: bs58.encode(signed.signature),
+      signedTrade = { state: 'pending', direction: side, amount: value, slippageBps: prepared.slippageBps, signature: bs58.encode(signed.signature),
         id: prepared.id, lastValidBlockHeight: prepared.lastValidBlockHeight }
       setResultCard(signedTrade)
       setStage('Checking transaction')
       const submittedResponse = await fetch('/api/trade', { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action: 'submit', id: prepared.id, transaction: btoa(String.fromCharCode(...signed.serialize())) }) })
       const submitted = await submittedResponse.json()
-      // The server never broadcast it (its trade window closed): show it as not submitted; the next attempt re-prepares.
-      if (submitted.code === 'TRADE_WINDOW_CLOSED') signedTrade = null
-      if (!submittedResponse.ok) throw new Error(submitted.error)
+      // The server never broadcast it (its trade window closed, or the price was already past the minimum): show it as not
+      // submitted; the next attempt re-prepares.
+      if (submitted.code === 'TRADE_WINDOW_CLOSED' || submitted.code === SLIPPAGE_EXCEEDED) signedTrade = null
+      if (!submittedResponse.ok) throw Object.assign(new Error(submitted.error),
+        submitted.code === SLIPPAGE_EXCEEDED ? { reason: 'slippage', slippageBps: submitted.slippageBps } : {})
       applyTradeStatus(submitted, signedTrade)
     } catch (cause) {
       if (signedTrade) setResultCard(current => current?.signature === signedTrade.signature ? current : signedTrade)
-      else setResultCard({ state: 'notSubmitted', direction, message: cause.message || 'Trade was not submitted' })
+      else setResultCard({ state: 'notSubmitted', direction: side, amount: value, message: cause.message || 'Trade was not submitted',
+        reason: cause.reason, slippageBps: cause.slippageBps })
     } finally { submitting.current = false; setBusy(false); setPreparedCosts(null); setStage('') }
   }
 
@@ -298,6 +332,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
 
   // Only markets on a launch-fee config return launchFee; it is active during their first minutes.
   const launchFeeNote = liveQuote ? launchFeeTradeNote(liveQuote.launchFee) : null
+  // The tolerance behind the minimum on screen: the live quote's, else the prepared trade's, else the setting.
+  const shownSlippage = (liveQuote ? liveQuote.slippageBps : minimumOut ? preparedSlippage : null) ?? slippageBps
   const currentCosts = liveQuote && costPreview?.inputKey === liveQuote.inputKey ? costPreview : null
   const costs = busy ? preparedCosts : currentCosts?.costs
   const costShortfall = costs && BigInt(costs.shortfall) > 0n
@@ -340,10 +376,11 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       <label>{minimumOut && !liveQuote ? 'Minimum receive' : 'Estimated receive'}</label>
       <div className={`asset-input read-only quote-output${(!liveQuote && quoteStatus) || !amount ? ' is-waiting' : ''}`} role="status" aria-live="polite" aria-busy={quoteStatus === 'Calculating quote…' || quoteStatus === 'Refreshing quote…'}><span>{quoteStatus === 'Calculating quote…' && <LoadingSignal/>}{liveQuote ? formatUnits(liveQuote.outputAmount, direction === 'buy' ? 6 : 9, 6) : minimumOut ? formatUnits(minimumOut, direction === 'buy' ? 6 : 9, 6) : quoteStatus || (amount ? '—' : 'Enter an amount')}{liveQuote && quoteStatus === 'Refreshing quote…' && <LoadingSignal/>}</span><span>{direction === 'buy' ? market.symbol : 'SOL'}</span></div>
       {quoteStatus && !['Calculating quote…', 'Refreshing quote…'].includes(quoteStatus) && validAmount && <button type="button" className="quote-retry" disabled={busy} onClick={() => setQuoteRefresh(value => value + 1)}>Retry quote</button>}
+      <SlippageSetting value={slippageBps} onChange={chooseSlippage} disabled={busy}/>
       <p className="trade-hint" id="trade-quote-hint">{liveQuote || minimumOut
-        ? `Minimum after 1% slippage: ${formatUnits(minimumOut || liveQuote.minimumAmountOut, direction === 'buy' ? 6 : 9, 6)} ${direction === 'buy' ? market.symbol : 'SOL'}. Refreshed before wallet confirmation.`
-        : 'Quote updates as you enter an amount. Fixed slippage: 1%.'}{direction === 'buy' && ' Leave SOL for network fees and token-account costs.'}</p>
-      {(usdAmount || liveQuote) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div>{launchFeeNote && <div><dt>Launch fee <small>(at this quote)</small></dt><dd>{feePercentLabel(liveQuote.launchFee.feeNumerator)}</dd></div>}<div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div></>}</dl>}
+        ? `Minimum after ${slippageLabel(shownSlippage)} slippage: ${formatUnits(liveQuote ? liveQuote.minimumAmountOut : minimumOut, direction === 'buy' ? 6 : 9, 6)} ${direction === 'buy' ? market.symbol : 'SOL'}. Refreshed before wallet confirmation.`
+        : 'Quote updates as you enter an amount.'}{direction === 'buy' && ' Leave SOL for network fees and token-account costs.'}</p>
+      {(usdAmount || liveQuote || minimumOut) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div>{launchFeeNote && <div><dt>Launch fee <small>(at this quote)</small></dt><dd>{feePercentLabel(liveQuote.launchFee.feeNumerator)}</dd></div>}<div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div></>}{(liveQuote || minimumOut) && <div><dt title="The trade fails instead of filling below the minimum this sets">Max slippage</dt><dd>{slippageLabel(shownSlippage)}</dd></div>}</dl>}
       {(liveQuote || preparedCosts) && <div className="trade-cost-preview">
         {costs ? <><dl className="trade-quote-details"><div><dt>Network + priority fee</dt><dd>≈ {formatUnits(costs.networkFee)} SOL</dd></div><div><dt>Token account deposit</dt><dd>{formatUnits(costs.accountDeposits)} SOL</dd></div>{BigInt(costs.refundableDeposit) > 0n && <div><dt>Temporary deposit <small>(returned)</small></dt><dd>{formatUnits(costs.refundableDeposit)} SOL</dd></div>}<div className="trade-cost-total"><dt>{direction === 'buy' ? 'Total spend' : 'SOL costs'}</dt><dd>≈ {formatUnits(costs.total)} SOL</dd></div></dl><p className="trade-hint">{BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction. ` : ''}Estimate checked again before signing.</p></> : <p className="trade-hint">{wallet ? currentCosts?.loading ? 'Checking network fees and account deposits…' : 'Network cost estimate unavailable. Checked again before wallet approval.' : 'Connect your wallet to preview network fees and account deposits.'}</p>}
         {costShortfall && <p className="trade-funding-note" role="status">You need ≈ {formatUnits((BigInt(costs.shortfall) + 999n) / 1000n * 1000n)} more SOL to cover this trade.</p>}
@@ -353,6 +390,6 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       <button className="button primary trade-submit" type="submit" disabled={busy || !available || !tradingOpen || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
       <TransactionStatus stage={busy ? stage : ''}/>
     </form>
-    <TradeResultCard result={resultCard} symbol={market.symbol} mint={market.mint} fullName={market.fullName} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)}/>
+    <TradeResultCard result={resultCard} symbol={market.symbol} mint={market.mint} fullName={market.fullName} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)} onRetry={retryWithSlippage}/>
   </div>{!panelVisible && !resultCard && <nav className="mobile-trade-actions" aria-label="Quick trade navigation"><span>${market.symbol}</span><button type="button" className="button primary" disabled={busy || !available} onClick={() => openTrade('buy')}>Buy</button><button type="button" className="button outline" disabled={busy || !available} onClick={() => openTrade('sell')}>Sell</button></nav>}</>
 }
