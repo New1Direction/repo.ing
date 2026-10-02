@@ -10,13 +10,15 @@ import { ReserveCoverage } from './reserve-coverage'
 import { BuybackStatus, receiptUrl } from './buyback-status'
 import { BUYBACK_RECEIPTS_BY_TIME, totalBuybackLamports } from '../lib/buyback-receipts.mjs'
 import { LIQUIDITY_RECEIPTS, liquidityTotals } from '../lib/liquidity-receipts.mjs'
+import { SourceSplit } from './hf/source-split'
 const BUYBACK_SOURCE = { custody: 'platform revenue', team: 'team wallet' }
 
 function Amount({ value, usdPerSol, hero = false }) {
   const usd = formatUsdEstimate(value, usdPerSol)
   return <div className={`analytics-amount${hero ? ' analytics-amount-large' : ''}`}><strong>{usd ? `≈ ${usd}` : `${formatSolDisplay(value)} SOL`}</strong>{usd && <span>{formatSolDisplay(value)} SOL</span>}</div>
 }
-export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS_BY_TIME, buybackStatus = null }) {
+// showSources (HF_MARKETS_ENABLED): adds the GitHub repos / Hugging Face models split under the builder figures.
+export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS_BY_TIME, buybackStatus = null, showSources = false }) {
   const { totals, platform } = data
   const rangeLabel = { '24h': 'Past 24 hours', '7d': 'Past 7 days', '30d': 'Past 30 days', all: 'All time' }[data.range]
   return <>
@@ -25,6 +27,7 @@ export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS
       <div><span className="analytics-kicker">Earned by builders</span><Amount value={totals.earned} usdPerSol={usdPerSol} hero/><p>Indexed fees, including amounts already paid</p><BuilderSplit split={data.builders?.earned}/></div>
     </section>
     {data.builders && <BuilderSplitNote/>}
+    {showSources && <SourceSplit sources={data.sources}/>}
     <div className="analytics-market-counts"><span><strong>{totals.markets}</strong> live markets</span><span><strong>{totals.graduated}</strong> graduated</span><span><strong>{totals.trades.toLocaleString('en-US')}</strong> trades · {rangeLabel.toLowerCase()}</span></div>
     <section className="analytics-chart-grid" aria-label="Protocol activity charts">
       {[['volume','Trading volume'],['earned','Builder fees earned'],['paid','Builder payouts']].map(([metric,title]) => <article className="analytics-card" key={metric}><h2>{title}</h2><Amount value={totals[metric]} usdPerSol={usdPerSol}/><p>{data.bucket==='hour'?'Hourly':'Daily'} in UTC{data.range==='all'?' · last 14 days shown':''}</p><AnalyticsActivityChart data={data} metric={metric} title={title}/></article>)}
