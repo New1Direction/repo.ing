@@ -2,17 +2,21 @@ import { database } from '../../../lib/server.mjs'
 import { githubApiHeaders } from '../../../../src/github-app-auth.mjs'
 import { repositoryAssetDirectory, repositoryLogoFromAssets, repositoryLogoFromReadme, safeGithubImageUrl } from '../../../../src/repo-logo.mjs'
 import { githubImageVariant, githubImageVariantResponse, imageWidthParam } from '../../../../src/token-image.mjs'
-import { assertGithubRepoId, isGithubRepoId } from '../../../../src/market-identity.mjs'
+import { assertGithubRepoId, isGithubRepoId, isMarketId, marketSource } from '../../../../src/market-identity.mjs'
+import { safeHfAvatarUrl } from '../../../../src/hf-avatar.mjs'
+import { hfMarketsEnabled } from '../../../lib/hf-markets.mjs'
 
 export const runtime = 'nodejs'
 const logoCache = new Map()
 const imageResponse = target => new Response(null, { status: 302, headers: { Location: target,
   'Cache-Control': 'public, max-age=3600, s-maxage=3600' } })
 
-// ?w= serves a resized WebP for in-app avatars; without it the redirect stays canonical for token metadata. Only GitHub
-// repositories have a logo here: any other id (a Hugging Face market's included) is not found, and GitHub is never asked.
+// ?w= serves a resized WebP for in-app avatars; without it the redirect stays canonical for token metadata. GitHub
+// repositories get their README logo or owner avatar; a Hugging Face model market gets its owner's avatar (modelLogo).
+// Any other id is not found, and GitHub is never asked about a model.
 export async function GET(request, { params }) {
   const { repo } = await params
+  if (/^\d+$/.test(repo) && isMarketId(repo) && marketSource(repo) === 'huggingface') return modelLogo(request, repo)
   if (!/^\d+$/.test(repo) || !isGithubRepoId(repo)) return new Response(null, { status: 404 })
   const width = request ? imageWidthParam(new URL(request.url).searchParams.get('w')) : null
   if (width === undefined) return new Response(null, { status: 400 })
@@ -61,4 +65,29 @@ async function logoTarget(repo) {
   if (logoCache.size > 1000) logoCache.clear()
   logoCache.set(repo, { url: target, expiresAt: Date.now() + (image ? 6 * 60 : 10) * 60_000 })
   return target
+}
+
+// A Hugging Face model market's logo: its owner's avatar as the launch stored it (repositories.avatar_url), only from the
+// Hub's two avatar hosts (src/hf-avatar.mjs), through the same resizing proxy as GitHub images. No GitHub or Hub API call;
+// off (not found) unless HF_MARKETS_ENABLED.
+async function modelLogo(request, repo) {
+  if (!hfMarketsEnabled()) return new Response(null, { status: 404 })
+  const width = request ? imageWidthParam(new URL(request.url).searchParams.get('w')) : null
+  if (width === undefined) return new Response(null, { status: 400 })
+  const key = `hf:${repo}`, cached = logoCache.get(key)
+  let target = cached && cached.expiresAt > Date.now() ? cached.url : undefined
+  if (target === undefined) {
+    const pool = database()
+    if (!pool) return new Response(null, { status: 503 })
+    try {
+      const { rows } = await pool.query("select avatar_url from repositories where github_repo_id = $1 and source = 'huggingface'", [repo])
+      target = safeHfAvatarUrl(rows[0]?.avatar_url)
+    } catch { return new Response(null, { status: 503 }) }
+    if (logoCache.size > 1000) logoCache.clear()
+    logoCache.set(key, { url: target, expiresAt: Date.now() + 10 * 60_000 })
+  }
+  if (!target) return new Response(null, { status: 404 })
+  if (!width) return imageResponse(target)
+  try { return githubImageVariantResponse(await githubImageVariant(target, width, { allow: safeHfAvatarUrl })) }
+  catch { return imageResponse(target) }
 }
