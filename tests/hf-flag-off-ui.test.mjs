@@ -9,6 +9,8 @@ import { appModule, h, html } from './fixtures/render-jsx.mjs'
 // UPDATE_GITHUB_UI_SNAPSHOT=1 node --test tests/hf-flag-off-ui.test.mjs
 const SNAPSHOT = new URL('./fixtures/github-ui.snapshot.json', import.meta.url)
 delete process.env.HF_MARKETS_ENABLED
+// The same markup on every machine: dates in UTC, and no surface below formats with the machine's default locale.
+process.env.TZ = 'UTC'
 
 const { MarketTable, RepoAvatar, RepoIdentity, RepoStats, GitHubLink } = await appModule('app/components/ui.jsx')
 const { HomeMarkets } = await appModule('app/components/home-markets.jsx')
@@ -65,7 +67,8 @@ function surfaces() {
     'more-markets-featured': html(h(MoreMarkets, { markets: selectMoreMarkets(GITHUB, { now: NOW }), featured: true })),
     'repo-identity': html(h(RepoIdentity, { repo: verified, heading: true }, h('span', null, 'ticker'))),
     'repo-identity-compact': html(h(RepoIdentity, { repo: fresh, compact: true })),
-    'repo-stats': html(h(RepoStats, { repo: verified, detailed: true })),
+    // RepoStats formats with the default locale (toLocaleString / toLocaleDateString): values that read the same in any.
+    'repo-stats': html(h(RepoStats, { repo: { ...verified, stars: 120, updatedAt: null }, detailed: true })),
     'github-link': html(h(GitHubLink, { repo: verified })) + html(h(GitHubLink, { repo: { ...verified, htmlUrl: 'https://github.com/New1Direction/Waternot' } })),
     'repo-avatar': [verified, { repoId: verified.repoId }, { avatarUrl: verified.avatarUrl }, {}].map(repo => html(h(RepoAvatar, { repo, size: 'large' }))).join('\n'),
     'trust-panel': html(h(TrustPanel, { market: verified })) + html(h(TrustPanel, { market: fresh, declined: { createdAt: '2026-09-01T00:00:00Z' } })),
