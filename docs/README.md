@@ -13,6 +13,7 @@ Launch open source markets. Every trade pays the builders.
 | Prepare a launch with an agent or add a README launch button | [Agent launch reviews](AGENT_LAUNCH.md) |
 | Find repositories by topic or activity | [Repository search](REPOSITORY_SEARCH.md) |
 | Understand discoverer earnings | [Discovery rewards](DISCOVERY_REWARDS.md) |
+| Understand the launcher's verification bonus | [Verification bonus](VERIFICATION_BONUS.md) |
 | Understand liquidity and graduation | [Liquidity guide](LIQUIDITY.md) |
 | Understand the 1% builder allocation | [Builder allocation](BUILDER_ALLOCATION_PLAN.md) |
 | Read protocol metrics | [Analytics definitions and sources](ANALYTICS.md) |
