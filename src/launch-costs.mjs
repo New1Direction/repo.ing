@@ -1,21 +1,31 @@
 import { VersionedTransaction } from '@solana/web3.js'
+import { readLaunchComputeBudget } from './launch-wallet-fees.mjs'
 
-export function launchCostBreakdown({ balance, after, networkFee, initialBuyLamports }) {
-  if (![balance, after, networkFee].every(value => Number.isSafeInteger(value) && value >= 0)) {
+const LAMPORTS_PER_SIGNATURE = 5000n
+
+// networkFee is what the wallet is charged: one base fee per signature plus the reviewed priority fee (limit × price).
+// It must cover both, so the network-fee line and the deposits derived from it never hide the priority fee.
+export function launchCostBreakdown({ balance, after, networkFee, priorityFee = '0', signatures = 1, initialBuyLamports }) {
+  if (![balance, after, networkFee].every(value => Number.isSafeInteger(value) && value >= 0) ||
+      !/^\d+$/.test(String(priorityFee)) || !Number.isSafeInteger(signatures) || signatures < 1 ||
+      BigInt(networkFee) < BigInt(signatures) * LAMPORTS_PER_SIGNATURE + BigInt(priorityFee)) {
     throw new Error('Launch cost estimate is unavailable; refresh the review')
   }
   const buy = BigInt(initialBuyLamports), total = BigInt(balance) - BigInt(after)
   const deposits = total - buy - BigInt(networkFee)
   if (buy < 0n || deposits < 0n) throw new Error('Wallet balance changed; refresh the launch review')
-  return { balance: String(balance), initialBuy: buy.toString(), networkFee: String(networkFee),
+  return { balance: String(balance), initialBuy: buy.toString(), networkFee: String(networkFee), priorityFee: String(priorityFee),
     accountDeposits: deposits.toString(), total: total.toString() }
 }
 
-// Read-only simulation of the exact prepared message. The user has not signed
-// it and this function never broadcasts. A failed simulation blocks review.
+// Read-only simulation of the exact prepared message, compute budget included: the simulated balance change and
+// getFeeForMessage both include the priority fee, so the total is exactly what the wallet pays. The user has not
+// signed it and this function never broadcasts. A failed simulation blocks review.
 export async function estimateLaunchCosts(connection, transaction, initialBuyLamports) {
   const payer = transaction.feePayer
   const unavailable = () => { throw new Error('Could not check launch costs. Please retry shortly.') }
+  const { priorityFee } = readLaunchComputeBudget(transaction.instructions)
+  const message = transaction.compileMessage()
   const before = await connection.getBalanceAndContext(payer, 'confirmed').catch(unavailable)
   const encoded = transaction.serialize({ requireAllSignatures: false, verifySignatures: false })
   const [simulation, fee] = await Promise.all([
@@ -23,7 +33,7 @@ export async function estimateLaunchCosts(connection, transaction, initialBuyLam
       commitment: 'confirmed', sigVerify: false, minContextSlot: before.context.slot,
       accounts: { encoding: 'base64', addresses: [payer.toBase58()] },
     }),
-    connection.getFeeForMessage(transaction.compileMessage(), 'confirmed'),
+    connection.getFeeForMessage(message, 'confirmed'),
   ]).catch(unavailable)
   if (simulation.value.err) {
     const insufficient = simulation.value.logs?.some(line => /insufficient (lamports|funds)/i.test(line)) ||
@@ -32,5 +42,5 @@ export async function estimateLaunchCosts(connection, transaction, initialBuyLam
       'Launch simulation did not pass. Refresh the review before approving in your wallet.')
   }
   return launchCostBreakdown({ balance: before.value, after: simulation.value.accounts?.[0]?.lamports,
-    networkFee: fee.value, initialBuyLamports })
+    networkFee: fee.value, priorityFee: priorityFee.toString(), signatures: message.header.numRequiredSignatures, initialBuyLamports })
 }

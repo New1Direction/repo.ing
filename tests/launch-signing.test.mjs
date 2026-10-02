@@ -75,20 +75,29 @@ test('wallet cancellation never releases server signatures', async () => {
   assert.equal(f.cosigns(), 0)
 })
 
+// Fake RPC for the launch budget: 120k simulated units, recent fees p75 at 300k microlamports per unit.
+const budgetRpc = { rpcEndpoint: 'http://127.0.0.1:8899',
+  simulateTransaction: async () => ({ value: { err: null, unitsConsumed: 120_000 } }),
+  getRecentPrioritizationFees: async () => [{ slot: 1, prioritizationFee: 300_000 }] }
+const priced = async f => (await withLaunchPriorityFee(budgetRpc, f.tx,
+  { feePayer: f.payer.publicKey, blockhash: f.tx.recentBlockhash, log: () => {} })).transaction
+
 test('unsigned three-signer transaction still gets an exact pre-wallet simulation', async () => {
-  const f = fixture()
+  const f = fixture(), tx = await priced(f)
   const rpc = {
     getBalanceAndContext: async () => ({ context: { slot: 123 }, value: 100000000 }),
-    simulateTransaction: async (tx, options) => {
+    simulateTransaction: async (simulated, options) => {
       assert.equal(options.sigVerify, false)
       assert.equal(options.minContextSlot, 123)
-      assert.ok(tx.signatures.every(signature => signature.every(byte => byte === 0)))
-      assert.equal(tx.message.header.numRequiredSignatures, 3)
-      return { value: { err: null, accounts: [{ lamports: 97985000 }] } }
+      assert.ok(simulated.signatures.every(signature => signature.every(byte => byte === 0)))
+      assert.equal(simulated.message.header.numRequiredSignatures, 3)
+      return { value: { err: null, accounts: [{ lamports: 97942000 }] } }
     },
-    getFeeForMessage: async () => ({ value: 15000 }),
+    // 3 signatures + 160,000 CU × 300,000 microlamports.
+    getFeeForMessage: async () => ({ value: 63000 }),
   }
-  assert.equal((await estimateLaunchCosts(rpc, f.tx, '0')).networkFee, '15000')
+  const costs = await estimateLaunchCosts(rpc, tx, '0')
+  assert.deepEqual([costs.networkFee, costs.priorityFee, costs.accountDeposits, costs.total], ['63000', '48000', '1995000', '2058000'])
   assert.equal(f.cosigns(), 0)
 })
 
@@ -96,7 +105,7 @@ test('unsigned three-signer transaction still gets an exact pre-wallet simulatio
 // The former launch reproduces the exact rejection; explicit reviewed fees
 // prevent the augmentation without accepting a changed financial instruction.
 import { ComputeBudgetProgram, ComputeBudgetInstruction } from '@solana/web3.js'
-import { setLaunchWalletFees } from '../src/launch-wallet-fees.mjs'
+import { withLaunchPriorityFee } from '../src/launch-wallet-fees.mjs'
 function phantomAutoFees(tx, payer) {
   if (tx.signatures.every(entry => entry.signature === null) &&
       !tx.instructions.some(ix => ix.programId.equals(ComputeBudgetProgram.programId))) {
@@ -110,29 +119,33 @@ test('reproduces Phantom unsigned launch auto-fee mutation and rejects it', asyn
   await assert.rejects(f.sign(async tx => transport(phantomAutoFees(transport(tx), f.payer))), /wallet changed/)
   assert.equal(f.cosigns(), 0)
 })
-test('explicit zero-price budget prevents Phantom auto-fee mutation with wallet-first signatures', async () => {
-  const f = fixture()
-  setLaunchWalletFees(f.tx)
-  const sign = prepareLaunchSigning(f.tx, f.payer.publicKey, f.creator, f.mint)
-  const reviewed = Buffer.from(f.tx.serializeMessage())
-  assert.equal(ComputeBudgetInstruction.decodeSetComputeUnitPrice(f.tx.instructions[1]).microLamports, 0n)
-  const result = await sign(async tx => transport(phantomAutoFees(transport(tx), f.payer)))
+test('explicit priced budget prevents Phantom auto-fee mutation with wallet-first signatures', async () => {
+  const f = fixture(), tx = await priced(f)
+  const sign = prepareLaunchSigning(tx, f.payer.publicKey, f.creator, f.mint)
+  const reviewed = Buffer.from(tx.serializeMessage())
+  assert.equal(ComputeBudgetInstruction.decodeSetComputeUnitLimit(tx.instructions[0]).units, 160_000)
+  assert.equal(ComputeBudgetInstruction.decodeSetComputeUnitPrice(tx.instructions[1]).microLamports, 300_000n)
+  const result = await sign(async unsigned => transport(phantomAutoFees(transport(unsigned), f.payer)))
   const final = Transaction.from(result.raw)
   assert.deepEqual(final.serializeMessage(), reviewed)
   assert.equal(final.verifySignatures(), true)
-  assert.throws(() => setLaunchWalletFees(f.tx), /exactly once/)
+  await assert.rejects(withLaunchPriorityFee(budgetRpc, tx, { feePayer: f.payer.publicKey, blockhash: tx.recentBlockhash, log: () => {} }), /exactly once/)
 })
-test('wallet cannot replace reviewed zero priority fee with a paid fee', async () => {
-  const f = fixture()
-  setLaunchWalletFees(f.tx)
-  const sign = prepareLaunchSigning(f.tx, f.payer.publicKey, f.creator, f.mint)
-  await assert.rejects(sign(async tx => {
-    const returned = transport(tx)
-    returned.instructions[1] = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000000 })
-    returned.partialSign(f.payer)
-    return transport(returned)
-  }), /wallet changed/)
-})
+for (const [label, change] of [['re-price', ix => { ix[1] = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000_000 }) }],
+  ['raise the limit of', ix => { ix[0] = ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }) }],
+  ['drop the budget of', ix => { ix.splice(0, 2) }]]) {
+  test(`wallet cannot ${label} the reviewed priority fee`, async () => {
+    const f = fixture(), tx = await priced(f)
+    const sign = prepareLaunchSigning(tx, f.payer.publicKey, f.creator, f.mint)
+    await assert.rejects(sign(async unsigned => {
+      const returned = transport(unsigned)
+      change(returned.instructions)
+      returned.partialSign(f.payer)
+      return transport(returned)
+    }), /wallet changed/)
+    assert.equal(f.cosigns(), 0)
+  })
+}
 
 import { PublicKey, TransactionInstruction } from '@solana/web3.js'
 import { LIGHTHOUSE_PROGRAM } from '../src/launch-wallet-assertions.mjs'
