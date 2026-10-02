@@ -73,9 +73,11 @@ test('real PostgreSQL: graduated 24h volume, quality signals and creation-time b
     const byRepo = Object.fromEntries(markets.map(m => [m.repoId, m]))
     assert.deepEqual(Object.fromEntries(markets.map(m => [m.repoId, m.volume24hLamports])),
       { 7001: String(3n * SOL), 7002: String(SOL + 4n * SOL + SOL / 2n), 7003: '0', 7004: '0', 7005: '0' })
+    // newRepo is the label: only the new repository that has not earned promotion (7003) carries it; 7002 graduated and
+    // 7004 reached 12% of its target, so theirs is gone.
     assert.deepEqual(Object.fromEntries(markets.map(m => [m.repoId, [m.newRepo, m.promoted, m.officialLaunch, m.wasVerified]])), {
-      7001: [false, true, false, false], 7002: [true, true, false, false], 7003: [true, false, false, false],
-      7004: [true, true, true, true], 7005: [false, true, false, true] })
+      7001: [false, true, false, false], 7002: [false, true, false, false], 7003: [true, false, false, false],
+      7004: [false, true, true, true], 7005: [false, true, false, true] })
     assert.ok(byRepo[7001].githubCreatedAt instanceof Date)
     assert.equal(byRepo[7005].githubCreatedAt, null)
     assert.deepEqual(orderMarkets(markets, 'Trending').map(m => m.repoId), ['7002', '7001', '7005', '7004', '7003'],

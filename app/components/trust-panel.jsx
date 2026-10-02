@@ -41,9 +41,10 @@ function MaintainerRow({ market }) {
       lines={[<>Maintainer? <Link href={`/claim/${market.repoId}`}>Verify here →</Link></>]} tip={TIPS.maintainer}/>
 }
 
-// facts: repoFactsView (repo-quality.mjs). Age and stars, then the repo score; new repositories in the warning tone.
+// facts: repoFactsView (repo-quality.mjs). Age and stars, then the repo score, for every market; the warning tone only
+// while a new repository's market has not earned promotion.
 function RepoRow({ facts }) {
-  return <Row id="trust-repo" icon={facts.isNew ? Sprout : CalendarClock} tone={facts.tone} title={facts.title}
+  return <Row id="trust-repo" icon={facts.labeled ? Sprout : CalendarClock} tone={facts.tone} title={facts.title}
     lines={[facts.counts, <span key="score" title={facts.scoreDetail}>{facts.scoreLabel}</span>]} tip={REPO_FACTS_TIP}/>
 }
 

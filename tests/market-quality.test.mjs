@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { NEW_REPO_DAYS, NEW_REPO_MIN_STARS, NEW_REPO_NOTE, PROMOTION_MIN_PERCENT, REPO_SCORE_MAX, featuredMarkets, featuredRacers,
-  featuredTicker, hasEarnedPromotion, isNewRepo, repoAgeLabel, repoFactsView, repoScore } from '../app/lib/repo-quality.mjs'
+  featuredTicker, hasEarnedPromotion, isNewRepo, repoAgeLabel, repoFactsView, repoScore, showsNewRepoLabel } from '../app/lib/repo-quality.mjs'
 import { OFFICIAL_LAUNCH_LIMIT, isOfficialLaunch, officialLaunches } from '../app/lib/official-launch.mjs'
 import { orderMarkets } from '../app/lib/market-order.mjs'
 import { LAUNCH_ALERT_DEFAULTS, createLaunchAlerts, launchAlertEarned } from '../src/launch-alerts.mjs'
@@ -44,6 +44,15 @@ test('promotion: established repos always; new repos at 10% of their graduation 
   assert.equal(GRADUATED_MILESTONE, 100)
 })
 
+test('the New repo label shows only until the market earns promotion', () => {
+  const fresh = { stars: 3, githubCreatedAt: created(2) }
+  assert.equal(showsNewRepoLabel({ ...fresh, bondingPercent: 9.99 }, NOW), true)
+  assert.equal(showsNewRepoLabel({ ...fresh, bondingPercent: null }, NOW), true)
+  assert.equal(showsNewRepoLabel({ ...fresh, bondingPercent: 12 }, NOW), false, 'e.g. webmcp-anything at ~12%')
+  assert.equal(showsNewRepoLabel({ stars: 2, githubCreatedAt: created(300), graduated: true }, NOW), false, 'e.g. $REPOING: graduated, 2 stars')
+  assert.equal(showsNewRepoLabel({ stars: 50, githubCreatedAt: created(90), bondingPercent: 0 }, NOW), false, 'established')
+})
+
 test('repo score: four capped parts that add up to 0-100', () => {
   assert.deepEqual(REPO_SCORE_MAX, { stars: 40, forks: 15, age: 20, activity: 25 })
   assert.deepEqual(repoScore({ stars: 0, forks: 0 }, null, NOW), { score: 0, parts: { stars: 0, forks: 0, age: 0, activity: 0 } })
@@ -60,7 +69,12 @@ test('repository facts read plainly: age, stars, forks and the score with its pa
     [0.4, 1, 45.9, 61, 729, 800].map(repoAgeLabel))
   assert.equal(repoAgeLabel(null), null)
   const fresh = repoFactsView({ stars: 3, forks: 1, githubCreatedAt: created(12) }, null, NOW)
-  assert.deepEqual([fresh.isNew, fresh.tone, fresh.title, fresh.counts, fresh.age], [true, 'warning', 'New repo · 12 days old', '3 stars · 1 fork', '12 days'])
+  assert.deepEqual([fresh.isNew, fresh.labeled, fresh.tone, fresh.title, fresh.counts, fresh.age], [true, true, 'warning', 'New repo · 12 days old', '3 stars · 1 fork', '12 days'])
+  // Once the market earns promotion the facts stay, without the label or the amber tone.
+  const earned = repoFactsView({ stars: 3, forks: 1, githubCreatedAt: created(12) }, null, NOW, { promoted: true })
+  assert.deepEqual([earned.isNew, earned.labeled, earned.tone, earned.title, earned.counts, earned.scoreLabel],
+    [true, false, 'neutral', 'Repo 12 days old', '3 stars · 1 fork', fresh.scoreLabel])
+  assert.equal(repoFactsView({ stars: 2, forks: 0, githubCreatedAt: created(300) }, null, NOW, { promoted: true }).title, 'Repo 9 months old')
   assert.match(fresh.scoreLabel, /^Repo score \d+\/100$/)
   assert.match(fresh.scoreDetail, /^Stars \d+\/40 · forks \d+\/15 · age \d+\/20 · activity \d+\/25$/)
   const known = repoFactsView({ stars: 1234, forks: 56, githubCreatedAt: created(1200) }, { devs7d: 2, commits7d: 30 }, NOW)

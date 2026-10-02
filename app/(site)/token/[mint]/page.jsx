@@ -83,7 +83,8 @@ export default async function Token({ params, searchParams }) {
   const tips = tipsEnabled()
   const rewards = market.allocationVersion === 1 || [1, 2].includes(market.discoveryVersion)
   // "Launch facts" repository row: age, stars and repo score (GitHub's live numbers when the display cache has them).
-  const repoFacts = repoFactsView({ stars: repo.stars, forks: repo.forks, githubCreatedAt: repo.githubCreatedAt ?? market.githubCreatedAt }, pulse, Date.now())
+  const repoFacts = repoFactsView({ stars: repo.stars, forks: repo.forks, githubCreatedAt: repo.githubCreatedAt ?? market.githubCreatedAt }, pulse, Date.now(),
+    { promoted: market.promoted })
   const tabs = [
     { id: 'repository', anchor: 'repository', label: 'Repository', content: <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense> },
     { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
