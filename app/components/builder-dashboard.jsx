@@ -29,7 +29,8 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   const [needsLogin,setNeedsLogin] = useState(!signedIn)
   // 'batch' or one repository id: where the paste-an-address form is open.
   const [pasteFor,setPasteFor] = useState(null)
-  const actionLock = useRef(false)
+  const actionLock = useRef(false), reloadTimer = useRef(null)
+  useEffect(() => () => clearTimeout(reloadTimer.current), [])
   const load = useCallback(async () => {
     setLoading(true); setError('')
     try {
@@ -100,7 +101,12 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   }
   async function refresh() { setResults({}); setStage(''); await load() }
   async function pasteSaved(result) { setPasteFor(null); setError(''); setStage(pasteSavedMessage(result)); await load() }
-  async function destinationChanged(reason) { if (reason === 'cancelled') setStage('Pasted address cancelled.'); await load() }
+  // Holds set together (a batch paste) end together: every row's countdown asks for one reload, coalesced here.
+  function destinationChanged(reason) {
+    if (reason === 'cancelled') { setStage('Pasted address cancelled.'); void load(); return }
+    if (reloadTimer.current) return
+    reloadTimer.current = setTimeout(() => { reloadTimer.current = null; void load() }, 2000)
+  }
 
   return <div className="builder-dashboard">
     <ClaimChecklist current={step}/>
