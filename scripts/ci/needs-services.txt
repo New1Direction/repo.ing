@@ -18,6 +18,7 @@ graduation-race-db
 graduation-readiness
 hf-launch-chain
 hf-launch-db
+hf-model-ui-db
 launch-chain
 launch-coordinator
 launch-curve
