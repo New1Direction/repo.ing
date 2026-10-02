@@ -6,6 +6,7 @@ import { discoveryRewardsEnabled } from '../../lib/server.mjs'
 import { trendingLaunches } from '../../lib/trending-launches.mjs'
 import { AppHeader, Footer } from '../../components/ui'
 import { RepoSearch } from '../../components/repo-search'
+import { hfMarketsEnabled } from '../../../src/hf-launch.mjs'
 import '../../maintainer-opt-out.css'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Launch a repository · repo.ing', description: 'Give open source a market. Paste a public GitHub repository, review the token and costs, then launch it with your wallet.' }
@@ -14,10 +15,11 @@ export default async function LaunchStart({ searchParams }) {
   const initialUrl = typeof params.repo === 'string' && params.repo.length <= 256 ? params.repo : ''
   // A README or bookmark link already names a repository: keep that page focused on it.
   const trending = initialUrl ? null : await trendingLaunches()
-  const discoveryEnabled = discoveryRewardsEnabled()
+  const discoveryEnabled = discoveryRewardsEnabled(), models = hfMarketsEnabled()
   return <><AppHeader active="launch"/><main className="section-wrap launch-start">
-    <div className="page-intro"><div className="eyebrow">LAUNCH</div><h1>Give open source a market.</h1><p>Paste a public GitHub repository. Review the token and costs, then launch with your wallet.</p></div>
-    <RepoSearch key={initialUrl} initialUrl={initialUrl}/>
+    <div className="page-intro"><div className="eyebrow">LAUNCH</div><h1>Give open source a market.</h1><p>{models ? 'Paste a public GitHub repository or Hugging Face model. Review the token and costs, then launch with your wallet.'
+      : 'Paste a public GitHub repository. Review the token and costs, then launch with your wallet.'}</p></div>
+    <RepoSearch key={initialUrl} initialUrl={initialUrl} models={models}/>
     {trending?.repos.length ? <TrendingLaunchStrip result={trending} discoveryEnabled={discoveryEnabled} now={Date.now()}/>
       : <Link href="/find-repos" className="launch-find-link">Find a repo gaining attention <ArrowRight size={15} aria-hidden="true"/></Link>}
     <LaunchBenefits discoveryEnabled={discoveryEnabled}/>

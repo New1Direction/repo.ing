@@ -11,10 +11,14 @@ import { activeLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
 import { maintainerDecision } from '../../../lib/maintainer-opt-outs.mjs'
 import { LaunchBlocked } from '../../../components/maintainer-declined'
 import { verificationBonusLamports } from '../../../../src/verification-bonus.mjs'
+import { isHfMarketId } from '../../../../src/hf-launch.mjs'
+import { ModelLaunch } from '../../../components/hf/model-launch'
 export const dynamic = 'force-dynamic'
 export const metadata = { referrer: 'no-referrer', robots: { index: false, follow: false } }
 export default async function Launch({ params, searchParams }) {
   const { repo: repoId } = await params
+  // Hugging Face model market ids (src/market-identity.mjs) have their own launch page.
+  if (isHfMarketId(repoId)) return <ModelLaunch repoId={repoId} searchParams={searchParams}/>
   const { market } = await marketByRepo(repoId)
   if (market) redirect(`/token/${market.mint}`)
   const repo = await repositoryById(repoId)

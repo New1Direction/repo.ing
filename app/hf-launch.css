@@ -1,0 +1,12 @@
+/* Hugging Face model launches: app/components/hf/model-launch.jsx and the model review in launch-form.jsx. The
+   community-launch disclaimer is set apart in neutral tones (it is information, not a warning) and never shown with the
+   Hugging Face logo. */
+.model-launch-hero .repo-avatar.large{color:var(--muted)}
+.model-launch-badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.model-launch-badges .badge{white-space:normal;overflow-wrap:anywhere}
+.community-launch-note{display:flex;align-items:flex-start;gap:12px;max-width:720px;margin:20px 0 0;padding:12px 14px;border:1px solid var(--border);border-left:3px solid var(--border-strong);border-radius:8px;color:var(--muted);font-size:14px;line-height:1.55}
+.community-launch-note svg{flex:none;margin-top:2px}
+.community-launch-note strong{color:var(--text);font-weight:600}
+.launch-review .launch-review-disclaimer{margin:14px 0;padding:10px 12px;border-left:3px solid var(--border-strong);border-radius:6px;background:color-mix(in srgb,var(--text) 4%,transparent)}
+.launch-review .launch-review-disclaimer strong{color:var(--text);font-weight:600}
+@media(max-width:700px){.community-launch-note{margin-top:16px;font-size:13px}}
