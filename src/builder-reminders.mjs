@@ -31,6 +31,22 @@ export function reminderPlan(repos, baseline = {}) {
 }
 const sol = n => `${BigInt(n) / 1000000000n}.${String(BigInt(n) % 1000000000n).padStart(9, '0').replace(/0+$/, '') || '0'}`
 
+// "Payout address change requested" (src/payout-address.mjs): a notice, sent at once, that a pasted address will become
+// the payout address after its hold, with the claim page where any current admin can cancel it. It authorizes nothing.
+export function payoutAddressNotice({ origin, repos, wallet, activeAt, requestedByLogin, previousWallet, unsubscribe }) {
+  const one = repos.length === 1
+  const subject = one ? `Payout address change requested for ${repos[0].fullName}` : `Payout address change requested for ${repos.length} repositories`
+  const text = ['repo.ing payout address change requested', '',
+    `GitHub user ${requestedByLogin} pasted a new Solana payout address for ${one ? repos[0].fullName : 'these repositories'}:`,
+    ...(one ? [] : repos.map(repo => `- ${repo.fullName}`)), '', wallet, '',
+    `It can receive builder payouts from ${new Date(activeAt).toISOString()}, after a 48-hour hold.`,
+    previousWallet ? `Until then, payouts keep going to the current payout address ${previousWallet}.` : 'Until then, claims stay closed.', '',
+    'If you did not expect this, any current admin of the repository can cancel it before then:',
+    ...repos.map(repo => `${origin}/claim/${repo.repoId}`), '',
+    'This email is a notice only. It never authorizes a payout.', '', `Unsubscribe: ${unsubscribe}`].join('\n')
+  return { subject, text }
+}
+
 // Fixed provider, server configuration only. No browser-supplied delivery URL.
 export function createReminderSender(env = process.env, fetchImpl = fetch) {
   if (!remindersConfigured(env)) return null
@@ -96,6 +112,26 @@ export function createBuilderReminders({ pool, send, reconcile, secret, origin, 
     })
   }
   const remove = id => withLock(id, db => db.query('delete from builder_reminders where github_user_id=$1', [id]))
+  // Confirmed subscribers among githubUserIds only; never a new or unconfirmed address. One idempotency key per request
+  // and recipient, so a retried call cannot send twice.
+  const notifyPayoutAddressChange = async ({ githubUserIds, key, repoIds, wallet, activeAt, requestedByLogin, previousWallet = null }) => {
+    if (!send) return { status: 'DISABLED', accepted: 0, failed: 0 }
+    const ids = [...new Set(githubUserIds.map(String))].filter(id => /^[1-9]\d*$/.test(id))
+    if (!ids.length || !/^[\w-]{1,80}$/.test(key)) return { status: 'NONE', accepted: 0, failed: 0 }
+    const { rows: recipients } = await pool.query(`select github_user_id, email, revision from builder_reminders
+      where github_user_id = any($1::bigint[]) and verified_at is not null`, [ids])
+    if (!recipients.length) return { status: 'NONE', accepted: 0, failed: 0 }
+    const { rows: repos } = await pool.query(`select github_repo_id::text as "repoId", full_name as "fullName" from repositories
+      where github_repo_id = any($1::bigint[]) order by full_name`, [repoIds.map(String)])
+    if (!repos.length) return { status: 'NONE', accepted: 0, failed: 0 }
+    let accepted = 0, failed = 0
+    for (const row of recipients) {
+      const notice = payoutAddressNotice({ origin, repos, wallet, activeAt, requestedByLogin, previousWallet, unsubscribe: link(row, 'unsubscribe') })
+      try { await send({ to: row.email, subject: notice.subject, text: notice.text, key: `payout-address-${key}-${row.github_user_id}` }); accepted++ }
+      catch { failed++ }
+    }
+    return { status: 'CHECKED', accepted, failed }
+  }
   const runOnce = async () => {
     if (!send) return { status: 'DISABLED', accepted: 0 }
     await pool.query('delete from builder_reminders where verified_at is null and created_at < $1', [new Date(now() - 2 * DAY)])
@@ -148,5 +184,5 @@ export function createBuilderReminders({ pool, send, reconcile, secret, origin, 
     })
     return { status: 'CHECKED', accepted, failed }
   }
-  return { status, subscribe, act, remove, runOnce }
+  return { status, subscribe, act, remove, runOnce, notifyPayoutAddressChange }
 }
