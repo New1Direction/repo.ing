@@ -1,6 +1,7 @@
 import { createClaim } from '../../../../src/claim.mjs'
 import { claimProgressStream } from '../../../../src/claim-progress.mjs'
-import { HfAuthorityError, hfMarketsEnabled } from '../../../../src/hf-verification.mjs'
+import { HfAuthorityError } from '../../../../src/hf-verification.mjs'
+import { hfMarketsEnabled } from '../../../../src/hf-launch.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
 import { chain, configAddress, creatorSigner, database } from '../../../lib/server.mjs'
 import { assertSameOrigin } from '../../../lib/auth.mjs'

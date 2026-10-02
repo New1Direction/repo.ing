@@ -5,7 +5,8 @@ import { hfRouteError, hfVerifier } from '../../../lib/hf-session.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { forgetPromotionExclusions } from '../../../lib/promotion-exclusions.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
-import { hfMarketsEnabled, registerModel, registeredMarketId } from '../../../../src/hf-verification.mjs'
+import { registeredMarketId } from '../../../../src/hf-verification.mjs'
+import { hfMarketsEnabled, registerModel } from '../../../../src/hf-launch.mjs'
 import { activeDecision, createMaintainerDecisions, DecisionError, hasLiveMarket } from '../../../../src/maintainer-opt-outs.mjs'
 
 export const runtime = 'nodejs'
@@ -62,7 +63,7 @@ export async function POST(request) {
     // Checked before the model is registered, so nobody registers models they do not own; checked again below.
     const authority = await verifier.modelAuthority({ model: found, accessToken: session.accessToken, expectedSubject: session.subject })
     if (!authority.authorized) throw new DecisionError(authority.message, 403)
-    const marketId = body.action === 'withdraw' ? await registeredMarketId(pool, found.hfId) : await registerModel(pool, found)
+    const marketId = body.action === 'withdraw' ? await registeredMarketId(pool, found.hfId) : String(await registerModel(pool, found, found.owner))
     if (!marketId) throw new DecisionError('There is nothing to withdraw for this model.', 409)
     const decisions = createMaintainerDecisions({ pool, source: 'huggingface', verifyAdmin: ({ githubRepoId, live }) => verifier.verifyMarketAuthority({
       marketId: githubRepoId, accessToken: session.accessToken, expectedSubject: session.subject, record: live }) })

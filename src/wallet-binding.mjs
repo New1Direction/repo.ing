@@ -4,7 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from 'drizzle-orm'
 import { repoBeneficiaries, repoVerifications, walletBindingChallenges } from './db/schema.mjs'
-import { assertAuthoritySource } from './market-identity.mjs'
+import { assertAuthoritySource, assertHfMarketId } from './market-identity.mjs'
 
 const CHALLENGE_LIFETIME_MS = 5 * 60 * 1000
 const VERIFICATION_MAX_AGE_MS = 5 * 60 * 1000
@@ -56,6 +56,20 @@ function modelAuthority(value) {
     throw new Error('Fresh Hugging Face owner verification required')
   }
   return { subject: value.subject, ownerSubject: value.ownerSubject, hfId: value.hfId }
+}
+
+// A model market's payout binding and the Hugging Face authority it was made under, the counterpart of reading
+// repo_beneficiaries.github_user_id for a repository: { wallet, boundAt, method, subject, ownerSubject }, or null. subject:
+// only a binding made by that Hugging Face user. Anything that pays a model's owner from it (claims; later the builder
+// allocation) also needs ownerSubject to be the model's CURRENT owner _id, read fresh: a binding made for a previous owner
+// is never paid (assertBindingAuthority in src/claim.mjs).
+export async function modelBeneficiary(executor, marketId, { subject = null } = {}) {
+  const id = assertHfMarketId(marketId)
+  if (subject !== null && !SUBJECT.test(String(subject))) throw new TypeError('Invalid Hugging Face user ID')
+  const { rows: [row] } = await executor.query(`select wallet, bound_at as "boundAt", method, authority_subject as subject,
+      authority_owner_subject as "ownerSubject" from repo_beneficiaries
+    where github_repo_id = $1 and authority_source = 'huggingface' and ($2::text is null or authority_subject = $2)`, [id.toString(), subject])
+  return row ?? null
 }
 
 const bindingMessage = ({ githubRepoId, wallet, nonce, expiresAt }) => [

@@ -1,6 +1,6 @@
 import { createWalletBinding } from '../../../../src/wallet-binding.mjs'
 import { createPayoutAddresses, PayoutAddressError } from '../../../../src/payout-address.mjs'
-import { hfMarketsEnabled } from '../../../../src/hf-verification.mjs'
+import { hfMarketsEnabled } from '../../../../src/hf-launch.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
 import { chain, database } from '../../../lib/server.mjs'
 import { backerLabels } from '../../../lib/backers.mjs'

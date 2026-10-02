@@ -5,7 +5,7 @@ import { MaintainerOptOut } from '../../components/maintainer-opt-out'
 import { ModelOptOut } from '../../components/hf/model-opt-out'
 import { githubSessionCookie, readGithubSession } from '../../lib/auth.mjs'
 import { hfSessionCookie, publicHfUser, readHfSession } from '../../lib/hf-auth.mjs'
-import { hfMarketsEnabled } from '../../../src/hf-verification.mjs'
+import { hfMarketsEnabled } from '../../../src/hf-launch.mjs'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Maintainers: opt out · repo.ing', alternates: { canonical: '/opt-out' },

@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import { hfMarketsEnabled } from '../../../../src/hf-verification.mjs'
+import { hfMarketsEnabled } from '../../../../src/hf-launch.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
 import { database } from '../../../lib/server.mjs'
 import { clientKey } from '../../../lib/holder-notes.mjs'

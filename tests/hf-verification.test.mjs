@@ -4,8 +4,9 @@ import { createHash } from 'node:crypto'
 import { Keypair } from '@solana/web3.js'
 import { createHfClient } from '../src/hf-api.mjs'
 import { HF_MARKET_REF_MIN, MarketIdentityError } from '../src/market-identity.mjs'
-import { HF_OAUTH_SCOPES, HfAuthorityError, authorityMessage, createHfOAuth, createHfVerifier, decideModelAuthority, hfMarketsEnabled,
+import { HF_OAUTH_SCOPES, HfAuthorityError, authorityMessage, createHfOAuth, createHfVerifier, decideModelAuthority,
   hfOAuthConfig, parseUserInfo, pkcePair } from '../src/hf-verification.mjs'
+import { hfMarketsEnabled } from '../src/hf-launch.mjs'
 import { createGitHubAppVerifier } from '../src/github-verification.mjs'
 import { createWalletBinding, modelBindingMessage } from '../src/wallet-binding.mjs'
 import { assertBindingAuthority } from '../src/claim.mjs'

@@ -56,7 +56,9 @@ const resolveAndStore = async input => {
   await persistModelRepository(drizzle(pool), repo)
   return repo
 }
-const optOut = id => pool.query(`insert into maintainer_opt_outs (github_repo_id, kind, github_user_id) values ($1, 'opt_out', 7)`, [String(id)])
+// A model owner's opt-out as drizzle/0050_model_opt_outs.sql stores it: made by a Hugging Face user, with no GitHub user.
+const optOut = id => pool.query(`insert into maintainer_opt_outs (github_repo_id, kind, github_user_id, authority_source, actor_subject)
+  values ($1, 'opt_out', null, 'huggingface', '6426d3f3a7723d62b53c259b')`, [String(id)])
 
 let serial = 0
 const fakeLauncher = (overrides = {}) => ({
