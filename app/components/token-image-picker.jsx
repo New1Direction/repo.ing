@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, Image as ImageIcon, LoaderCircle, Upload } from 'lucide-react'
 
-export function TokenImagePicker({ repoId, value, onChange, onBusyChange, disabled }) {
+// subject: what the suggestions come from, in the copy ('repository'; a Hugging Face model market passes 'model').
+export function TokenImagePicker({ repoId, value, onChange, onBusyChange, disabled, subject = 'repository' }) {
   const [images, setImages] = useState([])
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -20,11 +21,11 @@ export function TokenImagePicker({ repoId, value, onChange, onBusyChange, disabl
       .then(result => {
         setImages(result.images)
         if (!selected.current && result.images.length && current === version.current) onChange(result.images[0])
-        if (!result.images.length) setNotice('No suitable repository images found. Upload one below.')
+        if (!result.images.length) setNotice(`No suitable ${subject} images found. Upload one below.`)
       }).catch(cause => { if (cause.name !== 'AbortError') setNotice('Suggestions are unavailable. You can still upload an image.') })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [repoId, onChange])
+  }, [repoId, onChange, subject])
   useEffect(() => { onBusyChange(uploading || (loading && !value)) }, [uploading, loading, value, onBusyChange])
   useEffect(() => () => uploadController.current?.abort(), [])
 
@@ -53,7 +54,7 @@ export function TokenImagePicker({ repoId, value, onChange, onBusyChange, disabl
   return <section className="token-image-picker" aria-label="Token image" aria-busy={uploading || loading}>
     <div className="image-picker-current">
       <div className="image-picker-preview">{value ? <img src={value.image} alt="Selected token artwork"/> : <ImageIcon size={32}/>}</div>
-      <div className="image-picker-copy"><strong>{uploading ? 'Preparing your image…' : value?.label || (loading ? 'Finding repository images…' : 'Choose a token image')}</strong>
+      <div className="image-picker-copy"><strong>{uploading ? 'Preparing your image…' : value?.label || (loading ? `Finding ${subject} images…` : 'Choose a token image')}</strong>
         <span>Fits the full image. Saved with your token at launch.</span>
         <button type="button" className="button outline" disabled={changing} aria-expanded={expanded} aria-controls="token-image-options" onClick={() => setExpanded(!expanded)}>{expanded ? 'Done' : 'Change image'}</button>
       </div>

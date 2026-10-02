@@ -11,6 +11,7 @@ import { formatUnits, parseUnits } from '../lib/format.mjs'
 import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../lib/launch-defaults.mjs'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
 import { verificationBonusTerms } from '../lib/verification-bonus-copy.mjs'
+import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
 const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: true,
@@ -24,7 +25,10 @@ async function launchRequest(body) {
 
 // launchFee: launchFeeTerms() of the config this launch will use, or null when its fee is a flat 1.75%.
 // verificationBonus: lamports this launch would be stamped with (VERIFICATION_BONUS_LAMPORTS), or null.
+// A Hugging Face model market (repo.source 'huggingface', app/components/hf/model-launch.jsx) is prepared by its market id
+// and registry _id (repo.hfId), and its review carries the community-launch disclaimer.
 export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee = null, verificationBonus = null }) {
+  const model = repo.source === 'huggingface'
   const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
@@ -128,9 +132,11 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       const address = wallet || await connect()
       setStage('Checking launch costs')
       const initialBuyLamports = noBuy ? '0' : quote.initialBuyLamports
-      const result = await launchRequest({ action: 'prepare', repoId: repo.repoId, trendRevision, agentDraft: draft?.token,
-        repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
-        tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports })
+      const result = await launchRequest(model ? { action: 'prepare', repoId: repo.repoId, hfId: repo.hfId, agentDraft: draft?.token,
+        tokenName: name, tokenSymbol: symbol, tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports }
+        : { action: 'prepare', repoId: repo.repoId, trendRevision, agentDraft: draft?.token,
+          repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
+          tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports })
       setReview({ ...result, wallet: address, quote }); setStage('')
     } catch (cause) { setError(cause.message || 'Could not prepare launch'); setFailure({canRetry:cause.canRetry??true,supportCode:cause.supportCode??'LAUNCH-CONNECTION'}); setStage('Failed') }
     finally { working.current = false; setBusy(false) }
@@ -166,10 +172,10 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     {draft && <p className="agent-review-note" role="status">Prepared with an agent. Review these details, choose an image, and approve the final costs in your wallet. Your signing wallet receives discovery attribution.</p>}
     <div className="launch-columns">
       <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review}>
-        <h2>Launch token</h2><p className="launch-subtitle">Create a market for this repository. Every trade pays the builders.</p>
+        <h2>Launch token</h2><p className="launch-subtitle">{model ? "Create a community market for this model. Every trade pays the model's owner." : 'Create a market for this repository. Every trade pays the builders.'}</p>
         <div className="launch-token-summary" role="group" aria-label="Token preview">
           <div className="preview-avatar">{tokenImage ? <img src={tokenImage.image} alt="Token artwork preview"/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
-          <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Token name'}</span>{imageBusy && !tokenImage ? <small>Finding a repository image…</small> : isDefault && <small>Suggested from this repository</small>}</div>
+          <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Token name'}</span>{imageBusy && !tokenImage ? <small>{model ? "Finding the owner's avatar…" : 'Finding a repository image…'}</small> : isDefault && <small>{model ? 'Suggested from this model' : 'Suggested from this repository'}</small>}</div>
         </div>
         <details className="launch-customize" open={customizing} onToggle={e => setCustomizing(e.currentTarget.open)}>
           <summary><span>Customize name, ticker &amp; image</span><ChevronDown size={18} aria-hidden="true"/></summary>
@@ -181,7 +187,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
             <input id="token-symbol" className="field-input" maxLength={10} value={symbol} onChange={e => setSymbol(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,''))} required/>
             <div className="field-hint"><span>A short symbol for your token.</span><span>{symbol.length}/10</span></div>
             <div className="field-label">Token image</div>
-            <TokenImagePicker repoId={repo.repoId} value={tokenImage} onChange={setTokenImage} onBusyChange={setImageBusy} disabled={busy || !!review}/>
+            <TokenImagePicker repoId={repo.repoId} value={tokenImage} onChange={setTokenImage} onBusyChange={setImageBusy} disabled={busy || !!review} subject={model ? 'model' : 'repository'}/>
           </div>
         </details>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
@@ -205,7 +211,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         {allocationEnabled && <div className="inner-card discovery-launch"><h3>1% for the builders</h3><strong>10 million tokens reserved</strong><p>The verified repository admin can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>}
         {discoveryEnabled && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. Claim in SOL from the market page by signing a message; repo.ing sends the reward and pays the network fee.</p></div>}
         {verificationBonus && <div className="inner-card discovery-launch"><p style={{ margin: 0 }}><strong>Verification bonus:</strong> {verificationBonusTerms(verificationBonus)}</p></div>}
-        <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line"><span>Repository creator share<small>Accrues for the verified repository owner</small></span><strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>{launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}<div className="fee-note"><Info size={18}/><span>{launchFee ? `${launchFeeSentence(launchFee)} ${LAUNCH_FEE_SPLIT} ${launcherBuySentence(launchFee) ?? ''} ` : ''}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
+        <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line">{model ? <span>Model owner share<small>Accrues for the model&apos;s verified owner</small></span> : <span>Repository creator share<small>Accrues for the verified repository owner</small></span>}<strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>{launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}<div className="fee-note"><Info size={18}/><span>{launchFee ? `${launchFeeSentence(launchFee)} ${LAUNCH_FEE_SPLIT} ${launcherBuySentence(launchFee) ?? ''} ` : ''}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
       </div>
     </div>
     {review ? <section className="launch-review inner-card" aria-labelledby="launch-review-heading" aria-live="polite">
@@ -217,6 +223,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         <div><dt>Network fee{BigInt(review.costs.priorityFee ?? '0') > 0n && <small>Includes {sol(review.costs.priorityFee)} priority fee</small>}</dt><dd>{sol(review.costs.networkFee)}</dd></div>
         <div className="launch-review-total"><dt>Estimated total</dt><dd>{sol(review.costs.total)}</dd></div></dl>
       <p>The launch and any initial buy happen together. The priority fee helps it land when Solana is busy. Check the final amount in your wallet.</p>
+      {model && <p className="launch-review-disclaimer" role="note"><strong>{HF_DISCLAIMER}</strong></p>}
       {expired && <p role="status">This review expired. Edit and review again for a fresh transaction.</p>}
       <div className="launch-review-actions"><button type="button" className="button primary" onClick={approve} disabled={busy || expired || wallet !== review.wallet}>{busy ? stage : 'Approve in wallet'}</button>
         <button type="button" className="button outline" disabled={busy} onClick={() => edit(expired)}>{expired ? 'Refresh review' : 'Edit launch'}</button></div>
