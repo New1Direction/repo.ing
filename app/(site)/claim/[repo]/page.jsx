@@ -21,6 +21,7 @@ import { Connection } from '@solana/web3.js'
 import { assertBuilderReinvestEnabled } from '../../../../src/builder-reinvest.mjs'
 import { configAddress } from '../../../lib/server.mjs'
 import { currentPayoutDestinations } from '../../../lib/payout-destination.mjs'
+import { ModelClaimPage } from '../../../components/hf/claim-page'
 export const dynamic = 'force-dynamic'
 
 export default async function ClaimPage({ params, searchParams }) {
@@ -28,6 +29,8 @@ export default async function ClaimPage({ params, searchParams }) {
   const query = await searchParams
   const { market } = await marketByRepo(repoId)
   if (!market) notFound()
+  // A Hugging Face model market: its own claim flow (Hugging Face sign-in), never GitHub's.
+  if (market.source === 'huggingface') return <ModelClaimPage market={market} query={query}/>
   const repo = displayRepository(market)
   return <><AppHeader/><main className="section-wrap claim-page">
     <Link href={`/token/${market.mint}`} className="back-link"><ArrowLeft size={18}/>Back to repository</Link>
