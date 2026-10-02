@@ -7,6 +7,7 @@ import * as liquidity from '../app/api/platform-liquidity/route.js'
 import * as revenue from '../app/api/platform-revenue/route.js'
 import * as fees from '../app/api/platform-fees/[repo]/route.js'
 import * as trends from '../app/api/operations/trends/route.js'
+import * as bonuses from '../app/api/operations/verification-bonuses/route.js'
 test('builder access never grants platform treasury access without the immutable-ID allowlist',()=>{
   const session={scope:'builders',githubUserId:'123',expiresAt:Date.now()+60000}
   assert.throws(()=>requirePlatformOperator(null,{}),e=>e.status===401)
@@ -28,7 +29,7 @@ test('all treasury HTTP routes reject unauthenticated and non-operator builder s
   process.env.APP_ORIGIN='https://repo.ing'
   const builder=encryptGithubSession({scope:'builders',repoId:null,permission:'identity',githubUserId:'456',
     accessToken:'ghu_test_only',sessionId:randomBytes(24).toString('hex'),expiresAt:Date.now()+60000})
-  for(const route of [liquidity,revenue,fees,trends])for(const method of ['GET','POST'])for(const [cookie,status] of [[undefined,401],[builder,403]]){
+  for(const route of [liquidity,revenue,fees,trends,bonuses])for(const method of ['GET','POST'])for(const [cookie,status] of [[undefined,401],[builder,403]]){
     const request={url:'https://repo.ing/api/platform-liquidity',headers:new Headers({origin:'https://repo.ing'}),
       cookies:{get:()=>cookie?{value:cookie}:undefined},json:async()=>({action:'intent.execute',id:1})}
     const response=await route[method](request,{params:Promise.resolve({repo:'996001'})})

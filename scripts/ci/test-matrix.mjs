@@ -30,6 +30,7 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_opt_outs_test'),
   // Required (not opt-in) by replica-state, which is listed in needs-services.txt.
   launchtest('repoing_launch_sessions_test'),
+  launchtest('repoing_verification_bonus_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -53,6 +54,7 @@ export const DEFAULT_ENV = {
   SERVER_SPEED_TEST_DATABASE_URL: launchtest('repoing_server_speed_test'),
   MAINTAINER_OPT_OUTS_TEST_DATABASE_URL: launchtest('repoing_opt_outs_test'),
   LAUNCH_SESSIONS_TEST_DATABASE_URL: launchtest('repoing_launch_sessions_test'),
+  VERIFICATION_BONUS_TEST_DATABASE_URL: launchtest('repoing_verification_bonus_test'),
   // Production default; graduation-guards asserts the ambient environment keeps P3 execution off.
   REPO_LIQUIDITY_EXECUTION_ENABLED: 'false',
 }
