@@ -1,0 +1,67 @@
+/* Payout destination (active binding and a pasted address waiting out its hold) and the paste form, on the claim page
+   and the Builders dashboard. Theme variables carry light and dark; amber marks only the waiting state. */
+.destination,.form{--hold:#e7b24f}
+:global([data-theme=light]) .destination,:global([data-theme=light]) .form{--hold:#9a6300}
+
+.destination{display:grid;gap:10px;margin:12px 0 18px;min-width:0}
+.destination.compact{margin:0;gap:8px}
+.active{display:grid;gap:7px;min-width:0;font-size:13px;color:var(--muted)}
+.active :global(.copy-address){width:min(100%,560px)}
+.compact .active :global(.copy-address){max-width:100%;font-size:11px}
+.label{font-size:13px;color:var(--muted)}
+.method{display:inline-flex;align-items:center;gap:6px;width:fit-content;max-width:100%;padding:3px 9px 3px 7px;border-radius:999px;font-size:12px;line-height:1.35;font-weight:600}
+.method svg{flex:none}
+.signed{background:color-mix(in srgb,var(--green) 14%,transparent);color:var(--green-dark)}
+.pastedActive{background:var(--surface2);color:var(--text)}
+.compact .method{font-size:11px;padding:2px 8px 2px 6px}
+
+.pending{display:grid;gap:8px;min-width:0;padding:12px 14px;border:1px solid color-mix(in srgb,var(--hold) 50%,var(--border));border-radius:10px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--hold) 10%,transparent),transparent 85%);font-size:13px}
+.compact .pending{padding:10px 12px}
+.pendingTitle{display:flex;align-items:flex-start;gap:7px;margin:0;color:var(--text);line-height:1.45}
+.pendingTitle svg{flex:none;margin-top:2px;color:var(--hold)}
+.pendingTitle strong{font-weight:650}
+.nowrap{white-space:nowrap}
+.pending :global(.copy-address){width:min(100%,560px);max-width:100%}
+.compact .pending :global(.copy-address){font-size:11px}
+.pendingNote{margin:0;color:var(--muted);line-height:1.5}
+.countdown{display:inline-block;margin-left:4px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,var(--hold) 18%,transparent);
+  color:var(--text);font-variant-numeric:tabular-nums;font-size:12px;font-weight:600;white-space:nowrap}
+.requested{color:var(--dim);font-size:12px}
+.inlineButton{padding:0;border:0;background:none;color:var(--text);font-size:inherit;text-decoration:underline;text-underline-offset:3px}
+.inlineButton:hover:not(:disabled){color:var(--hold)}
+.inlineButton:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:2px}
+.confirmCancel{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;padding-top:10px;border-top:1px solid var(--border)}
+.confirmCancel p{flex-basis:100%;margin:0;color:var(--text);line-height:1.5}
+.confirmCancel :global(.button){min-height:34px;padding:0 14px;font-size:13px}
+
+/* Paste form */
+.form{display:grid;gap:12px;width:min(100%,600px);margin-top:14px;padding:16px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.formTitle{margin:0;font-size:15px;letter-spacing:-.01em}
+.formIntro{margin:-6px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+.field{display:grid;gap:6px;min-width:0}
+.field label{color:var(--text);font-size:13px;font-weight:600}
+.field small{color:var(--dim);font-size:12px;line-height:1.45}
+.field input{min-width:0;height:44px;padding:0 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg);color:var(--text);
+  font:14px/1.3 ui-monospace,SFMono-Regular,Consolas,monospace}
+.field input:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+.field input[aria-invalid=true]{border-color:var(--red)}
+.field input:disabled{opacity:.6}
+.confirmInput{width:9.5ch;text-align:center;letter-spacing:.18em;font-size:16px!important}
+.warning{display:flex;gap:9px;margin:0;padding:10px 12px;border-radius:8px;background:color-mix(in srgb,var(--hold) 12%,transparent);
+  color:var(--text);font-size:13px;line-height:1.5}
+.warning svg{flex:none;margin-top:2px;color:var(--hold)}
+.holdNote{display:flex;gap:8px;margin:0;color:var(--muted);font-size:12.5px;line-height:1.5}
+.holdNote svg{flex:none;margin-top:2px}
+.actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px 16px}
+.actions :global(.button){min-height:40px}
+.toggle{margin-top:12px}
+
+/* Builders dashboard: the form spans the whole repository row, or sits under the setup card for the batch */
+.rowPanel{grid-column:1/-1;min-width:0}
+.rowPanel .form,.batchPanel .form{width:100%;max-width:640px;margin-top:0}
+.batchPanel{margin:-6px 0 20px}
+.rowToggle{display:inline-block;margin-top:8px;font-size:12px}
+
+@media (prefers-reduced-motion:no-preference){.field input{transition:border-color .15s}}
+@media (max-width:700px){.form{padding:14px}.confirmCancel :global(.button){width:100%}}

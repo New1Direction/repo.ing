@@ -115,6 +115,8 @@
 .claim-wallet-warning p,.claim-change-confirm p{margin:0 0 9px}
 .claim-wallet-warning code,.claim-step-hint code{overflow-wrap:anywhere;color:var(--text);font-size:12px}
 .claim-text-button{border:0;background:none;padding:0;color:var(--green);text-decoration:underline;font-size:13px}
+.claim-paste-toggle{margin:14px 0 0}.claim-sign-instead{display:block;margin-top:12px}
+.claim-wallet-details small{color:var(--dim);font-size:12px}
 .claim-change-confirm{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
 .claim-change-confirm p{width:100%}
 .claim-receipt{display:flex;gap:16px;padding:20px;margin:0 0 28px;border:1px solid #41674f;border-radius:10px;background:#14251a;color:var(--green)}

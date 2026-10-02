@@ -14,17 +14,22 @@ import { LoadingSignal } from './loading-signal'
 import { BuilderReinvest } from './builder-reinvest'
 import { ClaimChecklist, WalletExplainer } from './claim-checklist'
 import { claimPageStep } from '../lib/claim-checklist.mjs'
+import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout-address'
+import { bindingLabel, formatUtcDateTime } from '../../src/payout-address-policy.mjs'
 
-export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
+export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
+  const [boundMethod, setBoundMethod] = useState(beneficiaryMethod)
+  const [pasteOpen, setPasteOpen] = useState(false)
   const [stage, setStage] = useState('')
   const [confirmChange, setConfirmChange] = useState(false)
   const [expanded, setExpanded] = useState(null)
   const [expired, setExpired] = useState(false)
   const [awaitingReview, setAwaitingReview] = useState(false)
   const [error, setError] = useState(errorCode === 'payout-unavailable' ? 'Payouts are paused while the network-cost wallet is replenished. Your fees remain in the pool.' :
+    errorCode === 'payout-address-pending' ? 'Your pasted payout address is still in its 48-hour hold. Claims open when it becomes active.' :
     errorCode === 'review-changed' ? 'The amount or payout details changed. Review the updated fees below, then claim again.' :
     errorCode === 'claim-failed' ? 'The payout could not be confirmed. Check the receipt and available balance before trying again.' :
     errorCode === 'verification-failed' ? 'GitHub access could not be verified. Verify again to continue.' :
@@ -36,14 +41,18 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
   const githubReady = Boolean(verifiedUser && !expired && errorCode !== 'verification-failed')
   const walletMatches = Boolean(wallet && bound && wallet === bound)
   const walletDiffers = Boolean(wallet && bound && wallet !== bound)
+  // A pasted address past its hold has no wallet to connect; a signature-bound one still asks for its wallet, as before.
+  const pastedActive = Boolean(bound && boundMethod === 'pasted')
+  const destinationReady = walletMatches || pastedActive
   const appReady = appAccess === 'installed'
   const appMissing = appAccess === 'missing'
-  const currentStep = claimPageStep({ githubReady, appReady, walletMatches })
+  const currentStep = claimPageStep({ githubReady, appReady, walletMatches, pastedActive })
   const canClaim = Boolean(currentStep === 3 && claimable && claimable !== '0' && feeStatus === 'MATCH' && payoutReady && review && !awaitingReview)
   const claimAmount = claimable === null ? '—' : `${formatUnits(claimable)} SOL`
   const open = step => currentStep === step || expanded === step
+  const short = address => `${address.slice(0, 6)}…${address.slice(-4)}`
 
-  useEffect(() => { setBound(beneficiaryWallet); setAwaitingReview(false); setStage('') }, [beneficiaryWallet, review])
+  useEffect(() => { setBound(beneficiaryWallet); setBoundMethod(beneficiaryMethod); setAwaitingReview(false); setStage('') }, [beneficiaryWallet, beneficiaryMethod, review])
   useEffect(() => {
     setExpired(false)
     if (!verifiedUser) return
@@ -82,10 +91,19 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
         body: JSON.stringify({ action: 'bind', githubRepoId: repoId, wallet: address, nonce: challenge.nonce, signature: signatureBase64 }) })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error)
-      setAwaitingReview(true); setBound(result.wallet); setConfirmChange(false); setExpanded(null)
+      setAwaitingReview(true); setBound(result.wallet); setBoundMethod('signature'); setConfirmChange(false); setPasteOpen(false); setExpanded(null)
       setStage('Payout wallet set. Refreshing your claim review…'); router.refresh()
     } catch (cause) { setError(cause.message || 'Could not set payout wallet'); setStage('') }
     finally { setBusy(false) }
+  }
+  function pasteSaved(result) {
+    setPasteOpen(false); setError(''); setStage(pasteSavedMessage(result)); router.refresh()
+  }
+  // Cancelled, or its hold just ended: the server activates a due address before rendering.
+  function destinationChanged(reason) {
+    setPasteOpen(false)
+    if (reason === 'cancelled') setStage('Pasted address cancelled.')
+    router.refresh()
   }
   function startNavigation(action, event) {
     if (pendingAction) { event.preventDefault(); return }
@@ -122,26 +140,33 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
       </div>
     </div>
     <div className={`claim-step ${currentStep === 2 ? 'current' : ''}`}>
-      <div className={`step-number ${walletMatches ? 'done' : ''}`}>{walletMatches ? <Check size={18}/> : 2}</div>
-      <div className="step-content">{stepHeading(2, 'Set payout wallet', walletMatches, walletMatches ? `Wallet set · ${bound.slice(0, 6)}…${bound.slice(-4)}` : 'Connect a wallet after verifying GitHub.')}
-        <div id="claim-step-2" hidden={!open(2)}><p>Choose the Solana wallet that receives your SOL. You sign a message to prove it’s yours; it does not spend SOL or grant access to your funds.</p>
-          {!bound && <WalletExplainer/>}
-          {bound && <div className="claim-wallet-details"><span>Payout address</span><CopyAddress address={bound} label="payout wallet"/></div>}
-          {!wallet ? <button className="button primary" type="button" onClick={() => connectWallet()}>Connect wallet</button> :
+      <div className={`step-number ${destinationReady ? 'done' : ''}`}>{destinationReady ? <Check size={18}/> : 2}</div>
+      <div className="step-content">{stepHeading(2, 'Set payout wallet', destinationReady, walletMatches ? `Wallet set · ${short(bound)}` : pastedActive ? `Pasted address · ${short(bound)}` :
+        pendingAddress ? `Pasted address waiting · active from ${formatUtcDateTime(pendingAddress.activeAt)}` : 'Connect a wallet after verifying GitHub.')}
+        <div id="claim-step-2" hidden={!open(2)}><p>Choose the Solana wallet that receives your SOL. You sign a message to prove it’s yours; it does not spend SOL or grant access to your funds. No wallet extension? Paste your wallet’s address instead; a pasted address starts receiving payouts after a 48-hour hold.</p>
+          {!bound && !pendingAddress && <WalletExplainer/>}
+          <PayoutDestination repoId={repoId} active={bound ? { wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt } : null} pending={pendingAddress}
+            canManage={githubReady} onChanged={destinationChanged}/>
+          {pastedActive && !wallet ? <button className="claim-text-button claim-sign-instead" type="button" onClick={() => connectWallet()}>Connect a wallet to sign instead</button> :
+            !wallet ? <button className="button primary" type="button" onClick={() => connectWallet()}>Connect wallet</button> :
             !bound ? <button className="button primary" type="button" disabled={!githubReady || busy} onClick={bind}>{busy ? 'Setting wallet…' : 'Use this wallet for payouts'}</button> :
               <button className={`button ${walletDiffers && !confirmChange ? 'primary' : 'outline'}`} type="button" onClick={() => connectWallet(true)}>Switch connected wallet</button>}
           {!bound && wallet && <div className="claim-wallet-details"><span>Connected wallet</span><CopyAddress address={wallet} label="connected wallet"/></div>}
           {walletDiffers && <div className="claim-wallet-warning"><p>The connected wallet differs from the payout address. Switch wallets or explicitly replace the payout address.</p>
             {!confirmChange ? <button className="claim-text-button" type="button" disabled={!githubReady} onClick={() => setConfirmChange(true)}>Change payout address instead</button> : <><p>Replace it with <strong>{wallet.slice(0, 6)}…{wallet.slice(-4)}</strong>? This requires a fresh admin check and wallet signature.</p><button className="button primary" type="button" disabled={!githubReady || busy} onClick={bind}>Confirm payout wallet change</button><button className="claim-text-button" type="button" onClick={() => setConfirmChange(false)}>Cancel</button></>}
           </div>}
+          {githubReady && (pasteOpen ? <PasteAddressForm repoIds={[repoId]} replacing={Boolean(bound)} onSaved={pasteSaved} onClose={() => setPasteOpen(false)}/> :
+            <p className="claim-paste-toggle"><button className="claim-text-button" type="button" onClick={() => { setError(''); setPasteOpen(true) }}>
+              {bound || pendingAddress ? 'Paste a different payout address' : 'No Solana wallet extension? Paste a payout address instead'}</button></p>)}
         </div>
       </div>
     </div>
     <div className={`claim-step last ${currentStep === 3 ? 'current' : ''}`}>
       <div className="step-number">3</div><div className="step-content">{stepHeading(3, 'Review and claim', false, 'Review your fees and payout address before claiming.')}
         {currentStep === 3 && <div className="claim-review"><strong className="claim-review-amount">{claimAmount}</strong>{usdEstimate && <span className="muted">≈ {usdEstimate}</span>}
-          <div className="claim-wallet-details"><span>Paid to</span><CopyAddress address={bound} label="payout wallet"/></div>
+          <div className="claim-wallet-details"><span>Paid to</span><CopyAddress address={bound} label="payout wallet"/><small>{bindingLabel({ wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt })}</small></div>
           <p>SOL is sent only to this payout wallet. GitHub admin access and pool fees are checked again before payout.{graduated && ' Graduated pool payouts include all SOL fees accrued before confirmation.'}</p>
+          {pendingAddress && <p className="claim-next">A pasted address replaces this one from {formatUtcDateTime(pendingAddress.activeAt)} unless an admin cancels it. Claims before then still pay the address above.</p>}
           {canClaim ? <form action="/api/claim" method="post" onSubmit={event => startNavigation('claim', event)}><input type="hidden" name="repoId" value={repoId}/><input type="hidden" name="review" value={review}/>
             {reinvestEnabled && <p>Claim pays your wallet. Reinvest claims first, then lets you choose an amount and approve a separate liquidity transaction.</p>}
             <div className="reinvest-actions"><button className="button primary" type="submit" disabled={Boolean(pendingAction) || busy}>{pendingAction === 'claim' ? 'Processing claim…' : reinvestEnabled ? 'Claim' : `Claim ${claimAmount}`}</button>
