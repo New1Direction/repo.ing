@@ -1,4 +1,5 @@
 import { MarketLink } from './market-link'
+import { NewRepoLabel } from './market-signals'
 import { PulseBadge, RepoAvatar } from './ui'
 import { ABOUT_TO_GRADUATE_MIN_PERCENT, GRADUATION_RACE_LIMIT, GRADUATION_RACE_MIN_PERCENT, graduationPercentLabel, raceLabel, remainingLabel } from '../lib/graduation-race.mjs'
 import '../graduation-race.css'
@@ -27,7 +28,7 @@ function RaceRow({ market, rank }) {
     <span className="race-rank" aria-hidden="true">{rank}</span>
     <RepoAvatar repo={market}/>
     <span className="race-name"><strong>{market.fullName}</strong>
-      <small>${market.symbol}{market.aboutToGraduate && <span className="race-near">About to graduate</span>}<PulseBadge badge={market.pulse?.badge}/></small></span>
+      <small>${market.symbol}{market.aboutToGraduate && <span className="race-near">About to graduate</span>}{market.newRepo && <NewRepoLabel compact/>}<PulseBadge badge={market.pulse?.badge}/></small></span>
     <RaceTrack percent={market.progressPercent}/>
     <span className="race-summary"><strong>{graduationPercentLabel(market.progressPercent)}</strong> · {remainingLabel(market)}</span>
   </MarketLink></li>

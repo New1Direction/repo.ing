@@ -33,7 +33,7 @@ import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
 import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
 import { TrustPanel } from '../../../components/trust-panel'
 import { OfficialBadge } from '../../../components/market-signals'
-import { featuredMarkets, featuredRacers, repoFactsView } from '../../../lib/repo-quality.mjs'
+import { featuredMarkets, labeledRacers, repoFactsView } from '../../../lib/repo-quality.mjs'
 import { MarketsToWatch, MarketsToWatchFallback, MarketsToWatchLists } from '../../../components/markets-to-watch'
 import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-race.mjs'
 import { marketLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
@@ -152,12 +152,13 @@ function TokenDetails({ market }) {
 }
 
 // $REPOING page: the graduation race's top three and the three newest launches, from the same memoized reads as the
-// home page (no extra query per view). The official market itself is never listed, nor a do-not-promote or declined one,
-// nor a new repository that has not earned promotion (repo-quality.mjs).
+// home page (no extra query per view). The official market itself is never listed, nor a do-not-promote or declined one;
+// the newest launches also leave out a new repository that has not earned promotion (repo-quality.mjs), while the race
+// keeps every racer and labels new repositories.
 async function MarketsToWatchContent() {
   const [{ markets: race, unavailable: raceUnavailable }, { markets, unavailable }, excluded] = await Promise.all([graduationRace(), listMarkets(), promotionExcluded()])
   const excludeMints = [OFFICIAL_TOKEN.mint]
-  return <MarketsToWatchLists race={topOfRace(featuredRacers(race, markets), { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable ?? unavailable}
+  return <MarketsToWatchLists race={topOfRace(labeledRacers(race, markets), { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
     newest={excluded ? newestLaunches(featuredMarkets(markets), { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
 }
 

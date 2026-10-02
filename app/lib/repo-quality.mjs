@@ -45,10 +45,12 @@ export const showsNewRepoLabel = (market, now = Date.now()) => isNewRepo(market,
 // Home featured lists keep only market rows that earned promotion (listMarkets sets `promoted` per row).
 export const featuredMarkets = markets => markets.filter(market => market.promoted === true)
 
-// Graduation race rows carry no repository facts: keep the racers whose market row earned promotion.
-export function featuredRacers(race, markets) {
-  const featured = new Set(featuredMarkets(markets).map(market => market.mint))
-  return race.filter(racer => featured.has(racer.mint))
+// The graduation race ranks markets by verified on-chain reserves, which is money already committed, so it is not gated on
+// repository age: every racer stays in its place, and a new repository's racer carries its market row's "New repo" label.
+// (The race itself still leaves out do-not-promote and maintainer-declined repositories.)
+export function labeledRacers(race, markets) {
+  const rows = new Map(markets.map(market => [market.mint, market]))
+  return race.map(racer => ({ ...racer, newRepo: rows.get(racer.mint)?.newRepo === true }))
 }
 
 // Live-from-GitHub ticker items (selectTicker in dev-pulse.mjs) link to their token page: keep those of markets that earned
