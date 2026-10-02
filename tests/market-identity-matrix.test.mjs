@@ -74,7 +74,7 @@ test('Dev Pulse records a Hugging Face row as an error and never reads GitHub fo
   assert.deepEqual(failed, [[String(HF), 'Not a GitHub repository ID']])
 })
 
-test('web GitHub reads refuse a Hugging Face id and keep non-market ids unknown, before the database or GitHub', async () => {
+test('web GitHub reads refuse a Hugging Face id (the logo route answers 404) and keep other ids unknown, before the database or GitHub', async () => {
   const saved = { url: process.env.DATABASE_URL, pool: globalThis.__gitfunPool, fetch: globalThis.fetch }
   const { calls, fetchImpl, pool } = recorder()
   process.env.DATABASE_URL = 'postgres://matrix.invalid/db'; globalThis.__gitfunPool = pool; globalThis.fetch = fetchImpl
@@ -83,8 +83,7 @@ test('web GitHub reads refuse a Hugging Face id and keep non-market ids unknown,
     for (const id of forms(HF)) await assert.rejects(repositoryById(id), MarketIdentityError)
     for (const id of ['0', '4503599627370496', '7000000000000001', '99999999999999999999', 'abc']) assert.equal(await repositoryById(id), null, id)
     await assert.rejects(repositoryImageSuggestions(String(HF), { owner: 'o', name: 'n', avatar_url: null }), MarketIdentityError)
-    await assert.rejects(logo(String(HF)), MarketIdentityError)
-    for (const id of ['0', '4503599627370496', '99999999999999999999']) assert.equal((await logo(id)).status, 404, id)
+    for (const id of [String(HF), String(HF_MARKET_REF_MAX), '0', '4503599627370496', '99999999999999999999']) assert.equal((await logo(id)).status, 404, id)
     assert.deepEqual(calls, [])
   } finally {
     if (saved.url === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = saved.url

@@ -2,17 +2,18 @@ import { database } from '../../../lib/server.mjs'
 import { githubApiHeaders } from '../../../../src/github-app-auth.mjs'
 import { repositoryAssetDirectory, repositoryLogoFromAssets, repositoryLogoFromReadme, safeGithubImageUrl } from '../../../../src/repo-logo.mjs'
 import { githubImageVariant, githubImageVariantResponse, imageWidthParam } from '../../../../src/token-image.mjs'
-import { assertGithubRepoId, isMarketId } from '../../../../src/market-identity.mjs'
+import { assertGithubRepoId, isGithubRepoId } from '../../../../src/market-identity.mjs'
 
 export const runtime = 'nodejs'
 const logoCache = new Map()
 const imageResponse = target => new Response(null, { status: 302, headers: { Location: target,
   'Cache-Control': 'public, max-age=3600, s-maxage=3600' } })
 
-// ?w= serves a resized WebP for in-app avatars; without it the redirect stays canonical for token metadata.
+// ?w= serves a resized WebP for in-app avatars; without it the redirect stays canonical for token metadata. Only GitHub
+// repositories have a logo here: any other id (a Hugging Face market's included) is not found, and GitHub is never asked.
 export async function GET(request, { params }) {
   const { repo } = await params
-  if (!/^\d+$/.test(repo) || !isMarketId(repo)) return new Response(null, { status: 404 })
+  if (!/^\d+$/.test(repo) || !isGithubRepoId(repo)) return new Response(null, { status: 404 })
   const width = request ? imageWidthParam(new URL(request.url).searchParams.get('w')) : null
   if (width === undefined) return new Response(null, { status: 400 })
   const target = await logoTarget(repo)
