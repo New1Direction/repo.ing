@@ -32,6 +32,10 @@ The digest covers up to 100 current saved beneficiary bindings associated with t
 - A durable frozen payload and provider idempotency key survive worker restart. Retry the identical message for at most one hour, safely inside Resend’s documented 24-hour key retention. An exhausted/ambiguous message is suppressed for the day and its baseline retained; operator logs show accepted/failed counts. Provider acceptance is not inbox delivery proof.
 - Ten-minute confirmation-request limits bind both account and destination, including after cancellation. Destination rate keys are HMACs; they do not contain raw email addresses.
 
+## Payout address change notice
+
+When a payout address is pasted (see [CLAIM.md](CLAIM.md#2026-10-02-pasted-payout-addresses-with-a-48-hour-hold)), the web service sends "Payout address change requested" at once to confirmed subscribers among: the GitHub user who pasted it, the GitHub user whose current binding it would replace, and the author of a waiting address it replaced. It names the repository, the pasted address, when it becomes active, the current payout address, and the claim page where any admin can cancel it. One Resend idempotency key per request and recipient. Delivery is best effort and never blocks or undoes the request; with delivery unconfigured nothing is looked up or sent. It is not retried by the worker.
+
 ## Stored data and removal
 
 The database stores the opted-in email, GitHub account ID, confirmation revision and dates, per-repository notified earnings baselines, and a pending delivery payload when needed. It stores no GitHub access token or wallet secret for reminders. Standard database backup retention applies.

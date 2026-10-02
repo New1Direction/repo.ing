@@ -61,20 +61,32 @@ For a graduated market, the same Buy/Sell panel trades in the repository’s ver
 
 ## Claim builder fees
 
-Builder fees accrue before a repository owner connects. To claim, you need current **admin** permission on that public repository and control of the payout wallet.
+Builder fees accrue before a repository owner connects. To claim, you need current **admin** permission on that public repository and a Solana wallet you control to receive the payout. You don't need a wallet browser extension: you can paste the wallet's address instead (it starts receiving payouts after a 48-hour hold).
 
 1. Open the market's claim page or the [Builders dashboard](https://repo.ing/builders).
 2. Connect GitHub. If required, install or grant the repo.ing GitHub App access to the selected repository. For an organization, its administrator may need to approve that access.
 3. Verify the account with current admin permission. Write or maintain permission alone is insufficient.
-4. Connect your payout wallet and sign the wallet-binding message. The message binds your GitHub identity, repository, wallet, and expiry; it does not spend SOL.
+4. Set the payout address: either connect your payout wallet and sign the wallet-binding message (it takes effect at once; the message binds your GitHub identity, repository, wallet, and expiry and does not spend SOL), or [paste the address](#paste-a-payout-address) (it takes effect after 48 hours).
 5. Review the available amount and saved recipient, then select Claim.
 6. Wait for the claim receipt. The protected platform signer submits the builder payout after the authorization checks; the claim click does not require a separate user-wallet transfer signature.
 
 GitHub's authorization screen describes the App acting on your behalf because repo.ing needs to identify you and check your access. The configured repository permission is **Metadata: read**. The claim flow does not request code-write or repository-administration permission. The application rechecks current authority before binding or paying; a past login is insufficient. [Verification details](GITHUB_VERIFICATION.md).
 
+### Paste a payout address
+
+If you don't have a Solana wallet extension, select **No Solana wallet extension? Paste a payout address instead** on the claim page (or **Paste an address** on a Builders dashboard row). Copy your SOL receiving address from any Solana wallet app, paste it, and type its **last 4 characters** as your wallet app shows them; that catches a wrong or altered clipboard. Use a Solana wallet you control. Exchange deposit addresses may not credit program payouts.
+
+- **A 48-hour hold.** A pasted address can receive payouts 48 hours after you save it. The page shows **Pasted address, active from &lt;date&gt; (cancel)** with a countdown. If the repository already has a payout address, that address keeps receiving claims until then; if not, claims open when the pasted address becomes active.
+- **Anyone with admin access can cancel it** during the hold: every current admin of the repository sees the waiting address and a **cancel** link (a fresh GitHub admin check, as for every change). Pasting a different address replaces the waiting one and restarts the hold. Signing with a wallet replaces a waiting address at once.
+- **Checked before it is saved.** repo.ing accepts only a Solana wallet address: it refuses program and system addresses, program-derived addresses, and any address that holds a token account, mint, program or other program data on Solana. If Solana can't be reached for that check, nothing is saved; try again.
+- **Email notice.** If you turned on earnings reminders, you receive **Payout address change requested** right away when an address is pasted for a repository you set up, and so does the person who pasted it.
+- After the hold, the claim page shows **Pasted address, active since &lt;date&gt;**; a wallet-signed address shows **Verified by wallet signature**. Claim reviews always show the exact address that will be paid. To change a pasted address later, sign with a wallet (immediate) or paste another (another 48-hour hold).
+
+A market launched from the payout wallet counts as **Official** only when that wallet was set by signing (see [Understand the numbers](#understand-the-numbers)).
+
 ### Claim from several repositories
 
-The Builders dashboard lists matching tokenized repositories where your account has current admin access. For repositories without a payout wallet, **Set wallet** can bind the same wallet with one message covering up to 100 repositories. Existing saved wallets must be changed individually.
+The Builders dashboard lists matching tokenized repositories where your account has current admin access. For repositories without a payout wallet, **Set wallet** can bind the same wallet with one message covering up to 100 repositories, or **Paste one address** sets the same pasted address for all of them, each with its own 48-hour hold. Existing saved wallets must be changed individually.
 
 Review the ready total and each saved recipient, then select **Claim all ready fees**. The site submits a small queue of separate claims and shows a receipt or issue for each repository. Keep the page open while it submits the queue. A partial failure does not undo completed payouts; check the displayed results before starting again.
 
@@ -120,7 +132,7 @@ Already-earned rewards remain claimable after the earning window closes. Discove
 - **Graduation progress:** real quote reserve relative to that market's configured threshold. Sells can lower it.
 - **Paid to builders:** settled builder payouts. Discovery rewards are separate. Stats splits paid and earned amounts between outside builders and the repo.ing team's own repositories.
 - **New repo:** the repository was created on GitHub less than 30 days ago or has fewer than 10 stars. Its market trades like any other, but repo.ing doesn't feature it (home page lists and ticker, launch posts) until its curve reaches 10% of its graduation target, and until then it sorts last in Explore's Trending view. The graduation race still ranks it by its real progress, with the label. The label goes away once the market reaches that 10% or graduates; the token page's Launch facts keep showing the repository's age and stars.
-- **Official:** the repository's verified maintainer launched the market from the payout wallet they set on repo.ing. Like Verified, it is not an endorsement of the token.
+- **Official:** the repository's verified maintainer launched the market from the payout wallet they set on repo.ing by signing with it (a pasted payout address does not count). Like Verified, it is not an endorsement of the token.
 - **Repo score (0–100):** stars (up to 40), forks (up to 15), age (up to 20) and this week's developers and commits from Dev Pulse (up to 25), in the token page's Launch facts.
 
 Finalized indexing and short display caches can cause a delay after a trade. An unavailable value is not proof of a zero balance. DAMM prices require canonical migration proof and finalized swap evidence; prices with missing evidence remain withheld. See the verified pool link for graduated trading.
@@ -131,6 +143,7 @@ Finalized indexing and short display caches can cause a delay after a trade. An 
 | --- | --- |
 | GitHub connected, repository unavailable | Confirm the correct account, current admin permission, and App access to that repository. Organization policy may require approval. |
 | Beneficiary bound, fee state unavailable or needs review | The wallet is saved, but reconciliation or chain evidence is not ready. Wait or refresh; binding alone does not authorize a payout. |
+| Pasted address waiting | It becomes the payout address when the 48-hour hold ends (see the countdown). Until then any previous payout address keeps receiving claims; with none, claims open then. Didn't paste it? Any current admin can cancel it on the claim page. |
 | Claims paused because the signer needs SOL | The operator must fund the protected signer for transaction costs. Accrued pool fees remain in place. |
 | Transaction pending | Use the receipt or Check status control. An unresolved transaction may still settle. |
 | Quote or balance unavailable | Check the wallet/network connection and retry. The site requires a current quote for the trade review. |
@@ -143,6 +156,8 @@ The market page also provides sharing, owner invitations, and a copyable builder
 When email delivery is configured, signed-in builders with a saved payout wallet can enable **Earnings reminders** from Builders. Enter an email and confirm it using the email link within 24 hours. Requests never subscribe someone automatically.
 
 The digest is sent at most once per day, when at least 0.05 SOL is available and at least 0.05 SOL of additional earnings has been verified since the last reminder. Unchanged balances do not generate repeated reminders. The email links to the ordinary review-and-claim flow; it does not authorize a payout. Turn reminders off in Builders or through the email’s unsubscribe link.
+
+Subscribers also get a **Payout address change requested** notice as soon as someone pastes a new payout address for a repository whose payout address they set (or that they pasted themselves), with the address, when it becomes active, and the claim page where any admin can cancel it.
 
 Delivery is disabled until a verified sender is configured. [Operator setup and data retention](BUILDER_REMINDERS.md).
 
