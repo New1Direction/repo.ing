@@ -7,6 +7,7 @@ import { portfolioSummary, withHoldingValues } from '../../../lib/portfolio.mjs'
 import { walletTrades, withHoldingPnl } from '../../../lib/holding-pnl.mjs'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { readWalletVerificationBonuses } from '../../../../src/verification-bonus.mjs'
+import { shownMarkets } from '../../../lib/hf-markets.mjs'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -18,7 +19,7 @@ export async function GET(request) {
   try {
     const db = database()
     if (!db) throw Error()
-    const [{ markets, unavailable }, rewards, sol, tokens, tokens2022, usdPerSol, bonuses] = await Promise.all([
+    const [{ markets: listed, unavailable }, rewards, sol, tokens, tokens2022, usdPerSol, bonuses] = await Promise.all([
       listMarkets(),
       db.query(`select m.github_repo_id::text as "repoId", m.discovery_version as version,
         coalesce((select sum(f.partner_amount) from discovery_fee_events f where f.github_repo_id=m.github_repo_id and f.discovery_eligible),0)::text as "partnerEarned",
@@ -33,6 +34,8 @@ export async function GET(request) {
       readWalletVerificationBonuses(db, wallet).catch(() => new Map()),
     ])
     if (unavailable) throw Error()
+    // Hugging Face model markets only with HF_MARKETS_ENABLED, as everywhere else.
+    const markets = shownMarkets(listed)
     // Holdings are all-or-nothing: a missing program's accounts would silently understate balances.
     const balances = tokens && tokens2022 ? walletTokenBalances(tokens.value, wallet, tokens2022.value) : null
     const rows = walletMarkets(markets, balances, wallet, rewards.rows)

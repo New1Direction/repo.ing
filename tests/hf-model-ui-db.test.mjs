@@ -104,7 +104,9 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       assert.deepEqual(shownMarkets(markets, {}).map(market => market.repoId), [GITHUB_ID])
       assert.deepEqual(shownMarkets(markets, { HF_MARKETS_ENABLED: 'true' }).map(market => market.repoId).sort(), [GITHUB_ID, MODEL_ID].sort())
       // Likes come only from a live card for the registry's own _id: refreshed after a first view, then attached to the row.
+      // (The token page above already asked the offline Hub once; that failure is remembered for a minute, so start clean.)
       const cards = globalThis.__repoingHfModelCards
+      globalThis.__repoingHfModelFacts.clear()
       globalThis.__repoingHfModelCards = createModelCards({ read: async path => ({ hfId: GPT2_HF_ID, path, likes: 4194, downloads30d: 15740994 }) })
       try {
         let refresh = null
@@ -118,6 +120,13 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
         assert.match(table, /<small>Community launch · Text generation · License: mit<\/small>/)
         assert.ok(table.replaceAll('&#x27;', "'").includes(HF_DISCLAIMER))
       } finally { globalThis.__repoingHfModelCards = cards; globalThis.__repoingHfModelFacts.clear() }
+      // /waiting is about repositories: a settled payout on the model market is not among "Recently claimed".
+      await pool.query(`insert into repo_claims(github_repo_id,beneficiary_wallet,amount_base_units,asset,claim_signature,status,settled_at)
+        values ($1,'Owner',$2,$3,'claim-model','settled',now())`, [MODEL_ID, String(SOL / 20n), SOL_MINT])
+      const { waitingBoard } = await import('../app/lib/waiting-board.mjs')
+      const board = await waitingBoard()
+      assert.equal(board.unavailable, undefined)
+      assert.deepEqual(board.claimed.map(payout => payout.mint), [githubMint])
     })
 
     await t.test('/stats: per-source volume, fees, payouts, trades and markets come from the same snapshot and add up to the totals', async () => {
@@ -125,9 +134,10 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       const stats = await readProtocolAnalytics(pool, { now: new Date(now + 1000) })
       assert.deepEqual(Object.keys(stats.totals).sort(), ['earned', 'graduated', 'markets', 'paid', 'trades', 'volume'])
       assert.deepEqual(Object.keys(stats.builders).sort(), ['earned', 'paid'])
+      // The model's 0.05 SOL payout was settled by the lists check above.
       assert.deepEqual(stats.sources, {
         github: { volume: String(3n * SOL), earned: String(SOL / 2n), paid: String(SOL / 10n), trades: 2, markets: 1 },
-        huggingface: { volume: String(2n * SOL), earned: String(SOL / 4n), paid: '0', trades: 1, markets: 1 } })
+        huggingface: { volume: String(2n * SOL), earned: String(SOL / 4n), paid: String(SOL / 20n), trades: 1, markets: 1 } })
       for (const metric of ['volume', 'earned', 'paid']) {
         assert.equal(BigInt(stats.sources.github[metric]) + BigInt(stats.sources.huggingface[metric]), BigInt(stats.totals[metric]), metric)
       }

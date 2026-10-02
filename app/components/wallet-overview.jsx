@@ -13,6 +13,7 @@ import { XMark } from './x-mark'
 import { IconArt } from './icon-art'
 import { useReferralPayouts } from './refer-link'
 import { VerificationBonusWalletValue } from './verification-bonus-status'
+import { isModelMarket } from '../lib/hf-model-display.mjs'
 
 export function WalletOverview() {
   const { wallet, connect, restoring, provider } = useWallet()
@@ -115,9 +116,11 @@ function HoldingPnl({ pnl, symbol }) {
   </dl>
 }
 
-// Shares only the percentage and the market: no wallet, SOL amounts or position size leave this page.
+// Shares only the percentage and the market: no wallet, SOL amounts or position size leave this page. A Hugging Face model
+// market's post carries the disclaimer (share-links.mjs).
 function ShareReturn({ market }) {
-  const href = xReturnShareUrl({ mint: market.mint, symbol: market.symbol, fullName: market.fullName, percent: market.pnl?.unrealizedPercent })
+  const href = xReturnShareUrl({ mint: market.mint, symbol: market.symbol, fullName: market.fullName, percent: market.pnl?.unrealizedPercent,
+    source: isModelMarket(market) ? 'huggingface' : 'github' })
   if (!href) return null
   return <a className="button outline" href={href} target="_blank" rel="noopener noreferrer" aria-label={`Share your return on $${market.symbol} on X`}><XMark size={14}/>Share</a>
 }

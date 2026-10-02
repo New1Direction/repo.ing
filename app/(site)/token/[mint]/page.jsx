@@ -47,7 +47,7 @@ import { DeclinedBanner } from '../../../components/maintainer-declined'
 import { PhoneMarketSummary } from '../../../components/phone-market-summary'
 import { BuildingLive, readPageStream } from '../../../components/building-live'
 import { ModelTokenPage, modelTokenMetadata } from '../../../components/hf/model-token-page'
-import { isModelMarket } from '../../../lib/hf-model-display.mjs'
+import { githubMarkets, isModelMarket } from '../../../lib/hf-model-display.mjs'
 import { shownMarkets } from '../../../lib/hf-markets.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
@@ -165,8 +165,9 @@ function TokenDetails({ market }) {
 async function MarketsToWatchContent() {
   const [{ markets: race, unavailable: raceUnavailable }, { markets, unavailable }, excluded] = await Promise.all([graduationRace(), listMarkets(), promotionExcluded()])
   const excludeMints = [OFFICIAL_TOKEN.mint]
-  return <MarketsToWatchLists race={topOfRace(labeledRacers(shownMarkets(race), markets), { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
-    newest={excluded ? newestLaunches(featuredMarkets(shownMarkets(markets)), { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
+  // "Repo markets to watch": repositories only (its copy is about repos' builders); Hugging Face models are left out.
+  return <MarketsToWatchLists race={topOfRace(labeledRacers(githubMarkets(race), markets), { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
+    newest={excluded ? newestLaunches(featuredMarkets(githubMarkets(markets)), { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
 }
 
 // Same memoized listMarkets() rows as the home tabs: no extra query per token page view. Never recommends a do-not-promote

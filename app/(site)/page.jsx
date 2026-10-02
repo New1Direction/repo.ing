@@ -24,7 +24,7 @@ import { featuredMarkets, labeledRacers, featuredTicker } from '../lib/repo-qual
 import { officialLaunches } from '../lib/official-launch.mjs'
 import { OfficialLaunches } from '../components/official-launches'
 import { hfMarketsEnabled, shownMarkets, withModelFacts } from '../lib/hf-markets.mjs'
-import { selectModelStrip } from '../lib/hf-model-display.mjs'
+import { githubMarkets, selectModelStrip } from '../lib/hf-model-display.mjs'
 import { ModelsStrip } from '../components/hf/models-strip'
 
 export const dynamic = 'force-dynamic'
@@ -62,7 +62,8 @@ async function GraduationRaceContent() {
 // (operator list and maintainer opt-outs) cannot be read.
 async function OfficialLaunchesContent() {
   const [{ markets }, excluded] = await Promise.all([listMarkets(), promotionExcluded()])
-  return excluded ? <OfficialLaunches markets={officialLaunches(shownMarkets(markets), { excluded })}/> : null
+  // Official is a verified GitHub maintainer's launch: repositories only.
+  return excluded ? <OfficialLaunches markets={officialLaunches(githubMarkets(markets), { excluded })}/> : null
 }
 
 // Live from GitHub: the newest releases, merges, star spikes and Hacker News stories across live markets that earned

@@ -73,7 +73,7 @@ async function LauncherRow({ market }) {
   // Only a wallet-signed payout wallet says the launcher is the maintainer; a pasted one is named as what it is.
   const ownWallet = Boolean(signed) && summary.wallet === signed
   const pastedPayout = !ownWallet && Boolean(market.beneficiaryWallet) && summary.wallet === market.beneficiaryWallet
-  const label = ownWallet ? "Maintainer's payout wallet" : pastedPayout ? 'Pasted payout address' : summary.label?.kind === 'builder' ? null : summary.label?.label
+  const label = ownWallet ? (isModelMarket(market) ? "Owner's payout wallet" : "Maintainer's payout wallet") : pastedPayout ? 'Pasted payout address' : summary.label?.kind === 'builder' ? null : summary.label?.label
   const who = <span className="trust-who">
     <a href={`https://solscan.io/account/${summary.wallet}`} target="_blank" rel="noreferrer" title={summary.wallet}>
       <code>{shortWallet(summary.wallet)}</code><span className="sr-only"> (view on Solscan)</span></a>
