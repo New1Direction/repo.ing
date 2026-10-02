@@ -20,8 +20,14 @@ export async function waitForLaunchEvidence(inspect, market, attempts = 120, ret
 
 // pendingReview(market) → true while a persisted launch review (src/launch-sessions.mjs) still owns a 'prepared'
 // market; a second prepare is then refused instead of replacing the mint the first wallet is reviewing.
+// verificationBonusLamports (bigint, from VERIFICATION_BONUS_LAMPORTS) is stamped on each NEW reservation, like
+// discovery_version; confirmed markets are returned unchanged, so nothing is ever enrolled retroactively.
 export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
-  evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null }) {
+  evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null,
+  verificationBonusLamports = null }) {
+  if (verificationBonusLamports !== null && (typeof verificationBonusLamports !== 'bigint' || verificationBonusLamports <= 0n)) {
+    throw new Error('Verification bonus stamp must be positive bigint lamports')
+  }
   async function withRepoLock(id, callback) {
     const client = await pool.connect()
     try {
@@ -73,6 +79,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       blockhash: null, lastValidBlockHeight: null,
       discoveryVersion: discoveryEnabled ? DISCOVERY_VERSION : null, launchBlockTime: null,
       builderAllocationVersion: builderAllocationEnabled ? 1 : null,
+      verificationBonusLamports,
     }
     if (market) {
       ;[market] = await db.update(markets).set(values).where(eq(markets.id, market.id)).returning()

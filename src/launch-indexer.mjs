@@ -1,6 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq, inArray } from 'drizzle-orm'
 import { markets } from './db/schema.mjs'
+import { usesActivationClock } from './launch-clock.mjs'
 
 export const settledLaunch = market => market.status === 'confirmed' && market.indexedAt !== null && market.launchFinality === 'finalized'
 
@@ -27,9 +28,9 @@ export function createLaunchIndexer({ pool, verify, reverifyAfterMs = null, maxR
     if (market.launchFinality !== null && market.launchFinality !== result.finality) {
       return { state: 'mismatch', reason: 'Recorded finality contradicts chain evidence' }
     }
-    if (market.discoveryVersion && (!result.blockTime || (market.launchBlockTime &&
+    if (usesActivationClock(market) && (!result.blockTime || (market.launchBlockTime &&
         market.launchBlockTime.getTime() !== result.blockTime.getTime()))) {
-      return { state: 'mismatch', reason: 'Discovery launch timestamp is unavailable or contradicts chain evidence' }
+      return { state: 'mismatch', reason: 'Discovery or bonus launch timestamp is unavailable or contradicts chain evidence' }
     }
     return result
   }

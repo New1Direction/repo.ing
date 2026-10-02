@@ -309,6 +309,13 @@
       "when": 1790910006000,
       "tag": "0046_repo_streams",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1790910007000,
+      "tag": "0047_verification_bonus",
+      "breakpoints": true
     }
   ]
 }
