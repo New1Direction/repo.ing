@@ -1,5 +1,8 @@
-import { bigint, bigserial, boolean, check, doublePrecision, index, integer, jsonb, numeric, pgTable, primaryKey, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
+import { bigint, bigserial, boolean, char, check, doublePrecision, index, integer, jsonb, numeric, pgSequence, pgTable, primaryKey, serial, smallint, text, timestamp, unique, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
+
+// Migration 0049: tables of GitHub-only features refuse Hugging Face market ids (src/market-identity.mjs).
+const githubOnly = (table, t) => check(`${table}_github_only`, sql`${t.githubRepoId} < 4503599627370496`)
 
 export const agentRequestLimits = pgTable('agent_request_limits', {
   scope: text('scope').primaryKey(), hits: integer('hits').notNull(),
@@ -129,14 +132,14 @@ export const trendCandidates = pgTable('trend_candidates', {
   approvedDiscoveryVersion: integer('approved_discovery_version'),
   approvedWindowMs: bigint('approved_window_ms',{mode:'bigint'}),
   approvedAt: timestamp('approved_at',{withTimezone:true}),
-},t=>[check('trend_state_check',sql`${t.state} in ('detected','reviewed','approved','launched','active','rejected','duplicate')`)])
+},t=>[check('trend_state_check',sql`${t.state} in ('detected','reviewed','approved','launched','active','rejected','duplicate')`),githubOnly('trend_candidates',t)])
 export const trendObservations = pgTable('trend_observations', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(()=>trendCandidates.githubRepoId),
   observedAt: timestamp('observed_at',{withTimezone:true}).notNull(),
   evidence: text('evidence').notNull(),
   evidenceHash: varchar('evidence_hash',{length:64}).notNull(),
-},t=>[uniqueIndex('trend_observation_unique').on(t.githubRepoId,t.observedAt)])
+},t=>[uniqueIndex('trend_observation_unique').on(t.githubRepoId,t.observedAt),githubOnly('trend_observations',t)])
 export const trendSignals = pgTable('trend_signals', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(()=>trendCandidates.githubRepoId),
@@ -147,7 +150,7 @@ export const trendSignals = pgTable('trend_signals', {
   expiresAt: timestamp('expires_at',{withTimezone:true}).notNull(),
   detectedAt: timestamp('detected_at',{withTimezone:true}).defaultNow().notNull(),
   operator: text('operator'),
-},t=>[uniqueIndex('trend_signal_unique').on(t.githubRepoId,t.source,t.url)])
+},t=>[uniqueIndex('trend_signal_unique').on(t.githubRepoId,t.source,t.url),githubOnly('trend_signals',t)])
 export const trendReviews = pgTable('trend_reviews', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(()=>trendCandidates.githubRepoId),
@@ -156,7 +159,7 @@ export const trendReviews = pgTable('trend_reviews', {
   operator: text('operator').notNull(),
   evidence: text('evidence').notNull(),
   createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(),
-})
+},t=>[githubOnly('trend_reviews',t)])
 export const trendLaunches = pgTable('trend_launches', {
   mint: varchar('mint',{length:44}).primaryKey(),
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(()=>trendCandidates.githubRepoId),
@@ -165,13 +168,32 @@ export const trendLaunches = pgTable('trend_launches', {
   candidateRevision: integer('candidate_revision').notNull(),
   evidence: text('evidence').notNull(),
   preparedAt: timestamp('prepared_at',{withTimezone:true}).defaultNow().notNull(),
-})
+},t=>[githubOnly('trend_launches',t)])
 export const trendSourceHealth = pgTable('trend_source_health', {
   source: text('source').primaryKey(),
   status: text('status').notNull(),
   checkedAt: timestamp('checked_at',{withTimezone:true}).defaultNow().notNull(),
   detail: text('detail').notNull(),
 })
+
+// Hugging Face model registry (0049): one market id (market_ref, from hf_market_ref_seq) per model _id; both are frozen.
+export const hfMarketRefSeq = pgSequence('hf_market_ref_seq', { startWith: '4503599627370497', minValue: '4503599627370497', maxValue: '7000000000000000', cycle: false })
+export const hfModels = pgTable('hf_models', {
+  marketRef: bigint('market_ref', { mode: 'bigint' }).primaryKey().default(sql`nextval('hf_market_ref_seq')`),
+  hfId: char('hf_id', { length: 24 }).notNull(), repoPath: text('repo_path').notNull(), ownerHandle: text('owner_handle').notNull(),
+  ownerKind: varchar('owner_kind', { length: 8 }).notNull(), ownerSubject: char('owner_subject', { length: 24 }),
+  private: boolean('private').default(false).notNull(), disabled: boolean('disabled').default(false).notNull(), gated: boolean('gated').default(false).notNull(),
+  baseModels: jsonb('base_models').default(sql`'[]'::jsonb`).notNull(),
+  pathConfirmedAt: timestamp('path_confirmed_at', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [unique('hf_models_hf_id_unique').on(t.hfId),
+  check('hf_models_market_ref_check', sql`${t.marketRef} between 4503599627370497 and 7000000000000000`),
+  check('hf_models_hf_id_check', sql`${t.hfId} ~ '^[0-9a-f]{24}$'`),
+  check('hf_models_repo_path_check', sql`char_length(${t.repoPath}) between 1 and 200`),
+  check('hf_models_owner_handle_check', sql`char_length(${t.ownerHandle}) between 1 and 100`),
+  check('hf_models_owner_kind_check', sql`${t.ownerKind} in ('user', 'org')`),
+  check('hf_models_owner_subject_check', sql`${t.ownerSubject} is null or ${t.ownerSubject} ~ '^[0-9a-f]{24}$'`),
+  check('hf_models_base_models_check', sql`jsonb_typeof(${t.baseModels}) = 'array'`)])
 
 export const repositories = pgTable('repositories', {
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).primaryKey(),
@@ -187,7 +209,10 @@ export const repositories = pgTable('repositories', {
   syncedAt: timestamp('synced_at', { withTimezone: true }).defaultNow().notNull(),
   // Migration 0045; null until GitHub is next read (app/lib/repo-quality.mjs then judges by stars alone).
   githubCreatedAt: timestamp('github_created_at', { withTimezone: true }),
-})
+  // Migration 0049: the id range decides the source; a Hugging Face row's id is its own hf_models.market_ref.
+  source: varchar('source', { length: 16 }).default('github').notNull(),
+  hfModelRef: bigint('hf_model_ref', { mode: 'bigint' }).references(() => hfModels.marketRef),
+}, t => [check('repositories_source_range', sql`(${t.source} = 'github' and ${t.githubRepoId} < 4503599627370496 and ${t.hfModelRef} is null) or (${t.source} = 'huggingface' and ${t.githubRepoId} between 4503599627370497 and 7000000000000000 and ${t.hfModelRef} is not distinct from ${t.githubRepoId})`)])
 
 export const markets = pgTable('markets', {
   id: serial('id').primaryKey(),
@@ -224,6 +249,7 @@ export const markets = pgTable('markets', {
   check('markets_verification_bonus_lamports_check', sql`${table.verificationBonusLamports} is null or ${table.verificationBonusLamports} between 1000000 and 1000000000`),
   check('markets_confirmed_evidence_check', sql`${table.status} <> 'confirmed' or (${table.mint} is not null and ${table.pool} is not null and ${table.launchSignature} is not null)`),
   check('markets_indexed_evidence_check', sql`${table.indexedAt} is null or (${table.launchSlot} is not null and ${table.launchFinality} = 'finalized' and ${table.lastVerifiedAt} is not null)`),
+  check('markets_hf_no_rewards', sql`${table.githubRepoId} < 4503599627370496 or (${table.verificationBonusLamports} is null and ${table.builderAllocationVersion} is null)`),
 ])
 
 // All DBC partner fees share this evidence ledger; eligibility preserves the
@@ -303,6 +329,7 @@ export const verificationBonuses = pgTable('verification_bonuses', {
   check('verification_bonuses_review_check', sql`(${table.status} in ('approved', 'rejected', 'paid')) = (${table.reviewedAt} is not null and ${table.reviewerGithubUserId} is not null)`),
   check('verification_bonuses_paid_check', sql`(${table.status} = 'paid') = (${table.paidAt} is not null)`),
   check('verification_bonuses_approval_check', sql`(${table.status} not in ('approved', 'paid') or (${table.approvedAt} is not null and ${table.approverGithubUserId} is not null)) and (${table.status} not in ('pending_review', 'ineligible') or (${table.approvedAt} is null and ${table.approverGithubUserId} is null))`),
+  githubOnly('verification_bonuses', table),
 ])
 
 // Durable bonus payout intents: signed bytes saved as 'pending' before the first broadcast; one live or settled
@@ -337,6 +364,7 @@ export const verificationBonusPayouts = pgTable('verification_bonus_payouts', {
   check('verification_bonus_payouts_attempt_check', sql`${table.attempt} > 0`),
   check('verification_bonus_payouts_wallets_check', sql`${table.wallet} <> ${table.payer}`),
   check('verification_bonus_payouts_state_check', sql`(${table.status} = 'pending' and ${table.settledAt} is null and ${table.resolvedAt} is null and ${table.resolutionReason} is null and ${table.networkFee} is null) or (${table.status} = 'settled' and ${table.settledAt} is not null and ${table.networkFee} is not null and ${table.slot} is not null and ${table.resolvedAt} is null and ${table.resolutionReason} is null) or (${table.status} = 'aborted' and ${table.settledAt} is null and ${table.resolvedAt} is not null and ${table.resolutionReason} is not null)`),
+  githubOnly('verification_bonus_payouts', table),
 ])
 
 export const feeEvents = pgTable('fee_events', {
@@ -491,6 +519,7 @@ export const builderAllocationClaims = pgTable('builder_allocation_claims', {
   check('builder_allocation_amount_check', sql`${table.amount} = 10000000000000`),
   check('builder_allocation_status_check', sql`${table.status} in ('pending','settled','aborted')`),
   check('builder_allocation_settlement_check', sql`(${table.status} = 'settled') = (${table.settledAt} is not null)`),
+  githubOnly('builder_allocation_claims', table),
 ])
 
 export const repositoryParticipation = pgTable('repository_participation', {
@@ -499,7 +528,7 @@ export const repositoryParticipation = pgTable('repository_participation', {
   githubLogin: text('github_login').notNull(),
   enabled: boolean('enabled').notNull(),
   optedInAt: timestamp('opted_in_at', { withTimezone: true }).notNull(),
-})
+}, table => [githubOnly('repository_participation', table)])
 
 // Operator-reviewed maintainer invitations. Dismissal is permanent; an invite snoozes 30 days.
 export const maintainerInvites = pgTable('maintainer_invites', {
@@ -507,7 +536,7 @@ export const maintainerInvites = pgTable('maintainer_invites', {
   invitedAt: timestamp('invited_at', { withTimezone: true }), dismissedAt: timestamp('dismissed_at', { withTimezone: true }),
   operatorGithubUserId: bigint('operator_github_user_id', { mode: 'bigint' }).notNull(), operatorLogin: text('operator_login'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-}, table => [check('maintainer_invites_state_check', sql`${table.invitedAt} is not null or ${table.dismissedAt} is not null`)])
+}, table => [check('maintainer_invites_state_check', sql`${table.invitedAt} is not null or ${table.dismissedAt} is not null`), githubOnly('maintainer_invites', table)])
 
 // Maintainer decisions: a current GitHub admin declined the repository's market or opted the repository out of repo.ing
 // (see drizzle/0041_maintainer_opt_outs.sql, src/maintainer-opt-outs.mjs). At most one active (not withdrawn) per repository.
@@ -777,6 +806,7 @@ export const builderReinvestIntents = pgTable('builder_reinvest_intents', {
   check('builder_reinvest_amount_check', sql`${table.sourceAmount} > 0 and (${table.settledDebit} is null or (${table.settledDebit} > 0 and ${table.settledDebit} <= ${table.sourceAmount}))`),
   check('builder_reinvest_status_check', sql`${table.status} in ('prepared','cancelling','submitted','settled','aborted')`),
   check('builder_reinvest_settlement_check', sql`(${table.status} = 'settled' and ${table.settledAt} is not null and ${table.signature} is not null and ${table.signedTransaction} is not null and ${table.settledDebit} is not null and ${table.settlement} is not null) or (${table.status} <> 'settled' and ${table.settledAt} is null and ${table.settledDebit} is null)`),
+  githubOnly('builder_reinvest_intents', table),
 ])
 // Operator-only trade landing telemetry (see drizzle/0028_trade_outcomes.sql). No wallet or key material.
 export const tradeOutcomes = pgTable('trade_outcomes', {
@@ -825,7 +855,7 @@ export const tipTransfers = pgTable('tip_transfers', {
   resolvedAt: timestamp('resolved_at',{withTimezone:true}), resolutionReason: text('resolution_reason'),
 },t=>[uniqueIndex('tip_transfers_signature_unique').on(t.signature),index('tip_transfers_pending').on(t.status).where(sql`${t.status} = 'pending'`),
   check('tip_transfers_kind_check',sql`${t.kind} in ('payout','refund')`),check('tip_transfers_amount_check',sql`${t.amount} > 0`),
-  check('tip_transfers_tip_count_check',sql`${t.tipCount} > 0`),check('tip_transfers_status_check',sql`${t.status} in ('pending','settled','aborted')`)])
+  check('tip_transfers_tip_count_check',sql`${t.tipCount} > 0`),check('tip_transfers_status_check',sql`${t.status} in ('pending','settled','aborted')`),githubOnly('tip_transfers',t)])
 export const repoTips = pgTable('repo_tips', {
   id: uuid('id').primaryKey(), githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
   donorWallet: varchar('donor_wallet',{length:44}).notNull(), tipWallet: varchar('tip_wallet',{length:44}).notNull(),
@@ -840,7 +870,7 @@ export const repoTips = pgTable('repo_tips', {
 },t=>[uniqueIndex('repo_tips_signature_unique').on(t.signature),index('repo_tips_repo_status').on(t.githubRepoId,t.status),
   index('repo_tips_donor').on(t.donorWallet,t.status),index('repo_tips_transfer').on(t.transferId),
   index('repo_tips_open').on(t.status,t.createdAt).where(sql`${t.status} in ('prepared','submitted')`),
-  check('repo_tips_status_check',sql`${t.status} in ('prepared','submitted','confirmed','expired','failed','paid','refunded')`)])
+  check('repo_tips_status_check',sql`${t.status} in ('prepared','submitted','confirmed','expired','failed','paid','refunded')`),githubOnly('repo_tips',t)])
 
 // "Why I bought" holder notes and their single-use signature nonces (see drizzle/0031_holder_notes.sql, src/holder-notes.mjs).
 export const holderNotes = pgTable('holder_notes', {
@@ -881,7 +911,8 @@ export const partsFunds = pgTable('parts_funds', {
   settledAt: tz('settled_at'), nextAttemptAt: tz('next_attempt_at'),
 },t=>[uniqueIndex('parts_funds_one_active').on(t.githubRepoId).where(sql`${t.settledAt} is null`),index('parts_funds_repo').on(t.githubRepoId,t.createdAt.desc()),
   index('parts_funds_unsettled').on(t.status,t.deadline).where(sql`${t.settledAt} is null`),
-  check('parts_funds_status_check',sql`${t.status} in ('open','funded','failed','cancelled')`),check('parts_funds_goal_check',sql`${t.goalCents} > 0 and ${t.goalCents} <= 500000`)])
+  check('parts_funds_status_check',sql`${t.status} in ('open','funded','failed','cancelled')`),check('parts_funds_goal_check',sql`${t.goalCents} > 0 and ${t.goalCents} <= 500000`),
+  githubOnly('parts_funds',t)])
 export const partsFundItems = pgTable('parts_fund_items', {
   id: uuid('id').primaryKey(), fundId: uuid('fund_id').notNull().references(() => partsFunds.id, { onDelete: 'cascade' }), position: smallint('position').notNull(),
   name: varchar('name',{length:80}).notNull(), url: varchar('url',{length:500}), unitPriceCents: integer('unit_price_cents').notNull(), quantity: smallint('quantity').notNull(),
@@ -896,7 +927,7 @@ export const partsTransfers = pgTable('parts_transfers', {
   lastValidBlockHeight: bigint('last_valid_block_height',{mode:'bigint'}).notNull(), receipt: jsonb('receipt'),
   createdAt: tz('created_at').defaultNow().notNull(), settledAt: tz('settled_at'), resolvedAt: tz('resolved_at'), resolutionReason: text('resolution_reason'),
 },t=>[uniqueIndex('parts_transfers_signature_unique').on(t.signature),index('parts_transfers_pending').on(t.status).where(sql`${t.status} = 'pending'`),
-  index('parts_transfers_fund').on(t.fundId)])
+  index('parts_transfers_fund').on(t.fundId),githubOnly('parts_transfers',t)])
 export const partsPledges = pgTable('parts_pledges', {
   id: uuid('id').primaryKey(), fundId: uuid('fund_id').notNull().references(() => partsFunds.id),
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
@@ -912,13 +943,13 @@ export const partsPledges = pgTable('parts_pledges', {
 },t=>[uniqueIndex('parts_pledges_signature_unique').on(t.signature),index('parts_pledges_fund_status').on(t.fundId,t.status),
   index('parts_pledges_donor').on(t.donorWallet,t.status),index('parts_pledges_transfer').on(t.transferId),
   index('parts_pledges_open').on(t.status,t.createdAt).where(sql`${t.status} in ('prepared','submitted')`),
-  check('parts_pledges_status_check',sql`${t.status} in ('prepared','submitted','confirmed','expired','failed','paid','refunded')`)])
+  check('parts_pledges_status_check',sql`${t.status} in ('prepared','submitted','confirmed','expired','failed','paid','refunded')`),githubOnly('parts_pledges',t)])
 export const partsUpdates = pgTable('parts_updates', {
   id: uuid('id').primaryKey(), fundId: uuid('fund_id').notNull().references(() => partsFunds.id),
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull().references(() => repositories.githubRepoId),
   body: varchar('body',{length:1000}).notNull(), images: jsonb('images').notNull().default(sql`'[]'::jsonb`), createdBy: text('created_by').notNull(),
   createdAt: tz('created_at').defaultNow().notNull(),
-},t=>[index('parts_updates_fund').on(t.fundId,t.createdAt.desc()),index('parts_updates_repo').on(t.githubRepoId,t.createdAt.desc())])
+},t=>[index('parts_updates_fund').on(t.fundId,t.createdAt.desc()),index('parts_updates_repo').on(t.githubRepoId,t.createdAt.desc()),githubOnly('parts_updates',t)])
 
 // Public "new market launched" posts, claimed before sending (see drizzle/0034_launch_alerts.sql, src/launch-alerts.mjs).
 export const launchAlerts = pgTable('launch_alerts', {
