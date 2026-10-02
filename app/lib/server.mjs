@@ -64,6 +64,8 @@ export function tradeAvailable() { return Boolean(database() && configAddress())
 const MARKETS_TTL_MS = 15_000
 export const listMarkets = ttlMemo(() => timed('listMarkets', loadMarkets), MARKETS_TTL_MS, { keep: result => !result.unavailable })
 
+// 24h volume: bonding-curve swaps, plus swaps in the DAMM v2 pool a graduated market's verified migration names (the
+// binding /stats uses: events recorded under any other pool never count).
 async function loadMarkets() {
   const pool = database()
   if (!pool) return { markets: [], unavailable: 'Database is not configured.' }
@@ -73,7 +75,7 @@ async function loadMarkets() {
         m.token_symbol as "symbol", m.indexed_at as "indexedAt", m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet", r.owner, r.name,
         r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks,
         coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
-        coalesce(t.volume, 0)::text as "volume24hLamports",
+        (coalesce(t.volume, 0) + coalesce(dv.volume, 0))::text as "volume24hLamports",
         b.wallet as "beneficiaryWallet", exists (
           select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin'
         ) as "wasVerified",
@@ -91,6 +93,9 @@ async function loadMarkets() {
       left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
       left join (select pool, sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric) as volume
         from trade_events where traded_at >= now() - interval '24 hours' group by pool) t on t.pool = m.pool
+      left join (select d.github_repo_id, sum(d.quote_amount) as volume from damm_trade_events d
+        join graduation_events g on g.github_repo_id = d.github_repo_id and g.pool = d.pool
+        where d.traded_at >= now() - interval '24 hours' group by d.github_repo_id) dv on dv.github_repo_id = m.github_repo_id
       where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
       order by m.indexed_at desc`)
     const now = Date.now()
@@ -164,8 +169,10 @@ async function singleMarket(column, value) {
       r.stars, r.forks, r.github_updated_at as "updatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
-      (select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)::text
-        from trade_events where pool = m.pool and traded_at >= now() - interval '24 hours') as "volume24hLamports",
+      ((select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)
+        from trade_events where pool = m.pool and traded_at >= now() - interval '24 hours')
+      + (select coalesce(sum(d.quote_amount), 0) from damm_trade_events d join graduation_events g on g.github_repo_id = d.github_repo_id and g.pool = d.pool
+        where d.github_repo_id = m.github_repo_id and d.traded_at >= now() - interval '24 hours'))::text as "volume24hLamports",
       exists(select 1 from repo_verifications where github_repo_id = m.github_repo_id and permission = 'admin') as "wasVerified",
       case when coalesce(dp.slot, -1) > coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice",
       o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"
