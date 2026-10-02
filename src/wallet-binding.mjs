@@ -4,10 +4,13 @@ import { PublicKey } from '@solana/web3.js'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { and, desc, eq, gt, gte, inArray, isNull, sql } from 'drizzle-orm'
 import { repoBeneficiaries, repoVerifications, walletBindingChallenges } from './db/schema.mjs'
+import { assertAuthoritySource } from './market-identity.mjs'
 
 const CHALLENGE_LIFETIME_MS = 5 * 60 * 1000
 const VERIFICATION_MAX_AGE_MS = 5 * 60 * 1000
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
+// Every binding here is authorized by a GitHub admin verification (repo_verifications), so only GitHub markets qualify.
+const authority = { source: 'github' }
 
 const positiveId = value => {
   const id = BigInt(value)
@@ -57,6 +60,7 @@ export function createWalletBinding({ pool }) {
   }
   const requestChallenge = async ({ githubRepoId, githubUserId, wallet }) => {
     const repoId = positiveId(githubRepoId)
+    assertAuthoritySource(authority, repoId)
     const userId = positiveId(githubUserId)
     const walletKey = new PublicKey(wallet).toBase58()
     const now = new Date()
@@ -70,6 +74,7 @@ export function createWalletBinding({ pool }) {
   }
   const bindWallet = async ({ githubRepoId, githubUserId, wallet, nonce, signature }) => {
     const repoId = positiveId(githubRepoId)
+    assertAuthoritySource(authority, repoId)
     const userId = positiveId(githubUserId)
     const walletKey = new PublicKey(wallet)
     const walletAddress = walletKey.toBase58()
@@ -109,6 +114,7 @@ export function createWalletBinding({ pool }) {
   const requestBatchChallenge = async ({ githubRepoIds, githubUserId, wallet }) => {
     if (!Array.isArray(githubRepoIds) || !githubRepoIds.length || githubRepoIds.length > 100 || new Set(githubRepoIds.map(String)).size !== githubRepoIds.length) throw new Error('Choose up to 100 distinct repositories')
     const ids = githubRepoIds.map(positiveId).sort((a,b) => a < b ? -1 : 1)
+    for (const id of ids) assertAuthoritySource(authority, id)
     const challenges = []
     for (const githubRepoId of ids) {
       const [existing] = await db.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, githubRepoId)).limit(1)
@@ -128,6 +134,7 @@ export function createWalletBinding({ pool }) {
       for (const c of challenges) await tx.execute(sql`select pg_advisory_xact_lock(${c.githubRepoId.toString()}::bigint)`)
       const now = new Date()
       for (const c of challenges) {
+        assertAuthoritySource(authority, c.githubRepoId)
         if (c.githubUserId !== userId || c.wallet !== walletKey.toBase58() || c.consumedAt || c.expiresAt <= now) throw new Error('Wallet challenge is mismatched, expired, or used')
         await requireRecentAdmin(tx, c.githubRepoId, userId, now)
         const [existing] = await tx.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, c.githubRepoId)).limit(1)

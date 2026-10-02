@@ -26,6 +26,7 @@ liquidity-deployment
 maintainer-opt-outs-db
 market-lookup
 market-quality-db
+market-source-db
 milestone-alerts-db
 payout-address-db
 platform-dbc-fees

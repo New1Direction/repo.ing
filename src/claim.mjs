@@ -10,6 +10,7 @@ import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dyn
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq, sql } from 'drizzle-orm'
 import { markets, repoClaims } from './db/schema.mjs'
+import { assertAuthoritySource } from './market-identity.mjs'
 
 import { createGraduatedFees, recordGraduatedFees } from './graduated-fees.mjs'
 import { resolvePayoutRecipient } from './payout-address.mjs'
@@ -48,6 +49,7 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
     }
     const repoId = BigInt(request.githubRepoId)
     if (repoId <= 0n) throw new Error('GitHub repository ID must be positive')
+    assertAuthoritySource(githubVerifier, repoId)
     const client = await pool.connect()
     try {
       await client.query('select pg_advisory_lock($1::bigint)', [repoId.toString()])
