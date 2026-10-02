@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto'
 import { createMcpHandler, McpServer, hostHeaderValidationResponse, originValidationResponse } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import { AgentLaunchError } from './agent-launch-draft.mjs'
+import { HF_DISCLAIMER } from './hf-copy.mjs'
 
 // DB quotas survive restarts and apply across replicas. The global cap also bounds
 // callers that rotate/spoof forwarded IPs; a client key is not authentication.
@@ -44,7 +45,24 @@ export function createAgentMcpServer(service) {
       initialBuy: z.enum(['none', '100', '200', '300']).default('none').describe('Optional preference: none, 1%, 2%, or max 3% of supply. Requoted in the browser.') }).strict(), service.createDraft, false)
   register('get_launch_status', 'Read canonical indexed launch evidence for an immutable repo ID. Reports the actual discoverer, which may be a different launcher. Drafts are not tracked as markets.',
     z.object({ repoId: z.string().regex(/^[1-9]\d{0,18}$/) }).strict(), service.getStatus)
+  if (service.resolveModel) registerModelTools(register, service)
   return server
+}
+
+// Hugging Face model markets (src/agent-launch-models.mjs). Listed only while HF_MARKETS_ENABLED, when
+// app/lib/agent-launch.mjs passes the model service; the repository tools above never change
+// (tests/agent-launch-schemas.test.mjs freezes them).
+function registerModelTools(register, service) {
+  const model = z.string().min(3).max(2048).describe('Public Hugging Face model URL (huggingface.co/owner/name) or owner/name.')
+  register('resolve_model', `Verify a public Hugging Face model by its stable ID and check it for an existing canonical market and whether its owner opted out of repo.ing. Private and disabled models are refused. ${HF_DISCLAIMER}`,
+    z.object({ model }).strict(), service.resolveModel, false)
+  register('create_model_launch_draft', `Create an expiring browser review link for a community market of a public Hugging Face model. No transaction, reservation, purchase, or wallet authority. Default: no initial buy. User chooses artwork and approves current costs in their wallet. ${HF_DISCLAIMER}`,
+    z.object({ model, tokenName: z.string().trim().min(1).max(32).regex(/^[^\x00-\x1f\x7f]+$/).optional(),
+      tokenSymbol: z.string().regex(/^[A-Z0-9]{1,10}$/).optional(),
+      initialBuy: z.enum(['none', '100', '200', '300']).default('none').describe('Optional preference: none, 1%, 2%, or max 3% of supply. Requoted in the browser.') }).strict(),
+    service.createModelDraft, false)
+  register('get_model_launch_status', 'Read canonical indexed launch evidence for a Hugging Face model market by the marketId resolve_model returns. Reports the actual discoverer, which may be a different launcher. Drafts are not tracked as markets.',
+    z.object({ marketId: z.string().regex(/^[1-9]\d{15}$/) }).strict(), service.getModelStatus)
 }
 
 export function createAgentMcpHandler({ service, origin, quota }) {
