@@ -6,7 +6,8 @@ import { startFakeHf, recorded } from './fixtures/hf-server.mjs'
 import { createHfClient } from '../src/hf-api.mjs'
 import { HF_MARKET_REF_MAX, HF_MARKET_REF_MIN } from '../src/market-identity.mjs'
 import { HF_DISCLAIMER } from '../src/hf-copy.mjs'
-import { HF_MODEL_MOVED, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, persistModelRepository, resolveModel } from '../src/hf-launch.mjs'
+import { HF_CONFIG_RESERVE_ERROR, HF_MODEL_MOVED, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, persistModelRepository,
+  resolveModel } from '../src/hf-launch.mjs'
 import { createLaunchCoordinator } from '../src/launch-coordinator.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../src/launch-sessions.mjs'
 import { DISCOVERY_VERSION } from '../src/discovery-rewards.mjs'
@@ -166,7 +167,7 @@ test('an opt-out refuses the launch at prepare, and again after the wallet signe
 })
 
 function routeContext(env, work) {
-  const keys = ['HF_MARKETS_ENABLED', 'DATABASE_URL', 'DBC_CONFIG', 'PLATFORM_CREATOR_SECRET_KEY']
+  const keys = ['HF_MARKETS_ENABLED', 'DATABASE_URL', 'DBC_CONFIG', 'PLATFORM_CREATOR_SECRET_KEY', 'BUILDER_ALLOCATION_CONFIGS']
   const saved = { env: Object.fromEntries(keys.map(key => [key, process.env[key]])), pool: globalThis.__gitfunPool, hf: globalThis.__repoingHfClient }
   Object.assign(process.env, { DATABASE_URL: databaseUrl, ...env })
   globalThis.__gitfunPool = pool
@@ -211,18 +212,27 @@ test('/api/resolve registers and stores a model like a repository, refuses opted
   assert.equal(await count('hf_models'), 1, 'refused models are never registered')
 }))
 
-test('model lookups are rate limited per client, before Hugging Face is asked', () => routeContext({ HF_MARKETS_ENABLED: 'true' }, async () => {
-  const lookup = ip => resolveRoute(new Request('https://repo.ing/api/resolve', { method: 'POST', headers: { 'x-forwarded-for': ip },
-    body: JSON.stringify({ url: 'https://huggingface.co/openai-community/gpt2' }) }))
-  for (let i = 0; i < 8; i++) assert.equal((await lookup('203.0.113.7')).status, 200)
-  const before = hfServer.requests.length
-  const limited = await lookup('203.0.113.7')
-  assert.equal(limited.status, 429)
-  assert.equal(limited.headers.get('retry-after'), '60')
-  assert.deepEqual(await limited.json(), { error: 'Too many model lookups. Try again in a minute.', code: 'HF_RESOLVE_LIMITED' })
-  assert.equal(hfServer.requests.length, before)
-  assert.equal((await lookup('198.51.100.4')).status, 200, 'another client still has room')
-}))
+test('model lookups are rate limited per client before Hugging Face is asked, and a refused client spends no shared budget', () =>
+  routeContext({ HF_MARKETS_ENABLED: 'true' }, async () => {
+    const lookup = ip => resolveRoute(new Request('https://repo.ing/api/resolve', { method: 'POST', headers: { 'x-forwarded-for': ip },
+      body: JSON.stringify({ url: 'https://huggingface.co/openai-community/gpt2' }) }))
+    const globalHits = async () => (await pool.query(`select hits from agent_request_limits where scope = 'hf-lookup:global'`)).rows[0]?.hits
+    for (let i = 0; i < 6; i++) assert.equal((await lookup('203.0.113.7')).status, 200)
+    const before = hfServer.requests.length
+    for (let i = 0; i < 3; i++) {
+      const limited = await lookup('203.0.113.7')
+      assert.equal(limited.status, 429)
+      assert.equal(limited.headers.get('retry-after'), '60')
+      assert.deepEqual(await limited.json(), { error: 'Too many model lookups. Try again in a minute.', code: 'HF_LOOKUP_LIMITED' })
+    }
+    assert.equal(hfServer.requests.length, before)
+    assert.equal(await globalHits(), 6)
+    assert.equal((await lookup('198.51.100.4')).status, 200, 'another client still has room')
+    // The shared cap holds whatever the clients claim to be (x-forwarded-for is not authentication).
+    for (let i = 0; i < 13; i++) assert.equal((await lookup(`192.0.2.${i}`)).status, 200)
+    assert.equal((await lookup('192.0.2.200')).status, 429)
+    assert.equal(await globalHits(), 20)
+  }))
 
 test('/api/launch prepares a model only for the reviewed _id and never for an opted-out model', () => routeContext({ HF_MARKETS_ENABLED: 'true', DBC_CONFIG: config,
   PLATFORM_CREATOR_SECRET_KEY: JSON.stringify([...Keypair.generate().secretKey]) }, async () => {
@@ -235,13 +245,19 @@ test('/api/launch prepares a model only for the reviewed _id and never for an op
     assert.equal(response.status, 400)
     assert.match((await response.json()).error, message)
   }
+  // A launch config that reserves the builder allocation refuses every model launch, before anything else is read.
+  process.env.BUILDER_ALLOCATION_CONFIGS = config
+  assert.equal((await (await prepare({})).json()).error, HF_CONFIG_RESERVE_ERROR)
+  delete process.env.BUILDER_ALLOCATION_CONFIGS
   await optOut(repoId)
   assert.equal((await (await prepare({})).json()).error, HF_OPT_OUT_ERROR)
   assert.equal(await count('markets'), 0, 'no refusal reserves a market')
+  assert.equal(await count('agent_request_limits'), 0, 'refusals spend no lookup')
 }))
 
 test('the model MCP service resolves, drafts a browser review and reports status by market id', async () => {
-  const service = createModelLaunchService({ pool, origin: 'https://repo.ing', secret, config, discovery: true, allocation: true, hf, now: () => Date.parse('2026-10-02T12:00:00Z') })
+  const options = { pool, origin: 'https://repo.ing', secret, config, discovery: true, allocation: false, hf, now: () => Date.parse('2026-10-02T12:00:00Z') }
+  const service = createModelLaunchService(options)
   const resolved = await service.resolveModel({ model: 'hf.co/openai-community/gpt2' })
   const marketId = (await registry(GPT2._id)).marketRef
   assert.deepEqual(resolved, { marketId, hfId: GPT2._id, path: 'openai-community/gpt2', modelUrl: 'https://huggingface.co/openai-community/gpt2',
@@ -257,9 +273,16 @@ test('the model MCP service resolves, drafts a browser review and reports status
   assert.equal(draft.rules.discovery.version, DISCOVERY_VERSION)
   const token = new URL(draft.reviewUrl).searchParams.get('draft')
   assert.equal(new URL(draft.reviewUrl).pathname, `/launch/${marketId}`)
-  const verified = verifyLaunchDraft(token, { secret, repoId: marketId, config, discovery: true, allocation: true, now: Date.parse('2026-10-02T12:00:01Z') })
+  const verified = verifyLaunchDraft(token, { secret, repoId: marketId, config, discovery: true, allocation: false, now: Date.parse('2026-10-02T12:00:01Z') })
   assert.deepEqual([verified.repoId, verified.fullName, verified.initialBuy], [marketId, 'openai-community/gpt2', '100'])
   assert.equal(await count('markets'), 0, 'a draft reserves nothing')
+  // On a config that reserves the builder allocation no draft is made; a spent lookup budget stops before Hugging Face.
+  await assert.rejects(createModelLaunchService({ ...options, allocation: true }).createModelDraft({ model: 'openai-community/gpt2' }),
+    { message: HF_CONFIG_RESERVE_ERROR })
+  const before = hfServer.requests.length
+  await assert.rejects(createModelLaunchService({ ...options, lookupQuota: async () => false }).resolveModel({ model: 'openai-community/gpt2' }),
+    { message: 'Too many model lookups. Try again in a minute.' })
+  assert.equal(hfServer.requests.length, before)
 
   assert.deepEqual(await service.getModelStatus({ marketId }), { marketId, state: 'not_launched', live: false, observedAt: '2026-10-02T12:00:00.000Z',
     hfId: GPT2._id, path: 'openai-community/gpt2' })

@@ -6,10 +6,10 @@ import { startFakeHf, recorded } from './fixtures/hf-server.mjs'
 import { createHfClient } from '../src/hf-api.mjs'
 import { HF_MARKET_REF_MIN, MarketIdentityError } from '../src/market-identity.mjs'
 import { HF_DISCLAIMER, HF_DISCLAIMER_SHORT } from '../src/hf-copy.mjs'
-import { HF_MARKETS_UNAVAILABLE, HF_MODEL_MOVED, HF_OPT_OUT_ERROR, HfLaunchError, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled,
-  isHfMarketId, modelDescription, modelLookupError, modelTokenDefaults, namesHuggingFace, resolveModel } from '../src/hf-launch.mjs'
+import { HF_CONFIG_RESERVE_ERROR, HF_MARKETS_UNAVAILABLE, HF_MODEL_MOVED, HF_OPT_OUT_ERROR, HfLaunchError, hfLaunchGuard, hfLaunchSource,
+  hfMarketsEnabled, isHfMarketId, modelDescription, modelLookupError, modelTokenDefaults, namesHuggingFace, resolveModel } from '../src/hf-launch.mjs'
 import { defaultTokenName, defaultTokenSymbol } from '../app/lib/launch-defaults.mjs'
-import { fetchHfAvatar, safeHfAvatarUrl } from '../app/lib/hf-launch.mjs'
+import { fetchHfAvatar, modelImageSuggestions, safeHfAvatarUrl } from '../app/lib/hf-launch.mjs'
 import { modelLaunchPostText, modelLaunchPostUrl } from '../app/lib/model-share.mjs'
 import { launchPostUrl } from '../app/lib/builder-share.mjs'
 import { POST as resolveRoute } from '../app/api/resolve/route.js'
@@ -244,6 +244,31 @@ test('with the flag off, a model prepare is refused before the database, Hugging
     assert.equal(body.canRetry, true)
     assert.deepEqual(touched, [])
   })))
+
+test('a model prepare is refused on a launch config that reserves the builder allocation, before anything is read', () => {
+  const config = 'So11111111111111111111111111111111111111112'
+  return withEnv({ HF_MARKETS_ENABLED: 'true', DATABASE_URL: 'postgres://test-only', DBC_CONFIG: config, BUILDER_ALLOCATION_CONFIGS: config },
+    () => withRouteGlobals({}, async touched => {
+      const response = await launchRoute(new Request('https://repo.ing/api/launch', { method: 'POST', body: JSON.stringify({ action: 'prepare',
+        repoId: HF, hfId: GPT2._id, tokenName: 'gpt2', tokenSymbol: 'GPT2', tokenImage: 'data:image/png;base64,AAAA', launcherWallet: '11111111111111111111111111111111' }) }))
+      assert.equal(response.status, 400)
+      assert.equal((await response.json()).error, HF_CONFIG_RESERVE_ERROR)
+      assert.deepEqual(touched, [])
+    }))
+})
+
+test('avatar suggestions run at most eight fetches at once', async () => {
+  const png = await sharp({ create: { width: 64, height: 64, channels: 3, background: '#3355ff' } }).png().toBuffer()
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  const fetchImpl = async () => { await gate; return new Response(png, { status: 200 }) }
+  const row = i => ({ avatar_url: `https://cdn-avatars.huggingface.co/v1/production/uploads/inflight/${i}.png` })
+  const running = Array.from({ length: 8 }, (_, i) => modelImageSuggestions(row(i), { fetchImpl }))
+  await assert.rejects(modelImageSuggestions(row(8), { fetchImpl }), /busy/)
+  release()
+  for (const images of await Promise.all(running)) assert.equal(images[0].label, 'Owner avatar')
+  assert.equal((await modelImageSuggestions(row(8), { fetchImpl })).length, 1, 'room again once they finish')
+})
 
 test('the launch picker suggests the owner avatar for a model market and uploads still work; the flag gates both', async () => {
   const png = await sharp({ create: { width: 96, height: 96, channels: 3, background: '#ff9d00' } }).png().toBuffer()

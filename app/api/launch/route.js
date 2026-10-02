@@ -19,9 +19,10 @@ import { readLimitedBody } from '../../../src/token-image.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../../../src/launch-sessions.mjs'
 import { activeDecision, assertLaunchAllowed } from '../../../src/maintainer-opt-outs.mjs'
 import { verificationBonusLamports } from '../../../src/verification-bonus.mjs'
-import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled, isHfMarketId,
+import { HF_CONFIG_RESERVE_ERROR, HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled, isHfMarketId,
   registeredModel } from '../../../src/hf-launch.mjs'
 import { hfClient } from '../../lib/hf-client.mjs'
+import { MODEL_LOOKUP_LIMITED, takeModelLookup } from '../../lib/hf-launch.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -35,8 +36,10 @@ const safeError = (error, action) => {
 // A Hugging Face model market (src/hf-launch.mjs): the repository review, keyed by the model's market id. The browser names
 // the model by its registry _id (hfId); the server reads it through Hugging Face again at its registry path, and
 // hfLaunchGuard checks it once more at prepare and after the wallet signs. No trend shortcut: trends are repositories only.
+// Never on a config that reserves the builder allocation (HF_CONFIG_RESERVE_ERROR); the review's session keeps that config.
 async function prepareModelLaunch(request, body) {
   if (!hfMarketsEnabled()) throw new Error(HF_MARKETS_UNAVAILABLE)
+  if (builderAllocationEnabled()) throw new Error(HF_CONFIG_RESERVE_ERROR)
   if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
   const pool = database(), config = configAddress(), creator = creatorSigner()
   if (!pool || !config || !creator) throw new Error('Local launch is not configured')
@@ -45,6 +48,7 @@ async function prepareModelLaunch(request, body) {
   const marketRef = String(body.repoId), registered = await registeredModel(pool, marketRef)
   if (!registered || registered.hfId !== body.hfId) throw new Error('This model changed. Paste its Hugging Face URL and review the launch again.')
   if (await activeDecision(pool, marketRef)) throw new Error(HF_OPT_OUT_ERROR)
+  if (!await takeModelLookup(pool, request)) throw new Error(MODEL_LOOKUP_LIMITED)
   const connection = chain()
   const metadataOrigin = process.env.APP_ORIGIN ? publicOrigin(request.url) : null
   if (process.env.NODE_ENV === 'production' && !metadataOrigin) throw new Error('Token metadata origin is not configured')

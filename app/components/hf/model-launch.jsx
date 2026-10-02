@@ -3,12 +3,12 @@ import { notFound, redirect } from 'next/navigation'
 import { ArrowLeft, ArrowUpRight, Ban, Boxes, Info } from 'lucide-react'
 import { AppHeader, Footer } from '../ui'
 import { LaunchForm } from '../launch-form'
-import { marketByRepo, launchAvailable, discoveryRewardsEnabled } from '../../lib/server.mjs'
+import { marketByRepo, launchAvailable, discoveryRewardsEnabled, builderAllocationEnabled } from '../../lib/server.mjs'
 import { checkAgentDraft } from '../../lib/agent-launch.mjs'
 import { activeLaunchFeeTerms } from '../../lib/launch-fee.mjs'
 import { maintainerDecision } from '../../lib/maintainer-opt-outs.mjs'
 import { modelForLaunch } from '../../lib/hf-launch.mjs'
-import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfMarketsEnabled } from '../../../src/hf-launch.mjs'
+import { HF_CONFIG_RESERVE_ERROR, HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfMarketsEnabled } from '../../../src/hf-launch.mjs'
 import { HF_DISCLAIMER } from '../../../src/hf-copy.mjs'
 import { hfModelUrl } from '../../../src/hf-url.mjs'
 import '../../maintainer-opt-out.css'
@@ -60,10 +60,12 @@ function ModelHero({ model }) {
 
 // /launch/[id] for a Hugging Face model market (app/(site)/launch/[repo]/page.jsx returns this early for the model id
 // range). Dormant until HF_MARKETS_ENABLED; the model is the one /api/resolve (or an agent's resolve_model) registered.
+// A launched market is opened even with the flag off (a database read only), so holders can always reach it.
 export async function ModelLaunch({ repoId, searchParams }) {
-  if (!hfMarketsEnabled()) return <Notice title="Not available yet" action={<Link href="/launch" className="button outline">Launch a repository</Link>}>{HF_MARKETS_UNAVAILABLE}</Notice>
   const { market } = await marketByRepo(repoId)
   if (market) redirect(`/token/${market.mint}`)
+  if (!hfMarketsEnabled()) return <Notice title="Not available yet" action={<Link href="/launch" className="button outline">Launch a repository</Link>}>{HF_MARKETS_UNAVAILABLE}</Notice>
+  if (builderAllocationEnabled()) return <Notice title="Model launches are paused" action={<Link href="/launch" className="button outline">Launch a repository</Link>}>{HF_CONFIG_RESERVE_ERROR}</Notice>
   const model = await modelForLaunch(repoId)
   if (model === null) notFound()
   const decision = model === undefined ? undefined : await maintainerDecision(repoId)

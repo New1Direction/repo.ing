@@ -6,17 +6,21 @@ import { INITIAL_BUY_CAP_BPS } from './launch-buy.mjs'
 import { activeDecision } from './maintainer-opt-outs.mjs'
 import { HF_DISCLAIMER } from './hf-copy.mjs'
 import { hfModelUrl } from './hf-url.mjs'
-import { HF_OPT_OUT_ERROR, isHfMarketId, modelLookupError, modelTokenDefaults, persistModelRepository, resolveModel } from './hf-launch.mjs'
+import { HF_CONFIG_RESERVE_ERROR, HF_OPT_OUT_ERROR, isHfMarketId, modelLookupError, modelTokenDefaults, persistModelRepository,
+  resolveModel } from './hf-launch.mjs'
 
 // MCP service for Hugging Face model markets (resolve_model, create_model_launch_draft, get_model_launch_status): the model
 // counterparts of src/agent-launch.mjs, under the same rules. A draft is only a signed browser review link; the user
 // chooses artwork and approves the costs in their own wallet. Models are read by their stable _id (src/hf-launch.mjs).
-export function createModelLaunchService({ pool, origin, secret, config, discovery, allocation, hf, now = Date.now }) {
+// lookupQuota() → false when the shared Hugging Face lookup budget is spent (app/lib/hf-launch.mjs); allocation: whether
+// the launch config reserves the builder allocation, on which model launches are refused.
+export function createModelLaunchService({ pool, origin, secret, config, discovery, allocation, hf, lookupQuota = async () => true, now = Date.now }) {
   const status = async marketId => {
     const { rows } = await pool.query('select status,launch_finality,indexed_at,mint,pool,launch_signature,launcher_wallet from markets where github_repo_id=$1', [marketId])
     return { marketId, ...projectLaunchStatus(rows[0], origin), observedAt: new Date(now()).toISOString() }
   }
   async function resolveModelMarket(input) {
+    if (!await lookupQuota()) throw new AgentLaunchError('Too many model lookups. Try again in a minute.')
     let repo
     try {
       repo = await resolveModel({ pool, hf, input })
@@ -41,11 +45,12 @@ export function createModelLaunchService({ pool, origin, secret, config, discove
       if (resolved.ownerOptedOut) throw new AgentLaunchError(HF_OPT_OUT_ERROR)
       if (resolved.state !== 'not_launched') throw new AgentLaunchError('This model has a launch in progress or requiring review. Check launch status before continuing.')
       if (!config) throw new AgentLaunchError('Launch configuration is unavailable.')
+      if (allocation) throw new AgentLaunchError(HF_CONFIG_RESERVE_ERROR)
       const defaults = modelTokenDefaults(resolved.path.split('/')[1])
       const name = tokenName ?? defaults.tokenName, symbol = tokenSymbol ?? defaults.tokenSymbol
       if (!symbol) throw new AgentLaunchError('Choose a ticker with 1–10 letters or numbers.')
-      // allocation is the launch rule every draft records (verifyLaunchDraft compares it); a model market never gets the
-      // builder allocation or the verification bonus (rewardStamps, markets_hf_no_rewards).
+      // allocation (false here) is the launch rule every draft records (verifyLaunchDraft compares it); a model market never
+      // gets the builder allocation or the verification bonus (rewardStamps, markets_hf_no_rewards).
       const { draft, token } = signLaunchDraft({ repoId: resolved.marketId, fullName: resolved.path, tokenName: name, tokenSymbol: symbol,
         initialBuy, config, discovery, allocation }, { secret, now: now() })
       return { ...resolved, state: 'awaiting_browser_review', draftCreated: true,

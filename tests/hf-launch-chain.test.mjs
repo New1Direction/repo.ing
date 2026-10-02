@@ -11,14 +11,16 @@ import { normalizeTokenImage } from '../src/token-image.mjs'
 import { launchBuyPreset } from '../src/launch-buy.mjs'
 import { DISCOVERY_VERSION } from '../src/discovery-rewards.mjs'
 import { marketSource } from '../src/market-identity.mjs'
+import { HF_CONFIG_RESERVE_ERROR } from '../src/hf-launch.mjs'
 import { POST as resolveRoute } from '../app/api/resolve/route.js'
 import { GET as launchStatus, POST as launchRoute } from '../app/api/launch/route.js'
 
 // End to end on a local validator and a disposable database, through the same route handlers the browser calls:
 // /api/resolve → /api/launch prepare → the wallet signs → /api/launch submit → verified, indexed market. Hugging Face is
-// tests/fixtures/hf-server.mjs and GitHub a stub; nothing reaches the network. Every reward the environment can enable is
-// on, so the model market must come out without the bonus and the allocation, and the repository market launched in the
-// same run must carry them exactly as before.
+// tests/fixtures/hf-server.mjs and GitHub a stub; nothing reaches the network. Discovery and the verification bonus are on,
+// so the model market must come out with discovery and without the bonus. A model never launches on a config that reserves
+// the builder allocation; once the config is declared to, the model is refused and the repository launched in the same
+// run carries the allocation and the bonus exactly as before.
 const rpc = process.env.SOLANA_RPC_URL
 assert.match(rpc ?? '', /^http:\/\/(127\.0\.0\.1|localhost):\d+$/, 'Disposable local validator required')
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:launchtest@127.0.0.1:55432/repoing_hf_launch_test'
@@ -66,9 +68,10 @@ test('a model market launches end to end; a repository launch in the same run is
   const airdrop = await connection.requestAirdrop(wallet.publicKey, 5_000_000_000)
   await connection.confirmTransaction({ signature: airdrop, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
   delete process.env.APP_ORIGIN
+  delete process.env.BUILDER_ALLOCATION_CONFIGS
   Object.assign(process.env, { DATABASE_URL: databaseUrl, DBC_CONFIG: config.toBase58(), PLATFORM_CREATOR_SECRET_KEY: JSON.stringify([...creator.secretKey]),
     HF_MARKETS_ENABLED: 'true', DISCOVERY_REWARDS_ENABLED: 'true', PLATFORM_PARTNER_SECRET_KEY: JSON.stringify([...partner.secretKey]),
-    BUILDER_ALLOCATION_CONFIGS: config.toBase58(), VERIFICATION_BONUS_LAMPORTS: '5000000' })
+    VERIFICATION_BONUS_LAMPORTS: '5000000' })
   globalThis.__gitfunPool = pool
   globalThis.__repoingHfClient = createHfClient({ fetchImpl: hfServer.fetchImpl })
   const github = []
@@ -114,6 +117,17 @@ test('a model market launches end to end; a repository launch in the same run is
   const status = await (await launchStatus(new Request(`https://repo.ing/api/launch?repo=${resolved.repoId}`))).json()
   assert.deepEqual(status, { state: 'live', mint: launched.mint })
   assert.deepEqual(await call(resolveRoute, { url: 'hf.co/TheBloke/Llama-2-7B-GGUF' }), { repoId: resolved.repoId, mint: launched.mint, source: 'huggingface' })
+
+  // The config now reserves the builder allocation: a model is refused before Hugging Face or the chain is asked.
+  process.env.BUILDER_ALLOCATION_CONFIGS = config.toBase58()
+  const gpt2 = await call(resolveRoute, { url: 'https://huggingface.co/openai-community/gpt2' })
+  const beforeRefusal = hfServer.requests.length
+  const refused = await launchRoute(new Request('https://repo.ing/api/launch', { method: 'POST', body: JSON.stringify({ action: 'prepare', repoId: gpt2.repoId,
+    hfId: recorded['model-gpt2'].body._id, tokenName: 'gpt2', tokenSymbol: 'GPT2', tokenImage: image, launcherWallet: wallet.publicKey.toBase58(), initialBuyLamports: '0' }) }))
+  assert.equal(refused.status, 400)
+  assert.equal((await refused.json()).error, HF_CONFIG_RESERVE_ERROR)
+  assert.equal(hfServer.requests.length, beforeRefusal)
+  assert.deepEqual(await marketRow(gpt2.repoId), [])
 
   // The repository, through the same routes and environment: unchanged, rewards stamped.
   const modelRequests = hfServer.requests.length
