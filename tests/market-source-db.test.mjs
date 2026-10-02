@@ -112,7 +112,9 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
   assert.equal(process.env.DATABASE_URL, URL_)
   const journal = JSON.parse(await readFile('drizzle/meta/_journal.json', 'utf8'))
   const at = journal.entries.findIndex(entry => entry.tag === '0049_market_source')
-  assert.ok(at > 0 && journal.entries.slice(at + 1).every(entry => entry.when > journal.entries[at].when), '0049 is appended in order')
+  assert.ok(at > 0, '0049 is in the journal')
+  // drizzle applies only entries newer than the last applied one, so every "when" must exceed the one before it.
+  journal.entries.forEach((entry, i) => assert.ok(i === 0 || entry.when > journal.entries[i - 1].when, `${entry.tag} is out of order`))
   const admin = new pg.Pool({ connectionString: URL_.replace(/repoing_market_source_test$/, 'postgres') })
   const folder = await mkdtemp(join(tmpdir(), 'repoing-0049-'))
   let created = false, pool
@@ -213,7 +215,9 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
     })
 
     await t.test('GitHub-only reads see GitHub markets only, with a model market of the same owner/name present', async () => {
-      // The model market qualifies for every read below except by source: confirmed, indexed, VERIFIED progress, fees waiting.
+      // The model market qualifies for these reads except by source: confirmed, indexed, VERIFIED progress, fees waiting. The
+      // bonus accrual read is the exception: markets_hf_no_rewards already keeps a model market unstamped, so its source
+      // join is a second safeguard and this only checks that the GitHub candidate survives it.
       await pool.query(`insert into fee_events(github_repo_id,mint,pool,signature,event_index,amount_base_units,asset,kind,slot)
         values ($1,'MintH','PoolH','FeeH1',0,700000000,'${SOL_MINT}','dbc_creator_quote',16)`, [hf])
       await pool.query(`insert into graduation_observations(github_repo_id,checked_at,status,observation) values ($1,now(),'VERIFIED','{}')`, [hf])

@@ -3,6 +3,10 @@
 -- Every market id stays in the existing github_repo_id columns, so locks, unique indexes, views, triggers and ledgers work
 -- unchanged (known debt: github_* names also hold Hugging Face ids). GitHub repository ids are below 2^52; Hugging Face
 -- model markets take hf_models.market_ref, from 2^52+1 through 7e15 (still exact as a JavaScript Number).
+-- All pending migrations run in one transaction, so the locks taken below are held until it commits: give up after 5s
+-- (the deploy fails and can simply be retried) rather than queue every page query behind a long-running read.
+SET LOCAL lock_timeout = '5s';
+--> statement-breakpoint
 ALTER TABLE "repositories" ADD COLUMN IF NOT EXISTS "source" varchar(16) DEFAULT 'github' NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "repositories" ADD COLUMN IF NOT EXISTS "hf_model_ref" bigint;

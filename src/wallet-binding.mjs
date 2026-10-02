@@ -131,10 +131,10 @@ export function createWalletBinding({ pool }) {
     return db.transaction(async tx => {
       const challenges = await tx.select().from(walletBindingChallenges).where(inArray(walletBindingChallenges.nonce, nonces)).orderBy(walletBindingChallenges.githubRepoId)
       if (challenges.length !== nonces.length || new Set(challenges.map(c => String(c.githubRepoId))).size !== challenges.length) throw new Error('Wallet challenges mismatch')
+      for (const c of challenges) assertAuthoritySource(authority, c.githubRepoId)
       for (const c of challenges) await tx.execute(sql`select pg_advisory_xact_lock(${c.githubRepoId.toString()}::bigint)`)
       const now = new Date()
       for (const c of challenges) {
-        assertAuthoritySource(authority, c.githubRepoId)
         if (c.githubUserId !== userId || c.wallet !== walletKey.toBase58() || c.consumedAt || c.expiresAt <= now) throw new Error('Wallet challenge is mismatched, expired, or used')
         await requireRecentAdmin(tx, c.githubRepoId, userId, now)
         const [existing] = await tx.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, c.githubRepoId)).limit(1)
