@@ -25,11 +25,12 @@ export async function readLimitedBody(response, limit = MAX_IMAGE_BYTES) {
   return Buffer.concat(chunks)
 }
 
-// Never follow an image-host redirect onto an arbitrary host or send GitHub credentials.
-export async function fetchGithubImage(value, fetchImpl = fetch) {
+// Never follow an image-host redirect onto an arbitrary host or send GitHub credentials. allow: the host allowlist every
+// hop must pass (GitHub's image hosts by default; Hugging Face avatars pass src/hf-avatar.mjs's).
+export async function fetchGithubImage(value, fetchImpl = fetch, allow = safeGithubImageUrl) {
   let url = value
   for (let attempt = 0; attempt < 4; attempt++) {
-    url = safeGithubImageUrl(url)
+    url = allow(url)
     if (!url) throw Error('Unsupported image source')
     const response = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(5000) })
     if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -138,20 +139,21 @@ export function imageWidthParam(value) {
   return TOKEN_IMAGE_WIDTHS.includes(width) && String(width) === value ? width : undefined
 }
 
-async function renderGithubImage(value, width, fetchImpl) {
+async function renderGithubImage(value, width, fetchImpl, allow) {
   const url = new URL(value)
   if (url.hostname === 'avatars.githubusercontent.com') url.searchParams.set('s', String(width))
-  const bytes = await fetchGithubImage(url.href, fetchImpl)
+  const bytes = await fetchGithubImage(url.href, fetchImpl, allow)
   // SVG is never decoded here: README SVGs are untrusted and the caller falls back to a redirect.
   if (!isRasterImage(bytes)) throw Error('Unsupported image format')
   return sharp(bytes, options).timeout({ seconds: 5 }).resize(width, width, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer()
 }
 
-export async function githubImageVariant(value, width, { fetchImpl = fetch, now = Date.now() } = {}) {
+// allow: see fetchGithubImage. Allowlists never overlap, so one cache serves both sources.
+export async function githubImageVariant(value, width, { fetchImpl = fetch, now = Date.now(), allow = safeGithubImageUrl } = {}) {
   const key = `${width}:${value}`
   const cached = githubVariants.get(key)
   if (cached && cached.expiresAt > now) return cached.pending
-  const pending = renderGithubImage(value, width, fetchImpl)
+  const pending = renderGithubImage(value, width, fetchImpl, allow)
   githubVariants.delete(key)
   githubVariants.set(key, { pending, expiresAt: now + GITHUB_VARIANT_TTL_MS })
   pending.catch(() => { if (githubVariants.get(key)?.pending === pending) githubVariants.delete(key) })
