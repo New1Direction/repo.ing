@@ -10,7 +10,7 @@ export function reportOnlyPolicy({ dev = false } = {}) {
     'default-src': ["'self'"],
     'script-src': ["'self'", "'unsafe-inline'", 'https://static.cloudflareinsights.com', ...(dev ? ["'unsafe-eval'"] : [])],
     'style-src': ["'self'", "'unsafe-inline'"],
-    // The Hugging Face hosts serve model owners' avatars when the logo route redirects to them (src/hf-avatar.mjs).
+    // The Hugging Face hosts serve model owners' avatars when the logo route redirects to them (hubAvatarUrl, app/lib/hf-markets.mjs).
     'img-src': ["'self'", 'data:', 'blob:', 'https://avatars.githubusercontent.com', 'https://raw.githubusercontent.com', 'https://pbs.twimg.com', 'https://cdn-avatars.huggingface.co', 'https://huggingface.co'],
     'font-src': ["'self'", 'data:'],
     'connect-src': ["'self'", 'https://cloudflareinsights.com', 'https://mm-sdk-analytics.api.cx.metamask.io', 'wss://mm-sdk-relay.api.cx.metamask.io', ...(dev ? ['ws:'] : [])],

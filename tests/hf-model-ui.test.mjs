@@ -5,8 +5,7 @@ import { appModule, h, html, offlineFetch, resolveServer } from './fixtures/rend
 import { startFakeHf } from './fixtures/hf-server.mjs'
 import { HF_DISCLAIMER, HF_DISCLAIMER_BADGE, HF_DISCLAIMER_SHORT } from '../src/hf-copy.mjs'
 import { createHfClient, HfNotFoundError, HfUpstreamError } from '../src/hf-api.mjs'
-import { safeHfAvatarUrl } from '../src/hf-avatar.mjs'
-import { createModelCards, hfMarketsEnabled, shownMarkets, withModelFacts } from '../app/lib/hf-markets.mjs'
+import { createModelCards, hfMarketsEnabled, hubAvatarUrl, shownMarkets, withModelFacts } from '../app/lib/hf-markets.mjs'
 import { baseModels, derivativeLabel, gatedLabel, isModelMarket, modelEarningsHeadline, modelView, selectModelStrip, taskLabel } from '../app/lib/hf-model-display.mjs'
 
 // Hugging Face model markets in the UI: the display rules, the live model card, and every list, card and page variant.
@@ -374,15 +373,16 @@ test('logo route: a model’s avatar only from the Hub avatar hosts, resized thr
   }
 }))
 
+// The logo route's model branch: the launch's avatar allowlist narrowed to the Hub's own two hosts (no Gravatar).
 test('Hugging Face avatar allowlist: two Hub hosts, avatar paths, nothing else', () => {
   const ok = ['https://cdn-avatars.huggingface.co/v1/production/uploads/6426d3f3a7723d62b53c259b/tvPikpAzKTKGN5wrpadOJ.jpeg',
     'https://huggingface.co/avatars/0238dfe072bf70b8478b9201744585da.svg']
-  for (const url of ok) assert.equal(safeHfAvatarUrl(url), url)
+  for (const url of ok) assert.equal(hubAvatarUrl(url), url)
   for (const url of ['http://cdn-avatars.huggingface.co/v1/production/uploads/a.png', 'https://cdn-avatars.huggingface.co/other/a.png',
     'https://cdn-avatars.huggingface.co/v1/production/uploads/a.png?x=1', 'https://cdn-avatars.huggingface.co:444/v1/production/uploads/a.png',
     'https://user@huggingface.co/avatars/a.png', 'https://huggingface.co/api/avatars/openai', 'https://hf.co/avatars/a.png',
     'https://www.gravatar.com/avatar/0123456789abcdef0123456789abcdef', 'https://avatars.githubusercontent.com/u/1', 'https://cdn-avatars.huggingface.co/../avatars/x.png',
-    'javascript:alert(1)', '', null, 42]) assert.equal(safeHfAvatarUrl(url), null, String(url))
+    'javascript:alert(1)', '', null, 42]) assert.equal(hubAvatarUrl(url), null, String(url))
 })
 
 test('/stats: the GitHub / Hugging Face split renders only when asked, and each pair is its total', () => {
