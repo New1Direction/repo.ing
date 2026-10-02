@@ -75,6 +75,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
   const [pasteOpen, setPasteOpen] = useState(false)
   const [stage, setStage] = useState('')
   const [busy, setBusy] = useState(false)
+  const [confirmChange, setConfirmChange] = useState(false)
   const [claiming, setClaiming] = useState(false)
   const [expired, setExpired] = useState(false)
   const [error, setError] = useState(ERRORS[errorCode] ?? (errorCode ? 'This step could not finish. Refresh and try again.' : ''))
@@ -108,7 +109,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
       const signature = walletSignatureBytes(await provider().signMessage(new TextEncoder().encode(challenge.message)))
       setStage('Verifying and saving your payout wallet…')
       const result = await post({ action: 'bind', marketId: repoId, wallet: address, nonce: challenge.nonce, signature: btoa(String.fromCharCode(...signature)) })
-      setBound(result.wallet); setBoundMethod('signature'); setPasteOpen(false)
+      setBound(result.wallet); setBoundMethod('signature'); setPasteOpen(false); setConfirmChange(false)
       setStage('Payout wallet set. Refreshing your claim review…'); router.refresh()
     } catch (cause) { setError(cause.message || 'Could not set the payout wallet'); setStage('') }
     finally { setBusy(false) }
@@ -146,8 +147,14 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
         <PayoutDestination repoId={repoId} active={bound ? { wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt } : null} pending={pendingAddress}
           canManage={ready} onChanged={() => router.refresh()} endpoint={BIND_ENDPOINT} noun="model"/>
         {!wallet ? <button className="button primary" type="button" disabled={!ready} onClick={() => connect().catch(cause => setError(cause.message))}>Connect wallet</button>
-          : !bound || staleBinding || wallet !== bound ? <button className="button primary" type="button" disabled={!ready || busy} onClick={bind}>{busy ? 'Setting wallet…' : bound && !staleBinding ? 'Use the connected wallet instead' : 'Use this wallet for payouts'}</button>
-            : <button className="button outline" type="button" onClick={() => changeWallet().catch(cause => setError(cause.message))}>Switch connected wallet</button>}
+          : !bound || staleBinding ? <button className="button primary" type="button" disabled={!ready || busy} onClick={bind}>{busy ? 'Setting wallet…' : 'Use this wallet for payouts'}</button>
+            : <button className={`button ${wallet !== bound && !confirmChange ? 'primary' : 'outline'}`} type="button" onClick={() => changeWallet().catch(cause => setError(cause.message))}>Switch connected wallet</button>}
+        {wallet && bound && !staleBinding && wallet !== bound && <div className="claim-wallet-warning"><p>The connected wallet differs from the payout address. Switch wallets or explicitly replace the payout address.</p>
+          {!confirmChange ? <button className="claim-text-button" type="button" disabled={!ready} onClick={() => setConfirmChange(true)}>Change payout address instead</button> : <>
+            <p>Replace it with <strong>{wallet.slice(0, 6)}…{wallet.slice(-4)}</strong>? This needs a fresh Hugging Face ownership check and a wallet signature.</p>
+            <button className="button primary" type="button" disabled={!ready || busy} onClick={bind}>{busy ? 'Setting wallet…' : 'Confirm payout wallet change'}</button>
+            <button className="claim-text-button" type="button" onClick={() => setConfirmChange(false)}>Cancel</button></>}
+        </div>}
         {ready && (pasteOpen ? <PasteAddressForm repoIds={[repoId]} replacing={Boolean(bound)} endpoint={BIND_ENDPOINT} noun="model"
           onSaved={result => { setPasteOpen(false); setStage(pasteSavedMessage(result)); router.refresh() }} onClose={() => setPasteOpen(false)}/> :
           <p className="claim-paste-toggle"><button className="claim-text-button" type="button" onClick={() => { setError(''); setPasteOpen(true) }}>
