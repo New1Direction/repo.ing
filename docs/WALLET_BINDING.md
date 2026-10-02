@@ -39,4 +39,6 @@ Changed: `src/wallet-binding.mjs`, `src/db/schema.mjs`, `drizzle/0004_fresh_pupp
 
 To reproduce, use a dedicated PostgreSQL database, run `npm run db:migrate`, then `npm run test:wallet-binding`. The test truncates its database, seeds a recent admin-verification fixture, and generates a new wallet. Its address and timestamp will differ from this report.
 
+2026-10-02: a binding now records how it was made (`repo_beneficiaries.method`: `signature` here, `pasted` for an address pasted without a signature, which becomes the binding only after a 48-hour hold; see [CLAIM.md](CLAIM.md#2026-10-02-pasted-payout-addresses-with-a-48-hour-hold)). A wallet-signature binding, single or batch, still takes effect at once and replaces a pasted address that is still waiting; the batch setup treats a pasted address whose hold has passed as an existing payout address.
+
 The existing GitHub verifier does not retain a user access token, so this binding module checks a recent successful verification record rather than making a new live GitHub API call. Current GitHub authority immediately before a real beneficiary change and a browser wallet adapter signing flow remain unverified. The future `CLAIM` transition must recheck live GitHub authority before payout and must not infer current authority from this beneficiary row alone.
