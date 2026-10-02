@@ -46,6 +46,9 @@ import { maintainerDecision, promotionExcluded } from '../../../lib/maintainer-o
 import { DeclinedBanner } from '../../../components/maintainer-declined'
 import { PhoneMarketSummary } from '../../../components/phone-market-summary'
 import { BuildingLive, readPageStream } from '../../../components/building-live'
+import { ModelTokenPage, modelTokenMetadata } from '../../../components/hf/model-token-page'
+import { isModelMarket } from '../../../lib/hf-model-display.mjs'
+import { shownMarkets } from '../../../lib/hf-markets.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -56,6 +59,7 @@ export async function generateMetadata({ params }) {
   const { mint } = await params
   const { market } = await marketByMint(mint)
   if (!market) return { title: 'Market not found — repo.ing' }
+  if (isModelMarket(market)) return modelTokenMetadata(market)
   const title = `$${market.symbol} · ${market.fullName} — repo.ing`
   const description = (market.description || 'Explore this open source repository market on repo.ing.').slice(0, 180)
   const url = `https://repo.ing/token/${market.mint}`
@@ -71,6 +75,8 @@ export default async function Token({ params, searchParams }) {
   const activity = query.view === 'activity'
   const { market } = await marketByMint(mint)
   if (!market) notFound()
+  // Hugging Face model markets have their own page (none of the GitHub-only reads below run for them).
+  if (isModelMarket(market)) return <ModelTokenPage market={market} activity={activity}/>
   const repo = { ...displayRepository(market), mint: market.mint }
   // The maintainer's stream link, shown under the same rule as Dev Pulse. Started now, awaited after the reads below (it
   // never rejects).
@@ -159,8 +165,8 @@ function TokenDetails({ market }) {
 async function MarketsToWatchContent() {
   const [{ markets: race, unavailable: raceUnavailable }, { markets, unavailable }, excluded] = await Promise.all([graduationRace(), listMarkets(), promotionExcluded()])
   const excludeMints = [OFFICIAL_TOKEN.mint]
-  return <MarketsToWatchLists race={topOfRace(labeledRacers(race, markets), { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
-    newest={excluded ? newestLaunches(featuredMarkets(markets), { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
+  return <MarketsToWatchLists race={topOfRace(labeledRacers(shownMarkets(race), markets), { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
+    newest={excluded ? newestLaunches(featuredMarkets(shownMarkets(markets)), { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
 }
 
 // Same memoized listMarkets() rows as the home tabs: no extra query per token page view. Never recommends a do-not-promote
@@ -168,7 +174,7 @@ async function MarketsToWatchContent() {
 async function MoreMarketsContent({ mint, featured }) {
   const [{ markets }, excluded] = await Promise.all([listMarkets(), promotionExcluded()])
   if (!excluded) return null
-  return <MoreMarkets markets={selectMoreMarkets(markets.filter(market => !excluded.has(String(market.repoId))), { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured}/>
+  return <MoreMarkets markets={selectMoreMarkets(shownMarkets(markets).filter(market => !excluded.has(String(market.repoId))), { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured}/>
 }
 
 // Fixed-size placeholder: the resolved headline occupies exactly this box, so streaming it in never shifts layout.

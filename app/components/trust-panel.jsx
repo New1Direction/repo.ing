@@ -8,6 +8,7 @@ import { graduationLabel, launcherLines, maintainerStatus, percentLabel, TOP_HOL
 import { holdingLabel, shortWallet } from '../lib/holder-note-format.mjs'
 import { REPO_FACTS_TIP } from '../lib/repo-quality.mjs'
 import { signedPayoutWallet } from '../lib/official-launch.mjs'
+import { isModelMarket } from '../lib/hf-model-display.mjs'
 
 // One fact per row: icon, a one-line headline, fixed-height detail lines, and a one-line explainer behind (i).
 // Streamed rows keep the same line count while loading, so the card never changes height.
@@ -31,6 +32,18 @@ const TIPS = {
   holders: `On-chain: the ${TOP_HOLDERS} largest wallets' share of supply. The bonding curve or pool vault and token locks are shown separately, not counted. Refreshed about every minute.`,
   token: 'Read from the token mint account on Solana. With the mint authority revoked, no more tokens can ever be minted.',
   declined: 'A current GitHub admin of this repository declined this market on repo.ing. repo.ing does not promote it. Trading stays open so holders can exit, and builder fees stay claimable by the maintainer.',
+  modelOwner: "Verified: the model's current owner on Hugging Face (the user, or an admin of the owning organization) signed in and verified it on repo.ing, so fees can reach them.",
+  modelDeclined: "The model's current owner on Hugging Face declined this market on repo.ing. repo.ing does not promote it. Trading stays open so holders can exit, and fees stay claimable by the owner.",
+}
+
+// Hugging Face model markets: the owner is the model's current Hugging Face owner, and claiming starts on /claim/<id>.
+function ModelOwnerRow({ market }) {
+  const { verified } = maintainerStatus(market)
+  return verified
+    ? <Row id="trust-maintainer" icon={BadgeCheck} tone="verified" title="Verified model owner ✓"
+      lines={[market.beneficiaryWallet ? 'Hugging Face owner verified · payout wallet set' : 'Hugging Face owner verified']} tip={TIPS.modelOwner}/>
+    : <Row id="trust-maintainer" icon={CircleDashed} title="Model owner hasn't verified yet"
+      lines={[<>Model owner? <Link href={`/claim/${market.repoId}`}>Claim as the model&apos;s owner →</Link></>]} tip={TIPS.modelOwner}/>
 }
 
 function MaintainerRow({ market }) {
@@ -115,11 +128,14 @@ function LaunchFeeRow({ terms }) {
 // without changing the card's height. declined: the maintainer's active decline (src/maintainer-opt-outs.mjs), or null.
 // repoFacts: repoFactsView (repo-quality.mjs).
 export function TrustPanel({ market, launchFee = null, declined = null, repoFacts = null }) {
+  const model = isModelMarket(market)
   return <section className="inner-card trust-panel" aria-labelledby="trust-panel-title">
     <div className="trust-heading"><h3 id="trust-panel-title">Launch facts</h3><span>On-chain and repo.ing data</span></div>
     <ul className="trust-rows">
-      <MaintainerRow market={market}/>
-      {declined && <Row id="trust-declined" icon={Ban} tone="declined" title="Maintainer declined this market" lines={['Not promoted · not endorsed by the project']} tip={TIPS.declined}/>}
+      {model ? <ModelOwnerRow market={market}/> : <MaintainerRow market={market}/>}
+      {declined && (model
+        ? <Row id="trust-declined" icon={Ban} tone="declined" title="Model owner declined this market" lines={["Not promoted · not endorsed by the model's creators"]} tip={TIPS.modelDeclined}/>
+        : <Row id="trust-declined" icon={Ban} tone="declined" title="Maintainer declined this market" lines={['Not promoted · not endorsed by the project']} tip={TIPS.declined}/>)}
       {repoFacts && <RepoRow facts={repoFacts}/>}
       {launchFee && <LaunchFeeRow terms={launchFee}/>}
       <Suspense fallback={<LauncherFallback/>}><LauncherRow market={market}/></Suspense>
