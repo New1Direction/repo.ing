@@ -17,8 +17,11 @@ import { checkAgentDraft } from '../../lib/agent-launch.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../../../src/launch-sessions.mjs'
-import { assertLaunchAllowed } from '../../../src/maintainer-opt-outs.mjs'
+import { activeDecision, assertLaunchAllowed } from '../../../src/maintainer-opt-outs.mjs'
 import { verificationBonusLamports } from '../../../src/verification-bonus.mjs'
+import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled, isHfMarketId,
+  registeredModel } from '../../../src/hf-launch.mjs'
+import { hfClient } from '../../lib/hf-client.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -28,6 +31,44 @@ const safeError = (error, action) => {
   console.warn('launch_request_failed',{supportCode,action,code:result.code})
   return Response.json({...result,supportCode},{status:400,headers:{'Cache-Control':'no-store'}})
 }
+
+// A Hugging Face model market (src/hf-launch.mjs): the repository review, keyed by the model's market id. The browser names
+// the model by its registry _id (hfId); the server reads it through Hugging Face again at its registry path, and
+// hfLaunchGuard checks it once more at prepare and after the wallet signs. No trend shortcut: trends are repositories only.
+async function prepareModelLaunch(request, body) {
+  if (!hfMarketsEnabled()) throw new Error(HF_MARKETS_UNAVAILABLE)
+  if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
+  const pool = database(), config = configAddress(), creator = creatorSigner()
+  if (!pool || !config || !creator) throw new Error('Local launch is not configured')
+  if (body.trendRevision !== undefined) throw new Error('Trend launches are for GitHub repositories only')
+  if (!body.tokenImage) throw new Error('Choose a token image before reviewing the launch.')
+  const marketRef = String(body.repoId), registered = await registeredModel(pool, marketRef)
+  if (!registered || registered.hfId !== body.hfId) throw new Error('This model changed. Paste its Hugging Face URL and review the launch again.')
+  if (await activeDecision(pool, marketRef)) throw new Error(HF_OPT_OUT_ERROR)
+  const connection = chain()
+  const metadataOrigin = process.env.APP_ORIGIN ? publicOrigin(request.url) : null
+  if (process.env.NODE_ENV === 'production' && !metadataOrigin) throw new Error('Token metadata origin is not configured')
+  const store = launchSessions(pool, creator)
+  await sweep(store)
+  const hf = hfClient(), launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin })
+  // The shared reward settings go in unchanged: rewardStamps() leaves a model market without the bonus or the allocation.
+  const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
+    pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(),
+    source: hfLaunchSource({ pool, hf, expected: { hfId: registered.hfId, marketRef } }) })
+  const id = randomUUID(), initialBuyLamports = body.initialBuyLamports ?? '0'
+  let costs, transaction
+  const { prepared } = await coordinator.prepareLaunch({ repositoryUrl: registered.repoPath,
+    tokenName: body.tokenName, tokenSymbol: body.tokenSymbol, tokenImage: body.tokenImage, launcherWallet: body.launcherWallet,
+    initialBuyLamports, launchGuard: hfLaunchGuard({ pool, hf }), onPrepared: async ({ market, prepared, repo }) => {
+      costs = await estimateLaunchCosts(connection, prepared.transaction, initialBuyLamports)
+      transaction = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
+      await store.create({ id, market, repoFullName: repo.fullName, config, transaction, mintSecretKey: prepared.mintSecretKey,
+        blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight, initialBuyLamports })
+    } })
+  if (!prepared) throw new Error('No wallet signature requested')
+  return Response.json({ id, costs, transaction })
+}
+
 export async function GET(request) {
   const repoId=new URL(request.url).searchParams.get('repo')
   if(!/^[1-9]\d{0,18}$/.test(repoId??''))return Response.json({error:'Invalid repository'},{status:400})
@@ -66,6 +107,7 @@ export async function POST(request) {
       }
       return Response.json({ cancelled: true })
     }
+    if (body.action === 'prepare' && isHfMarketId(body.repoId)) return await prepareModelLaunch(request, body)
     if (body.action === 'prepare') {
       if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
       const pool = database(), config = configAddress(), creator = creatorSigner()
@@ -114,8 +156,10 @@ export async function POST(request) {
       try { prepared = launcher.restore(session) }
       catch (error) { await store.release(session); throw error }
       const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled() })
-      const launchGuard = session.trendRevision === null ? undefined : trendLaunchGuard({ pool, repoId: session.githubRepoId,
-        revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
+      // A model market is checked again after the wallet signed, before anything is sent (src/hf-launch.mjs).
+      const launchGuard = isHfMarketId(session.githubRepoId) ? hfLaunchGuard({ pool, hf: hfClient() })
+        : session.trendRevision === null ? undefined : trendLaunchGuard({ pool, repoId: session.githubRepoId,
+          revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
       // Parsed inside the signing step so a malformed body fails the review (market 'failed') like a wallet mismatch.
       const market = await coordinator.submitPrepared({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,
         repo: { githubRepoId: repoId, fullName: session.repoFullName }, prepared, launchGuard,
