@@ -30,21 +30,28 @@ export function decisionNote(value) {
 const ACTIVE = `select github_repo_id::text as "repoId", kind, note, created_at as "createdAt" from maintainer_opt_outs
   where withdrawn_at is null`
 
+// Reads of maintainer_opt_outs only. A database the migration has not reached yet has no such table (42P01), so it holds
+// no decisions; every other error still fails the caller.
+async function readDecisions(pool, sql, params = []) {
+  try { return (await pool.query(sql, params)).rows }
+  catch (error) { if (error?.code === '42P01') return []; throw error }
+}
+
 export async function activeDecision(pool, repoId) {
-  const { rows } = await pool.query(`${ACTIVE} and github_repo_id = $1`, [repoIdOf(repoId)])
-  return decisionOf(rows[0])
+  const [row] = await readDecisions(pool, `${ACTIVE} and github_repo_id = $1`, [repoIdOf(repoId)])
+  return decisionOf(row)
 }
 
 // Repository id → active decision, for a list of repositories (the builder dashboard and /opt-out).
 export async function activeDecisions(pool, repoIds) {
   const ids = repoIds.map(repoIdOf)
   if (!ids.length) return new Map()
-  const { rows } = await pool.query(`${ACTIVE} and github_repo_id = any($1::bigint[])`, [ids])
+  const rows = await readDecisions(pool, `${ACTIVE} and github_repo_id = any($1::bigint[])`, [ids])
   return new Map(rows.map(row => [row.repoId, decisionOf(row)]))
 }
 
 export async function activeOptOutRepoIds(pool) {
-  const { rows } = await pool.query('select github_repo_id::text as "repoId" from maintainer_opt_outs where withdrawn_at is null')
+  const rows = await readDecisions(pool, 'select github_repo_id::text as "repoId" from maintainer_opt_outs where withdrawn_at is null')
   return rows.map(row => row.repoId)
 }
 

@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@solana/web3.js'
-import { createPromotionExclusions, forgetPromotionExclusions, promotionExclusions, OPT_OUTS_STALE_MS, OPT_OUTS_TTL_MS } from '../app/lib/promotion-exclusions.mjs'
-import { assertLaunchAllowed, createMaintainerDecisions, decisionNote, DecisionError, OPT_OUT_ERROR } from '../src/maintainer-opt-outs.mjs'
+import { createPromotionExclusions, forgetPromotionExclusions, promotionExclusions, OPT_OUTS_RETRY_MS, OPT_OUTS_STALE_MS, OPT_OUTS_TTL_MS } from '../app/lib/promotion-exclusions.mjs'
+import { activeDecision, activeDecisions, activeOptOutRepoIds, assertLaunchAllowed, createMaintainerDecisions, decisionNote, DecisionError, OPT_OUT_ERROR } from '../src/maintainer-opt-outs.mjs'
 import { createAgentLaunchService } from '../src/agent-launch.mjs'
 import { AgentLaunchError } from '../src/agent-launch-draft.mjs'
 import { createGitHubAppVerifier } from '../src/github-verification.mjs'
@@ -46,35 +46,76 @@ test('the do-not-promote set unions PROMOTION_EXCLUDED_REPO_IDS with active main
   assert.deepEqual([...await createPromotionExclusions({ pool: null, env, read: () => assert.fail('no read') })()], ['9'])
 })
 
-test('the do-not-promote set fails closed: no recent opt-out list means no promotion', async () => {
-  let clock = 0, fail = true
-  const read = async () => { if (fail) throw Object.assign(Error('relation "maintainer_opt_outs" does not exist'), { code: '42P01' }); return ['501'] }
+// console.warn is silenced (and counted) while fn runs.
+async function quietly(fn) {
+  const warn = console.warn, warnings = []
+  console.warn = (...args) => { warnings.push(args) }
+  try { await fn(warnings) } finally { console.warn = warn }
+}
+
+test('the do-not-promote set fails closed, keeps the last good list through a blip, and backs off after a failure', () => quietly(async warnings => {
+  let clock = 0, fail = true, reads = 0
+  const read = async () => { reads++; if (fail) throw Object.assign(Error('connect ECONNREFUSED 127.0.0.1:5432'), { code: 'ECONNREFUSED' }); return ['501'] }
   const excluded = createPromotionExclusions({ pool: {}, env: {}, now: () => clock, read })
+  // No list yet: reject, and do not retry (or log) again until the backoff ends.
   await assert.rejects(excluded(), /opt-outs are unavailable/)
+  await assert.rejects(Promise.all([excluded(), excluded()]), /opt-outs are unavailable/)
+  assert.deepEqual([reads, warnings.length], [1, 1])
   fail = false
+  clock += OPT_OUTS_RETRY_MS
   assert.deepEqual([...await excluded()], ['501'])
-  // A brief outage keeps the last good list; a long one rejects again.
+  // A blip after a good read keeps serving that list, reading again only once the backoff ends.
   fail = true
   clock += OPT_OUTS_TTL_MS
-  const warn = console.warn
-  console.warn = () => {}
-  try { assert.deepEqual([...await excluded()], ['501']) } finally { console.warn = warn }
+  assert.deepEqual([...await excluded()], ['501'])
+  assert.deepEqual([...await excluded()], ['501'])
+  assert.deepEqual([reads, warnings.length], [3, 2])
+  clock += OPT_OUTS_RETRY_MS
+  assert.deepEqual([...await excluded()], ['501'])
+  assert.equal(reads, 4)
+  // Past the stale window (measured from the last good read) it rejects again.
   clock += OPT_OUTS_STALE_MS
   await assert.rejects(excluded(), /unavailable/)
-})
+  // A malformed result counts as a failed read too.
+  const odd = createPromotionExclusions({ pool: {}, env: {}, now: () => clock, read: async () => null })
+  await assert.rejects(odd(), /unavailable/)
+}))
 
-test('one shared loader per pool, reset after a maintainer decision', async () => {
-  const pool = fakePool(['601'])
+test('one shared loader per pool; a maintainer decision forces a re-read but keeps the last good list', () => quietly(async () => {
+  let down = false
+  const pool = { statements: 0, async query() { this.statements++; if (down) throw Error('Connection terminated unexpectedly'); return { rows: [{ repoId: '601' }] } } }
   assert.deepEqual([...await promotionExclusions(pool)], ['601'])
   await promotionExclusions(pool)
-  assert.equal(pool.statements.length, 1, 'cached per pool')
+  assert.equal(pool.statements, 1, 'cached per pool')
   forgetPromotionExclusions(pool)
+  assert.deepEqual([...await promotionExclusions(pool)], ['601'])
+  assert.equal(pool.statements, 2, 're-read after a decision')
+  down = true
+  forgetPromotionExclusions(pool)
+  assert.deepEqual([...await promotionExclusions(pool)], ['601'], 'a failed re-read falls back to the last good list')
   await promotionExclusions(pool)
-  assert.equal(pool.statements.length, 2)
+  assert.equal(pool.statements, 3, 'and backs off instead of retrying every call')
   const saved = process.env.PROMOTION_EXCLUDED_REPO_IDS
   process.env.PROMOTION_EXCLUDED_REPO_IDS = '42'
   try { assert.deepEqual([...await promotionExclusions(null)], ['42']) }
   finally { if (saved === undefined) delete process.env.PROMOTION_EXCLUDED_REPO_IDS; else process.env.PROMOTION_EXCLUDED_REPO_IDS = saved }
+}))
+
+test('a database without the maintainer_opt_outs table has no decisions; other errors still fail', async () => {
+  const failing = code => ({ async query(sql) {
+    assert.match(sql, /from maintainer_opt_outs/)
+    throw Object.assign(Error(code === '42P01' ? 'relation "maintainer_opt_outs" does not exist' : 'terminating connection due to administrator command'), { code })
+  } })
+  const missing = failing('42P01')
+  assert.deepEqual(await activeOptOutRepoIds(missing), [])
+  assert.equal(await activeDecision(missing, '700'), null)
+  assert.deepEqual([...(await activeDecisions(missing, ['700', '701'])).keys()], [])
+  await assert.doesNotReject(assertLaunchAllowed(missing, '700'))
+  assert.deepEqual([...await createPromotionExclusions({ pool: missing, env: { PROMOTION_EXCLUDED_REPO_IDS: '7' } })()], ['7'])
+  const down = failing('57P01')
+  for (const read of [() => activeOptOutRepoIds(down), () => activeDecision(down, '700'), () => activeDecisions(down, ['700']), () => assertLaunchAllowed(down, '700')]) {
+    await assert.rejects(read(), error => error.code === '57P01')
+  }
 })
 
 test('launches are refused for an opted-out repository', async () => {
@@ -131,6 +172,36 @@ test('/api/launch prepare refuses an opted-out repository before anything is res
   assert.equal(response.status, 400)
   assert.equal(body.error, OPT_OUT_ERROR)
   assert.deepEqual(pool.statements.filter(sql => !/maintainer_opt_outs/.test(sql)), [])
+})
+
+test('Dev Pulse is hidden for a declined market and unavailable, never cached, while the decision cannot be read', async () => {
+  const { GET } = await import('../app/api/market/[mint]/pulse/route.js')
+  const mint = Keypair.generate().publicKey.toBase58()
+  const market = { repoId: '700', mint, pool: 'Pool700', tokenName: 'Declined', symbol: 'NOPE', indexedAt: new Date(), allocationVersion: null,
+    discoveryVersion: null, launcherWallet: 'w', owner: 'octo', name: 'declined', fullName: 'octo/declined', description: null, avatarUrl: null,
+    stars: 1, forks: 0, updatedAt: new Date(), beneficiaryWallet: null, beneficiaryBoundAt: null, earned: '0', claimed: '0',
+    volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null }
+  // decisions: what reading maintainer_opt_outs does; the market row and empty Dev Pulse tables answer everything else.
+  const poolWith = decisions => ({ async query(sql, params) {
+    if (/from markets m join repositories r/.test(sql)) return { rows: [market] }
+    if (/maintainer_opt_outs/.test(sql)) return decisions(params)
+    return { rows: [] }
+  } })
+  const pulse = async decisions => {
+    const response = await withRoute(poolWith(decisions), () => GET(new Request(`https://repo.ing/api/market/${mint}/pulse`), { params: Promise.resolve({ mint }) }))
+    return { status: response.status, cache: response.headers.get('cache-control'), body: await response.json() }
+  }
+  const error = console.error
+  console.error = () => {}
+  try {
+    const unreadable = await pulse(() => { throw Error('Connection terminated unexpectedly') })
+    assert.deepEqual(unreadable, { status: 503, cache: 'no-store', body: { error: 'Dev Pulse unavailable' } })
+  } finally { console.error = error }
+  const declined = await pulse(() => ({ rows: [decisionRow('700')] }))
+  assert.deepEqual([declined.status, declined.body], [200, { status: 'hidden' }])
+  assert.notEqual(declined.cache, 'no-store')
+  const migrationPending = await pulse(() => { throw Object.assign(Error('relation "maintainer_opt_outs" does not exist'), { code: '42P01' }) })
+  assert.deepEqual([migrationPending.status, migrationPending.body.status], [200, 'pending'], 'a missing table holds no decline')
 })
 
 test('agent drafts refuse an opted-out repository and report it from resolve_repo', async () => {

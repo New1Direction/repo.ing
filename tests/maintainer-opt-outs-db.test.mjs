@@ -90,6 +90,14 @@ test('real PostgreSQL: maintainer decisions are created and withdrawn only by cu
     assert.deepEqual((await pool.query(`select count(*)::int as total, count(*) filter (where withdrawn_at is null)::int as active
       from maintainer_opt_outs where github_repo_id = $1`, [LIVE])).rows[0], { total: 2, active: 1 })
 
+    // A database the migration has not reached yet (here: a search_path without the table) holds no decisions.
+    const bare = new pg.Pool({ connectionString: url, options: '-c search_path=maintainer_opt_outs_absent' })
+    try {
+      assert.deepEqual(await activeOptOutRepoIds(bare), [])
+      assert.equal(await activeDecision(bare, NO_MARKET), null)
+      await assert.doesNotReject(assertLaunchAllowed(bare, NO_MARKET))
+    } finally { await bare.end() }
+
     // The table enforces the same rules on its own.
     const insert = (values, columns = 'github_repo_id, kind, github_user_id, note') => pool.query(`insert into maintainer_opt_outs (${columns}) values (${values})`)
     await assert.rejects(insert(`${OTHER}, 'decline', 42, repeat('x', 281)`), /maintainer_opt_outs_note_check/)
