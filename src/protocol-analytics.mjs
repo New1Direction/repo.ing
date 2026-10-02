@@ -11,18 +11,24 @@ export function analyticsWindow(range = 'all', now = new Date()) {
   return { range: selected, until: until.toISOString(), since: since?.toISOString() ?? null, chartSince: chartSince.toISOString(), bucket: selected === '24h' ? 'hour' : 'day' }
 }
 
-// Team repos: repositories whose GitHub owner is the repo.ing team's own account. They are the team's projects, repo.ing
-// itself included, and earn builder fees like any market. /stats reports them apart from outside builders so nobody
-// mistakes the team paying itself for open source maintainers getting paid; the totals still include both.
+// Team repos: the repo.ing team's own repositories, repo.ing itself included. They earn builder fees like any market; /stats
+// reports them apart from outside builders so nobody mistakes the team paying itself for open source maintainers getting
+// paid, and the totals still include both. A repository is a team repo when its GitHub owner is in TEAM_REPO_OWNERS or its
+// GitHub repository id is in TEAM_REPO_IDS. Ids never change, so a renamed organization or a transferred repository keeps
+// its history in the team column; the owner match covers team repositories launched after this list was written.
 export const TEAM_REPO_OWNERS = Object.freeze(['New1Direction'])
+// New1Direction/repo.ing, webmcp-anything, ohiyo and OntologyEX.
+export const TEAM_REPO_IDS = Object.freeze(['1388219884', '1250482335', '1269625283', '1266706783'])
 const TEAM_OWNERS = TEAM_REPO_OWNERS.map(owner => owner.toLowerCase())
 
 // Existing finalized event ledgers only. The union cannot count deposits, LP
 // migrations, claims or synthetic launch rows as trading volume. Every event carries
-// whether its market's repository is a team repo; team is the query's parameter
-// holding the lowercased TEAM_REPO_OWNERS (GitHub logins are case-insensitive).
-const eventsSQL = team => `with canonical as (
-  select m.*, lower(r.owner) = any(${team}::text[]) as team from markets m join repositories r on r.github_repo_id=m.github_repo_id
+// whether its market's repository is a team repo; owners and ids are the query's
+// parameters holding the lowercased TEAM_REPO_OWNERS (GitHub logins are
+// case-insensitive) and TEAM_REPO_IDS.
+const eventsSQL = (owners, ids) => `with canonical as (
+  select m.*, (lower(r.owner) = any(${owners}::text[]) or m.github_repo_id = any(${ids}::bigint[])) as team
+  from markets m join repositories r on r.github_repo_id=m.github_repo_id
   where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'
 ), events as (
   select 'volume' kind,t.traded_at occurred_at,(case when t.direction='buy' then t.input_base_units else t.output_base_units end)::numeric amount,m.team
@@ -42,7 +48,7 @@ export async function readProtocolAnalytics(pool, { range = 'all', now = new Dat
   try {
     await db.query('begin isolation level repeatable read read only')
     await db.query("set local statement_timeout='5000ms'")
-    const { rows: [{ outside_earned, team_earned, outside_paid, team_paid, ...totals }] } = await db.query(`${eventsSQL('$3')}
+    const { rows: [{ outside_earned, team_earned, outside_paid, team_paid, ...totals }] } = await db.query(`${eventsSQL('$3', '$4')}
       select coalesce(sum(amount) filter(where kind='volume'),0)::text as volume,
         coalesce(sum(amount) filter(where kind='earned'),0)::text as earned,
         coalesce(sum(amount) filter(where kind='paid'),0)::text as paid,
@@ -53,8 +59,8 @@ export async function readProtocolAnalytics(pool, { range = 'all', now = new Dat
         coalesce(sum(amount) filter(where kind='earned' and team),0)::text as team_earned,
         coalesce(sum(amount) filter(where kind='paid' and not team),0)::text as outside_paid,
         coalesce(sum(amount) filter(where kind='paid' and team),0)::text as team_paid
-      from events where ($1::timestamptz is null or occurred_at >= $1) and occurred_at <= $2`, [window.since, window.until, TEAM_OWNERS])
-    const { rows: days } = await db.query(`${eventsSQL('$4')}, buckets as (
+      from events where ($1::timestamptz is null or occurred_at >= $1) and occurred_at <= $2`, [window.since, window.until, TEAM_OWNERS, TEAM_REPO_IDS])
+    const { rows: days } = await db.query(`${eventsSQL('$4', '$5')}, buckets as (
       select generate_series(date_trunc($3,$1::timestamptz at time zone 'UTC') at time zone 'UTC',
         date_trunc($3,$2::timestamptz at time zone 'UTC') at time zone 'UTC',case when $3='hour' then interval '1 hour' else interval '1 day' end) bucket
     ), grouped as (
@@ -64,7 +70,7 @@ export async function readProtocolAnalytics(pool, { range = 'all', now = new Dat
         coalesce(sum(amount) filter(where kind='paid'),0)::text paid
       from events where occurred_at >= $1 and occurred_at <= $2 group by 1
     ) select b.bucket,coalesce(g.volume,'0') volume,coalesce(g.earned,'0') earned,coalesce(g.paid,'0') paid
-      from buckets b left join grouped g using(bucket) order by b.bucket`, [window.chartSince, window.until, window.bucket, TEAM_OWNERS])
+      from buckets b left join grouped g using(bucket) order by b.bucket`, [window.chartSince, window.until, window.bucket, TEAM_OWNERS, TEAM_REPO_IDS])
     const { rows: payouts } = await db.query(`select r.full_name as "fullName",m.mint,c.amount_base_units::text as amount,
       c.claim_signature as signature,c.settled_at as "settledAt" from repo_claims c
       join markets m on m.github_repo_id=c.github_repo_id join repositories r on r.github_repo_id=m.github_repo_id

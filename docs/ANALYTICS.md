@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | Paid to builders | Settled SOL fee payouts in the selected period | `repo_claims`, `status = settled`, settlement time |
 | Earned by builders | Indexed builder fee credits, including fees already paid | `fee_events` + verified-pool `damm_fee_events`, indexing time |
-| Outside builders / repo.ing team repos | Both builder figures split by repository owner. Team repos are the repo.ing team's own repositories, repo.ing itself included (GitHub owner in `TEAM_REPO_OWNERS`, `src/protocol-analytics.mjs`); the two parts add up to each total | `repositories.owner` |
+| Outside builders / repo.ing team repos | Both builder figures split by repository owner. Team repos are the repo.ing team's own repositories, repo.ing itself included: GitHub owner in `TEAM_REPO_OWNERS` or repository id in `TEAM_REPO_IDS` (`src/protocol-analytics.mjs`; ids keep a renamed or transferred team repository in the team column). The two parts add up to each total | `repositories.owner`, `markets.github_repo_id` |
 | Trading volume | DBC buy SOL input / sell SOL output, plus verified DAMM SOL quote amounts | `trade_events` + `damm_trade_events`, chain trade time |
 | Live markets | Confirmed, finalized launches with completed indexing | `markets` |
 | Graduated markets | Canonical markets with durable migration evidence | `graduation_events` |
