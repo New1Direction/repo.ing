@@ -4,6 +4,7 @@ import { AnalyticsActivityChart } from './analytics-activity-chart'
 import { ArrowUpRight } from 'lucide-react'
 import { formatSolDisplay, formatUnits, formatUsdEstimate } from '../lib/format.mjs'
 import { BuilderPayouts } from './builder-payouts'
+import { BuilderSplit, BuilderSplitNote } from './builder-split'
 import { TeamTokenLocks } from './team-token-locks'
 import { ReserveCoverage } from './reserve-coverage'
 import { BuybackStatus, receiptUrl } from './buyback-status'
@@ -20,9 +21,10 @@ export function ProtocolAnalytics({ data, usdPerSol, buybacks = BUYBACK_RECEIPTS
   const rangeLabel = { '24h': 'Past 24 hours', '7d': 'Past 7 days', '30d': 'Past 30 days', all: 'All time' }[data.range]
   return <>
     <section className="analytics-hero" aria-label="Builder earnings and payouts">
-      <div><span className="analytics-kicker">Paid to builders</span><Amount value={totals.paid} usdPerSol={usdPerSol} hero/><p>Settled payouts · {rangeLabel.toLowerCase()}</p></div>
-      <div><span className="analytics-kicker">Earned by builders</span><Amount value={totals.earned} usdPerSol={usdPerSol} hero/><p>Indexed fees, including amounts already paid</p></div>
+      <div><span className="analytics-kicker">Paid to builders</span><Amount value={totals.paid} usdPerSol={usdPerSol} hero/><p>Settled payouts · {rangeLabel.toLowerCase()}</p><BuilderSplit split={data.builders?.paid}/></div>
+      <div><span className="analytics-kicker">Earned by builders</span><Amount value={totals.earned} usdPerSol={usdPerSol} hero/><p>Indexed fees, including amounts already paid</p><BuilderSplit split={data.builders?.earned}/></div>
     </section>
+    {data.builders && <BuilderSplitNote/>}
     <div className="analytics-market-counts"><span><strong>{totals.markets}</strong> live markets</span><span><strong>{totals.graduated}</strong> graduated</span><span><strong>{totals.trades.toLocaleString('en-US')}</strong> trades · {rangeLabel.toLowerCase()}</span></div>
     <section className="analytics-chart-grid" aria-label="Protocol activity charts">
       {[['volume','Trading volume'],['earned','Builder fees earned'],['paid','Builder payouts']].map(([metric,title]) => <article className="analytics-card" key={metric}><h2>{title}</h2><Amount value={totals[metric]} usdPerSol={usdPerSol}/><p>{data.bucket==='hour'?'Hourly':'Daily'} in UTC{data.range==='all'?' · last 14 days shown':''}</p><AnalyticsActivityChart data={data} metric={metric} title={title}/></article>)}
