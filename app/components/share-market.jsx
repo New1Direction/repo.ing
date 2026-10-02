@@ -12,8 +12,9 @@ import { useShareReferral } from './share-referral'
 
 // Watch stays a button; every share action (referral status included) lives in one disclosure menu (Escape closes, focus
 // returns to "Share"). `more` holds secondary links for the "⋯" menu. readme: offer the README badge (false for a Hugging
-// Face model market, whose badge copy would describe a repository).
-export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true }) {
+// Face model market, whose badge copy would describe a repository). shareText replaces the system share sheet's text (a
+// model market's carries its disclaimer).
+export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true, shareText = null }) {
   const [state, setState] = useState('')
   const [open, setOpen] = useState(false), [badge, setBadge] = useState(false), [card, setCard] = useState(false)
   const root = useRef(null), trigger = useRef(null), panel = useRef(null), refocus = useRef(false)
@@ -45,7 +46,7 @@ export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = tru
   }
   async function share() {
     if (!navigator.share) return copy()
-    try { await navigator.share({ title: `$${symbol} — ${fullName}`, text: `${fullName} on repo.ing`, url: url() }); setState('') }
+    try { await navigator.share({ title: `$${symbol} — ${fullName}`, text: shareText ?? `${fullName} on repo.ing`, url: url() }); setState('') }
     catch (error) { if (error.name !== 'AbortError') await copy() }
   }
   function onKeyDown(event) {
