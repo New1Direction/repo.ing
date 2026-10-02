@@ -87,7 +87,7 @@ async function loadMarkets() {
         r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks, r.github_created_at as "githubCreatedAt",
         coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
         (coalesce(t.volume, 0) + coalesce(dv.volume, 0))::text as "volume24hLamports",
-        b.wallet as "beneficiaryWallet", exists (
+        b.wallet as "beneficiaryWallet", b.method as "beneficiaryMethod", exists (
           select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin'
         ) as "wasVerified",
         case when coalesce(dp.slot, -1) > coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice",
@@ -178,7 +178,7 @@ async function singleMarket(column, value) {
       m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
       m.verification_bonus_lamports::text as "verificationBonusLamports",
       r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl",
-      r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt",
+      r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt", b.method as "beneficiaryMethod",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
       ((select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)
