@@ -17,7 +17,7 @@ import { readPulseTicker } from '../lib/dev-pulse.mjs'
 import { pulseIndex, withPulse } from '../lib/pulse-index.mjs'
 import { shippingLeaders } from '../lib/pulse-rank.mjs'
 import { ShippingLeaders } from '../components/shipping-leaders'
-import { promotionExcludedRepoIds } from '../lib/promotion-exclusions.mjs'
+import { promotableMarkets, promotionExcluded } from '../lib/maintainer-opt-outs.mjs'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
 
 export const dynamic = 'force-dynamic'
@@ -29,7 +29,10 @@ export default function Home() {
 
 async function MarketContent() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
-  return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<HomeMarkets tabs={homeMarketTabs(await withPulse(markets))} usdPerSol={usdPerSol}/></>
+  // Home lists promote: never a do-not-promote or maintainer-declined repository, and nothing when that list is unreadable.
+  const promotable = await promotableMarkets(markets)
+  const notice = unavailable || (!promotable && 'Markets are temporarily unavailable.')
+  return <>{notice && <p className="subtle-notice">{notice}</p>}<HomeMarkets tabs={homeMarketTabs(await withPulse(promotable ?? []))} usdPerSol={usdPerSol}/></>
 }
 
 async function GraduationRaceContent() {
@@ -43,10 +46,12 @@ async function PulseTickerContent() {
   return <PulseTicker items={items}/>
 }
 
-// The three community repositories that shipped the most code this week ($REPOING and do-not-promote repos excluded).
+// The three community repositories that shipped the most code this week ($REPOING, do-not-promote and maintainer-declined
+// repos excluded; hidden when that list is unreadable).
 async function ShippingLeadersContent() {
-  const [{ markets }, index] = await Promise.all([listMarkets(), pulseIndex()])
+  const [{ markets }, index, excluded] = await Promise.all([listMarkets(), pulseIndex(), promotionExcluded()])
+  if (!excluded) return null
   const leaders = shippingLeaders(markets.map(market => ({ ...market, pulse: index.get(String(market.repoId)) ?? null })),
-    { excluded: promotionExcludedRepoIds(), skipMints: [OFFICIAL_TOKEN.mint] })
+    { excluded, skipMints: [OFFICIAL_TOKEN.mint] })
   return <ShippingLeaders markets={leaders}/>
 }

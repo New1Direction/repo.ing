@@ -62,7 +62,8 @@ test('real PostgreSQL: migration, exclusions, snooze, permanent dismissal and is
       create table builder_fee_credits(github_repo_id bigint,amount_base_units bigint);
       create table repo_claims(github_repo_id bigint,amount_base_units bigint,status text);
       create table repo_beneficiaries(github_repo_id bigint primary key);
-      create table repository_participation(github_repo_id bigint primary key)`)
+      create table repository_participation(github_repo_id bigint primary key);
+      create table maintainer_opt_outs(github_repo_id bigint,withdrawn_at timestamptz)`)
     await client.query(await readFile(new URL('../drizzle/0027_maintainer_invites.sql', import.meta.url), 'utf8'))
     const ids = [1, 2, 3, 4, 5, 6, 7, 8]
     await client.query(`insert into repositories select id,'o/r'||id,id*10,id=8 from unnest($1::bigint[]) id`, [ids])
@@ -89,6 +90,12 @@ test('real PostgreSQL: migration, exclusions, snooze, permanent dismissal and is
     clock = now + INVITE_SNOOZE_MS + 1000
     candidates = (await invites.list()).candidates
     assert.deepEqual(candidates.map(c => c.repoId), ['2'])
+    // A maintainer who declined the market is never invited; a withdrawn decline does not count.
+    await client.query('insert into maintainer_opt_outs values(2,now())')
+    assert.deepEqual((await invites.list()).candidates.map(c => c.repoId), ['2'])
+    await client.query('insert into maintainer_opt_outs values(2,null)')
+    assert.deepEqual((await invites.list()).candidates, [])
+    await client.query('delete from maintainer_opt_outs')
     await assert.rejects(invites.record({ repoId: '6', action: 'invited', operator }), /dismissed/)
     await assert.rejects(invites.record({ repoId: '999', action: 'invited', operator }), /no market/)
     await assert.rejects(invites.record({ repoId: '2', action: 'post', operator }), /Unsupported/)

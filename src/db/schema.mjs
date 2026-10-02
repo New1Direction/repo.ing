@@ -385,6 +385,20 @@ export const maintainerInvites = pgTable('maintainer_invites', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, table => [check('maintainer_invites_state_check', sql`${table.invitedAt} is not null or ${table.dismissedAt} is not null`)])
 
+// Maintainer decisions: a current GitHub admin declined the repository's market or opted the repository out of repo.ing
+// (see drizzle/0041_maintainer_opt_outs.sql, src/maintainer-opt-outs.mjs). At most one active (not withdrawn) per repository.
+export const maintainerOptOuts = pgTable('maintainer_opt_outs', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(), githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  kind: varchar('kind', { length: 16 }).notNull(), githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(), note: text('note'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+  withdrawnByGithubUserId: bigint('withdrawn_by_github_user_id', { mode: 'bigint' }),
+}, t => [uniqueIndex('maintainer_opt_outs_one_active').on(t.githubRepoId).where(sql`${t.withdrawnAt} is null`),
+  check('maintainer_opt_outs_github_repo_id_check', sql`${t.githubRepoId} > 0`), check('maintainer_opt_outs_kind_check', sql`${t.kind} in ('decline', 'opt_out')`),
+  check('maintainer_opt_outs_github_user_id_check', sql`${t.githubUserId} > 0`),
+  check('maintainer_opt_outs_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 280`),
+  check('maintainer_opt_outs_withdrawn_by_github_user_id_check', sql`${t.withdrawnByGithubUserId} > 0`),
+  check('maintainer_opt_outs_withdrawn_check', sql`(${t.withdrawnAt} is null) = (${t.withdrawnByGithubUserId} is null) and (${t.withdrawnAt} is null or ${t.withdrawnAt} >= ${t.createdAt})`)])
+
 export const repoClaims = pgTable('repo_claims', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),

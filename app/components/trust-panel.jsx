@@ -1,6 +1,6 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
-import { BadgeCheck, CircleDashed, Coins, Info, PieChart, Rocket, Timer } from 'lucide-react'
+import { Ban, BadgeCheck, CircleDashed, Coins, Info, PieChart, Rocket, Timer } from 'lucide-react'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
 import { XHandle } from './x-handle'
 import { holderSnapshot, launcherSummary } from '../lib/trust-panel.mjs'
@@ -28,6 +28,7 @@ const TIPS = {
   launcher: 'From buys and sells on repo.ing (bonding curve and graduated pool). Tokens moved by transfer are not counted.',
   holders: `On-chain: the ${TOP_HOLDERS} largest wallets' share of supply. The bonding curve or pool vault and token locks are shown separately, not counted. Refreshed about every minute.`,
   token: 'Read from the token mint account on Solana. With the mint authority revoked, no more tokens can ever be minted.',
+  declined: 'A current GitHub admin of this repository declined this market on repo.ing. repo.ing does not promote it. Trading stays open so holders can exit, and builder fees stay claimable by the maintainer.',
 }
 
 function MaintainerRow({ market }) {
@@ -98,12 +99,14 @@ function LaunchFeeRow({ terms }) {
 }
 
 // Token page trust panel: who maintains it, what the launcher did, how concentrated holdings are, and the mint facts.
-// Only the maintainer row is known at render time; the rest stream in without changing the card's height.
-export function TrustPanel({ market, launchFee = null }) {
+// Only the maintainer rows are known at render time; the rest stream in without changing the card's height.
+// declined: the maintainer's active decline (src/maintainer-opt-outs.mjs), or null.
+export function TrustPanel({ market, launchFee = null, declined = null }) {
   return <section className="inner-card trust-panel" aria-labelledby="trust-panel-title">
     <div className="trust-heading"><h3 id="trust-panel-title">Launch facts</h3><span>On-chain and repo.ing data</span></div>
     <ul className="trust-rows">
       <MaintainerRow market={market}/>
+      {declined && <Row id="trust-declined" icon={Ban} tone="declined" title="Maintainer declined this market" lines={['Not promoted · not endorsed by the project']} tip={TIPS.declined}/>}
       {launchFee && <LaunchFeeRow terms={launchFee}/>}
       <Suspense fallback={<LauncherFallback/>}><LauncherRow market={market}/></Suspense>
       <Suspense fallback={<HoldersFallback/>}><HoldersRows market={market}/></Suspense>

@@ -9,6 +9,7 @@ import { AppHeader, Footer, RepoIdentity, RepoStats, GitHubLink } from '../../..
 import { ClaimSteps } from '../../../components/claim-steps'
 import { IconArt } from '../../../components/icon-art'
 import { ClaimPageTips } from '../../../components/repo-tips'
+import { ClaimPageDecision } from '../../../components/maintainer-declined'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
 import { marketByRepo, feeStatus, database, chain, creatorSigner } from '../../../lib/server.mjs'
 import { displayRepository } from '../../../lib/repository-display.mjs'
@@ -35,6 +36,7 @@ export default async function ClaimPage({ params, searchParams }) {
     </Suspense>
     <Suspense fallback={null}><ClaimTipsSection market={market}/></Suspense>
     <Participation repoId={repoId}/>
+    <Suspense fallback={null}><ClaimPageDecision market={market}/></Suspense>
     {market.allocationVersion === 1 && <BuilderAllocation repoId={repoId}/>}
   </main><Footer/></>
 }

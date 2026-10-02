@@ -1,4 +1,4 @@
-import { promotionExcludedRepoIds } from './promotion-exclusions.mjs'
+import { promotionExclusions } from './promotion-exclusions.mjs'
 import { activeDevelopers, isBotAuthor, pulseBadge } from './pulse-rank.mjs'
 
 // Dev Pulse read side: what a repository's developers did on GitHub (collected by the worker, src/dev-pulse.mjs) plus
@@ -132,12 +132,13 @@ export function selectTicker(items, { excluded = new Set(), limit = 14, perRepo 
       fullName: item.fullName, symbol: item.symbol, href: `/token/${item.mint}` }))
 }
 
-export async function readPulseTicker(pool, { now = Date.now(), excluded = promotionExcludedRepoIds(), limit = 14 } = {}) {
+// excluded defaults to the full do-not-promote set (env list and maintainer opt-outs); when it cannot be read this throws.
+export async function readPulseTicker(pool, { now = Date.now(), excluded, limit = 14 } = {}) {
   if (!pool) return []
   const live = `(select distinct on (github_repo_id) github_repo_id, mint, token_symbol from markets where status = 'confirmed'
     order by github_repo_id, created_at desc)`
   try {
-    const [events, commits, verified] = await Promise.all([
+    const [events, commits, verified, skip] = await Promise.all([
       pool.query(`select e.github_repo_id::text as "repoId", e.kind, e.source_id as key, e.title, e.amount, e.occurred_at as at,
           m.mint, m.token_symbol as symbol, r.full_name as "fullName"
         from repo_pulse_events e join ${live} m on m.github_repo_id = e.github_repo_id join repositories r on r.github_repo_id = e.github_repo_id
@@ -150,8 +151,9 @@ export async function readPulseTicker(pool, { now = Date.now(), excluded = promo
       pool.query(`select b.github_repo_id::text as "repoId", 'verified' as kind, b.bound_at as at, m.mint, m.token_symbol as symbol, r.full_name as "fullName"
         from repo_beneficiaries b join ${live} m on m.github_repo_id = b.github_repo_id join repositories r on r.github_repo_id = b.github_repo_id
         where b.bound_at >= $1`, [iso(now - 7 * DAY)]),
+      excluded ?? promotionExclusions(pool),
     ])
-    return selectTicker([...events.rows, ...commits.rows, ...verified.rows], { excluded, limit })
+    return selectTicker([...events.rows, ...commits.rows, ...verified.rows], { excluded: skip, limit })
   } catch (error) {
     if (error?.code === '42P01') return []
     throw error

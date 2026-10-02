@@ -9,9 +9,10 @@
 //   reached and posts nothing; only milestones above the mark are ever posted (see planMilestones).
 // - Each (market, channel, milestone) is claimed in milestone_alerts BEFORE sending and runs hold an advisory lock, so
 //   nothing posts twice. Outcomes, retries, per-run/per-day caps and spacing work exactly like launch alerts.
-// - Repositories on the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS) are never posted and keep no marks (every run
-//   drops them, including marks taken before the repository was listed). Once taken off the list, its first sight only
-//   takes a mark, so nothing from its excluded time is announced.
+// - Repositories on the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS, plus maintainers' opt-outs when the worker
+//   passes `excluded`) are never posted and keep no marks (every run drops them, including marks taken before the
+//   repository was listed). Once taken off the list, its first sight only takes a mark, so nothing from its excluded time
+//   is announced. When that list cannot be read the run fails and nothing is posted.
 import { alertChannels, alertMaxPerDay, alertOrigin, alertSince, deliverAlert, postInTurn, runAlertsLocked } from './launch-alerts.mjs'
 import { tokenUrl } from './launch-alerts-message.mjs'
 import { buildMilestoneMessage, milestoneOf, planMilestones } from './milestone-alerts-message.mjs'
@@ -113,7 +114,7 @@ export function createMilestoneAlertStore(pool) {
 // ---------- job ----------
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
-export function createMilestoneAlerts({ store, config, senders, sleep = wait, now = () => Date.now() }) {
+export function createMilestoneAlerts({ store, config, senders, sleep = wait, now = () => Date.now(), excluded: readExcluded = async () => config.excluded ?? new Set() }) {
   async function runChannel(channel, markets) {
     const { marks, alerts } = await store.channelState(channel)
     const plan = planMilestones({ markets, marks, alerts, since: config.since, now: now(), maxAttempts: config.maxAttempts })
@@ -132,7 +133,7 @@ export function createMilestoneAlerts({ store, config, senders, sleep = wait, no
     // Before the cutoff nothing is marked or posted, so the first marks are always taken at/after it.
     if (now() < config.since.getTime()) return { posts: [], interrupted: [], skipped: 'BEFORE_SINCE' }
     return runAlertsLocked({ store, config, notMigrated: 'MILESTONE_ALERTS_NOT_MIGRATED' }, async () => {
-      const excluded = config.excluded ?? new Set()
+      const excluded = await readExcluded()
       await store.forgetMarks([...excluded])
       const at = now()
       const markets = (await store.progressRows()).flatMap(row => {

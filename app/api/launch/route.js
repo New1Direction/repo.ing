@@ -17,6 +17,7 @@ import { checkAgentDraft } from '../../lib/agent-launch.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../../../src/launch-sessions.mjs'
+import { assertLaunchAllowed } from '../../../src/maintainer-opt-outs.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -72,6 +73,7 @@ export async function POST(request) {
       if (!body.tokenImage) throw new Error('Choose a token image before reviewing the launch.')
       const resolved = await resolvePublicRepository(body.repositoryUrl)
       if (resolved.githubRepoId.toString() !== String(body.repoId)) throw new Error('Repository URL does not match canonical repository ID')
+      await assertLaunchAllowed(pool, body.repoId)
       const connection = chain()
       const metadataOrigin = process.env.APP_ORIGIN ? publicOrigin(request.url) : null
       if (process.env.NODE_ENV === 'production' && !metadataOrigin) throw new Error('Token metadata origin is not configured')

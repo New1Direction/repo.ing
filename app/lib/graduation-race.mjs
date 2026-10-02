@@ -2,7 +2,7 @@ import { publicGraduation } from '../../src/graduation-readiness.mjs'
 import { formatSolDisplay } from './format.mjs'
 import { orderMarkets } from './market-order.mjs'
 import { chartTradeAge } from './chart-display.mjs'
-import { promotionExcludedRepoIds } from './promotion-exclusions.mjs'
+import { promotionExcludedRepoIds, promotionExclusions } from './promotion-exclusions.mjs'
 
 // Home and /explore "Graduation race": curve markets ranked by verified progress toward their own graduation target.
 export const GRADUATION_RACE_LIMIT = 5
@@ -46,20 +46,22 @@ export function topOfRace(race, { limit = GRADUATION_RACE_LIMIT, excludeMints = 
 }
 
 // One joined read of public markets with a VERIFIED observation; freshness is checked per row above. Repositories on
-// the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS) never race.
-export async function readGraduationRace(pool, { now = Date.now(), excluded = promotionExcludedRepoIds() } = {}) {
-  const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_name as "tokenName",
+// the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS and maintainer opt-outs, promotionExclusions) never race; when
+// that list cannot be read the race fails instead.
+export async function readGraduationRace(pool, { now = Date.now(), excluded } = {}) {
+  const [{ rows }, skip] = await Promise.all([pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_name as "tokenName",
       m.token_symbol as "symbol", r.full_name as "fullName", o.status, o.observation, o.error_code,
       e.evidence_hash as migration_evidence_hash
     from markets m join repositories r on r.github_repo_id = m.github_repo_id
     join graduation_observations o on o.github_repo_id = m.github_repo_id
     left join graduation_events e on e.github_repo_id = m.github_repo_id
-    where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and o.status = 'VERIFIED'`)
-  return rankGraduationRace(rows, { now, excluded })
+    where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and o.status = 'VERIFIED'`),
+  excluded ?? promotionExclusions(pool)])
+  return rankGraduationRace(rows, { now, excluded: skip })
 }
 
 // Newest launches from the memoized listMarkets() rows (already public, finalized markets only), newest first, without
-// the given mints or any repository on the do-not-promote list.
+// the given mints or any repository on the do-not-promote list (callers pass the full set from promotionExclusions).
 export function newestLaunches(markets, { limit = WATCH_LIMIT, excludeMints = [], excluded = promotionExcludedRepoIds(), now = Date.now() } = {}) {
   const skipMints = new Set(excludeMints)
   const launchedAt = market => new Date(market.indexedAt).getTime()

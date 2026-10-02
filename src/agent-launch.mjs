@@ -4,6 +4,7 @@ import { AgentLaunchError, signLaunchDraft } from './agent-launch-draft.mjs'
 import { simpleSearch, applySearchResult } from './repo-search.mjs'
 import { DISCOVERY_VERSION, DISCOVERY_CAP, DISCOVERY_WINDOW_MS } from './discovery-rewards.mjs'
 import { INITIAL_BUY_CAP_BPS } from './launch-buy.mjs'
+import { activeDecision, OPT_OUT_ERROR } from './maintainer-opt-outs.mjs'
 
 import { persistLaunchRepository } from './repository-store.mjs'
 export { persistLaunchRepository } from './repository-store.mjs'
@@ -31,8 +32,10 @@ export function createAgentLaunchService({ pool, origin, secret, config, discove
     try { repo = await resolve(url) } catch { throw new AgentLaunchError('GitHub could not verify this public, active repository. Check the URL or try again later.') }
     const repoId = repo.githubRepoId.toString()
     await persistLaunchRepository(pool, repo)
-    return { repoId, fullName: repo.fullName, repositoryUrl: `https://github.com/${repo.fullName}`, ...(await status(repoId)),
-      reviewUrl: `${origin}/launch/${repoId}` }
+    const [launch, optOut] = await Promise.all([status(repoId), activeDecision(pool, repoId)])
+    // maintainerOptedOut: a current GitHub admin declined the market or opted the repository out; it cannot be launched.
+    return { repoId, fullName: repo.fullName, repositoryUrl: `https://github.com/${repo.fullName}`, ...launch,
+      maintainerOptedOut: Boolean(optOut), reviewUrl: `${origin}/launch/${repoId}` }
   }
   return {
     async findRepos({ query = '', limit = 10 }) {
@@ -47,6 +50,7 @@ export function createAgentLaunchService({ pool, origin, secret, config, discove
     async createDraft({ repository, tokenName, tokenSymbol, initialBuy = 'none' }) {
       const repo = await resolveRepo(repository)
       if (repo.live) return { ...repo, draftCreated: false, reason: 'A canonical market already exists. Open its market.' }
+      if (repo.maintainerOptedOut) throw new AgentLaunchError(OPT_OUT_ERROR)
       if (repo.state !== 'not_launched') throw new AgentLaunchError('This repository has a launch in progress or requiring review. Check launch status before continuing.')
       if (!config) throw new AgentLaunchError('Launch configuration is unavailable.')
       const name = tokenName ?? repo.fullName.split('/')[1].slice(0, 32)

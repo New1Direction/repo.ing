@@ -8,8 +8,8 @@ export async function GET(request) {
   const origin = publicOrigin(request.url)
   const stateSession = unseal(request.cookies.get('gitfun_oauth')?.value)
   if (!stateSession) return NextResponse.redirect(new URL('/explore', origin))
-  const isDashboard = stateSession.mode === 'builders'
-  const back = new URL(isDashboard ? '/builders' : `/claim/${stateSession.repoId}`, origin)
+  const isDashboard = stateSession.mode === 'builders' || stateSession.mode === 'opt-out'
+  const back = new URL(stateSession.mode === 'opt-out' ? '/opt-out' : isDashboard ? '/builders' : `/claim/${stateSession.repoId}`, origin)
   let session = null
   try {
     const verifier = createGitHubAppVerifier({ pool: database(), clientId: process.env.GITHUB_APP_CLIENT_ID,

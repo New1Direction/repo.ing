@@ -31,12 +31,15 @@ import { createActivitySchedule, createConfigActivityFeed } from '../src/indexer
 import { approvedConfigs } from '../src/market-config.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { createDevPulseCollector } from '../src/dev-pulse.mjs'
-import { promotionExcludedRepoIds } from '../app/lib/promotion-exclusions.mjs'
+import { createPromotionExclusions } from '../app/lib/promotion-exclusions.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
 const once = process.argv.includes('--once')
 const pool = new pg.Pool({ connectionString: databaseUrl })
+// Never promoted: PROMOTION_EXCLUDED_REPO_IDS plus maintainers' opt-outs (re-read at most every 30 s). Dev Pulse and the
+// launch/milestone alerts read it each run; a run that cannot read it does nothing.
+const promotionExcluded = createPromotionExclusions({ pool })
 // Every Solana RPC request goes through one meter per provider: a compact {"rpcUsage":…} line per minute, and a
 // provider answering HTTP 429 (rate limit or exhausted credits) is backed off exponentially instead of hammered.
 const meter = createRpcMeter()
@@ -133,7 +136,7 @@ async function observeBuybackReceipts(){
 let launchAlerts=null,launchAlertTask=null,nextLaunchAlertCheck=0
 try{
   const launchAlertConfig=launchAlertsConfig()
-  if(launchAlertConfig)launchAlerts=createLaunchAlerts({store:createLaunchAlertStore(pool),config:launchAlertConfig,senders:createLaunchAlertSenders(launchAlertConfig)})
+  if(launchAlertConfig)launchAlerts=createLaunchAlerts({store:createLaunchAlertStore(pool),config:launchAlertConfig,senders:createLaunchAlertSenders(launchAlertConfig),excluded:promotionExcluded})
 }catch(error){console.log(JSON.stringify({launchAlertError:error instanceof LaunchAlertConfigError?error.message:'LAUNCH_ALERTS_CONFIG_INVALID'}))}
 async function deliverLaunchAlerts(){
   try{
@@ -146,7 +149,7 @@ async function deliverLaunchAlerts(){
 let milestoneAlerts=null,milestoneAlertTask=null,nextMilestoneAlertCheck=0
 try{
   const milestoneAlertConfig=milestoneAlertsConfig()
-  if(milestoneAlertConfig)milestoneAlerts=createMilestoneAlerts({store:createMilestoneAlertStore(pool),config:milestoneAlertConfig,senders:createLaunchAlertSenders(milestoneAlertConfig)})
+  if(milestoneAlertConfig)milestoneAlerts=createMilestoneAlerts({store:createMilestoneAlertStore(pool),config:milestoneAlertConfig,senders:createLaunchAlertSenders(milestoneAlertConfig),excluded:promotionExcluded})
 }catch(error){console.log(JSON.stringify({milestoneAlertError:error instanceof LaunchAlertConfigError?error.message:'GRADUATION_ALERTS_CONFIG_INVALID'}))}
 async function deliverMilestoneAlerts(){
   try{
@@ -166,9 +169,9 @@ async function observeTradeCanary(){
 const trends=createTrendIntake({pool})
 let trendTask=null,nextTrendCheck=0
 // Dev Pulse reads public GitHub activity with the GitHub App's installation token (read-only metadata); it stays off
-// without that token or with DEV_PULSE_ENABLED=false. Do-not-promote repositories are never read.
+// without that token or with DEV_PULSE_ENABLED=false. Do-not-promote and opted-out repositories are never read.
 const devPulse=process.env.DEV_PULSE_ENABLED!=='false'&&process.env.GITHUB_APP_PRIVATE_KEY_BASE64&&process.env.GITHUB_APP_INSTALLATION_ID
-  ?createDevPulseCollector({pool,excluded:promotionExcludedRepoIds()}):null
+  ?createDevPulseCollector({pool,excluded:promotionExcluded}):null
 if(!devPulse)console.log(JSON.stringify({devPulse:'disabled'}))
 let devPulseTask=null,nextDevPulseCheck=0
 async function observeDevPulse(){
