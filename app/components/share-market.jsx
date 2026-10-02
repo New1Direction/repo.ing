@@ -8,20 +8,20 @@ import { ReadmeBadgePanel } from './readme-badge'
 import { MarketShareCard } from './market-share-card'
 import { WatchButton } from './watchlist'
 import { MenuDetails } from './menu-details'
-import { useWallet } from './wallet'
+import { useShareReferral } from './share-referral'
 
 // Watch stays a button; every share action (referral status included) lives in one disclosure menu (Escape closes, focus
 // returns to "Share"). `more` holds secondary links for the "⋯" menu.
 export function ShareMarket({ mint, symbol, fullName, repoId, more }) {
-  const { wallet } = useWallet() ?? {}
   const [state, setState] = useState('')
   const [open, setOpen] = useState(false), [badge, setBadge] = useState(false), [card, setCard] = useState(false)
   const root = useRef(null), trigger = useRef(null), panel = useRef(null), refocus = useRef(false)
   const id = useId(), panelId = `${id}-share`, badgeId = `${id}-badge`
-  // The plain market URL is the Blink on X once actions.json is registered; dial.to works in any app. A connected
-  // wallet's links carry its ?ref, so the trades they bring pay it a referral.
-  const url = () => tokenPageUrl(mint, window.location.origin, wallet)
-  const copied = what => `${what} copied${wallet ? ' · includes your referral' : ''}`
+  // The plain market URL is the Blink on X once actions.json is registered; dial.to works in any app. The links carry
+  // the wallet's ?ref only when its referral payouts are set up and it has not chosen to share without it.
+  const referral = useShareReferral(open || card)
+  const url = () => tokenPageUrl(mint, window.location.origin, referral.ref)
+  const copied = what => `${what} copied${referral.ref ? ' · includes your referral (your wallet address)' : ''}`
 
   useEffect(() => {
     if (!open) { setBadge(false); if (refocus.current) trigger.current?.focus(); refocus.current = false; return }
@@ -39,7 +39,7 @@ export function ShareMarket({ mint, symbol, fullName, repoId, more }) {
     catch { setState('Copy failed. Copy the link from your address bar.') }
   }
   async function copyBlink() {
-    try { await navigator.clipboard.writeText(dialToUrl(mint, window.location.origin, wallet)); setState(copied('Blink link')) }
+    try { await navigator.clipboard.writeText(dialToUrl(mint, window.location.origin, referral.ref)); setState(copied('Blink link')) }
     catch { setState('Copy failed. Try the market link instead.') }
   }
   async function share() {
@@ -69,7 +69,7 @@ export function ShareMarket({ mint, symbol, fullName, repoId, more }) {
           <button type="button" onClick={() => { setOpen(false); setCard(true) }}><ImageIcon size={15} aria-hidden="true"/>Share card</button>
           {repoId && <button type="button" aria-expanded={badge} aria-controls={badgeId} onClick={() => setBadge(value => !value)}><Code2 size={15} aria-hidden="true"/>README badge<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>}
           {repoId && badge && <ReadmeBadgePanel id={badgeId} repoId={repoId} mint={mint}/>}
-          <ReferLink/>
+          <ReferLink referral={referral}/>
         </div>}
       </div>
       {more && <MenuDetails className="share-more" label="More actions" summary={<Ellipsis size={16} aria-hidden="true"/>}><div className="menu-panel share-more-panel">{more}</div></MenuDetails>}

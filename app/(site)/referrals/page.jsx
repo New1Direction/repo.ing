@@ -13,7 +13,7 @@ export const metadata = { title: 'Referrals — repo.ing',
 export const dynamic = 'force-dynamic'
 
 const STEPS = [
-  { icon: Share2, title: 'Share a link', body: 'Copy your link above, or share any market while your wallet is connected: Copy link, Share on X and Blink links all carry ?ref with your wallet.' },
+  { icon: Share2, title: 'Share a link', body: 'Copy your link above. Once payouts are set up, the market links, X posts and Blink links you share carry it too; the share menu says so, since the link holds your wallet address, and lets you leave it out.' },
   { icon: Repeat2, title: 'They trade', body: 'For 30 days after someone opens your link, their trades on repo.ing name you as referrer (the last link they opened wins). Buys and sells from a Blink you shared name you too.' },
   { icon: Coins, title: 'You earn 4%', body: 'Each of those trades pays you 4% of its trading fee, in SOL, the moment it lands. It is carved from Meteora’s protocol share, so it costs traders, builders and repo.ing nothing.' },
 ]
