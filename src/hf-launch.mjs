@@ -18,6 +18,10 @@ import { defaultTokenName, defaultTokenSymbol } from '../app/lib/launch-defaults
 export const HF_MARKETS_UNAVAILABLE = 'Hugging Face model markets are not available yet.'
 export const HF_OPT_OUT_ERROR = "The model's owner has opted this model out of repo.ing"
 export const HF_MODEL_MOVED = 'This model moved on Hugging Face. Paste its current Hugging Face URL and review the launch again.'
+// The 1% builder allocation is off for model markets, but a launch config that reserves it (BUILDER_ALLOCATION_CONFIGS:
+// the builders and launch-fee curves leave 10,001,000 tokens to the protected creator signer after graduation) would still
+// give a model token that reserve with no one entitled to claim it. Model launches are refused on such a config.
+export const HF_CONFIG_RESERVE_ERROR = 'Model launches are paused: the current launch config reserves 1% of supply for repository builders, and model markets have no builder allocation.'
 const MAX_BASE_MODELS = 20
 
 export const hfMarketsEnabled = (env = process.env) => env.HF_MARKETS_ENABLED === 'true'

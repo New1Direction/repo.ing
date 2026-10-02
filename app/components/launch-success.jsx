@@ -27,6 +27,6 @@ export function LaunchSuccess({ repo, launched, symbol, image }) {
       : <LaunchKit repoId={repo.repoId} fullName={repo.fullName} mint={launched.mint} symbol={symbol} verified={launched.verified === true}/>}
     <CopyAddress address={launched.mint}/>
     {launched.signature && <a className="launch-receipt" href={`https://solscan.io/tx/${launched.signature}`} target="_blank" rel="noreferrer">View launch transaction ↗</a>}
-    <ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId}/>
+    <ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId} readme={!model}/>
   </section>
 }

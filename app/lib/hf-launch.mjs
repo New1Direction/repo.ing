@@ -12,9 +12,15 @@ import { normalizeTokenImage, readLimitedBody } from '../../src/token-image.mjs'
 
 const LIVE_MINT = `select mint from markets where github_repo_id = $1 and status = 'confirmed' and indexed_at is not null
   and launch_finality = 'finalized'`
-// The anonymous Hugging Face budget is per server IP (500 requests per 5 minutes) and a resolve spends up to three, so one
-// client cannot spend it for everyone. Shared by every replica (agent_request_limits, src/request-quota.mjs).
-const RESOLVE_QUOTA = { global: [30, 60], client: [8, 60] }
+// The anonymous Hugging Face budget is per server IP (500 requests per 5 minutes, about 90 a minute after the client's
+// reserve). A lookup (resolve, or a prepare, which reads the model and its owner, then the model again) spends up to four,
+// so web lookups are capped at 20 a minute in all and 6 per client; agents share the global cap. Shared by every replica
+// (agent_request_limits, src/request-quota.mjs). The client scope is checked first, so a client over its own limit never
+// spends the shared one.
+export const MODEL_LOOKUP_LIMITED = 'Too many model lookups. Try again in a minute.'
+const LOOKUP_QUOTA = { client: [6, 60], global: [20, 60] }
+export const takeModelLookup = (pool, request) => takeQuota(pool, [...request ? [[`hf-lookup:client:${clientKey(request)}`, ...LOOKUP_QUOTA.client]] : [],
+  ['hf-lookup:global', ...LOOKUP_QUOTA.global]])
 
 // POST /api/resolve for a Hugging Face URL: the market id and live mint, like a repository, plus source. The model is read
 // by its _id every time (no path shortcut: a path can come to name a different model).
@@ -23,8 +29,8 @@ export async function resolveModelRequest(input, request) {
   const pool = database()
   if (!pool) return Response.json({ error: 'Database is not configured' }, { status: 503 })
   try {
-    if (!await takeQuota(pool, [['hf-resolve:global', ...RESOLVE_QUOTA.global], [`hf-resolve:client:${clientKey(request)}`, ...RESOLVE_QUOTA.client]])) {
-      return Response.json({ error: 'Too many model lookups. Try again in a minute.', code: 'HF_RESOLVE_LIMITED' }, { status: 429, headers: { 'Retry-After': '60' } })
+    if (!await takeModelLookup(pool, request)) {
+      return Response.json({ error: MODEL_LOOKUP_LIMITED, code: 'HF_LOOKUP_LIMITED' }, { status: 429, headers: { 'Retry-After': '60' } })
     }
     const repo = await resolveModel({ pool, hf: hfClient(), input })
     await persistModelRepository(drizzle(pool), repo)
@@ -75,16 +81,18 @@ export async function fetchHfAvatar(value, fetchImpl = fetch) {
   return readLimitedBody(response)
 }
 
-const AVATAR_CACHE_LIMIT = 32
+const AVATAR_CACHE_LIMIT = 32, AVATARS_IN_FLIGHT = 8
 const avatars = new Map(), pendingAvatars = new Map()
 
 // The launch picker's suggestion for a model: its owner's avatar (upload stays available). record: the repositories row.
+// Like the repository suggestions (app/lib/repo-images.mjs), at most a few fetch-and-decode jobs run at once.
 export async function modelImageSuggestions(record, { fetchImpl = fetch, now = Date.now } = {}) {
   const source = safeHfAvatarUrl(record?.avatar_url)
   if (!source) return []
   const cached = avatars.get(source)
   if (cached?.expiresAt > now()) return cached.images
   if (pendingAvatars.has(source)) return pendingAvatars.get(source)
+  if (pendingAvatars.size >= AVATARS_IN_FLIGHT) throw Error('Image suggestions are busy. Please try again.')
   const job = (async () => {
     let images = []
     try {

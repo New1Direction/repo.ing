@@ -11,8 +11,9 @@ import { MenuDetails } from './menu-details'
 import { useShareReferral } from './share-referral'
 
 // Watch stays a button; every share action (referral status included) lives in one disclosure menu (Escape closes, focus
-// returns to "Share"). `more` holds secondary links for the "⋯" menu.
-export function ShareMarket({ mint, symbol, fullName, repoId, more }) {
+// returns to "Share"). `more` holds secondary links for the "⋯" menu. readme: offer the README badge (false for a Hugging
+// Face model market, whose badge copy would describe a repository).
+export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true }) {
   const [state, setState] = useState('')
   const [open, setOpen] = useState(false), [badge, setBadge] = useState(false), [card, setCard] = useState(false)
   const root = useRef(null), trigger = useRef(null), panel = useRef(null), refocus = useRef(false)
@@ -67,8 +68,8 @@ export function ShareMarket({ mint, symbol, fullName, repoId, more }) {
           <button type="button" onClick={act(copy)}><Link2 size={15} aria-hidden="true"/>Copy link</button>
           <button type="button" onClick={act(copyBlink)} title="Buy from any app via dial.to"><Zap size={15} aria-hidden="true"/>Copy Blink link</button>
           <button type="button" onClick={() => { setOpen(false); setCard(true) }}><ImageIcon size={15} aria-hidden="true"/>Share card</button>
-          {repoId && <button type="button" aria-expanded={badge} aria-controls={badgeId} onClick={() => setBadge(value => !value)}><Code2 size={15} aria-hidden="true"/>README badge<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>}
-          {repoId && badge && <ReadmeBadgePanel id={badgeId} repoId={repoId} mint={mint}/>}
+          {repoId && readme && <button type="button" aria-expanded={badge} aria-controls={badgeId} onClick={() => setBadge(value => !value)}><Code2 size={15} aria-hidden="true"/>README badge<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>}
+          {repoId && readme && badge && <ReadmeBadgePanel id={badgeId} repoId={repoId} mint={mint}/>}
           <ReferLink referral={referral}/>
         </div>}
       </div>
