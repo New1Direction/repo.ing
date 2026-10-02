@@ -42,4 +42,5 @@ trade
 trend-integration
 trend-launchable-db
 trust-signals-db
+verification-bonus-db
 wallet-binding
