@@ -3,9 +3,11 @@ import { chartTradeAge } from './chart-display.mjs'
 
 // Official: the repository's own maintainer launched the market. A GitHub admin verified on repo.ing bound a payout wallet,
 // and it is the wallet that launched the market (markets.launcher_wallet). Read from the market row alone (server and
-// client safe); distinct from Verified, which only says an admin has verified since.
+// client safe); distinct from Verified, which only says an admin has verified since. A pasted payout address
+// (beneficiaryMethod 'pasted') proves no control of that wallet, so only a wallet-signature binding counts.
 export function isOfficialLaunch(market) {
-  return Boolean(market?.wasVerified && market.beneficiaryWallet && market.launcherWallet && market.beneficiaryWallet === market.launcherWallet)
+  return Boolean(market?.wasVerified && market.beneficiaryWallet && market.launcherWallet && market.beneficiaryWallet === market.launcherWallet &&
+    market.beneficiaryMethod !== 'pasted')
 }
 
 export const OFFICIAL_LAUNCH_LIMIT = 4
