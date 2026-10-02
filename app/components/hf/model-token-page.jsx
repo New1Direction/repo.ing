@@ -34,8 +34,8 @@ import '../../maintainer-opt-out.css'
 
 // The token page of a Hugging Face model market (app/(site)/token/[mint]/page.jsx returns here for a model id). It keeps
 // the trading panel, chart, trust panel, recent trades and sharing, shows the model card, the Model Pulse slot and the
-// disclaimer, and leaves out what models do not have in v1: tips, parts funds, the builder allocation, maintainer
-// invites, streams and Dev Pulse. Off unless HF_MARKETS_ENABLED.
+// disclaimer, and leaves out what models do not have in v1: tips, parts funds, maintainer invites, streams and Dev Pulse.
+// The builder allocation is not shown yet (see rewardSections). Off unless HF_MARKETS_ENABLED.
 
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
 const claimHref = market => `/claim/${market.repoId}`
@@ -60,14 +60,15 @@ export async function ModelTokenPage({ market, activity = false }) {
   const stored = modelView(market, registry)
   const repo = { ...market, description: market.description || null }
   const payoutWallet = signedPayoutWallet(market)
+  const rewards = rewardSections(market)
   const tabs = [
     { id: 'model', anchor: 'model', label: 'Model', content: <Suspense fallback={<ModelCard view={stored} pending/>}><LiveModelCard market={market} registry={registry}/></Suspense> },
     { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total model earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying fees…</p></div>}>
       <ModelEarnings market={market}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
-    // Launcher discovery rewards work as for repositories; models never carry the verification bonus or the allocation.
-    ...[1, 2].includes(market.discoveryVersion) ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards"><DiscoveryRewards repoId={market.repoId}/></div> }] : [],
+    // #rewards (linked from /wallet) opens this tab so a launcher lands on the claim button.
+    ...rewards.length ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards">{rewards}</div> }] : [],
   ]
   return <><AppHeader/><main className="section-wrap market-page model-market"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <ModelDeclinedBanner fullName={market.fullName} decision={decision}/>}
@@ -103,6 +104,16 @@ export async function ModelTokenPage({ market, activity = false }) {
       <Suspense fallback={<MoreMarketsFallback/>}><MoreMarketsContent mint={mint}/></Suspense>
     </>}
   </main><Footer/></>
+}
+
+// Details → Rewards: one section per reward the market carries, in the GitHub page's order; no tab when there is none.
+// Launcher discovery rewards work as for repositories, and a model market never carries the verification bonus. The
+// builder allocation is not shown yet: model markets keep the 1% allocation, claimable by the model's verified owner
+// after graduation, and a later phase adds its section first in this list (where the GitHub page has BuilderAllocation).
+function rewardSections(market) {
+  return [
+    [1, 2].includes(market.discoveryVersion) && <DiscoveryRewards key="discovery" repoId={market.repoId}/>,
+  ].filter(Boolean)
 }
 
 // Hero: likes, downloads, task, then the disclaimer badge and the gated / license / derivative badges; live when the Hub
