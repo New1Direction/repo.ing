@@ -211,6 +211,8 @@ export const markets = pgTable('markets', {
   builderAllocationVersion: integer('builder_allocation_version'),
   launchBlockTime: timestamp('launch_block_time', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  // One-time maintainer-verification bonus stamped on NEW launches (0047); the stamp is this market's policy.
+  verificationBonusLamports: bigint('verification_bonus_lamports', { mode: 'bigint' }),
 }, (table) => [
   uniqueIndex('markets_github_repo_id_unique').on(table.githubRepoId),
   uniqueIndex('markets_mint_unique').on(table.mint),
@@ -219,6 +221,7 @@ export const markets = pgTable('markets', {
   check('markets_status_check', sql`${table.status} in ('reserved', 'prepared', 'submitted', 'confirmed', 'failed', 'ambiguous')`),
   check('markets_discovery_version_check', sql`${table.discoveryVersion} is null or ${table.discoveryVersion} in (1,2)`),
   check('markets_builder_allocation_version_check', sql`${table.builderAllocationVersion} is null or ${table.builderAllocationVersion} = 1`),
+  check('markets_verification_bonus_lamports_check', sql`${table.verificationBonusLamports} is null or ${table.verificationBonusLamports} between 1000000 and 1000000000`),
   check('markets_confirmed_evidence_check', sql`${table.status} <> 'confirmed' or (${table.mint} is not null and ${table.pool} is not null and ${table.launchSignature} is not null)`),
   check('markets_indexed_evidence_check', sql`${table.indexedAt} is null or (${table.launchSlot} is not null and ${table.launchFinality} = 'finalized' and ${table.lastVerifiedAt} is not null)`),
 ])
@@ -268,6 +271,72 @@ export const discoveryClaims = pgTable('discovery_claims', {
     (${table.authMessage} is not null and ${table.authExpiresAt} is not null and (
       (${table.status} in ('prepared', 'aborted') and ${table.transaction} is null and ${table.lastValidBlockHeight} is null and ${table.authSignature} is null) or
       (${table.status} in ('pending', 'settled', 'aborted') and ${table.transaction} is not null and ${table.lastValidBlockHeight} is not null and ${table.authSignature} is not null)))`),
+])
+
+// One maintainer-verification bonus per market (0047), accrued by the worker from the repository's first admin
+// verification. 'ineligible' records failed rules; eligible rows wait in 'pending_review' for an operator.
+export const verificationBonuses = pgTable('verification_bonuses', {
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).primaryKey().references(() => markets.githubRepoId),
+  status: varchar('status', { length: 16 }).notNull(),
+  amount: bigint('amount', { mode: 'bigint' }).notNull(),
+  launcherWallet: varchar('launcher_wallet', { length: 44 }).notNull(),
+  verificationId: integer('verification_id').notNull().references(() => repoVerifications.id),
+  verifierGithubUserId: bigint('verifier_github_user_id', { mode: 'bigint' }).notNull(),
+  verifierLogin: text('verifier_login').notNull(),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }).notNull(),
+  activatedAt: timestamp('activated_at', { withTimezone: true }).notNull(),
+  evidence: jsonb('evidence').notNull(),
+  reason: text('reason'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  reviewerGithubUserId: bigint('reviewer_github_user_id', { mode: 'bigint' }),
+  reviewerLogin: text('reviewer_login'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  approverGithubUserId: bigint('approver_github_user_id', { mode: 'bigint' }),
+  approverLogin: text('approver_login'),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
+}, table => [
+  index('verification_bonuses_launcher').on(table.launcherWallet),
+  check('verification_bonuses_status_check', sql`${table.status} in ('pending_review', 'ineligible', 'approved', 'rejected', 'paid')`),
+  check('verification_bonuses_amount_check', sql`${table.amount} between 1000000 and 1000000000`),
+  check('verification_bonuses_reason_check', sql`(${table.status} in ('ineligible', 'rejected')) = (${table.reason} is not null)`),
+  check('verification_bonuses_review_check', sql`(${table.status} in ('approved', 'rejected', 'paid')) = (${table.reviewedAt} is not null and ${table.reviewerGithubUserId} is not null)`),
+  check('verification_bonuses_paid_check', sql`(${table.status} = 'paid') = (${table.paidAt} is not null)`),
+  check('verification_bonuses_approval_check', sql`(${table.status} not in ('approved', 'paid') or (${table.approvedAt} is not null and ${table.approverGithubUserId} is not null)) and (${table.status} not in ('pending_review', 'ineligible') or (${table.approvedAt} is null and ${table.approverGithubUserId} is null))`),
+])
+
+// Durable bonus payout intents: signed bytes saved as 'pending' before the first broadcast; one live or settled
+// payout per bonus (partial unique index) and a unique idempotency key per attempt.
+export const verificationBonusPayouts = pgTable('verification_bonus_payouts', {
+  id: uuid('id').primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => verificationBonuses.githubRepoId),
+  attempt: integer('attempt').notNull(),
+  idempotencyKey: varchar('idempotency_key', { length: 80 }).notNull(),
+  wallet: varchar('wallet', { length: 44 }).notNull(),
+  payer: varchar('payer', { length: 44 }).notNull(),
+  amount: bigint('amount', { mode: 'bigint' }).notNull(),
+  memo: text('memo').notNull(),
+  status: varchar('status', { length: 16 }).notNull(),
+  signature: varchar('signature', { length: 88 }).notNull(),
+  signedTransaction: text('signed_transaction').notNull(),
+  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }).notNull(),
+  networkFee: bigint('network_fee', { mode: 'bigint' }),
+  slot: bigint('slot', { mode: 'bigint' }),
+  createdBy: text('created_by').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  settledAt: timestamp('settled_at', { withTimezone: true }),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolutionReason: text('resolution_reason'),
+}, table => [
+  uniqueIndex('verification_bonus_payouts_signature_unique').on(table.signature),
+  uniqueIndex('verification_bonus_payouts_idempotency_unique').on(table.idempotencyKey),
+  uniqueIndex('verification_bonus_payouts_one_live').on(table.githubRepoId).where(sql`${table.status} in ('pending', 'settled')`),
+  index('verification_bonus_payouts_status').on(table.status, table.createdAt),
+  check('verification_bonus_payouts_status_check', sql`${table.status} in ('pending', 'settled', 'aborted')`),
+  check('verification_bonus_payouts_amount_check', sql`${table.amount} between 1000000 and 1000000000`),
+  check('verification_bonus_payouts_attempt_check', sql`${table.attempt} > 0`),
+  check('verification_bonus_payouts_wallets_check', sql`${table.wallet} <> ${table.payer}`),
+  check('verification_bonus_payouts_state_check', sql`(${table.status} = 'pending' and ${table.settledAt} is null and ${table.resolvedAt} is null and ${table.resolutionReason} is null and ${table.networkFee} is null) or (${table.status} = 'settled' and ${table.settledAt} is not null and ${table.networkFee} is not null and ${table.slot} is not null and ${table.resolvedAt} is null and ${table.resolutionReason} is null) or (${table.status} = 'aborted' and ${table.settledAt} is null and ${table.resolvedAt} is not null and ${table.resolutionReason} is not null)`),
 ])
 
 export const feeEvents = pgTable('fee_events', {

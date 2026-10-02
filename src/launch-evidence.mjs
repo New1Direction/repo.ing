@@ -3,6 +3,7 @@ import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { PublicKey } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { ActivationType, DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { usesActivationClock } from './launch-clock.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 // SDK 1.5.13 IDL: initializeVirtualPoolWithSplToken.
@@ -35,7 +36,7 @@ export function createLaunchEvidenceVerifier({ connection, config }) {
         connection.getTransaction(market.launchSignature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }),
         dbc.state.getPool(pool),
         connection.getAccountInfo(mint, 'finalized'),
-        market.discoveryVersion ? readPoolConfig(dbc, configKey) : null,
+        usesActivationClock(market) ? readPoolConfig(dbc, configKey) : null,
       ])
     } catch (error) {
       return { state: 'unavailable', reason: `Solana RPC verification failed: ${error.message}` }
@@ -65,8 +66,9 @@ export function createLaunchEvidenceVerifier({ connection, config }) {
     }
     // DBC initializes activationPoint from the on-chain Clock. Swap events use
     // that same clock; the RPC's estimated blockTime can differ by seconds.
-    const timestamp = market.discoveryVersion ? Number(state.poolState.activationPoint.toString()) : transaction.blockTime
-    if (market.discoveryVersion && (fixed?.activationType !== ActivationType.Timestamp || !Number.isSafeInteger(timestamp) || timestamp <= 0)) {
+    const activationClock = usesActivationClock(market)
+    const timestamp = activationClock ? Number(state.poolState.activationPoint.toString()) : transaction.blockTime
+    if (activationClock && (fixed?.activationType !== ActivationType.Timestamp || !Number.isSafeInteger(timestamp) || timestamp <= 0)) {
       return { state: 'unavailable', reason: 'Finalized DBC launch timestamp is unavailable' }
     }
     return { state: 'match', slot: BigInt(transaction.slot), finality: 'finalized',

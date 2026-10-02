@@ -18,6 +18,7 @@ import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../../../src/launch-sessions.mjs'
 import { assertLaunchAllowed } from '../../../src/maintainer-opt-outs.mjs'
+import { verificationBonusLamports } from '../../../src/verification-bonus.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -81,7 +82,7 @@ export async function POST(request) {
       await sweep(store)
       const launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin })
       const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
-        pendingReview: market => store.pending(market.id) })
+        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports() })
       if (body.trendRevision !== undefined && (!Number.isSafeInteger(body.trendRevision) || body.trendRevision < 1)) throw Error('Invalid trend approval')
       const launchGuard = body.trendRevision === undefined ? undefined : trendLaunchGuard({ pool, repoId: String(body.repoId),
         revision: body.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
