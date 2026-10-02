@@ -1,4 +1,5 @@
 import { createSign } from 'node:crypto'
+import { assertGithubRepoId } from './market-identity.mjs'
 
 let cachedToken = null
 let pendingToken = null
@@ -51,6 +52,7 @@ export async function currentGithubAdminForRepository({ repoId, owner, name, git
   fetchImpl = fetch, identity = appIdentity() }) {
   const numericRepoId = Number(repoId)
   if (!Number.isSafeInteger(numericRepoId) || numericRepoId <= 0) throw new Error('Invalid GitHub repository ID')
+  assertGithubRepoId(numericRepoId)
   const installation = await githubInstallationForRepository({ owner, name, fetchImpl, identity })
   if (!installation) return false
   const tokenResponse = await fetchImpl(`https://api.github.com/app/installations/${installation.id}/access_tokens`, {

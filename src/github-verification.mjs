@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import { markets, repoVerifications } from './db/schema.mjs'
+import { assertGithubRepoId } from './market-identity.mjs'
 
 const API = 'https://api.github.com'
 const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
@@ -18,7 +19,7 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
   if (!pool || !clientId || !clientSecret || !redirectUri) throw new Error('GitHub App OAuth and database configuration required')
   const db = drizzle(pool)
   const authorizationUrl = ({ githubRepoId } = {}) => {
-    const repoId = githubRepoId === undefined ? null : positiveId(githubRepoId)
+    const repoId = githubRepoId === undefined ? null : assertGithubRepoId(positiveId(githubRepoId))
     const state = randomBytes(32).toString('hex')
     const url = new URL('https://github.com/login/oauth/authorize')
     url.search = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, state }).toString()
@@ -75,7 +76,7 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
       githubUserId: BigInt(user.id), githubLogin: user.login, permission: 'identity' })
   }
   const verifyCallback = async ({ githubRepoId, expectedGithubRepoId, retainCredential = false, ...request }) => {
-    const repoId = positiveId(githubRepoId)
+    const repoId = assertGithubRepoId(positiveId(githubRepoId))
     if (repoId !== positiveId(expectedGithubRepoId)) throw new Error('GitHub OAuth repository ID is invalid')
     const credential = await exchangeCode(request)
     const result = await verifyAccessToken({ githubRepoId: repoId, accessToken: credential.access_token })
@@ -105,7 +106,7 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
     return { user, permission }
   }
   const verifyAccessToken = async ({ githubRepoId, accessToken: token, expectedGithubUserId }) => {
-    const repoId = positiveId(githubRepoId)
+    const repoId = assertGithubRepoId(positiveId(githubRepoId))
     if (typeof token !== 'string' || !token.startsWith('ghu_')) throw new Error('GitHub App user session required')
     const market = (await db.select().from(markets).where(eq(markets.githubRepoId, repoId)).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
@@ -122,7 +123,7 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
   // Maintainer opt-outs for repositories without a market (src/maintainer-opt-outs.mjs): the same fresh admin check as
   // verifyAccessToken, without its market requirement and without writing a verification record.
   const verifyRepositoryAdmin = async ({ githubRepoId, accessToken: token, expectedGithubUserId }) => {
-    const repoId = positiveId(githubRepoId)
+    const repoId = assertGithubRepoId(positiveId(githubRepoId))
     if (typeof token !== 'string' || !token.startsWith('ghu_')) throw new Error('GitHub App user session required')
     const { user, permission } = await currentPermission(repoId, token, expectedGithubUserId)
     return { admin: permission === 'admin', githubRepoId: repoId, githubUserId: BigInt(user.id), githubLogin: user.login, permission }

@@ -11,10 +11,11 @@ export async function POST(request) {
     const { owner, name } = parseRepositoryUrl(normalizedUrl)
     const pool = database()
     if (!pool) return Response.json({ error: 'Database is not configured' }, { status: 503 })
-    // Existing finalized markets can be opened without consuming GitHub's shared IP limit.
+    // Existing finalized markets can be opened without consuming GitHub's shared IP limit. GitHub rows only: a Hugging Face
+    // model may share this owner/name.
     const known = await pool.query(`select r.github_repo_id::text as "repoId", m.mint
       from repositories r join markets m on m.github_repo_id = r.github_repo_id
-      where lower(r.full_name) = lower($1) and r.archived = false
+      where lower(r.full_name) = lower($1) and r.source = 'github' and r.archived = false
         and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
         and r.synced_at > now() - interval '24 hours'`, [`${owner}/${name}`])
     if (known.rows[0]) return Response.json(known.rows[0])

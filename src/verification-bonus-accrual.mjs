@@ -1,4 +1,5 @@
 import { githubApiHeaders } from './github-app-auth.mjs'
+import { assertGithubRepoId } from './market-identity.mjs'
 import { activeDecision } from './maintainer-opt-outs.mjs'
 import { ACCRUAL_GRACE_MS, BONUS_WINDOW_MS, MIN_OTHER_VOLUME_LAMPORTS, MIN_REPO_AGE_MS, MIN_REPO_STARS, VERIFICATION_BONUS_RULES_VERSION,
   VOLUME_SETTLE_MS, evaluateVerificationBonus, failureReason, readSelfLaunchFacts } from './verification-bonus.mjs'
@@ -12,6 +13,7 @@ import { ACCRUAL_GRACE_MS, BONUS_WINDOW_MS, MIN_OTHER_VOLUME_LAMPORTS, MIN_REPO_
 // when it is stored (0045; filled from earlier GitHub reads), else from this same read. A repository GitHub no longer
 // serves publicly is a decision (ineligible); any other failure is retried on a later pass.
 export async function readRepositoryFacts(repoId, { fetchImpl = fetch, headers = githubApiHeaders } = {}) {
+  assertGithubRepoId(repoId)
   const response = await fetchImpl(`https://api.github.com/repositories/${repoId}`, { cache: 'no-store',
     headers: await headers('repo.ing-verification-bonus', fetchImpl), signal: AbortSignal.timeout(10_000) })
   const checkedAt = new Date().toISOString()
@@ -74,7 +76,8 @@ export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRe
   const retry = new Map()
   async function candidates() {
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", min(v.verified_at) as first
-      from markets m join repo_verifications v on v.github_repo_id = m.github_repo_id and v.permission = 'admin'
+      from markets m join repositories r on r.github_repo_id = m.github_repo_id and r.source = 'github'
+      join repo_verifications v on v.github_repo_id = m.github_repo_id and v.permission = 'admin'
       where m.verification_bonus_lamports is not null and m.status = 'confirmed' and m.indexed_at is not null
         and m.launch_finality = 'finalized' and m.launch_block_time is not null
         and not exists (select 1 from verification_bonuses b where b.github_repo_id = m.github_repo_id)

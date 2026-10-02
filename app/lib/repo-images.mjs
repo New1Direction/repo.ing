@@ -1,9 +1,11 @@
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { repositoryAssetDirectory, repositoryImagesFromAssets, repositoryImagesFromReadme, safeGithubImageUrl } from '../../src/repo-logo.mjs'
 import { fetchGithubImage, normalizeTokenImage, readLimitedBody } from '../../src/token-image.mjs'
+import { assertGithubRepoId } from '../../src/market-identity.mjs'
 
 const cache = new Map(), pending = new Map()
 export async function repositoryImageSuggestions(repoId, record) {
+  assertGithubRepoId(repoId)
   const key = `${repoId}:${record.owner}/${record.name}:${record.avatar_url}`
   const cached = cache.get(key)
   if (cached?.expiresAt > Date.now()) return cached.result

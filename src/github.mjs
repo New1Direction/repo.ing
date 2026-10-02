@@ -1,4 +1,5 @@
 import { githubApiHeaders } from './github-app-auth.mjs'
+import { assertGithubRepoId, isGithubRepoId } from './market-identity.mjs'
 
 import { RepositoryResolutionError, parseRepositoryUrl } from './github-url.mjs'
 export { RepositoryResolutionError, parseRepositoryUrl }
@@ -15,6 +16,7 @@ export async function resolvePublicRepository(input, fetchImpl = fetch) {
 // Resolve direct launch links by immutable identity, never by a browser-supplied name.
 export async function resolvePublicRepositoryById(id, fetchImpl = fetch) {
   if (!/^[1-9]\d{0,18}$/.test(String(id))) throw new RepositoryResolutionError('Invalid repository')
+  assertGithubRepoId(id)
   const response = await fetchImpl(`https://api.github.com/repositories/${id}`, {
     headers: await githubApiHeaders('repo.ing-image-picker', fetchImpl),
     redirect: 'follow', cache: 'no-store', signal: AbortSignal.timeout(10000),
@@ -37,6 +39,8 @@ async function publicRepositoryFromResponse(response) {
   if (!Number.isSafeInteger(repo.id) || repo.id < 1 || typeof repo.full_name !== 'string' || typeof repo.owner?.login !== 'string') {
     throw new RepositoryResolutionError('GitHub returned incomplete repository identity')
   }
+  // Launches and lookups by URL learn the id from this response; one in the Hugging Face range would collide with a model market.
+  if (!isGithubRepoId(repo.id)) throw new RepositoryResolutionError('GitHub returned an unsupported repository ID')
   if (repo.private || repo.visibility && repo.visibility !== 'public') throw new RepositoryResolutionError('Private repositories are unsupported')
   if (repo.archived) throw new RepositoryResolutionError('Archived repositories are unsupported')
   const updated = new Date(repo.updated_at)
