@@ -8,7 +8,7 @@ import { KNOWN_PROGRAM_ADDRESSES, PASTED_ADDRESS_HOLD_MS, PayoutAddressError, as
 import { PASTED_ADDRESS_HOLD_HOURS, PAYOUT_ADDRESS_WARNING, bindingLabel, confirmsAddress, formatHoldRemaining, formatUtcDateTime,
   holdRemainingMs, looksLikeSolanaAddress, pendingLabel } from '../src/payout-address-policy.mjs'
 import { claimPageStep, builderClaimStep } from '../app/lib/claim-checklist.mjs'
-import { isOfficialLaunch } from '../app/lib/official-launch.mjs'
+import { isOfficialLaunch, signedPayoutWallet } from '../app/lib/official-launch.mjs'
 import { createBuilderReminders, payoutAddressNotice } from '../src/builder-reminders.mjs'
 
 // Address validation, the account check, the hold, recipient resolution and the notice, without PostgreSQL or a validator.
@@ -163,11 +163,17 @@ test('claim steps: a pasted active address completes the payout step without a w
   assert.equal(builderClaimStep({ needsLogin: false, repositories: [{ wallet: null, pending: null, available: '5' }] }), 2)
 })
 
-test('Official requires a wallet-signature binding: a pasted address proves no control of the launch wallet', () => {
+test('identity marks need a wallet-signature binding: a pasted address proves no control of the wallet', () => {
   const market = { wasVerified: true, beneficiaryWallet: 'L', launcherWallet: 'L' }
   assert.equal(isOfficialLaunch({ ...market, beneficiaryMethod: 'signature' }), true)
   assert.equal(isOfficialLaunch(market), true, 'rows without the column keep their meaning')
   assert.equal(isOfficialLaunch({ ...market, beneficiaryMethod: 'pasted' }), false)
+  // The ✓ maintainer X handle, the launcher's "Maintainer's payout wallet" and the backers' Builder label all read this.
+  assert.equal(signedPayoutWallet({ beneficiaryWallet: 'W', beneficiaryMethod: 'signature' }), 'W')
+  assert.equal(signedPayoutWallet({ beneficiaryWallet: 'W' }), 'W')
+  assert.equal(signedPayoutWallet({ beneficiaryWallet: 'W', beneficiaryMethod: 'pasted' }), null)
+  assert.equal(signedPayoutWallet({ beneficiaryWallet: null, beneficiaryMethod: null }), null)
+  assert.equal(signedPayoutWallet(null), null)
 })
 
 test('the change notice names the address, the activation time, the current recipient and where to cancel', () => {

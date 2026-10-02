@@ -250,6 +250,12 @@ test('real PostgreSQL: verification bonus stamping, accrual, review and payout i
       assert.deepEqual(checking.map(item => item.repoId), ['9203'])
       const listed = bonuses.find(bonus => bonus.repoId === '9201')
       assert.deepEqual([listed.fullName, listed.curveVolume, listed.verifierLinkedToLauncher], ['octo/repo-9201', '26000000000', false])
+      // A pasted payout address naming the launcher wallet is inert for 48 hours, longer than accrual waits; the reviewer
+      // still sees it as a link to the launcher.
+      await pool.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login, active_at)
+        values (9201, $1, 501, 'maintainer', now())`, [launchers[9201]])
+      assert.equal((await review.list()).bonuses.find(bonus => bonus.repoId === '9201').verifierLinkedToLauncher, true)
+      await pool.query('delete from payout_address_requests')
       assert.deepEqual((await readVerificationBonusView(pool, '9205')), { amount: '250000000',
         deadline: new Date(activatedAt.getTime() + 30 * DAY).toISOString(), status: 'rejected' }, 'the free-text reason stays private')
       const rejected = await bonusRow(pool, 9205)

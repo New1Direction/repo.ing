@@ -5,6 +5,7 @@ import { OFFICIAL_TOKEN } from './official-token.mjs'
 import { BUYBACK_WALLETS, PLATFORM_FEE_WALLET } from './buyback-receipts.mjs'
 import { tipWalletAddress } from './tips.mjs'
 import { xHandlesFor } from './x-links.mjs'
+import { signedPayoutWallet } from './official-launch.mjs'
 
 // Protected creator signer (per-pool creator and fee authority); also read from the env below when configured.
 const CREATOR_SIGNER = 'FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1'
@@ -40,4 +41,6 @@ export const backersFor = cache(async (mint, pool, repoId, beneficiaryWallet) =>
   }
 })
 
-export const marketBackers = market => backersFor(market.mint, market.pool, market.repoId ?? null, market.beneficiaryWallet ?? null)
+// Builder label (and exclusion from holder counts) only for a wallet-signed payout wallet: a pasted address could be any
+// holder's public address.
+export const marketBackers = market => backersFor(market.mint, market.pool, market.repoId ?? null, signedPayoutWallet(market))

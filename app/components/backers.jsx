@@ -5,6 +5,7 @@ import { marketBackers } from '../lib/backers.mjs'
 import { xLinksEnabled } from '../lib/x-links.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
 import { holdingLabel } from '../lib/holder-note-format.mjs'
+import { signedPayoutWallet } from '../lib/official-launch.mjs'
 
 const day = iso => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : null
 
@@ -50,7 +51,7 @@ export async function Backers({ market }) {
       : count ? <ol className="backers-list">{data.top.map((backer, index) => <Backer key={backer.wallet} backer={backer} rank={index + 1} symbol={market.symbol}/>)}</ol>
         : <p className="backers-empty">No backers yet. Buy ${market.symbol} here to be the first — the first {data.early} buyers get an <span className="backer-early">Early backer</span> badge.</p>}
     {data && count > data.top.length && <p className="backers-more">+{(count - data.top.length).toLocaleString('en-US')} more {count - data.top.length === 1 ? 'backer' : 'backers'}</p>}
-    {data && <Disclosed rows={data.disclosed} symbol={market.symbol} beneficiaryWallet={market.beneficiaryWallet}/>}
+    {data && <Disclosed rows={data.disclosed} symbol={market.symbol} beneficiaryWallet={signedPayoutWallet(market)}/>}
     <div className="backers-foot">
       {x && <a className="backers-cta" href="/wallet#x-account">Link your X to get credited →</a>}
       <p>Net bought = bought − sold through indexed swaps (bonding curve and graduated pool). Transfers are not counted, so this differs from the on-chain Holders count. Only public wallet data and X accounts linked by a wallet signature are shown.</p>

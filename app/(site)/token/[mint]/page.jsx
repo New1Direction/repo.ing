@@ -12,6 +12,7 @@ import { ActivityFeed } from '../../../components/activity-feed'
 import { DiscoveryRewards } from '../../../components/discovery-rewards'
 import { CopyAddress } from '../../../components/copy-address'
 import { marketByMint, displayFeeStatus, tradeAvailable, listMarkets, graduationRace, database } from '../../../lib/server.mjs'
+import { signedPayoutWallet } from '../../../lib/official-launch.mjs'
 import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
 import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../../lib/format.mjs'
@@ -112,7 +113,7 @@ export default async function Token({ params, searchParams }) {
       <div className="market-hero-main"><RepoIdentity repo={repo} heading>
           <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{market.officialLaunch && !decision && <OfficialBadge/>}{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
-          {market.beneficiaryWallet && <Suspense fallback={null}><XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/></Suspense>}
+          {signedPayoutWallet(market) && <Suspense fallback={null}><XHandle wallet={signedPayoutWallet(market)} trust className="maintainer-x"/></Suspense>}
           {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}
           <Suspense fallback={null}><BackersPill market={market} href={activity ? `/token/${mint}#backers` : '#backers'}/></Suspense></div>
         {!activity && <DevPulseStrip pulse={pulse}/>}</div>
@@ -207,7 +208,7 @@ async function RepositoryEarnings({ market, declined = false }) {
           <strong className="earnings-amount">{verifiedEarned===null?'Checking…':usdEstimate ? `≈ ${usdEstimate}` : `${formatSolDisplay(verifiedEarned)} SOL`}</strong>
           {usdEstimate && <span className="earnings-sol" title={`${market.earned} lamports earned in total`}>≈ {formatSolRounded(market.earned)} SOL earned</span>}
           <div className="earnings-breakdown"><span>Already paid<strong>{verifiedEarned===null?'—':`${formatSolDisplay(market.claimed)} SOL`}</strong></span><span>Available to claim<strong>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
-          <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{market.beneficiaryWallet && <XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/>}</div>
+          <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{signedPayoutWallet(market) && <XHandle wallet={signedPayoutWallet(market)} trust className="maintainer-x"/>}</div>
           <p>{earningsNote}</p><Link className="button white earnings-claim" href={`/claim/${market.repoId}`}>Claim builder fees<ArrowUpRight size={16}/></Link>
           {!market.beneficiaryWallet && !declined && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
         </div>)
