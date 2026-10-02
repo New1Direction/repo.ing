@@ -26,11 +26,11 @@ export function modelPageUrl(path) {
 }
 
 const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
-// A model's likes as its launch recorded them: repositories.stars holds them for model markets (the column predates
-// model markets, like github_repo_id holding model ids). An object that carries likes itself (a fresh Hub read) wins.
-// Live counts on the token page come from the model card read (hf-markets.mjs).
-export function storedLikes(market) {
-  return count(market?.likes) ?? count(market?.stars)
+// A model's likes for display, or null when unknown. Only display-only reads set them (the live model card, attached to
+// list rows by withModelFacts in hf-markets.mjs): repositories.stars stays 0 for model markets (src/hf-launch.mjs), so
+// Hugging Face metrics never feed promotion or rewards, and it is never read as likes.
+export function modelLikes(market) {
+  return count(market?.likes)
 }
 
 const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 })
@@ -53,12 +53,13 @@ export function gatedLabel(gated) {
 
 const RELATIONS = new Set(['quantized', 'finetune', 'adapter', 'merge'])
 // Base models from the live card ({ relation, models: [{ hfId, path }] }) or the registry's base_models (an array of
-// paths or { path } / { id } objects). Only valid model paths are kept; duplicates are dropped.
+// { hfId, path, relation } as the launch stores them, or plain paths). Only valid model paths are kept; duplicates are
+// dropped.
 export function baseModels(value) {
   const list = Array.isArray(value) ? value : Array.isArray(value?.models) ? value.models : []
   const paths = [...new Set(list.map(item => typeof item === 'string' ? item : item?.path ?? item?.id).filter(isHfModelPath))]
   if (!paths.length) return null
-  return { relation: RELATIONS.has(value?.relation) ? value.relation : null, paths }
+  return { relation: [value?.relation, list[0]?.relation].find(relation => RELATIONS.has(relation)) ?? null, paths }
 }
 
 // "Derivative of <base>" badge: the first base model, and how many more there are.
@@ -83,7 +84,7 @@ export function modelView(market, registry = null, card = null) {
     task: taskLabel(live?.pipelineTag) ?? null, license: live?.license ?? null,
     gated: gatedLabel(live ? live.gated : registry?.gated),
     base: baseModels(live?.baseModels ?? registry?.baseModels),
-    likes: count(live?.likes) ?? storedLikes(market), downloads30d: count(live?.downloads30d) ?? count(market?.downloads30d),
+    likes: count(live?.likes) ?? modelLikes(market), downloads30d: count(live?.downloads30d) ?? count(market?.downloads30d),
     updatedAt: live?.lastModified ?? market?.updatedAt ?? null,
   }
 }
@@ -97,7 +98,7 @@ export function selectModelStrip(markets, { limit = MODEL_STRIP_LIMIT } = {}) {
     if (av !== bv) return av > bv ? -1 : 1
     return launched(b) - launched(a) || a.mint.localeCompare(b.mint)
   }).slice(0, limit).map(market => ({ repoId: String(market.repoId), mint: market.mint, fullName: market.fullName, symbol: market.symbol,
-    volume24hLamports: String(market.volume24hLamports ?? '0'), likes: storedLikes(market) }))
+    volume24hLamports: String(market.volume24hLamports ?? '0'), likes: modelLikes(market) }))
 }
 
 // One line under a model's name in lists and the token page: the disclaimer badge, then what the model does.

@@ -1,4 +1,5 @@
 import { Suspense } from 'react'
+import { after } from 'next/server'
 import { ContentSkeleton } from '../../components/loading-skeleton'
 import Link from 'next/link'
 import { AppHeader, Footer } from '../../components/ui'
@@ -12,7 +13,7 @@ import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import { exploreGrowthView } from '../../lib/growth-view.mjs'
 import { withPulse } from '../../lib/pulse-index.mjs'
 import { labeledRacers } from '../../lib/repo-quality.mjs'
-import { hfMarketsEnabled, shownMarkets } from '../../lib/hf-markets.mjs'
+import { hfMarketsEnabled, shownMarkets, withModelFacts } from '../../lib/hf-markets.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Explore markets · repo.ing', description: 'Browse live markets for open source repositories. Real repositories, real communities — every trade pays the builders.' }
 export default function Explore() {
@@ -23,7 +24,7 @@ export default function Explore() {
 }
 async function Markets() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
-  return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<ExploreList markets={await withPulse(shownMarkets(markets))} usdPerSol={usdPerSol} modelsEnabled={hfMarketsEnabled()}/></>
+  return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<ExploreList markets={withModelFacts(await withPulse(shownMarkets(markets)), { schedule: after })} usdPerSol={usdPerSol} modelsEnabled={hfMarketsEnabled()}/></>
 }
 // The race features markets, so new repositories wait until 10% of their target (repo-quality.mjs); the list below has all.
 async function Graduating() {

@@ -84,7 +84,7 @@ export async function ModelTokenPage({ market, activity = false }) {
       <div className="market-hero-actions">
         <CopyAddress address={mint} compact/><ShareMarket key={mint} mint={mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
           shareText={modelShareText(market)} readme={false}
-          more={<>{stored.url && <a href={stored.url} target="_blank" rel="noreferrer">View on Hugging Face ↗</a>}
+          more={<><Suspense fallback={null}><LiveModelLink market={market} registry={registry}/></Suspense>
             <a href={`https://solscan.io/token/${mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
             <Link href={claimHref(market)}>{CLAIM_LABEL}</Link></>}/></div>
     </header>
@@ -116,6 +116,12 @@ async function LiveHeroFacts({ market, registry }) {
 
 async function LiveModelCard({ market, registry }) {
   return <ModelCard view={modelView(market, registry, await modelCard(registry))}/>
+}
+
+// The "⋯" menu's link to the model, withheld (like the card's) when the path now leads to a different repository.
+async function LiveModelLink({ market, registry }) {
+  const { url } = modelView(market, registry, await modelCard(registry))
+  return url ? <a href={url} target="_blank" rel="noreferrer">View on Hugging Face ↗</a> : null
 }
 
 // Details → Model: who publishes it, what it does, how it may be used, and its link on Hugging Face.

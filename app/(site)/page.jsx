@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { after } from 'next/server'
 import { Suspense } from 'react'
 import { ContentSkeleton } from '../components/loading-skeleton'
 import { ArrowRight } from 'lucide-react'
@@ -22,7 +23,7 @@ import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
 import { featuredMarkets, labeledRacers, featuredTicker } from '../lib/repo-quality.mjs'
 import { officialLaunches } from '../lib/official-launch.mjs'
 import { OfficialLaunches } from '../components/official-launches'
-import { hfMarketsEnabled, shownMarkets } from '../lib/hf-markets.mjs'
+import { hfMarketsEnabled, shownMarkets, withModelFacts } from '../lib/hf-markets.mjs'
 import { selectModelStrip } from '../lib/hf-model-display.mjs'
 import { ModelsStrip } from '../components/hf/models-strip'
 
@@ -40,14 +41,14 @@ async function MarketContent() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
   const promotable = await promotableMarkets(shownMarkets(markets))
   const notice = unavailable || (!promotable && 'Markets are temporarily unavailable.')
-  return <>{notice && <p className="subtle-notice">{notice}</p>}<HomeMarkets tabs={homeMarketTabs(await withPulse(featuredMarkets(promotable ?? [])))} usdPerSol={usdPerSol}/></>
+  return <>{notice && <p className="subtle-notice">{notice}</p>}<HomeMarkets tabs={homeMarketTabs(withModelFacts(await withPulse(featuredMarkets(promotable ?? [])), { schedule: after }))} usdPerSol={usdPerSol}/></>
 }
 
 // Hugging Face model markets (HF_MARKETS_ENABLED only), under the same do-not-promote rule as the lists; nothing without one.
 async function ModelsStripContent() {
   const { markets } = await listMarkets()
   const promotable = await promotableMarkets(markets)
-  return promotable ? <ModelsStrip markets={selectModelStrip(promotable)}/> : null
+  return promotable ? <ModelsStrip markets={selectModelStrip(withModelFacts(promotable, { schedule: after }))}/> : null
 }
 
 // The race ranks by verified reserves and keeps new repositories in place, labeled (labeledRacers); the market list is

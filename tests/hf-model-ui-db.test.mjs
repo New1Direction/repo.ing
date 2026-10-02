@@ -35,8 +35,9 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       values ($1,'openai-community/gpt2','openai-community','org',true,'["openai-community/gpt2-base"]') returning market_ref::text as ref`, [GPT2_HF_ID])
     await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,description,avatar_url,stars,forks,archived,github_updated_at,github_created_at) values
       ($1,'New1Direction','Waternot','New1Direction/Waternot','Water','https://avatars.githubusercontent.com/u/1',1200,31,false,now(),'2025-01-01T00:00:00Z')`, [GITHUB_ID])
+    // As the launch writes it (src/hf-launch.mjs): stars and forks stay 0, so Hugging Face metrics never feed promotion.
     await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,description,avatar_url,stars,forks,archived,github_updated_at,source,hf_model_ref)
-      values ($1,'openai-community','gpt2','openai-community/gpt2',null,$2,4194,0,false,now(),'huggingface',$1)`, [MODEL_ID, AVATAR])
+      values ($1,'openai-community','gpt2','openai-community/gpt2','Text generation · License: mit',$2,0,0,false,now(),'huggingface',$1)`, [MODEL_ID, AVATAR])
     for (const [id, mint, symbol] of [[GITHUB_ID, githubMint, 'WTR'], [MODEL_ID, modelMint, 'GPT2']]) {
       await pool.query(`insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,
         launch_slot,launch_finality,indexed_at,last_verified_at,discovery_version) values ($1,'confirmed',$2,$3,'Launcher','Creator',$4,$5,$6,1,'finalized',$7,now(),2)`,
@@ -59,14 +60,15 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       const { market: github } = await marketByMint(githubMint), { market: model } = await marketByMint(modelMint)
       assert.equal(github.source, 'github'); assert.equal(isModelMarket(github), false)
       assert.equal(model.source, 'huggingface'); assert.equal(isModelMarket(model), true)
-      assert.deepEqual([model.repoId, model.fullName, model.stars, model.avatarUrl, model.earned], [MODEL_ID, 'openai-community/gpt2', 4194, AVATAR, String(SOL / 4n)])
+      assert.deepEqual([model.repoId, model.fullName, model.stars, model.avatarUrl, model.earned], [MODEL_ID, 'openai-community/gpt2', 0, AVATAR, String(SOL / 4n)])
       assert.equal(model.volume24hLamports, String(2n * SOL))
       const registry = await readModelRegistry(pool, MODEL_ID)
-      assert.deepEqual({ ...registry, pathConfirmedAt: typeof registry.pathConfirmedAt }, { hfId: GPT2_HF_ID, path: 'openai-community/gpt2', ownerHandle: 'openai-community',
-        ownerKind: 'org', ownerSubject: null, gated: true, baseModels: ['openai-community/gpt2-base'], pathConfirmedAt: 'object' })
+      assert.deepEqual({ ...registry, pathConfirmedAt: typeof registry.pathConfirmedAt }, { marketRef: MODEL_ID, hfId: GPT2_HF_ID, path: 'openai-community/gpt2',
+        ownerHandle: 'openai-community', ownerKind: 'org', ownerSubject: null, gated: true, baseModels: ['openai-community/gpt2-base'], pathConfirmedAt: 'object' })
       assert.equal(await readModelRegistry(pool, GITHUB_ID), null, 'a GitHub id never reads the registry')
       const view = modelView(model, registry)
-      assert.deepEqual([view.owner, view.ownerKind, view.likes, view.gated.label, view.base.paths], ['openai-community', 'org', 4194, 'Gated', ['openai-community/gpt2-base']])
+      assert.deepEqual([view.owner, view.ownerKind, view.likes, view.gated.label, view.base.paths], ['openai-community', 'org', null, 'Gated', ['openai-community/gpt2-base']],
+        'repositories.stars (0) is never read as likes')
     })
 
     await t.test('token page: the model renders its own page from the database; off, it is not found; a GitHub market keeps its page', async () => {
@@ -91,20 +93,31 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       assert.equal(githubMetadata.description, 'Water')
     })
 
-    await t.test('lists: both rows carry their source; without the flag the model drops out; with it, it renders as a model row', async () => {
+    await t.test('lists: both rows carry their source; without the flag the model drops out; with it, it renders as a model row with display-only likes', async () => {
       const { MarketTable } = await appModule('app/components/ui.jsx')
       const { homeMarketTabs } = await import('../app/lib/market-order.mjs')
       const { selectModelStrip } = await import('../app/lib/hf-model-display.mjs')
+      const { createModelCards, withModelFacts } = await import('../app/lib/hf-markets.mjs')
       const { markets, unavailable } = await listMarkets()
       assert.equal(unavailable, undefined)
       assert.deepEqual(Object.fromEntries(markets.map(market => [market.repoId, market.source])), { [GITHUB_ID]: 'github', [MODEL_ID]: 'huggingface' })
       assert.deepEqual(shownMarkets(markets, {}).map(market => market.repoId), [GITHUB_ID])
       assert.deepEqual(shownMarkets(markets, { HF_MARKETS_ENABLED: 'true' }).map(market => market.repoId).sort(), [GITHUB_ID, MODEL_ID].sort())
-      assert.deepEqual(selectModelStrip(markets), [{ repoId: MODEL_ID, mint: modelMint, fullName: 'openai-community/gpt2', symbol: 'GPT2', volume24hLamports: String(2n * SOL), likes: 4194 }])
-      const table = html(h(MarketTable, { markets: homeMarketTabs(markets).Trending }))
-      assert.match(table, /<div class="market-row is-model">/)
-      assert.match(table, /href="https:\/\/huggingface\.co\/openai-community\/gpt2"[^>]*title="4,194 likes on Hugging Face/)
-      assert.ok(table.replaceAll('&#x27;', "'").includes(HF_DISCLAIMER))
+      // Likes come only from a live card for the registry's own _id: refreshed after a first view, then attached to the row.
+      const cards = globalThis.__repoingHfModelCards
+      globalThis.__repoingHfModelCards = createModelCards({ read: async path => ({ hfId: GPT2_HF_ID, path, likes: 4194, downloads30d: 15740994 }) })
+      try {
+        let refresh = null
+        assert.deepEqual(withModelFacts(markets, { schedule: fn => { refresh = fn } }), markets, 'nothing known yet')
+        await refresh()
+        const listed = withModelFacts(markets, { schedule: () => {} })
+        assert.deepEqual(selectModelStrip(listed), [{ repoId: MODEL_ID, mint: modelMint, fullName: 'openai-community/gpt2', symbol: 'GPT2', volume24hLamports: String(2n * SOL), likes: 4194 }])
+        const table = html(h(MarketTable, { markets: homeMarketTabs(listed).Trending }))
+        assert.match(table, /<div class="market-row is-model">/)
+        assert.match(table, /href="https:\/\/huggingface\.co\/openai-community\/gpt2"[^>]*title="4,194 likes on Hugging Face/)
+        assert.match(table, /<small>Community launch · Text generation · License: mit<\/small>/)
+        assert.ok(table.replaceAll('&#x27;', "'").includes(HF_DISCLAIMER))
+      } finally { globalThis.__repoingHfModelCards = cards; globalThis.__repoingHfModelFacts.clear() }
     })
 
     await t.test('/stats: per-source volume, fees, payouts, trades and markets come from the same snapshot and add up to the totals', async () => {
