@@ -10,6 +10,9 @@ import { ttlMemo } from './ttl-memo.mjs'
 import { readGraduationRace } from './graduation-race.mjs'
 import { marketRowStats } from './market-row-stats.mjs'
 import { timed } from './server-timing.mjs'
+import { hasEarnedPromotion, isNewRepo } from './repo-quality.mjs'
+import { isOfficialLaunch } from './official-launch.mjs'
+import { githubTime } from '../../src/github.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -64,6 +67,13 @@ export function tradeAvailable() { return Boolean(database() && configAddress())
 const MARKETS_TTL_MS = 15_000
 export const listMarkets = ttlMemo(() => timed('listMarkets', loadMarkets), MARKETS_TTL_MS, { keep: result => !result.unavailable })
 
+// Repository quality (repo-quality.mjs) and the Official mark from a market row's own columns. A recorded migration counts
+// as graduated for promotion even while the fresh progress read is stale.
+function withSignals(market, migrated, now) {
+  return { ...market, newRepo: isNewRepo(market, now), promoted: hasEarnedPromotion({ ...market, graduated: market.graduated || migrated }, now),
+    officialLaunch: isOfficialLaunch(market) }
+}
+
 // 24h volume: bonding-curve swaps, plus swaps in the DAMM v2 pool a graduated market's verified migration names (the
 // binding /stats uses: events recorded under any other pool never count).
 async function loadMarkets() {
@@ -73,7 +83,7 @@ async function loadMarkets() {
     const { rows } = await pool.query(`
       select m.github_repo_id::text as "repoId", m.mint, m.pool, m.token_name as "tokenName",
         m.token_symbol as "symbol", m.indexed_at as "indexedAt", m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet", r.owner, r.name,
-        r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks,
+        r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks, r.github_created_at as "githubCreatedAt",
         coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
         (coalesce(t.volume, 0) + coalesce(dv.volume, 0))::text as "volume24hLamports",
         b.wallet as "beneficiaryWallet", exists (
@@ -99,10 +109,10 @@ async function loadMarkets() {
       where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
       order by m.indexed_at desc`)
     const now = Date.now()
-    return { markets: rows.map(({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...row }) => ({ ...row,
+    return { markets: rows.map(({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...row }) => withSignals({ ...row,
       stars: Number(row.stars), forks: Number(row.forks),
       earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString(),
-      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) })) }
+      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now)) }
   } catch { return { markets: [], unavailable: 'Markets are temporarily unavailable.' } }
 }
 
@@ -166,7 +176,7 @@ async function singleMarket(column, value) {
       m.token_name as "tokenName", m.token_symbol as symbol, m.indexed_at as "indexedAt",
       m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
       r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl",
-      r.stars, r.forks, r.github_updated_at as "updatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt",
+      r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
       ((select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)
@@ -187,11 +197,12 @@ async function singleMarket(column, value) {
       where m.${column} = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [value])
     const [row] = rows
     if (!row) return { market: null }
-    // Same row fields as the market list (price, bonding progress), so either read can back a market card.
+    // Same row fields as the market list (price, bonding progress, quality signals), so either read can back a market card.
     const { lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...market } = row
-    return { market: { ...market, stars: Number(market.stars), forks: Number(market.forks),
+    const now = Date.now()
+    return { market: withSignals({ ...market, stars: Number(market.stars), forks: Number(market.forks),
       remaining: (BigInt(market.earned) - BigInt(market.claimed)).toString(),
-      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, Date.now()) } }
+      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now) }
   } catch { return { market: null, unavailable: 'Market is temporarily unavailable.' } }
 }
 // React cache is scoped to the render: metadata and page share one read, without caching payout state.
@@ -205,7 +216,7 @@ export async function repositoryById(repoId) {
   let row = null
   if (pool) {
     try {
-      const result = await pool.query('select github_repo_id::text as "repoId", owner, name, full_name as "fullName", description, avatar_url as "avatarUrl", stars, forks, github_updated_at as "updatedAt" from repositories where github_repo_id = $1', [repoId])
+      const result = await pool.query('select github_repo_id::text as "repoId", owner, name, full_name as "fullName", description, avatar_url as "avatarUrl", stars, forks, github_updated_at as "updatedAt", github_created_at as "githubCreatedAt" from repositories where github_repo_id = $1', [repoId])
       row = result.rows[0] ?? null
     } catch { /* GitHub may still resolve the repository. */ }
   }
@@ -220,7 +231,8 @@ export async function repositoryById(repoId) {
     return { repoId: String(repo.id), owner: repo.owner.login, name: repo.name, fullName: repo.full_name,
       description: repo.description, avatarUrl: repo.owner.avatar_url, stars: repo.stargazers_count,
       forks: repo.forks_count, language: detail.language ?? null, license: detail.license?.spdx_id ?? null,
-      updatedAt: repo.updated_at, htmlUrl: repo.html_url, hasIssues: typeof repo.has_issues === 'boolean' ? repo.has_issues : null }
+      updatedAt: repo.updated_at, htmlUrl: repo.html_url, hasIssues: typeof repo.has_issues === 'boolean' ? repo.has_issues : null,
+      githubCreatedAt: githubTime(repo.created_at)?.toISOString() ?? row?.githubCreatedAt ?? null }
   } catch { return row }
 }
 

@@ -185,6 +185,8 @@ export const repositories = pgTable('repositories', {
   archived: boolean('archived').notNull(),
   githubUpdatedAt: timestamp('github_updated_at', { withTimezone: true }).notNull(),
   syncedAt: timestamp('synced_at', { withTimezone: true }).defaultNow().notNull(),
+  // Migration 0045; null until GitHub is next read (app/lib/repo-quality.mjs then judges by stars alone).
+  githubCreatedAt: timestamp('github_created_at', { withTimezone: true }),
 })
 
 export const markets = pgTable('markets', {

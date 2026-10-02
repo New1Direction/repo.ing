@@ -32,6 +32,8 @@ import { timed } from '../../../lib/server-timing.mjs'
 import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
 import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
 import { TrustPanel } from '../../../components/trust-panel'
+import { OfficialBadge } from '../../../components/market-signals'
+import { featuredMarkets, featuredRacers, repoFactsView } from '../../../lib/repo-quality.mjs'
 import { MarketsToWatch, MarketsToWatchFallback, MarketsToWatchLists } from '../../../components/markets-to-watch'
 import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-race.mjs'
 import { marketLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
@@ -80,6 +82,8 @@ export default async function Token({ params, searchParams }) {
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
   const tips = tipsEnabled()
   const rewards = market.allocationVersion === 1 || [1, 2].includes(market.discoveryVersion)
+  // "Launch facts" repository row: age, stars and repo score (GitHub's live numbers when the display cache has them).
+  const repoFacts = repoFactsView({ stars: repo.stars, forks: repo.forks, githubCreatedAt: repo.githubCreatedAt ?? market.githubCreatedAt }, pulse, Date.now())
   const tabs = [
     { id: 'repository', anchor: 'repository', label: 'Repository', content: <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense> },
     { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
@@ -98,7 +102,7 @@ export default async function Token({ params, searchParams }) {
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><EarningsHeadline market={market}/></Suspense></div>
       <div className="market-hero-main"><RepoIdentity repo={repo} heading>
-          <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
+          <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{market.officialLaunch && !decision && <OfficialBadge/>}{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
           {market.beneficiaryWallet && <Suspense fallback={null}><XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/></Suspense>}
           {tips && <Suspense fallback={null}><PartsFundBadge market={market}/></Suspense>}
@@ -118,7 +122,7 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
-        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market} launchFee={launchFee} declined={decision || null}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
+        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}
           <Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense></div>}/>
@@ -140,12 +144,13 @@ function TokenDetails({ market }) {
 }
 
 // $REPOING page: the graduation race's top three and the three newest launches, from the same memoized reads as the
-// home page (no extra query per view). The official market itself is never listed, nor a do-not-promote or declined one.
+// home page (no extra query per view). The official market itself is never listed, nor a do-not-promote or declined one,
+// nor a new repository that has not earned promotion (repo-quality.mjs).
 async function MarketsToWatchContent() {
   const [{ markets: race, unavailable: raceUnavailable }, { markets, unavailable }, excluded] = await Promise.all([graduationRace(), listMarkets(), promotionExcluded()])
   const excludeMints = [OFFICIAL_TOKEN.mint]
-  return <MarketsToWatchLists race={topOfRace(race, { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
-    newest={excluded ? newestLaunches(markets, { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
+  return <MarketsToWatchLists race={topOfRace(featuredRacers(race, markets), { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable ?? unavailable}
+    newest={excluded ? newestLaunches(featuredMarkets(markets), { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
 }
 
 // Same memoized listMarkets() rows as the home tabs: no extra query per token page view. Never recommends a do-not-promote

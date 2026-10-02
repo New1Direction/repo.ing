@@ -9,6 +9,8 @@
 // - Runs are serialized with an advisory lock, capped per run and per 24 hours, and spaced out between posts.
 // Channel configuration, delivery and the locked run below are shared with milestone alerts (src/milestone-alerts.mjs).
 import { promotionExcludedRepoIds } from '../app/lib/promotion-exclusions.mjs'
+import { hasEarnedPromotion } from '../app/lib/repo-quality.mjs'
+import { marketRowStats } from '../app/lib/market-row-stats.mjs'
 import { buildLaunchMessage, tokenUrl } from './launch-alerts-message.mjs'
 import { createTelegramSender, createXSender } from './launch-alerts-senders.mjs'
 
@@ -81,7 +83,8 @@ export function createLaunchAlertSenders(config, { fetchImpl = fetch } = {}) {
 
 // ---------- PostgreSQL store (migration 0034_launch_alerts) ----------
 const MARKET_FIELDS = `m.github_repo_id::text as "githubRepoId", m.mint, m.token_symbol as "tokenSymbol", m.indexed_at as "indexedAt",
-  r.full_name as "fullName", r.description, r.stars`
+  r.full_name as "fullName", r.description, r.stars, r.github_created_at as "githubCreatedAt",
+  o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"`
 const ELIGIBLE = `m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.mint is not null
   and m.indexed_at >= $2 and m.indexed_at >= now() - make_interval(secs => $3)`
 
@@ -109,12 +112,14 @@ export function createLaunchAlertStore(pool) {
       return n
     },
     // Oldest first: never-alerted markets and retryable failures on this channel.
-    async candidates({ channel, since, maxAgeMs, maxAttempts, limit }) {
+    async candidates({ channel, since, maxAgeMs, maxAttempts, limit, offset = 0 }) {
       const { rows } = await pool.query(`select ${MARKET_FIELDS}, a.id::text as "alertId" from markets m
         join repositories r on r.github_repo_id=m.github_repo_id
+        left join graduation_observations o on o.github_repo_id=m.github_repo_id
+        left join graduation_events e on e.github_repo_id=m.github_repo_id
         left join launch_alerts a on a.github_repo_id=m.github_repo_id and a.channel=$1
         where ${ELIGIBLE} and (a.id is null or (a.status='failed' and a.attempts < $4 and coalesce(a.next_attempt_at, a.updated_at) <= now()))
-        order by m.indexed_at, m.github_repo_id limit $5`, [channel, since, maxAgeMs / 1000, maxAttempts, limit])
+        order by m.indexed_at, m.github_repo_id limit $5 offset $6`, [channel, since, maxAgeMs / 1000, maxAttempts, limit, offset])
       return rows
     },
     // The only path to a send: returns the claimed row id, or null when another run owns (or finished) this alert.
@@ -136,6 +141,16 @@ export function createLaunchAlertStore(pool) {
 
 // ---------- job ----------
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+// Candidates are read a page at a time (at most CANDIDATE_PAGES per channel and run) and markets that may not be announced
+// yet are dropped before the run's budget applies, so a wave of them never takes the places of markets that may.
+const CANDIDATE_PAGE = 200, CANDIDATE_PAGES = 10
+
+// A new repository (app/lib/repo-quality.mjs) is announced only once its market earned promotion: 10% of its graduation
+// target, from progress that passes the public freshness gate, or graduation. Its 24 hour window may close first.
+export function launchAlertEarned(market, now) {
+  const { bondingPercent, graduated } = marketRowStats(market, now)
+  return hasEarnedPromotion({ ...market, bondingPercent, graduated: graduated || Boolean(market.migrationEvidenceHash) }, now)
+}
 
 // Builds the text and sends it; never throws. Text that cannot be built is 'failed' (nothing was sent); a sender that
 // throws may have posted, so that is 'unknown'. Shared with milestone alerts.
@@ -190,10 +205,16 @@ export function createLaunchAlerts({ store, config, senders, sleep = wait, now =
   async function runChannel(channel, skip) {
     const budget = Math.min(config.maxPerRun, config.maxPerDay - await store.sentRecently(channel))
     if (budget <= 0) return []
-    // Repos on the do-not-promote list (env list and maintainer opt-outs) are never announced.
-    const markets = (await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts, limit: budget }))
-      .filter(market => !skip.has(String(market.githubRepoId)))
-    return postInTurn({ items: markets, config, sleep, now,
+    // Repos on the do-not-promote list (env list and maintainer opt-outs) are never announced, nor new repositories that
+    // have not earned promotion.
+    const markets = []
+    for (let page = 0; page < CANDIDATE_PAGES && markets.length < budget; page++) {
+      const rows = await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts,
+        limit: CANDIDATE_PAGE, offset: page * CANDIDATE_PAGE })
+      markets.push(...rows.filter(market => !skip.has(String(market.githubRepoId)) && launchAlertEarned(market, now())))
+      if (rows.length < CANDIDATE_PAGE) break
+    }
+    return postInTurn({ items: markets.slice(0, budget), config, sleep, now,
       claim: market => store.claim({ channel, market, maxAttempts: config.maxAttempts }),
       deliver: market => deliverAlert({ sender: senders[channel], url: tokenUrl(config.origin, market.mint),
         build: () => buildLaunchMessage(market, { channel, origin: config.origin }) }),

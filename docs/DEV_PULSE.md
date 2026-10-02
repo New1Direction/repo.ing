@@ -12,7 +12,7 @@ The worker (`src/dev-pulse.mjs`, every 2 minutes, at most 12 due repositories pe
 
 | Read | When | Stored as |
 | --- | --- | --- |
-| `GET /repositories/{id}` (rename-safe) | every check | `repo_pulse_state` (name, default branch, stars, `pushed_at`), one star snapshot per UTC hour in `repo_pulse_star_hours`, star milestones (10 … 100k) |
+| `GET /repositories/{id}` (rename-safe) | every check (without the validator once, while the repository's creation time is unknown) | `repo_pulse_state` (name, default branch, stars, `pushed_at`), one star snapshot per UTC hour in `repo_pulse_star_hours`, star milestones (10 … 100k); `repositories` stars, forks and `github_created_at` (filled once) for [repository quality signals](PRODUCTION.md#repository-quality-signals-and-official-markets) |
 | `GET /repos/{name}/releases` | every check | `release` events (drafts skipped) |
 | `GET /repos/{name}/commits?sha={default}&since={14 days}` | when `pushed_at` moved; the first read of a day pages back up to 1,000 commits | `commit` events |
 | `GET /repos/{name}/pulls?state=closed` | when `pushed_at` moved | `merge` events (merged pull requests only) |

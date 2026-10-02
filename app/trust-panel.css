@@ -31,6 +31,9 @@
 .trust-tip:hover .trust-tip-text,.trust-tip:focus-within .trust-tip-text{opacity:1;visibility:visible;transform:none}
 [data-theme=light] .trust-tip-text{box-shadow:0 10px 28px rgba(25,34,28,.16)}
 [data-theme=light] .trust-row.is-verified .trust-title,[data-theme=light] .trust-row.is-verified .trust-icon{color:#11774b}
+/* New repo (repository row): amber, a caution rather than an error (--amber tokens: app/market-signals.css). */
+.trust-row.is-warning .trust-icon{background:color-mix(in srgb,var(--amber,#f0b35a) 15%,transparent);color:var(--amber,#f0b35a)}
+.trust-row.is-warning .trust-title{color:var(--amber-text,#f3c27e)}
 
 .trust-foot{margin:8px 0 0;padding-top:10px;border-top:1px solid var(--border);color:var(--dim);font-size:11.5px;line-height:1.45}
 @media(prefers-reduced-motion:reduce){.trust-tip-text{transition:none}}

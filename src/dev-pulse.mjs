@@ -1,4 +1,5 @@
 import { githubApiHeaders } from './github-app-auth.mjs'
+import { githubTime } from './github.mjs'
 
 // Dev Pulse collector: public GitHub activity for live markets' repositories, read by the worker. Every GitHub read is a
 // conditional request (If-None-Match), so an unchanged repository costs nothing against the rate limit; commits and merged
@@ -94,6 +95,7 @@ export function createPulseStore(pool) {
       const { rows } = await pool.query(`select live.github_repo_id::text as "repoId", r.full_name as "fullName",
           s.full_name as "knownName", s.default_branch as "defaultBranch", s.stars, s.pushed_at as "pushedAt",
           s.activity_read_for as "activityReadFor", coalesce(s.etags, '{}'::jsonb) as etags, s.hn_checked_at as "hnCheckedAt",
+          r.github_created_at is null as "needsCreatedAt",
           (select h.stars_total from repo_pulse_star_hours h where h.github_repo_id = live.github_repo_id and h.hour < date_trunc('hour', now())
             order by h.hour desc limit 1) as "starsBefore"
         from (select distinct github_repo_id from markets where status = 'confirmed') live
@@ -127,6 +129,12 @@ export function createPulseStore(pool) {
             checked_at = excluded.checked_at, next_check_at = excluded.next_check_at, error = excluded.error`,
           [repoId, s.fullName, s.defaultBranch, s.stars, s.pushedAt, s.activityReadFor, JSON.stringify(s.etags), s.hnCheckedAt,
             s.checkedAt, s.nextCheckAt, s.error])
+        // Fresh star and fork counts for market lists and quality signals, and the creation time once (it never changes).
+        // Repository identity (owner, name) is left to the launch and lookup paths.
+        const r = outcome.repository
+        if (r) await client.query(`update repositories set stars = $2, forks = coalesce($3, forks), github_created_at = coalesce(github_created_at, $4)
+          where github_repo_id = $1 and (stars <> $2 or forks <> coalesce($3, forks) or (github_created_at is null and $4::timestamptz is not null))`,
+          [repoId, r.stars, r.forks, r.createdAt])
         await client.query('commit')
       } catch (error) { await client.query('rollback').catch(() => {}); throw error } finally { client.release() }
     },
@@ -174,15 +182,18 @@ export function createDevPulseCollector({ pool, store = createPulseStore(pool), 
     const time = now(), etags = { ...row.etags }, events = []
     const state = { fullName: row.knownName ?? row.fullName, defaultBranch: row.defaultBranch, stars: row.stars, pushedAt: row.pushedAt,
       activityReadFor: row.activityReadFor, etags, hnCheckedAt: row.hnCheckedAt, checkedAt: iso(time), nextCheckAt: null, error: null }
-    // /repositories/{id} survives renames and transfers; the current full name addresses the other reads.
-    const repo = await github(`/repositories/${row.repoId}`, etags.repo)
+    // /repositories/{id} survives renames and transfers; the current full name addresses the other reads. While the stored
+    // creation time is unknown (repositories saved before migration 0045), it is read once without the validator.
+    const repo = await github(`/repositories/${row.repoId}`, row.needsCreatedAt ? null : etags.repo)
     if (repo.missing) return { events, starHours: [], state: { ...state, error: 'REPOSITORY_UNAVAILABLE', nextCheckAt: iso(time + DAY) } }
+    let repository = null
     if (repo.data) {
       etags.repo = repo.etag
-      const stars = repo.data.stargazers_count
+      const stars = repo.data.stargazers_count, forks = repo.data.forks_count
       if (typeof repo.data.full_name !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo.data.full_name) || !Number.isSafeInteger(stars)) throw Error('GITHUB_INVALID_REPOSITORY')
       events.push(...milestoneEvents(row.stars, stars, iso(time), repo.data.full_name))
       Object.assign(state, { fullName: repo.data.full_name, defaultBranch: repo.data.default_branch ?? null, stars, pushedAt: repo.data.pushed_at ?? null })
+      repository = { stars, forks: Number.isSafeInteger(forks) && forks >= 0 ? forks : null, createdAt: githubTime(repo.data.created_at)?.toISOString() ?? null }
     }
     const name = state.fullName
     const releases = await github(`/repos/${name}/releases?per_page=10`, etags.releases)
@@ -219,7 +230,7 @@ export function createDevPulseCollector({ pool, store = createPulseStore(pool), 
     state.nextCheckAt = iso(time + nextCheckDelay(state.pushedAt, time))
     // One upsert cannot touch the same row twice; the last reading of an event wins.
     const unique = [...new Map(events.map(event => [`${event.kind}:${event.sourceId}`, event])).values()]
-    return { events: unique, starHours: hours, state }
+    return { events: unique, starHours: hours, state, repository }
   }
 
   return {

@@ -11,6 +11,7 @@ import { GraduationRace, GraduationRaceBoard, GraduationRaceFallback } from '../
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import { exploreGrowthView } from '../../lib/growth-view.mjs'
 import { withPulse } from '../../lib/pulse-index.mjs'
+import { featuredRacers } from '../../lib/repo-quality.mjs'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Explore markets · repo.ing', description: 'Browse live markets for open source repositories. Real repositories, real communities — every trade pays the builders.' }
 export default function Explore() {
@@ -23,9 +24,10 @@ async function Markets() {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
   return <>{unavailable && <p className="subtle-notice">{unavailable}</p>}<ExploreList markets={await withPulse(markets)} usdPerSol={usdPerSol}/></>
 }
+// The race features markets, so new repositories wait until 10% of their target (repo-quality.mjs); the list below has all.
 async function Graduating() {
-  const { markets, unavailable } = await graduationRace()
-  return <GraduationRaceBoard markets={await withPulse(markets)} unavailable={unavailable}/>
+  const [{ markets, unavailable }, listed] = await Promise.all([graduationRace(), listMarkets()])
+  return <GraduationRaceBoard markets={await withPulse(featuredRacers(markets, listed.markets))} unavailable={unavailable ?? listed.unavailable}/>
 }
 async function Highlights() {
   let growth
