@@ -5,7 +5,7 @@ import { provablyExpiredUnlanded } from './expiry-proof.mjs'
 import { broadcastUntilSettled, isDustPayout, maxPayoutNetworkFee, readTradeComputeBudget, signedWithPriorityFee } from './trade-landing.mjs'
 import { CAP_WINDOW_MS, VerificationBonusError, capAllows, formatBonusSol, nextBonusStatus, nextPayoutStatus, payerShortfall,
   requireReviewedTerms, verificationBonusPayoutConfig, withBonusLock } from './verification-bonus.mjs'
-import { bonusRepoId, currentSelfLaunchBlock } from './verification-bonus-review.mjs'
+import { bonusRepoId, currentBonusBlock } from './verification-bonus-review.mjs'
 
 // Payouts of approved bonuses: a plain SOL transfer from the protected partner signer (the key that already pays
 // discovery-claim network fees) to the launcher wallet, plus a memo naming the payout's idempotency key. Web only: the
@@ -195,7 +195,7 @@ export function createVerificationBonusPayouts({ pool, connection, partner = nul
       if (bonus.marketAmount !== bonus.amount || bonus.marketLauncher !== bonus.launcherWallet) {
         fail('This bonus no longer matches its market’s stored policy; settlement review required')
       }
-      const blocked = await currentSelfLaunchBlock(db, bonus)
+      const blocked = await currentBonusBlock(db, bonus)
       if (blocked) fail(`${blocked}. Reject this bonus instead of paying it.`)
       const amount = BigInt(bonus.amount)
       const committed = await readCommittedLamports(db, now())

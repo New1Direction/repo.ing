@@ -1,5 +1,6 @@
-import { VerificationBonusError, nextBonusStatus, readSelfLaunchFacts, rejectionReason, requireReviewedTerms, selfLaunchReason,
-  withBonusLock } from './verification-bonus.mjs'
+import { VerificationBonusError, maintainerDecisionReason, nextBonusStatus, readSelfLaunchFacts, rejectionReason, requireReviewedTerms,
+  selfLaunchReason, withBonusLock } from './verification-bonus.mjs'
+import { activeDecision, activeDecisions } from './maintainer-opt-outs.mjs'
 
 // Operator review (/operations/bonuses): list bonuses with their review context, approve, or reject with a reason.
 // Decisions run under the bonus advisory lock and only move a row out of the state the operator saw. Approval re-checks
@@ -19,10 +20,12 @@ async function readBonus(db, repoId) {
   return bonus
 }
 
-// Self-launch block on the CURRENT bindings, or null. Shared by approval and payout.
-export async function currentSelfLaunchBlock(db, bonus) {
-  return selfLaunchReason({ launcherWallet: bonus.launcherWallet, ...await readSelfLaunchFacts(db, { repoId: bonus.repoId,
-    verifierGithubUserId: bonus.verifierGithubUserId, launcherWallet: bonus.launcherWallet }) })
+// Why a bonus may not be approved or paid right now (current wallet bindings and maintainer decision), or null. A failed
+// read throws, so approval and payment fail closed. Shared by approval and payout.
+export async function currentBonusBlock(db, bonus) {
+  const [facts, decision] = await Promise.all([readSelfLaunchFacts(db, { repoId: bonus.repoId,
+    verifierGithubUserId: bonus.verifierGithubUserId, launcherWallet: bonus.launcherWallet }), activeDecision(db, bonus.repoId)])
+  return selfLaunchReason({ launcherWallet: bonus.launcherWallet, ...facts }) ?? maintainerDecisionReason(decision)
 }
 
 const reviewer = operator => {
@@ -62,7 +65,8 @@ export function createVerificationBonusReview({ pool, now = Date.now }) {
       where m.verification_bonus_lamports is not null and m.status = 'confirmed' and m.indexed_at is not null
         and not exists (select 1 from verification_bonuses b where b.github_repo_id = m.github_repo_id)
       group by m.github_repo_id, r.full_name order by min(v.verified_at) limit 20`)
-    return { bonuses, checking }
+    const decisions = await activeDecisions(pool, bonuses.map(bonus => bonus.repoId))
+    return { bonuses: bonuses.map(bonus => ({ ...bonus, maintainerDecision: decisions.get(bonus.repoId)?.kind ?? null })), checking }
   }
 
   async function approve({ repoId, operator, expected }) {
@@ -71,7 +75,7 @@ export function createVerificationBonusReview({ pool, now = Date.now }) {
       const bonus = await readBonus(db, id)
       requireReviewedTerms(bonus, expected)
       nextBonusStatus(bonus.status, 'approved')
-      const blocked = await currentSelfLaunchBlock(db, bonus)
+      const blocked = await currentBonusBlock(db, bonus)
       if (blocked) fail(`${blocked}. Reject this bonus instead.`)
       const at = new Date(now())
       const { rowCount } = await db.query(`update verification_bonuses set status = 'approved', reviewed_at = $2,

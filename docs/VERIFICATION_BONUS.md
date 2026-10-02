@@ -19,12 +19,14 @@ A bonus is **eligible** only if every rule passes. Each failing rule is recorded
 | Repository age | Created at least 30 days before activation | GitHub `created_at`, read by immutable repository ID at accrual time (the database stores no creation date) |
 | Stars | At least 10 stars when the bonus accrues | GitHub `stargazers_count`, same read |
 | Outside interest | At least **1 SOL** of curve (DBC) volume from wallets other than the launcher, traded before the verification | `trade_events.trader` (recorded for every trade since migration 0026: the swap's user, or the fee payer on aggregator routes). Rows with no recorded trader are reported but never counted. |
+| Not declined | The maintainer has no active decision to decline the market or opt the repository out ([maintainer opt-outs](../src/maintainer-opt-outs.mjs)) | `maintainer_opt_outs` (active rows). Declining a market records an admin verification, so a maintainer who shows up only to turn the market down never earns the launcher a bonus. |
 | Still public | GitHub still serves the repository publicly | A 404, 410 or 451, a 403 "repository access blocked", or a private repository is a decision (ineligible). Any other GitHub failure (an outage, a rate limit) is retried. |
 
 **At most one bonus per market** (the primary key is the repository ID). A decided market is never re-evaluated. A bonus that fails **only** the volume rule is not decided until two hours after the verification. That gives the trade index time to catch up on trades made before the verification, because idle markets are indexed every few minutes and outages back off further.
 
 ### Why these rules
 
+- **Declines.** The point is maintainers who show up to take part. A decline is the opposite, and because declining verifies the maintainer, it must not count. Approval and payment re-check the decision, so a decline made after accrual blocks the bonus until it is withdrawn.
 - **Self-launch.** The cheapest abuse is launching your own repository and verifying it yourself. A maintainer who binds the launcher wallet, now or ever, to any repository has proven they control it. Approval and payment re-check this against the bindings at that moment, so a wallet bound after accrual still blocks the bonus.
 - **Age and stars.** These rules make it expensive to create a throwaway repository just to farm the bonus.
 - **Outside volume.** At least one other person has to care about the market before the maintainer shows up. Wash volume is possible, but trading 1 SOL costs real fees (the 1.75% curve fee in each direction), and the reviewer sees the wallet breakdown.
@@ -41,7 +43,7 @@ A bonus is **eligible** only if every rule passes. Each failing rule is recorded
    - the launcher wallet and the repository's payout wallet, flagging any wallet link;
    - curve volume: from other wallets before verification, the launcher's own, unattributed, and all-time.
 
-   **Approve** re-checks the wallet link. **Reject** needs a reason of 3–300 characters. The reason is kept for operators only; launchers and visitors see "not approved after review", because a free-text reason (for example, suspected wash trading) is not something to publish on a token page.
+   **Approve** re-checks the wallet link and the maintainer's decision (the page flags an active decline). **Reject** needs a reason of 3–300 characters. The reason is kept for operators only; launchers and visitors see "not approved after review", because a free-text reason (for example, suspected wash trading) is not something to publish on a token page.
 
    An approved bonus can still be rejected while no payout is in flight or settled; the row keeps who approved it and who rejected it. Every decision carries the amount and launcher wallet the operator saw, and the server refuses a decision on anything else.
 
@@ -62,7 +64,7 @@ Before signing, the server requires all of the following, under the one advisory
 - payouts are enabled and their limits are well formed;
 - the bonus is `approved`;
 - the amount and launcher wallet equal both the market's stamp and the operator's view;
-- there is no wallet link;
+- there is no wallet link, and the maintainer has no active decline or opt-out;
 - the rolling cap holds: settled payouts in the last 30 days plus every in-flight payout plus this one stay within `VERIFICATION_BONUS_MAX_PER_30D_LAMPORTS`;
 - the RPC reports Solana mainnet's genesis (local validators are allowed only for tests);
 - the launcher wallet is not the payer;
@@ -121,8 +123,6 @@ Payouts protect what the ledger can see automatically. They never spend in-fligh
 
 **Migration order.** `0047` carries journal `when` `1790910007000` and must stay the **last** journal entry. drizzle applies only journal entries whose `when` is newer than the last applied migration, so every earlier migration (0040–0046, from other branches) must be applied before 0047. Otherwise drizzle skips them. The migration is idempotent (`if not exists` throughout), so re-applying it is harmless.
 
-**Maintainer opt-out.** Once the maintainer opt-out feature lands, approval and payment should also refuse a repository whose maintainer has declined. This branch does not know that table yet.
-
 ## Data model (migration 0047)
 
 - `markets.verification_bonus_lamports` (nullable bigint, 1,000,000–1,000,000,000). The trigger `protect_indexed_verification_bonus` makes it immutable once the launch is indexed (like `protect_indexed_discoverer` for `discovery_version`), so a market cannot be enrolled or un-enrolled retroactively.
@@ -154,6 +154,7 @@ Payouts protect what the ledger can see automatically. They never spend in-fligh
   - idempotent and concurrent accrual, every ineligible reason, GitHub outage retries with backoff, and the deferred volume rule;
   - review, including the approver kept on a later rejection and the private rejection reason;
   - the payer floor against the real revenue tables, and in-flight payouts counted as spent;
+  - a maintainer decline blocking accrual, approval (until withdrawn) and payment;
   - the lock refusing promptly when held, with the worker skipping;
   - the payout intent lifecycle against a scripted chain: intent saved before broadcast, idempotent pay, the unique index, worker rebroadcast of identical bytes, a wrong-delta receipt held for review, exactly one settlement, finalized-failure and provable-expiry aborts, ambiguous status never aborted, the cap counting in-flight payouts, and the self-launch re-check at payment.
 

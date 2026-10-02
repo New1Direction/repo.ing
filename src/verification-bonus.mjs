@@ -79,14 +79,25 @@ export function selfLaunchReason({ launcherWallet, repoPayoutWallet, verifierBou
   return null
 }
 
-// facts: { activatedAt, verifiedAt, launcherWallet, wallets, volume: { other }, repository }. repository is undefined
-// until GitHub has been read; { missing } when GitHub no longer serves the repository publicly. complete is false only
-// while the GitHub rules still have to be evaluated. Every failing rule is reported, not only the first.
-export function evaluateVerificationBonus({ activatedAt, verifiedAt, launcherWallet, wallets, volume, repository }) {
-  // Missing wallet facts would silently pass the self-launch rule; refuse instead.
+// An active maintainer decision (src/maintainer-opt-outs.mjs) means the maintainer showed up to turn the market down, not to
+// take part: no bonus. Declining a market records an admin verification, so this is checked at accrual, approval and payment.
+export function maintainerDecisionReason(decision) {
+  if (!decision) return null
+  return decision.kind === 'opt_out' ? 'The maintainer opted this repository out of repo.ing' : 'The maintainer declined this market'
+}
+
+// facts: { activatedAt, verifiedAt, launcherWallet, wallets, volume: { other }, decision, repository }. decision is the
+// active maintainer decision or null. repository is undefined until GitHub has been read; { missing } when GitHub no
+// longer serves the repository publicly. complete is false only while the GitHub rules still have to be evaluated.
+// Every failing rule is reported, not only the first.
+export function evaluateVerificationBonus({ activatedAt, verifiedAt, launcherWallet, wallets, volume, decision, repository }) {
+  // Missing facts would silently pass a rule; refuse instead.
   if (!wallets || typeof wallets !== 'object' || !launcherWallet) throw new Error('Verification bonus wallet facts are required')
   if (!volume || volume.other === undefined || volume.other === null) throw new Error('Verification bonus volume facts are required')
+  if (decision === undefined) throw new Error('Verification bonus maintainer decision is required (null when there is none)')
   const failures = []
+  const declined = maintainerDecisionReason(decision)
+  if (declined) failures.push({ rule: 'declined', reason: declined })
   const start = time(activatedAt), verified = time(verifiedAt)
   if (verified < start) failures.push({ rule: 'window', reason: 'The maintainer verification predates the market’s activation' })
   else if (verified >= start + BONUS_WINDOW_MS) {
