@@ -1,13 +1,27 @@
-// Server side of Hugging Face model markets in the web app: the HF_MARKETS_ENABLED flag, the registry read (hf_models,
-// migration 0049), the live model card and the display-only facts lists show. Display rules are in hf-model-display.mjs.
+// Server side of Hugging Face model markets' pages and lists: the registry read (hf_models, migration 0049), the live
+// model card, the display-only facts lists show and the logo route's avatar hosts. Display rules are in
+// hf-model-display.mjs; the flag, the Hub client and the avatar allowlist are the launch's (src/hf-launch.mjs,
+// hf-client.mjs, hf-launch.mjs).
 import { cache } from 'react'
 import { database } from './server.mjs'
-import { createHfClient, HfDisabledError, HfNotFoundError, HfPrivateError } from '../../src/hf-api.mjs'
+import { HfDisabledError, HfNotFoundError, HfPrivateError } from '../../src/hf-api.mjs'
+import { hfMarketsEnabled } from '../../src/hf-launch.mjs'
+import { hfClient } from './hf-client.mjs'
+import { safeHfAvatarUrl } from './hf-launch.mjs'
 import { isModelMarket } from './hf-model-display.mjs'
 
 // Every model surface (token page, list rows, the Models filter and home strip, the /stats split, model logos) is off
 // unless HF_MARKETS_ENABLED is exactly "true"; off, the site renders as it did before model markets.
-export const hfMarketsEnabled = (env = process.env) => env.HF_MARKETS_ENABLED === 'true'
+export { hfMarketsEnabled }
+
+// The logo route's model branch serves only avatars on the Hub's own hosts: the launch's allowlist (which also admits a
+// Gravatar hash, for the launch picker's suggestion) narrowed to cdn-avatars.huggingface.co and huggingface.co. The image
+// proxy checks it again on every redirect hop.
+const HUB_AVATAR_HOSTS = new Set(['cdn-avatars.huggingface.co', 'huggingface.co'])
+export function hubAvatarUrl(value) {
+  const url = safeHfAvatarUrl(value)
+  return url && HUB_AVATAR_HOSTS.has(new URL(url).hostname) ? url : null
+}
 
 // Lists drop model markets while the flag is off.
 export const shownMarkets = (markets, env = process.env) => hfMarketsEnabled(env) ? markets : markets.filter(market => !isModelMarket(market))
@@ -63,13 +77,10 @@ export function createModelCards({ read, now = Date.now, ttlMs = MODEL_CARD_TTL_
   }
 }
 
-// Fails fast and leaves half of the anonymous rate-limit window to the launch path on the same address: no retries, no
-// waiting for a window to reset.
+// Reads go through the web process's one Hub client (hf-client.mjs), so the launch path and these display reads share
+// one pacing of the anonymous rate limit.
 function liveCards() {
-  globalThis.__repoingHfModelCards ??= (() => {
-    const hf = createHfClient({ userAgent: 'repo.ing-web', timeoutMs: 4000, retries: 0, maxWaitMs: 0, reserve: 0.5 })
-    return createModelCards({ read: path => hf.model({ path }) })
-  })()
+  globalThis.__repoingHfModelCards ??= createModelCards({ read: path => hfClient().model({ path }) })
   return globalThis.__repoingHfModelCards
 }
 
@@ -89,7 +100,16 @@ function recordFacts(registry, card, now = Date.now()) {
   if (!previous && facts.size >= FACTS_LIMIT) facts.delete(facts.keys().next().value)
   facts.set(key, { ...known, refreshAt: now + (card.status === 'unavailable' ? MODEL_CARD_FAILURE_MS : MODEL_CARD_TTL_MS) })
 }
-export const modelCard = registry => liveCards()(registry).then(card => { recordFacts(registry ?? {}, card); return card })
+// waitMs bounds how long a page render waits (the shared client may pace or retry): past it the render shows stored
+// facts, and the read still completes and fills the caches for the next view. 0 waits for the read (background refreshes).
+export const MODEL_CARD_WAIT_MS = 4000
+export function modelCard(registry, { waitMs = MODEL_CARD_WAIT_MS } = {}) {
+  const card = liveCards()(registry).then(value => { recordFacts(registry ?? {}, value); return value })
+  if (!waitMs) return card
+  let timer
+  const late = new Promise(resolve => { timer = setTimeout(resolve, waitMs, { status: 'unavailable' }); timer.unref?.() })
+  return Promise.race([card, late]).finally(() => clearTimeout(timer))
+}
 
 // List rows with each model's display-only facts attached (likes, downloads30d). Models with none, or none fresher than
 // the card TTL, are refreshed through schedule (pages pass next/server's after, so it runs after the response; at most
@@ -113,6 +133,6 @@ async function refreshModelFacts(pool, marketIds) {
   if (!pool) return
   try {
     const { rows } = await pool.query(`select ${REGISTRY_COLUMNS} from hf_models where market_ref = any($1::bigint[])`, [marketIds])
-    await Promise.all(rows.map(row => modelCard(row)))
+    await Promise.all(rows.map(row => modelCard(row, { waitMs: 0 })))
   } catch (error) { console.error('hf model facts refresh failed', { error: error.message }) }
 }

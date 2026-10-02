@@ -3,8 +3,7 @@ import { githubApiHeaders } from '../../../../src/github-app-auth.mjs'
 import { repositoryAssetDirectory, repositoryLogoFromAssets, repositoryLogoFromReadme, safeGithubImageUrl } from '../../../../src/repo-logo.mjs'
 import { githubImageVariant, githubImageVariantResponse, imageWidthParam } from '../../../../src/token-image.mjs'
 import { assertGithubRepoId, isGithubRepoId, isMarketId, marketSource } from '../../../../src/market-identity.mjs'
-import { safeHfAvatarUrl } from '../../../../src/hf-avatar.mjs'
-import { hfMarketsEnabled } from '../../../lib/hf-markets.mjs'
+import { hfMarketsEnabled, hubAvatarUrl } from '../../../lib/hf-markets.mjs'
 
 export const runtime = 'nodejs'
 const logoCache = new Map()
@@ -68,7 +67,7 @@ async function logoTarget(repo) {
 }
 
 // A Hugging Face model market's logo: its owner's avatar as the launch stored it (repositories.avatar_url), only from the
-// Hub's two avatar hosts (src/hf-avatar.mjs), through the same resizing proxy as GitHub images. No GitHub or Hub API call;
+// Hub's two avatar hosts (hubAvatarUrl, app/lib/hf-markets.mjs), through the same resizing proxy as GitHub images. No GitHub or Hub API call;
 // off (not found) unless HF_MARKETS_ENABLED.
 async function modelLogo(request, repo) {
   if (!hfMarketsEnabled()) return new Response(null, { status: 404 })
@@ -81,13 +80,13 @@ async function modelLogo(request, repo) {
     if (!pool) return new Response(null, { status: 503 })
     try {
       const { rows } = await pool.query("select avatar_url from repositories where github_repo_id = $1 and source = 'huggingface'", [repo])
-      target = safeHfAvatarUrl(rows[0]?.avatar_url)
+      target = hubAvatarUrl(rows[0]?.avatar_url)
     } catch { return new Response(null, { status: 503 }) }
     if (logoCache.size > 1000) logoCache.clear()
     logoCache.set(key, { url: target, expiresAt: Date.now() + 10 * 60_000 })
   }
   if (!target) return new Response(null, { status: 404 })
   if (!width) return imageResponse(target)
-  try { return githubImageVariantResponse(await githubImageVariant(target, width, { allow: safeHfAvatarUrl })) }
+  try { return githubImageVariantResponse(await githubImageVariant(target, width, { allow: hubAvatarUrl })) }
   catch { return imageResponse(target) }
 }

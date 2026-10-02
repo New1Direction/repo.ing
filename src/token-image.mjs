@@ -26,7 +26,7 @@ export async function readLimitedBody(response, limit = MAX_IMAGE_BYTES) {
 }
 
 // Never follow an image-host redirect onto an arbitrary host or send GitHub credentials. allow: the host allowlist every
-// hop must pass (GitHub's image hosts by default; Hugging Face avatars pass src/hf-avatar.mjs's).
+// hop must pass (GitHub's image hosts by default; Hugging Face avatars pass app/lib/hf-markets.mjs hubAvatarUrl).
 export async function fetchGithubImage(value, fetchImpl = fetch, allow = safeGithubImageUrl) {
   let url = value
   for (let attempt = 0; attempt < 4; attempt++) {
