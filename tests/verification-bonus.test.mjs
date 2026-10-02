@@ -4,7 +4,7 @@ import { ComputeBudgetProgram, Keypair, PublicKey, SystemProgram, Transaction, T
 import { VerificationBonusError, capAllows, evaluateVerificationBonus, failureReason, nextBonusStatus, nextPayoutStatus, payerShortfall,
   rejectionReason, requireReviewedTerms, verificationBonusEnrollment, verificationBonusLamports, verificationBonusPayoutConfig,
   verificationBonusView } from '../src/verification-bonus.mjs'
-import { readRepositoryFacts } from '../src/verification-bonus-accrual.mjs'
+import { readRepositoryFacts, withStoredCreation } from '../src/verification-bonus-accrual.mjs'
 import { bonusPayoutMemo, checkBonusPayoutShape, createVerificationBonusPayouts, payoutIdempotencyKey } from '../src/verification-bonus-payouts.mjs'
 import { usesActivationClock } from '../src/launch-clock.mjs'
 import { createLaunchCoordinator } from '../src/launch-coordinator.mjs'
@@ -233,6 +233,16 @@ test('GitHub facts come from the immutable repository ID; a gone repository is a
   await assert.rejects(readRepositoryFacts('7', { fetchImpl: reply(200, { ...repo, id: 8 }), headers }), /identity mismatch/)
   await assert.rejects(readRepositoryFacts('7', { fetchImpl: reply(200, { ...repo, created_at: 'soon' }), headers }), /incomplete/)
   await assert.rejects(readRepositoryFacts('7', { fetchImpl: reply(200, { ...repo, stargazers_count: -1 }), headers }), /incomplete/)
+})
+
+test('a stored repository creation date takes precedence over the live GitHub read, and the source is recorded', () => {
+  const live = { createdAt: '2025-01-01T00:00:00.000Z', stars: 40, fullName: 'octo/repo', checkedAt: 'now' }
+  assert.deepEqual(withStoredCreation(live, null), { ...live, createdAtSource: 'github' })
+  assert.deepEqual(withStoredCreation(live, new Date('2026-09-25T00:00:00Z')), { ...live, githubCreatedAt: live.createdAt,
+    createdAt: '2026-09-25T00:00:00.000Z', createdAtSource: 'stored' })
+  const missing = { missing: 'GitHub no longer serves this repository publicly (HTTP 404)', checkedAt: 'now' }
+  assert.equal(withStoredCreation(missing, new Date()), missing, 'a repository GitHub no longer serves stays a decision')
+  assert.throws(() => withStoredCreation(live, 'not a date'), /creation date is invalid/)
 })
 
 test('bonus-stamped markets record the DBC activation point as their launch time, like discovery markets', () => {
