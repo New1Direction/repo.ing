@@ -9,8 +9,8 @@ const SPARK_WIDTH = 96, SPARK_HEIGHT = 34
 const changeLabel = change => change === null ? '—' : `${change > 0 ? '+' : change < 0 ? '−' : ''}${Math.abs(change).toFixed(2)}%`
 
 // Phones only (CSS shows it at ≤640px): what a trader is buying, before builder earnings and repo details. It makes no
-// request of its own: the server market row (last price; curve volume, which the page omits once graduated) first, then
-// the trades and metrics the price chart below already loaded.
+// request of its own: the server market row (last price; 24h volume, the verified DAMM pool included after graduation)
+// first, then the trades and metrics the price chart below already loaded.
 export function PhoneMarketSummary({ mint, symbol, priceSol = null, volume24hLamports = null }) {
   const [snapshot, setSnapshot] = useState(null)
   useEffect(() => {
