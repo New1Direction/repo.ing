@@ -8,8 +8,9 @@ import { ACCRUAL_GRACE_MS, BONUS_WINDOW_MS, MIN_OTHER_VOLUME_LAMPORTS, MIN_REPO_
 // runs no matter which path recorded the verification. It reads PostgreSQL and the public GitHub API only: no keys.
 // Idempotent: one row per market (primary key, insert … on conflict do nothing), never re-evaluated once written.
 
-// created_at and stars come from GitHub at accrual time (the repositories table stores no creation date). A repository
-// GitHub no longer serves publicly is a decision (ineligible); any other failure is retried on a later pass.
+// Stars and public visibility come from GitHub at accrual time. The creation date is taken from repositories.github_created_at
+// when it is stored (0045; filled from earlier GitHub reads), else from this same read. A repository GitHub no longer
+// serves publicly is a decision (ineligible); any other failure is retried on a later pass.
 export async function readRepositoryFacts(repoId, { fetchImpl = fetch, headers = githubApiHeaders } = {}) {
   const response = await fetchImpl(`https://api.github.com/repositories/${repoId}`, { cache: 'no-store',
     headers: await headers('repo.ing-verification-bonus', fetchImpl), signal: AbortSignal.timeout(10_000) })
@@ -30,12 +31,22 @@ export async function readRepositoryFacts(repoId, { fetchImpl = fetch, headers =
   return { createdAt: new Date(createdAt).toISOString(), stars: body.stargazers_count, fullName: body.full_name ?? null, checkedAt }
 }
 
+// A stored creation date (immutable on GitHub) takes precedence over the live read; the evidence records which decided.
+export function withStoredCreation(repository, storedCreatedAt) {
+  if (repository?.missing || !storedCreatedAt) return repository && !repository.missing ? { ...repository, createdAtSource: 'github' } : repository
+  const stored = new Date(storedCreatedAt)
+  if (!Number.isFinite(stored.getTime())) throw new Error('Stored repository creation date is invalid')
+  return { ...repository, githubCreatedAt: repository.createdAt, createdAt: stored.toISOString(), createdAtSource: 'stored' }
+}
+
 // The stamped, finalized market and its FIRST admin verification (earliest verified_at, then id).
 async function marketFacts(db, repoId) {
   const { rows: [market] } = await db.query(`select m.github_repo_id::text as "repoId", m.pool, m.launcher_wallet as "launcherWallet",
       m.verification_bonus_lamports::text as amount, m.launch_block_time as "activatedAt", v.id as "verificationId",
-      v.github_user_id::text as "verifierGithubUserId", v.github_login as "verifierLogin", v.verified_at as "verifiedAt"
-    from markets m join lateral (select id, github_user_id, github_login, verified_at from repo_verifications
+      v.github_user_id::text as "verifierGithubUserId", v.github_login as "verifierLogin", v.verified_at as "verifiedAt",
+      r.github_created_at as "storedCreatedAt"
+    from markets m join repositories r on r.github_repo_id = m.github_repo_id
+    join lateral (select id, github_user_id, github_login, verified_at from repo_verifications
       where github_repo_id = m.github_repo_id and permission = 'admin' order by verified_at, id limit 1) v on true
     where m.github_repo_id = $1 and m.verification_bonus_lamports is not null and m.status = 'confirmed'
       and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null`, [String(repoId)])
@@ -87,7 +98,7 @@ export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRe
     let result = evaluateVerificationBonus(facts), repository = null
     // GitHub is read only when the local rules pass; a failure here leaves no row and the next pass retries.
     if (!result.complete) {
-      repository = await readRepository(repoId, { fetchImpl })
+      repository = withStoredCreation(await readRepository(repoId, { fetchImpl }), market.storedCreatedAt)
       result = evaluateVerificationBonus({ ...facts, repository })
     }
     // Volume alone is not final until trades made before the verification have had time to be indexed.

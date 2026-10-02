@@ -380,6 +380,18 @@ test('real PostgreSQL: verification bonus stamping, accrual, review and payout i
       clock = now
     })
 
+    await t.test('accrual: a stored repository creation date decides the age rule before the live GitHub answer', async () => {
+      await eligibleMarket(9312)
+      // The GitHub stub says the repository is 400 days old; the stored date (0045) says it was created 5 days before launch.
+      await pool.query('update repositories set github_created_at = $2 where github_repo_id = $1', [9312, new Date(activatedAt.getTime() - 5 * DAY)])
+      const young = await accrual.accrue('9312')
+      assert.equal(young.status, 'ineligible')
+      assert.match(young.reason, /created 5\.0 days before launch \(minimum 30 days\)/)
+      const { repository } = (await bonusRow(pool, 9312)).evidence
+      assert.deepEqual([repository.createdAtSource, repository.stars], ['stored', 42])
+      assert.equal((await bonusRow(pool, 9201)).evidence.repository.createdAtSource, 'github', 'no stored date: the live read decides')
+    })
+
     await t.test('payouts: the payer keeps unallocated and undeployed liquidity revenue, and in-flight payouts count as spent', async () => {
       const partner = Keypair.generate(), payer = partner.publicKey.toBase58(), chain = scriptedChain()
       const payouts = createVerificationBonusPayouts({ pool, connection: chain.connection, partner,
