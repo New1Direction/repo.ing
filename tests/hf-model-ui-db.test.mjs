@@ -14,6 +14,7 @@ const SOL = 1_000_000_000n
 const SOL_MINT = 'So11111111111111111111111111111111111111112'
 const GITHUB_ID = '1384142609', GPT2_HF_ID = '621ffdc036468d709f17434d'
 const AVATAR = 'https://cdn-avatars.huggingface.co/v1/production/uploads/5dd96eb166059660ed1ee413/9NY4jfufqo1uyv8oNXQju.png'
+const BASE_MODEL = { hfId: '0123456789abcdef01234567', path: 'openai-community/gpt2-base', relation: 'finetune' }
 
 test('real PostgreSQL: a GitHub market and a model market through the token page, lists, /stats, logos, metadata and sitemap', { skip: !url, timeout: 120_000 }, async t => {
   const target = new URL(url)
@@ -31,8 +32,9 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       repo_beneficiaries, markets, repositories, hf_models restart identity cascade`)
     const githubMint = Keypair.generate().publicKey.toBase58(), modelMint = Keypair.generate().publicKey.toBase58()
     const now = Date.now(), hourAgo = new Date(now - 3_600_000)
+    // base_models as the launch stores it (src/hf-launch.mjs baseModelList): [{ hfId, path, relation }].
     const { rows: [{ ref: MODEL_ID }] } = await pool.query(`insert into hf_models(hf_id,repo_path,owner_handle,owner_kind,gated,base_models)
-      values ($1,'openai-community/gpt2','openai-community','org',true,'["openai-community/gpt2-base"]') returning market_ref::text as ref`, [GPT2_HF_ID])
+      values ($1,'openai-community/gpt2','openai-community','org',true,$2) returning market_ref::text as ref`, [GPT2_HF_ID, JSON.stringify([BASE_MODEL])])
     await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,description,avatar_url,stars,forks,archived,github_updated_at,github_created_at) values
       ($1,'New1Direction','Waternot','New1Direction/Waternot','Water','https://avatars.githubusercontent.com/u/1',1200,31,false,now(),'2025-01-01T00:00:00Z')`, [GITHUB_ID])
     // As the launch writes it (src/hf-launch.mjs): stars and forks stay 0, so Hugging Face metrics never feed promotion.
@@ -64,11 +66,11 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       assert.equal(model.volume24hLamports, String(2n * SOL))
       const registry = await readModelRegistry(pool, MODEL_ID)
       assert.deepEqual({ ...registry, pathConfirmedAt: typeof registry.pathConfirmedAt }, { marketRef: MODEL_ID, hfId: GPT2_HF_ID, path: 'openai-community/gpt2',
-        ownerHandle: 'openai-community', ownerKind: 'org', ownerSubject: null, gated: true, baseModels: ['openai-community/gpt2-base'], pathConfirmedAt: 'object' })
+        ownerHandle: 'openai-community', ownerKind: 'org', ownerSubject: null, gated: true, baseModels: [BASE_MODEL], pathConfirmedAt: 'object' })
       assert.equal(await readModelRegistry(pool, GITHUB_ID), null, 'a GitHub id never reads the registry')
       const view = modelView(model, registry)
-      assert.deepEqual([view.owner, view.ownerKind, view.likes, view.gated.label, view.base.paths], ['openai-community', 'org', null, 'Gated', ['openai-community/gpt2-base']],
-        'repositories.stars (0) is never read as likes')
+      assert.deepEqual([view.owner, view.ownerKind, view.likes, view.gated.label, view.base], ['openai-community', 'org', null, 'Gated',
+        { relation: 'finetune', paths: ['openai-community/gpt2-base'] }], 'repositories.stars (0) is never read as likes')
     })
 
     await t.test('token page: the model renders its own page from the database; off, it is not found; a GitHub market keeps its page', async () => {
@@ -154,10 +156,22 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       const response = await logo(new Request(`https://repo.ing/api/repo-logo/${MODEL_ID}?v=3`), { params: Promise.resolve({ repo: MODEL_ID }) })
       assert.equal(response.status, 302)
       assert.equal(response.headers.get('location'), AVATAR)
-      const json = await (await metadata(new Request(`https://repo.ing/api/token-metadata/${modelMint}`), { params: Promise.resolve({ mint: modelMint }) })).json()
-      assert.ok(json.description.includes(HF_DISCLAIMER))
-      assert.equal(json.image, `https://repo.ing/api/repo-logo/${MODEL_ID}?v=3`)
-      assert.equal(json.github, undefined)
+      // The token's Metaplex URI is fixed when the launch is prepared and must keep describing the model whatever the flag
+      // later says: the same model description while prepared and once confirmed, flag on or off, and no GitHub link.
+      const readMetadata = async () => (await metadata(new Request(`https://repo.ing/api/token-metadata/${modelMint}`), { params: Promise.resolve({ mint: modelMint }) })).json()
+      const page = `https://repo.ing/token/${modelMint}`, links = { website: page }
+      const expected = { name: 'gpt2', symbol: 'GPT2', description: '$GPT2 is the repo.ing market for the Hugging Face model huggingface.co/openai-community/gpt2. ' +
+        `Trading fees pay the model's owner in SOL. ${HF_DISCLAIMER}`, image: `https://repo.ing/api/repo-logo/${MODEL_ID}?v=3`, external_url: page, ...links, extensions: links }
+      assert.deepEqual(await readMetadata(), expected)
+      await pool.query(`update markets set status = 'prepared' where mint = $1`, [modelMint])
+      try {
+        assert.deepEqual(await readMetadata(), expected, 'prepared')
+        delete process.env.HF_MARKETS_ENABLED
+        assert.deepEqual(await readMetadata(), expected, 'flag off')
+      } finally {
+        process.env.HF_MARKETS_ENABLED = 'true'
+        await pool.query(`update markets set status = 'confirmed' where mint = $1`, [modelMint])
+      }
       const urls = async () => (await sitemap()).map(entry => entry.url).filter(entry => entry.includes('/token/'))
       assert.deepEqual((await urls()).sort(), [`https://repo.ing/token/${githubMint}`, `https://repo.ing/token/${modelMint}`].sort())
       delete process.env.HF_MARKETS_ENABLED
