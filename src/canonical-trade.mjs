@@ -12,7 +12,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { markets } from './db/schema.mjs'
-import { keptWsolRent, resolveReferral } from './referral.mjs'
+import { keptWsolRent, parseReferrer, resolveReferral } from './referral.mjs'
 import { ATA_PROGRAM, createWsolAtaInstruction, isCreateWsolAta, TOKEN_PROGRAM, wsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
 import { preparedFromRecord, readTradeRecord, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
@@ -116,7 +116,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
   }
   const prepare = async (request, direction, quoted = null) => {
     const wallet = new PublicKey(request.wallet)
-    const { market, pool, amountIn, result, slippageBps, launchFee } = quoted || await quote(request, direction)
+    const { market, pool, amountIn, result, slippageBps, collectFeeMode, launchFee } = quoted || await quote(request, direction)
     const mint = new PublicKey(market.mint)
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
@@ -141,7 +141,10 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, slippageBps,
       priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() },
       // Display only (Solana Actions message): the launch fee quoted for this trade while the window is open.
-      launchFee: launchFee?.active ? launchFeeJson(launchFee) : null })
+      launchFee: launchFee?.active ? launchFeeJson(launchFee) : null,
+      // Referral leaderboard only (estimated earnings): the wallet behind `referral` and the quoted SOL trading fee.
+      referrer: referral ? parseReferrer(request.referrer).toBase58() : null,
+      tradingFeeLamports: collectFeeMode === 0 ? result.tradingFee.add(result.protocolFee).add(result.referralFee).toString() : null })
     return preparedFromRecord(record, tx)
   }
   const verifyTrade = async (prepared, signature) => {

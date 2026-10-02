@@ -32,6 +32,7 @@ platform-revenue
 protocol-analytics
 reconcile
 referral
+referral-leaderboard-db
 replica-state
 reserve-alerts-integration
 server-speed-db

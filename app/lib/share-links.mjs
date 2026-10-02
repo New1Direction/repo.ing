@@ -1,10 +1,27 @@
-// Public share links only: no wallet address, amount or signature goes into a post by default.
+import { validReferrer } from './referral.mjs'
+
+// Public share links only: no amount or signature goes into a post, and a wallet address only as the sharer's own ?ref.
 export const SITE_ORIGIN = 'https://repo.ing'
 export const X_HANDLE = 'repodoting'
 const PAYS = "every trade pays the repo's builders in SOL"
 
-export function tokenPageUrl(mint, origin = SITE_ORIGIN) {
-  return `${origin}/token/${encodeURIComponent(String(mint ?? ''))}`
+// ?ref=<connected wallet> on a link that wallet shares, so trades it brings pay it a referral (src/referral.mjs).
+// Anything that is not a wallet address is left off.
+export function withReferral(url, ref) {
+  if (!validReferrer(ref)) return url
+  const link = new URL(url)
+  link.searchParams.set('ref', ref)
+  return link.toString()
+}
+
+export function tokenPageUrl(mint, origin = SITE_ORIGIN, ref = null) {
+  return withReferral(`${origin}/token/${encodeURIComponent(String(mint ?? ''))}`, ref)
+}
+
+// Share card captions end with the plain market link; the sharer's ref goes on that link only.
+export function captionWithReferral(caption, mint, ref) {
+  const plain = tokenPageUrl(mint)
+  return validReferrer(ref) ? String(caption).split('\n').map(line => line === plain ? tokenPageUrl(mint, SITE_ORIGIN, ref) : line).join('\n') : caption
 }
 
 export function shareText({ fullName, symbol, kind = 'buy' } = {}) {
@@ -13,8 +30,8 @@ export function shareText({ fullName, symbol, kind = 'buy' } = {}) {
   return `${lead} on @${X_HANDLE} — ${PAYS}`
 }
 
-export function xShareUrl({ mint, origin = SITE_ORIGIN, ...details }) {
-  const query = new URLSearchParams({ text: shareText(details), url: tokenPageUrl(mint, origin) })
+export function xShareUrl({ mint, origin = SITE_ORIGIN, ref = null, ...details }) {
+  const query = new URLSearchParams({ text: shareText(details), url: tokenPageUrl(mint, origin, ref) })
   return `https://x.com/intent/post?${query}`
 }
 
