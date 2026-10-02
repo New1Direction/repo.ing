@@ -5,6 +5,7 @@ import { normalizeTokenImage, readLimitedBody } from '../../../../src/token-imag
 
 import { repositoryImageContext } from '../../../../src/repository-image-context.mjs'
 import { publicError } from '../../../lib/public-error.mjs'
+import { modelImageSuggestions } from '../../../lib/hf-launch.mjs'
 const SAFE = /^(Choose|This image|Image|SVG references|Invalid repository|Archived repositories|Repository identity mismatch|Image service is temporarily unavailable)/
 
 export const runtime = 'nodejs'
@@ -17,7 +18,9 @@ async function repository(params) {
 export async function GET(_request, { params }) {
   try {
     const { id, record } = await repository(params)
-    return Response.json({ images: await repositoryImageSuggestions(id, record) }, { headers: { 'Cache-Control': 'private, max-age=60' } })
+    // A model market suggests its owner's avatar (app/lib/hf-launch.mjs); uploads work the same for both.
+    const images = record.source === 'huggingface' ? await modelImageSuggestions(record) : await repositoryImageSuggestions(id, record)
+    return Response.json({ images }, { headers: { 'Cache-Control': 'private, max-age=60' } })
   } catch { return Response.json({ error: 'Suggestions are unavailable. You can still upload an image.' }, { status: 503 }) }
 }
 

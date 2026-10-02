@@ -3,10 +3,14 @@ import { persistLaunchRepository } from '../../../src/repository-store.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { database } from '../../lib/server.mjs'
 import { activeDecision, OPT_OUT_ERROR } from '../../../src/maintainer-opt-outs.mjs'
+import { namesHuggingFace } from '../../../src/hf-launch.mjs'
+import { resolveModelRequest } from '../../lib/hf-launch.mjs'
 export const runtime = 'nodejs'
 export async function POST(request) {
   try {
     const { url } = await request.json()
+    // huggingface.co / hf.co: a model market (dormant until HF_MARKETS_ENABLED). Every other value is a GitHub repository.
+    if (namesHuggingFace(url)) return await resolveModelRequest(url, request)
     const normalizedUrl = typeof url === 'string' && url.trim().startsWith('github.com/') ? `https://${url.trim()}` : url
     const { owner, name } = parseRepositoryUrl(normalizedUrl)
     const pool = database()
