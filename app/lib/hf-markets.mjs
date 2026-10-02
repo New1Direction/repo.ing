@@ -1,5 +1,5 @@
 // Server side of Hugging Face model markets in the web app: the HF_MARKETS_ENABLED flag, the registry read (hf_models,
-// migration 0049) and the live model card. Display rules are in hf-model-display.mjs.
+// migration 0049), the live model card and the display-only facts lists show. Display rules are in hf-model-display.mjs.
 import { cache } from 'react'
 import { database } from './server.mjs'
 import { createHfClient, HfDisabledError, HfNotFoundError, HfPrivateError } from '../../src/hf-api.mjs'
@@ -14,11 +14,11 @@ export const shownMarkets = (markets, env = process.env) => hfMarketsEnabled(env
 
 // The model's registry row: its stable _id, last confirmed path and owner, and the gated and base-model state the launch
 // recorded. null for a GitHub id, a missing row, or no database.
+const REGISTRY_COLUMNS = `market_ref::text as "marketRef", hf_id as "hfId", repo_path as path, owner_handle as "ownerHandle",
+  owner_kind as "ownerKind", owner_subject as "ownerSubject", gated, base_models as "baseModels", path_confirmed_at as "pathConfirmedAt"`
 export async function readModelRegistry(pool, marketId) {
   if (!pool || !isModelMarket({ repoId: marketId })) return null
-  const { rows: [row] } = await pool.query(`select hf_id as "hfId", repo_path as path, owner_handle as "ownerHandle", owner_kind as "ownerKind",
-    owner_subject as "ownerSubject", gated, base_models as "baseModels", path_confirmed_at as "pathConfirmedAt"
-    from hf_models where market_ref = $1`, [String(marketId)])
+  const { rows: [row] } = await pool.query(`select ${REGISTRY_COLUMNS} from hf_models where market_ref = $1`, [String(marketId)])
   return row ?? null
 }
 
@@ -72,4 +72,39 @@ function liveCards() {
   })()
   return globalThis.__repoingHfModelCards
 }
-export const modelCard = registry => liveCards()(registry)
+
+// Display-only facts per market id (likes and 30-day downloads), from the last live card. Lists show them without a Hub
+// request of their own; they never order, promote or pay anything.
+const FACTS_LIMIT = 2000
+const facts = globalThis.__repoingHfModelFacts ??= new Map()
+function recordFacts(registry, card) {
+  if (card.status !== 'live' || !registry.marketRef) return
+  if (facts.size >= FACTS_LIMIT) facts.delete(facts.keys().next().value)
+  facts.set(String(registry.marketRef), { likes: card.likes, downloads30d: card.downloads30d, at: Date.now() })
+}
+export const modelCard = registry => liveCards()(registry).then(card => { recordFacts(registry ?? {}, card); return card })
+
+// List rows with each model's display-only facts attached (likes, downloads30d). Models with none, or none fresher than
+// the card TTL, are refreshed through schedule (pages pass next/server's after, so it runs after the response; at most
+// refreshLimit per call, through the same cached, rate-limited card reads), so a later view shows them. Without the flag,
+// or with no model in the list, the rows come back as they are. (next/server is not imported here: plain Node imports
+// this module through the logo route.)
+export const MODEL_FACTS_REFRESH_LIMIT = 12
+export function withModelFacts(markets, { schedule = null, now = Date.now, refreshLimit = MODEL_FACTS_REFRESH_LIMIT, pool = null } = {}) {
+  if (!hfMarketsEnabled() || !markets.some(isModelMarket)) return markets
+  const stale = markets.filter(market => isModelMarket(market) && !(facts.get(String(market.repoId))?.at > now() - MODEL_CARD_TTL_MS))
+    .slice(0, refreshLimit).map(market => String(market.repoId))
+  if (stale.length && schedule) schedule(() => refreshModelFacts(pool ?? database(), stale))
+  return markets.map(market => {
+    const known = isModelMarket(market) && facts.get(String(market.repoId))
+    return known ? { ...market, likes: known.likes, downloads30d: known.downloads30d } : market
+  })
+}
+
+async function refreshModelFacts(pool, marketIds) {
+  if (!pool) return
+  try {
+    const { rows } = await pool.query(`select ${REGISTRY_COLUMNS} from hf_models where market_ref = any($1::bigint[])`, [marketIds])
+    await Promise.all(rows.map(row => modelCard(row)))
+  } catch (error) { console.error('hf model facts refresh failed', { error: error.message }) }
+}

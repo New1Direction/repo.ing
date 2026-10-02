@@ -143,6 +143,7 @@ const EXEMPT = {
   'app/(site)/explore/page.jsx': 'flag and filtering; the list renders through MarketTable',
   'app/(site)/stats/page.jsx': 'flag only',
   'app/sitemap.js': 'URLs only',
+  'app/lib/market-order.mjs': 'carries model rows’ display-only likes; renders nothing',
 }
 
 const sources = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()

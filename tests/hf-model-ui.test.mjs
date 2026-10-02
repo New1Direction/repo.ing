@@ -6,7 +6,7 @@ import { startFakeHf } from './fixtures/hf-server.mjs'
 import { HF_DISCLAIMER, HF_DISCLAIMER_BADGE, HF_DISCLAIMER_SHORT } from '../src/hf-copy.mjs'
 import { createHfClient, HfNotFoundError, HfUpstreamError } from '../src/hf-api.mjs'
 import { safeHfAvatarUrl } from '../src/hf-avatar.mjs'
-import { createModelCards, hfMarketsEnabled, shownMarkets } from '../app/lib/hf-markets.mjs'
+import { createModelCards, hfMarketsEnabled, shownMarkets, withModelFacts } from '../app/lib/hf-markets.mjs'
 import { baseModels, derivativeLabel, gatedLabel, isModelMarket, modelEarningsHeadline, modelView, selectModelStrip, taskLabel } from '../app/lib/hf-model-display.mjs'
 
 // Hugging Face model markets in the UI: the display rules, the live model card, and every list, card and page variant.
@@ -28,8 +28,10 @@ const NOW = Date.parse('2026-10-01T12:00:00Z')
 // Not base58: nothing rendered here can reach an RPC.
 const MODEL = { repoId: MODEL_ID, source: 'huggingface', mint: 'MintModelGpt2', pool: 'PoolModelGpt2', fullName: 'openai-community/gpt2', owner: 'openai-community',
   name: 'gpt2', description: null, symbol: 'GPT2', tokenName: 'gpt2', wasVerified: false, volume24hLamports: '3000000000', earned: '9000000', claimed: '0',
-  remaining: '9000000', stars: 4194, forks: 0, priceSol: 0.0000003, indexedAt: new Date(NOW - 3_600_000).toISOString(), newRepo: true, promoted: true,
+  remaining: '9000000', stars: 0, forks: 0, priceSol: 0.0000003, indexedAt: new Date(NOW - 3_600_000).toISOString(), newRepo: true, promoted: true,
   officialLaunch: false, discoveryVersion: 2 }
+// A list row once withModelFacts attached the model's display-only likes (repositories.stars stays 0 for models).
+const LISTED = { ...MODEL, likes: 4194 }
 const GITHUB = { repoId: '1384142609', source: 'github', mint: 'MintGithubVerified', pool: 'PoolGithubVerified', fullName: 'New1Direction/Waternot',
   owner: 'New1Direction', name: 'Waternot', description: 'Water quality on a budget', symbol: 'WTR', tokenName: 'Waternot', wasVerified: true,
   volume24hLamports: '2500000000', earned: '125000000', claimed: '25000000', remaining: '100000000', stars: 1200, forks: 31, priceSol: 0.00000042,
@@ -83,18 +85,42 @@ test('modelView: live facts only for the registry row’s own _id; a moved path 
   assert.deepEqual({ ...view, gated: view.gated.label }, { path: 'openai-community/gpt2', owner: 'openai-community', name: 'gpt2', ownerKind: 'org', hfId: GPT2_HF_ID,
     url: 'https://huggingface.co/openai-community/gpt2', moved: false, live: true, task: 'Text generation', license: 'mit', gated: 'Gated',
     base: { relation: 'finetune', paths: ['gpt/base'] }, likes: 4200, downloads30d: 15740994, updatedAt: '2024-02-19T10:57:45.000Z' })
-  const stored = modelView(MODEL, { ...REGISTRY, gated: true, baseModels: ['meta/base'] }, { status: 'unavailable' })
+  const stored = modelView({ ...MODEL, stars: 4194 }, { ...REGISTRY, gated: true, baseModels: [{ hfId: 'a'.repeat(24), path: 'meta/base', relation: 'quantized' }] }, { status: 'unavailable' })
   assert.equal(stored.live, false)
-  assert.equal(stored.likes, 4194, 'likes recorded at launch (repositories.stars)')
+  assert.equal(stored.likes, null, 'repositories.stars is never read as likes')
   assert.equal(stored.downloads30d, null)
   assert.equal(stored.task, null)
   assert.equal(stored.gated.label, 'Gated')
-  assert.deepEqual(stored.base.paths, ['meta/base'])
-  const moved = modelView(MODEL, REGISTRY, { status: 'moved' })
+  assert.deepEqual(stored.base, { relation: 'quantized', paths: ['meta/base'] }, 'the launch stores the relation on each base model')
+  assert.equal(modelView(LISTED, REGISTRY, { status: 'unavailable' }).likes, 4194, 'display-only likes attached to a list row')
+  const moved = modelView(LISTED, REGISTRY, { status: 'moved' })
   assert.equal(moved.url, null)
   assert.equal(moved.moved, true)
   assert.equal(moved.likes, 4194)
 })
+
+test('list facts: lists show models’ likes from earlier live cards without a request, refreshing missing ones after the response', () => withFlag('true', async () => {
+  const facts = globalThis.__repoingHfModelFacts, cards = globalThis.__repoingHfModelCards
+  facts.clear()
+  const reads = []
+  globalThis.__repoingHfModelCards = createModelCards({ read: async path => { reads.push(path); return { hfId: GPT2_HF_ID, path, likes: 77, downloads30d: 5 } } })
+  const queries = [], scheduled = []
+  const pool = { query: async (sql, params) => { queries.push(params[0]); return { rows: [{ ...REGISTRY, marketRef: MODEL_ID }] } } }
+  try {
+    const rows = [GITHUB, MODEL, { ...MODEL, repoId: '4503599627370498', mint: 'MintModelTwo' }]
+    const first = withModelFacts(rows, { pool, schedule: fn => scheduled.push(fn), refreshLimit: 1 })
+    assert.deepEqual(first, rows, 'nothing known yet: the rows as they are')
+    assert.equal(scheduled.length, 1)
+    await scheduled[0]()
+    assert.deepEqual(queries, [[MODEL_ID]], 'one registry read, at most refreshLimit models')
+    assert.deepEqual(reads, ['openai-community/gpt2'])
+    const second = withModelFacts(rows, { pool, schedule: fn => scheduled.push(fn) })
+    assert.equal(second[0], GITHUB, 'GitHub rows are untouched')
+    assert.deepEqual([second[1].likes, second[1].downloads30d, second[2].likes], [77, 5, undefined])
+    assert.equal(scheduled.length, 2, 'the other model is still refreshed')
+    await withFlag(undefined, () => assert.equal(withModelFacts(rows, { pool, schedule: () => assert.fail('no refresh when off') }), rows))
+  } finally { facts.clear(); globalThis.__repoingHfModelCards = cards }
+}))
 
 test('model earnings headline: the builder evidence gate, in model-owner words', () => {
   assert.equal(modelEarningsHeadline(MODEL, { status: 'UNAVAILABLE' }, 150), null)
@@ -142,7 +168,7 @@ test('live model card: one Hub read per model per TTL, checked against the regis
 const rowsOf = markup => markup.split(/(?=<div class="market-row)/).slice(1)
 
 test('market tables: a model row shows its source label, the disclaimer badge, likes that link to the model, and the table ends with the disclaimer', () => {
-  const mixed = html(h(MarketTable, { markets: [GITHUB, MODEL], usdPerSol: 150 }))
+  const mixed = html(h(MarketTable, { markets: [GITHUB, LISTED], usdPerSol: 150 }))
   const [githubRow, modelRow] = rowsOf(mixed)
   // The GitHub row is byte-for-byte the row a GitHub-only table renders.
   const [alone] = rowsOf(html(h(MarketTable, { markets: [GITHUB], usdPerSol: 150 })))
@@ -157,7 +183,9 @@ test('market tables: a model row shows its source label, the disclaimer badge, l
   assert.match(mixed, /<div class="market-head"><span>#<\/span><span>Repo \/ model<\/span><span>Token<\/span><span>Market cap<\/span><span>24h Volume<\/span><span>Earnings<\/span><span>Stars \/ likes<\/span>/)
   assert.equal(mixed.split(escaped(HF_DISCLAIMER)).length - 1, 1, 'the full disclaimer once, under the table')
   assert.ok(mixed.endsWith(`<p class="model-disclaimer table-disclaimer" role="note">${mixed.slice(mixed.lastIndexOf('<svg'), mixed.lastIndexOf('</svg>') + 6)}<span>${escaped(HF_DISCLAIMER)}</span></p>`))
-  assert.match(html(h(MarketTable, { markets: [MODEL] })), /<span>Repo \/ model<\/span>/)
+  const unknown = html(h(MarketTable, { markets: [MODEL] }))
+  assert.match(unknown, /<span>Repo \/ model<\/span>/)
+  assert.match(unknown, /title="Likes unavailable right now · open openai-community\/gpt2 on Hugging Face"><svg[^>]*lucide-heart[\s\S]*?<\/svg>—<span class="sr-only"> likes/, 'unknown likes read as a dash, never 0')
 })
 
 test('avatars, identity, stats and source links have model variants, with no GitHub mark or link and no Hugging Face logo', () => {
@@ -171,7 +199,7 @@ test('avatars, identity, stats and source links have model variants, with no Git
   assert.match(identity, /<span class="source-chip is-model"[^>]*>Hugging Face<\/span>/)
   assert.match(identity, /<p>Public Hugging Face model<\/p>/)
   assert.doesNotMatch(identity, /Public<\/span>|GitHub/)
-  const stats = html(h(RepoStats, { repo: MODEL, detailed: true }))
+  const stats = html(h(RepoStats, { repo: LISTED, detailed: true }))
   assert.match(stats, /^<div class="repo-stats model-stats"><span title="4,194 likes on Hugging Face">/)
   assert.match(stats, /4\.2K<small>likes<\/small>/)
   assert.doesNotMatch(stats, /lucide-star|lucide-git-fork/)
@@ -190,7 +218,9 @@ test('more-markets cards, the graduation race and the home Models strip label mo
   assert.doesNotMatch(race, /New repo/)
   assert.ok(race.includes(`<span>${escaped(HF_DISCLAIMER)}</span>`))
   assert.equal(html(h(ModelsStrip, { markets: [] })), '')
-  const strip = html(h(ModelsStrip, { markets: selectModelStrip([GITHUB, MODEL, { ...MODEL, repoId: '4503599627370498', mint: 'MintModelTwo', volume24hLamports: '0', stars: 12 }]) }))
+  const strip = html(h(ModelsStrip, { markets: selectModelStrip([GITHUB, LISTED, { ...MODEL, repoId: '4503599627370498', mint: 'MintModelTwo', volume24hLamports: '0', stars: 12 }]) }))
+  assert.match(strip, /title="4,194 likes on Hugging Face"/)
+  assert.match(strip, /title="Likes unavailable right now"/, 'stars are never shown as likes')
   assert.match(strip, /<h2 id="models-strip-title">Hugging Face models<\/h2>/)
   assert.match(strip, /<a class="view-all" href="\/explore\?source=models">View all/)
   assert.deepEqual([...strip.matchAll(/<strong title="openai-community\/gpt2">([^<]+)<\/strong>/g)].map(match => match[1]), ['openai-community/gpt2', 'openai-community/gpt2'])
@@ -234,7 +264,7 @@ test('model token page: disclaimer, model card, Model Pulse slot and the owner c
     assert.match(page, /<div class="market-hero-ticker"><strong>\$GPT2<\/strong><span>Model market<\/span>/)
     assert.match(page, /<div id="model" class="inner-card model-card">/)
     assert.match(page, /<dt>Author<\/dt><dd>openai-community<\/dd>/)
-    assert.match(page, /<dt>Likes<\/dt><dd>4,194<\/dd>/)
+    assert.match(page, /<dt>Likes<\/dt><dd>—<\/dd>/, 'no live card: unknown, never repositories.stars')
     assert.match(page, /Live Hugging Face details are unavailable right now/)
     assert.match(page, /<a href="https:\/\/huggingface\.co\/openai-community\/gpt2" target="_blank" rel="noreferrer">View on Hugging Face ↗<\/a>/)
     assert.match(page, /<a href="\/claim\/4503599627370497">Claim as the model’s owner<\/a>/)
@@ -247,6 +277,24 @@ test('model token page: disclaimer, model card, Model Pulse slot and the owner c
       'README badge', 'github.com', 'View on GitHub', 'Repository market']) assert.ok(!main.includes(absent), absent)
     assert.ok(net.requested.every(url => !/github|huggingface/.test(url)), 'no GitHub or Hub request without a registry row')
   } finally { net.restore() }
+}))
+
+test('model token page: when the path now leads to another repository, no link and no live figures anywhere on the page', () => withFlag('true', async () => {
+  const net = offlineFetch(), before = process.env.DATABASE_URL, cards = globalThis.__repoingHfModelCards
+  process.env.DATABASE_URL = 'postgres://unused@127.0.0.1:1/unused'
+  globalThis.__gitfunPool = { query: async sql => ({ rows: /from hf_models/.test(sql) ? [REGISTRY] : [] }) }
+  let reads = 0
+  globalThis.__repoingHfModelCards = createModelCards({ read: async () => { reads++; return { hfId: 'f'.repeat(24), path: 'openai-community/gpt2', likes: 1 } } })
+  try {
+    const page = html(await resolveServer(await ModelTokenPage({ market: MODEL })), { wallet: true })
+    assert.equal(reads, 1, 'one Hub read serves the hero, the card and the menu')
+    assert.ok(!page.includes('href="https://huggingface.co/openai-community/gpt2"'))
+    assert.match(page, /This model’s Hugging Face path now leads to a different repository/)
+    assert.match(page, /<dt>Likes<\/dt><dd>—<\/dd>/, 'not the other repository’s likes')
+  } finally {
+    net.restore(); delete globalThis.__gitfunPool; globalThis.__repoingHfModelCards = cards
+    if (before === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = before
+  }
 }))
 
 test('model pages, metadata and logos are off without HF_MARKETS_ENABLED', () => withFlag(undefined, async () => {

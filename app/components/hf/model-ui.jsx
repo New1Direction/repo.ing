@@ -31,9 +31,12 @@ export function HuggingFaceLink({ url, className = 'button outline github-link m
   return <a className={className} href={url} target="_blank" rel="noreferrer">View on Hugging Face<ArrowUpRight size={16} aria-hidden="true"/></a>
 }
 
+// "4,194 likes on Hugging Face", or that they are unknown (display-only likes come from the live model card).
+export const likesTitle = likes => likes === null || likes === undefined ? 'Likes unavailable right now' : `${exactCount(likes)} likes on Hugging Face`
+
 // The likes cell in market tables, which doubles as the row's link to the model page (the row itself links to the market).
 export function ModelLikesCell({ likes, url, path }) {
-  const title = `${exactCount(likes)} likes on Hugging Face${url ? ` · open ${path} on Hugging Face` : ''}`
+  const title = `${likesTitle(likes)}${url ? ` · open ${path} on Hugging Face` : ''}`
   const content = <><Heart size={15} aria-hidden="true"/>{compactCount(likes)}<span className="sr-only"> likes{url ? `, open ${path} on Hugging Face` : ''}</span></>
   return url ? <a className="table-stars table-likes" href={url} target="_blank" rel="noreferrer" title={title}>{content}</a>
     : <span className="table-stars table-likes" title={title}>{content}</span>
@@ -42,7 +45,7 @@ export function ModelLikesCell({ likes, url, path }) {
 // Likes, 30-day downloads and, in detail, the task and last update: the model's counterpart of RepoStats.
 export function ModelStats({ view, detailed = false }) {
   return <div className="repo-stats model-stats">
-    <span title={`${exactCount(view.likes)} likes on Hugging Face`}><Heart size={18} aria-hidden="true"/>{compactCount(view.likes)}<small>likes</small></span>
+    <span title={likesTitle(view.likes)}><Heart size={18} aria-hidden="true"/>{compactCount(view.likes)}<small>likes</small></span>
     <span title={view.downloads30d === null ? 'Downloads unavailable right now' : `${exactCount(view.downloads30d)} downloads in the last 30 days`}><Download size={18} aria-hidden="true"/>{compactCount(view.downloads30d)}<small>downloads (30d)</small></span>
     {detailed && <><span title="Task on Hugging Face"><BrainCircuit size={18} aria-hidden="true"/>{view.task || (view.live ? 'Task not set' : '—')}</span>
       <span><Clock3 size={18} aria-hidden="true"/>{view.updatedAt ? new Date(view.updatedAt).toLocaleDateString('en-US', { timeZone: 'UTC' }) : '—'}</span></>}
