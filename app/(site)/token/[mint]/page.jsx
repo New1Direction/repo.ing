@@ -98,7 +98,7 @@ export default async function Token({ params, searchParams }) {
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
-    <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.graduated ? null : market.volume24hLamports}/>
+    <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><EarningsHeadline market={market}/></Suspense></div>
