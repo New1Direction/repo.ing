@@ -20,6 +20,8 @@ import { createTipExpiry, readTipWallet } from '../src/tips.mjs'
 import { createTipTransferRecovery, createTipWalletMonitor } from '../src/tip-transfers.mjs'
 import { createPartsFundJobs } from '../src/parts-settlement.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
+import { createVerificationBonusAccrual } from '../src/verification-bonus-accrual.mjs'
+import { createVerificationBonusPayouts } from '../src/verification-bonus-payouts.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
 import { createLaunchAlerts, createLaunchAlertSenders, createLaunchAlertStore, LaunchAlertConfigError, launchAlertsConfig } from '../src/launch-alerts.mjs'
 import { createMilestoneAlerts, createMilestoneAlertStore, milestoneAlertsConfig } from '../src/milestone-alerts.mjs'
@@ -91,6 +93,16 @@ async function observePartsFunds(){
 }
 const allocations = createAllocationRecovery({ pool, connection })
 const discovery = createDiscoveryClaims({ pool, connection, config })
+// Verification bonus: accrue bonuses from first maintainer verifications (PostgreSQL + public GitHub reads) and settle
+// or rebroadcast payouts already signed on web. No key: the worker never signs or creates a payout.
+const bonusAccrual = createVerificationBonusAccrual({ pool })
+const bonusPayouts = createVerificationBonusPayouts({ pool, connection })
+let bonusAccrualTask=null,nextBonusAccrualCheck=0
+async function observeVerificationBonuses(){
+  try{const r=await bonusAccrual.runOnce();if(r.length)console.log(JSON.stringify({verificationBonusAccrual:r}))}
+  catch(error){console.log(JSON.stringify({verificationBonusError:['42P01','42703'].includes(error?.code)?'VERIFICATION_BONUS_NOT_MIGRATED'
+    :{code:error?.code??null,message:String(error?.message??'VERIFICATION_BONUS_ACCRUAL_UNAVAILABLE').slice(0,120)}}))}
+}
 // The 15 s timeout starts after any backoff wait, so a short rate-limit pause never eats the request's own budget.
 const timedFetch=(url,options)=>fetch(url,{...options,signal:AbortSignal.timeout(15000)})
 const graduationFetches={primary:meter.fetchFor('primary',timedFetch),verification:meter.fetchFor('verification',timedFetch)}
@@ -223,6 +235,11 @@ try {
     catch (error) { result.feeError = error.message }
     try { result.discovery = await discovery.runOnce() }
     catch { result.discoveryError = 'Discovery recovery unavailable' }
+    try { const bonusPayoutResults = await bonusPayouts.runOnce(); if (bonusPayoutResults.length) result.verificationBonusPayouts = bonusPayoutResults }
+    catch (error) { if (!['42P01', '42703'].includes(error?.code)) result.verificationBonusPayoutError = 'Verification bonus payout recovery unavailable' }
+    if(once)await observeVerificationBonuses()
+    else if(!bonusAccrualTask&&Date.now()>=nextBonusAccrualCheck)
+      bonusAccrualTask=observeVerificationBonuses().finally(()=>{nextBonusAccrualCheck=Date.now()+60000;bonusAccrualTask=null})
     try { result.liquidity = await liquidity.runOnce() }
     catch { result.liquidityError = 'Liquidity recovery unavailable' }
     try { if (reinvest) result.reinvest = await reinvest.runOnce() }
@@ -296,7 +313,8 @@ try {
     if (result.tipError || result.tipTransfers?.some(item => item.status === 'review') || result.tips?.some(item => item.state === 'review') || result.reinvestError || result.reinvest?.some(item => item.status === 'review') || result.liquidityError || result.liquidity?.some(item => item.status === 'review') || result.platformFeeError || result.platformFees?.some(item => item.status === 'review' || item.status === 'error') || result.allocationError || result.allocations?.some(item => item.status === 'review') || result.launchError || result.feeError || result.claimError || result.claims?.some(item => item.status === 'review') || result.discoveryError || result.discovery?.some(item => item.status === 'review') ||
         result.launches?.some(item => ['invalid', 'mismatch', 'missing', 'unavailable'].includes(item.state)) ||
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
+    if (result.verificationBonusPayoutError || result.verificationBonusPayouts?.some(item => item.status === 'review')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
+} finally { if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }
