@@ -7,13 +7,20 @@ import { getAssociatedTokenAddressSync, NATIVE_MINT } from '@solana/spl-token'
 import { preparedFromRecord, serializeUnsigned, TRADE_RECORD_VERSION } from '../src/trade-record.mjs'
 import { POST as tradeApi } from '../app/api/trade/route.js'
 
-// /api/trade submit and status with an in-process session store, trader and database: no PostgreSQL and no RPC (the
-// RPC URL refuses connections, so any chain read fails fast).
+// /api/trade submit and status with an in-process session store, trader and database, and a scripted JSON-RPC answering
+// the route's own chain() connection: no PostgreSQL, no RPC endpoint.
 process.env.DATABASE_URL = 'postgres://unused@127.0.0.1:1/unused'
 process.env.DBC_CONFIG = '11111111111111111111111111111111'
 process.env.SOLANA_RPC_URL = 'http://127.0.0.1:1'
 const queries = []
 globalThis.__gitfunPool = { query: async (sql, params) => { queries.push({ sql, params }); return { rows: [], rowCount: 1 } } }
+// The signature's on-chain status (null: not seen yet); block height stays far below every trade's expiry.
+let onChain = null
+globalThis.__repoingRpcMeter = { fetch: async (_url, options) => {
+  const { id, method } = JSON.parse(options.body)
+  const result = method === 'getSignatureStatuses' ? { context: { slot: 1 }, value: [onChain] } : method === 'getBlockHeight' ? 10 : null
+  return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), { status: 200 })
+} }
 let submitError = null
 const engine = { submitTrade: async () => { throw submitError } }
 const router = Object.assign(async () => engine, { forPhase: () => engine })
@@ -57,10 +64,12 @@ const call = async body => {
 }
 const preflightRefusal = index => new SendTransactionError({ action: 'simulate', signature: '',
   transactionMessage: `Transaction simulation failed: Error processing Instruction ${index}: custom program error: 0x1772`, logs: [] })
+const failedOnChain = (index, code) => ({ slot: 2, confirmations: null, err: { InstructionError: [index, { Custom: code }] }, confirmationStatus: 'confirmed' })
 const outcomes = () => queries.filter(q => /insert into trade_outcomes/.test(q.sql)).map(q => q.params[1])
 
 test('a first submission refused at preflight on its own swap says nothing was sent, without a terminal outcome', async () => {
   queries.length = 0
+  onChain = null
   const trade = preparedTrade()
   submitError = preflightRefusal(3)
   const { status, body } = await call({ action: 'submit', id: session(trade), transaction: trade.signed })
@@ -72,6 +81,7 @@ test('a first submission refused at preflight on its own swap says nothing was s
 })
 
 test('a repeated submit, or a refusal elsewhere, never claims "nothing was sent"', async () => {
+  onChain = null
   const trade = preparedTrade()
   submitError = preflightRefusal(3)
   // The same signature submitted again: an earlier broadcast may still be in flight, so the status path answers.
@@ -84,6 +94,30 @@ test('a repeated submit, or a refusal elsewhere, never claims "nothing was sent"
   const elsewhere = await call({ action: 'submit', id: session(other), transaction: other.signed })
   assert.equal(elsewhere.status, 200)
   assert.equal(elsewhere.body.state, 'pending')
+})
+
+test('a swap that landed and failed on its own minimum is reported as slippage and is not a landing failure', async () => {
+  // Submit: the broadcast landed, then failed with ExceededSlippage on the swap instruction.
+  queries.length = 0
+  const trade = preparedTrade()
+  submitError = Error('Trade failed: {"InstructionError":[3,{"Custom":6002}]}')
+  onChain = failedOnChain(3, 6002)
+  const submitted = await call({ action: 'submit', id: session(trade), transaction: trade.signed })
+  assert.equal(submitted.status, 200)
+  assert.deepEqual(submitted.body, { state: 'failed', signature: trade.signature, reason: 'slippage', slippageBps: 300 })
+  assert.deepEqual(outcomes(), ['submitted'])
+  // Status poll of a submitted trade that failed the same way: still no terminal outcome.
+  queries.length = 0
+  const polledTrade = preparedTrade()
+  const id = session(polledTrade, { signature: polledTrade.signature, submittedAt: Date.now() })
+  const polled = await call({ action: 'status', id, signature: polledTrade.signature, lastValidBlockHeight: 1_000_000 })
+  assert.equal(polled.body.reason, 'slippage')
+  assert.deepEqual(outcomes(), [])
+  // Any other on-chain failure is still a failed landing outcome.
+  onChain = failedOnChain(3, 6017)
+  const other = await call({ action: 'status', id, signature: polledTrade.signature, lastValidBlockHeight: 1_000_000 })
+  assert.deepEqual(other.body, { state: 'failed', signature: polledTrade.signature })
+  assert.deepEqual(outcomes(), ['failed'])
 })
 
 test('a status poll records the referral only for the session\'s own verified signature', async () => {
