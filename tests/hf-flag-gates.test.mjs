@@ -104,5 +104,5 @@ test('model token page: the share menu gets the disclaimer share text and no REA
   const share = find(tree, node => node.type === ShareMarket)
   assert.ok(share, 'the page renders the share menu')
   assert.equal(share.props.shareText, `openai-community/gpt2 on repo.ing. ${HF_DISCLAIMER_SHORT}`)
-  assert.equal(share.props.readmeBadge, false)
+  assert.equal(share.props.readme, false)
 }))

@@ -6,9 +6,10 @@ import { CopyAddress } from './copy-address'
 import { ShareMarket } from './share-market'
 import { LaunchKit, ModelLaunchKit } from './launch-kit'
 import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
+import { modelShareText } from '../lib/hf-model-display.mjs'
 
 // Mounted only after the launch API verifies the canonical on-chain pool. A Hugging Face model market (repo.source
-// 'huggingface') names the model and carries the community-launch disclaimer.
+// 'huggingface') names the model and carries the community-launch disclaimer, in its share sheet text too.
 export function LaunchSuccess({ repo, launched, symbol, image }) {
   const heading = useRef(null)
   const model = repo.source === 'huggingface'
@@ -27,6 +28,7 @@ export function LaunchSuccess({ repo, launched, symbol, image }) {
       : <LaunchKit repoId={repo.repoId} fullName={repo.fullName} mint={launched.mint} symbol={symbol} verified={launched.verified === true}/>}
     <CopyAddress address={launched.mint}/>
     {launched.signature && <a className="launch-receipt" href={`https://solscan.io/tx/${launched.signature}`} target="_blank" rel="noreferrer">View launch transaction ↗</a>}
-    <ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId} readme={!model}/>
+    <ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId} readme={!model}
+      shareText={model ? modelShareText(repo) : null}/>
   </section>
 }
