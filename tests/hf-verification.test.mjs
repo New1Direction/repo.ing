@@ -298,6 +298,28 @@ test('a claim pays a model binding only while its owner is still the model owner
   assert.doesNotThrow(() => assertBindingAuthority({ wallet: 'W', authoritySource: 'github' }, 'github', {}))
 })
 
+test('the do-not-promote list resolves "hf:" entries to registry ids on the same read, and fails closed with it', async () => {
+  const { createPromotionExclusions, excludedModelMarketIds, promotionExcludedModels, promotionExcludedRepoIds } = await import('../app/lib/promotion-exclusions.mjs')
+  const env = { PROMOTION_EXCLUDED_REPO_IDS: ` 7, hf:${GPT2}, hf:OpenAI-Community/GPT2, hf:datasets/x, hf:not a path, hf:${GPT2.toUpperCase()}, 8` }
+  assert.deepEqual(promotionExcludedModels(env), { ids: [GPT2], paths: ['openai-community/gpt2'] })
+  assert.deepEqual([...promotionExcludedRepoIds(env)], ['7', '8'], 'the synchronous GitHub list is unchanged')
+  // No query at all without model entries; a database without the registry has none registered.
+  assert.deepEqual(await excludedModelMarketIds({ query: () => assert.fail('no query') }, { ids: [], paths: [] }), [])
+  const missing = { query: async () => { throw Object.assign(Error('relation "hf_models" does not exist'), { code: '42P01' }) } }
+  assert.deepEqual(await excludedModelMarketIds(missing, { ids: [GPT2], paths: [] }), [])
+  const asked = []
+  const excluded = createPromotionExclusions({ pool: {}, env, read: async () => ['501'], resolveModels: async (pool, models) => { asked.push(models); return [MARKET] } })
+  assert.deepEqual([...await excluded()].sort(), ['501', '7', '8', MARKET].sort())
+  assert.deepEqual(asked, [{ ids: [GPT2], paths: ['openai-community/gpt2'] }])
+  // A failed model resolution is a failed read: with no good list yet, the set is unavailable rather than incomplete.
+  const warn = console.warn
+  console.warn = () => {}
+  try {
+    const failing = createPromotionExclusions({ pool: {}, env, read: async () => ['501'], resolveModels: async () => { throw Error('connection refused') } })
+    await assert.rejects(failing(), /unavailable/)
+  } finally { console.warn = warn }
+})
+
 test('Hugging Face cookies: their own key, purpose-bound, at most an hour, and unreadable with the GitHub secret', async () => {
   const saved = { hf: process.env.HF_OAUTH_CLIENT_SECRET, github: process.env.GITHUB_APP_CLIENT_SECRET }
   process.env.HF_OAUTH_CLIENT_SECRET = 'test-only-hf-session-secret'
