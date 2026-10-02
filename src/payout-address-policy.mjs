@@ -8,7 +8,8 @@ export const PASTED_ADDRESS_HOLD_HOURS = PASTED_ADDRESS_HOLD_MS / 3_600_000
 
 export const PAYOUT_ADDRESS_WARNING = 'Use a Solana wallet you control. Exchange deposit addresses may not credit program payouts.'
 
-// The builder retypes the address's last characters from their wallet app, which catches a wrong or altered clipboard.
+// The builder retypes the address's last characters from their wallet app: a check against a wrong paste. It is not a
+// defence against clipboard malware that grinds a look-alike address; the hold, cancel and email notice are.
 export const CONFIRM_CHARACTERS = 4
 
 const BASE58_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/

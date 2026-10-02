@@ -117,11 +117,14 @@ const repoIdOf = value => {
 const byRepoId = (a, b) => (BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0)
 
 // A pending request whose hold has passed becomes the repository's binding: a new bound_at, so any review sealed for the
-// previous recipient stops matching (src/claim-review.mjs). A binding made after the request (a wallet signature) wins
-// instead. The caller holds the repository's advisory lock inside an open transaction.
+// previous recipient stops matching (src/claim-review.mjs). If the binding changed after the request was stored (a wallet
+// signature, which normally supersedes the request itself), the newer binding wins instead; replaces_bound_at makes that
+// exact, with no comparison between the app's and the database's clocks. The caller holds the repository's advisory lock
+// inside an open transaction.
 export async function activateDueWithin(client, repoId) {
   const { rows: [due] } = await client.query(`select r.id::text as id, r.wallet, r.requested_by_github_user_id::text as "requestedBy",
-      b.wallet as "currentWallet", b.github_user_id::text as "currentUser", coalesce(b.bound_at > r.requested_at, false) as "newerBinding"
+      b.wallet as "currentWallet", b.github_user_id::text as "currentUser",
+      (b.github_repo_id is not null and b.bound_at is distinct from r.replaces_bound_at) as "newerBinding"
     from payout_address_requests r left join repo_beneficiaries b on b.github_repo_id = r.github_repo_id
     where r.github_repo_id = $1 and r.status = 'pending' and r.active_at <= now()
     for update of r`, [repoId])
@@ -243,24 +246,31 @@ async function requireRecentAdmin(client, repoId, userId) {
   if (!rows.length) fail('GITHUB_REQUIRED', 'Recent GitHub admin verification required', 403)
 }
 
-async function inRepoLocks(pool, repoIds, work) {
+// A claim holds its repository's lock until the payout settles. A paste or cancel waits a bounded time for it, so it
+// never pins a database connection behind a long claim.
+async function inRepoLocks(pool, repoIds, work, lockTimeoutMs) {
   const client = await pool.connect()
   try {
     await client.query('begin')
+    await client.query(`set local lock_timeout = ${Math.max(1, Math.trunc(lockTimeoutMs))}`)
     for (const id of [...repoIds].sort(byRepoId)) await client.query('select pg_advisory_xact_lock($1::bigint)', [id])
     const result = await work(client)
     await client.query('commit')
     return result
   } catch (error) {
     await client.query('rollback').catch(() => {})
+    if (error?.code === '55P03') {
+      fail('BUSY', 'A claim or another payout address change is in progress for this repository. Nothing was saved; try again in a minute.', 409)
+    }
     throw error
   } finally { client.release() }
 }
 
+// The database stamps requested_at, raises active_at to at least 48 hours after it and records the binding the request
+// would replace (trigger start_payout_address_request); a longer PASTED_ADDRESS_HOLD_MS is kept as given.
 async function insertRequest(client, { repoId, wallet, userId, login, previousWallet }) {
-  const { rows: [created] } = await client.query(`with t as (select clock_timestamp() as at)
-    insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id, requested_by_login, requested_at, active_at)
-    select $1, $2, $3, $4, t.at, t.at + $5::bigint * interval '1 millisecond' from t
+  const { rows: [created] } = await client.query(`insert into payout_address_requests(github_repo_id, wallet, requested_by_github_user_id,
+      requested_by_login, active_at) values ($1, $2, $3, $4, clock_timestamp() + $5::bigint * interval '1 millisecond')
     returning id::text as id, wallet, requested_at as "requestedAt", active_at as "activeAt"`,
   [repoId, wallet, userId, login, PASTED_ADDRESS_HOLD_MS])
   await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, wallet, previous_wallet)
@@ -268,14 +278,17 @@ async function insertRequest(client, { repoId, wallet, userId, login, previousWa
   return { id: created.id, repoId, wallet, requestedAt: created.requestedAt.toISOString(), activeAt: created.activeAt.toISOString() }
 }
 
-async function assertRequestRate(client, repoId) {
-  const { rows: [row] } = await client.query(`select count(*)::int as n from payout_address_requests
-    where github_repo_id = $1 and requested_at > now() - interval '1 hour'`, [repoId])
-  if (row.n >= MAX_REQUESTS_PER_HOUR) fail('RATE_LIMITED', 'Too many payout address changes for this repository in the last hour. Try again later.', 429)
+// Checked before any GitHub or Solana call, then again under the lock.
+async function assertRequestRate(executor, repoIds) {
+  const { rows } = await executor.query(`select github_repo_id from payout_address_requests
+    where github_repo_id = any($1::bigint[]) and requested_at > now() - interval '1 hour'
+    group by github_repo_id having count(*) >= $2 limit 1`, [repoIds, MAX_REQUESTS_PER_HOUR])
+  if (rows.length) fail('RATE_LIMITED', 'Too many payout address changes for this repository in the last hour. Try again later.', 429)
 }
 
-// reserved: platform signer addresses (never a builder's payout address).
-export function createPayoutAddresses({ pool, connection, reserved = [], now = Date.now }) {
+// reserved: repo.ing's own wallet addresses (never a builder's payout address). lockTimeoutMs: how long a change waits
+// for the repository's lock before answering BUSY.
+export function createPayoutAddresses({ pool, connection, reserved = [], now = Date.now, lockTimeoutMs = 10_000 }) {
   const prepare = (address, confirm) => {
     const key = parsePayoutAddress(address, { reserved })
     assertConfirmation(key.toBase58(), confirm)
@@ -287,6 +300,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
   async function request({ githubRepoId, address, confirm, verifyAuthority }) {
     const repoId = repoIdOf(githubRepoId)
     const key = prepare(address, confirm), wallet = key.toBase58()
+    await assertRequestRate(pool, [repoId])
     const { userId, login } = await authorize(repoId, verifyAuthority, now)
     await checkPayoutAccount(connection, key)
     return inRepoLocks(pool, [repoId], async client => {
@@ -298,7 +312,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
       const { rows: [pending] } = await client.query(`select id::text as id, wallet, requested_by_github_user_id::text as "requestedBy"
         from payout_address_requests where github_repo_id = $1 and status = 'pending' for update`, [repoId])
       if (pending?.wallet === wallet) fail('ALREADY_PENDING', 'That address is already waiting to become this repository’s payout address.', 409)
-      await assertRequestRate(client, repoId)
+      await assertRequestRate(client, [repoId])
       if (pending) {
         await client.query(`update payout_address_requests set status = 'superseded', resolved_at = now(), resolved_by_github_user_id = $2,
           resolution_reason = 'Replaced by a newer pasted address' where id = $1`, [pending.id, userId])
@@ -308,7 +322,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
       const created = await insertRequest(client, { repoId, wallet, userId, login, previousWallet: active?.wallet ?? null })
       return { ...created, requestedByLogin: login, previousWallet: active?.wallet ?? null, replacedWallet: pending?.wallet ?? null,
         notify: [...new Set([userId, active?.githubUserId, pending?.requestedBy].filter(Boolean))] }
-    })
+    }, lockTimeoutMs)
   }
 
   // Builders dashboard: one address for repositories that have neither a payout address nor a waiting one. All or
@@ -320,6 +334,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
     const ids = githubRepoIds.map(repoIdOf)
     if (new Set(ids).size !== ids.length) fail('INVALID_REPOSITORIES', `Choose up to ${MAX_BATCH_REPOSITORIES} distinct repositories.`)
     const key = prepare(address, confirm), wallet = key.toBase58()
+    await assertRequestRate(pool, ids)
     const authorities = await mapLimited(ids, 3, id => authorize(id, verifyAuthority, now))
     if (new Set(authorities.map(a => a.userId)).size !== 1) fail('GITHUB_REQUIRED', 'Current GitHub admin permission required', 403)
     const { userId, login } = authorities[0]
@@ -333,12 +348,12 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
         if (taken.bound || taken.waiting) {
           fail('ALREADY_SET', 'A payout address was set or requested for one of these repositories. Refresh; change existing ones on their claim pages.', 409)
         }
-        await assertRequestRate(client, repoId)
       }
+      await assertRequestRate(client, ids)
       const requests = []
       for (const repoId of ids) requests.push(await insertRequest(client, { repoId, wallet, userId, login, previousWallet: null }))
       return { count: requests.length, wallet, requestedByLogin: login, activeAt: requests[0].activeAt, requests, notify: [userId] }
-    })
+    }, lockTimeoutMs)
   }
 
   // Any current admin can cancel a waiting address. Once its hold has passed it is the active binding and can only be
@@ -361,7 +376,7 @@ export function createPayoutAddresses({ pool, connection, reserved = [], now = D
       await client.query(`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, github_login, wallet, previous_wallet)
         values ($1, $2, 'cancelled', $3, $4, $5, $6)`, [row.id, repoId, userId, login, row.wallet, active?.wallet ?? null])
       return { repoId, requestId: row.id, wallet: row.wallet, cancelledBy: login }
-    })
+    }, lockTimeoutMs)
   }
 
   return { request, requestBatch, cancel }

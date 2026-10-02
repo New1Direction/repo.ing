@@ -426,7 +426,8 @@ export const repoBeneficiaries = pgTable('repo_beneficiaries', {
 ])
 
 // Pasted payout addresses waiting out their hold (0048, src/payout-address.mjs). At most one pending request per
-// repository; resolved requests are kept as history and never change again (trigger guard_payout_address_request).
+// repository; an insert always starts pending with the hold measured from that moment (trigger
+// start_payout_address_request); resolved requests are kept as history and never change (guard_payout_address_request).
 export const payoutAddressRequests = pgTable('payout_address_requests', {
   id: bigserial('id', { mode: 'bigint' }).primaryKey(),
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
@@ -435,6 +436,8 @@ export const payoutAddressRequests = pgTable('payout_address_requests', {
   requestedByLogin: text('requested_by_login').notNull(),
   requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
   activeAt: timestamp('active_at', { withTimezone: true }).notNull(),
+  // bound_at of the binding this request would replace when it was stored (trigger start_payout_address_request).
+  replacesBoundAt: timestamp('replaces_bound_at', { withTimezone: true }),
   status: varchar('status', { length: 16 }).default('pending').notNull(),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   resolvedByGithubUserId: bigint('resolved_by_github_user_id', { mode: 'bigint' }),

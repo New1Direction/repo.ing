@@ -241,9 +241,6 @@ test('a pasted payout address is never paid during its hold, then receives the n
   // the hold passes, the claim activates it under the repository lock, refuses the review of the old recipient without
   // moving funds, and pays the pasted address on a new review.
   const pasted = Keypair.generate().publicKey, holder = 285551516n
-  // The signature binding predates the request (this fixture bound it minutes ago; the hold below moves the request back
-  // 49 hours). A binding newer than a request would win over it instead.
-  await pool.query("update repo_beneficiaries set bound_at = bound_at - interval '3 days' where github_repo_id = $1", [repoId.toString()])
   const verifyAuthority = async ({ githubRepoId }) => {
     await db.insert(repoVerifications).values({ githubRepoId, githubUserId: holder, githubLogin: 'local-test-admin', permission: 'admin' })
     return { verified: true, permission: 'admin', githubRepoId, githubUserId: holder, githubLogin: 'local-test-admin', verifiedAt: new Date() }
