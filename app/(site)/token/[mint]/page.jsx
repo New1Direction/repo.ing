@@ -41,6 +41,7 @@ import { readRepoPulse } from '../../../lib/dev-pulse.mjs'
 import { isPromotionExcluded } from '../../../lib/promotion-exclusions.mjs'
 import { maintainerDecision, promotionExcluded } from '../../../lib/maintainer-opt-outs.mjs'
 import { DeclinedBanner } from '../../../components/maintainer-declined'
+import { PhoneMarketSummary } from '../../../components/phone-market-summary'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -92,6 +93,7 @@ export default async function Token({ params, searchParams }) {
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
+    <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.graduated ? null : market.volume24hLamports}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><EarningsHeadline market={market}/></Suspense></div>

@@ -1,0 +1,19 @@
+.phone-market-summary{display:none}
+@media(max-width:640px){
+  .phone-market-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px 12px;margin-top:16px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+  .phone-market-price{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;min-width:0}
+  .phone-market-price>span{flex-basis:100%;color:var(--muted);font-size:12px}
+  .phone-market-price strong{font-size:24px;line-height:1.15;letter-spacing:-.02em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+  .phone-market-change{font-style:normal;font-size:13px;font-weight:650;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .phone-market-change small{font-weight:500;color:var(--dim)}
+  .phone-market-change.is-up{color:var(--green)}
+  .phone-market-change.is-down{color:var(--red)}
+  .phone-market-spark{display:block;fill:none;stroke:var(--dim);stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round}
+  .phone-market-spark.is-up{stroke:var(--green)}
+  .phone-market-spark.is-down{stroke:var(--red)}
+  .phone-market-stats{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0;padding-top:10px;border-top:1px solid var(--border)}
+  .phone-market-stats div{min-width:0}
+  .phone-market-stats dt{color:var(--muted);font-size:12px}
+  .phone-market-stats dd{margin:2px 0 0;font-size:15px;font-weight:650;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  [data-theme=light] .phone-market-change.is-up{color:var(--green-dark)}
+}
