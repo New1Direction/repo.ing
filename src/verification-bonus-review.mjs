@@ -44,7 +44,11 @@ export function createVerificationBonusReview({ pool, now = Date.now }) {
         rb.wallet as "repoPayoutWallet", rb.github_user_id::text as "repoPayoutBoundBy",
         (exists(select 1 from repo_beneficiaries x where x.github_user_id = b.verifier_github_user_id and x.wallet = b.launcher_wallet)
           or exists(select 1 from wallet_binding_challenges c where c.github_user_id = b.verifier_github_user_id
-            and c.wallet = b.launcher_wallet and c.consumed_at is not null)) as "verifierLinkedToLauncher",
+            and c.wallet = b.launcher_wallet and c.consumed_at is not null)
+          -- A pasted payout address naming the launcher wallet (any status: it is inert for 48 hours, longer than accrual
+          -- waits) is shown to the reviewer as a link. Not an automatic rule: pasting needs no key, so anyone could.
+          or exists(select 1 from payout_address_requests q where q.wallet = b.launcher_wallet
+            and (q.requested_by_github_user_id = b.verifier_github_user_id or q.github_repo_id = b.github_repo_id))) as "verifierLinkedToLauncher",
         (select coalesce(sum((case when t.direction = 'buy' then t.input_base_units else t.output_base_units end)::numeric), 0)::text
           from trade_events t where t.pool = m.pool) as "curveVolume",
         p.id as "payoutId", p.status as "payoutStatus", p.signature as "payoutSignature", p.attempt as "payoutAttempt",

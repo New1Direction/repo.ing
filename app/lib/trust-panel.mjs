@@ -3,6 +3,7 @@ import { PublicKey } from '@solana/web3.js'
 import { deriveDbcTokenVaultAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { holderConcentration, mintFacts, parseMintAccount, parseTokenAccount, readLauncherTrades, launcherPosition } from '../../src/trust-signals.mjs'
 import { backerLabels } from './backers.mjs'
+import { signedPayoutWallet } from './official-launch.mjs'
 import { chain, database } from './server.mjs'
 
 // On-chain holder snapshot per mint: three batched RPC reads (largest token accounts; the mint plus those accounts;
@@ -55,7 +56,8 @@ export async function holderSnapshot(market, { connection = null, now = Date.now
   const request = (async () => {
     let value = null
     try {
-      const labels = backerLabels({ beneficiaryWallet: market.beneficiaryWallet, pool: market.pool })
+      // A pasted payout address is not labelled Builder (it proves no control); it counts like any holder.
+      const labels = backerLabels({ beneficiaryWallet: signedPayoutWallet(market), pool: market.pool })
       value = await withTimeout(loadHolderSnapshot(connection ?? chain(), market.mint, market.pool, { labels }), RPC_TIMEOUT_MS)
     } catch (error) {
       console.error('holder snapshot unavailable', { mint: key, error: error.message })

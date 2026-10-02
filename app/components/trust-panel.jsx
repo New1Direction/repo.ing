@@ -7,6 +7,7 @@ import { holderSnapshot, launcherSummary } from '../lib/trust-panel.mjs'
 import { graduationLabel, launcherLines, maintainerStatus, percentLabel, TOP_HOLDERS } from '../../src/trust-signals.mjs'
 import { holdingLabel, shortWallet } from '../lib/holder-note-format.mjs'
 import { REPO_FACTS_TIP } from '../lib/repo-quality.mjs'
+import { signedPayoutWallet } from '../lib/official-launch.mjs'
 
 // One fact per row: icon, a one-line headline, fixed-height detail lines, and a one-line explainer behind (i).
 // Streamed rows keep the same line count while loading, so the card never changes height.
@@ -52,11 +53,14 @@ const launcherRow = props => <Row id="trust-launcher" icon={Rocket} tip={TIPS.la
 const LauncherFallback = () => launcherRow({ busy: true, lines: [null, null, null] })
 
 async function LauncherRow({ market }) {
-  const summary = await launcherSummary(market.mint, market.launcherWallet ?? null, market.beneficiaryWallet ?? null, market.pool)
+  const signed = signedPayoutWallet(market)
+  const summary = await launcherSummary(market.mint, market.launcherWallet ?? null, signed, market.pool)
   const lines = launcherLines(summary?.position)
   if (!summary || !lines) return launcherRow({ title: 'Launcher position unavailable', lines: ['', '', ''] })
-  const ownWallet = summary.wallet === market.beneficiaryWallet
-  const label = ownWallet ? "Maintainer's payout wallet" : summary.label?.kind === 'builder' ? null : summary.label?.label
+  // Only a wallet-signed payout wallet says the launcher is the maintainer; a pasted one is named as what it is.
+  const ownWallet = Boolean(signed) && summary.wallet === signed
+  const pastedPayout = !ownWallet && Boolean(market.beneficiaryWallet) && summary.wallet === market.beneficiaryWallet
+  const label = ownWallet ? "Maintainer's payout wallet" : pastedPayout ? 'Pasted payout address' : summary.label?.kind === 'builder' ? null : summary.label?.label
   const who = <span className="trust-who">
     <a href={`https://solscan.io/account/${summary.wallet}`} target="_blank" rel="noreferrer" title={summary.wallet}>
       <code>{shortWallet(summary.wallet)}</code><span className="sr-only"> (view on Solscan)</span></a>

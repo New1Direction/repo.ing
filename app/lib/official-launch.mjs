@@ -1,13 +1,19 @@
 import { orderMarkets } from './market-order.mjs'
 import { chartTradeAge } from './chart-display.mjs'
 
-// Official: the repository's own maintainer launched the market. A GitHub admin verified on repo.ing bound a payout wallet,
-// and it is the wallet that launched the market (markets.launcher_wallet). Read from the market row alone (server and
-// client safe); distinct from Verified, which only says an admin has verified since. A pasted payout address
-// (beneficiaryMethod 'pasted') proves no control of that wallet, so only a wallet-signature binding counts.
+// The repository's payout wallet as evidence about who controls it: only a wallet-signature binding. A pasted payout
+// address (beneficiaryMethod 'pasted', src/payout-address.mjs) is anyone's public address an admin chose, so identity
+// marks (Official, the maintainer's ✓ X handle, the Builder label on a holder) never come from one. Payouts still go to it.
+export function signedPayoutWallet(market) {
+  return market?.beneficiaryMethod === 'pasted' ? null : market?.beneficiaryWallet ?? null
+}
+
+// Official: the repository's own maintainer launched the market. A GitHub admin verified on repo.ing bound a payout wallet
+// by signing with it, and it is the wallet that launched the market (markets.launcher_wallet). Read from the market row
+// alone (server and client safe); distinct from Verified, which only says an admin has verified since.
 export function isOfficialLaunch(market) {
-  return Boolean(market?.wasVerified && market.beneficiaryWallet && market.launcherWallet && market.beneficiaryWallet === market.launcherWallet &&
-    market.beneficiaryMethod !== 'pasted')
+  const wallet = signedPayoutWallet(market)
+  return Boolean(market?.wasVerified && wallet && market.launcherWallet && wallet === market.launcherWallet)
 }
 
 export const OFFICIAL_LAUNCH_LIMIT = 4
