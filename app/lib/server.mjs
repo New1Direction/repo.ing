@@ -10,7 +10,7 @@ import { ttlMemo } from './ttl-memo.mjs'
 import { readGraduationRace } from './graduation-race.mjs'
 import { marketRowStats } from './market-row-stats.mjs'
 import { timed } from './server-timing.mjs'
-import { hasEarnedPromotion, isNewRepo } from './repo-quality.mjs'
+import { hasEarnedPromotion, showsNewRepoLabel } from './repo-quality.mjs'
 import { isOfficialLaunch } from './official-launch.mjs'
 import { githubTime } from '../../src/github.mjs'
 
@@ -68,10 +68,11 @@ const MARKETS_TTL_MS = 15_000
 export const listMarkets = ttlMemo(() => timed('listMarkets', loadMarkets), MARKETS_TTL_MS, { keep: result => !result.unavailable })
 
 // Repository quality (repo-quality.mjs) and the Official mark from a market row's own columns. A recorded migration counts
-// as graduated for promotion even while the fresh progress read is stale.
+// as graduated for promotion even while the fresh progress read is stale. newRepo: the market shows the "New repo" label
+// (a new repository that has not earned promotion yet).
 function withSignals(market, migrated, now) {
-  return { ...market, newRepo: isNewRepo(market, now), promoted: hasEarnedPromotion({ ...market, graduated: market.graduated || migrated }, now),
-    officialLaunch: isOfficialLaunch(market) }
+  const facts = { ...market, graduated: market.graduated || migrated }
+  return { ...market, newRepo: showsNewRepoLabel(facts, now), promoted: hasEarnedPromotion(facts, now), officialLaunch: isOfficialLaunch(market) }
 }
 
 // 24h volume: bonding-curve swaps, plus swaps in the DAMM v2 pool a graduated market's verified migration names (the

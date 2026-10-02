@@ -38,6 +38,10 @@ export function hasEarnedPromotion(market, now = Date.now()) {
   return typeof progress === 'number' && Number.isFinite(progress) && progress >= PROMOTION_MIN_PERCENT
 }
 
+// The "New repo" label (market rows and cards) marks a new repository whose market has not earned promotion yet; it goes
+// once the market reaches PROMOTION_MIN_PERCENT of its target or graduates. The repository facts stay on the token page.
+export const showsNewRepoLabel = (market, now = Date.now()) => isNewRepo(market, now) && !hasEarnedPromotion(market, now)
+
 // Home featured lists keep only market rows that earned promotion (listMarkets sets `promoted` per row).
 export const featuredMarkets = markets => markets.filter(market => market.promoted === true)
 
@@ -87,14 +91,15 @@ export function repoAgeLabel(days) {
 
 const plural = (value, name) => `${value.toLocaleString('en-US')} ${name}${value === 1 ? '' : 's'}`
 
-// Display facts for the token page "Launch facts" row and launch review.
-export function repoFactsView(repo, pulse = null, now = Date.now()) {
-  const isNew = isNewRepo(repo, now), age = repoAgeLabel(repoAgeDays(repo, now))
+// Display facts for the token page "Launch facts" row and launch review. promoted: the market earned promotion (its row's
+// `promoted`); the facts always show, but only a new repository whose market has not earned it is labeled, in amber.
+export function repoFactsView(repo, pulse = null, now = Date.now(), { promoted = false } = {}) {
+  const isNew = isNewRepo(repo, now), labeled = isNew && promoted !== true, age = repoAgeLabel(repoAgeDays(repo, now))
   const stars = Number.isSafeInteger(repo?.stars) ? plural(repo.stars, 'star') : 'Stars unknown'
   const forks = Number.isSafeInteger(repo?.forks) ? plural(repo.forks, 'fork') : null
   const { score, parts } = repoScore(repo, pulse, now)
-  return { isNew, tone: isNew ? 'warning' : 'neutral',
-    title: isNew ? `New repo${age ? ` · ${age} old` : ''}` : age ? `Repo ${age} old` : 'Repo age unknown',
+  return { isNew, labeled, tone: labeled ? 'warning' : 'neutral',
+    title: labeled ? `New repo${age ? ` · ${age} old` : ''}` : age ? `Repo ${age} old` : 'Repo age unknown',
     age, stars, counts: [stars, forks].filter(Boolean).join(' · '), score,
     scoreLabel: `Repo score ${score}/100`,
     scoreDetail: `Stars ${parts.stars}/${REPO_SCORE_MAX.stars} · forks ${parts.forks}/${REPO_SCORE_MAX.forks} · age ${parts.age}/${REPO_SCORE_MAX.age} · activity ${parts.activity}/${REPO_SCORE_MAX.activity}` }

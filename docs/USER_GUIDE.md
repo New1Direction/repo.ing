@@ -110,7 +110,7 @@ Already-earned rewards remain claimable after the earning window closes. Discove
 - **Holders:** unique token-account owners with positive balances, excluding the canonical DBC token vault. Addresses do not necessarily correspond to distinct people.
 - **Graduation progress:** real quote reserve relative to that market's configured threshold. Sells can lower it.
 - **Paid to builders:** settled builder payouts. Discovery rewards are separate. Stats splits paid and earned amounts between outside builders and the repo.ing team's own repositories.
-- **New repo:** the repository was created on GitHub less than 30 days ago or has fewer than 10 stars. Its market trades like any other, but repo.ing doesn't feature it (home page lists and ticker, graduation races, launch posts) until its curve reaches 10% of its graduation target; until then it sorts last in Explore's Trending view.
+- **New repo:** the repository was created on GitHub less than 30 days ago or has fewer than 10 stars. Its market trades like any other, but repo.ing doesn't feature it (home page lists and ticker, graduation races, launch posts) until its curve reaches 10% of its graduation target; until then it sorts last in Explore's Trending view. The label goes away once the market reaches that 10% or graduates; the token page's Launch facts keep showing the repository's age and stars.
 - **Official:** the repository's verified maintainer launched the market from the payout wallet they set on repo.ing. Like Verified, it is not an endorsement of the token.
 - **Repo score (0–100):** stars (up to 40), forks (up to 15), age (up to 20) and this week's developers and commits from Dev Pulse (up to 25), in the token page's Launch facts.
 
