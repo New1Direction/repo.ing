@@ -1,0 +1,14 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/organizations/repoing-spike-no-such-org-x9/overview",
+  "status": 404,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=471;t=135",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300",
+    "x-error-message": "Sorry, we can't find the page you are looking for."
+  },
+  "body": {
+    "error": "Sorry, we can't find the page you are looking for."
+  }
+}

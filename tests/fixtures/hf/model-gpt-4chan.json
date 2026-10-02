@@ -1,0 +1,44 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/models/ykilcher/gpt-4chan?expand[]=author&expand[]=private&expand[]=disabled&expand[]=gated&expand[]=createdAt&expand[]=lastModified&expand[]=sha&expand[]=pipeline_tag&expand[]=tags&expand[]=likes&expand[]=downloads&expand[]=downloadsAllTime&expand[]=trendingScore&expand[]=baseModels&expand[]=childrenModelCount&expand[]=spaces",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=489;t=127",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300"
+  },
+  "body": {
+    "_id": "6283a9b7806a1feb9fbacf18",
+    "id": "ykilcher/gpt-4chan",
+    "author": "ykilcher",
+    "private": false,
+    "disabled": true,
+    "gated": "auto",
+    "lastModified": "2023-08-05T20:52:29.000Z",
+    "sha": "9306aeb6c1ff64e9f5ab7b22ddc6da18fe0dccff",
+    "pipeline_tag": "text-generation",
+    "tags": [
+      "transformers",
+      "pytorch",
+      "gptj",
+      "text-generation",
+      "causal-lm",
+      "en",
+      "arxiv:2109.07958",
+      "license:apache-2.0",
+      "region:us"
+    ],
+    "likes": 141,
+    "downloads": 0,
+    "downloadsAllTime": 1559,
+    "trendingScore": 0,
+    "spaces": [],
+    "createdAt": "2022-05-17T13:57:11.000Z",
+    "childrenModelCount": {
+      "adapter": 0,
+      "merge": 0,
+      "quantized": 0,
+      "finetune": 0
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/users/openai-community/overview",
+  "status": 404,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=475;t=144",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300",
+    "x-error-message": "This user does not exist"
+  },
+  "body": {
+    "error": "This user does not exist"
+  }
+}
