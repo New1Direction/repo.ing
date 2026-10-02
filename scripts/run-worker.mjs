@@ -16,6 +16,7 @@ import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 import { expireLaunchSessions } from '../src/launch-sessions.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
+import { activateDuePayoutAddresses } from '../src/payout-address.mjs'
 import { createTipExpiry, readTipWallet } from '../src/tips.mjs'
 import { createTipTransferRecovery, createTipWalletMonitor } from '../src/tip-transfers.mjs'
 import { createPartsFundJobs } from '../src/parts-settlement.mjs'
@@ -229,6 +230,13 @@ try {
     catch (error) { if (error?.code !== '42P01') result.launchSessionError = 'Launch session expiry unavailable' }
     try { result.claims = await claims.runOnce() }
     catch { result.claimError = 'Claim recovery unavailable' }
+    // Pasted payout addresses whose 48-hour hold has passed become the binding every payout path reads (database only;
+    // the claim path also does this under its own lock). Before the migration reaches this database there are none.
+    try {
+      const activations = (await activateDuePayoutAddresses(pool)).filter(item => item.status !== 'none')
+      if (activations.length) result.payoutAddresses = activations.map(({ status, repoId, requestId }) => ({ status, repoId, requestId }))
+    }
+    catch (error) { if (!['42P01', '42703'].includes(error?.code)) result.payoutAddressError = 'Payout address activation unavailable' }
     try { result.allocations = await allocations.runOnce() }
     catch { result.allocationError = 'Allocation recovery unavailable' }
     try { result.fees = await fees.runOnce() }
@@ -314,6 +322,7 @@ try {
         result.launches?.some(item => ['invalid', 'mismatch', 'missing', 'unavailable'].includes(item.state)) ||
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (result.verificationBonusPayoutError || result.verificationBonusPayouts?.some(item => item.status === 'review')) process.exitCode = 1
+    if (result.payoutAddressError || result.payoutAddresses?.some(item => item.status === 'error')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
 } finally { if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()

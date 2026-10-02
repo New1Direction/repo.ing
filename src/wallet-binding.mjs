@@ -15,6 +15,18 @@ const positiveId = value => {
   return id
 }
 
+// A wallet-signature binding takes effect at once (as before) and replaces a pasted address still waiting out its hold
+// (src/payout-address.mjs), so that address can never activate over the newer binding. Recorded in the audit log.
+async function supersedePastedAddress(tx, repoId, userId) {
+  const { rows } = await tx.execute(sql`update payout_address_requests set status = 'superseded', resolved_at = now(),
+      resolved_by_github_user_id = ${userId.toString()}, resolution_reason = 'Replaced by a wallet-signature binding'
+    where github_repo_id = ${repoId.toString()} and status = 'pending' returning id::text as id, wallet`)
+  for (const row of rows) {
+    await tx.execute(sql`insert into payout_address_events(request_id, github_repo_id, event, github_user_id, wallet)
+      values (${row.id}, ${repoId.toString()}, 'superseded', ${userId.toString()}, ${row.wallet})`)
+  }
+}
+
 const bindingMessage = ({ githubRepoId, wallet, nonce, expiresAt }) => [
   'repo.ing repository beneficiary v1',
   'I bind this Solana wallet as beneficiary for the repository.',
@@ -86,10 +98,11 @@ export function createWalletBinding({ pool }) {
       )).returning()
       if (!consumed) throw new Error('Wallet challenge already used or expired')
       const [beneficiary] = await tx.insert(repoBeneficiaries).values({ githubRepoId: repoId,
-        githubUserId: userId, wallet: walletAddress, boundAt: now }).onConflictDoUpdate({
+        githubUserId: userId, wallet: walletAddress, boundAt: now, method: 'signature', payoutRequestId: null }).onConflictDoUpdate({
         target: repoBeneficiaries.githubRepoId,
-        set: { githubUserId: userId, wallet: walletAddress, boundAt: now },
+        set: { githubUserId: userId, wallet: walletAddress, boundAt: now, method: 'signature', payoutRequestId: null },
       }).returning()
+      await supersedePastedAddress(tx, repoId, userId)
       return beneficiary
     })
   }
@@ -118,14 +131,18 @@ export function createWalletBinding({ pool }) {
         if (c.githubUserId !== userId || c.wallet !== walletKey.toBase58() || c.consumedAt || c.expiresAt <= now) throw new Error('Wallet challenge is mismatched, expired, or used')
         await requireRecentAdmin(tx, c.githubRepoId, userId, now)
         const [existing] = await tx.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, c.githubRepoId)).limit(1)
-        if (existing) throw new Error('Payout wallet changed. Refresh and review again.')
+        // A pasted address whose hold has passed is the repository's payout address even before a pass records it.
+        const { rows: [due] } = await tx.execute(sql`select 1 from payout_address_requests where github_repo_id = ${c.githubRepoId.toString()}
+          and status = 'pending' and active_at <= now()`)
+        if (existing || due) throw new Error('Payout wallet changed. Refresh and review again.')
       }
       const publicKey = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, walletKey.toBuffer()]), format: 'der', type: 'spki' })
       if (!verifySignature(null, Buffer.from(batchBindingMessage(challenges)), publicKey, signatureBytes)) throw new Error('Invalid Solana wallet signature')
       for (const c of challenges) {
         const [consumed] = await tx.update(walletBindingChallenges).set({ consumedAt: now }).where(and(eq(walletBindingChallenges.nonce,c.nonce),isNull(walletBindingChallenges.consumedAt),gt(walletBindingChallenges.expiresAt,now))).returning()
         if (!consumed) throw new Error('Wallet challenge already used or expired')
-        await tx.insert(repoBeneficiaries).values({ githubRepoId:c.githubRepoId,githubUserId:userId,wallet:c.wallet,boundAt:now })
+        await tx.insert(repoBeneficiaries).values({ githubRepoId:c.githubRepoId,githubUserId:userId,wallet:c.wallet,boundAt:now,method:'signature' })
+        await supersedePastedAddress(tx, c.githubRepoId, userId)
       }
       return { count: challenges.length, wallet: walletKey.toBase58() }
     })

@@ -9,9 +9,10 @@ import { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedToke
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq, sql } from 'drizzle-orm'
-import { markets, repoBeneficiaries, repoClaims } from './db/schema.mjs'
+import { markets, repoClaims } from './db/schema.mjs'
 
 import { createGraduatedFees, recordGraduatedFees } from './graduated-fees.mjs'
+import { resolvePayoutRecipient } from './payout-address.mjs'
 import { settleClaim } from './claim-settlement.mjs'
 import { broadcastUntilSettled, signedWithPriorityFee } from './trade-landing.mjs'
 
@@ -81,8 +82,15 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         }
         report('GitHub admin access verified. Checking accrued fees…')
 
-        const [beneficiary] = await db.select().from(repoBeneficiaries).where(eq(repoBeneficiaries.githubRepoId, repoId)).limit(1)
-        if (!beneficiary) throw new Error('Repository has no bound beneficiary')
+        // Only the active binding is ever a recipient. A pasted address whose hold has passed becomes it here, under this
+        // repository's lock, with a new bound_at, so a review of the previous recipient no longer matches; one still in
+        // its hold is never paid (src/payout-address.mjs).
+        const beneficiary = await resolvePayoutRecipient(client, repoId)
+        // Settled payouts change only under this lock. The review's recipient, binding time and paid revision are checked
+        // before any chain read.
+        const [settled] = await db.select({ paid: sql`coalesce(sum(${repoClaims.amountBaseUnits}), 0)::text` })
+          .from(repoClaims).where(sql`${repoClaims.githubRepoId} = ${repoId} and ${repoClaims.status} = 'settled'`)
+        if (request.review) assertClaimSnapshot(request.review, { repoId, beneficiary, paid: settled.paid })
         const receiverKey = new PublicKey(beneficiary.wallet)
         const state = await dbc.state.getPool(poolKey)
         const fixed = await dbc.state.getPoolConfig(configKey)
@@ -95,9 +103,6 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         await recordGraduatedFees(client, market, graduated)
         const { rows: [ledger] } = await client.query(`select coalesce(sum(amount_base_units),0)::text as earned
           from builder_fee_credits where github_repo_id=$1`, [String(repoId)])
-        const [settled] = await db.select({ paid: sql`coalesce(sum(${repoClaims.amountBaseUnits}), 0)::text` })
-          .from(repoClaims).where(sql`${repoClaims.githubRepoId} = ${repoId} and ${repoClaims.status} = 'settled'`)
-        if (request.review) assertClaimSnapshot(request.review, { repoId, beneficiary, paid: settled.paid })
         const outstanding = BigInt(ledger.earned) - BigInt(settled.paid)
         const dbcFee = BigInt(state.poolState.creatorQuoteFee.toString())
         const { payoutAmount, dbcPayout, dammFee, surplus } = claimAmounts({ dbcFee, dammFee: graduated?.available ?? 0n, outstanding, review: request.review })
