@@ -1,0 +1,13 @@
+/* /stats: outside builders vs repo.ing team repos under each builder figure (app/components/builder-split.jsx). */
+.builder-split{display:grid;gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.builder-split-bar{display:flex;height:6px;overflow:hidden;border-radius:999px;background:color-mix(in srgb,var(--muted) 38%,transparent)}
+.builder-split-bar>span{display:block;min-width:0;background:var(--green)}
+.builder-split dl{display:grid;gap:6px;margin:0}
+.builder-split dl>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px;font-size:13px}
+.builder-split dt{display:inline-flex;align-items:center;gap:7px;color:var(--muted)}
+.builder-split dt i{width:8px;height:8px;flex:none;border-radius:2px}
+.builder-split dt i.is-outside{background:var(--green)}
+.builder-split dt i.is-team{background:color-mix(in srgb,var(--muted) 60%,transparent)}
+.builder-split dd{display:inline-flex;align-items:baseline;gap:8px;margin:0;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.builder-split dd small{min-width:42px;color:var(--muted);font-size:12px;font-weight:500;text-align:right}
+.builder-split-note{margin:10px 2px 0;color:var(--muted);font-size:12px;line-height:1.55}
