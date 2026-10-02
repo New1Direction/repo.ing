@@ -119,11 +119,16 @@ const SURFACES = {
     short(buyAction(MODEL).description); short(sellAction(MODEL).description)
   },
   'app/lib/share-links.mjs': async () => {
-    const { shareText, xShareUrl } = await import('../app/lib/share-links.mjs')
+    const { returnShareText, shareText, xReturnShareUrl, xShareUrl } = await import('../app/lib/share-links.mjs')
     for (const kind of ['buy', 'sell', 'launch']) short(shareText({ fullName: MODEL.fullName, symbol: 'GPT2', kind, source: 'huggingface' }))
     short(new URL(xShareUrl({ mint: MINT, fullName: MODEL.fullName, symbol: 'GPT2', source: 'huggingface' })).searchParams.get('text'))
-    // One post: the longest name the text allows still fits X's 280 characters with the link (23).
+    // The wallet's "Share" of a holding's return (app/components/wallet-overview.jsx passes the market's source).
+    short(returnShareText({ symbol: 'GPT2', fullName: MODEL.fullName, pct: 12.5, source: 'huggingface' }))
+    short(new URL(xReturnShareUrl({ mint: MINT, symbol: 'GPT2', fullName: MODEL.fullName, percent: 12.5, source: 'huggingface' })).searchParams.get('text'))
+    assert.match(readFileSync('app/components/wallet-overview.jsx', 'utf8'), /source: isModelMarket\(market\) \? 'huggingface' : 'github'/)
+    // One post: the longest names the texts allow still fit X's 280 characters with the link (23).
     assert.ok(shareText({ fullName: 'a'.repeat(100), kind: 'launch', source: 'huggingface' }).length + 1 + 23 <= 280)
+    assert.ok(returnShareText({ symbol: 'S'.repeat(20), fullName: 'a'.repeat(100), pct: -99.9, source: 'huggingface' }).length + 1 + 23 <= 280)
   },
 }
 
@@ -144,6 +149,9 @@ const EXEMPT = {
   'app/(site)/stats/page.jsx': 'flag only',
   'app/sitemap.js': 'URLs only',
   'app/lib/market-order.mjs': 'carries model rows’ display-only likes; renders nothing',
+  'app/components/wallet-overview.jsx': 'passes the market’s source to the return share (checked under share-links.mjs)',
+  'app/api/wallet/overview/route.js': 'flag filtering only',
+  'app/lib/waiting-board.mjs': 'leaves model markets out of /waiting',
 }
 
 const sources = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()

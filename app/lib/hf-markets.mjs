@@ -74,13 +74,20 @@ function liveCards() {
 }
 
 // Display-only facts per market id (likes and 30-day downloads), from the last live card. Lists show them without a Hub
-// request of their own; they never order, promote or pay anything.
+// request of their own; they never order, promote or pay anything. Every card outcome is remembered with when to ask
+// again (as the card cache would), so a model the Hub does not answer for is not re-read on every list view. A transient
+// failure keeps the last known figures; a moved or missing model drops them. Figures older than FACTS_MAX_AGE_MS are not
+// shown.
 const FACTS_LIMIT = 2000
+export const FACTS_MAX_AGE_MS = 6 * 60 * 60_000
 const facts = globalThis.__repoingHfModelFacts ??= new Map()
-function recordFacts(registry, card) {
-  if (card.status !== 'live' || !registry.marketRef) return
-  if (facts.size >= FACTS_LIMIT) facts.delete(facts.keys().next().value)
-  facts.set(String(registry.marketRef), { likes: card.likes, downloads30d: card.downloads30d, at: Date.now() })
+function recordFacts(registry, card, now = Date.now()) {
+  if (!registry.marketRef) return
+  const key = String(registry.marketRef), previous = facts.get(key)
+  const known = card.status === 'live' ? { likes: card.likes, downloads30d: card.downloads30d, at: now }
+    : card.status === 'unavailable' && previous?.at ? previous : { likes: null, downloads30d: null, at: null }
+  if (!previous && facts.size >= FACTS_LIMIT) facts.delete(facts.keys().next().value)
+  facts.set(key, { ...known, refreshAt: now + (card.status === 'unavailable' ? MODEL_CARD_FAILURE_MS : MODEL_CARD_TTL_MS) })
 }
 export const modelCard = registry => liveCards()(registry).then(card => { recordFacts(registry ?? {}, card); return card })
 
@@ -92,12 +99,13 @@ export const modelCard = registry => liveCards()(registry).then(card => { record
 export const MODEL_FACTS_REFRESH_LIMIT = 12
 export function withModelFacts(markets, { schedule = null, now = Date.now, refreshLimit = MODEL_FACTS_REFRESH_LIMIT, pool = null } = {}) {
   if (!hfMarketsEnabled() || !markets.some(isModelMarket)) return markets
-  const stale = markets.filter(market => isModelMarket(market) && !(facts.get(String(market.repoId))?.at > now() - MODEL_CARD_TTL_MS))
+  const at = now()
+  const stale = markets.filter(market => isModelMarket(market) && !(facts.get(String(market.repoId))?.refreshAt > at))
     .slice(0, refreshLimit).map(market => String(market.repoId))
   if (stale.length && schedule) schedule(() => refreshModelFacts(pool ?? database(), stale))
   return markets.map(market => {
     const known = isModelMarket(market) && facts.get(String(market.repoId))
-    return known ? { ...market, likes: known.likes, downloads30d: known.downloads30d } : market
+    return known?.at && at - known.at < FACTS_MAX_AGE_MS ? { ...market, likes: known.likes, downloads30d: known.downloads30d } : market
   })
 }
 

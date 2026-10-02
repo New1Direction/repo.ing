@@ -19,6 +19,10 @@ export function isModelMarket(market) {
   return market?.source === 'huggingface'
 }
 
+// GitHub markets only, for surfaces whose copy and concepts are GitHub-maintainer specific ("Repo markets to watch",
+// Official launches, /waiting).
+export const githubMarkets = markets => markets.filter(market => !isModelMarket(market))
+
 // https://huggingface.co/<owner>/<name>; null for anything that is not a model path, so no link is ever guessed.
 export function modelPageUrl(path) {
   if (!isHfModelPath(path)) return null
@@ -78,9 +82,10 @@ export function modelView(market, registry = null, card = null) {
   const [owner = '', name = ''] = path.split('/')
   return {
     path, owner, name, ownerKind: registry?.ownerKind ?? null, hfId: registry?.hfId ?? null,
-    // A moved path now names a different repository: no link to it, and no live facts from it.
-    url: card?.status === 'moved' ? null : modelPageUrl(path),
-    moved: card?.status === 'moved', live: Boolean(live),
+    // A moved path now names a different repository: no link to it, and no live facts from it. A missing model (private,
+    // disabled or deleted on the Hub) gets no link either: it would only lead to an error page.
+    url: card?.status === 'moved' || card?.status === 'missing' ? null : modelPageUrl(path),
+    moved: card?.status === 'moved', missing: card?.status === 'missing', live: Boolean(live),
     task: taskLabel(live?.pipelineTag) ?? null, license: live?.license ?? null,
     gated: gatedLabel(live ? live.gated : registry?.gated),
     base: baseModels(live?.baseModels ?? registry?.baseModels),

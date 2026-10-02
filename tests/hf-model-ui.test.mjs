@@ -83,7 +83,7 @@ test('modelView: live facts only for the registry row’s own _id; a moved path 
     downloads30d: 15740994, gated: 'manual', baseModels: { relation: 'finetune', models: [{ hfId: 'a'.repeat(24), path: 'gpt/base' }] }, lastModified: '2024-02-19T10:57:45.000Z' }
   const view = modelView(MODEL, REGISTRY, live)
   assert.deepEqual({ ...view, gated: view.gated.label }, { path: 'openai-community/gpt2', owner: 'openai-community', name: 'gpt2', ownerKind: 'org', hfId: GPT2_HF_ID,
-    url: 'https://huggingface.co/openai-community/gpt2', moved: false, live: true, task: 'Text generation', license: 'mit', gated: 'Gated',
+    url: 'https://huggingface.co/openai-community/gpt2', moved: false, missing: false, live: true, task: 'Text generation', license: 'mit', gated: 'Gated',
     base: { relation: 'finetune', paths: ['gpt/base'] }, likes: 4200, downloads30d: 15740994, updatedAt: '2024-02-19T10:57:45.000Z' })
   const stored = modelView({ ...MODEL, stars: 4194 }, { ...REGISTRY, gated: true, baseModels: [{ hfId: 'a'.repeat(24), path: 'meta/base', relation: 'quantized' }] }, { status: 'unavailable' })
   assert.equal(stored.live, false)
@@ -97,27 +97,49 @@ test('modelView: live facts only for the registry row’s own _id; a moved path 
   assert.equal(moved.url, null)
   assert.equal(moved.moved, true)
   assert.equal(moved.likes, 4194)
+  const missing = modelView(MODEL, REGISTRY, { status: 'missing' })
+  assert.deepEqual([missing.url, missing.missing, missing.moved], [null, true, false], 'no link to a model the Hub no longer serves')
 })
 
 test('list facts: lists show models’ likes from earlier live cards without a request, refreshing missing ones after the response', () => withFlag('true', async () => {
   const facts = globalThis.__repoingHfModelFacts, cards = globalThis.__repoingHfModelCards
   facts.clear()
+  const TWO = '4503599627370498', TWO_HF_ID = 'b'.repeat(24)
   const reads = []
-  globalThis.__repoingHfModelCards = createModelCards({ read: async path => { reads.push(path); return { hfId: GPT2_HF_ID, path, likes: 77, downloads30d: 5 } } })
+  let twoAnswers = 'unavailable'
+  globalThis.__repoingHfModelCards = createModelCards({ read: async path => {
+    reads.push(path)
+    if (path === 'openai-community/gpt2') return { hfId: GPT2_HF_ID, path, likes: 77, downloads30d: 5 }
+    if (twoAnswers === 'live') return { hfId: TWO_HF_ID, path, likes: 9, downloads30d: 1 }
+    throw new HfUpstreamError('down', { code: 'HF_HTTP_503' })
+  }, failureMs: 0 })
+  const registries = { [MODEL_ID]: { ...REGISTRY, marketRef: MODEL_ID }, [TWO]: { hfId: TWO_HF_ID, path: 'org/two', marketRef: TWO } }
   const queries = [], scheduled = []
-  const pool = { query: async (sql, params) => { queries.push(params[0]); return { rows: [{ ...REGISTRY, marketRef: MODEL_ID }] } } }
+  const pool = { query: async (sql, [ids]) => { queries.push(ids); return { rows: ids.map(id => registries[id]) } } }
+  const run = async () => { while (scheduled.length) await scheduled.shift()() }
   try {
-    const rows = [GITHUB, MODEL, { ...MODEL, repoId: '4503599627370498', mint: 'MintModelTwo' }]
-    const first = withModelFacts(rows, { pool, schedule: fn => scheduled.push(fn), refreshLimit: 1 })
-    assert.deepEqual(first, rows, 'nothing known yet: the rows as they are')
-    assert.equal(scheduled.length, 1)
-    await scheduled[0]()
+    const rows = [GITHUB, MODEL, { ...MODEL, repoId: TWO, mint: 'MintModelTwo' }]
+    assert.deepEqual(withModelFacts(rows, { pool, schedule: fn => scheduled.push(fn), refreshLimit: 1 }), rows, 'nothing known yet: the rows as they are')
+    await run()
     assert.deepEqual(queries, [[MODEL_ID]], 'one registry read, at most refreshLimit models')
-    assert.deepEqual(reads, ['openai-community/gpt2'])
     const second = withModelFacts(rows, { pool, schedule: fn => scheduled.push(fn) })
     assert.equal(second[0], GITHUB, 'GitHub rows are untouched')
     assert.deepEqual([second[1].likes, second[1].downloads30d, second[2].likes], [77, 5, undefined])
-    assert.equal(scheduled.length, 2, 'the other model is still refreshed')
+    await run()
+    assert.deepEqual(queries.at(-1), [TWO], 'only the model without facts is refreshed')
+    // A failed read is remembered (until the card would retry), so the next view does not ask again.
+    withModelFacts(rows, { pool, schedule: fn => scheduled.push(fn), now: () => Date.now() })
+    assert.equal(scheduled.length, 0)
+    // Once it answers, its likes show; a later transient failure keeps them.
+    twoAnswers = 'live'
+    withModelFacts(rows, { pool, schedule: fn => scheduled.push(fn), now: () => Date.now() + 61_000 })
+    await run()
+    assert.equal(withModelFacts(rows, { pool, schedule: () => {} })[2].likes, 9)
+    twoAnswers = 'unavailable'
+    await globalThis.__repoingHfModelCards({ hfId: TWO_HF_ID, path: 'org/two' })
+    assert.equal(withModelFacts(rows, { pool, schedule: () => {} })[2].likes, 9)
+    // Figures older than six hours are no longer shown.
+    assert.equal(withModelFacts(rows, { pool, schedule: () => {}, now: () => Date.now() + 6 * 60 * 60_000 + 1 })[2].likes, undefined)
     await withFlag(undefined, () => assert.equal(withModelFacts(rows, { pool, schedule: () => assert.fail('no refresh when off') }), rows))
   } finally { facts.clear(); globalThis.__repoingHfModelCards = cards }
 }))

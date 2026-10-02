@@ -140,7 +140,8 @@ function ModelCard({ view, pending = false }) {
       <div><dt>Likes</dt><dd>{exactCount(view.likes)}</dd></div>
     </dl>
     {view.moved && <p className="model-card-note">This model’s Hugging Face path now leads to a different repository. The market stays tied to the original model, so no link or live figures are shown.</p>}
-    {!pending && !view.live && !view.moved && <p className="model-card-note">Live Hugging Face details are unavailable right now; showing what repo.ing recorded.</p>}
+    {view.missing && <p className="model-card-note">Hugging Face no longer shows this model publicly (it may be private, disabled or deleted); showing what repo.ing recorded.</p>}
+    {!pending && !view.live && !view.moved && !view.missing && <p className="model-card-note">Live Hugging Face details are unavailable right now; showing what repo.ing recorded.</p>}
     <ModelDisclaimer/>
   </div>
 }

@@ -70,14 +70,18 @@ export function returnPageUrl(mint, pct, origin = SITE_ORIGIN) {
   return `${tokenPageUrl(mint, origin)}/return/${returnParam(pct)}`
 }
 
-export function returnShareText({ symbol, fullName, pct }) {
-  const market = [symbol ? `$${String(symbol).slice(0, 20)}` : '', fullName ? `(${String(fullName).slice(0, 100)})` : ''].filter(Boolean).join(' ') || 'an open source repo'
-  return `${formatReturn(pct)} on ${market} — every trade pays the repo's builders @${X_HANDLE}`
+// source 'huggingface': as shareText, a model market's post names who it pays and carries the disclaimer.
+export function returnShareText({ symbol, fullName, pct, source = 'github' }) {
+  const model = source === 'huggingface'
+  const market = [symbol ? `$${String(symbol).slice(0, 20)}` : '', fullName ? `(${String(fullName).slice(0, model ? 80 : 100)})` : ''].filter(Boolean).join(' ')
+    || (model ? 'a Hugging Face model' : 'an open source repo')
+  return model ? `${formatReturn(pct)} on ${market} — every trade pays the model's owner @${X_HANDLE}. ${HF_DISCLAIMER_SHORT}`
+    : `${formatReturn(pct)} on ${market} — every trade pays the repo's builders @${X_HANDLE}`
 }
 
-export function xReturnShareUrl({ mint, symbol, fullName, percent, origin = SITE_ORIGIN }) {
+export function xReturnShareUrl({ mint, symbol, fullName, percent, source = 'github', origin = SITE_ORIGIN }) {
   const pct = sharedReturn(percent)
   if (!mint || pct === null) return null
-  const query = new URLSearchParams({ text: returnShareText({ symbol, fullName, pct }), url: returnPageUrl(mint, pct, origin) })
+  const query = new URLSearchParams({ text: returnShareText({ symbol, fullName, pct, source }), url: returnPageUrl(mint, pct, origin) })
   return `https://x.com/intent/post?${query}`
 }
