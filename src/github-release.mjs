@@ -1,3 +1,5 @@
+import { assertGithubRepoId } from './market-identity.mjs'
+
 // Public release metadata requires no extra GitHub App permissions. Cache both
 // releases and misses, share in-flight work, and honor the public API's budget.
 export function createReleaseReader({ fetchImpl = fetch, now = Date.now } = {}) {
@@ -5,6 +7,7 @@ export function createReleaseReader({ fetchImpl = fetch, now = Date.now } = {}) 
   let retryAt=0, windowStart=0, requests=0
   async function latest(repo) {
     if(!/^[1-9]\d*$/.test(String(repo.repoId))||!repo.owner||!repo.name)return null
+    assertGithubRepoId(repo.repoId)
     const key=`${repo.repoId}:${repo.owner}/${repo.name}`
     const previous=cache.get(key)
     if(previous?.expires>now())return previous.value

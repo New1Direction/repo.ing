@@ -1,5 +1,6 @@
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from './format.mjs'
 import { SITE_ORIGIN } from './share-links.mjs'
+import { isGithubRepoId } from '../../src/market-identity.mjs'
 
 // Public "Waiting for maintainers" board. Amounts are the market list's indexed builder fee credits
 // minus settled claims (`remaining`): the same figure Explore shows as "Builders earned". They are not
@@ -13,10 +14,11 @@ const X_URL_WEIGHT = 23
 const lamports = value => typeof value === 'string' && /^\d+$/.test(value) ? BigInt(value) : 0n
 
 // Waiting = nobody has verified GitHub admin access or bound a payout wallet, and fees are accruing.
-// Repositories whose maintainers asked not to be contacted (a dismissed invite) are never listed.
+// Repositories whose maintainers asked not to be contacted (a dismissed invite) are never listed. GitHub markets only
+// (decided by the id range, src/market-identity.mjs): the board asks maintainers to verify with GitHub.
 export function selectWaiting(markets = [], { optedOut = new Set(), limit = Infinity } = {}) {
   return markets
-    .filter(m => !m.beneficiaryWallet && !m.wasVerified && lamports(m.remaining) > 0n && !optedOut.has(String(m.repoId)))
+    .filter(m => isGithubRepoId(m.repoId) && !m.beneficiaryWallet && !m.wasVerified && lamports(m.remaining) > 0n && !optedOut.has(String(m.repoId)))
     .sort((a, b) => {
       const diff = lamports(b.remaining) - lamports(a.remaining)
       if (diff !== 0n) return diff > 0n ? 1 : -1

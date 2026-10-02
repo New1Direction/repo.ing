@@ -13,6 +13,7 @@ import { timed } from './server-timing.mjs'
 import { hasEarnedPromotion, showsNewRepoLabel } from './repo-quality.mjs'
 import { isOfficialLaunch } from './official-launch.mjs'
 import { githubTime } from '../../src/github.mjs'
+import { assertGithubRepoId, isMarketId } from '../../src/market-identity.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -84,7 +85,7 @@ async function loadMarkets() {
     const { rows } = await pool.query(`
       select m.github_repo_id::text as "repoId", m.mint, m.pool, m.token_name as "tokenName",
         m.token_symbol as "symbol", m.indexed_at as "indexedAt", m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet", r.owner, r.name,
-        r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks, r.github_created_at as "githubCreatedAt",
+        r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks, r.github_created_at as "githubCreatedAt", r.source,
         coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
         (coalesce(t.volume, 0) + coalesce(dv.volume, 0))::text as "volume24hLamports",
         b.wallet as "beneficiaryWallet", b.method as "beneficiaryMethod", exists (
@@ -177,7 +178,7 @@ async function singleMarket(column, value) {
       m.token_name as "tokenName", m.token_symbol as symbol, m.indexed_at as "indexedAt",
       m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
       m.verification_bonus_lamports::text as "verificationBonusLamports",
-      r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl",
+      r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.source,
       r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt", b.method as "beneficiaryMethod",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
@@ -212,8 +213,10 @@ export const marketByMint = cache(mint => timed('market', () => singleMarket('mi
 export const marketByRepo = cache(repoId => /^\d+$/.test(String(repoId))
   ? timed('market', () => singleMarket('github_repo_id', String(repoId))) : Promise.resolve({ market: null }))
 
+// Not a market id at all: unknown, as before. A Hugging Face market id is a caller bug and throws before GitHub is asked.
 export async function repositoryById(repoId) {
-  if (!/^\d+$/.test(String(repoId))) return null
+  if (!/^\d+$/.test(String(repoId)) || !isMarketId(repoId)) return null
+  assertGithubRepoId(repoId)
   const pool = database()
   let row = null
   if (pool) {

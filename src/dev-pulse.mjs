@@ -1,5 +1,6 @@
 import { githubApiHeaders } from './github-app-auth.mjs'
 import { githubTime } from './github.mjs'
+import { assertGithubRepoId } from './market-identity.mjs'
 
 // Dev Pulse collector: public GitHub activity for live markets' repositories, read by the worker. Every GitHub read is a
 // conditional request (If-None-Match), so an unchanged repository costs nothing against the rate limit; commits and merged
@@ -99,7 +100,7 @@ export function createPulseStore(pool) {
           (select h.stars_total from repo_pulse_star_hours h where h.github_repo_id = live.github_repo_id and h.hour < date_trunc('hour', now())
             order by h.hour desc limit 1) as "starsBefore"
         from (select distinct github_repo_id from markets where status = 'confirmed') live
-        join repositories r on r.github_repo_id = live.github_repo_id
+        join repositories r on r.github_repo_id = live.github_repo_id and r.source = 'github'
         left join repo_pulse_state s on s.github_repo_id = live.github_repo_id
         where not (live.github_repo_id::text = any($2::text[])) and (s.next_check_at is null or s.next_check_at <= now())
         order by s.next_check_at nulls first, live.github_repo_id limit $1`, [limit, [...excluded]])
@@ -179,6 +180,7 @@ export function createDevPulseCollector({ pool, store = createPulseStore(pool), 
   }
 
   async function check(row) {
+    assertGithubRepoId(row.repoId)
     const time = now(), etags = { ...row.etags }, events = []
     const state = { fullName: row.knownName ?? row.fullName, defaultBranch: row.defaultBranch, stars: row.stars, pushedAt: row.pushedAt,
       activityReadFor: row.activityReadFor, etags, hnCheckedAt: row.hnCheckedAt, checkedAt: iso(time), nextCheckAt: null, error: null }

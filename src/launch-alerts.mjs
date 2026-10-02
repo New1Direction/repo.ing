@@ -111,10 +111,11 @@ export function createLaunchAlertStore(pool) {
         and status in ('sending','sent','unknown') and updated_at > now() - interval '24 hours'`, [channel])
       return n
     },
-    // Oldest first: never-alerted markets and retryable failures on this channel.
+    // Oldest first: never-alerted markets and retryable failures on this channel. GitHub repositories only: the post links
+    // and describes a GitHub repository.
     async candidates({ channel, since, maxAgeMs, maxAttempts, limit, offset = 0 }) {
       const { rows } = await pool.query(`select ${MARKET_FIELDS}, a.id::text as "alertId" from markets m
-        join repositories r on r.github_repo_id=m.github_repo_id
+        join repositories r on r.github_repo_id=m.github_repo_id and r.source='github'
         left join graduation_observations o on o.github_repo_id=m.github_repo_id
         left join graduation_events e on e.github_repo_id=m.github_repo_id
         left join launch_alerts a on a.github_repo_id=m.github_repo_id and a.channel=$1

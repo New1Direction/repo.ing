@@ -1,5 +1,6 @@
 import { assertTrendIdentity, commitActivity, repoLink, DAY, TREND_FRESH_MS } from './trend-rules.mjs'
 import { safeGithubImageUrl } from './repo-logo.mjs'
+import { assertGithubRepoId } from './market-identity.mjs'
 
 // Public, read-only endpoints. No credential is sent to a third-party source.
 // Five repository refreshes + one search per half-hour <= 42 GitHub API calls/hour.
@@ -63,6 +64,7 @@ export function createTrendSources({ fetchImpl = fetch, now = () => Date.now(), 
     return { signals:collected,health }
   }
   async function observe(repository, expectedId) {
+    if (expectedId) assertGithubRepoId(expectedId)
     const canonical = repoLink(repository), endpoint=`https://api.github.com/repos/${canonical.slice('https://github.com/'.length)}`
     // Redirects are rejected; a rename must be re-resolved by immutable ID.
     let repo

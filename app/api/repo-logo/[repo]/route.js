@@ -2,6 +2,7 @@ import { database } from '../../../lib/server.mjs'
 import { githubApiHeaders } from '../../../../src/github-app-auth.mjs'
 import { repositoryAssetDirectory, repositoryLogoFromAssets, repositoryLogoFromReadme, safeGithubImageUrl } from '../../../../src/repo-logo.mjs'
 import { githubImageVariant, githubImageVariantResponse, imageWidthParam } from '../../../../src/token-image.mjs'
+import { assertGithubRepoId, isMarketId } from '../../../../src/market-identity.mjs'
 
 export const runtime = 'nodejs'
 const logoCache = new Map()
@@ -11,7 +12,7 @@ const imageResponse = target => new Response(null, { status: 302, headers: { Loc
 // ?w= serves a resized WebP for in-app avatars; without it the redirect stays canonical for token metadata.
 export async function GET(request, { params }) {
   const { repo } = await params
-  if (!/^\d+$/.test(repo)) return new Response(null, { status: 404 })
+  if (!/^\d+$/.test(repo) || !isMarketId(repo)) return new Response(null, { status: 404 })
   const width = request ? imageWidthParam(new URL(request.url).searchParams.get('w')) : null
   if (width === undefined) return new Response(null, { status: 400 })
   const target = await logoTarget(repo)
@@ -23,6 +24,7 @@ export async function GET(request, { params }) {
 }
 
 async function logoTarget(repo) {
+  assertGithubRepoId(repo)
   const cached = logoCache.get(repo)
   if (cached && cached.expiresAt > Date.now()) return cached.url
   const pool = database()

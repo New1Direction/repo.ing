@@ -1,4 +1,5 @@
 import { formatUnits } from '../app/lib/format.mjs'
+import { GITHUB_REPO_ID_MAX } from './market-identity.mjs'
 
 // Operator-reviewed invitations only. Nothing here posts to GitHub: the server
 // builds text and a prefilled issue link; the operator decides whether to use it.
@@ -63,6 +64,7 @@ export function createMaintainerInvites({ pool, verifiedFee, repoMeta, env = pro
   const list = async () => {
     // Recorded remaining equals the verified on-chain fee whenever reconciliation
     // matches, so it bounds which markets need the slower chain check.
+    // GitHub repositories only (an invite is a GitHub issue). The id range is what repositories.source records (0049).
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", r.full_name as "fullName", r.stars,
         coalesce(c.total,0) - coalesce(s.total,0) as recorded
       from markets m join repositories r on r.github_repo_id=m.github_repo_id
@@ -70,6 +72,7 @@ export function createMaintainerInvites({ pool, verifiedFee, repoMeta, env = pro
       left join (select github_repo_id, sum(amount_base_units) as total from repo_claims where status='settled' group by 1) s on s.github_repo_id=m.github_repo_id
       left join maintainer_invites i on i.github_repo_id=m.github_repo_id
       where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and not r.archived
+        and m.github_repo_id <= ${GITHUB_REPO_ID_MAX}
         and not exists (select 1 from repo_beneficiaries b where b.github_repo_id=m.github_repo_id)
         and not exists (select 1 from repo_claims x where x.github_repo_id=m.github_repo_id and x.status<>'aborted')
         and not exists (select 1 from repository_participation p where p.github_repo_id=m.github_repo_id)

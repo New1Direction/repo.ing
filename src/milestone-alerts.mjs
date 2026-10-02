@@ -56,11 +56,11 @@ export function createMilestoneAlertStore(pool) {
         and status in ('sending','sent','unknown') and updated_at > now() - interval '24 hours'`, [channel])
       return n
     },
-    // Raw graduation rows for every public market with a VERIFIED observation; freshness is checked per row in JS.
+    // Raw graduation rows for every public GitHub market with a VERIFIED observation; freshness is checked per row in JS.
     async progressRows() {
       const { rows } = await pool.query(`select m.github_repo_id::text as "githubRepoId", m.mint, m.token_symbol as "tokenSymbol",
           r.full_name as "fullName", o.status, o.observation, o.error_code, e.evidence_hash as migration_evidence_hash
-        from markets m join repositories r on r.github_repo_id=m.github_repo_id
+        from markets m join repositories r on r.github_repo_id=m.github_repo_id and r.source='github'
         join graduation_observations o on o.github_repo_id=m.github_repo_id
         left join graduation_events e on e.github_repo_id=m.github_repo_id
         where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.mint is not null and o.status='VERIFIED'
