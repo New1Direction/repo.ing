@@ -16,6 +16,8 @@ graduation-guards
 graduation-migration
 graduation-race-db
 graduation-readiness
+hf-launch-chain
+hf-launch-db
 launch-chain
 launch-coordinator
 launch-curve
