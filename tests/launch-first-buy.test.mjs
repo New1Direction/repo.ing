@@ -8,6 +8,7 @@ import { createMeteoraLauncher } from '../src/meteora-launch.mjs'
 import { canonicalTradeEvents } from '../src/trade-evidence.mjs'
 import { launchBuyPreset, launchBuyQuote } from '../src/launch-buy.mjs'
 import { estimateLaunchCosts } from '../src/launch-costs.mjs'
+import { readLaunchComputeBudget } from '../src/launch-wallet-fees.mjs'
 
 for (const profile of ['legacy', 'balanced', 'builders']) test(`${profile}: first buy is atomic, bounded to 3%, and yields a chart trade`, async () => {
   const rpc = process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899'
@@ -45,6 +46,14 @@ for (const profile of ['legacy', 'balanced', 'builders']) test(`${profile}: firs
   })
   assert.equal(costs.initialBuy, initialBuyLamports)
   assert.ok(BigInt(costs.accountDeposits) > 0n)
+  // The reviewed message carries the priority fee: limit sized from the launch simulation (not 1.4M CU), price from
+  // recent fees, and the network-fee line is three signatures plus exactly that fee.
+  const budget = readLaunchComputeBudget(prepared.transaction.instructions)
+  assert.equal(budget.limit, prepared.priorityFee.computeUnitLimit)
+  assert.ok(budget.limit >= 150_000 && budget.limit < 400_000, `compute limit ${budget.limit}`)
+  assert.ok(BigInt(costs.priorityFee) > 0n && BigInt(costs.priorityFee) <= 1_000_000n)
+  assert.equal(costs.priorityFee, prepared.priorityFee.lamports)
+  assert.equal(BigInt(costs.networkFee), 15_000n + BigInt(costs.priorityFee))
   const before = await connection.getBalance(payer.publicKey, 'confirmed')
   await launcher.submit({ ...signed, blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight })
   const after = await connection.getBalance(payer.publicKey, 'confirmed')
@@ -59,6 +68,7 @@ for (const profile of ['legacy', 'balanced', 'builders']) test(`${profile}: firs
   }
   assert.ok(tx, 'launch and first buy must finalize')
   assert.equal(String(tx.meta.fee), costs.networkFee)
+  assert.ok(tx.meta.computeUnitsConsumed > 0 && tx.meta.computeUnitsConsumed <= budget.limit)
   const events = canonicalTradeEvents(tx, { mint: prepared.mint, pool: prepared.pool, signature: signed.signature }, config, dbc)
   assert.equal(events.length, 1)
   assert.equal(events[0].direction, 'buy')

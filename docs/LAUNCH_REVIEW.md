@@ -18,6 +18,15 @@ Token decimals are six. The first buy and pool creation remain a single transact
 
 Unsigned mainnet simulation of a no-buy launch returned a 15,000-lamport network fee, 20,581,640 lamports of account deposits, and a total of 20,596,640 lamports. These are estimates at the checked state, not hard-coded prices. The then-current wallet balance of 34,078,750 lamports was insufficient for Max 3% plus setup, and simulation correctly blocked it. No mainnet launch was sent.
 
+### Priority fee (2026-10-01)
+
+Launches used to set a 1.4M compute-unit limit at price 0, so they could stall behind priority traffic. The reviewed message now carries a priced budget, set once before review (`src/launch-wallet-fees.mjs`):
+
+- **Limit:** a zero-price probe of the same message is simulated; the limit is the units consumed × 1.2, at least +40k for wallet-appended Lighthouse assertions (floor 100k, ceiling 1.4M; 400k if the probe fails). Local-validator launches consume about 100k units without a first buy and 160-200k with one.
+- **Price:** the trades' estimate (`src/trade-landing.mjs`): the p75 of recent non-zero prioritization fees on the launch's writable accounts (Helius's `High` estimate on Helius), clamped to 200,000-2,000,000 microlamports per unit, 500,000 if unavailable.
+- **Cap:** limit × price never exceeds 1,000,000 lamports (0.001 SOL), the trades' cap; above a 500k limit the price is lowered to fit.
+- **Review:** `getFeeForMessage` and the simulated wallet debit both include the priority fee. The network-fee line shows it ("Includes … priority fee") and must cover one base fee per signature plus that fee, otherwise the review is refused. The total is still exactly the wallet debit.
+
 ## Verification
 
 - Four focused cost/evidence tests passed: integer arithmetic, no double-counted trading fee, and missing/unsafe/contradictory simulation evidence.

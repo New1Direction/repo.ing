@@ -5,7 +5,7 @@ import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { launchBuyQuote } from './launch-buy.mjs'
 import { isApprovedLaunchFee } from './launch-fee.mjs'
-import { setLaunchWalletFees } from './launch-wallet-fees.mjs'
+import { withLaunchPriorityFee } from './launch-wallet-fees.mjs'
 import { matchesReviewedLaunch } from './launch-wallet-assertions.mjs'
 
 export class DefinitiveLaunchError extends Error {}
@@ -68,17 +68,16 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
         payer: launcher, poolCreator: creator.publicKey,
       }
       const buy = launchBuyQuote(client, fixed, initialBuyLamports)
-      const tx = buy ? await client.creator.createPoolWithFirstBuy({ createPoolParam,
+      const built = buy ? await client.creator.createPoolWithFirstBuy({ createPoolParam,
         firstBuyParam: { buyer: launcher, buyAmount: new BN(initialBuyLamports),
           minimumAmountOut: buy.minimumAmountOut, referralTokenAccount: null } })
         : await client.creator.createPool(createPoolParam)
-      setLaunchWalletFees(tx)
       const latest = await connection.getLatestBlockhash('confirmed')
-      tx.feePayer = launcher
-      tx.recentBlockhash = latest.blockhash
+      const { transaction: tx, ...landing } = await withLaunchPriorityFee(connection, built, { feePayer: launcher, blockhash: latest.blockhash })
       return {
         mint: mint.publicKey.toBase58(), pool: pool.toBase58(), initialBuyOutput: buy?.outputAmount.toString() ?? null,
         blockhash: latest.blockhash, lastValidBlockHeight: BigInt(latest.lastValidBlockHeight),
+        priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() },
         // For a review persisted across requests: the unsigned transaction the wallet reviews and the mint secret,
         // which the caller must store only sealed (src/launch-sessions.mjs).
         transaction: tx, mintSecretKey: mint.secretKey,

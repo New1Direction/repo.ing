@@ -211,9 +211,9 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       <p>{name} · {symbol}{review.quote ? ` · ≈ ${(review.quote.supplyBps / 100).toFixed(2)}% initial allocation` : ' · No initial buy'}</p>
       <dl><div><dt>Initial buy <small>Trading fee included</small></dt><dd>{sol(review.costs.initialBuy)}</dd></div>
         <div><dt>Launch account deposits</dt><dd>{sol(review.costs.accountDeposits)}</dd></div>
-        <div><dt>Network fee</dt><dd>{sol(review.costs.networkFee)}</dd></div>
+        <div><dt>Network fee{BigInt(review.costs.priorityFee ?? '0') > 0n && <small>Includes {sol(review.costs.priorityFee)} priority fee</small>}</dt><dd>{sol(review.costs.networkFee)}</dd></div>
         <div className="launch-review-total"><dt>Estimated total</dt><dd>{sol(review.costs.total)}</dd></div></dl>
-      <p>The launch and any initial buy happen together. Check the final amount in your wallet.</p>
+      <p>The launch and any initial buy happen together. The priority fee helps it land when Solana is busy. Check the final amount in your wallet.</p>
       {expired && <p role="status">This review expired. Edit and review again for a fresh transaction.</p>}
       <div className="launch-review-actions"><button type="button" className="button primary" onClick={approve} disabled={busy || expired || wallet !== review.wallet}>{busy ? stage : 'Approve in wallet'}</button>
         <button type="button" className="button outline" disabled={busy} onClick={() => edit(expired)}>{expired ? 'Refresh review' : 'Edit launch'}</button></div>
