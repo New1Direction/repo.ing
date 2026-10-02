@@ -426,31 +426,65 @@ export const repoVerifications = pgTable('repo_verifications', {
   check('repo_verifications_admin_check', sql`${table.permission} = 'admin'`),
 ])
 
+// Migrations 0050/0051: who is behind a binding, a pasted address or a maintainer decision. A GitHub row names a GitHub
+// user id; a Hugging Face row names Hugging Face subjects (24-hex _ids: the signed-in user's OIDC sub and, for payouts, the
+// model owner's _id at the time). Exactly one kind per row, matching the market id's source.
+const sourceRange = (name, t) => check(name, sql`(${t.authoritySource} = 'github' and ${t.githubRepoId} < 4503599627370496) or (${t.authoritySource} = 'huggingface' and ${t.githubRepoId} between 4503599627370497 and 7000000000000000)`)
+const bindingAuthority = (name, t) => check(name, sql`(${t.authoritySource} = 'github' and ${t.githubUserId} is not null and ${t.authoritySubject} is null and ${t.authorityOwnerSubject} is null) or (${t.authoritySource} = 'huggingface' and ${t.githubUserId} is null and ${t.authoritySubject} is not null and ${t.authoritySubject} ~ '^[0-9a-f]{24}$' and ${t.authorityOwnerSubject} is not null and ${t.authorityOwnerSubject} ~ '^[0-9a-f]{24}$')`)
+
+// A fresh Hugging Face authority check (0051, src/hf-verification.mjs), the model-market counterpart of repo_verifications.
+export const modelVerifications = pgTable('model_verifications', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  hfId: char('hf_id', { length: 24 }).notNull(), subject: char('subject', { length: 24 }).notNull(), username: text('username').notNull(),
+  ownerKind: varchar('owner_kind', { length: 8 }).notNull(), ownerSubject: char('owner_subject', { length: 24 }).notNull(),
+  role: varchar('role', { length: 16 }).notNull(),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('model_verifications_recent').on(t.githubRepoId, t.subject, t.verifiedAt),
+  check('model_verifications_market_range', sql`${t.githubRepoId} between 4503599627370497 and 7000000000000000`),
+  check('model_verifications_hf_id_check', sql`${t.hfId} ~ '^[0-9a-f]{24}$'`),
+  check('model_verifications_subject_check', sql`${t.subject} ~ '^[0-9a-f]{24}$' and ${t.ownerSubject} ~ '^[0-9a-f]{24}$'`),
+  check('model_verifications_username_check', sql`char_length(${t.username}) between 1 and 100`),
+  check('model_verifications_role_check', sql`(${t.ownerKind} = 'user' and ${t.role} = 'owner' and ${t.ownerSubject} = ${t.subject}) or (${t.ownerKind} = 'org' and ${t.role} = 'admin' and ${t.ownerSubject} <> ${t.subject})`)])
+
 export const walletBindingChallenges = pgTable('wallet_binding_challenges', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
-  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  // Null for a Hugging Face challenge (0051).
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }),
   wallet: varchar('wallet', { length: 44 }).notNull(),
   nonce: varchar('nonce', { length: 64 }).notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   consumedAt: timestamp('consumed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  authoritySource: varchar('authority_source', { length: 16 }).default('github').notNull(),
+  authoritySubject: char('authority_subject', { length: 24 }),
+  authorityOwnerSubject: char('authority_owner_subject', { length: 24 }),
 }, (table) => [
   uniqueIndex('wallet_binding_challenges_nonce_unique').on(table.nonce),
+  bindingAuthority('wallet_binding_challenges_authority_check', table),
+  check('wallet_binding_challenges_hf_range', sql`${table.authoritySource} <> 'huggingface' or ${table.githubRepoId} between 4503599627370497 and 7000000000000000`),
 ])
 
 // The repository's one active payout binding, read by every payout path. method (0048): 'signature' (the wallet signed
 // a binding message; instant) or 'pasted' (a pasted address, written here only when its request activates after the
-// hold; a database trigger rejects any other pasted row).
+// hold; a database trigger rejects any other pasted row). A model market's binding (0051) names the Hugging Face user who
+// made it and the model owner's _id at the time; claims refuse it once the model has another owner (src/claim.mjs).
 export const repoBeneficiaries = pgTable('repo_beneficiaries', {
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).primaryKey().references(() => repositories.githubRepoId),
-  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  // Null for a Hugging Face binding (0051).
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }),
   wallet: varchar('wallet', { length: 44 }).notNull(),
   boundAt: timestamp('bound_at', { withTimezone: true }).defaultNow().notNull(),
   method: varchar('method', { length: 16 }).default('signature').notNull(),
   payoutRequestId: bigint('payout_request_id', { mode: 'bigint' }).references(() => payoutAddressRequests.id),
+  authoritySource: varchar('authority_source', { length: 16 }).default('github').notNull(),
+  authoritySubject: char('authority_subject', { length: 24 }),
+  authorityOwnerSubject: char('authority_owner_subject', { length: 24 }),
 }, table => [
   check('repo_beneficiaries_method_check', sql`(${table.method} = 'signature' and ${table.payoutRequestId} is null) or (${table.method} = 'pasted' and ${table.payoutRequestId} is not null)`),
+  bindingAuthority('repo_beneficiaries_authority_check', table),
+  sourceRange('repo_beneficiaries_source_range', table),
 ])
 
 // Pasted payout addresses waiting out their hold (0048, src/payout-address.mjs). At most one pending request per
@@ -460,7 +494,8 @@ export const payoutAddressRequests = pgTable('payout_address_requests', {
   id: bigserial('id', { mode: 'bigint' }).primaryKey(),
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
   wallet: varchar('wallet', { length: 44 }).notNull(),
-  requestedByGithubUserId: bigint('requested_by_github_user_id', { mode: 'bigint' }).notNull(),
+  // Null for a Hugging Face request (0051), which names requested_by_subject and requested_by_owner_subject instead.
+  requestedByGithubUserId: bigint('requested_by_github_user_id', { mode: 'bigint' }),
   requestedByLogin: text('requested_by_login').notNull(),
   requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
   activeAt: timestamp('active_at', { withTimezone: true }).notNull(),
@@ -470,7 +505,13 @@ export const payoutAddressRequests = pgTable('payout_address_requests', {
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),
   resolvedByGithubUserId: bigint('resolved_by_github_user_id', { mode: 'bigint' }),
   resolutionReason: text('resolution_reason'),
+  authoritySource: varchar('authority_source', { length: 16 }).default('github').notNull(),
+  requestedBySubject: char('requested_by_subject', { length: 24 }),
+  requestedByOwnerSubject: char('requested_by_owner_subject', { length: 24 }),
+  resolvedBySubject: char('resolved_by_subject', { length: 24 }),
 }, table => [
+  check('payout_address_requests_authority_check', sql`(${table.authoritySource} = 'github' and ${table.requestedByGithubUserId} is not null and ${table.requestedBySubject} is null and ${table.requestedByOwnerSubject} is null and ${table.resolvedBySubject} is null) or (${table.authoritySource} = 'huggingface' and ${table.requestedByGithubUserId} is null and ${table.resolvedByGithubUserId} is null and ${table.requestedBySubject} is not null and ${table.requestedBySubject} ~ '^[0-9a-f]{24}$' and ${table.requestedByOwnerSubject} is not null and ${table.requestedByOwnerSubject} ~ '^[0-9a-f]{24}$' and (${table.resolvedBySubject} is null or ${table.resolvedBySubject} ~ '^[0-9a-f]{24}$'))`),
+  sourceRange('payout_address_requests_source_range', table),
   uniqueIndex('payout_address_requests_one_pending').on(table.githubRepoId).where(sql`${table.status} = 'pending'`),
   index('payout_address_requests_due').on(table.activeAt).where(sql`${table.status} = 'pending'`),
   check('payout_address_requests_status_check', sql`${table.status} in ('pending', 'activated', 'cancelled', 'superseded')`),
@@ -493,10 +534,12 @@ export const payoutAddressEvents = pgTable('payout_address_events', {
   wallet: varchar('wallet', { length: 44 }).notNull(),
   previousWallet: varchar('previous_wallet', { length: 44 }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  // The Hugging Face user behind an event on a model market (0051); github_user_id is null then.
+  actorSubject: char('actor_subject', { length: 24 }),
 }, table => [
   index('payout_address_events_repo').on(table.githubRepoId, table.createdAt),
   check('payout_address_events_event_check', sql`${table.event} in ('requested', 'cancelled', 'superseded', 'activated')`),
-  check('payout_address_events_actor_check', sql`(${table.event} = 'activated') = (${table.githubUserId} is null)`),
+  check('payout_address_events_actor_check', sql`(${table.event} = 'activated') = (${table.githubUserId} is null and ${table.actorSubject} is null) and (${table.githubUserId} is null or ${table.githubRepoId} < 4503599627370496) and (${table.actorSubject} is null or (${table.actorSubject} ~ '^[0-9a-f]{24}$' and ${table.githubRepoId} between 4503599627370497 and 7000000000000000))`),
 ])
 
 export const builderAllocationClaims = pgTable('builder_allocation_claims', {
@@ -540,17 +583,22 @@ export const maintainerInvites = pgTable('maintainer_invites', {
 
 // Maintainer decisions: a current GitHub admin declined the repository's market or opted the repository out of repo.ing
 // (see drizzle/0041_maintainer_opt_outs.sql, src/maintainer-opt-outs.mjs). At most one active (not withdrawn) per repository.
+// A Hugging Face model's decision (0050) is keyed by its registry market id and names Hugging Face subjects, not GitHub users.
 export const maintainerOptOuts = pgTable('maintainer_opt_outs', {
   id: bigserial('id', { mode: 'bigint' }).primaryKey(), githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
-  kind: varchar('kind', { length: 16 }).notNull(), githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(), note: text('note'),
+  kind: varchar('kind', { length: 16 }).notNull(), githubUserId: bigint('github_user_id', { mode: 'bigint' }), note: text('note'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
   withdrawnByGithubUserId: bigint('withdrawn_by_github_user_id', { mode: 'bigint' }),
+  authoritySource: varchar('authority_source', { length: 16 }).default('github').notNull(),
+  actorSubject: char('actor_subject', { length: 24 }), withdrawnBySubject: char('withdrawn_by_subject', { length: 24 }),
 }, t => [uniqueIndex('maintainer_opt_outs_one_active').on(t.githubRepoId).where(sql`${t.withdrawnAt} is null`),
   check('maintainer_opt_outs_github_repo_id_check', sql`${t.githubRepoId} > 0`), check('maintainer_opt_outs_kind_check', sql`${t.kind} in ('decline', 'opt_out')`),
   check('maintainer_opt_outs_github_user_id_check', sql`${t.githubUserId} > 0`),
   check('maintainer_opt_outs_note_check', sql`${t.note} is null or char_length(${t.note}) between 1 and 280`),
   check('maintainer_opt_outs_withdrawn_by_github_user_id_check', sql`${t.withdrawnByGithubUserId} > 0`),
-  check('maintainer_opt_outs_withdrawn_check', sql`(${t.withdrawnAt} is null) = (${t.withdrawnByGithubUserId} is null) and (${t.withdrawnAt} is null or ${t.withdrawnAt} >= ${t.createdAt})`)])
+  check('maintainer_opt_outs_actor_check', sql`(${t.authoritySource} = 'github' and ${t.githubUserId} is not null and ${t.actorSubject} is null and ${t.withdrawnBySubject} is null) or (${t.authoritySource} = 'huggingface' and ${t.githubUserId} is null and ${t.withdrawnByGithubUserId} is null and ${t.actorSubject} is not null and ${t.actorSubject} ~ '^[0-9a-f]{24}$' and (${t.withdrawnBySubject} is null or ${t.withdrawnBySubject} ~ '^[0-9a-f]{24}$'))`),
+  sourceRange('maintainer_opt_outs_source_range', t),
+  check('maintainer_opt_outs_withdrawn_check', sql`(${t.withdrawnAt} is null) = (${t.withdrawnByGithubUserId} is null and ${t.withdrawnBySubject} is null) and (${t.withdrawnByGithubUserId} is null or ${t.withdrawnBySubject} is null) and (${t.withdrawnAt} is null or ${t.withdrawnAt} >= ${t.createdAt})`)])
 
 export const repoClaims = pgTable('repo_claims', {
   id: serial('id').primaryKey(),

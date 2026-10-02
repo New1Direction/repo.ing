@@ -330,6 +330,20 @@
       "when": 1790910009000,
       "tag": "0049_market_source",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1790910010000,
+      "tag": "0050_model_opt_outs",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1790910011000,
+      "tag": "0051_model_authority",
+      "breakpoints": true
     }
   ]
 }
