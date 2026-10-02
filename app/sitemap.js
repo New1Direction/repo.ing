@@ -1,4 +1,5 @@
 import { database } from './lib/server.mjs'
+import { shownMarkets } from './lib/hf-markets.mjs'
 
 const SITE = 'https://repo.ing'
 // Public, indexable pages. /builders and /wallet are noindex; operator and claim pages are private.
@@ -15,10 +16,11 @@ async function tokenPages() {
   const pool = database()
   if (!pool) return []
   try {
-    const { rows } = await pool.query(`select mint, indexed_at as "indexedAt" from markets
+    const { rows } = await pool.query(`select github_repo_id::text as "repoId", mint, indexed_at as "indexedAt" from markets
       where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized'
       order by indexed_at desc limit 5000`)
-    return rows.map(row => ({ url: `${SITE}/token/${row.mint}`, lastModified: row.indexedAt, changeFrequency: 'hourly', priority: 0.8 }))
+    // Model token pages exist only with HF_MARKETS_ENABLED.
+    return shownMarkets(rows).map(row => ({ url: `${SITE}/token/${row.mint}`, lastModified: row.indexedAt, changeFrequency: 'hourly', priority: 0.8 }))
   } catch (error) {
     console.error('sitemap token query failed', { error: error.message })
     return []
