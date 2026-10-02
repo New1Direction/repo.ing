@@ -1,0 +1,67 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/models/openai-community/gpt2/discussions",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=463;t=39",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300"
+  },
+  "body": {
+    "discussions": [
+      {
+        "num": 184,
+        "author": {
+          "name": "xrachelburns",
+          "type": "user"
+        },
+        "repo": {
+          "name": "openai-community/gpt2",
+          "type": "model"
+        },
+        "title": "Update README.md",
+        "status": "open",
+        "createdAt": "2026-09-12T04:23:39.000Z",
+        "isPullRequest": true,
+        "numComments": 1,
+        "topReactions": [],
+        "numReactionUsers": 0,
+        "pinned": false,
+        "repoOwner": {
+          "name": "openai-community",
+          "isParticipating": false,
+          "type": "org",
+          "isDiscussionAuthor": false
+        }
+      },
+      {
+        "num": 150,
+        "author": {
+          "name": "SECONDACCOUNT69",
+          "type": "user"
+        },
+        "repo": {
+          "name": "openai-community/gpt2",
+          "type": "model"
+        },
+        "title": "Fix typo in model card",
+        "status": "closed",
+        "createdAt": "2026-02-28T14:01:43.000Z",
+        "isPullRequest": false,
+        "numComments": 3,
+        "topReactions": [],
+        "numReactionUsers": 0,
+        "pinned": false,
+        "repoOwner": {
+          "name": "openai-community",
+          "isParticipating": false,
+          "type": "org",
+          "isDiscussionAuthor": false
+        }
+      }
+    ],
+    "count": 183,
+    "start": 0,
+    "numClosedDiscussions": 77
+  }
+}

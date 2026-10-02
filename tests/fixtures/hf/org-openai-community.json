@@ -1,0 +1,27 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/organizations/openai-community/overview",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=474;t=142",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300"
+  },
+  "body": {
+    "_id": "659ebc82b61dd9658802f398",
+    "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/5dd96eb166059660ed1ee413/9NY4jfufqo1uyv8oNXQju.png",
+    "fullname": "OpenAI community",
+    "name": "openai-community",
+    "details": "This organization is maintained by the transformers team at Hugging Face and contains the historical (pre-\"Hub\") checkpoints like openai-gpt (\"GPT-1\"), gpt2, gpt2-medium, gpt2-large, gpt2-xl.",
+    "isVerified": false,
+    "isFollowing": false,
+    "numUsers": 2,
+    "numModels": 7,
+    "numSpaces": 0,
+    "numDatasets": 0,
+    "numKernels": 0,
+    "numBuckets": 0,
+    "numPapers": 0,
+    "numFollowers": 2408
+  }
+}

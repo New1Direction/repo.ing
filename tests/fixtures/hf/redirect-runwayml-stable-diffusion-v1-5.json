@@ -1,0 +1,11 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/models/runwayml/stable-diffusion-v1-5",
+  "status": 307,
+  "headers": {
+    "location": "/api/models/stable-diffusion-v1-5/stable-diffusion-v1-5",
+    "ratelimit": "\"api\";r=489;t=225",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300"
+  },
+  "body": null
+}

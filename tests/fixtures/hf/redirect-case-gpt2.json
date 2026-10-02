@@ -1,0 +1,11 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/models/OpenAI-Community/GPT2",
+  "status": 307,
+  "headers": {
+    "location": "/api/models/openai-community/gpt2",
+    "ratelimit": "\"api\";r=487;t=221",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300"
+  },
+  "body": null
+}

@@ -1,0 +1,274 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/trending?type=model&limit=20",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=459;t=30",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300"
+  },
+  "body": {
+    "recentlyTrending": [
+      {
+        "repoData": {
+          "author": "convaiinnovations",
+          "authorData": {
+            "_id": "64c213a5ec3c61813527cad5",
+            "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/64c213a5ec3c61813527cad5/RHtP6iyU-zbrMQnJfVZLp.jpeg",
+            "fullname": "Convai Innovations",
+            "name": "convaiinnovations",
+            "type": "user",
+            "isPro": false,
+            "isHf": false,
+            "isHfAdmin": false,
+            "isMod": false,
+            "followerCount": 870,
+            "isUserFollowing": false
+          },
+          "downloads": 0,
+          "gated": false,
+          "id": "convaiinnovations/laya",
+          "availableInferenceProviders": [],
+          "isLikedByUser": false,
+          "lastModified": "2026-09-24T05:39:22.000Z",
+          "likes": 4939,
+          "pipeline_tag": "text-classification",
+          "private": false,
+          "repoType": "model",
+          "widgetOutputUrls": [],
+          "numParameters": 421293830
+        },
+        "repoType": "model"
+      },
+      {
+        "repoData": {
+          "author": "Cloudflare",
+          "authorData": {
+            "_id": "64e8b5365ddcace745c8958b",
+            "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/650bb539ba3bc336065efadd/kMhNB7BzPxsPBeg0Kc982.png",
+            "fullname": "Cloudflare",
+            "name": "Cloudflare",
+            "type": "org",
+            "isHf": false,
+            "isHfAdmin": false,
+            "isMod": false,
+            "plan": "team",
+            "followerCount": 429,
+            "isUserFollowing": false
+          },
+          "downloads": 824,
+          "gated": false,
+          "id": "Cloudflare/clef",
+          "availableInferenceProviders": [],
+          "isLikedByUser": false,
+          "lastModified": "2026-10-01T15:23:46.000Z",
+          "likes": 679,
+          "pipeline_tag": "image-text-to-text",
+          "private": false,
+          "repoType": "model",
+          "widgetOutputUrls": [],
+          "numParameters": 27356728560
+        },
+        "repoType": "model"
+      },
+      {
+        "repoData": {
+          "author": "Qwen",
+          "authorData": {
+            "_id": "64c8b5837fe12ecd0a7e92eb",
+            "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/6215ca5692c0ecfba9186921/hrRM50-6XcdWgg2AKpENG.jpeg",
+            "fullname": "Qwen",
+            "name": "Qwen",
+            "type": "org",
+            "isHf": false,
+            "isHfAdmin": false,
+            "isMod": false,
+            "plan": "team",
+            "followerCount": 108112,
+            "isUserFollowing": false
+          },
+          "downloads": 81738,
+          "gated": false,
+          "id": "Qwen/Qwen-Image-2.1",
+          "availableInferenceProviders": [],
+          "isLikedByUser": false,
+          "lastModified": "2026-09-30T02:14:09.000Z",
+          "likes": 2821,
+          "pipeline_tag": "text-to-image",
+          "private": false,
+          "repoType": "model",
+          "numParameters": 7115124736
+        },
+        "repoType": "model"
+      },
+      {
+        "repoData": {
+          "author": "Lightricks",
+          "authorData": {
+            "_id": "628378625d21028fbbddddf8",
+            "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/669524bcbcd81f395e8f60f6/0ynfqKEWMh_dn3h4ff1K5.png",
+            "fullname": "LTX.io",
+            "name": "Lightricks",
+            "type": "org",
+            "isHf": false,
+            "isHfAdmin": false,
+            "isMod": false,
+            "plan": "team",
+            "followerCount": 5596,
+            "isUserFollowing": false
+          },
+          "downloads": 1584129,
+          "gated": "auto",
+          "id": "Lightricks/LTX-2.5",
+          "availableInferenceProviders": [],
+          "isLikedByUser": false,
+          "lastModified": "2026-09-01T06:29:03.000Z",
+          "likes": 5934,
+          "pipeline_tag": "image-to-video",
+          "private": false,
+          "repoType": "model"
+        },
+        "repoType": "model"
+      },
+      {
+        "repoData": {
+          "author": "nvidia",
+          "authorData": {
+            "_id": "60262b67268c201cdc8b7d43",
+            "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/65df9200dc3292a8983e5017/Vs5FPVCH-VZBipV3qKTuy.png",
+            "fullname": "NVIDIA",
+            "name": "nvidia",
+            "type": "org",
+            "isHf": false,
+            "isHfAdmin": false,
+            "isMod": false,
+            "plan": "plus",
+            "followerCount": 70104,
+            "isUserFollowing": false
+          },
+          "downloads": 44350,
+          "gated": false,
+          "id": "nvidia/Nemotron-3-Diarization",
+          "availableInferenceProviders": [],
+          "isLikedByUser": false,
+          "lastModified": "2026-09-24T05:52:51.000Z",
+          "likes": 619,
+          "pipeline_tag": "voice-activity-detection",
+          "private": false,
+          "repoType": "model",
+          "numParameters": 99226504
+        },
+        "repoType": "model"
+      },
+      {
+        "repoData": {
+          "author": "deepseek-ai",
+          "authorData": {
+            "_id": "652faff917096ceb6bf53f3f",
+            "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/6538815d1bdb3c40db94fbfa/xMBly9PUMphrFVMxLX4kq.png",
+            "fullname": "DeepSeek",
+            "name": "deepseek-ai",
+            "type": "org",
+            "isHf": false,
+            "isHfAdmin": false,
+            "isMod": false,
+            "followerCount": 148368,
+            "isUserFollowing": false
+          },
+          "downloads": 767871,
+          "gated": false,
+          "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+          "availableInferenceProviders": [
+            {
+              "provider": "novita",
+              "modelStatus": "live",
+              "providerStatus": "live",
+              "providerId": "deepseek/deepseek-v4.1-flash",
+              "task": "conversational",
+              "adapterWeightsPath": "model-00001-of-00048.safetensors",
+              "features": {
+                "structuredOutput": false,
+                "toolCalling": true
+              },
+              "isCheapestPricingOutput": false,
+              "isFastestThroughput": false,
+              "isModelAuthor": false,
+              "tokensPerSecond": 89.1589942408444,
+              "pricingOutput": 1.2
+            },
+            {
+              "provider": "fireworks-ai",
+              "modelStatus": "live",
+              "providerStatus": "live",
+              "providerId": "accounts/fireworks/models/deepseek-v4p1-flash",
+              "task": "conversational",
+              "adapterWeightsPath": "model-00001-of-00048.safetensors",
+              "features": {
+                "structuredOutput": true,
+                "toolCalling": true
+              },
+              "isCheapestPricingOutput": false,
+              "isFastestThroughput": false,
+              "isModelAuthor": false,
+              "tokensPerSecond": 61.14770398335149
+            },
+            {
+              "provider": "featherless-ai",
+              "modelStatus": "live",
+              "providerStatus": "live",
+              "providerId": "deepseek-ai/DeepSeek-V4.1-Flash",
+              "task": "conversational",
+              "adapterWeightsPath": "model-00001-of-00048.safetensors",
+              "isCheapestPricingOutput": false,
+              "isFastestThroughput": false,
+              "isModelAuthor": false
+            },
+            {
+              "provider": "deepinfra",
+              "modelStatus": "live",
+              "providerStatus": "live",
+              "providerId": "deepseek-ai/DeepSeek-V4.1-Flash",
+              "task": "conversational",
+              "adapterWeightsPath": "model-00001-of-00048.safetensors",
+              "features": {
+                "structuredOutput": true,
+                "toolCalling": true
+              },
+              "isCheapestPricingOutput": true,
+              "isFastestThroughput": false,
+              "isModelAuthor": false,
+              "tokensPerSecond": 29.688887330089063,
+              "pricingOutput": 0.6
+            },
+            {
+              "provider": "baseten",
+              "modelStatus": "live",
+              "providerStatus": "live",
+              "providerId": "deepseek-ai/DeepSeek-V4.1-Flash",
+              "task": "conversational",
+              "adapterWeightsPath": "model-00001-of-00048.safetensors",
+              "features": {
+                "structuredOutput": true,
+                "toolCalling": true
+              },
+              "isCheapestPricingOutput": false,
+              "isFastestThroughput": true,
+              "isModelAuthor": false,
+              "tokensPerSecond": 98.53187506158243,
+              "pricingOutput": 1.2
+            }
+          ],
+          "isLikedByUser": false,
+          "lastModified": "2026-10-01T05:56:24.000Z",
+          "likes": 4010,
+          "pipeline_tag": "image-text-to-text",
+          "private": false,
+          "repoType": "model",
+          "widgetOutputUrls": [],
+          "numParameters": 763205315794
+        },
+        "repoType": "model"
+      }
+    ]
+  }
+}

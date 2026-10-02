@@ -1,0 +1,14 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/models/openai-community/no-such-model-repoing-x9",
+  "status": 401,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=483;t=212",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300",
+    "x-error-message": "Invalid username or password."
+  },
+  "body": {
+    "error": "Invalid username or password."
+  }
+}

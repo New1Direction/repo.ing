@@ -1,0 +1,108 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/users/TheBloke/overview",
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=476;t=146",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300"
+  },
+  "body": {
+    "_id": "6426d3f3a7723d62b53c259b",
+    "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/6426d3f3a7723d62b53c259b/tvPikpAzKTKGN5wrpadOJ.jpeg",
+    "isPro": true,
+    "fullname": "Tom Jobbins",
+    "numModels": 3863,
+    "numDatasets": 0,
+    "numSpaces": 0,
+    "numKernels": 0,
+    "numBuckets": 0,
+    "numDiscussions": 1210,
+    "numPapers": 0,
+    "numUpvotes": 0,
+    "numLikes": 11,
+    "numFollowers": 27382,
+    "numFollowing": 16,
+    "numFollowingOrgs": 20,
+    "orgs": [
+      {
+        "id": "644c45922a64aa9dd8fe7fac",
+        "name": "openaccess-ai-collective",
+        "fullname": "Open Access AI Collective",
+        "avatarUrl": "https://www.gravatar.com/avatar/31c001d6d4cf57054b30ce7d2f380c6a?d=retro&size=100"
+      },
+      {
+        "id": "648323b1ce52171cce6a00ea",
+        "name": "TheBlokeAI",
+        "fullname": "TheBlokeAI",
+        "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/6426d3f3a7723d62b53c259b/waPyqc71Im-fpVAOiC0BW.jpeg"
+      },
+      {
+        "id": "64ad66df3b0219010e266c7c",
+        "name": "blog-explorers",
+        "fullname": "Blog-explorers",
+        "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/60a551a34ecc5d054c8ad93e/Ku5nM2bKq-8ZF3Jid1ocw.png"
+      },
+      {
+        "id": "648b54ea914962155143e910",
+        "name": "Open-Orca",
+        "fullname": "OpenOrca",
+        "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/63972e77157559113eb8396d/RUc4QKDRtHQYWGRL6mNGF.png"
+      },
+      {
+        "id": "64d3bdd2036ae0b37570d296",
+        "name": "RolePl",
+        "fullname": "RolePlai",
+        "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/63f950e570d45efb75a2da9e/XFaXk0wNJCzzN0L0vS6Ci.png"
+      },
+      {
+        "id": "64932cc99621f988db6b83fc",
+        "name": "TheBlokePPL",
+        "fullname": "TheBloke Perplexity Testing",
+        "avatarUrl": "https://www.gravatar.com/avatar/50b630ace2c12a6d8d2f88e5e805b8ef?d=retro&size=100"
+      },
+      {
+        "id": "64e9124614c57101f38f3cd3",
+        "name": "drmworld-archive",
+        "fullname": "DRMWorld Archived models",
+        "avatarUrl": "https://www.gravatar.com/avatar/36a4f815c6eac5f62e76803ac68df531?d=retro&size=100"
+      },
+      {
+        "id": "64c573032d07296c7e3600ef",
+        "name": "IntellectX",
+        "fullname": "IntellectX AI",
+        "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/noauth/dhy9S2c1BAlmDw06l9KzS.png"
+      },
+      {
+        "id": "655a0d464cd8d44865d23401",
+        "name": "TheBlokeTesting",
+        "fullname": "TheBloke Testing",
+        "avatarUrl": "https://www.gravatar.com/avatar/e97bf0552971d7895a67876c91b2ff94?d=retro&size=100"
+      },
+      {
+        "id": "656486e456f45b58dea625a0",
+        "name": "SCTest",
+        "fullname": "SCTest",
+        "avatarUrl": "https://www.gravatar.com/avatar/d6a75f548c0547ce7ceb98862f5a4db7?d=retro&size=100"
+      },
+      {
+        "id": "65498826136c6e5df2c9c030",
+        "name": "Keynote-Technology",
+        "fullname": "Keynote Technology",
+        "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/6500c7c912c1442d994c36e5/pyc454jIWYKQXhohhJKuA.png"
+      },
+      {
+        "id": "65843f12cf92e8f35cf2d80d",
+        "name": "social-post-explorers",
+        "fullname": "Social Post Explorers",
+        "avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/uploads/5f17f0a0925b9863e28ad517/nxmdd6m86cxu55UZBlQeg.jpeg"
+      }
+    ],
+    "user": "TheBloke",
+    "type": "user",
+    "isFollowing": false,
+    "details": "LLM: quantisation, fine tuning",
+    "hardwareItems": [],
+    "createdAt": "2023-03-31T12:37:07.000Z"
+  }
+}

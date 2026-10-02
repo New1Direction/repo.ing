@@ -1,0 +1,15 @@
+{
+  "recorded": "2026-10-02",
+  "request": "/api/models/openai-community/gpt2/commits/no-such-branch-x9?limit=1",
+  "status": 404,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "ratelimit": "\"api\";r=466;t=45",
+    "ratelimit-policy": "\"fixed window\";\"api\";q=500;w=300",
+    "x-error-code": "RevisionNotFound",
+    "x-error-message": "Invalid rev id: no-such-branch-x9"
+  },
+  "body": {
+    "error": "Invalid rev id: no-such-branch-x9"
+  }
+}
