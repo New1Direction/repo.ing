@@ -5,6 +5,7 @@ import { markets, repositories } from './db/schema.mjs'
 import { resolvePublicRepository } from './github.mjs'
 import { DefinitiveLaunchError } from './meteora-launch.mjs'
 import { DISCOVERY_VERSION } from './discovery-rewards.mjs'
+import { marketSource } from './market-identity.mjs'
 import { validateTokenImage } from './token-image.mjs'
 
 export class IncompleteLaunchError extends Error {}
@@ -16,6 +17,13 @@ export async function waitForLaunchEvidence(inspect, market, attempts = 120, ret
     if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, retryMs))
   }
   return false
+}
+
+// The builder allocation and verification bonus stamps a NEW reservation carries. Hugging Face markets never carry
+// either, whatever the environment enables (backed by the markets_hf_no_rewards check, migration 0049).
+export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificationBonusLamports }) {
+  if (marketSource(githubRepoId) !== 'github') return { builderAllocationVersion: null, verificationBonusLamports: null }
+  return { builderAllocationVersion: builderAllocationEnabled ? 1 : null, verificationBonusLamports }
 }
 
 // pendingReview(market) → true while a persisted launch review (src/launch-sessions.mjs) still owns a 'prepared'
@@ -78,8 +86,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       tokenName, tokenSymbol, tokenImage: image, launchSignature: null,
       blockhash: null, lastValidBlockHeight: null,
       discoveryVersion: discoveryEnabled ? DISCOVERY_VERSION : null, launchBlockTime: null,
-      builderAllocationVersion: builderAllocationEnabled ? 1 : null,
-      verificationBonusLamports,
+      ...rewardStamps(repo.githubRepoId, { builderAllocationEnabled, verificationBonusLamports }),
     }
     if (market) {
       ;[market] = await db.update(markets).set(values).where(eq(markets.id, market.id)).returning()
