@@ -149,6 +149,20 @@ const SURFACES = {
     short(modelLaunchPostText({ symbol: 'GPT2', path: MODEL.fullName }))
     short(new URL(modelLaunchPostUrl({ mint: 'E859MeM9CYWAoQGcNLQYgg8qHPim1EQN4LYqveubrJ6A', symbol: 'GPT2', path: MODEL.fullName })).searchParams.get('text'))
   },
+  // Claims and opt-outs (#138): the model's claim page and the /opt-out model section.
+  'app/components/hf/claim-page.jsx': async () => withModelDatabase(async () => {
+    // The page's own header carries the disclaimer in every claim state. With the flag off its content is the closed
+    // notice, which reads no session cookie (that needs a Next request).
+    const { ModelClaimPage } = await appModule('app/components/hf/claim-page.jsx')
+    delete process.env.HF_MARKETS_ENABLED
+    try { full(html(await resolveServer(ModelClaimPage({ market: ROW, query: {} })), { wallet: true })) }
+    finally { process.env.HF_MARKETS_ENABLED = 'true' }
+  }),
+  'app/components/hf/model-opt-out.jsx': async () => {
+    const { ModelOptOut } = await appModule('app/components/hf/model-opt-out.jsx')
+    full(html(h(ModelOptOut, { signedIn: null })))
+    full(html(h(ModelOptOut, { signedIn: { username: 'TheBloke' } })))
+  },
 }
 
 const EXEMPT = {
@@ -175,6 +189,13 @@ const EXEMPT = {
   'app/api/repo-images/[repo]/route.js': 'image suggestions only',
   'app/lib/hf-launch.mjs': 'launch reads, lookup quotas and avatar fetches; renders nothing',
   'app/lib/csp.mjs': 'admits the Hub avatar hosts to img-src; renders nothing',
+  'app/(site)/claim/[repo]/page.jsx': 'routes a model id to ModelClaimPage (hf/claim-page.jsx, checked above; the gate: tests/hf-claim-page.test.mjs)',
+  'app/components/hf/claim-steps.jsx': 'the claim steps inside ModelClaimPage, which carries the disclaimer',
+  'app/components/payout-address.jsx': 'the shared payout-address form; on a model market it sits inside ModelClaimPage',
+  'app/(site)/opt-out/page.jsx': 'renders the model section, ModelOptOut (hf/model-opt-out.jsx, checked above)',
+  'app/api/hf/start/route.js': 'Hugging Face sign-in redirect; renders nothing',
+  'app/api/opt-out/hf/route.js': 'JSON for the model opt-out section; renders nothing',
+  'app/lib/hf-session.mjs': 'sign-in and model authority wiring; renders nothing',
 }
 
 const sources = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()
