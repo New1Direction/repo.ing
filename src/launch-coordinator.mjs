@@ -30,9 +30,12 @@ export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificat
 // market; a second prepare is then refused instead of replacing the mint the first wallet is reviewing.
 // verificationBonusLamports (bigint, from VERIFICATION_BONUS_LAMPORTS) is stamped on each NEW reservation, like
 // discovery_version; confirmed markets are returned unchanged, so nothing is ever enrolled retroactively.
+// source: where a launch request's market comes from — { kind, resolve(input) → repo, persist(db, repo) under the market
+// lock }. Omitted, it is a public GitHub repository by URL, exactly as before; Hugging Face model markets pass
+// hfLaunchSource (src/hf-launch.mjs). Either way the resolved id must belong to that source.
 export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null,
-  verificationBonusLamports = null }) {
+  verificationBonusLamports = null, source = null }) {
   if (verificationBonusLamports !== null && (typeof verificationBonusLamports !== 'bigint' || verificationBonusLamports <= 0n)) {
     throw new Error('Verification bonus stamp must be positive bigint lamports')
   }
@@ -51,6 +54,13 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       set: { ...repo, syncedAt: new Date() },
     })
   }
+  const kind = source?.kind ?? 'github'
+  const persist = source?.persist ?? saveRepo
+  const resolve = async input => {
+    const repo = await (source ? source.resolve(input) : resolvePublicRepository(input, fetchImpl))
+    if (marketSource(repo.githubRepoId) !== kind) throw new Error(`Resolved market is not a ${kind} market`)
+    return repo
+  }
   const markFailed = (db, market) => db.update(markets).set({ status: 'failed' }).where(eq(markets.id, market.id))
 
   async function checkRequest({ repositoryUrl, tokenName, tokenSymbol, tokenImage, launcherWallet, signTransaction, requireSigner }) {
@@ -61,13 +71,13 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     if (requireSigner && typeof signTransaction !== 'function') throw new Error('Launcher signTransaction callback required')
     const wallet = new PublicKey(launcherWallet).toBase58()
     if (wallet === launcher.creatorWallet) throw new Error('Launcher wallet cannot be the platform creator authority')
-    const repo = await resolvePublicRepository(repositoryUrl, fetchImpl)
+    const repo = await resolve(repositoryUrl)
     return { image, wallet, repo }
   }
 
   // Under the repository lock: { existing } for a launched (or recovered) market, otherwise the freshly reserved row.
   async function reserve(db, repo, { wallet, tokenName, tokenSymbol, image }) {
-    await saveRepo(db, repo)
+    await persist(db, repo)
     let market = await findMarket(db, repo.githubRepoId)
     if (market?.status === 'confirmed') return { existing: market }
     if (market && ['submitted', 'ambiguous'].includes(market.status)) {
@@ -142,11 +152,11 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   }
 
   return {
-    resolveRepository: (url) => resolvePublicRepository(url, fetchImpl),
+    resolveRepository: (url) => resolve(url),
     async checkExistingLaunch(url) {
-      const repo = await resolvePublicRepository(url, fetchImpl)
+      const repo = await resolve(url)
       return withRepoLock(repo.githubRepoId, async db => {
-        await saveRepo(db, repo)
+        await persist(db, repo)
         const market = await findMarket(db, repo.githubRepoId)
         return market?.status === 'confirmed' ? market : null
       })
