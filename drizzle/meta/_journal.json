@@ -316,6 +316,13 @@
       "when": 1790910007000,
       "tag": "0047_verification_bonus",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1790910008000,
+      "tag": "0048_pasted_payout_address",
+      "breakpoints": true
     }
   ]
 }

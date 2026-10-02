@@ -411,12 +411,62 @@ export const walletBindingChallenges = pgTable('wallet_binding_challenges', {
   uniqueIndex('wallet_binding_challenges_nonce_unique').on(table.nonce),
 ])
 
+// The repository's one active payout binding, read by every payout path. method (0048): 'signature' (the wallet signed
+// a binding message; instant) or 'pasted' (a pasted address, written here only when its request activates after the
+// hold; a database trigger rejects any other pasted row).
 export const repoBeneficiaries = pgTable('repo_beneficiaries', {
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).primaryKey().references(() => repositories.githubRepoId),
   githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
   wallet: varchar('wallet', { length: 44 }).notNull(),
   boundAt: timestamp('bound_at', { withTimezone: true }).defaultNow().notNull(),
-})
+  method: varchar('method', { length: 16 }).default('signature').notNull(),
+  payoutRequestId: bigint('payout_request_id', { mode: 'bigint' }).references(() => payoutAddressRequests.id),
+}, table => [
+  check('repo_beneficiaries_method_check', sql`(${table.method} = 'signature' and ${table.payoutRequestId} is null) or (${table.method} = 'pasted' and ${table.payoutRequestId} is not null)`),
+])
+
+// Pasted payout addresses waiting out their hold (0048, src/payout-address.mjs). At most one pending request per
+// repository; resolved requests are kept as history and never change again (trigger guard_payout_address_request).
+export const payoutAddressRequests = pgTable('payout_address_requests', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  wallet: varchar('wallet', { length: 44 }).notNull(),
+  requestedByGithubUserId: bigint('requested_by_github_user_id', { mode: 'bigint' }).notNull(),
+  requestedByLogin: text('requested_by_login').notNull(),
+  requestedAt: timestamp('requested_at', { withTimezone: true }).defaultNow().notNull(),
+  activeAt: timestamp('active_at', { withTimezone: true }).notNull(),
+  status: varchar('status', { length: 16 }).default('pending').notNull(),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolvedByGithubUserId: bigint('resolved_by_github_user_id', { mode: 'bigint' }),
+  resolutionReason: text('resolution_reason'),
+}, table => [
+  uniqueIndex('payout_address_requests_one_pending').on(table.githubRepoId).where(sql`${table.status} = 'pending'`),
+  index('payout_address_requests_due').on(table.activeAt).where(sql`${table.status} = 'pending'`),
+  check('payout_address_requests_status_check', sql`${table.status} in ('pending', 'activated', 'cancelled', 'superseded')`),
+  check('payout_address_requests_wallet_check', sql`${table.wallet} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'`),
+  check('payout_address_requests_user_check', sql`${table.requestedByGithubUserId} > 0`),
+  check('payout_address_requests_hold_check', sql`${table.activeAt} >= ${table.requestedAt} + interval '48 hours'`),
+  check('payout_address_requests_resolution_check', sql`(${table.status} = 'pending') = (${table.resolvedAt} is null)`),
+  check('payout_address_requests_reason_check', sql`${table.status} not in ('cancelled', 'superseded') or ${table.resolutionReason} is not null`),
+])
+
+// Append-only audit log of pasted payout addresses (0048): requested, cancelled, superseded, and activated (by itself,
+// so with no GitHub user).
+export const payoutAddressEvents = pgTable('payout_address_events', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  requestId: bigint('request_id', { mode: 'bigint' }).notNull().references(() => payoutAddressRequests.id),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  event: varchar('event', { length: 16 }).notNull(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }),
+  githubLogin: text('github_login'),
+  wallet: varchar('wallet', { length: 44 }).notNull(),
+  previousWallet: varchar('previous_wallet', { length: 44 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, table => [
+  index('payout_address_events_repo').on(table.githubRepoId, table.createdAt),
+  check('payout_address_events_event_check', sql`${table.event} in ('requested', 'cancelled', 'superseded', 'activated')`),
+  check('payout_address_events_actor_check', sql`(${table.event} = 'activated') = (${table.githubUserId} is null)`),
+])
 
 export const builderAllocationClaims = pgTable('builder_allocation_claims', {
   id: serial('id').primaryKey(),
