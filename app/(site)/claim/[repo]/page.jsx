@@ -20,6 +20,7 @@ import { githubSessionCookie, readGithubSession, seal } from '../../../lib/auth.
 import { Connection } from '@solana/web3.js'
 import { assertBuilderReinvestEnabled } from '../../../../src/builder-reinvest.mjs'
 import { configAddress } from '../../../lib/server.mjs'
+import { currentPayoutDestinations } from '../../../lib/payout-destination.mjs'
 export const dynamic = 'force-dynamic'
 
 export default async function ClaimPage({ params, searchParams }) {
@@ -50,10 +51,11 @@ async function ClaimTipsSection({ market }) {
 
 async function ClaimContent({ market, repo, query }) {
   const repoId = market.repoId, pool = database()
-  const [fees, access, beneficiary, receipt, usdPerSol, funded, cookieStore] = await Promise.all([
+  const [fees, access, destination, receipt, usdPerSol, funded, cookieStore] = await Promise.all([
     feeStatus(repoId),
     githubInstallationForRepository({ owner: repo.owner, name: repo.name }).then(value => value ? 'installed' : 'missing').catch(() => 'unknown'),
-    pool.query('select wallet, bound_at as "boundAt" from repo_beneficiaries where github_repo_id = $1', [repoId]).then(result => result.rows[0] ?? null),
+    // The active binding (only it is ever paid) and a pasted address waiting out its hold.
+    currentPayoutDestinations(pool, [repoId]).then(destinations => destinations.get(String(repoId)) ?? { active: null, pending: null }),
     pool.query(`select amount_base_units::text as amount, beneficiary_wallet as wallet, claim_signature as signature
       from repo_claims where github_repo_id = $1 and status = 'settled'
       and ($2::text is null or claim_signature = $2) order by settled_at desc limit 1`,
@@ -70,6 +72,9 @@ async function ClaimContent({ market, repo, query }) {
   // Only the public identity is passed to the UI; the GitHub credential stays encrypted and HttpOnly.
   const verifiedUser = session?.repoId === repoId ? { githubLogin: session.githubLogin, expiresAt: session.expiresAt } : null
   const claimable = fees.status === 'MATCH' ? fees.onchainCreatorFee?.toString() ?? null : null
+  const beneficiary = destination.active
+  // Who pasted a waiting address is shown to the verified admin of this repository only.
+  const pendingAddress = destination.pending && (verifiedUser ? destination.pending : { ...destination.pending, requestedByLogin: null })
   const review = verifiedUser && beneficiary && claimable && claimable !== '0' ? seal({
     purpose: 'creator-claim-review', sessionId: session.sessionId, githubUserId: session.githubUserId,
     repoId, wallet: beneficiary.wallet, boundAt: new Date(beneficiary.boundAt).toISOString(),
@@ -88,7 +93,8 @@ async function ClaimContent({ market, repo, query }) {
     <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
   </div>
   return <ClaimSteps summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
-    verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} claimable={claimable} usdEstimate={usdEstimate}
+    verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} beneficiaryMethod={beneficiary?.method ?? 'signature'}
+    beneficiaryBoundAt={beneficiary?.boundAt ?? null} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate}
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}
     reinvestEnabled={reinvestEnabled} reinvestAfterClaim={query.reinvest === '1'}
     graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}/>

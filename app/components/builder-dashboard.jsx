@@ -17,6 +17,8 @@ import { ClaimTips } from './claim-tips'
 import { MaintainerDecision } from './maintainer-decision'
 import { BuilderRowTools } from './builder-row-tools'
 import { formatTokenAmount, formatUsdValue } from '../lib/format.mjs'
+import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout-address'
+import payoutStyles from './payout-address.module.css'
 
 export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   const { wallet, connect, provider } = useWallet()
@@ -25,6 +27,8 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   const [results,setResults] = useState({}), [busy,setBusy] = useState(false), [stage,setStage] = useState('')
   const [search,setSearch] = useState(''), [now,setNow] = useState(Date.now())
   const [needsLogin,setNeedsLogin] = useState(!signedIn)
+  // 'batch' or one repository id: where the paste-an-address form is open.
+  const [pasteFor,setPasteFor] = useState(null)
   const actionLock = useRef(false)
   const load = useCallback(async () => {
     setLoading(true); setError('')
@@ -49,7 +53,8 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   const repos = data?.repositories ?? []
   const actionable = repo => repo.review && repo.expiresAt > now && !results[repo.repoId]
   const ready = repos.filter(actionable)
-  const unbound = repos.filter(repo => !repo.wallet).slice(0,100)
+  // Neither an active payout address nor a pasted one waiting out its hold.
+  const unbound = repos.filter(repo => !repo.wallet && !repo.pending).slice(0,100)
   const sum = (items,key) => items.reduce((total,item) => total+BigInt(item[key] ?? '0'),0n).toString()
   const visible = repos.filter(repo => repo.fullName.toLowerCase().includes(search.trim().toLowerCase()))
   const settled = Object.values(results).filter(result => result.status === 'settled')
@@ -94,6 +99,8 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
     finally { setBusy(false); actionLock.current = false }
   }
   async function refresh() { setResults({}); setStage(''); await load() }
+  async function pasteSaved(result) { setPasteFor(null); setError(''); setStage(pasteSavedMessage(result)); await load() }
+  async function destinationChanged(reason) { if (reason === 'cancelled') setStage('Pasted address cancelled.'); await load() }
 
   return <div className="builder-dashboard">
     <ClaimChecklist current={step}/>
@@ -104,22 +111,27 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
       {data && <>
         <div className="builder-totals"><div><span>Available to claim</span><strong>{repos.some(repo=>repo.available===null)?'—':`${formatSolDisplay(sum(repos,'available'))} SOL`}</strong><small>{repos.some(repo=>repo.available===null)?'Some balances need another check.':'Current fees in your repository pools.'}</small></div><div><span>Total earned</span><strong>{formatSolDisplay(sum(repos,'earned'))} SOL</strong><small>Includes fees already paid.</small></div><div><span>Total paid</span><strong>{formatSolDisplay(sum(repos,'paid'))} SOL</strong><small>Completed repository payouts.</small></div></div>
         {!data.payoutReady && <p className="builder-notice" role="status">Payouts are paused while network funds are replenished. Your fees remain in their pools.</p>}
-        {unbound.length > 0 && <div className="builder-setup inner-card"><div><h2>Set your payout wallet once</h2><p>Use the same wallet for {unbound.length} {unbound.length===1?'repository':'repositories'} without a saved payout wallet.</p>{wallet && <CopyAddress address={wallet} compact label="payout wallet"/>}<small>One wallet message. Existing payout wallets stay as they are.</small><WalletExplainer/></div><button className={`button ${step===2?'primary':'outline'}`} disabled={busy||loading} onClick={setup}>Set wallet for {unbound.length}</button></div>}
+        {unbound.length > 0 && <div className="builder-setup inner-card"><div><h2>Set your payout wallet once</h2><p>Use the same wallet for {unbound.length} {unbound.length===1?'repository':'repositories'} without a saved payout wallet.</p>{wallet && <CopyAddress address={wallet} compact label="payout wallet"/>}<small>One wallet message. Existing payout wallets stay as they are.</small><WalletExplainer/>
+          <button type="button" className={`claim-text-button ${payoutStyles.toggle}`} aria-expanded={pasteFor==='batch'} disabled={busy} onClick={()=>setPasteFor(pasteFor==='batch'?null:'batch')}>{pasteFor==='batch'?'Hide the paste form':`No wallet extension? Paste one address for ${unbound.length===1?'it':`all ${unbound.length}`} instead`}</button></div>
+          <button className={`button ${step===2?'primary':'outline'}`} disabled={busy||loading} onClick={setup}>Set wallet for {unbound.length}</button></div>}
+        {unbound.length > 0 && pasteFor==='batch' && <div className={payoutStyles.batchPanel}><PasteAddressForm repoIds={unbound.map(repo=>repo.repoId)} onSaved={pasteSaved} onClose={()=>setPasteFor(null)}/></div>}
         <div className="builder-claim-bar"><div><strong title={`${formatUnits(sum(ready,'available'))} SOL`}>{formatSolDisplay(sum(ready,'available'))} SOL ready</strong><p>Sent to each repository’s saved wallet shown below.</p></div><button className={`button ${step===2?'outline':'primary'}`} disabled={busy||loading||!ready.length} onClick={()=>claim(ready)}>{busy?'Processing…':`Claim all ready fees${ready.length?` (${ready.length})`:''}`}</button></div>
         {stage && <div className="builder-run-status" role="status" aria-live="polite">{busy?<span className="claim-spinner" aria-hidden="true"/>:<Check size={18}/>}<div><strong>{stage}</strong>{busy&&<small>Keep this page open while queued claims are submitted. Each payout has its own receipt.</small>}{!busy&&Object.keys(results).length>0&&<small>{settled.length} {settled.length===1?'repository paid':'repositories paid'} · {formatUnits(sum(settled,'amount'))} SOL.{incomplete>0?' Some repositories need attention; see their rows and refresh to review again.':''}</small>}</div></div>}
         <section className="builder-repositories" aria-labelledby="builder-repos-title"><div className="builder-list-heading"><h2 id="builder-repos-title">Your repositories <span>{repos.length}</span></h2>{repos.length>5&&<label className="builder-search"><Search size={16}/><input type="search" placeholder="Find a repository…" aria-label="Find a repository" value={search} onChange={event=>setSearch(event.target.value)}/></label>}</div>
           {!repos.length?<div className="builder-empty"><h3>No tokenized repositories found</h3><p>Add your repositories to repo.ing’s read-only GitHub App access, then refresh. You must have admin access to claim.</p><Link href="/launch" className="button outline">Launch a repository</Link></div>:!visible.length?<p className="builder-empty">No repositories match your search.</p>:<div className="builder-repo-list">{visible.map(repo=>{
             const result=results[repo.repoId]
             const receipt=result?.signature||repo.pendingSignature
-            const state=result?.status==='settled'?'Paid':result?.status==='already-settled'?'Already paid':result?.status==='pending'||repo.pendingSignature?'Checking payout':result?.status==='queued'?'Queued':result?.status==='unknown'?'Check confirmation':result?.status==='failed'?'Needs attention':!repo.wallet?'Set payout wallet':repo.available===null?'Balance unavailable':repo.available==='0'?'Up to date':repo.expiresAt<=now?'Refresh review':!repo.review?'Payouts paused':'Ready to claim'
+            const state=result?.status==='settled'?'Paid':result?.status==='already-settled'?'Already paid':result?.status==='pending'||repo.pendingSignature?'Checking payout':result?.status==='queued'?'Queued':result?.status==='unknown'?'Check confirmation':result?.status==='failed'?'Needs attention':!repo.wallet?(repo.pending?'Pasted address waiting':'Set payout wallet'):repo.available===null?'Balance unavailable':repo.available==='0'?'Up to date':repo.expiresAt<=now?'Refresh review':!repo.review?'Payouts paused':'Ready to claim'
             return <article className="builder-repo-row" key={repo.repoId}><div className="builder-repo-name"><Link href={`/token/${repo.mint}`}>{repo.fullName}</Link><span className={`builder-row-state ${result?.status==='settled'?'paid':''}`}>{state}</span>{result?.error&&<small>{result.error}</small>}</div>
               <div className="builder-repo-balance"><span>Available</span><strong title={repo.available===null?undefined:`${formatUnits(repo.available)} SOL`}>{repo.available===null?'—':`${formatSolDisplay(repo.available)} SOL`}</strong><small>{formatSolDisplay(repo.earned)} SOL earned · {formatSolDisplay(repo.paid)} SOL paid</small></div>
               {repo.tips?.waiting.length > 0 && <div className="builder-repo-tips"><span>Tips waiting{repo.tips.usd !== null ? ` · ≈ ${formatUsdValue(repo.tips.usd)}` : ''}</span>
                 <strong>{repo.tips.waiting.map(t => `${formatTokenAmount(t.amount, t.decimals)} ${t.symbol}`).join(' · ')}</strong>
                 {repo.tipReview ? <ClaimTips review={repo.tipReview} compact symbols={Object.fromEntries(repo.tips.waiting.map(t => [t.mint, t.symbol]))}/> :
                   <small>{repo.wallet ? 'A tip payout is confirming.' : 'Set a payout wallet to claim tips.'}</small>}</div>}
-              <div className="builder-repo-wallet"><span>Payout wallet</span>{repo.wallet?<CopyAddress address={repo.wallet} compact label="payout wallet"/>:<span>Not set</span>}</div>
+              <div className="builder-repo-wallet"><span>Payout wallet</span>{repo.wallet||repo.pending?<PayoutDestination compact repoId={repo.repoId} active={repo.wallet?{wallet:repo.wallet,method:repo.method,boundAt:repo.boundAt}:null} pending={repo.pending} canManage onChanged={destinationChanged}/>:<span>Not set</span>}
+                <button type="button" className={`claim-text-button ${payoutStyles.rowToggle}`} aria-expanded={pasteFor===repo.repoId} disabled={busy} onClick={()=>setPasteFor(pasteFor===repo.repoId?null:repo.repoId)}>{pasteFor===repo.repoId?'Close':repo.wallet||repo.pending?'Paste a different address':'Paste an address'}</button></div>
               <div className="builder-repo-actions">{receipt?<a className="button outline" target="_blank" rel="noreferrer" href={`https://solscan.io/tx/${receipt}`}>Receipt ↗</a>:<button className="button outline" disabled={busy||loading||!actionable(repo)} onClick={()=>claim([repo])}>Claim</button>}<Link href={`/claim/${repo.repoId}`}>Manage</Link></div>
+              {pasteFor===repo.repoId&&<div className={payoutStyles.rowPanel}><PasteAddressForm repoIds={[repo.repoId]} replacing={Boolean(repo.wallet)} onSaved={pasteSaved} onClose={()=>setPasteFor(null)}/></div>}
               {repo.decision!==undefined&&<div className="builder-repo-decision"><MaintainerDecision key={`${repo.repoId}:${repo.decision?.createdAt??'none'}`} repoId={repo.repoId} fullName={repo.fullName} live decision={repo.decision} compact/></div>}
               <BuilderRowTools repo={repo} result={result}/>
             </article>
