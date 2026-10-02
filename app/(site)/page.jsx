@@ -19,7 +19,7 @@ import { shippingLeaders } from '../lib/pulse-rank.mjs'
 import { ShippingLeaders } from '../components/shipping-leaders'
 import { promotableMarkets, promotionExcluded } from '../lib/maintainer-opt-outs.mjs'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
-import { featuredMarkets, featuredRacers, featuredTicker } from '../lib/repo-quality.mjs'
+import { featuredMarkets, labeledRacers, featuredTicker } from '../lib/repo-quality.mjs'
 import { officialLaunches } from '../lib/official-launch.mjs'
 import { OfficialLaunches } from '../components/official-launches'
 
@@ -40,9 +40,11 @@ async function MarketContent() {
   return <>{notice && <p className="subtle-notice">{notice}</p>}<HomeMarkets tabs={homeMarketTabs(await withPulse(featuredMarkets(promotable ?? [])))} usdPerSol={usdPerSol}/></>
 }
 
+// The race ranks by verified reserves and keeps new repositories in place, labeled (labeledRacers); the market list is
+// read only for those labels, so its outage never hides a racer.
 async function GraduationRaceContent() {
   const [{ markets, unavailable }, listed] = await Promise.all([graduationRace(), listMarkets()])
-  return <GraduationRaceBoard markets={await withPulse(featuredRacers(markets, listed.markets))} unavailable={unavailable ?? listed.unavailable}/>
+  return <GraduationRaceBoard markets={await withPulse(labeledRacers(markets, listed.markets))} unavailable={unavailable}/>
 }
 
 // Markets the repository's own verified maintainer launched; hidden while there are none, and while the do-not-promote set

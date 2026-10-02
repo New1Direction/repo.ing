@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { NEW_REPO_DAYS, NEW_REPO_MIN_STARS, NEW_REPO_NOTE, PROMOTION_MIN_PERCENT, REPO_SCORE_MAX, featuredMarkets, featuredRacers,
+import { NEW_REPO_DAYS, NEW_REPO_MIN_STARS, NEW_REPO_NOTE, PROMOTION_MIN_PERCENT, REPO_SCORE_MAX, featuredMarkets, labeledRacers,
   featuredTicker, hasEarnedPromotion, isNewRepo, repoAgeLabel, repoFactsView, repoScore, showsNewRepoLabel } from '../app/lib/repo-quality.mjs'
 import { OFFICIAL_LAUNCH_LIMIT, isOfficialLaunch, officialLaunches } from '../app/lib/official-launch.mjs'
 import { orderMarkets } from '../app/lib/market-order.mjs'
@@ -87,12 +87,15 @@ test('repository facts read plainly: age, stars, forks and the score with its pa
 const row = (id, extra = {}) => ({ repoId: String(id), mint: `mint${id}`, fullName: `o/r${id}`, symbol: `S${id}`, volume24hLamports: '0',
   indexedAt: new Date(NOW - id * HOUR), promoted: true, officialLaunch: false, ...extra })
 
-test('home featured lists keep promoted markets; race rows follow their market row', () => {
-  const markets = [row(1), row(2, { promoted: false }), row(3)]
+test('home featured lists keep promoted markets; the race keeps every racer and labels new repos', () => {
+  const markets = [row(1), row(2, { promoted: false, newRepo: true }), row(3)]
   assert.deepEqual(featuredMarkets(markets).map(m => m.mint), ['mint1', 'mint3'])
   assert.deepEqual(featuredMarkets([{ ...row(4), promoted: undefined }]), [], 'only rows the server marked count')
-  assert.deepEqual(featuredRacers([{ mint: 'mint2' }, { mint: 'mint3' }, { mint: 'unknown' }], markets).map(r => r.mint), ['mint3'])
-  assert.deepEqual(featuredRacers([{ mint: 'mint1' }], []), [], 'no market rows: nothing is featured')
+  const race = [{ mint: 'mint2', progressPercent: 9 }, { mint: 'mint3', progressPercent: 4 }, { mint: 'unknown', progressPercent: 2 }]
+  assert.deepEqual(labeledRacers(race, markets).map(r => [r.mint, r.newRepo]), [['mint2', true], ['mint3', false], ['unknown', false]],
+    'the closest market stays first even when its repository is new; order and racers are unchanged')
+  assert.deepEqual(labeledRacers([{ mint: 'mint1' }], []).map(r => [r.mint, r.newRepo]), [['mint1', false]], 'no market rows: racers stay, unlabeled')
+  assert.equal(race[0].newRepo, undefined, 'input racers are not mutated')
   const items = ['mint2', 'mint1', 'unlisted', 'mint3', 'mint1'].map((mint, i) => ({ id: String(i), href: `/token/${mint}` }))
   assert.deepEqual(featuredTicker(items, markets).map(item => item.id), ['1', '3', '4'], 'ticker: promoted markets only, order kept')
   assert.deepEqual(featuredTicker(items, markets, 2).map(item => item.id), ['1', '3'])
