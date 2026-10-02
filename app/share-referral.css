@@ -1,0 +1,7 @@
+.share-referral-note{display:block;color:var(--muted);font-size:12px;line-height:1.45}
+.share-referral-note button{padding:0;border:0;background:none;color:var(--green);font:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px}
+.share-referral-note button:hover{color:var(--text)}
+.trade-result-actions .share-referral-note{flex-basis:100%;margin-top:-6px;color:inherit;opacity:.85}
+.share-menu-panel .share-referral-note{margin:2px 0 4px}
+.market-share-dialog .share-referral-note{margin-top:8px}
+[data-theme=light] .share-referral-note button{color:var(--green-dark)}

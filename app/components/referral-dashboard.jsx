@@ -49,7 +49,7 @@ export function ReferralDashboard() {
         <input aria-label="Your referral link" readOnly value={link} onFocus={event => event.target.select()} spellCheck={false}/>
         <button className="button outline" type="button" onClick={copy}>{copied === 'Link copied' ? <Check size={15} aria-hidden="true"/> : <Copy size={15} aria-hidden="true"/>}Copy</button>
       </div>
-      <small role="status">{copied || 'Market links, X posts and Blink links you share while this wallet is connected carry it too.'}</small>
+      <small role="status">{copied || 'Once payouts are set up, the market links, X posts and Blink links you share carry it too. Each share menu says so and lets you leave it out.'}</small>
     </div>
     <div className="referral-payout-panel"><h2>Payouts</h2><Payouts status={status} setup={setup} enable={enable}/></div>
   </section>

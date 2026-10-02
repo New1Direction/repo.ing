@@ -142,7 +142,7 @@ Graduation cards require fresh canonical indexed evidence and a reconciliation m
 
 ### Referrals
 
-While your wallet is connected, every market link you share (Copy link, Share on X, the Blink link and share-card captions) carries `?ref=` with your wallet. For 30 days after someone opens it, their trades on repo.ing name you as referrer (the last link they opened wins); trades from a Blink you shared do too. Each such trade pays you 4% of its trading fee in SOL, carved from Meteora’s protocol share, so traders, builders and repo.ing pay nothing extra. [Referrals](https://repo.ing/referrals) shows your link, the one-time payout setup (a wrapped-SOL account in your wallet; without it no referral can be paid), your earnings and a public leaderboard of estimated earnings from settled repo.ing trades.
+[Referrals](https://repo.ing/referrals) gives you a link carrying `?ref=` with your wallet. Once your referral payouts are set up, the market links you share (Copy link, Share on X, the Blink link and share-card captions) carry it too. A note beside them says so, because the link contains your wallet address, and lets you share without it; that choice is remembered on this device. For 30 days after someone opens your link, their trades on repo.ing name you as referrer (the last link they opened wins); trades from a Blink you shared do too. Each such trade pays you 4% of its trading fee in SOL, carved from Meteora’s protocol share, so traders, builders and repo.ing pay nothing extra. The Referrals page also shows the one-time payout setup (a wrapped-SOL account in your wallet; without it no referral can be paid), your earnings and a public leaderboard of estimated earnings from settled repo.ing trades.
 
 ### Faster market feedback
 
