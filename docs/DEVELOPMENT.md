@@ -97,6 +97,7 @@ Many integration tests truncate tables, seed canonical markets, or create local 
 | Platform revenue and LP deployment | [Revenue controls](PLATFORM_REVENUE.md), [liquidity settlement and recovery](PROTOCOL_LIQUIDITY.md) |
 | Graduation race and milestone alerts | `tests/graduation-race-db.test.mjs` and `tests/milestone-alerts-db.test.mjs` with `GRADUATION_RACE_TEST_DATABASE_URL` / `MILESTONE_ALERTS_TEST_DATABASE_URL` pointing at local databases named `repoing_graduation_race_test` / `repoing_milestone_alerts_test`; their pure logic runs in the quick suite (`node scripts/ci/run-quick-tests.mjs`) |
 | Read indexes, chart block positions, trend view and web vitals | `tests/server-speed-db.test.mjs` with `SERVER_SPEED_TEST_DATABASE_URL` pointing at a local database named `repoing_server_speed_test` (migrates it, seeds, checks EXPLAIN plans); the pure helpers run in the quick suite |
+| Maintainer opt-outs | `tests/maintainer-opt-outs-db.test.mjs` with `MAINTAINER_OPT_OUTS_TEST_DATABASE_URL` pointing at a local database named `repoing_opt_outs_test` (create/withdraw authorization, one active decision, constraints); the exclusion union and launch blocks run in the quick suite (`tests/maintainer-opt-outs.test.mjs`) |
 
 Review a suite's prerequisites before running its npm command. `scripts/mvp-acceptance-local.mjs` is a historical, operator-specific live-GitHub rehearsal; it is not a generic setup script.
 

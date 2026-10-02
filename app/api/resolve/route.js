@@ -1,6 +1,7 @@
 import { parseRepositoryUrl, resolvePublicRepository, RepositoryResolutionError } from '../../../src/github.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { database } from '../../lib/server.mjs'
+import { activeDecision, OPT_OUT_ERROR } from '../../../src/maintainer-opt-outs.mjs'
 export const runtime = 'nodejs'
 export async function POST(request) {
   try {
@@ -24,6 +25,10 @@ export async function POST(request) {
       github_updated_at=excluded.github_updated_at,synced_at=now()`, [repo.githubRepoId.toString(), repo.owner, repo.name,
       repo.fullName, repo.description, repo.avatarUrl, repo.stars, repo.forks, repo.archived, repo.githubUpdatedAt])
     const { rows } = await pool.query(`select mint from markets where github_repo_id = $1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`, [repo.githubRepoId.toString()])
+    // Without a market the next step is a launch: refuse it when the maintainer opted the repository out.
+    if (!rows[0]?.mint && await activeDecision(pool, repo.githubRepoId.toString())) {
+      return Response.json({ error: OPT_OUT_ERROR, code: 'MAINTAINER_OPTED_OUT' }, { status: 403 })
+    }
     return Response.json({ repoId: repo.githubRepoId.toString(), mint: rows[0]?.mint ?? null })
   } catch (error) {
     const known = error instanceof RepositoryResolutionError

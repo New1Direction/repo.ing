@@ -4,6 +4,7 @@ import { seal, sealTipReview } from './auth.mjs'
 import { repoTipSummary } from './tips.mjs'
 import { publicOrigin } from './origin.mjs'
 import { mapLimited } from '../../src/builder-queue.mjs'
+import { activeDecisions } from '../../src/maintainer-opt-outs.mjs'
 
 export async function builderOverview(session) {
   const pool = database()
@@ -20,6 +21,8 @@ export async function builderOverview(session) {
     where m.github_repo_id=any($1::bigint[]) and m.status='confirmed' and m.indexed_at is not null
     and m.launch_finality='finalized' order by r.full_name`, [ids])
   const payoutReady = await (async () => { try { const signer = creatorSigner(); return Boolean(signer && await chain().getBalance(signer.publicKey, 'confirmed') > 0) } catch { return false } })()
+  // Each row's active decline (src/maintainer-opt-outs.mjs); unreadable leaves it out and the row hides that control.
+  const decisions = await activeDecisions(pool, rows.map(row => row.repoId)).catch(error => { console.error('builder decisions unavailable', { error: error.message }); return null })
   const repositories = await mapLimited(rows, 3, async row => {
     const fees = await feeStatus(row.repoId)
     const available = fees.status === 'MATCH' ? fees.onchainCreatorFee?.toString() ?? null : null
@@ -32,7 +35,7 @@ export async function builderOverview(session) {
     const tips = await repoTipSummary(row.repoId)
     const tipReview = tips?.waiting.length && row.wallet && !tips.waiting.some(t => t.inFlight)
       ? sealTipReview(session, { repoId: row.repoId, wallet: row.wallet, boundAt: row.boundAt }) : null
-    return { ...row, available, review, expiresAt, feeStatus: fees.status, tips, tipReview }
+    return { ...row, available, review, expiresAt, feeStatus: fees.status, tips, tipReview, decision: decisions ? decisions.get(row.repoId) ?? null : undefined }
   })
   return { repositories, payoutReady, githubLogin: session.githubLogin, expiresAt: session.expiresAt }
 }

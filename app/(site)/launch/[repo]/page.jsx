@@ -7,6 +7,8 @@ import { repositoryById, marketByRepo, launchAvailable, discoveryRewardsEnabled,
 import { trendCandidate } from '../../../../src/trend-intake.mjs'
 import { checkAgentDraft } from '../../../lib/agent-launch.mjs'
 import { activeLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
+import { maintainerDecision } from '../../../lib/maintainer-opt-outs.mjs'
+import { LaunchBlocked } from '../../../components/maintainer-declined'
 export const dynamic = 'force-dynamic'
 export const metadata = { referrer: 'no-referrer', robots: { index: false, follow: false } }
 export default async function Launch({ params, searchParams }) {
@@ -15,6 +17,9 @@ export default async function Launch({ params, searchParams }) {
   if (market) redirect(`/token/${market.mint}`)
   const repo = await repositoryById(repoId)
   if (!repo) notFound()
+  // The maintainer opted this repository out of repo.ing (or that cannot be checked): no launch form.
+  const optOut = await maintainerDecision(repoId)
+  if (optOut !== null) return <><AppHeader/><main className="section-wrap launch-page"><LaunchBlocked repo={repo} decision={optOut}/></main><Footer/></>
   const query = await searchParams
   let draft
   if (query.draft !== undefined) {

@@ -184,13 +184,15 @@ export async function runAlertsLocked({ store, config, notMigrated }, work) {
   return result.value
 }
 
-export function createLaunchAlerts({ store, config, senders, sleep = wait, now = () => Date.now() }) {
-  async function runChannel(channel) {
+// excluded: the do-not-promote set for a run (the worker passes PROMOTION_EXCLUDED_REPO_IDS plus maintainers' opt-outs,
+// app/lib/promotion-exclusions.mjs); defaults to config.excluded. When it cannot be read the run fails and nothing is posted.
+export function createLaunchAlerts({ store, config, senders, sleep = wait, now = () => Date.now(), excluded = async () => config.excluded ?? new Set() }) {
+  async function runChannel(channel, skip) {
     const budget = Math.min(config.maxPerRun, config.maxPerDay - await store.sentRecently(channel))
     if (budget <= 0) return []
-    // Repos on the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS) are never announced.
+    // Repos on the do-not-promote list (env list and maintainer opt-outs) are never announced.
     const markets = (await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts, limit: budget }))
-      .filter(market => !config.excluded?.has(String(market.githubRepoId)))
+      .filter(market => !skip.has(String(market.githubRepoId)))
     return postInTurn({ items: markets, config, sleep, now,
       claim: market => store.claim({ channel, market, maxAttempts: config.maxAttempts }),
       deliver: market => deliverAlert({ sender: senders[channel], url: tokenUrl(config.origin, market.mint),
@@ -201,8 +203,9 @@ export function createLaunchAlerts({ store, config, senders, sleep = wait, now =
 
   async function runOnce() {
     return runAlertsLocked({ store, config, notMigrated: 'LAUNCH_ALERTS_NOT_MIGRATED' }, async () => {
+      const skip = await excluded()
       const posts = []
-      for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel))
+      for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel, skip))
       return posts
     })
   }

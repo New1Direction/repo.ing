@@ -281,6 +281,13 @@
       "when": 1790542598568,
       "tag": "0039_dev_pulse",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790910001000,
+      "tag": "0041_maintainer_opt_outs",
+      "breakpoints": true
     }
   ]
 }

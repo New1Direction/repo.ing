@@ -39,6 +39,8 @@ import { DevPulse } from '../../../components/dev-pulse'
 import { DevPulseStrip } from '../../../components/dev-pulse-strip'
 import { readRepoPulse } from '../../../lib/dev-pulse.mjs'
 import { isPromotionExcluded } from '../../../lib/promotion-exclusions.mjs'
+import { maintainerDecision, promotionExcluded } from '../../../lib/maintainer-opt-outs.mjs'
+import { DeclinedBanner } from '../../../components/maintainer-declined'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -67,8 +69,11 @@ export default async function Token({ params, searchParams }) {
   const repo = { ...displayRepository(market), mint: market.mint }
   // Non-null only when this market's own config charges the launch fee (config read once, then cached).
   const launchFee = await timed('launchFeeTerms', () => marketLaunchFeeTerms(market))
+  // A current GitHub admin declined this market (src/maintainer-opt-outs.mjs). undefined: unreadable, so nothing here
+  // promotes it, but no banner is claimed either.
+  const decision = await timed('maintainerDecision', () => maintainerDecision(market.repoId))
   // Dev Pulse: public GitHub activity from the worker's tables (one indexed read). Never shown for do-not-promote repos.
-  const pulse = isPromotionExcluded(market.repoId) ? null
+  const pulse = isPromotionExcluded(market.repoId) || decision !== null ? null
     : await timed('devPulse', () => readRepoPulse(database(), market.repoId)).catch(error => { console.error('dev-pulse read failed', { mint, error: error.message }); return null })
 
   const official = market.mint === OFFICIAL_TOKEN.mint && String(market.repoId) === OFFICIAL_TOKEN.repoId
@@ -78,7 +83,7 @@ export default async function Token({ params, searchParams }) {
     { id: 'repository', anchor: 'repository', label: 'Repository', content: <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense> },
     { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
-      <RepositoryEarnings market={market}/></Suspense> },
+      <RepositoryEarnings market={market} declined={decision !== null}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
     // #rewards (linked from /wallet) opens this tab so a launcher lands on the claim button.
     ...rewards ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards">
@@ -86,6 +91,7 @@ export default async function Token({ params, searchParams }) {
       {[1, 2].includes(market.discoveryVersion) && <DiscoveryRewards repoId={market.repoId}/>}</div> }] : [],
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
+    {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><EarningsHeadline market={market}/></Suspense></div>
@@ -110,7 +116,7 @@ export default async function Token({ params, searchParams }) {
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
       <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
-        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market} launchFee={launchFee}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
+        aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<TrustPanel market={market} launchFee={launchFee} declined={decision || null}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}
           <Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense></div>}/>
@@ -132,18 +138,20 @@ function TokenDetails({ market }) {
 }
 
 // $REPOING page: the graduation race's top three and the three newest launches, from the same memoized reads as the
-// home page (no extra query per view). The official market itself is never listed.
+// home page (no extra query per view). The official market itself is never listed, nor a do-not-promote or declined one.
 async function MarketsToWatchContent() {
-  const [{ markets: race, unavailable: raceUnavailable }, { markets, unavailable }] = await Promise.all([graduationRace(), listMarkets()])
+  const [{ markets: race, unavailable: raceUnavailable }, { markets, unavailable }, excluded] = await Promise.all([graduationRace(), listMarkets(), promotionExcluded()])
   const excludeMints = [OFFICIAL_TOKEN.mint]
   return <MarketsToWatchLists race={topOfRace(race, { limit: WATCH_LIMIT, excludeMints })} raceUnavailable={raceUnavailable}
-    newest={newestLaunches(markets, { excludeMints })} newestUnavailable={unavailable}/>
+    newest={excluded ? newestLaunches(markets, { excludeMints, excluded }) : []} newestUnavailable={unavailable || (!excluded && 'Markets are temporarily unavailable.') || null}/>
 }
 
-// Same memoized listMarkets() rows as the home tabs: no extra query per token page view.
+// Same memoized listMarkets() rows as the home tabs: no extra query per token page view. Never recommends a do-not-promote
+// or maintainer-declined market (nothing when that list is unreadable).
 async function MoreMarketsContent({ mint, featured }) {
-  const { markets } = await listMarkets()
-  return <MoreMarkets markets={selectMoreMarkets(markets, { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured}/>
+  const [{ markets }, excluded] = await Promise.all([listMarkets(), promotionExcluded()])
+  if (!excluded) return null
+  return <MoreMarkets markets={selectMoreMarkets(markets.filter(market => !excluded.has(String(market.repoId))), { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured}/>
 }
 
 // Fixed-size placeholder: the resolved headline occupies exactly this box, so streaming it in never shifts layout.
@@ -170,7 +178,7 @@ async function EarningsHeadline({ market }) {
   </div>
 }
 
-async function RepositoryEarnings({ market }) {
+async function RepositoryEarnings({ market, declined = false }) {
   const [fees, usdPerSol] = await earningsEvidence(market.repoId)
   const claimable = fees.status === 'MATCH' ? fees.onchainCreatorFee : null
   const verifiedEarned=fees.status==='MATCH'?market.earned:null
@@ -185,7 +193,7 @@ async function RepositoryEarnings({ market }) {
           <div className="earnings-breakdown"><span>Already paid<strong>{verifiedEarned===null?'—':`${formatSolDisplay(market.claimed)} SOL`}</strong></span><span>Available to claim<strong>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
           <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{market.beneficiaryWallet && <XHandle wallet={market.beneficiaryWallet} trust className="maintainer-x"/>}</div>
           <p>{earningsNote}</p><Link className="button white earnings-claim" href={`/claim/${market.repoId}`}>Claim builder fees<ArrowUpRight size={16}/></Link>
-          {!market.beneficiaryWallet && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
+          {!market.beneficiaryWallet && !declined && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
         </div>)
 }
 

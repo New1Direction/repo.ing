@@ -36,7 +36,7 @@ export function createAgentMcpServer(service) {
   const repository = z.string().min(3).max(256).describe('Public GitHub repository URL or owner/repository.')
   register('find_repos', 'Find public repositories from the existing evidence-backed trend feed. Scores include their inputs. Does not launch.',
     z.object({ query: z.string().max(120).optional(), limit: z.number().int().min(1).max(10).default(10) }).strict(), service.findRepos)
-  register('resolve_repo', 'Verify a public GitHub repository and check its immutable ID for an existing canonical market.',
+  register('resolve_repo', 'Verify a public GitHub repository and check its immutable ID for an existing canonical market and whether its maintainer opted out of repo.ing.',
     z.object({ repository }).strict(), service.resolveRepo, false)
   register('create_launch_draft', 'Create an expiring browser review link. No transaction, reservation, purchase, or wallet authority. Default: no initial buy. User chooses artwork and approves current costs in their wallet.',
     z.object({ repository, tokenName: z.string().trim().min(1).max(32).regex(/^[^\x00-\x1f\x7f]+$/).optional(),

@@ -23,6 +23,7 @@ launch-fee-chain
 launch-first-buy
 launch-indexer
 liquidity-deployment
+maintainer-opt-outs-db
 market-lookup
 milestone-alerts-db
 platform-dbc-fees

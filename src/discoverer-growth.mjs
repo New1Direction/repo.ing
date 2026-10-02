@@ -79,7 +79,9 @@ export async function discovererLeaderboard(pool,config=process.env.DBC_CONFIG,l
   return {leaders,attributions,excluded,checkedAt:new Date().toISOString()}
 }
 
-export async function growthSurface(pool,{operator=false}={}){
+// excluded: repository ids the public highlights and trend picks leave out (the do-not-promote list with maintainers'
+// opt-outs); the operator view shows everything.
+export async function growthSurface(pool,{operator=false,excluded=new Set()}={}){
   const [trends,discovery,{rows}]=await Promise.all([trendOperatorView(pool),discovererLeaderboard(pool),pool.query(`select m.github_repo_id::text as "repoId",r.full_name as "fullName",m.mint,m.launcher_wallet as wallet,
     m.launch_block_time as "launchedAt",coalesce((select sum(amount_base_units) from builder_fee_credits b where b.github_repo_id=m.github_repo_id),0)::text as earned,
     (coalesce((select sum((case when direction='buy' then input_base_units else output_base_units end)::numeric) from trade_events t where t.pool=m.pool),0)+
@@ -94,14 +96,15 @@ export async function growthSurface(pool,{operator=false}={}){
     return {repoId:row.repoId,fullName:row.fullName,mint:row.mint,wallet:row.wallet,launchedAt:row.launchedAt,
       earned:row.earned,volume:row.volume,graduation,fromTrend:row.fromTrend}
   })
-  const closest=markets.filter(m=>m.graduation?.phase==='CURVE').sort((a,b)=>{
+  const listed=operator?markets:markets.filter(m=>!excluded.has(String(m.repoId)))
+  const closest=listed.filter(m=>m.graduation?.phase==='CURVE').sort((a,b)=>{
     const d=BigInt(b.graduation.reserveLamports)*BigInt(a.graduation.thresholdLamports)-BigInt(a.graduation.reserveLamports)*BigInt(b.graduation.thresholdLamports)
     return d>0n?1:d<0n?-1:0
   }).slice(0,5)
   return {checkedAt:new Date().toISOString(),
-    candidates:operator?trends.candidates:publicTrendCandidates(trends.candidates,{limit:5}),
+    candidates:operator?trends.candidates:publicTrendCandidates(trends.candidates.filter(c=>!excluded.has(String(c.repoId))),{limit:5}),
     leaders:discovery.leaders.slice(0,operator?100:10),leaderboardPartial:discovery.excluded.length>0,
-    newMarkets:[...markets].sort((a,b)=>Date.parse(b.launchedAt)-Date.parse(a.launchedAt)).slice(0,5),closest,
-    earners:[...markets].sort((a,b)=>BigInt(a.earned)>BigInt(b.earned)?-1:BigInt(a.earned)<BigInt(b.earned)?1:0).slice(0,5),
+    newMarkets:[...listed].sort((a,b)=>Date.parse(b.launchedAt)-Date.parse(a.launchedAt)).slice(0,5),closest,
+    earners:[...listed].sort((a,b)=>BigInt(a.earned)>BigInt(b.earned)?-1:BigInt(a.earned)<BigInt(b.earned)?1:0).slice(0,5),
     ...(operator?{sources:trends.sources,recentTrends:markets.filter(m=>m.fromTrend).sort((a,b)=>Date.parse(b.launchedAt)-Date.parse(a.launchedAt)),attributionReview:discovery.excluded}:{})}
 }

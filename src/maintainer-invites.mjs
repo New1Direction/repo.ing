@@ -73,6 +73,7 @@ export function createMaintainerInvites({ pool, verifiedFee, repoMeta, env = pro
         and not exists (select 1 from repo_beneficiaries b where b.github_repo_id=m.github_repo_id)
         and not exists (select 1 from repo_claims x where x.github_repo_id=m.github_repo_id and x.status<>'aborted')
         and not exists (select 1 from repository_participation p where p.github_repo_id=m.github_repo_id)
+        and not exists (select 1 from maintainer_opt_outs o where o.github_repo_id=m.github_repo_id and o.withdrawn_at is null)
         and i.dismissed_at is null and (i.invited_at is null or i.invited_at < $2)
         and coalesce(c.total,0) - coalesce(s.total,0) >= $1
       order by recorded desc, m.github_repo_id limit $3`, [String(threshold), new Date(now() - INVITE_SNOOZE_MS), maxChecks])

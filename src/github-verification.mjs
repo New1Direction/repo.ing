@@ -6,6 +6,7 @@ import { markets, repoVerifications } from './db/schema.mjs'
 const API = 'https://api.github.com'
 const GITHUB_HEADERS = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28',
   'User-Agent': 'repo.ing-repo-verification' }
+const FULL_NAME = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/
 
 const positiveId = value => {
   const id = BigInt(value)
@@ -82,13 +83,9 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
     if (!retainCredential || !result.verified) return result
     return credentialResult(credential, result)
   }
-  const verifyAccessToken = async ({ githubRepoId, accessToken: token, expectedGithubUserId }) => {
-    const repoId = positiveId(githubRepoId)
-    if (typeof token !== 'string' || !token.startsWith('ghu_')) throw new Error('GitHub App user session required')
-    const market = (await db.select().from(markets).where(eq(markets.githubRepoId, repoId)).limit(1))[0]
-    if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
-      throw new Error('Repository has no indexed canonical market')
-    }
+  // GitHub's current answer for this user on this repository. The repository is resolved by its immutable ID before and
+  // after the permission read, so a rename or transfer during the check fails it.
+  const currentPermission = async (repoId, token, expectedGithubUserId) => {
     const user = await identify(token, expectedGithubUserId)
     const repo = await resolveRepo(repoId, token)
     const permissionPath = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}` +
@@ -105,6 +102,16 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
     if (after.owner !== repo.owner || after.name !== repo.name) {
       throw new Error('GitHub repository changed during permission verification')
     }
+    return { user, permission }
+  }
+  const verifyAccessToken = async ({ githubRepoId, accessToken: token, expectedGithubUserId }) => {
+    const repoId = positiveId(githubRepoId)
+    if (typeof token !== 'string' || !token.startsWith('ghu_')) throw new Error('GitHub App user session required')
+    const market = (await db.select().from(markets).where(eq(markets.githubRepoId, repoId)).limit(1))[0]
+    if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
+      throw new Error('Repository has no indexed canonical market')
+    }
+    const { user, permission } = await currentPermission(repoId, token, expectedGithubUserId)
     if (permission !== 'admin') return { verified: false, githubRepoId: repoId,
       githubUserId: BigInt(user.id), githubLogin: user.login, permission }
     const [record] = await db.insert(repoVerifications).values({ githubRepoId: repoId,
@@ -112,19 +119,31 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
     return { verified: true, githubRepoId: repoId, githubUserId: BigInt(user.id),
       githubLogin: user.login, permission, verifiedAt: record.verifiedAt }
   }
-  const listAdminRepositoryIds = async ({ accessToken, expectedGithubUserId }) => {
+  // Maintainer opt-outs for repositories without a market (src/maintainer-opt-outs.mjs): the same fresh admin check as
+  // verifyAccessToken, without its market requirement and without writing a verification record.
+  const verifyRepositoryAdmin = async ({ githubRepoId, accessToken: token, expectedGithubUserId }) => {
+    const repoId = positiveId(githubRepoId)
+    if (typeof token !== 'string' || !token.startsWith('ghu_')) throw new Error('GitHub App user session required')
+    const { user, permission } = await currentPermission(repoId, token, expectedGithubUserId)
+    return { admin: permission === 'admin', githubRepoId: repoId, githubUserId: BigInt(user.id), githubLogin: user.login, permission }
+  }
+  // The user's public, non-archived repositories with admin permission: [{ repoId, fullName }] (fullName null if malformed).
+  const listAdminRepositories = async ({ accessToken, expectedGithubUserId }) => {
     await identify(accessToken, expectedGithubUserId)
-    const ids = new Set()
+    const repos = new Map()
     // Paginate rather than silently omitting an owner's repositories after the first 100.
     for (let page = 1; page <= 100; page++) {
       const result = await apiGet(`/user/repos?visibility=public&affiliation=owner,collaborator,organization_member&sort=full_name&per_page=100&page=${page}`, accessToken)
       if (result.status !== 200 || !Array.isArray(result.body)) throw new Error('GitHub repositories are temporarily unavailable. Try refreshing.')
       for (const repo of result.body) {
-        if (Number.isSafeInteger(repo.id) && repo.id > 0 && repo.private === false && !repo.archived && repo.permissions?.admin === true) ids.add(String(repo.id))
+        if (Number.isSafeInteger(repo.id) && repo.id > 0 && repo.private === false && !repo.archived && repo.permissions?.admin === true) {
+          repos.set(String(repo.id), { repoId: String(repo.id), fullName: FULL_NAME.test(repo.full_name ?? '') ? repo.full_name : null })
+        }
       }
-      if (result.body.length < 100) return [...ids]
+      if (result.body.length < 100) return [...repos.values()]
     }
     throw new Error('GitHub returned too many repositories to check at once. Use the individual claim pages.')
   }
-  return { authorizationUrl, verifyCallback, verifyBuilderCallback, verifyAccessToken, listAdminRepositoryIds }
+  const listAdminRepositoryIds = async options => (await listAdminRepositories(options)).map(repo => repo.repoId)
+  return { authorizationUrl, verifyCallback, verifyBuilderCallback, verifyAccessToken, verifyRepositoryAdmin, listAdminRepositories, listAdminRepositoryIds }
 }

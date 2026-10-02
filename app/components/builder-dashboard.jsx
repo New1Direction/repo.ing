@@ -14,6 +14,7 @@ import { claimBuilderQueue } from '../../src/builder-queue.mjs'
 import { ClaimChecklist, WalletExplainer } from './claim-checklist'
 import { builderClaimStep } from '../lib/claim-checklist.mjs'
 import { ClaimTips } from './claim-tips'
+import { MaintainerDecision } from './maintainer-decision'
 import { formatTokenAmount, formatUsdValue } from '../lib/format.mjs'
 
 export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
@@ -118,6 +119,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
                   <small>{repo.wallet ? 'A tip payout is confirming.' : 'Set a payout wallet to claim tips.'}</small>}</div>}
               <div className="builder-repo-wallet"><span>Payout wallet</span>{repo.wallet?<CopyAddress address={repo.wallet} compact label="payout wallet"/>:<span>Not set</span>}</div>
               <div className="builder-repo-actions">{receipt?<a className="button outline" target="_blank" rel="noreferrer" href={`https://solscan.io/tx/${receipt}`}>Receipt ↗</a>:<button className="button outline" disabled={busy||loading||!actionable(repo)} onClick={()=>claim([repo])}>Claim</button>}<Link href={`/claim/${repo.repoId}`}>Manage</Link></div>
+              {repo.decision!==undefined&&<div className="builder-repo-decision"><MaintainerDecision key={`${repo.repoId}:${repo.decision?.createdAt??'none'}`} repoId={repo.repoId} fullName={repo.fullName} live decision={repo.decision} compact/></div>}
             </article>
           })}</div>}
         </section>

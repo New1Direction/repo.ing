@@ -143,6 +143,8 @@ export function createPulseStore(pool) {
   }
 }
 
+// excluded: repositories never read, as a Set or a function returning one per run (the worker passes the do-not-promote
+// list with maintainer opt-outs; when that read fails the run fails and nothing is read).
 export function createDevPulseCollector({ pool, store = createPulseStore(pool), fetchImpl = fetch, now = () => Date.now(),
   headers = () => githubApiHeaders('repo.ing-dev-pulse', fetchImpl), excluded = new Set(), batch = 12 } = {}) {
   let pausedUntil = 0, lastPrune = 0, warnedMissing = false
@@ -223,8 +225,9 @@ export function createDevPulseCollector({ pool, store = createPulseStore(pool), 
   return {
     async runOnce() {
       if (pausedUntil > now()) return { paused: iso(pausedUntil) }
+      const skip = typeof excluded === 'function' ? await excluded() : excluded
       let due
-      try { due = await store.due(batch, excluded) } catch (error) {
+      try { due = await store.due(batch, skip) } catch (error) {
         if (error?.code !== '42P01') throw error
         if (!warnedMissing) { warnedMissing = true; console.log('dev pulse tables missing; skipping') }
         return { skipped: 'NOT_MIGRATED' }

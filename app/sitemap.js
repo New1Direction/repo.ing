@@ -5,7 +5,7 @@ const SITE = 'https://repo.ing'
 const PAGES = [
   ['/', 1, 'hourly'], ['/explore', 0.9, 'hourly'], ['/launch', 0.8, 'daily'], ['/find-repos', 0.7, 'daily'],
   ['/stats', 0.7, 'daily'], ['/waiting', 0.7, 'hourly'], ['/parts', 0.7, 'daily'], ['/discoverers', 0.6, 'daily'], ['/how-it-works', 0.6, 'monthly'],
-  ['/about', 0.5, 'monthly'], ['/ja', 0.5, 'monthly'],
+  ['/about', 0.5, 'monthly'], ['/ja', 0.5, 'monthly'], ['/opt-out', 0.4, 'monthly'],
 ]
 
 // Rendered per request: token pages come from the database, which is unavailable at build time.
