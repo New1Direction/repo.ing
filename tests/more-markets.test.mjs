@@ -14,7 +14,7 @@ test('more markets: excludes current and official mints, volume first then newes
   const picked = selectMoreMarkets(markets, { excludeMints: ['mint11', 'mint12'], now })
   assert.equal(picked.length, MORE_MARKETS_LIMIT)
   assert.deepEqual(picked.map(m => m.mint), ['mint4', 'mint2', 'mint1', 'mint5', 'mint3', 'mint6', 'mint7', 'mint8'])
-  assert.deepEqual(Object.keys(picked[0]).sort(), ['fullName', 'isNew', 'mint', 'repoId', 'symbol', 'volume24hLamports'])
+  assert.deepEqual(Object.keys(picked[0]).sort(), ['fullName', 'isNew', 'mint', 'newRepo', 'officialLaunch', 'repoId', 'symbol', 'volume24hLamports'])
 })
 
 test('more markets: New flag holds strictly inside 7 days', () => {

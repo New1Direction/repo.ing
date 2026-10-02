@@ -277,7 +277,8 @@ test('repositories without a market get the same fresh admin check, with no veri
 
 test('worker jobs read the do-not-promote set every run and do nothing when it cannot be read', async () => {
   const SINCE = new Date('2026-10-01T00:00:00Z'), NOW = Date.parse('2026-10-02T00:00:00Z')
-  const market = id => ({ githubRepoId: id, mint: `Mint${id}`, tokenSymbol: 'R', fullName: `octo/repo-${id}`, description: null, stars: 1, indexedAt: new Date(NOW - 3600_000) })
+  // Established repositories (500 stars), so only the do-not-promote set decides here, not the new-repo gate.
+  const market = id => ({ githubRepoId: id, mint: `Mint${id}`, tokenSymbol: 'R', fullName: `octo/repo-${id}`, description: null, stars: 500, indexedAt: new Date(NOW - 3600_000) })
   const launchStore = { withLock: async fn => ({ locked: true, value: await fn() }), expireStale: async () => [], sentRecently: async () => 0,
     candidates: async () => [market('3'), market('4')], claim: async ({ market: m }) => m.githubRepoId, finish: async () => {} }
   const sent = []

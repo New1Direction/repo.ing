@@ -88,7 +88,7 @@ test('real PostgreSQL: draft/retry/cancel do not reserve markets; renamed repos 
   const db = new pg.Client({ connectionString: url.href }); await db.connect(); await db.query('begin')
   try {
     await db.query(readFileSync('drizzle/0022_agent_request_limits.sql', 'utf8').replaceAll('CREATE TABLE', 'CREATE TEMPORARY TABLE'))
-    await db.query(`create temporary table repositories(github_repo_id bigint primary key, owner text,name text,full_name text,description text,avatar_url text,stars int,forks int,archived boolean,github_updated_at timestamptz,synced_at timestamptz default now());
+    await db.query(`create temporary table repositories(github_repo_id bigint primary key, owner text,name text,full_name text,description text,avatar_url text,stars int,forks int,archived boolean,github_updated_at timestamptz,synced_at timestamptz default now(),github_created_at timestamptz);
       create temporary table markets(github_repo_id bigint primary key,status text,launch_finality text,indexed_at timestamptz,mint text,pool text,launch_signature text,launcher_wallet text)`)
     await db.query(readFileSync('drizzle/0041_maintainer_opt_outs.sql', 'utf8').replaceAll('CREATE TABLE', 'CREATE TEMPORARY TABLE'))
     const repo = { githubRepoId: 123n, owner: 'owner', name: 'repo', fullName: 'owner/repo', stars: 1, forks: 0, archived: false, githubUpdatedAt: new Date() }

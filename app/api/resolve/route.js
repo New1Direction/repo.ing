@@ -1,4 +1,5 @@
 import { parseRepositoryUrl, resolvePublicRepository, RepositoryResolutionError } from '../../../src/github.mjs'
+import { persistLaunchRepository } from '../../../src/repository-store.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { database } from '../../lib/server.mjs'
 import { activeDecision, OPT_OUT_ERROR } from '../../../src/maintainer-opt-outs.mjs'
@@ -18,12 +19,7 @@ export async function POST(request) {
         and r.synced_at > now() - interval '24 hours'`, [`${owner}/${name}`])
     if (known.rows[0]) return Response.json(known.rows[0])
     const repo = await resolvePublicRepository(normalizedUrl)
-    await pool.query(`insert into repositories (github_repo_id,owner,name,full_name,description,avatar_url,stars,forks,archived,github_updated_at)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict (github_repo_id) do update set
-      owner=excluded.owner,name=excluded.name,full_name=excluded.full_name,description=excluded.description,
-      avatar_url=excluded.avatar_url,stars=excluded.stars,forks=excluded.forks,archived=excluded.archived,
-      github_updated_at=excluded.github_updated_at,synced_at=now()`, [repo.githubRepoId.toString(), repo.owner, repo.name,
-      repo.fullName, repo.description, repo.avatarUrl, repo.stars, repo.forks, repo.archived, repo.githubUpdatedAt])
+    await persistLaunchRepository(pool, repo)
     const { rows } = await pool.query(`select mint from markets where github_repo_id = $1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`, [repo.githubRepoId.toString()])
     // Without a market the next step is a launch: refuse it when the maintainer opted the repository out.
     if (!rows[0]?.mint && await activeDecision(pool, repo.githubRepoId.toString())) {

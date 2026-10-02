@@ -295,6 +295,13 @@
       "when": 1790910003000,
       "tag": "0043_trade_referrers",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1790910005000,
+      "tag": "0045_repo_quality",
+      "breakpoints": true
     }
   ]
 }

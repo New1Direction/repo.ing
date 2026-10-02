@@ -24,6 +24,12 @@ export async function resolvePublicRepositoryById(id, fetchImpl = fetch) {
   return repo
 }
 
+// A GitHub timestamp string as a Date, or null when missing or malformed.
+export function githubTime(value) {
+  const time = typeof value === 'string' ? new Date(value) : null
+  return time && !Number.isNaN(time.getTime()) ? time : null
+}
+
 async function publicRepositoryFromResponse(response) {
   if (response.status === 404) throw new RepositoryResolutionError('Repository not found or not public')
   if (!response.ok) throw new RepositoryResolutionError(`GitHub lookup failed: HTTP ${response.status}`)
@@ -35,10 +41,13 @@ async function publicRepositoryFromResponse(response) {
   if (repo.archived) throw new RepositoryResolutionError('Archived repositories are unsupported')
   const updated = new Date(repo.updated_at)
   if (Number.isNaN(updated.getTime())) throw new RepositoryResolutionError('GitHub returned an invalid update time')
+  // Left out (never stored as null over a known value) if GitHub omits it; quality signals then judge by stars alone.
+  const created = githubTime(repo.created_at)
   return {
     githubRepoId: BigInt(repo.id), owner: repo.owner.login, name: repo.name,
     fullName: repo.full_name, description: repo.description ?? null,
     avatarUrl: repo.owner.avatar_url ?? null, stars: repo.stargazers_count ?? 0,
     forks: repo.forks_count ?? 0, archived: Boolean(repo.archived), githubUpdatedAt: updated,
+    ...created ? { githubCreatedAt: created } : {},
   }
 }
