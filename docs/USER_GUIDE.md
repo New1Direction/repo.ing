@@ -74,7 +74,7 @@ GitHub's authorization screen describes the App acting on your behalf because re
 
 ### Paste a payout address
 
-If you don't have a Solana wallet extension, select **No Solana wallet extension? Paste a payout address instead** on the claim page (or **Paste an address** on a Builders dashboard row). Copy your SOL receiving address from any Solana wallet app, paste it, and type its **last 4 characters** as your wallet app shows them; that catches a wrong or altered clipboard. Use a Solana wallet you control. Exchange deposit addresses may not credit program payouts.
+If you don't have a Solana wallet extension, select **No Solana wallet extension? Paste a payout address instead** on the claim page (or **Paste an address** on a Builders dashboard row). Copy your SOL receiving address from any Solana wallet app, paste it, and type its **last 4 characters** as your wallet app shows them, so a wrong paste is caught. Use a Solana wallet you control. Exchange deposit addresses may not credit program payouts.
 
 - **A 48-hour hold.** A pasted address can receive payouts 48 hours after you save it. The page shows **Pasted address, active from &lt;date&gt; (cancel)** with a countdown. If the repository already has a payout address, that address keeps receiving claims until then; if not, claims open when the pasted address becomes active.
 - **Anyone with admin access can cancel it** during the hold: every current admin of the repository sees the waiting address and a **cancel** link (a fresh GitHub admin check, as for every change). Pasting a different address replaces the waiting one and restarts the hold. Signing with a wallet replaces a waiting address at once.
@@ -82,7 +82,7 @@ If you don't have a Solana wallet extension, select **No Solana wallet extension
 - **Email notice.** If you turned on earnings reminders, you receive **Payout address change requested** right away when an address is pasted for a repository you set up, and so does the person who pasted it.
 - After the hold, the claim page shows **Pasted address, active since &lt;date&gt;**; a wallet-signed address shows **Verified by wallet signature**. Claim reviews always show the exact address that will be paid. To change a pasted address later, sign with a wallet (immediate) or paste another (another 48-hour hold).
 
-A market launched from the payout wallet counts as **Official** only when that wallet was set by signing (see [Understand the numbers](#understand-the-numbers)).
+A pasted address shows that a repository admin chose it, not who holds it. So a market launched from the payout wallet counts as **Official** only when that wallet was set by signing (see [Understand the numbers](#understand-the-numbers)), and the maintainer's ✓ X handle and the **Builder** label in Backers also come only from a wallet-signed payout address.
 
 ### Claim from several repositories
 
