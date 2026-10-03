@@ -11,16 +11,15 @@ import { normalizeTokenImage } from '../src/token-image.mjs'
 import { launchBuyPreset } from '../src/launch-buy.mjs'
 import { DISCOVERY_VERSION } from '../src/discovery-rewards.mjs'
 import { marketSource } from '../src/market-identity.mjs'
-import { HF_CONFIG_RESERVE_ERROR } from '../src/hf-launch.mjs'
 import { POST as resolveRoute } from '../app/api/resolve/route.js'
 import { GET as launchStatus, POST as launchRoute } from '../app/api/launch/route.js'
 
 // End to end on a local validator and a disposable database, through the same route handlers the browser calls:
 // /api/resolve → /api/launch prepare → the wallet signs → /api/launch submit → verified, indexed market. Hugging Face is
 // tests/fixtures/hf-server.mjs and GitHub a stub; nothing reaches the network. Discovery and the verification bonus are on,
-// so the model market must come out with discovery and without the bonus. A model never launches on a config that reserves
-// the builder allocation; once the config is declared to, the model is refused and the repository launched in the same
-// run carries the allocation and the bonus exactly as before.
+// so the model market must come out with discovery and without the bonus. Once the config is declared to reserve the
+// builder allocation, a second model launches on it and carries the allocation (never the bonus), and the repository
+// launched in the same run carries the allocation and the bonus exactly as before.
 const rpc = process.env.SOLANA_RPC_URL
 assert.match(rpc ?? '', /^http:\/\/(127\.0\.0\.1|localhost):\d+$/, 'Disposable local validator required')
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:launchtest@127.0.0.1:55432/repoing_hf_launch_test'
@@ -118,16 +117,16 @@ test('a model market launches end to end; a repository launch in the same run is
   assert.deepEqual(status, { state: 'live', mint: launched.mint })
   assert.deepEqual(await call(resolveRoute, { url: 'hf.co/TheBloke/Llama-2-7B-GGUF' }), { repoId: resolved.repoId, mint: launched.mint, source: 'huggingface' })
 
-  // The config now reserves the builder allocation: a model is refused before Hugging Face or the chain is asked.
+  // The config now reserves the builder allocation: a model launches on it too, and its market carries the allocation for
+  // the model's verified owner (src/builder-allocation.mjs), never the verification bonus.
   process.env.BUILDER_ALLOCATION_CONFIGS = config.toBase58()
   const gpt2 = await call(resolveRoute, { url: 'https://huggingface.co/openai-community/gpt2' })
-  const beforeRefusal = hfServer.requests.length
-  const refused = await launchRoute(new Request('https://repo.ing/api/launch', { method: 'POST', body: JSON.stringify({ action: 'prepare', repoId: gpt2.repoId,
-    hfId: recorded['model-gpt2'].body._id, tokenName: 'gpt2', tokenSymbol: 'GPT2', tokenImage: image, launcherWallet: wallet.publicKey.toBase58(), initialBuyLamports: '0' }) }))
-  assert.equal(refused.status, 400)
-  assert.equal((await refused.json()).error, HF_CONFIG_RESERVE_ERROR)
-  assert.equal(hfServer.requests.length, beforeRefusal)
-  assert.deepEqual(await marketRow(gpt2.repoId), [])
+  const gpt2Review = await call(launchRoute, { action: 'prepare', repoId: gpt2.repoId, hfId: recorded['model-gpt2'].body._id, tokenName: 'gpt2',
+    tokenSymbol: 'GPT2', tokenImage: image, launcherWallet: wallet.publicKey.toBase58(), initialBuyLamports: '0' })
+  const gpt2Launched = await call(launchRoute, { action: 'submit', id: gpt2Review.id, transaction: walletSigns(gpt2Review.transaction, wallet) })
+  assert.deepEqual(await marketRow(gpt2.repoId), [{ status: 'confirmed', mint: gpt2Launched.mint, pool: gpt2Launched.pool, signature: gpt2Launched.signature,
+    finality: 'finalized', indexed: true, launcher: wallet.publicKey.toBase58(), creator: creator.publicKey.toBase58(), tokenName: 'gpt2',
+    tokenSymbol: 'GPT2', hasImage: true, discoveryVersion: DISCOVERY_VERSION, allocationVersion: 1, bonusLamports: null }])
 
   // The repository, through the same routes and environment: unchanged, rewards stamped.
   const modelRequests = hfServer.requests.length
@@ -144,5 +143,5 @@ test('a model market launches end to end; a repository launch in the same run is
   assert.deepEqual(repo, { source: 'github', hf_model_ref: null, fullName: 'octocat/Hello-World', stars: 3000, forks: 900 })
   assert.deepEqual([...new Set(github)], ['https://api.github.com/repos/octocat/Hello-World'])
   assert.equal(hfServer.requests.length, modelRequests, 'a repository launch never asks Hugging Face')
-  assert.equal((await pool.query('select count(*)::int as n from markets')).rows[0].n, 2)
+  assert.equal((await pool.query('select count(*)::int as n from markets')).rows[0].n, 3)
 })

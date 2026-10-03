@@ -2,11 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import sharp from 'sharp'
+import { Keypair } from '@solana/web3.js'
 import { startFakeHf, recorded } from './fixtures/hf-server.mjs'
 import { createHfClient } from '../src/hf-api.mjs'
 import { HF_MARKET_REF_MIN, MarketIdentityError } from '../src/market-identity.mjs'
 import { HF_DISCLAIMER, HF_DISCLAIMER_SHORT } from '../src/hf-copy.mjs'
-import { HF_CONFIG_RESERVE_ERROR, HF_MARKETS_UNAVAILABLE, HF_MODEL_MOVED, HF_OPT_OUT_ERROR, HfLaunchError, hfLaunchGuard, hfLaunchSource,
+import { HF_MARKETS_UNAVAILABLE, HF_MODEL_MOVED, HF_OPT_OUT_ERROR, HfLaunchError, hfLaunchGuard, hfLaunchSource,
   hfMarketsEnabled, isHfMarketId, modelDescription, modelLookupError, modelTokenDefaults, namesHuggingFace, resolveModel } from '../src/hf-launch.mjs'
 import { defaultTokenName, defaultTokenSymbol } from '../app/lib/launch-defaults.mjs'
 import { fetchHfAvatar, modelImageSuggestions, safeHfAvatarUrl } from '../app/lib/hf-launch.mjs'
@@ -245,16 +246,15 @@ test('with the flag off, a model prepare is refused before the database, Hugging
     assert.deepEqual(touched, [])
   })))
 
-test('a model prepare is refused on a launch config that reserves the builder allocation, before anything is read', () => {
+test('a model prepare on a launch config that reserves the builder allocation goes on to the model checks: the market carries the allocation', () => {
   const config = 'So11111111111111111111111111111111111111112'
-  return withEnv({ HF_MARKETS_ENABLED: 'true', DATABASE_URL: 'postgres://test-only', DBC_CONFIG: config, BUILDER_ALLOCATION_CONFIGS: config },
-    () => withRouteGlobals({}, async touched => {
-      const response = await launchRoute(new Request('https://repo.ing/api/launch', { method: 'POST', body: JSON.stringify({ action: 'prepare',
-        repoId: HF, hfId: GPT2._id, tokenName: 'gpt2', tokenSymbol: 'GPT2', tokenImage: 'data:image/png;base64,AAAA', launcherWallet: '11111111111111111111111111111111' }) }))
-      assert.equal(response.status, 400)
-      assert.equal((await response.json()).error, HF_CONFIG_RESERVE_ERROR)
-      assert.deepEqual(touched, [])
-    }))
+  return withEnv({ HF_MARKETS_ENABLED: 'true', DATABASE_URL: 'postgres://test-only', DBC_CONFIG: config, BUILDER_ALLOCATION_CONFIGS: config,
+    PLATFORM_CREATOR_SECRET_KEY: JSON.stringify([...Keypair.generate().secretKey]) }, () => withRouteGlobals({}, async touched => {
+    const response = await launchRoute(new Request('https://repo.ing/api/launch', { method: 'POST', body: JSON.stringify({ action: 'prepare',
+      repoId: HF, hfId: GPT2._id, tokenName: 'gpt2', tokenSymbol: 'GPT2', tokenImage: 'data:image/png;base64,AAAA', launcherWallet: '11111111111111111111111111111111' }) }))
+    assert.equal(response.status, 400, 'this stand-in database refuses every read')
+    assert.ok(touched.some(entry => /from hf_models/.test(entry)), `nothing refused it for the allocation before the registry read: ${touched}`)
+  }))
 })
 
 test('avatar suggestions run at most eight fetches at once', async () => {

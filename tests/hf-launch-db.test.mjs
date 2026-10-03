@@ -6,7 +6,7 @@ import { startFakeHf, recorded } from './fixtures/hf-server.mjs'
 import { createHfClient } from '../src/hf-api.mjs'
 import { HF_MARKET_REF_MAX, HF_MARKET_REF_MIN } from '../src/market-identity.mjs'
 import { HF_DISCLAIMER } from '../src/hf-copy.mjs'
-import { HF_CONFIG_RESERVE_ERROR, HF_MODEL_MOVED, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, persistModelRepository,
+import { HF_MODEL_MOVED, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, persistModelRepository,
   resolveModel } from '../src/hf-launch.mjs'
 import { createLaunchCoordinator } from '../src/launch-coordinator.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../src/launch-sessions.mjs'
@@ -108,7 +108,7 @@ test('one market per _id, ever: renames and case find the same id; a reused path
   assert.deepEqual((await registry(GGUF._id)).baseModels, [{ hfId: '64b0234d53bd91402e6ad49c', path: 'meta-llama/Llama-2-7b-hf', relation: 'quantized' }])
 })
 
-test('the coordinator launches a model market under its registry id with discovery but never the bonus or the allocation', async () => {
+test('the coordinator launches a model market under its registry id with discovery and the builder allocation, never the bonus', async () => {
   const stages = []
   const guard = hfLaunchGuard({ pool, hf, enabled: on })
   const options = { pool, launcher: fakeLauncher(), discoveryEnabled: true, builderAllocationEnabled: true, verificationBonusLamports: 5_000_000n }
@@ -119,7 +119,7 @@ test('the coordinator launches a model market under its registry id with discove
   const marketRef = BigInt((await registry(GPT2._id)).marketRef)
   assert.equal(market.status, 'confirmed')
   assert.equal(market.githubRepoId, marketRef)
-  assert.equal(market.builderAllocationVersion, null)
+  assert.equal(market.builderAllocationVersion, 1, 'claimable by the model’s verified owner after graduation (migration 0052)')
   assert.equal(market.verificationBonusLamports, null)
   assert.equal(market.discoveryVersion, DISCOVERY_VERSION)
   assert.deepEqual(stages, ['prepare', 'submit'])
@@ -247,11 +247,12 @@ test('/api/launch prepares a model only for the reviewed _id and never for an op
     assert.equal(response.status, 400)
     assert.match((await response.json()).error, message)
   }
-  // A launch config that reserves the builder allocation refuses every model launch, before anything else is read.
-  process.env.BUILDER_ALLOCATION_CONFIGS = config
-  assert.equal((await (await prepare({})).json()).error, HF_CONFIG_RESERVE_ERROR)
-  delete process.env.BUILDER_ALLOCATION_CONFIGS
+  // A launch config that reserves the builder allocation launches model markets too (they carry it for the model's owner):
+  // with it declared, an opted-out model is refused for the opt-out, as without it.
   await optOut(repoId)
+  process.env.BUILDER_ALLOCATION_CONFIGS = config
+  assert.equal((await (await prepare({})).json()).error, HF_OPT_OUT_ERROR)
+  delete process.env.BUILDER_ALLOCATION_CONFIGS
   assert.equal((await (await prepare({})).json()).error, HF_OPT_OUT_ERROR)
   assert.equal(await count('markets'), 0, 'no refusal reserves a market')
   assert.equal(await count('agent_request_limits'), 0, 'refusals spend no lookup')
@@ -278,9 +279,15 @@ test('the model MCP service resolves, drafts a browser review and reports status
   const verified = verifyLaunchDraft(token, { secret, repoId: marketId, config, discovery: true, allocation: false, now: Date.parse('2026-10-02T12:00:01Z') })
   assert.deepEqual([verified.repoId, verified.fullName, verified.initialBuy], [marketId, 'openai-community/gpt2', '100'])
   assert.equal(await count('markets'), 0, 'a draft reserves nothing')
-  // On a config that reserves the builder allocation no draft is made; a spent lookup budget stops before Hugging Face.
-  await assert.rejects(createModelLaunchService({ ...options, allocation: true }).createModelDraft({ model: 'openai-community/gpt2' }),
-    { message: HF_CONFIG_RESERVE_ERROR })
+  // On a config that reserves the builder allocation the draft records it (the market carries it for the model's owner),
+  // and only a review under that same rule opens it; a spent lookup budget stops before Hugging Face.
+  const reserved = await createModelLaunchService({ ...options, allocation: true }).createModelDraft({ model: 'openai-community/gpt2' })
+  assert.deepEqual([reserved.draftCreated, reserved.rules.builderAllocationEnabled, reserved.rules.verificationBonus], [true, true, false])
+  assert.match(reserved.rules.builderAllocation, /verified Hugging Face owner after graduation/)
+  const reservedToken = new URL(reserved.reviewUrl).searchParams.get('draft')
+  assert.equal(verifyLaunchDraft(reservedToken, { secret, repoId: marketId, config, discovery: true, allocation: true, now: Date.parse('2026-10-02T12:00:01Z') }).repoId, marketId)
+  assert.throws(() => verifyLaunchDraft(reservedToken, { secret, repoId: marketId, config, discovery: true, allocation: false, now: Date.parse('2026-10-02T12:00:01Z') }),
+    /Launch rules changed/)
   const before = hfServer.requests.length
   await assert.rejects(createModelLaunchService({ ...options, lookupQuota: async () => false }).resolveModel({ model: 'openai-community/gpt2' }),
     { message: 'Too many model lookups. Try again in a minute.' })
