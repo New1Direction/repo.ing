@@ -5,6 +5,9 @@ import { QUOTE_ERRORS, QUOTE_REGISTRY, SOL_QUOTE, companyForOwner, quoteAssetByI
   resolveQuoteAsset, stockQuotesEnabled } from '../src/quote-assets.mjs'
 import { TIP_TOKENS } from '../src/tip-tokens.mjs'
 import { forgetQuoteOptions, quoteOptionsForRepo } from '../app/lib/quote-options.mjs'
+import { offlineFetch } from './fixtures/render-jsx.mjs'
+import { repositoryById } from '../app/lib/server.mjs'
+import { GET as quoteOptionsRoute } from '../app/api/repos/[repoId]/quote-options/route.js'
 
 // facebook/docusaurus and microsoft/vscode as GitHub reports them (owner ids from GitHub's GET /orgs/<login>).
 const DOCUSAURUS = { repoId: '94911145', ownerId: '69631', ownerType: 'Organization' }
@@ -34,6 +37,18 @@ test('the registry is explicit and well-formed: unique ids and mints, valid base
     assert.ok(asset.provider)
   }
   assert.ok(Object.isFrozen(QUOTE_REGISTRY.assets[0]) && Object.isFrozen(QUOTE_REGISTRY.companies[0]))
+  for (const company of companies) {
+    assert.ok(assets.filter(a => a.companyId === company.companyId && a.enabled).length <= 1, `${company.companyId} has at most one enabled asset`)
+  }
+})
+
+test('a replaced asset: the disabled original stays listed as not eligible and its appended successor is offered', () => {
+  const registry = { ...variant({ asset: { enabled: false } }), assets: [...variant({ asset: { enabled: false } }).assets,
+    { ...QUOTE_REGISTRY.assets.find(a => a.assetId === 'meta-xstock'), assetId: 'meta-xstock-2', mint: 'XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX', enabled: true }] }
+  assert.deepEqual(quoteOptions(DOCUSAURUS, { enabled: true, registry }).map(o => [o.assetId, o.eligible]),
+    [['sol', true], ['meta-xstock-2', true], ['meta-xstock', false]])
+  assert.equal(resolveQuoteAsset('meta-xstock-2', DOCUSAURUS, { enabled: true, registry }).assetId, 'meta-xstock-2')
+  assert.throws(() => resolveQuoteAsset('meta-xstock', DOCUSAURUS, { enabled: true, registry }), code(QUOTE_ERRORS.STOCK_ASSET_DISABLED))
 })
 
 test('every stock quote agrees with the tip allowlist on mint, decimals and token program', () => {
@@ -153,4 +168,53 @@ test('quote-options: SOL only without reading GitHub when off or for a model; ow
   const stored = await quoteOptionsForRepo(DOCUSAURUS.repoId, { enabled: true, load: async id => ({ repoId: id, owner: 'facebook' }) })
   assert.deepEqual(stored.options.map(o => o.assetId), ['sol'])
   forgetQuoteOptions()
+})
+
+test('quote-options spends at most one GitHub read per repository per minute: misses are kept, concurrent reads are shared', async () => {
+  forgetQuoteOptions()
+  let reads = 0
+  const slow = async id => { reads++; await new Promise(resolve => setTimeout(resolve, 20)); return id === DOCUSAURUS.repoId ? DOCUSAURUS : null }
+  const answers = await Promise.all(Array.from({ length: 20 }, () => quoteOptionsForRepo(DOCUSAURUS.repoId, { enabled: true, load: slow, now: 1000 })))
+  assert.equal(reads, 1)
+  assert.ok(answers.every(answer => answer.options[1].assetId === 'meta-xstock'))
+  for (let i = 0; i < 5; i++) assert.equal(await quoteOptionsForRepo('123', { enabled: true, load: slow, now: 1000 }), null)
+  assert.equal(reads, 2, 'an unknown repository is read once, then answered from the cache')
+  let failing = 0
+  const broken = async () => { failing++; throw Error('GitHub unavailable') }
+  for (let i = 0; i < 2; i++) await assert.rejects(quoteOptionsForRepo('456', { enabled: true, load: broken, now: 1000 }))
+  assert.equal(failing, 2, 'a failed read is not kept')
+  forgetQuoteOptions()
+})
+
+test('repositoryById reports the owner id and type from the live GitHub read only', async () => {
+  const github = owner => [/api\.github\.com\/repositories\/94911145$/, async () => Response.json({ id: 94911145, name: 'docusaurus',
+    full_name: 'facebook/docusaurus', owner, private: false, archived: false, language: 'TypeScript', license: { spdx_id: 'MIT' },
+    updated_at: '2026-10-01T00:00:00Z', created_at: '2017-06-20T00:00:00Z', html_url: 'https://github.com/facebook/docusaurus',
+    has_issues: true, stargazers_count: 60000, forks_count: 9000 })]
+  for (const [owner, expected] of [
+    [{ login: 'facebook', id: 69631, type: 'Organization', avatar_url: null }, ['69631', 'Organization']],
+    [{ login: 'facebook', avatar_url: null }, [null, null]],
+    [{ login: 'facebook', id: '69631', type: 7, avatar_url: null }, [null, null]],
+  ]) {
+    const fetches = offlineFetch([github(owner)])
+    try {
+      const repo = await repositoryById('94911145')
+      assert.deepEqual([repo.ownerId, repo.ownerType], expected)
+    } finally { fetches.restore() }
+  }
+})
+
+test('GET /api/repos/<id>/quote-options: SOL only while stock pairs are off, 404 for a malformed or out-of-range id', async () => {
+  forgetQuoteOptions()
+  const fetches = offlineFetch()
+  try {
+    const get = async id => quoteOptionsRoute(new Request(`https://repo.ing/api/repos/${id}/quote-options`), { params: Promise.resolve({ repoId: id }) })
+    const response = await get('94911145')
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('cache-control'), 'public, max-age=0, s-maxage=60')
+    assert.deepEqual((await response.json()).options.map(o => o.assetId), ['sol'])
+    assert.deepEqual((await (await get('4503599627370497')).json()).options.map(o => o.assetId), ['sol'])
+    for (const id of ['0', 'abc', '94911145.0', '99999999999999999999']) assert.equal((await get(id)).status, 404, id)
+    assert.deepEqual(fetches.requested, [], 'nothing is read from GitHub while stock pairs are off')
+  } finally { fetches.restore(); forgetQuoteOptions() }
 })

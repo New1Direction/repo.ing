@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { quoteStamp, resolveQuoteAsset } from '../src/quote-assets.mjs'
 
-// Migration 0053 (market quote asset) on real PostgreSQL: the database is brought to 0052, seeded with SOL markets in every
-// status, then upgraded. Existing rows must read back identically with null quote columns; a stock stamp must be all-or-none,
+// Migration 0053 (market quote asset) on real PostgreSQL: the database is brought to 0052, seeded with SOL markets (confirmed
+// and indexed, failed, submitted, ambiguous, and an indexed row in a pre-send status), then upgraded. Existing rows must read back identically with null quote columns; a stock stamp must be all-or-none,
 // never an explicit SOL, GitHub-only, and immutable once the launch was sent; re-applying the file changes nothing.
 const URL_ = 'postgres://postgres:launchtest@127.0.0.1:55432/repoing_market_quote_test'
 const SOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -20,12 +20,16 @@ insert into repositories(github_repo_id,owner,name,full_name,description,avatar_
   (10270250,'facebook','react','facebook/react',null,null,240000,49000,false,'2026-10-01T00:00:00Z'),
   (41881900,'microsoft','vscode','microsoft/vscode',null,null,180000,35000,false,'2026-10-01T00:00:00Z'),
   (1296269,'octocat','Hello-World','octocat/Hello-World',null,null,3000,900,false,'2026-10-01T00:00:00Z'),
-  (7,'fixture','submitted','fixture/submitted',null,null,1,0,false,'2026-10-01T00:00:00Z');
+  (7,'fixture','submitted','fixture/submitted',null,null,1,0,false,'2026-10-01T00:00:00Z'),
+  (8,'fixture','ambiguous','fixture/ambiguous',null,null,1,0,false,'2026-10-01T00:00:00Z'),
+  (9,'fixture','indexed','fixture/indexed',null,null,1,0,false,'2026-10-01T00:00:00Z');
 insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,blockhash,
     last_valid_block_height,launch_slot,launch_finality,indexed_at,last_verified_at) values
   (1296269,'confirmed','MintSol','PoolSol','Launcher','Creator','Hello','HELLO','LaunchSol','Hash',100,10,'finalized',now(),now()),
   (10270250,'failed',null,null,'Launcher','Creator','React','REACT',null,null,null,null,null,null,null),
-  (7,'submitted','MintSub','PoolSub','Launcher','Creator','Sub','SUB','LaunchSub','Hash',100,null,null,null,null);`
+  (7,'submitted','MintSub','PoolSub','Launcher','Creator','Sub','SUB','LaunchSub','Hash',100,null,null,null,null),
+  (8,'ambiguous','MintAmb','PoolAmb','Launcher','Creator','Amb','AMB','LaunchAmb','Hash',100,null,null,null,null),
+  (9,'prepared','MintIdx','PoolIdx','Launcher','Creator','Idx','IDX',null,'Hash',100,11,'finalized',now(),now());`
 const marketsCanonical = async pool => (await pool.query(`select md5(string_agg(row(github_repo_id,status,mint,pool,launcher_wallet,
   creator_wallet,token_name,token_symbol,launch_signature,indexed_at)::text, E'\\n' order by github_repo_id)) as sum from markets`)).rows[0].sum
 async function refused(pool, sql, check, params = []) {
@@ -82,6 +86,12 @@ test('migration 0053 leaves SOL markets as they were and guards every stock stam
       await refused(pool, insert(`(41881900,'reserved','L','C','VSCode','VSCODE','MSFTx','XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX',1)`), 'markets_quote_asset_check')
       await refused(pool, insert(`(41881900,'reserved','L','C','VSCode','VSCODE','msft-xstock','not a mint',1)`), 'markets_quote_asset_check')
       await refused(pool, insert(`(41881900,'reserved','L','C','VSCode','VSCODE','msft-xstock','XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX',0)`), 'markets_quote_asset_check')
+      // A Hugging Face model market can never carry a stock pair.
+      const { rows: [model] } = await pool.query(`insert into hf_models(hf_id,repo_path,owner_handle,owner_kind) values (repeat('a',24),'meta-llama/x','meta-llama','org') returning market_ref::text as id`)
+      await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at,source,hf_model_ref)
+        values ($1,'meta-llama','x','meta-llama/x',0,0,false,now(),'huggingface',$1)`, [model.id])
+      await refused(pool, `insert into markets(github_repo_id,status,launcher_wallet,creator_wallet,token_name,token_symbol,quote_asset_id,quote_mint,quote_registry_version)
+        values (${model.id},'reserved','L','C','Model','MODEL','meta-xstock','${META.mint}',1)`, 'markets_quote_asset_check')
     })
 
     await t.test('an unsent reservation may change pair; a sent or indexed launch never can', async () => {
@@ -91,6 +101,10 @@ test('migration 0053 leaves SOL markets as they were and guards every stock stam
       await pool.query(`update markets set quote_asset_id=null, quote_mint=null, quote_registry_version=null where github_repo_id=10270250`)
       await refused(pool, `update markets set quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=7`, 'immutable once its launch was sent')
       await refused(pool, `update markets set quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=1296269`, 'immutable once its launch was sent')
+      await refused(pool, `update markets set quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=8`, 'immutable once its launch was sent')
+      await refused(pool, `update markets set quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=9`, 'immutable once its launch was sent')
+      // Nor in the same statement that sends the launch.
+      await refused(pool, `update markets set status='submitted', launch_signature='LaunchReact', mint='MintReact', pool='PoolReact', quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=10270250`, 'immutable once its launch was sent')
       // the stamped reservation, once sent, keeps its stamp; other columns still update
       await pool.query(`update markets set status='submitted', mint='MintDocs', pool='PoolDocs', launch_signature='LaunchDocs' where github_repo_id=94911145`)
       await refused(pool, `update markets set quote_asset_id=null, quote_mint=null, quote_registry_version=null where github_repo_id=94911145`, 'immutable once its launch was sent')

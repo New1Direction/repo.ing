@@ -29,10 +29,12 @@ END $$;
 --> statement-breakpoint
 -- A reservation that never sent a transaction (reserved, prepared or failed) may be replaced by a new attempt with another
 -- pair. Once the launch transaction was sent (submitted, ambiguous, confirmed) or the market is indexed, its pool was
--- created against that quote mint, and the stamp is immutable.
+-- created against that quote mint, and the stamp is immutable; an update that sends or indexes the launch cannot change the
+-- stamp in the same statement either.
 CREATE OR REPLACE FUNCTION protect_market_quote() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF (OLD.status IN ('submitted', 'ambiguous', 'confirmed') OR OLD.indexed_at IS NOT NULL) AND (
+  IF (OLD.status IN ('submitted', 'ambiguous', 'confirmed') OR NEW.status IN ('submitted', 'ambiguous', 'confirmed') OR
+      OLD.indexed_at IS NOT NULL OR NEW.indexed_at IS NOT NULL) AND (
       NEW.quote_asset_id IS DISTINCT FROM OLD.quote_asset_id OR NEW.quote_mint IS DISTINCT FROM OLD.quote_mint OR
       NEW.quote_registry_version IS DISTINCT FROM OLD.quote_registry_version) THEN
     RAISE EXCEPTION 'Market quote asset is immutable once its launch was sent';
