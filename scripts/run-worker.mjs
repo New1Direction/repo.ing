@@ -30,6 +30,7 @@ import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
 import { createRpcMeter, registerRpcEndpoint } from '../src/rpc-usage.mjs'
+import { createFailoverFetch, verificationRpcUrls } from '../src/rpc-failover.mjs'
 import { createActivitySchedule, createConfigActivityFeed } from '../src/indexer-schedule.mjs'
 import { approvedConfigs } from '../src/market-config.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
@@ -52,7 +53,13 @@ const providerFetch = (url, provider) => {
   return providerFetches.get(url)
 }
 providerFetch(rpc, 'primary')
-if (process.env.GRADUATION_VERIFICATION_RPC_URL) providerFetch(process.env.GRADUATION_VERIFICATION_RPC_URL, 'verification')
+// The verification side asks GRADUATION_VERIFICATION_RPC_URL, then each GRADUATION_VERIFICATION_FALLBACK_RPC_URLS
+// provider, per request (src/rpc-failover.mjs), so one free provider refusing a call never stops verification. Each has
+// its own meter line and backoff: 'verification', then 'verification2'… Raw transaction reads find it by the first URL.
+const verificationUrls = verificationRpcUrls(process.env)
+const verificationFetch = fetchImpl => createFailoverFetch(verificationUrls.map((url, index) =>
+  ({ url, fetch: meter.fetchFor(index ? `verification${index + 1}` : 'verification', fetchImpl) })))
+if (verificationUrls.length) { providerFetches.set(verificationUrls[0], verificationFetch()); registerRpcEndpoint(verificationUrls[0], providerFetches.get(verificationUrls[0])) }
 const rpcConnection = (url, commitment, provider = 'primary') => new Connection(url, { commitment, disableRetryOnRateLimit: true, fetch: providerFetch(url, provider) })
 const connection = rpcConnection(rpc, 'finalized')
 const verify = createLaunchEvidenceVerifier({ connection, config })
@@ -106,7 +113,7 @@ async function observeVerificationBonuses(){
 }
 // The 15 s timeout starts after any backoff wait, so a short rate-limit pause never eats the request's own budget.
 const timedFetch=(url,options)=>fetch(url,{...options,signal:AbortSignal.timeout(15000)})
-const graduationFetches={primary:meter.fetchFor('primary',timedFetch),verification:meter.fetchFor('verification',timedFetch)}
+const graduationFetches={primary:meter.fetchFor('primary',timedFetch),verification:verificationUrls.length?verificationFetch(timedFetch):null}
 const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true,
   fetch:async(url,options)=>{
     const response=await graduationFetches[url===rpc?'primary':'verification'](url,options)
