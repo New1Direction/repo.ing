@@ -35,6 +35,7 @@ maintainer-opt-outs-db
 market-lookup
 market-quality-db
 market-quote-db
+stock-pair-chain
 market-source-db
 milestone-alerts-db
 payout-address-db

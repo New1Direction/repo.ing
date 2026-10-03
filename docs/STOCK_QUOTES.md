@@ -1,7 +1,9 @@
 # Stock-paired markets
 
-Status: groundwork only. The registry, the market columns and the quote-options API exist. `STOCK_QUOTES_ENABLED` is off,
-so nothing can be launched against a stock and every surface offers SOL only.
+Status: built dark through quote-aware market creation (P6a). The registry, the market columns, the quote-options API, the
+"Choose pair" control and stock-pair creation exist. Nothing can be launched against a stock yet: the code's own gate
+(`STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`) stays closed until trading, indexing, payouts and reconciliation are
+quote-aware too, and `STOCK_QUOTES_ENABLED` is off. Every surface offers SOL only.
 
 A launcher can pair a repository's market with SOL (the default, and the quote of every market launched so far) or, when
 the repository belongs to a GitHub organization mapped to a listed company, with that company's tokenized stock:
@@ -66,6 +68,43 @@ Refusals carry a stable `code`: `COMPANY_MAPPING_NOT_FOUND`, `STOCK_ASSET_NOT_FO
 - `protect_market_quote` refuses any change once the launch transaction was sent or the market is indexed. A reservation
   that never sent one may be replaced with another pair.
 
+## Launching a stock pair (P6a)
+
+- **One DBC config per stock**, created by the owner with `scripts/create-stock-quote-config.mjs --asset meta-xstock
+  --graduation <whole units>` (dry run by default; it sends only with the reviewed address, instruction hash and debit approved
+  in the environment). The config carries the live SOL launch-fee config's terms field by field (`STOCK_CONFIG_MUST_MATCH` in
+  `src/stock-quote-config.mjs`): the review refuses anything else before a key is loaded. Only the quote mint (through
+  Token-2022, with Meteora's badge) and the graduation threshold differ. Then set `STOCK_QUOTE_CONFIGS` on web and worker.
+- **At prepare and again after the wallet signs** (`app/lib/stock-launch.mjs`), a stock pair needs: stock launches ready, a
+  GitHub repository launched from its launch page (no trend or agent-draft shortcut), the stock of the company that owns the
+  repository on GitHub right now (a live read by numeric owner id), that stock's registered config, and the mint usable now
+  (not paused, no active transfer hook or fee, accounts not frozen by default).
+- **The launcher** checks every field of the config as for SOL, plus the stock's mint and the Token-2022 flag, and passes
+  Meteora's badge. A stock-paired launch has no initial buy yet; the form says so and the trade panel can buy right after.
+- **The reservation** stamps the pair and carries none of the SOL-denominated rewards (discovery, verification bonus,
+  builder allocation).
+- **Launch evidence and the indexer** resolve the pool through the quote-aware resolver. Every other path still uses the SOL
+  resolver, which refuses a stock-paired market loudly, so nothing can misread one until it is made quote-aware.
+
+`tests/stock-pair-chain.test.mjs` proves this on the programs mainnet runs (`scripts/ci/start-stock-validator.sh` loads the DBC,
+DAMM v2, Token-2022 and Metaplex programs as deployed, Meteora's badges for METAx, and the METAx mint with only its mint
+authority replaced):
+
+- a METAx config is reviewed and created;
+- DOCUSAURUS / METAx is prepared on one replica and submitted from another;
+- its evidence and indexing match;
+- a trader buys with exactly 1 METAx and the creator and partner fees accrue in METAx;
+- a SOL launch on the same programs is unchanged.
+
+To run it locally:
+
+```bash
+scripts/ci/start-stock-validator.sh <work-dir>
+STOCK_CHAIN_WORK_DIR=<work-dir> node --test tests/stock-pair-chain.test.mjs
+```
+
+The test needs PostgreSQL on 127.0.0.1:55432. Stop the validator afterwards and delete `<work-dir>/ledger`.
+
 ## Fee policy (decided 2026-10-03)
 
 | | Curve fee |
@@ -105,10 +144,10 @@ DAMM v2 on 2026-09-09.
 
 Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
 
-1. **P5:** the "Choose pair" control on the launch form. The launch API refuses any pair it cannot launch.
-2. **P6:** quote-aware creation, trading and indexing. Every place that assumes SOL takes the market's quote:
-   - config and pool derivation;
-   - launch evidence and the worker's approved configs;
+1. **P5 (done):** the "Choose pair" control on the launch form. The launch API refuses any pair it cannot launch.
+2. **P6a (done):** quote-aware creation: config per stock, pool derivation, launch checks, evidence and indexing.
+3. **P6, the rest:** quote-aware trading and indexing. Every remaining place that assumes SOL takes the market's quote:
+   - the worker's approved configs;
    - trade preparation and verification (no wrapped SOL; Token-2022 quote accounts; decimals from the asset);
    - DBC and DAMM event parsing and fee accrual;
    - graduation;
@@ -116,11 +155,11 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
    - platform totals, split by asset.
 
    Fix every part together: a partial fix would make the worker skip stock fees silently.
-3. **P7:** launcher fee routing and the recorded switch, quote-aware claims and reconciliation.
-4. **P8–P10:** the per-stock accumulator, the canonical pool registry and settlement previews with receipts, with
+4. **P7:** launcher fee routing and the recorded switch, quote-aware claims and reconciliation.
+5. **P8–P10:** the per-stock accumulator, the canonical pool registry and settlement previews with receipts, with
    spending off.
-5. **P11:** settlement execution behind an operator flag.
-6. **P12:** adversarial tests.
+6. **P11:** settlement execution behind an operator flag.
+7. **P12:** adversarial tests.
 
 Owner actions before launch:
 

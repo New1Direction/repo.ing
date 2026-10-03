@@ -62,7 +62,9 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [customizing, setCustomizing] = useState(!!draft)
   const { wallet, connect, provider } = useWallet()
   const quoteKey = `${quoteAssetId}:${choice === 'custom' ? `custom:${customBuy}` : choice}`
-  const noBuy = choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
+  // A stock-paired launch has no initial buy yet (src/meteora-launch.mjs): the buy section is replaced by a note.
+  const stockChosen = quoteAssetId !== 'sol'
+  const noBuy = stockChosen || choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
   const quote = !noBuy && buyQuote?.key === quoteKey ? buyQuote : null
   const quoteError = !noBuy && buyError?.key === quoteKey ? buyError.message : ''
   const quoting = !noBuy && !quote && !quoteError
@@ -146,7 +148,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         : { action: 'prepare', repoId: repo.repoId, trendRevision, agentDraft: draft?.token,
           repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
           tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports, ...pairRequest })
-      setReview({ ...result, wallet: address, quote }); setStage('')
+      setReview({ ...result, wallet: address, quote: stockChosen ? null : quote, pair: stockChosen ? stockPair?.symbol ?? quoteAssetId : null }); setStage('')
     } catch (cause) { setError(cause.message || 'Could not prepare launch'); setFailure({canRetry:cause.canRetry??true,supportCode:cause.supportCode??'LAUNCH-CONNECTION'}); setStage('Failed') }
     finally { working.current = false; setBusy(false) }
   }
@@ -200,6 +202,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
           </div>
         </details>
         {stockPair && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setError('') }}/>}
+        {stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className="launch-buy-presets" role="group" aria-label="Initial token allocation">
           {[[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]].map(([value, label]) =>
@@ -216,6 +219,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
           </> : !quoteError ? 'No token purchase. You pay only launch account costs and the network fee.' : null}
         </div>
         {quoteError && <div className="inline-error" role="alert">{quoteError}</div>}
+        </>}
       </fieldset>
       <div className="launch-side">
         {allocationEnabled && (model ? <div className="inner-card discovery-launch"><h3>1% for the model&apos;s owner</h3><strong>10 million tokens reserved</strong><p>The model&apos;s verified owner on Hugging Face can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>
@@ -228,7 +232,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     {review ? <section className="launch-review inner-card" aria-labelledby="launch-review-heading" aria-live="polite">
       <h3 id="launch-review-heading">Review your launch</h3>
       {tokenImage && <img className="launch-review-image" src={tokenImage.image} alt="Token artwork to be saved at launch"/>}
-      <p>{name} · {symbol}{review.quote ? ` · ≈ ${(review.quote.supplyBps / 100).toFixed(2)}% initial allocation` : ' · No initial buy'}</p>
+      <p>{name} · {symbol}{review.pair ? ` · Paired with ${review.pair}` : ''}{review.quote ? ` · ≈ ${(review.quote.supplyBps / 100).toFixed(2)}% initial allocation` : ' · No initial buy'}</p>
       <dl><div><dt>Initial buy <small>Trading fee included</small></dt><dd>{sol(review.costs.initialBuy)}</dd></div>
         <div><dt>Launch account deposits</dt><dd>{sol(review.costs.accountDeposits)}</dd></div>
         <div><dt>Network fee{BigInt(review.costs.priorityFee ?? '0') > 0n && <small>Includes {sol(review.costs.priorityFee)} priority fee</small>}</dt><dd>{sol(review.costs.networkFee)}</dd></div>

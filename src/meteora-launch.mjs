@@ -2,7 +2,8 @@ import bs58 from 'bs58'
 import BN from 'bn.js'
 import { Keypair, PublicKey, Transaction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
-import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { DynamicBondingCurveClient, deriveDbcPoolAddress, deriveTokenBadgeAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { SOL_QUOTE } from './quote-assets.mjs'
 import { launchBuyQuote } from './launch-buy.mjs'
 import { isApprovedLaunchFee } from './launch-fee.mjs'
 import { withLaunchPriorityFee } from './launch-wallet-fees.mjs'
@@ -41,18 +42,26 @@ export function prepareLaunchSigning(tx, launcher, creator, mint) {
 
 // The config is created once using the curve in scripts/meteora-spike.mjs.
 // A launch may choose metadata, but never fee, curve, migration, or quote settings.
-export function createMeteoraLauncher({ connection, config, creator, metadataOrigin = null }) {
+// quote: SOL (default) or a resolved stock asset (src/quote-assets.mjs) whose own config this is. A stock quote is a Token-2022
+// mint with extensions, which DBC accepts only with Meteora's token badge for it, passed with the pool creation. Stock-paired
+// launches have no initial buy yet.
+export function createMeteoraLauncher({ connection, config, creator, metadataOrigin = null, quote = SOL_QUOTE }) {
   const configKey = new PublicKey(config)
   const client = new DynamicBondingCurveClient(connection, 'confirmed')
+  const stock = quote.type !== 'SOL'
+  const quoteMint = stock ? new PublicKey(quote.mint) : NATIVE_MINT
   return {
     creatorWallet: creator.publicKey.toBase58(),
     async prepare({ launcherWallet, tokenName, tokenSymbol, initialBuyLamports = '0' }) {
       const launcher = new PublicKey(launcherWallet)
       if (launcher.equals(creator.publicKey)) throw new Error('Launcher and platform creator must differ')
+      if (stock && BigInt(initialBuyLamports) !== 0n) throw new Error('Stock-paired launches have no initial buy yet. Buy after the launch.')
       const fixed = await client.state.getPoolConfig(configKey)
       // Base fee: the proven flat 1.75%, or exactly the approved launch-fee schedule whose launcher first buy
       // pays 1.75% (src/launch-fee.mjs). Any other schedule could charge the launcher or traders differently.
-      if (!fixed || !fixed.quoteMint.equals(NATIVE_MINT) || fixed.tokenType !== 0 || fixed.tokenDecimal !== 6 ||
+      // A stock config must also quote that stock's mint through Token-2022 (quoteTokenFlag 1).
+      if (stock && (!fixed || fixed.quoteTokenFlag !== 1)) throw new Error('Configured DBC account does not match the stock pair')
+      if (!fixed || !fixed.quoteMint.equals(quoteMint) || fixed.tokenType !== 0 || fixed.tokenDecimal !== 6 ||
           fixed.collectFeeMode !== 0 || fixed.migrationOption !== 1 || !isApprovedLaunchFee(fixed) ||
           fixed.poolFees.dynamicFee.initialized !== 0 || fixed.poolCreationFee.toString() !== '0' ||
           fixed.creatorTradingFeePercentage !== 71 || fixed.creatorPermanentLockedLiquidityPercentage !== 50 ||
@@ -60,12 +69,15 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
           fixed.partnerLiquidityPercentage !== 0) {
         throw new Error('Configured DBC account does not match the tested fixed launch configuration')
       }
+      // Meteora's badge for the stock mint must exist, or DBC refuses the pool; checked here so the launcher sees why.
+      const tokenBadge = stock ? deriveTokenBadgeAddress(quoteMint) : null
+      if (tokenBadge && !await connection.getAccountInfo(tokenBadge, 'confirmed')) throw new Error(`${quote.symbol} is not approved for new pools on Meteora`)
       const mint = Keypair.generate()
-      const pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, configKey)
+      const pool = deriveDbcPoolAddress(quoteMint, mint.publicKey, configKey)
       const createPoolParam = {
         baseMint: mint.publicKey, config: configKey, name: tokenName, symbol: tokenSymbol,
         uri: metadataOrigin ? `${metadataOrigin}/api/token-metadata/${mint.publicKey.toBase58()}` : '',
-        payer: launcher, poolCreator: creator.publicKey,
+        payer: launcher, poolCreator: creator.publicKey, ...tokenBadge ? { tokenBadge } : {},
       }
       const buy = launchBuyQuote(client, fixed, initialBuyLamports)
       const built = buy ? await client.creator.createPoolWithFirstBuy({ createPoolParam,
