@@ -1,0 +1,104 @@
+/* Trade panel (components/trade-panel.jsx): Buy/Sell, the pay and receive fields joined by the flip button, slippage
+   and the quote details, then the trade button and who the trade shows as. */
+.trade-card{--trade-field-bg:#15181a;--trade-field-border:#32383c;--trade-field-hover:#434a4f;--trade-focus:#8bdbad;--trade-ring:#121415;--trade-label:#a9b3bd;--trade-chip-bg:#1c2023;--trade-buy:var(--green);--trade-sell:var(--red);--trade-high:#eabb75;--trade-ease:cubic-bezier(.16,1,.3,1)}
+[data-theme=light] .trade-card{--trade-field-bg:#f5f8f6;--trade-field-border:#d3ddd6;--trade-field-hover:#b5c4b9;--trade-focus:var(--green-dark);--trade-ring:#fff;--trade-label:#5a6a60;--trade-chip-bg:#fff;--trade-buy:#0f7a47;--trade-sell:#b03a45;--trade-high:#8a5a12}
+
+/* Buy / Sell: one segmented control; the chosen side takes its own color. */
+.trade-card .trade-tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:14px;padding:4px;border:1px solid var(--trade-field-border);border-radius:12px;background:var(--trade-field-bg)}
+.trade-card .trade-tabs button{width:auto;height:36px;border:0;border-radius:8px;background:none;color:var(--trade-label);font-size:14px;font-weight:650;transition:background-color .15s,color .15s}
+.trade-card .trade-tabs button:hover:not(:disabled):not(.selected){color:var(--text)}
+.trade-card .trade-tabs button.selected[data-side=buy]{background:color-mix(in srgb,var(--trade-buy) 15%,transparent);color:var(--trade-buy)}
+.trade-card .trade-tabs button.selected[data-side=sell]{background:color-mix(in srgb,var(--trade-sell) 15%,transparent);color:var(--trade-sell)}
+.trade-card .trade-tabs button:focus-visible{outline:2px solid var(--trade-focus);outline-offset:-2px}
+
+/* An amount field: label and balance, the amount and its token, then the dollar value and quick amounts. */
+.trade-field{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--trade-field-border);border-radius:14px;background:var(--trade-field-bg);transition:border-color .15s}
+.trade-field:hover{border-color:var(--trade-field-hover)}
+.trade-field:focus-within{border-color:var(--trade-focus)}
+.trade-field-head,.trade-field-foot{display:flex;align-items:center;justify-content:space-between;gap:6px 10px;min-height:20px;color:var(--trade-label);font-size:12px}
+.trade-field-foot{flex-wrap:wrap}
+.trade-card .trade-field-head label,.trade-field-head>span:first-child{margin:0;color:inherit;font-size:12px;font-weight:600}
+.trade-field-tag{padding:1px 7px;border:1px solid var(--trade-field-border);border-radius:999px;color:var(--dim);font-size:10px;font-weight:650;letter-spacing:.04em;text-transform:uppercase}
+.trade-balance{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.trade-balance strong{color:var(--text);font-weight:600}
+.trade-field-action{padding:0;border:0;background:none;color:var(--green);font-size:12px;font-weight:650;white-space:nowrap}
+.trade-field-action:hover:not(:disabled){text-decoration:underline;text-underline-offset:2px}
+.trade-field-action:focus-visible{outline:2px solid var(--trade-focus);outline-offset:2px;border-radius:3px}
+.trade-field-main{display:flex;align-items:center;gap:12px;min-height:42px}
+.trade-field-main input,.trade-quote-value{flex:1;min-width:0;color:var(--text);font-size:clamp(24px,5.6vw,30px);font-weight:600;letter-spacing:-.015em;line-height:1.15;font-variant-numeric:tabular-nums}
+.trade-field-main input{width:100%;padding:0;border:0;outline:0;background:none;font-family:inherit}
+.trade-field-main input::placeholder{color:var(--dim);opacity:.65}
+.trade-unit{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:5px 11px;border:1px solid var(--trade-field-border);border-radius:999px;background:var(--trade-chip-bg);color:var(--text);font-size:13px;font-weight:700;letter-spacing:.01em}
+.trade-quote-value{display:flex;align-items:center;gap:9px;overflow-wrap:anywhere}
+.trade-quote.is-empty .trade-quote-value{color:var(--dim);opacity:.65}
+.trade-quote.is-waiting .trade-quote-value{color:var(--trade-label);font-size:14px;font-weight:500;letter-spacing:0;line-height:1.35}
+.trade-quote .claim-spinner{flex:none;width:15px;height:15px}
+.trade-usd{color:var(--trade-label);font-variant-numeric:tabular-nums}
+
+/* Quick amounts inside the pay field: small pills at the right; the preset editor opens full width beneath them. */
+.trade-card .trade-field-foot .buy-presets{min-width:0;margin:0 0 0 auto}
+.trade-card .trade-field-foot .buy-presets.is-editing{flex-basis:100%}
+.trade-card .trade-field-foot .trade-quick-actions{flex-wrap:wrap;justify-content:flex-end;gap:5px;margin:0 0 0 auto}
+.trade-card .trade-field-foot .buy-presets .trade-quick-actions{margin:0}
+.trade-card .trade-field-foot .trade-quick-actions button{min-width:0;height:26px;padding:0 9px;border:1px solid var(--trade-field-border);border-radius:999px;background:var(--trade-chip-bg);color:var(--text);font-size:11.5px;font-weight:650;font-variant-numeric:tabular-nums;transition:border-color .15s,color .15s,background-color .15s}
+.trade-card .trade-field-foot .trade-quick-actions button:hover:not(:disabled){border-color:var(--trade-buy);color:var(--trade-buy)}
+.trade-card .trade-field-foot .trade-quick-actions button[aria-pressed=true]{border-color:var(--trade-buy);background:color-mix(in srgb,var(--trade-buy) 14%,var(--trade-chip-bg));color:var(--trade-buy)}
+.trade-card .trade-field-foot .trade-quick-actions button:disabled{opacity:.45;cursor:default}
+.trade-card .trade-field-foot .trade-quick-actions .buy-presets-edit{display:grid;place-items:center;width:26px;padding:0;color:var(--trade-label)}
+.trade-card .trade-field-foot .trade-quick-actions button:focus-visible{outline:2px solid var(--trade-focus);outline-offset:2px}
+.trade-card .trade-field-foot .preset-editor{margin-top:8px;background:var(--trade-chip-bg)}
+.trade-card .trade-field-foot .preset-message{text-align:right}
+
+/* The flip button sits in the gap between the fields, cut out of both by a ring in the card's own color. */
+.trade-flip{position:relative;z-index:1;display:grid;place-items:center;width:34px;height:34px;margin:-11px auto;padding:0;border:1px solid var(--trade-field-hover);border-radius:10px;background:var(--trade-chip-bg);box-shadow:0 0 0 4px var(--trade-ring);color:var(--text);transition:color .15s,border-color .15s,background-color .15s}
+.trade-flip svg{transition:transform .3s var(--trade-ease)}
+.trade-flip:hover:not(:disabled){border-color:var(--trade-buy);color:var(--trade-buy)}
+.trade-flip:hover:not(:disabled) svg{transform:rotate(180deg)}
+.trade-flip:focus-visible{outline:2px solid var(--trade-focus);outline-offset:1px}
+.trade-flip:disabled{cursor:default}
+
+/* Slippage, then one quiet list of what the quote means: minimum, impact, fees and the total. */
+.trade-settings{display:flex;align-items:center;gap:8px;margin-top:12px}
+.trade-settings .slippage-setting{flex:1;min-width:0;margin-top:0}
+.trade-details{margin:10px 0 0;padding:0 2px;font-size:12.5px}
+.trade-details>div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:3px 0}
+.trade-details dt{color:var(--trade-label)}
+.trade-details dt[title]{cursor:help;text-decoration:underline dotted color-mix(in srgb,var(--trade-label) 55%,transparent);text-underline-offset:3px}
+.trade-details dt small{color:var(--dim);font-size:11px}
+.trade-details dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.trade-details dd.is-high{color:var(--trade-high);font-weight:650}
+.trade-details>.trade-details-total{margin-top:4px;padding-top:8px;border-top:1px solid var(--border)}
+.trade-details-total dt,.trade-details-total dd{color:var(--text);font-weight:650}
+.trade-note{margin:8px 0 0;padding:0 2px;color:var(--dim);font-size:12px;line-height:1.45}
+.trade-card .trade-funding-note,.trade-card .trade-impact-warning{margin:10px 0 0}
+.trade-card .trade-size-guide{margin-top:10px}
+.trade-card .trade-size-guide .trade-quick-actions{justify-content:flex-start}
+
+/* The trade button, then who it trades as and where. */
+.trade-card .trade-submit{margin-top:14px;height:52px;border-radius:12px;font-size:16px}
+.trade-card .trade-submit:disabled{border-color:var(--trade-field-border);background:var(--trade-field-bg);color:var(--trade-label);opacity:1}
+.trade-card form[aria-busy=true] .trade-submit:disabled{border-color:var(--green);background:var(--green);color:#101713;opacity:.8;cursor:progress}
+[data-theme=light] .trade-card form[aria-busy=true] .trade-submit:disabled{color:#10291b}
+.trade-card .transaction-status{margin-top:10px}
+.trade-identity{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px 6px;margin:12px 0 0;color:var(--trade-label);font-size:12.5px;line-height:1.4;text-align:center}
+.trade-identity .x-handle{font-size:12.5px}
+.trade-identity.is-prompt>svg{flex:none}
+.trade-identity.is-prompt a{color:var(--text);font-weight:650;text-decoration:underline;text-underline-offset:2px}
+.trade-identity.is-prompt a:hover{color:var(--trade-buy)}
+.trade-venue{margin:8px 0 0;color:var(--dim);font-size:11.5px;text-align:center}
+.trade-venue a{color:var(--trade-label);text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+.trade-venue a:hover{color:var(--trade-buy)}
+
+/* After a confirmed trade: the @handle it shows as, or the way to show one. */
+.trade-result-card .trade-result-x .x-handle{margin:0 2px;color:inherit;font-size:13px}
+.trade-result-card .trade-result-x a:not(.x-handle){color:#a6ebbc;font-weight:650;text-decoration:underline;text-underline-offset:2px}
+[data-theme=light] .trade-result-card .trade-result-x a:not(.x-handle){color:#146d40}
+
+@media(max-width:700px){
+  .trade-card .trade-tabs{margin-bottom:12px}
+  .trade-field{padding:11px 12px}
+  .trade-card .trade-field-foot{column-gap:8px}
+  .trade-card .trade-field-foot .trade-quick-actions{gap:4px}
+  .trade-card .trade-field-foot .trade-quick-actions button{padding:0 7px;font-size:11px}
+}
+@media(prefers-reduced-motion:reduce){.trade-field,.trade-flip,.trade-flip svg,.trade-card .trade-tabs button,.trade-card .trade-field-foot .trade-quick-actions button{transition:none}}

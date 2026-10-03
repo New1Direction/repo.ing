@@ -3,6 +3,8 @@ import { CheckCircle2, CircleAlert, Clock3, ExternalLink, RefreshCw, X } from 'l
 import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
 import { nextSlippagePreset, slippageLabel } from '../../src/trade-slippage.mjs'
 import { ShareOnX } from './share-on-x'
+import Link from 'next/link'
+import { XHandleLink, hasXHandle } from './x-handle-link'
 
 // A swap that failed on its minimum output (reason 'slippage'): either refused before it was sent (notSubmitted, nothing
 // spent) or rejected on chain (failed, only the network fee spent). One tap retries it at the next preset up.
@@ -14,7 +16,9 @@ function slippageCopy(result, action) {
     message: `The price moved more than ${limit} before your ${action.toLowerCase()} could land, so it was stopped. ${spent}${next ? '' : ' Try a smaller amount.'}` }
 }
 
-export function TradeResultCard({ result, symbol, mint, fullName, source, onClose, onCheck, onRetry = null }) {
+// xLink: the trading wallet's linked X account (its confirmed trade shows as that @handle in the market's trades).
+// xNudge: Connect X is on and the wallet has not linked an account, so a confirmed trade suggests it.
+export function TradeResultCard({ result, symbol, mint, fullName, source, onClose, onCheck, onRetry = null, xLink = null, xNudge = false }) {
   if (!result) return null
   const { state, direction, signature } = result
   const action = direction === 'buy' ? 'Buy' : 'Sell'
@@ -40,6 +44,8 @@ export function TradeResultCard({ result, symbol, mint, fullName, source, onClos
       <div className="trade-result-heading"><strong>{title}</strong><button type="button" onClick={onClose} aria-label="Dismiss trade confirmation"><X size={18}/></button></div>
       <p>{message}</p>
       {confirmed && result.feeIndexing !== 'recorded' && <small>Repository fee indexing is still catching up.</small>}
+      {confirmed && (hasXHandle(xLink) ? <p className="trade-result-x">Shown as <XHandleLink link={xLink} avatar/> in this market's trades</p>
+        : xNudge && <small className="trade-result-x"><Link href="/wallet#x-account">Connect X</Link> to show your @handle on your trades</small>)}
       <div className="trade-result-actions">
         {slippage?.next && onRetry && <button type="button" className="trade-result-retry" onClick={() => onRetry(slippage.next)}
           title="Retries this trade only; your Max slippage setting stays the same">
