@@ -30,6 +30,10 @@ Changing repository ownership before a claim changes who can pass the current-au
 
 Prefer Meteora's supported reserved-token withdrawal path. Its leftover withdrawal is available only after migration and pays the configured receiver; it does not verify GitHub ownership. A protected platform authority and an explicit token transfer to the verified recipient are therefore required. Validate an atomic withdrawal/transfer where supported, and retain a durable signed intent before broadcast. Do not describe this as a trustless GitHub escrow. [Official leftover behavior](https://docs.meteora.ag/core-products/dbc/surplus-and-leftover).
 
+### Hugging Face model markets
+
+Owner decision (2026-10-02): model markets keep the allocation under the same rules, with Hugging Face authority in place of GitHub's. A model launched on an allocation config is stamped like a repository (never with the verification bonus). After verified graduation, the model's current owner on Hugging Face (the user who owns it, or an admin of the owning organization; SSO- or MFA-restricted organizations fail closed) claims it once. Authority is re-checked at claim time, and the grant goes to the wallet that user bound through the model's Hugging Face binding. A binding made for a previous owner, or a change of owner, user or binding since the review, is refused. One grant per market, ever. Migration 0052 opens `markets` and `builder_allocation_claims` to model market ids for this. Everything stays behind `HF_MARKETS_ENABLED`.
+
 ## Discovery versioning
 
 The existing discovery v1 cap is 1 SOL. Add a new immutable policy version for the approved 2.5 SOL cap; calculate earnings from the market's stored version. Do not replace the global cap and thereby rewrite existing obligations.
