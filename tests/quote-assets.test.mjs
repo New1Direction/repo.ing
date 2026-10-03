@@ -4,6 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 import { QUOTE_ERRORS, QUOTE_REGISTRY, SOL_QUOTE, companyForOwner, quoteAssetById, quoteOfMarket, quoteOptions, quoteStamp,
   resolveQuoteAsset, stockQuotesEnabled } from '../src/quote-assets.mjs'
 import { TIP_TOKENS } from '../src/tip-tokens.mjs'
+import { forgetQuoteOptions, quoteOptionsForRepo } from '../app/lib/quote-options.mjs'
 
 // facebook/docusaurus and microsoft/vscode as GitHub reports them (owner ids from GitHub's GET /orgs/<login>).
 const DOCUSAURUS = { repoId: '94911145', ownerId: '69631', ownerType: 'Organization' }
@@ -129,4 +130,27 @@ test('historical markets keep resolving through their stamp, even after the asse
 test('the switch is exactly STOCK_QUOTES_ENABLED=true', () => {
   assert.equal(stockQuotesEnabled({ STOCK_QUOTES_ENABLED: 'true' }), true)
   for (const value of [undefined, 'false', 'TRUE', '1', 'yes', ' true']) assert.equal(stockQuotesEnabled({ STOCK_QUOTES_ENABLED: value }), false)
+})
+
+test('quote-options: SOL only without reading GitHub when off or for a model; owner from a live read when on; cached 60 s', async () => {
+  forgetQuoteOptions()
+  let reads = 0
+  const load = async id => { reads++; return id === DOCUSAURUS.repoId ? { repoId: id, owner: 'facebook', ownerId: '69631', ownerType: 'Organization' } : null }
+  const off = await quoteOptionsForRepo(DOCUSAURUS.repoId, { enabled: false, load })
+  assert.deepEqual(off, { repoId: DOCUSAURUS.repoId, registryVersion: QUOTE_REGISTRY.version, options: [{ type: 'SOL', assetId: 'sol', symbol: 'SOL', eligible: true }] })
+  assert.deepEqual((await quoteOptionsForRepo('4503599627370497', { enabled: true, load })).options.map(o => o.assetId), ['sol'])
+  assert.equal(reads, 0)
+  const on = await quoteOptionsForRepo(DOCUSAURUS.repoId, { enabled: true, load, now: 1000 })
+  assert.deepEqual(on.options.map(o => o.assetId), ['sol', 'meta-xstock'])
+  await quoteOptionsForRepo(DOCUSAURUS.repoId, { enabled: true, load, now: 59_000 })
+  assert.equal(reads, 1, 'served from the 60 s cache')
+  await quoteOptionsForRepo(DOCUSAURUS.repoId, { enabled: true, load, now: 61_001 })
+  assert.equal(reads, 2, 'read again after 60 s')
+  assert.equal(await quoteOptionsForRepo('123', { enabled: true, load }), null, 'unknown repository')
+  assert.equal(await quoteOptionsForRepo('abc', { enabled: true, load }), null, 'not a market id')
+  // GitHub down: the stored row has no owner id, so only SOL is offered.
+  forgetQuoteOptions()
+  const stored = await quoteOptionsForRepo(DOCUSAURUS.repoId, { enabled: true, load: async id => ({ repoId: id, owner: 'facebook' }) })
+  assert.deepEqual(stored.options.map(o => o.assetId), ['sol'])
+  forgetQuoteOptions()
 })
