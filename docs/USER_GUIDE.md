@@ -48,16 +48,17 @@ The launcher does not need to own the repository. Launching creates a market; it
 
 Open a market from Explore, a direct market link, or your wallet holdings. Check the repository and use the copy control to verify the full token mint address.
 
-- **Buy:** enter SOL or use a preset. Use the sliders button to edit three amounts, saved on this device. Selecting a preset only requests a quote; it does not submit a trade. The panel shows your SOL balance, estimated token output, included trading fee, and price impact.
+- **Buy:** enter SOL or use a preset. Use the pencil button to edit the three amounts, saved on this device. Selecting a preset only requests a quote; it does not submit a trade. The pay field shows your SOL balance and the amount in dollars, the receive field the estimated tokens, and the list below it the minimum received, price impact and included trading fee. The arrow between the fields switches between buying and selling.
 - **Sell:** enter a token amount or select **25%**, **50%**, or **MAX** of your current token balance.
-- Review **Estimated receive** and the minimum after your **max slippage**: 1% unless you choose 3%, 5%, 10%, 20% or a custom 0.5–25% under **Max slippage** (remembered on this device). The quote is refreshed before wallet confirmation.
+- Review **You receive** and **Minimum received**, which your **max slippage** sets: 1% unless you choose 3%, 5%, 10%, 20% or a custom 0.5–25% under **Max slippage** (remembered on this device). The quote is refreshed before wallet confirmation. The trade button says what is missing (an amount, or enough SOL or tokens) until the trade can be made.
+- If your wallet has linked an X account (**Connect X** on your wallet page), the panel shows **Buying as @handle** and your trades show that handle in the market's **Recent trades** and **Activity** instead of your address.
 - If the price moves past your limit before the trade lands, it is stopped: nothing is spent if it was never sent, only the network fee if Solana rejected it. The result card offers a one-tap retry at the next preset up.
 - With a connected wallet, review the network fee, token account deposit, total cost, and any temporary SOL deposit. Temporary wrapped-SOL rent is returned in the same transaction but is required up front. If your balance is short, the panel shows how much more SOL is needed. The prepared transaction is simulated before wallet approval.
 - Approve in your wallet, then follow the result card. Pending, confirmed, and failed states are separate; the card links to the transaction and supports checking an unresolved status.
 
 Slippage allowance and price impact describe different things. Slippage sets a minimum output relative to the quote; price impact describes how the proposed trade moves its execution price relative to the pool's spot price. A 1% slippage setting does not limit a large trade's price impact to 1%.
 
-For a graduated market, the same Buy/Sell panel trades in the repository’s verified Meteora DAMM v2 pool once repo.ing has verified the destination from the curve’s finalized migration. Quotes, the max-slippage minimum, fees and network costs are shown the same way, your wallet signs the exact swap, and the receipt is checked against the canonical pool before it is shown as confirmed. **View pool on Meteora** stays available. The native price chart includes DBC history and verified DAMM swap prices, which appear once the DAMM trade indexer records the finalized swap.
+For a graduated market, the same Buy/Sell panel trades in the repository’s verified Meteora DAMM v2 pool once repo.ing has verified the destination from the curve’s finalized migration. Quotes, the max-slippage minimum, fees and network costs are shown the same way, your wallet signs the exact swap, and the receipt is checked against the canonical pool before it is shown as confirmed. **View pool** under the trade button opens the pool on Meteora. The native price chart includes DBC history and verified DAMM swap prices, which appear once the DAMM trade indexer records the finalized swap.
 
 ## Claim builder fees
 

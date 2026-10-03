@@ -185,6 +185,7 @@ These GET endpoints return the same body for every visitor (they read no cookie,
 | `/api/market/<mint>/trades?range=…` | 2 s | A refetch prompted by a live trade hint adds `fresh=1` and is answered `no-store`, so a just-indexed trade is never hidden by an edge copy. |
 | `/api/market/<mint>/curve` | 2 s | Same `fresh=1` rule. |
 | `/api/market/<mint>/activity` | 5 s | |
+| `/api/market/<mint>/traders` | 5 s | Linked traders' public X accounts for Recent trades; never wallet addresses. |
 | `/api/market/<mint>/metrics` | 10 s, stale 20 s | `no-store` when the chain read failed. |
 | `/api/repo-search` (GET) | 15 s, stale 45 s | The POST search is never cached. |
 | `/api/growth` | 15 s, stale 45 s | |
@@ -194,7 +195,7 @@ Cloudflare does not cache JSON unless a Cache Rule makes it eligible. In the Clo
 1. Select the `repo.ing` zone → **Caching** → **Cache Rules** → **Create rule**. Name it `Public JSON APIs (origin Cache-Control)`.
 2. Under **When incoming requests match**, choose **Custom filter expression** → **Edit expression** and paste:
    ```txt
-   (http.request.method eq "GET" and ((starts_with(http.request.uri.path, "/api/market/") and (ends_with(http.request.uri.path, "/trades") or ends_with(http.request.uri.path, "/curve") or ends_with(http.request.uri.path, "/activity") or ends_with(http.request.uri.path, "/metrics"))) or http.request.uri.path in {"/api/repo-search" "/api/growth"}))
+   (http.request.method eq "GET" and ((starts_with(http.request.uri.path, "/api/market/") and (ends_with(http.request.uri.path, "/trades") or ends_with(http.request.uri.path, "/curve") or ends_with(http.request.uri.path, "/activity") or ends_with(http.request.uri.path, "/traders") or ends_with(http.request.uri.path, "/metrics"))) or http.request.uri.path in {"/api/repo-search" "/api/growth"}))
    ```
    This deliberately leaves out `/api/market/<mint>/events` (the live stream must never be buffered or cached), `/balance` (per wallet), `/share-card` and every other API.
 3. Under **Then** → **Cache eligibility**, select **Eligible for cache**.
