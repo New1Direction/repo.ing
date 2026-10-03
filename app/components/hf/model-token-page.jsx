@@ -81,7 +81,7 @@ export async function ModelTokenPage({ market, activity = false }) {
           <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Model market</span><Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link></div></RepoIdentity>
         <Suspense fallback={<HeroFacts view={stored}/>}><LiveHeroFacts market={market} registry={registry}/></Suspense>
         <div className="market-hero-pills">
-          {payoutWallet && <Suspense fallback={null}><XHandle wallet={payoutWallet} trust className="maintainer-x"/></Suspense>}
+          {payoutWallet && <Suspense fallback={null}><XHandle wallet={payoutWallet} trust avatar className="maintainer-x"/></Suspense>}
           <Suspense fallback={null}><BackersPill market={market} href={activity ? `/token/${mint}#backers` : '#backers'}/></Suspense></div></div>
       <div className="market-hero-actions">
         <CopyAddress address={mint} compact/><ShareMarket key={mint} mint={mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
@@ -206,7 +206,7 @@ async function ModelEarnings({ market }) {
     <strong className="earnings-amount">{verifiedEarned === null ? 'Checking…' : usdEstimate ? `≈ ${usdEstimate}` : `${formatSolDisplay(verifiedEarned)} SOL`}</strong>
     {usdEstimate && <span className="earnings-sol" title={`${market.earned} lamports earned in total`}>≈ {formatSolRounded(market.earned)} SOL earned</span>}
     <div className="earnings-breakdown"><span>Already paid<strong>{verifiedEarned === null ? '—' : `${formatSolDisplay(market.claimed)} SOL`}</strong></span><span>Available to claim<strong>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
-    <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{signedPayoutWallet(market) && <XHandle wallet={signedPayoutWallet(market)} trust className="maintainer-x"/>}</div>
+    <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{signedPayoutWallet(market) && <XHandle wallet={signedPayoutWallet(market)} trust avatar className="maintainer-x"/>}</div>
     <p>{note}</p><Link className="button white earnings-claim" href={claimHref(market)}>{CLAIM_LABEL}<ArrowUpRight size={16}/></Link>
   </div>
 }

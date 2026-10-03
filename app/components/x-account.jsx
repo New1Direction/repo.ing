@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useWallet } from './wallet'
 import { XMark } from './x-mark'
 import { XHandleLink } from './x-handle-link'
+import { xLinkChanged } from './x-link-state'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { shortWallet } from '../lib/holder-note-format.mjs'
 
@@ -65,12 +66,14 @@ export function XAccount() {
     const signature = await sign(state.pending.message)
     const { link } = await post({ action: 'confirm', signature })
     setState({ link, pending: null }); setNotice(`Linked @${link.username} to this wallet.`)
+    xLinkChanged(wallet, link)
   })
   const cancel = () => run('cancel', async () => { await post({ action: 'cancel' }); setState(current => ({ ...current, pending: null })) })
   const unlink = () => run('unlink', async () => {
     const challenge = await post({ action: 'unlink-challenge', wallet })
     await post({ action: 'unlink', challenge: challenge.challenge, signature: await sign(challenge.message) })
     setState(current => ({ ...current, link: null })); setNotice('X account unlinked from this wallet.')
+    xLinkChanged(wallet, null)
   })
 
   if (!wallet) return null

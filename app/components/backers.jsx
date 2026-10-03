@@ -1,6 +1,4 @@
-import { ArrowUpRight } from 'lucide-react'
-import { CopyAddress } from './copy-address'
-import { XHandleLink } from './x-handle-link'
+import { WalletIdentity } from './wallet-identity'
 import { marketBackers } from '../lib/backers.mjs'
 import { xLinksEnabled } from '../lib/x-links.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
@@ -9,19 +7,12 @@ import { signedPayoutWallet } from '../lib/official-launch.mjs'
 
 const day = iso => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : null
 
-function Wallet({ wallet }) {
-  return <span className="backer-wallet"><CopyAddress address={wallet} compact label="wallet address"/>
-    <a className="backer-solscan" href={`https://solscan.io/account/${wallet}`} target="_blank" rel="noreferrer" aria-label={`View wallet ${wallet} on Solscan`} title="View on Solscan">
-      <ArrowUpRight size={14} aria-hidden="true"/></a></span>
-}
-
 function Backer({ backer, rank, symbol }) {
   const since = day(backer.firstBuyAt)
   return <li className="backer">
     <span className="backer-rank" aria-hidden="true">{rank}</span>
     <div className="backer-who">
-      {backer.x && <XHandleLink link={backer.x} avatar className="backer-x"/>}
-      <Wallet wallet={backer.wallet}/>
+      <WalletIdentity wallet={backer.wallet} link={backer.x}/>
       {backer.earlyRank && <span className="backer-early" title={`Among the first buyers of $${symbol} on repo.ing (#${backer.earlyRank})`}>Early backer #{backer.earlyRank}</span>}
     </div>
     <div className="backer-amount"><strong>{holdingLabel(backer.netBaseUnits)} <span>${symbol}</span></strong>
@@ -34,8 +25,7 @@ function Disclosed({ rows, symbol, beneficiaryWallet }) {
   if (!rows.length) return null
   return <div className="backers-disclosed"><h4>Labelled wallets <span>(not counted)</span></h4>
     <ul>{rows.map(row => <li key={row.wallet}><span className={`backer-label is-${row.kind}`}>{row.label}</span>
-      {row.x && <XHandleLink link={row.x} trust={row.wallet === beneficiaryWallet} className="backer-x"/>}
-      <Wallet wallet={row.wallet}/><span className="backer-disclosed-amount">{holdingLabel(row.netBaseUnits)} ${symbol}</span></li>)}</ul></div>
+      <WalletIdentity wallet={row.wallet} link={row.x} trust={row.wallet === beneficiaryWallet}/><span className="backer-disclosed-amount">{holdingLabel(row.netBaseUnits)} ${symbol}</span></li>)}</ul></div>
 }
 
 // Details → Backers. Server component; shares the per-request read with the hero pill.

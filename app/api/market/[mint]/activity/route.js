@@ -1,6 +1,8 @@
 import { database, marketByMint } from '../../../../lib/server.mjs'
 import { MARKET_ACTIVITY_CACHE, NO_STORE } from '../../../../lib/cache-headers.mjs'
 import { withServerTiming } from '../../../../lib/server-timing.mjs'
+import { xHandlesFor } from '../../../../lib/x-links.mjs'
+import { activityEvents } from '../../../../lib/market-activity.mjs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -12,9 +14,16 @@ export const GET = withServerTiming(async (_request, { params }) => {
   if (!market || !pool) return Response.json({ error: 'Market unavailable' }, { status: 404, headers: NO_STORE })
   try {
     const [trades, fees, claims, parts] = await Promise.all([
-      pool.query(`select signature, event_index as "eventIndex", direction, traded_at as "occurredAt",
-        input_base_units as "inputBaseUnits", output_base_units as "outputBaseUnits"
-        from trade_events where pool = $1 order by slot desc, event_index desc limit 30`, [market.pool]),
+      // Curve trades, then (after graduation) the same repository's verified pool, with each trade's trader.
+      pool.query(`(select signature, event_index as "eventIndex", direction, traded_at as "occurredAt",
+          input_base_units::text as "inputBaseUnits", output_base_units::text as "outputBaseUnits", trader
+          from trade_events where pool = $1 order by slot desc, event_index desc limit 30)
+        union all
+        (select d.signature, d.event_index, d.direction, d.traded_at,
+          (case when d.direction = 'buy' then d.quote_amount else d.base_amount end)::text,
+          (case when d.direction = 'buy' then d.base_amount else d.quote_amount end)::text, d.trader
+          from damm_trade_events d join graduation_events g on g.github_repo_id = d.github_repo_id and g.pool = d.pool
+          where d.github_repo_id = $2 and d.base_amount is not null order by d.slot desc, d.event_index desc limit 30)`, [market.pool, market.repoId]),
       pool.query(`select f.signature, f.event_index as "eventIndex", f.amount_base_units::text as "amountBaseUnits",
         coalesce(t.traded_at, f.created_at) as "occurredAt" from fee_events f
         left join lateral (select traded_at from trade_events t where t.pool = f.pool and t.signature = f.signature
@@ -34,16 +43,9 @@ export const GET = withServerTiming(async (_request, { params }) => {
         throw error
       }),
     ])
-    const events = [
-      ...trades.rows.map(row => ({ type: row.direction, signature: row.signature, eventIndex: row.eventIndex,
-        occurredAt: row.occurredAt?.toISOString(), inputBaseUnits: row.inputBaseUnits, outputBaseUnits: row.outputBaseUnits })),
-      ...fees.rows.map(row => ({ type: 'fee', signature: row.signature, eventIndex: row.eventIndex,
-        occurredAt: row.occurredAt?.toISOString(), amountBaseUnits: row.amountBaseUnits })),
-      ...claims.rows.map(row => ({ type: 'claim', signature: row.signature,
-        occurredAt: row.occurredAt?.toISOString(), amountBaseUnits: row.amountBaseUnits })),
-      ...parts.rows.map(row => ({ type: row.type, signature: row.signature, ref: row.ref, occurredAt: row.occurredAt?.toISOString(),
-        ...(row.type === 'parts-pledge' ? { amountBaseUnits: row.amountBaseUnits, symbol: row.symbol, decimals: row.decimals, usdCents: row.usdCents } : { body: row.body }) })),
-    ].sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt)).slice(0, 40)
+    // Traders who linked X are named by that account (one batched read); the lookup failing only drops the names.
+    const handles = await xHandlesFor([...new Set(trades.rows.map(row => row.trader).filter(Boolean))]).catch(() => new Map())
+    const events = activityEvents({ trades: trades.rows, fees: fees.rows, claims: claims.rows, parts: parts.rows, handles })
     return Response.json({ events }, { headers: MARKET_ACTIVITY_CACHE })
   } catch { return Response.json({ error: 'Activity is temporarily unavailable' }, { status: 503, headers: NO_STORE }) }
 })

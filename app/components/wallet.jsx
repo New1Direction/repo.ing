@@ -5,6 +5,9 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { getWallets } from '@wallet-standard/app'
 import { ArrowRight, ChevronDown, LogOut, Smartphone, Wallet, X } from 'lucide-react'
 import { CopyAddress } from './copy-address'
+import { XMark } from './x-mark'
+import { hasXHandle, xAvatar } from './x-handle-link'
+import { useXLink } from './x-link-state'
 import { createWalletProvider, hasWalletAppBrowser, isPhoneBrowser, listSolanaWallets, walletBrowseLinks } from '../lib/solana-wallet.mjs'
 
 const WalletContext = createContext(null)
@@ -269,6 +272,10 @@ export function WalletButton() {
   const { wallet, walletName, walletIcon, error, restoring, connect, changeWallet, disconnect } = useWallet()
   const [open, setOpen] = useState(false)
   const control = useRef(null)
+  // A wallet that linked X is shown as that account (avatar and @handle) instead of its address.
+  const { off: xOff, known: xKnown, link } = useXLink(wallet)
+  const x = hasXHandle(link) ? link : null, avatar = x && xAvatar(x)
+  const short = wallet ? `${wallet.slice(0, 4)}…${wallet.slice(-4)}` : ''
 
   useEffect(() => {
     if (!open) return
@@ -283,13 +290,17 @@ export function WalletButton() {
 
   return <div ref={control} className="wallet-control">
     <button type="button" className={`button outline wallet-button${wallet ? ' connected' : ''}`} aria-expanded={wallet ? open : undefined}
-      aria-label={wallet ? `Wallet ${wallet.slice(0, 4)}…${wallet.slice(-4)}; open account menu` : 'Connect wallet'}
+      aria-label={wallet ? `Wallet ${x ? `@${x.username} (${short})` : short}; open account menu` : 'Connect wallet'}
       onClick={() => wallet ? setOpen(value => !value) : connect().catch(() => {})}>
-      {wallet ? <>{walletIcon ? <img src={walletIcon} alt=""/> : <Wallet size={17}/>}<span>{wallet.slice(0, 4)}…{wallet.slice(-4)}</span><ChevronDown size={16}/></> : restoring ? 'Connecting…' : 'Connect wallet'}
+      {wallet ? <>{avatar ? <img className="wallet-button-avatar" src={avatar} alt="" referrerPolicy="no-referrer"/> : walletIcon ? <img src={walletIcon} alt=""/> : <Wallet size={17}/>}
+        <span>{x ? `@${x.username}` : short}</span><ChevronDown size={16}/></> : restoring ? 'Connecting…' : 'Connect wallet'}
     </button>
     {wallet && open && <div className="wallet-account-menu">
-      <div className="wallet-account-heading">{walletIcon ? <img src={walletIcon} alt=""/> : <Wallet size={22}/>}<div><strong>{walletName || 'Solana wallet'}</strong><span>Connected · Solana mainnet</span></div></div>
+      <div className="wallet-account-heading">{avatar ? <img className="wallet-account-avatar" src={avatar} alt="" referrerPolicy="no-referrer"/> : walletIcon ? <img src={walletIcon} alt=""/> : <Wallet size={22}/>}
+        <div><strong>{x ? `@${x.username}` : walletName || 'Solana wallet'}</strong><span>{x ? `${x.name ? `${x.name} · ` : ''}${walletName || 'Solana wallet'}` : 'Connected · Solana mainnet'}</span></div></div>
       <CopyAddress address={wallet} compact label="wallet address"/>
+      {xKnown && !x && !xOff && <Link className="wallet-menu-action wallet-menu-x" href="/wallet#x-account" onClick={() => setOpen(false)}>
+        <span><strong><XMark size={12}/>Connect X</strong><small>Show your @handle instead of this address</small></span><ArrowRight size={16}/></Link>}
       <Link className="wallet-menu-action" href="/wallet" onClick={() => setOpen(false)}>My holdings & rewards<ArrowRight size={16}/></Link>
       <button type="button" className="wallet-menu-action" onClick={() => { setOpen(false); changeWallet().catch(() => {}) }}>Change wallet<ArrowRight size={16}/></button>
       <button type="button" className="wallet-menu-action" onClick={() => { setOpen(false); void disconnect() }}>Disconnect<LogOut size={16}/></button>
