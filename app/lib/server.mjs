@@ -3,7 +3,7 @@ import { allocationEnabled } from '../../src/builder-allocation.mjs'
 import pg from 'pg'
 import { Connection, Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { createReconciler } from '../../src/reconcile.mjs'
+import { chainAheadOfLedger, createReconciler } from '../../src/reconcile.mjs'
 import { createRpcMeter, registerRpcEndpoint } from '../../src/rpc-usage.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
@@ -249,18 +249,27 @@ export async function feeStatus(repoId) {
   catch { return { status: 'UNAVAILABLE', onchainCreatorFee: null } }
 }
 
-// Token pages display fee status on every view; one chain reconciliation per repository per 30 s (10 s while it is
-// unavailable) serves every viewer of this process. Claim and payout paths call feeStatus and always read fresh.
+// Token pages display fee status on every view; one chain reconciliation per repository per 30 s (10 s while it is not
+// verified) serves every viewer of this process. Claim and payout paths call feeStatus and always read fresh.
+// After a trade the chain runs ahead of the indexed ledger until the worker records its fees (median ~30 s, up to ~10
+// min), so a reconcile reads MISMATCH; an RPC blip reads UNAVAILABLE. In those two cases only, the last verified figures
+// stay on screen, marked with lastVerifiedAt, for up to LAST_VERIFIED_MAX_AGE_MS instead of the "Verifying" placeholder.
+// Anything else (a pending claim, a ledger ahead of the chain, a withdrawal difference) is shown as read.
 const DISPLAY_FEE_STATUS_MS = 30_000
 const DISPLAY_FEE_UNAVAILABLE_MS = 10_000
-const displayFeeStatuses = new Map()
+const LAST_VERIFIED_MAX_AGE_MS = 15 * 60_000
+const displayFeeStatuses = new Map(), lastVerified = new Map()
+const keep = (map, key, entry) => { if (map.size >= 500) map.delete(map.keys().next().value); map.set(key, entry) }
 export function displayFeeStatus(repoId, { now = Date.now, read = feeStatus } = {}) {
   const key = String(repoId), hit = displayFeeStatuses.get(key)
   if (hit?.pending) return hit.pending
   if (hit && now() < hit.expiresAt) return Promise.resolve(hit.value)
-  const pending = read(key).then(value => {
-    if (displayFeeStatuses.size >= 500) displayFeeStatuses.delete(displayFeeStatuses.keys().next().value)
-    displayFeeStatuses.set(key, { value, expiresAt: now() + (value?.status === 'UNAVAILABLE' ? DISPLAY_FEE_UNAVAILABLE_MS : DISPLAY_FEE_STATUS_MS) })
+  const pending = read(key).then(fresh => {
+    const at = now(), verified = fresh?.status === 'MATCH', last = lastVerified.get(key)
+    if (verified) keep(lastVerified, key, { value: fresh, at })
+    const held = !verified && last && at - last.at <= LAST_VERIFIED_MAX_AGE_MS && (fresh?.status === 'UNAVAILABLE' || chainAheadOfLedger(fresh))
+    const value = held ? { ...last.value, lastVerifiedAt: new Date(last.at).toISOString() } : fresh
+    keep(displayFeeStatuses, key, { value, expiresAt: at + (verified ? DISPLAY_FEE_STATUS_MS : DISPLAY_FEE_UNAVAILABLE_MS) })
     return value
   }, error => { displayFeeStatuses.delete(key); throw error })
   displayFeeStatuses.set(key, { pending })
