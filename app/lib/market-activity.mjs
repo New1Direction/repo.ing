@@ -4,6 +4,15 @@
 const iso = value => value instanceof Date ? value.toISOString() : value ?? null
 const publicX = link => link?.username ? { username: link.username, name: link.name ?? null, image: link.image ?? null } : null
 
+// Recent trades: of the newest trades, those whose trader linked X, by trade (signature and event index), each with its
+// public X account only; no wallet address is sent.
+export function linkedTraders(rows, handles) {
+  return rows.flatMap(row => {
+    const x = publicX(row.trader ? handles.get(row.trader) : null)
+    return x ? [{ signature: row.signature, eventIndex: row.eventIndex, x }] : []
+  })
+}
+
 export function activityEvents({ trades = [], fees = [], claims = [], parts = [], handles = new Map(), limit = 40 }) {
   return [
     ...trades.map(row => {

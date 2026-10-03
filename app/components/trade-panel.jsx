@@ -17,6 +17,12 @@ import { captureReferral, storedReferral } from '../lib/referral.mjs'
 import { feePercentLabel, launchFeeTradeNote } from '../../src/launch-fee-copy.mjs'
 import { DEFAULT_SLIPPAGE_BPS, parseSlippageBps, SLIPPAGE_EXCEEDED, slippageLabel } from '../../src/trade-slippage.mjs'
 import { SlippageSetting } from './slippage-setting'
+import { ArrowDown } from 'lucide-react'
+import { useXLink } from './x-link-state'
+import { hasXHandle } from './x-handle-link'
+import { TradeIdentity } from './trade-identity'
+import { quoteAmountLabel, tradeButtonLabel } from '../lib/trade-panel.mjs'
+import '../trade-panel.css'
 
 const SLIPPAGE_KEY = 'repoing:slippage-bps'
 function localStore() { try { return window.localStorage } catch { return null } }
@@ -51,6 +57,14 @@ async function fetchTradeStatus(result) {
   return status
 }
 
+// The pay field's balance of what the trade spends, or the way to see it.
+function TradeBalance({ wallet, loading, error, label, exact, onConnect, onRetry }) {
+  if (!wallet) return <button type="button" className="trade-field-action" onClick={onConnect}>Connect wallet</button>
+  if (loading) return <span className="trade-balance">Loading balance…</span>
+  if (error) return <span className="trade-balance">Balance unavailable <button type="button" className="trade-field-action" onClick={onRetry}>Retry</button></span>
+  return label ? <span className="trade-balance" title={exact}>Balance <strong>{label}</strong></span> : null
+}
+
 export function TradePanel({ market, available, usdPerSol = null, curve = null }) {
   const [direction, setDirection] = useState('buy')
   const panelRef = useRef(null)
@@ -78,6 +92,8 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   const [solBalanceLoading, setSolBalanceLoading] = useState(false)
   const [solBalanceError, setSolBalanceError] = useState(false)
   const { wallet, connect, provider } = useWallet()
+  // The wallet's linked X account: the trade shows as that @handle in the market's trades.
+  const x = useXLink(wallet)
   const router = useRouter()
   const lastChartRefreshSignature = useRef(null)
   // A graduated market trades in its verified DAMM pool; migration without a verified destination stays closed.
@@ -247,10 +263,16 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     setStage('')
   }
 
+  function chooseAmount(value) {
+    setAmount(value)
+    setLiveQuote(null)
+    setMinimumOut(null)
+  }
+
   function selectPercent(percent) {
     if (balance === null) return
     const selected = sellAmountForPercent(balance, percent)
-    if (selected) { setAmount(selected); setMinimumOut(null); setLiveQuote(null) }
+    if (selected) chooseAmount(selected)
   }
 
   function submit(event) {
@@ -340,56 +362,82 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
   let usdAmount = null
   try { usdAmount = formatUsdEstimate(direction === 'buy' && amount ? parseUnits(amount, 9) : liveQuote?.outputAmount, usdPerSol) } catch { /* Wait for a valid amount. */ }
   if (!tradingOpen && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>Bonding-curve trades have ended. We are checking the destination pool; trading resumes here once it is verified. This page updates automatically.</p></div>
+  const buying = direction === 'buy'
+  const receiveUnit = buying ? market.symbol : 'SOL', receiveDecimals = buying ? 6 : 9
+  const quoteLoading = quoteStatus === 'Calculating quote…' || quoteStatus === 'Refreshing quote…'
+  const shownReceive = liveQuote ? liveQuote.outputAmount : minimumOut
+  const minimumReceive = liveQuote ? liveQuote.minimumAmountOut : minimumOut
+  const quoteRetry = Boolean(quoteStatus) && !quoteLoading && validAmount
+  const balanceShown = buying
+    ? { loading: solBalanceLoading, error: solBalanceError, label: solBalance === null ? null : `${formatSolDisplay(solBalance)} SOL`, exact: solBalance === null ? undefined : `${formatUnits(solBalance, 9)} SOL` }
+    : { loading: balanceLoading, error: balanceError, label: balance === null ? null : `${tokenBalanceLabel(balance)} ${market.symbol}`, exact: balance === null ? undefined : `${formatUnits(balance, 6)} ${market.symbol}` }
+  const costNote = costs
+    ? BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction.` : ''
+    : !(liveQuote || preparedCosts) ? '' : !wallet ? 'Connect a wallet to see network fees and account deposits.'
+      : currentCosts?.loading ? 'Checking network fees and account deposits…' : 'Network cost estimate unavailable. Checked again before wallet approval.'
+  const submitLabel = tradeButtonLabel({ direction, symbol: market.symbol, validAmount, buyExceedsBalance, sellExceedsBalance, costShortfall })
   return <><div className="trade-card" id="trade-panel" ref={panelRef} tabIndex={-1} aria-label={`Trade ${market.symbol}`}>
     <div className="trade-tabs" role="tablist" aria-label="Trade direction">
-      <button disabled={busy} role="tab" aria-selected={direction === 'buy'} className={direction === 'buy' ? 'selected' : ''} onClick={() => selectDirection('buy')}>Buy</button>
-      <button disabled={busy} role="tab" aria-selected={direction === 'sell'} className={direction === 'sell' ? 'selected' : ''} onClick={() => selectDirection('sell')}>Sell</button>
+      <button disabled={busy} role="tab" data-side="buy" aria-selected={buying} className={buying ? 'selected' : ''} onClick={() => selectDirection('buy')}>Buy</button>
+      <button disabled={busy} role="tab" data-side="sell" aria-selected={!buying} className={buying ? '' : 'selected'} onClick={() => selectDirection('sell')}>Sell</button>
     </div>
-    {graduatedPool && <p className="trade-venue-note">Trading in the graduated Meteora pool. <a href={graduatedPool.url} target="_blank" rel="noopener noreferrer">View pool on Meteora ↗</a></p>}
     <form onSubmit={submit} aria-busy={busy}>
-      <label htmlFor="trade-amount">You {direction === 'buy' ? 'pay' : 'sell'}</label>
-      <div className="asset-input"><input id="trade-amount" disabled={busy} aria-describedby="trade-quote-hint" inputMode="decimal" autoComplete="off" placeholder="0.00" value={amount} onChange={e => { setAmount(e.target.value); setMinimumOut(null); setLiveQuote(null) }} required/><span>{direction === 'buy' ? 'SOL' : market.symbol}</span></div>
-      {direction === 'buy' && <div className="trade-balance-row">
-        <span title={solBalance === null ? undefined : `${formatUnits(solBalance, 9)} SOL`}>
-          {solBalanceLoading ? 'Loading SOL balance…' : solBalance !== null ? `Balance: ${formatSolDisplay(solBalance)} SOL` : solBalanceError ? 'SOL balance unavailable' : 'Connect wallet to see your SOL balance'}
-        </span>
-        {!wallet && <button type="button" onClick={() => connect().catch(() => {})}>Connect wallet</button>}
-        {wallet && solBalanceError && <button type="button" onClick={() => setBalanceRefresh(value => value + 1)}>Retry</button>}
-      </div>}
-      {direction === 'buy' && (!curve || curve.status === 'active') && <TradeSizeGuide repoId={market.repoId} disabled={busy} onSelect={value => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}/>}
-      {direction === 'buy' && <BuyPresets disabled={busy} amount={amount} solBalance={solBalance} onSelect={value => { setAmount(value); setLiveQuote(null); setMinimumOut(null) }}/>}
-      {direction === 'sell' && <>
-        <div className="trade-balance-row">
-          <span title={balance === null ? undefined : `${formatUnits(balance, 6)} ${market.symbol}`}>
-            {balanceLoading ? 'Loading balance…' : balance !== null ? `Balance: ${tokenBalanceLabel(balance)} ${market.symbol}` : balanceError ? 'Balance unavailable' : 'Connect wallet to see your balance'}
-          </span>
-          {!wallet && <button type="button" onClick={() => connect().catch(() => {})}>Connect wallet</button>}
-          {wallet && balanceError && <button type="button" onClick={() => setBalanceRefresh(value => value + 1)}>Retry</button>}
+      <div className="trade-field">
+        <div className="trade-field-head"><label htmlFor="trade-amount">You {buying ? 'pay' : 'sell'}</label><TradeBalance wallet={wallet} {...balanceShown}
+          onConnect={() => connect().catch(() => {})} onRetry={() => setBalanceRefresh(value => value + 1)}/></div>
+        <div className="trade-field-main"><input id="trade-amount" disabled={busy} aria-describedby="trade-quote-hint" inputMode="decimal" autoComplete="off" placeholder="0.00" value={amount} onChange={e => chooseAmount(e.target.value)} required/><span className="trade-unit">{buying ? 'SOL' : market.symbol}</span></div>
+        <div className="trade-field-foot">
+          {buying && usdAmount && <span className="trade-usd">≈ {usdAmount}</span>}
+          {buying ? <BuyPresets disabled={busy} amount={amount} solBalance={solBalance} onSelect={chooseAmount}/>
+            : <div className="trade-quick-actions" role="group" aria-label="Sell amount shortcuts">
+              {[25, 50, 100].map(percent => { const preset = balance === null ? '' : sellAmountForPercent(balance, percent)
+                return <button type="button" key={percent} disabled={busy || !preset} aria-pressed={!!preset && sameAmount(amount, preset, 6)}
+                  onClick={() => selectPercent(percent)} aria-label={`Sell ${percent}% of your token balance`}>{percent === 100 ? 'MAX' : `${percent}%`}</button> })}
+            </div>}
         </div>
-        <div className="trade-quick-actions" role="group" aria-label="Sell amount shortcuts">
-          {[25, 50, 100].map(percent => { const preset = balance === null ? '' : sellAmountForPercent(balance, percent)
-            return <button type="button" key={percent} disabled={busy || !preset} aria-pressed={!!preset && sameAmount(amount, preset, 6)}
-              onClick={() => selectPercent(percent)} aria-label={`Sell ${percent}% of your token balance`}>{percent === 100 ? 'MAX' : `${percent}%`}</button> })}
+      </div>
+      <button type="button" className="trade-flip" disabled={busy} onClick={() => selectDirection(buying ? 'sell' : 'buy')}
+        aria-label={`Switch to ${buying ? 'selling' : 'buying'} ${market.symbol}`} title={buying ? 'Switch to sell' : 'Switch to buy'}><ArrowDown size={16} aria-hidden="true"/></button>
+      <div className="trade-field is-output">
+        <div className="trade-field-head"><span id="trade-receive-label">{minimumOut && !liveQuote ? 'Minimum receive' : 'You receive'}</span>{liveQuote && <span className="trade-field-tag">Estimate</span>}</div>
+        <div className={`trade-field-main trade-quote${shownReceive ? '' : quoteStatus ? ' is-waiting' : ' is-empty'}`} role="status" aria-live="polite" aria-busy={quoteLoading} aria-labelledby="trade-receive-label">
+          <span className="trade-quote-value" title={shownReceive ? `${formatUnits(shownReceive, receiveDecimals)} ${receiveUnit}` : undefined}>{quoteStatus === 'Calculating quote…' && <LoadingSignal/>}{shownReceive ? quoteAmountLabel(shownReceive, receiveDecimals) : quoteStatus || (amount ? '—' : '0.00')}{liveQuote && quoteStatus === 'Refreshing quote…' && <LoadingSignal/>}</span>
+          <span className="trade-unit">{receiveUnit}</span>
         </div>
-      </>}
-      <div className="trade-convert">↓</div>
-      <label>{minimumOut && !liveQuote ? 'Minimum receive' : 'Estimated receive'}</label>
-      <div className={`asset-input read-only quote-output${(!liveQuote && quoteStatus) || !amount ? ' is-waiting' : ''}`} role="status" aria-live="polite" aria-busy={quoteStatus === 'Calculating quote…' || quoteStatus === 'Refreshing quote…'}><span>{quoteStatus === 'Calculating quote…' && <LoadingSignal/>}{liveQuote ? formatUnits(liveQuote.outputAmount, direction === 'buy' ? 6 : 9, 6) : minimumOut ? formatUnits(minimumOut, direction === 'buy' ? 6 : 9, 6) : quoteStatus || (amount ? '—' : 'Enter an amount')}{liveQuote && quoteStatus === 'Refreshing quote…' && <LoadingSignal/>}</span><span>{direction === 'buy' ? market.symbol : 'SOL'}</span></div>
-      {quoteStatus && !['Calculating quote…', 'Refreshing quote…'].includes(quoteStatus) && validAmount && <button type="button" className="quote-retry" disabled={busy} onClick={() => setQuoteRefresh(value => value + 1)}>Retry quote</button>}
-      <SlippageSetting value={slippageBps} onChange={chooseSlippage} disabled={busy}/>
-      <p className="trade-hint" id="trade-quote-hint">{liveQuote || minimumOut
-        ? `Minimum after ${slippageLabel(shownSlippage)} slippage: ${formatUnits(liveQuote ? liveQuote.minimumAmountOut : minimumOut, direction === 'buy' ? 6 : 9, 6)} ${direction === 'buy' ? market.symbol : 'SOL'}. Refreshed before wallet confirmation.`
-        : 'Quote updates as you enter an amount.'}{direction === 'buy' && ' Leave SOL for network fees and token-account costs.'}</p>
-      {(usdAmount || liveQuote || minimumOut) && <dl className="trade-quote-details">{usdAmount && <div><dt>{direction === 'buy' ? 'Estimated spend' : 'Estimated receive'}</dt><dd>≈ {usdAmount}</dd></div>}{liveQuote && <><div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div>{launchFeeNote && <div><dt>Launch fee <small>(at this quote)</small></dt><dd>{feePercentLabel(liveQuote.launchFee.feeNumerator)}</dd></div>}<div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div></>}{(liveQuote || minimumOut) && <div><dt title="The trade fails instead of filling below the minimum this sets">Max slippage</dt><dd>{slippageLabel(shownSlippage)}</dd></div>}</dl>}
-      {(liveQuote || preparedCosts) && <div className="trade-cost-preview">
-        {costs ? <><dl className="trade-quote-details"><div><dt>Network + priority fee</dt><dd>≈ {formatUnits(costs.networkFee)} SOL</dd></div><div><dt>Token account deposit</dt><dd>{formatUnits(costs.accountDeposits)} SOL</dd></div>{BigInt(costs.refundableDeposit) > 0n && <div><dt>Temporary deposit <small>(returned)</small></dt><dd>{formatUnits(costs.refundableDeposit)} SOL</dd></div>}<div className="trade-cost-total"><dt>{direction === 'buy' ? 'Total spend' : 'SOL costs'}</dt><dd>≈ {formatUnits(costs.total)} SOL</dd></div></dl><p className="trade-hint">{BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction. ` : ''}Estimate checked again before signing.</p></> : <p className="trade-hint">{wallet ? currentCosts?.loading ? 'Checking network fees and account deposits…' : 'Network cost estimate unavailable. Checked again before wallet approval.' : 'Connect your wallet to preview network fees and account deposits.'}</p>}
-        {costShortfall && <p className="trade-funding-note" role="status">You need ≈ {formatUnits((BigInt(costs.shortfall) + 999n) / 1000n * 1000n)} more SOL to cover this trade.</p>}
-      </div>}
+        {((!buying && usdAmount) || quoteRetry) && <div className="trade-field-foot">
+          {!buying && usdAmount && <span className="trade-usd">≈ {usdAmount}</span>}
+          {quoteRetry && <button type="button" className="trade-field-action" disabled={busy} onClick={() => setQuoteRefresh(value => value + 1)}>Retry quote</button>}
+        </div>}
+      </div>
+      <div className="trade-settings"><SlippageSetting value={slippageBps} onChange={chooseSlippage} disabled={busy}/></div>
+      {(minimumReceive || liveQuote || costs) && <dl className="trade-details">
+        {minimumReceive && <div><dt title={`The trade fails instead of filling below this (${slippageLabel(shownSlippage)} max slippage). Refreshed before wallet confirmation.`}>Minimum received</dt>
+          <dd title={`${formatUnits(minimumReceive, receiveDecimals)} ${receiveUnit}`}>{quoteAmountLabel(minimumReceive, receiveDecimals)} {receiveUnit}</dd></div>}
+        {liveQuote && <>
+          <div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd className={liveQuote.priceImpactPercent >= 5 ? 'is-high' : undefined}>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div>
+          <div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div>
+          {launchFeeNote && <div><dt>Launch fee <small>(at this quote)</small></dt><dd>{feePercentLabel(liveQuote.launchFee.feeNumerator)}</dd></div>}
+        </>}
+        {costs && <>
+          <div><dt>Network + priority fee</dt><dd>≈ {formatUnits(costs.networkFee)} SOL</dd></div>
+          {BigInt(costs.accountDeposits) > 0n && <div><dt>Token account deposit</dt><dd>{formatUnits(costs.accountDeposits)} SOL</dd></div>}
+          {BigInt(costs.refundableDeposit) > 0n && <div><dt>Temporary deposit <small>(returned)</small></dt><dd>{formatUnits(costs.refundableDeposit)} SOL</dd></div>}
+          <div className="trade-details-total"><dt>{buying ? 'Total spend' : 'SOL costs'}</dt><dd>≈ {formatUnits(costs.total)} SOL</dd></div>
+        </>}
+      </dl>}
+      {costNote && <p className="trade-note">{costNote}</p>}
+      {costShortfall ? <p className="trade-funding-note" role="status">You need ≈ {formatUnits((BigInt(costs.shortfall) + 999n) / 1000n * 1000n)} more SOL to cover this trade.</p>
+        : buyExceedsBalance && <p className="trade-funding-note" role="status">Leave some SOL for network fees and token-account costs.</p>}
+      {buying && (!curve || curve.status === 'active') && <TradeSizeGuide repoId={market.repoId} disabled={busy} onSelect={chooseAmount}/>}
       {launchFeeNote && <p className="trade-impact-warning trade-launch-fee" role="status">{launchFeeNote}</p>}
       {liveQuote?.priceImpactPercent >= 5 && <p className="trade-impact-warning" role="status">High price impact. This trade moves the execution price by about {liveQuote.priceImpactPercent.toFixed(2)}% before fees. Consider a smaller amount.</p>}
-      <button className="button primary trade-submit" type="submit" disabled={busy || !available || !tradingOpen || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : `${direction === 'buy' ? 'Buy' : 'Sell'} ${market.symbol}`}</button>
+      <p className="sr-only" id="trade-quote-hint">{minimumReceive ? `Minimum after ${slippageLabel(shownSlippage)} slippage: ${formatUnits(minimumReceive, receiveDecimals, 6)} ${receiveUnit}. Refreshed before wallet confirmation.` : 'Quote updates as you enter an amount.'}</p>
+      <button className="button primary trade-submit" type="submit" disabled={busy || !available || !tradingOpen || !validAmount || buyExceedsBalance || costShortfall || sellExceedsBalance || resultCard?.state === 'pending'}>{busy && <LoadingSignal/>}{busy ? stage || 'Preparing…' : submitLabel}</button>
       <TransactionStatus stage={busy ? stage : ''}/>
+      <TradeIdentity wallet={wallet} direction={direction} x={x}/>
+      {graduatedPool && <p className="trade-venue">Trades in the graduated Meteora pool · <a href={graduatedPool.url} target="_blank" rel="noopener noreferrer">View pool ↗</a></p>}
     </form>
-    <TradeResultCard result={resultCard} symbol={market.symbol} mint={market.mint} fullName={market.fullName} source={market.source} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)} onRetry={retryWithSlippage}/>
+    <TradeResultCard result={resultCard} symbol={market.symbol} mint={market.mint} fullName={market.fullName} source={market.source} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)} onRetry={retryWithSlippage}
+      xLink={x.link} xNudge={Boolean(wallet && x.known && !x.off && !hasXHandle(x.link))}/>
   </div>{!panelVisible && !resultCard && <nav className="mobile-trade-actions" aria-label="Quick trade navigation"><span>${market.symbol}</span><button type="button" className="button primary" disabled={busy || !available} onClick={() => openTrade('buy')}>Buy</button><button type="button" className="button outline" disabled={busy || !available} onClick={() => openTrade('sell')}>Sell</button></nav>}</>
 }

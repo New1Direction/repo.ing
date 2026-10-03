@@ -30,3 +30,16 @@ export function recentTradeAge(trade, now) {
 export function solscanTx(signature) {
   return `https://solscan.io/tx/${encodeURIComponent(signature)}`
 }
+
+// A trade's key across the chart's trades and the /traders response.
+export const tradeKey = trade => `${trade.signature}:${trade.eventIndex}`
+const USERNAME = /^[A-Za-z0-9_]{1,15}$/
+
+// The /traders response as trade key → public X link (handle, name, avatar); a malformed entry is skipped.
+export function traderHandles(body) {
+  const handles = new Map()
+  for (const entry of Array.isArray(body?.traders) ? body.traders : []) {
+    if (SIGNATURE.test(entry?.signature ?? '') && USERNAME.test(entry?.x?.username ?? '')) handles.set(tradeKey(entry), entry.x)
+  }
+  return handles
+}

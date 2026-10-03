@@ -76,3 +76,14 @@
 .wallet-menu-x small{color:var(--muted);font-size:12px;font-weight:400;line-height:1.35}
 @media(max-width:700px){.wallet-button.connected>span{max-width:11ch}}
 .activity-detail .activity-x{margin-right:9px;font-size:12.5px}
+
+/* Recent trades beside the chart: a linked trader's @handle at the right of the amounts; on phones beside the SOL
+   amount, so a row keeps its height (components/recent-trades.jsx). */
+.recent-trades .recent-trade-x{order:3;flex:none;margin-left:auto;font-size:12px}
+.recent-trades .recent-trade-x>img{width:16px;height:16px}
+@media(max-width:700px){
+  .recent-trades .recent-trade-amount{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;column-gap:8px}
+  .recent-trades .recent-trade-amount small{grid-column:1/-1}
+  .recent-trades .recent-trade-x{order:0;justify-self:start;max-width:100%;margin-left:0;font-size:11.5px}
+  .recent-trades .recent-trade-x>img{width:14px;height:14px}
+}

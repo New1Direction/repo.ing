@@ -49,8 +49,8 @@
 [data-theme=light] .badge.verified svg{color:#fff;background:#269b61}
 [data-theme=light] .repo-identity p,[data-theme=light] .repo-stats,[data-theme=light] .repo-stats svg,[data-theme=light] .repo-details{color:#526358}
 [data-theme=light] .explore-search,[data-theme=light] .explore-search kbd{border-color:#c5d1c8;color:#526358;background:#fff}
-[data-theme=light] .segmented button,[data-theme=light] .trade-tabs button{color:#425247;background:#fff}
-[data-theme=light] .segmented button.selected,[data-theme=light] .trade-tabs button.selected{background:#e5efe8;color:#17291e}
+[data-theme=light] .segmented button{color:#425247;background:#fff}
+[data-theme=light] .segmented button.selected{background:#e5efe8;color:#17291e}
 
 [data-theme=light] .repo-hero-card,[data-theme=light] .market-hero,[data-theme=light] .launch-panel,[data-theme=light] .inner-card,[data-theme=light] .chart-card,[data-theme=light] .trade-card,[data-theme=light] .claim-repo-card,[data-theme=light] .claim-step-card,[data-theme=light] .info-card,[data-theme=light] .step-card,[data-theme=light] .info-note,[data-theme=light] .info-closing{background:#fff}
 [data-theme=light] .field-input,[data-theme=light] .input-suffix,[data-theme=light] .asset-input{border-color:#bac8bd;color:var(--text);background:#fff}
@@ -73,16 +73,16 @@
 [data-theme=light] .trade-result-card.failed .trade-result-actions a{color:#8d2a36}
 [data-theme=light] .state-card{color:#506157}
 
-[data-theme=light] .market-nav,[data-theme=light] .chart-metrics,[data-theme=light] .trade-card label,[data-theme=light] .trade-hint,[data-theme=light] .repo-meta-grid,[data-theme=light] .token-details dt,[data-theme=light] .earnings-card p{color:#607168}
+[data-theme=light] .market-nav,[data-theme=light] .chart-metrics,[data-theme=light] .trade-card label,[data-theme=light] .repo-meta-grid,[data-theme=light] .token-details dt,[data-theme=light] .earnings-card p{color:#607168}
 [data-theme=light] .market-nav .active{color:var(--text);border-color:var(--text)}
 [data-theme=light] .market-nav .disabled{color:#88968c}
 [data-theme=light] .chart-metrics strong,[data-theme=light] .repo-meta-grid strong{color:var(--text)}
 [data-theme=light] .chart-empty-grid{background-image:linear-gradient(to right,transparent calc(100% - 1px),#e1e9e3 calc(100% - 1px)),linear-gradient(to bottom,transparent calc(100% - 1px),#e1e9e3 calc(100% - 1px))}
 [data-theme=light] .chart-empty-label{background:#fffffff0;color:#617166}
 [data-theme=light] .chart-empty-label strong{color:var(--text)}
-[data-theme=light] .trade-tabs,[data-theme=light] .trade-tabs button:first-child{border-color:#ccd8cf}
-[data-theme=light] .trade-convert{color:#496052}
-[data-theme=light] .trade-convert:after{background:#fff;border-color:#cbd8ce}
+
+
+
 [data-theme=light] .asset-input.read-only{color:#607168}
 
 [data-theme=light] .claim-intro p,[data-theme=light] .claim-repo-right>span,[data-theme=light] .step-content>p,[data-theme=light] .step-main span,[data-theme=light] .claim-disclaimer,[data-theme=light] .claim-info,[data-theme=light] .claim-success span{color:#5a6d60}
