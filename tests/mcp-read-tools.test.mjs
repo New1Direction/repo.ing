@@ -185,6 +185,9 @@ test('trending_markets: the home page lists, promoted markets only, never a do-n
   const volume = await call('trending_markets', { sort: 'volume' })
   assert.deepEqual(volume.data.markets.map(market => market.project), ['acme/busy', 'openai-community/gpt2', 'acme/widget'])
   assert.deepEqual(volume.data.markets.map(market => market.rank), [1, 2, 3])
+  // Like the home page's Trending, by volume lists only markets that traded in the last 24 hours.
+  const idle = await call('trending_markets', { sort: 'volume' }, { markets: async () => ({ markets: [{ ...BUSY, volume24hLamports: '0' }, REPO] }) })
+  assert.deepEqual(idle.data.markets.map(market => market.project), ['acme/widget'])
   assert.deepEqual(volume.data.markets[0], { rank: 1, source: 'github', project: 'acme/busy', ticker: '$BUSY', mint: BUSY.mint, marketUrl: `${ORIGIN}/token/${BUSY.mint}`,
     volume24hLamports: '99000000000', launchedAt: '2026-09-01', graduation: { status: 'graduated' } })
   assert.equal(volume.text.split('\n')[1], `1. acme/busy ($BUSY) · 99 SOL 24h volume · graduated · ${ORIGIN}/token/${BUSY.mint}`)

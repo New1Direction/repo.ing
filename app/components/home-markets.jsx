@@ -8,5 +8,6 @@ export function HomeMarkets({ tabs, usdPerSol }) {
   return <><div className="explore-controls"><div className="segmented" role="tablist" aria-label="Homepage markets">
     {HOME_MARKET_TABS.map(name => <button key={name} role="tab" aria-selected={tab === name} className={tab === name ? 'selected' : ''} onClick={() => setTab(name)}>{name}</button>)}
   </div><span className="muted filter-note">{tab === 'Trending' ? 'Ranked by 24h volume' : 'Latest launches'}</span></div>
-    <MarketTable markets={tabs[tab]} usdPerSol={usdPerSol} empty="No indexed markets yet. Paste a repository above to start one."/></>
+    <MarketTable markets={tabs[tab]} usdPerSol={usdPerSol} empty={tab === 'Trending' ? 'Nothing has traded in the last 24 hours. See the newest launches under New.'
+      : 'No indexed markets yet. Paste a repository above to start one.'}/></>
 }

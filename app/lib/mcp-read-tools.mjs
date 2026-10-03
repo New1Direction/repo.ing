@@ -4,7 +4,7 @@ import { HfUrlError, isHfModelPath, parseHfModelUrl } from '../../src/hf-url.mjs
 import { namesHuggingFace } from '../../src/hf-launch.mjs'
 import { HF_DISCLAIMER, HF_DISCLAIMER_BADGE, isModelMarket, modelPageUrl } from './hf-model-display.mjs'
 import { featuredMarkets, labeledRacers, PROMOTION_MIN_PERCENT } from './repo-quality.mjs'
-import { orderMarkets } from './market-order.mjs'
+import { orderMarkets, tradedToday } from './market-order.mjs'
 import { formatSolDisplay, formatUsdEstimate } from './format.mjs'
 
 // The read-only repo.ing tools behind /api/mcp/readonly. route.js passes in the reads the site already caches, as sources:
@@ -235,7 +235,9 @@ async function trendingMarkets({ sort, limit }, request, sources) {
   } else {
     const [{ markets, unavailable }, excluded] = await Promise.all([sources.markets(), sources.excluded()])
     if (unavailable || !excluded) return failure(`${unavailable ?? 'Trending markets are temporarily unavailable.'} Try again shortly.`)
-    rows = orderMarkets(featuredMarkets(markets.filter(market => !excluded.has(String(market.repoId)))), sort === 'volume' ? 'Trending' : 'New').slice(0, limit)
+    // By volume, as the home page's Trending: only markets that traded in the last 24 hours (a 0 SOL row reads as dead).
+    const listed = featuredMarkets(markets.filter(market => !excluded.has(String(market.repoId))))
+    rows = orderMarkets(sort === 'volume' ? listed.filter(tradedToday) : listed, sort === 'volume' ? 'Trending' : 'New').slice(0, limit)
   }
   const entries = rows.map((row, index) => {
     const model = isModelMarket(row)
