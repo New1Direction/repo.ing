@@ -9,7 +9,7 @@ import { createMarketConfigResolver, createQuoteAwareConfigResolver } from '../s
 import { rewardStamps } from '../src/launch-coordinator.mjs'
 import { buildLaunchCurve, buildStockLaunchCurve } from '../src/launch-curve.mjs'
 import { resolveRepositoryOwner } from '../src/github.mjs'
-import { launchPair, stockMintCheck, stockPairGuard } from '../app/lib/stock-launch.mjs'
+import { composeGuards, launchPair, marketPairGuard, stockMintCheck, stockPairGuard } from '../app/lib/stock-launch.mjs'
 
 const DOCUSAURUS = { repoId: '94911145', ownerId: '69631', ownerType: 'Organization' }
 const META = resolveQuoteAsset('meta-xstock', DOCUSAURUS, { enabled: true })
@@ -127,4 +127,38 @@ test('the stock curve keeps the launch-fee profile\'s terms with the stock\'s de
   for (const bad of [{ quoteDecimals: 5, migrationQuoteThreshold: 14 }, { quoteDecimals: 8, migrationQuoteThreshold: 0 }, { quoteDecimals: 8, migrationQuoteThreshold: NaN }]) {
     assert.throws(() => buildStockLaunchCurve(bad))
   }
+})
+
+test('a malformed STOCK_QUOTE_CONFIGS can only fail stock-paired markets, never resolve or break a SOL one', () => {
+  const saved = process.env.STOCK_QUOTE_CONFIGS
+  process.env.STOCK_QUOTE_CONFIGS = '{"meta-xstock":"abc"}'
+  try {
+    const mint = Keypair.generate().publicKey
+    const aware = createQuoteAwareConfigResolver(SOL_CONFIG.toBase58(), [])
+    assert.ok(aware({ mint: mint.toBase58(), pool: deriveDbcPoolAddress(NATIVE_MINT, mint, SOL_CONFIG).toBase58() }).equals(SOL_CONFIG))
+    assert.throws(() => aware({ mint: mint.toBase58(), pool: deriveDbcPoolAddress(new PublicKey(META.mint), mint, META_CONFIG).toBase58(),
+      quoteAssetId: 'meta-xstock', quoteMint: META.mint, quoteRegistryVersion: 1 }))
+  } finally {
+    if (saved === undefined) delete process.env.STOCK_QUOTE_CONFIGS
+    else process.env.STOCK_QUOTE_CONFIGS = saved
+  }
+})
+
+test('after the wallet signs, the stamp decides: a SOL market passes untouched, a stock market is decided again', async () => {
+  let reads = 0
+  const deps = { enabled: () => true, owner: async () => { reads++; return { ownerId: '69631', ownerType: 'Organization' } },
+    configFor: () => META_CONFIG, mintUsable: usable }
+  const guard = marketPairGuard(META_CONFIG.toBase58(), deps)
+  await guard({ repo: { githubRepoId: 1296269n }, market: { quoteAssetId: null, quoteMint: null } })
+  assert.equal(reads, 0, 'a SOL launch reads nothing more')
+  await guard({ repo: { githubRepoId: 94911145n }, market: { quoteAssetId: 'meta-xstock', quoteMint: META.mint, quoteRegistryVersion: 1 } })
+  assert.equal(reads, 1, 'a stock launch re-reads its owner')
+  await assert.rejects(marketPairGuard(META_CONFIG.toBase58(), { ...deps, enabled: () => false })(
+    { repo: { githubRepoId: 94911145n }, market: { quoteAssetId: 'meta-xstock', quoteMint: META.mint, quoteRegistryVersion: 1 } }),
+    code(QUOTE_ERRORS.UNSUPPORTED_QUOTE_ASSET))
+  const order = []
+  await composeGuards(async () => order.push('pair'), null, async () => order.push('trend'))({})
+  assert.deepEqual(order, ['pair', 'trend'])
+  await assert.rejects(composeGuards(async () => { throw Error('pair refused') }, async () => order.push('never'))({}), /pair refused/)
+  assert.deepEqual(order, ['pair', 'trend'])
 })

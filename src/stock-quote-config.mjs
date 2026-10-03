@@ -38,19 +38,33 @@ export async function buildStockQuoteConfigTransaction({ connection, config, ass
 
 // The candidate (decoded PoolConfig) is the reference's terms quoted in the asset: same terms field by field, the asset's mint
 // through Token-2022, the requested graduation threshold, and the approved launch fee.
-export function assertStockConfig(candidate, reference, { asset, graduation }) {
+// curve: the buildStockLaunchCurve result the transaction was built from; its supply, start price and curve points must be what
+// the account holds.
+export function assertStockConfig(candidate, reference, { asset, graduation, curve = null }) {
   const differing = STOCK_CONFIG_MUST_MATCH.filter(field => configDifferences({ [field]: candidate[field] }, { [field]: reference[field] }).length)
   if (differing.length) throw Error(`Stock config differs from the SOL launch-fee config in: ${differing.join(', ')}`)
   if (!new PublicKey(candidate.quoteMint).equals(new PublicKey(asset.mint))) throw Error('Stock config does not quote the asset mint')
   if (candidate.quoteTokenFlag !== 1) throw Error('Stock config does not quote through Token-2022')
   if (candidate.migrationQuoteThreshold.toString() !== wholeUnits(graduation, asset.decimals).toString()) throw Error('Unexpected graduation threshold')
   if (!isApprovedLaunchFee(candidate)) throw Error('Stock config does not carry the approved launch fee')
+  if (curve) {
+    const expected = { preMigrationTokenSupply: curve.tokenSupply?.preMigrationTokenSupply, postMigrationTokenSupply: curve.tokenSupply?.postMigrationTokenSupply,
+      sqrtStartPrice: curve.sqrtStartPrice }
+    const differing = Object.keys(expected).filter(field => configDifferences({ [field]: candidate[field] }, { [field]: expected[field] }).length)
+    // The account keeps the curve in a fixed-size array: the built points first, then zero padding.
+    const points = candidate.curve ?? [], zero = point => String(point.sqrtPrice) === '0' && String(point.liquidity) === '0'
+    const pointsMatch = points.length >= curve.curve.length && curve.curve.every((point, i) =>
+      String(points[i].sqrtPrice) === String(point.sqrtPrice) && String(points[i].liquidity) === String(point.liquidity)) &&
+      points.slice(curve.curve.length).every(zero)
+    if (!pointsMatch) differing.push('curve')
+    if (differing.length) throw Error(`Stock config differs from the curve it was built from in: ${differing.join(', ')}`)
+  }
   return true
 }
 
 // Unsigned simulation (as reviewLaunchFeeConfig): exact rent, network fee and payer debit, and the simulated account checked
 // against the reference config before any key is loaded.
-export async function reviewStockQuoteConfig({ connection, tx, config, payer, reference, asset, graduation }) {
+export async function reviewStockQuoteConfig({ connection, tx, config, payer, reference, asset, graduation, curve = null }) {
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const coder = dbc.state.getProgram().coder.accounts
   const configKey = new PublicKey(config), payerKey = new PublicKey(payer)
@@ -72,7 +86,7 @@ export async function reviewStockQuoteConfig({ connection, tx, config, payer, re
   const totalDebitLamports = balance - payerAfter.lamports
   if (totalDebitLamports !== created.lamports + fee.value) throw Error('Unexpected simulated payer debit')
   const decoded = coder.decode('poolConfig', data)
-  assertStockConfig(decoded, coder.decode('poolConfig', referenceInfo.data), { asset, graduation })
+  assertStockConfig(decoded, coder.decode('poolConfig', referenceInfo.data), { asset, graduation, curve })
   return { accountDataSha256: sha256(data), accountBytes: data.length, rentLamports: created.lamports, networkFeeLamports: fee.value,
     totalDebitLamports, payerBalanceLamports: balance, decoded }
 }

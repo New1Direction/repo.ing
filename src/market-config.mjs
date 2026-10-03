@@ -30,13 +30,14 @@ export function createMarketConfigResolver(config, legacyConfigs = process.env.D
 
 // SOL markets exactly as createMarketConfigResolver; a stock-paired market only on the config registered for its stamped asset
 // (STOCK_QUOTE_CONFIGS), with its pool derived from the stamped quote mint, which must still be the registry's mint for that
-// asset (quoteOfMarket).
-export function createQuoteAwareConfigResolver(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '', stockConfigs = stockQuoteConfigs()) {
+// asset (quoteOfMarket). stockConfigs (a Map, or a function returning one) is read only when a stock-paired market is resolved,
+// so a malformed STOCK_QUOTE_CONFIGS can only fail stock markets, never a SOL path.
+export function createQuoteAwareConfigResolver(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '', stockConfigs = () => stockQuoteConfigs()) {
   const sol = createMarketConfigResolver(config, legacyConfigs)
   return market => {
     if (!market.quoteMint && !market.quoteAssetId) return sol(market)
     const quote = quoteOfMarket(market)
-    const key = stockConfigs.get(quote.assetId)
+    const key = (typeof stockConfigs === 'function' ? stockConfigs() : stockConfigs).get(quote.assetId)
     if (!key) throw Error('Stock-paired market has no registered config')
     if (!deriveDbcPoolAddress(new PublicKey(quote.mint), new PublicKey(market.mint), key).equals(new PublicKey(market.pool))) {
       throw Error('Canonical market does not match its stock config')

@@ -11,6 +11,9 @@ set -euo pipefail
 WORK_DIR="${1:?usage: start-stock-validator.sh <work-dir>}"
 RPC_PORT="${STOCK_VALIDATOR_RPC_PORT:-8919}"
 FAUCET_PORT="${STOCK_VALIDATOR_FAUCET_PORT:-9919}"
+# Its own gossip and dynamic ports, so it runs beside the CI validator (8909) without competing for theirs.
+GOSSIP_PORT="${STOCK_VALIDATOR_GOSSIP_PORT:-18100}"
+DYNAMIC_PORTS="${STOCK_VALIDATOR_DYNAMIC_PORTS:-18101-18160}"
 READY_TIMEOUT_SECONDS="${VALIDATOR_READY_TIMEOUT_SECONDS:-180}"
 MAINNET="${MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -50,9 +53,9 @@ authority.publicKey.toBuffer().copy(data, 4)
 if (text.split(encoded).length !== 2) throw Error("METAx account data is not unique in its JSON")
 writeFileSync(target, text.replace(encoded, data.toString("base64")))' "$FIXTURES/$METAX.json" "$WORK_DIR/metax-test-mint.json" "$WORK_DIR/metax-authority.json")
 
-solana-test-validator --reset --quiet \
+solana-test-validator --reset \
   --ledger "$WORK_DIR/ledger" \
-  --rpc-port "$RPC_PORT" --faucet-port "$FAUCET_PORT" \
+  --rpc-port "$RPC_PORT" --faucet-port "$FAUCET_PORT" --gossip-port "$GOSSIP_PORT" --dynamic-port-range "$DYNAMIC_PORTS" \
   --limit-ledger-size 10000000 \
   --bpf-program "$DBC" "$FIXTURES/dbc.so" \
   --bpf-program "$DAMM" "$FIXTURES/cp_amm.so" \
@@ -65,9 +68,11 @@ solana-test-validator --reset --quiet \
 echo $! > "$WORK_DIR/validator.pid"
 
 deadline=$((SECONDS + READY_TIMEOUT_SECONDS))
+pid=$(cat "$WORK_DIR/validator.pid")
 until curl -sf "http://127.0.0.1:$RPC_PORT" -X POST -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}' | grep -q '"ok"'; do
-  if [ $SECONDS -ge $deadline ]; then echo "validator did not become healthy within ${READY_TIMEOUT_SECONDS}s" >&2; tail -50 "$WORK_DIR/validator.log" >&2 || true; exit 1; fi
+  if ! kill -0 "$pid" 2>/dev/null; then echo "validator exited before becoming healthy" >&2; tail -80 "$WORK_DIR/validator.log" >&2 || true; exit 1; fi
+  if [ $SECONDS -ge $deadline ]; then echo "validator did not become healthy within ${READY_TIMEOUT_SECONDS}s" >&2; tail -80 "$WORK_DIR/validator.log" >&2 || true; exit 1; fi
   sleep 1
 done
 until [ "$(curl -sf "http://127.0.0.1:$RPC_PORT" -X POST -H 'content-type: application/json' \
