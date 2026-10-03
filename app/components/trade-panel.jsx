@@ -53,12 +53,14 @@ async function fetchStockBalance(wallet, assetId, signal) {
 // What a buy spends: SOL, or a stock pair's stock.
 const fetchPayBalance = (wallet, quote, signal) => quote ? fetchStockBalance(wallet, quote.assetId, signal) : fetchSolBalance(wallet, signal)
 
-// A stock pair's display facts: the multiplier wallets show it with and its USD price (app/api/quote-assets).
+// A stock pair's display facts (app/api/quote-assets): the multiplier wallets show it with, how many seconds it may be used
+// for, and its USD price.
 async function fetchStockInfo(quote, signal) {
-  const response = await fetch(`/api/quote-assets/${encodeURIComponent(quote.assetId)}`, { signal })
+  const response = await fetch(`/api/quote-assets/${encodeURIComponent(quote.assetId)}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]) })
   if (!response.ok) throw new Error('Pair details unavailable')
   const info = await response.json()
-  if (info.assetId !== quote.assetId || info.decimals !== quote.decimals || !stockUnits(info)) throw new Error('Invalid pair details')
+  if (info.assetId !== quote.assetId || info.decimals !== quote.decimals || !stockUnits(info) ||
+      !Number.isSafeInteger(info.validForSeconds) || info.validForSeconds < 1 || info.validForSeconds > 3600) throw new Error('Invalid pair details')
   return info
 }
 
@@ -130,7 +132,9 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
   const [stockInfo, setStockInfo] = useState(null)
   const [stockInfoError, setStockInfoError] = useState(false)
   const [stockInfoRefresh, setStockInfoRefresh] = useState(0)
-  const units = useMemo(() => stock ? stockUnits(stockInfo) : SOL_UNITS, [stock, stockInfo])
+  // Rebuilt only when what the units are made of changes, so a routine refresh does not re-quote.
+  const units = useMemo(() => stock ? stockUnits(stockInfo) : SOL_UNITS,
+    [stock, stockInfo?.symbol, stockInfo?.decimals, stockInfo?.uiMultiplier])
   const { wallet, connect, provider } = useWallet()
   // The wallet's linked X account: the trade shows as that @handle in the market's trades.
   const x = useXLink(wallet)
@@ -146,15 +150,22 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
 
   useEffect(() => {
     if (!quote || quote.unavailable) return
-    let active = true
+    let active = true, lapse = null
     const controller = new AbortController()
     async function refresh() {
-      // A failed refresh keeps the last good units; it shows only while none have loaded.
-      try { const info = await fetchStockInfo(quote, controller.signal); if (active) { setStockInfo(info); setStockInfoError(false) } }
-      catch { if (active) setStockInfoError(true) }
+      try {
+        const info = await fetchStockInfo(quote, controller.signal)
+        if (!active) return
+        // The units hold only for as long as the server says (never past a multiplier change the issuer scheduled): unless a
+        // refresh renews them, they lapse, the panel stops taking amounts, and they are read again at once.
+        window.clearTimeout(lapse)
+        lapse = window.setTimeout(() => { if (active) { setStockInfo(null); setStockInfoRefresh(value => value + 1) } }, info.validForSeconds * 1000)
+        setStockInfo(info)
+        setStockInfoError(false)
+      } catch { if (active) setStockInfoError(true) }
     }
     const stopPolling = visiblePolling(refresh, 60000)
-    return () => { active = false; controller.abort(); stopPolling() }
+    return () => { active = false; controller.abort(); window.clearTimeout(lapse); stopPolling() }
   }, [quote?.assetId, quote?.decimals, quote?.unavailable, stockInfoRefresh])
 
   function chooseSlippage(bps) {
@@ -413,7 +424,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
   const quoteShortfall = stock && costs && BigInt(costs.quoteShortfall ?? '0') > 0n
   // USD of what a buy spends or a sell receives: SOL at the chart's price; a stock at its own (app/api/quote-assets).
   const usdRaw = direction === 'buy' ? (validAmount ? inputRaw : null) : liveQuote?.outputAmount
-  const usdAmount = stock ? stockUsdLabel(usdRaw, units) : formatUsdEstimate(usdRaw, usdPerSol)
+  const usdAmount = stock ? stockUsdLabel(usdRaw, units, stockInfo?.usdPrice) : formatUsdEstimate(usdRaw, usdPerSol)
   if (quote?.unavailable && !resultCard) return <div className="trade-card graduated-trade"><h2>Trading unavailable</h2><p>This market's pair is not on repo.ing's list of supported pairs right now, so trades are paused here.</p></div>
   if (!tradingOpen && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>{stock && curve.status === 'graduated' ? `Bonding-curve trades have ended. Trading in the graduated pool is not open here yet for ${quote.symbol} pairs.` : 'Bonding-curve trades have ended. We are checking the destination pool; trading resumes here once it is verified. This page updates automatically.'}</p></div>
   const buying = direction === 'buy'
