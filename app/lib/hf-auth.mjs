@@ -8,6 +8,7 @@ import { isHfModelPath, isHfName } from '../../src/hf-url.mjs'
 //   state   — the OAuth state and PKCE verifier, for one sign-in (10 minutes)
 //   session — the signed-in user and the access token, for at most HF_SESSION_SECONDS (1 hour), never stored elsewhere
 //   review  — a claim review pinned to the session, the recipient and the paid revision (like creator-claim-review)
+//   allocation review — a builder allocation review pinned to the session, the binding and the model owner it was made under
 const production = () => process.env.NODE_ENV === 'production'
 export const hfSessionCookie = process.env.NODE_ENV === 'production' ? '__Host-repoing_hf' : 'repoing_hf'
 export const hfStateCookie = process.env.NODE_ENV === 'production' ? '__Host-repoing_hf_oauth' : 'repoing_hf_oauth'
@@ -106,6 +107,23 @@ export function readHfClaimReview(value, session) {
   if (!session || review?.purpose !== 'model-claim-review' || review.sessionId !== session.sessionId || review.subject !== session.subject ||
       review.repoId !== session.marketId || !/^\d+$/.test(review.amount || '') || !/^\d+$/.test(review.paid || '') || !review.wallet || !review.boundAt) {
     throw new Error('Your claim review expired. Refresh this page and review again.')
+  }
+  return review
+}
+
+// A builder allocation review (app/lib/allocation.mjs → /api/allocation/[repo] → src/builder-allocation.mjs), the model
+// counterpart of builder-allocation-review: sealed for one session and market, it names the binding the claim must still
+// find (wallet, boundAt), the model owner that binding was made under (ownerSubject) and the fixed grant.
+export function sealHfAllocationReview(session, { repoId, wallet, boundAt, ownerSubject, amount }) {
+  return encrypt('allocation review', { purpose: 'model-allocation-review', sessionId: session.sessionId, subject: session.subject,
+    repoId: String(repoId), wallet, boundAt: new Date(boundAt).toISOString(), ownerSubject, amount: String(amount),
+    expiresAt: Math.min(session.expiresAt, Date.now() + REVIEW_SECONDS * 1000) })
+}
+export function readHfAllocationReview(value, session) {
+  const review = decrypt('allocation review', value, REVIEW_SECONDS)
+  if (!session || review?.purpose !== 'model-allocation-review' || review.sessionId !== session.sessionId || review.subject !== session.subject ||
+      review.repoId !== session.marketId || !isHfSubject(review.ownerSubject) || !/^\d+$/.test(review.amount || '') || !review.wallet || !review.boundAt) {
+    throw new Error('Your allocation review expired. Refresh this page and review again.')
   }
   return review
 }
