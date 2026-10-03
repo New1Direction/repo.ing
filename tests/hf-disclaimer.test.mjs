@@ -163,6 +163,23 @@ const SURFACES = {
     full(html(h(ModelOptOut, { signedIn: null })))
     full(html(h(ModelOptOut, { signedIn: { username: 'TheBloke' } })))
   },
+  // The read-only MCP server (app/api/mcp/readonly): its instructions, and every answer that names a model market, in the
+  // text agents relay and on each structured row.
+  'app/lib/mcp-read-tools.mjs': async () => {
+    const { READ_ONLY_SERVER, readOnlyTools } = await import('../app/lib/mcp-read-tools.mjs')
+    full(READ_ONLY_SERVER.instructions)
+    const racer = { repoId: MODEL_ID, mint: MINT, fullName: MODEL.fullName, symbol: 'GPT2', progressPercent: 12, remainingLamports: '74800000000', aboutToGraduate: false }
+    const tools = Object.fromEntries(readOnlyTools({ origin: () => 'https://repo.ing', modelsEnabled: () => true, markets: async () => ({ markets: [MODEL] }),
+      race: async () => ({ markets: [racer] }), excluded: async () => new Set(), decision: async () => null, fees: async () => ({ status: 'MATCH', onchainCreatorFee: 0n }),
+      usdPerSol: async () => null, totals: async () => null }).map(tool => [tool.definition.name, tool]))
+    for (const [name, args] of [['find_market', { project: 'https://huggingface.co/openai-community/gpt2' }], ['builder_earnings', { project: 'openai-community/gpt2' }],
+      ['trending_markets', { sort: 'volume' }], ['trending_markets', { sort: 'graduation' }]]) {
+      const answer = await tools[name].call(tools[name].input.parse(args), new Request('https://repo.ing/api/mcp/readonly'))
+      full(answer.content[0].text)
+      assert.equal(answer.structuredContent.markets.length, 1, name)
+      for (const market of answer.structuredContent.markets) assert.equal(market.disclaimer, HF_DISCLAIMER, name)
+    }
+  },
 }
 
 const EXEMPT = {
@@ -185,6 +202,7 @@ const EXEMPT = {
   'app/lib/market-order.mjs': 'carries model rows’ display-only likes; renders nothing',
   'app/components/wallet-overview.jsx': 'passes the market’s source to the return share (checked under share-links.mjs)',
   'app/api/wallet/overview/route.js': 'flag filtering only',
+  'app/api/mcp/readonly/route.js': 'flag filtering only; its answers come from app/lib/mcp-read-tools.mjs (checked above)',
   'app/lib/waiting-board.mjs': 'leaves model markets out of /waiting',
   'app/(site)/launch/[repo]/page.jsx': 'routes a model id to ModelLaunch (hf/model-launch.jsx, checked above)',
   'app/api/repo-images/[repo]/route.js': 'image suggestions only',

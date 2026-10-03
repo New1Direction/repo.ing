@@ -1,0 +1,16 @@
+{
+  "name": "repo-ing",
+  "owner": {
+    "name": "repo.ing"
+  },
+  "metadata": {
+    "description": "repo.ing plugins: read-only lookups of repo.ing markets for GitHub repositories and Hugging Face models."
+  },
+  "plugins": [
+    {
+      "name": "repo-ing",
+      "source": "plugins/repo-ing",
+      "description": "Market, builder earnings, claiming, trending and launch links for GitHub repos and Hugging Face models on repo.ing. Read-only."
+    }
+  ]
+}
