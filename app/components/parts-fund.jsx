@@ -1,11 +1,12 @@
 import { cache } from 'react'
 import { cookies } from 'next/headers'
-import { Check, Cpu } from 'lucide-react'
+import { Check, ChevronRight, Cpu } from 'lucide-react'
 import { BackBuild } from './parts-fund-back'
 import { PartsFundActions, PartsFundEditor, PartsUpdateShare } from './parts-fund-manage'
 import { githubSessionCookie, readGithubSession, sealTipReview } from '../lib/auth.mjs'
 import { formatCents as centsLabel, formatTokenAmount, formatUsdValue } from '../lib/format.mjs'
 import { partsEnabled, repoPartsFund } from '../lib/parts-fund.mjs'
+import { PARTS_MAX_DAYS, PARTS_MAX_GOAL_CENTS, PARTS_MIN_DAYS } from '../../src/parts-fund.mjs'
 import { xHandlesFor } from '../lib/x-links.mjs'
 import { XHandleLink } from './x-handle-link'
 
@@ -36,8 +37,9 @@ async function maintainerSession(market) {
   return session?.repoId === String(market.repoId) ? session : null
 }
 
-// Token page card, under the tip jar. Shown when a list exists; a verified maintainer with a payout wallet also sees
-// "Start a parts fund" and the controls. Everything user-written renders as text; links are nofollow.
+// Token page parts fund, under the tip jar. Once a list exists the card shows for everyone. Before that (or after a
+// settled or stale one) a verified maintainer with a payout wallet gets the builder-only add-on instead; visitors get
+// nothing. Everything user-written renders as text; links are nofollow.
 export async function PartsFundCard({ market }) {
   if (!partsEnabled()) return null
   const [fund, session] = await Promise.all([pageFund(market.repoId), maintainerSession(market)])
@@ -46,14 +48,36 @@ export async function PartsFundCard({ market }) {
   const stale = fund?.settledAt && fund.status !== 'funded' && Date.now() - new Date(fund.settledAt).getTime() > STALE_MS
   if (!fund || (fund.settledAt && fund.status !== 'funded' && maintainer) || stale) {
     if (!maintainer) return fund && !stale ? <FundBody fund={fund} market={market}/> : null
-    return <section id="parts-fund" className="inner-card parts-card parts-card-empty" aria-labelledby="parts-fund-title">
-      <h3 id="parts-fund-title"><Cpu size={16} aria-hidden="true"/>Parts fund</h3>
-      <p>Need hardware for this repo? List the parts; backers fund it all-or-nothing in USDC or SOL, paid to your payout wallet.</p>
-      <PartsFundEditor repoId={String(market.repoId)}/></section>
+    return <PartsAddOn repoId={String(market.repoId)}/>
   }
   const review = maintainer && fund.status === 'open' && fund.goalMet ? sealTipReview(session, { repoId: market.repoId, wallet: market.beneficiaryWallet,
     boundAt: market.beneficiaryBoundAt, fundId: fund.id }, 'parts-collect-review') : null
   return <FundBody fund={fund} market={market} manage={maintainer ? { repoId: String(market.repoId), review } : null}/>
+}
+
+// The builder's add-on: one compact control in place of an empty card. "Add a parts fund" opens the list editor; the
+// card (with the hero badge while open) replaces this slot once the list is published.
+function PartsAddOn({ repoId }) {
+  return <section id="parts-fund" className="parts-addon" aria-labelledby="parts-addon-title">
+    <h3 id="parts-addon-title" className="sr-only">Parts fund</h3>
+    <div className="parts-addon-row"><PartsFundEditor repoId={repoId} label="Add a parts fund"/>
+      <span className="parts-addon-tag">Builder only</span></div>
+    <PartsExplainer/>
+  </section>
+}
+
+// "How parts funds work", folded away for builders (the add-on) and backers (the card) alike.
+function PartsExplainer() {
+  return <details className="parts-explainer"><summary><ChevronRight size={14} aria-hidden="true"/>How parts funds work</summary>
+    <ol>
+      <li><span><strong>A verified maintainer lists the parts.</strong> Each part has a price and an optional shop link; the list has a deadline
+        ({PARTS_MIN_DAYS}–{PARTS_MAX_DAYS} days) and a goal of up to {centsLabel(PARTS_MAX_GOAL_CENTS)}.</span></li>
+      <li><span><strong>Anyone backs it in USDC or SOL.</strong> Each pledge counts at its USD value when pledged and is held in the repo.ing tip wallet.</span></li>
+      <li><span><strong>All or nothing.</strong> Funded → paid to the maintainer’s verified payout wallet. Missed or cancelled → every backer is
+        refunded automatically.</span></li>
+      <li><span><strong>Build in public.</strong> Build updates, with photos, are posted on the token page.</span></li>
+    </ol>
+  </details>
 }
 
 async function FundBody({ fund: full, market, manage = null }) {
@@ -87,6 +111,7 @@ async function FundBody({ fund: full, market, manage = null }) {
         <img key={i} src={`/api/parts-fund/image/${update.id}/${i}`} alt={`Build update photo ${i + 1}`} loading="lazy" decoding="async" referrerPolicy="no-referrer" width="160" height="120"/>)}</div>}
       <PartsUpdateShare mint={market.mint} updateId={update.id} title={fund.title}/></li>)}</ol></div>}
     {fund.status === 'open' && <p className="tip-fineprint">All or nothing by {day(fund.deadline)}. Pledges are held in the repo.ing tip wallet, then paid to the maintainer’s verified payout wallet if funded, or refunded to every backer automatically.</p>}
+    <PartsExplainer/>
   </section>
 }
 

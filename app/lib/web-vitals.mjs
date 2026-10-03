@@ -12,7 +12,7 @@ const MAX_VALUE = Object.freeze({ LCP: 600_000, INP: 600_000, CLS: 100, FCP: 600
 // Every page route of the app as its pattern; anything else (a 404, a route added later) reports as /other.
 const STATIC_ROUTES = new Set(['/', '/about', '/agents', '/builders', '/builders/reminders', '/discoverers', '/explore', '/find-repos',
   '/how-it-works', '/launch', '/operations/fees', '/operations/graduation', '/operations/health', '/operations/invites',
-  '/operations/trends', '/operations/vitals', '/parts', '/stats', '/waiting', '/wallet', '/ja'])
+  '/operations/trends', '/operations/vitals', '/stats', '/waiting', '/wallet', '/ja'])
 const DYNAMIC_ROUTES = [
   [/^\/token\/[^/]+\/return\/[^/]+$/, '/token/[mint]/return/[pct]'],
   [/^\/token\/[^/]+$/, '/token/[mint]'],
