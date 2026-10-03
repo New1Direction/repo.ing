@@ -8,6 +8,32 @@ import { markets, repoClaims } from './db/schema.mjs'
 
 import { createGraduatedFees } from './graduated-fees.mjs'
 
+export const PARTNER_CAPTURE_MISMATCH = 'Partner fee capture differs from chain evidence'
+export const GRADUATED_WITHDRAWAL_MISMATCH = 'Graduated fee withdrawals differ from proven payouts'
+
+const amount = value => { try { return value == null ? null : BigInt(value) } catch { return null } }
+
+// A MISMATCH that only means the chain is ahead of the indexed ledger: fees from trades the worker has not recorded
+// yet. On-chain creator fees above what the ledger expects, and partner fees earned on-chain at or above those captured
+// with the same amounts claimed. A ledger ahead of the chain, a claim or withdrawal difference, or any other status
+// (a pending claim, unavailable) is not.
+export function chainAheadOfLedger(result) {
+  if (result?.status !== 'MISMATCH') return false
+  const platform = result.platform ?? null
+  if (platform) {
+    const [earned, claimed, onchainEarned, onchainClaimed] = [platform.earned, platform.claimed, platform.onchainEarned, platform.onchainClaimed].map(amount)
+    if ([earned, claimed, onchainEarned, onchainClaimed].includes(null) || claimed !== onchainClaimed || onchainEarned < earned) return false
+    if (result.reason === PARTNER_CAPTURE_MISMATCH) {
+      // Returned before the creator comparison: the creator side must not be behind either.
+      const onchain = amount(result.onchainCreatorFee), expected = amount(result.expectedRemaining)
+      return onchainEarned > earned && onchain !== null && expected !== null && onchain >= expected
+    }
+  }
+  if (result.reason) return false
+  const difference = amount(result.difference)
+  return difference !== null && difference > 0n
+}
+
 export function createReconciler({ pool, connection, config }) {
   const resolveConfig = createMarketConfigResolver(config)
   const graduatedFees = createGraduatedFees({ connection, config, db: pool })
@@ -66,12 +92,12 @@ export function createReconciler({ pool, connection, config }) {
           platform = { earned: BigInt(events.earned), claimed: BigInt(paid.paid),
             onchainEarned: graduated.partner.earned, onchainClaimed: graduated.partner.claimed }
           if (platform.earned !== platform.onchainEarned || platform.claimed !== platform.onchainClaimed)
-            return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: 'Partner fee capture differs from chain evidence' }
+            return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: PARTNER_CAPTURE_MISMATCH }
         }
         if (graduated) {
           const { rows: [damm] } = await client.query(`select coalesce(sum(damm_amount_base_units),0)::text as paid
             from repo_claims where github_repo_id=$1 and status='settled'`,[String(repoId)])
-          if (BigInt(damm.paid) !== graduated.claimed) return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: 'Graduated fee withdrawals differ from proven payouts' }
+          if (BigInt(damm.paid) !== graduated.claimed) return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: GRADUATED_WITHDRAWAL_MISMATCH }
         }
         const difference = onchainCreatorFee - expectedRemaining
         return { ...base, onchainCreatorFee, platform, difference, graduated: Boolean(graduated),
