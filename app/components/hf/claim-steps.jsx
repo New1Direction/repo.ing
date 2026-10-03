@@ -12,10 +12,12 @@ import { walletSignatureBytes } from '../../lib/solana-wallet.mjs'
 import { bindingLabel, formatUtcDateTime } from '../../../src/payout-address-policy.mjs'
 import styles from './model-authority.module.css'
 
-// A model market's claim steps (app/components/hf/claim-page.jsx): sign in with Hugging Face, set a payout wallet, claim.
-// Presentation and requests only; /api/hf/bind and /api/hf/claim check the model's current owner on Hugging Face again.
+// A model market's claim steps (app/components/hf/claim-page.jsx): sign in with Hugging Face, set a payout wallet, claim,
+// and for a market stamped with the 1% builder allocation, claim it after graduation. Presentation and requests only;
+// /api/hf/bind, /api/hf/claim and /api/allocation/<id> check the model's current owner on Hugging Face again.
 // Short labels: the checklist is one row on a phone; each step's heading says it in full.
 const STEPS = ['Sign in', 'Set payout wallet', 'Claim']
+const ALLOCATION_STEP = 'Allocation'
 const BIND_ENDPOINT = '/api/hf/bind'
 const ERRORS = {
   'payout-unavailable': 'Payouts are paused while the network-cost wallet is replenished. Your fees remain in the pool.',
@@ -38,9 +40,10 @@ async function post(body) {
   return result
 }
 
-function Checklist({ current }) {
-  return <ol className="claim-checklist" aria-label="Claim progress">{STEPS.map((label, index) => {
-    const state = index + 1 < current ? 'done' : index + 1 === current ? 'current' : 'upcoming'
+// steps: the labels shown; settled: step numbers done on their own (the allocation, once paid).
+function Checklist({ current, steps = STEPS, settled = [] }) {
+  return <ol className="claim-checklist" aria-label="Claim progress">{steps.map((label, index) => {
+    const state = index + 1 < current || settled.includes(index + 1) ? 'done' : index + 1 === current ? 'current' : 'upcoming'
     return <li key={label} className={state} aria-current={state === 'current' ? 'step' : undefined}>
       <span className="claim-checklist-mark" aria-hidden="true">{state === 'done' ? <Check size={12} strokeWidth={3}/> : index + 1}</span>
       <span>{label}<span className="sr-only"> ({state === 'done' ? 'done' : state === 'current' ? 'current step' : 'not started'})</span></span>
@@ -66,8 +69,55 @@ function Repoint({ repoId, onMoved }) {
   </form>
 }
 
+const ALLOCATION_CHIPS = { settled: 'Claimed', pending: 'Confirming', available: 'Unlocked', locked: 'Locked' }
+
+// The 1% builder allocation (app/components/hf/claim-page.jsx allocationStep): 10,000,000 tokens reserved once for the
+// model's verified owner, locked until graduation. Claimable here by the signed-in owner (or org admin) who set the payout
+// wallet; /api/allocation/<id> checks Hugging Face again before paying. onBind: set the payout wallet as this user.
+function AllocationStep({ number, repoId, allocation, ready, staleBinding, payoutReady, awaitingReview, bindBusy, onBind, onClaimed }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [paid, setPaid] = useState(null)
+  const state = paid?.status ?? allocation.state
+  const recipient = paid?.wallet ?? allocation.wallet, signature = paid?.signature ?? allocation.signature
+  const canClaim = Boolean(ready && !staleBinding && !awaitingReview && state === 'available' && allocation.boundBy === 'you' && allocation.review && payoutReady)
+  async function claim() {
+    setBusy(true); setError('')
+    try {
+      const response = await fetch(`/api/allocation/${repoId}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ review: allocation.review }) })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(result.error || 'The allocation could not be claimed. Refresh and try again.')
+      setPaid(result); onClaimed()
+    } catch (cause) { setError(cause.message) } finally { setBusy(false) }
+  }
+  const next = state === 'locked' ? 'The allocation stays reserved until this market graduates.'
+    : state === 'unavailable' ? 'The allocation could not be checked right now. Refresh to try again.'
+      : !ready ? 'Sign in with Hugging Face above as the model’s owner, or an admin of the organization that owns it.'
+        : staleBinding || !recipient ? 'Set a payout wallet above first: the allocation is paid only to a wallet set by the model’s current owner.'
+          : allocation.boundBy === 'another' ? 'The saved payout wallet was set by another Hugging Face user. To claim, set a payout wallet yourself: connect it and sign.'
+            : !payoutReady ? 'Payouts are paused while the network-cost wallet is replenished. Your allocation is preserved.'
+              : 'Refreshing your allocation review…'
+  return <div className={`claim-step last ${canClaim ? 'current' : ''}`}>
+    <div className={`step-number ${state === 'settled' ? 'done' : ''}`}>{state === 'settled' ? <Check size={18}/> : number}</div>
+    <div className="step-content"><div className="claim-step-heading"><div><h2>Claim the 1% builder allocation</h2></div><span className="small-chip">{ALLOCATION_CHIPS[state] ?? 'Checking'}</span></div>
+      <p>10,000,000 tokens from the fixed supply, reserved for the model’s verified owner and paid once, after this market graduates, to the payout wallet above. A payout never repeats, even after a transfer or a wallet change. Trading fees are separate.</p>
+      {busy || state === 'pending' ? <p className="claim-next" role="status">Checking Hugging Face ownership and confirming the token payout…</p>
+        : state === 'settled' ? <div className="claim-receipt" role="status"><Check size={24} aria-hidden="true"/><div>
+          <h2>Allocation paid</h2><p>10,000,000 tokens were paid to the verified payout wallet.</p>
+          {recipient && <CopyAddress address={recipient} label="allocation recipient"/>}
+          {signature && <a href={`https://explorer.solana.com/tx/${signature}`} target="_blank" rel="noopener noreferrer">View transaction ↗</a>}
+        </div></div>
+          : canClaim ? <div className="claim-review"><strong className="claim-review-amount">10,000,000 tokens</strong>
+            <div className="claim-wallet-details"><span>Paid to</span><CopyAddress address={recipient} label="allocation recipient"/></div>
+            <button className="button primary" type="button" disabled={busy} onClick={claim}>Claim 10 million tokens</button></div>
+            : <><p className="claim-next" role="status">{next}</p>
+              {state === 'available' && ready && !staleBinding && recipient && allocation.boundBy === 'another' &&
+                <button className="button outline" type="button" disabled={bindBusy} onClick={onBind}>{bindBusy ? 'Setting wallet…' : 'Set my payout wallet'}</button>}</>}
+      {error && <p className="inline-error" role="alert">{error}</p>}
+    </div>
+  </div>
+}
+
 export function ModelClaimSteps({ summary, repoId, signedIn, authority, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, staleBinding = false,
-  pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, graduated = false }) {
+  pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, graduated = false, allocation = null }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -92,7 +142,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
   const signIn = `/api/hf/start?mode=claim&market=${repoId}`
   const role = authority?.role === 'owner' ? 'owner' : authority?.role === 'admin' ? `admin of ${authority.ownerHandle}` : null
 
-  useEffect(() => { setBound(beneficiaryWallet); setBoundMethod(beneficiaryMethod); setAwaitingReview(false); setStage('') }, [beneficiaryWallet, beneficiaryMethod, review])
+  useEffect(() => { setBound(beneficiaryWallet); setBoundMethod(beneficiaryMethod); setAwaitingReview(false); setStage('') }, [beneficiaryWallet, beneficiaryMethod, review, allocation?.review])
   useEffect(() => {
     setExpired(false)
     if (!signedIn) return
@@ -117,7 +167,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
     finally { setBusy(false) }
   }
 
-  return <><Checklist current={current}/>{summary}<div className="claim-steps">
+  return <><Checklist current={current} steps={allocation ? [...STEPS, ALLOCATION_STEP] : STEPS} settled={allocation?.state === 'settled' ? [4] : []}/>{summary}<div className="claim-steps">
     {(busy || claiming) && <div className="claim-progress" role="status" aria-live="polite"><span><strong>{claiming ? 'Processing your claim…' : stage}</strong>
       <small>{claiming ? 'Checking current Hugging Face ownership and settling the payout on Solana. Keep this page open.' : 'Wait for confirmation here.'}</small></span></div>}
     {settledClaim && <div className="claim-receipt" role="status"><Check size={24} aria-hidden="true"/><div>
@@ -164,7 +214,7 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
       </div>
     </div>
 
-    <div className={`claim-step last ${current === 3 ? 'current' : ''}`}>
+    <div className={`claim-step ${allocation ? '' : 'last '}${current === 3 ? 'current' : ''}`}>
       <div className="step-number">3</div><div className="step-content"><div className="claim-step-heading"><div><h2>Review and claim</h2></div></div>
         {current === 3 && <div className="claim-review"><strong className="claim-review-amount">{claimAmount}</strong>{usdEstimate && <span className="muted">≈ {usdEstimate}</span>}
           <div className="claim-wallet-details"><span>Paid to</span><CopyAddress address={bound} label="payout wallet"/><small>{bindingLabel({ wallet: bound, method: boundMethod, boundAt: beneficiaryBoundAt })}</small></div>
@@ -177,6 +227,8 @@ export function ModelClaimSteps({ summary, repoId, signedIn, authority, benefici
         </div>}
       </div>
     </div>
+    {allocation && <AllocationStep number={4} repoId={repoId} allocation={allocation} ready={ready} staleBinding={staleBinding} payoutReady={payoutReady}
+      awaitingReview={awaitingReview} bindBusy={busy} onBind={bind} onClaimed={() => router.refresh()}/>}
     <p className="claim-disclaimer"><Info size={18}/>Fees settle in SOL. USD values are estimates. A payout receipt appears only after settlement is confirmed.</p>
     {stage && !busy && <p className="transaction-status" role="status">{stage}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}

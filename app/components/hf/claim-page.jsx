@@ -13,6 +13,7 @@ import { chain, creatorSigner, database, feeStatus } from '../../lib/server.mjs'
 import { formatSolDisplay, formatUnits, formatUsdEstimate } from '../../lib/format.mjs'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import { currentPayoutDestinations } from '../../lib/payout-destination.mjs'
+import { modelAllocationView } from '../../lib/allocation.mjs'
 import { hfSessionCookie, publicHfUser, readHfSession, sealHfClaimReview } from '../../lib/hf-auth.mjs'
 import { hfVerifier } from '../../lib/hf-session.mjs'
 import styles from './model-authority.module.css'
@@ -74,6 +75,21 @@ async function authorityStatus(session, repoId, path) {
   return value
 }
 
+// The allocation step of a market stamped with the 1% builder allocation (app/lib/allocation.mjs; null otherwise): its
+// state, the saved recipient or the paid receipt, and a review only for the session whose user made the binding.
+async function allocationStep(market, session) {
+  if (market.allocationVersion !== 1) return null
+  try {
+    const view = await modelAllocationView(market.repoId, session)
+    if (!view.enrolled) return null
+    return { state: view.state, wallet: view.receipt?.wallet ?? view.wallet ?? null, signature: view.receipt?.signature ?? null,
+      boundBy: view.boundBy ?? null, review: view.review ?? null }
+  } catch (error) {
+    console.error('model allocation status failed', { repo: market.repoId, error: error?.message })
+    return { state: 'unavailable', wallet: null, signature: null, boundBy: null, review: null }
+  }
+}
+
 async function ModelClaimContent({ market, query }) {
   const repoId = market.repoId, pool = database()
   const model = pool ? await registryModel(pool, repoId) : null
@@ -96,7 +112,7 @@ async function ModelClaimContent({ market, query }) {
   ])
   const stored = readHfSession(cookieStore.get(hfSessionCookie)?.value)
   const session = stored?.mode === 'claim' && stored.marketId === String(repoId) ? stored : null
-  const authority = session ? await authorityStatus(session, repoId, model?.path) : null
+  const [authority, allocation] = await Promise.all([session ? authorityStatus(session, repoId, model?.path) : null, allocationStep(market, session)])
   const beneficiary = destination.active
   // A binding made for a previous owner is never paid (src/claim.mjs); the current owner sets a new one first.
   const staleBinding = Boolean(beneficiary && authority?.ok && bindingOwner && bindingOwner !== authority.ownerSubject)
@@ -116,5 +132,5 @@ async function ModelClaimContent({ market, query }) {
     beneficiaryWallet={beneficiary?.wallet ?? null} beneficiaryMethod={beneficiary?.method ?? 'signature'} beneficiaryBoundAt={beneficiary?.boundAt ?? null}
     staleBinding={staleBinding} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate} feeStatus={fees.status}
     payoutReady={funded} settledClaim={receipt} review={review} graduated={fees.graduated === true} errorCode={typeof query.error === 'string' ? query.error : null}
-    justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed}/></>
+    justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} allocation={allocation}/></>
 }
