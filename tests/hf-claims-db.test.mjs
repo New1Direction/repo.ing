@@ -608,7 +608,7 @@ test('real PostgreSQL: 0050 and 0051 upgrade GitHub history unchanged, re-apply 
     // The database as main has it: every migration before 0050.
     const journal = JSON.parse(await readFile(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8'))
     const at = journal.entries.findIndex(entry => entry.tag === '0050_model_opt_outs')
-    assert.ok(at > 0 && journal.entries[at + 1]?.tag === '0051_model_authority' && at + 2 === journal.entries.length, '0050 and 0051 are the last two entries')
+    assert.ok(at > 0 && journal.entries[at + 1]?.tag === '0051_model_authority', '0051 follows 0050 (later migrations, such as 0052, come after both)')
     await mkdir(join(folder, 'meta'))
     const baseline = { ...journal, entries: journal.entries.slice(0, at) }
     await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify(baseline))

@@ -135,7 +135,10 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
     await t.test('upgrading changes no existing row, the fee ledger included, and re-applying is a no-op', async () => {
       await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
       await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
-      for (const statement of (await readFile('drizzle/0049_market_source.sql', 'utf8')).split('--> statement-breakpoint')) await pool.query(statement)
+      // 0049 and every later migration, in journal order: 0052 relaxes two of 0049's checks, which 0049 alone would add back.
+      for (const entry of journal.entries.slice(at)) {
+        for (const statement of (await readFile(`drizzle/${entry.tag}.sql`, 'utf8')).split('--> statement-breakpoint')) await pool.query(statement)
+      }
       assert.equal((await pool.query('select count(*)::int as n from drizzle.__drizzle_migrations')).rows[0].n, journal.entries.length)
       assert.deepEqual(await checksums(pool, relations), before)
       assert.deepEqual(await credits(pool), creditsBefore)
@@ -179,18 +182,20 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
       await refused(pool, `update repositories set source = 'github', hf_model_ref = null where github_repo_id = $1`, 'repositories_source_range', [hf])
     })
 
-    await t.test('markets: a model market never carries the verification bonus or the builder allocation', async () => {
+    await t.test('markets: a model market never carries the verification bonus (0052 lets it carry the builder allocation)', async () => {
       const market = extra => `insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,
           launch_slot,launch_finality,indexed_at,last_verified_at,discovery_version,launch_block_time${extra.columns}) values
         (${hf},'confirmed','MintH','PoolH','LauncherH','Creator','Hello','HELLO','LaunchH',10,'finalized',now(),now(),2,now()${extra.values})`
-      await refused(pool, market({ columns: ',verification_bonus_lamports', values: ',5000000' }), 'markets_hf_no_rewards')
-      await refused(pool, market({ columns: ',builder_allocation_version', values: ',1' }), 'markets_hf_no_rewards')
+      await refused(pool, market({ columns: ',verification_bonus_lamports', values: ',5000000' }), 'markets_hf_no_bonus')
+      await refused(pool, market({ columns: ',builder_allocation_version,verification_bonus_lamports', values: ',1,5000000' }), 'markets_hf_no_bonus')
       await pool.query(market({ columns: '', values: '' }))
-      await refused(pool, 'update markets set builder_allocation_version = 1 where github_repo_id = $1', 'markets_hf_no_rewards', [hf])
+      await pool.query('update markets set builder_allocation_version = 1 where github_repo_id = $1', [hf])
+      await pool.query('update markets set builder_allocation_version = null where github_repo_id = $1', [hf])
     })
 
     await t.test('every GitHub-only table refuses a model id', async () => {
-      const tables = ['verification_bonuses', 'verification_bonus_payouts', 'builder_allocation_claims', 'builder_reinvest_intents', 'repo_tips',
+      // builder_allocation_claims left this list in 0052: a model id is accepted there under a Hugging Face authority only.
+      const tables = ['verification_bonuses', 'verification_bonus_payouts', 'builder_reinvest_intents', 'repo_tips',
         'tip_transfers', 'parts_funds', 'parts_pledges', 'parts_transfers', 'parts_updates', 'repo_streams', 'repo_pulse_events', 'repo_pulse_state',
         'repo_pulse_star_hours', 'trend_candidates', 'trend_launches', 'trend_observations', 'trend_reviews', 'trend_signals',
         'repository_participation', 'maintainer_invites']
@@ -201,8 +206,6 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
       for (const [table, sql] of [
         ['verification_bonuses', `insert into verification_bonuses(github_repo_id,status,amount,launcher_wallet,verification_id,verifier_github_user_id,verifier_login,verified_at,activated_at,evidence)
           values (${hf},'pending_review',250000000,'LauncherH',${verification.id},7,'o',now(),now(),'{}')`],
-        ['builder_allocation_claims', `insert into builder_allocation_claims(github_repo_id,github_user_id,mint,wallet,amount,status,signature,signed_transaction,last_valid_block_height)
-          values (${hf},7,'MintH','W',10000000000000,'pending','AllocH','tx',1)`],
         ['repository_participation', `insert into repository_participation(github_repo_id,github_user_id,github_login,enabled,opted_in_at) values (${hf},7,'o',true,now())`],
         ['maintainer_invites', `insert into maintainer_invites(github_repo_id,invited_at,operator_github_user_id) values (${hf},now(),77)`],
         ['repo_streams', `insert into repo_streams(github_repo_id,url,updated_by_github_user_id) values (${hf},'https://twitch.tv/model',7)`],
@@ -212,11 +215,13 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
         ['repo_tips', `insert into repo_tips(id,github_repo_id,donor_wallet,tip_wallet,mint,token_program,decimals,symbol,requested_amount,status,message,transaction,last_valid_block_height,refund_after)
           values (gen_random_uuid(),${hf},'D','T','${SOL_MINT}','P',9,'SOL',1,'prepared','m','tx',1,now())`],
       ]) await refused(pool, sql, `${table}_github_only`)
+      await refused(pool, `insert into builder_allocation_claims(github_repo_id,github_user_id,mint,wallet,amount,status,signature,signed_transaction,last_valid_block_height)
+        values (${hf},7,'MintH','W',10000000000000,'pending','AllocH','tx',1)`, 'builder_allocation_claims_source_range')
     })
 
     await t.test('GitHub-only reads see GitHub markets only, with a model market of the same owner/name present', async () => {
       // The model market qualifies for these reads except by source: confirmed, indexed, VERIFIED progress, fees waiting. The
-      // bonus accrual read is the exception: markets_hf_no_rewards already keeps a model market unstamped, so its source
+      // bonus accrual read is the exception: markets_hf_no_bonus already keeps a model market unstamped, so its source
       // join is a second safeguard and this only checks that the GitHub candidate survives it.
       await pool.query(`insert into fee_events(github_repo_id,mint,pool,signature,event_index,amount_base_units,asset,kind,slot)
         values ($1,'MintH','PoolH','FeeH1',0,700000000,'${SOL_MINT}','dbc_creator_quote',16)`, [hf])
