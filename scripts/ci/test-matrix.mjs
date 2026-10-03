@@ -82,6 +82,7 @@ export const PINNED_GROUPS = [
   // selfManaged: the test creates, migrates and drops this database itself; the runner only drops leftovers.
   { files: ['graduation-migration'], databaseUrl: launchtest('repoing_p5_upgrade_test'), selfManaged: true },
   { files: ['market-source-db'], databaseUrl: launchtest('repoing_market_source_test'), selfManaged: true },
+  { files: ['market-quote-db'], databaseUrl: launchtest('repoing_market_quote_test'), selfManaged: true },
   { files: ['graduation-readiness'], databaseUrl: launchtest('repoing_p5_test') },
   { files: ['liquidity-deployment'], databaseUrl: launchtest('repoing_liquidity_test') },
   { files: ['protocol-analytics'], databaseUrl: launchtest('repoing_analytics_test'), selfManaged: true },
