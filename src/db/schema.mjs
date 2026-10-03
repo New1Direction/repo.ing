@@ -256,6 +256,7 @@ export const markets = pgTable('markets', {
   check('markets_indexed_evidence_check', sql`${table.indexedAt} is null or (${table.launchSlot} is not null and ${table.launchFinality} = 'finalized' and ${table.lastVerifiedAt} is not null)`),
   // A model market never carries the verification bonus (0049); it may carry the builder allocation (0052).
   check('markets_hf_no_bonus', sql`${table.githubRepoId} < 4503599627370496 or ${table.verificationBonusLamports} is null`),
+  index('markets_quote_asset_idx').on(table.quoteAssetId).where(sql`${table.quoteAssetId} is not null`),
   check('markets_quote_asset_check', sql`(${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null) or (${table.quoteAssetId} is not null and ${table.quoteMint} is not null and ${table.quoteRegistryVersion} is not null and ${table.quoteAssetId} ~ '^[a-z0-9][a-z0-9-]{1,31}$' and ${table.quoteAssetId} <> 'sol' and ${table.quoteMint} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$' and ${table.quoteMint} <> 'So11111111111111111111111111111111111111112' and ${table.quoteRegistryVersion} >= 1 and ${table.githubRepoId} < 4503599627370496)`),
 ])
 

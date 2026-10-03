@@ -80,16 +80,18 @@ export function quoteAssetById(assetId, registry = QUOTE_REGISTRY) {
 const solOption = Object.freeze({ type: 'SOL', assetId: SOL_QUOTE.assetId, symbol: SOL_QUOTE.symbol, eligible: true })
 
 // The pairs a repository can launch with. repo: { repoId, ownerId, ownerType } as GitHub reported them just now; without a
-// confirmed owner id only SOL is offered. A mapped company whose asset is disabled is listed as not eligible, with its code.
+// confirmed owner id only SOL is offered. Every asset of the owner's company is listed, enabled ones first (at most one is
+// enabled per company, tests/quote-assets.test.mjs); a disabled one is marked not eligible, with its code, so a replaced
+// asset stays visible while its successor is offered.
 export function quoteOptions(repo, { enabled = false, registry = QUOTE_REGISTRY } = {}) {
   if (!enabled || !repo || !isGithubRepoId(repo.repoId)) return [solOption]
   const company = companyForOwner(repo, registry)
   if (!company?.enabled) return [solOption]
-  const asset = registry.assets.find(candidate => candidate.companyId === company.companyId)
-  if (!asset) return [solOption]
-  return [solOption, { type: asset.type, assetId: asset.assetId, symbol: asset.symbol, ticker: company.ticker,
+  const assets = registry.assets.filter(candidate => candidate.companyId === company.companyId)
+    .sort((a, b) => Number(b.enabled) - Number(a.enabled))
+  return [solOption, ...assets.map(asset => ({ type: asset.type, assetId: asset.assetId, symbol: asset.symbol, ticker: company.ticker,
     company: company.companyName, githubOrg: company.githubOrg, provider: asset.provider, eligible: asset.enabled,
-    ...asset.enabled ? {} : { reason: QUOTE_ERRORS.STOCK_ASSET_DISABLED } }]
+    ...asset.enabled ? {} : { reason: QUOTE_ERRORS.STOCK_ASSET_DISABLED } }))]
 }
 
 // A launch's quoteAssetId (the only quote input a client ever sends) → the full asset, with eligibility re-derived from the
