@@ -91,20 +91,30 @@ Refusals carry a stable `code`: `COMPANY_MAPPING_NOT_FOUND`, `STOCK_ASSET_NOT_FO
 The site's curve trade path (`src/canonical-trade.mjs`: quote, prepare, submit, verify) handles a stock-paired market by its
 stamp:
 
-- **The swap** is the one DBC swap with the stock as its quote (`assertPreparedStockDbcSwap`). Nothing is wrapped or closed,
-  and there is no referral, because referrals pay through wrapped SOL. Besides the compute budget, the only other
-  instructions allowed are the wallet's own token accounts for the market token or the stock.
+- **Routing:** the trade router (`src/canonical-damm-trade.mjs`) reads a stock-paired curve through its quote-aware config,
+  so the curve trader handles it. The graduated (DAMM v2) trader is still SOL-only, so a graduated stock-paired market is
+  refused until that path is quote-aware.
+- **The swap** is the one DBC swap with the stock as its quote (`assertPreparedStockDbcSwap`). Its config, pool, both mints,
+  the wallet, its input and output accounts (the stock's through Token-2022) and both token programs are pinned. Nothing is
+  wrapped or closed, and there is no referral, because referrals pay through wrapped SOL. Besides the compute budget, the
+  only other instructions allowed create the wallet's own account for the market token or the stock, idempotently, under
+  that mint's token program.
 - **Settlement** is checked in raw units of each token (`assertStockDbcSettlement`):
   - a buy spends exactly the input of the stock and receives at least the minimum;
   - a sell gives exactly the input and receives at least the minimum of the stock;
   - the pool's stock vault moves the other way.
 
   Raw units are unaffected by the scaled-UI multiplier.
-- **Costs** (`src/trade-costs.mjs`): SOL pays only the network fee and account rent, where the stock account's size follows
-  the stock mint's extensions. The stock is checked separately (`quoteBalance`, `quoteShortfall`), and a buy larger than the
-  wallet holds is refused before signing ("You need approximately … more METAx").
+- **Costs** (`src/trade-costs.mjs`): SOL pays only the network fee and account rent. The stock account's rent is for the size
+  Token-2022 creates it at (`associatedAccountLength`: 179 bytes for METAx); a stock mint with an extension the estimate does
+  not know fails the estimate. The stock is checked separately (`quoteBalance`, `quoteShortfall`), and a buy larger than the
+  wallet holds is refused before signing ("You need approximately … more METAx", rounded up). A failed balance read fails
+  the estimate; it is never taken as zero.
 - **Records and results:** the trade record carries `quoteMint`. Results add `quoteDelta` and `quoteMint`; SOL trades return
   exactly what they did before.
+- **Blinks** (`app/lib/solana-actions.mjs`) are worded and sized in SOL, so a stock-paired market is never offered through
+  them: the action routes answer 404 with "Blink trades are available for SOL markets only", and the action trade builder
+  refuses a stock-paired trade as a backstop.
 
 Fee accrual and the worker's indexing of stock-paired trades come next. Until then, a confirmed stock trade stays confirmed
 and its fee recording raises the usual operator alert.
@@ -117,8 +127,10 @@ authority replaced):
 - DOCUSAURUS / METAx is prepared on one replica and submitted from another;
 - its evidence and indexing match;
 - a trader buys with exactly 1 METAx and the creator and partner fees accrue in METAx;
-- the site's trade path quotes, prices, prepares, submits and verifies a 0.5 METAx buy and a full sell-back to the raw unit,
-  and refuses a buy larger than the wallet's METAx before signing;
+- the site's trade path, routed as `/api/trade` routes it, quotes, prices, prepares, submits and verifies a 0.5 METAx buy
+  and a full sell-back to the raw unit, and refuses a buy larger than the wallet's METAx before signing;
+- a wallet with no METAx account sells: the estimated deposit is exactly the rent of the 179-byte account Token-2022
+  creates;
 - a SOL launch on the same programs is unchanged.
 
 To run it locally:

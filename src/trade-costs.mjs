@@ -1,6 +1,6 @@
 import { PublicKey, VersionedTransaction } from '@solana/web3.js'
-import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, ACCOUNT_SIZE, NATIVE_MINT, getAccountLenForMint,
-  getAssociatedTokenAddressSync, unpackMint } from '@solana/spl-token'
+import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, ACCOUNT_SIZE, NATIVE_MINT, ExtensionType, getAccountLen,
+  getAssociatedTokenAddressSync, getExtensionTypes, unpackAccount, unpackMint } from '@solana/spl-token'
 import { tradePriorityFee } from './trade-landing.mjs'
 import { QUOTE_REGISTRY } from './quote-assets.mjs'
 
@@ -34,7 +34,9 @@ export async function estimateTradeCosts(connection, prepared) {
     creations.length ? connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE) : 0,
     creations.length ? connection.getMultipleAccountsInfo(creations.map(ix => ix.keys[1].pubkey), 'confirmed') : [],
     creations.some(stockAccount) ? stockAccountRent(connection, quoteMint) : 0,
-    quoteAccount ? connection.getTokenAccountBalance(quoteAccount, 'confirmed').then(result => result.value.amount, () => '0') : null,
+    // No account holds nothing; an RPC failure is not a zero balance, so it fails the estimate instead.
+    quoteAccount ? connection.getAccountInfo(quoteAccount, 'confirmed').then(info => info && info.owner.equals(TOKEN_2022_PROGRAM_ID)
+      ? unpackAccount(quoteAccount, info, TOKEN_2022_PROGRAM_ID).amount : 0n) : null,
   ])
   let accountDeposits = 0n, refundableDeposit = 0n
   creations.forEach((ix, i) => {
@@ -61,22 +63,49 @@ export async function estimateTradeCosts(connection, prepared) {
     refundableDeposit: String(refundableDeposit), total: String(total), required: String(required),
     balance: String(walletBalance), shortfall: String(required > walletBalance ? required - walletBalance : 0n) }
   if (!quoteMint) return costs
-  const spend = prepared.direction === 'buy' ? BigInt(prepared.amountIn) : 0n, held = BigInt(quoteHeld)
+  const spend = prepared.direction === 'buy' ? BigInt(prepared.amountIn) : 0n, held = quoteHeld
   return { ...costs, quoteMint: quoteMint.toBase58(), quoteBalance: String(held), quoteShortfall: String(spend > held ? spend - held : 0n) }
 }
 
-// Rent for the wallet's Token-2022 account of a stock: the account size its mint's extensions require.
+// The account extensions Token-2022 adds when an associated account for a mint is created: ImmutableOwner, plus the one each of
+// these mint extensions requires. Extensions such as ConfidentialTransferAccount are added only when configured later, so they
+// are not counted (a METAx account is created at 179 bytes, as on mainnet). Every other known mint extension needs nothing.
+const REQUIRED_ACCOUNT_EXTENSION = new Map([[ExtensionType.TransferFeeConfig, ExtensionType.TransferFeeAmount],
+  [ExtensionType.NonTransferable, ExtensionType.NonTransferableAccount], [ExtensionType.TransferHook, ExtensionType.TransferHookAccount],
+  [ExtensionType.PausableConfig, ExtensionType.PausableAccount]])
+const NO_ACCOUNT_EXTENSION = new Set(['MintCloseAuthority', 'DefaultAccountState', 'InterestBearingConfig', 'PermanentDelegate',
+  'MetadataPointer', 'TokenMetadata', 'GroupPointer', 'TokenGroup', 'GroupMemberPointer', 'TokenGroupMember', 'ScaledUiAmountConfig',
+  'ConfidentialTransferMint'].filter(name => name in ExtensionType).map(name => ExtensionType[name]))
+
+// Bytes of a new associated account for this Token-2022 mint; an unrecognised mint extension fails the estimate.
+export function associatedAccountLength(mint) {
+  const extensions = getExtensionTypes(mint.tlvData)
+  if (extensions.some(type => !REQUIRED_ACCOUNT_EXTENSION.has(type) && !NO_ACCOUNT_EXTENSION.has(type))) {
+    throw Error('Account setup estimate unavailable for this transaction')
+  }
+  return getAccountLen([ExtensionType.ImmutableOwner, ...extensions.filter(type => REQUIRED_ACCOUNT_EXTENSION.has(type))
+    .map(type => REQUIRED_ACCOUNT_EXTENSION.get(type))])
+}
+
+// Rent for the wallet's Token-2022 account of a stock, at the size Token-2022 creates it.
 async function stockAccountRent(connection, mint) {
   const info = await connection.getAccountInfo(mint, 'confirmed')
   if (!info?.owner.equals(TOKEN_2022_PROGRAM_ID)) throw Error('Account setup estimate unavailable for this transaction')
-  return connection.getMinimumBalanceForRentExemption(getAccountLenForMint(unpackMint(mint, info, TOKEN_2022_PROGRAM_ID)))
+  return connection.getMinimumBalanceForRentExemption(associatedAccountLength(unpackMint(mint, info, TOKEN_2022_PROGRAM_ID)))
+}
+
+// A raw amount of a token with `decimals`, rounded up to at most 6 places (a shortfall is never shown smaller than it is).
+export function amountRoundedUp(raw, decimals) {
+  const places = Math.min(decimals, 6), step = 10n ** BigInt(decimals - places)
+  const units = (raw + step - 1n) / step, scale = 10n ** BigInt(places)
+  return places ? `${units / scale}.${String(units % scale).padStart(places, '0')}` : String(units)
 }
 
 export async function preflightTrade(connection, prepared, costs) {
   if (BigInt(costs.quoteShortfall ?? '0') > 0n) {
     const asset = QUOTE_REGISTRY.assets.find(candidate => candidate.mint === costs.quoteMint)
-    const scale = 10 ** (asset?.decimals ?? 0)
-    throw Error(`You need approximately ${(Number(BigInt(costs.quoteShortfall)) / scale).toFixed(Math.min(asset?.decimals ?? 0, 6))} more ${asset?.symbol ?? 'of the quote token'}.`)
+    if (!asset) throw Error('Trade simulation did not pass. Refresh the quote and check your wallet balance before trying again.')
+    throw Error(`You need approximately ${amountRoundedUp(BigInt(costs.quoteShortfall), asset.decimals)} more ${asset.symbol}.`)
   }
   if (BigInt(costs.shortfall) > 0n) {
     const amount = (BigInt(costs.shortfall) + 999n) / 1000n

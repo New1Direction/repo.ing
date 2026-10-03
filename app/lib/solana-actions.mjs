@@ -38,6 +38,9 @@ export const ACTIONS_JSON = Object.freeze({ rules: [
   { pathPattern: '/api/actions/**', apiPath: '/api/actions/**' },
 ] })
 
+// Blinks are worded and sized in SOL ("Buy 0.1 SOL"); a stock-paired market (docs/STOCK_QUOTES.md) is never offered through them.
+export const STOCK_PAIR_ACTIONS_UNAVAILABLE = 'Blink trades are available for SOL markets only. Trade this market on repo.ing.'
+
 export class ActionError extends Error {
   constructor(message, status = 400) { super(message); this.status = status }
 }
@@ -88,6 +91,7 @@ async function resolveMarket(mint, loadMarket) {
   try { market = await loadMarket(mint) }
   catch (error) { throw new ActionError(publicError(error, () => false, 'Market lookup is temporarily unavailable', 'action market'), 503) }
   if (!market) throw new ActionError('No indexed repo.ing market for this token', 404)
+  if (market.quoteMint) throw new ActionError(STOCK_PAIR_ACTIONS_UNAVAILABLE, 404)
   return market
 }
 
@@ -213,7 +217,7 @@ export async function handleSellPost(request, rawMint, { loadMarket, tokenBalanc
 export async function loadActionMarket(pool, mint) {
   if (!pool) throw new ActionError('Market lookup is temporarily unavailable', 503)
   const { rows: [row] } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_symbol as symbol,
-      r.full_name as "fullName", r.description
+      m.quote_mint as "quoteMint", r.full_name as "fullName", r.description
     from markets m left join repositories r on r.github_repo_id = m.github_repo_id
     where m.mint = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [mint])
   return row ?? null
