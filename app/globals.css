@@ -468,6 +468,11 @@
 .repo-search.launch-search button:disabled{cursor:wait;opacity:.65}
 .launch-find-link{display:inline-flex;align-items:center;gap:7px;color:var(--green);font-size:14px;margin-top:12px}
 .launch-find-link:hover{text-decoration:underline}
+/* Home hero: the direct way in for a Hugging Face model (shown only with model markets on). */
+.launch-model-cta{display:inline-flex;align-items:center;gap:9px;margin-top:16px;padding:11px 18px;border:1.5px solid var(--green);border-radius:999px;color:var(--green);font-weight:650;font-size:15px;transition:background .15s ease,color .15s ease}
+.launch-model-cta:hover{background:var(--green);color:#0a1f14}
+.launch-model-cta:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+.hero .launch-model-cta + .launch-find-link{display:flex;justify-content:center}
 .launch-benefits{margin:30px auto 0;border:1px solid var(--border);border-radius:9px;background:var(--surface);text-align:left;overflow:hidden}
 .launch-benefits.compact{max-width:920px}
 .launch-benefits ol{list-style:none;margin:0;padding:23px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px}
