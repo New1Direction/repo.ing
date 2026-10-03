@@ -173,6 +173,7 @@ const EXEMPT = {
   'app/components/trust-panel.jsx': 'rendered inside the model token page, which carries the disclaimer',
   'app/components/explore-list.jsx': 'filters rows; they render through MarketTable (ui.jsx)',
   'app/components/protocol-analytics.jsx': '/stats aggregates; names no model',
+  'app/components/repoing-case.jsx': '$REPOING page figures; names no model (the flag only adds "Now open to Hugging Face models")',
   'app/lib/og-image.jsx': 'loads logos; the cards are og-market-card and og-return-card',
   'app/(site)/token/[mint]/opengraph-image/route.jsx': 'flag gate; the card is og-market-card',
   'app/(site)/token/[mint]/return/[pct]/image/route.jsx': 'flag gate; the card is og-return-card',

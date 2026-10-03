@@ -21,6 +21,7 @@ import { InviteOwner } from '../../../components/invite-owner'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { OFFICIAL_TOKEN } from '../../../lib/official-token.mjs'
 import { TeamTokenLocks } from '../../../components/team-token-locks'
+import { RepoingCase, RepoingCaseFallback } from '../../../components/repoing-case'
 import { RepoTips, RepoTipsFallback, TipJarPill, TipJarPillFallback } from '../../../components/repo-tips'
 import { tipsEnabled } from '../../../lib/tips.mjs'
 import { PartsFundBadge, PartsFundCard } from '../../../components/parts-fund'
@@ -130,6 +131,8 @@ export default async function Token({ params, searchParams }) {
             <a href={`https://solscan.io/token/${market.mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
             <Link href={`/claim/${market.repoId}`}>Claim builder fees</Link></>}/></div>
     </header>
+    {/* "Why hold $REPOING": live buyback, volume and shipping figures, on the market view only. */}
+    {official && !activity && <Suspense fallback={<RepoingCaseFallback/>}><RepoingCase pulse={pulse}/></Suspense>}
     <div className="market-nav"><Link className={!activity ? 'active' : ''} href={`/token/${mint}`}>Market</Link>
       {/* A plain same-page anchor fires hashchange, which opens the Details "Repository" tab. */}
       <a href={activity ? `/token/${mint}#repository` : '#repository'}>Repository</a>
