@@ -249,7 +249,8 @@ export const markets = pgTable('markets', {
   check('markets_verification_bonus_lamports_check', sql`${table.verificationBonusLamports} is null or ${table.verificationBonusLamports} between 1000000 and 1000000000`),
   check('markets_confirmed_evidence_check', sql`${table.status} <> 'confirmed' or (${table.mint} is not null and ${table.pool} is not null and ${table.launchSignature} is not null)`),
   check('markets_indexed_evidence_check', sql`${table.indexedAt} is null or (${table.launchSlot} is not null and ${table.launchFinality} = 'finalized' and ${table.lastVerifiedAt} is not null)`),
-  check('markets_hf_no_rewards', sql`${table.githubRepoId} < 4503599627370496 or (${table.verificationBonusLamports} is null and ${table.builderAllocationVersion} is null)`),
+  // A model market never carries the verification bonus (0049); it may carry the builder allocation (0052).
+  check('markets_hf_no_bonus', sql`${table.githubRepoId} < 4503599627370496 or ${table.verificationBonusLamports} is null`),
 ])
 
 // All DBC partner fees share this evidence ledger; eligibility preserves the
@@ -542,10 +543,13 @@ export const payoutAddressEvents = pgTable('payout_address_events', {
   check('payout_address_events_actor_check', sql`(${table.event} = 'activated') = (${table.githubUserId} is null and ${table.actorSubject} is null) and (${table.githubUserId} is null or ${table.githubRepoId} < 4503599627370496) and (${table.actorSubject} is null or (${table.actorSubject} ~ '^[0-9a-f]{24}$' and ${table.githubRepoId} between 4503599627370497 and 7000000000000000))`),
 ])
 
+// One grant per market, ever (0011). A claim names its authority like a binding (0052): a GitHub user id, or for a model
+// market the Hugging Face user's sub and the model owner's _id at claim time.
 export const builderAllocationClaims = pgTable('builder_allocation_claims', {
   id: serial('id').primaryKey(),
   githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => markets.githubRepoId),
-  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  // Null for a Hugging Face claim (0052).
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }),
   mint: varchar('mint', { length: 44 }).notNull(),
   wallet: varchar('wallet', { length: 44 }).notNull(),
   amount: bigint('amount', { mode: 'bigint' }).notNull(),
@@ -556,13 +560,17 @@ export const builderAllocationClaims = pgTable('builder_allocation_claims', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   settledAt: timestamp('settled_at', { withTimezone: true }),
   resolutionReason: text('resolution_reason'),
+  authoritySource: varchar('authority_source', { length: 16 }).default('github').notNull(),
+  authoritySubject: char('authority_subject', { length: 24 }),
+  authorityOwnerSubject: char('authority_owner_subject', { length: 24 }),
 }, table => [
   uniqueIndex('builder_allocation_signature_unique').on(table.signature),
   uniqueIndex('builder_allocation_one_payout').on(table.githubRepoId).where(sql`${table.status} in ('pending','settled')`),
   check('builder_allocation_amount_check', sql`${table.amount} = 10000000000000`),
   check('builder_allocation_status_check', sql`${table.status} in ('pending','settled','aborted')`),
   check('builder_allocation_settlement_check', sql`(${table.status} = 'settled') = (${table.settledAt} is not null)`),
-  githubOnly('builder_allocation_claims', table),
+  bindingAuthority('builder_allocation_claims_authority_check', table),
+  sourceRange('builder_allocation_claims_source_range', table),
 ])
 
 export const repositoryParticipation = pgTable('repository_participation', {

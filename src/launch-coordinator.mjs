@@ -19,11 +19,13 @@ export async function waitForLaunchEvidence(inspect, market, attempts = 120, ret
   return false
 }
 
-// The builder allocation and verification bonus stamps a NEW reservation carries. Hugging Face markets never carry
-// either, whatever the environment enables (backed by the markets_hf_no_rewards check, migration 0049).
+// The builder allocation and verification bonus stamps a NEW reservation carries. A Hugging Face model market carries the
+// builder allocation like a repository (its verified Hugging Face owner claims it after graduation, src/builder-allocation.mjs)
+// but never the verification bonus, whatever the environment enables (backed by the markets_hf_no_bonus check, migration 0052).
 export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificationBonusLamports }) {
-  if (marketSource(githubRepoId) !== 'github') return { builderAllocationVersion: null, verificationBonusLamports: null }
-  return { builderAllocationVersion: builderAllocationEnabled ? 1 : null, verificationBonusLamports }
+  const builderAllocationVersion = builderAllocationEnabled ? 1 : null
+  if (marketSource(githubRepoId) !== 'github') return { builderAllocationVersion, verificationBonusLamports: null }
+  return { builderAllocationVersion, verificationBonusLamports }
 }
 
 // pendingReview(market) → true while a persisted launch review (src/launch-sessions.mjs) still owns a 'prepared'

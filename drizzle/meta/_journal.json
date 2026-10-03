@@ -344,6 +344,13 @@
       "when": 1790910011000,
       "tag": "0051_model_authority",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1790910012000,
+      "tag": "0052_model_builder_allocation",
+      "breakpoints": true
     }
   ]
 }

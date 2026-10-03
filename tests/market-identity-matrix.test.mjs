@@ -142,13 +142,15 @@ test('pasted payout addresses refuse an authority from another source before any
   assert.equal(calls.length, 1)
 })
 
-test('a reservation stamps no verification bonus or builder allocation on a Hugging Face market, whatever is enabled', () => {
+test('a reservation stamps a Hugging Face market with the builder allocation when enabled, but never the verification bonus', () => {
   const enabled = { builderAllocationEnabled: true, verificationBonusLamports: 250_000_000n }
   assert.deepEqual(rewardStamps(GITHUB, enabled), { builderAllocationVersion: 1, verificationBonusLamports: 250_000_000n })
   assert.deepEqual(rewardStamps(GITHUB, { builderAllocationEnabled: false, verificationBonusLamports: null }),
     { builderAllocationVersion: null, verificationBonusLamports: null })
   for (const id of [...forms(HF), HF_MARKET_REF_MAX]) {
-    assert.deepEqual(rewardStamps(id, enabled), { builderAllocationVersion: null, verificationBonusLamports: null })
+    assert.deepEqual(rewardStamps(id, enabled), { builderAllocationVersion: 1, verificationBonusLamports: null })
+    assert.deepEqual(rewardStamps(id, { builderAllocationEnabled: false, verificationBonusLamports: 250_000_000n }),
+      { builderAllocationVersion: null, verificationBonusLamports: null })
   }
   assert.throws(() => rewardStamps(2n ** 52n, enabled), MarketIdentityError)
 })
