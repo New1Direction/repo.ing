@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
 import { QUOTE_ERRORS, QuoteAssetError, STOCK_PAIR_LAUNCHES_READY, quoteOptions, stockPairsLaunchable } from '../src/quote-assets.mjs'
 import { launchFailure } from '../src/launch-failure.mjs'
@@ -77,4 +78,12 @@ test('no chooser for SOL-only repositories, an ineligible stock or a model marke
   assert.equal(chooser({ quoteOptions: [PAIRS[0]] }), false)
   assert.equal(chooser({ quoteOptions: [PAIRS[0], { ...PAIRS[1], eligible: false, reason: QUOTE_ERRORS.STOCK_ASSET_DISABLED }] }), false)
   assert.equal(chooser({ repo: { ...DOCUSAURUS, source: 'huggingface', repoId: '4503599627370497', hfId: 'a'.repeat(24) }, quoteOptions: PAIRS }), false)
+})
+
+test('a chosen pair is always sent: the form never drops it on the way to the server', () => {
+  const source = readFileSync('app/components/launch-form.jsx', 'utf8')
+  assert.match(source, /const pairRequest = quoteAssetId === 'sol' \? \{\} : \{ quoteAssetId \}/)
+  assert.match(source, /action: 'quote', \.\.\.body, \.\.\.pairRequest/)
+  assert.match(source, /initialBuyLamports, \.\.\.pairRequest \}\)/)
+  assert.match(source, /code:result\.code/)
 })

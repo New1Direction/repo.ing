@@ -20,7 +20,7 @@ const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: tru
 async function launchRequest(body) {
   const response = await fetch('/api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const result = await response.json()
-  if (!response.ok) throw Object.assign(new Error(result.error || 'Launch request failed'), {canRetry:result.canRetry,supportCode:result.supportCode})
+  if (!response.ok) throw Object.assign(new Error(result.error || 'Launch request failed'), {canRetry:result.canRetry,supportCode:result.supportCode,code:result.code})
   return result
 }
 
@@ -35,7 +35,9 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const model = repo.source === 'huggingface'
   const stockPair = model ? null : quoteOptions?.find(option => option.type === 'TOKENIZED_EQUITY' && option.eligible) ?? null
   const [quoteAssetId, setQuoteAssetId] = useState('sol')
-  const pairRequest = stockPair && quoteAssetId === stockPair.assetId ? { quoteAssetId } : {}
+  // A chosen stock pair is always sent, even if the server stops offering it before the launch is prepared: the server then
+  // refuses it with its code. A pair is never dropped on the way, so a stock launch can never silently become SOL.
+  const pairRequest = quoteAssetId === 'sol' ? {} : { quoteAssetId }
   const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
