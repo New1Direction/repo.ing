@@ -19,7 +19,7 @@ import { readLimitedBody } from '../../../src/token-image.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../../../src/launch-sessions.mjs'
 import { activeDecision, assertLaunchAllowed } from '../../../src/maintainer-opt-outs.mjs'
 import { verificationBonusLamports } from '../../../src/verification-bonus.mjs'
-import { HF_CONFIG_RESERVE_ERROR, HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled, isHfMarketId,
+import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled, isHfMarketId,
   registeredModel } from '../../../src/hf-launch.mjs'
 import { hfClient } from '../../lib/hf-client.mjs'
 import { MODEL_LOOKUP_LIMITED, takeModelLookup } from '../../lib/hf-launch.mjs'
@@ -36,10 +36,9 @@ const safeError = (error, action) => {
 // A Hugging Face model market (src/hf-launch.mjs): the repository review, keyed by the model's market id. The browser names
 // the model by its registry _id (hfId); the server reads it through Hugging Face again at its registry path, and
 // hfLaunchGuard checks it once more at prepare and after the wallet signs. No trend shortcut: trends are repositories only.
-// Never on a config that reserves the builder allocation (HF_CONFIG_RESERVE_ERROR); the review's session keeps that config.
+// On a config that reserves the builder allocation the model market carries it, for the model's verified owner to claim.
 async function prepareModelLaunch(request, body) {
   if (!hfMarketsEnabled()) throw new Error(HF_MARKETS_UNAVAILABLE)
-  if (builderAllocationEnabled()) throw new Error(HF_CONFIG_RESERVE_ERROR)
   if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
   const pool = database(), config = configAddress(), creator = creatorSigner()
   if (!pool || !config || !creator) throw new Error('Local launch is not configured')
@@ -55,7 +54,7 @@ async function prepareModelLaunch(request, body) {
   const store = launchSessions(pool, creator)
   await sweep(store)
   const hf = hfClient(), launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin })
-  // The shared reward settings go in unchanged: rewardStamps() leaves a model market without the bonus or the allocation.
+  // The shared reward settings go in unchanged: rewardStamps() stamps a model market's allocation but never the bonus.
   const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
     pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(),
     source: hfLaunchSource({ pool, hf, expected: { hfId: registered.hfId, marketRef } }) })

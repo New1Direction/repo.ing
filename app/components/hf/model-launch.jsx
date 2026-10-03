@@ -8,7 +8,7 @@ import { checkAgentDraft } from '../../lib/agent-launch.mjs'
 import { activeLaunchFeeTerms } from '../../lib/launch-fee.mjs'
 import { maintainerDecision } from '../../lib/maintainer-opt-outs.mjs'
 import { modelForLaunch } from '../../lib/hf-launch.mjs'
-import { HF_CONFIG_RESERVE_ERROR, HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfMarketsEnabled } from '../../../src/hf-launch.mjs'
+import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfMarketsEnabled } from '../../../src/hf-launch.mjs'
 import { HF_DISCLAIMER } from '../../../src/hf-copy.mjs'
 import { hfModelUrl } from '../../../src/hf-url.mjs'
 import '../../maintainer-opt-out.css'
@@ -65,7 +65,6 @@ export async function ModelLaunch({ repoId, searchParams }) {
   const { market } = await marketByRepo(repoId)
   if (market) redirect(`/token/${market.mint}`)
   if (!hfMarketsEnabled()) return <Notice title="Not available yet" action={<Link href="/launch" className="button outline">Launch a repository</Link>}>{HF_MARKETS_UNAVAILABLE}</Notice>
-  if (builderAllocationEnabled()) return <Notice title="Model launches are paused" action={<Link href="/launch" className="button outline">Launch a repository</Link>}>{HF_CONFIG_RESERVE_ERROR}</Notice>
   const model = await modelForLaunch(repoId)
   if (model === null) notFound()
   const decision = model === undefined ? undefined : await maintainerDecision(repoId)
@@ -85,11 +84,13 @@ export async function ModelLaunch({ repoId, searchParams }) {
   }
   // Explained only when the config new launches use has a launch fee (read once per config, then cached).
   const launchFee = await activeLaunchFeeTerms()
+  // A config that reserves the builder allocation stamps it on the model market too (for the model's verified owner); the
+  // verification bonus never applies to a model.
   return <Page>
     <Link href="/launch" className="back-link"><ArrowLeft size={18}/>Back to launch</Link>
     <ModelHero model={model}/>
     <LaunchForm key={`${repoId}:${query.draft || 'manual'}`} repo={model} available={launchAvailable()} discoveryEnabled={discoveryRewardsEnabled()}
       draft={draft ? { token: query.draft, tokenName: draft.tokenName, tokenSymbol: draft.tokenSymbol, initialBuy: draft.initialBuy } : undefined}
-      allocationEnabled={false} verificationBonus={null} launchFee={launchFee}/>
+      allocationEnabled={builderAllocationEnabled()} verificationBonus={null} launchFee={launchFee}/>
   </Page>
 }
