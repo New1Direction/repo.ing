@@ -13,7 +13,10 @@
 //   passes `excluded`) are never posted and keep no marks (every run drops them, including marks taken before the
 //   repository was listed). Once taken off the list, its first sight only takes a mark, so nothing from its excluded time
 //   is announced. When that list cannot be read the run fails and nothing is posted.
-import { alertChannels, alertMaxPerDay, alertOrigin, alertSince, deliverAlert, postInTurn, runAlertsLocked } from './launch-alerts.mjs'
+// - Hugging Face model markets are included only with HF_MARKETS_ENABLED=true in the worker's own environment (as for
+//   launch alerts), with model copy; their first sight after that only takes a mark, like any market's.
+import { alertChannels, alertMaxPerDay, alertOrigin, alertSince, alertSources, deliverAlert, postInTurn, runAlertsLocked } from './launch-alerts.mjs'
+import { hfMarketsEnabled } from './hf-launch.mjs'
 import { tokenUrl } from './launch-alerts-message.mjs'
 import { buildMilestoneMessage, milestoneOf, planMilestones } from './milestone-alerts-message.mjs'
 import { promotionExcludedRepoIds } from '../app/lib/promotion-exclusions.mjs'
@@ -31,7 +34,7 @@ export function milestoneAlertsConfig(env = process.env) {
   const since = alertSince(env, 'GRADUATION_ALERTS_SINCE')
   const origin = alertOrigin(env)
   const maxPerDay = alertMaxPerDay(env, 'GRADUATION_ALERTS_MAX_PER_DAY', MILESTONE_ALERT_DEFAULTS.maxPerDay)
-  return { ...MILESTONE_ALERT_DEFAULTS, channels, since, origin, maxPerDay, telegram, x, excluded: promotionExcludedRepoIds(env) }
+  return { ...MILESTONE_ALERT_DEFAULTS, channels, since, origin, maxPerDay, telegram, x, excluded: promotionExcludedRepoIds(env), models: hfMarketsEnabled(env) }
 }
 
 // ---------- PostgreSQL store (migration 0037_milestone_alerts) ----------
@@ -56,15 +59,17 @@ export function createMilestoneAlertStore(pool) {
         and status in ('sending','sent','unknown') and updated_at > now() - interval '24 hours'`, [channel])
       return n
     },
-    // Raw graduation rows for every public GitHub market with a VERIFIED observation; freshness is checked per row in JS.
-    async progressRows() {
+    // Raw graduation rows for every public GitHub market (and model market, with models: true, plus its registry path) with
+    // a VERIFIED observation; freshness is checked per row in JS.
+    async progressRows({ models = false } = {}) {
       const { rows } = await pool.query(`select m.github_repo_id::text as "githubRepoId", m.mint, m.token_symbol as "tokenSymbol",
-          r.full_name as "fullName", o.status, o.observation, o.error_code, e.evidence_hash as migration_evidence_hash
-        from markets m join repositories r on r.github_repo_id=m.github_repo_id and r.source='github'
+          r.full_name as "fullName", h.repo_path as "modelPath", o.status, o.observation, o.error_code, e.evidence_hash as migration_evidence_hash
+        from markets m join repositories r on r.github_repo_id=m.github_repo_id and r.source = any($1::text[])
+        left join hf_models h on h.market_ref=r.hf_model_ref
         join graduation_observations o on o.github_repo_id=m.github_repo_id
         left join graduation_events e on e.github_repo_id=m.github_repo_id
         where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.mint is not null and o.status='VERIFIED'
-        order by m.github_repo_id`)
+        order by m.github_repo_id`, [alertSources(models)])
       return rows
     },
     // This channel's marks and alert rows, keyed by repository id.
@@ -114,6 +119,17 @@ export function createMilestoneAlertStore(pool) {
 // ---------- job ----------
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+// The markets whose fresh, verified progress has reached a milestone at `at`, minus the do-not-promote set. Shared with
+// scripts/alerts-preview.mjs, so a preview plans from exactly the markets the job would.
+export function milestoneMarkets(rows, excluded, at) {
+  return rows.flatMap(row => {
+    if (excluded.has(String(row.githubRepoId))) return []
+    const reached = milestoneOf(row, at)
+    return reached ? [{ githubRepoId: row.githubRepoId, mint: row.mint, tokenSymbol: row.tokenSymbol, fullName: row.fullName,
+      ...(row.modelPath ? { modelPath: row.modelPath } : {}), ...reached }] : []
+  })
+}
+
 export function createMilestoneAlerts({ store, config, senders, sleep = wait, now = () => Date.now(), excluded: readExcluded = async () => config.excluded ?? new Set() }) {
   async function runChannel(channel, markets) {
     const { marks, alerts } = await store.channelState(channel)
@@ -136,11 +152,7 @@ export function createMilestoneAlerts({ store, config, senders, sleep = wait, no
       const excluded = await readExcluded()
       await store.forgetMarks([...excluded])
       const at = now()
-      const markets = (await store.progressRows()).flatMap(row => {
-        if (excluded.has(String(row.githubRepoId))) return []
-        const reached = milestoneOf(row, at)
-        return reached ? [{ githubRepoId: row.githubRepoId, mint: row.mint, tokenSymbol: row.tokenSymbol, fullName: row.fullName, ...reached }] : []
-      })
+      const markets = milestoneMarkets(await store.progressRows({ models: config.models === true }), excluded, at)
       const posts = []
       for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel, markets))
       return posts

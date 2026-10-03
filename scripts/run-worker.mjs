@@ -24,7 +24,7 @@ import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { createVerificationBonusAccrual } from '../src/verification-bonus-accrual.mjs'
 import { createVerificationBonusPayouts } from '../src/verification-bonus-payouts.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
-import { createLaunchAlerts, createLaunchAlertSenders, createLaunchAlertStore, LaunchAlertConfigError, launchAlertsConfig } from '../src/launch-alerts.mjs'
+import { createLaunchAlerts, createLaunchAlertSenders, createLaunchAlertStore, createModelAlertFacts, LaunchAlertConfigError, launchAlertsConfig } from '../src/launch-alerts.mjs'
 import { createMilestoneAlerts, createMilestoneAlertStore, milestoneAlertsConfig } from '../src/milestone-alerts.mjs'
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
@@ -153,10 +153,17 @@ async function observeBuybackReceipts(){
 }
 // Public "new market launched" posts to Telegram/X. Off unless LAUNCH_ALERTS_ENABLED=true, LAUNCH_ALERTS_SINCE and a
 // channel's credentials are set; silent when off. Posts are claimed in launch_alerts before sending (never twice).
+// When on, one startup line names what was picked up (no secrets), so a go-live can be confirmed before the first post.
+// Model markets (HF_MARKETS_ENABLED=true here too) add one quick, display-only Hugging Face read per model post.
+const alertsOn=config=>({channels:config.channels,since:config.since,maxPerDay:config.maxPerDay,models:config.models})
 let launchAlerts=null,launchAlertTask=null,nextLaunchAlertCheck=0
 try{
   const launchAlertConfig=launchAlertsConfig()
-  if(launchAlertConfig)launchAlerts=createLaunchAlerts({store:createLaunchAlertStore(pool),config:launchAlertConfig,senders:createLaunchAlertSenders(launchAlertConfig),excluded:promotionExcluded})
+  if(launchAlertConfig){
+    launchAlerts=createLaunchAlerts({store:createLaunchAlertStore(pool),config:launchAlertConfig,senders:createLaunchAlertSenders(launchAlertConfig),excluded:promotionExcluded,
+      modelFacts:launchAlertConfig.models?createModelAlertFacts():null})
+    console.log(JSON.stringify({launchAlertsOn:alertsOn(launchAlertConfig)}))
+  }
 }catch(error){console.log(JSON.stringify({launchAlertError:error instanceof LaunchAlertConfigError?error.message:'LAUNCH_ALERTS_CONFIG_INVALID'}))}
 async function deliverLaunchAlerts(){
   try{
@@ -169,7 +176,10 @@ async function deliverLaunchAlerts(){
 let milestoneAlerts=null,milestoneAlertTask=null,nextMilestoneAlertCheck=0
 try{
   const milestoneAlertConfig=milestoneAlertsConfig()
-  if(milestoneAlertConfig)milestoneAlerts=createMilestoneAlerts({store:createMilestoneAlertStore(pool),config:milestoneAlertConfig,senders:createLaunchAlertSenders(milestoneAlertConfig),excluded:promotionExcluded})
+  if(milestoneAlertConfig){
+    milestoneAlerts=createMilestoneAlerts({store:createMilestoneAlertStore(pool),config:milestoneAlertConfig,senders:createLaunchAlertSenders(milestoneAlertConfig),excluded:promotionExcluded})
+    console.log(JSON.stringify({milestoneAlertsOn:alertsOn(milestoneAlertConfig)}))
+  }
 }catch(error){console.log(JSON.stringify({milestoneAlertError:error instanceof LaunchAlertConfigError?error.message:'GRADUATION_ALERTS_CONFIG_INVALID'}))}
 async function deliverMilestoneAlerts(){
   try{

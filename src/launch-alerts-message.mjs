@@ -1,6 +1,9 @@
 // Text of a "new market launched" alert (see src/launch-alerts.mjs). Short and factual: repository, ticker, stars,
 // a one-line description and the token page link. Repository text is untrusted: descriptions lose control and bidi
 // characters, links, and @/#/$ prefixes (no tagging people, hashtag or cashtag spam), and are truncated to fit.
+// Hugging Face model markets get their own copy (bottom of this file), cleaned the same way.
+import { HF_DISCLAIMER_SHORT } from './hf-copy.mjs'
+import { isMarketId, marketSource } from './market-identity.mjs'
 
 export const X_MAX_WEIGHT = 280
 // X counts every link as 23 characters, whatever its length.
@@ -66,6 +69,7 @@ function lines({ repo, symbol, stars, description, url }) {
 
 // market: { fullName, tokenSymbol, stars, description, mint }. channel: 'telegram' (HTML) or 'x' (plain, ≤ 280 weighted).
 export function buildLaunchMessage(market, { channel, origin }) {
+  if (isModelAlert(market)) return buildModelLaunchMessage(market, { channel, origin })
   const base = { repo: cleanRepoName(market.fullName), symbol: cleanSymbol(market.tokenSymbol), stars: formatStars(market.stars), url: tokenUrl(origin, market.mint) }
   const description = cleanDescription(market.description)
   if (channel === 'telegram') {
@@ -77,4 +81,60 @@ export function buildLaunchMessage(market, { channel, origin }) {
   const text = lines({ ...base, description: truncate(description, fits) }).join('\n')
   if (xWeight(text) > X_MAX_WEIGHT) throw Error('Launch alert exceeds the X length limit')
   return text
+}
+
+// ---------- Hugging Face model markets ----------
+// A model market's posts name the model by its Hub id and always carry the short disclaimer every model surface does
+// (src/hf-copy.mjs). Text only, as on the site: never a Hugging Face logo or emoji.
+export const MODEL_LABEL = 'Hugging Face model'
+const MODEL_TAGLINE = "Every trade pays the model's owner."
+
+// The id decides the source, as on every model surface (src/market-identity.mjs): a model market's id is its
+// hf_models.market_ref, kept in github_repo_id. Rows without a usable id fall back to their source column.
+export function isModelAlert(market) {
+  const id = market?.githubRepoId
+  if (id !== undefined && id !== null && isMarketId(String(id))) return marketSource(String(id)) === 'huggingface'
+  return market?.source === 'huggingface'
+}
+
+// The characters cleanRepoName keeps. A model id runs to 193 characters (96 + 1 + 96), so it is not cut to a repository's
+// 140: an X post too short for it shortens it visibly (…), never silently into a different model's id.
+export const cleanModelPath = value => String(value ?? '').replace(/[^A-Za-z0-9._/-]/g, '').slice(0, 193)
+
+const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null
+const counted = (n, word) => `${formatStars(n)} ${word}${n === 1 ? '' : 's'}`
+// Likes, else 30-day downloads (live and display only, when the Hub answered for this model), then the parts of the
+// stored summary (task · license · base model; src/hf-launch.mjs modelDescription), cleaned like a repository description.
+function modelFacts(market) {
+  const likes = count(market.likes), downloads = count(market.downloads30d)
+  const metric = likes !== null ? `❤️ ${counted(likes, 'like')}` : downloads !== null ? `⬇️ ${counted(downloads, 'download')} (30d)` : null
+  return [metric, ...cleanDescription(market.description).split(' · ')].filter(Boolean)
+}
+
+function modelLines({ path, symbol, facts, tagline, url }) {
+  return [`🚀 New on repo.ing: ${MODEL_LABEL} ${path}${symbol ? ` — $${symbol}` : ''}`, ...(facts ? [facts] : []), ...(tagline ? [tagline] : []),
+    HF_DISCLAIMER_SHORT, url]
+}
+
+// market: a launch candidate of a model market, plus { likes, downloads30d } when its live card was read.
+function buildModelLaunchMessage(market, { channel, origin }) {
+  const base = { path: cleanModelPath(market.modelPath || market.fullName), symbol: cleanSymbol(market.tokenSymbol), url: tokenUrl(origin, market.mint) }
+  const facts = modelFacts(market)
+  if (channel === 'telegram') {
+    const line = truncate(facts.join(' · '), text => [...text].length <= TELEGRAM_DESCRIPTION_CHARS)
+    return modelLines({ ...base, path: escapeHtml(base.path), facts: escapeHtml(line), tagline: MODEL_TAGLINE, url: escapeHtml(base.url) }).join('\n')
+  }
+  if (channel !== 'x') throw Error(`Unknown launch alert channel ${channel}`)
+  // The disclaimer leaves little room: as many whole facts as fit, then the same without the tagline; a model id too
+  // long for even that is shortened visibly. Never a cut fact, never the disclaimer or the link.
+  const fits = lines => xWeight(lines.join('\n')) <= X_MAX_WEIGHT
+  for (const tagline of [MODEL_TAGLINE, null]) {
+    if (!fits(modelLines({ ...base, tagline }))) continue
+    let shown = 0
+    while (shown < facts.length && fits(modelLines({ ...base, tagline, facts: facts.slice(0, shown + 1).join(' · ') }))) shown++
+    return modelLines({ ...base, tagline, facts: facts.slice(0, shown).join(' · ') }).join('\n')
+  }
+  const path = truncate(base.path, candidate => fits(modelLines({ ...base, path: candidate })))
+  if (!path) throw Error('Launch alert exceeds the X length limit')
+  return modelLines({ ...base, path }).join('\n')
 }

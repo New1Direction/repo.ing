@@ -1,5 +1,6 @@
 # Test files that need PostgreSQL and/or solana-test-validator. They run only in the full suite (after merge).
 # Every other tests/*.test.mjs runs in the required "quick tests" check with no services; add a new file here if it needs them.
+alerts-models-db
 backers-db
 builder-allocation
 builder-binding
