@@ -40,10 +40,11 @@ const openNote = (racers, unavailable) => unavailable ? 'Graduation progress is 
   : racers ? `Open lane: the next market past ${GRADUATION_RACE_MIN_PERCENT}% of its target appears here`
     : `No market has passed ${GRADUATION_RACE_MIN_PERCENT}% of its target yet`
 
-// Always `limit` lanes tall: open lanes fill the rest, so streaming the board in never moves the page. Used on the
-// home page and /explore (five lanes) and in the $REPOING "Repo markets to watch" card (three).
-export function GraduationRaceBoard({ markets = [], limit = GRADUATION_RACE_LIMIT, unavailable = null }) {
-  const racers = markets.slice(0, limit), open = limit - racers.length
+// Always `limit` lanes tall: open lanes fill the rest, so streaming the board in never moves the page. Used on /explore
+// (five lanes) and in the $REPOING "Repo markets to watch" card (three). compact (the home page, below the first screen):
+// only the racers and one note row, so a thin race does not show as a column of empty lanes.
+export function GraduationRaceBoard({ markets = [], limit = GRADUATION_RACE_LIMIT, unavailable = null, compact = false }) {
+  const racers = markets.slice(0, limit), open = compact ? Math.min(1, limit - racers.length) : limit - racers.length
   return <div className="race-board">
     {racers.length > 0 && <ol className="race-list">{racers.map((market, index) => <RaceRow key={market.mint} market={market} rank={index + 1}/>)}</ol>}
     {open > 0 && <div className="race-open" aria-hidden={racers.length > 0 || undefined}>

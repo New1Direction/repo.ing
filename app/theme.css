@@ -103,7 +103,6 @@
 [data-theme=light] .trade-quick-actions button[aria-pressed=true],[data-theme=light] .trade-quick-actions button:hover:not(:disabled){color:#0f6b40;border-color:var(--green-dark)}
 [data-theme=light] .mobile-nav-panel{box-shadow:0 18px 32px rgba(25,34,28,.12)}
 [data-theme=light] .app-header .mobile-nav-panel a.active:after{background:var(--green-dark)}
-[data-theme=light] .buyback-counter>a,[data-theme=light] .buyback-counter p>span[aria-hidden]{color:#157347}
 :root[data-theme=light] .return-share h1 .gain{color:var(--green-dark)}
 [data-theme=light] .market-row .table-repo-ticker{color:#16834c}
 [data-theme=light] .wallet-market-values>.wallet-launcher-claimable strong,[data-theme=light] .discovery-note .claim-text-button{color:#16834c}
