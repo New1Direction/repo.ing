@@ -24,8 +24,11 @@ export function readTradeRecord(record, phase) {
     mint: key(record.mint), pool: key(record.pool), referral: optionalKey(record.referral ?? null),
     wsolRent: record.wsolRent === null ? null : u64(record.wsolRent), amountIn: u64(record.amountIn),
     minimumAmountOut: u64(record.minimumAmountOut), message: bytes(record.message), transaction: bytes(record.transaction),
+    // A stock-paired market's quote mint (docs/STOCK_QUOTES.md); absent or null for SOL, as every record before it.
+    quoteMint: optionalKey(record.quoteMint ?? null),
     signedMessage: record.signedMessage ? bytes(record.signedMessage) : null,
     blockhash: key(record.blockhash).toBase58(), lastValidBlockHeight: record.lastValidBlockHeight }
+  if (saved.quoteMint && (saved.referral || saved.wsolRent !== null)) fail()
   if (phase === 'graduated') Object.assign(saved, { curve: key(record.curve).toBase58(), tokenAVault: key(record.tokenAVault), tokenBVault: key(record.tokenBVault) })
   // The unsigned transaction handed to the wallet must be exactly the reviewed message; a stored wallet-signed message
   // must be the reviewed one, or it plus only constrained wallet assertions.
@@ -44,7 +47,8 @@ export function preparedFromRecord(record, transaction = null) {
   return { transaction: transaction ?? Transaction.from(saved.transaction), direction: saved.direction, amountIn: saved.amountIn,
     minimumAmountOut: saved.minimumAmountOut, lastValidBlockHeight: saved.lastValidBlockHeight, githubRepoId: saved.githubRepoId,
     mint: saved.mint.toBase58(), pool: saved.pool.toBase58(), slippageBps: record.slippageBps, phase: record.phase,
-    referral: saved.referral?.toBase58() ?? null, priorityFee: record.priorityFee ?? null, launchFee: record.launchFee ?? null, record }
+    referral: saved.referral?.toBase58() ?? null, priorityFee: record.priorityFee ?? null, launchFee: record.launchFee ?? null,
+    quoteMint: saved.quoteMint?.toBase58() ?? null, record }
 }
 
 // The record after the wallet signed: the signed message (reviewed + any accepted assertions) is what lands on chain.
