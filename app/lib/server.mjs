@@ -233,7 +233,10 @@ export async function repositoryById(repoId) {
     if (String(repo.id) !== String(repoId) || repo.private || repo.archived) return row
     const detailResponse = repo.language !== undefined && repo.license !== undefined ? null : await fetch(`https://api.github.com/repos/${encodeURIComponent(repo.owner.login)}/${encodeURIComponent(repo.name)}`, { headers: githubHeaders, cache: 'no-store', signal: AbortSignal.timeout(5000) })
     const detail = detailResponse?.ok ? await detailResponse.json() : repo
+    // ownerId/ownerType only from this live read (never the stored row): stock pairs are offered by owner id (src/quote-assets.mjs).
     return { repoId: String(repo.id), owner: repo.owner.login, name: repo.name, fullName: repo.full_name,
+      ownerId: Number.isSafeInteger(repo.owner.id) && repo.owner.id > 0 ? String(repo.owner.id) : null,
+      ownerType: typeof repo.owner.type === 'string' ? repo.owner.type : null,
       description: repo.description, avatarUrl: repo.owner.avatar_url, stars: repo.stargazers_count,
       forks: repo.forks_count, language: detail.language ?? null, license: detail.license?.spdx_id ?? null,
       updatedAt: repo.updated_at, htmlUrl: repo.html_url, hasIssues: typeof repo.has_issues === 'boolean' ? repo.has_issues : null,
