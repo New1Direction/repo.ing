@@ -17,6 +17,7 @@ import { Backers, BackersFallback, BackersPill } from '../backers'
 import { TrustPanel } from '../trust-panel'
 import { PhoneMarketSummary } from '../phone-market-summary'
 import { ModelPulseSlot } from './model-pulse-slot'
+import { ModelAllocation } from './model-allocation'
 import { CommunityLaunchBadge, HuggingFaceLink, ModelBadges, ModelDisclaimer, ModelStats } from './model-ui'
 import { displayFeeStatus, listMarkets, tradeAvailable } from '../../lib/server.mjs'
 import { hfMarketsEnabled, modelCard, modelRegistry, shownMarkets } from '../../lib/hf-markets.mjs'
@@ -35,7 +36,7 @@ import '../../maintainer-opt-out.css'
 // The token page of a Hugging Face model market (app/(site)/token/[mint]/page.jsx returns here for a model id). It keeps
 // the trading panel, chart, trust panel, recent trades and sharing, shows the model card, the Model Pulse slot and the
 // disclaimer, and leaves out what models do not have in v1: tips, parts funds, maintainer invites, streams and Dev Pulse.
-// The builder allocation is not shown yet (see rewardSections). Off unless HF_MARKETS_ENABLED.
+// Off unless HF_MARKETS_ENABLED.
 
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
 const claimHref = market => `/claim/${market.repoId}`
@@ -107,11 +108,12 @@ export async function ModelTokenPage({ market, activity = false }) {
 }
 
 // Details → Rewards: one section per reward the market carries, in the GitHub page's order; no tab when there is none.
-// Launcher discovery rewards work as for repositories, and a model market never carries the verification bonus. The
-// builder allocation is not shown yet: model markets keep the 1% allocation, claimable by the model's verified owner
-// after graduation, and a later phase adds its section first in this list (where the GitHub page has BuilderAllocation).
+// First the 1% builder allocation (where the GitHub page has BuilderAllocation), claimable once by the model's verified
+// owner after graduation; then launcher discovery rewards, which work as for repositories. A model market never carries
+// the verification bonus.
 function rewardSections(market) {
   return [
+    market.allocationVersion === 1 && <ModelAllocation key="allocation" repoId={market.repoId}/>,
     [1, 2].includes(market.discoveryVersion) && <DiscoveryRewards key="discovery" repoId={market.repoId}/>,
   ].filter(Boolean)
 }
