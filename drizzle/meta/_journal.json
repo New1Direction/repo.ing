@@ -351,6 +351,13 @@
       "when": 1790910012000,
       "tag": "0052_model_builder_allocation",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1790910013000,
+      "tag": "0053_market_quote_asset",
+      "breakpoints": true
     }
   ]
 }

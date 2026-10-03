@@ -238,6 +238,11 @@ export const markets = pgTable('markets', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   // One-time maintainer-verification bonus stamped on NEW launches (0047); the stamp is this market's policy.
   verificationBonusLamports: bigint('verification_bonus_lamports', { mode: 'bigint' }),
+  // Migration 0053: all null for SOL; a stock-paired market's registry asset, exact mint and registry version, stamped at
+  // reservation and immutable once its launch was sent (src/quote-assets.mjs, trigger protect_market_quote).
+  quoteAssetId: varchar('quote_asset_id', { length: 32 }),
+  quoteMint: varchar('quote_mint', { length: 44 }),
+  quoteRegistryVersion: integer('quote_registry_version'),
 }, (table) => [
   uniqueIndex('markets_github_repo_id_unique').on(table.githubRepoId),
   uniqueIndex('markets_mint_unique').on(table.mint),
@@ -251,6 +256,7 @@ export const markets = pgTable('markets', {
   check('markets_indexed_evidence_check', sql`${table.indexedAt} is null or (${table.launchSlot} is not null and ${table.launchFinality} = 'finalized' and ${table.lastVerifiedAt} is not null)`),
   // A model market never carries the verification bonus (0049); it may carry the builder allocation (0052).
   check('markets_hf_no_bonus', sql`${table.githubRepoId} < 4503599627370496 or ${table.verificationBonusLamports} is null`),
+  check('markets_quote_asset_check', sql`(${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null) or (${table.quoteAssetId} is not null and ${table.quoteMint} is not null and ${table.quoteRegistryVersion} is not null and ${table.quoteAssetId} ~ '^[a-z0-9][a-z0-9-]{1,31}$' and ${table.quoteAssetId} <> 'sol' and ${table.quoteMint} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$' and ${table.quoteMint} <> 'So11111111111111111111111111111111111111112' and ${table.quoteRegistryVersion} >= 1 and ${table.githubRepoId} < 4503599627370496)`),
 ])
 
 // All DBC partner fees share this evidence ledger; eligibility preserves the
