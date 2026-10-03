@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction } from '@solana/web3.js'
-import { TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction,
+import { TOKEN_2022_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction, createTransferInstruction,
   getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { drizzle } from 'drizzle-orm/node-postgres'
@@ -23,6 +23,7 @@ import { assertStockConfig, buildStockQuoteConfigTransaction, reviewStockQuoteCo
 import { SOL_QUOTE, resolveQuoteAsset } from '../src/quote-assets.mjs'
 import { stockMintCheck, stockPairGuard } from '../app/lib/stock-launch.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
+import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
 import { prepareCheckedTrade } from '../src/trade-prepare.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
 
@@ -194,8 +195,12 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       await sendAndConfirmTransaction(connection, new Transaction().add(
         createAssociatedTokenAccountIdempotentInstruction(trader.publicKey, account, trader.publicKey, METAX, TOKEN_2022_PROGRAM_ID),
         createMintToInstruction(METAX, account, authority.publicKey, 100_000_000n, [], TOKEN_2022_PROGRAM_ID)), [trader, authority], { commitment: 'confirmed' })
-      const engine = createCanonicalTrader({ pool, connection, config: solConfig.toBase58() })
+      // Routed exactly as /api/trade routes it: the router reads the stock-paired curve and picks the curve trader.
+      const curve = createCanonicalTrader({ pool, connection, config: solConfig.toBase58() })
+      const router = createTradeRouter({ curve, graduated: createDammTrader({ pool, connection, config: solConfig.toBase58() }) })
       const githubRepoId = String(stockMarket.githubRepoId), wallet = trader.publicKey.toBase58()
+      const engine = await router(githubRepoId)
+      assert.equal(engine, curve)
       const sign = async tx => { tx.partialSign(trader); return tx }
       const quote = await engine.quoteBuy({ githubRepoId, amountLamports: '50000000', slippageBps: 500 })
       assert.ok(BigInt(quote.outputAmount) > 0n && quote.priceImpactPercent >= 0)
@@ -216,6 +221,24 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       assert.equal(sold.tokenDelta, -bought.tokenDelta, 'every DOCUSAURUS token sold')
       assert.ok(sold.quoteDelta >= sell.prepared.minimumAmountOut && sold.quoteDelta > 0n, 'METAx back to the wallet')
       assert.equal((await connection.getTokenAccountBalance(account)).value.amount, String(50_000_000n + sold.quoteDelta))
+
+      // A wallet holding DOCUSAURUS but no METAx account sells: the estimated deposit is exactly the rent of the account
+      // Token-2022 creates for it (179 bytes for METAx), and that is the account created.
+      const again = await engine.submitTrade((await prepareCheckedTrade({ engine, connection, direction: 'buy', githubRepoId, wallet,
+        amountBaseUnits: '20000000', slippageBps: 500 })).prepared, sign)
+      const fresh = await funded(connection)
+      const freshToken = getAssociatedTokenAddressSync(new PublicKey(stockMarket.mint), fresh.publicKey)
+      await sendAndConfirmTransaction(connection, new Transaction().add(
+        createAssociatedTokenAccountIdempotentInstruction(trader.publicKey, freshToken, fresh.publicKey, new PublicKey(stockMarket.mint)),
+        createTransferInstruction(getAssociatedTokenAddressSync(new PublicKey(stockMarket.mint), trader.publicKey), freshToken, trader.publicKey, again.tokenDelta)),
+        [trader], { commitment: 'confirmed' })
+      const freshSell = await prepareCheckedTrade({ engine, connection, direction: 'sell', githubRepoId, wallet: fresh.publicKey.toBase58(),
+        amountBaseUnits: again.tokenDelta.toString(), slippageBps: 500 })
+      assert.equal(freshSell.costs.accountDeposits, String(await connection.getMinimumBalanceForRentExemption(179)))
+      const freshSold = await engine.submitTrade(freshSell.prepared, async tx => { tx.partialSign(fresh); return tx })
+      assert.ok(freshSold.quoteDelta > 0n)
+      const freshStock = await connection.getAccountInfo(getAssociatedTokenAddressSync(METAX, fresh.publicKey, false, TOKEN_2022_PROGRAM_ID))
+      assert.equal(freshStock.data.length, 179)
     })
 
     await t.test('a launcher built for one pair refuses the other pair\'s config', async () => {

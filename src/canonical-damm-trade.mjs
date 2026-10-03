@@ -8,7 +8,8 @@ import { eq } from 'drizzle-orm'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { CpAmm, CP_AMM_PROGRAM_ID, SwapMode, deriveTokenVaultAddress } from '@meteora-ag/cp-amm-sdk'
 import { markets } from './db/schema.mjs'
-import { createMarketConfigResolver } from './market-config.mjs'
+import { createMarketConfigResolver, createQuoteAwareConfigResolver } from './market-config.mjs'
+import { quoteOfMarket } from './quote-assets.mjs'
 import { createGraduatedFees } from './graduated-fees.mjs'
 import { readChainPoint } from './chain-clock.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
@@ -182,13 +183,17 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     return market
   })
   // A curve migrates once, so a migrated answer is permanent; an active answer is always re-read.
+  // Routing reads a stock-paired market's curve through its quote-aware config (docs/STOCK_QUOTES.md); trading a graduated
+  // market below still resolves SOL configs only, so a graduated stock-paired market is refused until that path is quote-aware.
+  const resolveCurveConfig = createQuoteAwareConfigResolver(config)
   const migrated = new Set()
   const isMigrated = async repoId => {
     const market = await loadMarket(repoId)
     const key = `${market.id}:${market.pool}`
     if (migrated.has(key)) return true
-    const configKey = resolveConfig(market), mint = new PublicKey(market.mint), curve = new PublicKey(market.pool)
-    if (!deriveDbcPoolAddress(NATIVE_MINT, mint, configKey).equals(curve)) throw Error('Canonical pool does not match fixed DBC config')
+    const configKey = resolveCurveConfig(market), mint = new PublicKey(market.mint), curve = new PublicKey(market.pool)
+    const quote = quoteOfMarket(market), quoteMint = quote.type === 'SOL' ? NATIVE_MINT : new PublicKey(quote.mint)
+    if (!deriveDbcPoolAddress(quoteMint, mint, configKey).equals(curve)) throw Error('Canonical pool does not match fixed DBC config')
     const state = await dbc.state.getPool(curve)
     if (!state || !state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(mint)) throw Error('Canonical DBC pool is missing or changed')
     if (!state.poolState.isMigrated) return false

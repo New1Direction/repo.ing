@@ -70,21 +70,29 @@ export function assertPreparedDbcSwap(tx, { wallet, pool, config, mint, amountIn
 // A stock-paired market's curve swap (docs/STOCK_QUOTES.md): the one DBC swap carries the quoted amounts and the canonical
 // accounts with the stock as its quote and no referral (referrals pay through wrapped SOL). Nothing is wrapped or closed:
 // besides the compute budget, the only other instructions are the wallet's own token accounts for the market token or the stock.
-export function assertPreparedStockDbcSwap(tx, { wallet, pool, config, mint, quoteMint, amountIn, minimumAmountOut }) {
+export function assertPreparedStockDbcSwap(tx, { direction, wallet, pool, config, mint, quoteMint, amountIn, minimumAmountOut }) {
   readTradeComputeBudget(tx.instructions)
+  // The wallet's own accounts: the market token through SPL Token, the stock through Token-2022.
+  const tokenAccount = getAssociatedTokenAddressSync(mint, wallet), stockAccount = getAssociatedTokenAddressSync(quoteMint, wallet, false, TOKEN_2022_PROGRAM_ID)
+  const [input, output] = direction === 'sell' ? [tokenAccount, stockAccount] : [stockAccount, tokenAccount]
   const swaps = tx.instructions.filter(ix => ix.programId.equals(DBC_PROGRAM))
   const ix = swaps[0], k = ix?.keys.map(key => key.pubkey) ?? []
-  if (swaps.length !== 1 || ix.data.length !== 24 || !ix.data.subarray(0, 8).equals(SWAP_DISCRIMINATOR) ||
+  if (!['buy', 'sell'].includes(direction) || swaps.length !== 1 || ix.data.length !== 24 || !ix.data.subarray(0, 8).equals(SWAP_DISCRIMINATOR) ||
       ix.data.readBigUInt64LE(8) !== amountIn || ix.data.readBigUInt64LE(16) !== minimumAmountOut ||
-      !k[1]?.equals(config) || !k[2]?.equals(pool) || !k[7]?.equals(mint) || !k[8]?.equals(quoteMint) || !k[9]?.equals(wallet) ||
+      !k[1]?.equals(config) || !k[2]?.equals(pool) || !k[3]?.equals(input) || !k[4]?.equals(output) || !k[7]?.equals(mint) ||
+      !k[8]?.equals(quoteMint) || !k[9]?.equals(wallet) || !k[10]?.equals(TOKEN_PROGRAM) || !k[11]?.equals(TOKEN_2022_PROGRAM_ID) ||
       !k[REFERRAL_SLOT]?.equals(DBC_PROGRAM)) {
     throw new Error('Trade transaction swap does not match the quote')
   }
+  const own = [[mint, tokenAccount, TOKEN_PROGRAM], [quoteMint, stockAccount, TOKEN_2022_PROGRAM_ID]]
   for (const other of tx.instructions) {
     if (other === ix || other.programId.equals(ComputeBudgetProgram.programId)) continue
     const accounts = other.keys.map(key => key.pubkey)
-    if (other.programId.equals(ATA_PROGRAM) && accounts[0]?.equals(wallet) && accounts[2]?.equals(wallet) &&
-        (accounts[3]?.equals(mint) || accounts[3]?.equals(quoteMint))) continue
+    // Only CreateIdempotent of the wallet's own account for one of the two mints, under that mint's token program.
+    const account = other.programId.equals(ATA_PROGRAM) && other.data.length === 1 && other.data[0] === 1 &&
+      accounts[0]?.equals(wallet) && accounts[2]?.equals(wallet) &&
+      own.find(([forMint, address, program]) => accounts[3]?.equals(forMint) && accounts[1]?.equals(address) && accounts[5]?.equals(program))
+    if (account) continue
     throw new Error('Trade transaction contains an unexpected instruction')
   }
 }
@@ -167,7 +175,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     if (keepWsol) swapTx.add(createWsolAtaInstruction(wallet))
     const expected = { wallet, pool, config: resolveConfig(market), mint, amountIn: BigInt(amountIn.toString()),
       minimumAmountOut: BigInt(result.minimumAmountOut.toString()), referral, keepWsol,
-      ...stock ? { quoteMint: new PublicKey(quoteAsset.mint) } : {} }
+      ...stock ? { quoteMint: new PublicKey(quoteAsset.mint), direction } : {} }
     const assertSwap = stock ? assertPreparedStockDbcSwap : assertPreparedDbcSwap
     assertSwap(swapTx, expected)
     const latest = await connection.getLatestBlockhash('confirmed')
