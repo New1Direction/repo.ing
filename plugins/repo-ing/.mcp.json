@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "repo-ing": {
+      "type": "http",
+      "url": "https://repo.ing/api/mcp/readonly"
+    }
+  }
+}

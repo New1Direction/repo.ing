@@ -1,0 +1,24 @@
+{
+  "name": "repo-ing",
+  "displayName": "repo.ing",
+  "version": "1.0.0",
+  "description": "Check whether a GitHub repo or Hugging Face model has a repo.ing market, what it has earned its builders, how maintainers claim, what is trending, and where to launch one. Read-only.",
+  "author": {
+    "name": "repo.ing",
+    "url": "https://repo.ing"
+  },
+  "homepage": "https://repo.ing",
+  "repository": "https://github.com/New1Direction/repo.ing",
+  "license": "MIT",
+  "keywords": [
+    "repo.ing",
+    "open source",
+    "maintainers",
+    "github",
+    "hugging face",
+    "builder fees",
+    "solana",
+    "mcp"
+  ],
+  "icon": "./assets/logo.png"
+}
