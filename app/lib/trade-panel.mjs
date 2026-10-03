@@ -10,10 +10,14 @@ export function quoteAmountLabel(raw, decimals) {
   return formatUnits(value, decimals, value >= 1000n * base ? 2 : value >= base ? 4 : finest)
 }
 
-// The trade button names what is missing (an amount, enough SOL or tokens) before it offers the trade itself.
-export function tradeButtonLabel({ direction, symbol, validAmount, buyExceedsBalance = false, sellExceedsBalance = false, costShortfall = false }) {
+// The trade button names what is missing (an amount, enough tokens, enough of what a buy spends, enough SOL for costs)
+// before it offers the trade itself. quoteSymbol: what a buy spends (SOL, or a stock pair's stock, docs/STOCK_QUOTES.md);
+// network fees and account deposits are always SOL.
+export function tradeButtonLabel({ direction, symbol, quoteSymbol = 'SOL', validAmount, buyExceedsBalance = false, sellExceedsBalance = false,
+  costShortfall = false, quoteShortfall = false }) {
   if (!validAmount) return 'Enter an amount'
   if (direction === 'sell' && sellExceedsBalance) return `Not enough ${symbol}`
-  if (buyExceedsBalance || costShortfall) return 'Not enough SOL'
+  if (buyExceedsBalance || quoteShortfall) return `Not enough ${quoteSymbol}`
+  if (costShortfall) return 'Not enough SOL'
   return `${direction === 'sell' ? 'Sell' : 'Buy'} ${symbol}`
 }

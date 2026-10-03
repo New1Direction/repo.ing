@@ -59,6 +59,21 @@ GitHub owner (numeric id, verified organization) → company → tokenized stock
 Refusals carry a stable `code`: `COMPANY_MAPPING_NOT_FOUND`, `STOCK_ASSET_NOT_FOUND`, `STOCK_ASSET_DISABLED`,
 `QUOTE_ASSET_INVALID`, `QUOTE_ASSET_MISMATCH`, `UNSUPPORTED_QUOTE_ASSET`. Nothing ever falls back from a stock to SOL.
 
+For the trade panel (P6b):
+
+- `GET /api/quote-assets/<assetId>` (`src/quote-asset-info.mjs`) returns a registry stock's display facts:
+
+  ```json
+  { "assetId": "meta-xstock", "symbol": "METAx", "decimals": 8, "uiMultiplier": "1.0028515433272898", "usdPrice": 712.5 }
+  ```
+
+  - `uiMultiplier` is the mint's ScaledUiAmount multiplier in force now, read from chain and kept a minute.
+  - `usdPrice` is Jupiter's price per whole raw token, read as tips read it, or `null`.
+  - SOL and unknown ids are 404; a failed mint read is 503.
+- `GET /api/wallet/balance?wallet=<address>&asset=<assetId>` returns `{ assetId, decimals, balanceBaseUnits }`: the raw
+  balance of the wallet's associated Token-2022 account for that stock, which is the account stock trades spend from. No
+  account is `"0"`; a failed read is 503, never zero. Without `asset`, the route answers the SOL balance as before.
+
 ## Data (migration 0053)
 
 `markets.quote_asset_id`, `quote_mint` and `quote_registry_version`:
@@ -115,6 +130,29 @@ stamp:
 - **Blinks** (`app/lib/solana-actions.mjs`) are worded and sized in SOL, so a stock-paired market is never offered through
   them: the action routes answer 404 with "Blink trades are available for SOL markets only", and the action trade builder
   refuses a stock-paired trade as a backstop.
+
+### The trade panel
+
+The token page passes the market's pair (`marketQuoteView`) to the trade panel. A SOL market is exactly as before. For a
+stock pair, the panel buys with the stock and sells for it:
+
+- **Units as wallets show them.** xStocks are Token-2022 ScaledUiAmount mints: wallets show raw × multiplier (about 1.0029
+  for METAx), while trades, fees and settlement stay in raw units.
+  - The panel shows every stock amount that way: balance, receive, minimum received, trading fee, shortfall, result.
+    It converts with BigInt arithmetic and truncates, as Token-2022 does (`app/lib/trade-units.mjs`).
+  - A typed or preset amount converts back to raw units rounded down, so it never spends more than it says. A dust
+    balance that would convert back to nothing gets no preset.
+  - Until the stock's units load, the panel takes no amount.
+- **Balances and presets.** A buy shows the wallet's stock balance and offers 25%, 50% and MAX of it. SOL still pays the
+  network fee and any account deposit, shown as "SOL costs".
+- **Shortfalls.** A buy beyond the stock balance reads "Not enough METAx", and a missing amount of the stock is shown rounded
+  up. A SOL shortfall for costs still reads "Not enough SOL".
+- **USD estimate** at the stock's own price.
+- **Not offered for stock pairs:** the SOL trade size guide. A graduated stock-paired market shows trading as not open yet,
+  because the graduated trader is SOL-only. A market whose stamp no longer matches the registry shows trading as paused.
+
+A launch draft also keeps its chosen pair. On restore, the pair is used only while the repository is still offered it;
+otherwise the form switches to SOL and says so.
 
 Fee accrual and the worker's indexing of stock-paired trades come next. Until then, a confirmed stock trade stays confirmed
 and its fee recording raises the usual operator alert.
@@ -183,13 +221,13 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
 
 1. **P5 (done):** the "Choose pair" control on the launch form. The launch API refuses any pair it cannot launch.
 2. **P6a (done):** quote-aware creation: config per stock, pool derivation, launch checks, evidence and indexing.
-   **P6b (server done):** the curve trade path; the trade panel's units come next.
+   **P6b (done):** the curve trade path, and the trade panel in the stock's units.
 3. **P6, the rest:** quote-aware trading and indexing. Every remaining place that assumes SOL takes the market's quote:
    - the worker's approved configs;
    - trade preparation and verification (no wrapped SOL; Token-2022 quote accounts; decimals from the asset);
    - DBC and DAMM event parsing and fee accrual;
    - graduation;
-   - charts, market cap and USD prices (Jupiter by mint, as tips use);
+   - charts, market cap and USD prices, with stock amounts shown as wallets show them (the trade panel already does);
    - platform totals, split by asset.
 
    Fix every part together: a partial fix would make the worker skip stock fees silently.
