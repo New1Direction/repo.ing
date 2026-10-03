@@ -46,3 +46,28 @@ export function buildLaunchCurve(profile = 'balanced') {
   // basis-point value, so it replaces the flat 175 bps base fee after the curve is built.
   return launchFee ? { ...curve, poolFees: { ...curve.poolFees, baseFee: launchFeeBaseFee() } } : curve
 }
+
+// A stock-paired market's curve (docs/STOCK_QUOTES.md): the launch-fee profile's fees, split, migration and locked liquidity,
+// with the stock's own decimals and a graduation threshold in whole units of that stock (the owner sets it when the config
+// is created; it moves with the stock's price, not SOL's). No builder allocation: stock-paired markets do not carry it.
+export function buildStockLaunchCurve({ quoteDecimals, migrationQuoteThreshold }) {
+  const decimals = { 6: TokenDecimal.SIX, 7: TokenDecimal.SEVEN, 8: TokenDecimal.EIGHT, 9: TokenDecimal.NINE }[quoteDecimals]
+  if (decimals === undefined) throw Error('Unsupported quote decimals')
+  if (!Number.isFinite(migrationQuoteThreshold) || migrationQuoteThreshold <= 0) throw Error('Graduation threshold must be positive')
+  const curve = buildCurve({
+    token: { tokenType: TokenType.SPLToken, tokenBaseDecimal: TokenDecimal.SIX, tokenQuoteDecimal: decimals,
+      tokenAuthorityOption: TokenAuthorityOption.Immutable, totalTokenSupply: 1_000_000_000, leftover: 1000 },
+    fee: { baseFeeParams: { baseFeeMode: BaseFeeMode.FeeSchedulerLinear,
+      feeSchedulerParam: { startingFeeBps: 175, endingFeeBps: 175, numberOfPeriod: 0, totalDuration: 0 } },
+      dynamicFeeEnabled: false, collectFeeMode: CollectFeeMode.QuoteToken,
+      creatorTradingFeePercentage: 71, poolCreationFee: 0, enableFirstSwapWithMinFee: true },
+    migration: { migrationOption: MigrationOption.MET_DAMM_V2, migrationFeeOption: MigrationFeeOption.FixedBps100,
+      migrationFee: { feePercentage: 0, creatorFeePercentage: 0 } },
+    liquidityDistribution: { partnerLiquidityPercentage: 0, partnerPermanentLockedLiquidityPercentage: 50,
+      creatorLiquidityPercentage: 0, creatorPermanentLockedLiquidityPercentage: 50 },
+    lockedVesting: { totalLockedVestingAmount: 0, numberOfVestingPeriod: 0, cliffUnlockAmount: 0, totalVestingDuration: 0,
+      cliffDurationFromMigrationTime: 0 },
+    activationType: ActivationType.Timestamp, percentageSupplyOnMigration: 20, migrationQuoteThreshold,
+  })
+  return { ...curve, poolFees: { ...curve.poolFees, baseFee: launchFeeBaseFee() } }
+}

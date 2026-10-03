@@ -23,7 +23,8 @@ import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource
   registeredModel } from '../../../src/hf-launch.mjs'
 import { hfClient } from '../../lib/hf-client.mjs'
 import { MODEL_LOOKUP_LIMITED, takeModelLookup } from '../../lib/hf-launch.mjs'
-import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairsLaunchable } from '../../../src/quote-assets.mjs'
+import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, quoteOfMarket, resolveQuoteAsset, stockPairsLaunchable } from '../../../src/quote-assets.mjs'
+import { launchPair, stockMintCheck, stockPairGuard } from '../../lib/stock-launch.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -34,11 +35,21 @@ const safeError = (error, action) => {
   return Response.json({...result,supportCode},{status:400,headers:{'Cache-Control':'no-store'}})
 }
 
-// The pair a launch asks for (docs/STOCK_QUOTES.md). Only SOL launches are wired so far, so every other pair is refused here
-// with its code, before anything is read or reserved; nothing ever falls back from a stock pair to SOL.
-function assertSolLaunch(body) {
-  const quote = resolveQuoteAsset(body.quoteAssetId, null, { enabled: stockPairsLaunchable() })
-  if (quote !== SOL_QUOTE) throw new QuoteAssetError(QUOTE_ERRORS.UNSUPPORTED_QUOTE_ASSET, 'Stock pairs are not available yet.')
+// Initial-buy quotes are SOL only: a stock-paired launch has no initial buy yet (src/meteora-launch.mjs). Any other pair is
+// refused with its code before anything is read.
+function assertSolBuyQuote(body) {
+  const quote = resolveQuoteAsset(body.quoteAssetId, null, { enabled: false })
+  if (quote !== SOL_QUOTE) throw new QuoteAssetError(QUOTE_ERRORS.UNSUPPORTED_QUOTE_ASSET, 'Stock pairs are not available.')
+}
+const stockPairsBuyRefusal = body => stockPairsLaunchable() && typeof body.quoteAssetId === 'string' && body.quoteAssetId !== 'sol' &&
+  /^[a-z0-9][a-z0-9-]{1,31}$/.test(body.quoteAssetId)
+
+// After the wallet signed: a stock-paired market (its stamp, src/quote-assets.mjs) is decided again exactly as at prepare.
+// A SOL market needs nothing more.
+const submitPairGuard = (config, connection) => async context => {
+  const quote = quoteOfMarket(context.market)
+  if (quote.type === 'SOL') return
+  await stockPairGuard(quote, config, { mintUsable: stockMintCheck(connection) })(context)
 }
 
 // A Hugging Face model market (src/hf-launch.mjs): the repository review, keyed by the model's market id. The browser names
@@ -96,7 +107,8 @@ export async function POST(request) {
     const body = JSON.parse((await readLimitedBody(request, 600_000)).toString('utf8'))
     action = ['quote','cancel','prepare','submit'].includes(body.action) ? body.action : 'unknown'
     if (body.action === 'quote') {
-      assertSolLaunch(body)
+      if (stockPairsBuyRefusal(body)) throw new QuoteAssetError(QUOTE_ERRORS.UNSUPPORTED_QUOTE_ASSET, 'Stock-paired launches have no initial buy yet. Buy after the launch.')
+      assertSolBuyQuote(body)
       const config = configAddress()
       if (!config) throw new Error('Launch config is unavailable')
       const dbc = new DynamicBondingCurveClient(chain(), 'confirmed')
@@ -119,11 +131,12 @@ export async function POST(request) {
       }
       return Response.json({ cancelled: true })
     }
-    if (body.action === 'prepare') assertSolLaunch(body)
+    // The pair is decided first (docs/STOCK_QUOTES.md): SOL as before; a stock pair only when it can launch, else refused.
+    const pair = body.action === 'prepare' ? await launchPair(body, { solConfig: configAddress(), mintUsable: quote => stockMintCheck(chain())(quote) }) : null
     if (body.action === 'prepare' && isHfMarketId(body.repoId)) return await prepareModelLaunch(request, body)
     if (body.action === 'prepare') {
       if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
-      const pool = database(), config = configAddress(), creator = creatorSigner()
+      const pool = database(), config = pair.config, creator = creatorSigner()
       if (!pool || !config || !creator) throw new Error('Local launch is not configured')
       if (!/^\d+$/.test(String(body.repoId))) throw new Error('Canonical repository ID required')
       if (!body.tokenImage) throw new Error('Choose a token image before reviewing the launch.')
@@ -135,12 +148,13 @@ export async function POST(request) {
       if (process.env.NODE_ENV === 'production' && !metadataOrigin) throw new Error('Token metadata origin is not configured')
       const store = launchSessions(pool, creator)
       await sweep(store)
-      const launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin })
+      const launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin, quote: pair.quote })
       const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
-        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports() })
+        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), quote: pair.quote })
       if (body.trendRevision !== undefined && (!Number.isSafeInteger(body.trendRevision) || body.trendRevision < 1)) throw Error('Invalid trend approval')
-      const launchGuard = body.trendRevision === undefined ? undefined : trendLaunchGuard({ pool, repoId: String(body.repoId),
-        revision: body.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
+      const launchGuard = pair.quote.type !== 'SOL' ? stockPairGuard(pair.quote, config, { mintUsable: stockMintCheck(connection) })
+        : body.trendRevision === undefined ? undefined : trendLaunchGuard({ pool, repoId: String(body.repoId),
+          revision: body.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
       const id = randomUUID(), initialBuyLamports = body.initialBuyLamports ?? '0'
       let costs, transaction
       // Runs under the repository lock: a failure here releases the market as 'failed' (nothing is stored or signed).
@@ -171,7 +185,7 @@ export async function POST(request) {
       const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled() })
       // A model market is checked again after the wallet signed, before anything is sent (src/hf-launch.mjs).
       const launchGuard = isHfMarketId(session.githubRepoId) ? hfLaunchGuard({ pool, hf: hfClient() })
-        : session.trendRevision === null ? undefined : trendLaunchGuard({ pool, repoId: session.githubRepoId,
+        : session.trendRevision === null ? submitPairGuard(config, connection) : trendLaunchGuard({ pool, repoId: session.githubRepoId,
           revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
       // Parsed inside the signing step so a malformed body fails the review (market 'failed') like a wallet mismatch.
       const market = await coordinator.submitPrepared({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,

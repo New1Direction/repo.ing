@@ -1,5 +1,5 @@
 import bs58 from 'bs58'
-import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
+import { createQuoteAwareConfigResolver, readPoolConfig } from './market-config.mjs'
 import { PublicKey } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { ActivationType, DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -10,7 +10,8 @@ const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const CREATE_SPL_POOL_DISCRIMINATOR = Buffer.from([140, 85, 215, 176, 102, 54, 104, 79])
 
 export function createLaunchEvidenceVerifier({ connection, config }) {
-  const resolveConfig = createMarketConfigResolver(config)
+  // SOL markets on the approved configs; a stock-paired market only on its stock's config (docs/STOCK_QUOTES.md).
+  const resolveConfig = createQuoteAwareConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   return async function verify(market) {
     if (!market.mint || !market.pool || !market.launchSignature) {
@@ -36,7 +37,7 @@ export function createLaunchEvidenceVerifier({ connection, config }) {
         connection.getTransaction(market.launchSignature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }),
         dbc.state.getPool(pool),
         connection.getAccountInfo(mint, 'finalized'),
-        usesActivationClock(market) ? readPoolConfig(dbc, configKey) : null,
+        usesActivationClock(market) || market.quoteMint ? readPoolConfig(dbc, configKey) : null,
       ])
     } catch (error) {
       return { state: 'unavailable', reason: `Solana RPC verification failed: ${error.message}` }
@@ -60,6 +61,9 @@ export function createLaunchEvidenceVerifier({ connection, config }) {
       return { state: 'mismatch', reason: 'Launch signature is not a DBC SPL pool creation by the recorded accounts' }
     }
     if (!state || !mintInfo) return { state: 'missing', reason: 'Finalized DBC pool or SPL mint account is missing' }
+    if (market.quoteMint && (!fixed || !fixed.quoteMint.equals(new PublicKey(market.quoteMint)))) {
+      return { state: 'mismatch', reason: 'Stock config does not quote the recorded stock mint' }
+    }
     if (!mintInfo.owner.equals(TOKEN_PROGRAM_ID) || !state.poolState.config.equals(configKey) ||
         !state.poolState.baseMint.equals(mint) || !state.poolState.creator.equals(creator)) {
       return { state: 'mismatch', reason: 'Finalized pool or mint account contradicts recorded launch' }

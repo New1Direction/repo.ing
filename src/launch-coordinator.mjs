@@ -6,6 +6,7 @@ import { resolvePublicRepository } from './github.mjs'
 import { DefinitiveLaunchError } from './meteora-launch.mjs'
 import { DISCOVERY_VERSION } from './discovery-rewards.mjs'
 import { marketSource } from './market-identity.mjs'
+import { SOL_QUOTE, quoteStamp } from './quote-assets.mjs'
 import { validateTokenImage } from './token-image.mjs'
 
 export class IncompleteLaunchError extends Error {}
@@ -22,7 +23,10 @@ export async function waitForLaunchEvidence(inspect, market, attempts = 120, ret
 // The builder allocation and verification bonus stamps a NEW reservation carries. A Hugging Face model market carries the
 // builder allocation like a repository (its verified Hugging Face owner claims it after graduation, src/builder-allocation.mjs)
 // but never the verification bonus, whatever the environment enables (backed by the markets_hf_no_bonus check, migration 0052).
-export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificationBonusLamports }) {
+export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificationBonusLamports, quote = SOL_QUOTE }) {
+  // A stock-paired market (docs/STOCK_QUOTES.md) carries none of the SOL-denominated rewards: its launcher earns the
+  // launcher-side fee instead, and the builder allocation's claim path is SOL-only.
+  if (quote.type !== 'SOL') return { builderAllocationVersion: null, verificationBonusLamports: null }
   const builderAllocationVersion = builderAllocationEnabled ? 1 : null
   if (marketSource(githubRepoId) !== 'github') return { builderAllocationVersion, verificationBonusLamports: null }
   return { builderAllocationVersion, verificationBonusLamports }
@@ -35,9 +39,11 @@ export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificat
 // source: where a launch request's market comes from — { kind, resolve(input) → repo, persist(db, repo) under the market
 // lock }. Omitted, it is a public GitHub repository by URL, exactly as before; Hugging Face model markets pass
 // hfLaunchSource (src/hf-launch.mjs). Either way the resolved id must belong to that source.
+// quote: SOL (default) or the resolved stock asset this launch pairs with; it is stamped on the reservation (quoteStamp), and the
+// launcher must have been built for it.
 export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null,
-  verificationBonusLamports = null, source = null }) {
+  verificationBonusLamports = null, source = null, quote = SOL_QUOTE }) {
   if (verificationBonusLamports !== null && (typeof verificationBonusLamports !== 'bigint' || verificationBonusLamports <= 0n)) {
     throw new Error('Verification bonus stamp must be positive bigint lamports')
   }
@@ -97,8 +103,9 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       launcherWallet: wallet, creatorWallet: launcher.creatorWallet,
       tokenName, tokenSymbol, tokenImage: image, launchSignature: null,
       blockhash: null, lastValidBlockHeight: null,
-      discoveryVersion: discoveryEnabled ? DISCOVERY_VERSION : null, launchBlockTime: null,
-      ...rewardStamps(repo.githubRepoId, { builderAllocationEnabled, verificationBonusLamports }),
+      discoveryVersion: discoveryEnabled && quote.type === 'SOL' ? DISCOVERY_VERSION : null, launchBlockTime: null,
+      ...rewardStamps(repo.githubRepoId, { builderAllocationEnabled, verificationBonusLamports, quote }),
+      ...quoteStamp(quote),
     }
     if (market) {
       ;[market] = await db.update(markets).set(values).where(eq(markets.id, market.id)).returning()
