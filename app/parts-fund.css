@@ -1,4 +1,5 @@
-/* Parts fund: token-page card (under the tip jar), title badge, back/edit/update dialogs, /stats and activity rows. */
+/* Parts fund: token-page card (under the tip jar) and the builder's add-on in its place, title badge, back/edit/update
+   dialogs, /stats and activity rows. */
 .parts-card{margin-top:14px;display:flex;flex-direction:column;gap:12px;padding:18px 20px;border-color:color-mix(in srgb,var(--green) 22%,var(--border))}
 .parts-card h3{display:flex;align-items:center;gap:7px;margin:0;font-size:13px;font-weight:600;color:var(--muted)}
 .parts-card h3 svg{color:var(--green)}
@@ -29,8 +30,31 @@
 .parts-items li.is-funded .parts-item-bar{display:none}
 .parts-back-cta{width:100%;justify-content:center}
 .parts-card .tip-fineprint{margin:0}
-.parts-card-empty p{margin:0;color:var(--muted);font-size:13px;line-height:1.5}
 .parts-start{align-self:flex-start;min-height:36px;padding:0 14px;font-size:13px}
+
+/* Builder add-on: a verified maintainer with no live list gets this compact slot instead of a card; visitors get nothing.
+   The dashed outline is the same "only you see this" cue as the maintainer controls inside the card. */
+.parts-addon{display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px dashed color-mix(in srgb,var(--green) 38%,var(--border));border-radius:10px}
+.parts-addon-row{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px}
+.parts-addon .parts-start{min-height:34px;padding:0 13px 0 11px}
+.parts-addon-tag{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--green-dark)}
+/* Small green text needs a darker green on the light theme to reach 4.5:1 (as .backer-label.is-builder does). */
+[data-theme=light] .parts-addon-tag,[data-theme=light] .parts-manage-label,[data-theme=light] .parts-state.is-open,
+[data-theme=light] .parts-items li.is-funded>small{color:#11774b}
+
+/* "How parts funds work": a fold-out at the foot of the card and in the add-on. */
+.parts-card .parts-explainer{padding-top:12px;border-top:1px solid var(--border)}
+.parts-explainer>summary{display:inline-flex;align-items:center;gap:6px;list-style:none;cursor:pointer;border-radius:4px;color:var(--muted);font-size:13px;font-weight:600}
+.parts-explainer>summary::-webkit-details-marker{display:none}
+.parts-explainer>summary:hover{color:var(--text)}
+.parts-explainer>summary:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+.parts-explainer>summary svg{flex:none;color:var(--green-dark);transition:transform .2s cubic-bezier(.16,1,.3,1)}
+.parts-explainer[open]>summary svg{transform:rotate(90deg)}
+.parts-explainer ol{list-style:none;counter-reset:parts-step;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:9px}
+.parts-explainer li{counter-increment:parts-step;display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;color:var(--muted);font-size:12.5px;line-height:1.5}
+.parts-explainer li:before{content:counter(parts-step);display:grid;place-items:center;width:20px;height:20px;border-radius:6px;border:1px solid var(--border);
+  background:var(--surface2);color:var(--muted);font-size:11px;font-weight:650;font-variant-numeric:tabular-nums}
+.parts-explainer li strong{color:var(--text);font-weight:600}
 
 /* Maintainer controls. */
 .parts-manage{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px dashed color-mix(in srgb,var(--green) 35%,var(--border));border-radius:9px}
@@ -112,6 +136,6 @@
   .parts-form-foot p{text-align:left}
   .parts-stats-grid{grid-template-columns:1fr}
 }
-@media(prefers-reduced-motion:reduce){.parts-progress>span,.parts-item-bar>span,.parts-badge{transition:none}}
+@media(prefers-reduced-motion:reduce){.parts-progress>span,.parts-item-bar>span,.parts-badge,.parts-explainer>summary svg{transition:none}}
 .parts-backers{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin:-6px 0 0;font-size:12px;color:var(--muted)}
 .parts-backers>span{color:var(--dim)}

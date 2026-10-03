@@ -23,12 +23,12 @@ A community launch does not imply maintainer endorsement. A repository token giv
 - Builder fees accrue even before the maintainers connect. A current GitHub admin of the repository verifies with GitHub, binds a payout wallet, and claims the fees in SOL. Launching a market does not give the launcher the builders' fees.
 - Discovery reward: the launch wallet earns 50% of repo.ing's partner fee share until graduation, 30 days, or 2.5 SOL earned, whichever comes first. It comes out of repo.ing's share; builder fees are unchanged.
 - Platform revenue policy for claimed platform revenue: 60% $REPOING buyback reserve, 20% protocol liquidity, 20% treasury.
+- Parts funds: a verified maintainer can add a hardware parts list to their market page. Anyone backs it in USDC or SOL, all or nothing: a funded list is paid to the maintainer's verified payout wallet, and a missed or cancelled one refunds every backer automatically.
 
 ## Key pages
 
 - [Home](https://repo.ing/): Paste a public GitHub repository link to find or launch its market.
 - [Explore markets](https://repo.ing/explore): Browse live repository markets.
-- [Parts funds](https://repo.ing/parts): Hardware lists from verified maintainers, backed all-or-nothing in USDC or SOL.
 - [Launch a repository](https://repo.ing/launch): Review a repository's token and costs, then launch with your wallet.
 - [Waiting for maintainers](https://repo.ing/waiting): Repositories with builder fees accrued but not yet claimed, ranked by amount.
 - [Find repos](https://repo.ing/find-repos): Repositories gaining attention, from an evidence-backed trend feed.

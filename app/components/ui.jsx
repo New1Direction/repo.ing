@@ -35,7 +35,7 @@ function BondingLine({ market }) {
     aria-valuenow={Math.floor(progress.percent)} title={progress.label}><span style={{ transform: `scaleX(${progress.percent / 100})` }}/></span>
 }
 
-const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'parts', href: '/parts', label: 'Parts' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }]
+const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }]
 const NAV_CLASSES = { launch: 'nav-launch', repoing: 'nav-token' }
 // $REPOING is repo.ing's own token: a green pill with the brand cat, kept beside Launch on phones instead of in the menu.
 const navLabel = link => link.key === 'repoing'

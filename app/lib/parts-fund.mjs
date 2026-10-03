@@ -2,7 +2,6 @@ import { PARTS_TOKENS, daysLeft, fundPercent, itemFill, linkDomain } from '../..
 import { tipTokenPrices, tipUsdValue } from '../../src/tip-tokens.mjs'
 import { database } from './server.mjs'
 import { tipSigner, tipWalletAddress } from './tips.mjs'
-import { ttlMemo } from './ttl-memo.mjs'
 
 // Parts funds ride on the tip wallet: enabled exactly when tips are (TIP_WALLET_SECRET_KEY + database).
 export const partsEnabled = () => Boolean(database() && tipSigner())
@@ -101,85 +100,3 @@ export async function partsHealth(db = database()) {
       (select coalesce(sum(usd_cents),0)::bigint::text from parts_pledges where status='confirmed') as "heldCents"`)
   return row
 }
-
-// ---------- /parts: every market's parts lists, browsed like an issue list (Open · Funded · Closed) ----------
-export const PARTS_TABS = Object.freeze(['open', 'funded', 'closed'])
-const BROWSE_LIMIT = 300
-const BROWSE_TTL_MS = 30_000
-const DAY = 24 * 60 * 60_000
-
-// ?state=… → a tab; anything else (missing, repeated, unknown) is the default "open".
-export const partsTabParam = value => PARTS_TABS.includes(value) ? value : 'open'
-// failed (missed its goal) and cancelled lists share the Closed tab.
-export const partsTab = status => status === 'open' || status === 'funded' ? status : 'closed'
-
-// "today", "yesterday", "3 days ago", then a calendar date once it is a month old (GitHub-style).
-export function relativeDay(value, now = Date.now()) {
-  const at = new Date(value).getTime()
-  if (!Number.isFinite(at)) return ''
-  const days = Math.floor((now - at) / DAY)
-  if (days <= 0) return 'today'
-  if (days === 1) return 'yesterday'
-  if (days < 30) return `${days} days ago`
-  return `on ${new Date(at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}`
-}
-
-// One row of the /parts query → the public row (wallets stay server-side under backerWallets / maintainerWallet).
-export function partsBrowseRow(row, now = Date.now()) {
-  const pledgedCents = Number(row.pledgedCents ?? 0), goalCents = Number(row.goalCents)
-  return {
-    id: row.id, repoId: row.repoId, fullName: row.fullName, mint: row.mint, symbol: row.symbol, title: row.title,
-    status: row.status, tab: partsTab(row.status), goalCents, pledgedCents, percent: fundPercent(pledgedCents, goalCents),
-    daysLeft: row.status === 'open' ? daysLeft(row.deadline, now) : null,
-    parts: Number(row.parts ?? 0), backers: Number(row.backers ?? 0), openedBy: row.openedBy ?? null,
-    createdAt: new Date(row.createdAt).toISOString(), closedAt: row.closedAt ? new Date(row.closedAt).toISOString() : null,
-    settledAt: row.settledAt ? new Date(row.settledAt).toISOString() : null,
-    maintainerWallet: row.maintainerWallet ?? null, backerWallets: Array.isArray(row.backerWallets) ? row.backerWallets : [],
-  }
-}
-
-// Newest first within a tab: open lists by when they opened, funded/closed ones by when they closed.
-const sortKey = row => new Date(row.tab === 'open' ? row.createdAt : row.closedAt ?? row.createdAt).getTime()
-
-// Rows → { state, counts per tab, lists in the selected tab }.
-export function partsBrowseView(rows, state = 'open', now = Date.now()) {
-  const tab = partsTabParam(state)
-  const all = rows.map(row => partsBrowseRow(row, now))
-  const counts = Object.fromEntries(PARTS_TABS.map(name => [name, all.filter(row => row.tab === name).length]))
-  const lists = all.filter(row => row.tab === tab).sort((a, b) => sortKey(b) - sortKey(a))
-  return { state: tab, counts, lists }
-}
-
-// One read for every list: repository, token, verified opener, parts count, and pledge totals (no per-list queries).
-// Only lists whose market is live (the same markets that accept tips and pledges) are listed.
-export const PARTS_BROWSE_SQL = `select f.id, f.github_repo_id::text as "repoId", f.title, f.status, f.goal_cents::int as "goalCents", f.deadline,
-    f.created_at as "createdAt", f.closed_at as "closedAt", f.settled_at as "settledAt",
-    r.full_name as "fullName", m.mint, m.token_symbol as symbol, v.github_login as "openedBy", b.wallet as "maintainerWallet",
-    coalesce(i.parts, 0)::int as parts, coalesce(p.cents, 0)::bigint::text as "pledgedCents", coalesce(p.backers, 0)::int as backers,
-    coalesce(p.wallets, '{}') as "backerWallets"
-  from parts_funds f
-  join repositories r on r.github_repo_id = f.github_repo_id
-  join markets m on m.github_repo_id = f.github_repo_id and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
-  left join repo_beneficiaries b on b.github_repo_id = f.github_repo_id
-  left join lateral (select github_login from repo_verifications where github_repo_id = f.github_repo_id
-    and f.created_by = 'github:' || github_user_id::text order by verified_at desc limit 1) v on true
-  left join lateral (select count(*) as parts from parts_fund_items where fund_id = f.id) i on true
-  left join lateral (select sum(d.cents) as cents, count(*) as backers, (array_agg(d.donor_wallet order by d.cents desc, d.donor_wallet))[1:5] as wallets
-    from (select donor_wallet, sum(usd_cents) as cents from parts_pledges where fund_id = f.id and status in ('confirmed','paid','refunded')
-      group by donor_wallet) d) p on true
-  order by f.created_at desc limit ${BROWSE_LIMIT}`
-
-export async function loadPartsLists(db = database()) {
-  if (!db) return { rows: [], unavailable: 'Parts lists are temporarily unavailable.' }
-  try {
-    return { rows: (await db.query(PARTS_BROWSE_SQL)).rows }
-  } catch (error) {
-    // Before migration 0033 runs there are simply no lists yet.
-    if (error?.code === '42P01') return { rows: [] }
-    console.error('parts lists unavailable', { error: error.message })
-    return { rows: [], unavailable: 'Parts lists are temporarily unavailable.' }
-  }
-}
-
-// /parts renders per request; share one read per 30 s (like /explore's market list).
-export const partsLists = ttlMemo(() => loadPartsLists(), BROWSE_TTL_MS, { keep: result => !result.unavailable })
