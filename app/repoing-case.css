@@ -1,0 +1,42 @@
+/* $REPOING page: "Why hold $REPOING" (components/repoing-case.jsx). Intro on the left, four live facts on the right;
+   one column with the facts two-up on tablets and phones. Fact cells keep a fixed minimum height so the streamed figures
+   land in the same box as the placeholder. */
+.repoing-case{position:relative;display:grid;grid-template-columns:minmax(230px,290px) minmax(0,1fr);gap:18px 30px;margin:24px 0 0;padding:24px 26px 16px;
+  border:1px solid var(--border);border-radius:12px;overflow:hidden;
+  background:radial-gradient(110% 150% at 0% 0%,rgba(129,230,173,.1),transparent 58%),var(--surface)}
+.repoing-case:before{content:"";position:absolute;inset:0 0 auto;height:2px;background:linear-gradient(90deg,var(--green),rgba(129,230,173,0) 65%)}
+.repoing-case-intro{display:flex;flex-direction:column;align-items:flex-start;gap:10px;min-width:0}
+.repoing-case-eyebrow{color:var(--green);font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase}
+.repoing-case h2{margin:0;color:var(--text);font-size:24px;line-height:1.2;letter-spacing:-.02em;text-wrap:balance}
+.repoing-case-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-top:auto;padding-top:8px}
+.repoing-case-link{display:inline-flex;align-items:center;gap:5px;color:var(--green);font-size:13px;font-weight:650}
+.repoing-case-link:hover,.repoing-case-link:focus-visible{text-decoration:underline}
+.repoing-case-facts{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);margin:0}
+.repoing-case-fact{display:flex;flex-direction:column;gap:7px;min-width:0;min-height:142px;padding:2px 0 2px 20px;margin-left:20px;border-left:1px solid var(--border)}
+.repoing-case-fact:first-child{margin-left:0}
+.repoing-case-fact dt{color:var(--muted);font-size:11px;font-weight:650;letter-spacing:.14em;text-transform:uppercase}
+.repoing-case-fact dd{display:flex;flex-direction:column;gap:7px;margin:0}
+.repoing-case-fact strong{color:var(--text);font-size:30px;line-height:1.1;font-weight:750;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.repoing-case-fact.is-policy strong{color:var(--green)}
+.repoing-case-fact dd>span{color:var(--muted);font-size:13px;line-height:1.45}
+.repoing-case-fact small{color:var(--dim);font-size:12px;line-height:1.4}
+.repoing-case-fact .skeleton-line{display:block;height:11px;width:60%}
+.repoing-case-fact strong .skeleton-line{height:30px;width:70%}
+.repoing-case-fact dd>.skeleton-line{height:13px;width:90%}
+.repoing-case-foot{grid-column:1/-1;margin:0;padding-top:12px;border-top:1px solid var(--border);color:var(--dim);font-size:12px}
+[data-theme=light] .repoing-case{background:radial-gradient(110% 150% at 0% 0%,rgba(46,196,124,.1),transparent 58%),var(--surface)}
+[data-theme=light] .repoing-case-eyebrow,[data-theme=light] .repoing-case-link,[data-theme=light] .repoing-case-fact.is-policy strong{color:#157347}
+@media(max-width:1100px){
+  .repoing-case{grid-template-columns:minmax(0,1fr)}
+  .repoing-case-actions{margin-top:2px}
+  .repoing-case-facts{grid-auto-flow:row;grid-template-columns:repeat(2,minmax(0,1fr));row-gap:20px}
+  .repoing-case-fact{min-height:124px}
+  .repoing-case-fact:nth-child(odd){margin-left:0;padding-left:0;border-left:0}
+}
+@media(max-width:560px){
+  .repoing-case{margin-top:18px;padding:20px 16px 14px}
+  .repoing-case h2{font-size:20px}
+  .repoing-case-fact{min-height:146px;padding-left:14px;margin-left:14px}
+  .repoing-case-fact strong{font-size:23px}
+  .repoing-case-fact dd>span{font-size:12.5px}
+}
