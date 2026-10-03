@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import bs58 from 'bs58'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
-import { tradeStatus } from '../../lib/trade-status.mjs'
+import { tradeResultFields, tradeStatus } from '../../lib/trade-status.mjs'
 import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
 import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { tradeSessions } from '../../lib/trade-sessions.mjs'
@@ -120,8 +120,7 @@ export async function POST(request) {
       const { feeIndexing, creatorFee } = await settleConfirmedTrade({ connection, db: database(), engine: session.engine,
         prepared: session.prepared, signature: result.signature,
         recordFees: args => createFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees(args) })
-      session = await store.saveResult(session, { state: 'confirmed', signature: result.signature, tokenDelta: result.tokenDelta.toString(),
-        solDelta: result.solDelta.toString(), feeIndexing, creatorFee })
+      session = await store.saveResult(session, { state: 'confirmed', signature: result.signature, ...tradeResultFields(result), feeIndexing, creatorFee })
       return Response.json(session.result, { headers: { 'Cache-Control': 'no-store' } })
     }
     throw new Error('Unsupported trade action')

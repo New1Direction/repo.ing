@@ -22,6 +22,8 @@ import { createMarketConfigResolver } from '../src/market-config.mjs'
 import { assertStockConfig, buildStockQuoteConfigTransaction, reviewStockQuoteConfig, verifyCreatedStockQuoteConfig } from '../src/stock-quote-config.mjs'
 import { SOL_QUOTE, resolveQuoteAsset } from '../src/quote-assets.mjs'
 import { stockMintCheck, stockPairGuard } from '../app/lib/stock-launch.mjs'
+import { createCanonicalTrader } from '../src/canonical-trade.mjs'
+import { prepareCheckedTrade } from '../src/trade-prepare.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
 
 // A METAx-paired market launched end to end on the programs mainnet runs (scripts/ci/start-stock-validator.sh): the DBC,
@@ -184,6 +186,36 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       assert.ok(BigInt(after.creatorQuoteFee.toString()) > 0n && BigInt(after.partnerQuoteFee.toString()) > 0n, 'creator and partner fees in METAx')
       const balance = await connection.getTokenAccountBalance(account)
       assert.equal(balance.value.amount, '100000000', 'exactly 1 METAx spent')
+    })
+
+    await t.test('the site\'s trade path buys and sells DOCUSAURUS for METAx, settled to the raw unit', async () => {
+      const trader = await funded(connection)
+      const account = getAssociatedTokenAddressSync(METAX, trader.publicKey, false, TOKEN_2022_PROGRAM_ID)
+      await sendAndConfirmTransaction(connection, new Transaction().add(
+        createAssociatedTokenAccountIdempotentInstruction(trader.publicKey, account, trader.publicKey, METAX, TOKEN_2022_PROGRAM_ID),
+        createMintToInstruction(METAX, account, authority.publicKey, 100_000_000n, [], TOKEN_2022_PROGRAM_ID)), [trader, authority], { commitment: 'confirmed' })
+      const engine = createCanonicalTrader({ pool, connection, config: solConfig.toBase58() })
+      const githubRepoId = String(stockMarket.githubRepoId), wallet = trader.publicKey.toBase58()
+      const sign = async tx => { tx.partialSign(trader); return tx }
+      const quote = await engine.quoteBuy({ githubRepoId, amountLamports: '50000000', slippageBps: 500 })
+      assert.ok(BigInt(quote.outputAmount) > 0n && quote.priceImpactPercent >= 0)
+      const buy = await prepareCheckedTrade({ engine, connection, direction: 'buy', githubRepoId, wallet, amountBaseUnits: '50000000', slippageBps: 500 })
+      assert.equal(buy.prepared.quoteMint, META.mint)
+      assert.deepEqual([buy.costs.quoteBalance, buy.costs.quoteShortfall, buy.costs.refundableDeposit], ['100000000', '0', '0'])
+      assert.ok(BigInt(buy.costs.accountDeposits) > 0n, 'rent for the new DOCUSAURUS account, in SOL')
+      const bought = await engine.submitTrade(buy.prepared, sign)
+      assert.equal(bought.quoteDelta, -50_000_000n, 'exactly 0.5 METAx spent')
+      assert.ok(bought.tokenDelta >= buy.prepared.minimumAmountOut)
+      assert.equal(bought.quoteMint, META.mint)
+      // More METAx than the wallet holds is refused before anything is signed.
+      await assert.rejects(prepareCheckedTrade({ engine, connection, direction: 'buy', githubRepoId, wallet, amountBaseUnits: '60000000', slippageBps: 500 }),
+        /You need approximately 0\.1[0-9]* more METAx/)
+      const sell = await prepareCheckedTrade({ engine, connection, direction: 'sell', githubRepoId, wallet,
+        amountBaseUnits: bought.tokenDelta.toString(), slippageBps: 500 })
+      const sold = await engine.submitTrade(sell.prepared, sign)
+      assert.equal(sold.tokenDelta, -bought.tokenDelta, 'every DOCUSAURUS token sold')
+      assert.ok(sold.quoteDelta >= sell.prepared.minimumAmountOut && sold.quoteDelta > 0n, 'METAx back to the wallet')
+      assert.equal((await connection.getTokenAccountBalance(account)).value.amount, String(50_000_000n + sold.quoteDelta))
     })
 
     await t.test('a launcher built for one pair refuses the other pair\'s config', async () => {

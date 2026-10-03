@@ -7,6 +7,11 @@ function failure(err, signature, session) {
   return slippage ? { state: 'failed', signature, reason: 'slippage', slippageBps: session.prepared.slippageBps ?? null } : { state: 'failed', signature }
 }
 
+// A verified trade's balance changes as the client reads them: the market token and SOL, and for a stock-paired market
+// (docs/STOCK_QUOTES.md) the stock's own change and mint as well.
+export const tradeResultFields = verified => ({ tokenDelta: verified.tokenDelta.toString(), solDelta: verified.solDelta.toString(),
+  ...verified.quoteMint ? { quoteDelta: verified.quoteDelta.toString(), quoteMint: verified.quoteMint } : {} })
+
 export async function tradeStatus(connection, signature, session, lastValidBlockHeight) {
   if (session?.signature === signature && session.result) return session.result
   const found = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0]
@@ -15,8 +20,7 @@ export async function tradeStatus(connection, signature, session, lastValidBlock
     if (session?.signature === signature) {
       try {
         const verified = await session.engine.verifyTrade(session.prepared, signature)
-        return { state: 'confirmed', signature, tokenDelta: verified.tokenDelta.toString(),
-          solDelta: verified.solDelta.toString(), feeIndexing: 'pending' }
+        return { state: 'confirmed', signature, ...tradeResultFields(verified), feeIndexing: 'pending' }
       } catch { /* Keep the chain result visible while detailed verification catches up. */ }
     }
     return { state: 'chainConfirmed', signature }

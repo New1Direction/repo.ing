@@ -86,6 +86,29 @@ Refusals carry a stable `code`: `COMPANY_MAPPING_NOT_FOUND`, `STOCK_ASSET_NOT_FO
 - **Launch evidence and the indexer** resolve the pool through the quote-aware resolver. Every other path still uses the SOL
   resolver, which refuses a stock-paired market loudly, so nothing can misread one until it is made quote-aware.
 
+## Trading a stock pair (P6b, curve)
+
+The site's curve trade path (`src/canonical-trade.mjs`: quote, prepare, submit, verify) handles a stock-paired market by its
+stamp:
+
+- **The swap** is the one DBC swap with the stock as its quote (`assertPreparedStockDbcSwap`). Nothing is wrapped or closed,
+  and there is no referral, because referrals pay through wrapped SOL. Besides the compute budget, the only other
+  instructions allowed are the wallet's own token accounts for the market token or the stock.
+- **Settlement** is checked in raw units of each token (`assertStockDbcSettlement`):
+  - a buy spends exactly the input of the stock and receives at least the minimum;
+  - a sell gives exactly the input and receives at least the minimum of the stock;
+  - the pool's stock vault moves the other way.
+
+  Raw units are unaffected by the scaled-UI multiplier.
+- **Costs** (`src/trade-costs.mjs`): SOL pays only the network fee and account rent, where the stock account's size follows
+  the stock mint's extensions. The stock is checked separately (`quoteBalance`, `quoteShortfall`), and a buy larger than the
+  wallet holds is refused before signing ("You need approximately … more METAx").
+- **Records and results:** the trade record carries `quoteMint`. Results add `quoteDelta` and `quoteMint`; SOL trades return
+  exactly what they did before.
+
+Fee accrual and the worker's indexing of stock-paired trades come next. Until then, a confirmed stock trade stays confirmed
+and its fee recording raises the usual operator alert.
+
 `tests/stock-pair-chain.test.mjs` proves this on the programs mainnet runs (`scripts/ci/start-stock-validator.sh` loads the DBC,
 DAMM v2, Token-2022 and Metaplex programs as deployed, Meteora's badges for METAx, and the METAx mint with only its mint
 authority replaced):
@@ -94,6 +117,8 @@ authority replaced):
 - DOCUSAURUS / METAx is prepared on one replica and submitted from another;
 - its evidence and indexing match;
 - a trader buys with exactly 1 METAx and the creator and partner fees accrue in METAx;
+- the site's trade path quotes, prices, prepares, submits and verifies a 0.5 METAx buy and a full sell-back to the raw unit,
+  and refuses a buy larger than the wallet's METAx before signing;
 - a SOL launch on the same programs is unchanged.
 
 To run it locally:
@@ -146,6 +171,7 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
 
 1. **P5 (done):** the "Choose pair" control on the launch form. The launch API refuses any pair it cannot launch.
 2. **P6a (done):** quote-aware creation: config per stock, pool derivation, launch checks, evidence and indexing.
+   **P6b (server done):** the curve trade path; the trade panel's units come next.
 3. **P6, the rest:** quote-aware trading and indexing. Every remaining place that assumes SOL takes the market's quote:
    - the worker's approved configs;
    - trade preparation and verification (no wrapped SOL; Token-2022 quote accounts; decimals from the asset);
