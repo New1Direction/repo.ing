@@ -131,6 +131,16 @@ export function quoteOfMarket(market, registry = QUOTE_REGISTRY) {
   return asset
 }
 
+// A market's pair as a page hands it to the browser: null for SOL; for a stock pair its asset id, symbol, name, decimals and
+// mint; { assetId, unavailable: true } when the stamp no longer matches the registry, so trading stays closed rather than
+// guessing units.
+export function marketQuoteView(market, registry = QUOTE_REGISTRY) {
+  let asset
+  try { asset = quoteOfMarket(market, registry) } catch { return { assetId: market?.quoteAssetId ?? null, unavailable: true } }
+  if (asset === SOL_QUOTE) return null
+  return { assetId: asset.assetId, symbol: asset.symbol, name: asset.name, decimals: asset.decimals, mint: asset.mint }
+}
+
 // The columns a reservation stamps for a resolved quote (all null for SOL, migration 0053).
 export function quoteStamp(quote) {
   if (!quote || quote.type === 'SOL') return { quoteAssetId: null, quoteMint: null, quoteRegistryVersion: null }

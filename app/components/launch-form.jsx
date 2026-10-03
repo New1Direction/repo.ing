@@ -6,7 +6,7 @@ import { TokenImagePicker } from './token-image-picker'
 import { useWallet } from './wallet'
 import { LaunchSuccess } from './launch-success'
 import { TransactionStatus } from './ui'
-import { launchDraftKey, readLaunchDraft, saveLaunchDraft } from '../lib/launch-draft.mjs'
+import { launchDraftKey, readLaunchDraft, restoredPair, saveLaunchDraft } from '../lib/launch-draft.mjs'
 import { formatUnits, parseUnits } from '../lib/format.mjs'
 import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../lib/launch-defaults.mjs'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
@@ -46,6 +46,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [copied, setCopied] = useState(false)
   const [draftReady, setDraftReady] = useState(null)
   const [draftRestored, setDraftRestored] = useState(false)
+  const [pairDropped, setPairDropped] = useState(false)
   const [busy, setBusy] = useState(false)
   const working = useRef(false)
   const [choice, setChoice] = useState(draft?.initialBuy ?? 'none')
@@ -76,16 +77,20 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   useEffect(() => {
     let saved=null
     try { if(!draft) saved=readLaunchDraft(window.sessionStorage,repo.repoId) } catch {}
-    if(saved){setName(saved.name);setSymbol(saved.symbol);setChoice(saved.choice);setCustomBuy(saved.customBuy);setTokenImage(saved.tokenImage);setDraftRestored(true)}
+    if(saved){
+      const pair=restoredPair(saved,stockPair?.assetId)
+      setName(saved.name);setSymbol(saved.symbol);setChoice(saved.choice);setCustomBuy(saved.customBuy);setTokenImage(saved.tokenImage)
+      setQuoteAssetId(pair.quoteAssetId);setPairDropped(pair.pairDropped);setDraftRestored(true)
+    }
     setDraftReady(repo.repoId)
   }, [repo.repoId, draft])
   useEffect(() => {
     if(draftReady!==repo.repoId)return
     try {
       if(launched)window.sessionStorage.removeItem(launchDraftKey(repo.repoId))
-      else saveLaunchDraft(window.sessionStorage,repo.repoId,{name,symbol,choice,customBuy,tokenImage})
+      else saveLaunchDraft(window.sessionStorage,repo.repoId,{name,symbol,choice,customBuy,quoteAssetId,tokenImage})
     }catch{}
-  }, [draftReady,repo.repoId,name,symbol,choice,customBuy,tokenImage,launched])
+  }, [draftReady,repo.repoId,name,symbol,choice,customBuy,quoteAssetId,tokenImage,launched])
   async function checkLaunchStatus(){
     setBusy(true)
     try{
@@ -180,6 +185,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image}/>
   return <form className="launch-panel" onSubmit={prepare}>
     {draftRestored && <p className="form-fineprint" role="status">Your saved launch details have been restored. Review current costs before signing.</p>}
+    {pairDropped && <p className="form-fineprint" role="status">The stock pair you chose before is not offered for this repository right now, so this launch is paired with SOL.</p>}
     {draft && <p className="agent-review-note" role="status">Prepared with an agent. Review these details, choose an image, and approve the final costs in your wallet. Your signing wallet receives discovery attribution.</p>}
     <div className="launch-columns">
       <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review}>
@@ -201,7 +207,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
             <TokenImagePicker repoId={repo.repoId} value={tokenImage} onChange={setTokenImage} onBusyChange={setImageBusy} disabled={busy || !!review} subject={model ? 'model' : 'repository'}/>
           </div>
         </details>
-        {stockPair && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setError('') }}/>}
+        {stockPair && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setPairDropped(false); setError('') }}/>}
         {stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className="launch-buy-presets" role="group" aria-label="Initial token allocation">

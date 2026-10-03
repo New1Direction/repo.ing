@@ -189,6 +189,8 @@ These GET endpoints return the same body for every visitor (they read no cookie,
 | `/api/market/<mint>/metrics` | 10 s, stale 20 s | `no-store` when the chain read failed. |
 | `/api/repo-search` (GET) | 15 s, stale 45 s | The POST search is never cached. |
 | `/api/growth` | 15 s, stale 45 s | |
+| `/api/repos/<repoId>/quote-options` | 60 s | Stock pairs (docs/STOCK_QUOTES.md). Not in the Cloudflare rule below, so only the origin headers apply. |
+| `/api/quote-assets/<assetId>` | 30 s | A stock pair's display multiplier and USD price for the trade panel. Not in the Cloudflare rule below. |
 
 Cloudflare does not cache JSON unless a Cache Rule makes it eligible. In the Cloudflare dashboard (nothing here changes Cloudflare automatically):
 

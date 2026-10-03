@@ -5,6 +5,7 @@ import { nextSlippagePreset, slippageLabel } from '../../src/trade-slippage.mjs'
 import { ShareOnX } from './share-on-x'
 import Link from 'next/link'
 import { XHandleLink, hasXHandle } from './x-handle-link'
+import { shownUnits } from '../lib/trade-units.mjs'
 
 // A swap that failed on its minimum output (reason 'slippage'): either refused before it was sent (notSubmitted, nothing
 // spent) or rejected on chain (failed, only the network fee spent). One tap retries it at the next preset up.
@@ -18,7 +19,9 @@ function slippageCopy(result, action) {
 
 // xLink: the trading wallet's linked X account (its confirmed trade shows as that @handle in the market's trades).
 // xNudge: Connect X is on and the wallet has not linked an account, so a confirmed trade suggests it.
-export function TradeResultCard({ result, symbol, mint, fullName, source, onClose, onCheck, onRetry = null, xLink = null, xNudge = false }) {
+// quoteUnits: a stock pair's units (app/lib/trade-units.mjs); a confirmed sell then reports the stock received, as wallets show it.
+export function TradeResultCard({ result, symbol, mint, fullName, source, onClose, onCheck, onRetry = null, xLink = null, xNudge = false,
+  quoteUnits = null }) {
   if (!result) return null
   const { state, direction, signature } = result
   const action = direction === 'buy' ? 'Buy' : 'Sell'
@@ -32,7 +35,9 @@ export function TradeResultCard({ result, symbol, mint, fullName, source, onClos
   const message = slippage ? slippage.message : confirmed
     ? direction === 'buy'
       ? `Received ${formatUnits(result.tokenDelta, 6, 4)} ${symbol}.`
-      : `Your wallet gained ${formatSolDisplay(result.solDelta)} SOL after transaction costs.`
+      : quoteUnits && result.quoteDelta !== undefined
+        ? `Received ${formatUnits(shownUnits(result.quoteDelta, quoteUnits), quoteUnits.decimals, 4)} ${quoteUnits.symbol}.`
+        : `Your wallet gained ${formatSolDisplay(result.solDelta)} SOL after transaction costs.`
     : state === 'chainConfirmed' ? 'The transaction succeeded on Solana. Market details and balances may take a moment to update.'
       : state === 'pending' ? 'The signed transaction has no final result yet. Please wait before trying the same trade again.'
         : state === 'expired' ? 'The transaction was not confirmed before its blockhash expired. No swap was recorded.'

@@ -34,9 +34,7 @@ export async function estimateTradeCosts(connection, prepared) {
     creations.length ? connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE) : 0,
     creations.length ? connection.getMultipleAccountsInfo(creations.map(ix => ix.keys[1].pubkey), 'confirmed') : [],
     creations.some(stockAccount) ? stockAccountRent(connection, quoteMint) : 0,
-    // No account holds nothing; an RPC failure is not a zero balance, so it fails the estimate instead.
-    quoteAccount ? connection.getAccountInfo(quoteAccount, 'confirmed').then(info => info && info.owner.equals(TOKEN_2022_PROGRAM_ID)
-      ? unpackAccount(quoteAccount, info, TOKEN_2022_PROGRAM_ID).amount : 0n) : null,
+    quoteAccount ? tokenAccountAmount(connection, quoteAccount, TOKEN_2022_PROGRAM_ID) : null,
   ])
   let accountDeposits = 0n, refundableDeposit = 0n
   creations.forEach((ix, i) => {
@@ -65,6 +63,13 @@ export async function estimateTradeCosts(connection, prepared) {
   if (!quoteMint) return costs
   const spend = prepared.direction === 'buy' ? BigInt(prepared.amountIn) : 0n, held = quoteHeld
   return { ...costs, quoteMint: quoteMint.toBase58(), quoteBalance: String(held), quoteShortfall: String(spend > held ? spend - held : 0n) }
+}
+
+// Raw units held by a token account under `programId`. No account holds nothing; an RPC failure throws, because a failed
+// read is never a zero balance.
+export async function tokenAccountAmount(connection, account, programId) {
+  const info = await connection.getAccountInfo(account, 'confirmed')
+  return info && info.owner.equals(programId) ? unpackAccount(account, info, programId).amount : 0n
 }
 
 // The account extensions Token-2022 adds when an associated account for a mint is created: ImmutableOwner, plus the one each of

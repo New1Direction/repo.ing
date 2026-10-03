@@ -12,6 +12,7 @@ import { ActivityFeed } from '../../../components/activity-feed'
 import { DiscoveryRewards } from '../../../components/discovery-rewards'
 import { CopyAddress } from '../../../components/copy-address'
 import { marketByMint, displayFeeStatus, tradeAvailable, listMarkets, graduationRace, database } from '../../../lib/server.mjs'
+import { marketQuoteView } from '../../../../src/quote-assets.mjs'
 import { signedPayoutWallet } from '../../../lib/official-launch.mjs'
 import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
 import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
@@ -139,7 +140,7 @@ export default async function Token({ params, searchParams }) {
       <Link className={activity ? 'active' : ''} href={`/token/${mint}?view=activity`}>Activity</Link>
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
-      <MarketTrading key={market.mint} market={market} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
+      <MarketTrading key={market.mint} market={market} quote={marketQuoteView(market)} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
         aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<BuildingLive stream={stream}/><TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}

@@ -177,7 +177,7 @@ async function singleMarket(column, value) {
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.pool,
       m.token_name as "tokenName", m.token_symbol as symbol, m.indexed_at as "indexedAt",
       m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
-      m.verification_bonus_lamports::text as "verificationBonusLamports",
+      m.verification_bonus_lamports::text as "verificationBonusLamports", m.quote_asset_id as "quoteAssetId", m.quote_mint as "quoteMint",
       r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.source,
       r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt", b.method as "beneficiaryMethod",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
