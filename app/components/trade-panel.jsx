@@ -372,7 +372,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
     ? { loading: solBalanceLoading, error: solBalanceError, label: solBalance === null ? null : `${formatSolDisplay(solBalance)} SOL`, exact: solBalance === null ? undefined : `${formatUnits(solBalance, 9)} SOL` }
     : { loading: balanceLoading, error: balanceError, label: balance === null ? null : `${tokenBalanceLabel(balance)} ${market.symbol}`, exact: balance === null ? undefined : `${formatUnits(balance, 6)} ${market.symbol}` }
   const costNote = costs
-    ? BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction.` : ''
+    ? `${BigInt(costs.refundableDeposit) > 0n ? `${formatUnits(costs.required)} SOL needed up front; the temporary deposit returns in this transaction. ` : ''}Estimate checked again before signing.`
     : !(liveQuote || preparedCosts) ? '' : !wallet ? 'Connect a wallet to see network fees and account deposits.'
       : currentCosts?.loading ? 'Checking network fees and account deposits…' : 'Network cost estimate unavailable. Checked again before wallet approval.'
   const submitLabel = tradeButtonLabel({ direction, symbol: market.symbol, validAmount, buyExceedsBalance, sellExceedsBalance, costShortfall })
@@ -413,6 +413,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null }
       {(minimumReceive || liveQuote || costs) && <dl className="trade-details">
         {minimumReceive && <div><dt title={`The trade fails instead of filling below this (${slippageLabel(shownSlippage)} max slippage). Refreshed before wallet confirmation.`}>Minimum received</dt>
           <dd title={`${formatUnits(minimumReceive, receiveDecimals)} ${receiveUnit}`}>{quoteAmountLabel(minimumReceive, receiveDecimals)} {receiveUnit}</dd></div>}
+        {minimumReceive && shownSlippage !== slippageBps && <div><dt>Max slippage <small>(this trade)</small></dt><dd>{slippageLabel(shownSlippage)}</dd></div>}
         {liveQuote && <>
           <div><dt title="Difference between the fee-excluded execution price and current pool spot price">Price impact</dt><dd className={liveQuote.priceImpactPercent >= 5 ? 'is-high' : undefined}>{Number.isFinite(liveQuote.priceImpactPercent) ? `${liveQuote.priceImpactPercent.toFixed(2)}%` : '—'}</dd></div>
           <div><dt>Trading fee <small>(included)</small></dt><dd>{formatSolDisplay(liveQuote.tradingFeeLamports)} SOL</dd></div>

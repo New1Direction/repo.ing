@@ -81,6 +81,7 @@
    amount, so a row keeps its height (components/recent-trades.jsx). */
 .recent-trades .recent-trade-x{order:3;flex:none;margin-left:auto;font-size:12px}
 .recent-trades .recent-trade-x>img{width:16px;height:16px}
+.recent-trades .recent-trade-x:focus-visible{outline-offset:-2px}
 @media(max-width:700px){
   .recent-trades .recent-trade-amount{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;column-gap:8px}
   .recent-trades .recent-trade-amount small{grid-column:1/-1}
