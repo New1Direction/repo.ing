@@ -2,7 +2,9 @@ import { Suspense } from 'react'
 import Link from 'next/link'
 import { Ban, BadgeCheck, CalendarClock, CircleDashed, Coins, Info, PieChart, Rocket, Sprout, Timer } from 'lucide-react'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
-import { XHandle } from './x-handle'
+import { hasXHandle } from './x-handle-link'
+import { WalletIdentity } from './wallet-identity'
+import { xHandleFor } from '../lib/x-links.mjs'
 import { holderSnapshot, launcherSummary } from '../lib/trust-panel.mjs'
 import { graduationLabel, launcherLines, maintainerStatus, percentLabel, TOP_HOLDERS } from '../../src/trust-signals.mjs'
 import { holdingLabel, shortWallet } from '../lib/holder-note-format.mjs'
@@ -74,10 +76,12 @@ async function LauncherRow({ market }) {
   const ownWallet = Boolean(signed) && summary.wallet === signed
   const pastedPayout = !ownWallet && Boolean(market.beneficiaryWallet) && summary.wallet === market.beneficiaryWallet
   const label = ownWallet ? (isModelMarket(market) ? "Owner's payout wallet" : "Maintainer's payout wallet") : pastedPayout ? 'Pasted payout address' : summary.label?.kind === 'builder' ? null : summary.label?.label
+  // A launcher who linked X is shown as that account; otherwise the short address, linking to Solscan.
+  const link = await xHandleFor(summary.wallet).catch(() => null)
   const who = <span className="trust-who">
-    <a href={`https://solscan.io/account/${summary.wallet}`} target="_blank" rel="noreferrer" title={summary.wallet}>
-      <code>{shortWallet(summary.wallet)}</code><span className="sr-only"> (view on Solscan)</span></a>
-    <Suspense fallback={null}><XHandle wallet={summary.wallet} trust={ownWallet} className="trust-x"/></Suspense>
+    {hasXHandle(link) ? <WalletIdentity wallet={summary.wallet} link={link} trust={ownWallet} className="trust-x"/>
+      : <a href={`https://solscan.io/account/${summary.wallet}`} target="_blank" rel="noreferrer" title={summary.wallet}>
+        <code>{shortWallet(summary.wallet)}</code><span className="sr-only"> (view on Solscan)</span></a>}
     {label && <span className="trust-label">{label}</span>}
   </span>
   return launcherRow({ title: lines.title, lines: [who, lines.launch, lines.sold] })

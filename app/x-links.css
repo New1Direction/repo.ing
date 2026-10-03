@@ -7,6 +7,22 @@
 .x-handle:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:3px}
 .x-handle-check{flex:none;display:inline-grid;place-items:center;width:14px;height:14px;border-radius:50%;background:color-mix(in srgb,var(--green) 22%,transparent);color:var(--green);font-size:9px;font-weight:800}
 
+/* A wallet shown as its linked X account (avatar and @handle) or, without one, its short copyable address; the Solscan
+   arrow keeps the full address one click away (components/wallet-identity.jsx). */
+.wallet-identity{display:inline-flex;align-items:center;gap:2px;min-width:0;max-width:100%}
+.wallet-identity.has-x{gap:5px}
+.wallet-identity.has-x .x-handle{font-size:13px}
+.wallet-identity.has-x .x-handle>img{width:20px;height:20px}
+.wallet-identity .copy-address{position:relative;gap:6px;padding:3px 4px 3px 7px;border-color:var(--border);border-radius:6px;background:var(--surface2);color:var(--muted)}
+.wallet-identity .copy-address:hover{border-color:var(--border-strong);background:var(--surface2);color:var(--text)}
+.wallet-identity .copy-address code{font-size:11.5px}
+.wallet-identity .copy-address-action{padding:3px;background:none;color:inherit}
+.wallet-identity .copy-address-action svg{width:13px;height:13px}
+.wallet-identity .copy-address-action span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.wallet-identity-solscan{flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--dim)}
+.wallet-identity-solscan:hover{color:var(--text);background:var(--surface2)}
+.wallet-identity-solscan:focus-visible{outline:2px solid var(--green);outline-offset:1px}
+
 .holder-note-who{display:inline-flex;align-items:baseline;gap:7px;min-width:0}
 .holder-note-who .x-handle{font-size:12px;align-self:center}
 .holder-note-x{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
@@ -46,3 +62,17 @@
 [data-theme=light] .x-handle-check{color:var(--green-dark)}
 [data-theme=light] .x-account-warning{border-color:#e2c39a;background:#fdf6ec;color:#5b5041}
 [data-theme=light] .x-account-warning strong{color:#3b2f1f}
+
+/* Header: a connected wallet that linked X shows its avatar and @handle, and its menu suggests Connect X until then
+   (components/wallet.jsx). */
+.wallet-button img.wallet-button-avatar{border-radius:50%;object-fit:cover}
+.wallet-button.connected>span{max-width:16ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wallet-account-heading>img.wallet-account-avatar{border-radius:50%;object-fit:cover}
+.wallet-account-heading>div{min-width:0}
+.wallet-account-heading strong,.wallet-account-heading span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wallet-menu-x{height:auto;padding:9px 4px;gap:12px;text-align:left}
+.wallet-menu-x>span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.wallet-menu-x strong{display:inline-flex;align-items:center;gap:7px;font-size:14px;font-weight:650}
+.wallet-menu-x small{color:var(--muted);font-size:12px;font-weight:400;line-height:1.35}
+@media(max-width:700px){.wallet-button.connected>span{max-width:11ch}}
+.activity-detail .activity-x{margin-right:9px;font-size:12.5px}

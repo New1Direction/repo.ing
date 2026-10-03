@@ -5,6 +5,7 @@ import { ArrowUpRight, RefreshCw } from 'lucide-react'
 import { formatCents, formatTokenAmount, formatUnits, formatSolDisplay } from '../lib/format.mjs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { ContentSkeleton } from './loading-skeleton'
+import { XHandleLink } from './x-handle-link'
 
 const tokenAmount = raw => BigInt(raw) > 0n && BigInt(raw) < 10_000n ? '<0.01' : formatUnits(raw, 6, 2)
 
@@ -37,13 +38,13 @@ export function ActivityFeed({ mint, symbol }) {
     const stop = visiblePolling(refresh, 30_000)
     return () => { active = false; controller.abort(); stop() }
   }, [mint, refreshKey])
-  return <section className="activity-card" aria-label="Repository market activity"><div className="activity-heading"><div><h2>Activity</h2><p>Finalized trades, creator fees, and settled payouts from this market.</p></div><button type="button" className="button outline" disabled={loading} onClick={() => setRefreshKey(value => value + 1)}><RefreshCw size={15} className={loading ? 'is-spinning' : ''}/>{loading ? 'Updating…' : 'Refresh'}</button></div>
+  return <section className="activity-card" aria-label="Repository market activity"><div className="activity-heading"><div><h2>Activity</h2><p>Finalized trades, creator fees, and settled payouts from this market. Traders who linked X show as their account.</p></div><button type="button" className="button outline" disabled={loading} onClick={() => setRefreshKey(value => value + 1)}><RefreshCw size={15} className={loading ? 'is-spinning' : ''}/>{loading ? 'Updating…' : 'Refresh'}</button></div>
     {error && <p className="activity-message" role="alert">Activity is temporarily unavailable. You can retry or return later.</p>}
     {!error && events === null && <ContentSkeleton label="Loading finalized activity" rows={4}/>}
     {!error && events?.length === 0 && <p className="activity-message">No finalized activity yet. Trades and fee payouts appear here once indexed.</p>}
     {events?.length > 0 && <div className="activity-list">{events.map((event, index) => {
       const copy = eventText(event, symbol)
-      return <div className="activity-row" key={`${event.type}-${event.signature ?? event.ref}-${event.eventIndex ?? index}`}><span className={`activity-type ${event.type}`}>{copy.label}</span><span className="activity-detail">{copy.detail}</span><time dateTime={event.occurredAt} title={new Date(event.occurredAt).toLocaleString()}>{new Date(event.occurredAt).toLocaleString()}</time>
+      return <div className="activity-row" key={`${event.type}-${event.signature ?? event.ref}-${event.eventIndex ?? index}`}><span className={`activity-type ${event.type}`}>{copy.label}</span><span className="activity-detail">{event.x && <XHandleLink link={event.x} avatar className="activity-x"/>}{copy.detail}</span><time dateTime={event.occurredAt} title={new Date(event.occurredAt).toLocaleString()}>{new Date(event.occurredAt).toLocaleString()}</time>
         {event.signature ? <a href={`https://explorer.solana.com/tx/${event.signature}`} target="_blank" rel="noopener noreferrer" aria-label={`View ${copy.label.toLowerCase()} transaction on Solana Explorer`}>Explorer<ArrowUpRight size={14}/></a>
           : <a href={`/token/${encodeURIComponent(mint)}#parts-update-${event.ref}`} aria-label="Open this build update on the market page">View<ArrowUpRight size={14}/></a>}</div>
     })}</div>}

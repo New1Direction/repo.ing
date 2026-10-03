@@ -4,7 +4,7 @@ import { useWallet } from './wallet'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { formatAgo } from '../lib/buyback-summary.mjs'
 import { NOTE_MAX, holdingLabel, shortWallet } from '../lib/holder-note-format.mjs'
-import { XHandleLink } from './x-handle-link'
+import { XHandleLink, hasXHandle } from './x-handle-link'
 
 async function call(url, init) {
   const response = await fetch(url, { cache: 'no-store', ...init })
@@ -18,7 +18,8 @@ const merge = (current, next) => [...current, ...next.filter(n => !current.some(
 function Note({ note, symbol }) {
   return <li className="holder-note">
     <p className="holder-note-body">{note.body}</p>
-    <p className="holder-note-meta"><span className="holder-note-who"><XHandleLink link={note.x}/><span className="holder-note-wallet" title={note.wallet}>{shortWallet(note.wallet)}</span></span>
+    <p className="holder-note-meta"><span className="holder-note-who" title={note.wallet}>{hasXHandle(note.x) ? <XHandleLink link={note.x} avatar/>
+      : <span className="holder-note-wallet">{shortWallet(note.wallet)}</span>}</span>
       <span className={note.sold ? 'holder-note-hold is-sold' : 'holder-note-hold'}>{note.sold ? 'sold' : `holds ${holdingLabel(note.balance)} $${symbol}`}</span>
       <time dateTime={note.updatedAt} suppressHydrationWarning>{formatAgo(note.updatedAt)}</time></p>
   </li>
