@@ -1,17 +1,17 @@
 import { isGithubRepoId, isMarketId } from '../../src/market-identity.mjs'
-import { QUOTE_REGISTRY, quoteOptions, stockQuotesEnabled } from '../../src/quote-assets.mjs'
+import { QUOTE_REGISTRY, quoteOptions, stockPairsLaunchable } from '../../src/quote-assets.mjs'
 import { repositoryById } from './server.mjs'
 
-// The pairs a repository can launch with (GET /api/repos/<repoId>/quote-options, and the launch page). With stock pairs off,
-// or for a Hugging Face model, the answer is SOL alone and GitHub is not read. Otherwise the owner comes from a live GitHub
-// read (repositoryById): when GitHub cannot confirm the owner id, only SOL is offered. Each answer, a miss (null) included,
-// is kept 60 s per repository and concurrent requests share one read, so the endpoint spends at most one GitHub read per
-// repository per minute and process.
+// The pairs a repository can launch with (GET /api/repos/<repoId>/quote-options, and the launch page). While stock pairs
+// cannot be launched (the switch is off, or the code's readiness gate is closed) and for a Hugging Face model, the answer is
+// SOL alone and GitHub is not read. Otherwise the owner comes from a live GitHub read (repositoryById): when GitHub cannot
+// confirm the owner id, only SOL is offered. Each answer, a miss (null) included, is kept 60 s per repository and concurrent
+// requests share one read, so the endpoint spends at most one GitHub read per repository per minute and process.
 const TTL_MS = 60_000
 const MAX_CACHED = 2000
 const cache = globalThis.__repoingQuoteOptions ??= new Map()
 
-export async function quoteOptionsForRepo(repoId, { enabled = stockQuotesEnabled(), load = repositoryById, registry = QUOTE_REGISTRY,
+export async function quoteOptionsForRepo(repoId, { enabled = stockPairsLaunchable(), load = repositoryById, registry = QUOTE_REGISTRY,
   now = Date.now() } = {}) {
   if (!isMarketId(repoId)) return null
   const id = String(repoId)

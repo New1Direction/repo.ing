@@ -12,6 +12,7 @@ import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../l
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
 import { verificationBonusTerms } from '../lib/verification-bonus-copy.mjs'
 import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
+import '../launch-pair.css'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
 const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: true,
@@ -27,8 +28,14 @@ async function launchRequest(body) {
 // verificationBonus: lamports this launch would be stamped with (VERIFICATION_BONUS_LAMPORTS), or null.
 // A Hugging Face model market (repo.source 'huggingface', app/components/hf/model-launch.jsx) is prepared by its market id
 // and registry _id (repo.hfId), and its review carries the community-launch disclaimer.
-export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee = null, verificationBonus = null }) {
+// quoteOptions: the pairs the server offers this repository (src/quote-assets.mjs quoteOptions). The pair chooser appears only
+// when an eligible stock pair is among them; the launch then sends the chosen quoteAssetId and nothing else about it.
+export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee = null, verificationBonus = null,
+  quoteOptions = null }) {
   const model = repo.source === 'huggingface'
+  const stockPair = model ? null : quoteOptions?.find(option => option.type === 'TOKENIZED_EQUITY' && option.eligible) ?? null
+  const [quoteAssetId, setQuoteAssetId] = useState('sol')
+  const pairRequest = stockPair && quoteAssetId === stockPair.assetId ? { quoteAssetId } : {}
   const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
@@ -52,7 +59,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   // Agent drafts ask the user to confirm an image, so they start expanded.
   const [customizing, setCustomizing] = useState(!!draft)
   const { wallet, connect, provider } = useWallet()
-  const quoteKey = choice === 'custom' ? `custom:${customBuy}` : choice
+  const quoteKey = `${quoteAssetId}:${choice === 'custom' ? `custom:${customBuy}` : choice}`
   const noBuy = choice === 'none' || (choice === 'custom' && /^(?:0+(?:\.0*)?)?$/.test(customBuy.trim()))
   const quote = !noBuy && buyQuote?.key === quoteKey ? buyQuote : null
   const quoteError = !noBuy && buyError?.key === quoteKey ? buyError.message : ''
@@ -94,7 +101,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     const timer = window.setTimeout(async () => {
       try {
         const body = choice === 'custom' ? { initialBuyLamports: parseUnits(customBuy.trim(), 9) } : { supplyBps: Number(choice) }
-        const result = await launchRequest({ action: 'quote', ...body })
+        const result = await launchRequest({ action: 'quote', ...body, ...pairRequest })
         if (active) { setBuyQuote({ ...result, key: quoteKey }); setBuyError(null) }
       } catch (cause) {
         if (active) { setBuyQuote(null); setBuyError({ key: quoteKey, message: cause.message || 'Quote unavailable' }) }
@@ -136,7 +143,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         tokenName: name, tokenSymbol: symbol, tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports }
         : { action: 'prepare', repoId: repo.repoId, trendRevision, agentDraft: draft?.token,
           repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
-          tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports })
+          tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports, ...pairRequest })
       setReview({ ...result, wallet: address, quote }); setStage('')
     } catch (cause) { setError(cause.message || 'Could not prepare launch'); setFailure({canRetry:cause.canRetry??true,supportCode:cause.supportCode??'LAUNCH-CONNECTION'}); setStage('Failed') }
     finally { working.current = false; setBusy(false) }
@@ -190,6 +197,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
             <TokenImagePicker repoId={repo.repoId} value={tokenImage} onChange={setTokenImage} onBusyChange={setImageBusy} disabled={busy || !!review} subject={model ? 'model' : 'repository'}/>
           </div>
         </details>
+        {stockPair && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setError('') }}/>}
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className="launch-buy-presets" role="group" aria-label="Initial token allocation">
           {[[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]].map(([value, label]) =>
@@ -233,4 +241,27 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     <TransactionStatus stage={stage} error={error}/>
     {failure && <div className="launch-recovery"><p className="form-fineprint">{failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
   </form>
+}
+
+// Choose pair: SOL (the default) or the stock of the company that owns this repository. The note names the instrument and
+// its issuer's restriction without mentioning protocol liquidity, which belongs to the market page.
+function LaunchPair({ pair, symbol, value, onChange }) {
+  const stock = value === pair.assetId
+  return <fieldset className="launch-pair">
+    <legend className="field-label">Choose pair</legend>
+    <div className="launch-pair-options">
+      <label className={`launch-pair-option${stock ? '' : ' is-selected'}`}>
+        <input type="radio" name="quote-asset" value="sol" checked={!stock} onChange={() => onChange('sol')}/>
+        <span className="launch-pair-symbol">SOL</span><small>Default</small>
+      </label>
+      <label className={`launch-pair-option${stock ? ' is-selected' : ''}`}>
+        <input type="radio" name="quote-asset" value={pair.assetId} checked={stock} onChange={() => onChange(pair.assetId)}/>
+        <span className="launch-pair-symbol">{pair.symbol}</span><small>{pair.company}</small>
+        <small className="launch-pair-why">Available because this repo belongs to {pair.githubOrg}</small>
+      </label>
+    </div>
+    {stock && <p className="launch-pair-note" role="note"><strong>${symbol || 'TICKER'} / {pair.symbol}</strong> trades and pays its fees in {pair.symbol},
+      tokenized {pair.company} stock{pair.provider === 'backed-xstocks' ? ' issued by Backed (xStocks), which are not available to U.S. persons' : ''}.
+      Not affiliated with or endorsed by {pair.company}.</p>}
+  </fieldset>
 }

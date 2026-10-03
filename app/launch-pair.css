@@ -1,0 +1,17 @@
+/* Choose pair on the launch form (components/launch-form.jsx): SOL or the owning company's stock, as two radio cards. */
+.launch-pair{min-width:0;margin:18px 0 4px;padding:0;border:0}
+.launch-pair legend{padding:0;margin-bottom:8px}
+.launch-pair-options{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr);gap:10px}
+.launch-pair-option{position:relative;display:flex;flex-direction:column;gap:2px;min-width:0;padding:12px 14px 12px 40px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);cursor:pointer;transition:border-color .15s,background-color .15s}
+.launch-pair-option input{position:absolute;top:15px;left:14px;width:16px;height:16px;margin:0;accent-color:var(--green)}
+.launch-pair-option:hover{border-color:var(--green)}
+.launch-pair-option:has(input:focus-visible){outline:2px solid var(--green);outline-offset:2px}
+.launch-pair-option.is-selected{border-color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface))}
+.launch-pair-symbol{color:var(--text);font-size:15px;font-weight:700;letter-spacing:.01em}
+.launch-pair-option small{color:var(--muted);font-size:12px;line-height:1.35}
+.launch-pair-option small.launch-pair-why{color:var(--dim)}
+.launch-pair-note{margin:10px 0 0;color:var(--muted);font-size:12px;line-height:1.5}
+.launch-pair-note strong{color:var(--text)}
+.launch-fieldset:disabled .launch-pair-option{cursor:default;opacity:.7}
+@media(max-width:700px){.launch-pair-options{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.launch-pair-option{transition:none}}

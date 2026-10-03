@@ -23,6 +23,7 @@ import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource
   registeredModel } from '../../../src/hf-launch.mjs'
 import { hfClient } from '../../lib/hf-client.mjs'
 import { MODEL_LOOKUP_LIMITED, takeModelLookup } from '../../lib/hf-launch.mjs'
+import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairsLaunchable } from '../../../src/quote-assets.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -31,6 +32,13 @@ const safeError = (error, action) => {
   const result=launchFailure(error,action),supportCode=`LAUNCH-${result.code}-${randomUUID().slice(0,8)}`
   console.warn('launch_request_failed',{supportCode,action,code:result.code})
   return Response.json({...result,supportCode},{status:400,headers:{'Cache-Control':'no-store'}})
+}
+
+// The pair a launch asks for (docs/STOCK_QUOTES.md). Only SOL launches are wired so far, so every other pair is refused here
+// with its code, before anything is read or reserved; nothing ever falls back from a stock pair to SOL.
+function assertSolLaunch(body) {
+  const quote = resolveQuoteAsset(body.quoteAssetId, null, { enabled: stockPairsLaunchable() })
+  if (quote !== SOL_QUOTE) throw new QuoteAssetError(QUOTE_ERRORS.UNSUPPORTED_QUOTE_ASSET, 'Stock pairs are not available yet.')
 }
 
 // A Hugging Face model market (src/hf-launch.mjs): the repository review, keyed by the model's market id. The browser names
@@ -88,6 +96,7 @@ export async function POST(request) {
     const body = JSON.parse((await readLimitedBody(request, 600_000)).toString('utf8'))
     action = ['quote','cancel','prepare','submit'].includes(body.action) ? body.action : 'unknown'
     if (body.action === 'quote') {
+      assertSolLaunch(body)
       const config = configAddress()
       if (!config) throw new Error('Launch config is unavailable')
       const dbc = new DynamicBondingCurveClient(chain(), 'confirmed')
@@ -110,6 +119,7 @@ export async function POST(request) {
       }
       return Response.json({ cancelled: true })
     }
+    if (body.action === 'prepare') assertSolLaunch(body)
     if (body.action === 'prepare' && isHfMarketId(body.repoId)) return await prepareModelLaunch(request, body)
     if (body.action === 'prepare') {
       if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
