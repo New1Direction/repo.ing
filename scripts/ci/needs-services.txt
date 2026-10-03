@@ -16,6 +16,8 @@ graduation-guards
 graduation-migration
 graduation-race-db
 graduation-readiness
+hf-allocation-chain
+hf-allocation-db
 hf-claim-chain
 hf-claims-db
 hf-launch-chain
