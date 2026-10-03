@@ -59,15 +59,16 @@ if (!existsSync(keyPath)) {
 const configSigner = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(readFileSync(keyPath, 'utf8'))))
 const config = configSigner.publicKey.toBase58()
 
-const { tx, instructionSha256 } = await buildStockQuoteConfigTransaction({ connection, config, asset, graduation, partner: PARTNER,
+const { tx, curve, instructionSha256 } = await buildStockQuoteConfigTransaction({ connection, config, asset, graduation, partner: PARTNER,
   leftoverReceiver: LEFTOVER_RECEIVER })
-const review = await reviewStockQuoteConfig({ connection, tx, config, payer: PARTNER, reference: REFERENCE_CONFIG, asset, graduation })
+const review = await reviewStockQuoteConfig({ connection, tx, config, payer: PARTNER, reference: REFERENCE_CONFIG, asset, graduation, curve })
 const sol = lamports => `${(Number(lamports) / 1e9).toFixed(6)} SOL`
 const reviewed = { network: 'mainnet', asset: asset.assetId, quoteMint: asset.mint, config, partner: PARTNER, leftoverReceiver: LEFTOVER_RECEIVER,
   referenceConfig: REFERENCE_CONFIG, graduationThreshold: `${graduation} ${asset.symbol}`,
-  inPlainWords: `Creates the Meteora settings account that new <repo> / ${asset.symbol} markets launch on. Same terms as today's SOL ` +
+  inPlainWords: `Creates the Meteora settings account that new <repo> / ${asset.symbol} markets launch on. The same fees as today's SOL ` +
     `launches: 1.75% trading fee with the same launch-fee window, 71% of the fee after Meteora's 20% to builders and 29% to repo.ing, ` +
-    `half of the graduated pool's liquidity permanently locked for each side. Quoted in ${asset.symbol}; a market graduates when its ` +
+    `half of the graduated pool's liquidity permanently locked for each side. Unlike SOL launches it reserves no 1% builder allocation ` +
+    `(stock pairs do not carry it). Quoted in ${asset.symbol}; a market graduates when its ` +
     `curve holds ${graduation} ${asset.symbol}. It holds no funds, launches nothing and changes no market. It costs ` +
     `${sol(review.totalDebitLamports)} (rent and network fee) from the partner wallet.`,
   instructionSha256, accountDataSha256: review.accountDataSha256, accountBytes: review.accountBytes, rentLamports: review.rentLamports,

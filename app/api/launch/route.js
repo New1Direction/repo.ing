@@ -23,8 +23,8 @@ import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource
   registeredModel } from '../../../src/hf-launch.mjs'
 import { hfClient } from '../../lib/hf-client.mjs'
 import { MODEL_LOOKUP_LIMITED, takeModelLookup } from '../../lib/hf-launch.mjs'
-import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, quoteOfMarket, resolveQuoteAsset, stockPairsLaunchable } from '../../../src/quote-assets.mjs'
-import { launchPair, stockMintCheck, stockPairGuard } from '../../lib/stock-launch.mjs'
+import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairsLaunchable } from '../../../src/quote-assets.mjs'
+import { composeGuards, launchPair, marketPairGuard, stockMintCheck, stockPairGuard } from '../../lib/stock-launch.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -44,13 +44,6 @@ function assertSolBuyQuote(body) {
 const stockPairsBuyRefusal = body => stockPairsLaunchable() && typeof body.quoteAssetId === 'string' && body.quoteAssetId !== 'sol' &&
   /^[a-z0-9][a-z0-9-]{1,31}$/.test(body.quoteAssetId)
 
-// After the wallet signed: a stock-paired market (its stamp, src/quote-assets.mjs) is decided again exactly as at prepare.
-// A SOL market needs nothing more.
-const submitPairGuard = (config, connection) => async context => {
-  const quote = quoteOfMarket(context.market)
-  if (quote.type === 'SOL') return
-  await stockPairGuard(quote, config, { mintUsable: stockMintCheck(connection) })(context)
-}
 
 // A Hugging Face model market (src/hf-launch.mjs): the repository review, keyed by the model's market id. The browser names
 // the model by its registry _id (hfId); the server reads it through Hugging Face again at its registry path, and
@@ -184,9 +177,10 @@ export async function POST(request) {
       catch (error) { await store.release(session); throw error }
       const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled() })
       // A model market is checked again after the wallet signed, before anything is sent (src/hf-launch.mjs).
+      // A GitHub launch is decided again by its stamp (a stock pair as at prepare; nothing more for SOL), then by its trend approval.
       const launchGuard = isHfMarketId(session.githubRepoId) ? hfLaunchGuard({ pool, hf: hfClient() })
-        : session.trendRevision === null ? submitPairGuard(config, connection) : trendLaunchGuard({ pool, repoId: session.githubRepoId,
-          revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
+        : composeGuards(marketPairGuard(config, { mintUsable: stockMintCheck(connection) }), session.trendRevision === null ? null
+          : trendLaunchGuard({ pool, repoId: session.githubRepoId, revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() }))
       // Parsed inside the signing step so a malformed body fails the review (market 'failed') like a wallet mismatch.
       const market = await coordinator.submitPrepared({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,
         repo: { githubRepoId: repoId, fullName: session.repoFullName }, prepared, launchGuard,

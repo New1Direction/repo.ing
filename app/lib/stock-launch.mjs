@@ -1,5 +1,5 @@
 import { isGithubRepoId } from '../../src/market-identity.mjs'
-import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairsLaunchable } from '../../src/quote-assets.mjs'
+import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, quoteOfMarket, resolveQuoteAsset, stockPairsLaunchable } from '../../src/quote-assets.mjs'
 import { stockConfigFor } from '../../src/quote-configs.mjs'
 import { resolveRepositoryOwner } from '../../src/github.mjs'
 import { checkTipMint } from '../../src/tip-tokens.mjs'
@@ -53,3 +53,16 @@ export function stockPairGuard(quote, config, { enabled = stockPairsLaunchable, 
     await mintUsable(quote)
   }
 }
+
+// The guard for a launch decided by its reservation's stamp (src/quote-assets.mjs): a stock-paired market is decided again as at
+// prepare; a SOL market needs nothing more. Used after the wallet signed, when only the stamp says which pair it is.
+export function marketPairGuard(config, deps) {
+  return async context => {
+    const quote = quoteOfMarket(context.market)
+    if (quote.type === 'SOL') return
+    await stockPairGuard(quote, config, deps)(context)
+  }
+}
+
+// Several launch guards in order; each must pass.
+export const composeGuards = (...guards) => async context => { for (const guard of guards.filter(Boolean)) await guard(context) }

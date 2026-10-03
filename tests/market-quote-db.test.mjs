@@ -103,6 +103,10 @@ test('migration 0053 leaves SOL markets as they were and guards every stock stam
       await refused(pool, `update markets set quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=1296269`, 'immutable once its launch was sent')
       await refused(pool, `update markets set quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=8`, 'immutable once its launch was sent')
       await refused(pool, `update markets set quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=9`, 'immutable once its launch was sent')
+      // A failed stock attempt's stamp is cleared by a later SOL attempt on the same row (reserve() writes nulls for SOL).
+      await pool.query(`update markets set status='failed', quote_asset_id='meta-xstock', quote_mint=$1, quote_registry_version=1 where github_repo_id=10270250`, [META.mint])
+      await pool.query(`update markets set status='reserved', quote_asset_id=null, quote_mint=null, quote_registry_version=null where github_repo_id=10270250`)
+      assert.deepEqual((await pool.query('select status, quote_asset_id from markets where github_repo_id=10270250')).rows[0], { status: 'reserved', quote_asset_id: null })
       // Nor in the same statement that sends the launch.
       await refused(pool, `update markets set status='submitted', launch_signature='LaunchReact', mint='MintReact', pool='PoolReact', quote_asset_id='meta-xstock', quote_mint='${META.mint}', quote_registry_version=1 where github_repo_id=10270250`, 'immutable once its launch was sent')
       // the stamped reservation, once sent, keeps its stamp; other columns still update

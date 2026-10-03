@@ -19,7 +19,7 @@ import { createLaunchSessionStore, launchSessionKey } from '../src/launch-sessio
 import { createLaunchEvidenceVerifier } from '../src/launch-evidence.mjs'
 import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 import { createMarketConfigResolver } from '../src/market-config.mjs'
-import { buildStockQuoteConfigTransaction, reviewStockQuoteConfig, verifyCreatedStockQuoteConfig } from '../src/stock-quote-config.mjs'
+import { assertStockConfig, buildStockQuoteConfigTransaction, reviewStockQuoteConfig, verifyCreatedStockQuoteConfig } from '../src/stock-quote-config.mjs'
 import { SOL_QUOTE, resolveQuoteAsset } from '../src/quote-assets.mjs'
 import { stockMintCheck, stockPairGuard } from '../app/lib/stock-launch.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
@@ -38,6 +38,11 @@ const HELLO = { id: 1296269, name: 'Hello-World', full_name: 'octocat/Hello-Worl
   avatar_url: null }, description: null, stargazers_count: 1, forks_count: 1, archived: false, private: false, visibility: 'public',
   updated_at: '2026-01-01T00:00:00Z' }
 const github = repo => async () => ({ ok: true, status: 200, json: async () => repo })
+// Every Connection the test opens, so their websockets can be closed (code 1000, which stops rpc-websockets reconnecting)
+// before a validator this test started is stopped; otherwise the reconnect loop keeps the test process alive.
+const connections = []
+const local = () => { const connection = new Connection(RPC, 'confirmed'); connections.push(connection); return connection }
+const closeConnections = () => { for (const connection of connections) { try { connection._rpcWebSocket?.close() } catch {} } }
 
 async function healthy() {
   try { return (await (await fetch(RPC, { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -54,23 +59,35 @@ async function until(read, attempts = 160) {
   return null
 }
 
+// Stops a validator this test started: SIGTERM, wait for it to exit, then remove its work dir.
+async function stopValidator(work) {
+  let pid
+  try { pid = Number(await readFile(join(work, 'validator.pid'), 'utf8')) } catch {}
+  if (pid) {
+    try { process.kill(pid) } catch {}
+    for (let i = 0; i < 40; i++) { try { process.kill(pid, 0) } catch { break } await new Promise(resolve => setTimeout(resolve, 250)) }
+  }
+  await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+}
+
 test('a METAx-paired market launches, verifies and trades on mainnet\'s programs; SOL launches are unchanged', { timeout: 600_000 }, async t => {
+  assert.match(RPC, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/, 'a local validator only')
   // The validator: reuse a running one (STOCK_CHAIN_RPC / STOCK_CHAIN_WORK_DIR), else start one and remove it afterwards.
   let work = process.env.STOCK_CHAIN_WORK_DIR, started = false
-  if (!await healthy()) {
-    work = await mkdtemp(join(tmpdir(), 'repoing-stock-chain-'))
-    const run = spawnSync('scripts/ci/start-stock-validator.sh', [work], { stdio: 'inherit', timeout: 300_000 })
-    assert.equal(run.status, 0, 'stock-pair validator started')
-    started = true
-  }
-  assert.ok(work && existsSync(join(work, 'metax-authority.json')), 'the validator work dir with the METAx test authority')
-  const authority = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(await readFile(join(work, 'metax-authority.json'), 'utf8'))))
-  const connection = new Connection(RPC, 'confirmed')
-  const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const admin = new pg.Pool({ connectionString: URL_.replace(/repoing_stock_pair_chain_test$/, 'postgres') })
   let pool, created = false
   const savedConfigs = process.env.STOCK_QUOTE_CONFIGS
   try {
+    if (!await healthy()) {
+      work = await mkdtemp(join(tmpdir(), 'repoing-stock-chain-'))
+      started = true
+      const run = spawnSync('scripts/ci/start-stock-validator.sh', [work], { stdio: 'inherit', timeout: 300_000 })
+      assert.equal(run.status, 0, 'stock-pair validator started')
+    }
+    assert.ok(work && existsSync(join(work, 'metax-authority.json')), 'the validator work dir with the METAx test authority')
+    const authority = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(await readFile(join(work, 'metax-authority.json'), 'utf8'))))
+    const connection = local()
+    const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
     await admin.query('drop database if exists repoing_stock_pair_chain_test')
     await admin.query('create database repoing_stock_pair_chain_test'); created = true
     pool = new pg.Pool({ connectionString: URL_ })
@@ -84,10 +101,15 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
     const built = await buildStockQuoteConfigTransaction({ connection, config: stockConfig.publicKey.toBase58(), asset: META, graduation: 14,
       partner: partner.publicKey.toBase58(), leftoverReceiver: partner.publicKey.toBase58() })
     const review = await reviewStockQuoteConfig({ connection, tx: built.tx, config: stockConfig.publicKey.toBase58(), payer: partner.publicKey.toBase58(),
-      reference: solConfig.toBase58(), asset: META, graduation: 14 })
+      reference: solConfig.toBase58(), asset: META, graduation: 14, curve: built.curve })
     built.tx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash
     await sendAndConfirmTransaction(connection, built.tx, [partner, stockConfig], { commitment: 'confirmed' })
     assert.ok(await verifyCreatedStockQuoteConfig({ connection, config: stockConfig.publicKey.toBase58(), accountDataSha256: review.accountDataSha256, commitment: 'confirmed' }))
+    // The review also holds the account to the curve it was built from.
+    const coder = dbc.state.getProgram().coder.accounts
+    const referenceDecoded = coder.decode('poolConfig', (await connection.getAccountInfo(solConfig)).data)
+    assert.throws(() => assertStockConfig(review.decoded, referenceDecoded, { asset: META, graduation: 14,
+      curve: { ...built.curve, sqrtStartPrice: built.curve.sqrtStartPrice.addn(1) } }), /differs from the curve it was built from in: sqrtStartPrice/)
     // A review against a config with different terms refuses before anything is signed.
     const { config: flatConfig } = await createFixedConfig(connection, 'balanced')
     const other = Keypair.generate().publicKey.toBase58()
@@ -105,7 +127,7 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       const creatorSecret = Keypair.generate().secretKey, launcherWallet = await funded(connection)
       const replica = () => {
         const creator = Keypair.fromSecretKey(creatorSecret)
-        const launcher = createMeteoraLauncher({ connection: new Connection(RPC, 'confirmed'), config: stockConfig.publicKey, creator, quote: META })
+        const launcher = createMeteoraLauncher({ connection: local(), config: stockConfig.publicKey, creator, quote: META })
         const store = createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
         return { launcher, store, coordinator: createLaunchCoordinator({ pool, launcher, fetchImpl: github(DOCUSAURUS), quote: META,
           discoveryEnabled: true, builderAllocationEnabled: true, verificationBonusLamports: 250_000_000n, pendingReview: m => store.pending(m.id) }) }
@@ -194,9 +216,7 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
     await pool?.end()
     if (created) await admin.query('drop database if exists repoing_stock_pair_chain_test with (force)')
     await admin.end()
-    if (started) {
-      try { process.kill(Number(await readFile(join(work, 'validator.pid'), 'utf8'))) } catch {}
-      await rm(work, { recursive: true, force: true })
-    }
+    closeConnections()
+    if (started) await stopValidator(work)
   }
 })
