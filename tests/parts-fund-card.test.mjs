@@ -97,6 +97,16 @@ test('after a settled missed list the maintainer can add a new one; backers see 
   assert.ok(builder.includes(ADD) && !builder.includes('Robot arm v2'))
 
   fundRow = list({ ...missed, settledAt: new Date(Date.now() - 15 * DAY) })
-  assert.ok(!(await slot(market())).includes('Robot arm v2'), 'stale: gone for visitors')
+  const staleVisitor = await slot(market())
+  assert.ok(!staleVisitor.includes('Robot arm v2') && !staleVisitor.includes(ADD), 'stale: gone for visitors, and no add-on either')
   assert.ok((await slot(market(), session(REPO_ID))).includes(ADD))
+})
+
+test('the Parts tab is gone from the header and the phone menu, and /parts is a permanent redirect to Explore', async () => {
+  const { AppHeader } = await appModule('app/components/ui.jsx')
+  const header = html(h(AppHeader), { wallet: true })
+  assert.ok(header.includes('href="/explore"') && header.includes('id="mobile-nav-panel"'))
+  assert.ok(!header.includes('href="/parts"') && !header.includes('>Parts<'))
+  const { GET } = await appModule('app/(site)/parts/route.js')
+  assert.throws(() => GET(), error => /^NEXT_REDIRECT;\w+;\/explore;308;/.test(error.digest), 'a 308 to /explore, query dropped')
 })
