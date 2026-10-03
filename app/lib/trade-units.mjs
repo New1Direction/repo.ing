@@ -1,27 +1,19 @@
 import { formatUsdValue, parseUnits } from './format.mjs'
+import { parseMultiplier, shownRoundedUp } from '../../src/scaled-ui-amount.mjs'
+
+export { parseMultiplier }
 
 // The units a trade panel's quote side works in (docs/STOCK_QUOTES.md). A SOL market: SOL, 9 decimals, amounts as they are.
 // A stock pair: its symbol and decimals, with amounts shown and typed as wallets show them (Token-2022 ScaledUiAmount:
 // raw × multiplier, truncated) and converted back to raw units, rounded down, for every request. The server only ever
 // receives raw units, and a typed or preset amount never spends more than it says.
-export const SOL_UNITS = Object.freeze({ symbol: 'SOL', decimals: 9, stock: false, scale: null, usdPrice: null })
-
-// "1.0028" → { num: 10028n, den: 10000n }. Anything but a plain positive decimal is refused.
-export function parseMultiplier(text) {
-  const match = /^(\d{1,6})(?:\.(\d{1,18}))?$/.exec(String(text ?? ''))
-  if (!match) throw Error('Invalid display multiplier')
-  const fraction = match[2] ?? '', num = BigInt(match[1] + fraction)
-  if (num <= 0n) throw Error('Invalid display multiplier')
-  return Object.freeze({ num, den: 10n ** BigInt(fraction.length) })
-}
+export const SOL_UNITS = Object.freeze({ symbol: 'SOL', decimals: 9, stock: false, scale: null })
 
 // A stock pair's units from its display facts (GET /api/quote-assets/:assetId), or null if they are not usable.
 export function stockUnits(info) {
   if (!info || typeof info.symbol !== 'string' || !Number.isInteger(info.decimals) || info.decimals < 0 || info.decimals > 18) return null
-  try {
-    return Object.freeze({ symbol: info.symbol, decimals: info.decimals, stock: true, scale: parseMultiplier(info.uiMultiplier),
-      usdPrice: Number.isFinite(info.usdPrice) && info.usdPrice > 0 ? info.usdPrice : null })
-  } catch { return null }
+  try { return Object.freeze({ symbol: info.symbol, decimals: info.decimals, stock: true, scale: parseMultiplier(info.uiMultiplier) }) }
+  catch { return null }
 }
 
 // Raw units → the base units a wallet shows (truncated, as Token-2022 does), as a string.
@@ -60,15 +52,14 @@ export function shownPercentAmount(rawBalance, percent, units) {
 
 // A shortfall in shown units, rounded up to at most 6 places, so it never reads smaller than it is.
 export function shownShortfall(raw, units) {
-  const value = BigInt(raw)
-  const shown = units.scale ? (value * units.scale.num + units.scale.den - 1n) / units.scale.den : value
+  const shown = shownRoundedUp(raw, units.scale)
   const places = Math.min(units.decimals, 6), step = 10n ** BigInt(units.decimals - places)
   const rounded = (shown + step - 1n) / step, scale = 10n ** BigInt(places)
   return places ? `${rounded / scale}.${String(rounded % scale).padStart(places, '0')}` : String(rounded)
 }
 
-// "$12.34" for a raw amount of the stock at its USD price per whole raw token, or null without a price.
-export function stockUsdLabel(raw, units) {
-  if (raw === null || raw === undefined || !units?.usdPrice) return null
-  return formatUsdValue(Number(BigInt(raw)) / 10 ** units.decimals * units.usdPrice)
+// "$12.34" for a raw amount of the stock at `usdPrice` per whole raw token, or null without a price.
+export function stockUsdLabel(raw, units, usdPrice) {
+  if (raw === null || raw === undefined || !units || !Number.isFinite(usdPrice) || usdPrice <= 0) return null
+  return formatUsdValue(Number(BigInt(raw)) / 10 ** units.decimals * usdPrice)
 }

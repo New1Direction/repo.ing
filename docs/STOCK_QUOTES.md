@@ -64,11 +64,16 @@ For the trade panel (P6b):
 - `GET /api/quote-assets/<assetId>` (`src/quote-asset-info.mjs`) returns a registry stock's display facts:
 
   ```json
-  { "assetId": "meta-xstock", "symbol": "METAx", "decimals": 8, "uiMultiplier": "1.0028515433272898", "usdPrice": 712.5 }
+  { "assetId": "meta-xstock", "symbol": "METAx", "decimals": 8, "uiMultiplier": "1.0028515433272898", "validForSeconds": 120,
+    "usdPrice": 712.5 }
   ```
 
-  - `uiMultiplier` is the mint's ScaledUiAmount multiplier in force now, read from chain and kept a minute.
-  - `usdPrice` is Jupiter's price per whole raw token, read as tips read it, or `null`.
+  - `uiMultiplier` is the mint's ScaledUiAmount multiplier in force now (`src/scaled-ui-amount.mjs`). The mint's extension
+    is read at most every 30 s; the multiplier in force is worked out on every request, so an issuer's scheduled change
+    applies on the second it takes effect.
+  - `validForSeconds` is how long the panel may use these units: until a change the issuer has scheduled, and at most 120 s.
+  - `usdPrice` is Jupiter's price per whole raw token, read as tips read it. It is `null` when there is no price, or when
+    none arrives within 0.8 s, so a slow price never holds up the units.
   - SOL and unknown ids are 404; a failed mint read is 503.
 - `GET /api/wallet/balance?wallet=<address>&asset=<assetId>` returns `{ assetId, decimals, balanceBaseUnits }`: the raw
   balance of the wallet's associated Token-2022 account for that stock, which is the account stock trades spend from. No
@@ -123,8 +128,8 @@ stamp:
 - **Costs** (`src/trade-costs.mjs`): SOL pays only the network fee and account rent. The stock account's rent is for the size
   Token-2022 creates it at (`associatedAccountLength`: 179 bytes for METAx); a stock mint with an extension the estimate does
   not know fails the estimate. The stock is checked separately (`quoteBalance`, `quoteShortfall`), and a buy larger than the
-  wallet holds is refused before signing ("You need approximately … more METAx", rounded up). A failed balance read fails
-  the estimate; it is never taken as zero.
+  wallet holds is refused before signing ("You need approximately … more METAx", in the units wallets show, rounded up).
+  A failed balance read fails the estimate; it is never taken as zero.
 - **Records and results:** the trade record carries `quoteMint`. Results add `quoteDelta` and `quoteMint`; SOL trades return
   exactly what they did before.
 - **Blinks** (`app/lib/solana-actions.mjs`) are worded and sized in SOL, so a stock-paired market is never offered through
@@ -142,7 +147,9 @@ stock pair, the panel buys with the stock and sells for it:
     It converts with BigInt arithmetic and truncates, as Token-2022 does (`app/lib/trade-units.mjs`).
   - A typed or preset amount converts back to raw units rounded down, so it never spends more than it says. A dust
     balance that would convert back to nothing gets no preset.
-  - Until the stock's units load, the panel takes no amount.
+  - Until the stock's units load, the panel takes no amount. Units lapse after `validForSeconds` unless a refresh renews
+    them, and are then read again at once. A scheduled multiplier change is applied on time, and units that cannot be
+    refreshed stop the panel rather than convert with a stale multiplier.
 - **Balances and presets.** A buy shows the wallet's stock balance and offers 25%, 50% and MAX of it. SOL still pays the
   network fee and any account deposit, shown as "SOL costs".
 - **Shortfalls.** A buy beyond the stock balance reads "Not enough METAx", and a missing amount of the stock is shown rounded

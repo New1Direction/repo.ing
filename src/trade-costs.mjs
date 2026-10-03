@@ -3,6 +3,8 @@ import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, A
   getAssociatedTokenAddressSync, getExtensionTypes, unpackAccount, unpackMint } from '@solana/spl-token'
 import { tradePriorityFee } from './trade-landing.mjs'
 import { QUOTE_REGISTRY } from './quote-assets.mjs'
+import { stockMultiplier } from './quote-asset-info.mjs'
+import { parseMultiplier, shownRoundedUp } from './scaled-ui-amount.mjs'
 
 const LAMPORTS_PER_SIGNATURE = 5000n
 
@@ -110,7 +112,9 @@ export async function preflightTrade(connection, prepared, costs) {
   if (BigInt(costs.quoteShortfall ?? '0') > 0n) {
     const asset = QUOTE_REGISTRY.assets.find(candidate => candidate.mint === costs.quoteMint)
     if (!asset) throw Error('Trade simulation did not pass. Refresh the quote and check your wallet balance before trying again.')
-    throw Error(`You need approximately ${amountRoundedUp(BigInt(costs.quoteShortfall), asset.decimals)} more ${asset.symbol}.`)
+    // In the units wallets show, as the trade panel shows it (src/scaled-ui-amount.mjs), rounded up.
+    const shown = shownRoundedUp(BigInt(costs.quoteShortfall), parseMultiplier(await stockMultiplier(connection, asset)))
+    throw Error(`You need approximately ${amountRoundedUp(shown, asset.decimals)} more ${asset.symbol}.`)
   }
   if (BigInt(costs.shortfall) > 0n) {
     const amount = (BigInt(costs.shortfall) + 999n) / 1000n

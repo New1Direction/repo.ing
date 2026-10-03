@@ -7,7 +7,9 @@ import { appModule, h, html } from './fixtures/render-jsx.mjs'
 import { SOL_UNITS, parseMultiplier, parseShownAmount, rawUnits, shownPercentAmount, shownShortfall, shownUnits, stockUnits,
   stockUsdLabel } from '../app/lib/trade-units.mjs'
 import { tradeButtonLabel } from '../app/lib/trade-panel.mjs'
-import { clearQuoteAssetInfoCache, currentMultiplier, multiplierText, quoteAssetInfo } from '../src/quote-asset-info.mjs'
+import { UNITS_VALID_SECONDS, clearQuoteAssetInfoCache, quoteAssetInfo, unitsValidSeconds } from '../src/quote-asset-info.mjs'
+import { currentMultiplier, multiplierText, scaledConfig } from '../src/scaled-ui-amount.mjs'
+import { preflightTrade } from '../src/trade-costs.mjs'
 import { marketQuoteView } from '../src/quote-assets.mjs'
 import { stockBalance } from '../app/lib/stock-balance.mjs'
 import { readLaunchDraft, restoredPair, saveLaunchDraft } from '../app/lib/launch-draft.mjs'
@@ -42,7 +44,7 @@ test('a stock is shown as wallets show it (raw × multiplier, truncated) and typ
   assert.equal(shownUnits('123', SOL_UNITS), '123')
   assert.equal(stockUnits({ ...metaxInfo, uiMultiplier: '1e-7' }), null)
   assert.equal(stockUnits({ ...metaxInfo, decimals: 'eight' }), null)
-  assert.equal(stockUnits({ ...metaxInfo, usdPrice: -1 }).usdPrice, null)
+  assert.deepEqual(stockUnits({ ...metaxInfo, usdPrice: 1 }), units, 'the price is not part of the units')
 })
 
 test('stock presets never spend more than the balance; shortfalls never read smaller than they are', () => {
@@ -62,9 +64,10 @@ test('stock presets never spend more than the balance; shortfalls never read sma
   assert.equal(shownShortfall('1', units), '0.000001')
   assert.equal(shownShortfall('12345678', units), '0.123809')
   assert.equal(shownShortfall('100000000', units), '1.002852')
-  assert.equal(stockUsdLabel('100000000', units), '$712.50')
-  assert.equal(stockUsdLabel('100000000', { ...units, usdPrice: null }), null)
-  assert.equal(stockUsdLabel(null, units), null)
+  assert.equal(stockUsdLabel('100000000', units, 712.5), '$712.50')
+  for (const price of [null, undefined, 0, -1, NaN]) assert.equal(stockUsdLabel('100000000', units, price), null, String(price))
+  assert.equal(stockUsdLabel(null, units, 712.5), null)
+  assert.equal(stockUsdLabel('100000000', null, 712.5), null)
 })
 
 test('the trade button names the stock a buy spends, and SOL only for network costs', () => {
@@ -89,13 +92,21 @@ const countingConnection = (account = mintAccount) => {
   return connection
 }
 
-test('a stock\'s display facts: the multiplier in force read from its mint, its USD price, kept a minute, failures never kept', async () => {
+test('a stock\'s display facts: the multiplier in force read from its mint, its USD price, the mint kept 30 s, failures never kept', async () => {
+  const config = scaledConfig({ multiplier: 1.5, newMultiplier: 2, newMultiplierEffectiveTimestamp: BigInt(SWITCH) })
+  assert.deepEqual(config, { multiplier: 1.5, newMultiplier: 2, effectiveAt: SWITCH })
+  assert.equal(scaledConfig(null), null)
   assert.equal(currentMultiplier(null, SWITCH), 1)
-  const config = { multiplier: 1.5, newMultiplier: 2, newMultiplierEffectiveTimestamp: BigInt(SWITCH) }
   assert.equal(currentMultiplier(config, SWITCH - 1), 1.5)
   assert.equal(currentMultiplier(config, SWITCH), 2)
   assert.equal(multiplierText(1.5), '1.5')
   for (const bad of [1e-7, 0, -1, NaN, Infinity, 1e21]) assert.throws(() => multiplierText(bad), /multiplier/, String(bad))
+  // Units hold until a scheduled change, at most UNITS_VALID_SECONDS.
+  assert.equal(unitsValidSeconds(config, SWITCH - 60), 60)
+  assert.equal(unitsValidSeconds(config, SWITCH - 1), 1)
+  assert.equal(unitsValidSeconds(config, SWITCH), UNITS_VALID_SECONDS)
+  assert.equal(unitsValidSeconds(config, SWITCH - 10_000), UNITS_VALID_SECONDS)
+  assert.equal(unitsValidSeconds(null, SWITCH), UNITS_VALID_SECONDS)
 
   clearQuoteAssetInfoCache()
   const prices = async () => ({ [METAX]: 712.5 })
@@ -103,20 +114,37 @@ test('a stock\'s display facts: the multiplier in force read from its mint, its 
   assert.equal(await quoteAssetInfo('aapl-xstock', { connection: countingConnection(), prices }), null)
   const connection = countingConnection(), after = () => (SWITCH + 60) * 1000
   assert.deepEqual(await quoteAssetInfo('meta-xstock', { connection, prices, now: after }),
-    { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, uiMultiplier: '1.0028515433272898', usdPrice: 712.5 })
-  await quoteAssetInfo('meta-xstock', { connection, prices: async () => ({}), now: () => after() + 59_000 })
-  assert.equal(connection.reads, 1, 'kept for a minute')
-  assert.equal((await quoteAssetInfo('meta-xstock', { connection, prices: () => Promise.reject(Error('down')), now: () => after() + 60_000 })).usdPrice, null)
+    { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, uiMultiplier: '1.0028515433272898', validForSeconds: UNITS_VALID_SECONDS, usdPrice: 712.5 })
+  await quoteAssetInfo('meta-xstock', { connection, prices: async () => ({}), now: () => after() + 29_000 })
+  assert.equal(connection.reads, 1, 'the mint is kept 30 s')
+  assert.equal((await quoteAssetInfo('meta-xstock', { connection, prices: () => Promise.reject(Error('down')), now: () => after() + 30_000 })).usdPrice, null)
   assert.equal(connection.reads, 2)
 
+  // A scheduled change is applied on the second it takes effect, from the kept mint, without waiting for a new read.
   clearQuoteAssetInfoCache()
-  assert.equal((await quoteAssetInfo('meta-xstock', { connection: countingConnection(), prices, now: () => (SWITCH - 60) * 1000 })).uiMultiplier, '1.002298265651938')
+  const scheduled = countingConnection()
+  const before = await quoteAssetInfo('meta-xstock', { connection: scheduled, prices, now: () => (SWITCH - 1) * 1000 })
+  assert.deepEqual([before.uiMultiplier, before.validForSeconds], ['1.002298265651938', 1])
+  const at = await quoteAssetInfo('meta-xstock', { connection: scheduled, prices, now: () => SWITCH * 1000 })
+  assert.deepEqual([at.uiMultiplier, at.validForSeconds, scheduled.reads], ['1.0028515433272898', UNITS_VALID_SECONDS, 1])
+  // A price that does not answer never holds up the units.
+  const started = Date.now()
+  assert.equal((await quoteAssetInfo('meta-xstock', { connection: scheduled, prices: () => new Promise(() => {}), now: () => SWITCH * 1000 })).usdPrice, null)
+  assert.ok(Date.now() - started < 2_000)
   clearQuoteAssetInfoCache()
   const failing = { async getAccountInfo() { throw Error('rpc down') } }
   await assert.rejects(quoteAssetInfo('meta-xstock', { connection: failing, prices, now: after }), /rpc down/)
   assert.equal((await quoteAssetInfo('meta-xstock', { connection: countingConnection(), prices, now: after })).uiMultiplier, '1.0028515433272898', 'a failure is not kept')
   clearQuoteAssetInfoCache()
   await assert.rejects(quoteAssetInfo('meta-xstock', { connection: countingConnection(() => mintAccount(TOKEN_PROGRAM_ID)), prices, now: after }), /Stock mint is unavailable/)
+  clearQuoteAssetInfoCache()
+})
+
+test('the server\'s refusal of a stock buy beyond the wallet\'s stock is in the units wallets show, rounded up', async () => {
+  clearQuoteAssetInfoCache()
+  // 10,000,000 raw × 1.0028515433272898 = 10,028,515.4…, rounded up to 10,028,516, then up to 6 places.
+  await assert.rejects(preflightTrade(countingConnection(), null, { quoteMint: METAX, quoteShortfall: '10000000', shortfall: '0' }),
+    { message: 'You need approximately 0.100286 more METAx.' })
   clearQuoteAssetInfoCache()
 })
 
