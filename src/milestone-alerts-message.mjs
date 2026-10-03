@@ -1,7 +1,8 @@
 // Graduation-milestone alerts (see src/milestone-alerts.mjs), pure parts: which milestone a market's verified progress
 // has reached, what one channel should do about it this run, and the post text.
 import { publicGraduation } from './graduation-readiness.mjs'
-import { cleanRepoName, cleanSymbol, escapeHtml, tokenUrl, X_MAX_WEIGHT, xWeight } from './launch-alerts-message.mjs'
+import { HF_DISCLAIMER_SHORT } from './hf-copy.mjs'
+import { cleanModelPath, cleanRepoName, cleanSymbol, escapeHtml, isModelAlert, MODEL_LABEL, tokenUrl, truncate, X_MAX_WEIGHT, xWeight } from './launch-alerts-message.mjs'
 
 export const MILESTONES = Object.freeze([25, 50, 75, 90])
 export const GRADUATED_MILESTONE = 100
@@ -67,6 +68,7 @@ function headline({ milestone, ticker, remaining, target }) {
 // post: { fullName, tokenSymbol, mint, milestone, curve: { remainingLamports, thresholdLamports } }.
 // channel: 'telegram' (HTML) or 'x' (plain, at most 280 weighted characters). Factual: no price talk.
 export function buildMilestoneMessage(post, { channel, origin }) {
+  if (isModelAlert(post)) return buildModelMilestoneMessage(post, { channel, origin })
   const repo = cleanRepoName(post.fullName), symbol = cleanSymbol(post.tokenSymbol), url = tokenUrl(origin, post.mint)
   const ticker = symbol ? `$${symbol}` : repo
   const lines = [headline({ milestone: post.milestone, ticker, remaining: solAmount(post.curve.remainingLamports), target: solAmount(post.curve.thresholdLamports) }),
@@ -76,4 +78,19 @@ export function buildMilestoneMessage(post, { channel, origin }) {
   const text = lines.join('\n')
   if (xWeight(text) > X_MAX_WEIGHT) throw Error('Milestone alert exceeds the X length limit')
   return text
+}
+
+// A Hugging Face model market's post (post.modelPath: its registry path): the same headline, the model id and the short
+// disclaimer every model surface carries (src/hf-copy.mjs). On X a model id too long to fit loses its label, then is
+// shortened visibly (…); the disclaimer and the link always stay.
+function buildModelMilestoneMessage(post, { channel, origin }) {
+  const path = cleanModelPath(post.modelPath || post.fullName), symbol = cleanSymbol(post.tokenSymbol), url = tokenUrl(origin, post.mint)
+  const amounts = { milestone: post.milestone, remaining: solAmount(post.curve.remainingLamports), target: solAmount(post.curve.thresholdLamports) }
+  const lines = model => [headline({ ...amounts, ticker: symbol ? `$${symbol}` : model }), ...(symbol ? [model] : []), HF_DISCLAIMER_SHORT, url]
+  if (channel === 'telegram') return lines(`${MODEL_LABEL} ${path}`).map(escapeHtml).join('\n')
+  if (channel !== 'x') throw Error(`Unknown milestone alert channel ${channel}`)
+  const fits = model => xWeight(lines(model).join('\n')) <= X_MAX_WEIGHT
+  const model = [`${MODEL_LABEL} ${path}`, path].find(fits) ?? truncate(path, fits)
+  if (!model) throw Error('Milestone alert exceeds the X length limit')
+  return lines(model).join('\n')
 }

@@ -7,11 +7,15 @@
 //   redeploys never post twice. A post that may have gone out (timeout, 5xx, crash mid-send) becomes 'unknown' and is
 //   never retried automatically; only a provider rejection (4xx/connection refused) becomes 'failed' and is retried.
 // - Runs are serialized with an advisory lock, capped per run and per 24 hours, and spaced out between posts.
+// - Hugging Face model markets are included only with HF_MARKETS_ENABLED=true in the worker's own environment, the switch
+//   their token pages need on web (the posts link there), under the same rules and with model copy.
 // Channel configuration, delivery and the locked run below are shared with milestone alerts (src/milestone-alerts.mjs).
 import { promotionExcludedRepoIds } from '../app/lib/promotion-exclusions.mjs'
 import { hasEarnedPromotion } from '../app/lib/repo-quality.mjs'
 import { marketRowStats } from '../app/lib/market-row-stats.mjs'
-import { buildLaunchMessage, tokenUrl } from './launch-alerts-message.mjs'
+import { createHfClient } from './hf-api.mjs'
+import { hfMarketsEnabled } from './hf-launch.mjs'
+import { buildLaunchMessage, isModelAlert, tokenUrl } from './launch-alerts-message.mjs'
 import { createTelegramSender, createXSender } from './launch-alerts-senders.mjs'
 
 export const LAUNCH_ALERT_CHANNELS = ['telegram', 'x']
@@ -19,6 +23,8 @@ export const LAUNCH_ALERT_DEFAULTS = Object.freeze({
   maxPerRun: 2, maxPerDay: 15, spacingMs: 10_000, maxAgeMs: 24 * 3600_000, maxAttempts: 3, staleSendingMs: 10 * 60_000, retryDelayMs: 5 * 60_000 })
 const X_KEYS = ['X_BOT_API_KEY', 'X_BOT_API_SECRET', 'X_BOT_ACCESS_TOKEN', 'X_BOT_ACCESS_SECRET']
 const TELEGRAM_KEYS = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+// Each channel's variables (scripts/alerts-check.mjs reports each channel on its own).
+export const ALERT_CHANNEL_KEYS = Object.freeze({ telegram: TELEGRAM_KEYS, x: X_KEYS })
 // Two-key advisory lock form: never conflicts with the single-bigint repository locks used elsewhere.
 const LOCK_KEYS = [0x7265706f, 0x616c7274]
 
@@ -73,8 +79,11 @@ export function launchAlertsConfig(env = process.env) {
   const since = alertSince(env, 'LAUNCH_ALERTS_SINCE')
   const origin = alertOrigin(env)
   const maxPerDay = alertMaxPerDay(env, 'LAUNCH_ALERTS_MAX_PER_DAY', LAUNCH_ALERT_DEFAULTS.maxPerDay)
-  return { ...LAUNCH_ALERT_DEFAULTS, channels, since, origin, maxPerDay, telegram, x, excluded: promotionExcludedRepoIds(env) }
+  return { ...LAUNCH_ALERT_DEFAULTS, channels, since, origin, maxPerDay, telegram, x, excluded: promotionExcludedRepoIds(env), models: hfMarketsEnabled(env) }
 }
+
+// Market sources a store read covers: GitHub repositories, plus Hugging Face models when the config includes them.
+export const alertSources = models => models === true ? ['github', 'huggingface'] : ['github']
 
 export function createLaunchAlertSenders(config, { fetchImpl = fetch } = {}) {
   return { ...(config.telegram ? { telegram: createTelegramSender({ ...config.telegram, fetchImpl }) } : {}),
@@ -82,9 +91,12 @@ export function createLaunchAlertSenders(config, { fetchImpl = fetch } = {}) {
 }
 
 // ---------- PostgreSQL store (migration 0034_launch_alerts) ----------
+// A model market also carries its registry _id and last confirmed path (hf_models, migration 0049): the post names the
+// model by that path, and its live facts count only when the Hub answers for that _id.
 const MARKET_FIELDS = `m.github_repo_id::text as "githubRepoId", m.mint, m.token_symbol as "tokenSymbol", m.indexed_at as "indexedAt",
   r.full_name as "fullName", r.description, r.stars, r.github_created_at as "githubCreatedAt",
-  o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"`
+  o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash",
+  h.hf_id as "hfId", h.repo_path as "modelPath"`
 const ELIGIBLE = `m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.mint is not null
   and m.indexed_at >= $2 and m.indexed_at >= now() - make_interval(secs => $3)`
 
@@ -111,16 +123,17 @@ export function createLaunchAlertStore(pool) {
         and status in ('sending','sent','unknown') and updated_at > now() - interval '24 hours'`, [channel])
       return n
     },
-    // Oldest first: never-alerted markets and retryable failures on this channel. GitHub repositories only: the post links
-    // and describes a GitHub repository.
-    async candidates({ channel, since, maxAgeMs, maxAttempts, limit, offset = 0 }) {
+    // Oldest first: never-alerted markets and retryable failures on this channel. GitHub repositories only unless models is
+    // true: the GitHub post links and describes a GitHub repository, and model markets have their own copy.
+    async candidates({ channel, since, maxAgeMs, maxAttempts, limit, offset = 0, models = false }) {
       const { rows } = await pool.query(`select ${MARKET_FIELDS}, a.id::text as "alertId" from markets m
-        join repositories r on r.github_repo_id=m.github_repo_id and r.source='github'
+        join repositories r on r.github_repo_id=m.github_repo_id and r.source = any($7::text[])
+        left join hf_models h on h.market_ref=r.hf_model_ref
         left join graduation_observations o on o.github_repo_id=m.github_repo_id
         left join graduation_events e on e.github_repo_id=m.github_repo_id
         left join launch_alerts a on a.github_repo_id=m.github_repo_id and a.channel=$1
         where ${ELIGIBLE} and (a.id is null or (a.status='failed' and a.attempts < $4 and coalesce(a.next_attempt_at, a.updated_at) <= now()))
-        order by m.indexed_at, m.github_repo_id limit $5 offset $6`, [channel, since, maxAgeMs / 1000, maxAttempts, limit, offset])
+        order by m.indexed_at, m.github_repo_id limit $5 offset $6`, [channel, since, maxAgeMs / 1000, maxAttempts, limit, offset, alertSources(models)])
       return rows
     },
     // The only path to a send: returns the claimed row id, or null when another run owns (or finished) this alert.
@@ -200,22 +213,59 @@ export async function runAlertsLocked({ store, config, notMigrated }, work) {
   return result.value
 }
 
+// The markets one channel's next run posts, oldest first, within the run's budget. Repos on the do-not-promote list (skip:
+// the env list and maintainer opt-outs) are never announced, nor new repositories that have not earned promotion; held
+// (optional) collects those passed over, with the reason. Shared with scripts/alerts-preview.mjs, so a preview selects
+// exactly what the job would.
+export async function nextLaunchAlerts({ store, config, channel, skip, now, held = null }) {
+  const budget = Math.min(config.maxPerRun, config.maxPerDay - await store.sentRecently(channel))
+  if (budget <= 0) return []
+  const markets = []
+  for (let page = 0; page < CANDIDATE_PAGES && markets.length < budget; page++) {
+    const rows = await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts,
+      limit: CANDIDATE_PAGE, offset: page * CANDIDATE_PAGE, models: config.models === true })
+    markets.push(...rows.filter(market => {
+      const reason = skip.has(String(market.githubRepoId)) ? 'do-not-promote' : launchAlertEarned(market, now()) ? null : 'not earned yet'
+      if (reason) held?.push({ ...market, reason })
+      return !reason
+    }))
+    if (rows.length < CANDIDATE_PAGE) break
+  }
+  return markets.slice(0, budget)
+}
+
+// Reads a model's live card for its launch post (src/hf-api.mjs): likes, 30-day downloads and its current path, display
+// only. One quick try (5 s, no retries, never waiting out the rate limit, at most 40% of the anonymous window;
+// docs/HUGGING_FACE_API_NOTES.md), so a post never waits on Hugging Face. The answer counts only for the registry's own
+// _id: a path can redirect to a different repository.
+export function createModelAlertFacts({ hf = createHfClient({ timeoutMs: 5_000, retries: 0, maxWaitMs: 0, reserve: 0.6 }) } = {}) {
+  return async market => {
+    if (!market.hfId || !market.modelPath) return null
+    const model = await hf.model({ path: market.modelPath })
+    return model.hfId === market.hfId ? { likes: model.likes, downloads30d: model.downloads30d, modelPath: model.path } : null
+  }
+}
+
+// One run's live model facts: each model market about to be posted is read at most once, whatever the channel count. A
+// failed, moved or missing read leaves the market as stored (its post carries the stored facts); nothing here decides
+// whether anything is posted.
+export function liveModelFacts(read) {
+  const reads = new Map()
+  return market => {
+    if (!read || !isModelAlert(market)) return market
+    if (!reads.has(market.githubRepoId)) reads.set(market.githubRepoId, Promise.resolve().then(() => read(market)).catch(() => null))
+    return reads.get(market.githubRepoId).then(facts => facts ? { ...market, ...facts } : market)
+  }
+}
+
 // excluded: the do-not-promote set for a run (the worker passes PROMOTION_EXCLUDED_REPO_IDS plus maintainers' opt-outs,
 // app/lib/promotion-exclusions.mjs); defaults to config.excluded. When it cannot be read the run fails and nothing is posted.
-export function createLaunchAlerts({ store, config, senders, sleep = wait, now = () => Date.now(), excluded = async () => config.excluded ?? new Set() }) {
-  async function runChannel(channel, skip) {
-    const budget = Math.min(config.maxPerRun, config.maxPerDay - await store.sentRecently(channel))
-    if (budget <= 0) return []
-    // Repos on the do-not-promote list (env list and maintainer opt-outs) are never announced, nor new repositories that
-    // have not earned promotion.
-    const markets = []
-    for (let page = 0; page < CANDIDATE_PAGES && markets.length < budget; page++) {
-      const rows = await store.candidates({ channel, since: config.since, maxAgeMs: config.maxAgeMs, maxAttempts: config.maxAttempts,
-        limit: CANDIDATE_PAGE, offset: page * CANDIDATE_PAGE })
-      markets.push(...rows.filter(market => !skip.has(String(market.githubRepoId)) && launchAlertEarned(market, now())))
-      if (rows.length < CANDIDATE_PAGE) break
-    }
-    return postInTurn({ items: markets.slice(0, budget), config, sleep, now,
+// modelFacts: createModelAlertFacts() when the config includes model markets, else nothing is read from Hugging Face.
+export function createLaunchAlerts({ store, config, senders, sleep = wait, now = () => Date.now(), excluded = async () => config.excluded ?? new Set(),
+  modelFacts = null }) {
+  async function runChannel(channel, skip, withFacts) {
+    const markets = await Promise.all((await nextLaunchAlerts({ store, config, channel, skip, now })).map(withFacts))
+    return postInTurn({ items: markets, config, sleep, now,
       claim: market => store.claim({ channel, market, maxAttempts: config.maxAttempts }),
       deliver: market => deliverAlert({ sender: senders[channel], url: tokenUrl(config.origin, market.mint),
         build: () => buildLaunchMessage(market, { channel, origin: config.origin }) }),
@@ -226,8 +276,9 @@ export function createLaunchAlerts({ store, config, senders, sleep = wait, now =
   async function runOnce() {
     return runAlertsLocked({ store, config, notMigrated: 'LAUNCH_ALERTS_NOT_MIGRATED' }, async () => {
       const skip = await excluded()
+      const withFacts = liveModelFacts(modelFacts)
       const posts = []
-      for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel, skip))
+      for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel, skip, withFacts))
       return posts
     })
   }
