@@ -35,6 +35,8 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_hf_model_ui_test'),
   // Hugging Face model markets: sign-in authority, bindings, claims and opt-outs; and a model claim on the validator.
   launchtest('repoing_hf_claims_test'), launchtest('repoing_hf_chain_test'),
+  // The 1% builder allocation for model markets: its rules and routes on PostgreSQL, and two grants on the validator.
+  launchtest('repoing_hf_allocation_test'), launchtest('repoing_hf_allocation_chain_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -63,6 +65,8 @@ export const DEFAULT_ENV = {
   HF_MODEL_UI_TEST_DATABASE_URL: launchtest('repoing_hf_model_ui_test'),
   HF_CLAIMS_TEST_DATABASE_URL: launchtest('repoing_hf_claims_test'),
   HF_CHAIN_TEST_DATABASE_URL: launchtest('repoing_hf_chain_test'),
+  HF_ALLOCATION_TEST_DATABASE_URL: launchtest('repoing_hf_allocation_test'),
+  HF_ALLOCATION_CHAIN_TEST_DATABASE_URL: launchtest('repoing_hf_allocation_chain_test'),
   // Production default; graduation-guards asserts the ambient environment keeps P3 execution off.
   REPO_LIQUIDITY_EXECUTION_ENABLED: 'false',
 }
