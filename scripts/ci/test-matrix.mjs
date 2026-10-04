@@ -101,6 +101,9 @@ export const PINNED_GROUPS = [
   { files: ['stock-claims-golden-db'], databaseUrl: launchtest('repoing_stock_claims_golden_test'), selfManaged: true },
   // The go-live readiness checker's database checks (read-only): the stock ledger migrations, the indexers' partition, the SOL ledgers.
   { files: ['stock-readiness-db'], databaseUrl: launchtest('repoing_stock_readiness_test'), selfManaged: true },
+  // A stock-paired market's graduation: its own validator as above, then the migration, DAMM swaps, fee checkpoints and site trades.
+  { files: ['stock-graduation-chain'], databaseUrl: launchtest('repoing_stock_graduation_chain_test'), selfManaged: true },
+  { files: ['stock-graduation-db'], databaseUrl: launchtest('repoing_stock_graduation_test'), selfManaged: true },
   { files: ['graduation-readiness'], databaseUrl: launchtest('repoing_p5_test') },
   { files: ['liquidity-deployment'], databaseUrl: launchtest('repoing_liquidity_test') },
   { files: ['protocol-analytics'], databaseUrl: launchtest('repoing_analytics_test'), selfManaged: true },

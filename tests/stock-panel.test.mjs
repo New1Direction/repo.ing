@@ -176,10 +176,14 @@ test('the panel for a stock pair: METAx units, no amount until its units load, p
   assert.match(markup, /aria-label="Spend 100% of your METAx balance"/)
   assert.doesNotMatch(markup, /Trade size guide|Buy 0\.1 SOL|Edit buy presets/)
   assert.match(markup, /<button class="button primary trade-submit" type="submit" disabled="">Enter an amount<\/button>/)
-  // A graduated stock pair is not traded here yet; a pair that no longer matches the registry is paused.
+  // A graduated stock pair trades in its verified pool, in METAx (src/stock-damm-trade.mjs); without a verified destination it stays
+  // closed; a pair that no longer matches the registry is paused.
   const graduated = html(h(TradePanel, { market, quote, available: true, curve: { status: 'graduated', destination: { url: 'https://app.meteora.ag/dammv2/PoolStockPanel' } } }), { wallet: true })
-  assert.match(graduated, /Trading in the graduated pool is not open here yet for METAx pairs/)
-  assert.doesNotMatch(graduated, /trade-venue/)
+  assert.match(graduated, /<p class="trade-venue">Trades in the graduated Meteora pool/)
+  assert.match(graduated, /<span class="trade-unit">METAx<\/span>/)
+  assert.match(graduated, /aria-label="Spend 100% of your METAx balance"/)
+  assert.doesNotMatch(graduated, /not open here yet|Trade size guide/)
+  assert.match(html(h(TradePanel, { market, quote, available: true, curve: { status: 'graduated' } }), { wallet: true }), /We are checking the destination pool/)
   assert.match(html(h(TradePanel, { market, quote: { assetId: 'meta-xstock', unavailable: true }, available: true }), { wallet: true }), /Trading unavailable/)
   // SOL markets keep their SOL presets and size guide.
   const sol = html(h(TradePanel, { market, available: true }), { wallet: true })
