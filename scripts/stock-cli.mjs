@@ -33,6 +33,13 @@ async function connections() {
   return { pool, connection, verification, network: genesis === MAINNET_GENESIS ? 'mainnet' : `genesis ${genesis}` }
 }
 
+// --write records mainnet facts only, read through two RPCs that agree (GRADUATION_VERIFICATION_RPC_URL), as SOL fee collection
+// requires before anything is recorded.
+export function assertWritable({ network, verification }) {
+  if (network !== 'mainnet') throw Error(`--write records mainnet transactions only; this RPC is on ${network}`)
+  if (!verification) throw Error('--write needs a second RPC (GRADUATION_VERIFICATION_RPC_URL) that agrees with every read')
+}
+
 // The stock's display units (multiplier and USD price); a failed read only drops the labels, never the raw amounts.
 export async function units(connection, assetId) {
   try {

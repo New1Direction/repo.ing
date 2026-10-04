@@ -4,8 +4,10 @@ import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, unpackAccount } from '@solana/
 import { CP_AMM_PROGRAM_ID, CpAmm, derivePoolAuthority, derivePositionNftAccount, deriveTokenVaultAddress } from '@meteora-ag/cp-amm-sdk'
 import { BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 import { OFFICIAL_TOKEN } from '../app/lib/official-token.mjs'
+import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { STOCK_FEE_CUSTODY } from './stock-collections.mjs'
 import { stockAsset } from './stock-accumulator.mjs'
+import { analyzeSettlementTransaction } from './stock-pool-transactions.mjs'
 
 // The canonical REPOING/<stock> DAMM v2 pool of each stock (docs/STOCK_QUOTES.md, "Accumulator and settlement"). The owner
 // creates and seeds it himself from the accumulated fees; this module only checks his pool against the chain and records it
@@ -14,7 +16,8 @@ import { stockAsset } from './stock-accumulator.mjs'
 export const REPOING_MINT = OFFICIAL_TOKEN.mint
 // The protocol wallets the owner creates, holds and settles canonical pools from: the stock fee custody (the partner wallet,
 // where collected stock fees land), the platform-revenue custody and the team wallet (which added the REPOING/SOL protocol
-// liquidity, app/lib/liquidity-receipts.mjs). Constants, never arguments: a pool or position held anywhere else is refused.
+// liquidity, app/lib/liquidity-receipts.mjs). Fixed here; the scripts never take wallets as arguments (only tests pass their
+// own). A pool or position created, paid for or held anywhere else is refused.
 export const STOCK_POOL_OWNERS = Object.freeze([...new Set([STOCK_FEE_CUSTODY, BUYBACK_WALLETS.custody, OFFICIAL_TOKEN.teamWallet])])
 const sha256 = data => createHash('sha256').update(data).digest('hex')
 const text = value => value.toString()
@@ -46,10 +49,25 @@ export async function readOwnedPosition({ connection, coder, pool, position, own
 }
 
 // Checks an owner-created pool against the chain at finalized commitment: a DAMM v2 pool of exactly REPOING (SPL Token) and the
-// stock's pinned mint (Token-2022), created by an owner wallet, enabled, with both vaults the program's own; and the owner's
-// position in it (given, or the one position an owner wallet holds there). Returns what stock_canonical_pools records.
-export async function verifyCanonicalPool({ connection, assetId, pool, position = null, owners = STOCK_POOL_OWNERS, repoingMint = REPOING_MINT }) {
+// stock's pinned mint (Token-2022), enabled, with both vaults the program's own; its creation transaction an owner wallet's seed
+// (the pool's creator field is not a signature: anyone may name an owner wallet as creator, so the creation must also have been
+// signed and paid for by one); and the owner's position in it (given, or the one position an owner wallet holds there). A second
+// RPC, when given, must find the same. Returns what stock_canonical_pools records.
+export async function verifyCanonicalPool({ connection, verification = null, assetId, pool, position = null, creationSignature,
+  owners = STOCK_POOL_OWNERS, repoingMint = REPOING_MINT, loadTransaction = loadFinalizedTransaction }) {
   const asset = stockAsset(assetId)
+  if (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(String(creationSignature ?? ''))) throw Error("The pool's creation transaction signature is required")
+  const check = rpc => checkCanonicalPool({ connection: rpc, asset, pool, position, creationSignature, owners, repoingMint, loadTransaction })
+  const verified = await check(connection)
+  if (verification) {
+    const identity = v => JSON.stringify([v.pool, v.repoingMint, v.quoteMint, v.position, v.owner, v.fullyLocked, v.evidence.pool.creator,
+      v.evidence.pool.sides, v.evidence.pool.tokenAVault, v.evidence.pool.tokenBVault, v.evidence.position.nftMint, v.evidence.creation])
+    if (identity(await check(verification)) !== identity(verified)) throw Error('RPC disagreement; verify again')
+  }
+  return { ...verified, evidence: { ...verified.evidence, verifiedBy: verification ? 2 : 1 } }
+}
+
+async function checkCanonicalPool({ connection, asset, pool, position, creationSignature, owners, repoingMint, loadTransaction }) {
   const poolKey = new PublicKey(pool), repoing = new PublicKey(repoingMint), stock = new PublicKey(asset.mint)
   const amm = new CpAmm(connection), coder = amm._program.coder.accounts
   const read = await connection.getMultipleAccountsInfoAndContext([poolKey, repoing, stock], 'finalized')
@@ -78,6 +96,11 @@ export async function verifyCanonicalPool({ connection, assetId, pool, position 
     const vault = unpackAccount(vaults[side], vaultInfos[i], program)
     if (!vault.mint.equals(mint) || !vault.owner.equals(authority)) throw Error(`Vault ${side} is not the pool's ${side === sides.repoing ? 'REPOING' : asset.symbol} vault`)
   }
+  // The creation must be an owner wallet's own seed of exactly this pool: signed and paid for by it, funded from its accounts.
+  const canonical = { pool: poolKey.toBase58(), repoingMint: repoing.toBase58(),
+    evidence: { pool: { sides, tokenAVault: vaults.A.toBase58(), tokenBVault: vaults.B.toBase58() } } }
+  const transaction = await loadTransaction(connection, creationSignature)
+  const seed = analyzeSettlementTransaction({ transaction, kind: 'seed', asset, canonical, owners })
   let owned
   if (position) owned = await readOwnedPosition({ connection, coder, pool: poolKey.toBase58(), position, owners })
   else {
@@ -95,6 +118,8 @@ export async function verifyCanonicalPool({ connection, assetId, pool, position 
       collectFeeMode: state.collectFeeMode, activationType: state.activationType, liquidity: text(state.liquidity),
       sqrtPrice: text(state.sqrtPrice), sqrtMinPrice: text(state.sqrtMinPrice), sqrtMaxPrice: text(state.sqrtMaxPrice),
       reserves: { repoing: reserve(sides.repoing), stock: reserve(sides.stock) } },
+    creation: { signature: creationSignature, slot: transaction.slot, payer: seed.owner, quoteSpent: text(seed.quoteSpent),
+      repoingSpent: text(seed.repoingSpent), positions: seed.positions },
     position: owned, owners: [...owners] }
   return { assetId: asset.assetId, symbol: asset.symbol, quoteMint: asset.mint, pool: poolKey.toBase58(), repoingMint: repoing.toBase58(),
     position: owned.address, owner: owned.owner, fullyLocked: owned.fullyLocked, evidence }
@@ -133,10 +158,12 @@ export async function registerCanonicalPool(pool, verified) {
 // Plain-English lines for a verification.
 export function describeCanonicalPool(verified) {
   const e = verified.evidence
-  return [`REPOING/${verified.symbol} pool ${verified.pool} checks out on chain (slot ${e.slot}):`,
+  return [`REPOING/${verified.symbol} pool ${verified.pool} checks out on chain (slot ${e.slot}${e.verifiedBy === 2 ? ', confirmed by a second RPC' : ''}):`,
     `  a DAMM v2 pool (${e.programs.damm}) of exactly REPOING ${verified.repoingMint} (token ${e.pool.sides.repoing}, SPL Token) and ` +
-    `${verified.symbol} ${verified.quoteMint} (token ${e.pool.sides.stock}, Token-2022), created by owner wallet ${e.pool.creator}, enabled, ` +
-    `with the program's own vaults; it holds ${e.pool.reserves.repoing} raw REPOING and ${e.pool.reserves.stock} raw ${verified.symbol}.`,
+    `${verified.symbol} ${verified.quoteMint} (token ${e.pool.sides.stock}, Token-2022), enabled, with the program's own vaults; it holds ` +
+    `${e.pool.reserves.repoing} raw REPOING and ${e.pool.reserves.stock} raw ${verified.symbol}.`,
+    `  created by transaction ${e.creation.signature}, signed and paid for by owner wallet ${e.creation.payer}, which seeded it with ` +
+    `${e.creation.quoteSpent} raw ${verified.symbol} and ${e.creation.repoingSpent} raw REPOING.`,
     `  owner position ${verified.position} is held by ${verified.owner}: liquidity ${e.position.liquidity.total}, of which ` +
     `${e.position.liquidity.permanent} permanently locked${verified.fullyLocked ? ' (all of it)' : `; ${e.position.liquidity.unlocked} unlocked and ${e.position.liquidity.vested} vesting are NOT permanent yet`}.`]
 }

@@ -15,7 +15,9 @@ import { decimalText, describeAccumulator, stockAmountView, summarizeAccumulator
 import { DBC_PROGRAM, STOCK_FEE_CUSTODY, checkStockCollectionReceipt, collectionInstructions, collectionLedger, evaluateCollection,
   stockCollectionTerms, stockCollectionTermsHash, tokenDeltas } from '../src/stock-collections.mjs'
 import { STOCK_POOL_OWNERS } from '../src/stock-canonical-pools.mjs'
-import { SETTLEMENT_LIMITS, analyzeSettlementTransaction, largestWithinImpact, priceImpactBps } from '../src/stock-settlement.mjs'
+import { assertWritable } from '../scripts/stock-cli.mjs'
+import { SETTLEMENT_LIMITS, analyzeSettlementTransaction as analyzeWithOwners, largestWithinImpact, lockCoverage, minimumAfterSlippage,
+  priceImpactBps } from '../src/stock-settlement.mjs'
 
 // Pure parts of the stock accumulator, collection previews and settlement receipts (docs/STOCK_QUOTES.md, "Accumulator and
 // settlement"). Receipts are checked against synthetic finalized transactions in the shape src/finalized-transaction.mjs
@@ -98,6 +100,17 @@ test('the accumulator reports overspending, payouts ahead of collection, foreign
   assert.equal(summary.totals.available, '-1')
   for (const pattern of [/spend 497 but only 496/, /Market 10270250: launcher paid before/, /names mint OtherMint/, /stamped with mint WrongMint/,
     /Ledger rows for market 999/, /Market 94911145: pools unreadable \(RPC down\)/]) assert.ok(summary.problems.some(p => pattern.test(p)), String(pattern))
+})
+
+test('the accumulator compares custody with the ledger and refuses to count one signature twice', () => {
+  const onchain = new Map([['94911145', { uncollected: '887' }], ['10270250', { uncollected: '100' }]])
+  const expected = 496n + 214n - 200n - 300n
+  const held = summarizeAccumulator(META, ledger(), { onchain, custodyBalance: expected + 5n })
+  assert.deepEqual([held.status, held.totals.custodyBalance, held.totals.custodyExpected], ['MATCH', String(expected + 5n), String(expected)], 'extra funds are not a problem')
+  const short = summarizeAccumulator(META, ledger(), { onchain, custodyBalance: expected - 1n })
+  assert.deepEqual(short.problems, [`Custody holds ${expected - 1n}, less than the ${expected} the ledger expects there: funds left custody that no settlement receipt or launcher payout records`])
+  const twice = summarizeAccumulator(META, ledger({ repeated: [{ kind: 'collection', signature: 'SameSig' }] }), { onchain })
+  assert.deepEqual(twice.problems, ['Signature SameSig settles more than one collection'])
 })
 
 const sources = (over = {}) => collectionLedger({
@@ -209,6 +222,7 @@ test('token deltas count created and closed accounts from and to zero', () => {
 const owner = new PublicKey(STOCK_POOL_OWNERS[0])
 const canonical = { id: '1', pool: pk().toBase58(), repoingMint: pk().toBase58(),
   evidence: { pool: { sides: { repoing: 'A', stock: 'B' }, tokenAVault: pk().toBase58(), tokenBVault: pk().toBase58() } } }
+const analyzeSettlementTransaction = args => analyzeWithOwners({ owners: STOCK_POOL_OWNERS, ...args })
 const zero = () => new BN(0), n = value => new BN(String(value))
 const swapEvent = ({ pool = canonical.pool, direction = 1, amountIn = 1000n, amountOut = 40000n } = {}) => ammEvent('EvtSwap2', { pool: new PublicKey(pool),
   tradeDirection: direction, collectFeeMode: 1, hasReferral: false, params: { amount0: n(amountIn), amount1: n(1), swapMode: 0 },
@@ -255,6 +269,7 @@ test('an add-liquidity receipt counts a balancing swap and the deposit; it names
     stock: [['owner', 5000, 3000], ['vault', 100, 2100]], repoing: [['owner', 0, 1000], ['vault', 90000, 89000]] })
   const found = analyzeSettlementTransaction({ transaction: tx, kind: 'add_liquidity', asset: META, canonical })
   assert.deepEqual([found.quoteSpent, found.repoingSpent, found.repoingReceived, found.positions], [2000n, 39000n, 40000n, [position.toBase58()]])
+  assert.deepEqual(found.liquidity, { [position.toBase58()]: '5' }, 'the liquidity this deposit added, for the permanent-lock check')
   assert.deepEqual(found.deposit, { stock: '1000', repoing: '39000' })
   assert.throws(() => analyzeSettlementTransaction({ transaction: tx, kind: 'swap', asset: META, canonical }), /exactly one swap/)
   assert.throws(() => analyzeSettlementTransaction({ kind: 'add_liquidity', asset: META, canonical,
@@ -276,6 +291,74 @@ test('settlement planning helpers: exact price impact and the largest size withi
   assert.equal(largestWithinImpact(10_000n, () => 301n, 300), null)
   assert.equal(largestWithinImpact(10_000n, half => { if (half > 2500n) throw Error('not enough liquidity'); return 0n }, 300), 5001n, 'a size the pool cannot quote does not fit')
   assert.deepEqual(SETTLEMENT_LIMITS, { slippageBps: 500, priceImpactBps: 1000 })
+})
+
+test('a graduated position\'s collection receipt takes everything accrued: exact or more, never less, and only that position', async () => {
+  const damm = { pool: pk().toBase58(), tokenAVault: pk().toBase58(), tokenBVault: pk().toBase58(),
+    creator: { position: pk().toBase58(), nftAccount: pk().toBase58() } }
+  const signer = market.creatorWallet
+  const built = await collectionInstructions({ source: 'damm_creator', signer, custody: STOCK_FEE_CUSTODY, market, quoteMint: META.mint, amount: '400', damm, programs })
+  assert.equal(built.instructions[2].name, 'claim_position_fee')
+  const evaluation = { status: 'MATCH', amount: '400', launcherAmount: '120', accumulatorAmount: '280', earned: '400', collected: '0', launcherEarned: '120', launcherCollected: '0' }
+  const terms = stockCollectionTerms({ market, asset: META, source: 'damm_creator', evaluation, signer, custody: STOCK_FEE_CUSTODY, built,
+    sourceVault: damm.tokenBVault, pool: damm.pool, position: damm.creator.position })
+  const claim = ({ claimed, position = terms.position }) => {
+    const accounts = Array.from({ length: 15 }, () => pk())
+    accounts[1] = new PublicKey(terms.pool); accounts[2] = new PublicKey(terms.position); accounts[4] = new PublicKey(terms.receiverTokenAccount)
+    accounts[6] = new PublicKey(terms.sourceVault); accounts[10] = new PublicKey(signer)
+    return transaction({ payer: new PublicKey(signer), instructions: [{ program: CP_AMM_PROGRAM_ID, accounts, data: Buffer.concat([Buffer.from('b4269a118521a2d3', 'hex')]) }],
+      inner: [{ index: 0, program: CP_AMM_PROGRAM_ID, data: ammEvent('EvtClaimPositionFee', { pool: new PublicKey(terms.pool), position: new PublicKey(position),
+        owner: new PublicKey(signer), feeAClaimed: zero(), feeBClaimed: n(claimed) }) }],
+      balances: [{ account: new PublicKey(terms.receiverTokenAccount), mint: META.mint, owner: STOCK_FEE_CUSTODY, pre: 0, post: claimed },
+        { account: new PublicKey(terms.sourceVault), mint: META.mint, owner: 'pool', pre: 10_000, post: 10_000n - BigInt(claimed) }] })
+  }
+  assert.deepEqual(Object.entries(checkStockCollectionReceipt({ transaction: claim({ claimed: 400n }), terms })).filter(([k]) => ['amount', 'excess'].includes(k)),
+    [['amount', '400'], ['excess', '0']])
+  assert.equal(checkStockCollectionReceipt({ transaction: claim({ claimed: 412n }), terms }).excess, '12', 'fees accrued since the review are reported')
+  assert.throws(() => checkStockCollectionReceipt({ transaction: claim({ claimed: 399n }), terms }), /differs from the reviewed amount/)
+  assert.throws(() => checkStockCollectionReceipt({ transaction: claim({ claimed: 400n, position: pk().toBase58() }), terms }), /exactly one claim event/)
+})
+
+const initEvent = ({ creator = owner, payer = owner, a = 39000n, b = 1000n, liquidity = 77n } = {}) => ammEvent('EvtInitializePool', {
+  pool: new PublicKey(canonical.pool), tokenAMint: new PublicKey(canonical.repoingMint), tokenBMint: new PublicKey(META.mint), creator, payer,
+  alphaVault: PublicKey.default, poolFees: { baseFee: { data: Array(27).fill(0) }, compoundingFeeBps: 0, padding: 0, dynamicFee: null },
+  sqrtMinPrice: n(1), sqrtMaxPrice: n(2), activationType: 0, collectFeeMode: 1, liquidity: n(liquidity), sqrtPrice: n(1), activationPoint: zero(),
+  tokenAFlag: 0, tokenBFlag: 1, tokenAAmount: n(a), tokenBAmount: n(b), totalAmountA: n(a), totalAmountB: n(b), poolType: 0 })
+const createdEvent = position => ammEvent('EvtCreatePosition', { pool: new PublicKey(canonical.pool), owner, position, positionNftMint: pk() })
+
+test('a seed receipt is the pool\'s creation, signed and paid for by owner wallets, with its one position\'s liquidity', () => {
+  const position = pk()
+  const seed = (events, payer = owner) => settlementTransaction({ events, payer, stock: [['owner', 5000, 4000], ['vault', null, 1000]],
+    repoing: [['owner', 90000, 51000], ['vault', null, 39000]] })
+  const found = analyzeSettlementTransaction({ transaction: seed([initEvent(), createdEvent(position)]), kind: 'seed', asset: META, canonical })
+  assert.deepEqual([found.quoteSpent, found.repoingSpent, found.repoingReceived, found.liquidity], [1000n, 39000n, 0n, { [position.toBase58()]: '77' }])
+  // Anyone may name an owner wallet as the pool's creator; only an owner wallet's own signature and funds make it the owner's.
+  assert.throws(() => analyzeSettlementTransaction({ transaction: seed([initEvent({ payer: pk() }), createdEvent(position)]), kind: 'seed', asset: META, canonical }),
+    /not created and paid for by owner wallets/)
+  assert.throws(() => analyzeSettlementTransaction({ transaction: seed([initEvent({ creator: pk() }), createdEvent(position)]), kind: 'seed', asset: META, canonical }),
+    /not created and paid for by owner wallets/)
+  assert.throws(() => analyzeSettlementTransaction({ transaction: seed([initEvent(), createdEvent(position)], pk()), kind: 'seed', asset: META, canonical }),
+    /not an owner wallet/)
+  assert.throws(() => analyzeSettlementTransaction({ transaction: seed([initEvent(), createdEvent(position), createdEvent(pk())]), kind: 'seed', asset: META, canonical }),
+    /exactly one position/)
+  assert.throws(() => analyzeWithOwners({ transaction: seed([initEvent(), createdEvent(position)]), kind: 'seed', asset: META, canonical }), /Owner wallets are required/)
+})
+
+test('liquidity counts only while permanently locked and covering every deposit recorded into the position', () => {
+  const facts = (permanent, unlocked = '0', vested = '0') => ({ address: 'Position', fullyLocked: unlocked === '0' && vested === '0' && BigInt(permanent) > 0n,
+    liquidity: { permanent, unlocked, vested } })
+  assert.equal(lockCoverage(facts('100'), '60', '40'), null)
+  assert.match(lockCoverage(facts('100'), '61', '40'), /100 permanently locked liquidity, less than the 101 recorded/)
+  assert.match(lockCoverage(facts('100', '5'), '0', '1'), /still holds 5 unlocked and 0 vesting/)
+  assert.match(lockCoverage(facts('100', '0', '3'), '0', '1'), /still holds 0 unlocked and 3 vesting/)
+  assert.equal(minimumAfterSlippage(1_000_000n, 100), 990_000n, 'slippage is in basis points, floored as the SDK floors it')
+  assert.equal(minimumAfterSlippage(999n, 500), 949n)
+})
+
+test('the scripts write to the database only for mainnet facts read through two agreeing RPCs', () => {
+  assert.throws(() => assertWritable({ network: 'genesis EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG', verification: {} }), /mainnet transactions only/)
+  assert.throws(() => assertWritable({ network: 'mainnet', verification: null }), /second RPC \(GRADUATION_VERIFICATION_RPC_URL\)/)
+  assert.doesNotThrow(() => assertWritable({ network: 'mainnet', verification: {} }))
 })
 
 test('the SOL platform-fee listing never lists a stock-paired market', async () => {

@@ -11,7 +11,7 @@ import { Connection, Keypair, PublicKey, Transaction, TransactionInstruction, se
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createMint, createMintToInstruction,
   getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
-import { CpAmm, MAX_SQRT_PRICE, MIN_SQRT_PRICE, SwapMode, getBaseFeeParams } from '@meteora-ag/cp-amm-sdk'
+import { CpAmm, MAX_SQRT_PRICE, MIN_SQRT_PRICE, SwapMode, derivePositionNftAccount, getBaseFeeParams, getCurrentPoint } from '@meteora-ag/cp-amm-sdk'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { createMeteoraLauncher } from '../src/meteora-launch.mjs'
@@ -185,33 +185,53 @@ test('stock collections and settlements verified from real transactions on mainn
     // A test REPOING (SPL Token, 6 decimals); the owner seeds REPOING/METAx with half the collected METAx, all permanently locked.
     const repoing = await createMint(connection, custody, custody.publicKey, null, 6, Keypair.generate(), { commitment: 'confirmed' })
     const ownerRepoing = getAssociatedTokenAddressSync(repoing, custody.publicKey)
-    await send([createAssociatedTokenAccountIdempotentInstruction(custody.publicKey, ownerRepoing, custody.publicKey, repoing),
+    const repoingFunding = await send([createAssociatedTokenAccountIdempotentInstruction(custody.publicKey, ownerRepoing, custody.publicKey, repoing),
       createMintToInstruction(repoing, ownerRepoing, custody.publicKey, 10n ** 15n)], [custody])
     let canonical, seedSpent = 0n
-
-    await t.test('the owner\'s pool is verified and registered, and its seeding is a receipt within the collected accumulator', async () => {
-      const stockSeed = collected / 2n, repoingSeed = stockSeed * 10n
+    // A customizable REPOING/METAx pool, created and funded by `payer`, naming `creator` (who gets the position NFT). Locking
+    // the position in the same transaction needs the creator's signature, so only an owner's own creation can lock it.
+    const createPool = async ({ payer, creator, mint, stockSeed, repoingSeed, lock = true }) => {
       const prep = amm.preparePoolCreationParams({ tokenAAmount: new BN(String(repoingSeed)), tokenBAmount: new BN(String(stockSeed)),
         minSqrtPrice: MIN_SQRT_PRICE, maxSqrtPrice: MAX_SQRT_PRICE, collectFeeMode: 1 })
       const nft = Keypair.generate()
-      const created = await amm.createCustomPool({ payer: custody.publicKey, creator: custody.publicKey, positionNft: nft.publicKey, tokenAMint: repoing,
+      const created = await amm.createCustomPool({ payer: payer.publicKey, creator, positionNft: nft.publicKey, tokenAMint: mint,
         tokenBMint: METAX, tokenAAmount: new BN(String(repoingSeed)), tokenBAmount: new BN(String(stockSeed)), sqrtMinPrice: MIN_SQRT_PRICE,
         sqrtMaxPrice: MAX_SQRT_PRICE, liquidityDelta: prep.liquidityDelta, initSqrtPrice: prep.initSqrtPrice,
         poolFees: { baseFee: getBaseFeeParams({ baseFeeMode: 0, feeTimeSchedulerParam: { startingFeeBps: 25, endingFeeBps: 25, numberOfPeriod: 0, totalDuration: 0 } }),
           compoundingFeeBps: 0, padding: 0, dynamicFee: null },
         hasAlphaVault: false, activationType: 0, collectFeeMode: 1, activationPoint: null, tokenAProgram: TOKEN_PROGRAM_ID,
-        tokenBProgram: TOKEN_2022_PROGRAM_ID, isLockLiquidity: true })
-      created.tx.feePayer = custody.publicKey
-      const seedSignature = await finalized(await sendAndConfirmTransaction(connection, created.tx, [custody, nft], { commitment: 'confirmed' }))
-      // Only a pool of exactly REPOING and METAx by an owner wallet passes.
-      await assert.rejects(verifyCanonicalPool({ connection: finalizedConnection, assetId: 'meta-xstock', pool: created.pool.toBase58(), owners,
-        repoingMint: Keypair.generate().publicKey.toBase58() }), /REPOING mint is not an SPL Token mint|not exactly REPOING/)
-      await assert.rejects(verifyCanonicalPool({ connection: finalizedConnection, assetId: 'meta-xstock', pool: created.pool.toBase58(),
-        owners: [Keypair.generate().publicKey.toBase58()], repoingMint: repoing.toBase58() }), /not an owner wallet/)
-      await assert.rejects(verifyCanonicalPool({ connection: finalizedConnection, assetId: 'msft-xstock', pool: created.pool.toBase58(), owners,
-        repoingMint: repoing.toBase58() }), /MSFTx mint is not a Token-2022 mint|not exactly REPOING/)
-      const verified = await verifyCanonicalPool({ connection: finalizedConnection, assetId: 'meta-xstock', pool: created.pool.toBase58(), owners,
-        repoingMint: repoing.toBase58() })
+        tokenBProgram: TOKEN_2022_PROGRAM_ID, isLockLiquidity: lock })
+      created.tx.feePayer = payer.publicKey
+      const signature = await finalized(await sendAndConfirmTransaction(connection, created.tx, [payer, nft], { commitment: 'confirmed' }))
+      return { ...created, signature }
+    }
+
+    await t.test('the owner\'s pool is verified and registered, and its seeding is a receipt within the collected accumulator', async () => {
+      const stockSeed = collected / 2n, repoingSeed = stockSeed * 10n
+      const created = await createPool({ payer: custody, creator: custody.publicKey, mint: repoing, stockSeed, repoingSeed })
+      const seedSignature = created.signature
+      const check = over => verifyCanonicalPool({ connection: finalizedConnection, assetId: 'meta-xstock', pool: created.pool.toBase58(), owners,
+        repoingMint: repoing.toBase58(), creationSignature: seedSignature, ...over })
+      // Only a pool of exactly REPOING and METAx, created and paid for by an owner wallet, passes.
+      await assert.rejects(check({ repoingMint: Keypair.generate().publicKey.toBase58() }), /REPOING mint is not an SPL Token mint|not exactly REPOING/)
+      await assert.rejects(check({ owners: [Keypair.generate().publicKey.toBase58()] }), /not an owner wallet/)
+      await assert.rejects(check({ assetId: 'msft-xstock' }), /MSFTx mint is not a Token-2022 mint|not exactly REPOING/)
+      await assert.rejects(check({ creationSignature: swapSignature }), /paid for by .*, not an owner wallet/)
+      await assert.rejects(check({ creationSignature: repoingFunding }), /exactly one pool creation/)
+      await assert.rejects(check({ creationSignature: undefined }), /creation transaction signature is required/)
+      // The pool's creator is not a signature: an outsider can create a pool naming an owner wallet, which then holds its position.
+      // Its creation, paid for by the outsider, is what refuses it.
+      const outsider = await funded(), forgedMint = await createMint(connection, outsider, outsider.publicKey, null, 6, Keypair.generate(), { commitment: 'confirmed' })
+      const outsiderRepoing = getAssociatedTokenAddressSync(forgedMint, outsider.publicKey)
+      await send([createAssociatedTokenAccountIdempotentInstruction(outsider.publicKey, outsiderRepoing, outsider.publicKey, forgedMint),
+        createMintToInstruction(forgedMint, outsiderRepoing, outsider.publicKey, 10n ** 12n)], [outsider])
+      await holdMetax(outsider, 100_000_000n)
+      const forged = await createPool({ payer: outsider, creator: custody.publicKey, mint: forgedMint, stockSeed: 1_000_000n, repoingSeed: 1_000_000_000n, lock: false })
+      await assert.rejects(verifyCanonicalPool({ connection: finalizedConnection, assetId: 'meta-xstock', pool: forged.pool.toBase58(), owners,
+        repoingMint: forgedMint.toBase58(), creationSignature: forged.signature }), /paid for by .*, not an owner wallet/)
+      const verified = await check({ verification: local('finalized') })
+      assert.equal(verified.evidence.verifiedBy, 2)
+      assert.deepEqual([verified.evidence.creation.signature, verified.evidence.creation.payer], [seedSignature, custody.publicKey.toBase58()])
       assert.deepEqual([verified.position, verified.owner, verified.fullyLocked, verified.evidence.pool.sides], [created.position.toBase58(),
         custody.publicKey.toBase58(), true, { repoing: 'A', stock: 'B' }])
       assert.equal((await registerCanonicalPool(pool, verified)).status, 'registered')
@@ -221,6 +241,7 @@ test('stock collections and settlements verified from real transactions on mainn
       assert.ok(BigInt(receipt.repoingSpent) > 0n && BigInt(receipt.repoingSpent) <= repoingSeed)
       assert.equal(receipt.repoingReceived, '0')
       assert.deepEqual(receipt.evidence.positions.map(p => [p.address, p.fullyLocked]), [[created.position.toBase58(), true]])
+      assert.deepEqual(Object.keys(receipt.evidence.liquidity), [created.position.toBase58()])
       await assert.rejects(verifyStockSettlementReceipt({ pool, connection: finalizedConnection, assetId: 'meta-xstock', kind: 'swap', signature: seedSignature, owners }), /exactly one swap/)
       const recorded = await recordStockSettlementReceipt(pool, receipt)
       assert.deepEqual([recorded.status, recorded.availableBefore], ['recorded', String(collected)])
@@ -233,9 +254,13 @@ test('stock collections and settlements verified from real transactions on mainn
       assert.equal(preview.available, String(collected - seedSpent))
       assert.ok(BigInt(preview.amount) > 1n && BigInt(preview.amount) <= collected - seedSpent)
       assert.ok(BigInt(preview.swap.priceImpactBps) <= 300n)
+      assert.equal(preview.swap.minimumOut, String(BigInt(preview.swap.expectedOut) * 9_900n / 10_000n), 'the default 100 bps slippage, in basis points')
       assert.deepEqual(preview.instructions.map(ix => ix.name.split(' ')[0]), ['createIdempotent', 'swap2', 'add_liquidity', 'permanent_lock_position'])
       const signature = await send(preview.instructions.map(toInstruction), [custody])
-      const receipt = await verifyStockSettlementReceipt({ pool, connection: finalizedConnection, assetId: 'meta-xstock', kind: 'add_liquidity', signature, owners })
+      const receipt = await verifyStockSettlementReceipt({ pool, connection: finalizedConnection, verification: local('finalized'), assetId: 'meta-xstock',
+        kind: 'add_liquidity', signature, owners })
+      assert.equal(receipt.evidence.verifiedBy, 2)
+      assert.equal(receipt.evidence.liquidity[canonical.position], preview.lock.liquidity, 'exactly the liquidity the plan locks')
       // The swap spends exactly the planned half; the deposit at most the planned rest (its thresholds).
       assert.equal(receipt.evidence.swap.amountIn, preview.swap.amountIn)
       assert.ok(BigInt(receipt.evidence.deposit.stock) <= BigInt(preview.deposit.stock))
@@ -251,7 +276,7 @@ test('stock collections and settlements verified from real transactions on mainn
       assert.equal(summary.canonicalPool.pool, canonical.pool)
     })
 
-    await t.test('a REPOING sale, an unlocked deposit and a spend beyond the accumulator are refused', async () => {
+    await t.test('a REPOING sale, an unlocked deposit, a deposit withdrawn before its lock and a spend beyond the accumulator are refused', async () => {
       const poolState = await amm.fetchPoolState(new PublicKey(canonical.pool))
       const swapIn = (input, output, amountIn) => amm.swap2({ payer: custody.publicKey, pool: new PublicKey(canonical.pool), inputTokenMint: input, outputTokenMint: output,
         tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
@@ -271,6 +296,27 @@ test('stock collections and settlements verified from real transactions on mainn
       const depositSignature = await finalized(await sendAndConfirmTransaction(connection, deposit, [custody, nft], { commitment: 'confirmed' }))
       await assert.rejects(verifyStockSettlementReceipt({ pool, connection: finalizedConnection, assetId: 'meta-xstock', kind: 'add_liquidity', signature: depositSignature, owners }),
         /still holds .* unlocked/)
+      // A deposit into the canonical position withdrawn again before any lock: the position is fully locked afterwards, but its
+      // permanent liquidity does not cover this deposit on top of the recorded ones, so it never counts.
+      const canonicalPosition = await amm.fetchPositionState(new PublicKey(canonical.position))
+      const positionNftAccount = derivePositionNftAccount(canonicalPosition.nftMint)
+      // Sized from real token amounts: a withdrawal that rounds to zero tokens is refused by the program.
+      const added = amm.getLiquidityDelta({ maxAmountTokenA: new BN(10n ** 9n), maxAmountTokenB: new BN(10n ** 7n), sqrtPrice: poolState.sqrtPrice,
+        sqrtMinPrice: poolState.sqrtMinPrice, sqrtMaxPrice: poolState.sqrtMaxPrice, collectFeeMode: poolState.collectFeeMode })
+      const add = await amm.addLiquidity({ owner: custody.publicKey, position: new PublicKey(canonical.position), pool: new PublicKey(canonical.pool),
+        positionNftAccount, liquidityDelta: added, maxAmountTokenA: new BN(10n ** 12n), maxAmountTokenB: new BN(10n ** 9n), tokenAAmountThreshold: new BN(10n ** 12n),
+        tokenBAmountThreshold: new BN(10n ** 9n), tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint, tokenAVault: poolState.tokenAVault,
+        tokenBVault: poolState.tokenBVault, tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_2022_PROGRAM_ID })
+      add.feePayer = custody.publicKey
+      const addSignature = await finalized(await sendAndConfirmTransaction(connection, add, [custody], { commitment: 'confirmed' }))
+      const remove = await amm.removeLiquidity({ owner: custody.publicKey, position: new PublicKey(canonical.position), pool: new PublicKey(canonical.pool),
+        positionNftAccount, liquidityDelta: added, tokenAAmountThreshold: new BN(0), tokenBAmountThreshold: new BN(0), tokenAMint: poolState.tokenAMint,
+        tokenBMint: poolState.tokenBMint, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault, tokenAProgram: TOKEN_PROGRAM_ID,
+        tokenBProgram: TOKEN_2022_PROGRAM_ID, vestings: [], currentPoint: await getCurrentPoint(connection, poolState.activationType) })
+      remove.feePayer = custody.publicKey
+      await finalized(await sendAndConfirmTransaction(connection, remove, [custody], { commitment: 'confirmed' }))
+      await assert.rejects(verifyStockSettlementReceipt({ pool, connection: finalizedConnection, assetId: 'meta-xstock', kind: 'add_liquidity', signature: addSignature, owners }),
+        /permanently locked liquidity, less than the .* recorded/)
       // A genuine swap paid from the owner's own METAx, larger than what the accumulator has left, verifies but is never recorded.
       const left = BigInt((await stockAccumulator(pool, 'meta-xstock')).totals.available)
       const big = await swapIn(METAX, repoing, String(left + 1n))

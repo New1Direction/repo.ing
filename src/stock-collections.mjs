@@ -25,8 +25,9 @@ export const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4Du
 export const STOCK_COLLECTION_SOURCES = Object.freeze(['dbc_creator', 'dbc_partner', 'damm_creator', 'damm_partner'])
 // The DBC fee claimer of every stock config (scripts/create-stock-quote-config.mjs) and the partner position's owner.
 export const STOCK_PARTNER_WALLET = PLATFORM_FEE_WALLET
-// Custody of collected stock fees: the partner wallet, where SOL platform-fee claims settle too. A constant, never an argument.
-// Collections land in its Token-2022 account for the stock; launcher payouts and the owner's settlements leave from there.
+// Custody of collected stock fees: the partner wallet, where SOL platform-fee claims settle too. Fixed here; the scripts never
+// take it as an argument (only tests pass their own). Collections land in its Token-2022 account for the stock; launcher
+// payouts and the owner's settlements leave from there.
 export const STOCK_FEE_CUSTODY = PLATFORM_FEE_WALLET
 const EVENT_CPI_PREFIX = Buffer.from('e445a52e51cb9a1d', 'hex')
 const DISCRIMINATORS = Object.freeze({
@@ -73,7 +74,7 @@ export async function readCollectionLedger(pool, repoId) {
         from stock_fee_events where github_repo_id=$1`, id)
       const { rows: checkpoints } = await db.query(`select side, count(*)::int as count, sum(credit)::text as credit,
           sum(launcher_credit)::text as launcher, (array_agg(cumulative_earned order by slot desc))[1]::text as earned,
-          (array_agg(cumulative_claimed order by slot desc))[1]::text as claimed, (array_agg(position order by slot desc))[1] as position,
+          (array_agg(position order by slot desc))[1] as position,
           (array_agg(damm_pool order by slot desc))[1] as pool, max(slot)::text as slot
         from stock_damm_fee_checkpoints where github_repo_id=$1 group by side`, id)
       const { rows: collections } = await db.query(`select source, status, count(*)::int as count,
@@ -100,7 +101,7 @@ export function collectionLedger({ fees, checkpoints, collections }) {
     else {
       const row = side(source === 'damm_creator' ? 'creator' : 'partner')
       earned = big(row?.credit); launcherEarned = big(row?.launcher)
-      checkpoint = row && { count: row.count, cumulativeEarned: row.earned, cumulativeClaimed: row.claimed, position: row.position, pool: row.pool, slot: row.slot }
+      checkpoint = row && { count: row.count, cumulativeEarned: row.earned, position: row.position, pool: row.pool, slot: row.slot }
     }
     result[source] = { earned, launcherEarned, collected: s.actual, collectedLauncher: s.launcher, pending, checkpoint }
   }
@@ -271,6 +272,13 @@ export function chainSources(chain) {
 
 // The total still collectable from one market's pools, both shares (the accumulator's onchain comparison).
 export const chainUncollected = chain => Object.values(chainSources(chain)).reduce((total, s) => total + (s ? s.uncollected : 0n), 0n)
+
+// Custody's balance of a stock, raw (its associated Token-2022 account; none is 0). A failed read throws: never taken as zero.
+export async function custodyStockBalance(connection, asset, custody = STOCK_FEE_CUSTODY) {
+  const account = getAssociatedTokenAddressSync(key(asset.mint), key(custody), true, TOKEN_2022_PROGRAM_ID)
+  const info = await connection.getAccountInfo(account, 'finalized')
+  return info ? unpackAccount(account, info, TOKEN_2022_PROGRAM_ID).amount : 0n
+}
 
 export function createStockCollections({ pool, reader, custody = STOCK_FEE_CUSTODY }) {
   // One market: every source's reconciliation and, where it matches, the collection it would make.

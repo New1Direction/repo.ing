@@ -14,9 +14,6 @@ import { parseMultiplier } from './scaled-ui-amount.mjs'
 //   available  collected − spent: what a settlement may still use
 // Nothing here moves funds; a problem is reported, never corrected.
 
-export const ACCUMULATOR_TABLES = Object.freeze(['stock_fee_events', 'stock_damm_fee_checkpoints', 'stock_fee_collections',
-  'stock_launcher_payouts', 'stock_settlement_receipts', 'stock_canonical_pools'])
-
 const big = value => BigInt(value ?? 0)
 const text = value => value.toString()
 
@@ -77,19 +74,24 @@ export async function readAccumulatorLedger(pool, assetId) {
       const receiptMints = await q(`select distinct quote_mint as "quoteMint" from stock_settlement_receipts where asset_id = $1`)
       const pools = await q(`select id::text, pool, quote_mint as "quoteMint", repoing_mint as "repoingMint", position,
           registered_at as "registeredAt" from stock_canonical_pools where asset_id = $1 and active`)
+      // A transaction settles one collection or one payout; the same signature settling two would count its money twice.
+      const repeated = await q(`select 'collection' as kind, signature from stock_fee_collections where asset_id = $1 and status = 'settled'
+          group by signature having count(*) > 1
+        union all select 'payout', signature from stock_launcher_payouts where asset_id = $1 and status = 'settled'
+          group by signature having count(*) > 1`)
       await db.query('commit')
-      return { markets, fees, checkpoints, collections, payouts, receipts, receiptMints, pools }
+      return { markets, fees, checkpoints, collections, payouts, receipts, receiptMints, pools, repeated }
     } catch (error) { await db.query('rollback').catch(() => {}); throw error }
   } finally { db.release() }
 }
 
 const zero = () => ({ credited: 0n, launcherCredited: 0n, collected: 0n, collectedLauncher: 0n, collectedActual: 0n,
-  launcherPaid: 0n, feeTotal: 0n, pendingCollections: 0, pendingReviewed: 0n, pendingPayouts: 0, pendingPayoutAmount: 0n })
+  launcherPaid: 0n, feeTotal: 0n, pendingCollections: 0, pendingPayouts: 0 })
 
-// The accumulator of one stock from its ledger (readAccumulatorLedger) and, optionally, what the pools hold now:
+// The accumulator of one stock from its ledger (readAccumulatorLedger) and, optionally, what the chain holds now:
 // onchain is a Map repoId → { uncollected } (raw units of the stock still claimable from that market's curve and graduated
-// positions, both shares) or { error }. units: { multiplier, usdPrice } for display.
-export function summarizeAccumulator(asset, ledger, { onchain = null, units = {} } = {}) {
+// positions, both shares) or { error }; custodyBalance is custody's stock balance (raw). units: { multiplier, usdPrice }.
+export function summarizeAccumulator(asset, ledger, { onchain = null, custodyBalance = null, units = {} } = {}) {
   const problems = []
   const per = new Map(ledger.markets.map(market => [market.repoId, { ...market, ...zero() }]))
   const of = repoId => {
@@ -110,15 +112,16 @@ export function summarizeAccumulator(asset, ledger, { onchain = null, units = {}
     if (row.status === 'settled') {
       m.collected += big(row.accumulator); m.collectedLauncher += big(row.launcher); m.collectedActual += big(row.actual)
       if (big(row.actual) !== big(row.launcher) + big(row.accumulator)) problems.push(`Settled ${row.source} collections of market ${row.repoId} do not split exactly into launcher and accumulator parts`)
-    } else if (row.status === 'pending') { m.pendingCollections += row.count; m.pendingReviewed += big(row.reviewed) }
+    } else if (row.status === 'pending') m.pendingCollections += row.count
   }
   for (const row of ledger.payouts) {
     const m = of(row.repoId)
     if (row.status === 'settled') m.launcherPaid += big(row.amount)
-    else if (row.status === 'pending') { m.pendingPayouts += row.count; m.pendingPayoutAmount += big(row.amount) }
+    else if (row.status === 'pending') m.pendingPayouts += row.count
   }
   for (const row of ledger.receiptMints ?? []) if (row.quoteMint !== asset.mint) problems.push(`A settlement receipt names mint ${row.quoteMint}, not ${asset.mint}`)
   for (const row of ledger.pools) if (row.quoteMint !== asset.mint) problems.push(`The canonical pool row names mint ${row.quoteMint}, not ${asset.mint}`)
+  for (const row of ledger.repeated ?? []) problems.push(`Signature ${row.signature} settles more than one ${row.kind}`)
 
   const repositories = [...per.values()].map(m => {
     const inPools = m.credited - m.collected, launcherInPools = m.launcherCredited - m.collectedLauncher
@@ -152,11 +155,14 @@ export function summarizeAccumulator(asset, ledger, { onchain = null, units = {}
   const available = collected - spent
   if (available < 0n) problems.push(`Settlement receipts spend ${spent} but only ${collected} of accumulator funds were collected`)
   if (ledger.pools.length > 1) problems.push('More than one active canonical pool')
+  // What custody should hold of this stock from the ledger alone: everything collected, less launcher payouts and settlements.
+  const custodyExpected = collected + collectedLauncher - launcherPaid - spent
+  if (custodyBalance != null && BigInt(custodyBalance) < custodyExpected) problems.push(`Custody holds ${custodyBalance}, less than the ` +
+    `${custodyExpected} the ledger expects there: funds left custody that no settlement receipt or launcher payout records`)
   const totals = { credited: text(sum('credited')), inPools: text(sum('inPools')), collected: text(collected), spent: text(spent),
     available: text(available), launcherCredited: text(sum('launcherCredited')), launcherInPools: text(sum('launcherInPools')),
     collectedLauncher: text(collectedLauncher), launcherPaid: text(launcherPaid), owedToLaunchers: text(sum('owed')),
-    // What custody should hold of this stock from the ledger alone: everything collected, less launcher payouts and settlements.
-    custodyExpected: text(collected + collectedLauncher - launcherPaid - spent),
+    custodyExpected: text(custodyExpected), ...(custodyBalance != null ? { custodyBalance: text(BigInt(custodyBalance)) } : {}),
     ...(onchain ? { onchainUncollected: text(repositories.reduce((total, r) => total + big(r.onchain?.uncollected), 0n)) } : {}) }
   const display = Object.fromEntries(Object.entries(totals).map(([key, value]) => [key, stockAmountView(value, asset, units)]))
   const pool = ledger.pools[0] ?? null
@@ -190,7 +196,8 @@ export function describeAccumulator(summary) {
     `  collected into custody: ${amount('collected')}`,
     `  spent by verified settlements: ${amount('spent')}`,
     `  available to settle: ${amount('available')}`,
-    `  owed to launchers: ${amount('owedToLaunchers')} (credited ${amount('launcherCredited')}, paid ${amount('launcherPaid')})`]
+    `  owed to launchers: ${amount('owedToLaunchers')} (credited ${amount('launcherCredited')}, paid ${amount('launcherPaid')})`,
+    `  custody should hold ${amount('custodyExpected')}${t.custodyBalance !== undefined ? `; it holds ${amount('custodyBalance')}` : ''}`]
   if (summary.canonicalPool) lines.push(`  canonical REPOING/${summary.symbol} pool: ${summary.canonicalPool.pool}`)
   else lines.push(`  no canonical REPOING/${summary.symbol} pool registered yet`)
   for (const problem of summary.problems) lines.push(`  PROBLEM: ${problem}`)
