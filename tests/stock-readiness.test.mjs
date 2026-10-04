@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import BN from 'bn.js'
 import { Keypair, PublicKey } from '@solana/web3.js'
@@ -12,8 +12,8 @@ import { launchFeeBaseFee } from '../src/launch-fee.mjs'
 import { DBC_PROGRAM_ID } from '../src/launch-fee-config.mjs'
 import { QUOTE_REGISTRY, STOCK_PAIR_LAUNCHES_READY, stockPairsLaunchable } from '../src/quote-assets.mjs'
 import { INDEXED_MARKETS, MAINNET_GENESIS, READINESS_ENV, SOL_INDEXER_MARKETS, SOL_LEDGERS, STOCK_INDEXER_MARKETS, STOCK_LEDGER_FUNCTIONS,
-  STOCK_LEDGER_INDEXES, STOCK_LEDGER_TABLES, STOCK_LEDGER_TRIGGERS, checkStockReadiness, custodyAddress, formatReadiness, partitionProblems,
-  stockBadges } from '../src/stock-readiness.mjs'
+  STOCK_EXECUTION_INDEXES, STOCK_LEDGER_INDEXES, STOCK_LEDGER_TABLES, STOCK_LEDGER_TRIGGERS, checkStockReadiness, custodyAddress, formatReadiness,
+  partitionProblems, stockBadges } from '../src/stock-readiness.mjs'
 import { readinessEnv } from '../scripts/stock-readiness.mjs'
 
 // src/stock-readiness.mjs against a fake connection and fake database: fixture accounts only, never mainnet. The METAx mint is
@@ -109,8 +109,10 @@ const statuses = report => report.items.filter(entry => entry.status === 'FAIL')
 
 // ---------- fake database ----------
 const TRIGGERS = STOCK_LEDGER_TRIGGERS.map(({ table, name, function: fn }) => ({ table, name, function: fn, enabled: 'O' }))
-const INDEXES = STOCK_LEDGER_INDEXES.map(({ table, name }) => ({ name, table, valid: true }))
-function fakeDb({ tables = STOCK_LEDGER_TABLES, functions = STOCK_LEDGER_FUNCTIONS, triggers = TRIGGERS, indexes = INDEXES, all = ['1', '2', '3'], sol = ['1', '2'],
+const INDEXES = STOCK_LEDGER_INDEXES.map(({ table, name }) => ({ name, table, valid: true, unique: false }))
+// Migration 0056's guards, as a database that has applied it describes them.
+const GUARDS = STOCK_EXECUTION_INDEXES.map(({ table, name, unique }) => ({ name, table, valid: true, unique }))
+function fakeDb({ tables = STOCK_LEDGER_TABLES, functions = STOCK_LEDGER_FUNCTIONS, triggers = TRIGGERS, indexes = [...INDEXES, ...GUARDS], all = ['1', '2', '3'], sol = ['1', '2'],
   stock = ['3'], ledgers = [], fail = null } = {}) {
   const queries = []
   const query = async (sql, params = []) => {
@@ -120,7 +122,7 @@ function fakeDb({ tables = STOCK_LEDGER_TABLES, functions = STOCK_LEDGER_FUNCTIO
     if (sql.includes('to_regclass(name) is not null')) return { rows: params[0].map(name => ({ name, present: tables.includes(name) })) }
     if (sql.includes('to_regprocedure')) return { rows: params[0].map(name => ({ name, present: functions.includes(name) })) }
     if (sql.includes('from pg_trigger')) return { rows: triggers }
-    if (sql.includes('from pg_index')) return { rows: indexes }
+    if (sql.includes('from pg_index')) return { rows: indexes.filter(row => params[0].includes(row.name)) }
     for (const [where, ids] of [[STOCK_INDEXER_MARKETS, stock], [SOL_INDEXER_MARKETS, sol], [INDEXED_MARKETS, all]]) {
       if (sql.includes(`where ${where} order by`)) return { rows: ids.map(id => ({ id })) }
     }
@@ -336,17 +338,19 @@ test('switches are shown on or off, never as a failure; launches open only with 
   }
 })
 
-test('database: migrations 0054 and 0055, the market partition and the SOL ledgers, each read in its own READ ONLY transaction', async () => {
+test('database: migrations 0054, 0055 and 0056, the market partition and the SOL ledgers, each read in its own READ ONLY transaction', async () => {
   const db = fakeDb()
   const { report, find } = await run({ db })
   assert.equal(report.ok, true)
-  assert.deepEqual(['Migration 0054', 'Migration 0055', 'Market partition', 'SOL ledgers'].map(name => find(name).status), ['PASS', 'PASS', 'PASS', 'PASS'])
+  assert.deepEqual(['Migration 0054', 'Migration 0055', 'Migration 0056', 'Market partition', 'SOL ledgers'].map(name => find(name).status),
+    ['PASS', 'PASS', 'PASS', 'PASS', 'PASS'])
   assert.equal(find('Migration 0055').reason, 'the stock ledgers\' 3 read indexes are present and valid')
+  assert.equal(find('Migration 0056').reason, 'the stock execution guards\' 3 indexes are present and valid, one collection and one payout per signature')
   assert.equal(find('Market partition').reason, '3 indexed markets: 2 SOL (the SOL indexer\'s list) + 1 stock (the stock indexer\'s list), none in both')
   assert.match(find('SOL ledgers').reason, /^no stock-paired market in any of the 12 SOL fee, trade, claim and reward tables$/)
-  // Four transactions, each begun read only and rolled back; nothing but reads in between.
-  assert.equal(db.queries.filter(sql => sql === 'begin transaction read only').length, 4)
-  assert.equal(db.queries.filter(sql => sql === 'rollback').length, 4)
+  // Five transactions, each begun read only and rolled back; nothing but reads in between.
+  assert.equal(db.queries.filter(sql => sql === 'begin transaction read only').length, 5)
+  assert.equal(db.queries.filter(sql => sql === 'rollback').length, 5)
   for (const sql of db.queries) assert.match(sql, /^(begin transaction read only|set local statement_timeout = '30s'|rollback|select )/)
 })
 
@@ -374,11 +378,38 @@ test('database failures: partition overlap, missing 0054 objects or 0055 indexes
   // One unreadable check fails alone; the others still run, and the database URL's password is never printed.
   const env = { ...ENV, DATABASE_URL: `postgres://reader:${DB_SECRET}@db.internal:5432/railway` }
   const unreadable = await run({ env, db: fakeDb({ fail: /from pg_trigger/ }) })
-  assert.deepEqual(['Migration 0054', 'Migration 0055', 'Market partition', 'SOL ledgers'].map(name => unreadable.status(name)), ['FAIL', 'PASS', 'PASS', 'PASS'])
+  assert.deepEqual(['Migration 0054', 'Migration 0055', 'Migration 0056', 'Market partition', 'SOL ledgers'].map(name => unreadable.status(name)),
+    ['FAIL', 'PASS', 'PASS', 'PASS', 'PASS'])
   assert.match(unreadable.find('Migration 0054').reason, /^could not read the database: relation is unreadable \(\[redacted\]\)$/)
   const refused = await run({ env, dbError: Error(`password authentication failed: ${DB_SECRET}`) })
   assert.deepEqual([refused.status('Connection'), refused.find('Connection').reason], ['FAIL', 'could not connect to DATABASE_URL: password authentication failed: [redacted]'])
   for (const { text } of [unreadable, refused]) assert.equal(text.includes(DB_SECRET), false)
+})
+
+test('migration 0056 (stock execution guards): a TODO, not a FAIL, until applied; then PASS; a partial or wrong guard fails', async () => {
+  // Not applied yet (PR #170 ships it): none of its indexes exists. Nothing fails, and the line says why.
+  const before = await run({ db: fakeDb({ indexes: INDEXES }) })
+  assert.equal(before.report.ok, true)
+  assert.deepEqual([before.status('Migration 0055'), before.status('Migration 0056')], ['PASS', 'TODO'])
+  assert.equal(before.find('Migration 0056').reason, 'migration 0056 not applied yet: none of its 3 stock execution guard indexes exists ' +
+    '(it ships with stock fee collection and launcher payout execution, which stay off)')
+  assert.match(before.text, /\n {2}TODO {2}Migration 0056: migration 0056 not applied yet: /)
+  // Applied: all three, valid, the signature guards unique.
+  const after = await run({ db: fakeDb() })
+  assert.deepEqual([after.report.ok, after.status('Migration 0056')], [true, 'PASS'])
+  // Partly there, on the wrong table, not valid or not unique: each a FAIL, named.
+  const failed = async indexes => { const { report, find } = await run({ db: fakeDb({ indexes: [...INDEXES, ...indexes] }) }); assert.equal(report.ok, false); return find('Migration 0056') }
+  const [collections, payouts, status] = GUARDS
+  assert.deepEqual(await failed([collections]), { section: 'Database', name: 'Migration 0056', status: 'FAIL', reason: 'index stock_launcher_payouts_signature_unique ' +
+    'missing; index stock_launcher_payouts_asset_status missing: apply migration 0056 as written' })
+  assert.equal((await failed([collections, { ...payouts, unique: false }, status])).reason, 'index stock_launcher_payouts_signature_unique on ' +
+    'stock_launcher_payouts is not unique: apply migration 0056 as written')
+  assert.equal((await failed([{ ...collections, table: 'stock_launcher_payouts' }, payouts, { ...status, valid: false }])).reason, 'index ' +
+    'stock_fee_collections_signature_unique is on stock_launcher_payouts, not stock_fee_collections; index stock_launcher_payouts_asset_status on ' +
+    'stock_launcher_payouts is not valid: apply migration 0056 as written')
+  // The guards checked: only the two signature indexes must be unique.
+  assert.deepEqual(STOCK_EXECUTION_INDEXES.map(({ name, unique }) => [name, unique]), [['stock_fee_collections_signature_unique', true],
+    ['stock_launcher_payouts_signature_unique', true], ['stock_launcher_payouts_asset_status', false]])
 })
 
 test('only the variables the checks need are read, and the script takes nothing else from the environment', async () => {
@@ -415,6 +446,14 @@ test('the readiness checks follow the code they mirror', () => {
   // Migration 0055 creates every read index checked, on its table.
   const indexes = source('../drizzle/0055_stock_ledger_indexes.sql')
   for (const { table, name } of STOCK_LEDGER_INDEXES) assert.ok(indexes.includes(`CREATE INDEX IF NOT EXISTS "${name}" ON "${table}"`), name)
+  // Migration 0056 (once merged; until then its check is a TODO) creates every guard checked, on its table, unique where checked.
+  const guards = new URL('../drizzle/0056_stock_execution_guards.sql', import.meta.url)
+  if (existsSync(guards)) {
+    const sql = source(guards)
+    for (const { table, name, unique } of STOCK_EXECUTION_INDEXES) {
+      assert.ok(sql.includes(`CREATE ${unique ? 'UNIQUE ' : ''}INDEX IF NOT EXISTS "${name}" ON "${table}"`), name)
+    }
+  }
   // Every SOL ledger is a table of the schema with its key column.
   const schema = source('../src/db/schema.mjs')
   for (const { table, key: column } of SOL_LEDGERS) {
