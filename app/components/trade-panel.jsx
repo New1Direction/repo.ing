@@ -520,6 +520,6 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
       {graduatedPool && <p className="trade-venue">Trades in the graduated Meteora pool · <a href={graduatedPool.url} target="_blank" rel="noopener noreferrer">View pool ↗</a></p>}
     </form>
     <TradeResultCard result={resultCard} symbol={market.symbol} mint={market.mint} fullName={market.fullName} source={market.source} onClose={() => setResultCard(null)} onCheck={() => checkTrade(resultCard)} onRetry={retryWithSlippage}
-      xLink={x.link} xNudge={Boolean(wallet && x.known && !x.off && !hasXHandle(x.link))} quoteUnits={stock ? units : null}/>
+      xLink={x.link} xNudge={Boolean(wallet && x.known && !x.off && !hasXHandle(x.link))} quoteUnits={stock ? units : null} quote={quote}/>
   </div>{!panelVisible && !resultCard && <nav className="mobile-trade-actions" aria-label="Quick trade navigation"><span>${market.symbol}</span><button type="button" className="button primary" disabled={busy || !available} onClick={() => openTrade('buy')}>Buy</button><button type="button" className="button outline" disabled={busy || !available} onClick={() => openTrade('sell')}>Sell</button></nav>}</>
 }

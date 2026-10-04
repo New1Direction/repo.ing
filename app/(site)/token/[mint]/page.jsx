@@ -137,7 +137,7 @@ export default async function Token({ params, searchParams }) {
       <div className="market-hero-actions">
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
         <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
-          more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
+          {...(stockPair ? { readme: false } : {})} more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
             <a href={`https://solscan.io/token/${market.mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
             {stockPair ? <a href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}>Fee routing</a> : <Link href={`/claim/${market.repoId}`}>Claim builder fees</Link>}</>}/></div>
     </header>
@@ -157,7 +157,7 @@ export default async function Token({ params, searchParams }) {
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
         <DetailsTabs tabs={tabs} initial="earnings" label={`${market.symbol} details`}/></section>
       {official && <TeamTokenLocks/>}
-      <Suspense fallback={<MoreMarketsFallback featured={official}/>}><MoreMarketsContent mint={market.mint} featured={official}/></Suspense>
+      <Suspense fallback={<MoreMarketsFallback featured={official}/>}><MoreMarketsContent mint={market.mint} featured={official} quote={quote}/></Suspense>
     </>}
   </main><Footer/></>
 }
@@ -189,11 +189,11 @@ async function MarketsToWatchContent() {
 }
 
 // Same memoized listMarkets() rows as the home tabs: no extra query per token page view. Never recommends a do-not-promote
-// or maintainer-declined market (nothing when that list is unreadable).
-async function MoreMarketsContent({ mint, featured }) {
+// or maintainer-declined market (nothing when that list is unreadable). quote: this page's pair, for the strip's line.
+async function MoreMarketsContent({ mint, featured, quote = null }) {
   const [{ markets }, excluded] = await Promise.all([listMarkets(), promotionExcluded()])
   if (!excluded) return null
-  return <MoreMarkets markets={selectMoreMarkets(shownMarkets(markets).filter(market => !excluded.has(String(market.repoId))), { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured}/>
+  return <MoreMarkets markets={selectMoreMarkets(shownMarkets(markets).filter(market => !excluded.has(String(market.repoId))), { excludeMints: [mint, OFFICIAL_TOKEN.mint] })} featured={featured} quote={quote}/>
 }
 
 // Fixed-size placeholder: the resolved headline occupies exactly this box, so streaming it in never shifts layout.

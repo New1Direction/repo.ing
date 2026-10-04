@@ -422,6 +422,17 @@ handle if they linked one (else the short wallet), and the builder share plus re
 $REPOING / stock liquidity, with the amounts recorded so far as wallets show the stock. `/wallet` shows the connected
 wallet's launcher earnings in each stock. A wallet with no stock-pair market gets exactly the overview it always did.
 
+**Copy.** Wherever a SOL market says its trades pay the repo's builders in SOL, a stock pair says instead: "Every trade pays
+1.75% in METAx: 0.30% to the launcher, 1.10% to permanent $REPOING / METAx liquidity." (`src/stock-pair-copy.mjs`).
+
+- This covers its link-preview cards, its shared-return page, its token metadata, the X posts after a trade or its launch,
+  and its launch kit.
+- The more-markets strip names SOL pairs and stock pairs apart whenever it lists a stock pair or sits on a stock pair's page.
+- The share menu and the launch kit offer no README badge for a stock pair (the badge shows builder fees in SOL), and the
+  launch kit no maintainer invitation.
+
+SOL markets read exactly as before (`tests/stock-copy-sol-golden.test.mjs`, `tests/hf-flag-off-ui.test.mjs`).
+
 **Launcher earnings** (`src/stock-launcher-earnings.mjs`, raw units of the stock, per market and per launcher wallet):
 
 - **Earned:** `launcher_amount` of the market's curve fee events, plus `launcher_credit` of its creator-position checkpoints.

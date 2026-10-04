@@ -20,8 +20,9 @@ function slippageCopy(result, action) {
 // xLink: the trading wallet's linked X account (its confirmed trade shows as that @handle in the market's trades).
 // xNudge: Connect X is on and the wallet has not linked an account, so a confirmed trade suggests it.
 // quoteUnits: a stock pair's units (app/lib/trade-units.mjs); a confirmed sell then reports the stock received, as wallets show it.
+// quote: a stock pair's pair (marketQuoteView), null for SOL; its "Share on X" post says what its trades pay in the stock.
 export function TradeResultCard({ result, symbol, mint, fullName, source, onClose, onCheck, onRetry = null, xLink = null, xNudge = false,
-  quoteUnits = null }) {
+  quoteUnits = null, quote = null }) {
   if (!result) return null
   const { state, direction, signature } = result
   const action = direction === 'buy' ? 'Buy' : 'Sell'
@@ -59,7 +60,7 @@ export function TradeResultCard({ result, symbol, mint, fullName, source, onClos
           View transaction <ExternalLink size={14}/>
         </a>}
         {checking && <button type="button" onClick={onCheck}><RefreshCw size={14}/> Check status</button>}
-        {confirmed && <ShareOnX className="trade-result-share" mint={mint} fullName={fullName} symbol={symbol} kind={direction} source={source}/>}
+        {confirmed && <ShareOnX className="trade-result-share" mint={mint} fullName={fullName} symbol={symbol} kind={direction} source={source} quote={quote}/>}
       </div>
     </div>
   </aside>

@@ -36,6 +36,8 @@ const TIPS = {
   holders: `On-chain: the ${TOP_HOLDERS} largest wallets' share of supply. The bonding curve or pool vault and token locks are shown separately, not counted. Refreshed about every minute.`,
   token: 'Read from the token mint account on Solana. With the mint authority revoked, no more tokens can ever be minted.',
   declined: 'A current GitHub admin of this repository declined this market on repo.ing. repo.ing does not promote it. Trading stays open so holders can exit, and builder fees stay claimable by the maintainer.',
+  // A stock pair has no builder fees to claim (src/stock-owner-claims.mjs): its fees keep their fixed routing.
+  stockDeclined: 'A current GitHub admin of this repository declined this market on repo.ing. repo.ing does not promote it. Trading stays open so holders can exit, and its fees keep going to the launcher and to permanent $REPOING liquidity.',
   modelOwner: "Verified: the model's current owner on Hugging Face (the user, or an admin of the owning organization) signed in and verified it on repo.ing, so fees can reach them.",
   modelDeclined: "The model's current owner on Hugging Face declined this market on repo.ing. repo.ing does not promote it. Trading stays open so holders can exit, and fees stay claimable by the owner.",
 }
@@ -147,7 +149,8 @@ export function TrustPanel({ market, launchFee = null, declined = null, repoFact
       {model ? <ModelOwnerRow market={market}/> : isStockPairMarket(market) ? <StockPairOwnerRow market={market}/> : <MaintainerRow market={market}/>}
       {declined && (model
         ? <Row id="trust-declined" icon={Ban} tone="declined" title="Model owner declined this market" lines={["Not promoted · not endorsed by the model's creators"]} tip={TIPS.modelDeclined}/>
-        : <Row id="trust-declined" icon={Ban} tone="declined" title="Maintainer declined this market" lines={['Not promoted · not endorsed by the project']} tip={TIPS.declined}/>)}
+        : <Row id="trust-declined" icon={Ban} tone="declined" title="Maintainer declined this market" lines={['Not promoted · not endorsed by the project']}
+          tip={isStockPairMarket(market) ? TIPS.stockDeclined : TIPS.declined}/>)}
       {repoFacts && <RepoRow facts={repoFacts}/>}
       {launchFee && <LaunchFeeRow terms={launchFee}/>}
       <Suspense fallback={<LauncherFallback/>}><LauncherRow market={market}/></Suspense>

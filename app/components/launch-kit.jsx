@@ -9,17 +9,20 @@ import { launchPostUrl } from '../lib/builder-share.mjs'
 import { modelLaunchPostUrl } from '../lib/model-share.mjs'
 import { tokenPageUrl } from '../lib/share-links.mjs'
 import { hfModelUrl } from '../../src/hf-url.mjs'
+import { stockFeeLine } from '../../src/stock-pair-copy.mjs'
 import styles from './builder-kit.module.css'
 
 // Next steps after a confirmed launch: announce the ticker on X, the README badge, the market link, and an invitation
 // for the maintainer while nobody has verified the repository on repo.ing. The X post and the copied link carry the
-// wallet's ?ref under the same rules (and note) as every other share; the README badge never does.
-export function LaunchKit({ repoId, fullName, mint, symbol, verified = false }) {
+// wallet's ?ref under the same rules (and note) as every other share; the README badge never does. quote: a stock pair's
+// pair ({ symbol }), null for SOL. A stock pair pays no builder fees for the badge to show or the maintainer to claim
+// (docs/STOCK_QUOTES.md, "Fee policy"), so its kit has neither and says what its trades pay instead.
+export function LaunchKit({ repoId, fullName, mint, symbol, verified = false, quote = null }) {
   const [copied, setCopied] = useState(''), [fallback, setFallback] = useState(null)
   const referral = useShareReferral()
-  const post = launchPostUrl({ mint, symbol, fullName, ref: referral.ref })
+  const post = launchPostUrl({ mint, symbol, fullName, ref: referral.ref, quote })
   let badge = null
-  try { badge = badgeMarkdown(repoId, mint) } catch { /* no badge for a malformed market */ }
+  if (!quote) try { badge = badgeMarkdown(repoId, mint) } catch { /* no badge for a malformed market */ }
   async function copy(kind, value) {
     setFallback(null)
     try { await navigator.clipboard.writeText(value); setCopied(kind) }
@@ -28,14 +31,15 @@ export function LaunchKit({ repoId, fullName, mint, symbol, verified = false }) 
   return <section className={styles.kit} aria-labelledby="launch-kit-title">
     <span className={styles.eyebrow}>Launch kit</span>
     <h3 id="launch-kit-title">Tell people ${symbol} is live</h3>
-    <p>Announce it, put the badge in the README and bring in the maintainer. Builders earn from every trade.</p>
+    {quote ? <p>Announce it and share the market. {stockFeeLine(quote.symbol ?? null)}</p>
+      : <p>Announce it, put the badge in the README and bring in the maintainer. Builders earn from every trade.</p>}
     <div className={styles.kitActions}>
       {post && <a className="button outline" href={post} target="_blank" rel="noopener noreferrer"><XMark size={15}/>Post on X</a>}
       {badge && <button type="button" className="button outline" onClick={() => copy('badge', badge)}>
         {copied === 'badge' ? <Check size={15} aria-hidden="true"/> : <Code2 size={15} aria-hidden="true"/>}{copied === 'badge' ? 'Badge copied' : 'Copy README badge'}</button>}
       <button type="button" className="button outline" onClick={() => copy('link', tokenPageUrl(mint, window.location.origin, referral.ref))}>
         {copied === 'link' ? <Check size={15} aria-hidden="true"/> : <Link2 size={15} aria-hidden="true"/>}{copied === 'link' ? 'Link copied' : 'Copy link'}</button>
-      {!verified && <InviteOwner repoId={repoId} fullName={fullName} label="Invite the maintainer"/>}
+      {!verified && !quote && <InviteOwner repoId={repoId} fullName={fullName} label="Invite the maintainer"/>}
     </div>
     <ShareReferralNote referral={referral} className={styles.kitNote}/>
     {badge && <div className={styles.badgeStrip}><img src={`/api/badge/${repoId}`} height={24} alt="README badge preview: builder fees earned on repo.ing"/>

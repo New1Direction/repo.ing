@@ -1,5 +1,6 @@
 import { validReferrer } from './referral.mjs'
 import { HF_DISCLAIMER_SHORT } from '../../src/hf-copy.mjs'
+import { stockFeeTerms } from '../../src/stock-pair-copy.mjs'
 
 // Public share links only: no amount or signature goes into a post, and a wallet address only as the sharer's own ?ref.
 export const SITE_ORIGIN = 'https://repo.ing'
@@ -27,11 +28,13 @@ export function captionWithReferral(caption, mint, ref) {
 }
 
 // source 'huggingface': a model market's post says who it pays and carries the disclaimer; its name is cut shorter so the
-// post and its link still fit X's 280 characters.
-export function shareText({ fullName, symbol, kind = 'buy', source = 'github' } = {}) {
+// post and its link still fit X's 280 characters. quote: a stock pair's pair ({ symbol }, marketQuoteView), whose post says
+// what its trades pay in the stock instead of builders in SOL.
+export function shareText({ fullName, symbol, kind = 'buy', source = 'github', quote = null } = {}) {
   const model = source === 'huggingface'
   const name = String(fullName || (symbol ? `$${symbol}` : '') || (model ? 'a Hugging Face model' : 'an open source repo')).slice(0, model ? 80 : 100)
   const lead = kind === 'launch' ? `I just launched a market for ${name}` : kind === 'sell' ? `I'm trading ${name}` : `I just backed ${name}`
+  if (quote && !model) return `${lead} on @${X_HANDLE} — every trade ${stockFeeTerms(quote.symbol ?? null)}`
   return model ? `${lead} on @${X_HANDLE} — ${MODEL_PAYS}. ${HF_DISCLAIMER_SHORT}` : `${lead} on @${X_HANDLE} — ${PAYS}`
 }
 
