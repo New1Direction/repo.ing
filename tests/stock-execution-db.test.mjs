@@ -14,7 +14,8 @@ import { createStockCollectionExecutor } from '../src/stock-collection-execution
 import { createStockLauncherPayouts } from '../src/stock-launcher-payouts.mjs'
 import { runStockExecution } from '../src/stock-execution-job.mjs'
 import { listStockMarkets } from '../src/stock-collections.mjs'
-import { META, address, curveReceipt, fakeChain, finalizedTransaction, loadFrom, offlinePrograms, payoutTransaction } from './fixtures/stock-execution-fakes.mjs'
+import { META, address, collectionTransaction, curveReceipt, fakeChain, finalizedTransaction, loadFrom, offlinePrograms,
+  payoutTransaction } from './fixtures/stock-execution-fakes.mjs'
 
 // Stock fee collections and launcher payouts on PostgreSQL (migration 0054's tables, indexes and triggers), with PR-E's real
 // collection previews (src/stock-collections.mjs) over the real stock ledgers and PR-D's real launcher ledger
@@ -69,9 +70,11 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
     const landed = (raw, signature) => {
       const intent = intents.get(signature)
       if (intent?.kind === 'payout') return payoutTransaction(raw, intent.terms)
-      if (intent?.terms.source === 'damm_creator') { grad.claimed += BigInt(intent.terms.amount) + state.excess; grad.uncollected = 0n }
-      else if (intent?.kind === 'collection') curve[intent.terms.source] = 0n
-      return finalizedTransaction(raw)
+      if (intent?.kind !== 'collection') return finalizedTransaction(raw)
+      const received = BigInt(intent.terms.amount) + (intent.terms.source.startsWith('damm_') ? state.excess : 0n)
+      if (intent.terms.source === 'damm_creator') { grad.claimed += received; grad.uncollected = 0n }
+      else curve[intent.terms.source] = 0n
+      return collectionTransaction(raw, intent.terms, received)
     }
     const chain = fakeChain({ finalized: landed })
     const receipt = ({ terms, signature }) => (terms.source.startsWith('damm_') && state.excess
@@ -156,14 +159,23 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
       state.crash = true
       await assert.rejects(payouts.pay({ repoId: DOCS }), /crash/)
       assert.deepEqual([(await ledger()).pending, (await ledger()).payable], [SPLIT.launcherAmount, 0n])
-      // Another process holding the market (the worker or the operator script) makes this one wait its turn.
+      // The market's lock is the stock reconciliation's own (src/stock-reconcile.mjs: pg_advisory_lock(github_repo_id)): while
+      // it holds the market, a payout waits, so the reconciliation never reads a half-settled payout.
       const holder = await pool.connect()
+      let waiting
       try {
-        await holder.query("select pg_advisory_lock(hashtextextended('stock-execution:' || $1, 0))", [DOCS])
-        assert.deepEqual(await payouts.pay({ repoId: DOCS }), { repoId: DOCS, status: 'BUSY' })
-        await holder.query("select pg_advisory_unlock(hashtextextended('stock-execution:' || $1, 0))", [DOCS])
+        await holder.query('select pg_advisory_lock($1::bigint)', [DOCS])
+        waiting = payouts.pay({ repoId: DOCS })
+        let blocked = 0
+        for (let i = 0; i < 100 && !blocked; i++) {
+          blocked = (await pool.query(`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted
+            and classid = 0 and objid = $1 and objsubid = 1`, [Number(DOCS)])).rows[0].n
+          if (!blocked) await new Promise(resolve => setTimeout(resolve, 50))
+        }
+        assert.equal(blocked, 1, 'the payout waits on the lock the reconciliation holds')
+        await holder.query('select pg_advisory_unlock($1::bigint)', [DOCS])
       } finally { holder.release() }
-      assert.equal((await payouts.pay({ repoId: DOCS })).status, 'IN_FLIGHT')
+      assert.equal((await waiting).status, 'IN_FLIGHT')
       await assert.rejects(store.insertPayout(pool, { repoId: DOCS, assetId: META.assetId, quoteMint: META.mint, wallet: market.launcherWallet, amount: '1',
         signature: 'y', signedTransaction: 'y', receipt: {} }), { code: E.IN_FLIGHT })
       const sends = chain.sends.length

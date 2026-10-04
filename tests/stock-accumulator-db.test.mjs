@@ -10,7 +10,7 @@ import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { listPlatformFees } from '../src/platform-fee-operations.mjs'
 import { quoteAssetById } from '../src/quote-assets.mjs'
 import { POLICY_VERSION, dammCheckpoint, splitCurveFee } from '../src/stock-fee-policy.mjs'
-import { stockAccumulator } from '../src/stock-accumulator.mjs'
+import { readAccumulatorLedger, stockAccumulator, summarizeAccumulator } from '../src/stock-accumulator.mjs'
 import { STOCK_FEE_CUSTODY, createStockCollections, listStockMarkets } from '../src/stock-collections.mjs'
 import { activeCanonicalPool, registerCanonicalPool } from '../src/stock-canonical-pools.mjs'
 import { recordStockSettlementReceipt } from '../src/stock-settlement.mjs'
@@ -250,11 +250,11 @@ test('stock accumulator, collection previews, canonical pools and settlement rec
       }
     })
 
-    await t.test('one signature settling two collections is reported, never counted silently', async () => {
-      await pool.query(`insert into stock_fee_collections(github_repo_id,asset_id,quote_mint,source,reviewed_amount,actual_amount,launcher_amount,
+    await t.test('one signature settling two collections is refused by the database (migration 0056), and reported if one ever did', async () => {
+      await assert.rejects(pool.query(`insert into stock_fee_collections(github_repo_id,asset_id,quote_mint,source,reviewed_amount,actual_amount,launcher_amount,
         accumulator_amount,terms_hash,status,signature,receipt,settled_at) values ($1,'meta-xstock',$2,'dbc_creator',1,1,0,1,repeat('f',64),'settled',
-        'CollectDocs','{"status":"settled"}',now())`, [JEST, META.mint])
-      const meta = await stockAccumulator(pool, 'meta-xstock')
+        'CollectDocs','{"status":"settled"}',now())`, [JEST, META.mint]), { code: '23505', constraint: 'stock_fee_collections_signature_unique' })
+      const meta = summarizeAccumulator(META, { ...await readAccumulatorLedger(pool, 'meta-xstock'), repeated: [{ kind: 'collection', signature: 'CollectDocs' }] })
       assert.equal(meta.status, 'MISMATCH')
       assert.ok(meta.problems.includes('Signature CollectDocs settles more than one collection'), meta.problems.join('; '))
     })

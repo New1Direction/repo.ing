@@ -29,6 +29,16 @@ export function finalizedTransaction(raw, meta = {}) {
 const tokenBalance = (accountIndex, amount, owner, mint = META.mint) => ({ accountIndex, mint, owner, programId: TOKEN_2022_PROGRAM_ID.toBase58(),
   uiTokenAmount: { amount: String(amount), decimals: META.decimals, uiAmount: null, uiAmountString: String(amount) } })
 
+// The finalized collection a correct claim leaves: the pool's stock vault −received, custody's stock account +received (created
+// by the claim's idempotent instruction, so it has no balance before).
+export function collectionTransaction(raw, terms, received = BigInt(terms.amount)) {
+  const base = finalizedTransaction(raw)
+  const keys = base.transaction.message.accountKeys.map(k => k.toBase58())
+  const vault = keys.indexOf(terms.sourceVault), custody = keys.indexOf(terms.receiverTokenAccount), held = 10n ** 12n
+  return { ...base, meta: { ...base.meta, preTokenBalances: [tokenBalance(vault, held, terms.pool)],
+    postTokenBalances: [tokenBalance(vault, held - BigInt(received), terms.pool), tokenBalance(custody, received, terms.receiver)] } }
+}
+
 // The finalized payout a correct transfer leaves: custody −amount, the launcher +amount (its account created when `created`),
 // the network fee and that account's rent from custody, nothing else.
 export function payoutTransaction(raw, terms, { created = true, fee = 25_000, rent = 2_136_720, custodyBefore = 50_000_000n } = {}) {
