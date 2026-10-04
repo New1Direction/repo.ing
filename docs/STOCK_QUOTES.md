@@ -501,6 +501,58 @@ DAMM v2 on 2026-09-09.
   can end a product on 30 business days' notice, so permanently locked stock may never be redeemable.
 - **Owner action:** have this reviewed legally before the switch goes on.
 
+## Execution (off by default)
+
+Collecting a stock pair's fees into custody and paying launchers their 0.30%, both in the stock. Seeding the REPOING/stock pools
+is not here: the owner does that himself from custody.
+
+- **Flags:** `STOCK_COLLECTIONS_EXECUTION_ENABLED` and `STOCK_LAUNCHER_PAYOUTS_ENABLED`, each on only when exactly `true`. While
+  both are off, the worker's job does not exist: no key is read, nothing is read or printed, and the worker's output and RPC calls
+  are unchanged (`tests/stock-execution-worker-db.test.mjs`).
+- **Keys**, read only when a transaction is about to be signed and never printed:
+  - `PLATFORM_CREATOR_SECRET_KEY` signs creator-fee collections (the curve's creator, the graduated creator position's owner);
+  - `PLATFORM_PARTNER_SECRET_KEY` signs partner-fee collections and payouts. The partner wallet is every stock config's fee
+    claimer and the custody (`STOCK_FEE_CUSTODY` in `src/stock-collections.mjs`).
+- **Network:** mainnet with a second RPC (`GRADUATION_VERIFICATION_RPC_URL`) that every deciding read must agree with, or a local
+  validator.
+- **Collections** (`src/stock-collection-execution.mjs`), per source (`dbc_creator`, `dbc_partner`, `damm_creator`, `damm_partner`):
+  - Under the market's lock, the preview (`src/stock-collections.mjs`) is rebuilt from finalized reads and the stock ledgers. Only a
+    source that still MATCHes, with the terms hash that was reviewed, is executed.
+  - The transaction is exactly the hashed instructions: the custody's two token accounts created idempotently, then the one
+    claim, with the reviewed signer the only signer.
+  - It settles from its finalized receipt: the exact signed message, exact Token-2022 deltas and the program's claim event. A
+    graduated position's claim takes everything accrued when it runs; the excess is split as the next DAMM checkpoint credits it,
+    so the launcher's and accumulator's parts always add up to the amount received.
+- **Payouts** (`src/stock-launcher-payouts.mjs`):
+  - The amount is the launcher ledger's `payable` (collected − paid − pending, `src/stock-launcher-earnings.mjs`), paid once it
+    reaches `STOCK_LAUNCHER_PAYOUT_MIN_RAW`: 1,000,000 raw units, 0.01 of a whole xStock (an asset may set its own floor in
+    `STOCK_LAUNCHER_PAYOUT_MIN_RAW_BY_ASSET`). Below it nothing is loaded, signed or sent.
+  - Custody must hold it, checked before any key is loaded and never as an equality (anyone can send the custody account dust):
+    - the ledgers' lower bound of what custody holds is settled collections − settled payouts − pending payouts − recorded
+      settlement spends. A live balance below it is a shortfall: an ERROR that blocks every payout of that stock;
+    - otherwise the live balance must cover this payout plus every payout still pending, or the payout waits.
+  - It goes only to the market's `launcher_wallet` (the database refuses any other wallet), as one Token-2022 `transferChecked`
+    from custody's account to the launcher's, which is created if missing. Custody pays the network fee and rent.
+  - It settles only when the receipt shows custody −amount and the launcher +amount, no other token moved, no program ran under
+    the transfer, and no SOL moved but the fee and that rent.
+- **Every transaction** is recorded `pending` with its signed bytes and intent (blockhash, last valid block height, terms, kept in
+  `receipt` until it settles) before it is sent. The database allows one pending collection per market and source and one
+  pending payout per market, and one lock per market keeps the worker and the script from interleaving.
+- **Recovery** finishes pending rows:
+  - it settles a finalized transaction and aborts one that failed;
+  - it rebroadcasts the stored bytes while their blockhash is valid;
+  - it aborts only once that blockhash has expired at finalized and no RPC, the verification RPC included, knows the signature.
+  - A transaction that landed but whose receipt does not match stays pending, with a `STOCK_EXECUTION_REVIEW` operator alert.
+- **Worker:** every 5 minutes a pass runs recovery, then collections, then payouts, so a share collected in a pass is paid in the
+  same pass. An ERROR or REVIEW fails the run.
+- **Operator:** `node scripts/stock-execute.mjs [--collections] [--payouts] [--asset <id>] [--repo <id>]` is a dry run. It prints
+  what it would collect (with each terms hash), pay, settle, rebroadcast or abort, and loads, signs, sends and writes nothing.
+  `--execute` runs the pass for real, and only with the matching flag set.
+
+`tests/stock-execution.test.mjs` covers the state machine, `tests/stock-execution-db.test.mjs` the same on PostgreSQL with the
+real ledgers, and `tests/stock-execution-chain.test.mjs` collects both curve fees and pays a launcher on mainnet's programs (run
+it as `tests/stock-pair-chain.test.mjs` is run, above).
+
 ## Roadmap
 
 Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
