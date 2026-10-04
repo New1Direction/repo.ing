@@ -52,7 +52,7 @@ function harness(history, { curve = async () => ({}) } = {}) {
     credited.push({ signature, migration: migration?.signature ?? null })
     if (signature === 'unmatched' && !fixed) throw new StockEvidenceUnmatchedError(['instruction 3: an unknown DBC instruction names the pool'])
     if (signature === 'rpc-down') throw Error('Solana RPC transaction read returned HTTP 503')
-    if (signature === 'migration') throw new StockCurveMigratedError()
+    if (signature === 'migration' && !migration) throw new StockCurveMigratedError()
     const key = `${signature}:0`, fresh = !db.state.fees.has(key)
     db.state.fees.set(key, 10n)
     return { creditedBaseUnits: fresh ? 10n : 0n, creditedPartnerUnits: fresh ? 4n : 0n, eventKeys: [key] }
@@ -120,7 +120,7 @@ test('a cursor missing from the finalized history is an ERROR, never a skip', as
   assert.equal(db.state.fees.size, 0)
 })
 
-test('a migrated curve is finished once its migration is proven: the swaps before it credited, the cursor stops on it, GRADUATED', async () => {
+test('a migrated curve is finished once its migration is proven: the swaps up to and in it credited, the cursor stops on it, GRADUATED', async () => {
   const history = [item('claim', 6), item('migration', 5), item('good-2', 4), item('good-1', 3), item('launch', 1)]
   const checks = []
   const { db, indexer, reads, credited } = harness(history, { curve: async (repoId, _executor, migration = null) => {
@@ -131,14 +131,15 @@ test('a migrated curve is finished once its migration is proven: the swaps befor
   // Not proven yet by the graduation job: an ERROR before any history is read, as before.
   let [result] = await indexer.runOnce()
   assert.deepEqual([result.status, result.error, reads(), db.state.cursor], ['ERROR', new StockCurveMigratedError().message, 0, null])
-  // Proven: every swap before the migration is credited (with the proof), never the migration or the curve's later fee claims.
+  // Proven: every transaction up to the migration is credited with the proof, the migration itself too (a swap may be bundled
+  // into it), never the curve's later fee claims.
   db.state.migration = { signature: 'migration', slot: '5' }
   ;[result] = await indexer.runOnce()
-  assert.deepEqual([result.status, result.migration, result.creditedBaseUnits, result.cursorAfter], ['GRADUATED', 'migration', 30n, { signature: 'migration', slot: '5' }])
-  assert.deepEqual(credited, ['launch', 'good-1', 'good-2'].map(signature => ({ signature, migration: 'migration' })))
+  assert.deepEqual([result.status, result.migration, result.creditedBaseUnits, result.cursorAfter], ['GRADUATED', 'migration', 40n, { signature: 'migration', slot: '5' }])
+  assert.deepEqual(credited, ['launch', 'good-1', 'good-2', 'migration'].map(signature => ({ signature, migration: 'migration' })))
   assert.deepEqual(checks, [null, null, 'migration'])
   // From then on the market is GRADUATED here without reading its history again.
   const before = reads()
   ;[result] = await indexer.runOnce()
-  assert.deepEqual([result.status, result.creditedBaseUnits, result.discovered, reads(), credited.length], ['GRADUATED', 0n, 0, before, 3])
+  assert.deepEqual([result.status, result.creditedBaseUnits, result.discovered, reads(), credited.length], ['GRADUATED', 0n, 0, before, 4])
 })

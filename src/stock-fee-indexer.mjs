@@ -11,7 +11,8 @@ import { StockCurveMigratedError } from './stock-trade-evidence.mjs'
 // missing stock config, a changed or migrated curve, or an RPC failure is an ERROR that leaves the cursor where it was.
 // Graduation (the DAMM v2 pool after migration) is indexed by src/stock-graduation-monitor.mjs. A migrated curve stays an ERROR
 // here until that job has proven its migration (stock_graduation_events); then the curve is finished: the swaps before the
-// migration are credited, the cursor stops on the migration, and the market is GRADUATED here from then on.
+// migration, and any bundled into the migration transaction itself, are credited, the cursor stops on the migration, and the
+// market is GRADUATED here from then on.
 
 const PAGE_SIZE = 1000
 const FIRST_PAGE = 100
@@ -116,9 +117,10 @@ export function createStockFeeIndexer({ pool: databasePool, connection, config, 
         // Oldest first, the launch itself on the first pass. The cursor moves only past a transaction that was credited,
         // quarantined, or failed on chain.
         for (const item of [...(!previous ? [boundaryItem] : []), ...discovered.reverse()]) {
-          // A migrated curve stops on its migration: the curve's later transactions (fee claims) credit no swap.
+          // A migrated curve stops on its migration (itself credited: a swap may be bundled into it); the curve's later
+          // transactions (fee claims) credit no swap.
           const atMigration = Boolean(migration) && item.signature === migration.signature
-          if (!item.err && !atMigration) await credit(item.signature, item.slot)
+          if (!item.err) await credit(item.signature, item.slot)
           await client.query(`insert into stock_pool_cursors (pool, github_repo_id, venue, last_signature, last_slot, updated_at)
             values ($1, $2, 'dbc', $3, $4, now()) on conflict (pool) do update set last_signature = excluded.last_signature,
               last_slot = excluded.last_slot, updated_at = now()`, [market.pool, String(market.repoId), item.signature, String(item.slot)])

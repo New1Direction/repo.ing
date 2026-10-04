@@ -195,3 +195,14 @@ test('the instruction table is the program\'s IDL: discriminators, account place
   const takesPool = program.idl.instructions.filter(instruction => instruction.accounts.some(account => roles.pool.includes(account.name)))
   assert.deepEqual(takesPool.map(instruction => instruction.name).sort(), STOCK_DBC_INSTRUCTIONS.map(entry => entry.name).sort())
 })
+
+test('a migration is an ERROR, except the proven migration in its own transaction, where only a bundled swap counts', () => {
+  // The real migration of DOCUSAURUS / METAx into its DAMM v2 pool (tests/stock-graduation-chain.test.mjs, mainnet's programs).
+  const graduation = JSON.parse(readFileSync(new URL('./fixtures/stock-damm-graduation.json', import.meta.url), 'utf8'))
+  const raw = graduation.transactions.migration, signature = raw.transaction.signatures[0]
+  const migration = () => normalizeFinalizedTransaction(structuredClone(raw), signature)
+  const migrated = { pool: graduation.market.curve, mint: graduation.market.mint }, options = { config: graduation.market.config, quoteMint: graduation.quoteMint }
+  assert.throws(() => stockDbcSwapEvents(migration(), migrated, options, dbc), StockCurveMigratedError)
+  assert.throws(() => stockDbcSwapEvents(migration(), migrated, { ...options, migrationSignature: 'another-signature' }, dbc), StockCurveMigratedError)
+  assert.deepEqual(stockDbcSwapEvents(migration(), migrated, { ...options, migrationSignature: signature }, dbc).events, [])
+})

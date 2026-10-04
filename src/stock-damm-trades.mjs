@@ -18,6 +18,9 @@ import { DAMM_SWAP_PAYER, swapTrader } from './swap-trader.mjs'
 const EVENT = Buffer.from('e445a52e51cb9a1d', 'hex')
 const SWAPS = ['f8c69e91e17587c8', '414b3f4ceb5b5b88']
 const FIRST_PAGE = 100
+// Transactions taken per pass, oldest first: a long backlog (a worker outage, a busy pool) is worked off over several passes,
+// the cursor saved after each transaction, rather than holding one pass for minutes.
+export const STOCK_DAMM_MAX_TRANSACTIONS_PER_PASS = 250
 export const STOCK_DAMM_QUARANTINE = 'STOCK_DAMM_SWAP_QUARANTINED'
 
 export class StockSwapUnmatched extends Error {
@@ -139,18 +142,34 @@ async function quarantine(db, market, pool, signature, slot, error) {
   return rows[0] ?? null
 }
 
+// One row per swap event, idempotent on (signature, event_index); a row already stored under that key must be this very event
+// (the key is shared with the curve rows), never a different one passed over.
+const TRADE_COLUMNS = ['github_repo_id', 'asset_id', 'quote_mint', 'venue', 'pool', 'signature', 'event_index', 'slot', 'traded_at', 'direction',
+  'quote_amount', 'base_amount', 'next_sqrt_price', 'trader']
 async function recordEvents(db, market, quote, pool, signature, slot, events) {
-  for (const event of events) await db.query(`insert into stock_trade_events (github_repo_id, asset_id, quote_mint, venue, pool, signature,
-    event_index, slot, traded_at, direction, quote_amount, base_amount, next_sqrt_price, trader)
-    values ($1,$2,$3,'damm',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) on conflict (signature, event_index) do nothing`,
-  [String(market.githubRepoId), quote.assetId, quote.mint, pool, signature, event.eventIndex, String(slot), event.tradedAt, event.direction,
-    event.quoteVolume, event.baseAmount, event.nextSqrtPrice, event.trader])
+  let inserted = 0
+  for (const event of events) {
+    const values = [String(market.githubRepoId), quote.assetId, quote.mint, 'damm', pool, signature, String(event.eventIndex), String(slot),
+      event.tradedAt.toISOString(), event.direction, event.quoteVolume, event.baseAmount, event.nextSqrtPrice, event.trader]
+    const { rowCount } = await db.query(`insert into stock_trade_events (${TRADE_COLUMNS.join(', ')})
+      values (${TRADE_COLUMNS.map((_, i) => `$${i + 1}`).join(',')}) on conflict (signature, event_index) do nothing`, values)
+    if (rowCount) { inserted++; continue }
+    const { rows: [stored] } = await db.query(`select github_repo_id::text, asset_id, quote_mint, venue, pool, signature, event_index::text,
+      slot::text, traded_at, direction, quote_amount::text, base_amount::text, next_sqrt_price, trader
+      from stock_trade_events where signature = $1 and event_index = $2`, [signature, event.eventIndex])
+    const same = stored && TRADE_COLUMNS.every((column, i) => column === 'traded_at'
+      ? new Date(stored.traded_at).getTime() === event.tradedAt.getTime() : stored[column] === values[i])
+    if (!same) throw Error('STOCK_TRADE_ROW_CONFLICT')
+  }
+  return inserted
 }
 
-// Indexes every finalized swap on the graduated stock pool since the migration, both providers agreeing on the pool's history
-// and on every transaction (the SOL DAMM indexer's pattern), with the cursor in stock_pool_cursors. graduation: the proven
-// { pool, signature, slot } of the migration. quote: the market's registry stock (src/quote-assets.mjs quoteOfMarket).
-export async function indexStockDammTrades({ db, connection, verification, market, quote, graduation, coder = new CpAmm(connection)._program.coder }) {
+// Indexes every finalized swap on the graduated stock pool from the migration on, both providers agreeing on the pool's history
+// and on every transaction (the SOL DAMM indexer's pattern), with the cursor in stock_pool_cursors. The migration transaction
+// itself is read too (a swap on the new pool may be bundled into it). graduation: the proven { pool, signature, slot } of the
+// migration. quote: the market's registry stock (src/quote-assets.mjs quoteOfMarket).
+export async function indexStockDammTrades({ db, connection, verification, market, quote, graduation, coder = new CpAmm(connection)._program.coder,
+  maxTransactions = STOCK_DAMM_MAX_TRANSACTIONS_PER_PASS }) {
   if (!quote?.mint || quote.type === 'SOL') throw Error('STOCK_QUOTE_MINT_REQUIRED')
   const address = graduation.pool, parse = tx => stockDammSwapEvents(tx, { mint: market.mint, quoteMint: quote.mint, pool: address, coder })
   const alerts = [], quarantined = []
@@ -166,10 +185,12 @@ export async function indexStockDammTrades({ db, connection, verification, marke
       quarantined.push(signature)
       return false
     }
-    await recordEvents(db, market, quote, address, signature, tx.slot, events)
-    inserted += events.length
+    inserted += await recordEvents(db, market, quote, address, signature, tx.slot, events)
     return true
   }
+  const advance = (signature, slot) => db.query(`insert into stock_pool_cursors (pool, github_repo_id, venue, last_signature, last_slot)
+    values ($1,$2,'damm',$3,$4) on conflict (pool) do update set last_signature = excluded.last_signature, last_slot = excluded.last_slot,
+    updated_at = now()`, [address, String(market.githubRepoId), signature, String(slot)])
   // Earlier quarantines first: one that parses now is recorded and its alert acknowledged.
   const { rows: open } = await db.query(`select id, detail from graduation_alerts where kind = $1 and github_repo_id = $2
     and acknowledged_at is null order by id limit 100`, [STOCK_DAMM_QUARANTINE, String(market.githubRepoId)])
@@ -180,6 +201,11 @@ export async function indexStockDammTrades({ db, connection, verification, marke
       where id = $1 and acknowledged_at is null`, [row.id])
   }
   const { rows: [cursor] } = await db.query('select last_signature from stock_pool_cursors where pool = $1', [address])
+  // First pass: the migration transaction, then everything after it.
+  if (!cursor) {
+    await take(graduation.signature, graduation.slot)
+    await advance(graduation.signature, graduation.slot)
+  }
   const boundary = cursor?.last_signature ?? graduation.signature
   async function history(rpc) {
     const result = []
@@ -195,13 +221,12 @@ export async function indexStockDammTrades({ db, connection, verification, marke
   }
   const histories = await Promise.all([connection, verification].map(history))
   agreeGraduation(...histories)
-  for (const item of [...histories[0]].reverse()) {
+  const pending = [...histories[0]].reverse(), batch = pending.slice(0, maxTransactions)
+  for (const item of batch) {
     if (!item.err) await take(item.signature, item.slot)
-    await db.query(`insert into stock_pool_cursors (pool, github_repo_id, venue, last_signature, last_slot) values ($1,$2,'damm',$3,$4)
-      on conflict (pool) do update set last_signature = excluded.last_signature, last_slot = excluded.last_slot, updated_at = now()`,
-    [address, String(market.githubRepoId), item.signature, String(item.slot)])
+    await advance(item.signature, item.slot)
   }
   const { rows: [{ count }] } = await db.query(`select count(*)::int as count from graduation_alerts where kind = $1 and github_repo_id = $2
     and acknowledged_at is null`, [STOCK_DAMM_QUARANTINE, String(market.githubRepoId)])
-  return { transactions: histories[0].length, inserted, quarantined, openQuarantines: count, alerts }
+  return { transactions: batch.length + (cursor ? 0 : 1), remaining: pending.length - batch.length, inserted, quarantined, openQuarantines: count, alerts }
 }

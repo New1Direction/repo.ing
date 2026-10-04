@@ -221,7 +221,6 @@ export async function readStockGraduationState({ connection, verification, confi
   if (snapshots.some(s => !s)) throw Error('GRADUATION_STATE_DISAGREEMENT')
   agreeGraduation(...snapshots.map(s => ({ evidence: s.evidence, partner: s.partner.evidence })))
   const g = snapshots[0]
-  if (g.poolState.poolStatus !== 0) throw Error('DAMM_POOL_DISABLED')
   const tx = await agreedFinalizedTransaction(connection, verification, g.proof.signature)
   const proof = stockMigrationPosition(tx, market, configKey, g.pool, quote.mint)
   if (!proof || !proof.position.equals(g.position) || !proof.partner.position.equals(g.partner.position) || tx.slot > slot) {
@@ -237,7 +236,9 @@ export async function readStockGraduationState({ connection, verification, confi
   const feeView = side => ({ position: side.position.toBase58(), earned: String(side.earned), claimed: String(side.claimed), available: String(side.available) })
   Object.assign(value, stockGraduationProgress(state.quoteReserve.toString(), fixed.migrationQuoteThreshold.toString(), true), {
     destination: { pool: g.pool.toBase58(), url: `https://app.meteora.ag/dammv2/${g.pool.toBase58()}` },
-    dammQuoteReserve: g.poolState.tokenBAmount.toString(), partnerWallet: g.feeClaimer.toBase58(),
+    // A disabled pool (Meteora's switch) cannot be traded (assertTradableStockPool), but its proof, swaps and fees are still
+    // recorded; the monitor reports it for review.
+    dammPoolEnabled: g.poolState.poolStatus === 0, dammQuoteReserve: g.poolState.tokenBAmount.toString(), partnerWallet: g.feeClaimer.toBase58(),
     fees: { slot: Math.min(...snapshots.map(s => s.slot)), creator: feeView(g), partner: feeView(g.partner) } })
   return assertFreshGraduation(value)
 }
@@ -258,16 +259,17 @@ export async function recordStockGraduationEvent(db, state) {
   return rows.length === 1
 }
 
-// A reading of the curve's progress. Kept when it says something new (reserve, threshold, migration) or the last one is
-// older than heartbeatMs, so the public view stays fresh without a row every pass. observed_at is the finalized chain time
-// of the reading (never later than the check), so freshness is judged conservatively.
+// A reading of the curve's progress. Kept when it says something new (reserve, threshold, migration) or, while the curve trades,
+// when the last one is older than heartbeatMs, so the public view stays fresh without a row every pass. A migrated curve never
+// changes again: its migrated reading is kept once (the public view of a graduated market rests on stock_graduation_events).
+// observed_at is the finalized chain time of the reading (never later than the check), so freshness is judged conservatively.
 export const STOCK_OBSERVATION_HEARTBEAT_MS = 60_000
 export async function recordStockObservation(db, state, { heartbeatMs = STOCK_OBSERVATION_HEARTBEAT_MS, now = Date.now } = {}) {
   const migrated = state.phase === 'GRADUATED'
   const { rows: [last] } = await db.query(`select quote_reserve::text as reserve, migration_threshold::text as threshold, is_migrated, observed_at
     from stock_graduation_observations where github_repo_id = $1 order by observed_at desc, id desc limit 1`, [state.repoId])
   if (last && last.reserve === state.reserveBaseUnits && last.threshold === state.thresholdBaseUnits && last.is_migrated === migrated &&
-      now() - new Date(last.observed_at).getTime() < heartbeatMs) return false
+      (migrated || now() - new Date(last.observed_at).getTime() < heartbeatMs)) return false
   await db.query(`insert into stock_graduation_observations (github_repo_id, asset_id, quote_mint, pool, slot, observed_at, quote_reserve,
     migration_threshold, is_migrated) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
   [state.repoId, state.assetId, state.quoteMint, state.curve, String(state.slot), state.chainTime, state.reserveBaseUnits, state.thresholdBaseUnits, migrated])
