@@ -49,16 +49,6 @@ flowchart LR
 
 Paste an eligible public GitHub URL, review its identity, name, ticker, and project image, then approve in your wallet. The launch defaults to **No buy**. An optional initial purchase is capped at **3% of token supply**, with 1%, 2%, and Max 3% presets. This cap applies to the launch transaction, not all future purchases by that wallet.
 
-Or start from the repository you are already working in:
-
-```bash
-npm install --global @repoing/cli
-cd your-project
-repoing launch
-```
-
-The CLI detects the GitHub `origin`, resolves the canonical repository, and opens a signed repo.ing launch review. It never receives wallet keys or signing authority; current costs and the final transaction still require explicit browser + wallet approval.
-
 Phantom, Backpack, MetaMask's Solana connection, and compatible Solana Wallet Standard wallets are supported. Availability depends on the wallet, browser, and required signing features. repo.ing never asks for a seed phrase.
 
 [Agent launch reviews and README shortcuts](https://repo.ing/agents) use the same launcher: an agent can find a repo and produce a review link, while the user reviews artwork and costs and approves with their wallet. Agents receive no signing authority. [MCP setup and tools →](docs/AGENT_LAUNCH.md)
