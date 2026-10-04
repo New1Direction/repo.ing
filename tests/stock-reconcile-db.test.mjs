@@ -12,7 +12,9 @@ import { readMarketLauncherLedger, walletStockLauncherEarnings } from '../src/st
 import { createReconciler } from '../src/reconcile.mjs'
 import { createBuilderReminders } from '../src/builder-reminders.mjs'
 import { quoteAssetById } from '../src/quote-assets.mjs'
-import { METAX_MINT, curveConfig, curvePool, dammPool, dammPosition, fakeConnection, key, stockMarket, token2022Account } from './fixtures/stock-chain.mjs'
+import { readFileSync } from 'node:fs'
+import { METAX_MINT, curveConfig, curvePool, dammPool, dammPosition, fakeConnection, key, rpcAccount, startJsonRpc, stockMarket,
+  token2022Account } from './fixtures/stock-chain.mjs'
 
 // Stock-pair reconciliation and launcher earnings on real PostgreSQL with every migration (0054's stock ledgers, their checks
 // and market triggers): the stock ledgers against chain state encoded with the programs' coders (no validator), operator alerts
@@ -78,6 +80,8 @@ test.before(async () => {
   [PENDING, META.assetId, META.mint])
 })
 test.after(async () => {
+  await globalThis.__gitfunPool?.end()
+  delete globalThis.__gitfunPool
   await pool?.end()
   await admin?.query(`drop database if exists ${DB} with (force)`)
   await admin?.end()
@@ -217,4 +221,34 @@ test('partition: SOL jobs keep SOL markets, stock jobs take stock markets, toget
   await assert.rejects(createReconciler({ pool, connection, config: docs.config }).reconcile(DOCS), /Stock-paired market needs a quote-aware path/)
   await assert.rejects(reconciler().reconcile(HELLO), /SOL market is reconciled by src\/reconcile\.mjs/)
   assert.equal((await pool.query('select count(*)::int as n from fee_events')).rows[0].n, 0, 'no stock fee ever reached a SOL ledger')
+})
+
+test('/wallet of a stock launcher: its earnings in the stock and no builder claim; unreadable earnings say so, nothing else breaks', async () => {
+  // The route builds its own connection from SOLANA_RPC_URL: no SOL, no token accounts, and the METAx mint for display units.
+  const metax = JSON.parse(readFileSync(new URL('./fixtures/metax-mint.json', import.meta.url), 'utf8'))
+  const rpc = await startJsonRpc({ getBalance: () => ({ context: { slot: 1 }, value: 0 }), getTokenAccountsByOwner: () => ({ context: { slot: 1 }, value: [] }),
+    getAccountInfo: ([address]) => ({ context: { slot: 1 }, value: address === META.mint ? rpcAccount({ data: Buffer.from(metax.data, 'base64'), owner: metax.owner }) : null }) })
+  const saved = { rpc: process.env.SOLANA_RPC_URL, fetch: globalThis.fetch }
+  process.env.SOLANA_RPC_URL = rpc.url
+  globalThis.fetch = async (input, init) => /^http:\/\/127\.0\.0\.1:/.test(String(input?.url ?? input)) ? saved.fetch(input, init) : Promise.reject(new TypeError('offline test'))
+  try {
+    const { GET } = await import('../app/api/wallet/overview/route.js')
+    const overview = async wallet => { const response = await GET({ url: `https://repo.ing/api/wallet/overview?wallet=${wallet}` }); return { status: response.status, body: await response.json() } }
+    const { rows: [sums] } = await pool.query(`select (select sum(launcher_amount) from stock_fee_events where github_repo_id = $1)
+      + (select sum(launcher_credit) from stock_damm_fee_checkpoints where github_repo_id = $1) as earned`, [DOCS])
+    let { status, body } = await overview(docs.launcherWallet)
+    assert.equal(status, 200)
+    const [launched] = body.markets
+    assert.deepEqual([launched.repoId, launched.stockPair, launched.builderWallet, launched.stockLauncher.raw.earned], [DOCS, true, false, String(sums.earned)])
+    assert.deepEqual(body.stockLauncher.totals.map(total => [total.asset.symbol, total.raw.earned, total.markets]), [['METAx', String(sums.earned), 1]])
+    assert.ok(body.stockLauncher.totals[0].shown, 'shown in METAx units')
+    await pool.query('drop table stock_launcher_payouts cascade')
+    ;({ status, body } = await overview(docs.launcherWallet))
+    assert.equal(status, 200, 'the overview still answers')
+    assert.deepEqual([body.stockLauncher, body.markets[0].stockPair, body.markets[0].builderWallet], [null, true, false])
+  } finally {
+    process.env.SOLANA_RPC_URL = saved.rpc; if (saved.rpc === undefined) delete process.env.SOLANA_RPC_URL
+    globalThis.fetch = saved.fetch
+    await rpc.close()
+  }
 })

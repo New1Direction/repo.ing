@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PublicKey } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
-import { STOCK_RECONCILE_ALERT, STOCK_RECONCILE_LAG_MS, STOCK_RECONCILE_REASONS as R, compareCurveSide, compareCustody, compareGraduatedSide,
+import { STOCK_CUSTODY_SURPLUS_ALERT, STOCK_RECONCILE_ALERT, STOCK_RECONCILE_LAG_MS, STOCK_RECONCILE_REASONS as R, compareCurveSide, compareCustody, compareGraduatedSide,
   createStockChainReads, createStockReconcileRunner, createStockReconciler, mismatchKind, reconcileJSON, stockChainAheadOfLedger,
   stockCustodyAccount, toleratedForNow } from '../src/stock-reconcile.mjs'
 import { chainAheadOfLedger } from '../src/reconcile.mjs'
@@ -29,8 +29,10 @@ test('a graduated position is behind only when its earned fees run ahead with th
 test('custody is collections minus launcher payouts minus settlement spends, exactly', () => {
   assert.deepEqual(compareCustody({ collected: 1000n, launcherPaid: 300n, settlementSpent: 200n, balance: 500n }),
     { collected: 1000n, launcherPaid: 300n, settlementSpent: 200n, expected: 500n, balance: 500n, difference: 0n, status: 'MATCH' })
-  assert.equal(compareCustody({ collected: 1000n, launcherPaid: 300n, settlementSpent: 200n, balance: 501n }).reason, R.CUSTODY_SURPLUS)
-  assert.equal(compareCustody({ collected: 1000n, launcherPaid: 300n, settlementSpent: 200n, balance: 499n }).reason, R.CUSTODY_SHORTFALL)
+  const surplus = compareCustody({ collected: 1000n, launcherPaid: 300n, settlementSpent: 200n, balance: 501n })
+  assert.deepEqual([surplus.status, surplus.reason, surplus.difference], ['SURPLUS', R.CUSTODY_SURPLUS, 1n], 'stock sent to the account unasked: informational')
+  const shortfall = compareCustody({ collected: 1000n, launcherPaid: 300n, settlementSpent: 200n, balance: 499n })
+  assert.deepEqual([shortfall.status, shortfall.reason], ['MISMATCH', R.CUSTODY_SHORTFALL])
   assert.equal(compareCustody({ collected: 100n, launcherPaid: 300n, settlementSpent: 0n, balance: 0n }).reason, R.CUSTODY_LEDGER_INCONSISTENT)
 })
 
@@ -273,4 +275,26 @@ test('runner: a market that cannot be reconciled is an ERROR alert, never a skip
   assert.deepEqual(alerts.map(alert => [alert.repoId, alert.detail.ledger, alert.detail.reason]),
     [['94911145', 'stock', 'Stock-paired market has no registered config'], [null, 'stock-custody', R.CUSTODY_SHORTFALL]])
   assert.match(mismatchKind(custody['meta-xstock']), /^MISMATCH:CUSTODY_SHORTFALL/)
+})
+
+test('runner: a custody surplus is informational, one STOCK_CUSTODY_SURPLUS alert per distinct amount; a shortfall is a mismatch', async () => {
+  const pool = alertPool({ markets: [], settledAssets: [{ assetId: 'meta-xstock' }] })
+  let custody = { ledger: 'stock-custody', assetId: 'meta-xstock', ...compareCustody({ collected: 1000n, launcherPaid: 0n, settlementSpent: 0n, balance: 1001n }) }
+  const runner = createStockReconcileRunner({ pool, reconciler: scripted({ market: () => assert.fail('no market'), custody: () => custody }) })
+  let run = await runner.runOnce()
+  assert.deepEqual([run.custody[0].status, Boolean(run.custody[0].alert)], ['SURPLUS', true])
+  assert.equal((await runner.runOnce()).custody[0].alert, null, 'the same surplus alerts once')
+  custody = { ledger: 'stock-custody', assetId: 'meta-xstock', ...compareCustody({ collected: 1000n, launcherPaid: 0n, settlementSpent: 0n, balance: 1250n }) }
+  assert.ok((await runner.runOnce()).custody[0].alert, 'a new surplus amount alerts again')
+  // A restarted worker (fresh runner) does not repeat a surplus already reported.
+  const restarted = createStockReconcileRunner({ pool, reconciler: scripted({ market: () => assert.fail('no market'), custody: () => custody }) })
+  assert.equal((await restarted.runOnce()).custody[0].alert, null)
+  const surplusAlerts = [...pool.alerts.values()]
+  assert.deepEqual(surplusAlerts.map(alert => [alert.kind, alert.repoId, alert.detail.surplus, alert.detail.code]),
+    [[STOCK_CUSTODY_SURPLUS_ALERT, null, '1', R.CUSTODY_SURPLUS], [STOCK_CUSTODY_SURPLUS_ALERT, null, '250', R.CUSTODY_SURPLUS]])
+  custody = { ledger: 'stock-custody', assetId: 'meta-xstock', ...compareCustody({ collected: 1000n, launcherPaid: 0n, settlementSpent: 0n, balance: 999n }) }
+  run = await runner.runOnce()
+  assert.deepEqual([run.custody[0].status, run.custody[0].reason], ['MISMATCH', R.CUSTODY_SHORTFALL])
+  const shortfall = [...pool.alerts.values()].at(-1)
+  assert.deepEqual([shortfall.kind, shortfall.detail.code], [STOCK_RECONCILE_ALERT, R.CUSTODY_SHORTFALL], 'a shortfall alerts at once, as a mismatch')
 })

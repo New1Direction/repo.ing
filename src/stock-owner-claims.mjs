@@ -1,4 +1,5 @@
 import { quoteAssetById } from './quote-assets.mjs'
+import { STOCK_POLICY_ERRORS } from './stock-fee-policy.mjs'
 
 // Stock-paired markets have no owner claim of builder fees (docs/STOCK_QUOTES.md, "Fee policy"; src/stock-fee-policy.mjs).
 // The launcher earns 0.30% of every trade, paid in the stock, for as long as the market trades; the builder share and
@@ -7,17 +8,8 @@ import { quoteAssetById } from './quote-assets.mjs'
 //
 // Every owner-claim path refuses a stock-paired market with this code before any SOL claim code sees it: both claim routes
 // (/api/claim, /api/builders/claim), the claim preview, the claim page, the builder dashboard (app/lib/builders.mjs) and
-// builder reminders (src/builder-reminders.mjs leaves stock markets out of its list).
-export const STOCK_PAIR_NO_OWNER_CLAIM = 'STOCK_PAIR_NO_OWNER_CLAIM'
-
-export class StockPairNoOwnerClaimError extends Error {
-  constructor(message = noOwnerClaimMessage()) {
-    super(message)
-    this.name = 'StockPairNoOwnerClaimError'
-    this.code = STOCK_PAIR_NO_OWNER_CLAIM
-    this.status = 409
-  }
-}
+// builder reminders (src/builder-reminders.mjs leaves stock markets out of its list). The code is the policy module's.
+export const STOCK_PAIR_NO_OWNER_CLAIM = STOCK_POLICY_ERRORS.STOCK_PAIR_NO_OWNER_CLAIM
 
 // A market row from any read that carries migration 0053's stamp (camelCase or column names). SOL markets carry none.
 export function isStockPairMarket(market) {
@@ -51,16 +43,11 @@ export async function stockPairStamps(db, repoIds) {
 }
 
 // The stamp of one repository's market, or null for a SOL market and for a repository without one (the SOL claim path then
-// refuses it exactly as before). A database error is thrown: no claim proceeds on an unread stamp.
+// refuses it exactly as before). A database error is thrown; the claim routes then fall through to the SOL claim path, which
+// cannot resolve a stock pair's pool and refuses it.
 export async function stockPairOf(db, repoId) {
   if (!REPO_ID.test(String(repoId ?? ''))) return null
   const { rows: [row] } = await db.query(`select quote_asset_id as "quoteAssetId", quote_mint as "quoteMint" from markets
     where github_repo_id = $1`, [String(repoId)])
   return isStockPairMarket(row) ? row : null
-}
-
-// Throws StockPairNoOwnerClaimError for a stock-paired market.
-export async function assertOwnerClaimAllowed(db, repoId) {
-  const stock = await stockPairOf(db, repoId)
-  if (stock) throw new StockPairNoOwnerClaimError(noOwnerClaimMessage(stock))
 }

@@ -146,14 +146,15 @@ async function observeChartOrdering(){
   catch{console.log(JSON.stringify({chartOrderingError:'Chart ordering verification unavailable'}))}
 }
 // Stock-paired markets: their fee ledgers and each stock's custody against the chain (src/stock-reconcile.mjs). Read-only. A real
-// mismatch raises a RECONCILIATION_MISMATCH operator alert at once; ledger lag only if it lasts STOCK_RECONCILE_LAG_MS.
+// mismatch raises a RECONCILIATION_MISMATCH operator alert at once; ledger lag only if it lasts STOCK_RECONCILE_LAG_MS. A custody
+// surplus is informational (STOCK_CUSTODY_SURPLUS, once per amount).
 const stockReconcile=createStockReconcileRunner({pool,connection:graduationRPC(rpc),config})
 let stockReconcileTask=null,nextStockReconcileCheck=0
 async function observeStockReconcile(){
   try{
     const r=await meter.track('stockReconcile',()=>stockReconcile.runOnce())
     if(r.markets.length||r.custody.length)console.log(JSON.stringify({stockReconcile:r}))
-    if([...r.markets,...r.custody].some(item=>item.alert||item.status==='ERROR'))process.exitCode=1
+    if([...r.markets,...r.custody].some(item=>(item.alert&&item.status!=='SURPLUS')||item.status==='ERROR'))process.exitCode=1
   }catch(error){console.log(JSON.stringify({stockReconcileError:error?.code==='42P01'?'STOCK_LEDGERS_NOT_MIGRATED':'STOCK_RECONCILE_UNAVAILABLE'}))}
 }
 let reminderTask=null,nextReminderCheck=0
