@@ -2,10 +2,10 @@
 
 Status: built dark through quote-aware creation (P6a) and the curve trade path with its trade panel (P6b). The registry, the
 market columns, the quote-options API, the "Choose pair" control, stock-pair creation and curve trading exist. Fee accrual,
-graduation and payouts are being built, on separate stock ledgers (migration 0054) under the decided fee policy. Nothing can be
-launched against a stock yet: the code's own gate (`STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`) stays closed until
-trading, indexing, payouts and reconciliation are quote-aware too, and `STOCK_QUOTES_ENABLED` is off. Every surface offers SOL
-only.
+graduation and payouts are being built, on separate stock ledgers (migration 0054) under the decided fee policy. The code's
+own gate (`STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`) is open, but nothing can be launched against a stock until
+`STOCK_QUOTES_ENABLED` is also set to `true` on web ([go-live runbook](STOCK_GO_LIVE.md), step 6). Until then every surface
+offers SOL only.
 
 A launcher can pair a repository's market with SOL (the default, and the quote of every market launched so far) or, when
 the repository belongs to a GitHub organization mapped to a listed company, with that company's tokenized stock:
@@ -52,7 +52,8 @@ GitHub owner (numeric id, verified organization) → company → tokenized stock
     "githubOrg": "facebook", "provider": "backed-xstocks", "eligible": true } ] }
 ```
 
-- SOL only, without reading GitHub, while the switch is off and for Hugging Face models.
+- SOL only, without reading GitHub, while `STOCK_QUOTES_ENABLED` is not exactly `true` (or the code gate is closed) and for
+  Hugging Face models.
 - Otherwise the owner comes from a live GitHub read. If GitHub cannot confirm the owner id (the stored row is all that is
   left), only SOL is offered.
 - Answers are kept for 60 s per repository and process (public, `s-maxage=60`).
