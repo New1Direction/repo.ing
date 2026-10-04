@@ -6,7 +6,8 @@ import { quoteAssetById } from './quote-assets.mjs'
 // here is one asset's, in raw base units of that stock (pages convert them for display). Canonical markets only (confirmed,
 // indexed, finalized), bound as their charts are: curve trades and fees in the market's own pool, graduated-pool trades
 // and fees in the DAMM pool its recorded graduation names.
-//   volume       the stock moved in or out of those pools by trades (stock_trade_events)
+//   volume       the stock each trade exchanged (stock_trade_events.quote_amount: a buy's fee-excluded input, a sell's
+//                stock received; the amounts SOL volume counts)
 //   fees         trading fees credited past Meteora's share: curve creator + partner fees (stock_fee_events) and the
 //                graduated pool's position fees (stock_damm_fee_checkpoints credits)
 //   launcher     the launchers' share of those fees (src/stock-fee-policy.mjs)
