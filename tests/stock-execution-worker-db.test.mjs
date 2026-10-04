@@ -10,6 +10,7 @@ import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { quoteAssetById } from '../src/quote-assets.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // scripts/run-worker.mjs with the stock execution flags unset behaves exactly as it did before the job existed. The worker runs
 // once (--once) against a fresh PostgreSQL database holding a SOL market and a stock-paired market, and an in-process JSON-RPC
@@ -168,6 +169,6 @@ test('the worker with the stock execution flags unset is the worker without the 
     await rm(dir, { recursive: true, force: true })
     const admin = new pg.Client({ connectionString: URL_.replace(new RegExp(`${DB}$`), 'postgres') })
     await admin.connect()
-    try { await admin.query(`drop database if exists ${DB} with (force)`) } finally { await admin.end() }
+    try { await dropTestDatabase(admin, DB) } finally { await admin.end() }
   }
 })

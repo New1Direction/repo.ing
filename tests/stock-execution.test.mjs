@@ -9,7 +9,7 @@ import { STOCK_EXECUTION_ERRORS as E, MAINNET_GENESIS, STOCK_ABORT_MARGIN_BLOCKS
 import { STOCK_COLLECTION_MIN_RAW, collectionTransactionInstructions, createStockCollectionExecutor,
   settledCollectionSplit } from '../src/stock-collection-execution.mjs'
 import { STOCK_COLLECTION_SOURCES } from '../src/stock-collections.mjs'
-import { STOCK_KEYCHAIN_SERVICES, keychainSigner, keychainSigners } from '../src/stock-keychain.mjs'
+import { STOCK_KEYCHAIN_SERVICES, STOCK_KEYCHAIN_TIMEOUT_MS, keychainSigner, keychainSigners } from '../src/stock-keychain.mjs'
 import { STOCK_LAUNCHER_PAYOUT_MIN_RAW, checkLauncherPayoutReceipt, createStockLauncherPayouts, custodyGate, launcherPayoutInstructions,
   launcherPayoutMinimum } from '../src/stock-launcher-payouts.mjs'
 import { createStockExecutionJob, runStockExecution, stockExecutionLoud } from '../src/stock-execution-job.mjs'
@@ -78,8 +78,8 @@ function memoryStore({ custody = { collected: 0n, spent: 0n }, ahead = false } =
 const crashing = state => ({ afterIntent: async () => { if (state.crash) { state.crash = false; throw Error('crash after the intent was stored') } } })
 
 async function collectionSetup({ source = 'dbc_creator', crash = false, env = ON, receipt = null, verification = null, sources = undefined,
-  hooksFor = null, followFor = null } = {}) {
-  const creator = Keypair.generate(), partner = Keypair.generate(), custody = partner.publicKey.toBase58()
+  hooksFor = null, followFor = null, creator = Keypair.generate(), partner = Keypair.generate(), loadSigner = null } = {}) {
+  const custody = partner.publicKey.toBase58()
   const market = stockMarket({ creatorWallet: creator.publicKey.toBase58() })
   const signer = source.endsWith('creator') ? creator : partner
   const previewed = await curvePreview({ market, source, signer: signer.publicKey.toBase58(), custody })
@@ -90,14 +90,14 @@ async function collectionSetup({ source = 'dbc_creator', crash = false, env = ON
   const executor = createStockCollectionExecutor({ pool: null, connection: chain.connection, verification, config: null, env, custody, partner: custody,
     store, previewMarket: async () => state.preview, listMarkets: async () => [market],
     checkReceipt: receipt ?? (({ terms, signature }) => curveReceipt(terms, signature)), loadTransaction: loadFrom,
-    loadSigner: role => { loads.push(role); return role === 'creator' ? creator : partner }, mintCheck: async () => ({ ok: true }),
+    loadSigner: loadSigner ?? (role => { loads.push(role); return role === 'creator' ? creator : partner }), mintCheck: async () => ({ ok: true }),
     follow: followFor ? followFor(chain, store) : chain.follow, hooks: hooksFor ? hooksFor(store) : crashing(state), ...(sources ? { sources } : {}) })
   const request = { repoId: market.repoId, source, termsHash: previewed.termsHash }
   return { chain, store, loads, market, previewed, executor, state, request, creator, partner, custody }
 }
 
 async function payoutSetup({ collected = 5_000_000n, crash = false, env = ON, minimum = undefined, market = stockMarket(), partner = Keypair.generate(),
-  store = memoryStore({ custody: { collected: collected * 3n, spent: 0n } }), chain = null, ledgerPatch = {} } = {}) {
+  store = memoryStore({ custody: { collected: collected * 3n, spent: 0n } }), chain = null, ledgerPatch = {}, loadSigner = null } = {}) {
   const custody = partner.publicKey.toBase58(), loads = [], state = { crash }
   const termsOf = signature => [...store.rows.payout.values()].find(row => row.signature === signature)?.receipt.terms
   // A payout lands as a correct transfer; anything else sent on this chain lands as the chain already lands it.
@@ -113,7 +113,7 @@ async function payoutSetup({ collected = 5_000_000n, crash = false, env = ON, mi
       collected: String(collected), paid: String(sum('settled')), pending: String(sum('pending')), ...ledgerPatch }
   }
   const payouts = createStockLauncherPayouts({ pool: null, connection: chain.connection, env, custody, store, listMarkets: async () => [market], ledger,
-    loadTransaction: loadFrom, loadSigner: role => { loads.push(role); return partner }, mintCheck: usableMint, follow: chain.follow,
+    loadTransaction: loadFrom, loadSigner: loadSigner ?? (role => { loads.push(role); return partner }), mintCheck: usableMint, follow: chain.follow,
     custodyBalance: async () => chain.custodyBalance, hooks: crashing(state), ...(minimum === undefined ? {} : { minimum: () => minimum }) })
   return { chain, store, loads, market, payouts, state, partner, custody }
 }
@@ -154,20 +154,31 @@ test('flags off: the worker job does not exist, reads no key and touches nothing
 
 test('keys come only from the Keychain, read as the config script reads them, and a bad value never appears in an error', () => {
   const key = Keypair.generate(), calls = []
-  const spawn = (command, args) => { calls.push([command, ...args]); return { status: 0, stdout: `${bs58.encode(key.secretKey)}\n` } }
+  const spawn = (command, args, options) => { calls.push([command, ...args, options]); return { status: 0, stdout: `${bs58.encode(key.secretKey)}\n` } }
   assert.equal(keychainSigner('partner', { spawn, expected: key.publicKey.toBase58() }).publicKey.toBase58(), key.publicKey.toBase58())
-  assert.deepEqual(calls, [['security', 'find-generic-password', '-s', 'repo.ing.dbc.partner', '-a', 'production', '-w']])
-  assert.deepEqual(STOCK_KEYCHAIN_SERVICES, { partner: 'repo.ing.dbc.partner', creator: 'repo.ing.dbc.creator' })
+  assert.deepEqual(calls, [['/usr/bin/security', 'find-generic-password', '-s', 'repo.ing.dbc.partner', '-a', 'production', '-w',
+    { encoding: 'utf8', timeout: 120_000 }]])
+  assert.deepEqual([STOCK_KEYCHAIN_SERVICES, STOCK_KEYCHAIN_TIMEOUT_MS], [{ partner: 'repo.ing.dbc.partner', creator: 'repo.ing.dbc.creator' }, 120_000])
   assert.throws(() => keychainSigner('partner', { spawn: () => ({ status: 44, stdout: '' }) }), { code: E.KEY_MISSING })
+  // A prompt nobody answers: spawnSync stops `security` at the timeout and reports ETIMEDOUT, a clean error.
+  const unanswered = () => ({ status: null, signal: 'SIGTERM', stdout: '', error: Object.assign(Error('spawnSync /usr/bin/security ETIMEDOUT'), { code: 'ETIMEDOUT' }) })
+  assert.throws(() => keychainSigner('creator', { spawn: unanswered }), error => error.code === E.KEY_MISSING && /did not answer within 120 s/.test(error.message))
   const secret = 'not-a-key-but-secret-looking-value'
   assert.throws(() => keychainSigner('creator', { spawn: () => ({ status: 0, stdout: secret }) }), error => error.code === E.KEY_INVALID && !error.message.includes(secret))
   assert.throws(() => keychainSigner('partner', { spawn, expected: address() }), { code: E.SIGNER_MISMATCH })
   assert.throws(() => keychainSigner('owner', { spawn }), { code: E.INVALID_REQUEST })
-  // Each role is read once per run.
+  // prepare() reads each role once per run; signer() never reads the Keychain, and refuses a role that was not prepared.
   const reads = []
-  const signers = keychainSigners({ spawn: (command, args) => { reads.push(args[2]); return { status: 0, stdout: bs58.encode(key.secretKey) } } })
-  signers('creator'); signers('creator'); signers('partner')
+  const keys = keychainSigners({ spawn: (command, args) => { reads.push(args[2]); return { status: 0, stdout: bs58.encode(key.secretKey) } } })
+  assert.throws(() => keys.signer('creator'), { code: E.KEY_MISSING })
+  keys.prepare('creator'); keys.prepare('creator'); keys.prepare('partner')
+  assert.equal(keys.signer('creator').publicKey.toBase58(), key.publicKey.toBase58())
   assert.deepEqual(reads, ['repo.ing.dbc.creator', 'repo.ing.dbc.partner'])
+  // A failed read is kept for the run: a prompt nobody answered is not shown again for every transaction.
+  let attempts = 0
+  const denied = keychainSigners({ spawn: () => { attempts++; return unanswered() } })
+  for (const read of [() => denied.prepare('partner'), () => denied.prepare('partner'), () => denied.signer('partner')]) assert.throws(read, { code: E.KEY_MISSING })
+  assert.equal(attempts, 1)
 })
 
 test('the worker path holds no key: nothing it loads reads one, and its job only finishes rows the script signed', async () => {
@@ -572,6 +583,38 @@ test('payouts wait while a graduated-pool collection is ahead of the DAMM checkp
   const pass = await runStockExecution({ payouts: review.payouts, listMarkets: async () => [review.market], execute: true })
   assert.deepEqual(pass.payouts.map(item => [item.status, item.reason]), [['REVIEW', 'Launcher collections exceed launcher earnings']])
   assert.deepEqual([waiting.loads, review.loads, waiting.chain.sends, review.chain.sends], [[], [], [], []])
+})
+
+test('the pass reads each Keychain key with no market lock held, only for a transaction about to run; under the lock it is only checked', async () => {
+  const creator = Keypair.generate(), partner = Keypair.generate(), reads = []
+  let held = () => []
+  const keychain = (answer = role => ({ status: 0, stdout: bs58.encode((role === 'repo.ing.dbc.creator' ? creator : partner).secretKey) })) =>
+    keychainSigners({ expected: { partner: partner.publicKey.toBase58() }, spawn: (command, args) => { reads.push([args[2], held()]); return answer(args[2]) } })
+  const keys = keychain()
+  const c = await collectionSetup({ creator, partner, loadSigner: keys.signer })
+  const p = await payoutSetup({ market: c.market, partner, store: c.store, chain: c.chain, loadSigner: keys.signer })
+  held = () => [...c.store.held]
+  const pass = (execute, prepareSigner = keys.prepare, collections = c.executor, payouts = p.payouts, market = c.market) =>
+    runStockExecution({ collections, payouts, listMarkets: async () => [market], execute, prepareSigner })
+  assert.deepEqual([(await pass(false)).collections.map(i => i.status), reads], [['WOULD_COLLECT'], []], 'a dry run reads no key')
+  const done = await pass(true)
+  assert.deepEqual([done.collections.map(i => i.status), done.payouts.map(i => i.status)], [['SETTLED'], ['SETTLED']])
+  assert.deepEqual(reads, [['repo.ing.dbc.creator', []], ['repo.ing.dbc.partner', []]], 'each key read once, with no market lock held')
+  // Called directly, with no key read beforehand, the executors refuse under the lock: they never read the Keychain themselves.
+  const unread = keychain()
+  const d = await collectionSetup({ creator, partner, loadSigner: unread.signer })
+  await assert.rejects(d.executor.collect(d.request), { code: E.KEY_MISSING })
+  assert.deepEqual([reads.length, d.chain.sends, d.store.rows.collection.size], [2, [], 0])
+  // A key that cannot be read fails only the transactions that need it, before any lock is taken: here the creator's collection;
+  // the payout, signed by the partner key, still runs.
+  const locked = keychain(role => (role === 'repo.ing.dbc.creator' ? { status: 51, stdout: '' } : { status: 0, stdout: bs58.encode(partner.secretKey) }))
+  const f = await collectionSetup({ creator, partner, loadSigner: locked.signer })
+  const g = await payoutSetup({ market: f.market, partner, store: f.store, chain: f.chain, loadSigner: locked.signer })
+  held = () => [...f.store.held]
+  const mixed = await pass(true, locked.prepare, f.executor, g.payouts, f.market)
+  assert.deepEqual([mixed.collections.map(i => [i.status, i.code]), mixed.payouts.map(i => i.status)], [[['ERROR', E.KEY_MISSING]], ['SETTLED']])
+  assert.deepEqual(reads.slice(2), [['repo.ing.dbc.creator', []], ['repo.ing.dbc.partner', []]])
+  assert.deepEqual([f.store.rows.collection.size, f.store.rows.payout.size], [0, 1])
 })
 
 test('the market lock is held to sign, record and send, and released while the transaction is followed to finality', async () => {
