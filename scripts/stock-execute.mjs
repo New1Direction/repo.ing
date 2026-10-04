@@ -7,7 +7,8 @@
 // Without --collections or --payouts it does both. Graduated-pool (DAMM) collections run only with --damm, until a validator test
 // covers them. --execute runs the same pass for real, only for the kinds whose flag is set (STOCK_COLLECTIONS_EXECUTION_ENABLED=true,
 // STOCK_LAUNCHER_PAYOUTS_ENABLED=true), reading each key from the Keychain only to sign: repo.ing.dbc.creator for creator fees,
-// repo.ing.dbc.partner (which must be the custody wallet) for partner fees and payouts. Each transaction is recorded pending
+// repo.ing.dbc.partner (which must be the custody wallet) for partner fees and payouts. A key is read with no lock held, just
+// before the first transaction that needs it; a Keychain prompt waits at most 120 s. Each transaction is recorded pending
 // before it is sent and settled from its finalized receipt; the worker finishes any it leaves pending, without a key.
 // Environment: DATABASE_URL, SOLANA_RPC_URL, DBC_CONFIG and STOCK_QUOTE_CONFIGS (as the worker has them); off localnet also
 // GRADUATION_VERIFICATION_RPC_URL, a second RPC the previews and recovery's abort decisions must agree with. Exits non-zero on
@@ -35,13 +36,15 @@ if (execute) {
 
 await run(async ({ pool, connection, verification }) => {
   if (!process.env.DBC_CONFIG) throw Error('DBC_CONFIG required')
-  // Keys only for --execute, each read from the Keychain the first time a transaction needs it.
-  const loadSigner = execute ? keychainSigners({ expected: { partner: STOCK_FEE_CUSTODY } }) : null
+  // Keys only for --execute: the pass reads each from the Keychain (prepare) outside any lock, just before the first transaction
+  // that needs it; under the market's lock the executors only get the key already read (signer).
+  const keys = execute ? keychainSigners({ expected: { partner: STOCK_FEE_CUSTODY } }) : null
+  const loadSigner = keys ? keys.signer : null
   const collections = kinds.collections ? createStockCollectionExecutor({ pool, connection, verification, config: process.env.DBC_CONFIG,
     loadSigner, sources: args.damm ? STOCK_COLLECTION_SOURCES : STOCK_DEFAULT_COLLECTION_SOURCES }) : null
   const payouts = kinds.payouts ? createStockLauncherPayouts({ pool, connection, verification, loadSigner }) : null
   const report = await runStockExecution({ collections, payouts, listMarkets: filter => listStockMarkets(pool, filter), execute, assetId,
-    repoId: args.repo ?? null, verbose: true })
+    repoId: args.repo ?? null, verbose: true, prepareSigner: keys ? keys.prepare : null })
   if (stockExecutionLoud(report)) process.exitCode = 1
   return { json: { mode: execute ? 'execute' : 'dry-run', ...report }, lines: describeStockExecution(report, { execute }) }
 })
