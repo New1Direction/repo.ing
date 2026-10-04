@@ -1,0 +1,30 @@
+{
+  "name": "@repoing/cli",
+  "version": "0.1.0",
+  "description": "Launch canonical open-source markets on repo.ing from your terminal.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "bin": {
+    "repoing": "./bin/repoing.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/New1Direction/repo.ing.git",
+    "directory": "cli"
+  },
+  "homepage": "https://repo.ing",
+  "bugs": {
+    "url": "https://github.com/New1Direction/repo.ing/issues"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}
