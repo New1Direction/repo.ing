@@ -358,6 +358,13 @@
       "when": 1790910013000,
       "tag": "0053_market_quote_asset",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1790910014000,
+      "tag": "0054_stock_ledgers",
+      "breakpoints": true
     }
   ]
 }

@@ -1073,3 +1073,115 @@ export const webVitals = pgTable('web_vitals', {
   check('web_vitals_value_check', sql`${t.value} >= 0 and ${t.value} <= 600000`),
   check('web_vitals_rating_check', sql`${t.rating} in ('good', 'needs-improvement', 'poor')`),
   check('web_vitals_device_check', sql`${t.device} in ('mobile', 'desktop')`)])
+
+// Stock-pair ledgers (migration 0054, docs/STOCK_QUOTES.md): a stock-paired market's trades, curve fees, graduation, DAMM fee
+// checkpoints, collections and launcher payouts, and each stock's canonical pools and settlement receipts. Separate from every
+// SOL table; amounts are raw units of each token. A row naming a market and its stock must match the market's stamp (trigger
+// stock_ledger_market_check); fee splits and policy_version come from src/stock-fee-policy.mjs.
+const stockMarket = () => ({
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  assetId: varchar('asset_id', { length: 32 }).notNull(),
+  quoteMint: varchar('quote_mint', { length: 44 }).notNull(),
+})
+export const stockPoolCursors = pgTable('stock_pool_cursors', {
+  pool: varchar('pool', { length: 44 }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  venue: varchar('venue', { length: 4 }).notNull(),
+  lastSignature: varchar('last_signature', { length: 88 }).notNull(),
+  lastSlot: bigint('last_slot', { mode: 'bigint' }).notNull(),
+  updatedAt: tz('updated_at').defaultNow().notNull(),
+}, t => [check('stock_pool_cursors_venue_check', sql`${t.venue} in ('dbc', 'damm')`)])
+export const stockTradeEvents = pgTable('stock_trade_events', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(), ...stockMarket(),
+  venue: varchar('venue', { length: 4 }).notNull(), pool: varchar('pool', { length: 44 }).notNull(),
+  signature: varchar('signature', { length: 88 }).notNull(), eventIndex: integer('event_index').notNull(),
+  slot: bigint('slot', { mode: 'bigint' }).notNull(), tradedAt: tz('traded_at').notNull(),
+  direction: varchar('direction', { length: 4 }).notNull(),
+  // Raw stock units in or out of the pool, and raw market-token units.
+  quoteAmount: bigint('quote_amount', { mode: 'bigint' }).notNull(), baseAmount: bigint('base_amount', { mode: 'bigint' }).notNull(),
+  nextSqrtPrice: varchar('next_sqrt_price', { length: 40 }).notNull(), trader: varchar('trader', { length: 44 }).notNull(),
+  createdAt: tz('created_at').defaultNow().notNull(),
+}, t => [uniqueIndex('stock_trade_events_chain_event_unique').on(t.signature, t.eventIndex),
+  index('stock_trade_events_repo_slot').on(t.githubRepoId, t.slot),
+  check('stock_trade_events_venue_check', sql`${t.venue} in ('dbc', 'damm')`),
+  check('stock_trade_events_direction_check', sql`${t.direction} in ('buy', 'sell')`),
+  check('stock_trade_events_amounts_check', sql`${t.quoteAmount} >= 0 and ${t.baseAmount} >= 0`)])
+// DBC curve swaps only; the graduated pool's fees are stockDammFeeCheckpoints.
+export const stockFeeEvents = pgTable('stock_fee_events', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(), ...stockMarket(),
+  pool: varchar('pool', { length: 44 }).notNull(), signature: varchar('signature', { length: 88 }).notNull(),
+  eventIndex: integer('event_index').notNull(), slot: bigint('slot', { mode: 'bigint' }).notNull(),
+  creatorAmount: bigint('creator_amount', { mode: 'bigint' }).notNull(), partnerAmount: bigint('partner_amount', { mode: 'bigint' }).notNull(),
+  launcherAmount: bigint('launcher_amount', { mode: 'bigint' }).notNull(), accumulatorAmount: bigint('accumulator_amount', { mode: 'bigint' }).notNull(),
+  policyVersion: integer('policy_version').notNull(), createdAt: tz('created_at').defaultNow().notNull(),
+}, t => [uniqueIndex('stock_fee_events_chain_event_unique').on(t.signature, t.eventIndex),
+  check('stock_fee_events_amounts_check', sql`${t.creatorAmount} >= 0 and ${t.partnerAmount} >= 0 and ${t.launcherAmount} >= 0 and ${t.accumulatorAmount} >= 0`),
+  check('stock_fee_events_split_check', sql`${t.creatorAmount} + ${t.partnerAmount} = ${t.launcherAmount} + ${t.accumulatorAmount}`),
+  check('stock_fee_events_launcher_check', sql`${t.launcherAmount} <= ${t.creatorAmount}`)])
+export const stockGraduationObservations = pgTable('stock_graduation_observations', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(), ...stockMarket(),
+  pool: varchar('pool', { length: 44 }).notNull(), slot: bigint('slot', { mode: 'bigint' }).notNull(), observedAt: tz('observed_at').notNull(),
+  quoteReserve: bigint('quote_reserve', { mode: 'bigint' }).notNull(), migrationThreshold: bigint('migration_threshold', { mode: 'bigint' }).notNull(),
+  isMigrated: boolean('is_migrated').notNull(),
+}, t => [index('stock_graduation_observations_repo_observed').on(t.githubRepoId, t.observedAt),
+  check('stock_graduation_observations_amounts_check', sql`${t.quoteReserve} >= 0 and ${t.migrationThreshold} >= 0`)])
+export const stockGraduationEvents = pgTable('stock_graduation_events', {
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).primaryKey(),
+  assetId: varchar('asset_id', { length: 32 }).notNull(), quoteMint: varchar('quote_mint', { length: 44 }).notNull(),
+  dbcPool: varchar('dbc_pool', { length: 44 }).notNull(), dammPool: varchar('damm_pool', { length: 44 }).notNull(),
+  migrationSignature: varchar('migration_signature', { length: 88 }).notNull(), slot: bigint('slot', { mode: 'bigint' }).notNull(),
+  creatorPosition: varchar('creator_position', { length: 44 }), partnerPosition: varchar('partner_position', { length: 44 }),
+  evidence: jsonb('evidence').notNull(), createdAt: tz('created_at').defaultNow().notNull(),
+})
+// Cumulative checkpoints of the graduated pool's creator and partner positions; each credits the growth since the last one.
+export const stockDammFeeCheckpoints = pgTable('stock_damm_fee_checkpoints', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(), ...stockMarket(),
+  dammPool: varchar('damm_pool', { length: 44 }).notNull(), side: varchar('side', { length: 8 }).notNull(),
+  position: varchar('position', { length: 44 }).notNull(), slot: bigint('slot', { mode: 'bigint' }).notNull(),
+  cumulativeEarned: bigint('cumulative_earned', { mode: 'bigint' }).notNull(), cumulativeClaimed: bigint('cumulative_claimed', { mode: 'bigint' }).notNull(),
+  credit: bigint('credit', { mode: 'bigint' }).notNull(), launcherCumulative: bigint('launcher_cumulative', { mode: 'bigint' }).notNull(),
+  launcherCredit: bigint('launcher_credit', { mode: 'bigint' }).notNull(), accumulatorCredit: bigint('accumulator_credit', { mode: 'bigint' }).notNull(),
+  policyVersion: integer('policy_version').notNull(), createdAt: tz('created_at').defaultNow().notNull(),
+}, t => [uniqueIndex('stock_damm_fee_checkpoints_pool_side_slot_unique').on(t.dammPool, t.side, t.slot),
+  check('stock_damm_fee_checkpoints_side_check', sql`${t.side} in ('creator', 'partner')`),
+  check('stock_damm_fee_checkpoints_amounts_check', sql`${t.cumulativeEarned} >= 0 and ${t.cumulativeClaimed} >= 0 and ${t.credit} >= 0 and ${t.launcherCumulative} >= 0 and ${t.launcherCredit} >= 0 and ${t.accumulatorCredit} >= 0`),
+  check('stock_damm_fee_checkpoints_split_check', sql`${t.credit} = ${t.launcherCredit} + ${t.accumulatorCredit}`),
+  check('stock_damm_fee_checkpoints_partner_check', sql`${t.side} <> 'partner' or ${t.launcherCredit} = 0`)])
+export const stockFeeCollections = pgTable('stock_fee_collections', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(), ...stockMarket(),
+  source: varchar('source', { length: 16 }).notNull(), reviewedAmount: bigint('reviewed_amount', { mode: 'bigint' }).notNull(),
+  actualAmount: bigint('actual_amount', { mode: 'bigint' }), launcherAmount: bigint('launcher_amount', { mode: 'bigint' }).notNull(),
+  accumulatorAmount: bigint('accumulator_amount', { mode: 'bigint' }).notNull(), termsHash: varchar('terms_hash', { length: 64 }).notNull(),
+  status: varchar('status', { length: 10 }).notNull(), signature: varchar('signature', { length: 88 }), signedTransaction: text('signed_transaction'),
+  receipt: jsonb('receipt'), createdAt: tz('created_at').defaultNow().notNull(), settledAt: tz('settled_at'),
+}, t => [uniqueIndex('stock_fee_collections_one_pending').on(t.githubRepoId, t.source).where(sql`${t.status} = 'pending'`),
+  check('stock_fee_collections_source_check', sql`${t.source} in ('dbc_creator', 'dbc_partner', 'damm_creator', 'damm_partner')`),
+  check('stock_fee_collections_status_check', sql`${t.status} in ('pending', 'settled', 'aborted')`),
+  check('stock_fee_collections_amounts_check', sql`${t.reviewedAmount} >= 0 and (${t.actualAmount} is null or ${t.actualAmount} >= 0) and ${t.launcherAmount} >= 0 and ${t.accumulatorAmount} >= 0`)])
+// The wallet is always the market's launcher_wallet (trigger stock_launcher_payout_wallet_check).
+export const stockLauncherPayouts = pgTable('stock_launcher_payouts', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(), ...stockMarket(),
+  wallet: varchar('wallet', { length: 44 }).notNull(), amount: bigint('amount', { mode: 'bigint' }).notNull(),
+  status: varchar('status', { length: 10 }).notNull(), signature: varchar('signature', { length: 88 }), signedTransaction: text('signed_transaction'),
+  receipt: jsonb('receipt'), createdAt: tz('created_at').defaultNow().notNull(), settledAt: tz('settled_at'),
+}, t => [uniqueIndex('stock_launcher_payouts_one_pending').on(t.githubRepoId).where(sql`${t.status} = 'pending'`),
+  check('stock_launcher_payouts_amount_check', sql`${t.amount} > 0`),
+  check('stock_launcher_payouts_status_check', sql`${t.status} in ('pending', 'settled', 'aborted')`)])
+// Per stock, not per market: one active canonical REPOING/stock pool per asset.
+export const stockCanonicalPools = pgTable('stock_canonical_pools', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  assetId: varchar('asset_id', { length: 32 }).notNull(), quoteMint: varchar('quote_mint', { length: 44 }).notNull(),
+  pool: varchar('pool', { length: 44 }).notNull(), repoingMint: varchar('repoing_mint', { length: 44 }).notNull(),
+  position: varchar('position', { length: 44 }), evidence: jsonb('evidence').notNull(),
+  active: boolean('active').default(true).notNull(), registeredAt: tz('registered_at').defaultNow().notNull(),
+}, t => [uniqueIndex('stock_canonical_pools_one_active').on(t.assetId).where(sql`${t.active}`)])
+export const stockSettlementReceipts = pgTable('stock_settlement_receipts', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  assetId: varchar('asset_id', { length: 32 }).notNull(), quoteMint: varchar('quote_mint', { length: 44 }).notNull(),
+  kind: varchar('kind', { length: 16 }).notNull(), signature: varchar('signature', { length: 88 }).notNull(),
+  quoteSpent: bigint('quote_spent', { mode: 'bigint' }).notNull(), repoingSpent: bigint('repoing_spent', { mode: 'bigint' }).notNull(),
+  repoingReceived: bigint('repoing_received', { mode: 'bigint' }).notNull(), evidence: jsonb('evidence').notNull(),
+  createdAt: tz('created_at').defaultNow().notNull(),
+}, t => [uniqueIndex('stock_settlement_receipts_signature_unique').on(t.signature),
+  check('stock_settlement_receipts_kind_check', sql`${t.kind} in ('swap', 'add_liquidity', 'seed')`),
+  check('stock_settlement_receipts_amounts_check', sql`${t.quoteSpent} >= 0 and ${t.repoingSpent} >= 0 and ${t.repoingReceived} >= 0`)])
