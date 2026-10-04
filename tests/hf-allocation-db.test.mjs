@@ -16,6 +16,7 @@ import { createHfOAuth, createHfVerifier } from '../src/hf-verification.mjs'
 import { createWalletBinding } from '../src/wallet-binding.mjs'
 import { createPayoutAddresses } from '../src/payout-address.mjs'
 import { recorded, startFakeHf } from './fixtures/hf-server.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // The Hugging Face branch of the 1% builder allocation on real PostgreSQL with every committed migration (0052 included)
 // and a local stand-in for huggingface.co (the recorded Hub, plus scripted OAuth): the 0052 rules, who may claim a model
@@ -404,7 +405,7 @@ test('real PostgreSQL: 0052 upgrades GitHub allocation history unchanged and re-
     assert.deepEqual(pending.map(row => row.signature), ['Pending9802'])
   } finally {
     await pool?.end()
-    await admin.query('drop database if exists repoing_hf_allocation_upgrade_test with (force)')
+    await dropTestDatabase(admin, 'repoing_hf_allocation_upgrade_test')
     await admin.end(); await rm(folder, { recursive: true, force: true })
   }
 })

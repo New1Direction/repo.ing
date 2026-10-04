@@ -13,6 +13,7 @@ import { STOCK_DAMM_QUARANTINE, indexStockDammTrades } from '../src/stock-damm-t
 import { clearFinalizedTransactionCache } from '../src/finalized-transaction.mjs'
 import { registerRpcEndpoint } from '../src/rpc-usage.mjs'
 import { SOL_QUOTE, resolveQuoteAsset } from '../src/quote-assets.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // The stock graduation ledgers (migration 0054) on real PostgreSQL: the SOL and stock graduation jobs split the indexed markets
 // exactly; observations, the migration proof and DAMM fee checkpoints are written as the stock fee policy says; and the DAMM
@@ -235,7 +236,7 @@ test('stock graduation ledgers on PostgreSQL', { timeout: 120_000 }, async t => 
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query('drop database if exists repoing_stock_graduation_test with (force)')
+    if (created) await dropTestDatabase(admin, 'repoing_stock_graduation_test')
     await admin.end()
   }
 })

@@ -24,6 +24,7 @@ import { checkStockCollectionReceipt, createStockChainReader, createStockCollect
 import { registerCanonicalPool, verifyCanonicalPool } from '../src/stock-canonical-pools.mjs'
 import { previewStockSettlement, recordStockSettlementReceipt, verifyStockSettlementReceipt } from '../src/stock-settlement.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // The accumulator's previews and receipt checks against real transactions on the programs mainnet runs
 // (scripts/ci/start-stock-validator.sh: DBC, DAMM v2 and Token-2022 as deployed, Meteora's badges and the real METAx mint with
@@ -330,7 +331,7 @@ test('stock collections and settlements verified from real transactions on mainn
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query(`drop database if exists ${DB} with (force)`)
+    if (created) await dropTestDatabase(admin, DB)
     await admin.end()
     closeConnections()
     if (started) await stopValidator(work)

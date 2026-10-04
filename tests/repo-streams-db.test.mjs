@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto'
 import { createRepoStreams, readRepoStream } from '../src/repo-streams.mjs'
 import { encryptGithubSession } from '../app/lib/auth.mjs'
 import * as route from '../app/api/builders/stream/route.js'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Real PostgreSQL, drizzle/0046_repo_streams.sql applied in a scratch schema: the store's writes, the six-hour live
 // window and expiry, and the table's own link and window constraints. The second test drives the HTTP route on a
@@ -77,7 +78,7 @@ test('real PostgreSQL route: claim and builders sessions change a stream only wi
       if (saved.env[key] === undefined) delete process.env[key]; else process.env[key] = saved.env[key]
     }
     globalThis.__gitfunPool = saved.pool; globalThis.fetch = saved.fetch
-    await pool.end(); await admin.query(`drop database ${name} with (force)`); await admin.end()
+    await pool.end(); await dropTestDatabase(admin, name); await admin.end()
   })
   await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
   await pool.query(`insert into repositories(github_repo_id, owner, name, full_name, stars, forks, archived, github_updated_at) values (77, 'octo', 'widget', 'octo/widget', 1, 0, false, now())`)

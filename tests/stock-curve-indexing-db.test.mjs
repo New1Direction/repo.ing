@@ -15,6 +15,7 @@ import { readMarketChart } from '../src/market-chart.mjs'
 import { resolveQuoteAsset } from '../src/quote-assets.mjs'
 import { createStockFeeAccrual, stockFeeSplit } from '../src/stock-fee-accrual.mjs'
 import { normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Stock-pair curve indexing on real PostgreSQL (docs/STOCK_QUOTES.md): the SOL and stock indexers split the indexed markets
 // between them with no overlap, the SOL indexer's output does not change when a stock market exists, the stock accrual writes
@@ -226,7 +227,7 @@ test('stock curve indexing on PostgreSQL: partitioned markets, unchanged SOL ind
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query('drop database if exists repoing_stock_curve_indexing_test with (force)')
+    if (created) await dropTestDatabase(admin, 'repoing_stock_curve_indexing_test')
     await admin.end()
   }
 })

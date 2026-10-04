@@ -33,6 +33,7 @@ import { stockDbcSwapEvents } from '../src/stock-trade-evidence.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { LAUNCHER_DEN, LAUNCHER_NUM } from '../src/stock-fee-policy.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // A METAx-paired market graduates on the programs mainnet runs (scripts/ci/start-stock-validator.sh): DOCUSAURUS / METAx is
 // bought past its 14 METAx threshold, migrated into its DAMM v2 pool as Meteora's migrator does on mainnet, and from then on
@@ -395,7 +396,7 @@ test('a METAx-paired market graduates: proven, its DAMM swaps indexed in METAx, 
     if (savedConfigs === undefined) delete process.env.STOCK_QUOTE_CONFIGS
     else process.env.STOCK_QUOTE_CONFIGS = savedConfigs
     await pool?.end()
-    if (created) await admin.query('drop database if exists repoing_stock_graduation_chain_test with (force)')
+    if (created) await dropTestDatabase(admin, 'repoing_stock_graduation_chain_test')
     await admin.end()
     closeConnections()
     if (started) await stopValidator(work)

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { quoteAssetById } from '../src/quote-assets.mjs'
 import { POLICY_VERSION, dammCheckpoint, splitCurveFee } from '../src/stock-fee-policy.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Migration 0054 (stock ledgers, docs/STOCK_QUOTES.md) on real PostgreSQL. The database is brought to 0053 and seeded with SOL
 // rows across the ledgers the stock tables sit beside (trades, curve and DAMM fees, cursors, graduation, claims) plus two
@@ -505,7 +506,7 @@ test('migration 0054 adds the stock ledgers, leaves every SOL table as it was, a
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query(`drop database if exists ${DB} with (force)`)
+    if (created) await dropTestDatabase(admin, DB)
     await admin.end()
     await rm(folder, { recursive: true, force: true })
   }
