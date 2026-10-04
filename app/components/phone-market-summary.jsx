@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { phoneMarketSummary, sparklinePath } from '../lib/phone-market-summary.mjs'
+import { phoneMarketSummary, sparklinePath, stockMarketSummary } from '../lib/phone-market-summary.mjs'
 import { readMarketSnapshot, subscribeMarketSnapshot } from '../lib/market-snapshot.mjs'
 import '../phone-market-summary.css'
 
@@ -10,16 +10,18 @@ const changeLabel = change => change === null ? '—' : `${change > 0 ? '+' : ch
 
 // Phones only (CSS shows it at ≤640px): what a trader is buying, before builder earnings and repo details. It makes no
 // request of its own: the server market row (last price; 24h volume, the verified DAMM pool included after graduation)
-// first, then the trades and metrics the price chart below already loaded.
-export function PhoneMarketSummary({ mint, symbol, priceSol = null, volume24hLamports = null }) {
+// first, then the trades and metrics the price chart below already loaded. A stock pair (quote: marketQuoteView, stock: the
+// row's stock figures) reads the same snapshot in its stock (stockMarketSummary).
+export function PhoneMarketSummary({ mint, symbol, priceSol = null, volume24hLamports = null, quote = null, stock = null }) {
   const [snapshot, setSnapshot] = useState(null)
   useEffect(() => {
     setSnapshot(readMarketSnapshot(mint))
     return subscribeMarketSnapshot(mint, setSnapshot)
   }, [mint])
   // The newest price and volume from any chart window, over the latest window long enough for 24h change and sparkline.
-  const chart = snapshot?.chart ? { ...snapshot.chart, latest: snapshot.latest, volume24hLamports: snapshot.volume24hLamports } : null
-  const summary = phoneMarketSummary({ priceSol, volume24hLamports, chart, metrics: snapshot?.metrics ?? null, now: Date.parse(chart?.fetchedAt) || 0 })
+  const chart = snapshot?.chart ? { ...snapshot.chart, latest: snapshot.latest, ...(quote ? { volume24hQuote: snapshot.volume24hQuote } : { volume24hLamports: snapshot.volume24hLamports }) } : null
+  const summary = quote ? stockMarketSummary({ quote, stock, chart, metrics: snapshot?.metrics ?? null, now: Date.parse(chart?.fetchedAt) || 0 })
+    : phoneMarketSummary({ priceSol, volume24hLamports, chart, metrics: snapshot?.metrics ?? null, now: Date.parse(chart?.fetchedAt) || 0 })
   const path = sparklinePath(summary.spark, SPARK_WIDTH, SPARK_HEIGHT)
   const trend = summary.change === null ? '' : summary.change >= 0 ? ' is-up' : ' is-down'
   return <section className="phone-market-summary" aria-label={`$${symbol} market summary`}>

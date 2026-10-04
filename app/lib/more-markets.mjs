@@ -15,6 +15,6 @@ export function selectMoreMarkets(markets, { excludeMints = [], now = Date.now()
     const age = now - launched(market)
     return { repoId: market.repoId, mint: market.mint, fullName: market.fullName, symbol: market.symbol,
       volume24hLamports: String(market.volume24hLamports ?? '0'), isNew: age >= 0 && age < NEW_MARKET_MS,
-      newRepo: market.newRepo === true, officialLaunch: market.officialLaunch === true }
+      newRepo: market.newRepo === true, officialLaunch: market.officialLaunch === true, ...(market.stock !== undefined && { stock: market.stock }) }
   })
 }

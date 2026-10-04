@@ -10,10 +10,12 @@ import { GraduationProgress } from './graduation-progress'
 // `aside` (server-rendered, e.g. the tip card) sits under the trade panel: right column on desktop, right after it on mobile.
 // `below` (server-rendered, e.g. holder notes) sits under recent trades on desktop and after the side column on mobile.
 // `pulse` (server-read GitHub events) becomes pins on the price chart.
-// `quote` is the market's pair (src/quote-assets.mjs marketQuoteView): null for SOL.
+// `quote` is the market's pair (src/quote-assets.mjs marketQuoteView): null for SOL. A stock pair's chart and graduation bar
+// show its stock, with the display units the chart's metrics read brings (quoteUnits).
 export function MarketTrading({ market, available, usdPerSol, aside = null, below = null, pulse = null, quote = null }) {
   useEffect(() => watchMarketEvents(market.mint), [market.mint])
   const [solPrice, setSolPrice] = useState(usdPerSol)
+  const [quoteUnits, setQuoteUnits] = useState(null)
   const [curve, setCurve] = useState(null), [error, setError] = useState(false)
   const curveEnded = useRef(null)
   const [now,setNow]=useState(Date.now())
@@ -51,6 +53,7 @@ export function MarketTrading({ market, available, usdPerSol, aside = null, belo
     window.addEventListener('repoing:market-updated', onTrade)
     return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTrade); window.removeEventListener('repoing:market-updated', onTrade) }
   }, [market.mint])
-  return <><GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)}/>
-    <div className="market-grid"><PriceChart key={`chart:${market.mint}`} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice} pulse={pulse}/><div className="market-side"><TradePanel key={`trade:${market.mint}`} market={market} quote={quote} available={available} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/>{aside}</div>{below}</div></>
+  return <><GraduationProgress curve={verifiedCurve} error={error||Boolean(curve&&!verifiedCurve)} units={quoteUnits}/>
+    <div className="market-grid"><PriceChart key={`chart:${market.mint}`} mint={market.mint} symbol={market.symbol} curveStatus={verifiedCurve?.status} onSolUsd={setSolPrice}
+      onQuoteUnits={quote ? setQuoteUnits : undefined} quote={quote} pulse={pulse}/><div className="market-side"><TradePanel key={`trade:${market.mint}`} market={market} quote={quote} available={available} usdPerSol={solPrice} curve={verifiedCurve || (curveEnded.current === market.mint ? {status:'migrating'} : null)}/>{aside}</div>{below}</div></>
 }

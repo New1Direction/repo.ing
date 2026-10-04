@@ -9,12 +9,16 @@ import { ChartPulsePins } from './chart-pulse-pins'
 // price-chart already starts this download while the page hydrates; this reuses the same module request.
 const loadLightweightCharts = () => import('lightweight-charts')
 
-export default function MarketChartCanvas({ data, multiplier, unit, style, symbol, pulse = null, showPulse = true, children }) {
+const SOL_VOLUME_LABEL = bar => `${formatSolDisplay(bar.volumeLamports)} SOL`
+
+// unit: 'USD' (market cap) or the price's unit ('SOL', or a stock pair's symbol). volumeOf / volumeLabel: a bar's volume as
+// plotted and as read out; SOL's unless given (a stock pair's come from app/lib/chart-quote.mjs).
+export default function MarketChartCanvas({ data, multiplier, unit, style, symbol, pulse = null, showPulse = true, volumeOf, volumeLabel = SOL_VOLUME_LABEL, children }) {
   const container = useRef(null), api = useRef(null), latest = useRef(null)
   const [ready, setReady] = useState(false), [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0), [hoverTime, setHoverTime] = useState(null)
   const [chartApi, setChartApi] = useState(null)
-  const series = useMemo(() => chartSeries(data, multiplier), [data, multiplier])
+  const series = useMemo(() => chartSeries(data, multiplier, volumeOf), [data, multiplier, volumeOf])
   const byTime = useMemo(() => new Map(data.candles.map(bar => [bar.time, bar])), [data.candles])
   // Every series time, whitespace included, so an event in a quiet hour keeps its place instead of joining the last trade.
   const pins = useMemo(() => showPulse && pulse?.length ? pulsePins(pulse, series.prices.map(bar => bar.time), { interval: data.interval }) : [],
@@ -131,10 +135,10 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
   return <div className="market-chart-plot">
     <div className="chart-readout" aria-hidden="true">
       <time>{current ? `${new Date(current.time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC` : 'Finalized trade history'}</time>
-      <div className="chart-readout-values">{['open', 'high', 'low', 'close'].map(key => <span key={key}>{key[0].toUpperCase()} <b>{current && !current.orderingPending ? label(current[key]) : '—'}</b></span>)}<span>Vol <b>{current ? `${formatSolDisplay(current.volumeLamports)} SOL` : '—'}</b></span></div>
+      <div className="chart-readout-values">{['open', 'high', 'low', 'close'].map(key => <span key={key}>{key[0].toUpperCase()} <b>{current && !current.orderingPending ? label(current[key]) : '—'}</b></span>)}<span>Vol <b>{current ? volumeLabel(current) : '—'}</b></span></div>
     </div>
     <div className="market-chart-stage">
-      <div ref={container} className="market-chart-canvas" tabIndex={0} role="region" aria-label={`${symbol} ${unit === 'USD' ? 'estimated market cap' : 'SOL price'} chart. Drag to pan, pinch to zoom, or use plus, minus and Home. Exact prices are in the chart data table below.`} onKeyDown={keyboard}/>
+      <div ref={container} className="market-chart-canvas" tabIndex={0} role="region" aria-label={`${symbol} ${unit === 'USD' ? 'estimated market cap' : `${unit} price`} chart. Drag to pan, pinch to zoom, or use plus, minus and Home. Exact prices are in the chart data table below.`} onKeyDown={keyboard}/>
       {ready && chartApi && pins.length > 0 && <ChartPulsePins chart={chartApi} pins={pins}/>}
     </div>
     {!ready && <div className="chart-overlay" role="status">{failed ? <><span>Chart could not load.</span><button className="button outline" onClick={() => setRetry(value => value + 1)}>Retry chart</button></> : <><span className="claim-spinner" aria-hidden="true"/>Preparing chart…</>}</div>}

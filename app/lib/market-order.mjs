@@ -17,9 +17,11 @@ export const HOME_MARKET_LIMIT = 5
 // Trending lists only markets that traded in the last 24 hours: a "0 SOL" row reads as a dead market. New lists them all.
 export const tradedToday = market => BigInt(market.volume24hLamports ?? '0') > 0n
 // Only the fields MarketTable, RepoAvatar and WatchButton read, so the home page ships no unused rows. A model market's
-// display-only likes (app/lib/hf-markets.mjs withModelFacts) ride along only when known; GitHub rows never carry them.
+// display-only likes (app/lib/hf-markets.mjs withModelFacts) ride along only when known; GitHub rows never carry them. A
+// stock pair's figures (`stock`, app/lib/stock-market-stats.mjs) ride along the same way; SOL rows never carry them.
 const HOME_MARKET_FIELDS = ['repoId', 'mint', 'fullName', 'description', 'symbol', 'tokenName', 'wasVerified', 'volume24hLamports', 'earned', 'claimed', 'remaining', 'stars', 'priceSol', 'bondingPercent', 'graduated', 'pulse', 'newRepo', 'officialLaunch']
 export function homeMarketTabs(markets) {
   return Object.fromEntries(HOME_MARKET_TABS.map(tab => [tab, orderMarkets(tab === 'Trending' ? markets.filter(tradedToday) : markets, tab).slice(0, HOME_MARKET_LIMIT)
-    .map(market => ({ ...Object.fromEntries(HOME_MARKET_FIELDS.map(key => [key, market[key]])), ...(market.likes !== undefined && { likes: market.likes }) }))]))
+    .map(market => ({ ...Object.fromEntries(HOME_MARKET_FIELDS.map(key => [key, market[key]])), ...(market.likes !== undefined && { likes: market.likes }),
+      ...(market.stock !== undefined && { stock: market.stock }) }))]))
 }

@@ -1,6 +1,7 @@
 import { MarketLink } from './market-link'
 import { RepoAvatar } from './ui'
 import { formatSolDisplay } from '../lib/format.mjs'
+import { stockRowDisplay } from '../lib/stock-display.mjs'
 import { MORE_MARKETS_LIMIT } from '../lib/more-markets.mjs'
 import { NewRepoLabel, OfficialBadge } from './market-signals'
 import { isModelMarket } from '../lib/hf-model-display.mjs'
@@ -17,7 +18,7 @@ export function MoreMarkets({ markets = [], featured = false }) {
     <ol className="more-markets-rail">{markets.map(market => <li className="more-markets-card" key={market.mint}>
       <MarketLink mint={market.mint} className="more-markets-repo"><RepoAvatar repo={market}/><span><strong>{market.fullName}</strong><small><span className="more-markets-symbol">${market.symbol}</span>{isModelMarket(market) ? <ModelSourceChip compact/> : market.newRepo ? <NewRepoLabel compact/> : market.officialLaunch ? <OfficialBadge compact/> : market.isNew && <span className="more-markets-new">New</span>}</small></span></MarketLink>
       {isModelMarket(market) && <ModelCardBadge/>}
-      <p className="more-markets-volume"><span>24h vol</span>{formatSolDisplay(market.volume24hLamports)} SOL</p>
+      <p className="more-markets-volume"><span>24h vol</span>{market.stock ? stockRowDisplay(market.stock).volume : `${formatSolDisplay(market.volume24hLamports)} SOL`}</p>
       <MarketLink mint={market.mint} hash="#trade-panel" className="button primary more-markets-buy" aria-label={`Buy $${market.symbol}`}>Buy</MarketLink>
     </li>)}</ol>
     {models && <ModelDisclaimer/>}

@@ -13,10 +13,13 @@ import { NewRepoLabel, OfficialBadge } from './market-signals'
 import { formatSolDisplay, formatUsdEstimate } from '../lib/format.mjs'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
 import { bondingProgress, marketCapDisplay } from '../lib/market-display.mjs'
+import { stockRowDisplay } from '../lib/stock-display.mjs'
 import { isModelMarket, modelLikes, modelPageUrl, modelSummary, modelView } from '../lib/hf-model-display.mjs'
 import { HuggingFaceLink, ModelDisclaimer, ModelLikesCell, ModelMark, ModelSourceChip, ModelStats } from './hf/model-ui'
 
 function MarketEarnings({ market, usdPerSol }) {
+  // A stock pair earns no SOL: its fees are paid in its stock (launcher share and the stock's accumulator).
+  if (market.stock) return <span className="table-earnings" title={`This market's trading fees are paid in ${market.stock.symbol ?? 'its stock'}.`}><strong>—</strong><small>{`Fees in ${market.stock.symbol ?? 'its stock'}`}</small></span>
   const usd = formatUsdEstimate(market.earned, usdPerSol)
   return <span className={`table-earnings${BigInt(market.earned ?? 0) > 0n ? ' has-earnings' : ''}`} title={`${formatSolDisplay(market.earned)} SOL earned in total · ${formatSolDisplay(market.claimed)} SOL paid · ${formatSolDisplay(market.remaining)} SOL available. USD estimate at the current SOL price.`}>
     <strong>{usd ?? `${formatSolDisplay(market.earned)} SOL`}</strong>
@@ -24,8 +27,15 @@ function MarketEarnings({ market, usdPerSol }) {
   </span>
 }
 function MarketCap({ market, usdPerSol }) {
+  // A stock pair's cap is in its stock (USD at the stock's price), from the row's stock figures.
+  if (market.stock) { const view = stockRowDisplay(market.stock); return <span className="table-mcap" title={view.capTitle}>{view.cap ?? '—'}</span> }
   const cap = marketCapDisplay(market.priceSol, usdPerSol)
   return <span className="table-mcap" title={cap?.title ?? 'No trades recorded yet'}>{cap?.value ?? '—'}</span>
+}
+function MarketVolume({ market }) {
+  if (!market.stock) return <span className="table-volume">{formatSolDisplay(market.volume24hLamports)} SOL</span>
+  const view = stockRowDisplay(market.stock)
+  return <span className="table-volume" title={view.volumeTitle}>{view.volume}</span>
 }
 // One thin line on the row's bottom edge; nothing is drawn when progress is unknown or stale.
 function BondingLine({ market }) {
@@ -92,7 +102,7 @@ const MIXED_HEADINGS = ['#', 'Repo / model', 'Token', 'Market cap', '24h Volume'
 // model's Hugging Face page) where a repository shows stars. No "New repo" label or GitHub copy.
 function MarketRow({ market, index, usdPerSol }) {
   const model = isModelMarket(market)
-  return <div className={model ? 'market-row is-model' : 'market-row'}><span className="row-index">{index + 1}</span><MarketLink mint={market.mint} className="table-repo"><RepoAvatar repo={market}/><span><span className="table-repo-name"><strong>{market.fullName}</strong><span className="table-repo-ticker">${market.symbol}</span>{model && <ModelSourceChip/>}{market.officialLaunch ? <OfficialBadge/> : <Badge tone={market.wasVerified ? 'verified' : 'muted'}>{market.wasVerified ? 'Verified' : 'Unverified'}</Badge>}{!model && market.newRepo && <NewRepoLabel/>}<PulseBadge badge={market.pulse?.badge}/></span><small>{model ? modelSummary(market) : market.description || 'Public repository'}</small></span></MarketLink><span className="table-token"><strong>{market.symbol}</strong><small>{market.tokenName}</small></span><MarketCap market={market} usdPerSol={usdPerSol}/><span className="table-volume">{formatSolDisplay(market.volume24hLamports)} SOL</span><MarketEarnings market={market} usdPerSol={usdPerSol}/>{model ? <ModelLikesCell likes={modelLikes(market)} url={modelPageUrl(market.fullName)} path={market.fullName}/> : <span className="table-stars"><Star size={15}/>{typeof market.stars === 'number' ? market.stars.toLocaleString('en-US') : '—'}</span>}<span className="table-actions"><WatchButton market={market} compact/><MarketLink mint={market.mint} className="button outline table-action">Trade<ChevronRight size={15}/></MarketLink></span><BondingLine market={market}/></div>
+  return <div className={model ? 'market-row is-model' : 'market-row'}><span className="row-index">{index + 1}</span><MarketLink mint={market.mint} className="table-repo"><RepoAvatar repo={market}/><span><span className="table-repo-name"><strong>{market.fullName}</strong><span className="table-repo-ticker">${market.symbol}</span>{model && <ModelSourceChip/>}{market.officialLaunch ? <OfficialBadge/> : <Badge tone={market.wasVerified ? 'verified' : 'muted'}>{market.wasVerified ? 'Verified' : 'Unverified'}</Badge>}{!model && market.newRepo && <NewRepoLabel/>}<PulseBadge badge={market.pulse?.badge}/></span><small>{model ? modelSummary(market) : market.description || 'Public repository'}</small></span></MarketLink><span className="table-token"><strong>{market.symbol}</strong><small>{market.tokenName}</small></span><MarketCap market={market} usdPerSol={usdPerSol}/><MarketVolume market={market}/><MarketEarnings market={market} usdPerSol={usdPerSol}/>{model ? <ModelLikesCell likes={modelLikes(market)} url={modelPageUrl(market.fullName)} path={market.fullName}/> : <span className="table-stars"><Star size={15}/>{typeof market.stars === 'number' ? market.stars.toLocaleString('en-US') : '—'}</span>}<span className="table-actions"><WatchButton market={market} compact/><MarketLink mint={market.mint} className="button outline table-action">Trade<ChevronRight size={15}/></MarketLink></span><BondingLine market={market}/></div>
 }
 // A table with model rows ends with the full disclaimer (the rows carry the short badge).
 export function MarketTable({ markets = [], usdPerSol = null, empty = 'No indexed markets yet.' }) {
