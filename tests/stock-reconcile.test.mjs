@@ -4,7 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { STOCK_RECONCILE_ALERT, STOCK_RECONCILE_LAG_MS, STOCK_RECONCILE_REASONS as R, compareCurveSide, compareCustody, compareGraduatedSide,
   createStockChainReads, createStockReconcileRunner, createStockReconciler, mismatchKind, reconcileJSON, stockChainAheadOfLedger,
-  toleratedForNow } from '../src/stock-reconcile.mjs'
+  stockCustodyAccount, toleratedForNow } from '../src/stock-reconcile.mjs'
 import { chainAheadOfLedger } from '../src/reconcile.mjs'
 import { METAX_MINT, curveConfig, curvePool, dammPool, dammPosition, fakeConnection, key, stockMarket, token2022Account } from './fixtures/stock-chain.mjs'
 
@@ -189,6 +189,7 @@ test('custody: the fee claimer\'s Token-2022 account of the stock against the st
   const result = await reconciler(market, fakePool({ market }), matched.connection).reconcileStockCustody('meta-xstock')
   assert.equal(result.status, 'MATCH')
   assert.deepEqual([result.wallet, result.account, result.expected, result.balance], [matched.feeClaimer, matched.custody, 1000n, 1000n])
+  assert.equal(stockCustodyAccount(matched.feeClaimer, METAX_MINT), matched.custody, 'the shared custody account definition')
   const short = await reconciler(market, fakePool({ market }), chain(market, { custodyAmount: 990n }).connection).reconcileStockCustody('meta-xstock')
   assert.deepEqual([short.status, short.reason, short.difference], ['MISMATCH', R.CUSTODY_SHORTFALL, -10n])
   const missing = await reconciler(market, fakePool({ market }), chain(market, { custodyAmount: null }).connection).reconcileStockCustody('meta-xstock')

@@ -160,6 +160,12 @@ const CUSTODY_SQL = `select coalesce((select sum(actual_amount) from stock_fee_c
     + (select count(*) from stock_launcher_payouts where asset_id = $1 and quote_mint <> $2)
     + (select count(*) from stock_settlement_receipts where asset_id = $1 and quote_mint <> $2))::int as "otherMintRows"`
 
+// Where a stock's fee collections land and launcher payouts and settlement spends leave from: the Token-2022 associated
+// account of the stock, owned by the custody wallet (the stock config's fee claimer, header above). Off-curve owners allowed.
+export function stockCustodyAccount(wallet, mint) {
+  return getAssociatedTokenAddressSync(new PublicKey(mint), new PublicKey(wallet), true, TOKEN_2022_PROGRAM_ID).toBase58()
+}
+
 // Chain reads, injectable for tests. Each throws ReconcileStop: UNAVAILABLE for an RPC failure, MISMATCH for contrary state.
 export function createStockChainReads({ connection }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
@@ -205,8 +211,7 @@ export function createStockChainReads({ connection }) {
     return new PublicKey(fixed.feeClaimer).toBase58()
   }
   async function custodyBalance({ asset, wallet }) {
-    const mint = new PublicKey(asset.mint), owner = new PublicKey(wallet)
-    const account = getAssociatedTokenAddressSync(mint, owner, true, TOKEN_2022_PROGRAM_ID)
+    const mint = new PublicKey(asset.mint), owner = new PublicKey(wallet), account = new PublicKey(stockCustodyAccount(wallet, asset.mint))
     let info
     try { info = await connection.getAccountInfo(account, 'finalized') } catch (error) { throw unavailable(`Custody account read failed: ${error.message}`) }
     if (!info) return { account: account.toBase58(), balance: 0n, frozen: false }

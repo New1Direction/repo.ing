@@ -347,8 +347,9 @@ partner signer (`PLATFORM_PARTNER_SECRET_KEY`, the configs' fee claimer, `H7TKâ€
 (`src/platform-fees.mjs`). `scripts/platform-sweep.mjs` then moves surplus SOL to the published custody wallet `FgzeYâ€¦`. A
 stock pair has no payout wallet, so all four of its fee sources (`dbc_creator`, `dbc_partner`, `damm_creator`,
 `damm_partner`) land in the **stock's Token-2022 associated account of the stock config's fee claimer**: the platform partner
-wallet, which already signs launcher-facing payouts. Launcher payouts and settlement spends leave from that account. The
-reconciler reads the fee claimer from the stock's config on-chain, so the worker needs no key.
+wallet, which already signs launcher-facing payouts. Launcher payouts and settlement spends leave from that account
+(`stockCustodyAccount(wallet, mint)` in `src/stock-reconcile.mjs`). The reconciler reads the fee claimer from the stock's
+config on-chain, so the worker needs no key.
 
 **Reconciliation** (`src/stock-reconcile.mjs`; the SOL reconciler keeps refusing stock markets):
 
