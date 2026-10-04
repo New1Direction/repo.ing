@@ -58,6 +58,7 @@ stock-ledgers-db
 stock-ledger-indexes-db
 stock-market-reads-db
 stock-reconcile-db
+stock-readiness-db
 trade
 trend-integration
 trend-launchable-db
