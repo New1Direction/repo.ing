@@ -11,7 +11,7 @@ import { quoteAssetById } from '../src/quote-assets.mjs'
 import { SOL_INDEXER_MARKETS, STOCK_INDEXER_MARKETS, checkDatabase } from '../src/stock-readiness.mjs'
 
 // The readiness database checks (src/stock-readiness.mjs, docs/STOCK_GO_LIVE.md) on real PostgreSQL: migration 0054's tables,
-// functions and triggers; the SOL/stock market partition, which must be exactly the lists the two worker indexers walk; and no
+// functions and triggers, and 0055's read indexes; the SOL/stock market partition, which must be exactly the lists the two worker indexers walk; and no
 // stock-paired market in any SOL ledger. Every read is in a READ ONLY transaction that is rolled back.
 const DB = 'repoing_stock_readiness_test'
 const URL_ = `postgres://postgres:launchtest@127.0.0.1:55432/${DB}`
@@ -77,7 +77,7 @@ const recording = client => {
 }
 const byName = items => Object.fromEntries(items.map(entry => [entry.name, entry]))
 
-test('readiness database checks on PostgreSQL: migration 0054, the indexers\' partition, the SOL ledgers', { timeout: 120_000 }, async t => {
+test('readiness database checks on PostgreSQL: migrations 0054 and 0055, the indexers\' partition, the SOL ledgers', { timeout: 120_000 }, async t => {
   assert.equal(process.env.DATABASE_URL ?? URL_, URL_)
   const admin = new pg.Pool({ connectionString: URL_.replace(new RegExp(`${DB}$`), 'postgres') })
   let pool, client, created = false
@@ -92,13 +92,14 @@ test('readiness database checks on PostgreSQL: migration 0054, the indexers\' pa
     await t.test('a migrated database passes every check, read in READ ONLY transactions that are rolled back', async () => {
       const db = recording(client)
       const items = byName(await checkDatabase({ db }))
-      assert.deepEqual(Object.keys(items), ['Migration 0054', 'Market partition', 'SOL ledgers'])
-      assert.deepEqual(Object.values(items).map(entry => entry.status), ['PASS', 'PASS', 'PASS'], JSON.stringify(items))
+      assert.deepEqual(Object.keys(items), ['Migration 0054', 'Migration 0055', 'Market partition', 'SOL ledgers'])
+      assert.deepEqual(Object.values(items).map(entry => entry.status), ['PASS', 'PASS', 'PASS', 'PASS'], JSON.stringify(items))
       assert.equal(items['Migration 0054'].reason, '10 stock tables, 3 functions and 10 triggers present, every trigger enabled')
+      assert.equal(items['Migration 0055'].reason, 'the stock ledgers\' 3 read indexes are present and valid')
       assert.equal(items['Market partition'].reason, '3 indexed markets: 2 SOL (the SOL indexer\'s list) + 1 stock (the stock indexer\'s list), none in both')
       assert.equal(items['SOL ledgers'].reason, 'no stock-paired market in any of the 12 SOL fee, trade, claim and reward tables')
       const kinds = db.statements.map(sql => sql.startsWith('select ') ? 'select' : sql)
-      assert.deepEqual(kinds.filter(kind => kind !== 'select'), Array(3).fill(['begin transaction read only', "set local statement_timeout = '30s'", 'rollback']).flat())
+      assert.deepEqual(kinds.filter(kind => kind !== 'select'), Array(4).fill(['begin transaction read only', "set local statement_timeout = '30s'", 'rollback']).flat())
       assert.equal((await client.query('show transaction_read_only')).rows[0].transaction_read_only, 'off', 'no transaction left open')
     })
 
@@ -129,6 +130,16 @@ test('readiness database checks on PostgreSQL: migration 0054, the indexers\' pa
         await client.query(`delete from repo_claims where claim_signature = '${sig(82)}'`)
       }
       assert.equal(byName(await checkDatabase({ db: client }))['SOL ledgers'].status, 'PASS')
+    })
+
+    await t.test('a missing 0055 read index fails, and passes again once it is back', async () => {
+      await client.query('drop index stock_fee_events_repo_slot')
+      const items = byName(await checkDatabase({ db: client }))
+      assert.deepEqual([items['Migration 0055'].status, items['Migration 0055'].reason],
+        ['FAIL', 'index stock_fee_events_repo_slot missing: apply migration 0055 as written'])
+      assert.equal(items['Migration 0054'].status, 'PASS')
+      await client.query('create index "stock_fee_events_repo_slot" on "stock_fee_events" ("github_repo_id", "slot" desc, "event_index" desc)')
+      assert.equal(byName(await checkDatabase({ db: client }))['Migration 0055'].status, 'PASS')
     })
 
     await t.test('a disabled or missing 0054 trigger or function fails', async () => {
