@@ -6,13 +6,15 @@ import { HF_DISCLAIMER } from './hf-copy.mjs'
 
 // DB quotas survive restarts and apply across replicas. The global cap also bounds
 // callers that rotate/spoof forwarded IPs; a client key is not authentication.
-export async function takeAgentQuota(pool, client, secret) {
+// `prefix` gives another caller (the CLI, src/cli-launch-http.mjs) its own buckets and limits; the MCP uses none.
+export async function takeAgentQuota(pool, client, secret, { prefix = '', globalLimit = 120, clientLimit = 30 } = {}) {
   const key = createHmac('sha256', secret).update(client.slice(0, 256)).digest('hex')
-  for (const [scope, limit] of [['global', 120], [`client:${key}`, 30]]) {
+  const scope = name => prefix ? `${prefix}:${name}` : name
+  for (const [scopeName, limit] of [[scope('global'), globalLimit], [scope(`client:${key}`), clientLimit]]) {
     const { rows } = await pool.query(`insert into agent_request_limits(scope,hits,expires_at) values($1,1,now()+interval '1 minute')
       on conflict(scope) do update set hits=case when agent_request_limits.expires_at<=now() then 1 else agent_request_limits.hits+1 end,
       expires_at=case when agent_request_limits.expires_at<=now() then now()+interval '1 minute' else agent_request_limits.expires_at end
-      where agent_request_limits.expires_at<=now() or agent_request_limits.hits<$2 returning hits`, [scope, limit])
+      where agent_request_limits.expires_at<=now() or agent_request_limits.hits<$2 returning hits`, [scopeName, limit])
     if (!rows.length) return false
   }
   await pool.query("delete from agent_request_limits where expires_at<now()-interval '1 hour'")
