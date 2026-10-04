@@ -38,6 +38,7 @@ import { createDevPulseCollector } from '../src/dev-pulse.mjs'
 import { createPromotionExclusions } from '../app/lib/promotion-exclusions.mjs'
 import { createStockFeeIndexer } from '../src/stock-fee-indexer.mjs'
 import { stockQuoteConfigs } from '../src/quote-configs.mjs'
+import { createStockReconcileRunner, STOCK_RECONCILE_INTERVAL_MS } from '../src/stock-reconcile.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
@@ -143,6 +144,17 @@ let chartOrderingTask=null,nextChartOrderingCheck=0
 async function observeChartOrdering(){
   try{console.log(JSON.stringify({chartOrdering:await chartOrdering.runOnce()}))}
   catch{console.log(JSON.stringify({chartOrderingError:'Chart ordering verification unavailable'}))}
+}
+// Stock-paired markets: their fee ledgers and each stock's custody against the chain (src/stock-reconcile.mjs). Read-only. A real
+// mismatch raises a RECONCILIATION_MISMATCH operator alert at once; ledger lag only if it lasts STOCK_RECONCILE_LAG_MS.
+const stockReconcile=createStockReconcileRunner({pool,connection:graduationRPC(rpc),config})
+let stockReconcileTask=null,nextStockReconcileCheck=0
+async function observeStockReconcile(){
+  try{
+    const r=await meter.track('stockReconcile',()=>stockReconcile.runOnce())
+    if(r.markets.length||r.custody.length)console.log(JSON.stringify({stockReconcile:r}))
+    if([...r.markets,...r.custody].some(item=>item.alert||item.status==='ERROR'))process.exitCode=1
+  }catch(error){console.log(JSON.stringify({stockReconcileError:error?.code==='42P01'?'STOCK_LEDGERS_NOT_MIGRATED':'STOCK_RECONCILE_UNAVAILABLE'}))}
 }
 let reminderTask=null,nextReminderCheck=0
 const reminders=remindersConfigured()?createBuilderReminders({pool,send:createReminderSender(),secret:process.env.BUILDER_REMINDER_SECRET,
@@ -297,6 +309,9 @@ try {
     if(once)await observeGraduation()
     else if(!graduationTask&&Date.now()>=nextGraduationCheck)
       graduationTask=observeGraduation().finally(()=>{nextGraduationCheck=Date.now()+30000;graduationTask=null})
+    if(once)await observeStockReconcile()
+    else if(!stockReconcileTask&&Date.now()>=nextStockReconcileCheck)
+      stockReconcileTask=observeStockReconcile().finally(()=>{nextStockReconcileCheck=Date.now()+STOCK_RECONCILE_INTERVAL_MS;stockReconcileTask=null})
     if(process.env.TREND_INTAKE_ENABLED==='true'){
       if(once)await observeTrends()
       else if(!trendTask&&Date.now()>=nextTrendCheck)trendTask=observeTrends().finally(()=>{nextTrendCheck=Date.now()+300000;trendTask=null})
@@ -352,5 +367,5 @@ try {
     if (result.stockFeeError || result.stockFees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
+} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }
