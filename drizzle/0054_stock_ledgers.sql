@@ -9,14 +9,19 @@
 SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint
 -- A row that names a market (github_repo_id) and its stock (asset_id, quote_mint) must match that market's stamp (migration
--- 0053). A SOL market (no stamp), an unknown market, another stock or another mint is refused. Attached BEFORE INSERT to every
--- table below that carries all three columns.
+-- 0053). A SOL market (no stamp), an unknown market, another stock or another mint is refused. Attached BEFORE INSERT, and
+-- BEFORE UPDATE OF those three columns, to every table below that carries all three. Once stored, a row can never be re-pointed
+-- to another market or stock, not even to one whose stamp it would match.
 CREATE OR REPLACE FUNCTION stock_ledger_market_check() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM "markets" m WHERE m."github_repo_id" = NEW."github_repo_id"
       AND m."quote_asset_id" = NEW."asset_id" AND m."quote_mint" = NEW."quote_mint") THEN
     RAISE EXCEPTION 'Stock ledger row does not match a stock-paired market (% for market %: % %)',
       TG_TABLE_NAME, NEW."github_repo_id", NEW."asset_id", NEW."quote_mint";
+  END IF;
+  IF TG_OP = 'UPDATE' AND (NEW."github_repo_id", NEW."asset_id", NEW."quote_mint")
+      IS DISTINCT FROM (OLD."github_repo_id", OLD."asset_id", OLD."quote_mint") THEN
+    RAISE EXCEPTION 'Stock ledger row cannot move to another market or stock (% for market %)', TG_TABLE_NAME, OLD."github_repo_id";
   END IF;
   RETURN NEW;
 END $$;
@@ -73,7 +78,8 @@ DO $$ BEGIN
     ALTER TABLE "stock_trade_events" ADD CONSTRAINT "stock_trade_events_amounts_check" CHECK ("quote_amount" >= 0 AND "base_amount" >= 0);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_ledger_market_check' AND tgrelid = '"stock_trade_events"'::regclass) THEN
-    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT ON "stock_trade_events" FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
+    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT OR UPDATE OF "github_repo_id", "asset_id", "quote_mint" ON "stock_trade_events"
+      FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
   END IF;
 END $$;
 --> statement-breakpoint
@@ -98,6 +104,11 @@ CREATE TABLE IF NOT EXISTS "stock_fee_events" (
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "stock_fee_events_chain_event_unique" ON "stock_fee_events" ("signature", "event_index");
 --> statement-breakpoint
+-- Per-market reads (the launcher's earnings) and per-stock reads (the accumulator).
+CREATE INDEX IF NOT EXISTS "stock_fee_events_repo" ON "stock_fee_events" ("github_repo_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "stock_fee_events_asset" ON "stock_fee_events" ("asset_id");
+--> statement-breakpoint
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_fee_events_amounts_check' AND conrelid = '"stock_fee_events"'::regclass) THEN
     ALTER TABLE "stock_fee_events" ADD CONSTRAINT "stock_fee_events_amounts_check" CHECK ("creator_amount" >= 0 AND "partner_amount" >= 0
@@ -112,7 +123,8 @@ DO $$ BEGIN
     ALTER TABLE "stock_fee_events" ADD CONSTRAINT "stock_fee_events_launcher_check" CHECK ("launcher_amount" <= "creator_amount");
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_ledger_market_check' AND tgrelid = '"stock_fee_events"'::regclass) THEN
-    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT ON "stock_fee_events" FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
+    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT OR UPDATE OF "github_repo_id", "asset_id", "quote_mint" ON "stock_fee_events"
+      FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
   END IF;
 END $$;
 --> statement-breakpoint
@@ -138,7 +150,8 @@ DO $$ BEGIN
       "quote_reserve" >= 0 AND "migration_threshold" >= 0);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_ledger_market_check' AND tgrelid = '"stock_graduation_observations"'::regclass) THEN
-    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT ON "stock_graduation_observations" FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
+    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT OR UPDATE OF "github_repo_id", "asset_id", "quote_mint" ON "stock_graduation_observations"
+      FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
   END IF;
 END $$;
 --> statement-breakpoint
@@ -160,7 +173,8 @@ CREATE TABLE IF NOT EXISTS "stock_graduation_events" (
 --> statement-breakpoint
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_ledger_market_check' AND tgrelid = '"stock_graduation_events"'::regclass) THEN
-    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT ON "stock_graduation_events" FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
+    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT OR UPDATE OF "github_repo_id", "asset_id", "quote_mint" ON "stock_graduation_events"
+      FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
   END IF;
 END $$;
 --> statement-breakpoint
@@ -188,6 +202,10 @@ CREATE TABLE IF NOT EXISTS "stock_damm_fee_checkpoints" (
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "stock_damm_fee_checkpoints_pool_side_slot_unique" ON "stock_damm_fee_checkpoints" ("damm_pool", "side", "slot");
 --> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "stock_damm_fee_checkpoints_repo" ON "stock_damm_fee_checkpoints" ("github_repo_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "stock_damm_fee_checkpoints_asset" ON "stock_damm_fee_checkpoints" ("asset_id");
+--> statement-breakpoint
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_damm_fee_checkpoints_side_check' AND conrelid = '"stock_damm_fee_checkpoints"'::regclass) THEN
     ALTER TABLE "stock_damm_fee_checkpoints" ADD CONSTRAINT "stock_damm_fee_checkpoints_side_check" CHECK ("side" IN ('creator', 'partner'));
@@ -206,7 +224,8 @@ DO $$ BEGIN
       "side" <> 'partner' OR "launcher_credit" = 0);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_ledger_market_check' AND tgrelid = '"stock_damm_fee_checkpoints"'::regclass) THEN
-    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT ON "stock_damm_fee_checkpoints" FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
+    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT OR UPDATE OF "github_repo_id", "asset_id", "quote_mint" ON "stock_damm_fee_checkpoints"
+      FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
   END IF;
 END $$;
 --> statement-breakpoint
@@ -234,6 +253,8 @@ CREATE TABLE IF NOT EXISTS "stock_fee_collections" (
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "stock_fee_collections_one_pending" ON "stock_fee_collections" ("github_repo_id", "source") WHERE "status" = 'pending';
 --> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "stock_fee_collections_asset_status" ON "stock_fee_collections" ("asset_id", "status");
+--> statement-breakpoint
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_fee_collections_source_check' AND conrelid = '"stock_fee_collections"'::regclass) THEN
     ALTER TABLE "stock_fee_collections" ADD CONSTRAINT "stock_fee_collections_source_check" CHECK (
@@ -246,8 +267,16 @@ DO $$ BEGIN
     ALTER TABLE "stock_fee_collections" ADD CONSTRAINT "stock_fee_collections_amounts_check" CHECK ("reviewed_amount" >= 0
       AND ("actual_amount" IS NULL OR "actual_amount" >= 0) AND "launcher_amount" >= 0 AND "accumulator_amount" >= 0);
   END IF;
+  -- A settled collection carries its signature, settlement time, the amount actually received and its receipt; a pending one
+  -- has no settlement time. An aborted one may never have been signed.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_fee_collections_settlement_check' AND conrelid = '"stock_fee_collections"'::regclass) THEN
+    ALTER TABLE "stock_fee_collections" ADD CONSTRAINT "stock_fee_collections_settlement_check" CHECK (
+      ("status" <> 'settled' OR ("signature" IS NOT NULL AND "settled_at" IS NOT NULL AND "actual_amount" IS NOT NULL AND "receipt" IS NOT NULL))
+      AND ("status" <> 'pending' OR "settled_at" IS NULL));
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_ledger_market_check' AND tgrelid = '"stock_fee_collections"'::regclass) THEN
-    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT ON "stock_fee_collections" FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
+    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT OR UPDATE OF "github_repo_id", "asset_id", "quote_mint" ON "stock_fee_collections"
+      FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
   END IF;
 END $$;
 --> statement-breakpoint
@@ -269,6 +298,8 @@ CREATE TABLE IF NOT EXISTS "stock_launcher_payouts" (
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "stock_launcher_payouts_one_pending" ON "stock_launcher_payouts" ("github_repo_id") WHERE "status" = 'pending';
 --> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "stock_launcher_payouts_repo_status" ON "stock_launcher_payouts" ("github_repo_id", "status");
+--> statement-breakpoint
 -- The payout wallet is the market's launcher wallet, on insert and on any later change of the market or the wallet.
 CREATE OR REPLACE FUNCTION stock_launcher_payout_wallet_check() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -285,8 +316,16 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_launcher_payouts_status_check' AND conrelid = '"stock_launcher_payouts"'::regclass) THEN
     ALTER TABLE "stock_launcher_payouts" ADD CONSTRAINT "stock_launcher_payouts_status_check" CHECK ("status" IN ('pending', 'settled', 'aborted'));
   END IF;
+  -- A settled payout carries its signature, settlement time and receipt; a pending one has no settlement time. An aborted one
+  -- may never have been signed.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stock_launcher_payouts_settlement_check' AND conrelid = '"stock_launcher_payouts"'::regclass) THEN
+    ALTER TABLE "stock_launcher_payouts" ADD CONSTRAINT "stock_launcher_payouts_settlement_check" CHECK (
+      ("status" <> 'settled' OR ("signature" IS NOT NULL AND "settled_at" IS NOT NULL AND "receipt" IS NOT NULL))
+      AND ("status" <> 'pending' OR "settled_at" IS NULL));
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_ledger_market_check' AND tgrelid = '"stock_launcher_payouts"'::regclass) THEN
-    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT ON "stock_launcher_payouts" FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
+    CREATE TRIGGER stock_ledger_market_check BEFORE INSERT OR UPDATE OF "github_repo_id", "asset_id", "quote_mint" ON "stock_launcher_payouts"
+      FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check();
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'stock_launcher_payout_wallet_check' AND tgrelid = '"stock_launcher_payouts"'::regclass) THEN
     CREATE TRIGGER stock_launcher_payout_wallet_check BEFORE INSERT OR UPDATE OF "github_repo_id", "wallet" ON "stock_launcher_payouts"

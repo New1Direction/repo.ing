@@ -238,11 +238,14 @@ refusing stock markets. Amounts are raw units of each token.
   `credit = launcher_credit + accumulator_credit`, and the partner side never pays the launcher.
 - `stock_fee_collections` and `stock_launcher_payouts`: fee claims and launcher payouts.
   - At most one is pending per market and source (collections) or per market (payouts).
+  - A settled one carries its signature, settlement time and receipt (a collection also the amount received). A pending one
+    has no settlement time.
   - A payout goes only to the market's `launcher_wallet`.
 - `stock_canonical_pools` and `stock_settlement_receipts`: at most one active REPOING/stock pool per stock, and verified
   settlement receipts.
 - **The market check:** a trigger refuses any row whose market, `asset_id` and `quote_mint` do not match the market's stamp,
-  so a SOL market or another stock can never enter these ledgers.
+  so a SOL market or another stock can never enter these ledgers. Once stored, a row can never move to another market or
+  stock.
 - **Live updates:** new stock trade and fee rows of a live market send hints on `repoing_stock_market_updates`
   (`{ "mint", "kind": "trade" | "fee" }`). The SOL channel is unchanged.
 

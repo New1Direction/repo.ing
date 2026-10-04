@@ -60,7 +60,7 @@ const STOCK_FUNCTIONS = ['repoing_notify_stock_market_update()', 'stock_launcher
 // The contract (columns in order: name, type, "null" when nullable, "= default"), indexes, checks and triggers of each table.
 const MARKET = 'github_repo_id bigint; asset_id varchar(32); quote_mint varchar(44)'
 const SETTLE = 'status varchar(10); signature varchar(88) null; signed_transaction text null; receipt jsonb null; created_at timestamptz = now(); settled_at timestamptz null'
-const MARKET_CHECK = 'stock_ledger_market_check BEFORE INSERT FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check()'
+const MARKET_CHECK = 'stock_ledger_market_check BEFORE INSERT OR UPDATE OF github_repo_id, asset_id, quote_mint FOR EACH ROW EXECUTE FUNCTION stock_ledger_market_check()'
 const pending = "WHERE ((status)::text = 'pending'::text)"
 const CONTRACT = {
   stock_pool_cursors: { columns: 'pool varchar(44); github_repo_id bigint; venue varchar(4); last_signature varchar(88); last_slot bigint; updated_at timestamptz = now()',
@@ -70,7 +70,8 @@ const CONTRACT = {
     checks: ['amounts', 'direction', 'venue'],
     triggers: ['repoing_stock_trade_update AFTER INSERT FOR EACH ROW EXECUTE FUNCTION repoing_notify_stock_market_update()', MARKET_CHECK] },
   stock_fee_events: { columns: `id bigint = serial; ${MARKET}; pool varchar(44); signature varchar(88); event_index integer; slot bigint; creator_amount bigint; partner_amount bigint; launcher_amount bigint; accumulator_amount bigint; policy_version integer; created_at timestamptz = now()`,
-    indexes: ['stock_fee_events_chain_event_unique unique (signature, event_index)', 'stock_fee_events_pkey unique (id)'],
+    indexes: ['stock_fee_events_asset (asset_id)', 'stock_fee_events_chain_event_unique unique (signature, event_index)', 'stock_fee_events_pkey unique (id)',
+      'stock_fee_events_repo (github_repo_id)'],
     checks: ['amounts', 'launcher', 'split'],
     triggers: ['repoing_stock_fee_update AFTER INSERT FOR EACH ROW EXECUTE FUNCTION repoing_notify_stock_market_update()', MARKET_CHECK] },
   stock_graduation_observations: { columns: `id bigint = serial; ${MARKET}; pool varchar(44); slot bigint; observed_at timestamptz; quote_reserve bigint; migration_threshold bigint; is_migrated boolean`,
@@ -79,14 +80,17 @@ const CONTRACT = {
   stock_graduation_events: { columns: `${MARKET}; dbc_pool varchar(44); damm_pool varchar(44); migration_signature varchar(88); slot bigint; creator_position varchar(44) null; partner_position varchar(44) null; evidence jsonb; created_at timestamptz = now()`,
     indexes: ['stock_graduation_events_pkey unique (github_repo_id)'], checks: [], triggers: [MARKET_CHECK] },
   stock_damm_fee_checkpoints: { columns: `id bigint = serial; ${MARKET}; damm_pool varchar(44); side varchar(8); position varchar(44); slot bigint; cumulative_earned bigint; cumulative_claimed bigint; credit bigint; launcher_cumulative bigint; launcher_credit bigint; accumulator_credit bigint; policy_version integer; created_at timestamptz = now()`,
-    indexes: ['stock_damm_fee_checkpoints_pkey unique (id)', 'stock_damm_fee_checkpoints_pool_side_slot_unique unique (damm_pool, side, slot)'],
+    indexes: ['stock_damm_fee_checkpoints_asset (asset_id)', 'stock_damm_fee_checkpoints_pkey unique (id)',
+      'stock_damm_fee_checkpoints_pool_side_slot_unique unique (damm_pool, side, slot)', 'stock_damm_fee_checkpoints_repo (github_repo_id)'],
     checks: ['amounts', 'partner', 'side', 'split'], triggers: [MARKET_CHECK] },
   stock_fee_collections: { columns: `id bigint = serial; ${MARKET}; source varchar(16); reviewed_amount bigint; actual_amount bigint null; launcher_amount bigint; accumulator_amount bigint; terms_hash varchar(64); ${SETTLE}`,
-    indexes: [`stock_fee_collections_one_pending unique (github_repo_id, source) ${pending}`, 'stock_fee_collections_pkey unique (id)'],
-    checks: ['amounts', 'source', 'status'], triggers: [MARKET_CHECK] },
+    indexes: ['stock_fee_collections_asset_status (asset_id, status)', `stock_fee_collections_one_pending unique (github_repo_id, source) ${pending}`,
+      'stock_fee_collections_pkey unique (id)'],
+    checks: ['amounts', 'settlement', 'source', 'status'], triggers: [MARKET_CHECK] },
   stock_launcher_payouts: { columns: `id bigint = serial; ${MARKET}; wallet varchar(44); amount bigint; ${SETTLE}`,
-    indexes: [`stock_launcher_payouts_one_pending unique (github_repo_id) ${pending}`, 'stock_launcher_payouts_pkey unique (id)'],
-    checks: ['amount', 'status'],
+    indexes: [`stock_launcher_payouts_one_pending unique (github_repo_id) ${pending}`, 'stock_launcher_payouts_pkey unique (id)',
+      'stock_launcher_payouts_repo_status (github_repo_id, status)'],
+    checks: ['amount', 'settlement', 'status'],
     triggers: ['stock_launcher_payout_wallet_check BEFORE INSERT OR UPDATE OF github_repo_id, wallet FOR EACH ROW EXECUTE FUNCTION stock_launcher_payout_wallet_check()', MARKET_CHECK] },
   stock_canonical_pools: { columns: 'id bigint = serial; asset_id varchar(32); quote_mint varchar(44); pool varchar(44); repoing_mint varchar(44); position varchar(44) null; evidence jsonb; active boolean = true; registered_at timestamptz = now()',
     indexes: ['stock_canonical_pools_one_active unique (asset_id) WHERE active', 'stock_canonical_pools_pkey unique (id)'], checks: [], triggers: [] },
@@ -290,6 +294,31 @@ test('migration 0054 adds the stock ledgers, leaves every SOL table as it was, a
       assert.equal((await pool.query(`select count(*)::int as n from stock_trade_events where github_repo_id = $1`, [HELLO])).rows[0].n, 0)
     })
 
+    await t.test('a stored row can never be re-pointed to another market or stock, in every stamped table', async () => {
+      const MISMATCH = 'does not match a stock-paired market', MOVE = 'cannot move to another market or stock', WALLET = 'not the market\'s launcher wallet'
+      for (const table of STAMPED) {
+        const key = table === 'stock_graduation_events' ? 'github_repo_id' : 'id'
+        const { rows: [row] } = await pool.query(`select * from "${table}" where github_repo_id = $1 order by "${key}" limit 1`, [DOCS])
+        const update = set => pool.query(`update "${table}" set ${set} where "${key}" = $1`, [row[key]])
+        const payout = table === 'stock_launcher_payouts'
+        // The payout wallet check runs first by name on a change of market; a payout's own move takes its wallet along.
+        for (const [label, set, expected] of [
+          ['another stock', `asset_id = '${MSFT.assetId}'`, MISMATCH],
+          ['another mint', `quote_mint = '${MSFT.mint}'`, MISMATCH],
+          ['a SOL market', `github_repo_id = ${HELLO}`, payout ? WALLET : MISMATCH],
+          ['an unknown market', 'github_repo_id = 424242', payout ? WALLET : MISMATCH],
+          // Consistent with the other stock market's stamp, so only the rule that a row never moves refuses it.
+          ['the other stock market, stamp and all', `github_repo_id = ${VSCODE}, asset_id = '${MSFT.assetId}', quote_mint = '${MSFT.mint}'` +
+            (payout ? `, wallet = 'LauncherVscode'` : ''), MOVE],
+        ]) await refused(update(set), expected, `${table}: ${label}`)
+        // Writing the same market and stock back, or changing any other column, is allowed.
+        await update('github_repo_id = github_repo_id, asset_id = asset_id, quote_mint = quote_mint')
+        const { rows: [after] } = await pool.query(`select github_repo_id::text as repo, asset_id, quote_mint from "${table}" where "${key}" = $1`, [row[key]])
+        assert.deepEqual(after, { repo: DOCS, asset_id: META.assetId, quote_mint: META.mint }, table)
+      }
+      await pool.query(`update stock_trade_events set trader = 'TraderDocsRenamed' where github_repo_id = $1`, [DOCS])
+    })
+
     await t.test('amounts, splits, enumerations and chain events are enforced', async () => {
       const cases = [
         ['stock_pool_cursors', { venue: 'amm' }, 'stock_pool_cursors_venue_check'],
@@ -311,7 +340,8 @@ test('migration 0054 adds the stock ledgers, leaves every SOL table as it was, a
         ['stock_fee_collections', { source: 'dbc' }, 'stock_fee_collections_source_check'],
         ['stock_fee_collections', { status: 'sent' }, 'stock_fee_collections_status_check'],
         ['stock_fee_collections', { reviewed_amount: -1n }, 'stock_fee_collections_amounts_check'],
-        ['stock_fee_collections', { actual_amount: -1n, status: 'settled' }, 'stock_fee_collections_amounts_check'],
+        ['stock_fee_collections', { actual_amount: -1n, status: 'settled', signature: 'CollectNegative', settled_at: '2026-10-04T02:00:00Z', receipt: { slot: 1 } },
+          'stock_fee_collections_amounts_check'],
         ['stock_launcher_payouts', { amount: 0n }, 'stock_launcher_payouts_amount_check'],
         ['stock_launcher_payouts', { status: 'sent' }, 'stock_launcher_payouts_status_check'],
         ['stock_settlement_receipts', { kind: 'burn' }, 'stock_settlement_receipts_kind_check'],
@@ -353,14 +383,16 @@ test('migration 0054 adds the stock ledgers, leaves every SOL table as it was, a
       await insert(pool, 'stock_launcher_payouts', ROWS.stock_launcher_payouts({ ...vscode, wallet: 'LauncherVscode' }))
       await insert(pool, 'stock_launcher_payouts', ROWS.stock_launcher_payouts({ status: 'aborted' }))
       await insert(pool, 'stock_launcher_payouts', ROWS.stock_launcher_payouts({ status: 'aborted' }))
-      await pool.query(`update stock_launcher_payouts set status = 'settled', settled_at = now() where id = $1`, [payout.id])
+      await pool.query(`update stock_launcher_payouts set status = 'settled', signature = 'PayoutSettled', receipt = '{"slot":1}', settled_at = now() where id = $1`,
+        [payout.id])
       await insert(pool, 'stock_launcher_payouts', ROWS.stock_launcher_payouts())
 
       const { rows: [collection] } = await insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections())
       await refused(insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections()), 'stock_fee_collections_one_pending', 'second pending collection')
       for (const source of ['dbc_partner', 'damm_creator', 'damm_partner']) await insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections({ source }))
       await insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections(vscode))
-      await pool.query(`update stock_fee_collections set status = 'settled', actual_amount = 994000, settled_at = now() where id = $1`, [collection.id])
+      await pool.query(`update stock_fee_collections set status = 'settled', signature = 'CollectSettled', actual_amount = 994000, receipt = '{"slot":1}',
+        settled_at = now() where id = $1`, [collection.id])
       await insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections())
       await insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections({ status: 'aborted' }))
 
@@ -372,6 +404,72 @@ test('migration 0054 adds the stock ledgers, leaves every SOL table as it was, a
       await insert(pool, 'stock_canonical_pools', ROWS.stock_canonical_pools())
       const { rows } = await pool.query('select asset_id, count(*) filter (where active)::int as active, count(*)::int as n from stock_canonical_pools group by 1 order by 1')
       assert.deepEqual(rows, [{ asset_id: 'meta-xstock', active: 1, n: 3 }, { asset_id: 'msft-xstock', active: 1, n: 1 }])
+    })
+
+    await t.test('a settled collection or payout carries its signature, settlement time and receipt; a pending one has no settlement time', async () => {
+      await pool.query('delete from stock_fee_collections; delete from stock_launcher_payouts')
+      const settled = { status: 'settled', settled_at: '2026-10-04T02:00:00Z', receipt: { slot: 9000 } }
+      const collection = over => ROWS.stock_fee_collections({ ...settled, signature: fresh('CollectDocs'), actual_amount: 994_000n, ...over })
+      const payout = over => ROWS.stock_launcher_payouts({ ...settled, signature: fresh('PayoutDocs'), ...over })
+      for (const missing of ['signature', 'settled_at', 'actual_amount', 'receipt']) {
+        await refused(insert(pool, 'stock_fee_collections', collection({ [missing]: null })), 'stock_fee_collections_settlement_check',
+          `settled collection without ${missing}`)
+      }
+      for (const missing of ['signature', 'settled_at', 'receipt']) {
+        await refused(insert(pool, 'stock_launcher_payouts', payout({ [missing]: null })), 'stock_launcher_payouts_settlement_check', `settled payout without ${missing}`)
+      }
+      await refused(insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections({ settled_at: settled.settled_at })),
+        'stock_fee_collections_settlement_check', 'pending collection with a settlement time')
+      await refused(insert(pool, 'stock_launcher_payouts', ROWS.stock_launcher_payouts({ settled_at: settled.settled_at })),
+        'stock_launcher_payouts_settlement_check', 'pending payout with a settlement time')
+      // Complete settled rows are accepted, and so are aborted rows that were never signed.
+      await insert(pool, 'stock_fee_collections', collection())
+      await insert(pool, 'stock_launcher_payouts', payout())
+      await insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections({ status: 'aborted' }))
+      await insert(pool, 'stock_launcher_payouts', ROWS.stock_launcher_payouts({ status: 'aborted' }))
+      // A pending row settles only with all of it, and a settled row never goes back to pending.
+      const { rows: [pendingCollection] } = await insert(pool, 'stock_fee_collections', ROWS.stock_fee_collections())
+      await refused(pool.query(`update stock_fee_collections set status = 'settled', settled_at = now() where id = $1`, [pendingCollection.id]),
+        'stock_fee_collections_settlement_check', 'collection settled without signature, amount or receipt')
+      await pool.query(`update stock_fee_collections set status = 'settled', settled_at = now(), signature = $2, actual_amount = 993999,
+        receipt = '{"slot":9001}' where id = $1`, [pendingCollection.id, fresh('CollectDocs')])
+      await refused(pool.query(`update stock_fee_collections set status = 'pending' where id = $1`, [pendingCollection.id]),
+        'stock_fee_collections_settlement_check', 'settled collection back to pending')
+      const { rows: [pendingPayout] } = await insert(pool, 'stock_launcher_payouts', ROWS.stock_launcher_payouts())
+      await refused(pool.query(`update stock_launcher_payouts set status = 'settled', settled_at = now(), signature = $2 where id = $1`,
+        [pendingPayout.id, fresh('PayoutDocs')]), 'stock_launcher_payouts_settlement_check', 'payout settled without a receipt')
+      await pool.query(`update stock_launcher_payouts set status = 'settled', settled_at = now(), signature = $2, receipt = '{"slot":9002}' where id = $1`,
+        [pendingPayout.id, fresh('PayoutDocs')])
+      await refused(pool.query(`update stock_launcher_payouts set status = 'pending' where id = $1`, [pendingPayout.id]),
+        'stock_launcher_payouts_settlement_check', 'settled payout back to pending')
+      const counts = async table => (await pool.query(`select status, count(*)::int as n from "${table}" group by 1`)).rows
+        .sort((a, b) => (a.status < b.status ? -1 : 1))
+      assert.deepEqual(await counts('stock_fee_collections'), [{ status: 'aborted', n: 1 }, { status: 'settled', n: 2 }])
+      assert.deepEqual(await counts('stock_launcher_payouts'), [{ status: 'aborted', n: 1 }, { status: 'settled', n: 2 }])
+    })
+
+    await t.test('the read indexes serve per-market and per-stock reads', async () => {
+      const client = await pool.connect()
+      try {
+        await client.query('begin')
+        // Tiny tables are cheapest to scan whole; with sequential scans off, the plan shows the index each read can use.
+        await client.query('set local enable_seqscan = off')
+        for (const [read, index] of [
+          [`select sum(launcher_amount) from stock_fee_events where github_repo_id = ${DOCS}`, 'stock_fee_events_repo'],
+          [`select sum(accumulator_amount) from stock_fee_events where asset_id = '${META.assetId}'`, 'stock_fee_events_asset'],
+          [`select sum(launcher_credit) from stock_damm_fee_checkpoints where github_repo_id = ${DOCS}`, 'stock_damm_fee_checkpoints_repo'],
+          [`select sum(accumulator_credit) from stock_damm_fee_checkpoints where asset_id = '${META.assetId}'`, 'stock_damm_fee_checkpoints_asset'],
+          [`select sum(accumulator_amount) from stock_fee_collections where asset_id = '${META.assetId}' and status = 'settled'`,
+            'stock_fee_collections_asset_status'],
+          [`select sum(amount) from stock_launcher_payouts where github_repo_id = ${DOCS} and status = 'settled'`, 'stock_launcher_payouts_repo_status'],
+        ]) {
+          const plan = (await client.query(`explain ${read}`)).rows.map(row => row['QUERY PLAN']).join('\n')
+          assert.match(plan, new RegExp(`\\b${index}\\b`), `${read}\n${plan}`)
+        }
+      } finally {
+        await client.query('rollback')
+        client.release()
+      }
     })
 
     await t.test('stock trade and fee rows of a canonical market notify on the stock channel, and nothing else does', { timeout: 15_000 }, async () => {
