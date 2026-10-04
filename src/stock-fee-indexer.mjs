@@ -2,13 +2,16 @@ import { PublicKey } from '@solana/web3.js'
 import { createStockFeeAccrual } from './stock-fee-accrual.mjs'
 import { UnparseableTradeError } from './trade-evidence.mjs'
 import { createQuoteAwareConfigResolver } from './market-config.mjs'
+import { StockCurveMigratedError } from './stock-trade-evidence.mjs'
 
 // The worker's curve indexer for stock-paired markets (docs/STOCK_QUOTES.md): exactly the markets the SOL indexer
 // (external-fee-indexer.mjs) leaves out, with their own cursors (stock_pool_cursors) and ledgers (stock-fee-accrual.mjs).
 // Nothing here skips silently: a transaction the strict parser cannot fully match is quarantined for operator review
 // (STOCK_FEE_EVIDENCE_QUARANTINED on the graduation_alerts feed, retried every run) and later trades keep being credited; a
 // missing stock config, a changed or migrated curve, or an RPC failure is an ERROR that leaves the cursor where it was.
-// Graduation (the DAMM v2 pool after migration) is indexed elsewhere, so a migrated curve stays an ERROR here.
+// Graduation (the DAMM v2 pool after migration) is indexed by src/stock-graduation-monitor.mjs. A migrated curve stays an ERROR
+// here until that job has proven its migration (stock_graduation_events); then the curve is finished: the swaps before the
+// migration are credited, the cursor stops on the migration, and the market is GRADUATED here from then on.
 
 const PAGE_SIZE = 1000
 const FIRST_PAGE = 100
@@ -54,13 +57,22 @@ export function createStockFeeIndexer({ pool: databasePool, connection, config, 
       if (!lock.rows[0].locked) return { githubRepoId: market.repoId, pool: market.pool, status: 'BUSY' }
       try {
         // Before any history is read or any cursor moves: the stock config is registered, the curve is the market's and
-        // has not migrated, and its config is the one the fee policy expects.
-        await accrual.checkCurve(market.repoId)
+        // has not migrated (or its migration is proven), and its config is the one the fee policy expects.
+        let migration = null
+        try { await accrual.checkCurve(market.repoId) } catch (error) {
+          if (!(error instanceof StockCurveMigratedError)) throw error
+          migration = (await client.query(`select migration_signature as signature, slot::text as slot from stock_graduation_events
+            where github_repo_id = $1`, [String(market.repoId)])).rows[0] ?? null
+          if (!migration) throw error
+          await accrual.checkCurve(market.repoId, databasePool, migration)
+        }
+        const finished = cursor => Boolean(migration) && cursor?.last_signature === migration.signature
         let creditedBaseUnits = 0n, creditedPartnerUnits = 0n
         const eventKeys = [], quarantined = []
         const credit = async (signature, slot) => {
           try {
-            const result = await accrual.recordTradeFees({ githubRepoId: market.repoId, signatures: [signature], allowNonSwap: true })
+            const result = await accrual.recordTradeFees({ githubRepoId: market.repoId, signatures: [signature], allowNonSwap: true,
+              ...(migration ? { migration } : {}) })
             creditedBaseUnits += result.creditedBaseUnits
             creditedPartnerUnits += result.creditedPartnerUnits
             eventKeys.push(...result.eventKeys)
@@ -82,6 +94,9 @@ export function createStockFeeIndexer({ pool: databasePool, connection, config, 
         }
         const previous = (await client.query('select last_signature, last_slot::text from stock_pool_cursors where pool = $1',
           [market.pool])).rows[0] ?? null
+        if (finished(previous)) return { githubRepoId: market.repoId, pool: market.pool, quoteAssetId: market.quoteAssetId, status: 'GRADUATED',
+          discovered: 0, creditedBaseUnits, creditedPartnerUnits, quarantined, eventKeys, migration: migration.signature,
+          cursorBefore: { signature: previous.last_signature, slot: previous.last_slot }, cursorAfter: { signature: previous.last_signature, slot: previous.last_slot } }
         const boundary = previous?.last_signature ?? market.launchSignature
         const discovered = []
         let before, foundBoundary = false, boundaryItem
@@ -101,15 +116,18 @@ export function createStockFeeIndexer({ pool: databasePool, connection, config, 
         // Oldest first, the launch itself on the first pass. The cursor moves only past a transaction that was credited,
         // quarantined, or failed on chain.
         for (const item of [...(!previous ? [boundaryItem] : []), ...discovered.reverse()]) {
-          if (!item.err) await credit(item.signature, item.slot)
+          // A migrated curve stops on its migration: the curve's later transactions (fee claims) credit no swap.
+          const atMigration = Boolean(migration) && item.signature === migration.signature
+          if (!item.err && !atMigration) await credit(item.signature, item.slot)
           await client.query(`insert into stock_pool_cursors (pool, github_repo_id, venue, last_signature, last_slot, updated_at)
             values ($1, $2, 'dbc', $3, $4, now()) on conflict (pool) do update set last_signature = excluded.last_signature,
               last_slot = excluded.last_slot, updated_at = now()`, [market.pool, String(market.repoId), item.signature, String(item.slot)])
+          if (atMigration) break
         }
         const cursor = (await client.query('select last_signature, last_slot::text from stock_pool_cursors where pool = $1',
           [market.pool])).rows[0] ?? null
-        return { githubRepoId: market.repoId, pool: market.pool, quoteAssetId: market.quoteAssetId, status: 'OK',
-          discovered: discovered.length, creditedBaseUnits, creditedPartnerUnits, quarantined, eventKeys,
+        return { githubRepoId: market.repoId, pool: market.pool, quoteAssetId: market.quoteAssetId, status: finished(cursor) ? 'GRADUATED' : 'OK',
+          discovered: discovered.length, creditedBaseUnits, creditedPartnerUnits, quarantined, eventKeys, ...(migration ? { migration: migration.signature } : {}),
           cursorBefore: previous ? { signature: previous.last_signature, slot: previous.last_slot } : null,
           cursorAfter: cursor ? { signature: cursor.last_signature, slot: cursor.last_slot } : null }
       } finally { await client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [market.pool]) }

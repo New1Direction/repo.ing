@@ -7,6 +7,7 @@ import { createTrendIntake } from '../src/trend-intake.mjs'
 import { createLiquidityRecovery } from '../src/liquidity-settlement.mjs'
 import { createBuilderReinvestRecovery } from '../src/builder-reinvest.mjs'
 import { createGraduationMonitor } from '../src/graduation-readiness.mjs'
+import { createStockGraduationMonitor } from '../src/stock-graduation-monitor.mjs'
 import { createReserveAlertDelivery, createReserveWebhookSender } from '../src/reserve-alerts.mjs'
 import { createAllocationRecovery } from '../src/builder-allocation-settlement.mjs'
 import { createPlatformFeeRecovery } from '../src/platform-fees.mjs'
@@ -130,6 +131,9 @@ const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetry
   }})
 const graduation=createGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
+// Stock-paired markets (docs/STOCK_QUOTES.md): graduation proof, DAMM swaps and fee checkpoints in the stock ledgers, in the same pass.
+const stockGraduation=createStockGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
+  ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
 const operatingWallets=createOperatingWalletMonitor({pool,connections:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?[graduationRPC(rpc),graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL)]:[]})
 let operatingWalletTask=null,nextOperatingWalletCheck=0
@@ -244,7 +248,7 @@ async function observeTrends(){
 // Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch and
 // milestone alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
 for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
-  tipMonitor,partsFunds,chartOrdering,graduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts})){
+  tipMonitor,partsFunds,chartOrdering,graduation,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts})){
   if(!worker)continue
   const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
 }
@@ -253,7 +257,9 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function observeGraduation(){
   const result={}
   try{result.graduation=await graduation.runOnce()}catch{result.graduationError='Graduation readiness unavailable'}
+  try{result.stockGraduation=await stockGraduation.runOnce()}catch{result.stockGraduationError='Stock graduation unavailable'}
   if(result.graduationError||result.graduation?.some(item=>item.status==='REVIEW'))process.exitCode=1
+  if(result.stockGraduationError||result.stockGraduation?.some(item=>item.status==='REVIEW'))process.exitCode=1
   console.log(JSON.stringify(result))
 }
 

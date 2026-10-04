@@ -79,7 +79,9 @@ export function createStockFeeAccrual({ pool: databasePool, connection, config, 
 
   // The market and its curve as the chain holds them now: its stamped stock still the registry's, its registered stock config,
   // the canonical pool unchanged and not migrated, and the config the fee policy expects. Any failure is an ERROR for the market.
-  async function checkCurve(githubRepoId, executor = databasePool) {
+  // migration: the curve's proven migration ({ signature, slot }, stock_graduation_events, src/stock-graduation-monitor.mjs); with
+  // it a migrated curve is accepted, only to credit the swaps it finalized before migrating.
+  async function checkCurve(githubRepoId, executor = databasePool, migration = null) {
     const market = await loadMarket(executor, BigInt(githubRepoId))
     const asset = quoteOfMarket(market)
     const configKey = resolveConfig(market)
@@ -89,14 +91,15 @@ export function createStockFeeAccrual({ pool: databasePool, connection, config, 
         !state.poolState.creator.equals(new PublicKey(market.creatorWallet))) {
       throw Error('Canonical stock DBC pool state does not match market')
     }
-    if (state.poolState.isMigrated !== 0) throw new StockCurveMigratedError()
+    if (state.poolState.isMigrated !== 0 && !migration) throw new StockCurveMigratedError()
     assertStockCurveConfig(fixed, asset)
-    return { market, asset, configKey, state, fixed }
+    return { market, asset, configKey, state, fixed, migration }
   }
 
-  const evidenceFrom = async (signature, { market, asset, configKey, fixed }, allowNonSwap) => {
+  const evidenceFrom = async (signature, { market, asset, configKey, fixed, migration }, allowNonSwap) => {
     const transaction = await loadTransaction(connection, signature)
     if (!transaction || !transaction.meta || transaction.meta.err) throw Error(`Trade ${signature} has no successful finalized transaction evidence`)
+    if (migration && (signature === migration.signature || BigInt(transaction.slot) > BigInt(migration.slot))) throw new StockCurveMigratedError()
     const { events } = stockDbcSwapEvents(transaction, market, { config: configKey, quoteMint: asset.mint }, dbc)
     if (!events.length && !allowNonSwap) throw new UnparseableTradeError(`Trade ${signature} has no canonical stock DBC swap event`)
     const base = { githubRepoId: market.repoId, assetId: asset.assetId, quoteMint: asset.mint, pool: market.pool }
@@ -110,14 +113,14 @@ export function createStockFeeAccrual({ pool: databasePool, connection, config, 
   // allowNonSwap: the indexer passes every finalized transaction of the pool, so one with no swap (the launch, a fee claim) is
   // expected; the strict parser has already refused anything on the pool it could not match. quoteMint: the stock a trade was
   // prepared with (the trade route), which must be the market's.
-  async function recordTradeFees({ githubRepoId, signatures, allowNonSwap = false, quoteMint = null }) {
+  async function recordTradeFees({ githubRepoId, signatures, allowNonSwap = false, quoteMint = null, migration = null }) {
     const repoId = BigInt(githubRepoId)
     if (!Array.isArray(signatures) || signatures.length === 0) throw Error('Finalized trade signatures required')
     const client = await databasePool.connect()
     try {
       await client.query('select pg_advisory_lock($1::bigint)', [repoId.toString()])
       try {
-        const curve = await checkCurve(repoId, client)
+        const curve = await checkCurve(repoId, client, migration)
         if (quoteMint !== null && quoteMint !== curve.asset.mint) throw Error('Trade quote mint differs from the market\'s stock')
         const evidence = await Promise.all([...new Set(signatures)].map(signature => evidenceFrom(signature, curve, allowNonSwap)))
         const fees = evidence.flatMap(item => item.fees), trades = evidence.flatMap(item => item.trades)

@@ -140,9 +140,9 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
   const x = useXLink(wallet)
   const router = useRouter()
   const lastChartRefreshSignature = useRef(null)
-  // A graduated market trades in its verified DAMM pool; migration without a verified destination stays closed. A graduated
-  // stock pair stays closed too: its pool is not traded here yet (src/canonical-damm-trade.mjs refuses it).
-  const graduatedPool = curve?.status === 'graduated' && !stock ? curve.destination ?? null : null
+  // A graduated market trades in its verified DAMM pool (a stock pair in its market token / stock pool, src/stock-damm-trade.mjs);
+  // migration without a verified destination stays closed.
+  const graduatedPool = curve?.status === 'graduated' ? curve.destination ?? null : null
   const tradingOpen = !curve || curve.status === 'active' || Boolean(graduatedPool)
 
   useEffect(() => { const store = localStore(); if (store) captureReferral(window.location.search, store) }, [])
@@ -426,7 +426,7 @@ export function TradePanel({ market, available, usdPerSol = null, curve = null, 
   const usdRaw = direction === 'buy' ? (validAmount ? inputRaw : null) : liveQuote?.outputAmount
   const usdAmount = stock ? stockUsdLabel(usdRaw, units, stockInfo?.usdPrice) : formatUsdEstimate(usdRaw, usdPerSol)
   if (quote?.unavailable && !resultCard) return <div className="trade-card graduated-trade"><h2>Trading unavailable</h2><p>This market's pair is not on repo.ing's list of supported pairs right now, so trades are paused here.</p></div>
-  if (!tradingOpen && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>{stock && curve.status === 'graduated' ? `Bonding-curve trades have ended. Trading in the graduated pool is not open here yet for ${quote.symbol} pairs.` : 'Bonding-curve trades have ended. We are checking the destination pool; trading resumes here once it is verified. This page updates automatically.'}</p></div>
+  if (!tradingOpen && !busy && !resultCard) return <div className="trade-card graduated-trade"><h2>{curve.status === 'graduated' ? 'This market has graduated' : 'Migration in progress'}</h2><p>Bonding-curve trades have ended. We are checking the destination pool; trading resumes here once it is verified. This page updates automatically.</p></div>
   const buying = direction === 'buy'
   // Labels before a stock pair's units load; amounts wait for the units themselves.
   const payUnits = units ?? { symbol: quote?.symbol ?? 'SOL', decimals: quote?.decimals ?? 9 }
