@@ -1162,6 +1162,7 @@ export const stockFeeCollections = pgTable('stock_fee_collections', {
 }, t => [uniqueIndex('stock_fee_collections_one_pending').on(t.githubRepoId, t.source).where(sql`${t.status} = 'pending'`),
   index('stock_fee_collections_asset_status').on(t.assetId, t.status),
   index('stock_fee_collections_repo_status').on(t.githubRepoId, t.status),
+  uniqueIndex('stock_fee_collections_signature_unique').on(t.signature).where(sql`${t.signature} is not null`),
   check('stock_fee_collections_source_check', sql`${t.source} in ('dbc_creator', 'dbc_partner', 'damm_creator', 'damm_partner')`),
   check('stock_fee_collections_status_check', sql`${t.status} in ('pending', 'settled', 'aborted')`),
   check('stock_fee_collections_amounts_check', sql`${t.reviewedAmount} >= 0 and (${t.actualAmount} is null or ${t.actualAmount} >= 0) and ${t.launcherAmount} >= 0 and ${t.accumulatorAmount} >= 0`),
@@ -1174,6 +1175,8 @@ export const stockLauncherPayouts = pgTable('stock_launcher_payouts', {
   receipt: jsonb('receipt'), createdAt: tz('created_at').defaultNow().notNull(), settledAt: tz('settled_at'),
 }, t => [uniqueIndex('stock_launcher_payouts_one_pending').on(t.githubRepoId).where(sql`${t.status} = 'pending'`),
   index('stock_launcher_payouts_repo_status').on(t.githubRepoId, t.status),
+  uniqueIndex('stock_launcher_payouts_signature_unique').on(t.signature).where(sql`${t.signature} is not null`),
+  index('stock_launcher_payouts_asset_status').on(t.assetId, t.status),
   check('stock_launcher_payouts_amount_check', sql`${t.amount} > 0`),
   check('stock_launcher_payouts_status_check', sql`${t.status} in ('pending', 'settled', 'aborted')`),
   check('stock_launcher_payouts_settlement_check', sql`(${t.status} <> 'settled' or (${t.signature} is not null and ${t.settledAt} is not null and ${t.receipt} is not null)) and (${t.status} <> 'pending' or ${t.settledAt} is null)`)])

@@ -14,9 +14,10 @@ const PAYOUT = `id::text, github_repo_id::text as "repoId", asset_id as "assetId
   status, signature, signed_transaction as "signedTransaction", receipt, created_at as "createdAt", settled_at as "settledAt"`
 const json = value => JSON.stringify(value)
 
-// A second pending row (the partial unique indexes stock_fee_collections_one_pending / stock_launcher_payouts_one_pending).
-const inFlight = (error, what) => {
-  if (error?.code === '23505') throw new StockExecutionError(E.IN_FLIGHT, `A ${what} is already in flight for this market`)
+// A second pending row (the partial unique indexes stock_fee_collections_one_pending / stock_launcher_payouts_one_pending). Any
+// other refusal, a signature already stored on another row (migration 0056) included, is rethrown as it is: loud.
+const inFlight = (error, what, index) => {
+  if (error?.code === '23505' && error.constraint === index) throw new StockExecutionError(E.IN_FLIGHT, `A ${what} is already in flight for this market`)
   throw error
 }
 
@@ -40,7 +41,7 @@ export function createStockExecutionStore(pool) {
           values ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11) returning ${COLLECTION}`, [row.repoId, row.assetId, row.quoteMint, row.source,
           row.reviewedAmount, row.launcherAmount, row.accumulatorAmount, row.termsHash, row.signature, row.signedTransaction, json(row.receipt)])
         return inserted
-      } catch (error) { return inFlight(error, `${row.source} collection`) }
+      } catch (error) { return inFlight(error, `${row.source} collection`, 'stock_fee_collections_one_pending') }
     },
     async pendingCollections(db, { repoId = null } = {}) {
       return (await db.query(`select ${COLLECTION} from stock_fee_collections where status = 'pending'
@@ -65,7 +66,7 @@ export function createStockExecutionStore(pool) {
             signature,signed_transaction,receipt) values ($1,$2,$3,$4,$5,'pending',$6,$7,$8) returning ${PAYOUT}`,
         [row.repoId, row.assetId, row.quoteMint, row.wallet, row.amount, row.signature, row.signedTransaction, json(row.receipt)])
         return inserted
-      } catch (error) { return inFlight(error, 'launcher payout') }
+      } catch (error) { return inFlight(error, 'launcher payout', 'stock_launcher_payouts_one_pending') }
     },
     async pendingPayouts(db, { repoId = null } = {}) {
       return (await db.query(`select ${PAYOUT} from stock_launcher_payouts where status = 'pending'
@@ -91,6 +92,16 @@ export function createStockExecutionStore(pool) {
           coalesce((select sum(amount) from stock_launcher_payouts where asset_id = $1 and status = 'pending'), 0)::text as pending,
           coalesce((select sum(quote_spent) from stock_settlement_receipts where asset_id = $1), 0)::text as spent`, [assetId])
       return { collected: BigInt(row.collected), paid: BigInt(row.paid), pending: BigInt(row.pending), spent: BigInt(row.spent) }
+    },
+    // Whether a settled collection from the graduated creator position received more than its review (a claim takes everything
+    // accrued when it runs) in a slot no creator checkpoint has reached yet: the launcher's part of that excess is collected
+    // before the DAMM checkpoints credit it (src/stock-graduation.mjs), so for now collected is ahead of earned.
+    async collectedAheadOfCheckpoints(db, repoId) {
+      const { rows: [row] } = await db.query(`select exists (select 1 from stock_fee_collections c where c.github_repo_id = $1
+          and c.source = 'damm_creator' and c.status = 'settled' and c.actual_amount > c.reviewed_amount
+          and (c.receipt->>'slot')::bigint > coalesce((select max(k.slot) from stock_damm_fee_checkpoints k
+            where k.github_repo_id = $1 and k.side = 'creator'), -1)) as ahead`, [String(repoId)])
+      return row.ahead
     },
     // Markets with a pending row, for recovery (the pending rows themselves are re-read under each market's lock).
     async pendingMarkets(kind, { repoId = null } = {}) {

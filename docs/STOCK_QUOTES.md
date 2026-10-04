@@ -520,9 +520,13 @@ is not here: the owner does that himself from custody.
     source that still MATCHes, with the terms hash that was reviewed, is executed.
   - The transaction is exactly the hashed instructions: the custody's two token accounts created idempotently, then the one
     claim, with the reviewed signer the only signer.
-  - It settles from its finalized receipt: the exact signed message, exact Token-2022 deltas and the program's claim event. A
-    graduated position's claim takes everything accrued when it runs; the excess is split as the next DAMM checkpoint credits it,
-    so the launcher's and accumulator's parts always add up to the amount received.
+  - It settles from its finalized receipt: the exact signed message, exact Token-2022 deltas and the program's claim event. The
+    launcher's and accumulator's parts always add up to the amount received:
+    - a curve claim takes exactly the reviewed amount (its maximum);
+    - a graduated position's claim takes everything accrued when it runs, so trades landing after the preview add an excess. It is
+      split as the next DAMM checkpoint credits it (the creator side's launcher share grows by the `floor(cumulative × 150 / 497)`
+      rule, the partner side's excess is all accumulator). Until that checkpoint is recorded the launcher has collected more than
+      the ledger says they earned, so their payouts wait; nothing is credited twice.
 - **Payouts** (`src/stock-launcher-payouts.mjs`):
   - The amount is the launcher ledger's `payable` (collected − paid − pending, `src/stock-launcher-earnings.mjs`), paid once it
     reaches `STOCK_LAUNCHER_PAYOUT_MIN_RAW`: 1,000,000 raw units, 0.01 of a whole xStock (an asset may set its own floor in
@@ -537,7 +541,8 @@ is not here: the owner does that himself from custody.
     the transfer, and no SOL moved but the fee and that rent.
 - **Every transaction** is recorded `pending` with its signed bytes and intent (blockhash, last valid block height, terms, kept in
   `receipt` until it settles) before it is sent. The database allows one pending collection per market and source and one
-  pending payout per market, and one lock per market keeps the worker and the script from interleaving.
+  pending payout per market, and one lock per market keeps the worker and the script from interleaving. Migration 0056 stores a
+  transaction signature on at most one collection and one payout, and indexes payouts by stock for the custody check.
 - **Recovery** finishes pending rows:
   - it settles a finalized transaction and aborts one that failed;
   - it rebroadcasts the stored bytes while their blockhash is valid;
