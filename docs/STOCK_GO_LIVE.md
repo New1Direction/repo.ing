@@ -3,10 +3,11 @@
 The owner's checklist for turning on stock-paired markets, such as DOCUSAURUS / METAx. Do the steps in order. Each step says
 what happens on chain and what it costs. How stock pairs work is in [Stock-paired markets](STOCK_QUOTES.md).
 
-Stock pairs ship turned off. Two switches keep them off:
+Two switches control stock-pair launches:
 
-- `STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`. It is a line of code. A pull request turns it on.
-- `STOCK_QUOTES_ENABLED` on the web service. It is a Railway variable.
+- `STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`, the code gate. It is a line of code, and it is on: the switch PR
+  turned it on (step 6).
+- `STOCK_QUOTES_ENABLED` on the web service. It is a Railway variable. It stays off until you set it (step 6).
 
 Launches open only when both are on. Until then the site offers SOL pairs only.
 
@@ -116,7 +117,7 @@ STOCK_QUOTE_CONFIGS={"meta-xstock":"<config>","msft-xstock":"<config>","nvda-xst
 ```
 
 - Leave out any stock you are not ready for. It stays unavailable.
-- Users see no change yet: the switches are still off.
+- Users see no change yet: `STOCK_QUOTES_ENABLED` is still off.
 - A value that does not parse breaks stock markets only, never SOL markets. The readiness script reports it.
 
 ## 5. Run the readiness script until nothing fails

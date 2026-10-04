@@ -65,10 +65,11 @@ export const QUOTE_REGISTRY = Object.freeze({ version: QUOTE_REGISTRY_VERSION,
 // Off unless exactly "true": the quote-options API then offers SOL only and a launch accepts SOL only.
 export const stockQuotesEnabled = (env = process.env) => env.STOCK_QUOTES_ENABLED === 'true'
 
-// The code's own readiness, independent of the switch: true only once a stock-paired market can be created, traded,
-// indexed, paid out and reconciled (docs/STOCK_QUOTES.md, P6-P7). Until then even STOCK_QUOTES_ENABLED=true offers SOL
-// only and the launch API refuses every stock pair, so turning the switch on early cannot strand a market.
-export const STOCK_PAIR_LAUNCHES_READY = false
+// The code's own readiness, independent of the switch. It is on: the switch PR opened it (docs/STOCK_GO_LIVE.md, step 6).
+// Launches also need STOCK_QUOTES_ENABLED to be exactly "true" on web: while it is unset or anything else, the quote-options
+// API offers SOL only and the launch API refuses every stock pair. Setting this back to false closes stock launches whatever
+// the switch says.
+export const STOCK_PAIR_LAUNCHES_READY = true
 export const stockPairsLaunchable = (env = process.env) => STOCK_PAIR_LAUNCHES_READY && stockQuotesEnabled(env)
 
 // The listed company a repository owner is: a GitHub organization, matched by numeric id only.
