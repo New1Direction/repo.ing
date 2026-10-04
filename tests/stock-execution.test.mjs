@@ -10,8 +10,8 @@ import { STOCK_LAUNCHER_PAYOUT_MIN_RAW, checkLauncherPayoutReceipt, createStockL
   launcherPayoutMinimum } from '../src/stock-launcher-payouts.mjs'
 import { createStockExecutionJob, runStockExecution } from '../src/stock-execution-job.mjs'
 import { dammCheckpoint } from '../src/stock-fee-policy.mjs'
-import { META, address, curvePreview, curveReceipt, dammPreview, fakeChain, finalizedTransaction, loadFrom, payoutTransaction, previewOf,
-  stockMarket } from './fixtures/stock-execution-fakes.mjs'
+import { META, address, collectionTransaction, curvePreview, curveReceipt, dammPreview, fakeChain, finalizedTransaction, loadFrom,
+  payoutTransaction, previewOf, stockMarket } from './fixtures/stock-execution-fakes.mjs'
 
 // The execution state machine of stock-pair fee collections and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by
 // default)") on an in-process chain and an in-memory store with the database's one-pending rules. tests/stock-execution-db.test.mjs
@@ -21,9 +21,9 @@ const ON = { STOCK_COLLECTIONS_EXECUTION_ENABLED: 'true', STOCK_LAUNCHER_PAYOUTS
 const sha256 = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
 // The store's contract (src/stock-execution-store.mjs) in memory: one pending row per market and source (collections) or per
-// market (payouts), updates only from pending, and a per-market lock that answers BUSY.
+// market (payouts), updates only from pending, and a per-market lock that makes a second holder wait its turn.
 function memoryStore({ custody = { collected: 0n, spent: 0n }, ahead = false } = {}) {
-  const rows = { collection: new Map(), payout: new Map() }, locks = new Set(), alerts = []
+  const rows = { collection: new Map(), payout: new Map() }, queues = new Map(), alerts = []
   let next = 0
   const db = { query: async (sql, params) => {
     if (/graduation_alerts/.test(sql)) alerts.push({ key: params[0], kind: params[2], detail: JSON.parse(params[3]) })
@@ -44,11 +44,10 @@ function memoryStore({ custody = { collected: 0n, spent: 0n }, ahead = false } =
     return clone(rows[kind].get(row.id))
   }
   return { rows, alerts,
-    withLock: async (repoId, work) => {
-      const key = String(repoId)
-      if (locks.has(key)) return { repoId: key, status: 'BUSY' }
-      locks.add(key)
-      try { return await work(db) } finally { locks.delete(key) }
+    withLock: (repoId, work) => {
+      const key = String(repoId), turn = (queues.get(key) ?? Promise.resolve()).then(() => work(db))
+      queues.set(key, turn.catch(() => {}))
+      return turn
     },
     insertCollection: async (_db, row) => insert('collection', row, r => r.source === row.source),
     pendingCollections: async (_db, { repoId } = {}) => pending('collection', repoId).map(clone),
@@ -77,7 +76,10 @@ async function collectionSetup({ source = 'dbc_creator', crash = false, env = ON
   const market = stockMarket({ creatorWallet: creator.publicKey.toBase58() })
   const signer = source.endsWith('creator') ? creator : partner
   const previewed = await curvePreview({ market, source, signer: signer.publicKey.toBase58(), custody })
-  const chain = fakeChain(), store = memoryStore(), loads = [], state = { crash, preview: previewOf(market, [previewed]) }
+  const store = memoryStore(), loads = [], state = { crash, preview: previewOf(market, [previewed]) }
+  // A collection lands as a correct claim of its reviewed amount: the pool's vault −amount, custody +amount.
+  const termsOf = signature => [...store.rows.collection.values()].find(row => row.signature === signature)?.receipt.terms
+  const chain = fakeChain({ finalized: (raw, signature) => (termsOf(signature) ? collectionTransaction(raw, termsOf(signature)) : finalizedTransaction(raw)) })
   const executor = createStockCollectionExecutor({ pool: null, connection: chain.connection, verification, config: null, env, custody, partner: custody,
     store, previewMarket: async () => state.preview, listMarkets: async () => [market],
     checkReceipt: receipt ?? (({ terms, signature }) => curveReceipt(terms, signature)), loadTransaction: loadFrom,
@@ -91,9 +93,10 @@ async function payoutSetup({ collected = 5_000_000n, crash = false, env = ON, mi
   store = memoryStore({ custody: { collected: collected * 3n, spent: 0n } }), chain = null, ledgerPatch = {} } = {}) {
   const custody = partner.publicKey.toBase58(), loads = [], state = { crash }
   const termsOf = signature => [...store.rows.payout.values()].find(row => row.signature === signature)?.receipt.terms
-  // A payout lands as a correct transfer; anything else sent on this chain lands as a plain finalized transaction.
+  // A payout lands as a correct transfer; anything else sent on this chain lands as the chain already lands it.
   chain ??= fakeChain()
-  chain.finalized = (raw, signature) => (termsOf(signature) ? payoutTransaction(raw, termsOf(signature)) : finalizedTransaction(raw))
+  const otherwise = chain.finalized
+  chain.finalized = (raw, signature) => (termsOf(signature) ? payoutTransaction(raw, termsOf(signature)) : otherwise(raw, signature))
   // PR-D's ledger row for the market, from the store's payouts: collected is fixed, paid and pending follow the rows.
   const ledger = async (_db, repoId) => {
     const own = [...store.rows.payout.values()].filter(row => row.repoId === String(repoId))
@@ -194,6 +197,22 @@ test('a collection is stored pending with its signed bytes before it is sent, th
   }
 })
 
+test('a collection that would land anywhere but the stock custody account, or report another amount than moved, is refused', async () => {
+  // Custody configured as a wallet other than the fee claimer: the preview's account is not the custody account the reconciliation
+  // and payouts use.
+  const s = await collectionSetup()
+  const elsewhere = createStockCollectionExecutor({ pool: null, connection: s.chain.connection, config: null, env: ON, custody: s.custody,
+    partner: address(), store: s.store, previewMarket: async () => s.state.preview, listMarkets: async () => [s.market], loadTransaction: loadFrom,
+    loadSigner: role => { s.loads.push(role); return s.creator }, mintCheck: async () => ({ ok: true }), follow: s.chain.follow })
+  await assert.rejects(elsewhere.collect(s.request), /does not land in the stock custody account/)
+  assert.deepEqual([s.loads, s.chain.sends], [[], []])
+  // A claim that reports its amount while custody received less is held for review, never settled.
+  const short = await collectionSetup()
+  short.chain.finalized = raw => collectionTransaction(raw, short.previewed.terms, BigInt(short.previewed.amount) - 1n)
+  const result = await short.executor.collect(short.request)
+  assert.deepEqual([result.status, result.reason], ['REVIEW', 'What the pool released, what custody received and what the claim reports differ'])
+})
+
 test('a wrong key for the reviewed signer is refused before signing', async () => {
   const s = await collectionSetup()
   const other = Keypair.generate()
@@ -286,10 +305,11 @@ test('payouts: below the minimum nothing is loaded, signed or sent; at the minim
   assert.deepEqual(at.loads, ['partner'])
 })
 
-test('payouts: a double run never pays twice, also across a crash and while another run holds the market', async () => {
+test('payouts: a double run never pays twice, also across a crash and when two runs start at once', async () => {
   const s = await payoutSetup()
+  // Two runs at once: the market's lock makes the second wait, and by then nothing is payable.
   const [first, concurrent] = await Promise.all([s.payouts.pay({ repoId: s.market.repoId }), s.payouts.pay({ repoId: s.market.repoId })])
-  assert.deepEqual([first.status, concurrent.status], ['SETTLED', 'BUSY'])
+  assert.deepEqual([first.status, concurrent.status], ['SETTLED', 'NOTHING'])
   assert.equal(first.amount, '5000000')
   assert.equal((await s.payouts.pay({ repoId: s.market.repoId })).status, 'NOTHING')
   assert.equal(s.chain.sends.length, 1)
@@ -448,8 +468,11 @@ test('a graduated position\'s claim that lands with more than its review settles
   const earned = 20_000_000n, excess = 12_345n
   const previewed = await dammPreview({ market, signer: creator.publicKey.toBase58(), custody, earned })
   assert.equal(collectionTransactionInstructions(previewed).length, 3, 'a position claim has the collection shape too')
-  const chain = fakeChain(), store = memoryStore()
-  // The position kept earning between the preview and the claim: the program paid everything accrued, the review plus the excess.
+  const store = memoryStore()
+  const termsOf = signature => [...store.rows.collection.values()].find(row => row.signature === signature).receipt.terms
+  // The position kept earning between the preview and the claim: the program paid everything accrued, the review plus the excess,
+  // out of the pool's vault into custody.
+  const chain = fakeChain({ finalized: (raw, signature) => collectionTransaction(raw, termsOf(signature), BigInt(termsOf(signature).amount) + excess) })
   const raced = ({ terms, signature }) => ({ ...curveReceipt(terms, signature), amount: String(BigInt(terms.amount) + excess), excess: String(excess) })
   const executor = createStockCollectionExecutor({ pool: null, connection: chain.connection, config: null, env: ON, custody, partner: custody, store,
     previewMarket: async () => previewOf(market, [previewed]), listMarkets: async () => [market], checkReceipt: raced, loadTransaction: loadFrom,
