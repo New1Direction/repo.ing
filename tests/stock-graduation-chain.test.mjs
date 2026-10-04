@@ -29,6 +29,7 @@ import { createStockGraduation } from '../src/stock-graduation.mjs'
 import { createStockGraduationMonitor, stockGraduationPass } from '../src/stock-graduation-monitor.mjs'
 import { createStockFeeIndexer } from '../src/stock-fee-indexer.mjs'
 import { stockDammSwapEvents } from '../src/stock-damm-trades.mjs'
+import { stockDbcSwapEvents } from '../src/stock-trade-evidence.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { LAUNCHER_DEN, LAUNCHER_NUM } from '../src/stock-fee-policy.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
@@ -167,6 +168,52 @@ test('a METAx-paired market graduates: proven, its DAMM swaps indexed in METAx, 
       assert.deepEqual(observation, { asset_id: 'meta-xstock', quote_mint: META.mint, pool: market.pool, migration_threshold: '1400000000', is_migrated: false })
     })
 
+    let curveSwaps = 0
+    await t.test('dust swaps on the curve are recorded with their zero amounts and their fees credited, never quarantined', async () => {
+      const trader = await funded(connection)
+      await holdMetax(trader, 10_000_000n)
+      const swap = async (buy, amountIn, minimumAmountOut) => send(await dbc.pool.swap2({ owner: trader.publicKey, payer: trader.publicKey,
+        pool: curve, amountIn: new BN(String(amountIn)), minimumAmountOut: new BN(String(minimumAmountOut)), swapBaseForQuote: !buy,
+        swapMode: DbcSwapMode.ExactIn, referralTokenAccount: null }), [trader])
+      // A small buy first, so the trader holds tokens to sell.
+      const signatures = [await swap(true, 1_000_000n, 1n)]
+      // Dust both ways, 1 raw unit in: whatever the program accepts is a swap to record with its fee, never a quarantine that
+      // would leave the fee out of the ledger.
+      const dust = {}
+      for (const [name, buy] of [['dustBuy', true], ['dustSell', false]]) {
+        try { dust[name] = await swap(buy, 1n, 0n); signatures.push(dust[name]) }
+        catch (error) { dust[name] = { refused: String(error?.message ?? error).match(/custom program error: 0x[0-9a-f]+|Error Code: \w+/)?.[0] ?? 'refused' } }
+      }
+      // What the program reported for each swap, read back from its finalized transaction.
+      const reported = []
+      for (const signature of signatures) {
+        const { events } = stockDbcSwapEvents(await loadFinalizedTransaction(connection, signature), market,
+          { config: stockConfig.publicKey.toBase58(), quoteMint: META.mint }, dbc)
+        for (const { eventIndex, data } of events) {
+          reported.push({ signature, eventIndex, direction: data.tradeDirection === 1 ? 'buy' : 'sell', ...Object.fromEntries(
+            ['actualInputAmount', 'outputAmount', 'tradingFee', 'protocolFee'].map(field => [field, data.swapResult[field].toString()])) })
+        }
+      }
+      const result = await curvePass()
+      const { rows } = await pool.query(`select t.signature, t.event_index, t.direction, t.quote_amount::text, t.base_amount::text,
+        (f.creator_amount + f.partner_amount)::text as fee from stock_trade_events t join stock_fee_events f using (signature, event_index)
+        where t.venue = 'dbc' and t.signature = any($1) order by t.slot, t.event_index`, [signatures])
+      console.log(JSON.stringify({ curveDust: dust, reported, quarantined: result.quarantined, rows }))
+      assert.deepEqual([result.status, result.quarantined], ['OK', []], 'nothing quarantined')
+      assert.ok(reported.some(event => event.outputAmount === '0'), `a dust swap landed and moved nothing out: ${JSON.stringify(dust)}`)
+      // Each swap is one trade row with the program's own amounts (zero where it moved nothing) and one fee row with its whole
+      // trading fee.
+      assert.deepEqual(rows.map(row => [row.signature, row.event_index, row.direction, row.quote_amount, row.base_amount, row.fee]),
+        reported.map(event => [event.signature, event.eventIndex, event.direction, ...(event.direction === 'buy'
+          ? [event.actualInputAmount, event.outputAmount] : [event.outputAmount, event.actualInputAmount]), event.tradingFee]))
+      // Every unit of the curve's fees so far is in the ledger, the dust swaps' included.
+      const { poolState } = await new DynamicBondingCurveClient(verification, 'finalized').state.getPool(curve)
+      const { rows: [fees] } = await pool.query(`select count(*)::int as n, sum(creator_amount)::text as creator, sum(partner_amount)::text as partner
+        from stock_fee_events where github_repo_id = $1`, [githubRepoId])
+      assert.deepEqual(fees, { n: reported.length, creator: poolState.creatorQuoteFee.toString(), partner: poolState.partnerQuoteFee.toString() })
+      curveSwaps = reported.length
+    })
+
     let dammPool, migrationSignature
     await t.test('past the threshold, migrated locally into the METAx DAMM pool and proven', async () => {
       const whale = await funded(connection, 20_000_000_000)
@@ -212,16 +259,17 @@ test('a METAx-paired market graduates: proven, its DAMM swaps indexed in METAx, 
       // The proof replays: a second pass changes nothing.
       assert.equal((await pass()).migration, migrationSignature)
       assert.equal((await pool.query('select count(*)::int as n from stock_graduation_events')).rows[0].n, 1)
-      // The hand-off: the curve indexer, which never saw the swap that filled the curve, credits it once the migration is
-      // proven, stops on the migration, and is GRADUATED from then on. Every unit of curve fee is in the ledger.
+      // The hand-off: once the migration is proven the curve indexer credits what it has not yet seen up to and in the
+      // migration, stops on it, and is GRADUATED from then on. Every unit of curve fee is in the ledger: the swaps before the
+      // fill (dust included) and the fill.
       const finished = await curvePass()
       assert.deepEqual([finished.status, finished.migration, finished.cursorAfter.signature], ['GRADUATED', migrationSignature, migrationSignature])
       assert.equal((await curvePass()).status, 'GRADUATED')
       const curveState = (await new DynamicBondingCurveClient(verification, 'finalized').state.getPool(curve)).poolState
       const { rows: [fees] } = await pool.query(`select count(*)::int as n, sum(creator_amount)::text as creator, sum(partner_amount)::text as partner
         from stock_fee_events where github_repo_id = $1`, [githubRepoId])
-      assert.deepEqual(fees, { n: 1, creator: curveState.creatorQuoteFee.toString(), partner: curveState.partnerQuoteFee.toString() })
-      assert.equal((await pool.query("select count(*)::int as n from stock_trade_events where venue = 'dbc'")).rows[0].n, 1)
+      assert.deepEqual(fees, { n: curveSwaps + 1, creator: curveState.creatorQuoteFee.toString(), partner: curveState.partnerQuoteFee.toString() })
+      assert.equal((await pool.query("select count(*)::int as n from stock_trade_events where venue = 'dbc'")).rows[0].n, curveSwaps + 1)
     })
 
     const swaps = {}
