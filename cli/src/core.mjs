@@ -4,11 +4,11 @@ export const VERSION = '0.1.0'
 
 function cleanRepoPath(pathname) {
   const parts = pathname.replace(/^\/+|\/+$/g, '').split('/')
-  if (parts.length !== 2 || parts.some(part => !/^[\\w.-]+$/.test(part) || /^\\.+$/.test(part))) {
+  if (parts.length !== 2 || parts.some(part => !/^[\w.-]+$/.test(part) || /^\.+$/.test(part))) {
     throw new Error('Use a GitHub repository like owner/repo or https://github.com/owner/repo.')
   }
-  const repo = parts[1].replace(/\\.git$/i, '')
-  if (!repo || /^\\.+$/.test(repo)) throw new Error('Invalid GitHub repository name.')
+  const repo = parts[1].replace(/\.git$/i, '')
+  if (!repo || /^\.+$/.test(repo)) throw new Error('Invalid GitHub repository name.')
   return `${parts[0]}/${repo}`
 }
 
@@ -16,11 +16,11 @@ export function normalizeGithubRepository(input) {
   const value = String(input ?? '').trim()
   if (!value) throw new Error('No repository supplied.')
 
-  if (/^[\\w.-]+\\/[\\w.-]+(?:\\.git)?$/.test(value)) {
+  if (/^[\w.-]+\/[\w.-]+(?:\.git)?$/.test(value)) {
     return `https://${GITHUB_HOST}/${cleanRepoPath(value)}`
   }
 
-  const scp = value.match(/^git@github\\.com:([^?#]+)$/i)
+  const scp = value.match(/^git@github\.com:([^?#]+)$/i)
   if (scp) return `https://${GITHUB_HOST}/${cleanRepoPath(scp[1])}`
 
   let url
