@@ -519,9 +519,11 @@ is not here: the owner does that himself from custody.
   - Under the market's lock, the preview (`src/stock-collections.mjs`) is rebuilt from finalized reads and the stock ledgers. Only a
     source that still MATCHes, with the terms hash that was reviewed, is executed.
   - The transaction is exactly the hashed instructions: the custody's two token accounts created idempotently, then the one
-    claim, with the reviewed signer the only signer.
-  - It settles from its finalized receipt: the exact signed message, exact Token-2022 deltas and the program's claim event. The
-    launcher's and accumulator's parts always add up to the amount received:
+    claim, with the reviewed signer the only signer. Every source lands in the one stock custody account,
+    `stockCustodyAccount(fee claimer, mint)` (`src/stock-reconcile.mjs`), which the reconciliation watches and payouts leave from.
+  - It settles from its finalized receipt: the exact signed message, exact Token-2022 deltas and the program's claim event. What
+    the pool released, what custody received and what the claim reports must be one amount; otherwise it is held for review.
+    The launcher's and accumulator's parts always add up to the amount received:
     - a curve claim takes exactly the reviewed amount (its maximum);
     - a graduated position's claim takes everything accrued when it runs, so trades landing after the preview add an excess. It is
       split as the next DAMM checkpoint credits it (the creator side's launcher share grows by the `floor(cumulative × 150 / 497)`
@@ -541,8 +543,10 @@ is not here: the owner does that himself from custody.
     the transfer, and no SOL moved but the fee and that rent.
 - **Every transaction** is recorded `pending` with its signed bytes and intent (blockhash, last valid block height, terms, kept in
   `receipt` until it settles) before it is sent. The database allows one pending collection per market and source and one
-  pending payout per market, and one lock per market keeps the worker and the script from interleaving. Migration 0056 stores a
-  transaction signature on at most one collection and one payout, and indexes payouts by stock for the custody check.
+  pending payout per market. A collection or payout holds the market's lock from reading its terms until it settles. It is the
+  lock the stock reconciliation, the SOL reconciler and the SOL claims take, `pg_advisory_lock(github_repo_id)`, so nothing
+  interleaves and the reconciliation never reads a half-settled row. Migration 0056 stores a transaction signature on at most
+  one collection and one payout, and indexes payouts by stock for the custody check.
 - **Recovery** finishes pending rows:
   - it settles a finalized transaction and aborts one that failed;
   - it rebroadcasts the stored bytes while their blockhash is valid;

@@ -7,7 +7,8 @@ import { quoteOfMarket } from './quote-assets.mjs'
 import { LAUNCHER_DEN, LAUNCHER_NUM } from './stock-fee-policy.mjs'
 import { checkTipMint } from './tip-tokens.mjs'
 import { DBC_PROGRAM, STOCK_COLLECTION_SOURCES, STOCK_FEE_CUSTODY, STOCK_PARTNER_WALLET, checkStockCollectionReceipt,
-  createStockChainReader, createStockCollections, listStockMarkets, stockCollectionTermsHash } from './stock-collections.mjs'
+  createStockChainReader, createStockCollections, listStockMarkets, stockCollectionTermsHash, tokenDeltas } from './stock-collections.mjs'
+import { stockCustodyAccount } from './stock-reconcile.mjs'
 import { STOCK_EXECUTION_ERRORS as E, assertExecutionNetwork, assertSignedMessage, assertStockExecutionEnabled,
   errorResult, fail, isRepoId, loadStockSigner, pendingIntent, raiseExecutionAlert, recoverPendingRow, sendAndFollow,
   signStockTransaction } from './stock-execution.mjs'
@@ -19,7 +20,8 @@ import { createStockExecutionStore } from './stock-execution-store.mjs'
 // MATCHes and its terms hash is the reviewed one. It is signed by the key the SOL claims sign with for that side (the platform
 // creator for creator fees, the partner for partner fees), recorded pending with its signed bytes before it is sent, and settled
 // from its finalized receipt (checkStockCollectionReceipt: the exact signed message, exact Token-2022 deltas and the program's
-// claim event), with the amount received split into the launcher's and the accumulator's parts.
+// claim event), with the amount received split into the launcher's and the accumulator's parts. Every source lands in the one
+// stock custody account, stockCustodyAccount(fee claimer, mint), that the reconciliation watches and payouts leave from.
 
 const SIGNER_ROLE = Object.freeze({ dbc_creator: 'creator', damm_creator: 'creator', dbc_partner: 'partner', damm_partner: 'partner' })
 const CREATE_IDEMPOTENT = Buffer.from([1]).toString('base64')
@@ -86,6 +88,11 @@ export function createStockCollectionExecutor({ pool, connection, verification =
     try {
       assertSignedMessage(transaction, stored)
       receipt = checkReceipt({ transaction, terms: intent.terms, signature: row.signature })
+      // What the pool released, what custody received and what the claim reports must be one amount (xStocks charge no
+      // transfer fee); the receipt check holds them to it, and so does this, in exact raw deltas.
+      const deltas = tokenDeltas(transaction, intent.terms.quoteMint), amount = BigInt(receipt.amount)
+      if (deltas.get(intent.terms.receiverTokenAccount)?.delta !== amount || deltas.get(intent.terms.sourceVault)?.delta !== -amount)
+        fail(E.RECEIPT, 'What the pool released, what custody received and what the claim reports differ')
       split = settledCollectionSplit(intent.terms, receipt.amount)
     } catch (error) {
       // The transaction landed: never aborted, held for a person.
@@ -127,6 +134,8 @@ export function createStockCollectionExecutor({ pool, connection, verification =
       const terms = current.terms
       if (terms.assetId !== asset.assetId || terms.quoteMint !== asset.mint || terms.receiver !== custody || terms.repoId !== String(repoId))
         fail(E.NOT_EXECUTABLE, 'The terms name another market, stock or custody')
+      // The fee claimer's Token-2022 account for the stock: the one custody account (PR-E's reader holds the fee claimer to partner).
+      if (terms.receiverTokenAccount !== stockCustodyAccount(partner, asset.mint)) fail(E.NOT_EXECUTABLE, 'The collection does not land in the stock custody account')
       const instructions = collectionTransactionInstructions(current)
       if ((await store.pendingCollections(db, { repoId })).some(row => row.source === source))
         fail(E.IN_FLIGHT, `A ${source} collection is already in flight for this market`)
