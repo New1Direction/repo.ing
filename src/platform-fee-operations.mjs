@@ -31,7 +31,9 @@ export function allocationReview({ sessionId, policyVersion, now = Date.now() })
   return { purpose: 'platform-revenue-allocate', sessionId, policyVersion, expiresAt: now + REVIEW_TTL_MS }
 }
 
-// Every finalized market's uncollected platform fees. On-chain inspection is read-only;
+// Every finalized SOL market's uncollected platform fees. Stock-paired markets (quote_asset_id set) are never listed, so the
+// SOL sweep and panel cannot touch one: their fees go through src/stock-collections.mjs, whose listStockMarkets is exactly
+// the other half of the indexed markets. On-chain inspection is read-only;
 // `review` is only asked for rows with a positive balance. The panel reads four markets at once without retries.
 // The sweep reads one market at a time, `paceMs` apart, and passes `retry` (retryRpcRead options) so a transient RPC
 // error is retried; an entry then carries the `retries` it spent, also when it still failed.
@@ -43,7 +45,7 @@ export async function listPlatformFees({ pool, feeService, review = () => null, 
       coalesce(r.full_name, 'Repo ' || m.github_repo_id) as "fullName",
       exists (select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) as graduated
       from markets m left join repositories r on r.github_repo_id = m.github_repo_id
-      where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'
+      where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null
       order by m.github_repo_id`)
     const queue = [...repos], results = []
     const worker = async () => {
