@@ -36,6 +36,8 @@ import { approvedConfigs } from '../src/market-config.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { createDevPulseCollector } from '../src/dev-pulse.mjs'
 import { createPromotionExclusions } from '../app/lib/promotion-exclusions.mjs'
+import { createStockFeeIndexer } from '../src/stock-fee-indexer.mjs'
+import { stockQuoteConfigs } from '../src/quote-configs.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
@@ -68,6 +70,11 @@ const launches = createLaunchIndexer({ pool, verify, reverifyAfterMs: 3_600_000 
 // Idle markets are checked less often; new config-account signatures and repo.ing trades wake them early.
 const fees = createExternalFeeIndexer({ pool, connection, config, schedule: createActivitySchedule(),
   feed: createConfigActivityFeed({ connection, configs: approvedConfigs(config), loadTransaction: loadFinalizedTransaction }) })
+// Stock-paired curves (docs/STOCK_QUOTES.md): their own ledgers, cursors and schedule; the feed watches the stock configs. A
+// malformed STOCK_QUOTE_CONFIGS fails only stock markets: each one resolves its config itself and reports the ERROR.
+const stockFees = createStockFeeIndexer({ pool, connection, config, schedule: createActivitySchedule(),
+  feed: createConfigActivityFeed({ connection, configs: (() => { try { return [...stockQuoteConfigs().values()] } catch { return [] } })(),
+    loadTransaction: loadFinalizedTransaction }) })
 // Recovery only needs already authorized, signed intents. No partner key here.
 const liquidity = createLiquidityRecovery({ pool, connection })
 // Only recover already issued/approved intents. Never prepare or sign a builder action.
@@ -223,7 +230,7 @@ async function observeTrends(){
 }
 // Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch and
 // milestone alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
-for(const [job,worker] of Object.entries({launches,fees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
+for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
   tipMonitor,partsFunds,chartOrdering,graduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts})){
   if(!worker)continue
   const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
@@ -258,6 +265,8 @@ try {
     catch { result.allocationError = 'Allocation recovery unavailable' }
     try { result.fees = await fees.runOnce() }
     catch (error) { result.feeError = error.message }
+    try { result.stockFees = await stockFees.runOnce() }
+    catch (error) { result.stockFeeError = error.message }
     try { result.discovery = await discovery.runOnce() }
     catch { result.discoveryError = 'Discovery recovery unavailable' }
     try { const bonusPayoutResults = await bonusPayouts.runOnce(); if (bonusPayoutResults.length) result.verificationBonusPayouts = bonusPayoutResults }
@@ -332,7 +341,7 @@ try {
     }
     console.log(JSON.stringify(result, (key, value) => {
       if (typeof value === 'bigint') return value.toString()
-      if (['error', 'reason', 'launchError', 'feeError'].includes(key) && typeof value === 'string') return 'Indexer error'
+      if (['error', 'reason', 'launchError', 'feeError', 'stockFeeError'].includes(key) && typeof value === 'string') return 'Indexer error'
       return value
     }))
     if (result.tipError || result.tipTransfers?.some(item => item.status === 'review') || result.tips?.some(item => item.state === 'review') || result.reinvestError || result.reinvest?.some(item => item.status === 'review') || result.liquidityError || result.liquidity?.some(item => item.status === 'review') || result.platformFeeError || result.platformFees?.some(item => item.status === 'review' || item.status === 'error') || result.allocationError || result.allocations?.some(item => item.status === 'review') || result.launchError || result.feeError || result.claimError || result.claims?.some(item => item.status === 'review') || result.discoveryError || result.discovery?.some(item => item.status === 'review') ||
@@ -340,6 +349,7 @@ try {
         result.fees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (result.verificationBonusPayoutError || result.verificationBonusPayouts?.some(item => item.status === 'review')) process.exitCode = 1
     if (result.payoutAddressError || result.payoutAddresses?.some(item => item.status === 'error')) process.exitCode = 1
+    if (result.stockFeeError || result.stockFees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
 } finally { if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()

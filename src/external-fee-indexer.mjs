@@ -141,9 +141,10 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
   }
 
   async function runOnce() {
+    // SOL markets only: stock-paired markets are indexed by stock-fee-indexer.mjs into the stock ledgers.
     const { rows } = await databasePool.query(`select github_repo_id::text as "repoId", mint, pool,
       launch_signature as "launchSignature", creator_wallet as "creatorWallet"${schedule ? ACTIVITY_COLUMNS : ''} from markets where status = 'confirmed'
-      and indexed_at is not null and launch_finality = 'finalized' order by github_repo_id`)
+      and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null order by github_repo_id`)
     const results = []
     if (!schedule) {
       for (const market of rows) {

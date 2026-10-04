@@ -4,6 +4,7 @@ import { acceptSignedTrade, TRADE_WINDOW_CLOSED } from '../../../src/trade-sessi
 import { randomUUID } from 'node:crypto'
 import bs58 from 'bs58'
 import { createFeeAccrual } from '../../../src/fee-accrual.mjs'
+import { createStockFeeAccrual } from '../../../src/stock-fee-accrual.mjs'
 import { database, chain, configAddress } from '../../lib/server.mjs'
 import { tradeResultFields, tradeStatus } from '../../lib/trade-status.mjs'
 import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
@@ -117,9 +118,12 @@ export async function POST(request) {
       await track({ ...attempt, outcome: 'confirmed', signToConfirmMs: Date.now() - session.submittedAt }, session)
       await recordReferral(session, result.signature)
       const connection = chain()
+      // A stock-paired trade (its prepared quote mint) accrues into the stock ledgers; a SOL trade exactly as before.
       const { feeIndexing, creatorFee } = await settleConfirmedTrade({ connection, db: database(), engine: session.engine,
         prepared: session.prepared, signature: result.signature,
-        recordFees: args => createFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees(args) })
+        recordFees: args => session.prepared.quoteMint
+          ? createStockFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees({ ...args, quoteMint: session.prepared.quoteMint })
+          : createFeeAccrual({ pool: database(), connection, config: configAddress() }).recordTradeFees(args) })
       session = await store.saveResult(session, { state: 'confirmed', signature: result.signature, ...tradeResultFields(result), feeIndexing, creatorFee })
       return Response.json(session.result, { headers: { 'Cache-Control': 'no-store' } })
     }
