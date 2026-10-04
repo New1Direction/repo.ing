@@ -67,3 +67,6 @@ trend-launchable-db
 trust-signals-db
 verification-bonus-db
 wallet-binding
+stock-execution-chain
+stock-execution-db
+stock-execution-worker-db
