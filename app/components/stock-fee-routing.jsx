@@ -3,7 +3,7 @@ import { xHandleFor } from '../lib/x-links.mjs'
 import { shortWallet } from '../lib/holder-note-format.mjs'
 import { formatTokenAmount, formatUnits } from '../lib/format.mjs'
 import { STOCK_FEE_SPLIT, stockFeeRouting } from '../lib/stock-fee-routing.mjs'
-import { STOCK_PAIR_NO_OWNER_CLAIM } from '../../src/stock-owner-claims.mjs'
+import { STOCK_PAIR_NO_OWNER_CLAIM, stockSymbol } from '../../src/stock-owner-claims.mjs'
 import styles from './stock-pair.module.css'
 
 // Token page of a stock-paired market (docs/STOCK_QUOTES.md, "Fee policy"): where every trade's fee goes, in place of the
@@ -46,10 +46,20 @@ export async function StockFeeRouting({ market }) {
         <div className={styles.body}><strong>Meteora protocol fee</strong></div>
       </li>
     </ol>
-    <p className={styles.note} role="status">{routing.unavailable ?? (routing.multiplier === null
+    <p className={styles.note}>{routing.unavailable ?? (routing.multiplier === null
       ? `Amounts appear once ${symbol}’s display units can be read.`
       : `Amounts as wallets show ${symbol}${routing.multiplier === '1' ? '' : ` (raw units × ${routing.multiplier})`}. A launch-fee window scales every share alike.`)}</p>
   </section>
+}
+
+// The hero headline's placeholder while the ledgers are read: the same box as the resolved headline, so nothing shifts.
+export function StockFeeHeadlineFallback({ market }) {
+  return <div className="earnings-headline pending" aria-busy="true">
+    <span className="earnings-headline-label">Toward $REPOING / {stockSymbol(market)} liquidity</span>
+    <strong className="earnings-headline-value"><span className="skeleton-line"/></strong>
+    <span className="earnings-headline-detail" role="status">Reading fee routing…</span>
+    <span className="earnings-headline-action note"><span className="skeleton-line"/></span>
+  </div>
 }
 
 // Hero headline slot (the "Earned by builders" box on SOL markets), same footprint, no claim action. href: the Fee routing

@@ -19,7 +19,8 @@
 .note{margin:12px 0 0;color:var(--dim);font-size:12px;line-height:1.5}
 /* Hero: the stock's symbol beside the amount, smaller, so the amount keeps the headline's size. */
 .unit{margin-left:.22em;font-size:.42em;font-weight:650;letter-spacing:-.01em;color:var(--muted)}
-/* Claim page: what still works for the maintainer, under the routing card. */
+/* Claim page: the refusal between the repository and the routing card, and what still works for the maintainer below. */
+.notice{margin:18px 0 16px}
 .footnote{margin:16px 0 0;color:var(--muted);font-size:14px}
 .footnote a{color:var(--text);text-decoration:underline;text-underline-offset:3px}
 /* /wallet: one line per stock in the launcher tile. */
