@@ -7,7 +7,7 @@ import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk
 import { normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { migrationPosition } from '../src/graduated-fees.mjs'
 import { assertStockGraduationConfig, stockGraduationProgress, stockMigrationPosition, stockQuoteOf } from '../src/stock-graduation.mjs'
-import { createStockGraduationMonitor, stockGraduationError } from '../src/stock-graduation-monitor.mjs'
+import { createStockGraduationMonitor, stockGraduationError, stockGraduationPass } from '../src/stock-graduation-monitor.mjs'
 import { resolveQuoteAsset } from '../src/quote-assets.mjs'
 
 // Graduation of a stock-paired market (docs/STOCK_QUOTES.md), on the real migration of DOCUSAURUS / METAx from
@@ -77,4 +77,25 @@ test('the stock job costs nothing until a stock-paired market exists; a hook nee
   assert.deepEqual(await monitor.runOnce(), [])
   for (const hook of [null, { name: 'reconcile' }, { run: async () => {} }]) assert.throws(() => monitor.addHook(hook), /needs a name and a run function/)
   monitor.addHook({ name: 'reconcile', run: async () => 'MATCH' })
+})
+
+test('the worker\'s stock pass never rejects: a hook\'s BigInt is logged as text, and a broken report or log is contained', async () => {
+  // scripts/run-worker.mjs runs this pass un-awaited: a rejection would take every SOL job down with the worker.
+  const lines = [], log = line => lines.push(line)
+  const result = [{ repoId: '94911145', status: 'VERIFIED', hooks: { reconcile: { earned: 2001n, nested: [1n] } } }]
+  assert.equal(await stockGraduationPass({ runOnce: async () => result }, log), false)
+  assert.deepEqual(JSON.parse(lines.at(-1)).stockGraduation[0].hooks.reconcile, { earned: '2001', nested: ['1'] })
+  assert.equal(await stockGraduationPass({ runOnce: async () => [{ repoId: '1', status: 'REVIEW', code: 'RPC_DISAGREEMENT' }] }, log), true)
+  assert.equal(await stockGraduationPass({ runOnce: async () => { throw Error('down') } }, log), true)
+  assert.deepEqual(JSON.parse(lines.at(-1)), { stockGraduationError: 'Stock graduation unavailable' })
+  // A hook result that cannot be serialized (a cycle), or a log that throws, still resolves.
+  const cycle = { repoId: '1', status: 'VERIFIED' }
+  cycle.self = cycle
+  assert.equal(await stockGraduationPass({ runOnce: async () => [cycle] }, log), true)
+  assert.deepEqual(JSON.parse(lines.at(-1)), { stockGraduationError: 'STOCK_GRADUATION_REPORT_UNAVAILABLE' })
+  assert.equal(await stockGraduationPass({ runOnce: async () => result }, () => { throw Error('stdout closed') }), true)
+  // Nothing to report: no line.
+  const before = lines.length
+  assert.equal(await stockGraduationPass({ runOnce: async () => [] }, log), false)
+  assert.equal(lines.length, before)
 })
