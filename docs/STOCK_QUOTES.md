@@ -315,6 +315,68 @@ refusing stock markets. Amounts are raw units of each token.
 
 `tests/stock-ledgers-db.test.mjs` proves this on PostgreSQL, including that every existing row and definition is unchanged.
 
+## No owner claim, reconciliation and launcher earnings (dark)
+
+**No owner claim.** A stock pair's builder fees have no owner to claim them. Every owner-claim path refuses a stock-paired
+market with `STOCK_PAIR_NO_OWNER_CLAIM` (`src/stock-owner-claims.mjs`) before any SOL claim code runs:
+
+- `POST /api/claim` sends the browser back to `/claim/<id>?error=STOCK_PAIR_NO_OWNER_CLAIM`, before a review is read.
+- `POST /api/builders/claim` answers 409 with the code, and the claim preview answers 409 with `available: null`.
+- `/claim/<id>` explains where the fees go and runs no fee check.
+- The Builders dashboard (`app/lib/builders.mjs`) shows the row with nothing to claim and the same explanation.
+- Builder reminders list SOL markets only (`and m.quote_asset_id is null`), so a stock pair never gets a "claim your fees"
+  email.
+
+The token page shows **Fee routing** instead of the claim link and the owner invitation: the launcher's 0.30%, to their X
+handle if they linked one (else the short wallet), and the builder share plus repo.ing's share, 1.10%, to permanent
+$REPOING / stock liquidity, with the amounts recorded so far as wallets show the stock. `/wallet` shows the connected
+wallet's launcher earnings in each stock.
+
+**Launcher earnings** (`src/stock-launcher-earnings.mjs`, raw units of the stock, per market and per launcher wallet):
+
+- **Earned:** `launcher_amount` of the market's curve fee events, plus `launcher_credit` of its creator-position checkpoints.
+- **Collected:** `launcher_amount` of settled fee collections, the launcher's part of fees claimed into custody.
+- **Paid** (settled payouts) and **pending** (payouts in flight, never payable twice).
+- **Payable:** collected − paid − pending, held in custody for the launcher. **Uncollected:** earned − collected.
+- More collected than earned, or more paid than collected, is shown as under review, never as an amount.
+
+**Custody.** Today the platform creator signer (`PLATFORM_CREATOR_SECRET_KEY`, every pool's creator) claims a SOL market's DBC
+creator fees and graduated creator-position fees in `src/claim.mjs`, straight to the repository's payout wallet. The platform
+partner signer (`PLATFORM_PARTNER_SECRET_KEY`, the configs' fee claimer, `H7TK…` in production) claims partner fees: DBC to
+`PLATFORM_FEE_TREASURY_WALLET` (by default itself, `src/platform-dbc-fees.mjs`), graduated positions to itself only
+(`src/platform-fees.mjs`). `scripts/platform-sweep.mjs` then moves surplus SOL to the published custody wallet `FgzeY…`. A
+stock pair has no payout wallet, so all four of its fee sources (`dbc_creator`, `dbc_partner`, `damm_creator`,
+`damm_partner`) land in the **stock's Token-2022 associated account of the stock config's fee claimer**: the platform partner
+wallet, which already signs launcher-facing payouts. Launcher payouts and settlement spends leave from that account. The
+reconciler reads the fee claimer from the stock's config on-chain, so the worker needs no key.
+
+**Reconciliation** (`src/stock-reconcile.mjs`; the SOL reconciler keeps refusing stock markets):
+
+- **Curve:** the DBC pool's `creatorQuoteFee` and `partnerQuoteFee` each equal their fee events minus settled `dbc_creator`
+  and `dbc_partner` collections.
+- **Graduated pool:** each position's fees earned on-chain (unclaimed + claimed) equal its latest checkpoint, and its claimed
+  fees equal settled `damm_creator` and `damm_partner` collections.
+- **Custody, per stock:** the custody account's balance equals settled collections − settled launcher payouts − settlement
+  spends.
+- **Lag is tolerated as the SOL reconciler tolerates it:** on-chain fees ahead of the ledger with the same claims (trades or
+  checkpoints the worker has not recorded yet), a graduation not recorded yet, a pending collection or payout, and an
+  unavailable read are held for 15 minutes before they alert.
+- **Anything else alerts at once:** a `RECONCILIATION_MISMATCH` operator alert on the same `graduation_alerts` feed as SOL
+  reconciliation, once per kind of mismatch. Examples are a ledger ahead of the chain, a claim with no collection, rows off
+  the market's canonical pool or positions, a config off the policy, or a custody shortfall or surplus. A market that cannot
+  be reconciled at all is an `ERROR` alert, never skipped.
+- **The worker** reconciles every indexed stock-paired market and each stock's custody once a minute
+  (`scripts/run-worker.mjs`, read-only).
+- **Collections and payouts must be recorded pending before they are sent** (the schema holds at most one pending row per
+  market and source), and a collection must hold the repository's advisory lock while it is sent and settled, as SOL claims
+  do. The reconciler reads under that lock, and a ledger that moved during its chain read counts as pending, not as a
+  mismatch.
+
+`tests/stock-reconcile.test.mjs`, `tests/stock-launcher-earnings.test.mjs`, `tests/stock-owner-claims.test.mjs` and
+`tests/stock-pair-pages.test.mjs` cover this without services, `tests/stock-reconcile-db.test.mjs` on PostgreSQL, and
+`tests/stock-claims-golden-db.test.mjs` proves every SOL claim and fee-status output unchanged with a stock-paired market
+present.
+
 ## Issuer powers
 
 Read on mainnet on 2026-10-03, for METAx (MSFTx and NVDAx are the same). Meteora approved these three mints for DBC and
