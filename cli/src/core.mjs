@@ -105,6 +105,16 @@ export function validateOrigin(value) {
   return url.origin
 }
 
+// The only links the CLI opens: those on the repo.ing origin it asked (https, or http on localhost). Anything else the server
+// returns is printed, never handed to the system's opener.
+export function safeBrowserUrl(target, origin) {
+  if (typeof target !== 'string' || !target) return null
+  let url
+  try { url = new URL(target) } catch { return null }
+  if (url.origin !== validateOrigin(origin) || url.username || url.password) return null
+  return url.href
+}
+
 export async function requestLaunchDraft({ origin, repository, tokenName, tokenSymbol, initialBuy, fetchImpl = fetch }) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 12_000)
