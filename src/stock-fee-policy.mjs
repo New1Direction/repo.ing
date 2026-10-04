@@ -83,7 +83,7 @@ export function dammCheckpoint({ side, cumulativeEarned, previous = null } = {})
     if ((previous.side !== undefined && previous.side !== side) ||
         (previous.policyVersion !== undefined && previous.policyVersion !== POLICY_VERSION) ||
         (previous.launcherCumulative !== undefined && rawAmount(previous.launcherCumulative, 'previous.launcherCumulative') !== launcherBefore)) {
-      fail(STOCK_POLICY_ERRORS.STOCK_DAMM_PREVIOUS_MISMATCH, `Previous DAMM ${side} checkpoint was not recorded under stock fee policy ${POLICY_VERSION}`)
+      fail(STOCK_POLICY_ERRORS.STOCK_DAMM_PREVIOUS_MISMATCH, `Previous checkpoint is not a ${side} checkpoint recorded under stock fee policy ${POLICY_VERSION}`)
     }
     if (earned < earnedBefore) {
       fail(STOCK_POLICY_ERRORS.STOCK_DAMM_CUMULATIVE_DECREASED, `DAMM ${side} fees earned went from ${earnedBefore} down to ${earned}; review required`)
