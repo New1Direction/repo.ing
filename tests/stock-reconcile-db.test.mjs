@@ -83,6 +83,13 @@ test.after(async () => {
   await globalThis.__gitfunPool?.end()
   delete globalThis.__gitfunPool
   await pool?.end()
+  // An ended pool's sessions close after end() resolves. Dropping with force while the server still sees one terminates it, and
+  // its client, no longer listened to, reports that as an uncaught error (seen on CI). Wait for them to go first.
+  for (let tries = 0; tries < 50; tries++) {
+    const { rows: [{ open }] } = await admin.query('select count(*)::int as open from pg_stat_activity where datname = $1', [DB])
+    if (!open) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
   await admin?.query(`drop database if exists ${DB} with (force)`)
   await admin?.end()
 })
