@@ -229,7 +229,9 @@ A stock-paired market's numbers come only from the stock ledgers, and a stock va
 - **Units as wallets show them:** the metrics route adds the stock's display facts (`quote`: today's multiplier and USD price).
   The chart, recent trades, the phone summary and the graduation bar show stock amounts as raw × today's multiplier,
   truncated, history included (like a split-adjusted chart). Until the units load, or when they cannot be read, prices and
-  amounts read "—", never raw units. USD uses the stock's own price per whole raw token.
+  amounts read "—", never raw units. USD uses the stock's own price per whole raw token. On the server, units come from a small
+  per-process cache refreshed in the background (`app/lib/stock-units.mjs`, each read bounded at 1.5 s, units served only
+  while they hold), so the shared market list never waits on the RPC.
 - **Market rows** (`app/lib/stock-market-stats.mjs`): a stamped market's row has `priceSol` and `volume24hLamports` null and a
   `stock` object: the last price, the raw 24h volume and, on lists, today's multiplier and USD price. Its progress comes from
   `stock_graduation_observations` under the public curve's freshness rule. If these reads fail, only the stamped rows are
@@ -240,8 +242,9 @@ A stock-paired market's numbers come only from the stock ledgers, and a stock va
   SOL trade does.
 - **Totals:** `protocolStats`, `/stats` analytics and the graduation race count SOL markets only (`quote_asset_id is null`).
   `/stats` adds a section per stock (`src/stock-analytics.mjs`: volume, fees, the launcher's and the accumulator's shares, in
-  that stock and in USD), shown only once a stock pair has traded or earned a fee. A stock is never added to SOL or to another
-  stock.
+  that stock and in USD, read at most every 20 s per period), shown only once a stock pair has traded or earned a fee, and
+  marked unavailable, never hidden, when it cannot be read. A stock is never added to SOL or to another stock. The MCP tools
+  give a stock pair's volume in its stock and no builder fees: never a SOL zero.
 - **The graduation race leaves stock pairs out.** The race and everything that reads it (the home and explore lists, the
   $REPOING card, the MCP tools) state reserves in SOL, and a stock pair's observations carry no verified status to rank
   against SOL racers. Its own row and token page show its progress in its stock.

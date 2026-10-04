@@ -1,6 +1,6 @@
 import { PUBLIC_GRADUATION_MAX_AGE_MS } from '../../src/graduation-state.mjs'
-import { quoteAssetInfo } from '../../src/quote-asset-info.mjs'
 import { quoteAssetById } from '../../src/quote-assets.mjs'
+import { stockUnits } from './stock-units.mjs'
 import { MARKET_TOKEN_DECIMALS, isStockMarket, stockChartMigration, stockQuoteOf, stockSpotPrice } from '../../src/stock-market-chart.mjs'
 
 // Server-only: the market-list and token-page numbers of stock-paired markets (docs/STOCK_QUOTES.md), from the stock
@@ -9,7 +9,7 @@ import { MARKET_TOKEN_DECIMALS, isStockMarket, stockChartMigration, stockQuoteOf
 //   assetId, symbol, decimals   the stamped stock (registry)
 //   price                       last trade price, whole raw stock units per whole market token (null before a trade)
 //   volume24h                   raw stock base units traded in the last 24h (curve, plus the recorded DAMM pool)
-//   uiMultiplier, usdPrice      today's display multiplier and USD price per whole raw token, when read (lists only)
+//   uiMultiplier, usdPrice      today's display multiplier and USD price per whole raw token, when cached (lists only)
 // bondingPercent and graduated are the row's usual unit-free fields, from the stock graduation tables. A stamped row whose
 // figures cannot be read carries `stock.unavailable` instead. Nothing is read for SOL rows: a list without stamped rows
 // comes back as it came, with no query.
@@ -90,29 +90,6 @@ export function unavailableStockRow(market) {
     stock: { assetId: market.quoteAssetId ?? null, symbol: asset?.type === 'TOKENIZED_EQUITY' ? asset.symbol : null, unavailable: true } }
 }
 
-// A stock's display facts read within `ms`, else null (logged): the reads that need them (the shared market list, /stats)
-// never wait on a stalled RPC, and rows without units show no converted figures.
-export const UNITS_WAIT_MS = 1_500
-export async function unitsWithin(read, label, ms = UNITS_WAIT_MS) {
-  let timer
-  const late = new Promise(resolve => { timer = setTimeout(() => resolve('timeout'), ms) })
-  try {
-    const value = await Promise.race([Promise.resolve().then(read), late])
-    if (value === 'timeout') { console.error('stock units unavailable', label, 'timeout'); return null }
-    return value ?? null
-  } catch (error) { console.error('stock units unavailable', label, error?.code ?? error?.message ?? 'error'); return null }
-  finally { clearTimeout(timer) }
-}
-
-// Today's display facts per stock asset (one bounded read each). connection: a Connection or a function making one (called
-// only here, so a SOL-only list never needs the RPC).
-async function unitsByAsset(assetIds, connection, info) {
-  let rpc
-  try { rpc = typeof connection === 'function' ? connection() : connection }
-  catch (error) { console.error('stock units unavailable', error?.message ?? 'error'); return new Map() }
-  return new Map(await Promise.all([...new Set(assetIds)].map(async assetId => [assetId, await unitsWithin(() => info(assetId, { connection: rpc }), assetId)])))
-}
-
 // A stamped market's stock and recorded graduation, or null (logged) when its stamp or graduation record does not hold up.
 function resolvedStamp(market, event) {
   try {
@@ -122,11 +99,11 @@ function resolvedStamp(market, event) {
 }
 
 // markets: rows as server.mjs builds them (repoId, pool and, for stamped rows, quoteAssetId and quoteMint). Returns the same
-// array when no row is stamped. withUnits: also read today's multiplier and USD price through `connection` (the market
-// list renders them on the server; a token page reads them from the metrics route instead, so single-market reads, which
-// every market API route makes, stay off the RPC).
+// array when no row is stamped. withUnits: also add today's multiplier and USD price from the units cache (app/lib/
+// stock-units.mjs) as they stand, never waiting for the RPC: missing units are null until a background refresh lands (the
+// market list renders them on the server; a token page reads them from the metrics route instead).
 // A failure here never takes SOL rows down: the stamped rows then carry `stock.unavailable`.
-export async function withStockStats(markets, { db, connection = null, withUnits = false, now = Date.now(), info = quoteAssetInfo } = {}) {
+export async function withStockStats(markets, { db, connection = null, withUnits = false, now = Date.now(), units = stockUnits } = {}) {
   const stamped = markets.filter(isStockMarket)
   if (!stamped.length) return markets
   const overlay = new Map(stamped.map(market => [market.repoId, unavailableStockRow(market)]))
@@ -135,14 +112,12 @@ export async function withStockStats(markets, { db, connection = null, withUnits
     const byRepo = new Map(events.map(row => [String(row.github_repo_id), row]))
     const resolved = stamped.map(market => resolvedStamp(market, byRepo.get(String(market.repoId)))).filter(Boolean)
     if (resolved.length) {
-      const [{ rows }, units] = await Promise.all([
-        db.query(FACTS, [resolved.map(r => r.market.repoId), resolved.map(r => r.market.pool), resolved.map(r => r.quote.assetId),
-          resolved.map(r => r.quote.mint), resolved.map(r => r.migration?.pool ?? null), resolved.map(r => r.migration?.slot ?? null), new Date(now)]),
-        withUnits && connection ? unitsByAsset(resolved.map(r => r.quote.assetId), connection, info) : new Map(),
-      ])
+      const { rows } = await db.query(FACTS, [resolved.map(r => r.market.repoId), resolved.map(r => r.market.pool), resolved.map(r => r.quote.assetId),
+        resolved.map(r => r.quote.mint), resolved.map(r => r.migration?.pool ?? null), resolved.map(r => r.migration?.slot ?? null), new Date(now)])
       const facts = new Map(rows.map(row => [row.repoId, row]))
+      const unitsOf = assetId => withUnits && connection ? units.current(assetId, connection) : null
       for (const { market, quote, migration } of resolved) {
-        overlay.set(market.repoId, stockRowStats(market, quote, facts.get(String(market.repoId)), migration, units.get(quote.assetId) ?? null, now))
+        overlay.set(market.repoId, stockRowStats(market, quote, facts.get(String(market.repoId)), migration, unitsOf(quote.assetId), now))
       }
     }
   } catch (error) { console.error('stock market stats unavailable', error?.code ?? error?.message ?? 'error') }

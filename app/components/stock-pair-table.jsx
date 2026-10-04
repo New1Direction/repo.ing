@@ -6,6 +6,11 @@ const PERIOD = { '24h': 'Past 24 hours', '7d': 'Past 7 days', '30d': 'Past 30 da
 export const unitsKey = asset => `${asset.assetId}:${asset.mint}`
 const count = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`
 
+// The stock section when its totals cannot be read: said so, as the SOL analytics say it, never hidden.
+export function StockPairsUnavailable() {
+  return <div className="state-card error" role="status">Stock-pair totals are temporarily unavailable. Please try again shortly.</div>
+}
+
 // One figure in its stock as wallets show it, with a USD estimate at that stock's price under it.
 function StockAmount({ raw, units }) {
   const usd = formatUsdValue(stockRawUsd(raw, units))

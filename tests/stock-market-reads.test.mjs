@@ -9,7 +9,9 @@ import { formatQuoteAmount, formatStockCompact, stockAmountLabel, stockDisplayUn
 import { chartQuote } from '../app/lib/chart-quote.mjs'
 import { chartSeries } from '../app/lib/chart-display.mjs'
 import { phoneMarketSummary, stockMarketSummary } from '../app/lib/phone-market-summary.mjs'
-import { UNITS_WAIT_MS, stockCurveProgress, stockGraduation, stockRowStats, unavailableStockRow, unitsWithin, withStockStats } from '../app/lib/stock-market-stats.mjs'
+import { stockCurveProgress, stockGraduation, stockRowStats, unavailableStockRow, withStockStats } from '../app/lib/stock-market-stats.mjs'
+import { UNITS_WAIT_MS, createStockUnitsCache, unitsWithin } from '../app/lib/stock-units.mjs'
+import { readOnlyTools } from '../app/lib/mcp-read-tools.mjs'
 import { activityEvents } from '../app/lib/market-activity.mjs'
 import { chartReader } from '../app/lib/market-charts.mjs'
 import { homeMarketTabs } from '../app/lib/market-order.mjs'
@@ -217,20 +219,113 @@ test('activity rows: a stock pair\'s fee splits and launcher payouts, raw, besid
     [{ type: 'fee', signature: 'x', eventIndex: 1, occurredAt: '2026-10-04T09:00:00.000Z', amountBaseUnits: '7' }])
 })
 
-test('a stalled or failing units read never holds the market list: stamped rows come back without units, SOL rows as they were', async () => {
+test('units cache: answers at once, refreshes in the background within UNITS_WAIT_MS, and serves units only while they hold', async () => {
   assert.equal(await unitsWithin(async () => 'units', 'meta-xstock'), 'units')
   assert.equal(await unitsWithin(async () => { throw Error('rpc down') }, 'meta-xstock'), null)
   const quick = Date.now()
   assert.equal(await unitsWithin(() => new Promise(() => {}), 'meta-xstock', 50), null)
   assert.ok(Date.now() - quick < 1000)
+  let clock = 1_000_000, reads = 0, answer = { ...INFO, validForSeconds: 60 }
+  const cache = createStockUnitsCache({ now: () => clock, info: async (assetId, { connection }) => { reads++; assert.equal(connection, 'rpc'); return typeof answer === 'function' ? answer() : answer } })
+  // Cold: nothing yet, and a refresh starts in the background; within() waits for it.
+  assert.equal(cache.current('meta-xstock', () => 'rpc'), null)
+  assert.equal((await cache.within('meta-xstock', () => 'rpc')).uiMultiplier, MULTIPLIER)
+  assert.equal(reads, 1)
+  // Warm: served from the cache, with the time it still holds; no read until it is due.
+  clock += 10_000
+  assert.equal(cache.current('meta-xstock', 'rpc').validForSeconds, 50); assert.equal(reads, 1)
+  // A failed refresh keeps the last units only while they hold, then there are none.
+  answer = () => { throw Error('rpc down') }
+  clock += 25_000
+  assert.equal(cache.current('meta-xstock', 'rpc').uiMultiplier, MULTIPLIER, 'due for a refresh, still valid')
+  assert.equal(await cache.within('meta-xstock', 'rpc').then(u => u.uiMultiplier), MULTIPLIER)
+  clock += 30_000
+  assert.equal(cache.current('meta-xstock', 'rpc'), null, 'lapsed: never a stale multiplier')
+  assert.equal(await cache.within('meta-xstock', 'rpc'), null)
+  // A hanging read never makes within() wait past the bound.
+  const hanging = createStockUnitsCache({ waitMs: 50, info: () => new Promise(() => {}) })
+  const started = Date.now()
+  assert.equal(await hanging.within('meta-xstock', 'rpc'), null)
+  assert.ok(Date.now() - started < 1000)
+})
+
+test('stamped rows take units from the cache without waiting; a stalled or failing read leaves them null and SOL rows untouched', async () => {
   const db = { query: async sql => ({ rows: /stock_graduation_events/.test(sql) ? [] : [{ repoId: stamped.repoId, lastSqrtPrice: (SQRT * 2n).toString(), volume24h: '5' }] }) }
   const sol = { repoId: '1', pool: 'p', priceSol: 0.001 }
+  const stalled = createStockUnitsCache({ info: () => new Promise(() => {}) })
   const started = Date.now()
-  const rows = await withStockStats([sol, stamped], { db, connection: {}, withUnits: true, info: () => new Promise(() => {}) })
-  assert.ok(Date.now() - started < UNITS_WAIT_MS + 1000, 'the list waits at most UNITS_WAIT_MS for units')
+  const rows = await withStockStats([sol, stamped], { db, connection: {}, withUnits: true, units: stalled })
+  assert.ok(Date.now() - started < 500, 'the list never waits for units')
   assert.equal(rows[0], sol)
   assert.deepEqual([rows[1].stock.price, rows[1].stock.volume24h, rows[1].stock.uiMultiplier, rows[1].stock.usdPrice], [0.04, '5', null, null])
+  // Once the cache holds units, the next list carries them.
+  const warm = createStockUnitsCache({ info: async () => ({ ...INFO }) })
+  await warm.within('meta-xstock', {})
+  const [row] = await withStockStats([stamped], { db, connection: {}, withUnits: true, units: warm })
+  assert.deepEqual([row.stock.uiMultiplier, row.stock.usdPrice], [MULTIPLIER, 712.5])
   // A connection that cannot even be made leaves the units null too.
-  const noRpc = await withStockStats([stamped], { db, connection: () => { throw Error('SOLANA_RPC_URL is required in production') }, withUnits: true })
-  assert.equal(noRpc[0].stock.uiMultiplier, null); assert.equal(noRpc[0].stock.price, 0.04)
+  const noRpc = createStockUnitsCache()
+  const [plain] = await withStockStats([stamped], { db, connection: () => { throw Error('SOLANA_RPC_URL is required in production') }, withUnits: true, units: noRpc })
+  assert.equal(plain.stock.uiMultiplier, null); assert.equal(plain.stock.price, 0.04)
+})
+
+test('listMarkets never waits on a hanging RPC: a stamped row comes back at once without units, the SOL row as it was', async () => {
+  // Every outbound request hangs (the RPC meter takes this fetch on its first use).
+  const realFetch = globalThis.fetch
+  globalThis.fetch = () => new Promise(() => {})
+  process.env.DATABASE_URL = 'postgres://stock-hang-test.invalid/db'
+  process.env.SOLANA_RPC_URL = 'http://127.0.0.1:9/hang'
+  const solRow = { repoId: '1', mint: 'SolMint', pool: 'SolPool', indexedAt: new Date(), stars: '7', forks: '0', earned: '10', claimed: '0', volume24hLamports: '5' }
+  const stockRow = { ...solRow, repoId: stamped.repoId, mint: stamped.mint, pool: stamped.pool, volume24hLamports: '0', quoteAssetId: stamped.quoteAssetId, quoteMint: stamped.quoteMint }
+  globalThis.__gitfunPool = { query: async sql => ({ rows: /from markets m join repositories r/.test(sql) ? [solRow, stockRow]
+    : /stock_graduation_events/.test(sql) ? [] : [{ repoId: stamped.repoId, lastSqrtPrice: (SQRT * 2n).toString(), volume24h: '5' }] }) }
+  try {
+    const { listMarkets } = await import('../app/lib/server.mjs?hang')
+    const started = Date.now()
+    const { markets, unavailable } = await listMarkets()
+    assert.ok(Date.now() - started < UNITS_WAIT_MS, `listMarkets took ${Date.now() - started} ms`)
+    assert.equal(unavailable, undefined)
+    const [sol, stock] = markets
+    assert.equal(sol.volume24hLamports, '5'); assert.equal('stock' in sol, false); assert.equal('quoteAssetId' in sol, false)
+    assert.deepEqual([stock.priceSol, stock.volume24hLamports, stock.stock.price, stock.stock.uiMultiplier], [null, null, 0.04, null])
+  } finally { globalThis.fetch = realFetch; globalThis.__gitfunPool = undefined; delete process.env.DATABASE_URL; delete process.env.SOLANA_RPC_URL }
+})
+
+test('MCP tools: a stock pair\'s volume in its stock and no builder fees, never a SOL zero; SOL rows unchanged', async () => {
+  const origin = 'https://repo.ing'
+  const sol = { repoId: '123456', mint: 'RepoMint111111111111111111111111111111111', fullName: 'acme/widget', symbol: 'WIDGET', tokenName: 'Widget', description: 'd',
+    volume24hLamports: '12500000000', earned: '2000000000', claimed: '500000000', graduated: false, bondingPercent: 42.7, indexedAt: '2026-09-30T12:00:00.000Z',
+    promoted: true, newRepo: false, beneficiaryWallet: null, source: 'github' }
+  const stock = { ...sol, repoId: stamped.repoId, mint: 'DocuMint111111111111111111111111111111111', fullName: 'facebook/docusaurus', symbol: 'DOCUSAURUS',
+    tokenName: 'Docusaurus', volume24hLamports: null, earned: '0', claimed: '0', bondingPercent: 30, indexedAt: '2026-10-03T00:00:00.000Z', priceSol: null,
+    quoteAssetId: stamped.quoteAssetId, quoteMint: stamped.quoteMint,
+    stock: { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, price: 0.04, volume24h: '140000000', uiMultiplier: MULTIPLIER, usdPrice: 712.5 } }
+  const sources = rows => ({ origin: () => origin, modelsEnabled: () => false, markets: async () => ({ markets: rows }), race: async () => ({ markets: [] }),
+    excluded: async () => new Set(), decision: async () => null, usdPerSol: async () => 150, totals: async () => null,
+    fees: async repoId => { assert.notEqual(repoId, stamped.repoId, 'a stock pair is never reconciled for builder fees'); return { status: 'MATCH', onchainCreatorFee: 1n } } })
+  const call = async (rows, name, args) => {
+    const tool = readOnlyTools(sources(rows)).find(entry => entry.definition.name === name)
+    const answer = await tool.call(tool.input.parse(args), new Request(`${origin}/api/mcp/readonly`))
+    return { text: answer.content[0].text, data: answer.structuredContent }
+  }
+  const found = await call([sol, stock], 'find_market', { project: 'facebook/docusaurus' })
+  assert.match(found.text, /24h volume: 1\.4 METAx/)
+  assert.match(found.text, /Paired with METAx: its trading fees are paid in METAx, to its launcher and to the METAx accumulator; its repository's owners have no builder fees to claim\./)
+  assert.doesNotMatch(found.text, /SOL|Claim page/)
+  const [fact] = found.data.markets
+  assert.deepEqual([fact.pair, fact.volume24h], [{ assetId: 'meta-xstock', symbol: 'METAx' }, { baseUnits: '140000000', decimals: 8, symbol: 'METAx', shown: '1.4 METAx' }])
+  for (const field of ['volume24hLamports', 'builderFees', 'claimUrl']) assert.equal(field in fact, false, field)
+  // Without today's units the volume is not converted: no line at all, the raw amount in the data.
+  const unitless = await call([{ ...stock, stock: { ...stock.stock, uiMultiplier: null, usdPrice: null } }], 'find_market', { project: 'facebook/docusaurus' })
+  assert.doesNotMatch(unitless.text, /24h volume|SOL/); assert.equal('shown' in unitless.data.markets[0].volume24h, false)
+  const earned = await call([sol, stock], 'builder_earnings', { project: 'facebook/docusaurus' })
+  assert.match(earned.text, /facebook\/docusaurus \(\$DOCUSAURUS\): Paired with METAx/); assert.doesNotMatch(earned.text, /SOL/)
+  assert.equal(earned.data.markets[0].builderEarnings, 'none')
+  const newest = await call([sol, stock], 'trending_markets', { sort: 'newest' })
+  assert.match(newest.text, /facebook\/docusaurus \(\$DOCUSAURUS\) · launched 2026-10-03 · 1\.4 METAx 24h volume · 30% to graduation/)
+  assert.match(newest.text, /acme\/widget \(\$WIDGET\) · launched 2026-09-30 · 12\.5 SOL 24h volume · 42% to graduation/)
+  const stockEntry = newest.data.markets.find(entry => entry.mint === stock.mint)
+  assert.equal('volume24hLamports' in stockEntry, false); assert.equal(stockEntry.volume24h.baseUnits, '140000000')
+  // By volume (SOL) a stock pair, with no SOL volume, is not listed; the SOL row reads as before.
+  assert.deepEqual((await call([sol, stock], 'trending_markets', { sort: 'volume' })).data.markets.map(entry => [entry.mint, entry.volume24hLamports]), [[sol.mint, '12500000000']])
 })
