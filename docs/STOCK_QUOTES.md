@@ -361,3 +361,52 @@ Owner actions:
 
 Both are on-chain steps: scripts will print a dry run and a plain description first, and nothing is sent without the
 owner's approval.
+
+## Accumulator and settlement (P8–P10, read-only)
+
+The owner creates and seeds each canonical REPOING/<stock> DAMM v2 pool himself, later, from that stock's accumulated fees.
+repo.ing keeps only the accounts, previews and checks: nothing here signs or sends a transaction, and no script loads a key.
+Collection, launcher payouts and settlement execution come later, behind operator flags. Amounts are raw units of the stock;
+displays add the ScaledUiAmount multiplier and a USD price.
+
+- **The accumulator, per stock** (`src/stock-accumulator.mjs`), from the stock ledgers:
+  - **credited:** `stock_fee_events.accumulator_amount` plus `stock_damm_fee_checkpoints.accumulator_credit`;
+  - **in the pools:** credited but not collected (with a chain read, beside what the pools hold);
+  - **collected:** settled `stock_fee_collections`, now in custody;
+  - **owed to launchers:** their credited share less settled `stock_launcher_payouts`;
+  - **spent:** `stock_settlement_receipts`; **available:** collected less spent.
+
+  It lists the contributing repositories, and reports any inconsistency as a problem, never correcting it.
+- **Collection previews** (`src/stock-collections.mjs`) cover each market's curve creator and partner fees and its graduated
+  creator and partner positions.
+  - A source is planned only when what its pool holds equals what the ledger expects, and no collection of it is pending.
+  - The plan gives the exact instructions, the launcher's and the accumulator's parts, and a `terms_hash`. Custody is the
+    partner wallet, a constant. Off localnet a second RPC (`GRADUATION_VERIFICATION_RPC_URL`) must agree, as for SOL fees.
+  - `checkStockCollectionReceipt` will settle executions on exact Token-2022 balance deltas and the program's claim event.
+  - The SOL sweep never sees a stock market: `listPlatformFees` lists only `quote_asset_id is null`.
+- **The canonical pool registry** (`src/stock-canonical-pools.mjs`): before a pool is recorded (one active per stock), it is
+  checked on chain to be a DAMM v2 pool of exactly REPOING (SPL Token) and the stock's pinned mint (Token-2022). It must be
+  created by an owner wallet, with the program's own vaults and an owner position. The owner wallets are constants: the
+  partner wallet, the platform-revenue custody and the team wallet.
+- **Settlement** (`src/stock-settlement.mjs`):
+  - **The preview** swaps about half of the available accumulator into REPOING through the canonical pool and adds both
+    sides to the owner's position, permanently locked. It is bounded by slippage (default 100 bps, at most 500) and price
+    impact (default 300 bps, at most 1,000).
+  - **Receipts** verify the owner's own `seed`, `swap` or `add_liquidity` transaction: on the canonical pool only, exact
+    balance deltas of both tokens, every deposited position permanently locked.
+  - A receipt is recorded only within the collected, unspent accumulator: the owner's own funds are not a settlement.
+
+```bash
+node scripts/stock-collect.mjs [--asset meta-xstock] [--repo <id>]   # preview only
+node scripts/stock-pool-register.mjs --asset meta-xstock --pool <address> [--position <address>] [--write]
+node scripts/stock-settlement-preview.mjs --asset meta-xstock [--max <raw>] [--slippage-bps 100] [--impact-bps 300]
+node scripts/stock-settlement-receipt.mjs --asset meta-xstock --kind seed|swap|add_liquidity --signature <sig> [--write]
+```
+
+Scripts are dry runs by default; `--write` writes to the database only. Each prints a JSON report, then what it found and
+would do in plain English. Operators can read the same view at `GET /api/operations/stock-accumulator[?asset=<id>]`. It is
+read-only and protected like the other operator routes.
+
+Tests: `tests/stock-accumulator.test.mjs` (arithmetic, previews, receipt checks), `tests/stock-accumulator-db.test.mjs`
+(PostgreSQL, including the SOL/stock partition) and `tests/stock-accumulator-chain.test.mjs` (stock validator: collections,
+a seed, a settlement and swaps from the previews' own instructions, verified as receipts).
