@@ -47,7 +47,9 @@ export function topOfRace(race, { limit = GRADUATION_RACE_LIMIT, excludeMints = 
 
 // One joined read of public markets with a VERIFIED observation; freshness is checked per row above. Repositories on
 // the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS and maintainer opt-outs, promotionExclusions) never race; when
-// that list cannot be read the race fails instead.
+// that list cannot be read the race fails instead. SOL markets only (quote_asset_id is null): the race and everything
+// reading it (lists, the $REPOING card, the MCP tools) state reserves in SOL, and a stock-paired market's progress is in
+// its stock and comes from its own observations; its row and token page show it (app/lib/stock-market-stats.mjs).
 export async function readGraduationRace(pool, { now = Date.now(), excluded } = {}) {
   const [{ rows }, skip] = await Promise.all([pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_name as "tokenName",
       m.token_symbol as "symbol", r.full_name as "fullName", o.status, o.observation, o.error_code,
@@ -55,7 +57,8 @@ export async function readGraduationRace(pool, { now = Date.now(), excluded } = 
     from markets m join repositories r on r.github_repo_id = m.github_repo_id
     join graduation_observations o on o.github_repo_id = m.github_repo_id
     left join graduation_events e on e.github_repo_id = m.github_repo_id
-    where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and o.status = 'VERIFIED'`),
+    where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and o.status = 'VERIFIED'
+      and m.quote_asset_id is null`),
   excluded ?? promotionExclusions(pool)])
   return rankGraduationRace(rows, { now, excluded: skip })
 }

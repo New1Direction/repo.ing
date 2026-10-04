@@ -1,8 +1,14 @@
 import pg from 'pg'
 export const MARKET_CHANNEL = 'repoing_market_updates'
-export function parseMarketNotification(payload) {
+// Stock-paired markets' hints (migration 0054): a new stock trade or fee row. Either changes what a chart or an activity
+// read shows, so both reach listeners as 'trade', the kind the SOL channel uses for the same thing.
+export const STOCK_MARKET_CHANNEL = 'repoing_stock_market_updates'
+export function parseMarketNotification(payload, channel = MARKET_CHANNEL) {
   try {
     const value = JSON.parse(payload)
+    if (channel === STOCK_MARKET_CHANNEL) {
+      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.mint) && ['trade', 'fee'].includes(value.kind) ? { mint: value.mint, kind: 'trade' } : null
+    }
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.mint) || !['trade','curve'].includes(value.kind)) return null
     return { mint: value.mint, kind: value.kind }
   } catch { return null }
@@ -32,14 +38,15 @@ export function createMarketNotifications({ connectionString, makeClient = optio
     next.on('error', failed)
     next.on('end', failed)
     next.on('notification', message => {
-      if (client !== next || message.channel !== MARKET_CHANNEL) return
-      const value = parseMarketNotification(message.payload)
+      if (client !== next || (message.channel !== MARKET_CHANNEL && message.channel !== STOCK_MARKET_CHANNEL)) return
+      const value = parseMarketNotification(message.payload, message.channel)
       if (value) emit(value.mint, value.kind)
     })
     connecting = (async () => {
       try {
         await next.connect()
         await next.query(`LISTEN ${MARKET_CHANNEL}`)
+        await next.query(`LISTEN ${STOCK_MARKET_CHANNEL}`)
         if (client === next) for (const mint of listeners.keys()) emit(mint, 'resync')
       } catch { failed() }
     })()

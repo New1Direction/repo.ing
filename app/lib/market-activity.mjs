@@ -13,7 +13,9 @@ export function linkedTraders(rows, handles) {
   })
 }
 
-export function activityEvents({ trades = [], fees = [], claims = [], parts = [], handles = new Map(), limit = 40 }) {
+// A stock-paired market (app/lib/stock-market-activity.mjs) has no SOL fees or builder claims: its curve fee rows carry the
+// split (launcher and the stock's accumulator) as 'stock-fee', and its launcher payouts are 'launcher-payout', all raw.
+export function activityEvents({ trades = [], fees = [], claims = [], parts = [], stockFees = [], launcherPayouts = [], handles = new Map(), limit = 40 }) {
   return [
     ...trades.map(row => {
       const x = publicX(row.trader ? handles.get(row.trader) : null)
@@ -23,6 +25,9 @@ export function activityEvents({ trades = [], fees = [], claims = [], parts = []
     ...fees.map(row => ({ type: 'fee', signature: row.signature, eventIndex: row.eventIndex,
       occurredAt: iso(row.occurredAt), amountBaseUnits: row.amountBaseUnits })),
     ...claims.map(row => ({ type: 'claim', signature: row.signature, occurredAt: iso(row.occurredAt), amountBaseUnits: row.amountBaseUnits })),
+    ...stockFees.map(row => ({ type: 'stock-fee', signature: row.signature, eventIndex: row.eventIndex, occurredAt: iso(row.occurredAt),
+      launcherBaseUnits: row.launcherBaseUnits, accumulatorBaseUnits: row.accumulatorBaseUnits })),
+    ...launcherPayouts.map(row => ({ type: 'launcher-payout', signature: row.signature, occurredAt: iso(row.occurredAt), amountBaseUnits: row.amountBaseUnits })),
     ...parts.map(row => ({ type: row.type, signature: row.signature, ref: row.ref, occurredAt: iso(row.occurredAt),
       ...(row.type === 'parts-pledge' ? { amountBaseUnits: row.amountBaseUnits, symbol: row.symbol, decimals: row.decimals, usdCents: row.usdCents } : { body: row.body }) })),
   ].sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt)).slice(0, limit)

@@ -1,11 +1,34 @@
-import { database, marketByMint } from '../../../../lib/server.mjs'
+import { chain, database, marketByMint } from '../../../../lib/server.mjs'
 import { MARKET_ACTIVITY_CACHE, NO_STORE } from '../../../../lib/cache-headers.mjs'
 import { withServerTiming } from '../../../../lib/server-timing.mjs'
 import { xHandlesFor } from '../../../../lib/x-links.mjs'
 import { activityEvents } from '../../../../lib/market-activity.mjs'
+import { readStockActivity } from '../../../../lib/stock-market-activity.mjs'
+import { isStockMarket } from '../../../../../src/stock-market-chart.mjs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+
+// Parts fund: confirmed pledges and build updates (text only here; the card shows the photos).
+// (Same SQL text as before it moved here.)
+const partsActivity = (pool, repoId) => pool.query(`(select 'parts-pledge' as type, p.signature, p.id::text as ref, p.confirmed_at as "occurredAt", p.received_amount::text as "amountBaseUnits",
+          p.symbol, p.decimals, p.usd_cents::int as "usdCents", null as body from parts_pledges p
+          where p.github_repo_id=$1 and p.status in ('confirmed','paid','refunded') order by p.confirmed_at desc limit 15)
+        union all
+        (select 'parts-update', null, u.id::text, u.created_at, null, null, null, null, left(u.body, 160) from parts_updates u
+          where u.github_repo_id=$1 order by u.created_at desc limit 10)`, [repoId]).catch(error => {
+  if (error?.code === '42P01') return { rows: [] }
+  throw error
+})
+
+// Traders who linked X are named by that account (one batched read); the lookup failing only drops the names.
+const handlesFor = rows => xHandlesFor([...new Set(rows.map(row => row.trader).filter(Boolean))]).catch(() => new Map())
+
+// A stock-paired market reads the stock ledger and answers with its stock's units (app/lib/stock-market-activity.mjs).
+async function stockActivity(pool, market) {
+  const [{ trades, fees, payouts, quote }, parts] = await Promise.all([readStockActivity(pool, market, { connection: chain() }), partsActivity(pool, market.repoId)])
+  return { events: activityEvents({ trades, stockFees: fees, launcherPayouts: payouts, parts: parts.rows, handles: await handlesFor(trades) }), quote }
+}
 
 export const GET = withServerTiming(async (_request, { params }) => {
   const { mint } = await params
@@ -13,6 +36,7 @@ export const GET = withServerTiming(async (_request, { params }) => {
   const pool = database()
   if (!market || !pool) return Response.json({ error: 'Market unavailable' }, { status: 404, headers: NO_STORE })
   try {
+    if (isStockMarket(market)) return Response.json(await stockActivity(pool, market), { headers: MARKET_ACTIVITY_CACHE })
     const [trades, fees, claims, parts] = await Promise.all([
       // Curve trades, then (after graduation) the same repository's verified pool, with each trade's trader.
       pool.query(`(select signature, event_index as "eventIndex", direction, traded_at as "occurredAt",
@@ -32,19 +56,9 @@ export const GET = withServerTiming(async (_request, { params }) => {
       pool.query(`select claim_signature as signature, amount_base_units::text as "amountBaseUnits",
         settled_at as "occurredAt" from repo_claims where github_repo_id = $1 and status = 'settled'
         order by settled_at desc limit 15`, [market.repoId]),
-      // Parts fund: confirmed pledges and build updates (text only here; the card shows the photos).
-      pool.query(`(select 'parts-pledge' as type, p.signature, p.id::text as ref, p.confirmed_at as "occurredAt", p.received_amount::text as "amountBaseUnits",
-          p.symbol, p.decimals, p.usd_cents::int as "usdCents", null as body from parts_pledges p
-          where p.github_repo_id=$1 and p.status in ('confirmed','paid','refunded') order by p.confirmed_at desc limit 15)
-        union all
-        (select 'parts-update', null, u.id::text, u.created_at, null, null, null, null, left(u.body, 160) from parts_updates u
-          where u.github_repo_id=$1 order by u.created_at desc limit 10)`, [market.repoId]).catch(error => {
-        if (error?.code === '42P01') return { rows: [] }
-        throw error
-      }),
+      partsActivity(pool, market.repoId),
     ])
-    // Traders who linked X are named by that account (one batched read); the lookup failing only drops the names.
-    const handles = await xHandlesFor([...new Set(trades.rows.map(row => row.trader).filter(Boolean))]).catch(() => new Map())
+    const handles = await handlesFor(trades.rows)
     const events = activityEvents({ trades: trades.rows, fees: fees.rows, claims: claims.rows, parts: parts.rows, handles })
     return Response.json({ events }, { headers: MARKET_ACTIVITY_CACHE })
   } catch { return Response.json({ error: 'Activity is temporarily unavailable' }, { status: 503, headers: NO_STORE }) }
