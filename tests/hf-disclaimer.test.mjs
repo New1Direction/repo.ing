@@ -75,12 +75,6 @@ const SURFACES = {
     assert.equal(markup.split(`>${HF_DISCLAIMER_BADGE}</p>`).length - 1, 1, 'the card carries the badge')
     full(markup)
   },
-  'app/components/home-highlights.jsx': async () => {
-    const { MovingNowStrip } = await appModule('app/components/home-highlights.jsx')
-    const markup = html(h(MovingNowStrip, { kind: 'moving', markets: [MODEL], now: Date.parse('2026-10-01T12:00:00Z') }))
-    assert.equal(markup.split(`>${HF_DISCLAIMER_BADGE}</p>`).length - 1, 1, 'the card carries the badge')
-    full(markup)
-  },
   'app/components/hf/models-strip.jsx': async () => {
     const { ModelsStrip } = await appModule('app/components/hf/models-strip.jsx')
     const { selectModelStrip } = await import('../app/lib/hf-model-display.mjs')

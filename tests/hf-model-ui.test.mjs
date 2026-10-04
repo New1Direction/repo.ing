@@ -242,8 +242,9 @@ test('more-markets cards, the graduation race and the home Models strip label mo
   const strip = html(h(ModelsStrip, { markets: selectModelStrip([GITHUB, LISTED, { ...MODEL, repoId: '4503599627370498', mint: 'MintModelTwo', volume24hLamports: '0', stars: 12 }]) }))
   assert.match(strip, /title="4,194 likes on Hugging Face"/)
   assert.match(strip, /title="Likes unavailable right now"/, 'stars are never shown as likes')
-  assert.match(strip, /<h2 id="models-strip-title">Hugging Face models<\/h2>/)
-  assert.match(strip, /<a class="view-all" href="\/explore\?source=models">View all/)
+  // The home board's Models tab names the strip; the strip itself is the cards, the disclaimer and the way to all of them.
+  assert.match(strip, /^<ol class="more-markets-rail">/)
+  assert.match(strip, /<a class="home-board-more" href="\/explore\?source=models">Every model market/)
   assert.deepEqual([...strip.matchAll(/<strong title="openai-community\/gpt2">([^<]+)<\/strong>/g)].map(match => match[1]), ['openai-community/gpt2', 'openai-community/gpt2'])
   assert.deepEqual([...strip.matchAll(/href="\/token\/(\w+)#trade-panel"/g)].map(match => match[1]), ['MintModelGpt2', 'MintModelTwo'], 'by 24h volume')
   assert.equal(strip.split(`<p class="model-card-badge" title="${escaped(HF_DISCLAIMER)}">${HF_DISCLAIMER_BADGE}</p>`).length - 1, 2, 'each card shows the badge')
