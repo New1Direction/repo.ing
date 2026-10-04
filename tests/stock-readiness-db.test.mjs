@@ -11,7 +11,7 @@ import { quoteAssetById } from '../src/quote-assets.mjs'
 import { SOL_INDEXER_MARKETS, STOCK_INDEXER_MARKETS, checkDatabase } from '../src/stock-readiness.mjs'
 
 // The readiness database checks (src/stock-readiness.mjs, docs/STOCK_GO_LIVE.md) on real PostgreSQL: migration 0054's tables,
-// functions and triggers, and 0055's read indexes; the SOL/stock market partition, which must be exactly the lists the two worker indexers walk; and no
+// functions and triggers, 0055's read indexes and 0056's execution guards; the SOL/stock market partition, which must be exactly the lists the two worker indexers walk; and no
 // stock-paired market in any SOL ledger. Every read is in a READ ONLY transaction that is rolled back.
 const DB = 'repoing_stock_readiness_test'
 const URL_ = `postgres://postgres:launchtest@127.0.0.1:55432/${DB}`
@@ -61,6 +61,14 @@ insert into stock_fee_events(github_repo_id,asset_id,quote_mint,pool,signature,e
     accumulator_amount,policy_version) values
   (${DOCS},'${META.assetId}','${META.mint}','${key(41)}','${sig(71)}',0,40,1235927,504872,373016,1367783,1);`
 
+// Migration 0056's guards exactly as drizzle/0056_stock_execution_guards.sql creates them (it ships with stock fee collection and
+// launcher payout execution). Applied here after the migrations, a no-op once the migrations folder has 0056 itself.
+const GUARDS = {
+  stock_fee_collections_signature_unique: 'CREATE UNIQUE INDEX IF NOT EXISTS "stock_fee_collections_signature_unique" ON "stock_fee_collections" ("signature") WHERE "signature" IS NOT NULL',
+  stock_launcher_payouts_signature_unique: 'CREATE UNIQUE INDEX IF NOT EXISTS "stock_launcher_payouts_signature_unique" ON "stock_launcher_payouts" ("signature") WHERE "signature" IS NOT NULL',
+  stock_launcher_payouts_asset_status: 'CREATE INDEX IF NOT EXISTS "stock_launcher_payouts_asset_status" ON "stock_launcher_payouts" ("asset_id", "status")',
+}
+
 // The worker's two indexers over a chain whose every pool history is just its launch (as tests/stock-curve-indexing-db.test.mjs).
 const launches = new Map([[key(11), sig(11)], [key(21), sig(21)], [key(41), sig(41)]])
 const connection = { getSignaturesForAddress: async pool => [{ signature: launches.get(pool.toBase58()), slot: 1, err: null }] }
@@ -77,7 +85,7 @@ const recording = client => {
 }
 const byName = items => Object.fromEntries(items.map(entry => [entry.name, entry]))
 
-test('readiness database checks on PostgreSQL: migrations 0054 and 0055, the indexers\' partition, the SOL ledgers', { timeout: 120_000 }, async t => {
+test('readiness database checks on PostgreSQL: migrations 0054, 0055 and 0056, the indexers\' partition, the SOL ledgers', { timeout: 120_000 }, async t => {
   assert.equal(process.env.DATABASE_URL ?? URL_, URL_)
   const admin = new pg.Pool({ connectionString: URL_.replace(new RegExp(`${DB}$`), 'postgres') })
   let pool, client, created = false
@@ -87,19 +95,21 @@ test('readiness database checks on PostgreSQL: migrations 0054 and 0055, the ind
     pool = new pg.Pool({ connectionString: URL_ })
     await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
     await pool.query(SEED)
+    for (const sql of Object.values(GUARDS)) await pool.query(sql)
     client = await pool.connect()
 
     await t.test('a migrated database passes every check, read in READ ONLY transactions that are rolled back', async () => {
       const db = recording(client)
       const items = byName(await checkDatabase({ db }))
-      assert.deepEqual(Object.keys(items), ['Migration 0054', 'Migration 0055', 'Market partition', 'SOL ledgers'])
-      assert.deepEqual(Object.values(items).map(entry => entry.status), ['PASS', 'PASS', 'PASS', 'PASS'], JSON.stringify(items))
+      assert.deepEqual(Object.keys(items), ['Migration 0054', 'Migration 0055', 'Migration 0056', 'Market partition', 'SOL ledgers'])
+      assert.deepEqual(Object.values(items).map(entry => entry.status), ['PASS', 'PASS', 'PASS', 'PASS', 'PASS'], JSON.stringify(items))
       assert.equal(items['Migration 0054'].reason, '10 stock tables, 3 functions and 10 triggers present, every trigger enabled')
       assert.equal(items['Migration 0055'].reason, 'the stock ledgers\' 3 read indexes are present and valid')
+      assert.equal(items['Migration 0056'].reason, 'the stock execution guards\' 3 indexes are present and valid, one collection and one payout per signature')
       assert.equal(items['Market partition'].reason, '3 indexed markets: 2 SOL (the SOL indexer\'s list) + 1 stock (the stock indexer\'s list), none in both')
       assert.equal(items['SOL ledgers'].reason, 'no stock-paired market in any of the 12 SOL fee, trade, claim and reward tables')
       const kinds = db.statements.map(sql => sql.startsWith('select ') ? 'select' : sql)
-      assert.deepEqual(kinds.filter(kind => kind !== 'select'), Array(4).fill(['begin transaction read only', "set local statement_timeout = '30s'", 'rollback']).flat())
+      assert.deepEqual(kinds.filter(kind => kind !== 'select'), Array(5).fill(['begin transaction read only', "set local statement_timeout = '30s'", 'rollback']).flat())
       assert.equal((await client.query('show transaction_read_only')).rows[0].transaction_read_only, 'off', 'no transaction left open')
     })
 
@@ -140,6 +150,29 @@ test('readiness database checks on PostgreSQL: migrations 0054 and 0055, the ind
       assert.equal(items['Migration 0054'].status, 'PASS')
       await client.query('create index "stock_fee_events_repo_slot" on "stock_fee_events" ("github_repo_id", "slot" desc, "event_index" desc)')
       assert.equal(byName(await checkDatabase({ db: client }))['Migration 0055'].status, 'PASS')
+    })
+
+    await t.test('before migration 0056 is applied its line is a TODO, not a FAIL; a partial or non-unique guard fails', async () => {
+      const drop = async () => { for (const name of Object.keys(GUARDS)) await client.query(`drop index if exists ${name}`) }
+      await drop()
+      const before = byName(await checkDatabase({ db: client }))
+      assert.deepEqual([before['Migration 0056'].status, before['Migration 0056'].reason], ['TODO', 'migration 0056 not applied yet: none of its 3 stock ' +
+        'execution guard indexes exists (it ships with stock fee collection and launcher payout execution, which stay off)'])
+      assert.deepEqual(Object.values(before).filter(entry => entry.status === 'FAIL'), [], 'nothing fails before 0056')
+      // Only the collections guard: the other two are missing.
+      await client.query(GUARDS.stock_fee_collections_signature_unique)
+      assert.deepEqual(byName(await checkDatabase({ db: client }))['Migration 0056'].reason, 'index stock_launcher_payouts_signature_unique missing; ' +
+        'index stock_launcher_payouts_asset_status missing: apply migration 0056 as written')
+      // A payout signature index that does not refuse a second payout with the same signature is not the guard.
+      await client.query('create index "stock_launcher_payouts_signature_unique" on "stock_launcher_payouts" ("signature")')
+      await client.query(GUARDS.stock_launcher_payouts_asset_status)
+      const loose = byName(await checkDatabase({ db: client }))['Migration 0056']
+      assert.deepEqual([loose.status, loose.reason], ['FAIL', 'index stock_launcher_payouts_signature_unique on stock_launcher_payouts is not unique: ' +
+        'apply migration 0056 as written'])
+      // As the migration creates them: PASS again.
+      await drop()
+      for (const sql of Object.values(GUARDS)) await client.query(sql)
+      assert.equal(byName(await checkDatabase({ db: client }))['Migration 0056'].status, 'PASS')
     })
 
     await t.test('a disabled or missing 0054 trigger or function fails', async () => {
