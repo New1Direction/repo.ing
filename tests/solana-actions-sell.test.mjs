@@ -85,7 +85,8 @@ test('sell refuses bad input before reading balances and hides balance-read infr
 
 test('?ref passes a valid referrer wallet to buys and sells; anything else is dropped, never an error', async () => {
   assert.equal(parseActionReferrer(referrer), referrer)
-  for (const bad of [null, '', 'nonsense', pda.toBase58(), `${referrer}x`]) assert.equal(parseActionReferrer(bad), null, String(bad))
+  // A trailing "0" is never base58, so the last case is always malformed (a trailing letter made a valid wallet ~0.6% of runs).
+  for (const bad of [null, '', 'nonsense', pda.toBase58(), `${referrer}0`]) assert.equal(parseActionReferrer(bad), null, String(bad))
   assert.equal((await sell({ ref: referrer })).calls[0].referrer, referrer)
   assert.equal('referrer' in (await sell({ ref: pda.toBase58() })).calls[0], false)
   const buys = []
