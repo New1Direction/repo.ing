@@ -25,6 +25,7 @@ import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { createVerificationBonusAccrual } from '../src/verification-bonus-accrual.mjs'
 import { createVerificationBonusPayouts } from '../src/verification-bonus-payouts.mjs'
 import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
+import { createStockExecutionJob, STOCK_EXECUTION_INTERVAL_MS, stockExecutionLoud } from '../src/stock-execution-job.mjs'
 import { createLaunchAlerts, createLaunchAlertSenders, createLaunchAlertStore, createModelAlertFacts, LaunchAlertConfigError, launchAlertsConfig } from '../src/launch-alerts.mjs'
 import { createMilestoneAlerts, createMilestoneAlertStore, milestoneAlertsConfig } from '../src/milestone-alerts.mjs'
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
@@ -178,6 +179,18 @@ let buybackReceiptTask=null,nextBuybackReceiptCheck=0
 async function observeBuybackReceipts(){
   try{console.log(JSON.stringify({buybackReceipts:await buybackReceipts.runOnce()}))}
   catch{console.log(JSON.stringify({buybackReceiptError:'BUYBACK_RECEIPTS_UNAVAILABLE'}))}
+}
+// Stock-pair fee collections into custody and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by default)"): null, so
+// nothing is built, read, loaded or printed, unless STOCK_COLLECTIONS_EXECUTION_ENABLED or STOCK_LAUNCHER_PAYOUTS_ENABLED is 'true'.
+const stockExecution=createStockExecutionJob({pool,config,connect:()=>({connection:graduationRPC(rpc),verification:process.env.GRADUATION_VERIFICATION_RPC_URL
+  ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})})
+let stockExecutionTask=null,nextStockExecutionCheck=0
+async function observeStockExecution(){
+  try{
+    const r=await meter.track('stockExecution',()=>stockExecution.runOnce())
+    if(r.collections.length||r.payouts.length)console.log(JSON.stringify({stockExecution:r}))
+    if(stockExecutionLoud(r))process.exitCode=1
+  }catch(error){console.log(JSON.stringify({stockExecutionError:String(error?.message??'STOCK_EXECUTION_UNAVAILABLE').slice(0,200)}));process.exitCode=1}
 }
 // Public "new market launched" posts to Telegram/X. Off unless LAUNCH_ALERTS_ENABLED=true, LAUNCH_ALERTS_SINCE and a
 // channel's credentials are set; silent when off. Posts are claimed in launch_alerts before sending (never twice).
@@ -337,6 +350,11 @@ try {
     if(once)await observeBuybackReceipts()
     else if(!buybackReceiptTask&&Date.now()>=nextBuybackReceiptCheck)
       buybackReceiptTask=observeBuybackReceipts().finally(()=>{nextBuybackReceiptCheck=Date.now()+180000;buybackReceiptTask=null})
+    if(stockExecution){
+      if(once)await observeStockExecution()
+      else if(!stockExecutionTask&&Date.now()>=nextStockExecutionCheck)
+        stockExecutionTask=observeStockExecution().finally(()=>{nextStockExecutionCheck=Date.now()+STOCK_EXECUTION_INTERVAL_MS;stockExecutionTask=null})
+    }
     if(tradeCanary){
       if(once)await observeTradeCanary()
       else if(!tradeCanaryTask&&Date.now()>=nextTradeCanaryCheck)
@@ -379,5 +397,5 @@ try {
     if (result.stockFeeError || result.stockFees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
+} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;if(stockExecutionTask)await stockExecutionTask;await pool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }
