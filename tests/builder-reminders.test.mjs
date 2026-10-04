@@ -34,7 +34,7 @@ test('real PostgreSQL: explicit confirmation, immutable retries, daily cap, no r
  const service=createBuilderReminders({pool,secret,origin:'https://repo.ing',now:()=>now,reconcile:async()=>fees,send:async m=>{emails.push(m);if(fail)throw Error('timeout');return 'accepted'}})
  try{
  await db.query(readFileSync('drizzle/0021_builder_reminders.sql','utf8').replaceAll('CREATE TABLE','CREATE TEMPORARY TABLE'))
- await db.query('create temporary table repo_beneficiaries(github_repo_id bigint,github_user_id bigint,wallet text);create temporary table markets(github_repo_id bigint,mint text,status text,launch_finality text,indexed_at timestamptz);create temporary table repositories(github_repo_id bigint,full_name text)')
+ await db.query('create temporary table repo_beneficiaries(github_repo_id bigint,github_user_id bigint,wallet text);create temporary table markets(github_repo_id bigint,mint text,status text,launch_finality text,indexed_at timestamptz,quote_asset_id text);create temporary table repositories(github_repo_id bigint,full_name text)')
  await db.query("insert into repo_beneficiaries values(1,7,'wallet');insert into markets values(1,'mint','confirmed','finalized',now());insert into repositories values(1,'owner/repo')")
  await service.subscribe('7','owner@example.com');assert.equal((await service.status('7')).status,'pending')
  assert.equal((await service.runOnce()).accepted,0);assert.equal(emails.length,1)

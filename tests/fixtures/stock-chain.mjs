@@ -80,3 +80,29 @@ export function stockMarket({ repoId = '94911145', assetId = 'meta-xstock', conf
   return { githubRepoId: repoId, repoId, status: 'confirmed', mint, pool, creatorWallet: creator, launcherWallet: launcher, config,
     quoteAssetId: assetId, quoteMint, indexedAt: new Date('2026-10-01T00:00:00Z'), launchFinality: 'finalized' }
 }
+
+// A JSON-RPC server for code that builds its own Connection from SOLANA_RPC_URL (app/lib/server.mjs chain()): one handler
+// per method, returning the result; a method without one, or a handler that throws, answers a JSON-RPC error.
+export async function startJsonRpc(handlers) {
+  const { createServer } = await import('node:http')
+  const calls = []
+  const server = createServer(async (request, response) => {
+    let body = ''
+    for await (const chunk of request) body += chunk
+    const call = JSON.parse(body)
+    calls.push(call.method)
+    let payload
+    try {
+      payload = handlers[call.method] ? { result: await handlers[call.method](call.params) }
+        : { error: { code: -32601, message: `This test RPC does not serve ${call.method}` } }
+    } catch (error) { payload = { error: { code: -32000, message: error.message } } }
+    response.setHeader('content-type', 'application/json')
+    response.end(JSON.stringify({ jsonrpc: '2.0', id: call.id, ...payload }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  return { url: `http://127.0.0.1:${server.address().port}`, calls, close: () => new Promise(resolve => server.close(resolve)) }
+}
+
+// An account as JSON-RPC getAccountInfo returns it (base64), or null.
+export const rpcAccount = account => account ? { data: [Buffer.from(account.data).toString('base64'), 'base64'], executable: false,
+  lamports: 1_000_000, owner: new PublicKey(account.owner).toBase58(), rentEpoch: 0, space: account.data.length } : null

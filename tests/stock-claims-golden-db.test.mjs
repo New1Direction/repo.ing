@@ -45,6 +45,7 @@ const server = http.createServer(async (request, response) => {
   }
   if (call.method === 'getBalance') return reply({ context, value: call.params[0] === creator.publicKey.toBase58() ? 1_000_000_000 : 0 })
   if (call.method === 'getLatestBlockhash') return reply({ context, value: { blockhash: bs58.encode(Buffer.alloc(32, 7)), lastValidBlockHeight: 1000 } })
+  if (call.method === 'getTokenAccountsByOwner') return reply({ context, value: [] })
   if (call.method === 'simulateTransaction') return reply({ context, value: { err: { InstructionError: [3, { Custom: 6000 }] }, logs: ['Program log: refused by the test'],
     accounts: null, unitsConsumed: 0, returnData: null } })
   response.end(JSON.stringify({ jsonrpc: '2.0', id: call.id, error: { code: -32601, message: `This test RPC does not serve ${call.method}` } }))
@@ -56,7 +57,8 @@ const github = { repos: [[HELLO, 'octocat/Hello-World']], calls: [] }
 const realFetch = globalThis.fetch
 globalThis.fetch = async (input, init) => {
   const url = new URL(String(input?.url ?? input))
-  if (url.hostname !== 'api.github.com') return realFetch(input, init)
+  if (url.hostname === '127.0.0.1') return realFetch(input, init)
+  if (url.hostname !== 'api.github.com') throw new TypeError(`offline test: ${url.origin}`)
   github.calls.push(url.pathname)
   if (url.pathname === '/user') return Response.json({ id: Number(USER), login: 'octocat' })
   if (url.pathname === '/user/repos') return Response.json(url.searchParams.get('page') === '1'
@@ -87,6 +89,14 @@ const { createBuilderReminders } = await import('../src/builder-reminders.mjs')
 const claimRoute = await import('../app/api/claim/route.js')
 const builderClaimRoute = await import('../app/api/builders/claim/route.js')
 const previewRoute = await import('../app/api/claim/[repo]/preview/route.js')
+const walletRoute = await import('../app/api/wallet/overview/route.js')
+// The keys of /api/wallet/overview as main answers them: a SOL wallet must never get another.
+const WALLET_KEYS = ['checkedAt', 'holdingsAvailable', 'launcherRewards', 'markets', 'portfolio', 'pricesAvailable', 'solBalance', 'usdPerSol', 'wallet']
+async function walletOverview(wallet) {
+  const response = await walletRoute.GET({ url: `https://repo.ing/api/wallet/overview?wallet=${wallet}` })
+  const { checkedAt, ...body } = await response.json()
+  return { status: response.status, keys: Object.keys({ checkedAt, ...body }).sort(), body }
+}
 
 test.after(async () => {
   globalThis.fetch = realFetch
@@ -104,8 +114,8 @@ async function seedSol() {
   await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,description,avatar_url,stars,forks,archived,github_updated_at) values
     (${HELLO},'octocat','Hello-World','octocat/Hello-World',null,null,3000,900,false,now())`)
   await pool.query(`insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,blockhash,
-    last_valid_block_height,launch_slot,launch_finality,indexed_at,last_verified_at) values ($1,'confirmed',$2,$3,'LauncherHello',$4,'Hello','HELLO','LaunchHello',
-    'Hash',100,10,'finalized',now(),now())`, [HELLO, mint, solPool, creator.publicKey.toBase58()])
+    last_valid_block_height,launch_slot,launch_finality,indexed_at,last_verified_at) values ($1,'confirmed',$2,$3,$5,$4,'Hello','HELLO','LaunchHello',
+    'Hash',100,10,'finalized',now(),now())`, [HELLO, mint, solPool, creator.publicKey.toBase58(), beneficiary])
   await pool.query(`insert into fee_events(github_repo_id,mint,pool,signature,event_index,amount_base_units,asset,kind,slot) values
     ($1,$2,$3,'TradeA',0,99400000,$4,'dbc_creator_quote',11), ($1,$2,$3,'TradeB',0,99400000,$4,'dbc_creator_quote',12)`, [HELLO, mint, solPool, NATIVE_MINT.toBase58()])
   await pool.query(`insert into repo_claims(github_repo_id,beneficiary_wallet,amount_base_units,asset,claim_signature,status,settled_at) values
@@ -172,7 +182,8 @@ async function solOutputs() {
   await pool.query(`update builder_reminders set next_check_at = $1`, [new Date(FIXED_NOW - 1000)])
   const reminderRun = await reminders.runOnce()
   const { rows: pending } = await pool.query("select count(*)::int as n from repo_claims where status = 'pending'")
-  return JSON.parse(reconcileJSON({ fees, preview: { status: preview.status, body: await preview.json() },
+  const wallet = await walletOverview(beneficiary)
+  return JSON.parse(reconcileJSON({ fees, wallet, preview: { status: preview.status, body: await preview.json() },
     builderRow: { ...stable, reviewed: Boolean(review) }, payoutReady: overview.payoutReady,
     builderClaim, pageClaim,
     reminders: { run: reminderRun, sent }, pendingClaims: pending[0].n }))
@@ -191,6 +202,9 @@ test('SOL claim and fee-status outputs are unchanged with a stock-paired market 
   assert.deepEqual(before.reminders.run, { status: 'CHECKED', accepted: 1, failed: 0 })
   assert.match(before.reminders.sent[0].text, /octocat\/Hello-World: 0\.0994 SOL/)
   assert.equal(before.pendingClaims, 0, 'nothing was sent: the preflight refused it')
+  assert.equal(before.wallet.status, 200)
+  assert.deepEqual(before.wallet.keys, WALLET_KEYS, 'the wallet overview answers exactly as main does')
+  assert.deepEqual(before.wallet.body.markets.map(row => [row.repoId, row.launchedByYou, row.builderWallet, row.builderAvailable]), [[HELLO, true, true, '99400000']])
   assert.ok(rpcCalls.includes('simulateTransaction') && rpcCalls.includes('getLatestBlockhash'), 'the claim reached its preflight')
 
   await seedStock()
@@ -213,4 +227,13 @@ test('the stock-paired market beside it gets no owner claim on any of those path
   const { rows } = await pool.query(`select (select count(*) from repo_claims where github_repo_id = $1)::int as claims,
     (select count(*) from fee_events where github_repo_id = $1)::int as fees`, [DOCS])
   assert.deepEqual(rows[0], { claims: 0, fees: 0 }, 'nothing of the stock pair ever reached a SOL ledger')
+})
+
+test('with the stock ledgers unreadable, a SOL wallet still gets its overview exactly as before, with no stock field', async () => {
+  const before = await walletOverview(beneficiary)
+  await pool.query('drop table stock_launcher_payouts cascade')
+  const after = await walletOverview(beneficiary)
+  assert.deepEqual(after, before)
+  assert.deepEqual(after.keys, WALLET_KEYS)
+  assert.equal(after.status, 200)
 })

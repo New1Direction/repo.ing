@@ -330,7 +330,7 @@ market with `STOCK_PAIR_NO_OWNER_CLAIM` (`src/stock-owner-claims.mjs`) before an
 The token page shows **Fee routing** instead of the claim link and the owner invitation: the launcher's 0.30%, to their X
 handle if they linked one (else the short wallet), and the builder share plus repo.ing's share, 1.10%, to permanent
 $REPOING / stock liquidity, with the amounts recorded so far as wallets show the stock. `/wallet` shows the connected
-wallet's launcher earnings in each stock.
+wallet's launcher earnings in each stock. A wallet with no stock-pair market gets exactly the overview it always did.
 
 **Launcher earnings** (`src/stock-launcher-earnings.mjs`, raw units of the stock, per market and per launcher wallet):
 
@@ -364,8 +364,11 @@ config on-chain, so the worker needs no key.
   unavailable read are held for 15 minutes before they alert.
 - **Anything else alerts at once:** a `RECONCILIATION_MISMATCH` operator alert on the same `graduation_alerts` feed as SOL
   reconciliation, once per kind of mismatch. Examples are a ledger ahead of the chain, a claim with no collection, rows off
-  the market's canonical pool or positions, a config off the policy, or a custody shortfall or surplus. A market that cannot
-  be reconciled at all is an `ERROR` alert, never skipped.
+  the market's canonical pool or positions, a config off the policy, or a custody shortfall. A market that cannot be
+  reconciled at all is an `ERROR` alert, never skipped.
+- **A custody surplus is informational** (`SURPLUS`): anyone can send the stock to the custody account. It raises one
+  `STOCK_CUSTODY_SURPLUS` alert per distinct amount. Nothing gates on the custody equalling its ledger: a payout or a
+  settlement checks that the balance covers what it moves.
 - **The worker** reconciles every indexed stock-paired market and each stock's custody once a minute
   (`scripts/run-worker.mjs`, read-only).
 - **Collections and payouts must be recorded pending before they are sent** (the schema holds at most one pending row per

@@ -1,14 +1,14 @@
 import { cache } from 'react'
 import { STANDARD_FEE_NUMERATOR, feePercentLabel } from '../../src/launch-fee.mjs'
 import { quoteOfMarket } from '../../src/quote-assets.mjs'
-import { LAUNCHER_DEN, LAUNCHER_NUM } from '../../src/stock-fee-policy.mjs'
+import { LAUNCHER_DEN, LAUNCHER_NUM, STOCK_CREATOR_FEE_PERCENTAGE } from '../../src/stock-fee-policy.mjs'
 import { feeRoutingTotals, readMarketLauncherLedger, shownStockUnits, stockMultipliers } from '../../src/stock-launcher-earnings.mjs'
 import { chain, database } from './server.mjs'
 
 // A stock pair's 1.75% trading fee at the regular rate (a launch-fee window scales every share alike): Meteora keeps its 20%
 // protocol share, the creator's 71% of the rest is 0.994%, and the launcher gets 150/497 of that, 0.30%. Everything else, the
 // builder share and repo.ing's share, is 1.10% to the stock's accumulator (src/stock-fee-policy.mjs).
-const METEORA_PERCENT = 20n, CREATOR_PERCENT = 71n
+const METEORA_PERCENT = 20n, CREATOR_PERCENT = BigInt(STOCK_CREATOR_FEE_PERCENTAGE)
 const routed = STANDARD_FEE_NUMERATOR * (100n - METEORA_PERCENT) / 100n
 const launcherNumerator = routed * CREATOR_PERCENT / 100n * LAUNCHER_NUM / LAUNCHER_DEN
 export const STOCK_FEE_SPLIT = Object.freeze({ total: feePercentLabel(STANDARD_FEE_NUMERATOR), meteora: feePercentLabel(STANDARD_FEE_NUMERATOR - routed),

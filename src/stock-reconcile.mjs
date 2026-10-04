@@ -28,10 +28,13 @@ import { isStockPairMarket } from './stock-owner-claims.mjs'
 // Tolerance, as the SOL reconciler's (chainAheadOfLedger): on-chain fees above the ledger with equal claims mean trades the
 // worker has not recorded yet. That, a pending collection or payout and an unavailable read are held for STOCK_RECONCILE_LAG_MS
 // before they alert; anything else that does not MATCH raises a RECONCILIATION_MISMATCH operator alert at once, on the same
-// graduation_alerts feed the SOL reconciliation alerts use. Nothing here signs or sends a transaction.
+// graduation_alerts feed the SOL reconciliation alerts use. A custody surplus (anyone can send the stock to the custody
+// account) is informational: SURPLUS, one STOCK_CUSTODY_SURPLUS alert per distinct amount. Nothing should gate on custody
+// equalling the ledger; a payout or settlement checks the balance covers what it moves. Nothing here signs or sends.
 export const STOCK_RECONCILE_LAG_MS = 15 * 60_000
 export const STOCK_RECONCILE_INTERVAL_MS = 60_000
 export const STOCK_RECONCILE_ALERT = 'RECONCILIATION_MISMATCH'
+export const STOCK_CUSTODY_SURPLUS_ALERT = 'STOCK_CUSTODY_SURPLUS'
 
 export const STOCK_RECONCILE_REASONS = Object.freeze({
   // Ledger behind the chain (held, like a fee the indexer has not recorded yet).
@@ -87,12 +90,14 @@ export function compareGraduatedSide({ ledgerEarned, ledgerCollected, onchainEar
     status: difference === 0n && claimedDifference === 0n ? 'MATCH' : 'MISMATCH' }
 }
 
-// The custody account against its ledger. Collections are recorded pending before they are sent, so a surplus is never lag.
+// The custody account against its ledger. A shortfall (or a ledger that spent more than it collected) is a MISMATCH. A surplus
+// is SURPLUS: stock anyone sent to the account, never lag (collections are recorded pending before they are sent).
 export function compareCustody({ collected, launcherPaid, settlementSpent, balance }) {
   const expected = big(collected) - big(launcherPaid) - big(settlementSpent), onchain = big(balance), difference = onchain - expected
   const reason = expected < 0n ? R.CUSTODY_LEDGER_INCONSISTENT : difference > 0n ? R.CUSTODY_SURPLUS : difference < 0n ? R.CUSTODY_SHORTFALL : null
+  const status = !reason ? 'MATCH' : reason === R.CUSTODY_SURPLUS ? 'SURPLUS' : 'MISMATCH'
   return { collected: big(collected), launcherPaid: big(launcherPaid), settlementSpent: big(settlementSpent), expected, balance: onchain, difference,
-    status: reason ? 'MISMATCH' : 'MATCH', ...(reason ? { reason } : {}) }
+    status, ...(reason ? { reason } : {}) }
 }
 
 const curveAhead = side => { const d = amount(side?.difference), e = amount(side?.expectedRemaining); return d !== null && e !== null && d > 0n && e >= 0n }
@@ -321,10 +326,10 @@ export const reconcileJSON = value => JSON.stringify(value, (_key, item) => type
 const hash = value => createHash('sha256').update(reconcileJSON(value)).digest('hex')
 
 // An operator alert on the graduation_alerts feed (the operations health and graduation panels), deduplicated by event key.
-export async function emitStockReconcileAlert(db, { repoId = null, key, detail }) {
+export async function emitStockReconcileAlert(db, { repoId = null, key, detail, kind = STOCK_RECONCILE_ALERT }) {
   const { rows } = await db.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values($1,$2,$3,$4)
     on conflict(event_key) do nothing returning id, kind, github_repo_id::text as "repoId", created_at as "createdAt"`,
-  [key, repoId, STOCK_RECONCILE_ALERT, reconcileJSON(detail)])
+  [key, repoId, kind, reconcileJSON(detail)])
   return rows[0] ?? null
 }
 
@@ -350,13 +355,18 @@ export function createStockReconcileRunner({ pool, connection, config, now = Dat
   const episodes = new Map()
   let sequence = 0
   async function settle(key, repoId, result) {
-    if (result.status === 'MATCH') { episodes.delete(key); return null }
+    if (result.status === 'MATCH' || result.status === 'SURPLUS') episodes.delete(key)
+    if (result.status === 'MATCH') return null
+    // Informational, once per distinct surplus amount, whatever this process has seen before.
+    if (result.status === 'SURPLUS') return emitStockReconcileAlert(pool, { kind: STOCK_CUSTODY_SURPLUS_ALERT,
+      key: `protocol:${STOCK_CUSTODY_SURPLUS_ALERT}:${result.assetId}:${result.difference}`,
+      detail: { ledger: result.ledger, code: result.reason, assetId: result.assetId, surplus: result.difference, result } })
     const lagging = toleratedForNow(result), kind = lagging ? 'lagging' : mismatchKind(result)
     let episode = episodes.get(key)
     if (episode?.kind !== kind) episodes.set(key, episode = { kind, first: now(), id: ++sequence })
     if (lagging && now() - episode.first < lagMs) return null
     return emitStockReconcileAlert(pool, { repoId, key: `${repoId ?? 'protocol'}:${STOCK_RECONCILE_ALERT}:stock:${key}:${hash([kind, episode.first, episode.id])}`,
-      detail: { ledger: result.ledger, status: result.status, reason: result.reason ?? null, lagging,
+      detail: { ledger: result.ledger, code: result.reason ?? result.status, status: result.status, reason: result.reason ?? null, lagging,
         since: new Date(episode.first).toISOString(), result } })
   }
   const summary = (result, alert) => ({ status: result.status, ...(result.reason ? { reason: result.reason } : {}),
