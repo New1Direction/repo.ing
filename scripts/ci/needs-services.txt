@@ -53,6 +53,7 @@ reserve-alerts-integration
 server-speed-db
 stock-ledgers-db
 stock-ledger-indexes-db
+stock-market-reads-db
 trade
 trend-integration
 trend-launchable-db

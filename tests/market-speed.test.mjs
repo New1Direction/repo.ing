@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events'
 import { createMarketPrefetch } from '../app/lib/market-prefetch.mjs'
 import { loadTradePreview } from '../app/lib/trade-preview.mjs'
 import { watchMarketEvents } from '../app/lib/market-events.mjs'
-import { createMarketNotifications, parseMarketNotification, MARKET_CHANNEL } from '../src/market-notifications.mjs'
+import { createMarketNotifications, parseMarketNotification, MARKET_CHANNEL, STOCK_MARKET_CHANNEL } from '../src/market-notifications.mjs'
 const mint = '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be'
 const other = '9RnMkXRLtkpMSWSCfgbUoGsYmJovAgEgJ7z8sHnwbaHk'
 const flush = () => new Promise(resolve => setImmediate(resolve))
@@ -42,15 +42,25 @@ test('event parser rejects private/invalid/misclassified payloads',()=>{
   assert.equal(parseMarketNotification('{}'),null);assert.equal(parseMarketNotification('invalid'),null)
   assert.equal(parseMarketNotification(JSON.stringify({mint,kind:'balance'})),null)
   assert.deepEqual(parseMarketNotification(JSON.stringify({mint,kind:'trade',balance:'SECRET'})),{mint,kind:'trade'})
+  // The SOL channel keeps its two kinds; a stock pair's trade and fee hints (migration 0054) both refresh as 'trade'.
+  assert.equal(parseMarketNotification(JSON.stringify({mint,kind:'fee'})),null)
+  assert.deepEqual(parseMarketNotification(JSON.stringify({mint,kind:'fee'}),STOCK_MARKET_CHANNEL),{mint,kind:'trade'})
+  assert.deepEqual(parseMarketNotification(JSON.stringify({mint,kind:'trade',amount:'1'}),STOCK_MARKET_CHANNEL),{mint,kind:'trade'})
+  for(const bad of [{mint,kind:'curve'},{mint:'not-a-mint',kind:'trade'},{kind:'fee'}])assert.equal(parseMarketNotification(JSON.stringify(bad),STOCK_MARKET_CHANNEL),null)
 })
 test('one DB listener fans out to the correct market, reconnects and cleans up',async()=>{
   const clients=[];let count=0
-  class FakeClient extends EventEmitter {async connect(){} async query(sql){assert.equal(sql,`LISTEN ${MARKET_CHANNEL}`)} async end(){this.ended=true}}
+  class FakeClient extends EventEmitter {async connect(){} async query(sql){(this.listens??=[]).push(sql)} async end(){this.ended=true}}
   const hub=createMarketNotifications({makeClient:()=>{const c=new FakeClient();clients.push(c);return c},retryMs:5,idleMs:5})
   const seen=[];const stop=hub.subscribe(mint,event=>seen.push(event));const stopOther=hub.subscribe(other,()=>count++)
   await flush();assert.equal(clients.length,1);assert.equal(seen[0].kind,'resync');assert.equal(count,1)
+  assert.deepEqual(clients[0].listens,[`LISTEN ${MARKET_CHANNEL}`,`LISTEN ${STOCK_MARKET_CHANNEL}`])
   clients[0].emit('notification',{channel:MARKET_CHANNEL,payload:JSON.stringify({mint,kind:'trade'})})
   assert.equal(seen.at(-1).kind,'trade');assert.equal(count,1)
+  // A stock pair's fee hint reaches its own market's listeners as a trade; other channels are ignored.
+  clients[0].emit('notification',{channel:STOCK_MARKET_CHANNEL,payload:JSON.stringify({mint,kind:'fee'})})
+  assert.deepEqual(seen.at(-1),{mint,kind:'trade'});assert.equal(seen.length,3);assert.equal(count,1)
+  clients[0].emit('notification',{channel:'some_other_channel',payload:JSON.stringify({mint,kind:'trade'})});assert.equal(seen.length,3)
   clients[0].emit('error',Error('network'));await new Promise(r=>setTimeout(r,15));assert.equal(clients.length,2);assert.equal(seen.at(-1).kind,'resync')
   stop();stop();stopOther();await new Promise(r=>setTimeout(r,15));assert.equal(clients[1].ended,true);hub.close()
 })
