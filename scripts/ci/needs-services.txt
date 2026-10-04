@@ -53,9 +53,11 @@ reserve-alerts-integration
 server-speed-db
 stock-accumulator-chain
 stock-accumulator-db
+stock-claims-golden-db
 stock-ledgers-db
 stock-ledger-indexes-db
 stock-market-reads-db
+stock-reconcile-db
 trade
 trend-integration
 trend-launchable-db

@@ -95,6 +95,10 @@ export const PINNED_GROUPS = [
   // collections and settlements on a stock validator of its own (started like stock-pair-chain's when none is running).
   { files: ['stock-accumulator-db'], databaseUrl: launchtest('repoing_stock_accumulator_test'), selfManaged: true },
   { files: ['stock-accumulator-chain'], databaseUrl: launchtest('repoing_stock_accumulator_chain_test'), selfManaged: true },
+  // Stock-pair reconciliation and launcher earnings on the stock ledgers, with chain state encoded in-process (no validator).
+  { files: ['stock-reconcile-db'], databaseUrl: launchtest('repoing_stock_reconcile_test'), selfManaged: true },
+  // Golden: SOL claim and fee-status outputs with a stock-paired market present, against an in-process JSON-RPC server.
+  { files: ['stock-claims-golden-db'], databaseUrl: launchtest('repoing_stock_claims_golden_test'), selfManaged: true },
   { files: ['graduation-readiness'], databaseUrl: launchtest('repoing_p5_test') },
   { files: ['liquidity-deployment'], databaseUrl: launchtest('repoing_liquidity_test') },
   { files: ['protocol-analytics'], databaseUrl: launchtest('repoing_analytics_test'), selfManaged: true },
