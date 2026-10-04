@@ -25,6 +25,7 @@ import { createStockCollectionExecutor } from '../src/stock-collection-execution
 import { createStockLauncherPayouts } from '../src/stock-launcher-payouts.mjs'
 import { runStockExecution } from '../src/stock-execution-job.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Stock fees collected into custody and a launcher paid, for real, on the programs mainnet runs (scripts/ci/start-stock-validator.sh:
 // DBC and Token-2022 as deployed, Meteora's badges and the real METAx mint with a test mint authority). DOCUSAURUS / METAx is
@@ -241,7 +242,7 @@ test('stock fees are collected into custody and the launcher is paid, settled fr
     if (savedConfigs === undefined) delete process.env.STOCK_QUOTE_CONFIGS
     else process.env.STOCK_QUOTE_CONFIGS = savedConfigs
     await pool?.end()
-    if (created) await admin.query(`drop database if exists ${DB} with (force)`)
+    if (created) await dropTestDatabase(admin, DB)
     await admin.end()
     closeConnections()
     if (started) await stopValidator(work)

@@ -18,6 +18,7 @@ import { runStockExecution } from '../src/stock-execution-job.mjs'
 import { listStockMarkets } from '../src/stock-collections.mjs'
 import { META, address, collectionTransaction, curveReceipt, fakeChain, finalizedTransaction, loadFrom, offlinePrograms,
   payoutTransaction, usableMint } from './fixtures/stock-execution-fakes.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Stock fee collections and launcher payouts on PostgreSQL (migration 0054's tables, indexes and triggers), with PR-E's real
 // collection previews (src/stock-collections.mjs) over the real stock ledgers and PR-D's real launcher ledger
@@ -87,10 +88,11 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
     } }
     const loads = []
     const loadSigner = role => { loads.push(role); return role === 'creator' ? creator : partner }
-    // Whether any advisory lock is held while a transaction is followed to finality: none may be (the lock is released after the
-    // first send and taken again only to settle).
+    // Whether any advisory lock is held in this test's database while a transaction is followed to finality, or while a key is
+    // read: none may be (the lock is taken after the key is read, released after the first send, and taken again only to settle).
     const lockSeen = []
-    const advisoryLocks = async () => (await pool.query(`select count(*)::int as n from pg_locks where locktype = 'advisory' and granted`)).rows[0].n
+    const advisoryLocks = async () => (await pool.query(`select count(*)::int as n from pg_locks where locktype = 'advisory' and granted
+      and database = (select oid from pg_database where datname = current_database())`)).rows[0].n
     const follow = { now: chain.follow.now, sleep: async ms => { lockSeen.push(await advisoryLocks()); await chain.follow.sleep(ms) } }
     // Graduated-pool sources opted in (the operator script's --damm), for the DAMM race below.
     const collections = createStockCollectionExecutor({ pool, connection: chain.connection, config: null, env: ON, custody, partner: custody,
@@ -133,8 +135,12 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
     })
 
     await t.test('the partner collection runs from the pass; the ledgers then read exactly what custody received', async () => {
-      const pass = await runStockExecution({ collections, listMarkets, execute: true })
+      // The pass reads the key (the operator script's Keychain read) before it takes the market's lock: no lock is held then.
+      const prepared = []
+      const prepareSigner = async role => { prepared.push([role, await advisoryLocks()]) }
+      const pass = await runStockExecution({ collections, listMarkets, execute: true, prepareSigner })
       assert.deepEqual(pass.collections.map(i => [i.source, i.status]), [['dbc_partner', 'SETTLED']])
+      assert.deepEqual(prepared, [['partner', 0]], 'no advisory lock was held while the key was read')
       const { rows } = await pool.query(`select source, status, reviewed_amount::text, actual_amount::text, launcher_amount::text, accumulator_amount::text,
         settled_at is not null as settled, receipt->>'state' as state, receipt->>'amount' as amount from stock_fee_collections order by source`)
       assert.deepEqual(rows.map(r => [r.source, r.status, r.actual_amount, r.launcher_amount, r.accumulator_amount, r.settled, r.state, r.amount]), [
@@ -307,6 +313,7 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
       const holder = await pool.connect()
       try {
         await holder.query('select pg_advisory_lock($1::bigint)', [DOCS])
+        assert.equal(await advisoryLocks(), 1, "the lock probe sees a lock that is held")
         const started = Date.now()
         await assert.rejects(accrual.recordTradeFees({ githubRepoId: DOCS, signatures: ['Sig'] }), { code: 'STOCK_FEE_LOCK_BUSY' })
         assert.ok(Date.now() - started < 5_000, 'gave up after its timeout')
@@ -326,7 +333,7 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query(`drop database if exists ${DB} with (force)`)
+    if (created) await dropTestDatabase(admin, DB)
     await admin.end()
   }
 })

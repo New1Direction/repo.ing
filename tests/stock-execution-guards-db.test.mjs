@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { readFile } from 'node:fs/promises'
@@ -132,7 +133,7 @@ test('migration 0056 adds the stock execution guards and nothing else', { timeou
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query(`drop database if exists ${DB} with (force)`)
+    if (created) await dropTestDatabase(admin, DB)
     await admin.end()
   }
 })
