@@ -2,6 +2,8 @@
 # Start a disposable solana-test-validator for the stock-pair chain tests (docs/STOCK_QUOTES.md):
 #   - the DBC, DAMM v2, Token-2022 and Metaplex programs exactly as deployed on mainnet (read with `solana program dump`);
 #   - Meteora's DBC and DAMM v2 token badges for METAx, as on mainnet;
+#   - the DAMM v2 pool config a stock config's curve migrates into (FixedBps100, the launch configs' migration fee option), so a
+#     stock-paired market can graduate: the snapshot start-validator.sh loads, byte-identical to mainnet's account (2026-10-04);
 #   - the METAx mint as on mainnet, every byte and extension included (pause, freeze, permanent delegate, scaled UI amount,
 #     transfer hook slot), except its mint authority, replaced by a test key written to <work-dir>/metax-authority.json so the
 #     tests can hold METAx.
@@ -22,6 +24,7 @@ DBC=dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN
 DAMM=cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG
 TOKEN_2022=TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb
 METAPLEX=metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
+DAMM_MIGRATION_CONFIG=Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp
 FIXTURES="$WORK_DIR/fixtures"
 mkdir -p "$FIXTURES"
 
@@ -64,6 +67,7 @@ solana-test-validator --reset \
   --account "$METAX" "$WORK_DIR/metax-test-mint.json" \
   --account "$DBC_BADGE" "$FIXTURES/$DBC_BADGE.json" \
   --account "$DAMM_BADGE" "$FIXTURES/$DAMM_BADGE.json" \
+  --account "$DAMM_MIGRATION_CONFIG" "$REPO_ROOT/tests/fixtures/validator/$DAMM_MIGRATION_CONFIG.json" \
   > "$WORK_DIR/validator.log" 2>&1 &
 echo $! > "$WORK_DIR/validator.pid"
 

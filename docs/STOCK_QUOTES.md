@@ -114,8 +114,8 @@ The site's curve trade path (`src/canonical-trade.mjs`: quote, prepare, submit, 
 stamp:
 
 - **Routing:** the trade router (`src/canonical-damm-trade.mjs`) reads a stock-paired curve through its quote-aware config,
-  so the curve trader handles it. The graduated (DAMM v2) trader is still SOL-only, so a graduated stock-paired market is
-  refused until that path is quote-aware.
+  so the curve trader handles it until the curve migrates; then the graduated trader trades it in its DAMM v2 pool (see
+  "Graduation" below).
 - **The swap** is the one DBC swap with the stock as its quote (`assertPreparedStockDbcSwap`). Its config, pool, both mints,
   the wallet, its input and output accounts (the stock's through Token-2022) and both token programs are pinned. Nothing is
   wrapped or closed, and there is no referral, because referrals pay through wrapped SOL. Besides the compute budget, the
@@ -157,8 +157,9 @@ stock pair, the panel buys with the stock and sells for it:
 - **Shortfalls.** A buy beyond the stock balance reads "Not enough METAx", and a missing amount of the stock is shown rounded
   up. A SOL shortfall for costs still reads "Not enough SOL".
 - **USD estimate** at the stock's own price.
-- **Not offered for stock pairs:** the SOL trade size guide. A graduated stock-paired market shows trading as not open yet,
-  because the graduated trader is SOL-only. A market whose stamp no longer matches the registry shows trading as paused.
+- **Not offered for stock pairs:** the SOL trade size guide. A graduated stock-paired market trades in its graduated pool once
+  that pool is verified, in the stock as on the curve. A market whose stamp no longer matches the registry shows trading as
+  paused.
 
 A launch draft also keeps its chosen pair. On restore, the pair is used only while the repository is still offered it;
 otherwise the form switches to SOL and says so.
@@ -184,8 +185,10 @@ query is unchanged.
   idempotent on (signature, event_index).
 - **Worker** (`src/stock-fee-indexer.mjs`): exactly the markets the SOL indexer leaves out (`quote_asset_id is not null`), with
   cursors in `stock_pool_cursors`, its own schedule and an activity feed over the configs in `STOCK_QUOTE_CONFIGS`. A missing
-  config, a changed or migrated curve, an RPC failure or a cursor missing from history is an ERROR, and the worker exits
-  non-zero. A malformed `STOCK_QUOTE_CONFIGS` fails stock markets only.
+  config, a changed curve, an RPC failure or a cursor missing from history is an ERROR, and the worker exits non-zero; so is a
+  migrated curve until the graduation job has proven its migration ("Graduation" below). Then the curve is finished: the swaps
+  before the migration are credited, the cursor stops on the migration, and the market is `GRADUATED` here from then on. A
+  malformed `STOCK_QUOTE_CONFIGS` fails stock markets only.
 - **Trade route:** a confirmed stock trade's fees are recorded through the stock accrual (by its prepared quote mint); a SOL
   trade's exactly as before.
 - **Charts:** chart ordering also places stock trades' transactions in their finalized blocks.
@@ -252,6 +255,80 @@ A stock-paired market's numbers come only from the stock ledgers, and a stock va
 `tests/stock-market-reads-db.test.mjs` proves on PostgreSQL that the SOL market list, SOL markets, SOL charts, `protocolStats`,
 `/stats` and the race read exactly as before with stock markets, their ledgers and stray SOL rows filed under a stock market
 present, and that SOL markets plus stock markets are every live market, with no overlap.
+
+## Graduation (P6, DAMM v2)
+
+A stock-paired curve graduates like a SOL one: once its stock reserve reaches the config's threshold (in whole units of the
+stock), Meteora's migrator moves it into a DAMM v2 pool of the market token (token A, SPL Token) and the stock (token B,
+Token-2022), with a permanently locked creator position and partner position, and the pool collects its fees in the stock.
+The SOL graduation path never reads a stock-paired market: its job lists (`publicMarketSQL`, the operator view) carry
+`quote_asset_id is null`, and the stock job lists the rest (`tests/stock-graduation-db.test.mjs` runs both: every indexed market
+is in exactly one).
+
+- **The worker** (`src/stock-graduation-monitor.mjs`, in the same pass as SOL graduation) checks each stock-paired market under
+  its own lock, with two providers agreeing on every read (the SOL rule): the network, the finalized curve and config, the
+  graduated pool and both positions, and the migration transaction.
+  - A reading of the curve's progress goes to `stock_graduation_observations` when it changed, or every minute.
+  - Once migrated, the proof goes to `stock_graduation_events`, once: the curve's own finalized migrate instruction into the
+    pool derived from the config, with the stock as its quote through Token-2022 (`stockMigrationPosition`, which requires the
+    quote mint). A different proof later is a conflict to review, never a replacement. The proof is also the curve indexer's
+    hand-off: with it, the curve's last swaps (the one that filled it, if the curve indexer had not seen it yet) are credited
+    and the curve's indexing ends on the migration.
+  - Every swap on the graduated pool goes to `stock_trade_events` with venue `damm` (`src/stock-damm-trades.mjs`), both
+    providers agreeing on the pool's history and each transaction. `quote_amount` means what it means on the curve rows: a
+    buy's stock without the pool's fee (the trader paid it plus the fee, which stays in the stock vault), a sell's stock
+    received. A DAMM swap has no `stock_fee_events` row: the pool's fees are the positions' checkpoints below.
+  - Fee checkpoints of both positions go to `stock_damm_fee_checkpoints` by the fee policy's `dammCheckpoint`: each side's
+    cumulative earnings (unclaimed + claimed, in the stock) at a finalized slot, crediting the growth since that side's last
+    checkpoint. The creator side pays the launcher `floor(earned * 150 / 497)` as a running total; the partner side goes to the
+    accumulator whole. A side whose earnings fell is refused for review.
+  - Later jobs (reconciliation) run inside the same pass through its hooks (`addHook`).
+  - Anything it cannot verify makes the market REVIEW with a stable code and a `STOCK_GRADUATION_REVIEW` alert. Stock alerts
+    have their own kinds in `graduation_alerts`, so nothing meant for SOL markets (public milestone posts) reads them.
+- **The strict swap parser.** The SOL DAMM parser only follows swaps quoted in SOL and passes over anything else. The stock
+  parser takes the stock's mint as a required argument, and refuses (quarantines) instead of skipping:
+  - a swap on the pool that names other mints;
+  - a swap without exactly one swap event, or a swap event without its swap or one that does not decode;
+  - fees outside the stock, or a transfer fee on the stock;
+  - any instruction on the pool the program's coder does not know.
+
+  A quarantined swap is a durable `STOCK_DAMM_SWAP_QUARANTINED` alert, retried every run until it parses (then recorded and
+  acknowledged); while one is open the market stays REVIEW.
+- **The token page** reads these ledgers: the curve route's answer for a stock pair (progress from the newest reading; graduated,
+  with its pool, once `stock_graduation_events` holds the proof) feeds the graduation bar and the trade panel.
+- **Trading the graduated pool** (`src/stock-damm-trade.mjs`, dispatched by `createDammTrader` by the market's quote; its SOL
+  path is byte-identical, `tests/damm-sol-golden.test.mjs`):
+  - the pool must be the market token / stock pair with fees in the stock, the canonical vaults and swaps enabled;
+  - the quote is in the stock's own decimals, from the asset, and its fee is in the stock;
+  - the swap is exactly one ExactIn swap2 on the proven pool with the wallet's own accounts, both vaults, both mints, both token
+    programs and no referral. Nothing is wrapped or closed. Besides the compute budget, the only other instructions create the
+    wallet's own account for either mint, idempotently, under that mint's program;
+  - the trade record carries the stock's mint, and a SOL record never verifies against a stock pool, nor a stock record against
+    a SOL one;
+  - the receipt is settled in raw units, as on the curve: a buy spends exactly the input of the stock for at least the minimum
+    of the market token, a sell the reverse. The swap event, the wallet's two accounts and both vaults must agree (the stock
+    vault takes the whole input of a buy; its fees stay in the vault).
+- **The trade panel** opens graduated trading for a stock pair once the curve route reports it graduated with its pool, in the
+  stock's units as on the curve.
+
+`tests/stock-graduation-chain.test.mjs` proves this on the programs mainnet runs: DOCUSAURUS / METAx is bought past its 14 METAx
+threshold and migrated locally (as Meteora's migrator does on mainnet). Then:
+
+- the worker proves the migration, and the curve indexer credits the swap that filled the curve and stops on the migration
+  (the curve's fees equal the pool's counters);
+- two swaps sent straight to the pool are indexed, and the checkpoints equal both positions' fees exactly;
+- the site's trade path buys and sells in the graduated pool, settled to the raw unit, and those swaps are indexed and
+  checkpointed too.
+
+To run it locally:
+
+```bash
+scripts/ci/start-stock-validator.sh <work-dir>
+STOCK_CHAIN_WORK_DIR=<work-dir> node --test tests/stock-graduation-chain.test.mjs
+```
+
+`STOCK_VALIDATOR_RPC_PORT` (and the script's other port variables) move the validator; both chain tests read the RPC port from
+it. The test needs PostgreSQL on 127.0.0.1:55432. Stop the validator afterwards and delete `<work-dir>/ledger`.
 
 ## Fee policy (policy 1)
 
@@ -411,6 +488,11 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
    - graduation;
    - charts, market cap and USD prices, with stock amounts shown as wallets show them (done, dark);
    - platform totals, split by asset (done, dark).
+
+   - DBC and DAMM event parsing and fee accrual (DAMM swaps and fee checkpoints done, dark: "Graduation" above);
+   - graduation (done, dark: "Graduation" above);
+   - charts, market cap and USD prices, with stock amounts shown as wallets show them (the trade panel already does);
+   - platform totals, split by asset.
 
    Fix every part together: a partial fix would make the worker skip stock fees silently.
 4. **P7:** launcher fee routing (policy 1, above), quote-aware claims and reconciliation.

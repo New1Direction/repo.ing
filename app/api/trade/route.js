@@ -118,7 +118,9 @@ export async function POST(request) {
       await track({ ...attempt, outcome: 'confirmed', signToConfirmMs: Date.now() - session.submittedAt }, session)
       await recordReferral(session, result.signature)
       const connection = chain()
-      // A stock-paired trade (its prepared quote mint) accrues into the stock ledgers; a SOL trade exactly as before.
+      // A stock-paired trade (its prepared quote mint) accrues into the stock ledgers; a SOL trade exactly as before. Only a curve
+      // trade reaches recordFees: a graduated one (SOL or stock) is only re-verified, and the worker indexes its swap and the pool's
+      // fee checkpoints (src/stock-graduation-monitor.mjs for a stock pair; tests/stock-graduated-trade-route.test.mjs).
       const { feeIndexing, creatorFee } = await settleConfirmedTrade({ connection, db: database(), engine: session.engine,
         prepared: session.prepared, signature: result.signature,
         recordFees: args => session.prepared.quoteMint

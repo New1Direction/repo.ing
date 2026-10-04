@@ -3,12 +3,14 @@ import { requirePlatformOperator } from '../../../lib/platform-operator.mjs'
 import { readGithubSession,githubSessionCookie,assertSameOrigin } from '../../../lib/auth.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { graduationOperatorView } from '../../../../src/graduation-readiness.mjs'
+import { stockGraduationOperatorView } from '../../../../src/stock-graduation-monitor.mjs'
 export const runtime='nodejs'
 const headers={'Cache-Control':'private, no-store'}
 const operator=request=>requirePlatformOperator(readGithubSession(request.cookies.get(githubSessionCookie)?.value))
 export async function GET(request){
   try{operator(request)}catch(error){return Response.json({error:error.message},{status:error.status??403,headers})}
-  try{return Response.json(await graduationOperatorView(database()),{headers})}
+  // SOL markets as before; stock-paired markets (docs/STOCK_QUOTES.md) as their own list.
+  try{const [view,stockMarkets]=await Promise.all([graduationOperatorView(database()),stockGraduationOperatorView(database())]);return Response.json({...view,stockMarkets},{headers})}
   catch{return Response.json({error:'Graduation readiness is temporarily unavailable.'},{status:503,headers})}
 }
 export async function POST(request){

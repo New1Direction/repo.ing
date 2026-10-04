@@ -11,6 +11,8 @@ import { markets } from './db/schema.mjs'
 import { createMarketConfigResolver, createQuoteAwareConfigResolver } from './market-config.mjs'
 import { quoteOfMarket } from './quote-assets.mjs'
 import { createGraduatedFees } from './graduated-fees.mjs'
+import { createStockDammTrading, isStockMarket } from './stock-damm-trade.mjs'
+import { createStockGraduation } from './stock-graduation.mjs'
 import { readChainPoint } from './chain-clock.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
 import { dammSwapEvents } from './damm-trades.mjs'
@@ -169,11 +171,13 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
   return { tokenDelta, solDelta, quoteAmount, baseAmount, referralFee, slot: BigInt(tx.slot) }
 }
 
-export function createDammTrader({ pool: databasePool, connection, config, graduatedFees = null, loadTransaction = loadTransactionAt, loadMarket: marketLoader = null }) {
+export function createDammTrader({ pool: databasePool, connection, config, graduatedFees = null, loadTransaction = loadTransactionAt, loadMarket: marketLoader = null, stockGraduation = null }) {
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const amm = new CpAmm(connection)
   const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool })
+  // A stock-paired market's graduated pool, quote, swap and receipt (src/stock-damm-trade.mjs); every SOL line below is unchanged.
+  const stock = createStockDammTrading({ connection, amm, loadTransaction, graduation: stockGraduation ?? createStockGraduation({ connection, config, db: databasePool }) })
   const destinations = new Map()
   const loadMarket = marketLoader ?? (async repoId => {
     const market = (await drizzle(databasePool).select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
@@ -183,8 +187,8 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     return market
   })
   // A curve migrates once, so a migrated answer is permanent; an active answer is always re-read.
-  // Routing reads a stock-paired market's curve through its quote-aware config (docs/STOCK_QUOTES.md); trading a graduated
-  // market below still resolves SOL configs only, so a graduated stock-paired market is refused until that path is quote-aware.
+  // Routing reads a stock-paired market's curve through its quote-aware config (docs/STOCK_QUOTES.md); a graduated stock-paired
+  // market trades below through the stock branch (src/stock-damm-trade.mjs), whose pool is proven in src/stock-graduation.mjs.
   const resolveCurveConfig = createQuoteAwareConfigResolver(config)
   const migrated = new Set()
   const isMigrated = async repoId => {
@@ -203,6 +207,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   }
   // The pool address is immutable once proven by the finalized migrate instruction; pool state is re-read every time.
   const canonicalPool = async market => {
+    if (isStockMarket(market)) return stock.canonicalPool(market)
     const key = `${market.id}:${market.pool}:${market.mint}`
     if (destinations.has(key)) return destinations.get(key)
     const proven = await proofs.destination(market)
@@ -212,6 +217,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     return proven.target
   }
   const poolSnapshot = async market => {
+    if (isStockMarket(market)) return stock.poolSnapshot(market)
     const pool = await canonicalPool(market), mint = new PublicKey(market.mint)
     const info = await connection.getAccountInfo(pool, 'confirmed')
     if (!info?.owner.equals(CP_AMM_PROGRAM_ID)) throw Error('Canonical DAMM pool is missing')
@@ -227,12 +233,14 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     const market = await loadMarket(request.githubRepoId)
     const { pool, mint, poolState } = await poolSnapshot(market)
     const currentPoint = await readChainPoint(connection, poolState.activationType)
+    if (isStockMarket(market)) return { market, pool, mint, poolState, amountIn: input, slippageBps, ...stock.quote({ market, poolState, direction, amountIn: input, currentPoint, slippageBps }) }
     return { market, pool, mint, poolState, amountIn: input, slippageBps,
       ...dammQuote({ amm, poolState, direction, amountIn: input, currentPoint, slippageBps }) }
   }
   const prepare = async (request, direction) => {
     const wallet = new PublicKey(request.wallet)
     const { market, pool, mint, poolState, amountIn, minimumAmountOut, slippageBps, fee } = await quote(request, direction)
+    if (isStockMarket(market)) return stock.prepare({ wallet, market, pool, poolState, direction, amountIn, minimumAmountOut, slippageBps })
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
     const swapTx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
@@ -265,6 +273,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     const market = await loadMarket(saved.githubRepoId)
     if (market.id !== saved.marketId || market.mint !== saved.mint.toBase58() || market.pool !== saved.curve ||
         !(await canonicalPool(market)).equals(saved.pool)) throw new Error('Canonical market changed before trade verification')
+    if (saved.quoteMint || isStockMarket(market)) return stock.verifyTrade({ saved, market, signature, commitment })
     let tx = null
     for (let attempt = 0; attempt < 12 && !tx; attempt++) {
       tx = await loadTransaction(connection, signature, commitment)
