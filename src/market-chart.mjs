@@ -61,8 +61,8 @@ const canonicalEvents = `with canonical_events as (
 // A trade's place in its finalized block: the stored position (finalized_chart_positions), else the block's full
 // signature list. The list is joined (and de-TOASTed) only for a trade indexed after its block was recorded, until the
 // ordering worker stores that position; null while the block is unverified or the trade is not in it.
-const blockPosition = t => `coalesce(p.transaction_index,array_position(b.signatures,${t}.signature::text))`
-const blockJoins = t => `left join finalized_chart_positions p on p.slot=${t}.slot and p.signature=${t}.signature
+export const blockPosition = t => `coalesce(p.transaction_index,array_position(b.signatures,${t}.signature::text))`
+export const blockJoins = t => `left join finalized_chart_positions p on p.slot=${t}.slot and p.signature=${t}.signature
   left join finalized_chart_blocks b on b.slot=${t}.slot and p.slot is null`
 
 export async function readMarketChart(db, market, range = 'all', now = Date.now()) {

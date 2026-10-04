@@ -14,6 +14,8 @@ import { hasEarnedPromotion, showsNewRepoLabel } from './repo-quality.mjs'
 import { isOfficialLaunch } from './official-launch.mjs'
 import { githubTime } from '../../src/github.mjs'
 import { assertGithubRepoId, isMarketId } from '../../src/market-identity.mjs'
+import { isStockMarket } from '../../src/stock-market-chart.mjs'
+import { withStockStats } from './stock-market-stats.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
@@ -77,7 +79,8 @@ function withSignals(market, migrated, now) {
 }
 
 // 24h volume: bonding-curve swaps, plus swaps in the DAMM v2 pool a graduated market's verified migration names (the
-// binding /stats uses: events recorded under any other pool never count).
+// binding /stats uses: events recorded under any other pool never count). A stock-paired market's row has no SOL figures:
+// its numbers come from the stock ledger (app/lib/stock-market-stats.mjs), and SOL rows come back exactly as before.
 async function loadMarkets() {
   const pool = database()
   if (!pool) return { markets: [], unavailable: 'Database is not configured.' }
@@ -85,6 +88,7 @@ async function loadMarkets() {
     const { rows } = await pool.query(`
       select m.github_repo_id::text as "repoId", m.mint, m.pool, m.token_name as "tokenName",
         m.token_symbol as "symbol", m.indexed_at as "indexedAt", m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet", r.owner, r.name,
+        m.quote_asset_id as "quoteAssetId", m.quote_mint as "quoteMint",
         r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks, r.github_created_at as "githubCreatedAt", r.source,
         coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
         (coalesce(t.volume, 0) + coalesce(dv.volume, 0))::text as "volume24hLamports",
@@ -111,10 +115,14 @@ async function loadMarkets() {
       where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
       order by m.indexed_at desc`)
     const now = Date.now()
-    return { markets: rows.map(({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...row }) => withSignals({ ...row,
+    const markets = rows.map(({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, quoteAssetId, quoteMint, ...row }) => withSignals({ ...row,
+      ...(quoteAssetId || quoteMint ? { quoteAssetId, quoteMint } : {}),
       stars: Number(row.stars), forks: Number(row.forks),
       earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString(),
-      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now)) }
+      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now))
+    // Stamped rows only (SOL rows pass through untouched): stock figures, then their signals from the stock progress.
+    const stock = await withStockStats(markets, { db: pool, connection: chain, withUnits: true, now })
+    return { markets: stock === markets ? markets : stock.map(market => isStockMarket(market) ? withSignals(market, false, now) : market) }
   } catch { return { markets: [], unavailable: 'Markets are temporarily unavailable.' } }
 }
 
@@ -145,6 +153,7 @@ export async function recentBuilderPayouts() {
   } catch { return { payouts: [], unavailable: true } }
 }
 
+// SOL markets only (quote_asset_id is null): stock-paired markets keep separate ledgers and totals (src/stock-analytics.mjs).
 export async function protocolStats() {
   const pool = database()
   if (!pool) return { stats: null, unavailable: 'Protocol stats are unavailable.' }
@@ -153,18 +162,18 @@ export async function protocolStats() {
       select m.markets as "markets", t.trades as "trades", t.volume as "volumeLamports",
         f.earned as "earnedLamports", c.paid as "paidLamports"
       from (select count(*)::text as markets from markets
-        where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized') m
+        where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null) m
       cross join (select count(*)::text as trades,
         coalesce(sum((case when t.direction = 'buy' then t.input_base_units else t.output_base_units end)::numeric), 0)::text as volume
         from trade_events t join markets market on market.pool = t.pool
-        where market.status = 'confirmed' and market.indexed_at is not null and market.launch_finality = 'finalized') t
+        where market.status = 'confirmed' and market.indexed_at is not null and market.launch_finality = 'finalized' and market.quote_asset_id is null) t
       cross join (select coalesce(sum(f.amount_base_units), 0)::text as earned
         from builder_fee_credits f join markets market on market.pool = f.pool
-        where market.status = 'confirmed' and market.indexed_at is not null and market.launch_finality = 'finalized') f
+        where market.status = 'confirmed' and market.indexed_at is not null and market.launch_finality = 'finalized' and market.quote_asset_id is null) f
       cross join (select coalesce(sum(c.amount_base_units), 0)::text as paid
         from repo_claims c join markets market on market.github_repo_id = c.github_repo_id
         where c.status = 'settled' and market.status = 'confirmed'
-          and market.indexed_at is not null and market.launch_finality = 'finalized') c`)
+          and market.indexed_at is not null and market.launch_finality = 'finalized' and market.quote_asset_id is null) c`)
     return { stats: rows[0] ?? null, unavailable: null }
   } catch { return { stats: null, unavailable: 'Protocol stats are temporarily unavailable.' } }
 }
@@ -203,9 +212,13 @@ async function singleMarket(column, value) {
     // Same row fields as the market list (price, bonding progress, quality signals), so either read can back a market card.
     const { lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...market } = row
     const now = Date.now()
-    return { market: withSignals({ ...market, stars: Number(market.stars), forks: Number(market.forks),
+    const built = withSignals({ ...market, stars: Number(market.stars), forks: Number(market.forks),
       remaining: (BigInt(market.earned) - BigInt(market.claimed)).toString(),
-      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now) }
+      ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now)
+    if (!isStockMarket(built)) return { market: built }
+    // A stock-paired market: its figures from the stock ledger, in raw units (the page reads display units separately).
+    const [stock] = await withStockStats([built], { db: pool, now })
+    return { market: withSignals(stock, false, now) }
   } catch { return { market: null, unavailable: 'Market is temporarily unavailable.' } }
 }
 // React cache is scoped to the render: metadata and page share one read, without caching payout state.

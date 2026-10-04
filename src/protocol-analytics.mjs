@@ -26,11 +26,12 @@ const TEAM_OWNERS = TEAM_REPO_OWNERS.map(owner => owner.toLowerCase())
 // whether its market's repository is a team repo; owners and ids are the query's
 // parameters holding the lowercased TEAM_REPO_OWNERS (GitHub logins are
 // case-insensitive) and TEAM_REPO_IDS. It also carries its market's source (repositories.source,
-// migration 0049: 'github' or 'huggingface'), for the /stats split by source.
+// migration 0049: 'github' or 'huggingface'), for the /stats split by source. SOL markets only (quote_asset_id is null):
+// stock-paired markets keep their own ledgers, and /stats totals them per stock (src/stock-analytics.mjs).
 const eventsSQL = (owners, ids) => `with canonical as (
   select m.*, (lower(r.owner) = any(${owners}::text[]) or m.github_repo_id = any(${ids}::bigint[])) as team, r.source as market_source
   from markets m join repositories r on r.github_repo_id=m.github_repo_id
-  where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'
+  where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null
 ), events as (
   select 'volume' kind,t.traded_at occurred_at,(case when t.direction='buy' then t.input_base_units else t.output_base_units end)::numeric amount,m.team,m.market_source
     from trade_events t join canonical m on m.pool=t.pool
@@ -88,7 +89,7 @@ export async function readProtocolAnalytics(pool, { range = 'all', now = new Dat
     const { rows: payouts } = await db.query(`select r.full_name as "fullName",m.mint,c.amount_base_units::text as amount,
       c.claim_signature as signature,c.settled_at as "settledAt" from repo_claims c
       join markets m on m.github_repo_id=c.github_repo_id join repositories r on r.github_repo_id=m.github_repo_id
-      where c.status='settled' and m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'
+      where c.status='settled' and m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null
       and ($1::timestamptz is null or c.settled_at >= $1) and c.settled_at <= $2 order by c.settled_at desc,c.id desc limit 10`, [window.since, window.until])
     const revenue = await platformRevenueSummary(db), revenueCheck = await reconcilePlatformRevenue(db)
     const liquidity = await liquidityReserveSummary(db), liquidityCheck = await reconcileLiquidity(db)
