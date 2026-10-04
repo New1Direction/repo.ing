@@ -65,11 +65,12 @@ Set `DATABASE_URL` explicitly. Drizzle's fallback database is an older test defa
 | `GRADUATION_ALERTS_ENABLED` | Worker | `true` turns on public [graduation milestone alerts](PRODUCTION.md#graduation-milestone-alerts) (25/50/75/90% and graduation) on the launch-alert channels; also needs the cutoff. Off by default |
 | `GRADUATION_ALERTS_SINCE` | Worker | ISO timestamp; nothing runs before it, and the first sight of each market after it only records the milestone already reached (no backfill) |
 | `GRADUATION_ALERTS_MAX_PER_DAY` | Worker | Optional per-channel cap on milestone posts over 24 hours (default 10), separate from the launch-alert cap |
+| `STOCK_COLLECTIONS_EXECUTION_ENABLED`, `STOCK_LAUNCHER_PAYOUTS_ENABLED` | Worker, owner's machine | `true` lets `scripts/stock-execute.mjs --execute` collect stock-pair fees and pay launchers (keys from the macOS Keychain), and lets the worker finish what it left pending, without a key. Off by default; see [stock execution](STOCK_QUOTES.md#execution-off-by-default) |
 | `HF_MARKETS_ENABLED` | Web, worker | `true` turns on Hugging Face model markets on web; on the worker it adds them to launch and milestone alerts. Keep the two the same ([alerts setup](ALERTS_SETUP.md)) |
 | `PROMOTION_EXCLUDED_REPO_IDS` | Web, worker | [Do-not-promote list](PRODUCTION.md#do-not-promote-list): comma-separated GitHub repository IDs left out of `/waiting`, the graduation race, "Repo markets to watch" and milestone alerts |
 | `SERVER_TIMING_SLOW_MS` | Web | Optional: log `slowLoader` lines for data loaders slower than this many milliseconds (default 150; see [response speed](PRODUCTION.md#response-speed-indexes-caches-edge-caching-and-real-user-vitals)) |
 
-Secrets are server-only. The worker needs database/RPC/config access and signed-intent records, not either signer secret. Turning off discovery enrollment does not cancel existing reward obligations. The backup service has separate credentials described in [Backups](BACKUPS.md).
+Secrets are server-only. The worker needs database/RPC/config access and signed-intent records, not either signer secret. Stock-pair collections and launcher payouts are signed only on the owner's machine (`scripts/stock-execute.mjs --execute`, keys from the macOS Keychain); the worker only finishes them. Turning off discovery enrollment does not cancel existing reward obligations. The backup service has separate credentials described in [Backups](BACKUPS.md).
 
 ## Checks you can run without services
 

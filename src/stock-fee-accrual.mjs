@@ -65,8 +65,35 @@ const POLICY_SPLIT = ['launcher_amount', 'accumulator_amount', 'policy_version']
 const sameFee = (row, expected) => FEE_FIELDS.every((field, i) => row[field] === expected[i] ||
   (POLICY_SPLIT.includes(field) && row.policy_version !== expected[FEE_FIELDS.indexOf('policy_version')]))
 
+// The market's lock, pg_advisory_lock(github_repo_id), is the one the SOL fee accrual and claims, the stock reconciliation, and
+// stock collections and payouts take; this takes it with the same call and key. It waits at most lockTimeoutMs for it (SET LOCAL
+// lock_timeout in a short transaction around the session lock, as src/payout-address.mjs bounds its waits), so a web
+// trade-confirm request never parks behind a holder. A timeout is STOCK_FEE_LOCK_BUSY: the trade route then reports the trade's
+// fees as pending with an operator alert, and the worker's stock indexer credits them from the pool's history (on a timeout of
+// its own it reports the market BUSY and retries it on its next run).
+export const STOCK_FEE_LOCK_TIMEOUT_MS = 10_000
+export class StockFeeLockBusyError extends Error {
+  constructor(repoId) {
+    super(`Stock market ${repoId} is busy (a collection, payout, reconciliation or other fee indexing holds it); its fees stay pending`)
+    this.name = 'StockFeeLockBusyError'
+    this.code = 'STOCK_FEE_LOCK_BUSY'
+  }
+}
+async function lockMarket(client, repoId, timeoutMs) {
+  await client.query('begin')
+  try {
+    await client.query(`set local lock_timeout = ${Math.max(1, Math.trunc(timeoutMs))}`)
+    await client.query('select pg_advisory_lock($1::bigint)', [repoId])
+    await client.query('commit')
+  } catch (error) {
+    await client.query('rollback').catch(() => {})
+    if (error?.code === '55P03') throw new StockFeeLockBusyError(repoId)
+    throw error
+  }
+}
+
 export function createStockFeeAccrual({ pool: databasePool, connection, config, stockConfigs = undefined,
-  dbc = new DynamicBondingCurveClient(connection, 'finalized'), loadTransaction = loadFinalizedTransaction }) {
+  dbc = new DynamicBondingCurveClient(connection, 'finalized'), loadTransaction = loadFinalizedTransaction, lockTimeoutMs = STOCK_FEE_LOCK_TIMEOUT_MS }) {
   const resolveConfig = createQuoteAwareConfigResolver(config, undefined, stockConfigs)
   const loadMarket = async (executor, repoId) => {
     const { rows: [market] } = await executor.query(MARKET, [String(repoId)])
@@ -120,7 +147,7 @@ export function createStockFeeAccrual({ pool: databasePool, connection, config, 
     if (!Array.isArray(signatures) || signatures.length === 0) throw Error('Finalized trade signatures required')
     const client = await databasePool.connect()
     try {
-      await client.query('select pg_advisory_lock($1::bigint)', [repoId.toString()])
+      await lockMarket(client, repoId.toString(), lockTimeoutMs)
       try {
         const curve = await checkCurve(repoId, client, migration)
         if (quoteMint !== null && quoteMint !== curve.asset.mint) throw Error('Trade quote mint differs from the market\'s stock')

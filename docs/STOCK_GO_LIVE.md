@@ -204,12 +204,19 @@ Every trade on a stock pair pays 1.75%, in the stock:
 
 On chain: once turned on, collections claim fees from the pools into the partner wallet, and payouts send launchers their
 stock. Cost: network fees, and the first time for each stock, a deposit of about 0.002 SOL for the partner wallet's account.
+A launcher's first payout also costs about 0.002 SOL, which the partner wallet pays for the launcher's stock account.
 
 Two flags control this. Both are off by default. Leave them off until the code that uses them has merged and been reviewed:
 
 - `STOCK_COLLECTIONS_EXECUTION_ENABLED`: claim each market's stock fees from its pool into the partner wallet's account for
   that stock.
 - `STOCK_LAUNCHER_PAYOUTS_ENABLED`: send each launcher their collected 0.30%, in the stock, to the market's launcher wallet.
+
+You run both from your own machine, never from the worker or web service: `node scripts/stock-execute.mjs` prints what it
+would do, and `node scripts/stock-execute.mjs --execute` does it, with the flags set in that shell. It reads the keys from your
+macOS Keychain: `repo.ing.dbc.partner` (as for the configs) and `repo.ing.dbc.creator` (the platform creator key, account
+`production`). Turn the same flags on for the worker too: it holds no key, and only finishes transactions the script signed but
+left pending ([details](STOCK_QUOTES.md#execution-off-by-default)).
 
 While they are off, fees build up in the pools. Nothing is lost. The readiness script shows both flags.
 

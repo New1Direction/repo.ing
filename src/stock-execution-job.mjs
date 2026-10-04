@@ -1,24 +1,26 @@
-import { listStockMarkets } from './stock-collections.mjs'
 import { createStockCollectionExecutor } from './stock-collection-execution.mjs'
 import { createStockLauncherPayouts } from './stock-launcher-payouts.mjs'
 import { STOCK_EXECUTION_ERRORS as E, errorResult, stockExecutionFlags } from './stock-execution.mjs'
 
-// Stock-pair fee collections and launcher payouts as one pass (docs/STOCK_QUOTES.md, "Execution (off by default)"), for the
-// worker job (scripts/run-worker.mjs) and the operator script (scripts/stock-execute.mjs). A pass first finishes pending rows
-// (settle, rebroadcast or abort), then collects every source whose preview MATCHes, then pays every launcher whose payable
-// reaches the minimum, so a share collected in a pass can be paid in the same pass.
+// Stock-pair fee collections and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by default)").
+// - The operator script (scripts/stock-execute.mjs) runs a whole pass: it first finishes pending rows (settle, rebroadcast or
+//   abort), then collects every enabled source whose preview MATCHes, then pays every launcher whose payable reaches the
+//   minimum, so a share collected in a pass can be paid in the same pass. Only with --execute does it sign, with Keychain keys.
+// - The worker job (scripts/run-worker.mjs) only finishes pending rows: it never plans, signs or loads a key.
 
-export const STOCK_EXECUTION_INTERVAL_MS = 5 * 60_000
+// The worker's recovery cadence: with nothing pending a run is one indexed query per kind and no chain read.
+export const STOCK_EXECUTION_INTERVAL_MS = 60_000
 // Statuses that need a person: they fail the worker run and the script, as the other stock jobs' ERRORs do. A preview MISMATCH
 // is reported but not loud here: src/stock-reconcile.mjs raises the operator alert for mismatches that outlast indexing lag.
 export const STOCK_EXECUTION_LOUD = Object.freeze(['ERROR', 'REVIEW'])
 const QUIET = new Set(['EMPTY', 'NOTHING'])
 
-// A collection preview's non-MATCH source as a report item.
+// A collection preview's non-MATCH source as a report item. Held back on purpose (not enabled, below the floor) is not loud;
+// anything the preview refused is.
 function unmatched(item) {
   if (item.status === 'MISMATCH') return { ...item, status: 'NOT_COLLECTABLE' }
   if (item.status === 'PENDING') return { ...item, status: 'IN_FLIGHT' }
-  if (item.status === 'ERROR') return item
+  if (['ERROR', 'NOT_ENABLED', 'BELOW_MINIMUM'].includes(item.status)) return item
   return { ...item, status: 'ERROR', reason: `${item.status}: ${item.reason ?? 'not collectable'}` }
 }
 
@@ -76,17 +78,25 @@ export async function runStockExecution({ collections = null, payouts = null, li
 
 export const stockExecutionLoud = report => [...report.collections, ...report.payouts].some(item => STOCK_EXECUTION_LOUD.includes(item.status))
 
+// Recovery only, for every pending row of the enabled kinds: settle a finalized transaction, rebroadcast stored bytes while their
+// blockhash is valid, abort once it has expired beyond doubt. No key: only bytes the operator's script already signed are sent.
+export async function recoverStockExecution({ collections = null, payouts = null }) {
+  return { collections: collections ? await collections.recover() : [], payouts: payouts ? await payouts.recover() : [] }
+}
+
 // The worker job: null, so it constructs, reads and loads nothing (connect() is not even called), unless
-// STOCK_COLLECTIONS_EXECUTION_ENABLED or STOCK_LAUNCHER_PAYOUTS_ENABLED is 'true'; then only the kinds whose flag is on run.
-// connect() returns { connection, verification }.
+// STOCK_COLLECTIONS_EXECUTION_ENABLED or STOCK_LAUNCHER_PAYOUTS_ENABLED is 'true'; then it recovers the kinds whose flag is on.
+// It is keyless by construction: its executors have no signer, so they can recover but never collect or pay. connect() returns
+// { connection, verification }.
 export function createStockExecutionJob({ pool, connect, config, env = process.env, ...options }) {
+  if ('loadSigner' in options) throw Error('The worker never signs: stock collections and payouts run from scripts/stock-execute.mjs')
   const flags = stockExecutionFlags(env)
   if (!flags.collections && !flags.payouts) return null
   const { connection, verification = null } = connect()
   const shared = { pool, connection, verification, env, ...options }
   const collections = flags.collections ? createStockCollectionExecutor({ ...shared, config }) : null
   const payouts = flags.payouts ? createStockLauncherPayouts(shared) : null
-  return { flags, runOnce: () => runStockExecution({ collections, payouts, listMarkets: filter => listStockMarkets(pool, filter), execute: true }) }
+  return { flags, runOnce: () => recoverStockExecution({ collections, payouts }) }
 }
 
 // Plain-English lines for the operator script.
@@ -97,6 +107,6 @@ export function describeStockExecution(report, { execute }) {
     `${item.reason ? ` (${item.reason})` : ''}`
   const lines = ['Collections:', ...(report.collections.length ? report.collections.map(line) : ['  none']),
     'Launcher payouts:', ...(report.payouts.length ? report.payouts.map(line) : ['  none'])]
-  lines.push(execute ? 'Executed: every transaction above was recorded before it was sent.' : 'Dry run: no key was loaded and nothing was signed, sent or written.')
+  lines.push(execute ? 'Executed: every transaction above was recorded pending before it was sent.' : 'Dry run: no key was loaded and nothing was signed, sent or written.')
   return lines
 }

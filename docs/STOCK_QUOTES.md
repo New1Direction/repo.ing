@@ -506,18 +506,33 @@ DAMM v2 on 2026-09-09.
 Collecting a stock pair's fees into custody and paying launchers their 0.30%, both in the stock. Seeding the REPOING/stock pools
 is not here: the owner does that himself from custody.
 
-- **Flags:** `STOCK_COLLECTIONS_EXECUTION_ENABLED` and `STOCK_LAUNCHER_PAYOUTS_ENABLED`, each on only when exactly `true`. While
-  both are off, the worker's job does not exist: no key is read, nothing is read or printed, and the worker's output and RPC calls
-  are unchanged (`tests/stock-execution-worker-db.test.mjs`).
-- **Keys**, read only when a transaction is about to be signed and never printed:
-  - `PLATFORM_CREATOR_SECRET_KEY` signs creator-fee collections (the curve's creator, the graduated creator position's owner);
-  - `PLATFORM_PARTNER_SECRET_KEY` signs partner-fee collections and payouts. The partner wallet is every stock config's fee
-    claimer and the custody (`STOCK_FEE_CUSTODY` in `src/stock-collections.mjs`).
-- **Network:** mainnet with a second RPC (`GRADUATION_VERIFICATION_RPC_URL`) that every deciding read must agree with, or a local
-  validator.
-- **Collections** (`src/stock-collection-execution.mjs`), per source (`dbc_creator`, `dbc_partner`, `damm_creator`, `damm_partner`):
-  - Under the market's lock, the preview (`src/stock-collections.mjs`) is rebuilt from finalized reads and the stock ledgers. Only a
-    source that still MATCHes, with the terms hash that was reviewed, is executed.
+- **Where it runs:** only on the owner's machine, with `scripts/stock-execute.mjs`, as `scripts/platform-sweep.mjs` claims SOL
+  platform fees. The worker and the web service never hold a stock execution key.
+  - The script is a dry run by default. It prints what it would collect (with each terms hash), pay, settle, rebroadcast or
+    abort, and loads, signs, sends and writes nothing.
+  - `--execute` runs the pass for real, only for the kinds whose flag is set, and reads each key from the macOS Keychain only
+    when a transaction needs it, as `scripts/create-stock-quote-config.mjs` reads the partner key:
+    - `repo.ing.dbc.creator` (account `production`): the platform creator, for creator fees, checked against each collection's
+      reviewed signer;
+    - `repo.ing.dbc.partner` (account `production`): every stock config's fee claimer and the custody wallet, for partner fees
+      and payouts.
+  - No environment variable is ever read for a key.
+- **Flags:** `STOCK_COLLECTIONS_EXECUTION_ENABLED` and `STOCK_LAUNCHER_PAYOUTS_ENABLED`, each on only when exactly `true`. They
+  gate the script's `--execute` and the worker's recovery.
+- **The worker** only finishes rows the script already signed: it settles them, rebroadcasts their stored bytes, or aborts
+  them. It runs every minute and is keyless by construction: its executors have no signer, so they cannot collect or pay. While
+  both flags are off it does not exist: nothing is read or printed, and the worker's output and RPC calls are unchanged
+  (`tests/stock-execution-worker-db.test.mjs`).
+- **Network:** mainnet or a local validator. Off localnet a second RPC (`GRADUATION_VERIFICATION_RPC_URL`) is required:
+  - the previews read the pools through both RPCs and need them to agree byte for byte;
+  - recovery aborts only when both say the signature is unknown and the second one's finalized block height is 32 blocks past
+    the blockhash's last valid height;
+  - balances, the mint, simulation and sending use the first RPC.
+- **Collections** (`src/stock-collection-execution.mjs`):
+  - Curve sources (`dbc_creator`, `dbc_partner`) only. Graduated-pool sources need `--damm` until a validator test covers them.
+  - A source holding less than `STOCK_COLLECTION_MIN_RAW` (1,000,000 raw units) is left to accrue.
+  - Under the market's lock, the preview (`src/stock-collections.mjs`) is rebuilt from finalized reads and the stock ledgers.
+    Only a source that still MATCHes, with the terms hash that was reviewed, is executed.
   - The transaction is exactly the hashed instructions: the custody's two token accounts created idempotently, then the one
     claim, with the reviewed signer the only signer. Every source lands in the one stock custody account,
     `stockCustodyAccount(fee claimer, mint)` (`src/stock-reconcile.mjs`), which the reconciliation watches and payouts leave from.
@@ -539,24 +554,27 @@ is not here: the owner does that himself from custody.
     - otherwise the live balance must cover this payout plus every payout still pending, or the payout waits.
   - It goes only to the market's `launcher_wallet` (the database refuses any other wallet), as one Token-2022 `transferChecked`
     from custody's account to the launcher's, which is created if missing. Custody pays the network fee and rent.
-  - It settles only when the receipt shows custody −amount and the launcher +amount, no other token moved, no program ran under
-    the transfer, and no SOL moved but the fee and that rent.
+  - It settles only when the receipt shows custody −amount and the launcher +amount, no other token moved, and no program ran
+    under the transfer. In SOL, the launcher's account may gain at most the rent Token-2022 creates it at, and custody pays
+    exactly the network fee plus that gain. Someone pre-funding the account's address with lamports cannot block a payout.
 - **Every transaction** is recorded `pending` with its signed bytes and intent (blockhash, last valid block height, terms, kept in
   `receipt` until it settles) before it is sent. The database allows one pending collection per market and source and one
-  pending payout per market. A collection or payout holds the market's lock from reading its terms until it settles. It is the
-  lock the stock reconciliation, the SOL reconciler and the SOL claims take, `pg_advisory_lock(github_repo_id)`, so nothing
-  interleaves and the reconciliation never reads a half-settled row. Migration 0056 stores a transaction signature on at most
-  one collection and one payout, and indexes payouts by stock for the custody check.
+  pending payout per market. Migration 0056 stores a transaction signature on at most one collection and one payout, and
+  indexes payouts by stock for the custody check.
+- **The market's lock** is the one the stock reconciliation, the SOL reconciler and the SOL claims take,
+  `pg_advisory_lock(github_repo_id)`. Nothing interleaves, and the reconciliation never reads a half-written row:
+  - a collection or payout holds the lock only to rebuild its terms, sign, record the pending row and send once;
+  - while the transaction lands (followed for at most 90 seconds, then left to recovery) the lock is free;
+  - it settles under a fresh, short lock.
+  - The stock fee accrual waits at most 10 seconds for the lock. On a timeout the trade route leaves the trade's fees pending,
+    with an alert, and the worker's stock indexer credits them from the pool's history. The indexer itself reports that market
+    `BUSY` and retries it on its next run, from the last trade it credited.
 - **Recovery** finishes pending rows:
   - it settles a finalized transaction and aborts one that failed;
   - it rebroadcasts the stored bytes while their blockhash is valid;
-  - it aborts only once that blockhash has expired at finalized and no RPC, the verification RPC included, knows the signature.
+  - it aborts only as described under Network: past the 32-block margin, with no RPC knowing the signature.
   - A transaction that landed but whose receipt does not match stays pending, with a `STOCK_EXECUTION_REVIEW` operator alert.
-- **Worker:** every 5 minutes a pass runs recovery, then collections, then payouts, so a share collected in a pass is paid in the
-  same pass. An ERROR or REVIEW fails the run.
-- **Operator:** `node scripts/stock-execute.mjs [--collections] [--payouts] [--asset <id>] [--repo <id>]` is a dry run. It prints
-  what it would collect (with each terms hash), pay, settle, rebroadcast or abort, and loads, signs, sends and writes nothing.
-  `--execute` runs the pass for real, and only with the matching flag set.
+  - An ERROR or REVIEW fails the worker run.
 
 `tests/stock-execution.test.mjs` covers the state machine, `tests/stock-execution-db.test.mjs` the same on PostgreSQL with the
 real ledgers, and `tests/stock-execution-chain.test.mjs` collects both curve fees and pays a launcher on mainnet's programs (run
@@ -596,9 +614,10 @@ owner's approval.
 ## Accumulator and settlement (P8–P10, read-only)
 
 The owner creates and seeds each canonical REPOING/<stock> DAMM v2 pool himself, later, from that stock's accumulated fees.
-repo.ing keeps only the accounts, previews and checks: nothing here signs or sends a transaction, and no script loads a key.
-Collection, launcher payouts and settlement execution come later, behind operator flags. Amounts are raw units of the stock;
-displays add the ScaledUiAmount multiplier and a USD price.
+repo.ing keeps only the accounts, previews and checks: nothing in this section signs or sends a transaction, and none of its
+scripts loads a key. Collections and launcher payouts run behind operator flags from `scripts/stock-execute.mjs`
+([Execution](#execution-off-by-default)); settlement execution comes later. Amounts are raw units of the stock; displays add
+the ScaledUiAmount multiplier and a USD price.
 
 - **The accumulator, per stock** (`src/stock-accumulator.mjs`), from the stock ledgers:
   - **credited:** `stock_fee_events.accumulator_amount` plus `stock_damm_fee_checkpoints.accumulator_credit`;
@@ -614,7 +633,7 @@ displays add the ScaledUiAmount multiplier and a USD price.
   - A source is planned only when what its pool holds equals what the ledger expects, and no collection of it is pending.
   - The plan gives the exact instructions, the launcher's and the accumulator's parts, and a `terms_hash`. Custody is the
     partner wallet, a constant. Off localnet a second RPC (`GRADUATION_VERIFICATION_RPC_URL`) must agree, as for SOL fees.
-  - `checkStockCollectionReceipt` will settle executions on exact Token-2022 balance deltas and the program's claim event.
+  - `checkStockCollectionReceipt` settles executed collections on exact Token-2022 balance deltas and the program's claim event.
   - The SOL sweep never sees a stock market: `listPlatformFees` lists only `quote_asset_id is null`.
 - **The canonical pool registry** (`src/stock-canonical-pools.mjs`): before a pool is recorded (one active per stock), it is
   checked on chain to be a DAMM v2 pool of exactly REPOING (SPL Token) and the stock's pinned mint (Token-2022), with the
