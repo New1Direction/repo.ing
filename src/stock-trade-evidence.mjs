@@ -80,7 +80,10 @@ const AGREEING = ['actualInputAmount', 'outputAmount', 'nextSqrtPrice', 'trading
 // config; quoteMint: the market's stamped stock mint (required: nothing here assumes a quote). Returns the canonical swap
 // events exactly as canonicalDbcSwapEvents shapes them, with the same transaction-wide event ordinals, so a ledger key
 // (signature, event_index) means the same thing for both quotes.
-export function stockDbcSwapEvents(transaction, market, { config, quoteMint } = {}, dbc) {
+// migrationSignature: the curve's proven migration (stock_graduation_events, src/stock-graduation-monitor.mjs). In exactly
+// that transaction its migrationDammV2 is accepted, so a swap bundled before it is still read; anywhere else a migration
+// instruction stays a StockCurveMigratedError.
+export function stockDbcSwapEvents(transaction, market, { config, quoteMint, migrationSignature = null } = {}, dbc) {
   if (!quoteMint) throw Error('Stock swap evidence needs the market\'s quote mint')
   if (!config) throw Error('Stock swap evidence needs the market\'s DBC config')
   if (!transaction?.meta || transaction.meta.err) throw Error('Finalized trade transaction is unavailable or failed')
@@ -92,6 +95,7 @@ export function stockDbcSwapEvents(transaction, market, { config, quoteMint } = 
   const configKey = new PublicKey(config), quote = new PublicKey(quoteMint)
   const isKey = (index, expected) => Number.isInteger(index) && Boolean(keys[index]?.equals(expected))
   const namesPool = instruction => (instruction.accounts ?? []).some(index => isKey(index, pool))
+  const provenMigration = Boolean(migrationSignature) && transaction.transaction.signatures?.[0] === migrationSignature
   const expected = { pool, config: configKey, baseMint: mint, quoteMint: quote }
   // The pool, config and mints exactly where the instruction takes them, and the pool nowhere else.
   const fullyMatches = (instruction, positions) => {
@@ -110,7 +114,8 @@ export function stockDbcSwapEvents(transaction, market, { config, quoteMint } = 
     if (known?.kind === SWAP) return known
     if (!namesPool(instruction)) return null
     if (!known) unmatched.push(`${label}: an unknown DBC instruction names the pool`)
-    else if (known.kind === MIGRATION) throw new StockCurveMigratedError(`Stock-paired curve ${market.pool} is migrating (${known.name}); graduation is not indexed yet`)
+    else if (known.kind === MIGRATION && !(provenMigration && known.name === 'migrationDammV2')) throw new StockCurveMigratedError(`Stock-paired curve ${market.pool} is migrating (${known.name}); graduation is not indexed yet`)
+    else if (known.kind === MIGRATION) return null
     else if (!fullyMatches(instruction, known.accounts)) unmatched.push(`${label}: ${known.name} names the pool with other accounts`)
     return null
   }

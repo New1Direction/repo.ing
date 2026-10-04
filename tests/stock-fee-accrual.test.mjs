@@ -164,17 +164,19 @@ test('anything that is not this stock market\'s live curve is an error before an
   assert.equal((await accrualFor(db).checkCurve('94911145')).asset, META)
 })
 
-test('a migrated curve, with its proven migration, credits only the swaps finalized before it migrated', async () => {
+test('a migrated curve, with its proven migration, credits only the swaps finalized up to and in it', async () => {
   // As the indexer finishes a graduated curve (src/stock-fee-indexer.mjs): the migration proven by src/stock-graduation-monitor.mjs.
-  const migrated = { state: poolState({ isMigrated: 1 }) }, migration = { signature: SELL, slot: String(STOCK.sell.slot - 1) }
+  // Here the sell stands in for the migration transaction: a swap bundled into it is credited like any before it.
+  const migrated = { state: poolState({ isMigrated: 1 }) }, migration = { signature: SELL, slot: String(STOCK.sell.slot) }
   const db = fakeDatabase()
   await assert.rejects(accrualFor(db, migrated).recordTradeFees({ githubRepoId: '94911145', signatures: [BUY] }), StockCurveMigratedError)
   const before = await accrualFor(db, migrated).recordTradeFees({ githubRepoId: '94911145', signatures: [BUY], migration })
   assert.deepEqual([before.creditedBaseUnits, before.eventKeys], [10235927n, [`${BUY}:0`]])
-  // The migration itself, and anything finalized after it, is never credited here.
-  await assert.rejects(accrualFor(db, migrated).recordTradeFees({ githubRepoId: '94911145', signatures: [SELL], migration }), StockCurveMigratedError)
-  await assert.rejects(accrualFor(db, migrated).recordTradeFees({ githubRepoId: '94911145', signatures: [BUY],
+  const bundled = await accrualFor(db, migrated).recordTradeFees({ githubRepoId: '94911145', signatures: [SELL], migration })
+  assert.deepEqual(bundled.eventKeys, [`${SELL}:0`])
+  // Anything finalized after the migration's slot is never credited here.
+  await assert.rejects(accrualFor(db, migrated).recordTradeFees({ githubRepoId: '94911145', signatures: [SELL],
     migration: { signature: BUY, slot: String(STOCK.buy.slot) } }), StockCurveMigratedError)
-  assert.deepEqual([db.state.fees.size, db.state.trades.size], [1, 1])
+  assert.deepEqual([db.state.fees.size, db.state.trades.size], [2, 2])
   assert.equal((await accrualFor(db, migrated).checkCurve('94911145', db, migration)).migration, migration)
 })

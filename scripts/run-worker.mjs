@@ -131,9 +131,17 @@ const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetry
   }})
 const graduation=createGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
-// Stock-paired markets (docs/STOCK_QUOTES.md): graduation proof, DAMM swaps and fee checkpoints in the stock ledgers, in the same pass.
+// Stock-paired markets (docs/STOCK_QUOTES.md): graduation proof, DAMM swaps and fee checkpoints in the stock ledgers. Its own pass,
+// so a long stock backlog never delays SOL graduation.
 const stockGraduation=createStockGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
+let stockGraduationTask=null,nextStockGraduationCheck=0
+async function observeStockGraduation(){
+  const result={}
+  try{result.stockGraduation=await stockGraduation.runOnce()}catch{result.stockGraduationError='Stock graduation unavailable'}
+  if(result.stockGraduationError||result.stockGraduation?.some(item=>item.status==='REVIEW'))process.exitCode=1
+  if(result.stockGraduationError||result.stockGraduation?.length)console.log(JSON.stringify(result))
+}
 const operatingWallets=createOperatingWalletMonitor({pool,connections:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?[graduationRPC(rpc),graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL)]:[]})
 let operatingWalletTask=null,nextOperatingWalletCheck=0
@@ -257,9 +265,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function observeGraduation(){
   const result={}
   try{result.graduation=await graduation.runOnce()}catch{result.graduationError='Graduation readiness unavailable'}
-  try{result.stockGraduation=await stockGraduation.runOnce()}catch{result.stockGraduationError='Stock graduation unavailable'}
   if(result.graduationError||result.graduation?.some(item=>item.status==='REVIEW'))process.exitCode=1
-  if(result.stockGraduationError||result.stockGraduation?.some(item=>item.status==='REVIEW'))process.exitCode=1
   console.log(JSON.stringify(result))
 }
 
@@ -319,6 +325,9 @@ try {
     if(once)await observeStockReconcile()
     else if(!stockReconcileTask&&Date.now()>=nextStockReconcileCheck)
       stockReconcileTask=observeStockReconcile().finally(()=>{nextStockReconcileCheck=Date.now()+STOCK_RECONCILE_INTERVAL_MS;stockReconcileTask=null})
+    if(once)await observeStockGraduation()
+    else if(!stockGraduationTask&&Date.now()>=nextStockGraduationCheck)
+      stockGraduationTask=observeStockGraduation().finally(()=>{nextStockGraduationCheck=Date.now()+30000;stockGraduationTask=null})
     if(process.env.TREND_INTAKE_ENABLED==='true'){
       if(once)await observeTrends()
       else if(!trendTask&&Date.now()>=nextTrendCheck)trendTask=observeTrends().finally(()=>{nextTrendCheck=Date.now()+300000;trendTask=null})
@@ -374,5 +383,5 @@ try {
     if (result.stockFeeError || result.stockFees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
+} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;await pool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }

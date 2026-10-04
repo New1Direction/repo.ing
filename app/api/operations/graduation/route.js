@@ -9,8 +9,8 @@ const headers={'Cache-Control':'private, no-store'}
 const operator=request=>requirePlatformOperator(readGithubSession(request.cookies.get(githubSessionCookie)?.value))
 export async function GET(request){
   try{operator(request)}catch(error){return Response.json({error:error.message},{status:error.status??403,headers})}
-  // SOL markets as before; stock-paired markets (docs/STOCK_QUOTES.md) as their own list.
-  try{const [view,stockMarkets]=await Promise.all([graduationOperatorView(database()),stockGraduationOperatorView(database())]);return Response.json({...view,stockMarkets},{headers})}
+  // SOL markets as before; stock-paired markets (docs/STOCK_QUOTES.md) as their own list, which can never take the SOL view down.
+  try{const [view,stockMarkets]=await Promise.all([graduationOperatorView(database()),stockGraduationOperatorView(database()).catch(()=>null)]);return Response.json({...view,stockMarkets},{headers})}
   catch{return Response.json({error:'Graduation readiness is temporarily unavailable.'},{status:503,headers})}
 }
 export async function POST(request){

@@ -62,10 +62,13 @@ export function createStockGraduationMonitor({ pool, connection, verification, c
         }
         const hookResults = {}
         for (const hook of registered) hookResults[hook.name] = await hook.run({ db, market, quote, state, connection, verification })
-        const quarantined = trades?.openQuarantines ?? 0
-        return { repoId, status: quarantined ? 'REVIEW' : 'VERIFIED', ...(quarantined ? { code: STOCK_DAMM_QUARANTINE } : {}), assetId: quote.assetId,
+        const quarantined = trades?.openQuarantines ?? 0, disabled = Boolean(state.migration) && !state.dammPoolEnabled
+        if (disabled) await notify(STOCK_GRADUATION_REVIEW, 'DAMM_POOL_DISABLED', { code: 'DAMM_POOL_DISABLED', pool: state.migration.pool })
+        const code = quarantined ? STOCK_DAMM_QUARANTINE : disabled ? 'DAMM_POOL_DISABLED' : null
+        return { repoId, status: code ? 'REVIEW' : 'VERIFIED', ...(code ? { code } : {}), assetId: quote.assetId,
           phase: state.phase, curve: state.status, progressPercent: state.progressPercent, observed, migration: state.migration?.signature ?? null,
-          dammPool: state.destination?.pool ?? null, trades: trades && { transactions: trades.transactions, inserted: trades.inserted, quarantined: trades.quarantined },
+          dammPool: state.destination?.pool ?? null,
+          trades: trades && { transactions: trades.transactions, remaining: trades.remaining, inserted: trades.inserted, quarantined: trades.quarantined },
           checkpoints, hooks: hookResults, alerts }
       } catch (error) {
         const code = stockGraduationError(error)

@@ -95,6 +95,7 @@ test('stock graduation ledgers on PostgreSQL', { timeout: 120_000 }, async t => 
       await assert.rejects(recordStockGraduationEvent(pool, graduated(fees, { migration: { ...migration, signature: bs58.encode(Buffer.alloc(64, 9)) } })), /DUPLICATE_GRADUATION_CONFLICT/)
       await assert.rejects(recordStockGraduationEvent(pool, graduated(fees, { migrationHash: 'b'.repeat(64) })), /DUPLICATE_GRADUATION_CONFLICT/)
       assert.equal(await recordStockObservation(pool, graduated(fees)), true)
+      assert.equal(await recordStockObservation(pool, graduated(fees), { now: () => Date.now() + 3_600_000 }), false, 'a migrated curve never changes: no heartbeat')
       const { rows: [event] } = await pool.query('select asset_id, quote_mint, dbc_pool, damm_pool, migration_signature, slot::text from stock_graduation_events')
       assert.deepEqual(event, { asset_id: 'meta-xstock', quote_mint: META.mint, dbc_pool: fixture.market.curve, damm_pool: fixture.dammPool,
         migration_signature: migration.signature, slot: String(migration.slot) })
@@ -144,8 +145,9 @@ test('stock graduation ledgers on PostgreSQL', { timeout: 120_000 }, async t => 
       history.push(...order.map(name => ({ signature: fixture.transactions[name].transaction.signatures[0], slot: fixture.transactions[name].slot, err: null })))
       const run = () => indexStockDammTrades({ db: pool, connection: primary, verification, market, quote: META,
         graduation: { pool: fixture.dammPool, signature: migration.signature, slot: migration.slot } })
+      // The first pass reads the migration transaction itself (no swap in it here), then the four swaps after it.
       const first = await run()
-      assert.deepEqual([first.transactions, first.inserted, first.quarantined, first.openQuarantines], [4, 4, [], 0])
+      assert.deepEqual([first.transactions, first.remaining, first.inserted, first.quarantined, first.openQuarantines], [5, 0, 4, [], 0])
       const { rows } = await pool.query(`select signature, venue, direction, quote_amount::text, asset_id, quote_mint from stock_trade_events order by slot, event_index`)
       assert.deepEqual(rows.map(row => [row.signature, row.venue, row.direction, row.asset_id, row.quote_mint]),
         ['directBuy', 'directSell', 'siteBuy', 'siteSell'].map((name, i) => [fixture.transactions[name].transaction.signatures[0], 'damm', i % 2 ? 'sell' : 'buy', 'meta-xstock', META.mint]))
@@ -186,6 +188,34 @@ test('stock graduation ledgers on PostgreSQL', { timeout: 120_000 }, async t => 
         graduation: { pool: fixture.dammPool, signature: migration.signature, slot: migration.slot } }), /DAMM_TRADE_PRECEDES_MIGRATION/)
       await assert.rejects(indexStockDammTrades({ db: pool, connection: primary, verification, market, quote: SOL_QUOTE, graduation: { pool: fixture.dammPool } }),
         /STOCK_QUOTE_MINT_REQUIRED/)
+    })
+
+    await t.test('a swap bundled into the migration transaction is indexed; a long backlog is worked off over capped passes', async () => {
+      await pool.query('delete from stock_trade_events where pool = $1', [fixture.dammPool])
+      await pool.query('delete from stock_pool_cursors where pool = $1', [fixture.dammPool])
+      const transactions = new Map(Object.values(fixture.transactions).map(tx => [tx.transaction.signatures[0], tx]))
+      const order = ['siteSell', 'siteBuy', 'directSell'].map(name => fixture.transactions[name])
+      const providers = ['primary', 'verification'].map(name => {
+        const url = `https://${name}.stock-bundled.invalid`
+        registerRpcEndpoint(url, async (_, init) => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1,
+          result: transactions.get(JSON.parse(init.body).params[0]) ?? null }), { status: 200 }))
+        return Object.assign(Object.create(new Connection(url)), { getSignaturesForAddress: async () =>
+          [...order, fixture.transactions.directBuy].map(tx => ({ signature: tx.transaction.signatures[0], slot: tx.slot, err: null })) })
+      })
+      // As if the migration had carried the first swap on the new pool: the migration transaction is the direct buy.
+      const bundled = fixture.transactions.directBuy
+      const run = () => indexStockDammTrades({ db: pool, connection: providers[0], verification: providers[1], market, quote: META, maxTransactions: 2,
+        graduation: { pool: fixture.dammPool, signature: bundled.transaction.signatures[0], slot: bundled.slot } })
+      const first = await run()
+      assert.deepEqual([first.transactions, first.remaining, first.inserted], [3, 1, 3], 'the migration transaction and two after it')
+      const second = await run()
+      assert.deepEqual([second.transactions, second.remaining, second.inserted], [1, 0, 1])
+      const { rows } = await pool.query('select signature from stock_trade_events where pool = $1 order by slot, event_index', [fixture.dammPool])
+      assert.deepEqual(rows.map(row => row.signature), ['directBuy', 'directSell', 'siteBuy', 'siteSell'].map(name => fixture.transactions[name].transaction.signatures[0]))
+      // A stored row under the same key must be the same event: anything else stops the pass, never passed over.
+      await pool.query(`update stock_trade_events set quote_amount = quote_amount + 1 where signature = $1`, [bundled.transaction.signatures[0]])
+      await pool.query('delete from stock_pool_cursors where pool = $1', [fixture.dammPool])
+      await assert.rejects(run(), /STOCK_TRADE_ROW_CONFLICT/)
     })
 
     await t.test('a market the monitor cannot verify is REVIEW with a code and one alert, never skipped', async () => {

@@ -80,7 +80,7 @@ export function createStockFeeAccrual({ pool: databasePool, connection, config, 
   // The market and its curve as the chain holds them now: its stamped stock still the registry's, its registered stock config,
   // the canonical pool unchanged and not migrated, and the config the fee policy expects. Any failure is an ERROR for the market.
   // migration: the curve's proven migration ({ signature, slot }, stock_graduation_events, src/stock-graduation-monitor.mjs); with
-  // it a migrated curve is accepted, only to credit the swaps it finalized before migrating.
+  // it a migrated curve is accepted, only to credit the swaps it finalized up to and in the migration transaction.
   async function checkCurve(githubRepoId, executor = databasePool, migration = null) {
     const market = await loadMarket(executor, BigInt(githubRepoId))
     const asset = quoteOfMarket(market)
@@ -99,8 +99,10 @@ export function createStockFeeAccrual({ pool: databasePool, connection, config, 
   const evidenceFrom = async (signature, { market, asset, configKey, fixed, migration }, allowNonSwap) => {
     const transaction = await loadTransaction(connection, signature)
     if (!transaction || !transaction.meta || transaction.meta.err) throw Error(`Trade ${signature} has no successful finalized transaction evidence`)
-    if (migration && (signature === migration.signature || BigInt(transaction.slot) > BigInt(migration.slot))) throw new StockCurveMigratedError()
-    const { events } = stockDbcSwapEvents(transaction, market, { config: configKey, quoteMint: asset.mint }, dbc)
+    // After a proven migration only the swaps it finalized count: those before it, and one bundled into the migration itself.
+    if (migration && BigInt(transaction.slot) > BigInt(migration.slot)) throw new StockCurveMigratedError()
+    const { events } = stockDbcSwapEvents(transaction, market, { config: configKey, quoteMint: asset.mint,
+      migrationSignature: migration?.signature ?? null }, dbc)
     if (!events.length && !allowNonSwap) throw new UnparseableTradeError(`Trade ${signature} has no canonical stock DBC swap event`)
     const base = { githubRepoId: market.repoId, assetId: asset.assetId, quoteMint: asset.mint, pool: market.pool }
     // Both rows of every swap are built before anything is written: a swap that cannot become a trade row credits no fee.
