@@ -122,3 +122,36 @@ test('control: the token page of a SOL market keeps its claim link, invitation a
   assert.ok(markup.includes('Claim builder fees') && markup.includes('Total repository earnings') && markup.includes('Maintainer? '))
   assert.doesNotMatch(markup, /Fee routing|no owner claim/)
 })
+
+// Copy (src/stock-pair-copy.mjs): a stock pair's pages never say its trades pay the repo's builders in SOL.
+const LINE = 'Every trade pays 1.75% in METAx: 0.30% to the launcher, 1.10% to permanent $REPOING / METAx liquidity.'
+const byName = name => node => node.type?.name === name
+
+test('the token page of a stock pair gives the more-markets strip its pair and offers no README badge (it shows builder fees in SOL)', async () => {
+  clearQuoteAssetInfoCache()
+  const page = async mint => tokenPage.default({ params: Promise.resolve({ mint }), searchParams: Promise.resolve({}) })
+  const stock = await page('MintStockDocs')
+  assert.deepEqual(find(stock, byName('MoreMarketsContent')).props.quote, { assetId: 'meta-xstock', symbol: 'METAx', name: 'Meta xStock', decimals: 8, mint: METAX })
+  assert.equal(find(stock, byName('ShareMarket')).props.readme, false)
+  assert.doesNotMatch(decoded(html(await resolveServer(stock), { wallet: true })), /builders in SOL/)
+  // A SOL market's page: no pair for the strip, and the share menu's README badge as before.
+  const sol = await page('MintSolHello')
+  assert.equal(find(sol, byName('MoreMarketsContent')).props.quote, null)
+  assert.equal('readme' in find(sol, byName('ShareMarket')).props, false)
+})
+
+test('the shared return of a stock pair says what its trades pay, in METAx; a SOL market\'s still says builders in SOL', async () => {
+  const returnPage = await appModule('app/(site)/token/[mint]/return/[pct]/page.jsx')
+  const params = mint => Promise.resolve({ mint, pct: '12.5' })
+  const metadata = await returnPage.generateMetadata({ params: params('MintStockDocs') })
+  for (const description of [metadata.description, metadata.openGraph.description, metadata.twitter.description]) {
+    assert.equal(description, `A trader's reported return on facebook/docusaurus. ${LINE}`)
+  }
+  const markup = decoded(html(await resolveServer(await returnPage.default({ params: params('MintStockDocs') })), { wallet: true }))
+  assert.ok(markup.includes(`reported by the person who shared this link, not verified by repo.ing. ${LINE}</p>`))
+  assert.doesNotMatch(markup, /builders in SOL/)
+  const sol = await returnPage.generateMetadata({ params: params('MintSolHello') })
+  assert.equal(sol.description, 'A trader\'s reported return on facebook/docusaurus. Every trade pays the repo\'s builders in SOL.')
+  const solMarkup = decoded(html(await resolveServer(await returnPage.default({ params: params('MintSolHello') })), { wallet: true }))
+  assert.ok(solMarkup.includes('not verified by repo.ing. Every trade pays the repo’s builders in SOL.</p>'))
+})
