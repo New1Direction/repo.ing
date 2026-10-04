@@ -89,6 +89,8 @@ export const PINNED_GROUPS = [
   { files: ['stock-ledger-indexes-db'], databaseUrl: launchtest('repoing_stock_ledger_indexes_test'), selfManaged: true },
   // Stock-pair curve indexing: the SOL/stock market partition, SOL indexing and chart ordering unchanged.
   { files: ['stock-curve-indexing-db'], databaseUrl: launchtest('repoing_stock_curve_indexing_test'), selfManaged: true },
+  // Stock-paired market reads (charts, row figures, per-stock totals) and the SOL reads they must leave unchanged.
+  { files: ['stock-market-reads-db'], databaseUrl: launchtest('repoing_stock_reads_test'), selfManaged: true },
   { files: ['graduation-readiness'], databaseUrl: launchtest('repoing_p5_test') },
   { files: ['liquidity-deployment'], databaseUrl: launchtest('repoing_liquidity_test') },
   { files: ['protocol-analytics'], databaseUrl: launchtest('repoing_analytics_test'), selfManaged: true },
