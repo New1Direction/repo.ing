@@ -16,7 +16,8 @@ import { createStockExecutionStore } from './stock-execution-store.mjs'
 
 // Collecting a stock-paired market's fees into custody (docs/STOCK_QUOTES.md, "Execution (off by default)"), behind
 // STOCK_COLLECTIONS_EXECUTION_ENABLED=true and only from scripts/stock-execute.mjs --execute, which passes the Keychain signer
-// (loadSigner); without one a collection is refused, so the worker can only recover. A collection executes only what
+// (loadSigner, which only returns a key the pass read before taking the market's lock); without one a collection is refused,
+// so the worker can only recover. A collection executes only what
 // src/stock-collections.mjs previews: under the market's lock the preview is rebuilt from fresh finalized reads and the stock
 // ledgers, and it runs only if that source still MATCHes, is enabled, reaches the floor and its terms hash is the reviewed one.
 // It is signed with the key of that side (the platform creator for creator fees, the partner for partner fees), recorded
@@ -25,7 +26,8 @@ import { createStockExecutionStore } from './stock-execution-store.mjs'
 // program's claim event), with the amount received split into the launcher's and the accumulator's parts. Every source lands in
 // the one stock custody account, stockCustodyAccount(fee claimer, mint), that the reconciliation watches and payouts leave from.
 
-const SIGNER_ROLE = Object.freeze({ dbc_creator: 'creator', damm_creator: 'creator', dbc_partner: 'partner', damm_partner: 'partner' })
+// Whose key signs each source's claim: the pass (src/stock-execution-job.mjs) reads it before the market's lock is taken.
+export const STOCK_COLLECTION_SIGNER_ROLE = Object.freeze({ dbc_creator: 'creator', damm_creator: 'creator', dbc_partner: 'partner', damm_partner: 'partner' })
 // Curve sources only, until a validator test covers a graduated position's claim; the graduated pool's need an explicit opt-in
 // (scripts/stock-execute.mjs --damm).
 export const STOCK_DEFAULT_COLLECTION_SOURCES = Object.freeze(['dbc_creator', 'dbc_partner'])
@@ -158,8 +160,9 @@ export function createStockCollectionExecutor({ pool, connection, verification =
     if ((await store.pendingCollections(db, { repoId })).some(row => row.source === source))
       fail(E.IN_FLIGHT, `A ${source} collection is already in flight for this market`)
     await usable(asset)
-    const signer = await loadSigner(SIGNER_ROLE[source])
-    if (signer.publicKey.toBase58() !== terms.signer) fail(E.SIGNER_MISMATCH, `The ${SIGNER_ROLE[source]} key is not the reviewed signer`)
+    // The key the pass read before this lock was taken (keychainSigners' signer() never waits on the Keychain): checked here.
+    const signer = await loadSigner(STOCK_COLLECTION_SIGNER_ROLE[source])
+    if (signer.publicKey.toBase58() !== terms.signer) fail(E.SIGNER_MISMATCH, `The ${STOCK_COLLECTION_SIGNER_ROLE[source]} key is not the reviewed signer`)
     const landing = await signStockTransaction({ connection, instructions, signer })
     // Durable before broadcast: from here on, only recovery's rules decide what becomes of this transaction.
     const row = await store.insertCollection(db, { repoId: String(repoId), assetId: asset.assetId, quoteMint: asset.mint, source,

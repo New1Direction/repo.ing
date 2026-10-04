@@ -16,7 +16,8 @@ import { createStockExecutionStore } from './stock-execution-store.mjs'
 
 // Paying a stock-paired market's launcher their 0.30% (docs/STOCK_QUOTES.md, "Execution (off by default)"), behind
 // STOCK_LAUNCHER_PAYOUTS_ENABLED=true and only from scripts/stock-execute.mjs --execute, which passes the Keychain signer
-// (loadSigner); without one a payout is refused, so the worker can only recover. The amount is the launcher ledger's `payable`
+// (loadSigner, which only returns a key the pass read before taking the market's lock); without one a payout is refused, so the
+// worker can only recover. The amount is the launcher ledger's `payable`
 // (src/stock-launcher-earnings.mjs: the launcher's part of fees already collected into custody, less what was paid or is
 // pending), read under the market's lock, and only to the market's launcher_wallet (the database refuses any other wallet).
 // Custody must hold it (custodyGate). A payout is one Token-2022 transferChecked of the stock from the stock custody account to the
@@ -27,6 +28,8 @@ import { createStockExecutionStore } from './stock-execution-store.mjs'
 // (about $1.80 to $7 at today's prices), against a network fee and, the first time, ~0.0021 SOL of rent for the launcher's stock
 // account (179 bytes for METAx). An asset can carry its own floor in STOCK_LAUNCHER_PAYOUT_MIN_RAW_BY_ASSET.
 export const STOCK_LAUNCHER_PAYOUT_MIN_RAW = 1_000_000n
+// Custody pays every payout: the pass (src/stock-execution-job.mjs) reads this key before the market's lock is taken.
+export const STOCK_PAYOUT_SIGNER_ROLE = 'partner'
 export const STOCK_LAUNCHER_PAYOUT_MIN_RAW_BY_ASSET = Object.freeze({})
 export function launcherPayoutMinimum(assetId, overrides = STOCK_LAUNCHER_PAYOUT_MIN_RAW_BY_ASSET) {
   return overrides[assetId] === undefined ? STOCK_LAUNCHER_PAYOUT_MIN_RAW : BigInt(overrides[assetId])
@@ -206,7 +209,8 @@ export function createStockLauncherPayouts({ pool, connection, verification = nu
     // The rent of the account Token-2022 creates for this mint: the most the launcher's account may gain (a pre-funded address
     // gains less).
     const rentCap = BigInt(await connection.getMinimumBalanceForRentExemption(associatedAccountLength(checked.mint)))
-    const signer = await loadSigner('partner')
+    // The key the pass read before this lock was taken (keychainSigners' signer() never waits on the Keychain): checked here.
+    const signer = await loadSigner(STOCK_PAYOUT_SIGNER_ROLE)
     if (signer.publicKey.toBase58() !== custody) fail(E.SIGNER_MISMATCH, 'The partner key is not the custody wallet')
     const built = launcherPayoutInstructions({ custody, wallet, mint: asset.mint, decimals: asset.decimals, amount })
     const terms = { purpose: 'stock-launcher-payout', policyVersion: POLICY_VERSION, repoId: String(repoId), assetId: asset.assetId,

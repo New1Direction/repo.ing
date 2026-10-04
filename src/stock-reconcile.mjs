@@ -274,7 +274,10 @@ export function createStockReconciler({ pool, connection, config, stockConfigs =
     return withStatus(base, parts, reasons)
   }
 
-  // Same lock as the SOL reconciler and claims: a stock collection must hold it while it is sent and settled.
+  // Same lock as the SOL reconciler and claims, and as stock collections and payouts (src/stock-execution-store.mjs). They hold
+  // it to sign, record the pending row and send, then briefly to settle; it is free while their transaction lands. A
+  // reconciliation in that window sees the pending row and reports PENDING_REVIEW (above, and the custody check below), and the
+  // one-pending indexes refuse a second collection of that source or a second payout of that market.
   const reconcile = async githubRepoId => {
     const repoId = BigInt(githubRepoId)
     if (repoId <= 0n) throw new Error('GitHub repository ID must be positive')

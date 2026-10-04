@@ -5,8 +5,10 @@ import { StockExecutionError, STOCK_EXECUTION_ERRORS as E } from './stock-execut
 // and a payout to any wallet but the market's launcher wallet. The market's lock is the very lock the stock reconciliation
 // (src/stock-reconcile.mjs), the SOL reconciler and the SOL claims take, pg_advisory_lock(github_repo_id). A collection or payout
 // holds it while it reads its terms, signs, records the pending row and sends once, then again, briefly, to settle; recovery
-// holds it per market. So the worker, the operator script and the reconciliation never interleave on one market, and the
-// reconciliation never reads a half-written row.
+// holds it per market. The lock is free while a transaction lands. In that window the pending row is what protects the market:
+// the reconciliation reports the stock's custody (and, for a collection, the market) PENDING_REVIEW rather than comparing it,
+// and the one-pending indexes refuse a second collection of the source or a second payout. Every write here is one statement,
+// so no reader ever sees a half-written row.
 const COLLECTION = `id::text, github_repo_id::text as "repoId", asset_id as "assetId", quote_mint as "quoteMint", source,
   reviewed_amount::text as "reviewedAmount", actual_amount::text as "actualAmount", launcher_amount::text as "launcherAmount",
   accumulator_amount::text as "accumulatorAmount", terms_hash as "termsHash", status, signature, signed_transaction as "signedTransaction",

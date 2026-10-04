@@ -510,8 +510,9 @@ is not here: the owner does that himself from custody.
   platform fees. The worker and the web service never hold a stock execution key.
   - The script is a dry run by default. It prints what it would collect (with each terms hash), pay, settle, rebroadcast or
     abort, and loads, signs, sends and writes nothing.
-  - `--execute` runs the pass for real, only for the kinds whose flag is set, and reads each key from the macOS Keychain only
-    when a transaction needs it, as `scripts/create-stock-quote-config.mjs` reads the partner key:
+  - `--execute` runs the pass for real, only for the kinds whose flag is set. It reads each key from the macOS Keychain just
+    before the first transaction that needs it, with no lock held, as `scripts/create-stock-quote-config.mjs` reads the partner
+    key. A Keychain prompt waits at most 120 seconds, and a failed read is that transaction's ERROR:
     - `repo.ing.dbc.creator` (account `production`): the platform creator, for creator fees, checked against each collection's
       reviewed signer;
     - `repo.ing.dbc.partner` (account `production`): every stock config's fee claimer and the custody wallet, for partner fees
@@ -562,9 +563,12 @@ is not here: the owner does that himself from custody.
   pending payout per market. Migration 0056 stores a transaction signature on at most one collection and one payout, and
   indexes payouts by stock for the custody check.
 - **The market's lock** is the one the stock reconciliation, the SOL reconciler and the SOL claims take,
-  `pg_advisory_lock(github_repo_id)`. Nothing interleaves, and the reconciliation never reads a half-written row:
-  - a collection or payout holds the lock only to rebuild its terms, sign, record the pending row and send once;
-  - while the transaction lands (followed for at most 90 seconds, then left to recovery) the lock is free;
+  `pg_advisory_lock(github_repo_id)`:
+  - a collection or payout holds the lock only to rebuild its terms, sign, record the pending row and send once. Its key was
+    read from the Keychain before the lock was taken, so a Keychain prompt never holds the lock;
+  - while the transaction lands (followed for at most 90 seconds, then left to recovery) the lock is free. The pending row
+    protects that window: the reconciliation reports the stock's custody (and, for a collection, the market) `PENDING_REVIEW`
+    instead of comparing it, and the one-pending indexes refuse a second collection of that source or a second payout;
   - it settles under a fresh, short lock.
   - The stock fee accrual waits at most 10 seconds for the lock. On a timeout the trade route leaves the trade's fees pending,
     with an alert, and the worker's stock indexer credits them from the pool's history. The indexer itself reports that market
@@ -575,6 +579,19 @@ is not here: the owner does that himself from custody.
   - it aborts only as described under Network: past the 32-block margin, with no RPC knowing the signature.
   - A transaction that landed but whose receipt does not match stays pending, with a `STOCK_EXECUTION_REVIEW` operator alert.
   - An ERROR or REVIEW fails the worker run.
+- **A REVIEW row** is a transaction that landed but whose receipt does not match its terms. It is never aborted: its funds moved.
+  - **Find it:** the `STOCK_EXECUTION_REVIEW` alert (event key `stock-execution:collection:<id>` or `stock-execution:payout:<id>`)
+    names the table, row id, signature and reason. The worker reports it again every minute, and so does every `--execute`
+    pass. A dry run does not re-check receipts: it lists the row as `WOULD_SETTLE`.
+  - **Inspect it:** the row's `receipt.terms` is what was reviewed and signed. Compare it with the finalized transaction (its
+    signature on an explorer): amounts, accounts and SOL movements.
+  - **What waits on it:** while it is pending, that source's collections (or that market's payouts) wait, and the custody check
+    keeps the amount of a pending payout aside.
+  - **Resolve it:** never delete the row or change its status by hand.
+    - If the transaction did what its terms say and the check is wrong, fix the check in code. Recovery re-checks every pending
+      row on each run and settles it then.
+    - If it did something else, turn both flags off and treat it as an incident. Any correction to the ledgers is a reviewed
+      change, because payouts and the accumulator read them.
 
 `tests/stock-execution.test.mjs` covers the state machine, `tests/stock-execution-db.test.mjs` the same on PostgreSQL with the
 real ledgers, and `tests/stock-execution-chain.test.mjs` collects both curve fees and pays a launcher on mainnet's programs (run

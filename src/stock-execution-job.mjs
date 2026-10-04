@@ -1,11 +1,13 @@
-import { createStockCollectionExecutor } from './stock-collection-execution.mjs'
-import { createStockLauncherPayouts } from './stock-launcher-payouts.mjs'
+import { STOCK_COLLECTION_SIGNER_ROLE, createStockCollectionExecutor } from './stock-collection-execution.mjs'
+import { STOCK_PAYOUT_SIGNER_ROLE, createStockLauncherPayouts } from './stock-launcher-payouts.mjs'
 import { STOCK_EXECUTION_ERRORS as E, errorResult, stockExecutionFlags } from './stock-execution.mjs'
 
 // Stock-pair fee collections and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by default)").
 // - The operator script (scripts/stock-execute.mjs) runs a whole pass: it first finishes pending rows (settle, rebroadcast or
 //   abort), then collects every enabled source whose preview MATCHes, then pays every launcher whose payable reaches the
-//   minimum, so a share collected in a pass can be paid in the same pass. Only with --execute does it sign, with Keychain keys.
+//   minimum, so a share collected in a pass can be paid in the same pass. Only with --execute does it sign, with Keychain keys,
+//   each read (prepareSigner) outside any lock, just before the first transaction that needs it: a Keychain prompt never holds
+//   up a market's lock, so trades' fee indexing and the reconciliation never wait on it.
 // - The worker job (scripts/run-worker.mjs) only finishes pending rows: it never plans, signs or loads a key.
 
 // The worker's recovery cadence: with nothing pending a run is one indexed query per kind and no chain read.
@@ -36,8 +38,10 @@ async function attempt(base, work) {
 
 // One pass. execute=false is a dry run: plans and recovery checks only (statuses WOULD_COLLECT, WOULD_PAY, WOULD_SETTLE,
 // WOULD_REBROADCAST, WOULD_ABORT), with no key loaded and nothing signed, sent or written. verbose keeps the EMPTY and NOTHING
-// items the worker leaves out of its log.
-export async function runStockExecution({ collections = null, payouts = null, listMarkets, execute = false, assetId = null, repoId = null, verbose = false }) {
+// items the worker leaves out of its log. prepareSigner(role) reads a key (keychainSigners' prepare): it is called with no lock
+// held, only for a collection that MATCHes or a payout that is PAYABLE, right before it runs; a failure is that item's ERROR.
+export async function runStockExecution({ collections = null, payouts = null, listMarkets, execute = false, assetId = null, repoId = null, verbose = false,
+  prepareSigner = null }) {
   const report = { collections: [], payouts: [] }
   if (!collections && !payouts) return report
   const markets = await listMarkets({ assetId, repoId })
@@ -58,8 +62,10 @@ export async function runStockExecution({ collections = null, payouts = null, li
       for (const item of planned) {
         if (item.status !== 'MATCH') { if (keep(item)) report.collections.push(QUIET.has(item.status) ? item : unmatched(item)); continue }
         if (!execute) { report.collections.push({ ...item, status: 'WOULD_COLLECT' }); continue }
-        report.collections.push(await attempt({ kind: 'collection', repoId: item.repoId, source: item.source },
-          () => collections.collect({ repoId: item.repoId, source: item.source, termsHash: item.termsHash })))
+        report.collections.push(await attempt({ kind: 'collection', repoId: item.repoId, source: item.source }, async () => {
+          await prepareSigner?.(STOCK_COLLECTION_SIGNER_ROLE[item.source])
+          return collections.collect({ repoId: item.repoId, source: item.source, termsHash: item.termsHash })
+        }))
       }
     }
   }
@@ -70,7 +76,10 @@ export async function runStockExecution({ collections = null, payouts = null, li
       try { decision = await payouts.plan(market) } catch (error) { report.payouts.push(errorResult({ kind: 'payout', repoId: market.repoId }, error)); continue }
       if (decision.status !== 'PAYABLE') { if (keep(decision)) report.payouts.push(decision); continue }
       if (!execute) { report.payouts.push({ ...decision, status: 'WOULD_PAY' }); continue }
-      report.payouts.push(await attempt({ kind: 'payout', repoId: market.repoId }, () => payouts.pay({ repoId: market.repoId })))
+      report.payouts.push(await attempt({ kind: 'payout', repoId: market.repoId }, async () => {
+        await prepareSigner?.(STOCK_PAYOUT_SIGNER_ROLE)
+        return payouts.pay({ repoId: market.repoId })
+      }))
     }
   }
   return report

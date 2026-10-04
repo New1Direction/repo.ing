@@ -215,8 +215,10 @@ Two flags control this. Both are off by default. Leave them off until the code t
 You run both from your own machine, never from the worker or web service: `node scripts/stock-execute.mjs` prints what it
 would do, and `node scripts/stock-execute.mjs --execute` does it, with the flags set in that shell. It reads the keys from your
 macOS Keychain: `repo.ing.dbc.partner` (as for the configs) and `repo.ing.dbc.creator` (the platform creator key, account
-`production`). Turn the same flags on for the worker too: it holds no key, and only finishes transactions the script signed but
-left pending ([details](STOCK_QUOTES.md#execution-off-by-default)).
+`production`). If macOS asks you to allow access, answer within two minutes; otherwise the transactions needing that key are
+skipped with an error. Trades, fee indexing and the reconciliation never wait on the prompt. Turn the same flags on for the
+worker too: it holds no key, and only finishes transactions the script signed but left pending
+([details](STOCK_QUOTES.md#execution-off-by-default)).
 
 While they are off, fees build up in the pools. Nothing is lost. The readiness script shows both flags.
 
