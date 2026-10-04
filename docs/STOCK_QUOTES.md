@@ -185,7 +185,9 @@ query is unchanged.
   creator share 71%). Each swap becomes one `stock_fee_events` row (the creator's 71% of the trading fee rounded down, the
   partner the rest, split by `splitCurveFee` with its `policy_version`) and one `stock_trade_events` row (venue `dbc`: a buy's
   fee-excluded stock input and the tokens out, a sell's tokens in and stock out, all raw), written in one transaction and
-  idempotent on (signature, event_index).
+  idempotent on (signature, event_index). A dust swap the program accepts with nothing out (a buy whose fee, rounded up,
+  takes its whole input; a sell whose stock out rounds down to nothing) is recorded with its zero amounts and its fee
+  credited, as DAMM dust swaps are ("Graduation" below); a swap event without a price is still quarantined.
 - **Worker** (`src/stock-fee-indexer.mjs`): exactly the markets the SOL indexer leaves out (`quote_asset_id is not null`), with
   cursors in `stock_pool_cursors`, its own schedule and an activity feed over the configs in `STOCK_QUOTE_CONFIGS`. A missing
   config, a changed curve, an RPC failure or a cursor missing from history is an ERROR, and the worker exits non-zero; so is a

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import bs58 from 'bs58'
+import BN from 'bn.js'
 import { readFileSync } from 'node:fs'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
@@ -10,6 +11,7 @@ import { canonicalDbcSwapEvents, UnparseableTradeError } from '../src/trade-evid
 import { STOCK_DBC_INSTRUCTIONS, StockCurveMigratedError, StockEvidenceUnmatchedError, stockDbcSwapEvents, stockTradeRows }
   from '../src/stock-trade-evidence.mjs'
 import { QUOTE_REGISTRY } from '../src/quote-assets.mjs'
+import { dustSwap, withSwapEvents } from './fixtures/dbc-stock-dust.mjs'
 
 // The strict stock-pair swap parser (docs/STOCK_QUOTES.md) on real transactions: a DOCUSAURUS / METAx launch, buy and sell
 // captured from the local stock-pair validator (mainnet's DBC and Token-2022 programs, the real METAx mint), and the SOL
@@ -57,6 +59,26 @@ test('a METAx buy and sell from the validator: one canonical event each, with th
   assert.deepEqual([sold.direction, sold.quoteAmount, sold.baseAmount], ['sell', 20875643n, 53455273178753n])
   assert.equal(bought.tradedAt.getTime() % 1000, 0)
   assert.match(bought.nextSqrtPrice, /^[1-9]\d*$/)
+})
+
+test('a dust swap that moves nothing out is a row with its zero amounts; a swap without a price is still refused', () => {
+  // As mainnet's DBC program reports 1 raw unit in (tests/stock-graduation-chain.test.mjs): a buy's fee takes all of it.
+  const dust = direction => normalizeFinalizedTransaction(dustSwap(STOCK[direction], program, direction, `dust-${direction}`), `dust-${direction}`)
+  const [buy, sell] = [parse(dust('buy')), parse(dust('sell'))]
+  const wallet = STOCK.buy.transaction.message.accountKeys[0]
+  assert.deepEqual(facts(buy), [{ eventIndex: 0, trader: wallet, direction: 1, pool: market.pool, config,
+    actualInputAmount: '0', outputAmount: '0', tradingFee: '1', protocolFee: '0' }])
+  assert.deepEqual(facts(sell), [{ eventIndex: 0, trader: wallet, direction: 0, pool: market.pool, config,
+    actualInputAmount: '1', outputAmount: '0', tradingFee: '0', protocolFee: '0' }])
+  const [bought] = stockTradeRows(dust('buy'), 'dust-buy', buy.events), [sold] = stockTradeRows(dust('sell'), 'dust-sell', sell.events)
+  assert.deepEqual([bought.direction, bought.quoteAmount, bought.baseAmount], ['buy', 0n, 0n])
+  assert.deepEqual([sold.direction, sold.quoteAmount, sold.baseAmount], ['sell', 0n, 1n])
+  assert.match(bought.nextSqrtPrice, /^[1-9]\d*$/)
+  // The price is still required: a swap event without one is unparseable (quarantined, never a row).
+  const priceless = normalizeFinalizedTransaction(withSwapEvents(STOCK.buy, program, (_, data) => { data.swapResult.nextSqrtPrice = new BN(0) },
+    'priceless'), 'priceless')
+  assert.throws(() => stockTradeRows(priceless, 'priceless', parse(priceless).events),
+    error => error instanceof UnparseableTradeError && error.message === 'Canonical stock swap has no price')
 })
 
 test('the launch is matched as a known non-swap: no events, nothing unmatched', () => {

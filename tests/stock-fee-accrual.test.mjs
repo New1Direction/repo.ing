@@ -10,6 +10,7 @@ import { StockCurveMigratedError } from '../src/stock-trade-evidence.mjs'
 import { assertStockCurveConfig, createStockFeeAccrual, stockFeeSplit } from '../src/stock-fee-accrual.mjs'
 import { LAUNCHER_DEN, LAUNCHER_NUM, POLICY_VERSION, splitCurveFee } from '../src/stock-fee-policy.mjs'
 import { quoteAssetById } from '../src/quote-assets.mjs'
+import { dustSwap } from './fixtures/dbc-stock-dust.mjs'
 
 // Curve fee accrual for a stock pair (docs/STOCK_QUOTES.md) on the DOCUSAURUS / METAx buy and sell captured from the local
 // stock-pair validator, with an in-memory database and the pool and config as the chain held them.
@@ -18,7 +19,10 @@ const META = quoteAssetById('meta-xstock')
 const real = new DynamicBondingCurveClient(new Connection('http://127.0.0.1:1'), 'finalized')
 const signatureOf = name => STOCK[name].transaction.signatures[0]
 const [BUY, SELL, LAUNCH] = ['buy', 'sell', 'launch'].map(signatureOf)
-const transactions = new Map(['buy', 'sell', 'launch'].map(name => [signatureOf(name), STOCK[name]]))
+// The dust swaps mainnet's DBC program accepts (fixtures/dbc-stock-dust.mjs), made from the captured buy and sell.
+const [DUST_BUY, DUST_SELL] = ['dust-buy-signature', 'dust-sell-signature']
+const transactions = new Map([...['buy', 'sell', 'launch'].map(name => [signatureOf(name), STOCK[name]]),
+  [DUST_BUY, dustSwap(STOCK.buy, real.state.getProgram(), 'buy', DUST_BUY)], [DUST_SELL, dustSwap(STOCK.sell, real.state.getProgram(), 'sell', DUST_SELL)]])
 const creator = Keypair.generate().publicKey
 const MARKET = { repoId: '94911145', status: 'confirmed', mint: STOCK.market.mint, pool: STOCK.market.pool, creatorWallet: creator.toBase58(),
   launchFinality: 'finalized', indexedAt: new Date(), quoteAssetId: META.assetId, quoteMint: META.mint }
@@ -105,6 +109,17 @@ test('a buy and a sell become one fee row and one trade row each, written in one
   assert.deepEqual(result, { githubRepoId: 94911145n, assetId: 'meta-xstock', quoteMint: META.mint,
     creditedBaseUnits: 10235927n + sell.creatorAmount, creditedPartnerUnits: 4180872n + sell.partnerAmount,
     observedCreatorFee: 1n, observedPartnerFee: 2n, eventKeys: [`${BUY}:0`, `${SELL}:0`] })
+})
+
+test('a dust swap that moves nothing out is a trade row with its zero amounts, and its fee is credited', async () => {
+  // 1 raw METAx in, all of it the fee (creator 71% of 1 rounds to 0, the partner gets 1); 1 raw token in, nothing out, no fee.
+  const db = fakeDatabase()
+  const result = await accrualFor(db).recordTradeFees({ githubRepoId: '94911145', signatures: [DUST_BUY, DUST_SELL] })
+  assert.deepEqual([result.creditedBaseUnits, result.creditedPartnerUnits, result.eventKeys], [0n, 1n, [`${DUST_BUY}:0`, `${DUST_SELL}:0`]])
+  const fee = signature => ['creator_amount', 'partner_amount', 'launcher_amount', 'accumulator_amount'].map(field => db.state.fees.get(`${signature}:0`)[field])
+  assert.deepEqual([fee(DUST_BUY), fee(DUST_SELL)], [['0', '1', '0', '1'], ['0', '0', '0', '0']])
+  const trade = signature => ['direction', 'quote_amount', 'base_amount'].map(field => db.state.trades.get(`${signature}:0`)[field])
+  assert.deepEqual([trade(DUST_BUY), trade(DUST_SELL)], [['buy', '0', '0'], ['sell', '0', '1']])
 })
 
 test('the same evidence again credits nothing; stored rows that contradict the chain stop the market', async () => {

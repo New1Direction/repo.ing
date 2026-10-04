@@ -207,13 +207,15 @@ export function stockDbcSwapEvents(transaction, market, { config, quoteMint, mig
 
 // The stock_trade_events rows (venue 'dbc') of a transaction's canonical swap events. Amounts are raw units, the ones SOL
 // charts derive from trade_events (market-chart.mjs): a buy's fee-excluded stock input and the market tokens it received; a
-// sell's market tokens in and the stock it received.
+// sell's market tokens in and the stock it received. A dust swap can move nothing out (a buy's fee, rounded up, takes its whole
+// input; a sell's output rounds down to nothing): still a swap, recorded with its zero amounts and its fee credited, as the
+// DAMM side does (stock-damm-trades.mjs). A swap without a price is still refused.
 export function stockTradeRows(transaction, signature, events) {
   return events.map(({ eventIndex, data, trader }) => {
     const direction = data.tradeDirection === 1 ? 'buy' : data.tradeDirection === 0 ? 'sell' : null
     if (!direction) throw new UnparseableTradeError('Canonical stock swap has an unknown direction')
     const { actualInputAmount, outputAmount, nextSqrtPrice } = data.swapResult
-    if (nextSqrtPrice.isZero() || outputAmount.isZero()) throw new UnparseableTradeError('Canonical stock swap has no price or output')
+    if (nextSqrtPrice.isZero()) throw new UnparseableTradeError('Canonical stock swap has no price')
     const [quoteAmount, baseAmount] = direction === 'buy' ? [actualInputAmount, outputAmount] : [outputAmount, actualInputAmount]
     return { signature, eventIndex, slot: BigInt(transaction.slot), tradedAt: new Date(Number(data.currentTimestamp.toString()) * 1000),
       direction, quoteAmount: BigInt(quoteAmount.toString()), baseAmount: BigInt(baseAmount.toString()),
