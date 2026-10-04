@@ -3,6 +3,7 @@ import { database, chain, configAddress, creatorSigner } from '../../../lib/serv
 import { githubSessionCookie, readGithubSession, readBuilderReview, assertSameOrigin } from '../../../lib/auth.mjs'
 import { sessionVerifier } from '../../../lib/github-session.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
+import { STOCK_PAIR_NO_OWNER_CLAIM, noOwnerClaimMessage, stockPairOf } from '../../../../src/stock-owner-claims.mjs'
 export const runtime = 'nodejs'
 
 export async function POST(request) {
@@ -13,6 +14,10 @@ export async function POST(request) {
     session = readGithubSession(request.cookies.get(githubSessionCookie)?.value)
     review = readBuilderReview((await request.json()).review, session)
   } catch { return Response.json({ status: 'failed', error: 'Your review expired. Refresh and connect GitHub again if needed.' }, { status: 403, headers }) }
+  // A stock pair has no owner claim (src/stock-owner-claims.mjs). The dashboard never reviews one; a review that names one
+  // anyway is refused before any payout code runs. An unreadable stamp falls through to createClaim, which refuses stock pairs.
+  const stockPair = await stockPairOf(database(), review.repoId).catch(() => null)
+  if (stockPair) return Response.json({ status: 'failed', code: STOCK_PAIR_NO_OWNER_CLAIM, error: noOwnerClaimMessage(stockPair) }, { status: 409, headers })
   try {
     const creator = creatorSigner(), config = configAddress()
     if (!creator || !config) throw new Error('Payout signer needs SOL for network costs')

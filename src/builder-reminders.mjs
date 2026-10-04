@@ -154,9 +154,10 @@ export function createBuilderReminders({ pool, send, reconcile, secret, origin, 
           return
         }
         if (row.last_sent_at && now() - row.last_sent_at.getTime() < DAY) return
+        // SOL markets only: a stock pair has no owner claim (src/stock-owner-claims.mjs), so never a "claim your fees" reminder.
         const { rows: markets } = await db.query(`select m.github_repo_id::text as "repoId",m.mint,r.full_name as "fullName",b.wallet
           from repo_beneficiaries b join markets m on m.github_repo_id=b.github_repo_id join repositories r on r.github_repo_id=m.github_repo_id
-          where b.github_user_id=$1 and m.status='confirmed' and m.launch_finality='finalized' and m.indexed_at is not null limit 100`, [row.github_user_id])
+          where b.github_user_id=$1 and m.status='confirmed' and m.launch_finality='finalized' and m.indexed_at is not null and m.quote_asset_id is null limit 100`, [row.github_user_id])
         const repos = []
         for (const market of markets) {
           const fees = await reconcile(market.repoId)

@@ -6,6 +6,7 @@ import { publicOrigin } from './origin.mjs'
 import { mapLimited } from '../../src/builder-queue.mjs'
 import { activeDecisions } from '../../src/maintainer-opt-outs.mjs'
 import { currentPayoutDestinations } from './payout-destination.mjs'
+import { STOCK_PAIR_NO_OWNER_CLAIM, noOwnerClaimMessage, stockPairStamps } from '../../src/stock-owner-claims.mjs'
 
 export async function builderOverview(session) {
   const pool = database()
@@ -29,8 +30,13 @@ export async function builderOverview(session) {
   const payoutReady = await (async () => { try { const signer = creatorSigner(); return Boolean(signer && await chain().getBalance(signer.publicKey, 'confirmed') > 0) } catch { return false } })()
   // Each row's active decline (src/maintainer-opt-outs.mjs); unreadable leaves it out and the row hides that control.
   const decisions = await activeDecisions(pool, rows.map(row => row.repoId)).catch(error => { console.error('builder decisions unavailable', { error: error.message }); return null })
+  // Stock-paired markets have no owner claim (src/stock-owner-claims.mjs): no fee check and no review, ever; nothing is
+  // available to claim, and the row says where the fees go instead. Tips and the maintainer's decision work as before.
+  // Unreadable: every row takes the SOL path, which refuses a stock pair on its own (its reconciler cannot resolve one).
+  const stockPairs = await stockPairStamps(pool, rows.map(row => row.repoId)).catch(error => { console.error('builder stock pairs unavailable', { error: error.message }); return new Map() })
   const repositories = await mapLimited(rows, 3, async row => {
-    const fees = await feeStatus(row.repoId)
+    const stockPair = stockPairs.has(row.repoId)
+    const fees = stockPair ? { status: STOCK_PAIR_NO_OWNER_CLAIM, onchainCreatorFee: null } : await feeStatus(row.repoId)
     const available = fees.status === 'MATCH' ? fees.onchainCreatorFee?.toString() ?? null : null
     const ready = payoutReady && row.wallet && !row.pendingSignature && available && BigInt(available) > 0n
     const expiresAt = Math.min(session.expiresAt, Date.now() + 30 * 60_000)
@@ -41,7 +47,8 @@ export async function builderOverview(session) {
     const tips = await repoTipSummary(row.repoId)
     const tipReview = tips?.waiting.length && row.wallet && !tips.waiting.some(t => t.inFlight)
       ? sealTipReview(session, { repoId: row.repoId, wallet: row.wallet, boundAt: row.boundAt }) : null
-    return { ...row, available, review, expiresAt, feeStatus: fees.status, tips, tipReview, decision: decisions ? decisions.get(row.repoId) ?? null : undefined }
+    return { ...row, available, review, expiresAt, feeStatus: fees.status, tips, tipReview, decision: decisions ? decisions.get(row.repoId) ?? null : undefined,
+      ...stockPair ? { available: '0', ownerClaim: { code: STOCK_PAIR_NO_OWNER_CLAIM, message: noOwnerClaimMessage(stockPairs.get(row.repoId)) } } : {} }
   })
   return { repositories, payoutReady, githubLogin: session.githubLogin, expiresAt: session.expiresAt }
 }

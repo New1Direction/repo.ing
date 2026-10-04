@@ -51,6 +51,8 @@ import { BuildingLive, readPageStream } from '../../../components/building-live'
 import { ModelTokenPage, modelTokenMetadata } from '../../../components/hf/model-token-page'
 import { githubMarkets, isModelMarket } from '../../../lib/hf-model-display.mjs'
 import { shownMarkets } from '../../../lib/hf-markets.mjs'
+import { StockFeeHeadline, StockFeeRouting } from '../../../components/stock-fee-routing'
+import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -103,9 +105,13 @@ export default async function Token({ params, searchParams }) {
   // "Launch facts" repository row: age, stars and repo score (GitHub's live numbers when the display cache has them).
   const repoFacts = repoFactsView({ stars: repo.stars, forks: repo.forks, githubCreatedAt: repo.githubCreatedAt ?? market.githubCreatedAt }, pulse, Date.now(),
     { promoted: market.promoted })
+  // A stock pair has no owner claim (src/stock-owner-claims.mjs): its fee routing replaces the claim link and the owner invitation.
+  const stockPair = isStockPairMarket(market)
   const tabs = [
     { id: 'repository', anchor: 'repository', label: 'Repository', content: <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense> },
     { id: 'token', label: 'Token', content: <TokenDetails market={market} quote={quote}/> },
+    stockPair ? { id: 'earnings', anchor: 'fee-routing', label: 'Fee routing', content: <Suspense fallback={<div className="inner-card" aria-busy="true"><h3>Fee routing</h3><p role="status" className="loading-placeholder">Reading fee routing…</p></div>}>
+      <StockFeeRouting market={market}/></Suspense> } :
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
       <RepositoryEarnings market={market} declined={decision !== null}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
@@ -120,7 +126,7 @@ export default async function Token({ params, searchParams }) {
       {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <header className="market-hero">
-      <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><EarningsHeadline market={market}/></Suspense></div>
+      <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}>{stockPair ? <StockFeeHeadline market={market} href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}/> : <EarningsHeadline market={market}/>}</Suspense></div>
       <div className="market-hero-main"><RepoIdentity repo={repo} heading>
           <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{market.officialLaunch && !decision && <OfficialBadge/>}{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
@@ -133,7 +139,7 @@ export default async function Token({ params, searchParams }) {
         <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
           more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
             <a href={`https://solscan.io/token/${market.mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
-            <Link href={`/claim/${market.repoId}`}>Claim builder fees</Link></>}/></div>
+            {stockPair ? <a href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}>Fee routing</a> : <Link href={`/claim/${market.repoId}`}>Claim builder fees</Link>}</>}/></div>
     </header>
     {/* "Why hold $REPOING": live buyback, volume and shipping figures, on the market view only. */}
     {official && !activity && <Suspense fallback={<RepoingCaseFallback/>}><RepoingCase pulse={pulse}/></Suspense>}

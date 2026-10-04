@@ -11,6 +11,8 @@ import { holdingLabel, shortWallet } from '../lib/holder-note-format.mjs'
 import { REPO_FACTS_TIP } from '../lib/repo-quality.mjs'
 import { signedPayoutWallet } from '../lib/official-launch.mjs'
 import { isModelMarket } from '../lib/hf-model-display.mjs'
+import { isStockPairMarket, noOwnerClaimMessage } from '../../src/stock-owner-claims.mjs'
+import { STOCK_FEE_SPLIT } from '../lib/stock-fee-routing.mjs'
 
 // One fact per row: icon, a one-line headline, fixed-height detail lines, and a one-line explainer behind (i).
 // Streamed rows keep the same line count while loading, so the card never changes height.
@@ -55,6 +57,12 @@ function MaintainerRow({ market }) {
       lines={[market.beneficiaryWallet ? 'GitHub admin verified · payout wallet set' : 'GitHub admin verified']} tip={TIPS.maintainer}/>
     : <Row id="trust-maintainer" icon={CircleDashed} title="Maintainer hasn't verified yet"
       lines={[<>Maintainer? <Link href={`/claim/${market.repoId}`}>Verify here →</Link></>]} tip={TIPS.maintainer}/>
+}
+
+// A stock pair (src/stock-owner-claims.mjs): no owner claim, so no "verify to claim" here; the row says where fees go.
+function StockPairOwnerRow({ market }) {
+  return <Row id="trust-maintainer" icon={Coins} title="Stock pair: no owner claim"
+    lines={[`${STOCK_FEE_SPLIT.launcher} to the launcher · ${STOCK_FEE_SPLIT.accumulator} to liquidity`]} tip={noOwnerClaimMessage(market)}/>
 }
 
 // facts: repoFactsView (repo-quality.mjs). Age and stars, then the repo score, for every market; the warning tone only
@@ -136,7 +144,7 @@ export function TrustPanel({ market, launchFee = null, declined = null, repoFact
   return <section className="inner-card trust-panel" aria-labelledby="trust-panel-title">
     <div className="trust-heading"><h3 id="trust-panel-title">Launch facts</h3><span>On-chain and repo.ing data</span></div>
     <ul className="trust-rows">
-      {model ? <ModelOwnerRow market={market}/> : <MaintainerRow market={market}/>}
+      {model ? <ModelOwnerRow market={market}/> : isStockPairMarket(market) ? <StockPairOwnerRow market={market}/> : <MaintainerRow market={market}/>}
       {declined && (model
         ? <Row id="trust-declined" icon={Ban} tone="declined" title="Model owner declined this market" lines={["Not promoted · not endorsed by the model's creators"]} tip={TIPS.modelDeclined}/>
         : <Row id="trust-declined" icon={Ban} tone="declined" title="Maintainer declined this market" lines={['Not promoted · not endorsed by the project']} tip={TIPS.declined}/>)}
