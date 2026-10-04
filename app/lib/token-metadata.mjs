@@ -1,9 +1,11 @@
 import { OFFICIAL_TOKEN } from './official-token.mjs'
 import { HF_DISCLAIMER, isModelMarket } from './hf-model-display.mjs'
+import { stockPairFeeLine } from '../../src/stock-owner-claims.mjs'
 // Off-chain token metadata (Metaplex JSON). Wallets, DEX Screener and Jupiter read the
 // description and links from here, so it names the repository and links back to it.
 // repo.ing's own token is launched by the repository's own team, so it gets an official description
 // and the home page as its website instead of the community-launch disclaimer.
+// A stock pair (market.quoteAssetId set) says what its trades pay, in its stock, instead of builders in SOL.
 const OFFICIAL_DESCRIPTION = 'The official token of repo.ing, the market layer for open source. ' +
   'Every trade pays builders, and 60% of platform fees buy back $REPOING.'
 
@@ -15,7 +17,7 @@ export function tokenMetadataJson({ mint, origin, market }) {
   const description = official ? OFFICIAL_DESCRIPTION
     : market.fullName
       ? `$${market.symbol} is the repo.ing market for github.com/${market.fullName}. ` +
-        `Trading fees pay the repository's builders in SOL. ` +
+        `${stockPairFeeLine(market) ?? 'Trading fees pay the repository\'s builders in SOL.'} ` +
         `Community launch: does not imply endorsement by the repository's maintainers.`
       : `Token for public GitHub repository ${market.repoId} on repo.ing.`
   // Only repo.ing's own token carries repo.ing's X account; other tokens are community launches for

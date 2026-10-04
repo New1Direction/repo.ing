@@ -182,7 +182,8 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     working.current = false; setBusy(false)
     if (refresh) await prepare({ preventDefault() {} })
   }
-  if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image}/>
+  // A stock pair is never dropped on the way (pairRequest), so a confirmed launch with one chosen is that stock pair.
+  if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image} quote={stockChosen ? { symbol: stockPair?.symbol ?? null } : null}/>
   return <form className="launch-panel" onSubmit={prepare}>
     {draftRestored && <p className="form-fineprint" role="status">Your saved launch details have been restored. Review current costs before signing.</p>}
     {pairDropped && <p className="form-fineprint" role="status">The stock pair you chose before is not offered for this repository right now, so this launch is paired with SOL.</p>}

@@ -1,5 +1,6 @@
 import { quoteAssetById } from './quote-assets.mjs'
 import { STOCK_POLICY_ERRORS } from './stock-fee-policy.mjs'
+import { stockFeeLine } from './stock-pair-copy.mjs'
 
 // Stock-paired markets have no owner claim of builder fees (docs/STOCK_QUOTES.md, "Fee policy"; src/stock-fee-policy.mjs).
 // The launcher earns 0.30% of every trade, paid in the stock, for as long as the market trades; the builder share and
@@ -20,6 +21,14 @@ export function isStockPairMarket(market) {
 export function stockSymbol(market) {
   const asset = quoteAssetById(market?.quoteAssetId ?? market?.quote_asset_id ?? null)
   return asset && asset.type === 'TOKENIZED_EQUITY' ? asset.symbol : 'the stock'
+}
+
+// "Every trade pays 1.75% in METAx: 0.30% to the launcher, 1.10% to permanent $REPOING / METAx liquidity." for a stock pair (the
+// line its pages show where a SOL market's say "Every trade pays the repo's builders in SOL."), or null for a SOL market.
+export function stockPairFeeLine(market) {
+  if (!isStockPairMarket(market)) return null
+  const asset = quoteAssetById(market?.quoteAssetId ?? market?.quote_asset_id ?? null)
+  return stockFeeLine(asset?.type === 'TOKENIZED_EQUITY' ? asset.symbol : null)
 }
 
 // Where a stock pair's fees go, in one sentence the refusal carries everywhere.

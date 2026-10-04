@@ -12,7 +12,8 @@ import { useShareReferral } from './share-referral'
 
 // Watch stays a button; every share action (referral status included) lives in one disclosure menu (Escape closes, focus
 // returns to "Share"). `more` holds secondary links for the "⋯" menu. readme: offer the README badge (false for a Hugging
-// Face model market, whose badge copy would describe a repository). shareText replaces the system share sheet's text (a
+// Face model market, whose badge copy would describe a repository, and for a stock pair, whose trades pay no builder fees in
+// SOL for the badge to show). shareText replaces the system share sheet's text (a
 // model market's carries its disclaimer).
 export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true, shareText = null }) {
   const [state, setState] = useState('')

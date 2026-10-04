@@ -1,14 +1,15 @@
 import { ogText } from './og-card.mjs'
 import { Frame, MarketLogo, colors } from './og-image'
 import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
+import { stockPairFeeLine } from '../../src/stock-owner-claims.mjs'
 
 // The token page's link-preview card (app/(site)/token/[mint]/opengraph-image). A Hugging Face model market's card says
-// so, names who its fees pay, and carries the disclaimer.
+// so, names who its fees pay, and carries the disclaimer. A stock pair's footer says what its trades pay, in its stock.
 const MODEL_FRAME = { tagline: 'Hugging Face model market', footer: 'Every trade pays the model’s owner in SOL.' }
 
 export function MarketCard({ market, logo, stats }) {
-  const symbol = ogText(market.symbol, 14), name = ogText(market.fullName, 48), model = isModelMarket(market)
-  return <Frame {...(model ? MODEL_FRAME : {})}>
+  const symbol = ogText(market.symbol, 14), name = ogText(market.fullName, 48), model = isModelMarket(market), stockLine = stockPairFeeLine(market)
+  return <Frame {...(model ? MODEL_FRAME : stockLine ? { footer: stockLine } : {})}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 36, marginTop: 44 }}>
       <MarketLogo logo={logo} symbol={symbol}/>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: 860 }}>

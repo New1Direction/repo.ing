@@ -12,8 +12,9 @@ export async function GET(request, { params }) {
   const pool = database()
   if (!pool) return Response.json({ error: 'Metadata database unavailable' }, { status: 503 })
   try {
+    // quoteAssetId: a stock pair's stamp (null for SOL), so its description names what its trades pay.
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.token_name as "name",
-      m.token_symbol as "symbol", m.token_image is not null as "hasImage", r.full_name as "fullName"
+      m.token_symbol as "symbol", m.token_image is not null as "hasImage", r.full_name as "fullName", m.quote_asset_id as "quoteAssetId"
       from markets m left join repositories r on r.github_repo_id = m.github_repo_id
       where m.mint = $1 and m.status in ('prepared', 'submitted', 'confirmed', 'ambiguous')`, [mint])
     const market = rows[0]
