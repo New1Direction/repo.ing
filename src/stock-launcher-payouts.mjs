@@ -123,8 +123,11 @@ export function createStockLauncherPayouts({ pool, connection, verification = nu
       return { ...base, status: 'ERROR', reason: "The launcher ledger does not match the market's stamp or launcher wallet" }
     let earnings
     try { earnings = launcherEarnings(row) } catch (error) {
-      if (error instanceof StockLauncherBalanceError) return { ...base, status: 'REVIEW', reason: error.message }
-      throw error
+      if (!(error instanceof StockLauncherBalanceError)) throw error
+      // The one expected cause: a graduated position's claim took fees the next DAMM checkpoint has not credited yet.
+      if (await store.collectedAheadOfCheckpoints(db, market.repoId)) return { ...base, status: 'WAITING',
+        reason: 'A graduated-pool collection took fees the DAMM checkpoints have not credited yet; payouts wait for the next checkpoint' }
+      return { ...base, status: 'REVIEW', reason: error.message }
     }
     const floor = minimum(market.quoteAssetId)
     const amounts = { payable: text(earnings.payable), minimum: text(floor), collected: text(earnings.collected), paid: text(earnings.paid),
