@@ -46,7 +46,7 @@ export async function reinvestQuote(connection, snapshot, amount, rules = REINVE
   const {amm,state} = snapshot, swapAmount = BigInt(amount)/2n
   if (swapAmount <= 0n) throw Error('Reinvestment amount is too small')
   const quote = amm.getQuote2({inputTokenMint:NATIVE_MINT,poolState:state,currentPoint:await getCurrentPoint(connection,state.activationType),
-    amountIn:new BN(String(swapAmount)),slippage:rules.maxSlippageBps/100,swapMode:SwapMode.ExactIn,tokenADecimal:6,tokenBDecimal:9,hasReferral:false})
+    amountIn:new BN(String(swapAmount)),slippage:rules.maxSlippageBps,swapMode:SwapMode.ExactIn,tokenADecimal:6,tokenBDecimal:9,hasReferral:false})
   const before=BigInt(state.sqrtPrice.toString())**2n, after=BigInt(quote.nextSqrtPrice.toString())**2n
   const impact=(after-before)*10000n
   if (impact<0n || (impact+before-1n)/before>BigInt(rules.maxPriceImpactBps)) throw Error('Reinvestment price impact exceeds the limit')

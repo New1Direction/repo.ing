@@ -92,7 +92,7 @@ export function createLiquidityDeployment({ pool, connection, config, partner })
     if(!snapshot)throw Error('Canonical graduation required')
     const state = await amm.fetchPoolState(snapshot.pool), swapAmount = amount/2n
     const quote = amm.getQuote2({inputTokenMint:NATIVE_MINT,poolState:state,currentPoint:await getCurrentPoint(connection,state.activationType),
-      amountIn:new BN(String(swapAmount)),slippage:rules.maxSlippageBps/100,swapMode:SwapMode.ExactIn,tokenADecimal:6,tokenBDecimal:9,hasReferral:false})
+      amountIn:new BN(String(swapAmount)),slippage:rules.maxSlippageBps,swapMode:SwapMode.ExactIn,tokenADecimal:6,tokenBDecimal:9,hasReferral:false})
     const before = BigInt(state.sqrtPrice.toString())**2n, after = BigInt(quote.nextSqrtPrice.toString())**2n
     const impactBps = ((after-before)*10000n+before-1n)/before
     if(impactBps<0n||impactBps>BigInt(rules.maxPriceImpactBps))throw Error('Balancing swap price impact exceeds the reviewed bound')
