@@ -80,6 +80,8 @@ export default async function Token({ params, searchParams }) {
   // Hugging Face model markets have their own page (none of the GitHub-only reads below run for them).
   if (isModelMarket(market)) return <ModelTokenPage market={market} activity={activity}/>
   const repo = { ...displayRepository(market), mint: market.mint }
+  // The market's pair: null for SOL; a stock pair's figures are in its stock (docs/STOCK_QUOTES.md).
+  const quote = marketQuoteView(market)
   // The maintainer's stream link, shown under the same rule as Dev Pulse. Started now, awaited after the reads below (it
   // never rejects).
   const streamRead = activity || isPromotionExcluded(market.repoId) ? null : timed('repoStream', () => readPageStream(market.repoId))
@@ -103,7 +105,7 @@ export default async function Token({ params, searchParams }) {
     { promoted: market.promoted })
   const tabs = [
     { id: 'repository', anchor: 'repository', label: 'Repository', content: <Suspense fallback={<RepositoryDetails repo={repo}/>}><FreshRepositoryDetails repo={repo}/></Suspense> },
-    { id: 'token', label: 'Token', content: <TokenDetails market={market}/> },
+    { id: 'token', label: 'Token', content: <TokenDetails market={market} quote={quote}/> },
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
       <RepositoryEarnings market={market} declined={decision !== null}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
@@ -114,7 +116,8 @@ export default async function Token({ params, searchParams }) {
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
-    <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}/>
+    <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}
+      {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><EarningsHeadline market={market}/></Suspense></div>
@@ -139,8 +142,8 @@ export default async function Token({ params, searchParams }) {
       <a href={activity ? `/token/${mint}#repository` : '#repository'}>Repository</a>
       <Link className={activity ? 'active' : ''} href={`/token/${mint}?view=activity`}>Activity</Link>
     </div>
-    {activity ? <ActivityFeed mint={mint} symbol={market.symbol}/> : <>
-      <MarketTrading key={market.mint} market={market} quote={marketQuoteView(market)} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
+    {activity ? <ActivityFeed mint={mint} symbol={market.symbol} {...(quote ? { quote } : {})}/> : <>
+      <MarketTrading key={market.mint} market={market} quote={quote} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
         aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<BuildingLive stream={stream}/><TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
         below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}
@@ -153,12 +156,17 @@ export default async function Token({ params, searchParams }) {
   </main><Footer/></>
 }
 
-function TokenDetails({ market }) {
+// A stock pair also names the stock it trades in (quote: marketQuoteView), whose amounts the page shows as wallets show them.
+function TokenDetails({ market, quote = null }) {
   return <div className="inner-card token-details"><h3>Token details</h3><dl>
     <div><dt>Token name</dt><dd>{market.tokenName}</dd></div><div><dt>Ticker</dt><dd>{market.symbol}</dd></div>
     <div><dt>Mint address</dt><dd><CopyAddress address={market.mint}/></dd></div>
     <div><dt>Decimals</dt><dd>6</dd></div>
     <div><dt>Pool</dt><dd title={market.pool}>{market.pool.slice(0,6)}…{market.pool.slice(-4)}</dd></div>
+    {quote?.unavailable && <div><dt>Paired with</dt><dd>Unsupported pair · trading paused</dd></div>}
+    {quote && !quote.unavailable && <><div><dt>Paired with</dt><dd>{`${quote.symbol} (${quote.name})`}</dd></div>
+      <div><dt>{`${quote.symbol} mint`}</dt><dd><CopyAddress address={quote.mint}/></dd></div>
+      <div><dt>{`${quote.symbol} decimals`}</dt><dd>{quote.decimals}</dd></div></>}
   </dl></div>
 }
 

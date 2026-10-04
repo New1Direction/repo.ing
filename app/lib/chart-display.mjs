@@ -14,7 +14,8 @@ export function chartScaleRange(original) {
   return { ...original, priceRange: { minValue: Math.max(0, minValue - pad), maxValue: maxValue + pad } }
 }
 
-export function chartSeries(data, multiplier = 1) {
+// volumeOf: a bar's volume as the histogram plots it (SOL by default; a stock pair's in its shown units, app/lib/chart-quote.mjs).
+export function chartSeries(data, multiplier = 1, volumeOf = bar => Number(bar.volumeLamports) / 1e9) {
   if (!data || !Number.isFinite(multiplier) || multiplier <= 0) return { prices: [], volumes: [] }
   const byTime = new Map(data.candles.map(bar => [bar.time, bar]))
   const first = data.candles[0]?.time
@@ -26,7 +27,7 @@ export function chartSeries(data, multiplier = 1) {
     if (!bar || bar.orderingPending) prices.push({ time })
     else prices.push({ time, open: bar.open * multiplier, high: bar.high * multiplier,
       low: bar.low * multiplier, close: bar.close * multiplier, value: bar.close * multiplier })
-    volumes.push(bar ? { time, value: Number(bar.volumeLamports) / 1e9,
+    volumes.push(bar ? { time, value: volumeOf(bar),
       color: bar.orderingPending ? '#7f889266' : bar.close >= bar.open ? '#81e6ad66' : '#f2848566' } : { time })
   }
   return { prices, volumes }

@@ -1,6 +1,7 @@
 import { formatSolDisplay } from './format.mjs'
 import { chartPriceLabel } from './chart-display.mjs'
 import { formatSolMarketCap, formatUsdMarketCap, MARKET_TOKEN_SUPPLY } from './market-display.mjs'
+import { formatStockCompact, stockAmountLabel, stockDisplayUnits, stockRawUsd } from './stock-display.mjs'
 
 // The phone token page's market summary, computed only from what the page already has: the server market row (last
 // price, curve volume) and the chart's own trades + metrics reads (published through market-snapshot.mjs).
@@ -58,6 +59,29 @@ export function phoneMarketSummary({ priceSol = null, volume24hLamports = null, 
     change: chart ? change24h(candles, interval, price, nowSeconds) : null,
     marketCap: !price ? '—' : solUsd ? formatUsdMarketCap(price * supply * solUsd) : formatSolMarketCap(price * supply),
     volume: volume === null ? '—' : solUsd ? formatUsdMarketCap(Number(volume) / 1e9 * solUsd) : `${formatSolDisplay(volume)} SOL`,
+    spark: chart ? sparklinePoints(candles, interval, nowSeconds) : [],
+  }
+}
+
+// A stock pair's summary (docs/STOCK_QUOTES.md): the same figures from the stock chart (src/stock-market-chart.mjs) and the
+// market row's `stock` (app/lib/stock-market-stats.mjs): USD at the stock's own price when there is one, else in the stock as
+// wallets show it at today's multiplier, and '—' until the stock's units arrive with the chart's metrics read. The 24h change
+// and sparkline are ratios of prices in one unit, so they need no conversion.
+export function stockMarketSummary({ quote, stock = null, chart = null, metrics = null, now = Date.now() }) {
+  const info = metrics?.quote
+  const units = info?.assetId === quote?.assetId && info?.decimals === quote?.decimals ? stockDisplayUnits(info) : null
+  const price = positive(chart?.latest?.priceQuote) ? chart.latest.priceQuote : positive(stock?.price) ? stock.price : null
+  const supply = /^\d+$/.test(metrics?.supplyBaseUnits ?? '') && Number.isInteger(metrics.supplyDecimals)
+    ? Number(metrics.supplyBaseUnits) / 10 ** metrics.supplyDecimals : MARKET_TOKEN_SUPPLY
+  const volume = /^\d+$/.test(String(chart?.volume24hQuote ?? '')) ? chart.volume24hQuote
+    : /^\d+$/.test(String(stock?.volume24h ?? '')) ? String(stock.volume24h) : null
+  const usd = units?.usdPrice ?? null
+  const nowSeconds = Math.floor(now / 1000), candles = chart?.candles ?? [], interval = chart?.interval ?? 0
+  return {
+    price: !price || !units ? '—' : usd ? formatUsdPrice(price * usd) : `${chartPriceLabel(price * units.multiplier)} ${units.symbol}`,
+    change: chart ? change24h(candles, interval, price, nowSeconds) : null,
+    marketCap: !price || !units ? '—' : usd ? formatUsdMarketCap(price * supply * usd) : formatStockCompact(price * units.multiplier * supply, units.symbol),
+    volume: volume === null || !units ? '—' : usd ? formatUsdMarketCap(stockRawUsd(volume, units)) : stockAmountLabel(volume, units),
     spark: chart ? sparklinePoints(candles, interval, nowSeconds) : [],
   }
 }
