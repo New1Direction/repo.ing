@@ -142,7 +142,7 @@ Each line says PASS, FAIL or TODO, with one reason. Switches say ON or OFF. The 
 | Network | The RPC is Solana mainnet. |
 | Registry | Each stock's pinned mint: Token-2022, 8 decimals, a ScaledUiAmount multiplier that makes sense, usable now (not paused, no transfer hook or transfer fee, accounts not frozen by default), and Meteora's DBC and DAMM v2 badges for it. |
 | Stock configs | `STOCK_QUOTE_CONFIGS` parses. For each config: a real DBC config account, quoting the right stock through Token-2022; creator share exactly 71%; fees claimed by the partner wallet; the SOL launch config's terms field by field (fees, fee mode, migration) and the curve the create script builds; the threshold, in the stock. |
-| Database | Migration 0054's tables, functions and triggers. Every indexed market is in exactly one of the worker's two lists, SOL or stock. No stock market in any SOL fee, trade, claim or reward table. |
+| Database | Migration 0054's tables, functions and triggers, and migration 0055's read indexes. Every indexed market is in exactly one of the worker's two lists, SOL or stock. No stock market in any SOL fee, trade, claim or reward table. |
 | Custody | Whether the partner wallet already has an account for each stock. Missing is a TODO: it is created on the first collection. |
 | Switches | The two launch switches and the two flags of step 9. Off is expected now and is not a failure. |
 

@@ -273,6 +273,10 @@ export const STOCK_LEDGER_TRIGGERS = Object.freeze([
   ['stock_trade_events', 'repoing_stock_trade_update', 'repoing_notify_stock_market_update'],
   ['stock_fee_events', 'repoing_stock_fee_update', 'repoing_notify_stock_market_update'],
 ].map(([table, name, fn]) => Object.freeze({ table, name, function: fn })))
+// Migration 0055 (drizzle/0055_stock_ledger_indexes.sql): the stock ledgers' read indexes, each on its table and valid.
+export const STOCK_LEDGER_INDEXES = Object.freeze([['stock_trade_events', 'stock_trade_events_repo_traded_at'],
+  ['stock_fee_events', 'stock_fee_events_repo_slot'], ['stock_fee_collections', 'stock_fee_collections_repo_status'],
+].map(([table, name]) => Object.freeze({ table, name })))
 
 // The two worker indexers' market lists (src/external-fee-indexer.mjs for SOL, src/stock-fee-indexer.mjs for stocks): every
 // confirmed, indexed, finalized market belongs to exactly one, by whether it carries a stock stamp.
@@ -308,6 +312,20 @@ async function migrationItem(db) {
   return problems.length ? item(SECTION.database, 'Migration 0054', FAIL, `${problems.join('; ')}: apply migration 0054 as written`)
     : item(SECTION.database, 'Migration 0054', PASS, `${STOCK_LEDGER_TABLES.length} stock tables, ${STOCK_LEDGER_FUNCTIONS.length} functions and ` +
       `${STOCK_LEDGER_TRIGGERS.length} triggers present, every trigger enabled`)
+}
+
+async function indexItem(db) {
+  const { rows } = await db.query(`select i.relname as name, t.relname as "table", x.indisvalid as valid from pg_index x
+    join pg_class i on i.oid = x.indexrelid join pg_class t on t.oid = x.indrelid
+    where x.indexrelid in (select to_regclass(name) from unnest($1::text[]) as name)`, [STOCK_LEDGER_INDEXES.map(index => index.name)])
+  const problems = STOCK_LEDGER_INDEXES.flatMap(expected => {
+    const found = rows.find(row => row.name === expected.name)
+    if (!found) return [`index ${expected.name} missing`]
+    if (found.table !== expected.table) return [`index ${expected.name} is on ${found.table}, not ${expected.table}`]
+    return found.valid ? [] : [`index ${expected.name} on ${expected.table} is not valid`]
+  })
+  return problems.length ? item(SECTION.database, 'Migration 0055', FAIL, `${problems.join('; ')}: apply migration 0055 as written`)
+    : item(SECTION.database, 'Migration 0055', PASS, `the stock ledgers' ${STOCK_LEDGER_INDEXES.length} read indexes are present and valid`)
 }
 
 // What is wrong with a split of the indexed markets into the SOL indexer's and the stock indexer's lists.
@@ -353,7 +371,8 @@ export async function checkDatabase({ db = null, dbError = null } = {}) {
   if (dbError) return [item(SECTION.database, 'Connection', FAIL, `could not connect to DATABASE_URL: ${dbError.message}`)]
   if (!db) return [item(SECTION.database, 'DATABASE_URL', TODO, 'not set: the database checks did not run (run this on the web or worker service to include them)')]
   const items = []
-  for (const [name, check] of [['Migration 0054', migrationItem], ['Market partition', partitionItem], ['SOL ledgers', solLedgerItem]]) {
+  for (const [name, check] of [['Migration 0054', migrationItem], ['Migration 0055', indexItem], ['Market partition', partitionItem],
+    ['SOL ledgers', solLedgerItem]]) {
     try { items.push(await readOnly(db, () => check(db))) } catch (error) {
       items.push(item(SECTION.database, name, FAIL, `could not read the database: ${error.message}`))
     }
