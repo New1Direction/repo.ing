@@ -1104,6 +1104,7 @@ export const stockTradeEvents = pgTable('stock_trade_events', {
   createdAt: tz('created_at').defaultNow().notNull(),
 }, t => [uniqueIndex('stock_trade_events_chain_event_unique').on(t.signature, t.eventIndex),
   index('stock_trade_events_repo_slot').on(t.githubRepoId, t.slot),
+  index('stock_trade_events_repo_traded_at').on(t.githubRepoId, t.tradedAt),
   check('stock_trade_events_venue_check', sql`${t.venue} in ('dbc', 'damm')`),
   check('stock_trade_events_direction_check', sql`${t.direction} in ('buy', 'sell')`),
   check('stock_trade_events_amounts_check', sql`${t.quoteAmount} >= 0 and ${t.baseAmount} >= 0`)])
@@ -1117,6 +1118,7 @@ export const stockFeeEvents = pgTable('stock_fee_events', {
   policyVersion: integer('policy_version').notNull(), createdAt: tz('created_at').defaultNow().notNull(),
 }, t => [uniqueIndex('stock_fee_events_chain_event_unique').on(t.signature, t.eventIndex),
   index('stock_fee_events_repo').on(t.githubRepoId), index('stock_fee_events_asset').on(t.assetId),
+  index('stock_fee_events_repo_slot').on(t.githubRepoId, t.slot.desc(), t.eventIndex.desc()),
   check('stock_fee_events_amounts_check', sql`${t.creatorAmount} >= 0 and ${t.partnerAmount} >= 0 and ${t.launcherAmount} >= 0 and ${t.accumulatorAmount} >= 0`),
   check('stock_fee_events_split_check', sql`${t.creatorAmount} + ${t.partnerAmount} = ${t.launcherAmount} + ${t.accumulatorAmount}`),
   check('stock_fee_events_launcher_check', sql`${t.launcherAmount} <= ${t.creatorAmount}`)])
@@ -1159,6 +1161,7 @@ export const stockFeeCollections = pgTable('stock_fee_collections', {
   receipt: jsonb('receipt'), createdAt: tz('created_at').defaultNow().notNull(), settledAt: tz('settled_at'),
 }, t => [uniqueIndex('stock_fee_collections_one_pending').on(t.githubRepoId, t.source).where(sql`${t.status} = 'pending'`),
   index('stock_fee_collections_asset_status').on(t.assetId, t.status),
+  index('stock_fee_collections_repo_status').on(t.githubRepoId, t.status),
   check('stock_fee_collections_source_check', sql`${t.source} in ('dbc_creator', 'dbc_partner', 'damm_creator', 'damm_partner')`),
   check('stock_fee_collections_status_check', sql`${t.status} in ('pending', 'settled', 'aborted')`),
   check('stock_fee_collections_amounts_check', sql`${t.reviewedAmount} >= 0 and (${t.actualAmount} is null or ${t.actualAmount} >= 0) and ${t.launcherAmount} >= 0 and ${t.accumulatorAmount} >= 0`),

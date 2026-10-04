@@ -365,6 +365,13 @@
       "when": 1790910014000,
       "tag": "0054_stock_ledgers",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1790910015000,
+      "tag": "0055_stock_ledger_indexes",
+      "breakpoints": true
     }
   ]
 }
