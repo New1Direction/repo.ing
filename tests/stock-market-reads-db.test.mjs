@@ -16,6 +16,7 @@ import { readGraduationRace } from '../app/lib/graduation-race.mjs'
 import { withStockStats } from '../app/lib/stock-market-stats.mjs'
 import { readStockActivity, readStockTraders } from '../app/lib/stock-market-activity.mjs'
 import { readStockCurve } from '../app/lib/stock-market-stats.mjs'
+import { createStockUnitsCache } from '../app/lib/stock-units.mjs'
 import { createMarketNotifications } from '../src/market-notifications.mjs'
 
 // Stock-paired market reads (docs/STOCK_QUOTES.md) on real PostgreSQL with every migration (0054's stock ledgers included).
@@ -233,9 +234,11 @@ test('stock-paired markets: SOL reads unchanged, partitioned totals, and the sto
       assert.deepEqual([row3.stock.price, row3.stock.volume24h, row3.bondingPercent, row3.graduated], [null, '0', null, false])
       // The token page's single read carries the same figures, without the RPC.
       assert.deepEqual(s1.stock, row1.stock); assert.equal(s1.bondingPercent, 30); assert.equal(s1.priceSol, null)
-      // With today's units read, the row carries them as given.
-      const units = { uiMultiplier: '1.0028515433272898', usdPrice: 712.5 }
-      const [withUnits] = await withStockStats([s1], { db, connection: {}, withUnits: true, now, info: async id => ({ assetId: id, ...units }) })
+      // With today's units in the cache, the row carries them as given.
+      const units = { uiMultiplier: '1.0028515433272898', usdPrice: 712.5, validForSeconds: 120 }
+      const cache = createStockUnitsCache({ info: async id => ({ assetId: id, symbol: 'METAx', decimals: 8, ...units }) })
+      await cache.within('meta-xstock', {})
+      const [withUnits] = await withStockStats([s1], { db, connection: {}, withUnits: true, now, units: cache })
       assert.deepEqual([withUnits.stock.uiMultiplier, withUnits.stock.usdPrice], [units.uiMultiplier, units.usdPrice])
       // A stale newest observation draws no progress.
       assert.equal((await withStockStats([s1], { db, now: now + 10 * MINUTE }))[0].bondingPercent, null)
@@ -267,7 +270,8 @@ test('stock-paired markets: SOL reads unchanged, partitioned totals, and the sto
     })
 
     await t.test('activity and traders: stock trades and fee splits of the market only, settled launcher payouts, today\'s units', async () => {
-      const activity = await readStockActivity(db, s1, { connection: null, multiplier: async (_connection, asset) => { assert.equal(asset.mint, META.mint); return '1.0028' } })
+      const cache = createStockUnitsCache({ info: async assetId => { assert.equal(assetId, 'meta-xstock'); return { assetId, uiMultiplier: '1.0028', validForSeconds: 120 } } })
+      const activity = await readStockActivity(db, s1, { connection: null, units: cache })
       assert.deepEqual(activity.quote, { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, uiMultiplier: '1.0028' })
       assert.deepEqual(activity.trades.map(trade => [trade.signature, trade.inputBaseUnits, trade.outputBaseUnits]),
         [['s1-t2', '20000000000', '40000000'], ['s1-t1', '100000000', '50000000000'], ['s1-t0', '300000000', '90000000000']])
@@ -276,7 +280,7 @@ test('stock-paired markets: SOL reads unchanged, partitioned totals, and the sto
       assert.deepEqual(activity.fees.map(fee => fee.occurredAt.toISOString()), [at(2 * HOUR).toISOString(), at(3 * DAY).toISOString()])
       assert.deepEqual(activity.payouts.map(payout => [payout.signature, payout.amountBaseUnits]), [['s1-payout', '100000']])
       // Without the stock's multiplier the feed still lists every row; its stock amounts wait ('—' on the page).
-      const unitless = await readStockActivity(db, s1, { multiplier: async () => { throw Error('mint read failed') } })
+      const unitless = await readStockActivity(db, s1, { units: createStockUnitsCache({ info: async () => { throw Error('mint read failed') } }) })
       assert.equal(unitless.quote.uiMultiplier, null); assert.equal(unitless.trades.length, 3)
       assert.deepEqual((await readStockTraders(db, s2, 20)).map(row => row.signature), ['s2-d1', 's2-t1'])
     })

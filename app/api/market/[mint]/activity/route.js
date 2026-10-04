@@ -26,7 +26,7 @@ const handlesFor = rows => xHandlesFor([...new Set(rows.map(row => row.trader).f
 
 // A stock-paired market reads the stock ledger and answers with its stock's units (app/lib/stock-market-activity.mjs).
 async function stockActivity(pool, market) {
-  const [{ trades, fees, payouts, quote }, parts] = await Promise.all([readStockActivity(pool, market, { connection: chain() }), partsActivity(pool, market.repoId)])
+  const [{ trades, fees, payouts, quote }, parts] = await Promise.all([readStockActivity(pool, market, { connection: chain }), partsActivity(pool, market.repoId)])
   return { events: activityEvents({ trades, stockFees: fees, launcherPayouts: payouts, parts: parts.rows, handles: await handlesFor(trades) }), quote }
 }
 

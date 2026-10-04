@@ -33,7 +33,7 @@ test('/stats stock section: each stock in its own units with a USD estimate; a s
   assert.doesNotMatch(page, /SOL figures above\b.*\d SOL|lamports/i)
 })
 
-test('/stats stock section reads nothing without a database and renders nothing before any stock activity', async () => {
+test('/stats stock section: nothing without a database or before any stock activity; a failed read shows as unavailable', async () => {
   const { StockPairStats } = await appModule('app/components/stock-pair-stats.jsx')
   const saved = process.env.DATABASE_URL
   try {
@@ -50,6 +50,9 @@ test('/stats stock section reads nothing without a database and renders nothing 
       return /from stock_trade_events/.test(sql) ? { rows: [{ assetId: 'meta-xstock', quoteMint: METAX, markets: 1, trades: 1, volume: '100000000', fees: '1',
         launcher: '0', accumulator: '1', active: true }] } : { rows: [] } } }) }
     try { assert.match(text(html(await StockPairStats({ range: 'all' }))), /METAx 1 market · 1 trade — — — —/) } finally { offline.restore() }
+    // A failed read is never shown as "no stock activity": the section says the totals are unavailable.
+    globalThis.__gitfunPool = { connect: async () => ({ release() {}, async query(sql) { if (/from stock_trade_events/.test(sql)) throw Error('canceling statement'); return { rows: [] } } }) }
+    assert.match(text(html(await StockPairStats({ range: '30d' }))), /Stock-pair totals are temporarily unavailable/)
   } finally {
     globalThis.__gitfunPool = undefined
     if (saved === undefined) delete process.env.DATABASE_URL; else process.env.DATABASE_URL = saved
