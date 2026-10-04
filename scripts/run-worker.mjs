@@ -180,8 +180,9 @@ async function observeBuybackReceipts(){
   try{console.log(JSON.stringify({buybackReceipts:await buybackReceipts.runOnce()}))}
   catch{console.log(JSON.stringify({buybackReceiptError:'BUYBACK_RECEIPTS_UNAVAILABLE'}))}
 }
-// Stock-pair fee collections into custody and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by default)"): null, so
-// nothing is built, read, loaded or printed, unless STOCK_COLLECTIONS_EXECUTION_ENABLED or STOCK_LAUNCHER_PAYOUTS_ENABLED is 'true'.
+// Stock-pair fee collections and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by default)"): the worker only finishes
+// rows scripts/stock-execute.mjs already signed (settle, rebroadcast, abort) and holds no key. null, so nothing is built, read or
+// printed, unless STOCK_COLLECTIONS_EXECUTION_ENABLED or STOCK_LAUNCHER_PAYOUTS_ENABLED is 'true'.
 const stockExecution=createStockExecutionJob({pool,config,connect:()=>({connection:graduationRPC(rpc),verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})})
 let stockExecutionTask=null,nextStockExecutionCheck=0

@@ -2,10 +2,11 @@ import { StockExecutionError, STOCK_EXECUTION_ERRORS as E } from './stock-execut
 
 // The SQL of stock fee collections and launcher payouts (migration 0054). The database itself refuses a second pending row per
 // market and source (collections) or per market (payouts), a row whose market, asset and mint do not match the market's stamp,
-// and a payout to any wallet but the market's launcher wallet. A collection or payout holds the market's lock from before it
-// reads its terms until it is settled: the very lock the stock reconciliation (src/stock-reconcile.mjs), the SOL reconciler and
-// the SOL claims take, pg_advisory_lock(github_repo_id). So the worker, the operator script and the reconciliation never
-// interleave on one market, and the reconciliation never reads a half-settled collection or payout.
+// and a payout to any wallet but the market's launcher wallet. The market's lock is the very lock the stock reconciliation
+// (src/stock-reconcile.mjs), the SOL reconciler and the SOL claims take, pg_advisory_lock(github_repo_id). A collection or payout
+// holds it while it reads its terms, signs, records the pending row and sends once, then again, briefly, to settle; recovery
+// holds it per market. So the worker, the operator script and the reconciliation never interleave on one market, and the
+// reconciliation never reads a half-written row.
 const COLLECTION = `id::text, github_repo_id::text as "repoId", asset_id as "assetId", quote_mint as "quoteMint", source,
   reviewed_amount::text as "reviewedAmount", actual_amount::text as "actualAmount", launcher_amount::text as "launcherAmount",
   accumulator_amount::text as "accumulatorAmount", terms_hash as "termsHash", status, signature, signed_transaction as "signedTransaction",
@@ -22,13 +23,22 @@ const inFlight = (error, what, index) => {
 }
 
 export function createStockExecutionStore(pool) {
-  // work(db) runs on the locked connection, after any other holder of the market's lock has let go.
+  // work(db) runs on the locked connection, after any other holder of the market's lock has let go. A connection that errors,
+  // or whose unlock fails, is destroyed rather than returned to the pool: closing the session is what releases its lock.
   async function withLock(repoId, work) {
     const db = await pool.connect()
+    let broken = false
+    const onError = () => { broken = true }
+    db.on('error', onError)
     try {
-      await db.query('select pg_advisory_lock($1::bigint)', [String(repoId)])
-      try { return await work(db) } finally { await db.query('select pg_advisory_unlock($1::bigint)', [String(repoId)]) }
-    } finally { db.release() }
+      try { await db.query('select pg_advisory_lock($1::bigint)', [String(repoId)]) } catch (error) { broken = true; throw error }
+      try { return await work(db) } finally {
+        try { await db.query('select pg_advisory_unlock($1::bigint)', [String(repoId)]) } catch { broken = true }
+      }
+    } finally {
+      db.removeListener('error', onError)
+      db.release(broken || undefined)
+    }
   }
 
   return {

@@ -4,9 +4,10 @@ import { Connection } from '@solana/web3.js'
 import { quoteAssetInfo } from '../src/quote-asset-info.mjs'
 import { stockAsset } from '../src/stock-accumulator.mjs'
 
-// Shared by the stock accumulator scripts (scripts/stock-*.mjs): strict arguments, the database and read-only RPC
-// connections, and display units. None of them loads a key, signs or sends anything; --write (where offered) writes to the
-// database only. Not a script itself.
+// Shared by the stock scripts (scripts/stock-*.mjs): strict arguments, the database and RPC connections, and display units.
+// The accumulator scripts load no key and sign or send nothing; --write (where offered) writes to the database only. The one
+// script that signs is scripts/stock-execute.mjs, and only with --execute, its keys read from the macOS Keychain. Not a script
+// itself.
 const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 
 export function cli(usage, options) {

@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
-import { createStockFeeAccrual } from './stock-fee-accrual.mjs'
+import { StockFeeLockBusyError, createStockFeeAccrual } from './stock-fee-accrual.mjs'
 import { UnparseableTradeError } from './trade-evidence.mjs'
 import { createQuoteAwareConfigResolver } from './market-config.mjs'
 import { StockCurveMigratedError } from './stock-trade-evidence.mjs'
@@ -145,7 +145,12 @@ export function createStockFeeIndexer({ pool: databasePool, connection, config, 
     const results = []
     const check = async market => {
       try { return await processMarket(market) }
-      catch (error) { return { githubRepoId: market.repoId, pool: market.pool, quoteAssetId: market.quoteAssetId, status: 'ERROR', error: error.message } }
+      catch (error) {
+        // The market's lock outlasted the accrual's bounded wait (a collection, payout or reconciliation holds it): like this
+        // pool's own lock, BUSY, retried on the next run from the cursor, which stays after the last trade credited.
+        if (error instanceof StockFeeLockBusyError) return { githubRepoId: market.repoId, pool: market.pool, quoteAssetId: market.quoteAssetId, status: 'BUSY' }
+        return { githubRepoId: market.repoId, pool: market.pool, quoteAssetId: market.quoteAssetId, status: 'ERROR', error: error.message }
+      }
     }
     if (!schedule) {
       for (const market of rows) results.push(await check(market))
