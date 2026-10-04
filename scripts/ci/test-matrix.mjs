@@ -85,6 +85,7 @@ export const PINNED_GROUPS = [
   { files: ['market-quote-db'], databaseUrl: launchtest('repoing_market_quote_test'), selfManaged: true },
   // Starts its own validator with mainnet's programs (scripts/ci/start-stock-validator.sh, reads mainnet once).
   { files: ['stock-pair-chain'], databaseUrl: launchtest('repoing_stock_pair_chain_test'), selfManaged: true },
+  { files: ['stock-ledgers-db'], databaseUrl: launchtest('repoing_stock_ledgers_test'), selfManaged: true },
   { files: ['graduation-readiness'], databaseUrl: launchtest('repoing_p5_test') },
   { files: ['liquidity-deployment'], databaseUrl: launchtest('repoing_liquidity_test') },
   { files: ['protocol-analytics'], databaseUrl: launchtest('repoing_analytics_test'), selfManaged: true },

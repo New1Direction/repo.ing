@@ -50,6 +50,7 @@ replica-state
 repo-streams-db
 reserve-alerts-integration
 server-speed-db
+stock-ledgers-db
 trade
 trend-integration
 trend-launchable-db
