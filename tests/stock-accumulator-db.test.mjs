@@ -212,12 +212,22 @@ test('stock accumulator, collection previews, canonical pools and settlement rec
         [String(1000n + share), String(collected - 1000n - share), 2, '14'])
       assert.equal(meta.status, 'MATCH', meta.problems.join('; '))
       assert.equal(await solListing(), solOnly, 'and with every stock ledger row present')
+      // Deposits into a position count only while its permanently locked liquidity covers all of them, checked under the lock.
+      const locked = permanent => [{ address: 'CanonicalMeta-position', fullyLocked: true, liquidity: { permanent: String(permanent), unlocked: '0', vested: '0' } }]
+      const deposit = (signature, liquidity, permanent) => ({ ...receipt(signature, 1n), evidence: { pool: 'CanonicalMeta',
+        liquidity: { 'CanonicalMeta-position': String(liquidity) }, positions: locked(permanent) } })
+      assert.equal((await recordStockSettlementReceipt(pool, deposit('DepositOne', 60, 100))).status, 'recorded')
+      await assert.rejects(recordStockSettlementReceipt(pool, deposit('DepositTwo', 50, 100)), /100 permanently locked liquidity, less than the 110 recorded/)
+      assert.equal((await recordStockSettlementReceipt(pool, deposit('DepositTwo', 50, 110))).status, 'recorded')
     })
 
     await t.test('the operator route answers from the ledgers read-only; the chain side says what it lacks', async () => {
-      const saved = Object.fromEntries(['GITHUB_APP_CLIENT_SECRET', 'PLATFORM_OPERATOR_GITHUB_IDS', 'DATABASE_URL', 'DBC_CONFIG'].map(name => [name, process.env[name]]))
+      const saved = Object.fromEntries(['GITHUB_APP_CLIENT_SECRET', 'PLATFORM_OPERATOR_GITHUB_IDS', 'DATABASE_URL', 'DBC_CONFIG', 'SOLANA_RPC_URL']
+        .map(name => [name, process.env[name]]))
       try {
-        Object.assign(process.env, { GITHUB_APP_CLIENT_SECRET: randomBytes(32).toString('hex'), PLATFORM_OPERATOR_GITHUB_IDS: '123', DATABASE_URL: URL_ })
+        // An RPC nobody answers: the chain side fails closed (no units, no custody balance) and the ledgers still answer.
+        Object.assign(process.env, { GITHUB_APP_CLIENT_SECRET: randomBytes(32).toString('hex'), PLATFORM_OPERATOR_GITHUB_IDS: '123', DATABASE_URL: URL_,
+          SOLANA_RPC_URL: 'http://127.0.0.1:1' })
         delete process.env.DBC_CONFIG
         const { GET } = await import('../app/api/operations/stock-accumulator/route.js')
         const cookie = encryptGithubSession({ scope: 'builders', repoId: null, permission: 'identity', githubUserId: '123', accessToken: 'ghu_test_only',
@@ -229,7 +239,7 @@ test('stock accumulator, collection previews, canonical pools and settlement rec
         const body = await response.json()
         const meta = await stockAccumulator(pool, 'meta-xstock')
         assert.deepEqual([body.readOnly, body.stocks.length, body.stocks[0].ok, body.stocks[0].accumulator.totals], [true, 1, true, meta.totals])
-        assert.ok(body.stocks[0].chainError, 'no DBC config: no collection previews, said so')
+        assert.equal(body.stocks[0].chainError, 'DBC_CONFIG is not set, so there are no collection previews.')
         assert.equal((await GET(request(''))).status, 200)
         assert.equal((await GET(request('?asset=sol'))).status, 404)
       } finally {
@@ -237,6 +247,15 @@ test('stock accumulator, collection previews, canonical pools and settlement rec
         await globalThis.__gitfunPool?.end()
         delete globalThis.__gitfunPool
       }
+    })
+
+    await t.test('one signature settling two collections is reported, never counted silently', async () => {
+      await pool.query(`insert into stock_fee_collections(github_repo_id,asset_id,quote_mint,source,reviewed_amount,actual_amount,launcher_amount,
+        accumulator_amount,terms_hash,status,signature,receipt,settled_at) values ($1,'meta-xstock',$2,'dbc_creator',1,1,0,1,repeat('f',64),'settled',
+        'CollectDocs','{"status":"settled"}',now())`, [JEST, META.mint])
+      const meta = await stockAccumulator(pool, 'meta-xstock')
+      assert.equal(meta.status, 'MISMATCH')
+      assert.ok(meta.problems.includes('Signature CollectDocs settles more than one collection'), meta.problems.join('; '))
     })
 
     await t.test('the stock ledgers refuse rows for a SOL market (the market trigger the accumulator relies on)', async () => {

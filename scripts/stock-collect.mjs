@@ -8,7 +8,7 @@
 // RPC, GRADUATION_VERIFICATION_RPC_URL, must agree with every read before a collection is planned, as for SOL platform fees.
 import { QUOTE_REGISTRY } from '../src/quote-assets.mjs'
 import { describeAccumulator, stockAccumulator } from '../src/stock-accumulator.mjs'
-import { createStockChainReader, createStockCollections, describeCollectionPreview } from '../src/stock-collections.mjs'
+import { createStockChainReader, createStockCollections, custodyStockBalance, describeCollectionPreview } from '../src/stock-collections.mjs'
 import { asset, cli, run, units } from './stock-cli.mjs'
 
 const USAGE = 'Usage: node scripts/stock-collect.mjs [--asset <stock asset id>] [--repo <github repo id>]'
@@ -25,7 +25,8 @@ await run(async ({ pool, connection, verification }) => {
   for (const stock of assets) {
     const previews = await collections.previewAll({ assetId: stock.assetId, repoId: args.repo ?? null })
     const onchain = new Map(previews.map(p => [p.repoId, p.uncollected === undefined ? { error: p.error ?? p.status } : { uncollected: p.uncollected }]))
-    const accumulator = await stockAccumulator(pool, stock.assetId, { onchain, units: await units(connection, stock.assetId) })
+    const accumulator = await stockAccumulator(pool, stock.assetId, { onchain, units: await units(connection, stock.assetId),
+      custodyBalance: await custodyStockBalance(connection, stock) })
     json.assets.push({ assetId: stock.assetId, accumulator, collections: previews })
     lines.push(...describeAccumulator(accumulator))
     if (!previews.length) lines.push(`  No launched ${stock.symbol} market is indexed${args.repo ? ` as repository ${args.repo}` : ''}: nothing to collect.`)

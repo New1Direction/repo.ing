@@ -376,7 +376,8 @@ displays add the ScaledUiAmount multiplier and a USD price.
   - **owed to launchers:** their credited share less settled `stock_launcher_payouts`;
   - **spent:** `stock_settlement_receipts`; **available:** collected less spent.
 
-  It lists the contributing repositories, and reports any inconsistency as a problem, never correcting it.
+  It lists the contributing repositories, and reports any inconsistency as a problem, never correcting it: for example
+  custody holding less than the ledger expects, or one signature settling two collections.
 - **Collection previews** (`src/stock-collections.mjs`) cover each market's curve creator and partner fees and its graduated
   creator and partner positions.
   - A source is planned only when what its pool holds equals what the ledger expects, and no collection of it is pending.
@@ -385,27 +386,32 @@ displays add the ScaledUiAmount multiplier and a USD price.
   - `checkStockCollectionReceipt` will settle executions on exact Token-2022 balance deltas and the program's claim event.
   - The SOL sweep never sees a stock market: `listPlatformFees` lists only `quote_asset_id is null`.
 - **The canonical pool registry** (`src/stock-canonical-pools.mjs`): before a pool is recorded (one active per stock), it is
-  checked on chain to be a DAMM v2 pool of exactly REPOING (SPL Token) and the stock's pinned mint (Token-2022). It must be
-  created by an owner wallet, with the program's own vaults and an owner position. The owner wallets are constants: the
-  partner wallet, the platform-revenue custody and the team wallet.
+  checked on chain to be a DAMM v2 pool of exactly REPOING (SPL Token) and the stock's pinned mint (Token-2022), with the
+  program's own vaults and an owner position.
+  - Its creation transaction must be an owner wallet's own seed. A pool's `creator` is not a signature: anyone can create a
+    pool naming an owner wallet, so the creation must also be signed and paid for by one.
+  - The owner wallets are constants: the partner wallet, the platform-revenue custody and the team wallet.
 - **Settlement** (`src/stock-settlement.mjs`):
   - **The preview** swaps about half of the available accumulator into REPOING through the canonical pool and adds both
     sides to the owner's position, permanently locked. It is bounded by slippage (default 100 bps, at most 500) and price
-    impact (default 300 bps, at most 1,000).
-  - **Receipts** verify the owner's own `seed`, `swap` or `add_liquidity` transaction: on the canonical pool only, exact
-    balance deltas of both tokens, every deposited position permanently locked.
+    impact (default 300 bps, at most 1,000). It spends from the position owner's stock account and is refused while that
+    holds less, until the owner moves funds out of custody.
+  - **Receipts** verify the owner's own `seed`, `swap` or `add_liquidity` transaction: on the canonical pool only, with exact
+    balance deltas of both tokens. Each position it deposited into must be fully locked, with permanently locked liquidity
+    covering every deposit recorded into it, so a deposit withdrawn before its lock never counts.
   - A receipt is recorded only within the collected, unspent accumulator: the owner's own funds are not a settlement.
 
 ```bash
 node scripts/stock-collect.mjs [--asset meta-xstock] [--repo <id>]   # preview only
-node scripts/stock-pool-register.mjs --asset meta-xstock --pool <address> [--position <address>] [--write]
+node scripts/stock-pool-register.mjs --asset meta-xstock --pool <address> --creation <sig> [--position <address>] [--write]
 node scripts/stock-settlement-preview.mjs --asset meta-xstock [--max <raw>] [--slippage-bps 100] [--impact-bps 300]
 node scripts/stock-settlement-receipt.mjs --asset meta-xstock --kind seed|swap|add_liquidity --signature <sig> [--write]
 ```
 
-Scripts are dry runs by default; `--write` writes to the database only. Each prints a JSON report, then what it found and
-would do in plain English. Operators can read the same view at `GET /api/operations/stock-accumulator[?asset=<id>]`. It is
-read-only and protected like the other operator routes.
+Scripts are dry runs by default; `--write` writes to the database only, and only for mainnet facts read through two RPCs
+that agree (`GRADUATION_VERIFICATION_RPC_URL`). Each prints a JSON report, then what it found and would do in plain English.
+Operators can read the same view at `GET /api/operations/stock-accumulator[?asset=<id>]`. It is read-only and protected
+like the other operator routes.
 
 Tests: `tests/stock-accumulator.test.mjs` (arithmetic, previews, receipt checks), `tests/stock-accumulator-db.test.mjs`
 (PostgreSQL, including the SOL/stock partition) and `tests/stock-accumulator-chain.test.mjs` (stock validator: collections,
