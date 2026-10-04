@@ -105,11 +105,11 @@ STOCK_QUOTE_CONFIGS='{"meta-xstock":"<config>"}' node scripts/stock-readiness.mj
 `DBC_CONFIG` is the live SOL launch config ([Launch fee](LAUNCH_FEE.md)); each stock config must carry its terms. Every
 `METAx config` line must say PASS. `METAx config graduation` repeats your threshold in METAx.
 
-## 4. Set STOCK_QUOTE_CONFIGS on worker and web
+## 4. Set STOCK_QUOTE_CONFIGS on web and worker
 
-On chain: nothing. Cost: nothing. Each service restarts.
+On chain: nothing. Cost: nothing. Each service restarts; no code is deployed.
 
-Set the same value on the **worker** first, then on **web**:
+Set the same value on **web** and on the **worker**. While launches are closed, the order does not matter:
 
 ```text
 STOCK_QUOTE_CONFIGS={"meta-xstock":"<config>","msft-xstock":"<config>","nvda-xstock":"<config>"}
@@ -132,6 +132,9 @@ railway ssh --service web -- node scripts/stock-readiness.mjs
 railway ssh --service worker -- node scripts/stock-readiness.mjs
 ```
 
+The script is part of the code. If a service does not have it yet, deploy web first (its pre-deploy step applies database
+migrations), then the worker.
+
 Each line says PASS, FAIL or TODO, with one reason. Switches say ON or OFF. The script ends with an error if anything fails.
 
 | Section | What it checks |
@@ -151,8 +154,8 @@ Done means no FAIL on either service. The only TODO left should be custody. Both
 On chain: nothing. Cost: nothing.
 
 1. **The switch PR** sets `STOCK_PAIR_LAUNCHES_READY = true` in `src/quote-assets.mjs`. Merge it only after the rest of the
-   stock-pair work has merged and step 5 passes. It deploys to web and worker. Launches stay closed, because
-   `STOCK_QUOTES_ENABLED` is still off.
+   stock-pair work has merged and step 5 passes. Merging deploys nothing. After merging, deploy web first (its pre-deploy
+   step applies database migrations), then the worker. Launches stay closed, because `STOCK_QUOTES_ENABLED` is still off.
 2. **Then, on web,** set `STOCK_QUOTES_ENABLED=true`. Web restarts. Repositories owned by the facebook, microsoft and nvidia
    organizations on GitHub can now launch paired with their company's stock, for each stock that has a config in
    `STOCK_QUOTE_CONFIGS`.
@@ -237,5 +240,5 @@ On chain: nothing. Cost: nothing.
   the worker still records their fees.
 - **Leave `STOCK_QUOTE_CONFIGS` as it is.** Existing stock markets need it. Without it the worker reports errors for them.
 - **If collections or payouts are on,** set those flags to `false` to stop them.
-- The code switch can stay on. To close it as well, revert the switch PR.
+- The code switch can stay on. To close it as well, revert the switch PR, then deploy web first and the worker after it.
 - The configs stay on chain. They cannot be closed.
