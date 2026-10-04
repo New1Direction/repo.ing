@@ -7,6 +7,7 @@ import { readFile, mkdtemp, mkdir, copyFile, writeFile, rm } from 'node:fs/promi
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { quoteStamp, resolveQuoteAsset } from '../src/quote-assets.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Migration 0053 (market quote asset) on real PostgreSQL: the database is brought to 0052, seeded with SOL markets (confirmed
 // and indexed, failed, submitted, ambiguous, and an indexed row in a pre-send status), then upgraded. Existing rows must read back identically with null quote columns; a stock stamp must be all-or-none,
@@ -119,7 +120,7 @@ test('migration 0053 leaves SOL markets as they were and guards every stock stam
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query('drop database if exists repoing_market_quote_test with (force)')
+    if (created) await dropTestDatabase(admin, 'repoing_market_quote_test')
     await admin.end()
     await rm(folder, { recursive: true, force: true })
   }

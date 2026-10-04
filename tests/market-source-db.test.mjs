@@ -16,6 +16,7 @@ import { createWalletBinding } from '../src/wallet-binding.mjs'
 import { database, listMarkets, marketByRepo } from '../app/lib/server.mjs'
 import { selectWaiting } from '../app/lib/waiting.mjs'
 import { POST as resolve } from '../app/api/resolve/route.js'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Migration 0049 on real PostgreSQL. The database is brought to the migration just before 0049, seeded with
 // representative rows, then upgraded: every existing row must read back identically (checksums over each table's and
@@ -269,7 +270,7 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
   } finally {
     await database()?.end().catch(() => {}); delete globalThis.__gitfunPool
     await pool?.end()
-    if (created) await admin.query('drop database repoing_market_source_test with (force)')
+    if (created) await dropTestDatabase(admin, 'repoing_market_source_test')
     await admin.end(); await rm(folder, { recursive: true, force: true })
   }
 })

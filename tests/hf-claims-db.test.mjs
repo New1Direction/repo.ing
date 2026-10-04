@@ -19,6 +19,7 @@ import { activateDuePayoutAddresses, createPayoutAddresses } from '../src/payout
 import { activeDecision, createMaintainerDecisions } from '../src/maintainer-opt-outs.mjs'
 import { createPromotionExclusions } from '../app/lib/promotion-exclusions.mjs'
 import { recorded, startFakeHf } from './fixtures/hf-server.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Real PostgreSQL with every committed migration (0050_model_opt_outs, 0051_model_authority), and a local stand-in for
 // huggingface.co (the recorded Hub responses, plus scripted OAuth): who may bind a model market's payout wallet, paste
@@ -677,7 +678,7 @@ test('real PostgreSQL: 0050 and 0051 upgrade GitHub history unchanged, re-apply 
     assert.deepEqual(sources, { beneficiaries: ['github'], requests: ['github'], decisions: ['github'] })
   } finally {
     await pool?.end()
-    await admin.query('drop database if exists repoing_hf_upgrade_test with (force)')
+    await dropTestDatabase(admin, 'repoing_hf_upgrade_test')
     await admin.end(); await rm(folder, { recursive: true, force: true })
   }
 })

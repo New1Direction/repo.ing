@@ -18,6 +18,7 @@ import { readStockActivity, readStockTraders } from '../app/lib/stock-market-act
 import { readStockCurve } from '../app/lib/stock-market-stats.mjs'
 import { createStockUnitsCache } from '../app/lib/stock-units.mjs'
 import { createMarketNotifications } from '../src/market-notifications.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Stock-paired market reads (docs/STOCK_QUOTES.md) on real PostgreSQL with every migration (0054's stock ledgers included).
 // Golden: the SOL market list, a SOL market, SOL charts (curve and graduated), protocolStats, /stats analytics (all time and
@@ -333,7 +334,7 @@ test('stock-paired markets: SOL reads unchanged, partitioned totals, and the sto
     globalThis.fetch = realFetch
     await globalThis.__gitfunPool?.end().catch(() => {}); globalThis.__gitfunPool = undefined
     await db?.end()
-    if (created) await admin.query('drop database if exists repoing_stock_reads_test with (force)')
+    if (created) await dropTestDatabase(admin, 'repoing_stock_reads_test')
     await admin.end()
   }
 })

@@ -9,6 +9,7 @@ import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createStockFeeIndexer } from '../src/stock-fee-indexer.mjs'
 import { quoteAssetById } from '../src/quote-assets.mjs'
 import { SOL_INDEXER_MARKETS, STOCK_INDEXER_MARKETS, checkDatabase } from '../src/stock-readiness.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // The readiness database checks (src/stock-readiness.mjs, docs/STOCK_GO_LIVE.md) on real PostgreSQL: migration 0054's tables,
 // functions and triggers, 0055's read indexes and 0056's execution guards; the SOL/stock market partition, which must be exactly the lists the two worker indexers walk; and no
@@ -190,7 +191,7 @@ test('readiness database checks on PostgreSQL: migrations 0054, 0055 and 0056, t
   } finally {
     client?.release()
     await pool?.end()
-    if (created) await admin.query(`drop database if exists ${DB} with (force)`)
+    if (created) await dropTestDatabase(admin, DB)
     await admin.end()
   }
 })

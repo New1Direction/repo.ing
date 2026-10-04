@@ -15,6 +15,7 @@ import { STOCK_FEE_CUSTODY, createStockCollections, listStockMarkets } from '../
 import { activeCanonicalPool, registerCanonicalPool } from '../src/stock-canonical-pools.mjs'
 import { recordStockSettlementReceipt } from '../src/stock-settlement.mjs'
 import { encryptGithubSession } from '../app/lib/auth.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // The stock accumulator, collection previews, canonical pool registry and settlement receipts on real PostgreSQL with
 // migration 0054 (docs/STOCK_QUOTES.md, "Accumulator and settlement"). The chain side of a preview is a stub here
@@ -264,7 +265,7 @@ test('stock accumulator, collection previews, canonical pools and settlement rec
     })
   } finally {
     await pool?.end()
-    if (created) await admin.query(`drop database if exists ${DB} with (force)`)
+    if (created) await dropTestDatabase(admin, DB)
     await admin.end()
   }
 })

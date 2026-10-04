@@ -31,6 +31,7 @@ import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { splitCurveFee } from '../src/stock-fee-policy.mjs'
 import { settleConfirmedTrade } from '../app/lib/trade-settlement.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // A METAx-paired market launched end to end on the programs mainnet runs (scripts/ci/start-stock-validator.sh): the DBC,
 // DAMM v2, Token-2022 and Metaplex programs as deployed, Meteora's real badges for METAx, and the real METAx mint with only its
@@ -355,7 +356,7 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
     if (savedConfigs === undefined) delete process.env.STOCK_QUOTE_CONFIGS
     else process.env.STOCK_QUOTE_CONFIGS = savedConfigs
     await pool?.end()
-    if (created) await admin.query('drop database if exists repoing_stock_pair_chain_test with (force)')
+    if (created) await dropTestDatabase(admin, 'repoing_stock_pair_chain_test')
     await admin.end()
     closeConnections()
     if (started) await stopValidator(work)

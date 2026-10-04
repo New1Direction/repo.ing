@@ -14,6 +14,7 @@ import { POLICY_VERSION, splitCurveFee } from '../src/stock-fee-policy.mjs'
 import { reconcileJSON } from '../src/stock-reconcile.mjs'
 import { STOCK_PAIR_NO_OWNER_CLAIM } from '../src/stock-owner-claims.mjs'
 import { curveConfig, curvePool, key, stockMarket } from './fixtures/stock-chain.mjs'
+import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 // Golden: a SOL market's claim and fee-status outputs are exactly the same before and after a stock-paired market (with its
 // stock ledgers, a collection, a launcher payout and a payout wallet bound by the same maintainer) is added to the database.
@@ -103,7 +104,7 @@ test.after(async () => {
   globalThis.__gitfunPool = saved.pool
   for (const name of KEYS) { if (saved[name] === undefined) delete process.env[name]; else process.env[name] = saved[name] }
   await pool.end()
-  await admin.query(`drop database if exists ${DB} with (force)`)
+  await dropTestDatabase(admin, DB)
   await admin.end()
   await new Promise(resolve => server.close(resolve))
 })
