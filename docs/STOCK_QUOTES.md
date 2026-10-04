@@ -217,6 +217,39 @@ STOCK_CHAIN_WORK_DIR=<work-dir> node --test tests/stock-pair-chain.test.mjs
 The test needs PostgreSQL on 127.0.0.1:55432. It reads the validator's RPC port from `STOCK_VALIDATOR_RPC_PORT` (default 8919),
 as the script does. Stop the validator afterwards and delete `<work-dir>/ledger`.
 
+### Prices, charts and totals of a stock pair (dark)
+
+A stock-paired market's numbers come only from the stock ledgers, and a stock value is never put in a SOL field.
+
+- **Chart** (`src/stock-market-chart.mjs`, served by the same `/api/market/<mint>/trades`): the market's curve trades, then,
+  after its recorded graduation (`stock_graduation_events`), the trades of the DAMM pool that graduation names, from the
+  migration slot on. Prices come from each swap's sqrt price in the stock's decimals (`stockSpotPrice`: 8, never SOL's 9).
+  Volume is `quote_amount`: a buy's fee-excluded input and a sell's stock received, the amounts SOL volume counts in SOL. The
+  payload names its stock (`quote`) and uses `priceQuote`, `quoteAmount`, `volumeQuote` and `volume24hQuote`.
+- **Units as wallets show them:** the metrics route adds the stock's display facts (`quote`: today's multiplier and USD price).
+  The chart, recent trades, the phone summary and the graduation bar show stock amounts as raw × today's multiplier,
+  truncated, history included (like a split-adjusted chart). Until the units load, or when they cannot be read, prices and
+  amounts read "—", never raw units. USD uses the stock's own price per whole raw token.
+- **Market rows** (`app/lib/stock-market-stats.mjs`): a stamped market's row has `priceSol` and `volume24hLamports` null and a
+  `stock` object: the last price, the raw 24h volume and, on lists, today's multiplier and USD price. Its progress comes from
+  `stock_graduation_observations` under the public curve's freshness rule. If these reads fail, only the stamped rows are
+  marked unavailable; SOL rows are returned as they were, with no extra query.
+- **Activity, traders and the graduation bar** read the stock ledger for a stamped market: trades, each curve swap's fee split
+  (the launcher's share and the accumulator's), settled launcher payouts, and its progress in the stock.
+- **Live updates:** the web process also listens on `repoing_stock_market_updates`, so a stock trade refreshes open charts as a
+  SOL trade does.
+- **Totals:** `protocolStats`, `/stats` analytics and the graduation race count SOL markets only (`quote_asset_id is null`).
+  `/stats` adds a section per stock (`src/stock-analytics.mjs`: volume, fees, the launcher's and the accumulator's shares, in
+  that stock and in USD), shown only once a stock pair has traded or earned a fee. A stock is never added to SOL or to another
+  stock.
+- **The graduation race leaves stock pairs out.** The race and everything that reads it (the home and explore lists, the
+  $REPOING card, the MCP tools) state reserves in SOL, and a stock pair's observations carry no verified status to rank
+  against SOL racers. Its own row and token page show its progress in its stock.
+
+`tests/stock-market-reads-db.test.mjs` proves on PostgreSQL that the SOL market list, SOL markets, SOL charts, `protocolStats`,
+`/stats` and the race read exactly as before with stock markets, their ledgers and stray SOL rows filed under a stock market
+present, and that SOL markets plus stock markets are every live market, with no overlap.
+
 ## Fee policy (policy 1)
 
 | | Curve fee |
@@ -307,8 +340,8 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
    - trade preparation and verification (no wrapped SOL; Token-2022 quote accounts; decimals from the asset);
    - DBC and DAMM event parsing and fee accrual;
    - graduation;
-   - charts, market cap and USD prices, with stock amounts shown as wallets show them (the trade panel already does);
-   - platform totals, split by asset.
+   - charts, market cap and USD prices, with stock amounts shown as wallets show them (done, dark);
+   - platform totals, split by asset (done, dark).
 
    Fix every part together: a partial fix would make the worker skip stock fees silently.
 4. **P7:** launcher fee routing (policy 1, above), quote-aware claims and reconciliation.
