@@ -91,6 +91,10 @@ export const PINNED_GROUPS = [
   { files: ['stock-curve-indexing-db'], databaseUrl: launchtest('repoing_stock_curve_indexing_test'), selfManaged: true },
   // Stock-paired market reads (charts, row figures, per-stock totals) and the SOL reads they must leave unchanged.
   { files: ['stock-market-reads-db'], databaseUrl: launchtest('repoing_stock_reads_test'), selfManaged: true },
+  // The stock accumulator, collection previews, canonical pools and settlement receipts: the ledgers on PostgreSQL, then real
+  // collections and settlements on a stock validator of its own (started like stock-pair-chain's when none is running).
+  { files: ['stock-accumulator-db'], databaseUrl: launchtest('repoing_stock_accumulator_test'), selfManaged: true },
+  { files: ['stock-accumulator-chain'], databaseUrl: launchtest('repoing_stock_accumulator_chain_test'), selfManaged: true },
   { files: ['graduation-readiness'], databaseUrl: launchtest('repoing_p5_test') },
   { files: ['liquidity-deployment'], databaseUrl: launchtest('repoing_liquidity_test') },
   { files: ['protocol-analytics'], databaseUrl: launchtest('repoing_analytics_test'), selfManaged: true },
