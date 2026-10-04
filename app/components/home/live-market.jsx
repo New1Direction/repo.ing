@@ -10,6 +10,7 @@ import { LIVE_MARKET_POLL_MS, LIVE_MARKET_RANGE, LIVE_TRADE_ROWS, lastPoint, liv
 import { phoneMarketSummary, sparklinePath } from '../../lib/phone-market-summary.mjs'
 import { recentTradeAge, recentTradeSol, tradeKey } from '../../lib/recent-trades.mjs'
 import { formatSolDisplay } from '../../lib/format.mjs'
+import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
 
 const W = 320, H = 112, PAD = 4
 
@@ -93,12 +94,18 @@ export function LiveMarket({ market, initial, usdPerSol = null, renderedAt }) {
   </article>
 }
 
-// Same frame as the card, so streaming it in never moves the hero. unavailable: the market could not be read.
+// The card's own blocks at the card's sizes (home.css), so streaming it in never moves the hero. unavailable: the market
+// could not be read; the way to trade it stays.
 export function LiveMarketFallback({ unavailable = false }) {
   return <article className="live-market is-loading" aria-busy={!unavailable || undefined}>
     <header className="live-market-head"><span className="skeleton-avatar"/><div className="live-market-name"><span className="skeleton-line"/><span className="skeleton-line short"/></div></header>
     <div className="live-market-price"><span className="skeleton-line"/></div>
     <div className="live-chart">{unavailable && <p className="live-chart-empty" role="status">Live prices are temporarily unavailable.</p>}</div>
-    <div className="live-market-stats"><span className="skeleton-line"/><span className="skeleton-line"/><span className="skeleton-line"/></div>
+    <dl className="live-market-stats">{['Market cap', '24h volume', 'Builders earned'].map(label =>
+      <div key={label}><dt>{label}</dt><dd><span className="skeleton-line"/></dd></div>)}</dl>
+    <ol className="live-trades" aria-hidden="true">{Array.from({ length: LIVE_TRADE_ROWS }, (_, index) =>
+      <li key={index} className="live-trade"><span className="skeleton-line"/></li>)}</ol>
+    {unavailable ? <Link href={OFFICIAL_TOKEN.marketPath} className="button primary live-market-cta">Trade ${OFFICIAL_TOKEN.symbol}<ArrowRight size={17} aria-hidden="true"/></Link>
+      : <span className="button primary live-market-cta is-placeholder" aria-hidden="true">Trade</span>}
   </article>
 }

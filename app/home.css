@@ -50,7 +50,7 @@
 .home-proof.is-loading .skeleton-line{width:min(440px,90%);height:42px}
 
 /* The live market card (components/home/live-market.jsx). Its frame is fixed, so streaming it in never moves the hero. */
-.live-market{display:flex;flex-direction:column;gap:16px;min-height:478px;padding:22px 22px 20px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,var(--green) 12%),var(--surface) 38%);box-shadow:0 34px 80px -44px rgba(0,0,0,.8),inset 0 1px 0 color-mix(in srgb,var(--text) 7%,transparent)}
+.live-market{display:flex;flex-direction:column;gap:16px;padding:22px 22px 20px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,var(--green) 12%),var(--surface) 38%);box-shadow:0 34px 80px -44px rgba(0,0,0,.8),inset 0 1px 0 color-mix(in srgb,var(--text) 7%,transparent)}
 .live-market-head{display:flex;align-items:center;gap:12px}
 .live-market-head .repo-avatar,.live-market-head .skeleton-avatar{width:46px;height:46px;border-radius:11px}
 .live-market-name{display:flex;flex:1;flex-direction:column;gap:4px;min-width:0}
@@ -58,7 +58,7 @@
 .live-market-name span{overflow:hidden;color:var(--muted);font-size:13px;text-overflow:ellipsis;white-space:nowrap}
 .live-badge{display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid color-mix(in srgb,var(--home-accent) 38%,transparent);border-radius:999px;color:var(--home-accent);font-family:var(--home-mono);font-size:11px;font-weight:650;letter-spacing:.14em;text-transform:uppercase}
 .live-badge i{width:6px;height:6px;border-radius:50%;background:currentColor}
-.live-market-price{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;min-height:40px}
+.live-market-price{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;min-height:48px}
 .live-market-price strong{font-family:var(--home-mono);font-size:clamp(26px,2.3vw,34px);font-weight:650;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
 .live-market-price small{color:var(--dim);font-family:var(--home-mono);font-size:12px}
 .live-change{padding:3px 8px;border-radius:6px;font-family:var(--home-mono);font-size:14px;font-weight:650;font-variant-numeric:tabular-nums}
@@ -89,19 +89,23 @@
 .live-market-cta{min-height:48px;margin-top:auto;font-size:15px}
 .live-market-cta svg{transition:transform .2s var(--home-ease)}
 .live-market-cta:hover svg{transform:translateX(3px)}
+/* The placeholder (LiveMarketFallback) has the card's blocks at the card's sizes, so streaming the card in moves nothing. */
 .live-market.is-loading .live-market-name .skeleton-line{width:120px;height:18px}
 .live-market.is-loading .live-market-name .skeleton-line.short{width:170px;height:12px}
-.live-market.is-loading .live-market-price .skeleton-line{width:190px;height:30px}
+.live-market.is-loading .live-market-price .skeleton-line{width:190px;height:30px;align-self:center}
 .live-market.is-loading .live-chart{border-radius:10px;background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--surface2) 70%,transparent))}
-.live-market.is-loading .live-market-stats{display:flex;gap:16px}
-.live-market.is-loading .live-market-stats .skeleton-line{height:30px}
+.live-market.is-loading .live-market-stats dd .skeleton-line{width:70%;height:1.4em}
+.live-market.is-loading .live-trade .skeleton-line{grid-column:1/-1;width:100%;height:12px}
+.live-market-cta.is-placeholder{pointer-events:none;opacity:.35}
 
 /* Live from GitHub (components/pulse-ticker.jsx), in the page's column and its mono. */
 .home .pulse-ticker{margin:0 auto}
 .home .pulse-ticker-track a{font-family:var(--home-mono);font-size:12.5px}
 
 /* The market board (components/home/home-board.jsx). */
-.home-board{margin-top:clamp(40px,4.4vw,64px)}
+.home-board{position:relative;margin-top:clamp(40px,4.4vw,64px)}
+/* /#graduating and the like land on the board (HomeBoard renders one anchor per tab). */
+.home-board-anchor{position:absolute;top:-20px}
 .home-board-head{display:flex;flex-wrap:wrap;align-items:center;gap:14px 24px;margin-bottom:16px}
 .home-board-head h2{margin:0;font-family:var(--home-display);font-size:clamp(28px,2.5vw,36px);font-weight:400;letter-spacing:-.015em}
 .home-board-tabs{display:flex;gap:4px;max-width:100%;padding:4px;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface);scrollbar-width:none}
@@ -117,6 +121,7 @@
 .home-board-more:hover{text-decoration:underline;text-underline-offset:3px}
 .home-board-empty{margin:0;padding:34px 20px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);text-align:center}
 .home-board .shipping-leaders-list{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+.home-board .models-strip{padding-top:0}
 
 /* How it works: the steps beside the flywheel video. */
 .home-how{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:clamp(28px,4.4vw,72px);align-items:center;margin-top:clamp(52px,6vw,92px);padding-top:clamp(36px,4vw,56px);border-top:1px solid var(--border)}
@@ -129,7 +134,7 @@
 .home-how .flywheel-video h2{margin:0 0 12px;color:var(--muted);font-family:var(--home-mono);font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
 
 /* Light theme: the darker green for text, and an amber that reads on white. */
-[data-theme=light] .home{--home-accent:var(--green-dark);--home-sell:#a86b12;--home-glow:color-mix(in srgb,var(--green) 20%,transparent)}
+[data-theme=light] .home{--home-accent:#157347;--home-sell:#a86b12;--home-glow:color-mix(in srgb,var(--green) 20%,transparent)}
 [data-theme=light] .live-market{box-shadow:0 30px 70px -46px rgba(25,34,28,.35),inset 0 1px 0 #fff}
 
 @media(max-width:1099px){
@@ -158,6 +163,9 @@
   .home-board-tabs button{flex:1 0 auto;padding:0 10px;font-size:12px}
   .home-board-panel{min-height:0;overflow-x:auto}
 }
+/* Five tabs (with model markets on) fit a phone's column without scrolling. */
+@media(max-width:420px){.home-board-tabs button{padding:0 7px;font-size:11.5px;letter-spacing:0}}
+@media(max-width:370px){.home-board-tabs button{padding:0 5px;font-size:11px}}
 @media(prefers-reduced-motion:reduce){
   .home-kicker i:after,.live-badge i:after,.live-chart-dot:after{animation:none;opacity:0}
   .live-trade.is-new{animation:none}

@@ -28,7 +28,7 @@
 [data-theme=light] .wallet-options button:hover:not(:disabled),[data-theme=light] .wallet-options a:hover{background:#e1f1e6}
 [data-theme=light] .wallet-option-icon{background:#dcebe0;color:#168b59}
 
-[data-theme=light] .hero>p,[data-theme=light] .section-heading p,[data-theme=light] .search-helper,[data-theme=light] .page-intro p,[data-theme=light] .launch-subtitle,[data-theme=light] .info-intro p{color:#53645a}
+[data-theme=light] .section-heading p,[data-theme=light] .search-helper,[data-theme=light] .page-intro p,[data-theme=light] .launch-subtitle,[data-theme=light] .info-intro p{color:#53645a}
 [data-theme=light] .repo-search{background:#fff;border-color:#bac8bd}
 [data-theme=light] .repo-search input,[data-theme=light] .explore-search input{color:var(--text)}
 [data-theme=light] .repo-search input::placeholder,[data-theme=light] .explore-search input::placeholder{color:#738277}

@@ -856,12 +856,6 @@ a.pulse-stat:hover{border-color:color-mix(in srgb,var(--pulse) 60%,var(--border)
 .pulse-badge.is-shipping i:after{content:"";position:absolute;inset:0;border-radius:50%;background:var(--green);animation:pulse-ping 1.8s cubic-bezier(0,0,.2,1) infinite}
 .race-name small .pulse-badge{height:18px;padding:0 7px;font-size:10.5px}
 .shipping-tab-icon{color:var(--green)}
-.shipping-leaders{margin:16px 0 6px}
-.shipping-leaders-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
-.shipping-leaders-head h2{display:inline-flex;align-items:center;gap:9px;margin:0;font-size:16px;letter-spacing:-.01em}
-.shipping-leaders-head h2 i{position:relative;width:8px;height:8px;border-radius:50%;background:var(--green)}
-.shipping-leaders-head h2 i:after{content:"";position:absolute;inset:0;border-radius:50%;background:var(--green);animation:pulse-ping 1.8s cubic-bezier(0,0,.2,1) infinite}
-.shipping-leaders-head a{display:inline-flex;flex:none;align-items:center;gap:5px;color:var(--muted);font-size:13px;font-weight:600;white-space:nowrap}.shipping-leaders-head a:hover{color:var(--text)}
 .shipping-leaders-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
 .shipping-card{display:grid;grid-template-columns:auto auto minmax(0,1fr);grid-template-areas:"rank avatar name" "stats stats stats";align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.012);color:var(--text);transition:border-color .15s,transform .15s}
 .shipping-card:hover,.shipping-card:focus-visible{border-color:color-mix(in srgb,var(--green) 55%,var(--border));transform:translateY(-1px)}
@@ -871,6 +865,4 @@ a.pulse-stat:hover{border-color:color-mix(in srgb,var(--pulse) 60%,var(--border)
 .shipping-name small{color:var(--green);font-size:12px;font-weight:650}
 .shipping-stats{grid-area:stats;display:flex;flex-wrap:wrap;gap:4px 14px;padding-top:9px;border-top:1px solid var(--border);color:var(--dim);font-size:12px}
 .shipping-stats b{color:var(--text);font-variant-numeric:tabular-nums}
-@media(max-width:900px){.shipping-leaders-list{grid-template-columns:1fr}.shipping-card{grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-areas:"rank avatar name stats"}.shipping-stats{padding-top:0;border-top:0;justify-content:flex-end}}
-@media(max-width:520px){.shipping-card{grid-template-columns:auto auto minmax(0,1fr);grid-template-areas:"rank avatar name" "stats stats stats"}.shipping-stats{padding-top:8px;border-top:1px solid var(--border);justify-content:flex-start}}
-@media(prefers-reduced-motion:reduce){.pulse-badge.is-shipping i:after,.shipping-leaders-head h2 i:after{animation:none}}
+@media(prefers-reduced-motion:reduce){.pulse-badge.is-shipping i:after{animation:none}}
