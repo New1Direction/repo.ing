@@ -15,20 +15,20 @@ import { quoteAssetById } from '../src/quote-assets.mjs'
 // once (--once) against a fresh PostgreSQL database holding a SOL market and a stock-paired market, and an in-process JSON-RPC
 // server that answers every call with an error and records it; then it runs again from a copy of the script with exactly the
 // job's lines removed. Their output lines, exit codes and RPC calls must be identical, and no transaction is ever sent. With a
-// flag on (and no key in its environment) the job runs, reports, and fails the run loudly.
+// flag on, the job only recovers rows the operator's script signed, with no key: idle, it changes nothing either; with a row
+// pending, it checks the network first and fails the run loudly on this refusing RPC.
 const DB = 'repoing_stock_execution_worker_test'
 const URL_ = `postgres://postgres:launchtest@127.0.0.1:55432/${DB}`
 const ROOT = new URL('..', import.meta.url)
 const META = quoteAssetById('meta-xstock')
-// The stock market's pool is the DBC pool of its mint, METAx and this stock config, so its curve resolves and is read.
-const STOCK_CONFIG = '7vJDrxN46rmZXKAuVyv2ZRCNRMyRn3d25B5P2pkFcvrn'
 
 // The job's lines in scripts/run-worker.mjs, exactly. If they change, change them here too: this test removes them to rebuild
 // the worker as it was without the job.
 const JOB_LINES = [
   "import { createStockExecutionJob, STOCK_EXECUTION_INTERVAL_MS, stockExecutionLoud } from '../src/stock-execution-job.mjs'\n",
-  `// Stock-pair fee collections into custody and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by default)"): null, so
-// nothing is built, read, loaded or printed, unless STOCK_COLLECTIONS_EXECUTION_ENABLED or STOCK_LAUNCHER_PAYOUTS_ENABLED is 'true'.
+  `// Stock-pair fee collections and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by default)"): the worker only finishes
+// rows scripts/stock-execute.mjs already signed (settle, rebroadcast, abort) and holds no key. null, so nothing is built, read or
+// printed, unless STOCK_COLLECTIONS_EXECUTION_ENABLED or STOCK_LAUNCHER_PAYOUTS_ENABLED is 'true'.
 const stockExecution=createStockExecutionJob({pool,config,connect:()=>({connection:graduationRPC(rpc),verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})})
 let stockExecutionTask=null,nextStockExecutionCheck=0
@@ -86,7 +86,12 @@ const SEED = `insert into repositories(github_repo_id,owner,name,full_name,stars
       'ScTetvZxPRiLfchEixzMRHVeaZk4Cy1LvF2ZxjQnVAqHjd3wdM65zU6CbrjcBv8RVWNYHrzWgUWWrRKXYJLJHMP','H',1,1,'finalized',
       '2026-10-02T00:00:00Z','2026-10-02T00:00:00Z',null,null,null);`
 
-async function freshDatabase() {
+// A payout the operator's script recorded and never finished.
+const PENDING_PAYOUT = `insert into stock_launcher_payouts(github_repo_id,asset_id,quote_mint,wallet,amount,status,signature,signed_transaction,receipt)
+  values (94911145,'meta-xstock','${META.mint}','AoVsGaj8MSJ6xwKxfFxo9iZWH3enC8RRTXKH2fx2F8os',5000000,'pending','PendingPayout','AA==','{}')`
+const ON = { STOCK_COLLECTIONS_EXECUTION_ENABLED: 'true', STOCK_LAUNCHER_PAYOUTS_ENABLED: 'true' }
+
+async function freshDatabase(extra = '') {
   const admin = new pg.Client({ connectionString: URL_.replace(new RegExp(`${DB}$`), 'postgres') })
   await admin.connect()
   try {
@@ -94,7 +99,7 @@ async function freshDatabase() {
     await admin.query(`create database ${DB}`)
   } finally { await admin.end() }
   const pool = new pg.Pool({ connectionString: URL_ })
-  try { await migrate(drizzle(pool), { migrationsFolder: 'drizzle' }); await pool.query(SEED) } finally { await pool.end() }
+  try { await migrate(drizzle(pool), { migrationsFolder: 'drizzle' }); await pool.query(SEED); if (extra) await pool.query(extra) } finally { await pool.end() }
 }
 
 // Volatile values only: wall-clock times and the usage line's elapsed seconds.
@@ -105,8 +110,8 @@ const normalize = line => {
 }
 
 // A fresh database, the script once, with only the variables a worker needs (never the developer's own environment).
-async function runWorker(script, extraEnv = {}) {
-  await freshDatabase()
+async function runWorker(script, extraEnv = {}, extraSeed = '') {
+  await freshDatabase(extraSeed)
   const rpc = await refusingRpc()
   try {
     const env = { PATH: process.env.PATH, DATABASE_URL: URL_, SOLANA_RPC_URL: rpc.url, DBC_CONFIG: '3Atsbq9N5EaCc9YWmqD2rUVedX4pqDe7hyk6JSyWRTrG',
@@ -147,19 +152,18 @@ test('the worker with the stock execution flags unset is the worker without the 
     const off = await runWorker(withJob, { STOCK_COLLECTIONS_EXECUTION_ENABLED: 'false', STOCK_LAUNCHER_PAYOUTS_ENABLED: 'false' })
     assert.deepEqual([off.lines, off.code, off.methods], [before.lines, before.code, before.methods])
 
-    // On, without any key: the job runs after the others, finds the stock market's curve unreadable on this RPC, reports it
-    // and fails the run. It sends nothing and loads no key.
-    const on = await runWorker(withJob, { STOCK_COLLECTIONS_EXECUTION_ENABLED: 'true', STOCK_LAUNCHER_PAYOUTS_ENABLED: 'true',
-      STOCK_QUOTE_CONFIGS: JSON.stringify({ 'meta-xstock': STOCK_CONFIG }) })
-    const report = on.lines.map(line => { try { return JSON.parse(line) } catch { return null } }).find(value => value?.stockExecution)
-    assert.ok(report, `the job reported:\n${on.lines.join('\n')}\n${on.stderr}`)
-    assert.deepEqual(report.stockExecution.collections.map(item => [item.kind, item.repoId, item.status]), [['collection', '94911145', 'ERROR']],
-      JSON.stringify(report))
-    assert.match(report.stockExecution.collections[0].reason, /^UNREADABLE: /)
-    assert.deepEqual(report.stockExecution.payouts, [], 'nothing collected, so nothing payable')
-    assert.equal(on.code, 1)
-    assert.ok(!on.methods.includes('sendTransaction'))
-    assert.ok(on.methods.includes('getMultipleAccounts'), "the job read the stock market's curve")
+    // On, with nothing pending: the job is one ledger query per kind and nothing else, so output and RPC calls are unchanged too.
+    const idle = await runWorker(withJob, ON)
+    assert.deepEqual([idle.lines, idle.code, idle.methods], [before.lines, before.code, before.methods])
+    // On, with a payout the operator's script left pending: recovery checks the network before reading the row, and this RPC
+    // refuses everything, so the job reports the error and fails the run. It sends nothing; it never plans, signs or loads a key.
+    const pending = await runWorker(withJob, ON, PENDING_PAYOUT)
+    const failure = pending.lines.map(line => { try { return JSON.parse(line) } catch { return null } }).find(value => value?.stockExecutionError)
+    assert.ok(failure, `the job reported:\n${pending.lines.join('\n')}\n${pending.stderr}`)
+    assert.equal(pending.code, 1)
+    assert.ok(pending.methods.includes('getGenesisHash'), 'the network check ran')
+    assert.ok(!pending.methods.includes('sendTransaction') && !pending.methods.includes('getMultipleAccounts'), 'nothing sent, nothing planned')
+    assert.ok(!pending.lines.some(line => /stockExecution"/.test(line) && /WOULD_|COLLECT|PAY/.test(line)))
   } finally {
     await rm(dir, { recursive: true, force: true })
     const admin = new pg.Client({ connectionString: URL_.replace(new RegExp(`${DB}$`), 'postgres') })

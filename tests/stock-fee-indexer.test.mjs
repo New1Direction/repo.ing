@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@solana/web3.js'
 import { createStockFeeIndexer, STOCK_QUARANTINE } from '../src/stock-fee-indexer.mjs'
+import { StockFeeLockBusyError } from '../src/stock-fee-accrual.mjs'
 import { StockCurveMigratedError, StockEvidenceUnmatchedError } from '../src/stock-trade-evidence.mjs'
 import { quoteAssetById } from '../src/quote-assets.mjs'
 
@@ -52,6 +53,7 @@ function harness(history, { curve = async () => ({}) } = {}) {
     credited.push({ signature, migration: migration?.signature ?? null })
     if (signature === 'unmatched' && !fixed) throw new StockEvidenceUnmatchedError(['instruction 3: an unknown DBC instruction names the pool'])
     if (signature === 'rpc-down') throw Error('Solana RPC transaction read returned HTTP 503')
+    if (signature === 'busy') throw new StockFeeLockBusyError(githubRepoId)
     if (signature === 'migration' && !migration) throw new StockCurveMigratedError()
     const key = `${signature}:0`, fresh = !db.state.fees.has(key)
     db.state.fees.set(key, 10n)
@@ -102,6 +104,14 @@ test('an RPC failure or a migration in the history stops the market with an ERRO
     assert.match(result.error, error)
     assert.deepEqual([db.state.cursor.last_signature, db.state.alerts.length, db.state.fees.has('after:0')], ['good', 0, false])
   }
+})
+
+test("the market's lock held past the accrual's bounded wait is BUSY, not an ERROR: the cursor stays after the last credited trade", async () => {
+  const { db, indexer, credited } = harness([item('after', 4), item('busy', 3), item('good', 2), item('launch', 1)])
+  const [result] = await indexer.runOnce()
+  assert.deepEqual(result, { githubRepoId: market.repoId, pool: market.pool, quoteAssetId: market.quoteAssetId, status: 'BUSY' })
+  assert.deepEqual([db.state.cursor.last_signature, db.state.alerts.length, db.state.fees.has('after:0')], ['good', 0, false])
+  assert.deepEqual(credited.map(c => c.signature), ['launch', 'good', 'busy'])
 })
 
 test('a missing stock config or a changed or migrated curve is an ERROR before any history is read', async () => {

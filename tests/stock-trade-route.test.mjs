@@ -73,7 +73,9 @@ test('a stock-paired trade\'s fees go to the stock accrual; a SOL trade\'s to th
   assert.deepEqual([stock.body.state, stock.body.quoteMint, stock.body.feeIndexing], ['confirmed', META.mint, 'pending'])
   assert.deepEqual([stock.alert.kind, stock.alert.detail.code, stock.alert.detail.reason],
     ['TRADE_VERIFICATION_FAILED', 'FEE_INDEXING', 'Repository has no indexed stock-paired market'])
-  assert.deepEqual(clientQueries, ['select pg_advisory_lock($1::bigint)', 'select github_repo_id::text as', 'select pg_advisory_unlock($1::bigint)'])
+  // The stock accrual takes the market's lock with a bounded wait (src/stock-fee-accrual.mjs); the SOL accrual below is unchanged.
+  assert.deepEqual(clientQueries, ['begin', 'set local lock_timeout', 'select pg_advisory_lock($1::bigint)', 'commit', 'select github_repo_id::text as',
+    'select pg_advisory_unlock($1::bigint)'])
 
   verified = { tokenDelta: 5n, solDelta: -100_000_000n }
   const sol = await submit(null)

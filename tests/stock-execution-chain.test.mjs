@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
 import BN from 'bn.js'
-import bs58 from 'bs58'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -31,8 +30,9 @@ import { createFixedConfig } from './fixed-config.mjs'
 // DBC and Token-2022 as deployed, Meteora's badges and the real METAx mint with a test mint authority). DOCUSAURUS / METAx is
 // launched and traded; the stock fee indexer records the fees; then the execution pass (src/stock-execution-job.mjs) collects the
 // curve's creator fee (signed by the platform creator key) and partner fee (signed by the partner key) into custody, and pays the
-// launcher their 0.30% from custody, each settled from its finalized receipt. Keys are the test's own, given to the executors as
-// their environment. Nothing here touches mainnet beyond the validator script's one read of those accounts.
+// launcher their 0.30% from custody, each settled from its finalized receipt. Keys are the test's own, handed to the executors as
+// scripts/stock-execute.mjs hands over its Keychain keys. Nothing here touches mainnet beyond the validator script's one read of
+// those accounts.
 const DB = 'repoing_stock_execution_chain_test'
 const URL_ = `postgres://postgres:launchtest@127.0.0.1:55432/${DB}`
 const RPC = process.env.STOCK_CHAIN_RPC ?? `http://127.0.0.1:${process.env.STOCK_VALIDATOR_RPC_PORT ?? 8919}`
@@ -152,14 +152,15 @@ test('stock fees are collected into custody and the launcher is paid, settled fr
     const split = splitCurveFee({ creatorAmount: fees.creator, partnerAmount: fees.partner })
     assert.ok(split.launcherAmount >= 1_000_000n, 'the launcher share reaches the payout minimum')
 
-    // The executors exactly as the worker builds them, with this test's keys as their environment.
+    // The executors as scripts/stock-execute.mjs --execute builds them: the two flags are all their environment holds.
     const custody = partner.publicKey.toBase58(), launcher = launcherWallet.publicKey.toBase58()
-    const env = { STOCK_COLLECTIONS_EXECUTION_ENABLED: 'true', STOCK_LAUNCHER_PAYOUTS_ENABLED: 'true',
-      PLATFORM_CREATOR_SECRET_KEY: bs58.encode(creator.secretKey), PLATFORM_PARTNER_SECRET_KEY: bs58.encode(partner.secretKey) }
+    const env = { STOCK_COLLECTIONS_EXECUTION_ENABLED: 'true', STOCK_LAUNCHER_PAYOUTS_ENABLED: 'true' }
+    // The operator script's signers (src/stock-keychain.mjs reads them from the Keychain): here, this test's keys.
+    const loadSigner = role => (role === 'creator' ? creator : partner)
     const state = { crash: false }
     const collections = createStockCollectionExecutor({ pool, connection, config: solConfig.toBase58(), env, custody, partner: custody, stockConfigs,
-      legacyConfigs: '', hooks: { afterIntent: async () => { if (state.crash) { state.crash = false; throw Error('crash after the intent was stored') } } } })
-    const payouts = createStockLauncherPayouts({ pool, connection, env, custody })
+      legacyConfigs: '', loadSigner, hooks: { afterIntent: async () => { if (state.crash) { state.crash = false; throw Error('crash after the intent was stored') } } } })
+    const payouts = createStockLauncherPayouts({ pool, connection, env, custody, loadSigner })
     const pass = execute => runStockExecution({ collections, payouts, listMarkets: filter => listStockMarkets(pool, filter), execute })
     const ledger = async () => launcherEarnings(await readMarketLauncherLedger(pool, DOCS))
 
