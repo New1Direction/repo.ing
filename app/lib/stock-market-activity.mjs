@@ -1,5 +1,6 @@
 import { stockMultiplier } from '../../src/quote-asset-info.mjs'
 import { readStockMigration, stockQuoteOf, stockTradeScope, stockTradeScopeParams } from '../../src/stock-market-chart.mjs'
+import { unitsWithin } from './stock-market-stats.mjs'
 
 // A stock-paired market's Activity tab and recent traders (docs/STOCK_QUOTES.md), from the stock ledger: its curve and
 // graduated-pool trades (bound as its chart binds them), each curve swap's fee split, and settled launcher payouts. A trade's
@@ -20,13 +21,14 @@ const PAYOUTS = `select signature, amount::text as "amountBaseUnits", settled_at
   where github_repo_id=$1 and asset_id=$2 and quote_mint=$3 and status='settled' and settled_at is not null
   order by settled_at desc, id desc limit 15`
 
-// { trades, fees, payouts, quote: { assetId, symbol, decimals, uiMultiplier } }. The multiplier is read now; a failed read
-// fails the call, so amounts are never shown with a stale or missing multiplier.
+// { trades, fees, payouts, quote: { assetId, symbol, decimals, uiMultiplier } }. The multiplier is read now, within
+// UNITS_WAIT_MS; when it cannot be read it is null and the feed shows its stock amounts as "—" (never with a stale or
+// missing multiplier) while every row, time and market-token amount still shows.
 export async function readStockActivity(db, market, { connection, multiplier = stockMultiplier } = {}) {
   const quote = stockQuoteOf(market)
   const scope = stockTradeScopeParams(market, quote, await readStockMigration(db, market, quote))
   const [trades, fees, payouts, uiMultiplier] = await Promise.all([db.query(TRADES, scope), db.query(FEES, scope.slice(0, 4)),
-    db.query(PAYOUTS, scope.slice(0, 3)), multiplier(connection, quote)])
+    db.query(PAYOUTS, scope.slice(0, 3)), unitsWithin(() => multiplier(connection, quote), quote.assetId)])
   return { trades: trades.rows, fees: fees.rows, payouts: payouts.rows,
     quote: { assetId: quote.assetId, symbol: quote.symbol, decimals: quote.decimals, uiMultiplier } }
 }

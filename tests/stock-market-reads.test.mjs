@@ -5,11 +5,11 @@ import { getPriceFromSqrtPrice } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { quoteAssetById, quoteStamp, resolveQuoteAsset } from '../src/quote-assets.mjs'
 import { chartSpotPrice, readMarketChart } from '../src/market-chart.mjs'
 import { isStockMarket, readStockMarketChart, stockChartBar, stockChartMigration, stockQuoteOf, stockSpotPrice, stockTradeScope, stockTradeScopeParams } from '../src/stock-market-chart.mjs'
-import { formatQuoteAmount, formatStockCompact, stockAmountLabel, stockDisplayUnits, stockPriceLabel, stockPriceShown, stockPriceUsd, stockRawUsd, stockRowDisplay } from '../app/lib/stock-display.mjs'
+import { formatQuoteAmount, formatStockCompact, stockAmountLabel, stockDisplayUnits, stockRawUsd, stockRowDisplay } from '../app/lib/stock-display.mjs'
 import { chartQuote } from '../app/lib/chart-quote.mjs'
 import { chartSeries } from '../app/lib/chart-display.mjs'
 import { phoneMarketSummary, stockMarketSummary } from '../app/lib/phone-market-summary.mjs'
-import { stockCurveProgress, stockGraduation, stockRowStats, unavailableStockRow, withStockStats } from '../app/lib/stock-market-stats.mjs'
+import { UNITS_WAIT_MS, stockCurveProgress, stockGraduation, stockRowStats, unavailableStockRow, unitsWithin, withStockStats } from '../app/lib/stock-market-stats.mjs'
 import { activityEvents } from '../app/lib/market-activity.mjs'
 import { chartReader } from '../app/lib/market-charts.mjs'
 import { homeMarketTabs } from '../app/lib/market-order.mjs'
@@ -82,9 +82,6 @@ test('display units: raw × today\'s multiplier, truncated as Token-2022 truncat
   // USD never applies the display multiplier: Jupiter's xStock price is for the raw amount (src/tip-tokens.mjs).
   assert.equal(stockRawUsd('100000000', units), 712.5)
   assert.equal(stockRawUsd('100000000', stockDisplayUnits({ ...INFO, usdPrice: null })), null)
-  assert.equal(stockPriceShown(0.04, units), 0.04 * Number(MULTIPLIER))
-  assert.equal(stockPriceUsd(0.04, units), 0.04 * 712.5)
-  assert.equal(stockPriceLabel(0.04, units), '0.040114 METAx')
   for (const unusable of [null, {}, { ...INFO, uiMultiplier: null }, { ...INFO, uiMultiplier: '-1' }, { ...INFO, decimals: 19 }, { ...INFO, symbol: 7 }]) {
     assert.equal(stockDisplayUnits(unusable), null)
   }
@@ -218,4 +215,22 @@ test('activity rows: a stock pair\'s fee splits and launcher payouts, raw, besid
   ])
   assert.deepEqual(activityEvents({ fees: [{ signature: 'x', eventIndex: 1, occurredAt: '2026-10-04T09:00:00.000Z', amountBaseUnits: '7' }] }),
     [{ type: 'fee', signature: 'x', eventIndex: 1, occurredAt: '2026-10-04T09:00:00.000Z', amountBaseUnits: '7' }])
+})
+
+test('a stalled or failing units read never holds the market list: stamped rows come back without units, SOL rows as they were', async () => {
+  assert.equal(await unitsWithin(async () => 'units', 'meta-xstock'), 'units')
+  assert.equal(await unitsWithin(async () => { throw Error('rpc down') }, 'meta-xstock'), null)
+  const quick = Date.now()
+  assert.equal(await unitsWithin(() => new Promise(() => {}), 'meta-xstock', 50), null)
+  assert.ok(Date.now() - quick < 1000)
+  const db = { query: async sql => ({ rows: /stock_graduation_events/.test(sql) ? [] : [{ repoId: stamped.repoId, lastSqrtPrice: (SQRT * 2n).toString(), volume24h: '5' }] }) }
+  const sol = { repoId: '1', pool: 'p', priceSol: 0.001 }
+  const started = Date.now()
+  const rows = await withStockStats([sol, stamped], { db, connection: {}, withUnits: true, info: () => new Promise(() => {}) })
+  assert.ok(Date.now() - started < UNITS_WAIT_MS + 1000, 'the list waits at most UNITS_WAIT_MS for units')
+  assert.equal(rows[0], sol)
+  assert.deepEqual([rows[1].stock.price, rows[1].stock.volume24h, rows[1].stock.uiMultiplier, rows[1].stock.usdPrice], [0.04, '5', null, null])
+  // A connection that cannot even be made leaves the units null too.
+  const noRpc = await withStockStats([stamped], { db, connection: () => { throw Error('SOLANA_RPC_URL is required in production') }, withUnits: true })
+  assert.equal(noRpc[0].stock.uiMultiplier, null); assert.equal(noRpc[0].stock.price, 0.04)
 })
