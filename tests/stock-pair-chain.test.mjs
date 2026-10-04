@@ -25,13 +25,19 @@ import { stockMintCheck, stockPairGuard } from '../app/lib/stock-launch.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
 import { prepareCheckedTrade } from '../src/trade-prepare.mjs'
+import { createStockFeeAccrual } from '../src/stock-fee-accrual.mjs'
+import { createStockFeeIndexer } from '../src/stock-fee-indexer.mjs'
+import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
+import { splitCurveFee } from '../src/stock-fee-policy.mjs'
+import { settleConfirmedTrade } from '../app/lib/trade-settlement.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
 
 // A METAx-paired market launched end to end on the programs mainnet runs (scripts/ci/start-stock-validator.sh): the DBC,
 // DAMM v2, Token-2022 and Metaplex programs as deployed, Meteora's real badges for METAx, and the real METAx mint with only its
 // mint authority replaced. Nothing here touches mainnet beyond reading those accounts once.
 const URL_ = 'postgres://postgres:launchtest@127.0.0.1:55432/repoing_stock_pair_chain_test'
-const RPC = process.env.STOCK_CHAIN_RPC ?? 'http://127.0.0.1:8919'
+// The validator's RPC port as scripts/ci/start-stock-validator.sh reads it (STOCK_VALIDATOR_RPC_PORT, default 8919).
+const RPC = process.env.STOCK_CHAIN_RPC ?? `http://127.0.0.1:${process.env.STOCK_VALIDATOR_RPC_PORT ?? 8919}`
 const META = resolveQuoteAsset('meta-xstock', { repoId: '94911145', ownerId: '69631', ownerType: 'Organization' }, { enabled: true })
 const METAX = new PublicKey(META.mint)
 const DOCUSAURUS = { id: 94911145, name: 'docusaurus', full_name: 'facebook/docusaurus', owner: { login: 'facebook', id: 69631, type: 'Organization',
@@ -125,7 +131,9 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
     assert.ok(fixed.quoteMint.equals(METAX))
     assert.equal(fixed.quoteTokenFlag, 1, 'quoted through Token-2022')
 
-    let stockMarket
+    let stockMarket, siteBuy
+    // Every swap on DOCUSAURUS / METAx, oldest first: what the stock ledgers must hold.
+    const swaps = []
     await t.test('prepared on one replica, signed by the wallet, submitted from another: DOCUSAURUS / METAx', async () => {
       const creatorSecret = Keypair.generate().secretKey, launcherWallet = await funded(connection)
       const replica = () => {
@@ -182,7 +190,8 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       const swap = await dbc.pool.swap({ owner: trader.publicKey, pool: new PublicKey(stockMarket.pool), amountIn: new BN(100_000_000),
         minimumAmountOut: new BN(1), swapBaseForQuote: false, referralTokenAccount: null })
       swap.feePayer = trader.publicKey
-      await sendAndConfirmTransaction(connection, swap, [trader], { commitment: 'confirmed' })
+      swaps.push({ signature: await sendAndConfirmTransaction(connection, swap, [trader], { commitment: 'confirmed' }), direction: 'buy',
+        trader: trader.publicKey.toBase58(), amountIn: 100_000_000n })
       const after = (await dbc.state.getPool(new PublicKey(stockMarket.pool))).poolState
       assert.ok(BigInt(after.creatorQuoteFee.toString()) > 0n && BigInt(after.partnerQuoteFee.toString()) > 0n, 'creator and partner fees in METAx')
       const balance = await connection.getTokenAccountBalance(account)
@@ -209,6 +218,8 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       assert.deepEqual([buy.costs.quoteBalance, buy.costs.quoteShortfall, buy.costs.refundableDeposit], ['100000000', '0', '0'])
       assert.ok(BigInt(buy.costs.accountDeposits) > 0n, 'rent for the new DOCUSAURUS account, in SOL')
       const bought = await engine.submitTrade(buy.prepared, sign)
+      siteBuy = { prepared: buy.prepared, signature: bought.signature }
+      swaps.push({ signature: bought.signature, direction: 'buy', trader: wallet, amountIn: 50_000_000n, tokenDelta: bought.tokenDelta })
       assert.equal(bought.quoteDelta, -50_000_000n, 'exactly 0.5 METAx spent')
       assert.ok(bought.tokenDelta >= buy.prepared.minimumAmountOut)
       assert.equal(bought.quoteMint, META.mint)
@@ -218,6 +229,7 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       const sell = await prepareCheckedTrade({ engine, connection, direction: 'sell', githubRepoId, wallet,
         amountBaseUnits: bought.tokenDelta.toString(), slippageBps: 500 })
       const sold = await engine.submitTrade(sell.prepared, sign)
+      swaps.push({ signature: sold.signature, direction: 'sell', trader: wallet, tokenDelta: sold.tokenDelta, quoteDelta: sold.quoteDelta })
       assert.equal(sold.tokenDelta, -bought.tokenDelta, 'every DOCUSAURUS token sold')
       assert.ok(sold.quoteDelta >= sell.prepared.minimumAmountOut && sold.quoteDelta > 0n, 'METAx back to the wallet')
       assert.equal((await connection.getTokenAccountBalance(account)).value.amount, String(50_000_000n + sold.quoteDelta))
@@ -226,6 +238,7 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
       // Token-2022 creates for it (179 bytes for METAx), and that is the account created.
       const again = await engine.submitTrade((await prepareCheckedTrade({ engine, connection, direction: 'buy', githubRepoId, wallet,
         amountBaseUnits: '20000000', slippageBps: 500 })).prepared, sign)
+      swaps.push({ signature: again.signature, direction: 'buy', trader: wallet, amountIn: 20_000_000n, tokenDelta: again.tokenDelta })
       const fresh = await funded(connection)
       const freshToken = getAssociatedTokenAddressSync(new PublicKey(stockMarket.mint), fresh.publicKey)
       await sendAndConfirmTransaction(connection, new Transaction().add(
@@ -236,9 +249,82 @@ test('a METAx-paired market launches, verifies and trades on mainnet\'s programs
         amountBaseUnits: again.tokenDelta.toString(), slippageBps: 500 })
       assert.equal(freshSell.costs.accountDeposits, String(await connection.getMinimumBalanceForRentExemption(179)))
       const freshSold = await engine.submitTrade(freshSell.prepared, async tx => { tx.partialSign(fresh); return tx })
+      swaps.push({ signature: freshSold.signature, direction: 'sell', trader: fresh.publicKey.toBase58(), tokenDelta: freshSold.tokenDelta,
+        quoteDelta: freshSold.quoteDelta })
       assert.ok(freshSold.quoteDelta > 0n)
       const freshStock = await connection.getAccountInfo(getAssociatedTokenAddressSync(METAX, fresh.publicKey, false, TOKEN_2022_PROGRAM_ID))
       assert.equal(freshStock.data.length, 179)
+    })
+
+    await t.test('every METAx trade reaches the stock ledgers: fees equal the pool\'s counters to the raw unit, SOL ledgers untouched', async () => {
+      const finalized = async signature => (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true }))
+        .value[0]?.confirmationStatus === 'finalized'
+      assert.ok(await until(() => finalized(swaps.at(-1).signature), 400), 'the last trade is finalized')
+      const config = solConfig.toBase58(), githubRepoId = String(stockMarket.githubRepoId)
+      // A confirmed stock trade on the site, settled as /api/trade settles it: its fees go through the stock accrual.
+      const accrual = createStockFeeAccrual({ pool, connection, config })
+      const settled = await settleConfirmedTrade({ connection, db: pool, engine: null, prepared: siteBuy.prepared, signature: siteBuy.signature,
+        recordFees: args => accrual.recordTradeFees({ ...args, quoteMint: siteBuy.prepared.quoteMint }) })
+      assert.equal(settled.feeIndexing, 'recorded')
+      assert.ok(BigInt(settled.creatorFee) > 0n, 'the creator fee credited, in raw METAx')
+      // The worker's two jobs on the same database: the SOL job leaves the stock market out, the stock job indexes it.
+      assert.deepEqual(await createExternalFeeIndexer({ pool, connection, config }).runOnce(), [])
+      const indexer = createStockFeeIndexer({ pool, connection, config })
+      const [first] = await indexer.runOnce()
+      assert.deepEqual([first.githubRepoId, first.status, first.discovered, first.quarantined], [githubRepoId, 'OK', swaps.length, []])
+      assert.equal(first.cursorAfter.signature, swaps.at(-1).signature)
+
+      const ledger = async () => {
+        const { rows: fees } = await pool.query(`select signature, event_index, creator_amount::text, partner_amount::text, launcher_amount::text,
+          accumulator_amount::text, policy_version, asset_id, quote_mint, pool from stock_fee_events order by slot, event_index`)
+        const { rows: trades } = await pool.query(`select signature, event_index, venue, direction, quote_amount::text, base_amount::text, trader,
+          asset_id, quote_mint, pool from stock_trade_events order by slot, event_index`)
+        return { fees, trades }
+      }
+      const { fees, trades } = await ledger()
+      assert.deepEqual(fees.map(row => [row.signature, row.event_index]), trades.map(row => [row.signature, row.event_index]), 'one fee row per trade row')
+      assert.deepEqual(trades.map(row => [row.signature, row.direction, row.trader]), swaps.map(swap => [swap.signature, swap.direction, swap.trader]))
+      for (const row of [...fees, ...trades]) assert.deepEqual([row.asset_id, row.quote_mint, row.pool], [META.assetId, META.mint, stockMarket.pool])
+      assert.ok(trades.every(row => row.venue === 'dbc'))
+      for (const [row, swap, fee] of trades.map((row, i) => [row, swaps[i], fees[i]])) {
+        if (swap.direction === 'sell') {
+          // Raw units in and out of the pool: the tokens sold and the METAx the wallet received.
+          assert.deepEqual([BigInt(row.base_amount), BigInt(row.quote_amount)], [-swap.tokenDelta, swap.quoteDelta])
+        } else {
+          // The fee-excluded METAx that bought the tokens: the trading fee (creator + partner) and Meteora's fee make up the rest.
+          const tradingFee = BigInt(fee.creator_amount) + BigInt(fee.partner_amount)
+          assert.ok(BigInt(row.quote_amount) > 0n && BigInt(row.quote_amount) + tradingFee < swap.amountIn)
+          if (swap.tokenDelta !== undefined) assert.equal(BigInt(row.base_amount), swap.tokenDelta)
+        }
+      }
+      for (const row of fees) {
+        const split = splitCurveFee({ creatorAmount: BigInt(row.creator_amount), partnerAmount: BigInt(row.partner_amount) })
+        assert.deepEqual([BigInt(row.launcher_amount), BigInt(row.accumulator_amount), row.policy_version], [split.launcherAmount, split.accumulatorAmount, 1])
+        assert.ok(BigInt(row.creator_amount) > 0n && BigInt(row.partner_amount) > 0n)
+      }
+      // The pool's own fee counters (finalized), to the raw unit.
+      const state = (await new DynamicBondingCurveClient(connection, 'finalized').state.getPool(new PublicKey(stockMarket.pool))).poolState
+      const sum = field => fees.reduce((total, row) => total + BigInt(row[field]), 0n)
+      assert.equal(sum('creator_amount'), BigInt(state.creatorQuoteFee.toString()), 'creator fees = pool creatorQuoteFee')
+      assert.equal(sum('partner_amount'), BigInt(state.partnerQuoteFee.toString()), 'partner fees = pool partnerQuoteFee')
+      assert.equal(first.creditedBaseUnits + BigInt(settled.creatorFee), sum('creator_amount'), 'nothing credited twice')
+
+      // Idempotent: another run finds nothing; a replay of the whole history from the launch credits nothing new.
+      const [again] = await indexer.runOnce()
+      assert.deepEqual([again.status, again.discovered, again.creditedBaseUnits], ['OK', 0, 0n])
+      await pool.query('delete from stock_pool_cursors where pool = $1', [stockMarket.pool])
+      const [replay] = await indexer.runOnce()
+      assert.deepEqual([replay.status, replay.discovered, replay.creditedBaseUnits, replay.creditedPartnerUnits], ['OK', swaps.length, 0n, 0n])
+      assert.deepEqual(await ledger(), { fees, trades })
+
+      // The SOL ledgers and the operator feed are untouched.
+      for (const table of ['fee_events', 'trade_events', 'discovery_fee_events', 'pool_fee_cursors', 'damm_trade_events', 'damm_fee_events', 'platform_fee_events']) {
+        assert.equal((await pool.query(`select count(*)::int as n from ${table}`)).rows[0].n, 0, `${table} untouched`)
+      }
+      assert.equal((await pool.query('select count(*)::int as n from graduation_alerts')).rows[0].n, 0, 'no alert or quarantine')
+      console.log(JSON.stringify({ stockLedgers: { pool: stockMarket.pool, mint: stockMarket.mint, config: stockConfig.publicKey.toBase58(),
+        launch: stockMarket.launchSignature, swaps: swaps.map(swap => [swap.signature, swap.direction]),
+        creatorQuoteFee: state.creatorQuoteFee.toString(), partnerQuoteFee: state.partnerQuoteFee.toString() } }))
     })
 
     await t.test('a launcher built for one pair refuses the other pair\'s config', async () => {

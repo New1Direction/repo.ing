@@ -36,6 +36,7 @@ market-lookup
 market-quality-db
 market-quote-db
 stock-pair-chain
+stock-curve-indexing-db
 market-source-db
 milestone-alerts-db
 payout-address-db

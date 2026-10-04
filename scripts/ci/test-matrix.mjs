@@ -86,6 +86,8 @@ export const PINNED_GROUPS = [
   // Starts its own validator with mainnet's programs (scripts/ci/start-stock-validator.sh, reads mainnet once).
   { files: ['stock-pair-chain'], databaseUrl: launchtest('repoing_stock_pair_chain_test'), selfManaged: true },
   { files: ['stock-ledgers-db'], databaseUrl: launchtest('repoing_stock_ledgers_test'), selfManaged: true },
+  // Stock-pair curve indexing: the SOL/stock market partition, SOL indexing and chart ordering unchanged.
+  { files: ['stock-curve-indexing-db'], databaseUrl: launchtest('repoing_stock_curve_indexing_test'), selfManaged: true },
   { files: ['graduation-readiness'], databaseUrl: launchtest('repoing_p5_test') },
   { files: ['liquidity-deployment'], databaseUrl: launchtest('repoing_liquidity_test') },
   { files: ['protocol-analytics'], databaseUrl: launchtest('repoing_analytics_test'), selfManaged: true },
