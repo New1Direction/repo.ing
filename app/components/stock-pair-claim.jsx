@@ -18,7 +18,7 @@ export function StockPairClaimPage({ market, query = {} }) {
     <div className="claim-intro"><div><h1>No owner claim on stock pairs</h1>
       <p>${market.symbol} trades against {stockSymbol(market)}, so its fees follow a fixed routing instead of a builder claim.</p></div></div>
     <div className="claim-repo-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo}/></div><GitHubLink repo={repo}/></div>
-    <p className={`state-card${refused ? ' error' : ''}`} role={refused ? 'alert' : 'status'} data-code={STOCK_PAIR_NO_OWNER_CLAIM}>
+    <p className={`state-card${refused ? ' error' : ''} ${styles.notice}`} role={refused ? 'alert' : 'status'} data-code={STOCK_PAIR_NO_OWNER_CLAIM}>
       {refused && <strong>That claim was not sent. </strong>}{noOwnerClaimMessage(market)}</p>
     <Suspense fallback={<div className="inner-card" role="status" aria-busy="true">Reading fee routing…</div>}>
       <StockFeeRouting market={market}/>

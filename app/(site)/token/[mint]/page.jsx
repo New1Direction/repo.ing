@@ -51,7 +51,7 @@ import { BuildingLive, readPageStream } from '../../../components/building-live'
 import { ModelTokenPage, modelTokenMetadata } from '../../../components/hf/model-token-page'
 import { githubMarkets, isModelMarket } from '../../../lib/hf-model-display.mjs'
 import { shownMarkets } from '../../../lib/hf-markets.mjs'
-import { StockFeeHeadline, StockFeeRouting } from '../../../components/stock-fee-routing'
+import { StockFeeHeadline, StockFeeHeadlineFallback, StockFeeRouting } from '../../../components/stock-fee-routing'
 import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
@@ -126,7 +126,7 @@ export default async function Token({ params, searchParams }) {
       {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <header className="market-hero">
-      <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}>{stockPair ? <StockFeeHeadline market={market} href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}/> : <EarningsHeadline market={market}/>}</Suspense></div>
+      <div className="market-hero-earnings"><Suspense fallback={stockPair ? <StockFeeHeadlineFallback market={market}/> : <EarningsHeadlineFallback/>}>{stockPair ? <StockFeeHeadline market={market} href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}/> : <EarningsHeadline market={market}/>}</Suspense></div>
       <div className="market-hero-main"><RepoIdentity repo={repo} heading>
           <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{market.officialLaunch && !decision && <OfficialBadge/>}{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
