@@ -8,14 +8,16 @@ import { POLICY_VERSION, dammCheckpoint, splitCurveFee } from '../src/stock-fee-
 import { stockAccumulator } from '../src/stock-accumulator.mjs'
 import { createStockCollections } from '../src/stock-collections.mjs'
 import { launcherEarnings, readMarketLauncherLedger } from '../src/stock-launcher-earnings.mjs'
-import { STOCK_EXECUTION_ERRORS as E } from '../src/stock-execution.mjs'
+import { STOCK_EXECUTION_ERRORS as E, STOCK_ABORT_MARGIN_BLOCKS } from '../src/stock-execution.mjs'
+import { STOCK_COLLECTION_SOURCES } from '../src/stock-collections.mjs'
+import { createStockFeeAccrual } from '../src/stock-fee-accrual.mjs'
 import { createStockExecutionStore } from '../src/stock-execution-store.mjs'
 import { createStockCollectionExecutor } from '../src/stock-collection-execution.mjs'
 import { createStockLauncherPayouts } from '../src/stock-launcher-payouts.mjs'
 import { runStockExecution } from '../src/stock-execution-job.mjs'
 import { listStockMarkets } from '../src/stock-collections.mjs'
 import { META, address, collectionTransaction, curveReceipt, fakeChain, finalizedTransaction, loadFrom, offlinePrograms,
-  payoutTransaction } from './fixtures/stock-execution-fakes.mjs'
+  payoutTransaction, usableMint } from './fixtures/stock-execution-fakes.mjs'
 
 // Stock fee collections and launcher payouts on PostgreSQL (migration 0054's tables, indexes and triggers), with PR-E's real
 // collection previews (src/stock-collections.mjs) over the real stock ledgers and PR-D's real launcher ledger
@@ -85,11 +87,17 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
     } }
     const loads = []
     const loadSigner = role => { loads.push(role); return role === 'creator' ? creator : partner }
+    // Whether any advisory lock is held while a transaction is followed to finality: none may be (the lock is released after the
+    // first send and taken again only to settle).
+    const lockSeen = []
+    const advisoryLocks = async () => (await pool.query(`select count(*)::int as n from pg_locks where locktype = 'advisory' and granted`)).rows[0].n
+    const follow = { now: chain.follow.now, sleep: async ms => { lockSeen.push(await advisoryLocks()); await chain.follow.sleep(ms) } }
+    // Graduated-pool sources opted in (the operator script's --damm), for the DAMM race below.
     const collections = createStockCollectionExecutor({ pool, connection: chain.connection, config: null, env: ON, custody, partner: custody,
       previewMarket: m => previews.previewMarket(m), checkReceipt: receipt, loadTransaction: loadFrom,
-      loadSigner, mintCheck: async () => ({ ok: true }), follow: chain.follow, hooks })
+      loadSigner, mintCheck: async () => ({ ok: true }), follow, hooks, sources: STOCK_COLLECTION_SOURCES })
     const payouts = createStockLauncherPayouts({ pool, connection: chain.connection, env: ON, custody, loadTransaction: loadFrom, loadSigner,
-      mintCheck: async () => ({ ok: true }), custodyBalance: async () => chain.custodyBalance, follow: chain.follow, hooks })
+      mintCheck: usableMint, custodyBalance: async () => chain.custodyBalance, follow, hooks })
     const store = createStockExecutionStore(pool)
     const listMarkets = filter => listStockMarkets(pool, filter)
     const ledger = async () => launcherEarnings(await readMarketLauncherLedger(pool, DOCS))
@@ -203,12 +211,15 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
       state.crash = true
       await assert.rejects(payouts.pay({ repoId: DOCS }), /crash/)
       const { rows: [pending] } = await pool.query(`select id::text, receipt->>'lastValidBlockHeight' as expiry from stock_launcher_payouts where status = 'pending'`)
-      chain.finalizedHeight = Number(pending.expiry) + 1
+      // Expired, but the deciding RPC (here the primary: no verification RPC on a local validator) is not yet past the margin.
+      chain.finalizedHeight = Number(pending.expiry) + Number(STOCK_ABORT_MARGIN_BLOCKS)
+      assert.deepEqual((await payouts.recover()).map(r => r.status), ['WAITING'])
+      chain.finalizedHeight += 1
       assert.deepEqual((await payouts.recover({ dryRun: true })).map(r => r.status), ['WOULD_ABORT'])
       assert.deepEqual((await payouts.recover()).map(r => r.status), ['ABORTED'])
       const { rows: [aborted] } = await pool.query(`select status, settled_at, receipt->>'state' as state, receipt->>'reason' as reason from stock_launcher_payouts where id = $1`, [pending.id])
       assert.deepEqual([aborted.status, aborted.settled_at, aborted.state], ['aborted', null, 'aborted'])
-      assert.match(aborted.reason, /expired at finalized/)
+      assert.match(aborted.reason, /expired \d+ blocks ago at finalized/)
       chain.finalizedHeight = chain.height
       assert.equal((await ledger()).payable, more.launcherAmount, 'an aborted payout is payable again')
       // A landed payout whose receipt pays another amount: never aborted, one operator alert however often it is seen.
@@ -247,6 +258,10 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
       await checkpoint(100, E)
       const planned = (await collections.plan(await gradMarket())).find(item => item.source === 'damm_creator')
       assert.deepEqual([planned.status, planned.amount, planned.launcherAmount], ['MATCH', String(E), String(share(E))])
+      // Without the opt-in the same source is held back: graduated-pool collections are off by default.
+      const defaults = createStockCollectionExecutor({ pool, connection: chain.connection, config: null, env: ON, custody, partner: custody,
+        previewMarket: m => previews.previewMarket(m) })
+      assert.equal((await defaults.plan(await gradMarket())).find(item => item.source === 'damm_creator').status, 'NOT_ENABLED')
       // Trades land between the preview and the claim: the claim takes x more than reviewed.
       state.excess = x
       const settled = await collections.collect({ repoId: REACT, source: 'damm_creator', termsHash: planned.termsHash })
@@ -280,6 +295,28 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
       const { rows: [sums] } = await pool.query(`select sum(actual_amount)::text as actual, sum(launcher_amount + accumulator_amount)::text as parts
         from stock_fee_collections where github_repo_id = $1 and status = 'settled'`, [REACT])
       assert.deepEqual(sums, { actual: String(E + x + y), parts: String(E + x + y) })
+    })
+
+    await t.test('no lock was held while a transaction was followed to finality', () => {
+      assert.ok(lockSeen.length >= 5, `followed ${lockSeen.length} times`)
+      assert.deepEqual([...new Set(lockSeen)], [0])
+    })
+
+    await t.test("a web trade-confirm's stock fee accrual waits a bounded time for the market's lock, never indefinitely", async () => {
+      const accrual = createStockFeeAccrual({ pool, connection: chain.connection, config: address(), dbc: {}, lockTimeoutMs: 300 })
+      const holder = await pool.connect()
+      try {
+        await holder.query('select pg_advisory_lock($1::bigint)', [DOCS])
+        const started = Date.now()
+        await assert.rejects(accrual.recordTradeFees({ githubRepoId: DOCS, signatures: ['Sig'] }), { code: 'STOCK_FEE_LOCK_BUSY' })
+        assert.ok(Date.now() - started < 5_000, 'gave up after its timeout')
+      } finally {
+        await holder.query('select pg_advisory_unlock($1::bigint)', [DOCS]).catch(() => {})
+        holder.release()
+      }
+      // Free, it takes the lock (then fails here, with no stock config registered) and gives it back.
+      await assert.rejects(accrual.recordTradeFees({ githubRepoId: DOCS, signatures: ['Sig'] }), error => error.code !== 'STOCK_FEE_LOCK_BUSY')
+      assert.equal(await advisoryLocks(), 0)
     })
 
     await t.test('the SOL ledgers are untouched', async () => {

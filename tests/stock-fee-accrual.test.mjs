@@ -37,6 +37,7 @@ function fakeDatabase({ market = MARKET, failTradeInsert = false } = {}) {
   const query = async (sql, params = []) => {
     state.queries.push(sql.trim().split(/\s+/).slice(0, 3).join(' '))
     if (/advisory/.test(sql)) return { rows: [{ locked: true }] }
+    if (/^set local lock_timeout = \d+$/.test(sql)) { state.lockTimeouts = [...(state.lockTimeouts ?? []), Number(sql.split('= ')[1])]; return { rows: [] } }
     if (/from markets where github_repo_id/.test(sql)) return { rows: market ? [market] : [] }
     if (sql === 'begin') { state.staged = { fees: new Map(state.fees), trades: new Map(state.trades) }; return { rows: [] } }
     if (sql === 'commit') { Object.assign(state, state.staged, { staged: null }); return { rows: [] } }
@@ -56,6 +57,9 @@ function fakeDatabase({ market = MARKET, failTradeInsert = false } = {}) {
   }
   return { state, query, connect: async () => ({ query, release() {} }) }
 }
+// The queries after the market's lock: the lock is taken in a short transaction of its own (begin, set local lock_timeout,
+// pg_advisory_lock, commit), so whether anything was written is read from what follows it.
+const afterLock = db => db.state.queries.slice(db.state.queries.indexOf('commit') + 1)
 let endpoints = 0
 function accrualFor(db, { state = poolState(), fixed = FIXED, configs = new Map([[META.assetId, new PublicKey(STOCK.market.config)]]) } = {}) {
   // A distinct endpoint per accrual: readPoolConfig keeps decoded configs per endpoint.
@@ -91,9 +95,11 @@ test('the stock config must quote the market\'s stock through Token-2022, collec
 test('a buy and a sell become one fee row and one trade row each, written in one transaction', async () => {
   const db = fakeDatabase()
   const result = await accrualFor(db).recordTradeFees({ githubRepoId: '94911145', signatures: [BUY, SELL], quoteMint: META.mint })
-  assert.deepEqual(db.state.queries, ['select pg_advisory_lock($1::bigint)', 'select github_repo_id::text as', 'begin',
+  // The market's lock is taken with a bounded wait (src/stock-fee-accrual.mjs, STOCK_FEE_LOCK_TIMEOUT_MS), then held as before.
+  assert.deepEqual(db.state.queries, ['begin', 'set local lock_timeout', 'select pg_advisory_lock($1::bigint)', 'commit', 'select github_repo_id::text as', 'begin',
     'insert into stock_fee_events', 'insert into stock_fee_events', 'insert into stock_trade_events', 'insert into stock_trade_events', 'commit',
     'select pg_advisory_unlock($1::bigint)'])
+  assert.deepEqual(db.state.lockTimeouts, [10_000])
   const buyFee = db.state.fees.get(`${BUY}:0`), sellFee = db.state.fees.get(`${SELL}:0`)
   assert.deepEqual(buyFee, { github_repo_id: '94911145', asset_id: 'meta-xstock', quote_mint: META.mint, pool: STOCK.market.pool, signature: BUY,
     event_index: '0', slot: String(STOCK.buy.slot), creator_amount: '10235927', partner_amount: '4180872', launcher_amount: '3089313',
@@ -143,7 +149,7 @@ test('the same evidence again credits nothing; stored rows that contradict the c
 test('a trade row that cannot be written rolls the fee row back with it', async () => {
   const db = fakeDatabase({ failTradeInsert: true })
   await assert.rejects(accrualFor(db).recordTradeFees({ githubRepoId: '94911145', signatures: [BUY] }), /refused the row/)
-  assert.deepEqual([db.state.fees.size, db.state.trades.size, db.state.queries.includes('commit'), db.state.queries.at(-2)], [0, 0, false, 'rollback'])
+  assert.deepEqual([db.state.fees.size, db.state.trades.size, afterLock(db).includes('commit'), db.state.queries.at(-2)], [0, 0, false, 'rollback'])
 })
 
 test('a transaction with no swap is credited only by the indexer, which passes every pool transaction', async () => {
@@ -168,7 +174,7 @@ test('anything that is not this stock market\'s live curve is an error before an
   for (const [database, chain, expected] of cases) {
     const db = fakeDatabase(database)
     await assert.rejects(accrualFor(db, chain).recordTradeFees({ githubRepoId: '94911145', signatures: [BUY] }), expected)
-    assert.ok(!db.state.queries.includes('begin'), `nothing written: ${expected}`)
+    assert.ok(!afterLock(db).includes('begin'), `nothing written: ${expected}`)
   }
   const db = fakeDatabase()
   await assert.rejects(accrualFor(db).recordTradeFees({ githubRepoId: '94911145', signatures: [BUY], quoteMint: quoteAssetById('nvda-xstock').mint }),

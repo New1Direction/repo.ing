@@ -39,14 +39,22 @@ export function collectionTransaction(raw, terms, received = BigInt(terms.amount
     postTokenBalances: [tokenBalance(vault, held - BigInt(received), terms.pool), tokenBalance(custody, received, terms.receiver)] } }
 }
 
+// Rent-exempt lamports for an account of `bytes`, as the fake chain answers getMinimumBalanceForRentExemption.
+export const rentFor = bytes => (bytes + 128) * 6960
+// What the payouts' mint check returns for a stock mint with no account-adding extensions: Token-2022 creates its accounts at
+// 170 bytes (ImmutableOwner), so their rent is rentFor(170).
+export const usableMint = async () => ({ ok: true, mint: { tlvData: Buffer.alloc(0) } })
+export const ACCOUNT_RENT = rentFor(170)
+
 // The finalized payout a correct transfer leaves: custody −amount, the launcher +amount (its account created when `created`),
-// the network fee and that account's rent from custody, nothing else.
-export function payoutTransaction(raw, terms, { created = true, fee = 25_000, rent = 2_136_720, custodyBefore = 50_000_000n } = {}) {
+// the network fee and that account's rent from custody, nothing else. prefunded: lamports someone sent to the launcher's account
+// address before it existed; the account program then takes only the rest of the rent from custody.
+export function payoutTransaction(raw, terms, { created = true, fee = 25_000, rent = ACCOUNT_RENT, prefunded = 0, custodyBefore = 50_000_000n } = {}) {
   const base = finalizedTransaction(raw)
   const keys = base.transaction.message.accountKeys.map(k => k.toBase58())
   const wallet = keys.indexOf(terms.walletTokenAccount), custody = keys.indexOf(terms.custodyTokenAccount), amount = BigInt(terms.amount)
-  const pre = keys.map((_, i) => (created && i === wallet ? 0 : 1_000_000_000))
-  const post = pre.map((value, i) => (i === 0 ? value - fee - (created ? rent : 0) : created && i === wallet ? rent : value))
+  const pre = keys.map((_, i) => (created && i === wallet ? prefunded : 1_000_000_000))
+  const post = pre.map((value, i) => (i === 0 ? value - fee - (created ? rent - prefunded : 0) : created && i === wallet ? rent : value))
   const ata = base.transaction.message.instructions.findIndex(ix => keys[ix.programIdIndex] === ASSOCIATED_TOKEN_PROGRAM_ID.toBase58())
   return { ...base, meta: { ...base.meta, fee, preBalances: pre, postBalances: post,
     preTokenBalances: [tokenBalance(custody, custodyBefore, terms.custody), ...(created ? [] : [tokenBalance(wallet, 0n, terms.wallet)])],
@@ -78,6 +86,7 @@ export function fakeChain({ finalized = raw => finalizedTransaction(raw), genesi
     simulateTransaction: rpc('simulateTransaction', () => ({ value: { err: null, unitsConsumed: 60_000, logs: [] } })),
     getFeeForMessage: rpc('getFeeForMessage', () => ({ value: 25_000 })),
     getBlockHeight: rpc('getBlockHeight', commitment => (commitment === 'finalized' ? chain.finalizedHeight : chain.height)),
+    getMinimumBalanceForRentExemption: rpc('getMinimumBalanceForRentExemption', bytes => rentFor(bytes)),
     sendRawTransaction: rpc('sendRawTransaction', raw => {
       const bytes = Buffer.from(raw)
       chain.sends.push(bytes.toString('base64'))
@@ -109,7 +118,7 @@ export function stockMarket(overrides = {}) {
 }
 
 // previewMarket's result for a curve source that MATCHes, built exactly as src/stock-collections.mjs builds it.
-export async function curvePreview({ market, source, signer, custody, creatorFee = 1_000_000n, partnerFee = 400_000n, dbc = null }) {
+export async function curvePreview({ market, source, signer, custody, creatorFee = 10_000_000n, partnerFee = 4_000_000n, dbc = null }) {
   const d = dbc ?? { pool: market.pool, config: address(), baseVault: address(), quoteVault: address() }
   const split = splitCurveFee({ creatorAmount: creatorFee, partnerAmount: partnerFee })
   const amount = source === 'dbc_creator' ? creatorFee : partnerFee
