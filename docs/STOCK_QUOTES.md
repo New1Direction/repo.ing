@@ -1,9 +1,11 @@
 # Stock-paired markets
 
-Status: built dark through quote-aware market creation (P6a). The registry, the market columns, the quote-options API, the
-"Choose pair" control and stock-pair creation exist. Nothing can be launched against a stock yet: the code's own gate
-(`STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`) stays closed until trading, indexing, payouts and reconciliation are
-quote-aware too, and `STOCK_QUOTES_ENABLED` is off. Every surface offers SOL only.
+Status: built dark through quote-aware creation (P6a) and the curve trade path with its trade panel (P6b). The registry, the
+market columns, the quote-options API, the "Choose pair" control, stock-pair creation and curve trading exist. Fee accrual,
+graduation and payouts are being built, on separate stock ledgers (migration 0054) under the decided fee policy. Nothing can be
+launched against a stock yet: the code's own gate (`STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`) stays closed until
+trading, indexing, payouts and reconciliation are quote-aware too, and `STOCK_QUOTES_ENABLED` is off. Every surface offers SOL
+only.
 
 A launcher can pair a repository's market with SOL (the default, and the quote of every market launched so far) or, when
 the repository belongs to a GitHub organization mapped to a listed company, with that company's tokenized stock:
@@ -187,24 +189,64 @@ STOCK_CHAIN_WORK_DIR=<work-dir> node --test tests/stock-pair-chain.test.mjs
 
 The test needs PostgreSQL on 127.0.0.1:55432. Stop the validator afterwards and delete `<work-dir>/ledger`.
 
-## Fee policy (decided 2026-10-03)
+## Fee policy (policy 1)
 
 | | Curve fee |
 | --- | --- |
 | Total | 1.75%, unchanged |
 | Meteora | 0.35% |
-| Launcher, while the repository is unclaimed | 0.30%, carved from the builder share |
-| Builder escrow for the owner, while unclaimed | 0.694% |
-| Verified owner, after the claim | the full 0.994% |
-| repo.ing | 0.406%, into that stock's protocol accumulator |
+| Launcher | 0.30%, carved from the 0.994% builder share, forever |
+| The stock's accumulator | 1.10%: the rest of the builder share (0.694%) and repo.ing's 0.406% |
 
-- At the first admin verification the launcher-side 0.30% switches to the verified owner from then on. The switch slot,
-  time and verification are recorded, and the launcher keeps everything earned before it.
-- Discoverer rewards are off for stock markets: the launcher's 0.30% replaces them.
-- All of these fees are paid in the stock token, because the curve collects fees in its quote.
-- repo.ing's 0.406% accumulates per stock asset. A bounded, operator-run settlement later swaps about half into REPOING
-  and adds both sides as permanently locked liquidity to one canonical REPOING/stock pool per stock. Every repository
-  paired with the same stock feeds the same pool.
+- **The launcher** gets 0.30% of every trade, paid in the stock, for as long as the market trades. There is no end date and
+  no switch.
+- **A company admin who verifies the repository changes nothing.** There is no owner claim of builder fees on a stock pair;
+  one is refused with `STOCK_PAIR_NO_OWNER_CLAIM`.
+- **Everything else**, the rest of the builder share and repo.ing's whole 0.406%, goes to that stock's accumulator. It is
+  destined to become permanent REPOING/stock liquidity.
+- **The accumulator is per stock:** every repository paired with the same stock feeds it. The owner seeds one canonical
+  REPOING/stock pool per stock later, from the accumulated fees. repo.ing builds only the accounting, previews, dry-run tools
+  and receipt verification for this. Nothing creates pools or configs, or sends transactions, on mainnet.
+- **No other rewards:** stock markets carry no discovery reward, verification bonus or builder allocation.
+- **Units:** all of these fees are paid in the stock, because the curve collects fees in its quote. Ledgers keep raw units;
+  the ScaledUiAmount multiplier is for display only.
+
+The arithmetic is `src/stock-fee-policy.mjs` (`POLICY_VERSION` 1, BigInt, every share rounded down):
+
+- **The config:** the stock's DBC config gives the creator 71% of the fee after Meteora's (0.994% of volume).
+  `assertStockPolicyConfig` refuses any other share.
+- **Each curve swap** (`splitCurveFee`): the launcher gets `floor(creator fee × 150 / 497)`, which is 0.30 / 0.994 of it.
+  The rest of the creator fee and the whole partner fee go to the accumulator.
+- **After graduation** (`dammCheckpoint`): fees are read as cumulative checkpoints of the DAMM v2 creator and partner
+  positions, and each checkpoint credits the growth since the last.
+  - The launcher's running total is `floor(creator position's earned fees × 150 / 497)`.
+  - The partner position's fees all go to the accumulator.
+  - A cumulative that goes backwards is refused for review, never credited negative.
+
+## Stock ledgers (migration 0054)
+
+Stock-pair accounting lives only in its own `stock_*` tables. No SOL table, query or row changes, and SOL-only code keeps
+refusing stock markets. Amounts are raw units of each token.
+
+- `stock_trade_events` and `stock_pool_cursors`: every swap on a stock-paired curve or graduated pool, and the worker's
+  position in each pool's history.
+- `stock_fee_events`: each curve swap's creator and partner fee and its split, with the `policy_version`. The database checks
+  `creator + partner = launcher + accumulator` and `launcher <= creator`.
+- `stock_graduation_observations` and `stock_graduation_events`: curve progress, and the migration to DAMM v2 with its two
+  positions.
+- `stock_damm_fee_checkpoints`: cumulative checkpoints of those positions. The database checks
+  `credit = launcher_credit + accumulator_credit`, and the partner side never pays the launcher.
+- `stock_fee_collections` and `stock_launcher_payouts`: fee claims and launcher payouts.
+  - At most one is pending per market and source (collections) or per market (payouts).
+  - A payout goes only to the market's `launcher_wallet`.
+- `stock_canonical_pools` and `stock_settlement_receipts`: at most one active REPOING/stock pool per stock, and verified
+  settlement receipts.
+- **The market check:** a trigger refuses any row whose market, `asset_id` and `quote_mint` do not match the market's stamp,
+  so a SOL market or another stock can never enter these ledgers.
+- **Live updates:** new stock trade and fee rows of a live market send hints on `repoing_stock_market_updates`
+  (`{ "mint", "kind": "trade" | "fee" }`). The SOL channel is unchanged.
+
+`tests/stock-ledgers-db.test.mjs` proves this on PostgreSQL, including that every existing row and definition is unchanged.
 
 ## Issuer powers
 
@@ -238,17 +280,17 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
    - platform totals, split by asset.
 
    Fix every part together: a partial fix would make the worker skip stock fees silently.
-4. **P7:** launcher fee routing and the recorded switch, quote-aware claims and reconciliation.
+4. **P7:** launcher fee routing (policy 1, above), quote-aware claims and reconciliation.
 5. **P8–P10:** the per-stock accumulator, the canonical pool registry and settlement previews with receipts, with
    spending off.
 6. **P11:** settlement execution behind an operator flag.
 7. **P12:** adversarial tests.
 
-Owner actions before launch:
+Owner actions:
 
-- **One DBC config per stock.** The graduation threshold is denominated in that stock, and the launch-fee decay matches
+- **Before launch, one DBC config per stock.** The graduation threshold is denominated in that stock, and the launch-fee decay matches
   today's.
-- **One canonical REPOING/stock DAMM v2 pool,** seeded from the treasury.
+- **Later, one canonical REPOING/stock DAMM v2 pool per stock,** seeded by the owner from that stock's accumulated fees.
 
 Both are on-chain steps: scripts will print a dry run and a plain description first, and nothing is sent without the
 owner's approval.
