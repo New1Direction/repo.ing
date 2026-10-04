@@ -511,15 +511,10 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
 3. **P6, the rest:** quote-aware trading and indexing. Every remaining place that assumes SOL takes the market's quote:
    - the worker's approved configs;
    - trade preparation and verification (no wrapped SOL; Token-2022 quote accounts; decimals from the asset);
-   - DBC and DAMM event parsing and fee accrual;
-   - graduation;
+   - DBC and DAMM event parsing and fee accrual (done, dark: "Indexing a stock pair's curve" and "Graduation" above);
+   - graduation (done, dark: "Graduation" above);
    - charts, market cap and USD prices, with stock amounts shown as wallets show them (done, dark);
    - platform totals, split by asset (done, dark).
-
-   - DBC and DAMM event parsing and fee accrual (DAMM swaps and fee checkpoints done, dark: "Graduation" above);
-   - graduation (done, dark: "Graduation" above);
-   - charts, market cap and USD prices, with stock amounts shown as wallets show them (the trade panel already does);
-   - platform totals, split by asset.
 
    Fix every part together: a partial fix would make the worker skip stock fees silently.
 4. **P7:** launcher fee routing (policy 1, above), quote-aware claims and reconciliation.
