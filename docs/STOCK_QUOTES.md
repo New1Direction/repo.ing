@@ -163,8 +163,32 @@ stock pair, the panel buys with the stock and sells for it:
 A launch draft also keeps its chosen pair. On restore, the pair is used only while the repository is still offered it;
 otherwise the form switches to SOL and says so.
 
-Fee accrual and the worker's indexing of stock-paired trades come next. Until then, a confirmed stock trade stays confirmed
-and its fee recording raises the usual operator alert.
+### Indexing a stock pair's curve (dark)
+
+A stock-paired market's curve trades and fees are recorded only in the stock ledgers (migration 0054); every SOL table and SOL
+query is unchanged.
+
+- **Evidence** (`src/stock-trade-evidence.mjs`) takes the market's stock mint and config as required arguments and is strict.
+  The SOL parser reads anything it does not recognise as "not a swap", which for a stock pair would credit a missed swap
+  nothing and move the cursor past it for good. Here every DBC instruction that names the canonical pool must be fully
+  matched: a canonical swap with exactly one swap event (evtSwap and evtSwap2 must agree when both appear), or a known
+  non-swap (the launch, fee claims, metadata, a creator transfer) with the pool, config and mints in their places. Every swap
+  event naming the pool must come from a canonical swap. Anything else is quarantined (`STOCK_FEE_EVIDENCE_QUARANTINED` on the
+  operator alert feed), retried every run and credited once it can be matched. A migration instruction is an ERROR: graduation
+  is indexed separately. Event ordinals are the SOL parser's, so (signature, event_index) means the same in both ledgers.
+- **Accrual** (`src/stock-fee-accrual.mjs`) checks the market's stamp against the registry, its registered stock config, the
+  live curve (pool, creator, not migrated) and the config (the stock as quote through Token-2022, fees collected in the stock,
+  creator share 71%). Each swap becomes one `stock_fee_events` row (the creator's 71% of the trading fee rounded down, the
+  partner the rest, split by `splitCurveFee` with its `policy_version`) and one `stock_trade_events` row (venue `dbc`: a buy's
+  fee-excluded stock input and the tokens out, a sell's tokens in and stock out, all raw), written in one transaction and
+  idempotent on (signature, event_index).
+- **Worker** (`src/stock-fee-indexer.mjs`): exactly the markets the SOL indexer leaves out (`quote_asset_id is not null`), with
+  cursors in `stock_pool_cursors`, its own schedule and an activity feed over the configs in `STOCK_QUOTE_CONFIGS`. A missing
+  config, a changed or migrated curve, an RPC failure or a cursor missing from history is an ERROR, and the worker exits
+  non-zero. A malformed `STOCK_QUOTE_CONFIGS` fails stock markets only.
+- **Trade route:** a confirmed stock trade's fees are recorded through the stock accrual (by its prepared quote mint); a SOL
+  trade's exactly as before.
+- **Charts:** chart ordering also places stock trades' transactions in their finalized blocks.
 
 `tests/stock-pair-chain.test.mjs` proves this on the programs mainnet runs (`scripts/ci/start-stock-validator.sh` loads the DBC,
 DAMM v2, Token-2022 and Metaplex programs as deployed, Meteora's badges for METAx, and the METAx mint with only its mint
@@ -178,6 +202,9 @@ authority replaced):
   and a full sell-back to the raw unit, and refuses a buy larger than the wallet's METAx before signing;
 - a wallet with no METAx account sells: the estimated deposit is exactly the rent of the 179-byte account Token-2022
   creates;
+- every METAx trade reaches the stock ledgers through the trade route's settlement and the worker's stock job: the summed
+  creator and partner fees equal the pool's own creator and partner fee counters to the raw unit, a replay credits nothing
+  twice, and the SOL indexer leaves the market out with every SOL ledger empty;
 - a SOL launch on the same programs is unchanged.
 
 To run it locally:
@@ -187,7 +214,8 @@ scripts/ci/start-stock-validator.sh <work-dir>
 STOCK_CHAIN_WORK_DIR=<work-dir> node --test tests/stock-pair-chain.test.mjs
 ```
 
-The test needs PostgreSQL on 127.0.0.1:55432. Stop the validator afterwards and delete `<work-dir>/ledger`.
+The test needs PostgreSQL on 127.0.0.1:55432. It reads the validator's RPC port from `STOCK_VALIDATOR_RPC_PORT` (default 8919),
+as the script does. Stop the validator afterwards and delete `<work-dir>/ledger`.
 
 ## Fee policy (policy 1)
 

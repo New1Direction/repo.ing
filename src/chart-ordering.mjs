@@ -42,7 +42,8 @@ export async function recordChartBlock(db, proof) {
   // Chart reads order trades by these stored positions instead of searching the block's whole signature list.
   await db.query(`insert into finalized_chart_positions(slot,signature,transaction_index)
     select $1::bigint,s.signature,s.ord from unnest($2::text[]) with ordinality as s(signature,ord)
-    where s.signature in (select signature from trade_events where slot=$1 union select signature from damm_trade_events where slot=$1)
+    where s.signature in (select signature from trade_events where slot=$1 union select signature from damm_trade_events where slot=$1
+      union select signature from stock_trade_events where slot=$1)
     on conflict do nothing`, [proof.slot, proof.signatures])
 }
 
@@ -51,13 +52,15 @@ export async function recordChartBlock(db, proof) {
 const SYNC_POSITIONS = `insert into finalized_chart_positions(slot,signature,transaction_index)
   select slot,signature,transaction_index from (
     select t.slot,t.signature,array_position(b.signatures,t.signature::text) as transaction_index
-    from (select slot,signature from trade_events union select slot,signature from damm_trade_events) t
+    from (select slot,signature from trade_events union select slot,signature from damm_trade_events
+      union select slot,signature from stock_trade_events) t
     join finalized_chart_blocks b on b.slot=t.slot
     where not exists (select 1 from finalized_chart_positions p where p.slot=t.slot and p.signature=t.signature)
     offset 0) missing
   where transaction_index is not null on conflict do nothing`
 
-// Auxiliary chart evidence only. Never changes trade amounts, fees, or financial intents.
+// Auxiliary chart evidence only. Never changes trade amounts, fees, or financial intents. Orders SOL trades (trade_events,
+// damm_trade_events) and stock-pair trades (stock_trade_events, docs/STOCK_QUOTES.md) alike: positions are per signature.
 export function createChartOrdering({ pool, connection, verification, now = Date.now }) {
   const retryAfter = new Map()
   return { async runOnce() {
@@ -73,6 +76,7 @@ export function createChartOrdering({ pool, connection, verification, now = Date
       // sync above). Never reads the blocks' signature lists, which used to be de-TOASTed in full on every pass.
       const { rows } = await db.query(`with all_trades as (
         select slot,signature from trade_events union all select slot,signature from damm_trade_events
+        union all select slot,signature from stock_trade_events
         ) select t.slot::text,array_agg(distinct t.signature) as signatures
         from all_trades t left join finalized_chart_blocks b on b.slot=t.slot
         left join finalized_chart_positions p on p.slot=t.slot and p.signature=t.signature
