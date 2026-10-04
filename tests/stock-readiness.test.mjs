@@ -12,7 +12,7 @@ import { launchFeeBaseFee } from '../src/launch-fee.mjs'
 import { DBC_PROGRAM_ID } from '../src/launch-fee-config.mjs'
 import { QUOTE_REGISTRY, STOCK_PAIR_LAUNCHES_READY, stockPairsLaunchable } from '../src/quote-assets.mjs'
 import { INDEXED_MARKETS, MAINNET_GENESIS, READINESS_ENV, SOL_INDEXER_MARKETS, SOL_LEDGERS, STOCK_INDEXER_MARKETS, STOCK_LEDGER_FUNCTIONS,
-  STOCK_LEDGER_TABLES, STOCK_LEDGER_TRIGGERS, checkStockReadiness, custodyAddress, formatReadiness, partitionProblems,
+  STOCK_LEDGER_INDEXES, STOCK_LEDGER_TABLES, STOCK_LEDGER_TRIGGERS, checkStockReadiness, custodyAddress, formatReadiness, partitionProblems,
   stockBadges } from '../src/stock-readiness.mjs'
 import { readinessEnv } from '../scripts/stock-readiness.mjs'
 
@@ -109,7 +109,8 @@ const statuses = report => report.items.filter(entry => entry.status === 'FAIL')
 
 // ---------- fake database ----------
 const TRIGGERS = STOCK_LEDGER_TRIGGERS.map(({ table, name, function: fn }) => ({ table, name, function: fn, enabled: 'O' }))
-function fakeDb({ tables = STOCK_LEDGER_TABLES, functions = STOCK_LEDGER_FUNCTIONS, triggers = TRIGGERS, all = ['1', '2', '3'], sol = ['1', '2'],
+const INDEXES = STOCK_LEDGER_INDEXES.map(({ table, name }) => ({ name, table, valid: true }))
+function fakeDb({ tables = STOCK_LEDGER_TABLES, functions = STOCK_LEDGER_FUNCTIONS, triggers = TRIGGERS, indexes = INDEXES, all = ['1', '2', '3'], sol = ['1', '2'],
   stock = ['3'], ledgers = [], fail = null } = {}) {
   const queries = []
   const query = async (sql, params = []) => {
@@ -119,6 +120,7 @@ function fakeDb({ tables = STOCK_LEDGER_TABLES, functions = STOCK_LEDGER_FUNCTIO
     if (sql.includes('to_regclass(name) is not null')) return { rows: params[0].map(name => ({ name, present: tables.includes(name) })) }
     if (sql.includes('to_regprocedure')) return { rows: params[0].map(name => ({ name, present: functions.includes(name) })) }
     if (sql.includes('from pg_trigger')) return { rows: triggers }
+    if (sql.includes('from pg_index')) return { rows: indexes }
     for (const [where, ids] of [[STOCK_INDEXER_MARKETS, stock], [SOL_INDEXER_MARKETS, sol], [INDEXED_MARKETS, all]]) {
       if (sql.includes(`where ${where} order by`)) return { rows: ids.map(id => ({ id })) }
     }
@@ -334,20 +336,21 @@ test('switches are shown on or off, never as a failure; launches open only with 
   }
 })
 
-test('database: migration 0054, the market partition and the SOL ledgers, each read in its own READ ONLY transaction', async () => {
+test('database: migrations 0054 and 0055, the market partition and the SOL ledgers, each read in its own READ ONLY transaction', async () => {
   const db = fakeDb()
   const { report, find } = await run({ db })
   assert.equal(report.ok, true)
-  assert.deepEqual(['Migration 0054', 'Market partition', 'SOL ledgers'].map(name => find(name).status), ['PASS', 'PASS', 'PASS'])
+  assert.deepEqual(['Migration 0054', 'Migration 0055', 'Market partition', 'SOL ledgers'].map(name => find(name).status), ['PASS', 'PASS', 'PASS', 'PASS'])
+  assert.equal(find('Migration 0055').reason, 'the stock ledgers\' 3 read indexes are present and valid')
   assert.equal(find('Market partition').reason, '3 indexed markets: 2 SOL (the SOL indexer\'s list) + 1 stock (the stock indexer\'s list), none in both')
   assert.match(find('SOL ledgers').reason, /^no stock-paired market in any of the 12 SOL fee, trade, claim and reward tables$/)
-  // Three transactions, each begun read only and rolled back; nothing but reads in between.
-  assert.equal(db.queries.filter(sql => sql === 'begin transaction read only').length, 3)
-  assert.equal(db.queries.filter(sql => sql === 'rollback').length, 3)
+  // Four transactions, each begun read only and rolled back; nothing but reads in between.
+  assert.equal(db.queries.filter(sql => sql === 'begin transaction read only').length, 4)
+  assert.equal(db.queries.filter(sql => sql === 'rollback').length, 4)
   for (const sql of db.queries) assert.match(sql, /^(begin transaction read only|set local statement_timeout = '30s'|rollback|select )/)
 })
 
-test('database failures: partition overlap, missing 0054 objects, stock rows in SOL ledgers, unreadable tables', async () => {
+test('database failures: partition overlap, missing 0054 objects or 0055 indexes, stock rows in SOL ledgers, unreadable tables', async () => {
   // Partition overlap: market 2 in both indexers' lists, market 4 in neither.
   const overlap = await run({ db: fakeDb({ all: ['1', '2', '3', '4'], sol: ['1', '2'], stock: ['2', '3'] }) })
   assert.equal(overlap.report.ok, false)
@@ -359,6 +362,11 @@ test('database failures: partition overlap, missing 0054 objects, stock rows in 
   assert.equal(objects.find('Migration 0054').reason, 'table stock_fee_events missing; function stock_ledger_market_check() missing; ' +
     'trigger stock_ledger_market_check on stock_trade_events disabled; trigger stock_ledger_market_check on stock_fee_events calls other(); ' +
     'trigger repoing_stock_fee_update on stock_fee_events missing: apply migration 0054 as written')
+  // 0055's read indexes: missing, on another table, not valid.
+  const indexes = await run({ db: fakeDb({ indexes: [{ ...INDEXES[1], table: 'stock_trade_events' }, { ...INDEXES[2], valid: false }] }) })
+  assert.equal(indexes.report.ok, false)
+  assert.equal(indexes.find('Migration 0055').reason, 'index stock_trade_events_repo_traded_at missing; index stock_fee_events_repo_slot is on ' +
+    'stock_trade_events, not stock_fee_events; index stock_fee_collections_repo_status on stock_fee_collections is not valid: apply migration 0055 as written')
   // A stock market in SOL ledgers.
   const ledgers = await run({ db: fakeDb({ ledgers: [{ ledger: 'fee_events', rows: 2, markets: ['94911145'] }, { ledger: 'trade_events', rows: 1, markets: ['94911145'] }] }) })
   assert.equal(ledgers.find('SOL ledgers').reason, 'fee_events has 2 row(s) of stock-paired market(s) 94911145; trade_events has 1 row(s) of ' +
@@ -366,7 +374,7 @@ test('database failures: partition overlap, missing 0054 objects, stock rows in 
   // One unreadable check fails alone; the others still run, and the database URL's password is never printed.
   const env = { ...ENV, DATABASE_URL: `postgres://reader:${DB_SECRET}@db.internal:5432/railway` }
   const unreadable = await run({ env, db: fakeDb({ fail: /from pg_trigger/ }) })
-  assert.deepEqual(['Migration 0054', 'Market partition', 'SOL ledgers'].map(name => unreadable.status(name)), ['FAIL', 'PASS', 'PASS'])
+  assert.deepEqual(['Migration 0054', 'Migration 0055', 'Market partition', 'SOL ledgers'].map(name => unreadable.status(name)), ['FAIL', 'PASS', 'PASS', 'PASS'])
   assert.match(unreadable.find('Migration 0054').reason, /^could not read the database: relation is unreadable \(\[redacted\]\)$/)
   const refused = await run({ env, dbError: Error(`password authentication failed: ${DB_SECRET}`) })
   assert.deepEqual([refused.status('Connection'), refused.find('Connection').reason], ['FAIL', 'could not connect to DATABASE_URL: password authentication failed: [redacted]'])
@@ -404,6 +412,9 @@ test('the readiness checks follow the code they mirror', () => {
   for (const { table, name, function: fn } of STOCK_LEDGER_TRIGGERS) {
     assert.match(migration, new RegExp(`CREATE TRIGGER ${name} [^;]*? ON "${table}" FOR EACH ROW EXECUTE FUNCTION ${fn}\\(\\)`), `${name} on ${table}`)
   }
+  // Migration 0055 creates every read index checked, on its table.
+  const indexes = source('../drizzle/0055_stock_ledger_indexes.sql')
+  for (const { table, name } of STOCK_LEDGER_INDEXES) assert.ok(indexes.includes(`CREATE INDEX IF NOT EXISTS "${name}" ON "${table}"`), name)
   // Every SOL ledger is a table of the schema with its key column.
   const schema = source('../src/db/schema.mjs')
   for (const { table, key: column } of SOL_LEDGERS) {
