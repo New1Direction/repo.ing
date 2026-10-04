@@ -5,7 +5,7 @@ import { LIVE_TRADE_ROWS, lastPoint, liveChart } from '../app/lib/live-market.mj
 
 // The home page: the live $REPOING card, the tabbed market board and the Shipping tab (app/(site)/page.jsx).
 const { LiveMarket, LiveMarketFallback } = await appModule('app/components/home/live-market.jsx')
-const { HomeBoard } = await appModule('app/components/home/home-board.jsx')
+const { HomeBoard, tabForKey } = await appModule('app/components/home/home-board.jsx')
 const { ShippingLeaders } = await appModule('app/components/shipping-leaders.jsx')
 
 const NOW = Date.parse('2026-10-03T12:00:00Z'), NOW_S = NOW / 1000
@@ -61,11 +61,26 @@ test('a falling market reads down, in the chart\'s label too; without a SOL pric
   assert.match(markup, /<strong>9\.000e-7 SOL<\/strong>/)
 })
 
-test('the card\'s placeholder keeps its frame; an unreadable market says live prices are unavailable', () => {
-  assert.match(html(h(LiveMarketFallback)), /<article class="live-market is-loading" aria-busy="true">/)
+test('the card\'s placeholder has the card\'s blocks (so nothing moves when it streams in); an unreadable market keeps the way to trade', () => {
+  const loading = html(h(LiveMarketFallback))
+  assert.match(loading, /<article class="live-market is-loading" aria-busy="true">/)
+  assert.deepEqual([...loading.matchAll(/<dt>([^<]+)<\/dt>/g)].map(match => match[1]), ['Market cap', '24h volume', 'Builders earned'])
+  assert.equal(loading.match(/<li class="live-trade">/g).length, LIVE_TRADE_ROWS)
+  assert.match(loading, /<span class="button primary live-market-cta is-placeholder" aria-hidden="true">Trade<\/span><\/article>$/)
   const unavailable = html(h(LiveMarketFallback, { unavailable: true }))
   assert.doesNotMatch(unavailable, /aria-busy/)
   assert.match(unavailable, /role="status">Live prices are temporarily unavailable\.</)
+  assert.match(unavailable, /<a class="button primary live-market-cta" href="\/token\/59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be">Trade \$REPOING/)
+})
+
+test('board keys: arrows wrap, Home and End jump, and a key held with a modifier is left to the browser', () => {
+  assert.equal(tabForKey({ key: 'ArrowRight' }, 0, 4), 1)
+  assert.equal(tabForKey({ key: 'ArrowRight' }, 3, 4), 0)
+  assert.equal(tabForKey({ key: 'ArrowLeft' }, 0, 4), 3)
+  assert.equal(tabForKey({ key: 'Home' }, 2, 4), 0)
+  assert.equal(tabForKey({ key: 'End' }, 0, 4), 3)
+  assert.equal(tabForKey({ key: 'Enter' }, 0, 4), null)
+  for (const modifier of ['altKey', 'ctrlKey', 'metaKey', 'shiftKey']) assert.equal(tabForKey({ key: 'ArrowLeft', [modifier]: true }, 1, 4), null, modifier)
 })
 
 test('the board: one tab list, the first tab open, every other list rendered but hidden, and the board\'s own links', () => {
@@ -73,6 +88,7 @@ test('the board: one tab list, the first tab open, every other list rendered but
   const markup = html(h(HomeBoard, { title: 'Markets', tabs, panels: { trending: h('p', null, 'busiest'), new: h('p', null, 'newest') },
     action: h('a', { href: '/explore' }, 'View all'), footer: h('a', { href: '/waiting' }, 'Waiting') }))
   assert.match(markup, /<h2 id="home-board-title">Markets<\/h2><div class="home-board-tabs" role="tablist" aria-label="Markets">/)
+  assert.match(markup, /^<section class="home-board" aria-labelledby="home-board-title"><span id="trending" class="home-board-anchor" aria-hidden="true"><\/span><span id="new" class="home-board-anchor" aria-hidden="true"><\/span>/, 'one anchor per tab, so /#new lands on the board')
   assert.match(markup, /<button type="button" role="tab" id="home-tab-trending" aria-controls="home-panel-trending" aria-selected="true" tabindex="0">Trending<\/button>/)
   assert.match(markup, /<button type="button" role="tab" id="home-tab-new" aria-controls="home-panel-new" aria-selected="false" tabindex="-1">New<\/button>/)
   assert.match(markup, /<div class="home-board-panel" role="tabpanel" id="home-panel-trending" aria-labelledby="home-tab-trending"><p class="home-board-note">Ranked by 24h volume\.<\/p><p>busiest<\/p><\/div>/)

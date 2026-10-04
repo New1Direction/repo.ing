@@ -118,7 +118,8 @@ async function MarketListContent({ tab }) {
 async function ModelsStripContent() {
   const { markets } = await listMarkets()
   const promotable = await promotableMarkets(markets)
-  return promotable ? <ModelsStrip markets={selectModelStrip(withModelFacts(promotable, { schedule: after }))}/> : null
+  return promotable ? <ModelsStrip markets={selectModelStrip(withModelFacts(promotable, { schedule: after }))}/>
+    : <p className="home-board-empty">Model markets are temporarily unavailable.</p>
 }
 
 // The race ranks by verified reserves and keeps new repositories in place, labeled (labeledRacers); the market list is

@@ -7,10 +7,11 @@ import { compactCount } from '../../lib/hf-model-display.mjs'
 import { ModelCardBadge, ModelDisclaimer, likesTitle } from './model-ui'
 
 // Home board, Models tab: Hugging Face model markets (rows from selectModelStrip), in the token page's "More markets" card
-// shape. The tab is offered only with a model market to show.
+// shape (hf-models.css sizes those cards under .models-strip). The tab is there whenever model markets are on, so with none
+// to show it says so.
 export function ModelsStrip({ markets = [] }) {
-  if (!markets.length) return null
-  return <>
+  if (!markets.length) return <p className="home-board-empty">No model markets yet.</p>
+  return <div className="models-strip">
     <ol className="more-markets-rail">{markets.map(market => <li className="more-markets-card" key={market.mint}>
       <MarketLink mint={market.mint} className="more-markets-repo"><RepoAvatar repo={market}/><span><strong title={market.fullName}>{market.fullName}</strong>
         <small><span className="more-markets-symbol">${market.symbol}</span><span className="models-strip-likes" title={likesTitle(market.likes)}><Heart size={11} aria-hidden="true"/>{compactCount(market.likes)}</span></small></span></MarketLink>
@@ -20,5 +21,5 @@ export function ModelsStrip({ markets = [] }) {
     </li>)}</ol>
     <ModelDisclaimer/>
     <Link href="/explore?source=models" className="home-board-more">Every model market <ArrowRight size={15} aria-hidden="true"/></Link>
-  </>
+  </div>
 }
