@@ -105,6 +105,24 @@ export function createStockGraduationMonitor({ pool, connection, verification, c
   return { runOnce, processMarket, addHook }
 }
 
+// The worker's stock graduation pass (scripts/run-worker.mjs runs it un-awaited on its own schedule, so it must never reject):
+// one log line, BigInts as text, whatever a hook returns; a line that cannot be written is replaced by a fixed one. Returns true
+// when the worker should exit non-zero (a REVIEW, or the pass or its report failing).
+export async function stockGraduationPass(monitor, log = line => console.log(line)) {
+  try {
+    const result = {}
+    try { result.stockGraduation = await monitor.runOnce() } catch { result.stockGraduationError = 'Stock graduation unavailable' }
+    const failed = Boolean(result.stockGraduationError || result.stockGraduation?.some(item => item.status === 'REVIEW'))
+    if (result.stockGraduationError || result.stockGraduation?.length) {
+      log(JSON.stringify(result, (_key, value) => typeof value === 'bigint' ? value.toString() : value))
+    }
+    return failed
+  } catch {
+    try { log(JSON.stringify({ stockGraduationError: 'STOCK_GRADUATION_REPORT_UNAVAILABLE' })) } catch { /* nothing left to report with */ }
+    return true
+  }
+}
+
 // The operator view of stock-paired markets (the SOL graduationOperatorView lists SOL markets only): each one's latest reading,
 // migration proof, DAMM fee checkpoints so far and open swap quarantines.
 export async function stockGraduationOperatorView(pool) {

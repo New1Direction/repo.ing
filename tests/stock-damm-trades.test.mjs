@@ -138,6 +138,27 @@ test('a transfer fee on the stock, or a fee-excluded amount above what was paid,
   unmatched(() => parse(above), /fee-excluded stock amount/)
 })
 
+test('a transaction without recorded inner instructions is quarantined; a dust swap with nothing out is still a swap', () => {
+  for (const missing of [undefined, null]) {
+    const tx = load(fixture.transactions.siteBuy)
+    tx.meta.innerInstructions = missing
+    unmatched(() => parse(tx), /no recorded inner instructions/)
+  }
+  // The buy's event with nothing out (a fee that took the whole input): recorded with its zero, so a dust swap cannot pin a
+  // market in REVIEW.
+  const dust = load(fixture.transactions.siteBuy), group = swapGroup(dust)
+  const event = group.instructions.find(ix => Buffer.from(bs58.decode(ix.data)).subarray(0, 8).toString('hex') === 'e445a52e51cb9a1d')
+  const bytes = Buffer.from(bs58.decode(event.data)), decoded = coder.events.decode(bytes.subarray(8).toString('base64')).data
+  // The event ends with the amount out (transfer fee included, then excluded), the timestamp and both reserves, u64 each.
+  const outAt = bytes.length - 8 * 4
+  assert.equal(bytes.readBigUInt64LE(outAt), BigInt(decoded.excludedTransferFeeAmountOut.toString()), 'excluded amount out')
+  assert.equal(bytes.readBigUInt64LE(outAt + 8), BigInt(decoded.currentTimestamp.toString()), 'then the timestamp')
+  bytes.writeBigUInt64LE(0n, outAt)
+  event.data = bs58.encode(bytes)
+  const [zero] = parse(dust)
+  assert.deepEqual([zero.direction, zero.quoteAmount, zero.baseAmount], ['buy', '50000000', '0'])
+})
+
 test('a failed or missing transaction is not evidence', () => {
   const failed = load(fixture.transactions.siteBuy)
   failed.meta.err = { InstructionError: [4, { Custom: 6004 }] }

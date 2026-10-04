@@ -39,6 +39,11 @@ export const STOCK_DBC_INSTRUCTIONS = Object.freeze([
   ix('claimProtocolPoolCreationFee', [114, 205, 83, 188, 240, 153, 25, 54], NON_SWAP, { config: 0, pool: 1 }),
   ix('createVirtualPoolMetadata', [45, 97, 187, 103, 254, 109, 124, 134], NON_SWAP, { pool: 0 }),
   ix('transferPoolCreator', [20, 7, 169, 33, 58, 147, 166, 33], NON_SWAP, { pool: 0, config: 1 }),
+  // A completed curve's surplus quote (creator, partner) and leftover base tokens: they move no swap fee, and can land before
+  // the migration (src/stock-graduation-monitor.mjs proves that), so they are known non-swaps rather than a stop.
+  ix('withdrawLeftover', [20, 198, 202, 237, 235, 243, 183, 66], NON_SWAP, { config: 1, pool: 2, baseMint: 5 }),
+  ix('creatorWithdrawSurplus', [165, 3, 137, 7, 28, 134, 76, 80], NON_SWAP, { config: 1, pool: 2, quoteMint: 5 }),
+  ix('partnerWithdrawSurplus', [168, 173, 72, 100, 201, 98, 38, 92], NON_SWAP, { config: 1, pool: 2, quoteMint: 5 }),
   ix('createLocker', [167, 90, 137, 154, 75, 47, 17, 84], MIGRATION),
   ix('migrateMeteoraDamm', [27, 1, 48, 22, 180, 63, 118, 217], MIGRATION),
   ix('migrateMeteoraDammClaimLpToken', [139, 133, 2, 30, 91, 145, 127, 154], MIGRATION),
@@ -46,9 +51,6 @@ export const STOCK_DBC_INSTRUCTIONS = Object.freeze([
   ix('migrationDammV2', [156, 169, 230, 103, 53, 228, 80, 64], MIGRATION),
   ix('migrationDammV2CreateMetadata', [109, 189, 19, 36, 195, 183, 222, 82], MIGRATION),
   ix('migrationMeteoraDammCreateMetadata', [47, 94, 126, 115, 221, 226, 194, 133], MIGRATION),
-  ix('withdrawLeftover', [20, 198, 202, 237, 235, 243, 183, 66], MIGRATION),
-  ix('creatorWithdrawSurplus', [165, 3, 137, 7, 28, 134, 76, 80], MIGRATION),
-  ix('partnerWithdrawSurplus', [168, 173, 72, 100, 201, 98, 38, 92], MIGRATION),
   ix('withdrawMigrationFee', [237, 142, 45, 23, 129, 6, 222, 162], MIGRATION),
 ].map(Object.freeze))
 const BY_DISCRIMINATOR = new Map(STOCK_DBC_INSTRUCTIONS.map(entry => [entry.discriminator, entry]))

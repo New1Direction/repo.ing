@@ -259,21 +259,26 @@ export async function recordStockGraduationEvent(db, state) {
   return rows.length === 1
 }
 
-// A reading of the curve's progress. Kept when it says something new (reserve, threshold, migration) or, while the curve trades,
-// when the last one is older than heartbeatMs, so the public view stays fresh without a row every pass. A migrated curve never
-// changes again: its migrated reading is kept once (the public view of a graduated market rests on stock_graduation_events).
-// observed_at is the finalized chain time of the reading (never later than the check), so freshness is judged conservatively.
+// A reading of the curve's progress: a new row when it says something new (reserve, threshold, migration). While the curve trades
+// and nothing changed, the newest row is refreshed in place (observed_at, slot) once it is heartbeatMs old, so the public view
+// stays fresh with one row per change, not one per minute. A migrated curve never changes again: its migrated reading is kept
+// once (the public view of a graduated market rests on stock_graduation_events). observed_at is the finalized chain time of the
+// reading (never later than the check), so freshness is judged conservatively. Returns 'inserted', 'refreshed' or null.
 export const STOCK_OBSERVATION_HEARTBEAT_MS = 60_000
 export async function recordStockObservation(db, state, { heartbeatMs = STOCK_OBSERVATION_HEARTBEAT_MS, now = Date.now } = {}) {
   const migrated = state.phase === 'GRADUATED'
-  const { rows: [last] } = await db.query(`select quote_reserve::text as reserve, migration_threshold::text as threshold, is_migrated, observed_at
+  const { rows: [last] } = await db.query(`select id, quote_reserve::text as reserve, migration_threshold::text as threshold, is_migrated, observed_at
     from stock_graduation_observations where github_repo_id = $1 order by observed_at desc, id desc limit 1`, [state.repoId])
-  if (last && last.reserve === state.reserveBaseUnits && last.threshold === state.thresholdBaseUnits && last.is_migrated === migrated &&
-      (migrated || now() - new Date(last.observed_at).getTime() < heartbeatMs)) return false
+  if (last && last.reserve === state.reserveBaseUnits && last.threshold === state.thresholdBaseUnits && last.is_migrated === migrated) {
+    if (migrated || now() - new Date(last.observed_at).getTime() < heartbeatMs) return null
+    await db.query(`update stock_graduation_observations set observed_at = greatest(observed_at, $2::timestamptz), slot = greatest(slot, $3::bigint)
+      where id = $1`, [last.id, state.chainTime, String(state.slot)])
+    return 'refreshed'
+  }
   await db.query(`insert into stock_graduation_observations (github_repo_id, asset_id, quote_mint, pool, slot, observed_at, quote_reserve,
     migration_threshold, is_migrated) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
   [state.repoId, state.assetId, state.quoteMint, state.curve, String(state.slot), state.chainTime, state.reserveBaseUnits, state.thresholdBaseUnits, migrated])
-  return true
+  return 'inserted'
 }
 
 // DAMM fee checkpoints (stock fee policy, src/stock-fee-policy.mjs dammCheckpoint): each side's cumulative earnings (unclaimed +

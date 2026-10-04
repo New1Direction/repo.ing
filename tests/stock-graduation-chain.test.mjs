@@ -26,7 +26,7 @@ import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
 import { prepareCheckedTrade } from '../src/trade-prepare.mjs'
 import { createStockGraduation } from '../src/stock-graduation.mjs'
-import { createStockGraduationMonitor } from '../src/stock-graduation-monitor.mjs'
+import { createStockGraduationMonitor, stockGraduationPass } from '../src/stock-graduation-monitor.mjs'
 import { createStockFeeIndexer } from '../src/stock-fee-indexer.mjs'
 import { stockDammSwapEvents } from '../src/stock-damm-trades.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
@@ -134,11 +134,12 @@ test('a METAx-paired market graduates: proven, its DAMM swaps indexed in METAx, 
     const monitor = createStockGraduationMonitor({ pool, connection, verification, config, env: { ...process.env, NODE_ENV: 'test' } })
     // A later job (PR-D's reconciliation) runs in the same pass and lock, with the verified state.
     monitor.addHook({ name: 'probe', run: async ({ db, market: hooked, state }) => ({ phase: state.phase, repoId: hooked.githubRepoId,
-      locked: (await db.query("select count(*)::int as n from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()")).rows[0].n }) })
+      locked: (await db.query("select count(*)::int as n from pg_locks where locktype = 'advisory' and pid = pg_backend_pid()")).rows[0].n,
+      slot: BigInt(state.slot) }) })
     const pass = async () => {
       const results = await monitor.runOnce()
       assert.equal(results.length, 1, 'stock-paired markets only')
-      assert.equal(results[0].status, 'VERIFIED', JSON.stringify(results))
+      assert.equal(results[0].status, 'VERIFIED', JSON.stringify(results, (_, value) => typeof value === 'bigint' ? String(value) : value))
       assert.deepEqual([results[0].hooks.probe.phase, results[0].hooks.probe.repoId, results[0].hooks.probe.locked], [results[0].phase, githubRepoId, 1])
       return results[0]
     }
@@ -156,6 +157,10 @@ test('a METAx-paired market graduates: proven, its DAMM swaps indexed in METAx, 
 
     await t.test('on the curve: progress in METAx, no graduation yet', async () => {
       assert.deepEqual([(await curvePass()).status, (await pool.query('select count(*)::int as n from stock_fee_events')).rows[0].n], ['OK', 0], 'the launch, no swap yet')
+      // The worker's own pass (scripts/run-worker.mjs) never rejects, even with a hook returning a BigInt.
+      const lines = []
+      assert.equal(await stockGraduationPass(monitor, line => lines.push(line)), false)
+      assert.equal(typeof JSON.parse(lines[0]).stockGraduation[0].hooks.probe.slot, 'string')
       const result = await pass()
       assert.deepEqual([result.phase, result.curve, result.migration], ['CURVE', 'active', null])
       const { rows: [observation] } = await pool.query('select asset_id, quote_mint, pool, migration_threshold::text, is_migrated from stock_graduation_observations')
@@ -170,6 +175,20 @@ test('a METAx-paired market graduates: proven, its DAMM swaps indexed in METAx, 
         minimumAmountOut: new BN(1), swapBaseForQuote: false, swapMode: DbcSwapMode.PartialFill, referralTokenAccount: null }), [whale])
       const full = await pass()
       assert.deepEqual([full.phase, full.curve, full.progressPercent, full.migration], ['CURVE', 'migrating', 100, null])
+      // Before the migration, the completed curve's surplus and leftover withdrawals: whichever the program allows now moves no
+      // swap fee, and the curve indexer goes on past it (it never stops the market).
+      const creatorFunds = await connection.requestAirdrop(creator.publicKey, 1_000_000_000)
+      await connection.confirmTransaction({ signature: creatorFunds, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
+      const withdrawals = {}
+      for (const [name, build, signers] of [
+        ['partnerWithdrawSurplus', () => dbc.partner.partnerWithdrawSurplus({ pool: curve, feeClaimer: partner.publicKey }), [partner]],
+        ['creatorWithdrawSurplus', () => dbc.creator.creatorWithdrawSurplus({ creator: creator.publicKey, pool: curve }), [creator]],
+        ['withdrawLeftover', () => dbc.migration.withdrawLeftover({ pool: curve, payer: whale.publicKey }), [whale]]]) {
+        try { withdrawals[name] = { landed: await send(await build(), signers) } }
+        catch (error) { withdrawals[name] = { refused: String(error?.message ?? error).match(/custom program error: 0x[0-9a-f]+|Error Code: \w+/)?.[0] ?? 'refused' } }
+      }
+      console.log(JSON.stringify({ beforeMigration: withdrawals }))
+      assert.equal((await curvePass()).status, 'OK', `the curve indexer goes on: ${JSON.stringify(withdrawals)}`)
       // As Meteora's migrator does on mainnet: the pool authority pays the new pool's rent; anyone may send the migration.
       await send(new Transaction().add(SystemProgram.transfer({ fromPubkey: whale.publicKey, toPubkey: deriveDbcPoolAuthority(), lamports: 1_000_000_000 })), [whale])
       const fixed = await dbc.state.getPoolConfig(stockConfig.publicKey)
@@ -243,6 +262,31 @@ test('a METAx-paired market graduates: proven, its DAMM swaps indexed in METAx, 
       assert.equal(BigInt(totals.creator.launcher) + BigInt(totals.creator.accumulator), snapshot.earned)
       assert.deepEqual([totals.partner.launcher, totals.partner.accumulator], ['0', String(snapshot.partner.earned)])
       assert.equal((await pass()).checkpoints.length, 0, 'nothing new earned, nothing new credited')
+    })
+
+    await t.test('a v1 swap and dust swaps on the pool are indexed like any other swap, never quarantined', async () => {
+      const amm = new CpAmm(connection), poolState = await amm.fetchPoolState(dammPool)
+      const trader = await funded(connection)
+      await holdMetax(trader, 100_000_000n)
+      const accounts = { payer: trader.publicKey, pool: dammPool, tokenAMint: mint, tokenBMint: METAX, tokenAVault: poolState.tokenAVault,
+        tokenBVault: poolState.tokenBVault, tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_2022_PROGRAM_ID, referralTokenAccount: null }
+      // The v1 swap instruction, as aggregators still send it.
+      const v1 = await send(await amm.swap({ ...accounts, inputTokenMint: METAX, outputTokenMint: mint, amountIn: new BN(10_000_000), minimumAmountOut: new BN(1) }), [trader])
+      // Dust both ways: whatever the program accepts is a swap to record, never a reason to pin the market in REVIEW.
+      const dust = {}
+      for (const [name, buy] of [['dustBuy', true], ['dustSell', false]]) {
+        try {
+          dust[name] = await send(await amm.swap2({ ...accounts, poolState, swapMode: SwapMode.ExactIn, inputTokenMint: buy ? METAX : mint,
+            outputTokenMint: buy ? mint : METAX, amountIn: new BN(1), minimumAmountOut: new BN(0) }), [trader])
+        } catch (error) { dust[name] = { refused: String(error?.message ?? error).match(/custom program error: 0x[0-9a-f]+|Error Code: \w+/)?.[0] ?? 'refused' } }
+      }
+      const result = await pass()
+      const landed = [v1, ...Object.values(dust).filter(value => typeof value === 'string')]
+      const { rows } = await pool.query(`select signature, direction, quote_amount::text, base_amount::text from stock_trade_events
+        where venue = 'damm' and signature = any($1) order by slot, event_index`, [landed])
+      console.log(JSON.stringify({ v1Swap: v1, dust, rows }))
+      assert.deepEqual([result.trades.quarantined, rows.length], [[], landed.length], 'every landed swap is a row')
+      assert.equal(rows.find(row => row.signature === v1).direction, 'buy')
     })
 
     await t.test('the site\'s trade path buys and sells DOCUSAURUS for METAx in the graduated pool, settled to the raw unit', async () => {

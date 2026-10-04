@@ -44,11 +44,13 @@ export function stockDammSwapEvents(transaction, { mint, quoteMint, pool, coder 
   const quote = keyText(quoteMint, 'STOCK_QUOTE_MINT'), base = keyText(mint, 'Market mint'), destination = keyText(pool, 'Canonical pool')
   if (quote === NATIVE_MINT.toBase58()) throw Error('STOCK_QUOTE_MINT_REQUIRED')
   if (!transaction?.meta || transaction.meta.err) throw Error('DAMM_TRADE_EVIDENCE_MISSING')
+  // Without the recorded inner instructions a swap made through another program cannot be seen (as the curve parser refuses).
+  if (!Array.isArray(transaction.meta.innerInstructions)) unmatched('the transaction has no recorded inner instructions')
   const message = transaction.transaction.message, keys = message.accountKeys
   const onPool = ix => keys[ix.programIdIndex]?.equals(CP_AMM_PROGRAM_ID) && (ix.accounts ?? []).some(index => keys[index]?.toBase58() === destination)
   // Liquidity, fee claims and other known instructions on the pool are not swaps; an instruction the coder does not know is.
   const known = bytes => { try { return Boolean(coder.instruction.decode(bytes)) } catch { return false } }
-  const grouped = new Set((transaction.meta.innerInstructions ?? []).map(group => group.index))
+  const grouped = new Set(transaction.meta.innerInstructions.map(group => group.index))
   // A swap can only report itself through an event CPI: an outer swap on the pool with no inner instructions never did.
   for (const [index, ix] of message.instructions.entries()) {
     if (grouped.has(index) || !onPool(ix)) continue
@@ -58,7 +60,7 @@ export function stockDammSwapEvents(transaction, { mint, quoteMint, pool, coder 
   }
   const result = []
   let ordinal = 0
-  for (const group of transaction.meta.innerInstructions ?? []) {
+  for (const group of transaction.meta.innerInstructions) {
     const outer = message.instructions[group.index]
     if (!outer) throw Error('DAMM_TRADE_ORDERING_MISSING')
     // Swaps on the pool still running at each depth, waiting for their one event.
@@ -114,13 +116,14 @@ function swapFields(d, trader, group, instruction) {
   if (d.collectFeeMode !== 1) unmatched('a swap event collects fees outside the stock')
   const quoteAmount = (direction === 'buy' ? d.includedTransferFeeAmountIn : d.excludedTransferFeeAmountOut).toString()
   const baseAmount = (direction === 'buy' ? d.excludedTransferFeeAmountOut : d.includedTransferFeeAmountIn).toString()
-  if (!/^[1-9]\d*$/.test(quoteAmount) || !/^[1-9]\d*$/.test(baseAmount)) unmatched('a swap event moved no stock or no market token')
+  // A dust swap can move nothing out (its fee takes the whole input): still a swap, recorded with its zero amounts.
+  if (!/^\d+$/.test(quoteAmount) || !/^\d+$/.test(baseAmount)) unmatched('a swap event has no valid amounts')
   // The stock moves without a Token-2022 transfer fee (a stock pair launches only without one); one appearing later is for
   // review, never a guess: what the wallet sent or got must be what the pool took or paid.
   const [moved, pooled] = direction === 'buy' ? [d.includedTransferFeeAmountIn, d.swapResult?.includedFeeInputAmount] : [d.excludedTransferFeeAmountOut, d.swapResult?.outputAmount]
   if (pooled === undefined || moved.toString() !== pooled.toString()) unmatched('a swap event shows a transfer fee on the stock')
   const quoteVolume = (direction === 'buy' ? d.swapResult.excludedFeeInputAmount : d.excludedTransferFeeAmountOut)?.toString()
-  if (!/^[1-9]\d*$/.test(quoteVolume ?? '') || BigInt(quoteVolume) > BigInt(quoteAmount)) unmatched('a swap event has no valid fee-excluded stock amount')
+  if (!/^\d+$/.test(quoteVolume ?? '') || BigInt(quoteVolume) > BigInt(quoteAmount)) unmatched('a swap event has no valid fee-excluded stock amount')
   const nextSqrtPrice = d.swapResult?.nextSqrtPrice?.toString()
   if (!/^[1-9]\d*$/.test(nextSqrtPrice ?? '') || BigInt(nextSqrtPrice) >= (1n << 128n)) unmatched('a swap event has no valid next price')
   const tradedAt = new Date(Number(d.currentTimestamp?.toString()) * 1000)

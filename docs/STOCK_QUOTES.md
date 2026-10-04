@@ -176,7 +176,9 @@ query is unchanged.
   non-swap (the launch, fee claims, metadata, a creator transfer) with the pool, config and mints in their places. Every swap
   event naming the pool must come from a canonical swap. Anything else is quarantined (`STOCK_FEE_EVIDENCE_QUARANTINED` on the
   operator alert feed), retried every run and credited once it can be matched. A migration instruction is an ERROR: graduation
-  is indexed separately. Event ordinals are the SOL parser's, so (signature, event_index) means the same in both ledgers.
+  is indexed separately. A completed curve's surplus and leftover withdrawals are known non-swaps: they move no swap fee, and
+  the surplus ones can land before the migration. Event ordinals are the SOL parser's, so (signature, event_index) means the
+  same in both ledgers.
 - **Accrual** (`src/stock-fee-accrual.mjs`) checks the market's stamp against the registry, its registered stock config, the
   live curve (pool, creator, not migrated) and the config (the stock as quote through Token-2022, fees collected in the stock,
   creator share 71%). Each swap becomes one `stock_fee_events` row (the creator's 71% of the trading fee rounded down, the
@@ -268,8 +270,9 @@ is in exactly one).
 - **The worker** (`src/stock-graduation-monitor.mjs`, its own pass every 30 s, so a stock backlog never delays SOL graduation)
   checks each stock-paired market under its own lock, with two providers agreeing on every read (the SOL rule): the network,
   the finalized curve and config, the graduated pool and both positions, and the migration transaction.
-  - A reading of the curve's progress goes to `stock_graduation_observations` when it changed, or every minute while the curve
-    trades; a migrated curve's reading is kept once.
+  - A reading of the curve's progress goes to `stock_graduation_observations` when it changed. While the curve trades and
+    nothing changed, the newest reading is refreshed in place every minute (one row per change, not one per minute); a
+    migrated curve's reading is kept once.
   - Once migrated, the proof goes to `stock_graduation_events`, once: the curve's own finalized migrate instruction into the
     pool derived from the config, with the stock as its quote through Token-2022 (`stockMigrationPosition`, which requires the
     quote mint). A different proof later is a conflict to review, never a replacement. The proof is also the curve
@@ -285,7 +288,8 @@ is in exactly one).
     cumulative earnings (unclaimed + claimed, in the stock) at a finalized slot, crediting the growth since that side's last
     checkpoint. The creator side pays the launcher `floor(earned * 150 / 497)` as a running total; the partner side goes to the
     accumulator whole. A side whose earnings fell is refused for review.
-  - Later jobs (reconciliation) run inside the same pass through its hooks (`addHook`).
+  - Later jobs (reconciliation) run inside the same pass through its hooks (`addHook`). The worker's pass
+    (`stockGraduationPass`) never rejects, whatever a hook returns: it runs un-awaited beside every SOL job.
   - Anything it cannot verify makes the market REVIEW with a stable code and a `STOCK_GRADUATION_REVIEW` alert. A graduated
     pool Meteora has disabled cannot be traded but is still recorded, and is reported for review the same way. Stock alerts
     have their own kinds in `graduation_alerts`, so nothing meant for SOL markets (public milestone posts) reads them.
@@ -294,7 +298,12 @@ is in exactly one).
   - a swap on the pool that names other mints;
   - a swap without exactly one swap event, or a swap event without its swap or one that does not decode;
   - fees outside the stock, or a transfer fee on the stock;
-  - any instruction on the pool the program's coder does not know.
+  - any instruction on the pool the program's coder does not know;
+  - a transaction without recorded inner instructions (a swap routed through another program could not be seen).
+
+  Both swap instructions (`swap`, as aggregators still send it, and `swap2`) emit `EvtSwap2` and index alike. A dust swap the
+  program accepts with nothing out (its fee takes the whole input) is recorded with its zero amounts, so no one can pin a
+  market in REVIEW with one.
 
   A quarantined swap is a durable `STOCK_DAMM_SWAP_QUARANTINED` alert, retried every run until it parses (then recorded and
   acknowledged); while one is open the market stays REVIEW.

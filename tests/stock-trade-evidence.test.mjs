@@ -137,6 +137,11 @@ test('a swap event for the pool outside a canonical swap, or an instruction on t
   assert.equal(parse(withOuter(claim, [0, configIx, pool, 0, 0, 0, 0, baseMint, quoteIx])).events.length, 1)
   unmatched(withOuter(claim, [0, configIx, pool, 0, 0, 0, 0, baseMint, baseMint]), /claimTradingFee names the pool with other accounts/)
   unmatched(withOuter(discriminator('claimCreatorTradingFee'), [pool]), /claimCreatorTradingFee names the pool with other accounts/)
+  // A completed curve's surplus and leftover withdrawals move no swap fee: matched in their layouts, never a stop of the market.
+  for (const [name, mint] of [['creatorWithdrawSurplus', quoteIx], ['partnerWithdrawSurplus', quoteIx], ['withdrawLeftover', baseMint]]) {
+    assert.equal(parse(withOuter(discriminator(name), [0, configIx, pool, 0, 0, mint])).events.length, 1, name)
+    unmatched(withOuter(discriminator(name), [0, configIx, pool, 0, 0, mint === quoteIx ? baseMint : quoteIx]), new RegExp(`${name} names the pool with other accounts`))
+  }
   // Instructions that do not name the pool are not this market's (the swap is still found).
   assert.equal(parse(withOuter([1, 2, 3, 4, 5, 6, 7, 8], [configIx])).events.length, 1)
 })

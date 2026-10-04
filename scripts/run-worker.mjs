@@ -7,7 +7,7 @@ import { createTrendIntake } from '../src/trend-intake.mjs'
 import { createLiquidityRecovery } from '../src/liquidity-settlement.mjs'
 import { createBuilderReinvestRecovery } from '../src/builder-reinvest.mjs'
 import { createGraduationMonitor } from '../src/graduation-readiness.mjs'
-import { createStockGraduationMonitor } from '../src/stock-graduation-monitor.mjs'
+import { createStockGraduationMonitor, stockGraduationPass } from '../src/stock-graduation-monitor.mjs'
 import { createReserveAlertDelivery, createReserveWebhookSender } from '../src/reserve-alerts.mjs'
 import { createAllocationRecovery } from '../src/builder-allocation-settlement.mjs'
 import { createPlatformFeeRecovery } from '../src/platform-fees.mjs'
@@ -136,12 +136,8 @@ const graduation=createGraduationMonitor({pool,connection:graduationRPC(rpc),con
 const stockGraduation=createStockGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
 let stockGraduationTask=null,nextStockGraduationCheck=0
-async function observeStockGraduation(){
-  const result={}
-  try{result.stockGraduation=await stockGraduation.runOnce()}catch{result.stockGraduationError='Stock graduation unavailable'}
-  if(result.stockGraduationError||result.stockGraduation?.some(item=>item.status==='REVIEW'))process.exitCode=1
-  if(result.stockGraduationError||result.stockGraduation?.length)console.log(JSON.stringify(result))
-}
+// Never rejects (stockGraduationPass), since it runs un-awaited beside the main loop.
+async function observeStockGraduation(){if(await stockGraduationPass(stockGraduation))process.exitCode=1}
 const operatingWallets=createOperatingWalletMonitor({pool,connections:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?[graduationRPC(rpc),graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL)]:[]})
 let operatingWalletTask=null,nextOperatingWalletCheck=0

@@ -75,14 +75,20 @@ test('stock graduation ledgers on PostgreSQL', { timeout: 120_000 }, async t => 
     })
 
     await t.test('observations: a new reading when something changed or the last is a heartbeat old; never for a SOL market', async () => {
-      assert.equal(await recordStockObservation(pool, state()), true)
-      assert.equal(await recordStockObservation(pool, state({ slot: 101 })), false, 'nothing new yet')
-      assert.equal(await recordStockObservation(pool, state({ slot: 102, reserveBaseUnits: '1050000000' })), true)
-      assert.equal(await recordStockObservation(pool, state({ slot: 103, reserveBaseUnits: '1050000000' }), { now: () => Date.now() + 61_000 }), true, 'heartbeat')
+      assert.equal(await recordStockObservation(pool, state()), 'inserted')
+      assert.equal(await recordStockObservation(pool, state({ slot: 101 })), null, 'nothing new yet')
+      assert.equal(await recordStockObservation(pool, state({ slot: 102, reserveBaseUnits: '1050000000' })), 'inserted')
+      // A heartbeat with nothing new refreshes the newest reading in place: one row per change, not one per minute.
+      await new Promise(resolve => setTimeout(resolve, 5))
+      const later = new Date().toISOString()
+      assert.equal(await recordStockObservation(pool, state({ slot: 103, reserveBaseUnits: '1050000000', chainTime: later }), { now: () => Date.now() + 61_000 }), 'refreshed')
       // The newest reading, as the curve route reads it (observed_at is the finalized chain time of the read).
       const { rows: readings } = await pool.query(`select quote_reserve::text, migration_threshold::text, is_migrated, slot::text from stock_graduation_observations
         where github_repo_id = 94911145 order by observed_at desc, id desc`)
-      assert.deepEqual(readings.map(row => [row.quote_reserve, row.slot]), [['1050000000', '103'], ['1050000000', '102'], ['700000000', '100']])
+      assert.deepEqual(readings.map(row => [row.quote_reserve, row.slot]), [['1050000000', '103'], ['700000000', '100']])
+      const { rows: [newest] } = await pool.query(`select observed_at from stock_graduation_observations where github_repo_id = 94911145
+        order by observed_at desc, id desc limit 1`)
+      assert.equal(newest.observed_at.toISOString(), later)
       assert.deepEqual([readings[0].migration_threshold, readings[0].is_migrated], ['1400000000', false])
       await assert.rejects(recordStockObservation(pool, state({ repoId: '1296269', reserveBaseUnits: '1' })), /does not match a stock-paired market/)
       await assert.rejects(recordStockObservation(pool, state({ assetId: 'msft-xstock', quoteMint: MSFT.mint, reserveBaseUnits: '2' })), /does not match a stock-paired market/)
@@ -94,8 +100,8 @@ test('stock graduation ledgers on PostgreSQL', { timeout: 120_000 }, async t => 
       assert.equal(await recordStockGraduationEvent(pool, graduated(fees)), false)
       await assert.rejects(recordStockGraduationEvent(pool, graduated(fees, { migration: { ...migration, signature: bs58.encode(Buffer.alloc(64, 9)) } })), /DUPLICATE_GRADUATION_CONFLICT/)
       await assert.rejects(recordStockGraduationEvent(pool, graduated(fees, { migrationHash: 'b'.repeat(64) })), /DUPLICATE_GRADUATION_CONFLICT/)
-      assert.equal(await recordStockObservation(pool, graduated(fees)), true)
-      assert.equal(await recordStockObservation(pool, graduated(fees), { now: () => Date.now() + 3_600_000 }), false, 'a migrated curve never changes: no heartbeat')
+      assert.equal(await recordStockObservation(pool, graduated(fees)), 'inserted')
+      assert.equal(await recordStockObservation(pool, graduated(fees), { now: () => Date.now() + 3_600_000 }), null, 'a migrated curve never changes: no heartbeat')
       const { rows: [event] } = await pool.query('select asset_id, quote_mint, dbc_pool, damm_pool, migration_signature, slot::text from stock_graduation_events')
       assert.deepEqual(event, { asset_id: 'meta-xstock', quote_mint: META.mint, dbc_pool: fixture.market.curve, damm_pool: fixture.dammPool,
         migration_signature: migration.signature, slot: String(migration.slot) })
