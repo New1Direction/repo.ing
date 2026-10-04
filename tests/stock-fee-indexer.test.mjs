@@ -12,11 +12,16 @@ const market = { repoId: '94911145', mint: Keypair.generate().publicKey.toBase58
   launchSignature: 'launch', creatorWallet: Keypair.generate().publicKey.toBase58(), quoteAssetId: META.assetId, quoteMint: META.mint }
 
 function fakeDatabase() {
-  const state = { cursor: null, alerts: [], fees: new Map(), marketQueries: [] }
+  const state = { cursor: null, alerts: [], fees: new Map(), marketQueries: [], migration: null }
   const query = async (sql, params = []) => {
     if (/advisory/.test(sql)) return { rows: [{ locked: true }] }
     if (/^select github_repo_id::text as "repoId"/.test(sql)) { state.marketQueries.push(sql); return { rows: [market] } }
     if (/^select last_signature/.test(sql)) return { rows: state.cursor ? [state.cursor] : [] }
+    // The graduation job's proof of the curve's migration (src/stock-graduation-monitor.mjs).
+    if (/^select migration_signature as signature, slot::text as slot from stock_graduation_events/.test(sql)) {
+      assert.deepEqual(params, [market.repoId])
+      return { rows: state.migration ? [state.migration] : [] }
+    }
     if (/^insert into stock_pool_cursors/.test(sql)) {
       assert.deepEqual([params[0], params[1]], [market.pool, market.repoId])
       state.cursor = { last_signature: params[2], last_slot: params[3] }
@@ -41,8 +46,10 @@ function fakeDatabase() {
 function harness(history, { curve = async () => ({}) } = {}) {
   const db = fakeDatabase()
   let fixed = false, reads = 0
-  const accrual = { checkCurve: curve, recordTradeFees: async ({ githubRepoId, signatures: [signature], allowNonSwap }) => {
+  const credited = []
+  const accrual = { checkCurve: curve, recordTradeFees: async ({ githubRepoId, signatures: [signature], allowNonSwap, migration = null }) => {
     assert.deepEqual([githubRepoId, allowNonSwap], [market.repoId, true])
+    credited.push({ signature, migration: migration?.signature ?? null })
     if (signature === 'unmatched' && !fixed) throw new StockEvidenceUnmatchedError(['instruction 3: an unknown DBC instruction names the pool'])
     if (signature === 'rpc-down') throw Error('Solana RPC transaction read returned HTTP 503')
     if (signature === 'migration') throw new StockCurveMigratedError()
@@ -52,7 +59,7 @@ function harness(history, { curve = async () => ({}) } = {}) {
   } }
   const connection = { getSignaturesForAddress: async () => { reads++; return history } }
   const indexer = createStockFeeIndexer({ pool: db, connection, config: Keypair.generate().publicKey.toBase58(), accrual })
-  return { db, indexer, fix: () => { fixed = true }, reads: () => reads }
+  return { db, indexer, fix: () => { fixed = true }, reads: () => reads, credited }
 }
 const item = (signature, slot, err = null) => ({ signature, slot, err })
 
@@ -111,4 +118,27 @@ test('a cursor missing from the finalized history is an ERROR, never a skip', as
   assert.equal(result.status, 'ERROR')
   assert.match(result.error, /history does not contain cursor or launch signature/)
   assert.equal(db.state.fees.size, 0)
+})
+
+test('a migrated curve is finished once its migration is proven: the swaps before it credited, the cursor stops on it, GRADUATED', async () => {
+  const history = [item('claim', 6), item('migration', 5), item('good-2', 4), item('good-1', 3), item('launch', 1)]
+  const checks = []
+  const { db, indexer, reads, credited } = harness(history, { curve: async (repoId, _executor, migration = null) => {
+    assert.equal(repoId, market.repoId)
+    checks.push(migration?.signature ?? null)
+    if (!migration) throw new StockCurveMigratedError()
+  } })
+  // Not proven yet by the graduation job: an ERROR before any history is read, as before.
+  let [result] = await indexer.runOnce()
+  assert.deepEqual([result.status, result.error, reads(), db.state.cursor], ['ERROR', new StockCurveMigratedError().message, 0, null])
+  // Proven: every swap before the migration is credited (with the proof), never the migration or the curve's later fee claims.
+  db.state.migration = { signature: 'migration', slot: '5' }
+  ;[result] = await indexer.runOnce()
+  assert.deepEqual([result.status, result.migration, result.creditedBaseUnits, result.cursorAfter], ['GRADUATED', 'migration', 30n, { signature: 'migration', slot: '5' }])
+  assert.deepEqual(credited, ['launch', 'good-1', 'good-2'].map(signature => ({ signature, migration: 'migration' })))
+  assert.deepEqual(checks, [null, null, 'migration'])
+  // From then on the market is GRADUATED here without reading its history again.
+  const before = reads()
+  ;[result] = await indexer.runOnce()
+  assert.deepEqual([result.status, result.creditedBaseUnits, result.discovered, reads(), credited.length], ['GRADUATED', 0n, 0, before, 3])
 })

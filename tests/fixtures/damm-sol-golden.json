@@ -1,0 +1,94 @@
+{
+  "quoteBuy": {
+    "tradingFeeLamports": "119990",
+    "priceImpactPercent": 0.018,
+    "outputAmount": "55959630066",
+    "minimumAmountOut": "55400033765",
+    "slippageBps": 100,
+    "venue": "damm"
+  },
+  "quoteSell": {
+    "tradingFeeLamports": "21181",
+    "priceImpactPercent": 0.0032,
+    "outputAmount": "1744003",
+    "minimumAmountOut": "1700402",
+    "slippageBps": 250,
+    "venue": "damm"
+  },
+  "buy": {
+    "record": {
+      "v": 1,
+      "phase": "graduated",
+      "direction": "buy",
+      "wallet": "8u8LCMQvMKrFxHbn326Ltcqv72HDPEC5FPMgPC3mXvxV",
+      "marketId": 7,
+      "githubRepoId": "1388219884",
+      "mint": "59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be",
+      "curve": "GyfFHe77pcZtdgGnWGw4T1VxCPB6JJyGLfjzMagDdsz3",
+      "pool": "FHw49kTEEjzBhRuMff9F1Xw1bLcBpwvsaSboaAWpAcaT",
+      "tokenAVault": "BYBu5xTZWYFSmtV7wogZyVbeSJu9nPWdb7xpMQ4jeR8Z",
+      "tokenBVault": "9gu44zqNnRCxCt9jkrAmC3UBczYyuLbeJvGDsRJfYbur",
+      "referral": null,
+      "wsolRent": null,
+      "amountIn": "10000000",
+      "minimumAmountOut": "55400033765",
+      "message": "AQAJD3VcTLklbKfNxKz9xs/u2oSQF+W5+VFOmRkb1n4LDUJ2el83oHm/4LGsWVD5w6VmVCewAKsx10aCnWKZBV+NwduBFgDdiUe69ypLe37kXuignPro+vj20sAzenyPAbvWmYNDozHLAyPIawU0jPlUQg9xJp+31HpggESVG6mZRJ3GnJIyYD3Hhput+K+Af8y2sLbg3e1HOhgvn6m6jJ0ueR7UWgeCcpKqa/zWcK39I8hR56+Jg+3ZEAJLtf7a4r1YuAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKnbns0RkChz8WUyLytCgkQEcrH3RVr+DqDP7Igjrd609lN04GUYVRq3sRplcqR7aFiqoFXA2SFSyE3JmLbgZkYyXJY9OJInxuz0QKRSODYMLWhOZ2v8QhASOe9jb6fhZAwZGb+UhFzL/7K26csOb57yM5bvF9xJrLEObOkAAAAAJLSE1ZXoVnCuH1LZqcNuOl1I4n/dqryBs7QY6OPla7fLM1TWspfFzasgi3Qdz5NkvvYpZspQDUAKVqQEcc6nlBpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAEG3fbh12Whk9nL4UbO63msHLSF7V9bN5E6jPWFfv8AqeMy2vkvq+zotj/3pEAF5f39mvoVh1a2HFqV+QSzuNCBCAoABQJyiwEACgAJA4AaBgAAAAAACQYAAQANBg4BAQkGAAMACAYOAQEGAgABDAIAAACAlpgAAAAAAA4BAQERCw4MBQEDBAIIDQAODgsHCxlBSz9M61tbiICWmAAAAAAA5W0Z5gwAAAAADgMBAAABCQ==",
+      "transaction": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAkPdVxMuSVsp83ErP3Gz+7ahJAX5bn5UU6ZGRvWfgsNQnZ6Xzegeb/gsaxZUPnDpWZUJ7AAqzHXRoKdYpkFX43B24EWAN2JR7r3Kkt7fuRe6KCc+uj6+PbSwDN6fI8Bu9aZg0OjMcsDI8hrBTSM+VRCD3Emn7fUemCARJUbqZlEncackjJgPceGm634r4B/zLawtuDd7Uc6GC+fqbqMnS55HtRaB4Jykqpr/NZwrf0jyFHnr4mD7dkQAku1/trivVi4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAqduezRGQKHPxZTIvK0KCRARysfdFWv4OoM/siCOt3rT2U3TgZRhVGrexGmVypHtoWKqgVcDZIVLITcmYtuBmRjJclj04kifG7PRApFI4NgwtaE5na/xCEBI572Nvp+FkDBkZv5SEXMv/srbpyw5vnvIzlu8X3EmssQ5s6QAAAAAktITVlehWcK4fUtmpw246XUjif92qvIGztBjo4+Vrt8szVNayl8XNqyCLdB3Pk2S+9ilmylANQApWpARxzqeUGm4hX/quBhPtof2NGGMA12sQ53BrrO1WYoPAAAAAAAQbd9uHXZaGT2cvhRs7reawctIXtX1s3kTqM9YV+/wCp4zLa+S+r7Oi2P/ekQAXl/f2a+hWHVrYcWpX5BLO40IEICgAFAnKLAQAKAAkDgBoGAAAAAAAJBgABAA0GDgEBCQYAAwAIBg4BAQYCAAEMAgAAAICWmAAAAAAADgEBARELDgwFAQMEAggNAA4OCwcLGUFLP0zrW1uIgJaYAAAAAADlbRnmDAAAAAAOAwEAAAEJ",
+      "blockhash": "GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi",
+      "lastValidBlockHeight": 400000123,
+      "slippageBps": 100,
+      "priorityFee": {
+        "computeUnitLimit": 101234,
+        "microLamports": 400000,
+        "lamports": "40494"
+      },
+      "referrer": null,
+      "tradingFeeLamports": "119990"
+    },
+    "amountIn": "10000000",
+    "minimumAmountOut": "55400033765",
+    "phase": "graduated",
+    "quoteMint": null,
+    "referral": null,
+    "pool": "FHw49kTEEjzBhRuMff9F1Xw1bLcBpwvsaSboaAWpAcaT",
+    "mint": "59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be"
+  },
+  "sell": {
+    "record": {
+      "v": 1,
+      "phase": "graduated",
+      "direction": "sell",
+      "wallet": "8u8LCMQvMKrFxHbn326Ltcqv72HDPEC5FPMgPC3mXvxV",
+      "marketId": 7,
+      "githubRepoId": "1388219884",
+      "mint": "59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be",
+      "curve": "GyfFHe77pcZtdgGnWGw4T1VxCPB6JJyGLfjzMagDdsz3",
+      "pool": "FHw49kTEEjzBhRuMff9F1Xw1bLcBpwvsaSboaAWpAcaT",
+      "tokenAVault": "BYBu5xTZWYFSmtV7wogZyVbeSJu9nPWdb7xpMQ4jeR8Z",
+      "tokenBVault": "9gu44zqNnRCxCt9jkrAmC3UBczYyuLbeJvGDsRJfYbur",
+      "referral": null,
+      "wsolRent": null,
+      "amountIn": "10000000000",
+      "minimumAmountOut": "1700402",
+      "message": "AQAJD3VcTLklbKfNxKz9xs/u2oSQF+W5+VFOmRkb1n4LDUJ2el83oHm/4LGsWVD5w6VmVCewAKsx10aCnWKZBV+NwduBFgDdiUe69ypLe37kXuignPro+vj20sAzenyPAbvWmYNDozHLAyPIawU0jPlUQg9xJp+31HpggESVG6mZRJ3GnJIyYD3Hhput+K+Af8y2sLbg3e1HOhgvn6m6jJ0ueR7UWgeCcpKqa/zWcK39I8hR56+Jg+3ZEAJLtf7a4r1YuAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKnbns0RkChz8WUyLytCgkQEcrH3RVr+DqDP7Igjrd609lN04GUYVRq3sRplcqR7aFiqoFXA2SFSyE3JmLbgZkYyXJY9OJInxuz0QKRSODYMLWhOZ2v8QhASOe9jb6fhZAwZGb+UhFzL/7K26csOb57yM5bvF9xJrLEObOkAAAAAJLSE1ZXoVnCuH1LZqcNuOl1I4n/dqryBs7QY6OPla7fLM1TWspfFzasgi3Qdz5NkvvYpZspQDUAKVqQEcc6nlBpuIV/6rgYT7aH9jRhjANdrEOdwa6ztVmKDwAAAAAAEG3fbh12Whk9nL4UbO63msHLSF7V9bN5E6jPWFfv8AqeMy2vkvq+zotj/3pEAF5f39mvoVh1a2HFqV+QSzuNCBBgoABQJyiwEACgAJA4AaBgAAAAAACQYAAwAIBg4BAQkGAAEADQYOAQELDgwFAwEEAggNAA4OCwcLGUFLP0zrW1uIAOQLVAIAAAAy8hkAAAAAAAAOAwEAAAEJ",
+      "transaction": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAkPdVxMuSVsp83ErP3Gz+7ahJAX5bn5UU6ZGRvWfgsNQnZ6Xzegeb/gsaxZUPnDpWZUJ7AAqzHXRoKdYpkFX43B24EWAN2JR7r3Kkt7fuRe6KCc+uj6+PbSwDN6fI8Bu9aZg0OjMcsDI8hrBTSM+VRCD3Emn7fUemCARJUbqZlEncackjJgPceGm634r4B/zLawtuDd7Uc6GC+fqbqMnS55HtRaB4Jykqpr/NZwrf0jyFHnr4mD7dkQAku1/trivVi4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAqduezRGQKHPxZTIvK0KCRARysfdFWv4OoM/siCOt3rT2U3TgZRhVGrexGmVypHtoWKqgVcDZIVLITcmYtuBmRjJclj04kifG7PRApFI4NgwtaE5na/xCEBI572Nvp+FkDBkZv5SEXMv/srbpyw5vnvIzlu8X3EmssQ5s6QAAAAAktITVlehWcK4fUtmpw246XUjif92qvIGztBjo4+Vrt8szVNayl8XNqyCLdB3Pk2S+9ilmylANQApWpARxzqeUGm4hX/quBhPtof2NGGMA12sQ53BrrO1WYoPAAAAAAAQbd9uHXZaGT2cvhRs7reawctIXtX1s3kTqM9YV+/wCp4zLa+S+r7Oi2P/ekQAXl/f2a+hWHVrYcWpX5BLO40IEGCgAFAnKLAQAKAAkDgBoGAAAAAAAJBgADAAgGDgEBCQYAAQANBg4BAQsODAUDAQQCCA0ADg4LBwsZQUs/TOtbW4gA5AtUAgAAADLyGQAAAAAAAA4DAQAAAQk=",
+      "blockhash": "GHtXQBsoZHVnNFa9YevAzFr17DJjgHXk3ycTKD5xD3Zi",
+      "lastValidBlockHeight": 400000123,
+      "slippageBps": 250,
+      "priorityFee": {
+        "computeUnitLimit": 101234,
+        "microLamports": 400000,
+        "lamports": "40494"
+      },
+      "referrer": null,
+      "tradingFeeLamports": "21181"
+    },
+    "amountIn": "10000000000",
+    "minimumAmountOut": "1700402",
+    "phase": "graduated",
+    "quoteMint": null,
+    "referral": null,
+    "pool": "FHw49kTEEjzBhRuMff9F1Xw1bLcBpwvsaSboaAWpAcaT",
+    "mint": "59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be"
+  }
+}
