@@ -10,7 +10,7 @@ const NO_HANDLES = new Map()
 
 // The traders behind the newest trades who linked X, read again only when a new trade arrives. A failed read leaves the
 // rows as they are.
-function useTraderHandles(mint, newest) {
+export function useTraderHandles(mint, newest) {
   const [handles, setHandles] = useState(NO_HANDLES)
   useEffect(() => {
     if (!newest) return

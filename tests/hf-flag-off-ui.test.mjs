@@ -13,7 +13,7 @@ delete process.env.HF_MARKETS_ENABLED
 process.env.TZ = 'UTC'
 
 const { MarketTable, RepoAvatar, RepoIdentity, RepoStats, GitHubLink } = await appModule('app/components/ui.jsx')
-const { HomeMarkets } = await appModule('app/components/home-markets.jsx')
+const { HomeBoard } = await appModule('app/components/home/home-board.jsx')
 const { ExploreList } = await appModule('app/components/explore-list.jsx')
 const { MoreMarkets } = await appModule('app/components/more-markets.jsx')
 const { TrustPanel } = await appModule('app/components/trust-panel.jsx')
@@ -60,7 +60,8 @@ function surfaces() {
   return {
     'market-table': html(h(MarketTable, { markets: GITHUB, usdPerSol: 150 })),
     'market-table-empty': html(h(MarketTable, { markets: [], empty: 'No indexed markets yet.' })),
-    'home-markets': html(h(HomeMarkets, { tabs: homeMarketTabs(GITHUB), usdPerSol: 150 })),
+    'home-board': html(h(HomeBoard, { title: 'Markets', tabs: [{ id: 'trending', label: 'Trending', note: 'Ranked by 24h volume.' }, { id: 'new', label: 'New', note: 'The newest launches.' }],
+      panels: { trending: h(MarketTable, { markets: homeMarketTabs(GITHUB).Trending, usdPerSol: 150 }), new: h(MarketTable, { markets: homeMarketTabs(GITHUB).New, usdPerSol: 150 }) } })),
     'explore-list': html(h(ExploreList, { markets: GITHUB, usdPerSol: 150 })),
     'explore-list-filtered': html(h(ExploreList, { markets: GITHUB, usdPerSol: null }), { query: 'view=new&owner=verified' }),
     'more-markets': html(h(MoreMarkets, { markets: selectMoreMarkets(GITHUB, { now: NOW }) })),

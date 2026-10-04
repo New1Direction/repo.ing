@@ -1,0 +1,165 @@
+/* Home page (app/(site)/page.jsx): the hero beside the live $REPOING card, the GitHub ticker, the tabbed market board and how
+   it works. Type from repo.ing's video brand (app/home-fonts.js: Archivo Black headlines, JetBrains Mono labels and
+   figures); colors only from the theme tokens, so light and dark both work. Motion is transform and opacity only. */
+.home{
+  --home-display:var(--font-display),"Arial Black","Helvetica Neue",Arial,sans-serif;
+  --home-mono:var(--font-mono),ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --home-width:min(100% - 94px,1354px);
+  --home-ease:cubic-bezier(.16,1,.3,1);
+  --home-glow:color-mix(in srgb,var(--green) 16%,transparent);
+  --home-accent:var(--green);
+  --home-sell:#f3c48c;
+  overflow-x:clip;
+  padding-bottom:28px
+}
+.home>section{width:var(--home-width);margin-inline:auto}
+
+/* Live dots: a ring that grows and fades (transform and opacity), off with reduced motion. */
+.home-kicker i,.live-badge i,.live-chart-dot{position:relative}
+.home-kicker i:after,.live-badge i:after,.live-chart-dot:after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid currentColor;opacity:0;animation:home-ping 2.4s var(--home-ease) infinite}
+@keyframes home-ping{0%{transform:scale(.55);opacity:.75}100%{transform:scale(1.9);opacity:0}}
+
+/* Hero */
+.home-hero{position:relative;isolation:isolate;display:grid;grid-template-columns:minmax(0,1.08fr) minmax(360px,.92fr);gap:clamp(32px,4.6vw,76px);align-items:center;padding:clamp(40px,5.4vw,84px) 0 clamp(36px,4vw,56px)}
+/* The flywheel video's backdrop: a green glow behind the live card over a faint grid that fades out. */
+.home-hero:before{content:"";position:absolute;z-index:-1;inset:-10% -12% -6% 38%;background:radial-gradient(closest-side,var(--home-glow),transparent 74%);pointer-events:none}
+.home-hero:after{content:"";position:absolute;z-index:-2;inset:-24px -64px 0;background-image:linear-gradient(to right,var(--border) 1px,transparent 1px),linear-gradient(to bottom,var(--border) 1px,transparent 1px);background-size:56px 56px;opacity:.28;-webkit-mask-image:radial-gradient(ellipse 62% 58% at 68% 42%,#000,transparent 78%);mask-image:radial-gradient(ellipse 62% 58% at 68% 42%,#000,transparent 78%);pointer-events:none}
+.home-hero-copy{min-width:0}
+.home-kicker{display:inline-flex;align-items:center;gap:11px;margin:0 0 20px;color:var(--muted);font-family:var(--home-mono);font-size:12px;font-weight:600;letter-spacing:.16em;text-transform:uppercase}
+.home-kicker i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--home-accent);color:var(--home-accent)}
+.home-hero h1{margin:0 0 20px;font-family:var(--home-display);font-size:clamp(44px,5.3vw,82px);font-weight:400;line-height:.95;letter-spacing:-.025em;text-wrap:balance}
+.home-lead{max-width:33em;margin:0 0 28px;color:var(--muted);font-size:clamp(17px,1.35vw,20px);line-height:1.5}
+.home-hero .repo-search-wrap{max-width:none;margin:0}
+.home-hero .repo-search{height:62px;border-color:var(--border-strong);background:var(--surface);box-shadow:0 18px 40px -26px rgba(0,0,0,.7);transition:border-color .15s,box-shadow .2s}
+.home-hero .repo-search:focus-within{border-color:var(--home-accent);box-shadow:0 0 0 4px var(--home-glow)}
+.home-hero .repo-search.launch-search button{height:100%;min-width:132px}
+.home-hero .search-helper{margin:10px 0 0;color:var(--dim);font-size:13px;text-align:left}
+.home-hero-links{display:flex;flex-wrap:wrap;gap:8px 24px;margin:18px 0 0}
+.home-hero-links a{display:inline-flex;align-items:center;gap:6px;color:var(--home-accent);font-size:14px;font-weight:650}
+.home-hero-links a:hover{text-decoration:underline;text-underline-offset:3px}
+.home-hero-links svg,.home-board-more svg{transition:transform .2s var(--home-ease)}
+.home-hero-links a:hover svg,.home-board-more:hover svg{transform:translateX(3px)}
+
+/* The platform's figures (components/home-highlights.jsx): number over label, in mono, between hairlines. */
+.home-proof{display:flex;flex-wrap:wrap;gap:14px 0;min-height:76px;margin:32px 0 0;padding-top:18px;border-top:1px solid var(--border)}
+.home-proof>span,.home-proof a{display:flex;flex-direction:column;gap:5px;color:var(--dim);font-family:var(--home-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+.home-proof>span{padding-right:26px;margin-right:26px;border-right:1px solid var(--border)}
+.home-proof>span:last-child{margin-right:0;padding-right:0;border-right:0}
+.home-proof strong{color:var(--text);font-size:clamp(19px,1.55vw,24px);font-weight:650;letter-spacing:-.02em;text-transform:none;font-variant-numeric:tabular-nums}
+.home-proof a:hover strong,.home-proof a:focus-visible strong{color:var(--home-accent)}
+.home-proof.is-loading .skeleton-line{width:min(440px,90%);height:42px}
+
+/* The live market card (components/home/live-market.jsx). Its frame is fixed, so streaming it in never moves the hero. */
+.live-market{display:flex;flex-direction:column;gap:16px;min-height:478px;padding:22px 22px 20px;border:1px solid var(--border);border-radius:16px;background:linear-gradient(180deg,color-mix(in srgb,var(--surface) 88%,var(--green) 12%),var(--surface) 38%);box-shadow:0 34px 80px -44px rgba(0,0,0,.8),inset 0 1px 0 color-mix(in srgb,var(--text) 7%,transparent)}
+.live-market-head{display:flex;align-items:center;gap:12px}
+.live-market-head .repo-avatar,.live-market-head .skeleton-avatar{width:46px;height:46px;border-radius:11px}
+.live-market-name{display:flex;flex:1;flex-direction:column;gap:4px;min-width:0}
+.live-market-name h2{margin:0;font-family:var(--home-display);font-size:23px;font-weight:400;line-height:1;letter-spacing:-.01em}
+.live-market-name span{overflow:hidden;color:var(--muted);font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.live-badge{display:inline-flex;align-items:center;gap:8px;padding:5px 11px;border:1px solid color-mix(in srgb,var(--home-accent) 38%,transparent);border-radius:999px;color:var(--home-accent);font-family:var(--home-mono);font-size:11px;font-weight:650;letter-spacing:.14em;text-transform:uppercase}
+.live-badge i{width:6px;height:6px;border-radius:50%;background:currentColor}
+.live-market-price{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;min-height:40px}
+.live-market-price strong{font-family:var(--home-mono);font-size:clamp(26px,2.3vw,34px);font-weight:650;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.live-market-price small{color:var(--dim);font-family:var(--home-mono);font-size:12px}
+.live-change{padding:3px 8px;border-radius:6px;font-family:var(--home-mono);font-size:14px;font-weight:650;font-variant-numeric:tabular-nums}
+.live-change.is-up{color:var(--home-accent);background:color-mix(in srgb,var(--green) 13%,transparent)}
+.live-change.is-down{color:var(--red);background:color-mix(in srgb,var(--red) 13%,transparent)}
+.live-chart{position:relative;height:118px;margin:0 -4px;color:var(--home-accent)}
+.live-chart.is-down{color:var(--red)}
+.live-chart svg{display:block;width:100%;height:100%;overflow:visible}
+.live-chart-line{fill:none;stroke:currentColor;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round}
+.live-chart-dot{position:absolute;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:currentColor;box-shadow:0 0 0 4px color-mix(in srgb,currentColor 22%,transparent)}
+.live-chart-empty{display:grid;place-items:center;height:100%;margin:0;color:var(--dim);font-size:13px}
+.live-market-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;padding:14px 0;border-block:1px solid var(--border)}
+.live-market-stats>div{display:flex;flex-direction:column;justify-content:space-between;gap:5px;min-width:0;padding:0 12px;border-left:1px solid var(--border)}
+.live-market-stats>div:first-child{padding-left:0;border-left:0}
+.live-market-stats dt{color:var(--dim);font-family:var(--home-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase}
+.live-market-stats dd{margin:0;overflow:hidden;font-family:var(--home-mono);font-size:15px;font-weight:650;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.live-trades{display:grid;gap:3px;min-height:145px;margin:0;padding:0;list-style:none;align-content:start}
+.live-trade{display:grid;grid-template-columns:48px minmax(0,auto) minmax(0,1fr) auto;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:8px;font-size:13px}
+.live-trade:nth-child(odd){background:color-mix(in srgb,var(--surface2) 70%,transparent)}
+.live-trade.is-new{animation:live-arrive .8s var(--home-ease)}
+@keyframes live-arrive{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+.live-trade-side{font-family:var(--home-mono);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.live-trade-side.buy{color:var(--home-accent)}
+.live-trade-side.sell{color:var(--home-sell)}
+.live-trade strong{font-family:var(--home-mono);font-weight:650;white-space:nowrap;font-variant-numeric:tabular-nums}
+.live-trade-who{min-width:0;overflow:hidden;font-size:12px;white-space:nowrap}
+.live-trade time{color:var(--dim);font-family:var(--home-mono);font-size:12px;text-align:right;white-space:nowrap}
+.live-market-cta{min-height:48px;margin-top:auto;font-size:15px}
+.live-market-cta svg{transition:transform .2s var(--home-ease)}
+.live-market-cta:hover svg{transform:translateX(3px)}
+.live-market.is-loading .live-market-name .skeleton-line{width:120px;height:18px}
+.live-market.is-loading .live-market-name .skeleton-line.short{width:170px;height:12px}
+.live-market.is-loading .live-market-price .skeleton-line{width:190px;height:30px}
+.live-market.is-loading .live-chart{border-radius:10px;background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--surface2) 70%,transparent))}
+.live-market.is-loading .live-market-stats{display:flex;gap:16px}
+.live-market.is-loading .live-market-stats .skeleton-line{height:30px}
+
+/* Live from GitHub (components/pulse-ticker.jsx), in the page's column and its mono. */
+.home .pulse-ticker{margin:0 auto}
+.home .pulse-ticker-track a{font-family:var(--home-mono);font-size:12.5px}
+
+/* The market board (components/home/home-board.jsx). */
+.home-board{margin-top:clamp(40px,4.4vw,64px)}
+.home-board-head{display:flex;flex-wrap:wrap;align-items:center;gap:14px 24px;margin-bottom:16px}
+.home-board-head h2{margin:0;font-family:var(--home-display);font-size:clamp(28px,2.5vw,36px);font-weight:400;letter-spacing:-.015em}
+.home-board-tabs{display:flex;gap:4px;max-width:100%;padding:4px;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface);scrollbar-width:none}
+.home-board-tabs::-webkit-scrollbar{display:none}
+.home-board-tabs button{height:36px;padding:0 16px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-family:var(--home-mono);font-size:13px;font-weight:650;letter-spacing:.03em;white-space:nowrap;transition:background .15s,color .15s}
+.home-board-tabs button:hover{background:var(--surface2);color:var(--text)}
+.home-board-tabs button[aria-selected=true]{background:var(--text);color:var(--bg)}
+.home-board-tabs button:focus-visible{outline:2px solid var(--home-accent);outline-offset:-2px}
+.home-board-head .view-all{margin-left:auto}
+.home-board-panel{min-height:280px}
+.home-board-note{margin:0 0 12px;color:var(--muted);font-size:14px}
+.home-board-more{display:inline-flex;align-items:center;gap:6px;margin-top:14px;color:var(--home-accent);font-size:14px;font-weight:650}
+.home-board-more:hover{text-decoration:underline;text-underline-offset:3px}
+.home-board-empty{margin:0;padding:34px 20px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);text-align:center}
+.home-board .shipping-leaders-list{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
+
+/* How it works: the steps beside the flywheel video. */
+.home-how{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:clamp(28px,4.4vw,72px);align-items:center;margin-top:clamp(52px,6vw,92px);padding-top:clamp(36px,4vw,56px);border-top:1px solid var(--border)}
+.home-how-copy h2{max-width:14em;margin:0 0 24px;font-family:var(--home-display);font-size:clamp(28px,2.9vw,42px);font-weight:400;line-height:1.02;letter-spacing:-.015em;text-wrap:balance}
+.home-how .launch-benefits{margin:0;border:0;background:none;overflow:visible}
+.home-how .launch-benefits ol{grid-template-columns:1fr;gap:16px;padding:0}
+.home-how .launch-benefits strong{font-size:15px}
+.home-how .launch-reward-terms{margin-top:18px;padding:14px 0 0}
+.home-how .flywheel-video{margin:0}
+.home-how .flywheel-video h2{margin:0 0 12px;color:var(--muted);font-family:var(--home-mono);font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase}
+
+/* Light theme: the darker green for text, and an amber that reads on white. */
+[data-theme=light] .home{--home-accent:var(--green-dark);--home-sell:#a86b12;--home-glow:color-mix(in srgb,var(--green) 20%,transparent)}
+[data-theme=light] .live-market{box-shadow:0 30px 70px -46px rgba(25,34,28,.35),inset 0 1px 0 #fff}
+
+@media(max-width:1099px){
+  .home-hero{grid-template-columns:minmax(0,1fr);gap:36px}
+  .home-hero-live{max-width:640px}
+  .home-hero:before{inset:34% -30% -8% -30%}
+  .home-how{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:700px){
+  .home{--home-width:calc(100% - 32px)}
+  .home-hero{gap:28px;padding:30px 0 26px}
+  .home-hero h1{font-size:clamp(38px,11.4vw,54px)}
+  .home-lead{margin-bottom:22px;font-size:16px}
+  .home-hero .repo-search{height:56px}
+  .home-proof{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;min-height:66px;margin-top:24px;padding-top:14px}
+  .home-proof>span{margin:0;padding:0;border:0;font-size:10px}
+  .home-proof strong{font-size:16px}
+  .home-proof.is-loading .skeleton-line{grid-column:1/-1}
+  .live-market{gap:14px;min-height:0;padding:18px 16px 16px;border-radius:14px}
+  .live-chart{height:96px}
+  .live-market-stats>div{padding:0 8px}
+  .live-market-stats dd{font-size:13px}
+  .live-trade{grid-template-columns:40px minmax(0,auto) minmax(0,1fr) auto;gap:8px;padding:0 8px}
+  .home-board-head{gap:12px}
+  .home-board-tabs{order:3;width:100%}
+  .home-board-tabs button{flex:1 0 auto;padding:0 10px;font-size:12px}
+  .home-board-panel{min-height:0;overflow-x:auto}
+}
+@media(prefers-reduced-motion:reduce){
+  .home-kicker i:after,.live-badge i:after,.live-chart-dot:after{animation:none;opacity:0}
+  .live-trade.is-new{animation:none}
+  .home-hero-links svg,.home-board-more svg,.live-market-cta svg,.home-hero .repo-search{transition:none}
+}
