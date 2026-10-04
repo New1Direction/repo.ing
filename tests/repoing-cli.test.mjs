@@ -5,7 +5,8 @@ import {
   normalizeInitialBuy,
   parseArgs,
   requestLaunchDraft,
-} from '../src/core.mjs'
+  safeBrowserUrl,
+} from '../cli/src/core.mjs'
 
 test('normalizes common GitHub remotes', () => {
   const expected = 'https://github.com/openai/openai'
@@ -62,4 +63,17 @@ test('posts only launch preferences to the CLI endpoint', async () => {
     tokenSymbol: 'OPENAI',
     initialBuy: 'none',
   })
+})
+
+test('opens only links on the repo.ing origin it asked', () => {
+  const origin = 'https://repo.ing'
+  assert.equal(safeBrowserUrl('https://repo.ing/launch/1296269?draft=x', origin), 'https://repo.ing/launch/1296269?draft=x')
+  assert.equal(safeBrowserUrl('https://repo.ing/token/mint', origin), 'https://repo.ing/token/mint')
+  for (const link of ['https://evil.example/launch', 'http://repo.ing/launch/1', 'https://repo.ing.evil.example/x', 'https://user:pass@repo.ing/x',
+    'javascript:alert(1)', 'file:///etc/passwd', '-a /System/Applications/Calculator.app', 'https://repo.ing:8443/x', '', null, undefined]) {
+    assert.equal(safeBrowserUrl(link, origin), null, String(link))
+  }
+  // A local origin for development: only links on that same origin.
+  assert.equal(safeBrowserUrl('http://localhost:3000/launch/1', 'http://localhost:3000'), 'http://localhost:3000/launch/1')
+  assert.equal(safeBrowserUrl('https://repo.ing/launch/1', 'http://localhost:3000'), null)
 })
