@@ -98,7 +98,9 @@ async function seedStock(db) {
   await stockTrade(db, S1, { signature: 's1-t0', slot: 900, time: at(3 * DAY), quote: '300000000', base: '90000000000', price: sqrt(1) })
   await stockTrade(db, S1, { pool: FOREIGN_POOL, signature: 's1-foreign', slot: 1003, time: at(30 * MINUTE), quote: '999999999', base: '1', price: sqrt(9) })
   await stockTrade(db, S1, { venue: 'damm', pool: OTHER_DAMM, signature: 's1-damm-early', slot: 1004, time: at(20 * MINUTE), quote: '888888888', base: '1', price: sqrt(9) })
+  // Exactly one fee row per swap, on the swap's own (signature, event_index); a zero-fee swap gets a zero row.
   await stockFee(db, S1, { signature: 's1-t1', slot: 1001, creator: '497000', partner: '203000', time: at(2 * HOUR) })
+  await stockFee(db, S1, { signature: 's1-t2', slot: 1002, creator: '0', partner: '0', time: at(HOUR) })
   await stockFee(db, S1, { signature: 's1-t0', slot: 900, creator: '994', partner: '406', time: at(3 * DAY) })
   await stockFee(db, S1, { pool: FOREIGN_POOL, signature: 's1-foreign', slot: 1003, creator: '99400', partner: '40600', time: at(30 * MINUTE) })
   const observe = (m, { pool = m.pool, age, reserve, threshold = '10000000000', migrated = false }) => db.query(`insert into stock_graduation_observations(
@@ -269,7 +271,9 @@ test('stock-paired markets: SOL reads unchanged, partitioned totals, and the sto
       assert.deepEqual(activity.quote, { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, uiMultiplier: '1.0028' })
       assert.deepEqual(activity.trades.map(trade => [trade.signature, trade.inputBaseUnits, trade.outputBaseUnits]),
         [['s1-t2', '20000000000', '40000000'], ['s1-t1', '100000000', '50000000000'], ['s1-t0', '300000000', '90000000000']])
+      // The zero-fee swap's zero row is left out; each shown row takes its own swap's time.
       assert.deepEqual(activity.fees.map(fee => [fee.signature, fee.launcherBaseUnits, fee.accumulatorBaseUnits]), [['s1-t1', '150000', '550000'], ['s1-t0', '300', '1100']])
+      assert.deepEqual(activity.fees.map(fee => fee.occurredAt.toISOString()), [at(2 * HOUR).toISOString(), at(3 * DAY).toISOString()])
       assert.deepEqual(activity.payouts.map(payout => [payout.signature, payout.amountBaseUnits]), [['s1-payout', '100000']])
       await assert.rejects(readStockActivity(db, s1, { multiplier: async () => { throw Error('mint read failed') } }), /mint read failed/)
       assert.deepEqual((await readStockTraders(db, s2, 20)).map(row => row.signature), ['s2-d1', 's2-t1'])

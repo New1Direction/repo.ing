@@ -6,8 +6,10 @@ import { SOL_QUOTE, quoteOfMarket } from './quote-assets.mjs'
 // A stock-paired market's chart (docs/STOCK_QUOTES.md): the series src/market-chart.mjs builds for SOL markets, read from
 // the stock ledger (stock_trade_events) in raw units of each token. Stock trades never enter the SOL tables, and nothing
 // here is SOL: prices are in whole units of the stock's raw amount (before its ScaledUiAmount display multiplier) per
-// whole market token, and volumes are raw stock base units. The page shows both as wallets show the stock, at today's
-// multiplier, and in USD at the stock's own price (app/lib/stock-display.mjs).
+// whole market token, and volumes are raw stock base units (quote_amount: a buy's fee-excluded input, a sell's stock
+// received, the amounts SOL volume counts). The page shows both as wallets show the stock, at today's multiplier, and in USD
+// at the stock's own price (app/lib/stock-display.mjs). Block order comes from src/chart-ordering.mjs, which orders stock
+// trades too.
 export const MARKET_TOKEN_DECIMALS = 6
 
 const DECIMALS = value => Number.isInteger(value) && value >= 0 && value <= 18

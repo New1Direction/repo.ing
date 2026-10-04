@@ -16,7 +16,8 @@ function StockGraduationProgress({curve,units}){
         <strong className="graduation-percent">{curve.progressPercent.toFixed(2)}%</strong>{shown&&<span className="graduation-to-go">{amount(curve.remaining)} to go</span>}</>}
       <details className="graduation-details"><summary>{graduated?'Pool details':'Exact reserves'}</summary><div>
         {graduated?<p>Same token. Trading now continues in this repository’s verified DAMM pool.</p>
-        :<><p>{symbol} held in the curve: {amount(curve.reserve)} / {amount(curve.threshold)}</p><p>{exact(curve.reserve)} / {exact(curve.threshold)} · {exact(curve.remaining)} remaining</p>
+        :<>{shown?<><p>{symbol} held in the curve: {amount(curve.reserve)} / {amount(curve.threshold)}</p><p>{exact(curve.reserve)} / {exact(curve.threshold)} · {exact(curve.remaining)} remaining</p></>
+            :<p>{symbol} amounts appear once its current display units load.</p>}
           <small>Finalized on-chain reserves and this market’s configured target, in {symbol} as wallets show it. Trading fees are separate. The remaining reserve is not a purchase quote. <strong>Buys add {symbol} after fees. Sells reduce progress.</strong> Volume counts trading in both directions; graduation depends on the {symbol} that stays in the curve.</small></>}
       </div></details>
     </div>

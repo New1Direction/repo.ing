@@ -2,18 +2,20 @@ import { stockMultiplier } from '../../src/quote-asset-info.mjs'
 import { readStockMigration, stockQuoteOf, stockTradeScope, stockTradeScopeParams } from '../../src/stock-market-chart.mjs'
 
 // A stock-paired market's Activity tab and recent traders (docs/STOCK_QUOTES.md), from the stock ledger: its curve and
-// graduated-pool trades (bound as its chart binds them), each curve swap's fee split, and settled launcher payouts. Amounts
+// graduated-pool trades (bound as its chart binds them), each curve swap's fee split, and settled launcher payouts. A trade's
+// stock amount is quote_amount: a buy's fee-excluded input, a sell's stock received (the amounts SOL trades record). Amounts
 // stay raw; the response carries the stock's units (today's display multiplier) so the page shows them as wallets do. A
 // stock pair has no builder claims (owner claims are refused on stock pairs), so none are read.
 const TRADES = `select t.signature, t.event_index as "eventIndex", t.direction, t.traded_at as "occurredAt",
     (case when t.direction='buy' then t.quote_amount else t.base_amount end)::text as "inputBaseUnits",
     (case when t.direction='buy' then t.base_amount else t.quote_amount end)::text as "outputBaseUnits", t.trader
   from stock_trade_events t where ${stockTradeScope('t', 1)} order by t.slot desc, t.event_index desc limit 60`
+// Every curve swap has exactly one fee row, its own (signature, event_index); a zero-fee swap's zero row is not shown.
 const FEES = `select f.signature, f.event_index as "eventIndex", f.launcher_amount::text as "launcherBaseUnits",
     f.accumulator_amount::text as "accumulatorBaseUnits", coalesce(t.traded_at, f.created_at) as "occurredAt"
-  from stock_fee_events f left join lateral (select traded_at from stock_trade_events t where t.github_repo_id = f.github_repo_id
-    and t.signature = f.signature order by t.event_index limit 1) t on true
-  where f.github_repo_id=$1 and f.asset_id=$2 and f.quote_mint=$3 and f.pool=$4 order by f.slot desc, f.event_index desc limit 30`
+  from stock_fee_events f left join stock_trade_events t on t.signature = f.signature and t.event_index = f.event_index
+  where f.github_repo_id=$1 and f.asset_id=$2 and f.quote_mint=$3 and f.pool=$4 and f.creator_amount + f.partner_amount > 0
+  order by f.slot desc, f.event_index desc limit 30`
 const PAYOUTS = `select signature, amount::text as "amountBaseUnits", settled_at as "occurredAt" from stock_launcher_payouts
   where github_repo_id=$1 and asset_id=$2 and quote_mint=$3 and status='settled' and settled_at is not null
   order by settled_at desc, id desc limit 15`
