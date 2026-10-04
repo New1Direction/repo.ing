@@ -2,6 +2,7 @@ import bs58 from 'bs58'
 import { Connection, Keypair, Message, PublicKey, Transaction } from '@solana/web3.js'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { quoteAssetById } from '../../src/quote-assets.mjs'
 import { collectionInstructions, stockCollectionTerms, stockCollectionTermsHash } from '../../src/stock-collections.mjs'
 import { splitCurveFee } from '../../src/stock-fee-policy.mjs'
@@ -87,7 +88,8 @@ export function fakeChain({ finalized = raw => finalizedTransaction(raw), genesi
   return chain
 }
 
-const offlinePrograms = () => ({ dbc: new DynamicBondingCurveClient(new Connection('http://127.0.0.1:1', 'finalized'), 'finalized').state.getProgram() })
+const offline = () => new Connection('http://127.0.0.1:1', 'finalized')
+export const offlinePrograms = () => ({ dbc: new DynamicBondingCurveClient(offline(), 'finalized').state.getProgram(), amm: new CpAmm(offline()) })
 
 // A stock-paired market row as listStockMarkets returns it.
 export function stockMarket(overrides = {}) {
@@ -107,6 +109,23 @@ export async function curvePreview({ market, source, signer, custody, creatorFee
     accumulatorAmount: String(amount - launcherAmount) }
   const built = await collectionInstructions({ source, signer, custody, market, quoteMint: META.mint, amount: String(amount), dbc: d, programs: offlinePrograms() })
   const terms = stockCollectionTerms({ market, asset: META, source, evaluation, signer, custody, built, sourceVault: d.quoteVault, pool: d.pool, config: d.config })
+  return { ...evaluation, signer, receiver: custody, receiverTokenAccount: built.receiverTokenAccount, instructions: built.instructions, terms,
+    termsHash: stockCollectionTermsHash(terms) }
+}
+
+// previewMarket's result for a graduated position (damm_creator or damm_partner) that MATCHes, as src/stock-collections.mjs
+// builds it: the position has earned `earned` in all and nothing was collected from it yet.
+export async function dammPreview({ market, source = 'damm_creator', signer, custody, earned = 20_000_000n, damm = null }) {
+  const d = damm ?? { pool: address(), tokenAVault: address(), tokenBVault: address(),
+    creator: { position: address(), nftAccount: address() }, partner: { position: address(), nftAccount: address() } }
+  const launcherAmount = source === 'damm_creator' ? earned * 150n / 497n : 0n
+  const evaluation = { source, onchain: String(earned), ledgerExpected: String(earned), earned: String(earned), collected: '0',
+    launcherEarned: String(launcherAmount), launcherCollected: '0', status: 'MATCH', amount: String(earned), launcherAmount: String(launcherAmount),
+    accumulatorAmount: String(earned - launcherAmount) }
+  const built = await collectionInstructions({ source, signer, custody, market, quoteMint: META.mint, amount: String(earned), damm: d, programs: offlinePrograms() })
+  const side = source === 'damm_creator' ? d.creator : d.partner
+  const terms = stockCollectionTerms({ market, asset: META, source, evaluation, signer, custody, built, sourceVault: d.tokenBVault, pool: d.pool,
+    position: side.position })
   return { ...evaluation, signer, receiver: custody, receiverTokenAccount: built.receiverTokenAccount, instructions: built.instructions, terms,
     termsHash: stockCollectionTermsHash(terms) }
 }

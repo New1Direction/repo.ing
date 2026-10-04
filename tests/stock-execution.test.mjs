@@ -10,7 +10,7 @@ import { STOCK_LAUNCHER_PAYOUT_MIN_RAW, checkLauncherPayoutReceipt, createStockL
   launcherPayoutMinimum } from '../src/stock-launcher-payouts.mjs'
 import { createStockExecutionJob, runStockExecution } from '../src/stock-execution-job.mjs'
 import { dammCheckpoint } from '../src/stock-fee-policy.mjs'
-import { META, address, curvePreview, curveReceipt, fakeChain, finalizedTransaction, loadFrom, payoutTransaction, previewOf,
+import { META, address, curvePreview, curveReceipt, dammPreview, fakeChain, finalizedTransaction, loadFrom, payoutTransaction, previewOf,
   stockMarket } from './fixtures/stock-execution-fakes.mjs'
 
 // The execution state machine of stock-pair fee collections and launcher payouts (docs/STOCK_QUOTES.md, "Execution (off by
@@ -22,7 +22,7 @@ const sha256 = value => createHash('sha256').update(JSON.stringify(value)).diges
 
 // The store's contract (src/stock-execution-store.mjs) in memory: one pending row per market and source (collections) or per
 // market (payouts), updates only from pending, and a per-market lock that answers BUSY.
-function memoryStore({ custody = { collected: 0n, spent: 0n } } = {}) {
+function memoryStore({ custody = { collected: 0n, spent: 0n }, ahead = false } = {}) {
   const rows = { collection: new Map(), payout: new Map() }, locks = new Set(), alerts = []
   let next = 0
   const db = { query: async (sql, params) => {
@@ -61,6 +61,7 @@ function memoryStore({ custody = { collected: 0n, spent: 0n } } = {}) {
     settlePayout: async (_db, { id, receipt }) => update('payout', id, { status: 'settled', receipt, settledAt: 'now' }),
     abortPayout: async (_db, { id, receipt }) => update('payout', id, { status: 'aborted', receipt }),
     pendingMarkets: async (kind, { repoId } = {}) => [...new Set(pending(kind, repoId).map(r => r.repoId))],
+    collectedAheadOfCheckpoints: async () => ahead,
     custodyLedger: async () => {
       const sum = (kind, status, field) => [...rows[kind].values()].filter(r => r.status === status).reduce((t, r) => t + BigInt(r[field]), 0n)
       return { collected: custody.collected + sum('collection', 'settled', 'actualAmount'), paid: sum('payout', 'settled', 'amount'),
@@ -87,7 +88,7 @@ async function collectionSetup({ source = 'dbc_creator', crash = false, env = ON
 }
 
 async function payoutSetup({ collected = 5_000_000n, crash = false, env = ON, minimum = undefined, market = stockMarket(), partner = Keypair.generate(),
-  store = memoryStore({ custody: { collected: collected * 3n, spent: 0n } }), chain = null } = {}) {
+  store = memoryStore({ custody: { collected: collected * 3n, spent: 0n } }), chain = null, ledgerPatch = {} } = {}) {
   const custody = partner.publicKey.toBase58(), loads = [], state = { crash }
   const termsOf = signature => [...store.rows.payout.values()].find(row => row.signature === signature)?.receipt.terms
   // A payout lands as a correct transfer; anything else sent on this chain lands as a plain finalized transaction.
@@ -99,7 +100,7 @@ async function payoutSetup({ collected = 5_000_000n, crash = false, env = ON, mi
     const sum = status => own.filter(row => row.status === status).reduce((total, row) => total + BigInt(row.amount), 0n)
     return { repoId: String(repoId), mint: market.mint, symbol: 'DOCUSAURUS', launcherWallet: market.launcherWallet, assetId: META.assetId,
       quoteMint: META.mint, curveEarned: String(collected + 777n), graduatedEarned: '0', curveAccumulated: '1', graduatedAccumulated: '0',
-      collected: String(collected), paid: String(sum('settled')), pending: String(sum('pending')) }
+      collected: String(collected), paid: String(sum('settled')), pending: String(sum('pending')), ...ledgerPatch }
   }
   const payouts = createStockLauncherPayouts({ pool: null, connection: chain.connection, env, custody, store, listMarkets: async () => [market], ledger,
     loadTransaction: loadFrom, loadSigner: role => { loads.push(role); return partner }, mintCheck: async () => ({ ok: true }), follow: chain.follow,
@@ -439,4 +440,41 @@ test('a pass: a dry run plans without a key or a send; executing collects, then 
   c.state.preview = { status: 'UNREADABLE', error: 'RPC disagreement; refresh before collection', sources: [] }
   const loud = await runStockExecution({ collections: c.executor, listMarkets: async () => [c.market], execute: true })
   assert.deepEqual(loud.collections.map(i => i.status), ['ERROR'])
+})
+
+test('a graduated position\'s claim that lands with more than its review settles the excess by the checkpoint rule', async () => {
+  const creator = Keypair.generate(), partner = Keypair.generate(), custody = partner.publicKey.toBase58()
+  const market = stockMarket({ creatorWallet: creator.publicKey.toBase58(), dammPool: address() })
+  const earned = 20_000_000n, excess = 12_345n
+  const previewed = await dammPreview({ market, signer: creator.publicKey.toBase58(), custody, earned })
+  assert.equal(collectionTransactionInstructions(previewed).length, 3, 'a position claim has the collection shape too')
+  const chain = fakeChain(), store = memoryStore()
+  // The position kept earning between the preview and the claim: the program paid everything accrued, the review plus the excess.
+  const raced = ({ terms, signature }) => ({ ...curveReceipt(terms, signature), amount: String(BigInt(terms.amount) + excess), excess: String(excess) })
+  const executor = createStockCollectionExecutor({ pool: null, connection: chain.connection, config: null, env: ON, custody, partner: custody, store,
+    previewMarket: async () => previewOf(market, [previewed]), listMarkets: async () => [market], checkReceipt: raced, loadTransaction: loadFrom,
+    loadSigner: () => creator, mintCheck: async () => ({ ok: true }), follow: chain.follow })
+  const settled = await executor.collect({ repoId: market.repoId, source: 'damm_creator', termsHash: previewed.termsHash })
+  assert.equal(settled.status, 'SETTLED', settled.reason)
+  const [row] = store.rows.collection.values()
+  const launcher = dammCheckpoint({ side: 'creator', cumulativeEarned: earned + excess }).launcherCumulative
+  assert.deepEqual([row.actualAmount, row.launcherAmount, row.accumulatorAmount], [String(earned + excess), String(launcher), String(earned + excess - launcher)])
+  assert.equal(BigInt(row.launcherAmount) + BigInt(row.accumulatorAmount), BigInt(row.actualAmount), 'the parts add up to what custody received')
+  assert.equal(row.receipt.excess, String(excess))
+  // A curve claim never takes more than its review: the same receipt on a curve source is held for review, never settled.
+  const curve = await collectionSetup({ receipt: raced })
+  assert.equal((await curve.executor.collect(curve.request)).status, 'REVIEW')
+})
+
+test('payouts wait while a graduated-pool collection is ahead of the DAMM checkpoints; otherwise collected > earned is a review', async () => {
+  // PR-D's ledger refuses a launcher who collected more than they earned. Right after a raced position claim that is expected:
+  // the next checkpoint credits the excess.
+  const patch = { curveEarned: '0', graduatedEarned: '4000000', collected: '5000000' }
+  const waiting = await payoutSetup({ ledgerPatch: patch, store: memoryStore({ custody: { collected: 15_000_000n, spent: 0n }, ahead: true }) })
+  const decision = await waiting.payouts.pay({ repoId: waiting.market.repoId })
+  assert.deepEqual([decision.status, /DAMM checkpoints/.test(decision.reason)], ['WAITING', true])
+  const review = await payoutSetup({ ledgerPatch: patch, store: memoryStore({ custody: { collected: 15_000_000n, spent: 0n }, ahead: false }) })
+  const pass = await runStockExecution({ payouts: review.payouts, listMarkets: async () => [review.market], execute: true })
+  assert.deepEqual(pass.payouts.map(item => [item.status, item.reason]), [['REVIEW', 'Launcher collections exceed launcher earnings']])
+  assert.deepEqual([waiting.loads, review.loads, waiting.chain.sends, review.chain.sends], [[], [], [], []])
 })

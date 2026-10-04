@@ -86,8 +86,9 @@ export const PINNED_GROUPS = [
   // Starts its own validator with mainnet's programs (scripts/ci/start-stock-validator.sh, reads mainnet once).
   { files: ['stock-pair-chain'], databaseUrl: launchtest('repoing_stock_pair_chain_test'), selfManaged: true },
   // Stock fee collections and launcher payouts: the state machine on PostgreSQL, the worker with its flags unset (same output as
-  // without the job), and for real on the stock validator as above.
+  // without the job), migration 0056's guards, and for real on the stock validator as above.
   { files: ['stock-execution-db'], databaseUrl: launchtest('repoing_stock_execution_test'), selfManaged: true },
+  { files: ['stock-execution-guards-db'], databaseUrl: launchtest('repoing_stock_execution_guards_test'), selfManaged: true },
   { files: ['stock-execution-worker-db'], databaseUrl: launchtest('repoing_stock_execution_worker_test'), selfManaged: true },
   { files: ['stock-execution-chain'], databaseUrl: launchtest('repoing_stock_execution_chain_test'), selfManaged: true },
   { files: ['stock-ledgers-db'], databaseUrl: launchtest('repoing_stock_ledgers_test'), selfManaged: true },

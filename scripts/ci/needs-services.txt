@@ -69,4 +69,5 @@ verification-bonus-db
 wallet-binding
 stock-execution-chain
 stock-execution-db
+stock-execution-guards-db
 stock-execution-worker-db
