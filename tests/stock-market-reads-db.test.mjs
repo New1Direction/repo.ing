@@ -275,7 +275,9 @@ test('stock-paired markets: SOL reads unchanged, partitioned totals, and the sto
       assert.deepEqual(activity.fees.map(fee => [fee.signature, fee.launcherBaseUnits, fee.accumulatorBaseUnits]), [['s1-t1', '150000', '550000'], ['s1-t0', '300', '1100']])
       assert.deepEqual(activity.fees.map(fee => fee.occurredAt.toISOString()), [at(2 * HOUR).toISOString(), at(3 * DAY).toISOString()])
       assert.deepEqual(activity.payouts.map(payout => [payout.signature, payout.amountBaseUnits]), [['s1-payout', '100000']])
-      await assert.rejects(readStockActivity(db, s1, { multiplier: async () => { throw Error('mint read failed') } }), /mint read failed/)
+      // Without the stock's multiplier the feed still lists every row; its stock amounts wait ('—' on the page).
+      const unitless = await readStockActivity(db, s1, { multiplier: async () => { throw Error('mint read failed') } })
+      assert.equal(unitless.quote.uiMultiplier, null); assert.equal(unitless.trades.length, 3)
       assert.deepEqual((await readStockTraders(db, s2, 20)).map(row => row.signature), ['s2-d1', 's2-t1'])
     })
 

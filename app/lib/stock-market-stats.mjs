@@ -90,22 +90,35 @@ export function unavailableStockRow(market) {
     stock: { assetId: market.quoteAssetId ?? null, symbol: asset?.type === 'TOKENIZED_EQUITY' ? asset.symbol : null, unavailable: true } }
 }
 
-// Today's display facts per stock asset (one read each); a failed read is null, so the rows show no converted figures.
-// connection: a Connection or a function making one (called only here, so a SOL-only list never needs the RPC).
-async function unitsByAsset(assetIds, connection, info) {
-  let rpc
-  try { rpc = typeof connection === 'function' ? connection() : connection } catch { return new Map() }
-  return new Map(await Promise.all([...new Set(assetIds)].map(async assetId => {
-    try { return [assetId, await info(assetId, { connection: rpc })] } catch { return [assetId, null] }
-  })))
+// A stock's display facts read within `ms`, else null (logged): the reads that need them (the shared market list, /stats)
+// never wait on a stalled RPC, and rows without units show no converted figures.
+export const UNITS_WAIT_MS = 1_500
+export async function unitsWithin(read, label, ms = UNITS_WAIT_MS) {
+  let timer
+  const late = new Promise(resolve => { timer = setTimeout(() => resolve('timeout'), ms) })
+  try {
+    const value = await Promise.race([Promise.resolve().then(read), late])
+    if (value === 'timeout') { console.error('stock units unavailable', label, 'timeout'); return null }
+    return value ?? null
+  } catch (error) { console.error('stock units unavailable', label, error?.code ?? error?.message ?? 'error'); return null }
+  finally { clearTimeout(timer) }
 }
 
-// A stamped market's stock and recorded graduation, or null when its stamp or graduation record does not hold up.
+// Today's display facts per stock asset (one bounded read each). connection: a Connection or a function making one (called
+// only here, so a SOL-only list never needs the RPC).
+async function unitsByAsset(assetIds, connection, info) {
+  let rpc
+  try { rpc = typeof connection === 'function' ? connection() : connection }
+  catch (error) { console.error('stock units unavailable', error?.message ?? 'error'); return new Map() }
+  return new Map(await Promise.all([...new Set(assetIds)].map(async assetId => [assetId, await unitsWithin(() => info(assetId, { connection: rpc }), assetId)])))
+}
+
+// A stamped market's stock and recorded graduation, or null (logged) when its stamp or graduation record does not hold up.
 function resolvedStamp(market, event) {
   try {
     const quote = stockQuoteOf(market)
     return { market, quote, migration: stockChartMigration(market, quote, event) }
-  } catch { return null }
+  } catch (error) { console.error('stock market stats unavailable', market.repoId, error?.code ?? error?.message ?? 'error'); return null }
 }
 
 // markets: rows as server.mjs builds them (repoId, pool and, for stamped rows, quoteAssetId and quoteMint). Returns the same

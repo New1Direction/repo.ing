@@ -23,7 +23,9 @@ test('/stats stock section: each stock in its own units with a USD estimate; a s
     { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, mint: METAX, markets: 2, trades: 3, volume: '440000000', fees: '701400', launcher: '150300', accumulator: '551100', active: true },
     { assetId: 'msft-xstock', symbol: 'MSFTx', decimals: 8, mint: 'XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX', markets: 1, trades: 1, volume: '250000000', fees: '597', launcher: '150', accumulator: '447', active: true },
   ] }
-  const page = text(html(h(StockPairTable, { data, units: { 'meta-xstock': stockDisplayUnits(INFO), 'msft-xstock': null } })))
+  const page = text(html(h(StockPairTable, { data, units: { [`meta-xstock:${METAX}`]: stockDisplayUnits(INFO),
+    // Units are keyed by asset and mint: another row of the same asset id never borrows them.
+    'meta-xstock:SomeOtherMint1111111111111111111111111111': stockDisplayUnits({ ...INFO, uiMultiplier: '2' }) } })))
   assert.match(page, /Stock-paired markets/)
   assert.match(page, /METAx 2 markets · 3 trades 4\.41 METAx ≈ \$3,135\.00 0\.007034 METAx ≈ \$5\.00 0\.001507 METAx ≈ \$1\.07 0\.005527 METAx ≈ \$3\.93/)
   assert.match(page, /MSFTx 1 market · 1 trade — — — —/)

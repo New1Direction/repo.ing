@@ -1,4 +1,3 @@
-import { chartPriceLabel } from './chart-display.mjs'
 import { formatUsdMarketCap, MARKET_TOKEN_SUPPLY } from './market-display.mjs'
 import { shownUnits, stockUnits } from './trade-units.mjs'
 
@@ -41,10 +40,6 @@ export function stockRawUsd(raw, units) {
   return Number(BigInt(raw)) / 10 ** units.decimals * units.usdPrice
 }
 
-// A price per whole market token in whole raw stock units (src/stock-market-chart.mjs), as wallets show the stock / in USD.
-export const stockPriceShown = (price, units) => positive(price) && units ? price * units.multiplier : null
-export const stockPriceUsd = (price, units) => positive(price) && units?.usdPrice ? price * units.usdPrice : null
-
 // Compact cap or volume in shown stock units: "12.3k METAx".
 export function formatStockCompact(value, symbol) {
   if (!Number.isFinite(value) || value < 0) return '—'
@@ -75,10 +70,4 @@ export function stockRowDisplay(stock) {
     volume: volume === null ? '—' : stockAmountLabel(volume, units),
     volumeTitle: volume === null ? undefined : `${stockAmountLabel(volume, units)} traded in 24 hours${usdVolume !== null ? ` (≈ ${formatUsdMarketCap(usdVolume)} at the current ${units.symbol} price)` : ''}`,
   }
-}
-
-// A stock price per whole market token, shown: "0.000123 METAx".
-export const stockPriceLabel = (price, units) => {
-  const shown = stockPriceShown(price, units)
-  return shown === null ? '—' : `${chartPriceLabel(shown)} ${units.symbol}`
 }
