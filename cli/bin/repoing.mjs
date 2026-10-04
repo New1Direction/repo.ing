@@ -8,6 +8,7 @@ import {
   normalizeGithubRepository,
   parseArgs,
   requestLaunchDraft,
+  safeBrowserUrl,
 } from '../src/core.mjs'
 
 function currentGitRemote() {
@@ -22,11 +23,12 @@ function currentGitRemote() {
   }
 }
 
+// Only ever called with a link safeBrowserUrl accepted. On Windows not `cmd /c start`, which would also run shell syntax in it.
 function openUrl(url) {
   const platform = process.platform
   let child
   if (platform === 'darwin') child = spawn('open', [url], { detached: true, stdio: 'ignore' })
-  else if (platform === 'win32') child = spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true })
+  else if (platform === 'win32') child = spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url], { detached: true, stdio: 'ignore', windowsHide: true })
   else child = spawn('xdg-open', [url], { detached: true, stdio: 'ignore' })
   child.on('error', () => {})
   child.unref()
@@ -78,9 +80,11 @@ async function main() {
     initialBuy: options.initialBuy,
   })
 
-  const target = result.live && result.marketUrl ? result.marketUrl : result.reviewUrl
+  const link = result.live && result.marketUrl ? result.marketUrl : result.reviewUrl
+  const target = safeBrowserUrl(link, options.origin)
   const opened = Boolean(options.open && target)
   if (opened) openUrl(target)
+  else if (options.open && link) console.error('repoing: not opening a link outside the repo.ing origin; it is printed below.')
 
   if (options.json) console.log(JSON.stringify({ repository, ...result }, null, 2))
   else printHuman(repository, result, opened)
