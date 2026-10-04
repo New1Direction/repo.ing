@@ -51,6 +51,8 @@ replica-state
 repo-streams-db
 reserve-alerts-integration
 server-speed-db
+stock-accumulator-chain
+stock-accumulator-db
 stock-ledgers-db
 stock-ledger-indexes-db
 stock-market-reads-db
