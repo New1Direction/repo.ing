@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
-import { Connection, Keypair } from '@solana/web3.js'
-import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { Keypair } from '@solana/web3.js'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { POLICY_VERSION, splitCurveFee } from '../src/stock-fee-policy.mjs'
+import { POLICY_VERSION, dammCheckpoint, splitCurveFee } from '../src/stock-fee-policy.mjs'
+import { stockAccumulator } from '../src/stock-accumulator.mjs'
 import { createStockCollections } from '../src/stock-collections.mjs'
 import { launcherEarnings, readMarketLauncherLedger } from '../src/stock-launcher-earnings.mjs'
 import { STOCK_EXECUTION_ERRORS as E } from '../src/stock-execution.mjs'
@@ -14,7 +14,7 @@ import { createStockCollectionExecutor } from '../src/stock-collection-execution
 import { createStockLauncherPayouts } from '../src/stock-launcher-payouts.mjs'
 import { runStockExecution } from '../src/stock-execution-job.mjs'
 import { listStockMarkets } from '../src/stock-collections.mjs'
-import { META, address, curveReceipt, fakeChain, finalizedTransaction, loadFrom, payoutTransaction } from './fixtures/stock-execution-fakes.mjs'
+import { META, address, curveReceipt, fakeChain, finalizedTransaction, loadFrom, offlinePrograms, payoutTransaction } from './fixtures/stock-execution-fakes.mjs'
 
 // Stock fee collections and launcher payouts on PostgreSQL (migration 0054's tables, indexes and triggers), with PR-E's real
 // collection previews (src/stock-collections.mjs) over the real stock ledgers and PR-D's real launcher ledger
@@ -23,7 +23,7 @@ import { META, address, curveReceipt, fakeChain, finalizedTransaction, loadFrom,
 const DB = 'repoing_stock_execution_test'
 const URL_ = `postgres://postgres:launchtest@127.0.0.1:55432/${DB}`
 const ON = { STOCK_COLLECTIONS_EXECUTION_ENABLED: 'true', STOCK_LAUNCHER_PAYOUTS_ENABLED: 'true' }
-const DOCS = '94911145', HELLO = '1296269'
+const DOCS = '94911145', HELLO = '1296269', REACT = '10270250'
 const CREATOR_FEE = 10_000_000n, PARTNER_FEE = 4_084_507n
 const SPLIT = splitCurveFee({ creatorAmount: CREATOR_FEE, partnerAmount: PARTNER_FEE })
 
@@ -48,21 +48,34 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
       launcher_amount,accumulator_amount,policy_version) values ($1,'meta-xstock',$2,$3,'SwapDocs',0,20,$4,$5,$6,$7,$8)`,
     [DOCS, META.mint, market.pool, CREATOR_FEE, PARTNER_FEE, SPLIT.launcherAmount, SPLIT.accumulatorAmount, POLICY_VERSION])
 
-    // The curve as the reader sees it; a landed collection empties its side, as the program's claim does.
+    // The pools as the reader sees them: DOCUSAURUS's curve, and later facebook/react's graduated pool. A landed collection empties
+    // its side, as the program's claim does; a position claim takes everything accrued, the review plus any excess that raced it.
     const curve = { dbc_creator: CREATOR_FEE, dbc_partner: PARTNER_FEE }
     const dbc = { pool: market.pool, config: address(), baseVault: address(), quoteVault: address() }
-    const reader = { local: true, programs: { dbc: new DynamicBondingCurveClient(new Connection('http://127.0.0.1:1', 'finalized'), 'finalized').state.getProgram() },
-      readMarket: async () => ({ asset: META, slot: 4242, verified: false, damm: null,
-        dbc: { ...dbc, creator: market.creatorWallet, feeClaimer: custody, isMigrated: false, creatorFee: curve.dbc_creator, partnerFee: curve.dbc_partner } }) }
+    const grad = { mint: address(), curve: address(), pool: address(), creatorPosition: address(), partnerPosition: address(), tokenAVault: address(),
+      tokenBVault: address(), launcherWallet: Keypair.generate().publicKey.toBase58(), uncollected: 0n, claimed: 0n }
+    const nft = { [grad.creatorPosition]: address(), [grad.partnerPosition]: address() }
+    const position = (address_, owner, uncollected, claimed) => ({ position: address_, nftAccount: nft[address_], owner, uncollected, claimed })
+    const reader = { local: true, programs: offlinePrograms(),
+      readMarket: async m => (m.repoId === REACT ? { asset: META, slot: 4242, verified: false,
+        dbc: { ...dbc, pool: grad.curve, creator: m.creatorWallet, feeClaimer: custody, isMigrated: true, creatorFee: 0n, partnerFee: 0n },
+        damm: { pool: grad.pool, tokenAVault: grad.tokenAVault, tokenBVault: grad.tokenBVault,
+          creator: position(grad.creatorPosition, m.creatorWallet, grad.uncollected, grad.claimed), partner: position(grad.partnerPosition, custody, 0n, 0n) } }
+        : { asset: META, slot: 4242, verified: false, damm: null,
+          dbc: { ...dbc, creator: market.creatorWallet, feeClaimer: custody, isMigrated: false, creatorFee: curve.dbc_creator, partnerFee: curve.dbc_partner } }) }
     const previews = createStockCollections({ pool, reader, custody })
     const intents = new Map()
-    const chain = fakeChain({ finalized: (raw, signature) => {
+    const state = { crash: false, excess: 0n }
+    const landed = (raw, signature) => {
       const intent = intents.get(signature)
       if (intent?.kind === 'payout') return payoutTransaction(raw, intent.terms)
-      if (intent?.kind === 'collection') curve[intent.terms.source] = 0n
+      if (intent?.terms.source === 'damm_creator') { grad.claimed += BigInt(intent.terms.amount) + state.excess; grad.uncollected = 0n }
+      else if (intent?.kind === 'collection') curve[intent.terms.source] = 0n
       return finalizedTransaction(raw)
-    } })
-    const state = { crash: false }
+    }
+    const chain = fakeChain({ finalized: landed })
+    const receipt = ({ terms, signature }) => (terms.source.startsWith('damm_') && state.excess
+      ? { ...curveReceipt(terms, signature), amount: String(BigInt(terms.amount) + state.excess), excess: String(state.excess) } : curveReceipt(terms, signature))
     const hooks = { afterIntent: async row => {
       intents.set(row.signature, row.receipt)
       if (state.crash) { state.crash = false; throw Error('crash after the intent was stored') }
@@ -70,7 +83,7 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
     const loads = []
     const loadSigner = role => { loads.push(role); return role === 'creator' ? creator : partner }
     const collections = createStockCollectionExecutor({ pool, connection: chain.connection, config: null, env: ON, custody, partner: custody,
-      previewMarket: m => previews.previewMarket(m), checkReceipt: ({ terms, signature }) => curveReceipt(terms, signature), loadTransaction: loadFrom,
+      previewMarket: m => previews.previewMarket(m), checkReceipt: receipt, loadTransaction: loadFrom,
       loadSigner, mintCheck: async () => ({ ok: true }), follow: chain.follow, hooks })
     const payouts = createStockLauncherPayouts({ pool, connection: chain.connection, env: ON, custody, loadTransaction: loadFrom, loadSigner,
       mintCheck: async () => ({ ok: true }), custodyBalance: async () => chain.custodyBalance, follow: chain.follow, hooks })
@@ -194,6 +207,67 @@ test('stock collections and launcher payouts on PostgreSQL: one pending per mark
       assert.equal(await count('stock_launcher_payouts', "status = 'pending'"), 1)
       const { rows: alerts } = await pool.query(`select kind, github_repo_id::text as repo, detail::jsonb->>'table' as tbl from graduation_alerts`)
       assert.deepEqual(alerts, [{ kind: 'STOCK_EXECUTION_REVIEW', repo: DOCS, tbl: 'stock_launcher_payouts' }])
+    })
+
+    await t.test('the DAMM race: a position claim that took more than its review settles by the checkpoint rule, payouts wait for the checkpoint, nothing is credited twice', async () => {
+      chain.finalized = landed
+      const E = 20_000_000n, x = 12_345n, y = 3_000_000n, share = value => value * 150n / 497n
+      await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at)
+        values (${REACT},'facebook','react','facebook/react',240000,49000,false,now())`)
+      await pool.query(`insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,blockhash,
+          last_valid_block_height,launch_slot,launch_finality,indexed_at,last_verified_at,quote_asset_id,quote_mint,quote_registry_version)
+        values ($1,'confirmed',$2,$3,$4,$5,'React','REACT','LaunchReact','Hash',100,12,'finalized',now(),now(),'meta-xstock',$6,1)`,
+      [REACT, grad.mint, grad.curve, grad.launcherWallet, market.creatorWallet, META.mint])
+      await pool.query(`insert into stock_graduation_events(github_repo_id,asset_id,quote_mint,dbc_pool,damm_pool,migration_signature,slot,creator_position,
+        partner_position,evidence) values ($1,'meta-xstock',$2,$3,$4,'MigrateReact',90,$5,$6,'{}')`, [REACT, META.mint, grad.curve, grad.pool, grad.creatorPosition, grad.partnerPosition])
+      // PR-B's checkpoints of the creator position (src/stock-graduation.mjs): cumulative earnings, each crediting its growth.
+      let last = null
+      const checkpoint = async (slot, cumulative) => {
+        const c = dammCheckpoint({ side: 'creator', cumulativeEarned: cumulative, previous: last === null ? null : { cumulativeEarned: last } })
+        await pool.query(`insert into stock_damm_fee_checkpoints(github_repo_id,asset_id,quote_mint,damm_pool,side,position,slot,cumulative_earned,
+          cumulative_claimed,credit,launcher_cumulative,launcher_credit,accumulator_credit,policy_version) values ($1,'meta-xstock',$2,$3,'creator',$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [REACT, META.mint, grad.pool, grad.creatorPosition, slot, cumulative, grad.claimed, c.credit, c.launcherCumulative, c.launcherCredit, c.accumulatorCredit, POLICY_VERSION])
+        last = cumulative
+      }
+      const gradMarket = async () => (await listMarkets({ repoId: REACT }))[0]
+      const earnings = async () => launcherEarnings(await readMarketLauncherLedger(pool, REACT))
+      grad.uncollected = E
+      await checkpoint(100, E)
+      const planned = (await collections.plan(await gradMarket())).find(item => item.source === 'damm_creator')
+      assert.deepEqual([planned.status, planned.amount, planned.launcherAmount], ['MATCH', String(E), String(share(E))])
+      // Trades land between the preview and the claim: the claim takes x more than reviewed.
+      state.excess = x
+      const settled = await collections.collect({ repoId: REACT, source: 'damm_creator', termsHash: planned.termsHash })
+      state.excess = 0n
+      assert.deepEqual([settled.status, settled.amount, settled.launcherAmount], ['SETTLED', String(E + x), String(share(E + x))])
+      const { rows: [row] } = await pool.query(`select reviewed_amount::text, actual_amount::text, launcher_amount::text, accumulator_amount::text
+        from stock_fee_collections where github_repo_id = $1`, [REACT])
+      assert.deepEqual(row, { reviewed_amount: String(E), actual_amount: String(E + x), launcher_amount: String(share(E + x)),
+        accumulator_amount: String(E + x - share(E + x)) }, 'launcher + accumulator = the amount received')
+      // Until PR-B's next checkpoint credits the excess, the launcher has collected more than the ledger says they earned: payouts
+      // wait, quietly, without a key.
+      await assert.rejects(earnings(), /collections exceed launcher earnings/)
+      const before = loads.length
+      assert.deepEqual([(await payouts.plan(await gradMarket())).status, (await payouts.pay({ repoId: REACT })).status], ['WAITING', 'WAITING'])
+      assert.equal(loads.length, before)
+      // The checkpoint after the claim records the cumulative it reached: earned catches up with collected exactly.
+      await checkpoint(5000, E + x)
+      assert.deepEqual([(await earnings()).earned, (await earnings()).collected], [share(E + x), share(E + x)])
+      const paid = await payouts.pay({ repoId: REACT })
+      assert.deepEqual([paid.status, paid.amount], ['SETTLED', String(share(E + x))])
+      // More trading: the next checkpoint and collection take exactly the growth, with the launcher's part the running total's.
+      grad.uncollected = y
+      await checkpoint(6000, E + x + y)
+      const next = (await collections.plan(await gradMarket())).find(item => item.source === 'damm_creator')
+      assert.deepEqual([next.status, next.amount, next.launcherAmount], ['MATCH', String(y), String(share(E + x + y) - share(E + x))])
+      assert.equal((await collections.collect({ repoId: REACT, source: 'damm_creator', termsHash: next.termsHash })).status, 'SETTLED')
+      const total = await earnings()
+      assert.deepEqual([total.earned, total.collected, total.paid], [share(E + x + y), share(E + x + y), share(E + x)], 'nothing credited twice')
+      const summary = await stockAccumulator(pool, 'meta-xstock')
+      assert.deepEqual(summary.problems.filter(problem => problem.includes(REACT)), [])
+      const { rows: [sums] } = await pool.query(`select sum(actual_amount)::text as actual, sum(launcher_amount + accumulator_amount)::text as parts
+        from stock_fee_collections where github_repo_id = $1 and status = 'settled'`, [REACT])
+      assert.deepEqual(sums, { actual: String(E + x + y), parts: String(E + x + y) })
     })
 
     await t.test('the SOL ledgers are untouched', async () => {
