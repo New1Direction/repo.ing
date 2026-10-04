@@ -22,6 +22,8 @@ import { assertBuilderReinvestEnabled } from '../../../../src/builder-reinvest.m
 import { configAddress } from '../../../lib/server.mjs'
 import { currentPayoutDestinations } from '../../../lib/payout-destination.mjs'
 import { ModelClaimPage } from '../../../components/hf/claim-page'
+import { StockPairClaimPage } from '../../../components/stock-pair-claim'
+import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 export const dynamic = 'force-dynamic'
 
 export default async function ClaimPage({ params, searchParams }) {
@@ -31,6 +33,8 @@ export default async function ClaimPage({ params, searchParams }) {
   if (!market) notFound()
   // A Hugging Face model market: its own claim flow (Hugging Face sign-in), never GitHub's.
   if (market.source === 'huggingface') return <ModelClaimPage market={market} query={query}/>
+  // A stock-paired market: no owner claim (STOCK_PAIR_NO_OWNER_CLAIM), so none of the fee checks below run for it.
+  if (isStockPairMarket(market)) return <StockPairClaimPage market={market} query={query}/>
   const repo = displayRepository(market)
   return <><AppHeader/><main className="section-wrap claim-page">
     <Link href={`/token/${market.mint}`} className="back-link"><ArrowLeft size={18}/>Back to repository</Link>

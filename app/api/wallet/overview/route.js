@@ -8,6 +8,8 @@ import { walletTrades, withHoldingPnl } from '../../../lib/holding-pnl.mjs'
 import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { readWalletVerificationBonuses } from '../../../../src/verification-bonus.mjs'
 import { shownMarkets } from '../../../lib/hf-markets.mjs'
+import { launcherTotalsByAsset, walletStockLauncherEarnings } from '../../../../src/stock-launcher-earnings.mjs'
+import { withStockPairRows } from '../../../lib/stock-wallet.mjs'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -19,7 +21,7 @@ export async function GET(request) {
   try {
     const db = database()
     if (!db) throw Error()
-    const [{ markets: listed, unavailable }, rewards, sol, tokens, tokens2022, usdPerSol, bonuses] = await Promise.all([
+    const [{ markets: listed, unavailable }, rewards, sol, tokens, tokens2022, usdPerSol, bonuses, stockLaunches] = await Promise.all([
       listMarkets(),
       db.query(`select m.github_repo_id::text as "repoId", m.discovery_version as version,
         coalesce((select sum(f.partner_amount) from discovery_fee_events f where f.github_repo_id=m.github_repo_id and f.discovery_eligible),0)::text as "partnerEarned",
@@ -32,14 +34,16 @@ export async function GET(request) {
       solUsdPrice().catch(() => null),
       // One-time verification bonus per launched market; best effort, never blocks the overview.
       readWalletVerificationBonuses(db, wallet).catch(() => new Map()),
+      // Launcher earnings on stock pairs, in the stock (src/stock-launcher-earnings.mjs); best effort, null when unreadable.
+      walletStockLauncherEarnings(db, chain(), wallet).catch(() => null),
     ])
     if (unavailable) throw Error()
     // Hugging Face model markets only with HF_MARKETS_ENABLED, as everywhere else.
     const markets = shownMarkets(listed)
     // Holdings are all-or-nothing: a missing program's accounts would silently understate balances.
     const balances = tokens && tokens2022 ? walletTokenBalances(tokens.value, wallet, tokens2022.value) : null
-    const rows = walletMarkets(markets, balances, wallet, rewards.rows)
-      .map(row => row.launchedByYou && bonuses.get(row.repoId) ? { ...row, verificationBonus: bonuses.get(row.repoId) } : row)
+    const rows = await withStockPairRows(db, walletMarkets(markets, balances, wallet, rewards.rows)
+      .map(row => row.launchedByYou && bonuses.get(row.repoId) ? { ...row, verificationBonus: bonuses.get(row.repoId) } : row), stockLaunches)
     const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
     // Prices and P&L are best-effort: balances, launches and rewards still render if either fails.
     const [prices, trades] = await Promise.all([latestMarketPrices(db, held).catch(() => null),
@@ -48,7 +52,8 @@ export async function GET(request) {
     const priced = trades ? withHoldingPnl(valued, trades) : valued
     return Response.json({ wallet, solBalance: Number.isSafeInteger(sol) && sol >= 0 ? String(sol) : null,
       holdingsAvailable: Boolean(balances), pricesAvailable: Boolean(prices), usdPerSol,
-      portfolio: portfolioSummary(priced), launcherRewards: launcherRewardTotals(rows), markets: priced, checkedAt: new Date().toISOString() },
+      portfolio: portfolioSummary(priced), launcherRewards: launcherRewardTotals(rows), markets: priced, checkedAt: new Date().toISOString(),
+      stockLauncher: stockLaunches === null ? null : { markets: stockLaunches, totals: launcherTotalsByAsset(stockLaunches) } },
     { headers: { 'Cache-Control': 'private, no-store' } })
   } catch { return Response.json({ error: 'Your wallet overview is temporarily unavailable. Please retry.' }, { status: 503 }) }
 }

@@ -5,10 +5,24 @@ import { database, chain, configAddress, creatorSigner } from '../../lib/server.
 import { githubSessionCookie, readGithubSession, readClaimReview, assertSameOrigin } from '../../lib/auth.mjs'
 import { sessionVerifier } from '../../lib/github-session.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
+import { STOCK_PAIR_NO_OWNER_CLAIM, stockPairOf } from '../../../src/stock-owner-claims.mjs'
 export const runtime = 'nodejs'
+
+// A stock pair has no owner claim (src/stock-owner-claims.mjs), and so never a claim review: it is refused before the review
+// is read. Anything this check cannot read falls through to the claim path below, which refuses it as before.
+async function stockPairRefusal(request, origin) {
+  try {
+    assertSameOrigin(request, origin)
+    const session = readGithubSession(request.cookies.get(githubSessionCookie)?.value)
+    if (!session || !await stockPairOf(database(), session.repoId)) return null
+    return NextResponse.redirect(new URL(`/claim/${session.repoId}?error=${STOCK_PAIR_NO_OWNER_CLAIM}`, origin), 303)
+  } catch { return null }
+}
 
 export async function POST(request) {
   const origin = publicOrigin(request.url)
+  const refusal = await stockPairRefusal(request, origin)
+  if (refusal) return refusal
   let session, review, repoId, reinvest = false
   try {
     assertSameOrigin(request, origin)
