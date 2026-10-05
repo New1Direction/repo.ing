@@ -12,7 +12,7 @@ import { marketRowStats } from './market-row-stats.mjs'
 import { timed } from './server-timing.mjs'
 import { hasEarnedPromotion, showsNewRepoLabel } from './repo-quality.mjs'
 import { isOfficialLaunch } from './official-launch.mjs'
-import { githubTime } from '../../src/github.mjs'
+import { forkOf, githubTime } from '../../src/github.mjs'
 import { assertGithubRepoId, isMarketId } from '../../src/market-identity.mjs'
 import { isStockMarket } from '../../src/stock-market-chart.mjs'
 import { withStockStats } from './stock-market-stats.mjs'
@@ -90,6 +90,7 @@ async function loadMarkets() {
         m.token_symbol as "symbol", m.indexed_at as "indexedAt", m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet", r.owner, r.name,
         m.quote_asset_id as "quoteAssetId", m.quote_mint as "quoteMint",
         r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks, r.github_created_at as "githubCreatedAt", r.source,
+        r.fork_parent_full_name as "forkParent",
         coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
         (coalesce(t.volume, 0) + coalesce(dv.volume, 0))::text as "volume24hLamports",
         b.wallet as "beneficiaryWallet", b.method as "beneficiaryMethod", exists (
@@ -187,7 +188,7 @@ async function singleMarket(column, value) {
       m.token_name as "tokenName", m.token_symbol as symbol, m.indexed_at as "indexedAt",
       m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
       m.verification_bonus_lamports::text as "verificationBonusLamports", m.quote_asset_id as "quoteAssetId", m.quote_mint as "quoteMint",
-      r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.source,
+      r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.source, r.fork_parent_full_name as "forkParent",
       r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt", b.method as "beneficiaryMethod",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
@@ -247,7 +248,8 @@ export async function repositoryById(repoId) {
     const detailResponse = repo.language !== undefined && repo.license !== undefined ? null : await fetch(`https://api.github.com/repos/${encodeURIComponent(repo.owner.login)}/${encodeURIComponent(repo.name)}`, { headers: githubHeaders, cache: 'no-store', signal: AbortSignal.timeout(5000) })
     const detail = detailResponse?.ok ? await detailResponse.json() : repo
     // ownerId/ownerType only from this live read (never the stored row): stock pairs are offered by owner id (src/quote-assets.mjs).
-    return { repoId: String(repo.id), owner: repo.owner.login, name: repo.name, fullName: repo.full_name,
+    const fork = forkOf(repo)
+    return { repoId: String(repo.id), owner: repo.owner.login, name: repo.name, fullName: repo.full_name, ...fork ? { fork } : {},
       ownerId: Number.isSafeInteger(repo.owner.id) && repo.owner.id > 0 ? String(repo.owner.id) : null,
       ownerType: typeof repo.owner.type === 'string' ? repo.owner.type : null,
       description: repo.description, avatarUrl: repo.owner.avatar_url, stars: repo.stargazers_count,

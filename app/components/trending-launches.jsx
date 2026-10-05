@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { ArrowRight, ArrowUpRight, ChevronDown, Star, TrendingUp } from 'lucide-react'
 import { RepoAvatar } from './ui'
+import { ForkOfLabel } from './market-signals'
 import { IconArt } from './icon-art'
 import { launcherRewardTerms } from '../../src/trend-launchable.mjs'
 import { ageLabel, compactCount, rewardLimits, rewardShort, starGrowth, trendSignals } from '../lib/trend-launch-display.mjs'
@@ -49,6 +50,7 @@ function Row({ repo, rank, now, termsId, reward, compact = false }) {
         <span className="sr-only"> on GitHub (opens in a new tab)</span>
       </a>
       {!compact && repo.description && <p className="trend-launch-description">{repo.description}</p>}
+      {repo.forkOf && <ForkOfLabel parent={repo.forkOf} compact/>}
       <Signals repo={repo} now={now} compact={compact}/>
     </div>
     {!compact && <Stat repo={repo}/>}

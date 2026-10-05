@@ -8,6 +8,7 @@ import { createLiquidityRecovery } from '../src/liquidity-settlement.mjs'
 import { createBuilderReinvestRecovery } from '../src/builder-reinvest.mjs'
 import { createGraduationMonitor } from '../src/graduation-readiness.mjs'
 import { createGraduatedTradeIndexer, createLiveTrades, pruneLiveTrades } from '../src/live-trades.mjs'
+import { createLineageBackfill } from '../src/repo-lineage.mjs'
 import { createStockGraduationMonitor, stockGraduationPass } from '../src/stock-graduation-monitor.mjs'
 import { createReserveAlertDelivery, createReserveWebhookSender } from '../src/reserve-alerts.mjs'
 import { createAllocationRecovery } from '../src/builder-allocation-settlement.mjs'
@@ -158,6 +159,14 @@ async function observeOperatingWallets(){
   catch{console.log(JSON.stringify({operatingWalletError:'OPERATING_BALANCE_UNVERIFIED'}))}
 }
 let nextGraduationCheck=0,graduationTask=null
+// The fork guard (src/repo-lineage.mjs): first commits and fork parents for markets launched before migration 0058 (and any
+// repository whose first commit could not be read at launch), five a minute through the GitHub App.
+const lineageBackfill=createLineageBackfill({pool})
+let lineageTask=null,nextLineageCheck=0
+async function observeLineage(){
+  try{const r=await lineageBackfill.runOnce();if(r.length)console.log(JSON.stringify({lineageBackfill:r}))}
+  catch(error){console.log(JSON.stringify({lineageBackfillError:error?.code==='42703'?'NOT_MIGRATED':'LINEAGE_BACKFILL_UNAVAILABLE'}))}
+}
 // Live chart trades (src/live-trades.mjs; docs/CHARTS_AND_RESPONSIVENESS.md, "Live trades"). Confirmed swaps arrive over the
 // primary RPC's websocket and go on charts at once, marked confirming until finalized. Graduated markets' finalized DAMM swaps
 // are read every 10 s (and as soon as a confirmed one should be final) instead of once per graduation pass over every market.
@@ -381,6 +390,8 @@ try {
     else if(!chartOrderingTask&&Date.now()>=nextChartOrderingCheck)
       chartOrderingTask=observeChartOrdering().finally(()=>{nextChartOrderingCheck=Date.now()+30000;chartOrderingTask=null})
     // At most one observation pass runs; it uses its own per-market advisory lock.
+    if(!once&&!lineageTask&&Date.now()>=nextLineageCheck)
+      lineageTask=observeLineage().finally(()=>{nextLineageCheck=Date.now()+60000;lineageTask=null})
     if(once)await observeGraduation()
     else if(!graduationTask&&Date.now()>=nextGraduationCheck)
       graduationTask=observeGraduation().finally(()=>{nextGraduationCheck=Date.now()+30000;graduationTask=null})

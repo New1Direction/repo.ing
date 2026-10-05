@@ -87,6 +87,8 @@ function launchable(row, { now, config, discoveryEnabled }) {
     releasedAt: score.parts.release > 0 ? score.inputs.releaseAt : null,
     observedAt: isoTime(row.observedAt), score: score.total, reviewed,
     launchHref: `/launch/${row.repoId}${reviewed ? '?from=trend' : ''}`,
+    // A fork: the repository it was forked from, as observed (src/repo-lineage.mjs decides at launch whether it may launch).
+    ...typeof latest.repo?.forkOf === 'string' && /^[\w.-]+\/[\w.-]+$/.test(latest.repo.forkOf) ? { forkOf: latest.repo.forkOf } : {},
   }
 }
 

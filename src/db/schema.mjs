@@ -229,7 +229,10 @@ export const repositories = pgTable('repositories', {
   // Migration 0049: the id range decides the source; a Hugging Face row's id is its own hf_models.market_ref.
   source: varchar('source', { length: 16 }).default('github').notNull(),
   hfModelRef: bigint('hf_model_ref', { mode: 'bigint' }).references(() => hfModels.marketRef),
-}, t => [check('repositories_source_range', sql`(${t.source} = 'github' and ${t.githubRepoId} < 4503599627370496 and ${t.hfModelRef} is null) or (${t.source} = 'huggingface' and ${t.githubRepoId} between 4503599627370497 and 7000000000000000 and ${t.hfModelRef} is not distinct from ${t.githubRepoId})`)])
+  // Migration 0058 (src/repo-lineage.mjs): first commit, the repository GitHub says it was forked from, and when they were read.
+  rootCommit: varchar('root_commit', { length: 40 }), forkParentId: bigint('fork_parent_id', { mode: 'bigint' }),
+  forkParentFullName: text('fork_parent_full_name'), lineageCheckedAt: timestamp('lineage_checked_at', { withTimezone: true }),
+}, t => [index('repositories_root_commit').on(t.rootCommit).where(sql`${t.rootCommit} is not null`), check('repositories_source_range', sql`(${t.source} = 'github' and ${t.githubRepoId} < 4503599627370496 and ${t.hfModelRef} is null) or (${t.source} = 'huggingface' and ${t.githubRepoId} between 4503599627370497 and 7000000000000000 and ${t.hfModelRef} is not distinct from ${t.githubRepoId})`)])
 
 export const markets = pgTable('markets', {
   id: serial('id').primaryKey(),

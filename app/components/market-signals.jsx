@@ -1,4 +1,4 @@
-import { BadgeCheck, Sprout } from 'lucide-react'
+import { BadgeCheck, Sprout, GitFork } from 'lucide-react'
 import { NEW_REPO_DAYS, NEW_REPO_MIN_STARS, PROMOTION_MIN_PERCENT } from '../lib/repo-quality.mjs'
 import '../market-signals.css'
 
@@ -16,4 +16,12 @@ export function OfficialBadge({ compact = false }) {
 export function NewRepoLabel({ compact = false }) {
   return <span className={`badge new-repo${compact ? ' compact' : ''}`} title={NEW_REPO_TITLE}>
     <Sprout size={compact ? 11 : 12} strokeWidth={2.4} aria-hidden="true"/><span>New repo</span></span>
+}
+
+// A market or launch whose repository is a GitHub fork (src/repo-lineage.mjs): which repository it was forked from, so buyers
+// never take it for the original. parent: "owner/name".
+export function ForkOfLabel({ parent, compact = false }) {
+  if (!parent) return null
+  return <span className={`badge fork-of${compact ? ' compact' : ''}`} title={`A fork of ${parent} on GitHub. It is not that repository.`}>
+    <GitFork size={compact ? 11 : 12} strokeWidth={2.4} aria-hidden="true"/><span>Fork of {parent}</span></span>
 }
