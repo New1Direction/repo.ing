@@ -8,9 +8,19 @@ import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { indexDammTradesLocked } from './damm-trades.mjs'
 import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
 import { persistGraduationObservation } from './reserve-alerts.mjs'
-import { readGenesisHash } from './rpc-usage.mjs'
+import { readGenesisHash, transientRpcReason } from './rpc-usage.mjs'
 
-export const graduationError = error => /^[A-Z][A-Z_]{3,60}$/.test(error?.message??'') ? error.message : 'EVIDENCE_UNAVAILABLE'
+// A thrown error as a review code. A message that already is a code is kept. Prose (web3.js wraps an RPC failure in its own
+// message) is RPC_RATE_LIMITED or RPC_UNAVAILABLE when it names one or when transientRpcReason recognizes a transport failure
+// (429, 5xx, a timeout, a dropped connection, a lagging node); any other prose is EVIDENCE_UNAVAILABLE, never transient.
+export const graduationError = error => {
+  const message = String(error?.message ?? '')
+  if (/^[A-Z][A-Z_]{3,60}$/.test(message)) return message
+  const reason = transientRpcReason(error)
+  if (message.includes('RPC_RATE_LIMITED') || reason === 'rate limited' || reason === 'HTTP 429') return 'RPC_RATE_LIMITED'
+  if (message.includes('RPC_UNAVAILABLE') || reason) return 'RPC_UNAVAILABLE'
+  return 'EVIDENCE_UNAVAILABLE'
+}
 // SOL markets only; stock-paired markets graduate in src/stock-graduation-monitor.mjs (STOCK_MARKET_SQL is the other half).
 export const publicMarketSQL=`select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",r.full_name as "fullName"
   from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null`
@@ -118,8 +128,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         return {repoId,status:'VERIFIED',phase:state.phase,reconciliation:reconciliation.status,alerts}
       }catch(error){
         const code=graduationError(error)
-        await db.query(`insert into graduation_observations(github_repo_id,checked_at,status,error_code) values($1,now(),'REVIEW',$2)
-          on conflict(github_repo_id) do update set checked_at=excluded.checked_at,status='REVIEW',error_code=excluded.error_code`,[repoId,code])
+        await recordGraduationReview(db,repoId,code)
         await notify('GRADUATION_REVIEW',code,{code})
         return {repoId,status:'REVIEW',code,alerts}
       }finally{await db.query('select pg_advisory_unlock(hashtextextended($1,0))',[`graduation:${repoId}`])}
@@ -157,9 +166,20 @@ export function createGraduationMonitor({pool,connection,verification,config,env
   return {runOnce,processMarket}
 }
 
-// Review codes for a check that failed to read, not for anything it found: an RPC outage, a rate limit, two providers not
-// agreeing yet, an unexpected read error, or a read that came back stale.
-export const TRANSIENT_REVIEW_CODES=Object.freeze(['RPC_UNAVAILABLE','RPC_RATE_LIMITED','RPC_DISAGREEMENT','EVIDENCE_UNAVAILABLE','STALE_PROGRESS'])
+// Review codes for a check that failed to read, not for anything it found: an RPC outage or transport failure, a rate limit,
+// two providers not agreeing yet, or a read that came back stale. EVIDENCE_UNAVAILABLE (an unrecognized error) is not one.
+export const TRANSIENT_REVIEW_CODES=Object.freeze(['RPC_UNAVAILABLE','RPC_RATE_LIMITED','RPC_DISAGREEMENT','STALE_PROGRESS'])
+
+// A failed pass's review. A transient code never replaces a finding already on record (REVIEW with any other code), so a
+// failed read just after a real problem cannot let the curve endpoint serve the observation that problem withdrew; the next
+// verified pass replaces both.
+export async function recordGraduationReview(db,repoId,code) {
+  await db.query(`insert into graduation_observations(github_repo_id,checked_at,status,error_code) values($1,now(),'REVIEW',$2)
+    on conflict(github_repo_id) do update set checked_at=excluded.checked_at,status='REVIEW',
+      error_code=case when graduation_observations.status='REVIEW' and excluded.error_code=any($3::text[])
+        and not (coalesce(graduation_observations.error_code,'')=any($3::text[])) then graduation_observations.error_code
+        else excluded.error_code end`,[repoId,code,[...TRANSIENT_REVIEW_CODES]])
+}
 // transientReview: after one of those, serve the previous verified observation for the rest of its own freshness window
 // (PUBLIC_GRADUATION_MAX_AGE_MS), so one failed pass never takes a market page's progress and trade card offline. Only the
 // public curve endpoint asks for it; announcements, the graduation race, market lists, share cards and discoverer growth still
