@@ -2,13 +2,13 @@
 
 ## Scope
 
-Lightweight operator notification for real reserve growth or decline. No funnel events, attribution tokens, featured-market rules, economic policy changes or automated transactions.
+Lightweight operator record of real reserve growth or decline, and the delivery queue for operator notifications. By default the queue sends only what needs an operator: a low operating balance (below) and a ledger that stopped matching the chain ([What is sent](#what-is-sent)). Reserve moves are recorded for the operations pages and sent only when `RESERVE_MOVE_NOTIFICATIONS=true`. No funnel events, attribution tokens, featured-market rules, economic policy changes or automated transactions.
 
-The existing P5 worker supplies fresh finalized pool/config snapshots agreed by both RPC providers. No extra Solana subscription or polling service is introduced. The worker checks all finalized indexed markets in its paced graduation pass (30 seconds after each pass completes, plus per-market verification time). Notification delivery runs independently every 30 seconds after its previous batch, so a failed receiver cannot block fee indexing or transaction recovery. This is observation-based monitoring, not an instant notification for every trade.
+The existing P5 worker supplies fresh finalized pool/config snapshots agreed by both RPC providers. No extra Solana subscription or polling service is introduced. The worker checks all finalized indexed markets in its paced graduation pass (30 seconds after each pass completes, plus per-market verification time). Notification delivery runs independently two minutes after its previous batch, so a failed receiver cannot block fee indexing or transaction recovery. This is observation-based monitoring, not an instant notification for every trade.
 
 ## Meaningful changes
 
-- Notify on **at least 0.05 SOL of net movement in either direction** from the last notified reserve.
+- Record on **at least 0.05 SOL of net movement in either direction** from the last recorded reserve.
 - Small moves accumulate. Offset buys/sells can cancel; trading volume is not reserve growth.
 - **Five-minute cooldown per market.** During cooldown retain the last notified baseline, then notify if the net move still qualifies.
 - The first verified observation only establishes a baseline. Enabling monitoring never announces historical activity as new.
@@ -20,13 +20,15 @@ The existing P5 worker supplies fresh finalized pool/config snapshots agreed by 
 
 The last notified baseline lives in `graduation_observations.observation.reserveAlert`. The baseline update and `graduation_alerts` event (kind `RESERVE_MOVED`) commit in one transaction under the existing market advisory lock. A crash cannot consume a move without recording its notification. Immutable event keys and a global delivery lock prevent ordinary replay or simultaneous delivery by worker replicas. Stale data, identity/config/pool mismatch, RPC disagreement and slot regression do not generate reserve movement notifications.
 
-Delivery metadata is stored separately from the evidence inside the existing alert's `detail.delivery`. No schema migration or second accounting ledger is added. HTTP retries use exponential backoff from 30 seconds to 15 minutes, with at most 12 attempts. Events older than six hours are marked expired instead of flooding a newly configured receiver. Permanent failure/expiry stays visible in the operator view. Acknowledging the operator alert does not falsely mark an external notification sent.
+Delivery metadata is stored separately from the evidence inside the existing alert's `detail.delivery`. No schema migration or second accounting ledger is added. HTTP retries use exponential backoff from 30 seconds to 15 minutes, with at most 12 attempts. Events older than six hours are marked expired instead of flooding a newly configured receiver: each run expires all of them in one statement before it sends, so a backlog never delays the alerts behind it. Permanent failure/expiry stays visible in the operator view. Acknowledging the operator alert does not falsely mark an external notification sent.
 
 Delivery is **at least once**, not exactly once: if a receiver accepts a request and its response is lost, a retry may appear twice. Each message includes a stable alert ID; the generic webhook sends `Idempotency-Key: repoing-reserve-<id>` so the receiver can deduplicate. No money moves during delivery or retry.
 
 ## Worker configuration
 
 `RESERVE_ALERTS_ENABLED=true` starts observation and queue processing. The private `RESERVE_ALERT_WEBHOOK_URL` is optional until a destination is chosen. With no receiver, detection still records operator alerts and delivery reports `DESTINATION_REQUIRED`. It never claims that a user was notified.
+
+`RESERVE_MOVE_NOTIFICATIONS=true` also queues each reserve move for the receiver. Without it a move is recorded with `detail.delivery.status` `off` and shown on the operations pages only (one busy market produces about a hundred a day).
 
 The initial adapter accepts a trusted HTTPS receiver and POSTs JSON:
 
@@ -38,15 +40,29 @@ The real `market` payload also contains the public proof fields listed above. It
 
 Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; existing events remain durable. P3, P4 and buyback execution settings are untouched.
 
+## What is sent
+
+Always queued for the receiver, when `RESERVE_ALERTS_ENABLED=true`:
+
+- `OPS_WALLET_LOW`: an operating wallet below its minimum (next section).
+- `RECONCILIATION_MISMATCH`: a market's fee ledger, or the platform's revenue and liquidity ledgers, stopped matching the chain. One alert per episode, not per pass (`src/reconcile.mjs` `createReconcileEpisodes`):
+  - a ledger **behind** the chain (fees from a trade the worker has not recorded yet), a claim in flight or a failed read normally clears by itself, so it alerts only after it has lasted **15 minutes**;
+  - anything else (a ledger ahead of the chain, a claim or withdrawal difference, a platform ledger problem) alerts **at once**;
+  - a mismatch of another kind starts a new episode, a match ends it, and trades moving the amounts do not repeat the alert. Episodes live in the worker process, so a mismatch that survives a deploy is reported again.
+
+The alert text uses fixed wording; a failed read's own message is never sent. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are.
+
+Queued only with `RESERVE_MOVE_NOTIFICATIONS=true`: `RESERVE_MOVED`.
+
 ## Slack and operating balances
 
 For Slack, set `RESERVE_ALERT_WEBHOOK_URL` to the incoming webhook for the chosen operator channel. HTTPS `hooks.slack.com` receivers receive Slack's `{ "text": "..." }` payload. Keep the webhook private in Railway worker variables. Destination setup and a successful delivery test are required before calling Slack notifications live.
 
-Set `OPS_PAYOUT_WALLET` and `OPS_COLLECTION_WALLET` on the worker to the public addresses of the existing payout and collection signers. No private signing key is needed for monitoring. Every five minutes the worker compares finalized balances from the two configured RPC providers. Disagreement fails closed and logs `OPERATING_BALANCE_UNVERIFIED`.
+Set `OPS_PAYOUT_WALLET` and `OPS_COLLECTION_WALLET` on the worker to the public addresses of the existing payout and collection signers. No private signing key is needed for monitoring. Every 15 minutes the worker compares finalized balances from the two configured RPC providers. Disagreement fails closed and logs `OPERATING_BALANCE_UNVERIFIED`.
 
 - Payout signer: alert below **0.03 SOL**.
 - Collection signer: alert below **0.01 SOL**.
-- Each low role produces at most one durable `OPS_WALLET_LOW` alert per UTC day, using the same outbox and delivery retries as reserve alerts.
+- Each low role produces at most one durable `OPS_WALLET_LOW` alert per UTC day, using the same outbox and delivery retries as reserve alerts. It is always queued for the receiver.
 - The operator page shows role, balance, threshold and delivery status. Monitoring never transfers funds or tops up a wallet.
 - Balance observation remains active when reserve delivery is paused; removing the monitoring public-address variables disables it.
 
@@ -56,7 +72,7 @@ An operator can inspect a blocked launch with `node scripts/recover-expired-laun
 
 Both independent mainnet RPCs must agree: finalized height exceeds the transaction's last valid height by more than 150 blocks, blockhash is invalid, transaction and historical signature status are absent, and both mint and pool accounts are absent. Slot disagreement, stale evidence, existing accounts, or indexed launch evidence blocks recovery. The pool must derive from an approved config.
 
-Applying recovery holds the repository advisory lock and atomically records `LAUNCH_EXPIRED` evidence with its hash before changing the matching attempt to `failed`. A new launch can then be reviewed normally. The original signature and account identities remain in the durable audit. This command never signs or broadcasts a transaction; recovery is not scheduled automatically.
+Applying recovery holds the repository advisory lock and atomically records `LAUNCH_EXPIRED` evidence with its hash before changing the matching attempt to `failed`. A new launch can then be reviewed normally. The original signature and account identities remain in the durable audit. This command never signs or broadcasts a transaction. The worker releases an expired, unlanded attempt by the same proof on its own ([launch indexer](LAUNCH_INDEXER.md)); the command remains for inspection and for a release by hand.
 
 ## Verification
 
