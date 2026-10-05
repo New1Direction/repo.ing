@@ -94,7 +94,12 @@ function fakeConnection({ hangUnsubscribe = false } = {}) {
     deliver(address, logs, context = {}) { for (const callback of sets.get(address) ?? []) callback(logs, context) } }
 }
 const addresses = connection => [...connection.sets.keys()].sort()
+// Only for checking that nothing more happens. To wait for something, use until(): a fixed sleep fails on a slow CI runner.
 const settle = () => new Promise(resolve => setTimeout(resolve, 20))
+// Polls (every 5 ms, up to 5 s) until check() holds. The assertions after it still decide the test.
+const until = async (check, ms = 5000) => {
+  for (const end = Date.now() + ms; !check() && Date.now() < end;) await new Promise(resolve => setTimeout(resolve, 5))
+}
 
 test('the watcher subscribes to approved configs with curve markets and graduated pools, and follows market changes', async () => {
   // The fixture's curve pool is canonical for its approved config, which is what the real resolver checks.
@@ -110,7 +115,7 @@ test('the watcher subscribes to approved configs with curve markets and graduate
   // The curve market graduated away: its config is dropped, the DAMM pool kept.
   current = { curves: new Map(), damms: watched.damms }
   await live.refresh({ force: true })
-  await settle()
+  await until(() => connection.removed.length >= 1)
   assert.deepEqual(addresses(connection), [swaps.pool])
   assert.deepEqual(connection.removed, [CONFIG])
   // Dropped and watched again: each time a fresh subscription, and only one callback once the old ones are torn down.
@@ -120,11 +125,11 @@ test('the watcher subscribes to approved configs with curve markets and graduate
   await live.refresh({ force: true })
   current = watched
   await live.refresh({ force: true })
-  await settle()
+  await until(() => connection.removed.length >= 3)
   assert.deepEqual(addresses(connection), [CONFIG, swaps.pool].sort())
   assert.equal(connection.sets.get(CONFIG).size, 1)
   await live.stop()
-  await settle()
+  await until(() => connection.sets.size === 0)
   assert.equal(connection.sets.size, 0)
 })
 
@@ -140,7 +145,7 @@ test('a notification is read once at confirmed, written, and wakes finalized rea
   connection.deliver(swaps.pool, { signature, err: null }, { slot: tx.slot })
   connection.deliver(swaps.pool, { signature, err: null }, { slot: tx.slot }) // the same swap again (another subscription, a resubscribe)
   connection.deliver(swaps.pool, { signature: 'failed-signature', err: { InstructionError: [0, 'Custom'] } }, { slot: tx.slot })
-  await settle()
+  await until(() => loads.length >= 3 && woken.length >= 1)
   assert.deepEqual(loads, [signature, signature, signature])
   assert.equal(inserts.length, 1)
   assert.deepEqual(woken, [repoing.repoId])
@@ -152,13 +157,13 @@ test('a notification is read once at confirmed, written, and wakes finalized rea
 })
 
 test('a transaction the node never returns is counted, and a read failure never stops later notifications', async () => {
-  const connection = fakeConnection(), tx = load(swaps.buy), inserts = []
+  const connection = fakeConnection(), tx = load(swaps.buy), inserts = [], loads = []
   const live = createLiveTrades({ pool: { query: async (sql, params) => { inserts.push(params); return { rowCount: 1 } } }, connect: () => connection,
     config: CONFIG, legacyConfigs: '', delays: [0], markets: async () => watched,
-    loadTransaction: async (rpc, signature) => signature === 'missing' ? null : signature === 'broken' ? Promise.reject(Object.assign(Error('x'), { status: 503 })) : tx })
+    loadTransaction: async (rpc, signature) => { loads.push(signature); return signature === 'missing' ? null : signature === 'broken' ? Promise.reject(Object.assign(Error('x'), { status: 503 })) : tx } })
   await live.refresh()
   for (const signature of ['missing', 'broken', tx.transaction.signatures[0]]) connection.deliver(swaps.pool, { signature, err: null })
-  await settle()
+  await until(() => loads.filter(signature => signature === 'missing').length === 2 && loads.includes('broken') && inserts.length === 1)
   const stats = live.stats()
   assert.equal(stats.missing, 1)
   assert.deepEqual(stats.errors, { HTTP_503: 1 })
@@ -182,7 +187,7 @@ test('a websocket that missed a finalized trade moves to a fresh connection; a q
   // A finalized trade more than 60 s after anything was heard: renewed on a new connection.
   newest = new Date(4 * 3600_000 - 1000)
   const renewed = await live.refresh({ force: true })
-  await settle()
+  await until(() => connections.length === 2 && addresses(connections[0]).length === 0)
   assert.equal(renewed.renewed, true)
   assert.equal(connections.length, 2)
   assert.deepEqual(addresses(connections[0]), [])
@@ -226,7 +231,7 @@ test('a deafness check that cannot be read still lets the subscriptions follow t
   await live.refresh()
   current = { curves: new Map(), damms: watched.damms }
   const result = await live.refresh({ force: true })
-  await settle()
+  await until(() => addresses(connection).length === 1)
   assert.equal(result.renewed, false)
   assert.deepEqual(addresses(connection), [swaps.pool])
   assert.deepEqual(live.stats().errors, { DB_57014: 1 })
@@ -240,7 +245,7 @@ test('reads are capped (a flood is dropped, not queued) and skipped while the pr
     loadTransaction: async (rpc, signature) => { loads.push(signature); return signature === 'retry' && loads.length < 2 ? null : load(swaps.buy) } })
   await live.refresh()
   for (const signature of ['a', 'b', 'c', 'd']) connection.deliver(swaps.pool, { signature, err: null })
-  await settle()
+  await until(() => loads.length >= 2)
   assert.deepEqual(loads, ['a', 'b'])
   let stats = live.stats()
   assert.equal(stats.limited, 2)
@@ -248,9 +253,10 @@ test('reads are capped (a flood is dropped, not queued) and skipped while the pr
   clock += 1000
   loads.length = 0
   connection.deliver(swaps.pool, { signature: 'retry', err: null })
-  await settle()
+  let limited = 0
+  await until(() => (limited += live.stats().limited) >= 1)
   assert.deepEqual(loads, ['retry'])
-  assert.equal(live.stats().limited, 1)
+  assert.equal(limited, 1)
   clock += 5000
   paused = true
   connection.deliver(swaps.pool, { signature: 'during-backoff', err: null })
