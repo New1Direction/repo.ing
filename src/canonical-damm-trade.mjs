@@ -22,6 +22,7 @@ import { createWsolAtaInstruction, isCreateWsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
 import { preparedFromRecord, readTradeRecord, recordWithSignedMessage, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
 import { DEFAULT_SLIPPAGE_BPS, minimumOutAfterSlippage, parseSlippageBps } from './trade-slippage.mjs'
+import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket } from './early-access.mjs'
 
 // Same tolerance (1% unless the trader chose another) and floor rounding as curve trades.
 export const DAMM_SLIPPAGE_BPS = DEFAULT_SLIPPAGE_BPS
@@ -184,6 +185,8 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
       throw new Error('Repository has no indexed canonical market')
     }
+    // A transfer-hook pool (docs/EARLY_ACCESS.md) trades through swap2WithTransferHook, which the site builds from step 5 on.
+    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     return market
   })
   // A curve migrates once, so a migrated answer is permanent; an active answer is always re-read.

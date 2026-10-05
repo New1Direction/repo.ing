@@ -18,6 +18,7 @@ import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from '
 import { preparedFromRecord, readTradeRecord, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
 import { DEFAULT_SLIPPAGE_BPS, minimumOutAfterSlippage, parseSlippageBps } from './trade-slippage.mjs'
 import { quoteOfMarket } from './quote-assets.mjs'
+import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket } from './early-access.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
@@ -132,6 +133,8 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
       throw new Error('Repository has no indexed canonical market')
     }
+    // A transfer-hook pool (docs/EARLY_ACCESS.md) trades through swap2WithTransferHook, which the site builds from step 5 on.
+    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     return market
   })
   const quote = async (request, direction) => {

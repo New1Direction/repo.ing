@@ -25,6 +25,13 @@ export const EARLY_ACCESS_WINDOWS = Object.freeze([
   { seconds: 24 * 60 * 60, label: '24 hours' },
 ].map(Object.freeze))
 
+// A market stamped for contributor early access (migration 0059): a transfer-hook pool with a Token-2022 mint on the early
+// access config. Until the steps that handle hook pools ship, the site's SOL paths refuse or skip these markets.
+export const isEarlyAccessMarket = market => (market?.earlyAccessEnd ?? null) !== null || (market?.transferHookProgram ?? null) !== null
+// Trades on the site (step 5) and claims (step 6).
+export const EARLY_ACCESS_NOT_TRADABLE = 'Contributor early access markets are not tradable on the site yet.'
+export const EARLY_ACCESS_NOT_CLAIMABLE = 'Contributor early access markets cannot be claimed on the site yet.'
+
 export class EarlyAccessError extends Error {
   constructor(message, status = 400) { super(message); this.name = 'EarlyAccessError'; this.status = status }
 }

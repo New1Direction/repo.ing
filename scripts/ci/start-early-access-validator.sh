@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Start a disposable solana-test-validator for the early access hook chain test (docs/EARLY_ACCESS.md):
-#   - the DBC, DAMM v2 and Token-2022 programs exactly as deployed on mainnet (read with `solana program dump`);
+#   - the DBC, DAMM v2, Token-2022 and Metaplex token metadata programs exactly as deployed on mainnet (read with
+#     `solana program dump`; Metaplex for the SPL launches tests/early-access-launch-chain.test.mjs compares with);
 #   - the DAMM v2 pool config a SOL curve migrates into (FixedBps100), the snapshot start-validator.sh loads;
 #   - the early access hook (tests/fixtures/validator/early_access_hook.so, built by scripts/build-early-access-hook.sh) as
 #     an upgradeable program whose upgrade authority is a test key written to <work-dir>/hook-authority.json.
@@ -19,13 +20,14 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DBC=dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN
 DAMM=cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG
 TOKEN_2022=TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb
+METAPLEX=metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s
 HOOK=$(cd "$REPO_ROOT" && sed -n 's/^declare_id!("\(.*\)");$/\1/p' programs/early-access-hook/src/lib.rs)
 DAMM_MIGRATION_CONFIG=Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp
 [ -n "$HOOK" ] || { echo "declare_id! not found in programs/early-access-hook/src/lib.rs" >&2; exit 1; }
 FIXTURES="$WORK_DIR/fixtures"
 mkdir -p "$FIXTURES"
 
-for program in "dbc:$DBC" "cp_amm:$DAMM" "token2022:$TOKEN_2022"; do
+for program in "dbc:$DBC" "cp_amm:$DAMM" "token2022:$TOKEN_2022" "metaplex:$METAPLEX"; do
   name="${program%%:*}" id="${program#*:}"
   [ -s "$FIXTURES/$name.so" ] || solana program dump "$id" "$FIXTURES/$name.so" --url "$MAINNET" > /dev/null
 done
@@ -38,6 +40,7 @@ solana-test-validator --reset \
   --bpf-program "$DBC" "$FIXTURES/dbc.so" \
   --bpf-program "$DAMM" "$FIXTURES/cp_amm.so" \
   --bpf-program "$TOKEN_2022" "$FIXTURES/token2022.so" \
+  --bpf-program "$METAPLEX" "$FIXTURES/metaplex.so" \
   --upgradeable-program "$HOOK" "$REPO_ROOT/tests/fixtures/validator/early_access_hook.so" "$WORK_DIR/hook-authority.json" \
   --account "$DAMM_MIGRATION_CONFIG" "$REPO_ROOT/tests/fixtures/validator/$DAMM_MIGRATION_CONFIG.json" \
   > "$WORK_DIR/validator.log" 2>&1 &

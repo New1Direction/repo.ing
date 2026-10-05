@@ -34,7 +34,8 @@ export async function discoverySummary(pool, repoId) {
     coalesce((select sum(f.partner_amount) from discovery_fee_events f where f.github_repo_id = m.github_repo_id and f.discovery_eligible),0)::text as "partnerEarned",
     coalesce((select sum(c.amount) from discovery_claims c where c.github_repo_id = m.github_repo_id and c.status = 'settled'),0)::text as paid
     from markets m where m.github_repo_id = $1 and m.discovery_version in (1,2) and m.status = 'confirmed'
-    and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null`, [String(repoId)])
+    and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null
+    and m.early_access_end is null`, [String(repoId)])
   const market = rows[0]
   if (!market) return null
   const cap = discoveryCap(market.version)

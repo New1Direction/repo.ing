@@ -48,7 +48,8 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
     if (!partner) throw Error('Protected partner signer is required')
     const { rows: [m] } = await db.query(`select github_repo_id::text as "repoId",mint,pool,
       creator_wallet as "creatorWallet",discovery_version as version from markets
-      where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`, [String(repoId)])
+      where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'
+      and early_access_end is null`, [String(repoId)])
     if (!m) throw Error('Market is not finalized and indexed')
     const configKey = resolve(m), poolKey = new PublicKey(m.pool), receiver = destination()
     if (!local(connection) && !verification) throw Error('Independent RPC verification is required for collection')

@@ -44,11 +44,17 @@ export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificat
 // hfLaunchSource (src/hf-launch.mjs). Either way the resolved id must belong to that source.
 // quote: SOL (default) or the resolved stock asset this launch pairs with; it is stamped on the reservation (quoteStamp), and the
 // launcher must have been built for it.
+// earlyAccess: null (default), or contributor early access (docs/EARLY_ACCESS.md) as { windowSeconds, snapshot({ repo, wallet })
+// → { contributors, linkedWallets, keepLauncher } }. The launcher must then be the early access launcher
+// (src/early-access-launch.mjs); the window end and hook program it prepared are stamped on the market with status 'prepared'.
 export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null,
-  verificationBonusLamports = null, source = null, quote = SOL_QUOTE }) {
+  verificationBonusLamports = null, source = null, quote = SOL_QUOTE, earlyAccess = null }) {
   if (verificationBonusLamports !== null && (typeof verificationBonusLamports !== 'bigint' || verificationBonusLamports <= 0n)) {
     throw new Error('Verification bonus stamp must be positive bigint lamports')
+  }
+  if (earlyAccess && (quote.type !== 'SOL' || source || typeof earlyAccess.snapshot !== 'function')) {
+    throw new Error('Early access launches are GitHub repositories paired with SOL, with a contributor snapshot')
   }
   async function withRepoLock(id, callback) {
     const client = await pool.connect()
@@ -110,6 +116,8 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       discoveryVersion: discoveryEnabled && quote.type === 'SOL' ? DISCOVERY_VERSION : null, launchBlockTime: null,
       ...rewardStamps(repo.githubRepoId, { builderAllocationEnabled, verificationBonusLamports, quote }),
       ...quoteStamp(quote),
+      // A reused reservation never keeps an earlier attempt's early access stamp; an early access launch sets it at prepare.
+      earlyAccessEnd: null, transferHookProgram: null,
     }
     if (market) {
       ;[market] = await db.update(markets).set(values).where(eq(markets.id, market.id)).returning()
@@ -122,11 +130,17 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   // Under the repository lock: reserved → prepared. Any failure releases the reservation as 'failed'.
   async function prepareReserved(db, market, { repo, wallet, tokenName, tokenSymbol, initialBuyLamports, launchGuard }) {
     try {
-      const prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports })
+      // Early access: the repository's contributor snapshot first (GitHub), then the launch with its window.
+      const snapshot = earlyAccess ? await earlyAccess.snapshot({ repo, wallet }) : null
+      let prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports,
+        ...snapshot ? { earlyAccess: { windowSeconds: earlyAccess.windowSeconds, repoId: String(repo.githubRepoId), keepLauncher: snapshot.keepLauncher } } : {} })
+      if (Boolean(snapshot) !== Boolean(prepared.earlyAccess)) throw new Error('Launcher does not match the early access choice')
       ;[market] = await db.update(markets).set({
         status: 'prepared', mint: prepared.mint, pool: prepared.pool,
         blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight,
+        ...snapshot ? { earlyAccessEnd: new Date(prepared.earlyAccess.end * 1000), transferHookProgram: prepared.earlyAccess.hookProgram } : {},
       }).where(eq(markets.id, market.id)).returning()
+      if (snapshot) prepared = { ...prepared, earlyAccess: { ...prepared.earlyAccess, contributors: snapshot.contributors, linkedWallets: snapshot.linkedWallets } }
       if (launchGuard) await launchGuard({ repo, market, stage: 'prepare' })
       return { market, prepared }
     } catch (error) {

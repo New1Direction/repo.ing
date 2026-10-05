@@ -14,13 +14,16 @@ export function approvedConfigs(config, legacyConfigs = process.env.DBC_LEGACY_C
 
 // Only operator-approved configs may identify a canonical pool. Never trust a
 // config supplied by a browser, database label, or arbitrary pool account.
-// SOL markets only: a stock-paired market (markets.quote_mint set, migration 0053) is refused here, so a path that still
-// assumes SOL fails loudly on it instead of misreading its pool. Paths that handle any quote use
+// SOL markets only: a stock-paired market (markets.quote_mint set, migration 0053) or a contributor early access market
+// (markets.transfer_hook_program set, migration 0059) is refused here, so a path that still assumes SOL fails loudly on it
+// instead of misreading its pool. Paths that handle any quote use
 // createQuoteAwareConfigResolver.
 export function createMarketConfigResolver(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '') {
   const approved = approvedConfigs(config, legacyConfigs)
   return market => {
     if (market.quoteMint || market.quoteAssetId) throw Error('Stock-paired market needs a quote-aware path')
+    // A contributor early access market (docs/EARLY_ACCESS.md) is a transfer-hook pool on its own config: never a SOL path's.
+    if (market.earlyAccessEnd || market.transferHookProgram) throw Error('Contributor early access market needs a transfer-hook-aware path')
     const mint = new PublicKey(market.mint), pool = new PublicKey(market.pool)
     const match = approved.find(key => deriveDbcPoolAddress(NATIVE_MINT, mint, key).equals(pool))
     if (!match) throw Error('Canonical market does not match an approved DBC config')

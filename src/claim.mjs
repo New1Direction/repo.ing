@@ -16,6 +16,7 @@ import { createGraduatedFees, recordGraduatedFees } from './graduated-fees.mjs'
 import { resolvePayoutRecipient } from './payout-address.mjs'
 import { settleClaim } from './claim-settlement.mjs'
 import { broadcastUntilSettled, signedWithPriorityFee } from './trade-landing.mjs'
+import { EARLY_ACCESS_NOT_CLAIMABLE, isEarlyAccessMarket } from './early-access.mjs'
 
 // The creator's WSOL ATA is permissionless to create and fund, so routing payouts through it lets
 // anyone perturb a claim's receipt. Graduated fees unwrap through a one-time authority instead
@@ -72,6 +73,9 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         if (!market || market.status !== 'confirmed' || !market.indexedAt || market.launchFinality !== 'finalized') {
           throw new Error('Repository has no indexed canonical market')
         }
+        // A transfer-hook pool's fees are claimed with claim_creator_trading_fee2, which the site builds from step 6 of
+        // docs/EARLY_ACCESS.md on.
+        if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_CLAIMABLE)
         const mintKey = new PublicKey(market.mint)
         const configKey = resolveConfig(market)
         const poolKey = new PublicKey(market.pool)

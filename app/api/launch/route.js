@@ -1,9 +1,10 @@
 import { launchFailure } from '../../../src/launch-failure.mjs'
 import { randomUUID } from 'node:crypto'
-import { PublicKey, Transaction } from '@solana/web3.js'
+import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createLaunchCoordinator } from '../../../src/launch-coordinator.mjs'
-import { createMeteoraLauncher } from '../../../src/meteora-launch.mjs'
+import { createMeteoraLauncher, isVersionedLaunch, unsignedLaunchBase64 } from '../../../src/meteora-launch.mjs'
+import { createEarlyAccessLauncher } from '../../../src/early-access-launch.mjs'
 import { launchBuyPreset, launchBuyQuote } from '../../../src/launch-buy.mjs'
 import { estimateLaunchCosts } from '../../../src/launch-costs.mjs'
 import { createLaunchEvidenceVerifier } from '../../../src/launch-evidence.mjs'
@@ -21,6 +22,7 @@ import { activeDecision, assertLaunchAllowed } from '../../../src/maintainer-opt
 import { persistLaunchRepository } from '../../../src/repository-store.mjs'
 import { checkLaunchLineage } from '../../../src/repo-lineage.mjs'
 import { verificationBonusLamports } from '../../../src/verification-bonus.mjs'
+import { allocationEnabled } from '../../../src/builder-allocation.mjs'
 import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled, isHfMarketId,
   registeredModel } from '../../../src/hf-launch.mjs'
 import { hfClient } from '../../lib/hf-client.mjs'
@@ -28,6 +30,7 @@ import { MODEL_LOOKUP_LIMITED, takeModelLookup } from '../../lib/hf-launch.mjs'
 import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairsLaunchable } from '../../../src/quote-assets.mjs'
 import { composeGuards, launchPair, marketPairGuard, stockMintCheck, stockPairGuard } from '../../lib/stock-launch.mjs'
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
+import { contributorSnapshotStep, earlyAccessGuard, earlyAccessRequest, earlyAccessSettings } from '../../lib/early-access-launch.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -54,6 +57,8 @@ const stockPairsBuyRefusal = body => stockPairsLaunchable() && typeof body.quote
 // On a config that reserves the builder allocation the model market carries it, for the model's verified owner to claim.
 async function prepareModelLaunch(request, body) {
   if (!hfMarketsEnabled()) throw new Error(HF_MARKETS_UNAVAILABLE)
+  // Contributor early access is for GitHub repositories: a model's request for it is refused with its own message.
+  earlyAccessRequest(body)
   if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
   const pool = database(), config = configAddress(), creator = creatorSigner()
   if (!pool || !config || !creator) throw new Error('Local launch is not configured')
@@ -79,7 +84,7 @@ async function prepareModelLaunch(request, body) {
     tokenName: body.tokenName, tokenSymbol: body.tokenSymbol, tokenImage: body.tokenImage, launcherWallet: body.launcherWallet,
     initialBuyLamports, launchGuard: hfLaunchGuard({ pool, hf }), onPrepared: async ({ market, prepared, repo }) => {
       costs = await estimateLaunchCosts(connection, prepared.transaction, initialBuyLamports)
-      transaction = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
+      transaction = unsignedLaunchBase64(prepared.transaction)
       await store.create({ id, market, repoFullName: repo.fullName, config, transaction, mintSecretKey: prepared.mintSecretKey,
         blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight, initialBuyLamports })
     } })
@@ -135,12 +140,17 @@ export async function POST(request) {
       const refused = refuseOverLimit(request, 'launch:prepare', { canRetry: true })
       if (refused) return refused
     }
+    // Contributor early access (docs/EARLY_ACCESS.md) is decided before anything is read or reserved: a GitHub repository paired
+    // with SOL from its launch page, while early access can launch, on its own config and lookup table.
+    const earlyAccess = body.action === 'prepare' ? earlyAccessRequest(body) : null
     // The pair is decided first (docs/STOCK_QUOTES.md): SOL as before; a stock pair only when it can launch, else refused.
     const pair = body.action === 'prepare' ? await launchPair(body, { solConfig: configAddress(), mintUsable: quote => stockMintCheck(chain())(quote) }) : null
     if (body.action === 'prepare' && isHfMarketId(body.repoId)) return await prepareModelLaunch(request, body)
     if (body.action === 'prepare') {
+      const settings = earlyAccess ? earlyAccessSettings() : null
+      if (earlyAccess && pair.quote !== SOL_QUOTE) throw new Error('Contributor early access launches are paired with SOL only.')
       if (body.agentDraft !== undefined) checkAgentDraft(body.agentDraft, body.repoId)
-      const pool = database(), config = pair.config, creator = creatorSigner()
+      const pool = database(), config = settings?.config ?? pair.config, creator = creatorSigner()
       if (!pool || !config || !creator) throw new Error('Local launch is not configured')
       if (!/^\d+$/.test(String(body.repoId))) throw new Error('Canonical repository ID required')
       if (!body.tokenImage) throw new Error('Choose a token image before reviewing the launch.')
@@ -155,11 +165,16 @@ export async function POST(request) {
       if (process.env.NODE_ENV === 'production' && !metadataOrigin) throw new Error('Token metadata origin is not configured')
       const store = launchSessions(pool, creator)
       await sweep(store)
-      const launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin, quote: pair.quote })
-      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
-        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), quote: pair.quote })
+      const launcher = earlyAccess ? createEarlyAccessLauncher({ connection, config, creator, metadataOrigin, lookupTable: settings.lookupTable })
+        : createMeteoraLauncher({ connection, config, creator, metadataOrigin, quote: pair.quote })
+      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(),
+        // The early access config reserves the builder allocation when it is listed like any other config (src/builder-allocation.mjs).
+        builderAllocationEnabled: earlyAccess ? allocationEnabled(config) : builderAllocationEnabled(),
+        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), quote: pair.quote,
+        earlyAccess: earlyAccess ? { windowSeconds: earlyAccess.windowSeconds, snapshot: contributorSnapshotStep({ pool }) } : null })
       if (body.trendRevision !== undefined && (!Number.isSafeInteger(body.trendRevision) || body.trendRevision < 1)) throw Error('Invalid trend approval')
-      const launchGuard = pair.quote.type !== 'SOL' ? stockPairGuard(pair.quote, config, { mintUsable: stockMintCheck(connection) })
+      const launchGuard = earlyAccess ? earlyAccessGuard(config, { versioned: true })
+        : pair.quote.type !== 'SOL' ? stockPairGuard(pair.quote, config, { mintUsable: stockMintCheck(connection) })
         : body.trendRevision === undefined ? undefined : trendLaunchGuard({ pool, repoId: String(body.repoId),
           revision: body.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() })
       const id = randomUUID(), initialBuyLamports = body.initialBuyLamports ?? '0'
@@ -169,13 +184,15 @@ export async function POST(request) {
         tokenName: body.tokenName, tokenSymbol: body.tokenSymbol, tokenImage: body.tokenImage, launcherWallet: body.launcherWallet,
         initialBuyLamports, launchGuard, onPrepared: async ({ market, prepared, repo }) => {
           costs = await estimateLaunchCosts(connection, prepared.transaction, initialBuyLamports)
-          transaction = prepared.transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')
+          transaction = unsignedLaunchBase64(prepared.transaction)
           await store.create({ id, market, repoFullName: repo.fullName, config, transaction, mintSecretKey: prepared.mintSecretKey,
             blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight, initialBuyLamports,
             trendRevision: body.trendRevision ?? null })
         } })
       if (!prepared) throw new Error('No wallet signature requested')
-      return Response.json({ id, costs, transaction })
+      // An early access review also says when the window closes and how many contributors can buy now (linked wallets).
+      return Response.json({ id, costs, transaction, ...prepared.earlyAccess ? { earlyAccess: { end: new Date(prepared.earlyAccess.end * 1000).toISOString(),
+        contributors: prepared.earlyAccess.contributors, linkedWallets: prepared.earlyAccess.linkedWallets, launcherListed: prepared.earlyAccess.launcherListed } } : {} })
     }
     if (body.action === 'submit') {
       const pool = database(), creator = creatorSigner()
@@ -185,21 +202,28 @@ export async function POST(request) {
       const session = await store.consume(body.id)
       if (!session) throw new Error('Prepared launch expired; reload before trying again')
       const connection = chain(), config = session.config, repoId = BigInt(session.githubRepoId)
-      const launcher = createMeteoraLauncher({ connection, config, creator })
+      // An early access review is a v0 transaction (docs/EARLY_ACCESS.md); every other review is the legacy launch, as before.
+      const versioned = isVersionedLaunch(session.transaction)
+      const launcher = versioned ? createEarlyAccessLauncher({ connection, config, creator }) : createMeteoraLauncher({ connection, config, creator })
       let prepared
       try { prepared = launcher.restore(session) }
       catch (error) { await store.release(session); throw error }
       const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled() })
       // A model market is checked again after the wallet signed, before anything is sent (src/hf-launch.mjs).
-      // A GitHub launch is decided again by its stamp (a stock pair as at prepare; nothing more for SOL), then by its trend approval.
+      // A GitHub launch is decided again by its stamp (a stock pair as at prepare; nothing more for SOL; early access while it can
+      // launch on the same config), then by its trend approval.
       const launchGuard = isHfMarketId(session.githubRepoId) ? hfLaunchGuard({ pool, hf: hfClient() })
-        : composeGuards(marketPairGuard(config, { mintUsable: stockMintCheck(connection) }), session.trendRevision === null ? null
-          : trendLaunchGuard({ pool, repoId: session.githubRepoId, revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() }))
+        : composeGuards(marketPairGuard(config, { mintUsable: stockMintCheck(connection) }), earlyAccessGuard(config, { versioned }),
+          session.trendRevision === null ? null
+            : trendLaunchGuard({ pool, repoId: session.githubRepoId, revision: session.trendRevision, config, discoveryEnabled: discoveryRewardsEnabled() }))
       // Parsed inside the signing step so a malformed body fails the review (market 'failed') like a wallet mismatch.
       const market = await coordinator.submitPrepared({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,
         repo: { githubRepoId: repoId, fullName: session.repoFullName }, prepared, launchGuard,
-        signTransaction: async () => Transaction.from(Buffer.from(body.transaction, 'base64')) })
-      const verify = createLaunchEvidenceVerifier({ connection, config })
+        signTransaction: async () => versioned ? VersionedTransaction.deserialize(Buffer.from(body.transaction, 'base64'))
+          : Transaction.from(Buffer.from(body.transaction, 'base64')) })
+      // An early access market's pool is on its own config, which the verifier resolves by the market's stamp.
+      const verify = versioned ? createLaunchEvidenceVerifier({ connection, config: configAddress() ?? config, earlyAccessConfig: config })
+        : createLaunchEvidenceVerifier({ connection, config })
       let result
       for (let attempt = 0; attempt < 120; attempt++) {
         result = await verify(market)
@@ -209,7 +233,8 @@ export async function POST(request) {
       if (result?.state !== 'match') throw new Error('Launch confirmed but final indexing is not ready')
       const indexed = await createLaunchIndexer({ pool, verify }).processMarket(repoId)
       if (!['indexed', 'verified'].includes(indexed.state)) throw new Error('Canonical market did not index')
-      if (BigInt(session.initialBuyLamports) > 0n) {
+      // A hook pool's trades are indexed from step 5 of docs/EARLY_ACCESS.md on; the first buy of an early access launch waits for it.
+      if (BigInt(session.initialBuyLamports) > 0n && !versioned) {
         try {
           await createFeeAccrual({ pool, connection, config })
             .recordTradeFees({ githubRepoId: repoId, signatures: [market.launchSignature] })

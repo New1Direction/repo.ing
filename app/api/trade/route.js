@@ -15,7 +15,7 @@ import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { statusOutcome, submitOutcome, trackTradeOutcome } from '../../lib/trade-tracking.mjs'
 import { recordReferredTrade } from '../../../src/referral-leaderboard.mjs'
 import { DEFAULT_SLIPPAGE_BPS, isPreflightSlippageError, parseSlippageBps, SLIPPAGE_EXCEEDED, slippageLabel, swapInstructionIndex } from '../../../src/trade-slippage.mjs'
-const SAFE = /^(The trade window closed|Trading is not configured|Invalid trade|Invalid transaction signature|Invalid slippage|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
+const SAFE = /^(Contributor early access|The trade window closed|Trading is not configured|Invalid trade|Invalid transaction signature|Invalid slippage|Transaction (does not match|did not swap)|Prepared trade|Wallet returned|Trade (was not prepared|failed|size guide|simulation|transaction|balances)|You need approximately|No executable output|Network cost estimate|Account setup estimate|Repository has no indexed|Canonical|Buy balances|Sell balances|Quote fee|Pool and mint|Input amount|Fixed DBC|Unsupported trade action)/
 export const runtime = 'nodejs'
 // Sessions live in trade_sessions (see src/trade-sessions.mjs), so a deploy or another replica can finish a trade.
 // A missing or expired session (or a slow approval) means nothing was broadcast: the client shows this as not
