@@ -67,8 +67,9 @@ test('real PostgreSQL: maintainer decisions are created and withdrawn only by cu
     const excluded = createPromotionExclusions({ pool, env: { PROMOTION_EXCLUDED_REPO_IDS: '7' } })
     assert.deepEqual([...await excluded()].sort(), [LIVE, NO_MARKET, '7'])
     assert.deepEqual([...(await activeDecisions(pool, [LIVE, NO_MARKET, OTHER])).keys()].sort(), [LIVE, NO_MARKET])
+    // readRoot: the fork guard's first-commit read (src/repo-lineage.mjs), stubbed so the test never reaches GitHub.
     const agent = createAgentLaunchService({ pool, origin: 'https://repo.ing', secret: 'test-only-agent-draft-secret-at-least-32-bytes', config: '1'.repeat(32),
-      discovery: false, allocation: false, candidates: async () => [], resolve: async () => ({ githubRepoId: BigInt(NO_MARKET), owner: 'octo', name: 'fresh',
+      discovery: false, allocation: false, candidates: async () => [], readRoot: async () => null, resolve: async () => ({ githubRepoId: BigInt(NO_MARKET), owner: 'octo', name: 'fresh',
         fullName: 'octo/fresh', description: null, avatarUrl: null, stars: 1, forks: 0, archived: false, githubUpdatedAt: new Date() }) })
     await assert.rejects(agent.createDraft({ repository: 'octo/fresh' }), new RegExp(OPT_OUT_ERROR))
     assert.equal((await pool.query('select count(*)::int as n from markets where github_repo_id = $1', [NO_MARKET])).rows[0].n, 0, 'nothing reserved')
