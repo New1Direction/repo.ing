@@ -1,24 +1,35 @@
-// Fixed-window request caps held in one process: per client and in total, per action.
-// - limits: { action: { perClient, global } }. An action without an entry is never limited.
-// - A refused request spends nothing, and every count starts over each window.
-// - Past maxClients distinct clients in one window, every further client shares one allowance, so made-up client names
-//   cannot grow memory or buy more than that one allowance. Clients seen before the table filled keep their own.
+// Per-client request allowances held in one process, per action: a token bucket for each (action, client).
+// - limits: { action: { burst, perMinute } }. An action without an entry is never limited.
+// - A client may make `burst` requests at once and `perMinute` a minute from then on. A refused request spends nothing
+//   and is told how many seconds until one more would be allowed.
+// - Clients are counted apart and nothing is counted across them, so one client's requests can never get another's refused.
+// - At most maxClients allowances are kept. One that has refilled is forgotten. While the table is still full, a client
+//   without an allowance is let through uncounted: made-up client names can neither grow memory nor get anyone refused.
 // No database: a fault here can never stop a request path that works without one.
-export function createRequestLimiter({ limits, windowMs = 60_000, maxClients = 10_000, now = Date.now } = {}) {
-  let windowStart = now(), totals = new Map(), clients = new Map()
+export function createRequestLimiter({ limits, maxClients = 10_000, sweepMs = 60_000, now = () => performance.now() } = {}) {
+  const buckets = new Map()
+  let swept = now()
+  // A clock that steps back adds nothing; it never takes tokens away or delays the refill.
+  const level = (bucket, at) => Math.min(bucket.limit.burst, bucket.tokens + Math.max(0, at - bucket.at) * bucket.limit.perMinute / 60_000)
+  const sweep = at => {
+    swept = at
+    for (const [key, bucket] of buckets) if (level(bucket, at) >= bucket.limit.burst) buckets.delete(key)
+  }
   return function take(action, client) {
     const limit = limits[action]
     if (!limit) return { allowed: true }
-    const at = now()
-    if (at - windowStart >= windowMs) { windowStart = at; totals = new Map(); clients = new Map() }
-    const refused = scope => ({ allowed: false, scope, retryAfterSeconds: Math.max(1, Math.ceil((windowStart + windowMs - at) / 1000)) })
-    const total = totals.get(action) ?? 0
-    if (total >= limit.global) return refused('global')
-    const own = `${action}|${client}`, key = clients.has(own) || clients.size < maxClients ? own : `${action}|*`
-    const count = clients.get(key) ?? 0
-    if (count >= limit.perClient) return refused('client')
-    clients.set(key, count + 1)
-    totals.set(action, total + 1)
-    return { allowed: true }
+    const at = now(), key = `${action}|${client}`
+    if (at - swept >= sweepMs || at < swept) sweep(at)
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      if (buckets.size >= maxClients && at - swept >= 1000) sweep(at)
+      if (buckets.size >= maxClients) return { allowed: true }
+      bucket = { limit, tokens: limit.burst, at }
+      buckets.set(key, bucket)
+    }
+    const tokens = level(bucket, at)
+    bucket.at = at
+    bucket.tokens = tokens < 1 ? tokens : tokens - 1
+    return tokens < 1 ? { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((1 - tokens) * 60 / limit.perMinute)) } : { allowed: true }
   }
 }

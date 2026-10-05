@@ -25,7 +25,8 @@ const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: tru
 async function launchRequest(body) {
   const response = await fetch('/api/launch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const result = await response.json()
-  if (!response.ok) throw Object.assign(new Error(result.error || 'Launch request failed'), {canRetry:result.canRetry,supportCode:result.supportCode,code:result.code})
+  if (!response.ok) throw Object.assign(new Error(result.error || 'Launch request failed'), {canRetry:result.canRetry,supportCode:result.supportCode,code:result.code,
+    retryAfterSeconds:Number(response.headers.get('retry-after'))||null})
   return result
 }
 
@@ -58,6 +59,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [customBuy, setCustomBuy] = useState('')
   const [buyQuote, setBuyQuote] = useState(null)
   const [buyError, setBuyError] = useState(null)
+  const [quoteRetry, setQuoteRetry] = useState(0)
   const [review, setReview] = useState(null)
   const [expired, setExpired] = useState(false)
   const [balance, setBalance] = useState(null)
@@ -111,18 +113,22 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
 
   useEffect(() => {
     if (noBuy) return
-    let active = true
+    let active = true, retry
     const timer = window.setTimeout(async () => {
       try {
         const body = choice === 'custom' ? { initialBuyLamports: parseUnits(customBuy.trim(), 9) } : { supplyBps: Number(choice) }
         const result = await launchRequest({ action: 'quote', ...body, ...pairRequest })
         if (active) { setBuyQuote({ ...result, key: quoteKey }); setBuyError(null) }
       } catch (cause) {
-        if (active) { setBuyQuote(null); setBuyError({ key: quoteKey, message: cause.message || 'Quote unavailable' }) }
+        if (!active) return
+        setBuyQuote(null); setBuyError({ key: quoteKey, message: cause.message || 'Quote unavailable' })
+        // Refused for asking too often (app/lib/request-limits.mjs): nothing else asks again for the same choice, so ask
+        // once the wait is over.
+        if (cause.code === 'RATE_LIMITED') retry = window.setTimeout(() => setQuoteRetry(count => count + 1), Math.min(60, cause.retryAfterSeconds ?? 5) * 1000)
       }
     }, choice === 'custom' ? 350 : 0)
-    return () => { active = false; window.clearTimeout(timer) }
-  }, [choice, customBuy, noBuy, quoteKey])
+    return () => { active = false; window.clearTimeout(timer); window.clearTimeout(retry) }
+  }, [choice, customBuy, noBuy, quoteKey, quoteRetry])
 
   useEffect(() => {
     setBalance(null)

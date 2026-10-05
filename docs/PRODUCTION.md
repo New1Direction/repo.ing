@@ -83,24 +83,31 @@ Per replica by design (correct with any number of replicas): short-TTL read cach
 
 ## Request limits
 
-The public trade, launch and repository-lookup routes cap requests per minute, for one address and in total (`app/lib/request-limits.mjs`). They keep one address, or a flood, from spending the RPC and GitHub budgets that every other request and the worker share. Over a cap the route answers HTTP 429 with `Retry-After` and `{"error":"Too many requests. Try again in a minute.","code":"RATE_LIMITED"}`, before it reads the database, the chain or GitHub. The web log gets one `{"requestLimited":{"action":…,"scope":"client"|"global"}}` line per action and scope per minute; the address is never logged or stored.
+The public trade, launch and repository-lookup routes give each address an allowance per action (`app/lib/request-limits.mjs`): a burst it may spend at once, and a rate after that. This keeps one address from spending the RPC and GitHub budgets that every other request and the worker share. Over its allowance an address gets HTTP 429 with `Retry-After` (the seconds until one more request is allowed) and `{"error":"Too many requests. Try again in a minute.","code":"RATE_LIMITED"}`.
 
-| Action | Per address | Total | What one request costs |
+There is no site-wide total. Addresses are counted apart, so one visitor's requests can never get another visitor refused.
+
+| Action | Burst | Per minute after that | What one request costs |
 | --- | ---: | ---: | --- |
-| `/api/trade` `quote` | 120 | 600 | about 3 RPC calls |
-| `/api/trade` `costs` | 60 | 180 | about 15 RPC calls |
-| `/api/trade` `depth` | 30 | 120 | up to 3 RPC calls, cached 10 s |
-| `/api/trade` `prepare` | 20 | 60 | about 16 RPC calls and a trade session |
-| `/api/trade` `status` | 120 | 1200 | a few RPC calls |
-| `/api/launch` `quote` | 40 | 200 | 1 RPC call |
-| `/api/launch` `prepare` (GitHub repositories) | 12 | 30 | 3-4 GitHub calls, about 10 RPC calls, and the repository reserved for 2 minutes |
-| `/api/resolve` (when GitHub must be asked) | 20 | 60 | up to 3 GitHub calls |
+| `/api/trade` `quote` | 120 | 120 | about 3 RPC calls |
+| `/api/trade` `costs` | 120 | 60 | about 15 RPC calls |
+| `/api/trade` `depth` | 30 | 30 | up to 3 RPC calls, cached 10 s |
+| `/api/trade` `prepare` | 20 | 20 | about 16 RPC calls and a trade session |
+| `/api/trade` `status` | 120 | 120 | a few RPC calls |
+| `/api/launch` `quote` | 40 | 40 | 1 RPC call |
+| `/api/launch` `prepare` (GitHub repositories) | 30 | 6 | 3-4 GitHub calls, about 10 RPC calls, and the repository reserved for 2 minutes |
+| `/api/resolve` (when GitHub must be asked) | 30 | 8 | up to 3 GitHub calls |
 
-- The per-address caps are several times the heaviest honest use by one visitor: the trade panel refreshes a typed quote and its costs every 15 seconds and after each edit, and polls a signed trade every 3 seconds. Many people can share one address (an office, a VPN exit, a mobile carrier).
-- Never limited: a signed trade or launch (`submit`), releasing a review (`cancel`), and reading a launch's status. Model launches keep their own Hugging Face lookup quota.
-- Counts live in each web process. With several replicas each has its own caps, and a deploy starts them over.
-- The address is Cloudflare's `CF-Connecting-IP`, else the first `X-Forwarded-For` entry. It groups requests; it is not authentication. A request sent straight to the Railway service domain can claim any address, so the totals are the real bound.
-- `REQUEST_LIMITS_DISABLED=true` on the web service turns every cap off.
+- **Sizing:** each burst is at least four times the heaviest honest use by one visitor in a minute, and each rate is above one heavy visitor's, because many people can share one address (an office, a VPN exit, a mobile carrier). The trade panel refreshes a typed quote and its costs every 15 seconds and after each edit, and polls a signed trade every 3 seconds; the launch form asks for a fresh review every 20 seconds while one is being read. The two actions that read GitHub refill slowest: its budget is 5,000 calls an hour for the web and the worker together.
+- **Where a request is counted:** before the route reads the chain or GitHub. `/api/trade` checks the direction and slippage first. `/api/launch` `prepare` is counted before the pair's owner is looked up. `/api/resolve` answers a market it already knows from the database without counting.
+- **What a refusal looks like:** the trade panel shows the message and asks again on its next 15-second refresh; a refused costs preview shows as unavailable and the trade is still checked at prepare. The launch form asks for a refused initial-buy quote again by itself, and offers "Refresh review" for a refused review.
+- **Never limited:** a signed trade or launch (`submit`), releasing a review (`cancel`), and reading a launch's status. Model launches keep their own Hugging Face lookup quota.
+- **Not covered by these allowances:** Blink trades (`/api/actions/*`, whose clients often share a proxy address), wallet balance reads, the launch page's own repository read and `/api/repos/<id>/quote-options`.
+- **The address** is Cloudflare's `CF-Connecting-IP`, else the first `X-Forwarded-For` entry, else `X-Real-IP`. An IPv6 address counts as its /64. A request with no address at all is not limited. The address groups requests; it is not authentication. A request sent straight to the Railway service domain can claim any address and so gets a fresh allowance each time: the allowances stop one ordinary source, not someone who goes around Cloudflare.
+- **Counts live in each web process.** A deploy starts them over, and with several replicas each keeps its own.
+- **Log:** while an action refuses, one line a minute: `{"requestLimited":{"action":…,"refused":…,"addresses":…}}`, the requests refused and the addresses they came from since the previous line. Addresses themselves are never logged or stored.
+- **A fault in the limiter never refuses a request:** it logs `{"requestLimiterFault":…}` and the request proceeds.
+- `REQUEST_LIMITS_DISABLED=true` on the web service turns every allowance off. Setting it restarts the service.
 
 ## Chart ordering verification
 

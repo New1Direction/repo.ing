@@ -129,6 +129,12 @@ export async function POST(request) {
       }
       return Response.json({ cancelled: true })
     }
+    // A repository review is counted before GitHub or the chain is asked anything, the pair's own lookups included
+    // (app/lib/request-limits.mjs). The form offers "Refresh review" on canRetry. A model review has its own lookup allowance.
+    if (body.action === 'prepare' && !isHfMarketId(body.repoId)) {
+      const refused = refuseOverLimit(request, 'launch:prepare', { canRetry: true })
+      if (refused) return refused
+    }
     // The pair is decided first (docs/STOCK_QUOTES.md): SOL as before; a stock pair only when it can launch, else refused.
     const pair = body.action === 'prepare' ? await launchPair(body, { solConfig: configAddress(), mintUsable: quote => stockMintCheck(chain())(quote) }) : null
     if (body.action === 'prepare' && isHfMarketId(body.repoId)) return await prepareModelLaunch(request, body)
@@ -138,9 +144,6 @@ export async function POST(request) {
       if (!pool || !config || !creator) throw new Error('Local launch is not configured')
       if (!/^\d+$/.test(String(body.repoId))) throw new Error('Canonical repository ID required')
       if (!body.tokenImage) throw new Error('Choose a token image before reviewing the launch.')
-      // Counted before GitHub or the chain is asked (app/lib/request-limits.mjs). The form offers "Refresh review" on canRetry.
-      const refused = refuseOverLimit(request, 'launch:prepare', { canRetry: true })
-      if (refused) return refused
       const resolved = await resolvePublicRepository(body.repositoryUrl)
       if (resolved.githubRepoId.toString() !== String(body.repoId)) throw new Error('Repository URL does not match canonical repository ID')
       await assertLaunchAllowed(pool, body.repoId)

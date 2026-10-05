@@ -39,7 +39,8 @@ function validSignature(signature) {
 export async function POST(request) {
   try {
     const body = await request.json()
-    // Each read action is counted once its input is valid and before it reads anything (app/lib/request-limits.mjs).
+    // Each read action is counted against its address after the checks beside it and before anything is read
+    // (app/lib/request-limits.mjs).
     if (body.action === 'depth') {
       const refused = refuseOverLimit(request, 'trade:depth')
       if (refused) return refused
