@@ -2,6 +2,7 @@ import { createHmac } from 'node:crypto'
 import { createMcpHandler, McpServer, hostHeaderValidationResponse, originValidationResponse } from '@modelcontextprotocol/server'
 import * as z from 'zod/v4'
 import { AgentLaunchError } from './agent-launch-draft.mjs'
+import { clientAddress } from './client-address.mjs'
 import { HF_DISCLAIMER } from './hf-copy.mjs'
 
 // DB quotas survive restarts and apply across replicas. The global cap also bounds
@@ -74,7 +75,7 @@ export function createAgentMcpHandler({ service, origin, quota }) {
     if (rejected) return rejected
     if (request.method !== 'POST') return new Response('Use Streamable HTTP POST.', { status: 405, headers: { Allow: 'POST' } })
     try {
-      const allowed = await quota(request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown')
+      const allowed = await quota(clientAddress(request) ?? 'unknown')
       if (!allowed) return Response.json({ error: 'Too many requests. Try again in a minute.' }, { status: 429, headers: { 'Retry-After': '60' } })
       const response = await handler.fetch(request)
       response.headers.set('Cache-Control', 'no-store')

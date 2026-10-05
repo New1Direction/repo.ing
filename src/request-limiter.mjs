@@ -9,7 +9,7 @@
 export function createRequestLimiter({ limits, maxClients = 10_000, sweepMs = 60_000, now = () => performance.now() } = {}) {
   const buckets = new Map()
   let swept = now()
-  // A clock that steps back adds nothing; it never takes tokens away or delays the refill.
+  // A clock that steps back adds nothing and takes nothing away; the refill goes on from where the clock now stands.
   const level = (bucket, at) => Math.min(bucket.limit.burst, bucket.tokens + Math.max(0, at - bucket.at) * bucket.limit.perMinute / 60_000)
   const sweep = at => {
     swept = at
