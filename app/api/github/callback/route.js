@@ -1,15 +1,24 @@
 import { NextResponse } from 'next/server'
 import { createGitHubAppVerifier } from '../../../../src/github-verification.mjs'
 import { database } from '../../../lib/server.mjs'
-import { githubSessionCookie, unseal, cookieOptions, encryptGithubSession, newGithubSession, GITHUB_SESSION_SECONDS } from '../../../lib/auth.mjs'
+import { IDENTITY_SIGN_IN_PAGES, githubSessionCookie, unseal, cookieOptions, encryptGithubSession, newGithubSession, GITHUB_SESSION_SECONDS } from '../../../lib/auth.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
+import { contributorWalletAvailable } from '../../../lib/contributor-wallet.mjs'
 export const runtime = 'nodejs'
 export async function GET(request) {
   const origin = publicOrigin(request.url)
   const stateSession = unseal(request.cookies.get('gitfun_oauth')?.value)
   if (!stateSession) return NextResponse.redirect(new URL('/explore', origin))
-  const isDashboard = stateSession.mode === 'builders' || stateSession.mode === 'opt-out'
-  const back = new URL(stateSession.mode === 'opt-out' ? '/opt-out' : isDashboard ? '/builders' : `/claim/${stateSession.repoId}`, origin)
+  // A contributor sign-in started before EARLY_ACCESS_ENABLED was turned off does not finish.
+  if (stateSession.mode === 'contributor' && !contributorWalletAvailable()) {
+    const closed = NextResponse.redirect(new URL('/explore', origin))
+    closed.cookies.delete('gitfun_oauth')
+    return closed
+  }
+  // Identity-only sign-ins (builder dashboard, opt-out, contributor wallet) return to their own page.
+  const identityPage = Object.hasOwn(IDENTITY_SIGN_IN_PAGES, stateSession.mode) ? IDENTITY_SIGN_IN_PAGES[stateSession.mode] : null
+  const isDashboard = Boolean(identityPage)
+  const back = new URL(identityPage ?? `/claim/${stateSession.repoId}`, origin)
   let session = null
   try {
     const verifier = createGitHubAppVerifier({ pool: database(), clientId: process.env.GITHUB_APP_CLIENT_ID,

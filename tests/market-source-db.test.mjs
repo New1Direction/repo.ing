@@ -199,7 +199,9 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
       const tables = ['verification_bonuses', 'verification_bonus_payouts', 'builder_reinvest_intents', 'repo_tips',
         'tip_transfers', 'parts_funds', 'parts_pledges', 'parts_transfers', 'parts_updates', 'repo_streams', 'repo_pulse_events', 'repo_pulse_state',
         'repo_pulse_star_hours', 'trend_candidates', 'trend_launches', 'trend_observations', 'trend_reviews', 'trend_signals',
-        'repository_participation', 'maintainer_invites']
+        'repository_participation', 'maintainer_invites',
+        // 0059: contributor early access snapshots (GitHub accounts of a GitHub repository).
+        'early_access_contributors']
       const { rows } = await pool.query(`select conrelid::regclass::text as name, convalidated as valid, pg_get_constraintdef(oid) as def
         from pg_constraint where contype = 'c' and conname = conrelid::regclass::text || '_github_only' order by 1`)
       assert.deepEqual(rows, [...tables].sort().map(name => ({ name, valid: true, def: 'CHECK ((github_repo_id < \'4503599627370496\'::bigint))' })))

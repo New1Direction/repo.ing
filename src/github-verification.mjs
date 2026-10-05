@@ -75,6 +75,12 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
     return credentialResult(credential, { scope: 'builders', githubRepoId: null,
       githubUserId: BigInt(user.id), githubLogin: user.login, permission: 'identity' })
   }
+  // Who a session's token belongs to now (contributor wallet links): identity only, no repository authority. type is GitHub's
+  // account type ('User', 'Bot', 'Organization').
+  const verifyIdentity = async ({ accessToken, expectedGithubUserId }) => {
+    const user = await identify(accessToken, expectedGithubUserId)
+    return { githubUserId: BigInt(user.id), githubLogin: user.login, type: typeof user.type === 'string' ? user.type : null }
+  }
   const verifyCallback = async ({ githubRepoId, expectedGithubRepoId, retainCredential = false, ...request }) => {
     const repoId = assertGithubRepoId(positiveId(githubRepoId))
     if (repoId !== positiveId(expectedGithubRepoId)) throw new Error('GitHub OAuth repository ID is invalid')
@@ -146,5 +152,6 @@ export function createGitHubAppVerifier({ pool, clientId, clientSecret, redirect
     throw new Error('GitHub returned too many repositories to check at once. Use the individual claim pages.')
   }
   const listAdminRepositoryIds = async options => (await listAdminRepositories(options)).map(repo => repo.repoId)
-  return { authorizationUrl, verifyCallback, verifyBuilderCallback, verifyAccessToken, verifyRepositoryAdmin, listAdminRepositories, listAdminRepositoryIds }
+  return { authorizationUrl, verifyCallback, verifyBuilderCallback, verifyIdentity, verifyAccessToken, verifyRepositoryAdmin, listAdminRepositories,
+    listAdminRepositoryIds }
 }

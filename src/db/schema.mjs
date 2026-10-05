@@ -263,6 +263,11 @@ export const markets = pgTable('markets', {
   quoteAssetId: varchar('quote_asset_id', { length: 32 }),
   quoteMint: varchar('quote_mint', { length: 44 }),
   quoteRegistryVersion: integer('quote_registry_version'),
+  // Migration 0059 (docs/EARLY_ACCESS.md): both null without contributor early access; with it, when the window closes and the
+  // hook program the mint was created with. GitHub markets only, SOL only, immutable once the launch was sent (trigger
+  // protect_market_early_access).
+  earlyAccessEnd: timestamp('early_access_end', { withTimezone: true }),
+  transferHookProgram: varchar('transfer_hook_program', { length: 44 }),
 }, (table) => [
   uniqueIndex('markets_github_repo_id_unique').on(table.githubRepoId),
   uniqueIndex('markets_mint_unique').on(table.mint),
@@ -278,6 +283,9 @@ export const markets = pgTable('markets', {
   check('markets_hf_no_bonus', sql`${table.githubRepoId} < 4503599627370496 or ${table.verificationBonusLamports} is null`),
   index('markets_quote_asset_idx').on(table.quoteAssetId).where(sql`${table.quoteAssetId} is not null`),
   check('markets_quote_asset_check', sql`(${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null) or (${table.quoteAssetId} is not null and ${table.quoteMint} is not null and ${table.quoteRegistryVersion} is not null and ${table.quoteAssetId} ~ '^[a-z0-9][a-z0-9-]{1,31}$' and ${table.quoteAssetId} <> 'sol' and ${table.quoteMint} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$' and ${table.quoteMint} <> 'So11111111111111111111111111111111111111112' and ${table.quoteRegistryVersion} >= 1 and ${table.githubRepoId} < 4503599627370496)`),
+  index('markets_early_access_end_idx').on(table.earlyAccessEnd).where(sql`${table.earlyAccessEnd} is not null`),
+  check('markets_early_access_check', sql`(${table.earlyAccessEnd} is null and ${table.transferHookProgram} is null) or (${table.earlyAccessEnd} is not null and ${table.transferHookProgram} is not null and ${table.transferHookProgram} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$' and ${table.transferHookProgram} <> '11111111111111111111111111111111' and ${table.githubRepoId} < 4503599627370496)`),
+  check('markets_early_access_sol_only', sql`${table.earlyAccessEnd} is null or (${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null)`),
 ])
 
 // All DBC partner fees share this evidence ledger; eligibility preserves the
@@ -983,6 +991,33 @@ export const xLinkPending = pgTable('x_link_pending', {
 export const xLinkNonces = pgTable('x_link_nonces', {
   nonce: varchar('nonce',{length:32}).primaryKey(), expiresAt: timestamp('expires_at',{withTimezone:true}).notNull(),
 },t=>[index('x_link_nonces_expiry').on(t.expiresAt)])
+// Contributor early access (drizzle/0059_early_access.sql, src/github-wallet-links.mjs): each GitHub account's one linked wallet,
+// links waiting for the wallet's signature, and each early access repository's contributors when its launch was prepared.
+const BASE58_KEY = '^[1-9A-HJ-NP-Za-km-z]{32,44}$', GITHUB_LOGIN = '^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$'
+export const githubWalletLinks = pgTable('github_wallet_links', {
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).primaryKey(), wallet: varchar('wallet', { length: 44 }).notNull(),
+  githubLogin: text('github_login').notNull(), linkedAt: timestamp('linked_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [unique('github_wallet_links_wallet_unique').on(t.wallet), check('github_wallet_links_user_check', sql`${t.githubUserId} > 0`),
+  check('github_wallet_links_wallet_check', sql`${t.wallet} ~ ${sql.raw(`'${BASE58_KEY}'`)}`),
+  check('github_wallet_links_login_check', sql`${t.githubLogin} ~ ${sql.raw(`'${GITHUB_LOGIN}'`)}`)])
+export const githubWalletLinkChallenges = pgTable('github_wallet_link_challenges', {
+  nonce: varchar('nonce', { length: 48 }).primaryKey(), githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  githubLogin: text('github_login').notNull(), wallet: varchar('wallet', { length: 44 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(), expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+}, t => [index('github_wallet_link_challenges_expiry').on(t.expiresAt), check('github_wallet_link_challenges_nonce_check', sql`${t.nonce} ~ '^[0-9a-f]{48}$'`),
+  check('github_wallet_link_challenges_user_check', sql`${t.githubUserId} > 0`),
+  check('github_wallet_link_challenges_wallet_check', sql`${t.wallet} ~ ${sql.raw(`'${BASE58_KEY}'`)}`),
+  check('github_wallet_link_challenges_login_check', sql`${t.githubLogin} ~ ${sql.raw(`'${GITHUB_LOGIN}'`)}`),
+  check('github_wallet_link_challenges_expiry_check', sql`${t.expiresAt} > ${t.createdAt} and ${t.expiresAt} <= ${t.createdAt} + interval '5 minutes'`)])
+export const earlyAccessContributors = pgTable('early_access_contributors', {
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(), githubLogin: text('github_login').notNull(),
+  contributions: integer('contributions').notNull(), capturedAt: timestamp('captured_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [primaryKey({ name: 'early_access_contributors_pk', columns: [t.githubRepoId, t.githubUserId] }), githubOnly('early_access_contributors', t),
+  index('early_access_contributors_user').on(t.githubUserId), check('early_access_contributors_user_check', sql`${t.githubUserId} > 0`),
+  check('early_access_contributors_contributions_check', sql`${t.contributions} >= 1`)])
 // Parts funds: all-or-nothing hardware lists backed into the tip wallet (see drizzle/0033_parts_funds.sql, src/parts-fund.mjs).
 const tz = name => timestamp(name,{withTimezone:true})
 export const partsFunds = pgTable('parts_funds', {

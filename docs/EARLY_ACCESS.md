@@ -5,7 +5,8 @@ contributors can buy the token; anyone can sell to the curve at any time. It is 
 hook, `programs/early-access-hook`, on its own Meteora DBC config. Launches without the option, and every existing market,
 are unchanged.
 
-Status: the hook program and its tests (this document's first part). The app does not use it yet; nothing is deployed.
+Status: the hook program and its tests; the database, switches and the contributor wallet link (step 3), all dark. No launch
+uses the hook yet; nothing is deployed.
 
 ## Decisions (owner, 2026-10-05)
 
@@ -100,11 +101,46 @@ path's limits allow it).
 - Lookup table: about 0.004 SOL.
 - Per launch: the three mint accounts, about 0.004 SOL, paid by the launcher; the list's share comes back when it is closed.
 
+## Switches, database and the contributor wallet link (step 3)
+
+**Switches** (`src/early-access.mjs`). `EARLY_ACCESS_ENABLED` (exactly "true") opens the contributor wallet link; anything
+else answers 404 on its page, its API and its GitHub sign-in. Launches also need the code gate `EARLY_ACCESS_LAUNCHES_READY`,
+which stays `false` until the launch, trades, claims and graduation for hook pools exist (`earlyAccessLaunchable`). Settings,
+names only for now: `EARLY_ACCESS_DBC_CONFIG`, `EARLY_ACCESS_LOOKUP_TABLE`, `EARLY_ACCESS_ORACLE_SECRET_KEY` (errors name the
+variable, never its value). The window is a whole number of seconds from 900 to 86,400 (`earlyAccessWindow`); the form offers
+15 minutes, 1 hour, 6 hours and 24 hours (`EARLY_ACCESS_WINDOWS`).
+
+**Database** (`drizzle/0059_early_access.sql`).
+
+| Object | Rule |
+| --- | --- |
+| `markets.early_access_end`, `markets.transfer_hook_program` | Both or none; a base58 program key, not the default key; GitHub repository markets only; never with a stock pair's quote columns. Like the quote stamp: may change while the launch is unsent (reserved, prepared, failed), immutable once it was sent or indexed (trigger `protect_market_early_access`). |
+| `github_wallet_links` | One wallet per GitHub user id (the key); a wallet belongs to one account (UNIQUE). Re-linking replaces the account's wallet; a wallet linked to another account is refused, never moved. |
+| `github_wallet_link_challenges` | Nonce (48 hex), account, wallet; expires 5 minutes after it is made (database clock); used once (`consumed_at`). |
+| `early_access_contributors` | Per repository and account: login, commits (at least 1), when captured. Step 4 fills it when a launch is prepared. |
+
+**The link** (`src/github-wallet-links.mjs`, `/contributors/link`, `/api/contributor-wallet`). The contributor signs in with
+GitHub in the identity-only `contributor` mode (as the builder dashboard does; no repository authority). Asking for a
+challenge reads the account from GitHub again with the session's token (same user id, type `User`; bots refused), then the
+wallet signs:
+
+    repo.ing contributor wallet v1
+    GitHub user: <login> (<id>)
+    Wallet: <base58>
+    Nonce: <48 hex>
+    Expires: <ISO time>
+
+The link is written in one transaction: the challenge row is locked, checked (this account, this wallet, unused, unexpired),
+the signature verified, the nonce used up, then the link upserted. There is no paste-an-address path. Read helpers for step 4:
+`linkForGithubUser`, `linksForGithubUsers`, `githubUserForWallet`.
+
 ## Build and test
 
     scripts/build-early-access-hook.sh                 # writes tests/fixtures/validator/early_access_hook.so
     node --test tests/early-access-hook.test.mjs       # the client (quick suite)
     node --test tests/early-access-hook-chain.test.mjs # mainnet's programs on a local validator (full suite)
+    node --test tests/early-access.test.mjs            # switches, window, link message and refusals (quick suite)
+    node scripts/ci/run-tests.mjs early-access-links-db # migration 0059, the link flow and its routes (PostgreSQL)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain test starts `scripts/ci/start-early-access-validator.sh` on port
@@ -113,8 +149,8 @@ after any change to `programs/early-access-hook`. The chain test starts `scripts
 ## Plan
 
 1. Spike on mainnet's programs. Done.
-2. The hook program and its tests. This change.
-3. Database, switches and the GitHub-to-wallet link for contributors.
+2. The hook program and its tests. Done.
+3. Database, switches and the GitHub-to-wallet link for contributors. This change.
 4. The early access config and the launch (v0 transaction, lookup table, window on the form, contributor list at prepare).
 5. Curve trades, charts, lists and indexers for hook pools.
 6. Claims: builder fees, builder allocation, discovery and platform fees.
