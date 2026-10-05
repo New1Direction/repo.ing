@@ -1,5 +1,5 @@
 import { requirePlatformOperator } from '../../lib/platform-operator.mjs'
-import { createPlatformRevenue, platformRevenueSummary, reconcilePlatformRevenue } from '../../../src/platform-revenue.mjs'
+import { BUYBACK_IMPORT_REFUSALS, createPlatformRevenue, platformRevenueSummary, reconcilePlatformRevenue } from '../../../src/platform-revenue.mjs'
 import { chain, database, partnerSigner } from '../../lib/server.mjs'
 import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
 import { platformTreasuryWallet } from '../../../src/platform-dbc-fees.mjs'
@@ -7,8 +7,16 @@ import { assertSameOrigin, githubSessionCookie, readGithubSession, seal, unseal 
 import { publicOrigin } from '../../lib/origin.mjs'
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'private, no-store' }
-// Why importBuyback (src/platform-revenue.mjs) refused a signature: its own fixed wording, safe to show an operator.
-const IMPORT_REFUSAL = /^(Invalid buyback signature|Buyback transaction is not a finalized success|Custody wallet is absent from the buyback transaction|Transaction did not spend custody SOL beyond its network fee|No canonical token gain for the custody wallet in this transaction|Bought tokens are held outside the custody wallet|Unknown allocation group|This buyback is already recorded)$/
+// Refusals whose own fixed wording (src/platform-revenue.mjs) is safe to show an operator as it is.
+const SHOWN = new Set([...Object.values(BUYBACK_IMPORT_REFUSALS), 'Buyback amount exceeds the remaining reserve for this allocation',
+  'Intent exceeds the remaining buyback reserve'])
+// A fault (a missing import, a database or provider error) is answered in general words; its kind is logged so it cannot go
+// unnoticed. A refusal the service worded itself is a plain Error and is not a fault: null.
+function faultKind(error) {
+  const fault = error?.cause ?? error
+  return fault?.status ?? fault?.code ?? (fault?.name && fault.name !== 'Error' ? fault.name : error?.cause ? 'error' : null)
+}
+const logFault = (where, kind) => console.warn('platform_revenue_failed', { where, code: kind })
 
 function service() {
   const partner = partnerSigner()
@@ -43,10 +51,14 @@ export async function GET(request) {
     return Response.json({ ...summary, reconciliation, intents: intents.rows, reviews: { allocate,
       import: seal({ purpose: 'platform-revenue-intent.import', sessionId: session(request).sessionId,
         expiresAt: Date.now() + 10 * 60_000 }) } }, { headers })
-  } catch { return Response.json({ error: 'Platform revenue is temporarily unavailable. Try refreshing.' }, { status: 503, headers }) }
+  } catch (error) {
+    logFault('summary', faultKind(error) ?? 'error')
+    return Response.json({ error: 'Platform revenue is temporarily unavailable. Try refreshing.' }, { status: 503, headers })
+  }
 }
 
 export async function POST(request) {
+  let name = 'request'
   try {
     assertSameOrigin(request, publicOrigin(request.url))
     const body = await request.json()
@@ -89,15 +101,15 @@ export async function POST(request) {
     }
     const action = actions[body.action]
     if (!action) throw Error('Unsupported platform revenue action')
+    name = body.action
     return Response.json({ result: await action() }, { headers })
   } catch (error) {
     if (error.status) return Response.json({ error: error.message }, { status: error.status, headers })
     const message = /execution is disabled/.test(error.message) ? 'Buyback execution is disabled until the canonical $REPOING configuration exists.' :
       /No claimed platform revenue/.test(error.message) ? 'No claimed platform revenue is available to allocate.' :
-      /exceeds/.test(error.message) || IMPORT_REFUSAL.test(error.message) ? error.message :
-      // importBuyback reads legacy and v0 transactions only.
-      /Transaction version/.test(error.message) ? 'This buyback uses a newer transaction format than this tool can read. The worker records custody and team buybacks on its own; check Buybacks on /stats.' :
-      'Refresh this page to review platform revenue and try again.'
-    return Response.json({ status: 'failed', error: message }, { status: 409, headers })
+      SHOWN.has(error.message) ? error.message : null
+    const kind = faultKind(error)
+    if (kind !== null) logFault(name, kind)
+    return Response.json({ status: 'failed', error: message ?? 'Refresh this page to review platform revenue and try again.' }, { status: 409, headers })
   }
 }
