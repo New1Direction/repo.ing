@@ -44,6 +44,14 @@ export async function resolveRepositoryOwner(id, fetchImpl = fetch) {
   return { ownerId: String(repo.owner.id), ownerType: repo.owner.type }
 }
 
+// GitHub's fork facts from a single-repository response (src/repo-lineage.mjs): the repository it was forked from (parent)
+// and the root of its fork network (source), each { id, fullName } or null; null for a repository that is not a fork.
+export function forkOf(json) {
+  if (json?.fork !== true) return null
+  const ref = repo => Number.isSafeInteger(repo?.id) && repo.id > 0 && typeof repo.full_name === 'string' ? { id: String(repo.id), fullName: repo.full_name } : null
+  return { parent: ref(json.parent), source: ref(json.source) }
+}
+
 // A GitHub timestamp string as a Date, or null when missing or malformed.
 export function githubTime(value) {
   const time = typeof value === 'string' ? new Date(value) : null
@@ -68,12 +76,14 @@ async function publicRepositoryFromResponse(response) {
   const updated = new Date(repo.updated_at)
   if (Number.isNaN(updated.getTime())) throw new RepositoryResolutionError('GitHub returned an invalid update time')
   // Left out (never stored as null over a known value) if GitHub omits it; quality signals then judge by stars alone.
-  const created = githubTime(repo.created_at)
+  const created = githubTime(repo.created_at), fork = forkOf(repo)
   return {
     githubRepoId: BigInt(repo.id), owner: repo.owner.login, name: repo.name,
     fullName: repo.full_name, description: repo.description ?? null,
     avatarUrl: repo.owner.avatar_url ?? null, stars: repo.stargazers_count ?? 0,
     forks: repo.forks_count ?? 0, archived: Boolean(repo.archived), githubUpdatedAt: updated,
     ...created ? { githubCreatedAt: created } : {},
+    // Only a fork carries this (the fork guard, src/repo-lineage.mjs).
+    ...fork ? { fork } : {},
   }
 }

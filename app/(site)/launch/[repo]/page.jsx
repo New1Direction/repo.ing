@@ -10,6 +10,9 @@ import { checkAgentDraft } from '../../../lib/agent-launch.mjs'
 import { activeLaunchFeeTerms } from '../../../lib/launch-fee.mjs'
 import { maintainerDecision } from '../../../lib/maintainer-opt-outs.mjs'
 import { LaunchBlocked } from '../../../components/maintainer-declined'
+import { LaunchCopyBlocked } from '../../../components/fork-guard'
+import { ForkOfLabel } from '../../../components/market-signals'
+import { checkLaunchLineage, LineageError } from '../../../../src/repo-lineage.mjs'
 import { verificationBonusLamports } from '../../../../src/verification-bonus.mjs'
 import { isHfMarketId } from '../../../../src/hf-launch.mjs'
 import { ModelLaunch } from '../../../components/hf/model-launch'
@@ -27,6 +30,16 @@ export default async function Launch({ params, searchParams }) {
   // The maintainer opted this repository out of repo.ing (or that cannot be checked): no launch form.
   const optOut = await maintainerDecision(repoId)
   if (optOut !== null) return <><AppHeader/><main className="section-wrap launch-page"><LaunchBlocked repo={repo} decision={optOut}/></main><Footer/></>
+  // The fork guard (src/repo-lineage.mjs): a fork or copy of a launched repository gets no launch form. Launch prepare checks
+  // again, so a database hiccup here only skips the early notice.
+  const pool = database()
+  if (pool) {
+    try { await checkLaunchLineage({ pool, repo }) }
+    catch (error) {
+      if (error instanceof LineageError) return <><AppHeader/><main className="section-wrap launch-page"><LaunchCopyBlocked error={error}/></main><Footer/></>
+      console.warn('launch_lineage_unavailable', { code: error?.code ?? error?.name ?? 'error' })
+    }
+  }
   const query = await searchParams
   let draft
   if (query.draft !== undefined) {
@@ -43,5 +56,5 @@ export default async function Launch({ params, searchParams }) {
   const launchFee = await activeLaunchFeeTerms()
   // SOL, plus the owner's company stock when stock pairs can be launched; from the owner GitHub reported in the read above.
   const pairs = quoteOptions(repo, { enabled: stockPairsLaunchable() })
-  return <><AppHeader active="launch"/><main className="section-wrap launch-page"><Link href="/explore" className="back-link"><ArrowLeft size={18}/>Back to explore</Link><div className="repo-hero-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo} detailed/></div><div className="repo-hero-right"><GitHubLink repo={repo}/><div className="repo-details"><span>{repo.language || 'Language unavailable'}</span><span>{repo.license || 'License unavailable'}</span><span>{repo.updatedAt ? `Updated ${new Date(repo.updatedAt).toLocaleDateString()}` : 'Update date unavailable'}</span></div></div></div><LaunchRepoFacts repo={repo}/><LaunchForm key={`${repoId}:${query.draft || "manual"}`} repo={repo} draft={draft ? { token: query.draft, tokenName: draft.tokenName, tokenSymbol: draft.tokenSymbol, initialBuy: draft.initialBuy } : undefined} trendRevision={trendRevision} available={launchAvailable()} discoveryEnabled={discoveryRewardsEnabled()} allocationEnabled={builderAllocationEnabled()} launchFee={launchFee} verificationBonus={verificationBonusLamports()?.toString() ?? null} quoteOptions={pairs}/></main><Footer/></>
+  return <><AppHeader active="launch"/><main className="section-wrap launch-page"><Link href="/explore" className="back-link"><ArrowLeft size={18}/>Back to explore</Link><div className="repo-hero-card"><div><RepoIdentity repo={repo}><ForkOfLabel parent={repo.fork?.parent?.fullName}/></RepoIdentity><RepoStats repo={repo} detailed/></div><div className="repo-hero-right"><GitHubLink repo={repo}/><div className="repo-details"><span>{repo.language || 'Language unavailable'}</span><span>{repo.license || 'License unavailable'}</span><span>{repo.updatedAt ? `Updated ${new Date(repo.updatedAt).toLocaleDateString()}` : 'Update date unavailable'}</span></div></div></div><LaunchRepoFacts repo={repo}/><LaunchForm key={`${repoId}:${query.draft || "manual"}`} repo={repo} draft={draft ? { token: query.draft, tokenName: draft.tokenName, tokenSymbol: draft.tokenSymbol, initialBuy: draft.initialBuy } : undefined} trendRevision={trendRevision} available={launchAvailable()} discoveryEnabled={discoveryRewardsEnabled()} allocationEnabled={builderAllocationEnabled()} launchFee={launchFee} verificationBonus={verificationBonusLamports()?.toString() ?? null} quoteOptions={pairs}/></main><Footer/></>
 }

@@ -35,7 +35,7 @@ import { timed } from '../../../lib/server-timing.mjs'
 import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
 import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
 import { TrustPanel } from '../../../components/trust-panel'
-import { OfficialBadge } from '../../../components/market-signals'
+import { OfficialBadge, ForkOfLabel } from '../../../components/market-signals'
 import { featuredMarkets, labeledRacers, repoFactsView } from '../../../lib/repo-quality.mjs'
 import { MarketsToWatch, MarketsToWatchFallback, MarketsToWatchLists } from '../../../components/markets-to-watch'
 import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-race.mjs'
@@ -128,6 +128,7 @@ export default async function Token({ params, searchParams }) {
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={stockPair ? <StockFeeHeadlineFallback market={market}/> : <EarningsHeadlineFallback/>}>{stockPair ? <StockFeeHeadline market={market} href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}/> : <EarningsHeadline market={market}/>}</Suspense></div>
       <div className="market-hero-main"><RepoIdentity repo={repo} heading>
+          <ForkOfLabel parent={repo.fork?.parent?.fullName ?? market.forkParent}/>
           <div className="market-hero-ticker"><strong>${market.symbol}</strong><span>Repository market</span>{market.officialLaunch && !decision && <OfficialBadge/>}{!official && <Link className="platform-token-link" href={OFFICIAL_TOKEN.marketPath}>Platform token ${OFFICIAL_TOKEN.symbol} →</Link>}</div></RepoIdentity><RepoStats repo={repo} detailed/>
         <div className="market-hero-pills"><Suspense fallback={null}><ParticipationBadge repoId={market.repoId}/></Suspense>
           {signedPayoutWallet(market) && <Suspense fallback={null}><XHandle wallet={signedPayoutWallet(market)} trust avatar className="maintainer-x"/></Suspense>}

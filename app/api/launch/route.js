@@ -18,6 +18,8 @@ import { publicOrigin } from '../../lib/origin.mjs'
 import { readLimitedBody } from '../../../src/token-image.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../../../src/launch-sessions.mjs'
 import { activeDecision, assertLaunchAllowed } from '../../../src/maintainer-opt-outs.mjs'
+import { persistLaunchRepository } from '../../../src/repository-store.mjs'
+import { checkLaunchLineage } from '../../../src/repo-lineage.mjs'
 import { verificationBonusLamports } from '../../../src/verification-bonus.mjs'
 import { HF_MARKETS_UNAVAILABLE, HF_OPT_OUT_ERROR, hfLaunchGuard, hfLaunchSource, hfMarketsEnabled, isHfMarketId,
   registeredModel } from '../../../src/hf-launch.mjs'
@@ -136,6 +138,9 @@ export async function POST(request) {
       const resolved = await resolvePublicRepository(body.repositoryUrl)
       if (resolved.githubRepoId.toString() !== String(body.repoId)) throw new Error('Repository URL does not match canonical repository ID')
       await assertLaunchAllowed(pool, body.repoId)
+      // The fork guard (src/repo-lineage.mjs): a fork or copy of a launched repository is refused here, on every launch path.
+      await persistLaunchRepository(pool, resolved)
+      await checkLaunchLineage({ pool, repo: resolved })
       const connection = chain()
       const metadataOrigin = process.env.APP_ORIGIN ? publicOrigin(request.url) : null
       if (process.env.NODE_ENV === 'production' && !metadataOrigin) throw new Error('Token metadata origin is not configured')

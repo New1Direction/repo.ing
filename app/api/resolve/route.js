@@ -3,6 +3,7 @@ import { persistLaunchRepository } from '../../../src/repository-store.mjs'
 import { publicError } from '../../lib/public-error.mjs'
 import { database } from '../../lib/server.mjs'
 import { activeDecision, OPT_OUT_ERROR } from '../../../src/maintainer-opt-outs.mjs'
+import { checkLaunchLineage, LineageError } from '../../../src/repo-lineage.mjs'
 import { namesHuggingFace } from '../../../src/hf-launch.mjs'
 import { resolveModelRequest } from '../../lib/hf-launch.mjs'
 export const runtime = 'nodejs'
@@ -29,6 +30,14 @@ export async function POST(request) {
     // Without a market the next step is a launch: refuse it when the maintainer opted the repository out.
     if (!rows[0]?.mint && await activeDecision(pool, repo.githubRepoId.toString())) {
       return Response.json({ error: OPT_OUT_ERROR, code: 'MAINTAINER_OPTED_OUT' }, { status: 403 })
+    }
+    // The fork guard (src/repo-lineage.mjs), said here before anyone fills in a launch review.
+    if (!rows[0]?.mint) {
+      try { await checkLaunchLineage({ pool, repo }) }
+      catch (error) {
+        if (!(error instanceof LineageError)) throw error
+        return Response.json({ error: error.message, code: error.code, original: error.original }, { status: 409 })
+      }
     }
     return Response.json({ repoId: repo.githubRepoId.toString(), mint: rows[0]?.mint ?? null })
   } catch (error) {

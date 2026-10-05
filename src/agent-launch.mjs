@@ -1,4 +1,5 @@
 import { resolvePublicRepository } from './github.mjs'
+import { checkLaunchLineage, LineageError } from './repo-lineage.mjs'
 import { launchRepositoryUrl } from './launch-links.mjs'
 import { AgentLaunchError, signLaunchDraft } from './agent-launch-draft.mjs'
 import { simpleSearch, applySearchResult } from './repo-search.mjs'
@@ -33,9 +34,19 @@ export function createAgentLaunchService({ pool, origin, secret, config, discove
     const repoId = repo.githubRepoId.toString()
     await persistLaunchRepository(pool, repo)
     const [launch, optOut] = await Promise.all([status(repoId), activeDecision(pool, repoId)])
+    // copyOf: a fork or copy of a repository that already has a market (src/repo-lineage.mjs); it cannot be launched.
+    // forkOf: the repository it was forked from, when it is a fork that may launch.
+    let copyOf = null, forkOf = null
+    if (launch.state === 'not_launched') {
+      try { forkOf = (await checkLaunchLineage({ pool, repo })).forkOf?.fullName ?? null }
+      catch (error) {
+        if (!(error instanceof LineageError)) throw error
+        copyOf = { fullName: error.original.fullName, reason: error.message, marketUrl: error.original.mint ? `${origin}/token/${error.original.mint}` : null }
+      }
+    }
     // maintainerOptedOut: a current GitHub admin declined the market or opted the repository out; it cannot be launched.
     return { repoId, fullName: repo.fullName, repositoryUrl: `https://github.com/${repo.fullName}`, ...launch,
-      maintainerOptedOut: Boolean(optOut), reviewUrl: `${origin}/launch/${repoId}` }
+      maintainerOptedOut: Boolean(optOut), copyOf, forkOf, reviewUrl: `${origin}/launch/${repoId}` }
   }
   return {
     async findRepos({ query = '', limit = 10 }) {
@@ -51,6 +62,7 @@ export function createAgentLaunchService({ pool, origin, secret, config, discove
       const repo = await resolveRepo(repository)
       if (repo.live) return { ...repo, draftCreated: false, reason: 'A canonical market already exists. Open its market.' }
       if (repo.maintainerOptedOut) throw new AgentLaunchError(OPT_OUT_ERROR)
+      if (repo.copyOf) throw new AgentLaunchError(repo.copyOf.reason)
       if (repo.state !== 'not_launched') throw new AgentLaunchError('This repository has a launch in progress or requiring review. Check launch status before continuing.')
       if (!config) throw new AgentLaunchError('Launch configuration is unavailable.')
       const name = tokenName ?? repo.fullName.split('/')[1].slice(0, 32)

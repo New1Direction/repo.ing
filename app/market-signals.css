@@ -5,7 +5,8 @@
 
 .badge.official{gap:4px;padding:2px 9px 2px 7px;border:1px solid color-mix(in srgb,var(--green) 50%,transparent);background:color-mix(in srgb,var(--green) 15%,transparent);color:var(--green);font-weight:650}
 .badge.new-repo{gap:4px;padding:2px 9px 2px 7px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);background:color-mix(in srgb,var(--amber) 12%,transparent);color:var(--amber-text);font-weight:600}
-.badge.official svg,.badge.new-repo svg{flex:none}
+.badge.fork-of{gap:4px;padding:2px 9px 2px 7px;border:1px solid var(--border-strong);background:var(--surface2);color:var(--text);font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge.official svg,.badge.new-repo svg,.badge.fork-of svg{flex:none}
 .badge.compact{gap:3px;padding:0 6px 0 5px;font-size:10.5px;line-height:16px}
 [data-theme=light] .badge.official{background:#e1f5e9;border-color:#9fd8b6;color:#11774b}
 [data-theme=light] .badge.new-repo{background:#fdf1df;border-color:#efc98f}

@@ -81,8 +81,10 @@ export function createTrendSources({ fetchImpl = fetch, now = () => Date.now(), 
     const releaseAt=release.data?.published_at??null
     if(releaseAt&&(!Number.isFinite(Date.parse(releaseAt))||Date.parse(releaseAt)>nowMs+60000))throw Error('INVALID_RELEASE_EVIDENCE')
     // Language and owner avatar come with the identity response at no extra call; public lists show them from storage.
+    // forkOf: only for a GitHub fork, the repository it was forked from (shown as "Fork of …"; src/repo-lineage.mjs).
     return {repo:{id:String(named.id),fullName:named.full_name,description:named.description??null,stars:named.stargazers_count,forks:named.forks_count,
-      language:typeof named.language==='string'?named.language.slice(0,64):null,avatarUrl:safeGithubImageUrl(named.owner?.avatar_url)},
+      language:typeof named.language==='string'?named.language.slice(0,64):null,avatarUrl:safeGithubImageUrl(named.owner?.avatar_url),
+      ...(named.fork===true&&typeof named.parent?.full_name==='string'?{forkOf:named.parent.full_name}:{})},
       observedAt:new Date(nowMs).toISOString(),stars:named.stargazers_count,forks:named.forks_count,releaseAt,
       activity:commitActivity(commits.data??[],commits.complete,nowMs),
       sources:{identity:`${base}`,immutableIdentity:`https://api.github.com/repositories/${named.id}`,release:release.data?.html_url??`${canonical}/releases`,

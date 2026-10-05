@@ -3,6 +3,8 @@ const QUOTE_CODES=new Set(Object.values(QUOTE_ERRORS))
 // A refused quote pair keeps its own code (src/quote-assets.mjs), so the client can tell it from a failed review.
 export function launchFailure(error,action){
  const message=error.message||'Launch failed'
+ // The fork guard (src/repo-lineage.mjs): retrying cannot change it.
+ if(error.code==='COPY_OF_LAUNCHED_REPOSITORY')return {error:message,canRetry:false,code:error.code}
  const uncertain=error.name==='IncompleteLaunchError'||/incomplete launch|evidence is still pending|final indexing is not ready|did not index|No wallet signature requested/i.test(message)
  // By error.name: the production build renames classes, so constructor.name is not 'DefinitiveLaunchError' there.
  const definitive=error.name==='DefinitiveLaunchError'||error.constructor?.name==='DefinitiveLaunchError'
