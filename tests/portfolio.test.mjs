@@ -104,3 +104,35 @@ test('no held markets means no price queries', async () => {
   assert.equal((await latestMarketPrices(db, [])).size, 0)
   assert.equal(db.calls.length, 0)
 })
+
+test('real PostgreSQL: wallet prices and P&L order use stored positions, so a cleared block list changes nothing', { skip: !process.env.CHART_TEST_DATABASE_URL }, async () => {
+  const { default: pg } = await import('pg')
+  const { latestMarketPrices, clearPriceCache } = await import('../app/lib/portfolio-prices.mjs')
+  const { walletTrades } = await import('../app/lib/holding-pnl.mjs')
+  const url = new URL(process.env.CHART_TEST_DATABASE_URL)
+  assert.equal(url.port, '55441', 'Use the dedicated chart test DB, never the production tunnel')
+  const db = new pg.Client({ connectionString: url.href }); await db.connect()
+  try {
+    await db.query('begin')
+    await db.query(`create temporary table trade_events(pool text, signature text, event_index integer, slot bigint, traded_at timestamptz, direction text,
+      input_base_units text, output_base_units text, next_sqrt_price text, trader text)`)
+    await db.query(`create temporary table damm_trade_events(github_repo_id bigint, pool text, signature text, event_index integer, slot bigint, traded_at timestamptz,
+      quote_amount bigint, direction text, next_sqrt_price text, base_amount bigint, trader text)`)
+    await db.query('create temporary table graduation_events(github_repo_id bigint, pool text, signature text, slot bigint, evidence text, evidence_hash text)')
+    await db.query('create temporary table finalized_chart_blocks(slot bigint primary key, blockhash text, previous_blockhash text, parent_slot bigint, signatures text[] not null)')
+    await db.query('create temporary table finalized_chart_positions(slot bigint, signature text, transaction_index integer, primary key(slot, signature))')
+    const q64 = 1n << 64n
+    // Two transactions in one slot. Block order is B then A, the reverse of their signatures' alphabetical order.
+    await db.query(`insert into trade_events values ('curve-901','sig-A',0,50,now(),'buy','1000','10',$1,'W'), ('curve-901','sig-B',0,50,now(),'sell','5','900',$2,'W')`,
+      [(q64 * 2n).toString(), (q64 * 3n).toString()])
+    await db.query(`insert into finalized_chart_blocks values (50,'h','p',49,$1)`, [['other', 'sig-B', 'sig-A']])
+    await db.query(`insert into finalized_chart_positions values (50,'sig-B',2), (50,'sig-A',3)`)
+    const market = { repoId: '901', pool: 'curve-901', mint: 'Mint901' }
+    const read = async () => { clearPriceCache(); return { price: (await latestMarketPrices(db, [market])).get('901'),
+      order: (await walletTrades(db, 'W', [market])).get('901').map(trade => trade.direction) } }
+    const before = await read()
+    assert.deepEqual(before, { price: 0.004, order: ['sell', 'buy'] })
+    await db.query(`update finalized_chart_blocks set signatures = '{}'`)
+    assert.deepEqual(await read(), before)
+  } finally { await db.query('rollback'); await db.end() }
+})
