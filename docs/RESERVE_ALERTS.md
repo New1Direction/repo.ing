@@ -36,7 +36,7 @@ The initial adapter accepts a trusted HTTPS receiver and POSTs JSON:
 { "event": "reserve_moved", "id": 123, "text": "Human-readable alert", "market": { "repoId": "...", "previousReserveLamports": "...", "reserveLamports": "...", "deltaLamports": "...", "progressPercent": 0.5 } }
 ```
 
-The real `market` payload also contains the public proof fields listed above. It excludes delivery metadata and credentials. Requests have a 10-second timeout, reject redirects and accept only successful HTTP responses. Receiver acceptance is not proof that a human read the alert. Provider-specific Telegram/Discord formatting requires the chosen destination to be configured and tested; no credentials or destination have been supplied yet. Keep credentials in Railway worker variables or ignored secret files, never in Git or browser configuration.
+The real `market` payload also contains the public proof fields listed above. It excludes delivery metadata and credentials. Requests have a 10-second timeout, reject redirects and accept only successful HTTP responses. Receiver acceptance is not proof that a human read the alert. Slack, Discord and Telegram destinations get the message in their own format ([Destinations](#destinations)). Keep credentials in Railway worker variables or ignored secret files, never in Git or browser configuration.
 
 Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; existing events remain durable. P3, P4 and buyback execution settings are untouched.
 
@@ -63,9 +63,22 @@ Stock-pair ledgers raise the same kind from `src/stock-reconcile.mjs`. Those ale
 
 Queued only with `RESERVE_MOVE_NOTIFICATIONS=true`: `RESERVE_MOVED`. Without it the delivery job also marks any move that is still queued as `off` (`RESERVE_NOTIFICATIONS_OFF`) instead of sending it: the moves recorded before this setting existed, and any queued while it was on.
 
-## Slack and operating balances
+## Destinations
 
-For Slack, set `RESERVE_ALERT_WEBHOOK_URL` to the incoming webhook for the chosen operator channel. HTTPS `hooks.slack.com` receivers receive Slack's `{ "text": "..." }` payload. Keep the webhook private in Railway worker variables. Destination setup and a successful delivery test are required before calling Slack notifications live.
+`RESERVE_ALERT_WEBHOOK_URL` on the worker is the one destination. The sender picks the format from its host, and refuses a destination that cannot work when the worker starts (`reserveAlertError: ALERT_DESTINATION_INVALID`):
+
+| Destination | Value of `RESERVE_ALERT_WEBHOOK_URL` | What is sent |
+| --- | --- | --- |
+| Slack | The channel's incoming webhook, `https://hooks.slack.com/services/…` | `{ "text": "…" }` |
+| Discord | The channel's webhook, `https://discord.com/api/webhooks/<id>/<token>` | `{ "content": "…" }`, with mentions disabled |
+| Telegram | `https://api.telegram.org/bot<token>/sendMessage?chat_id=<chat>` | `sendMessage` with that chat and the text, link previews off |
+| Any other HTTPS receiver | Its URL | The JSON event shown above |
+
+- **Telegram:** the token comes from @BotFather. `<chat>` is the numeric id of the chat or channel the bot was added to (a channel id starts with `-100`), or `@channelname` for a public channel.
+- The value is a secret: it lets anyone post to that channel. Keep it in Railway worker variables only.
+- **Test it:** `railway ssh --service worker -- node scripts/send-test-alert.mjs` sends one test message through the same sender. It reads no database and no chain. A destination counts as live once that message has arrived.
+
+## Operating balances
 
 Set `OPS_PAYOUT_WALLET` and `OPS_COLLECTION_WALLET` on the worker to the public addresses of the existing payout and collection signers. No private signing key is needed for monitoring. Every 15 minutes the worker compares finalized balances from the two configured RPC providers. Disagreement fails closed and logs `OPERATING_BALANCE_UNVERIFIED`.
 

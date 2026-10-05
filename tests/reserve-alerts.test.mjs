@@ -70,6 +70,52 @@ test('webhook is disabled without a destination, bounded, no redirects, and cont
   const failed=createReserveWebhookSender({env:{RESERVE_ALERT_WEBHOOK_URL:'https://example.com/hook'},fetchImpl:async()=>({ok:false})})
   await assert.rejects(failed({id:7,text:'test',detail}),/NOTIFICATION_SEND_FAILED/)
 })
+test('Slack, Discord and Telegram each get the message in their own shape; any other receiver gets the event', async () => {
+  const detail = { role: 'Builder payout signer', minimumLamports: '30000000', balanceLamports: '1000', observedAt: '2026-10-05T08:15:00.000Z', delivery: pendingDelivery(0) }
+  const text = reserveAlertText(9, detail)
+  const sent = async destination => {
+    const requests = []
+    const sender = createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: destination }, fetchImpl: async (url, options) => { requests.push([String(url), JSON.parse(options.body), options]); return { ok: true } } })
+    assert.deepEqual(await sender({ id: 9, text, detail }), { accepted: true })
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0][2].redirect, 'error'); assert.equal(requests[0][2].method, 'POST'); assert.equal(requests[0][2].headers['Content-Type'], 'application/json')
+    return requests[0].slice(0, 2)
+  }
+  assert.deepEqual(await sent('https://hooks.slack.com/services/T0/B0/secret'), ['https://hooks.slack.com/services/T0/B0/secret', { text }])
+  for (const host of ['discord.com', 'discordapp.com', 'canary.discord.com', 'ptb.discord.com'])
+    assert.deepEqual(await sent(`https://${host}/api/webhooks/123/secret`), [`https://${host}/api/webhooks/123/secret`, { content: text, allowed_mentions: { parse: [] } }])
+  // A host that only ends in the same letters is not Discord.
+  assert.equal((await sent('https://notdiscord.com/api/webhooks/123/secret'))[1].event, 'operating_wallet_low')
+  // Telegram: the chat is named in the destination's own query, and the request goes to the method itself.
+  assert.deepEqual(await sent('https://api.telegram.org/bot123:secret/sendMessage?chat_id=-1001234567890'),
+    ['https://api.telegram.org/bot123:secret/sendMessage', { chat_id: '-1001234567890', text, link_preview_options: { is_disabled: true } }])
+  assert.deepEqual(await sent('https://api.telegram.org/bot123:secret/sendMessage?chat_id=@repoing_ops'),
+    ['https://api.telegram.org/bot123:secret/sendMessage', { chat_id: '@repoing_ops', text, link_preview_options: { is_disabled: true } }])
+  const [, generic] = await sent('https://example.com/hook')
+  assert.deepEqual([generic.event, generic.id, generic.text, generic.market.role, generic.market.delivery], ['operating_wallet_low', 9, text, 'Builder payout signer', undefined])
+  // The test message of scripts/send-test-alert.mjs is its own event.
+  let tested
+  await createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://example.com/hook' }, fetchImpl: async (_url, options) => { tested = JSON.parse(options.body); return { ok: true } } })(
+    { id: 0, text: 'repo.ing · Test alert', detail: { test: true, observedAt: '2026-10-05T08:15:00.000Z' } })
+  assert.deepEqual([tested.event, tested.id, tested.text], ['test', 0, 'repo.ing · Test alert'])
+  // A message longer than the receiver takes is cut, not refused.
+  const long = 'x'.repeat(5000), cut = async destination => {
+    let body
+    await createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: destination }, fetchImpl: async (_url, options) => { body = JSON.parse(options.body); return { ok: true } } })({ id: 1, text: long, detail })
+    return body
+  }
+  assert.equal((await cut('https://discord.com/api/webhooks/123/secret')).content.length, 2000)
+  assert.equal((await cut('https://api.telegram.org/bot123:secret/sendMessage?chat_id=5')).text.length, 4096)
+})
+
+test('a Telegram or Discord destination that cannot work is refused when the worker starts, not at the first alert', () => {
+  for (const url of ['https://api.telegram.org/bot123:secret/sendMessage', 'https://api.telegram.org/bot123:secret/sendMessage?chat_id=', 'https://api.telegram.org/bot123:secret/getUpdates?chat_id=5',
+    'https://api.telegram.org/sendMessage?chat_id=5', 'https://discord.com/channels/1/2', 'https://discord.com/api/webhooks/'])
+    assert.throws(() => createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: url } }), /ALERT_DESTINATION_INVALID/, url)
+  // The error never carries the destination.
+  try { createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://api.telegram.org/bot123:secret/sendMessage' } }) } catch (error) { assert.doesNotMatch(String(error.message), /secret|telegram/) }
+})
+
 test('a reserve move is recorded without a notification unless reserve notifications are on', () => {
   const first = checkpoint(state(100000000))
   assert.deepEqual(plan(state(150000000, 1), first, 1).alert.detail.delivery, { status: 'off' })
