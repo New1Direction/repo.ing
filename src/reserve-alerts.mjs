@@ -131,17 +131,41 @@ export function reserveAlertText(id, detail) {
     `Observed: ${detail.observedAt}`, `Since: ${detail.previousObservedAt}`, detail.url, `Alert #${id}`].join('\n')
 }
 
+// What each receiver expects, by its host. Slack and Discord webhooks take the text. Telegram's sendMessage takes the chat
+// from the destination's own query (https://api.telegram.org/bot<token>/sendMessage?chat_id=<chat>) and the text. Any other
+// HTTPS receiver gets the event as JSON. A destination that cannot work is refused here, when the worker starts.
+const TELEGRAM_TEXT_MAX = 4096, DISCORD_TEXT_MAX = 2000
+function receiver(url) {
+  if (url.hostname === 'hooks.slack.com') return ({ text }) => ({ url, body: { text } })
+  if (/(^|\.)discord(app)?\.com$/.test(url.hostname)) {
+    if (!/^\/api\/webhooks\/[^/]+\/[^/]+/.test(url.pathname)) throw Error('ALERT_DESTINATION_INVALID')
+    // No part of an alert may ping anyone.
+    return ({ text }) => ({ url, body: { content: text.slice(0, DISCORD_TEXT_MAX), allowed_mentions: { parse: [] } } })
+  }
+  if (url.hostname === 'api.telegram.org') {
+    const chat = url.searchParams.get('chat_id')
+    if (!chat || !/^\/bot[^/]+\/sendMessage$/.test(url.pathname)) throw Error('ALERT_DESTINATION_INVALID')
+    const method = new URL(url)
+    method.search = ''
+    return ({ text }) => ({ url: method, body: { chat_id: chat, text: text.slice(0, TELEGRAM_TEXT_MAX), link_preview_options: { is_disabled: true } } })
+  }
+  return ({ id, text, detail }) => {
+    const { delivery: _delivery, ...movement } = detail
+    const event = detail.test ? 'test' : detail.role ? 'operating_wallet_low' : detail.ledger ? 'reconciliation_mismatch' : 'reserve_moved'
+    return { url, body: { event, id, text, market: movement } }
+  }
+}
+
 // Destination is private worker configuration, never supplied by public API input.
 export function createReserveWebhookSender({ env = process.env, fetchImpl = fetch } = {}) {
   if (!env.RESERVE_ALERT_WEBHOOK_URL) return null
   const url = new URL(env.RESERVE_ALERT_WEBHOOK_URL)
   if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw Error('ALERT_DESTINATION_INVALID')
+  const request = receiver(url)
   return async ({ id, text, detail }) => {
-    const { delivery: _delivery, ...movement } = detail
-    const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `repoing-reserve-${id}` },
-      body: JSON.stringify(url.hostname === 'hooks.slack.com' ? { text }
-        : { event: detail.role ? 'operating_wallet_low' : detail.ledger ? 'reconciliation_mismatch' : 'reserve_moved', id, text, market: movement }) })
+    const { url: target, body } = request({ id, text, detail })
+    const response = await fetchImpl(target, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `repoing-reserve-${id}` }, body: JSON.stringify(body) })
     await response.body?.cancel()
     if (!response.ok) throw Error('NOTIFICATION_SEND_FAILED')
     return { accepted: true }
