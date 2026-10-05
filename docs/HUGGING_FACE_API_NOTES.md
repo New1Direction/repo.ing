@@ -152,7 +152,7 @@ What this changes for later phases:
 - **429s:** a 429 was not triggered, because that would take 500 requests. Per HF's docs and `huggingface_hub` (1.2+), a 429 carries the same headers and `t` is the wait. No `Retry-After` was observed; the client honours whichever of `RateLimit` and `Retry-After` asks for the longer wait.
 - **The client's behaviour:**
   - It keeps the latest reading.
-  - It leaves `reserve` of each window unspent: 10% by default, and the P1b worker passes 0.6 to use at most 40%.
+  - It leaves `reserve` of each window unspent: 10% by default, and the worker's launch-alert reader (`createModelAlertFacts` in `src/launch-alerts.mjs`) passes 0.6 to use at most 40%.
   - Before a request, it waits for the reset when the window is down to that reserve.
   - It retries 429, 500, 502, 503 and 504 up to twice. 429 retries wait as long as the headers ask; the others back off for 1 s, then 2 s.
   - It throws `HfRateLimitedError` with `retryAt` (epoch ms) when a wait would exceed `maxWaitMs`, which defaults to 15 s.

@@ -1,6 +1,6 @@
 # Fixed DBC trading fee proof
 
-> This report preserves the original DBC fee experiment. For the selected 85 SOL profile and current post-graduation behavior, read [Liquidity](LIQUIDITY.md) and [Graduated fees](GRADUATED_FEES.md). Later rollout evidence supersedes the integration-status limitations recorded below. The prepared anti-sniper config (a launch fee that falls to this same 1.75% within 3 minutes; not active) is in [Launch fee](LAUNCH_FEE.md).
+> This report preserves the original DBC fee experiment. For the selected 85 SOL profile and current post-graduation behavior, read [Liquidity](LIQUIDITY.md) and [Graduated fees](GRADUATED_FEES.md). Later rollout evidence supersedes the integration-status limitations recorded below. The anti-sniper config (a launch fee that falls to this same 1.75% within 3 minutes; active for new launches since 2026-10-01) is in [Launch fee](LAUNCH_FEE.md).
 
 **Network:** local Solana validator with Meteora DBC program fixtures. **SDK:** `@meteora-ag/dynamic-bonding-curve-sdk@1.5.13`. **Result:** the closest supported split to the product target is 175 basis points total, `creatorTradingFeePercentage = 71`, dynamic fee disabled, quote token SOL, and quote-token fee collection. The fixed launch guard and test fixture now require those values.
 

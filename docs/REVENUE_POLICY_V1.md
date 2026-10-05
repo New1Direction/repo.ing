@@ -14,7 +14,7 @@ This splits eligible, settled platform revenue when the operator allocates it. B
 
 The allocation source is finalized platform-fee claims. DBC collection reserves unpaid discovery rewards before sending the platform remainder to the receiving treasury; existing DAMM claims retain their partner-position collector. DBC gross accrual is informational until collected, and outstanding discovery obligations are never available for platform spending. Builder fees remain separate. See [collection and treasury custody](DBC_PLATFORM_COLLECTION.md). The activation evidence below predates this extension.
 
-The 60% buyback share accumulates as a reserve. The canonical $REPO mint and an approved venue executor are still needed before purchases can run. A reserve allocation must not be described as a completed buyback.
+The 60% buyback share accumulates as a reserve. The team buys back $REPOING by hand from the published wallets, and the worker records those buys against the reserve ([REPO token](REPO_TOKEN.md)). The in-app executor is still off: it needs its `REPO_BUYBACK_*` settings and an approved venue implementation. A reserve allocation must not be described as a completed buyback.
 
 Keep sufficient operating funds before discretionary deployments. Hosting/RPC expenses and signer network/account costs must be considered in that check. No numerical operating-runway floor was approved in this change. A later split requires an explicit V2 policy; existing allocations keep their original policy and are not silently reassigned.
 

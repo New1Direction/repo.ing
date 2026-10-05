@@ -2,7 +2,7 @@
 
 [Documentation](README.md) / Approved reward design
 
-**Approved September 25, 2026. Status: ACTIVE — the 1% builder allocation and discovery v2 are deployed and live for new launches (config `2YbBp7…`, 2026-09-26).** Existing market terms are unchanged.
+**Approved September 25, 2026. Status: ACTIVE — the 1% builder allocation and discovery v2 are deployed and live for new launches (activated on config `2YbBp7…` on 2026-09-26; launches since 2026-10-01 use the [launch-fee](LAUNCH_FEE.md) config, which carries the same allocation).** Existing market terms are unchanged.
 
 ## Locked product decisions
 

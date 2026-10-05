@@ -1,5 +1,11 @@
 # CLAIM transition
 
+> **What changed after this report.** The sections below are kept as written. Since then:
+> - A claim pays the indexed unpaid amount when the pools hold **at least** that much, and the receiver must get at least the proven payout plus the rent refund. Any unindexed surplus stays in the pool for reconciliation (`src/claim-amounts.mjs`).
+> - The worker's claim recovery pass settles, rebroadcasts or aborts an uncertain pending claim (`src/claim-settlement.mjs`).
+> - A graduated market's claim also pays the creator position's DAMM fees in the same transaction ([Graduated fees](GRADUATED_FEES.md)).
+> - `repo_claims` gained the `aborted` status with its resolution fields (migration 0008), and the durable signed transaction, its last valid block height and the DAMM share of the amount (migration 0010).
+
 ## Result
 
 Local validator proof passed on 2026-09-24 with `@meteora-ag/dynamic-bonding-curve-sdk@1.5.13`. A platform creator signer called `creator.claimCreatorTradingFeeToReceiver` on the indexed canonical DBC pool. The SDK sent the creator fee directly to the repository's stored beneficiary. No platform payout transfer or custom Solana program was used.

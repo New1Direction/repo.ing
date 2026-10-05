@@ -67,13 +67,13 @@ Phantom, Backpack, MetaMask's Solana connection, and compatible Solana Wallet St
 
 New markets use an **85 SOL real quote-reserve threshold** and begin on Meteora Dynamic Bonding Curve. Buys build reserve; sells can reduce it. **Volume is turnover, not reserve.** Virtual pricing reserves are not deposited SOL.
 
-After the threshold is met and migration is verified, the market continues in Meteora DAMM v2. The migrated liquidity is split **50% creator / 50% partner**, with both positions permanently locked. Their fees remain claimable. Graduated trading opens the verified Meteora pool.
+After the threshold is met and migration is verified, the market continues in Meteora DAMM v2. The migrated liquidity is split **50% creator / 50% partner**, with both positions permanently locked. Their fees remain claimable. After graduation, trading continues in the same trade panel against the verified Meteora DAMM v2 pool.
 
 Older markets keep their original configs. [Liquidity guide →](docs/LIQUIDITY.md)
 
 ### Builders earn fees and an allocation
 
-Before graduation, the **1.75% total DBC trading fee** has these nominal shares:
+Before graduation, the **1.75% total DBC trading fee** has these nominal shares (a new market's [launch fee](docs/LAUNCH_FEE.md) starts at 50.44% and falls to 1.75% over its first 180 seconds; the launcher's own initial buy pays 1.75%):
 
 | Recipient | Share of fee-paying trade value |
 | --- | ---: |
@@ -130,7 +130,7 @@ USD figures use the current SOL price; they are estimates, not historical dollar
 | Launches, DBC trades, builder claims, discovery rewards | **Live**, with recorded mainnet settlement evidence |
 | 1% builder allocation and 2.5 SOL discovery cap | **Active for new enrolled launches**; allocation unlock requires verified graduation |
 | Find repos, discoverer leaderboard, graduation progress, protocol stats | **Live** |
-| Graduated fee capture and 60/20/20 revenue controls | **Deployed**; first real graduation remains the production milestone |
+| Graduated fee capture and 60/20/20 revenue controls | **Deployed**; $REPOING graduated on 2026-09-28 and its first graduated builder payout settled the same day |
 | $REPOING buybacks | **Manual, published**: the team swaps from the buyback and team wallets; receipts, running total, and policy standing on [Stats](https://repo.ing/stats). The in-app buyback executor is **off** (reviewed executor and activation still required) |
 | $REPOING protocol liquidity | **Manual, published**: the team wallet adds liquidity to the canonical $REPOING DAMM v2 pool; deposits on [Stats](https://repo.ing/stats), positions not yet locked |
 | In-app protocol liquidity executor (P3) | **Built, execution off**; first bounded run capped at 0.05 SOL investment + 0.012 SOL overhead |

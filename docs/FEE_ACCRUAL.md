@@ -1,5 +1,7 @@
 # Canonical repository fee accrual
 
+> **Since this report:** the decoder also credits `evtSwap2` and `evtSwap2WithTransferHook` for a swap that emitted no `evtSwap`; when a swap emits both, only `evtSwap` is credited (`src/trade-evidence.mjs`). Builder earnings are read from `builder_fee_credits`, which adds graduated `damm_fee_events` to these `fee_events` rows (migration 0010).
+
 Run date: 2026-09-24. Scope: DBC `ACCRUE_FEES` only. This run used the isolated local Solana validator, PostgreSQL test database, and `@meteora-ag/dynamic-bonding-curve-sdk@1.5.13`.
 
 `src/fee-accrual.mjs` accepts a GitHub repository ID and finalized trade signatures. It loads the finalized, indexed canonical market, checks the pool and fixed config on Solana, and decodes the DBC `evtSwap` event CPI in each successful finalized canonical swap transaction. The event's `swapResult.tradingFee` and the on-chain config's `creatorTradingFeePercentage` determine the creator share in quote-token base units. The tested config collects fees in wrapped SOL and assigns 50% of trading fees to the per-pool creator. The SDK also emits `evtSwap2` for the same swap; it is deliberately not credited again.

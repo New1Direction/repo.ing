@@ -4,7 +4,7 @@ The receiving treasury is **`FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`**, su
 
 ## Which money moves
 
-For the current 1.75% DBC fee, 0.35% is Meteora's protocol fee, 0.994% is the builder share, and **0.406% is the partner share**, before discoverer rewards and integer rounding. Discovery rewards use half of eligible partner fees under each market's existing version, window and cap. The platform cannot collect those unpaid obligations.
+For the current 1.75% DBC fee (a new market's [launch fee](LAUNCH_FEE.md) is higher for its first 180 seconds and is split in the same proportions), 0.35% is Meteora's protocol fee, 0.994% is the builder share, and **0.406% is the partner share**, before discoverer rewards and integer rounding. Discovery rewards use half of eligible partner fees under each market's existing version, window and cap. The platform cannot collect those unpaid obligations.
 
 For each repository, use integer lamports:
 
@@ -22,7 +22,7 @@ The expected balance must equal the finalized pool's partner fee balance exactly
 - Primary and independent RPC must agree on finalized canonical pool/config bytes and network.
 - Derive pool identity from the mint and approved config; verify creator, partner authority and SOL-only fee mode.
 - One repository advisory lock serializes collection with discovery claims. Pending payouts block new collections.
-- The review binds repo, pool/config evidence hash, exact amount, receiving wallet, expiry and maximum network fee (default 20,000 lamports).
+- The review binds repo, pool/config evidence hash, exact amount, receiving wallet, expiry and maximum network fee (810,000 lamports, 0.00081 SOL: two signatures plus the bounded priority fee).
 - Simulate signed instructions before saving or broadcasting. Save the fully signed intent before broadcast.
 - Claim into fresh temporary token accounts, send the exact fee amount to the treasury, return both rent deposits to the signer, and close the temporary accounts in the same transaction.
 - Verify finalized signed message, canonical claim event, exact treasury and fee-payer SOL deltas, exact quote-vault token debit, and zero temporary account balances. Store a `MATCH` receipt.

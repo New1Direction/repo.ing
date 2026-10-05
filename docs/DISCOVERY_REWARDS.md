@@ -9,7 +9,7 @@ Scope explicitly approved by the operator on 2026-09-25. This extends the MVP's 
 
 ## Product rules
 
-- New launches only. The server stamps `markets.discovery_version = 1` when reserving a launch while enrollment is enabled. Existing, submitted, and recovered markets are never retroactively enrolled.
+- New launches only. The server stamps `markets.discovery_version` when reserving a launch while enrollment is enabled (1 under this policy; 2 since v2). Existing, submitted, and recovered markets are never retroactively enrolled.
 - The canonical, finalized launch signer (`launcher_wallet`) is the sole recipient. Launching a repository does not grant GitHub authority or ownership of builder fees.
 - The launcher earns **50% of actual partner trading fees** for canonical DBC swaps from pool creation until the first of curve completion/graduation, 30 days, or **1 SOL earned in total**. The swap completing the curve is included. Subsequent DAMM trades are excluded.
 - `min(floor(sum(eligible partner lamports) / 2), 1_000_000_000)` defines lifetime earnings. Aggregate rounding makes batching and backfill order irrelevant. Paid rewards count toward the cap.
@@ -19,7 +19,7 @@ Scope explicitly approved by the operator on 2026-09-25. This extends the MVP's 
 
 ## Evidence and isolation
 
-`discovery_fee_events` records all canonical partner fees with immutable `discovery_eligible` evidence; reward summaries include only eligible events. Legacy markets and trades outside the reward window do not gain rewards. The exact partner remainder is: `tradingFee - floor(tradingFee * creatorPercentage / 100)` from canonical `evtSwap` evidence. It is committed in the same database transaction as builder accrual, before the existing worker cursor advances. A signature/event ordinal is unique. Contradictory replay fails rather than replacing evidence.
+`discovery_fee_events` records all canonical partner fees with immutable `discovery_eligible` evidence; reward summaries include only eligible events. Legacy markets and trades outside the reward window do not gain rewards. The exact partner remainder is: `tradingFee - floor(tradingFee * creatorPercentage / 100)` from canonical `evtSwap` evidence (since then also `evtSwap2`, for a swap that emitted no `evtSwap`). It is committed in the same database transaction as builder accrual, before the existing worker cursor advances. A signature/event ordinal is unique. Contradictory replay fails rather than replacing evidence.
 
 Only swaps validated against the canonical config, mint, pool, DBC instruction ancestry, and finalized transaction enter this ledger. The DBC program rejects swaps once its curve is complete. Migration/LP/protocol fees do not count.
 

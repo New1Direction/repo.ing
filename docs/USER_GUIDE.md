@@ -4,7 +4,7 @@
 
 ## Find a market or repository
 
-[Explore](https://repo.ing/explore) starts with **All markets**, followed by new markets, graduation leaders, builder earners, and discoverers. The separate **Find repos** tab shows public repositories gaining attention, with source evidence. Selecting a candidate opens the existing repository review and launch flow; nothing launches automatically.
+[Explore](https://repo.ing/explore) opens with the **Graduation race**, then **All markets**, followed by new markets, markets closest to graduation, builder earners, and discoverers. The separate **Find repos** tab shows public repositories gaining attention, with source evidence. Selecting a candidate opens the existing repository review and launch flow; nothing launches automatically.
 
 On **Find repos**, search names/descriptions, choose **No market yet** or **Live markets**, and narrow by **Gaining stars** or **Recent releases**. Searches cover fresh tracked candidates, not all of GitHub. Pasting a GitHub repository URL uses the ordinary repository resolver and opens its market or launch form. An approved trend candidate keeps its **Review & launch** action. Scores still expand into the original source evidence. Optional natural-language matching requires the server-side TypeSafe integration; ordinary search and filters remain available without it.
 
@@ -22,7 +22,7 @@ Keep some SOL available for transaction fees and token-account costs. The Buy pa
 
 Choose **1H**, **24H**, **7D**, or **All**; switch between **Candles** and **Line**, or **Price** in SOL and **MCap** in estimated USD. Hover or touch the chart for price and volume details. Drag to pan, pinch to zoom, or use the zoom/reset buttons. Keyboard users can focus the chart and press `+`, `-`, or `Home`. **Chart details & data** contains a readable price table.
 
-Prices come from finalized pool swaps. Empty periods stay empty, and a delayed update is labeled. USD values use today’s SOL price. After verified graduation, the chart continues with finalized swaps from that repository’s canonical DAMM pool. Until its first indexed DAMM price, the curve history is labeled clearly. Use the verified Meteora link to trade. [Data definitions](CHARTS_AND_RESPONSIVENESS.md).
+Prices come from finalized pool swaps. Empty periods stay empty, and a delayed update is labeled. USD values use today’s SOL price. After verified graduation, the chart continues with finalized swaps from that repository’s canonical DAMM pool. Until its first indexed DAMM price, the curve history is labeled clearly. The same Buy/Sell panel trades the verified DAMM pool, and **View pool** opens it on Meteora. [Data definitions](CHARTS_AND_RESPONSIVENESS.md).
 
 ## Launch a repository market
 
@@ -136,7 +136,7 @@ Already-earned rewards remain claimable after the earning window closes. Discove
 - **Official:** the repository's verified maintainer launched the market from the payout wallet they set on repo.ing by signing with it (a pasted payout address does not count). Like Verified, it is not an endorsement of the token.
 - **Repo score (0–100):** stars (up to 40), forks (up to 15), age (up to 20) and this week's developers and commits from Dev Pulse (up to 25), in the token page's Launch facts.
 
-Finalized indexing and short display caches can cause a delay after a trade. An unavailable value is not proof of a zero balance. DAMM prices require canonical migration proof and finalized swap evidence; prices with missing evidence remain withheld. See the verified pool link for graduated trading.
+Finalized indexing and short display caches can cause a delay after a trade. An unavailable value is not proof of a zero balance. DAMM prices require canonical migration proof and finalized swap evidence; prices with missing evidence remain withheld. Graduated markets trade in the verified DAMM pool through the same Buy/Sell panel.
 
 ## Common questions
 

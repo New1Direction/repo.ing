@@ -28,7 +28,7 @@ The production deployment uses Railway web, worker, PostgreSQL, and a separate b
 | Database | Workflow state, canonical mappings, evidence, payout intents | `src/db/schema.mjs`, `drizzle/` |
 | Backup | Encrypted logical dump and private R2 upload | `backup/` |
 
-Web currently runs as one persistent instance because launch and trade signing sessions have in-memory state. Horizontal scaling or replacing it with stateless functions requires changes to that session design. The worker is a separate persistent process; it does not run as a browser request.
+Web currently runs as one persistent instance. Launch reviews (`launch_sessions`) and prepared trades (`trade_sessions`) live in PostgreSQL, so any replica can finish them; only short-lived read caches, concurrency caps and request allowances are held per process ([Production](PRODUCTION.md)). The worker is a separate persistent process; it does not run as a browser request.
 
 ## Sources of truth
 
@@ -82,7 +82,7 @@ Reconciliation compares indexed entitlement, settled withdrawals, and current on
 
 Repository metadata and market displays use cached or streamed reads for responsiveness. Authorization, signing, and payout decisions use their own current checks. USD values are estimates; SOL base units remain the accounting denomination.
 
-After graduation, builder fee tracking and claims cover the verified DAMM creator position. DAMM trade evidence and SOL volume are indexed after canonical migration verification and used in graduation status and protocol analytics. Native DAMM execution and chart candles are not implemented; the product links to the verified Meteora destination.
+After graduation, builder fee tracking and claims cover the verified DAMM creator position. DAMM trade evidence and SOL volume are indexed after canonical migration verification and used in graduation status and protocol analytics. Graduated markets trade in the app's own trade panel against the verified DAMM v2 pool, and their finalized swaps continue the price chart; every swap settles on Meteora.
 
 ## Recovery boundaries
 

@@ -7,7 +7,7 @@ Run date: 2026-09-24. Scope: `BIND_WALLET` only. No fee claim or transfer was ma
 The signed UTF-8 message has this exact shape (with actual values substituted):
 
 ```text
-git.fun repository beneficiary v1
+repo.ing repository beneficiary v1
 I bind this Solana wallet as beneficiary for the repository.
 Chain: Solana
 Repository ID: 1384142609
