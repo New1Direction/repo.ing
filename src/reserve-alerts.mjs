@@ -1,5 +1,6 @@
 import { assertFreshGraduation, evidenceHash, evidenceJSON } from './graduation-state.mjs'
 import { GRADUATED_WITHDRAWAL_MISMATCH, PARTNER_CAPTURE_MISMATCH, POOL_IDENTITY_MISMATCH } from './reconcile.mjs'
+import { digestDelivery, planLedgerDigest } from './ledger-digest.mjs'
 import { ledgerAlertTitle } from '../app/lib/operator-alerts.mjs'
 
 export const RESERVE_MOVE_MIN_LAMPORTS = 50_000_000n
@@ -89,34 +90,46 @@ const sol = value => {
 // provider's response.
 const OWN_REASONS = [PARTNER_CAPTURE_MISMATCH, GRADUATED_WITHDRAWAL_MISMATCH, POOL_IDENTITY_MISMATCH]
 const ownReason = reason => OWN_REASONS.includes(reason) || /^(\d{1,6} unresolved claim intent\(s\)|[A-Z][A-Z_]{3,60})$/.test(reason ?? '') ? reason : null
-// deliver false: recorded for the operations pages only, because one alert sums up this and others (ledgerSummaryAlertDetail).
-export const feeLedgerAlertDetail = ({ market, reconciliation, episode, observedAt, now, deliver = true }) => ({ ledger: 'fees', status: reconciliation.status,
+// Recorded for the next ledger message (src/ledger-digest.mjs), never queued to be sent by itself.
+export const feeLedgerAlertDetail = ({ market, reconciliation, episode, observedAt, now }) => ({ ledger: 'fees', status: reconciliation.status,
   reason: ownReason(reconciliation.reason), lagging: episode.lagging, since: episode.since,
   difference: reconciliation.difference == null ? null : String(reconciliation.difference), fullName: market.fullName, observedAt,
-  url: `https://repo.ing/token/${market.mint}`, delivery: deliver ? pendingDelivery(now) : { status: 'off', reason: 'SUMMARIZED' } })
+  url: `https://repo.ing/token/${market.mint}`, delivery: digestDelivery(now) })
 export const platformLedgerAlertDetail = ({ revenue, liquidity, episode, now }) => ({ ledger: 'platform', revenue: revenue.status, liquidity: liquidity.status,
-  problems: [...revenue.problems ?? [], ...liquidity.problems ?? []], since: episode.since, observedAt: new Date(now).toISOString(), delivery: pendingDelivery(now) })
-// One alert for the fee-ledger alerts a pass recorded unsent (src/ledger-alerts.mjs).
-export const ledgerSummaryAlertDetail = ({ count, now }) => ({ ledger: 'summary', count, since: new Date(now).toISOString(),
-  observedAt: new Date(now).toISOString(), delivery: pendingDelivery(now) })
-// The monitor cannot verify the chain at all, so no ledger is being checked. code: the review code of the failed check.
+  problems: [...revenue.problems ?? [], ...liquidity.problems ?? []], since: episode.since, observedAt: new Date(now).toISOString(), delivery: digestDelivery(now) })
+// The monitor's pass fails before it reaches any market, so no ledger is being checked. code: why (a review code).
 export const ledgerChecksAlertDetail = ({ code, episode, now }) => ({ ledger: 'checks', reason: ownReason(code), since: episode.since,
-  observedAt: new Date(now).toISOString(), delivery: pendingDelivery(now) })
+  observedAt: new Date(now).toISOString(), delivery: digestDelivery(now) })
 
+// Where every recorded ledger alert is listed.
+const LEDGER_ALERTS_URL = 'https://repo.ing/operations/graduation'
+const DIGEST_NAME_MAX = 60
+// The message for the ledgers recorded since the last one (src/ledger-digest.mjs). About one ledger, it is that ledger's own
+// alert; about several, it names the first few, the ones that need an operator most, and counts the rest.
+function ledgerDigestText(id, detail) {
+  if (detail.count === 1 && detail.items.length === 1) return ledgerAlertText(id, detail.items[0])
+  const named = detail.items.map(item => {
+    const name = item.fullName?.length > DIGEST_NAME_MAX ? `${item.fullName.slice(0, DIGEST_NAME_MAX - 1)}…` : item.fullName
+    return `${name ? `${name}: ` : ''}${ledgerAlertTitle(item)}`
+  })
+  const more = detail.count - detail.items.length
+  return [`repo.ing · ${ledgerAlertTitle(detail)}`, ...named, ...(more > 0 ? [`and ${more} more`] : []), `Since: ${detail.since}`, `Checked: ${detail.observedAt}`,
+    LEDGER_ALERTS_URL, `Alert #${id}`].join('\n')
+}
 // A ledger that stayed unmatched or unchecked (src/ledger-alerts.mjs): a market's fee ledger, the platform's revenue and
-// liquidity ledgers, the monitor's own checks, or a pass's summary. lagging: a state that normally clears by itself.
+// liquidity ledgers or the monitor's own checks; or the message about several of them. lagging: a state that normally
+// clears by itself.
 function ledgerAlertText(id, detail) {
+  if (detail.ledger === 'digest') return ledgerDigestText(id, detail)
   const title = `repo.ing · ${ledgerAlertTitle(detail)}`
   const tail = [`Since: ${detail.since}`, `Checked: ${detail.observedAt}`, ...(detail.url ? [detail.url] : []), `Alert #${id}`]
   if (detail.ledger === 'platform') return [title, `Revenue: ${detail.revenue} · Liquidity: ${detail.liquidity}`, ...(detail.problems ?? []), ...tail].join('\n')
-  if (detail.ledger === 'summary') return [title, 'They stopped matching, or could not be checked, in the same pass. Each is listed on the operations health page.',
-    ...tail.slice(1)].join('\n')
-  if (detail.ledger === 'checks') return [title, `The worker cannot verify the chain, so no ledger is being checked${detail.reason ? ` (${detail.reason})` : ''}.`, ...tail].join('\n')
+  if (detail.ledger === 'checks') return [title, `The monitor's pass stops before it reaches any market, so no ledger is being checked${detail.reason ? ` (${detail.reason})` : ''}.`, ...tail].join('\n')
   const fallback = detail.status === 'ERROR' ? 'The reconciliation itself failed.'
     : !detail.lagging ? String(detail.difference ?? '').startsWith('-') ? 'The ledger shows more fees than the chain holds.' : 'The ledger and the chain disagree.'
     : detail.status === 'UNAVAILABLE' ? 'The on-chain read keeps failing.'
     : detail.status === 'PENDING_REVIEW' ? 'A claim has not settled or been released.'
-    : 'On-chain fees are still missing from the ledger. This normally clears in under a minute.'
+    : 'The chain shows fees the worker has not recorded yet. It normally catches up within minutes, so the fee indexer may be stuck.'
   return [title, detail.fullName, detail.reason ?? fallback, ...tail].join('\n')
 }
 export function reserveAlertText(id, detail) {
@@ -172,8 +185,9 @@ export function createReserveWebhookSender({ env = process.env, fetchImpl = fetc
   }
 }
 
-// The kinds the delivery job sends: those written with a pending delivery. Low operating balances and ledgers that stopped
-// matching always are; reserve moves only when their notifications are on (reserveMovePlan notify).
+// The kinds the delivery job sends: those written with a pending delivery. Low operating balances always are; ledgers that
+// stopped matching as one message for several (digestLedgerAlerts); reserve moves only when their notifications are on
+// (reserveMovePlan notify).
 const DELIVERED_KINDS = `'RESERVE_MOVED','OPS_WALLET_LOW','RECONCILIATION_MISMATCH'`
 const WAITING = `kind in (${DELIVERED_KINDS}) and detail::jsonb->'delivery'->>'status' in ('pending','retry')`
 // A timestamp read from an alert's detail. A value that is not one reads as null, so one malformed row never stops the queue.
@@ -181,17 +195,55 @@ const time = field => `(case when ${field} ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2
 // How many expired alerts one run names in its result; the count is always complete.
 const EXPIRED_NAMED = 20
 
+// Ledger rows waiting for a message, oldest first; more than this many at once wait for the message after.
+const DIGEST_ROWS = 500
+const QUEUED_FOR_DIGEST = `kind='RECONCILIATION_MISMATCH' and detail::jsonb->'delivery'->>'status'='digest' and detail::jsonb->'delivery'->>'digest' is null`
+
+// Plans the next ledger message (src/ledger-digest.mjs) and stores it in one transaction: the message, each covered row's
+// reference to it, and the rows that expired instead. Call it under the delivery lock.
+// deliver: whether there is a destination. Without one the message is recorded unsent, so a destination set later is not
+// handed old news. Returns how many rows went into a message and how many expired.
+export async function digestLedgerAlerts(db, { now, deliver }) {
+  const { rows } = await db.query(`select id,github_repo_id::text as "repoId",detail from graduation_alerts where ${QUEUED_FOR_DIGEST} order by id limit ${DIGEST_ROWS}`)
+  if (!rows.length) return { digested: 0, expired: 0 }
+  const { rows: [last] } = await db.query(`select detail::jsonb->>'observedAt' as at from graduation_alerts
+    where kind='RECONCILIATION_MISMATCH' and detail::jsonb->>'ledger'='digest' order by id desc limit 1`)
+  const plan = planLedgerDigest({ rows: rows.map(row => ({ ...row, detail: JSON.parse(row.detail) })), lastDigestAt: last ? Date.parse(last.at) : null, now,
+    maxAgeMs: MAX_DELIVERY_AGE_MS, delivery: deliver ? pendingDelivery(now) : { status: 'off', reason: 'DESTINATION_REQUIRED' } })
+  if (!plan.expire.length && !plan.digest) return { digested: 0, expired: 0 }
+  await db.query('begin')
+  try {
+    if (plan.expire.length) await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',
+      (detail::jsonb->'delivery')||'{"status":"expired","error":"ALERT_TOO_OLD"}'::jsonb)::text where id=any($1::int[])`, [plan.expire])
+    if (plan.digest) {
+      // Keyed by its first row: a row is covered once, so no second message can take the same key.
+      const { rows: [stored] } = await db.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values($1,null,'RECONCILIATION_MISMATCH',$2)
+        on conflict(event_key) do nothing returning id`, [`protocol:RECONCILIATION_MISMATCH:digest:${plan.digest.covers[0]}`, evidenceJSON(plan.digest.detail)])
+      if (!stored) throw Error('LEDGER_DIGEST_CONFLICT')
+      await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery,digest}',to_jsonb($2::int))::text where id=any($1::int[])`,
+        [plan.digest.covers, stored.id])
+    }
+    await db.query('commit')
+  } catch (error) { await db.query('rollback'); throw error }
+  return { digested: plan.digest?.covers.length ?? 0, expired: plan.expire.length }
+}
+
 // External sends are at-least-once: an ambiguous provider timeout can cause a
 // retry with the same alert ID. Delivery metadata never changes reserve evidence.
 // reserveMoves: whether reserve moves are sent at all (RESERVE_MOVE_NOTIFICATIONS). While they are not, a move that is
 // still queued (from before the setting existed, or from while it was on) is marked off instead of being sent.
-export function createReserveAlertDelivery({ pool, send, now = Date.now, reserveMoves = false }) {
+// digest: the step that gathers recorded ledgers into one message (digestLedgerAlerts).
+export function createReserveAlertDelivery({ pool, send, now = Date.now, reserveMoves = false, digest = digestLedgerAlerts }) {
   async function runOnce() {
-    if (!send) return { status: 'DESTINATION_REQUIRED', sent: 0 }
     const db = await pool.connect()
     try {
       if (!(await db.query("select pg_try_advisory_lock(hashtextextended('reserve-alert-delivery',0)) as locked")).rows[0].locked) return { status: 'BUSY', sent: 0 }
       try {
+        // Ledger messages are planned with or without a destination. Planning that fails is reported, and never keeps the
+        // alerts already queued from going out; the rows it could not plan are planned by the next run.
+        const ledgers = await digest(db, { now: now(), deliver: Boolean(send) }).catch(() => ({ digested: 0, expired: 0, failed: true }))
+        const planning = { digested: ledgers.digested, ...(ledgers.failed ? { digestError: 'LEDGER_DIGEST_FAILED' } : {}) }
+        if (!send) return { status: 'DESTINATION_REQUIRED', sent: 0, expired: ledgers.expired, ...planning }
         const { rows: silenced } = reserveMoves ? { rows: [] } : await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',
           (detail::jsonb->'delivery')||'{"status":"off","error":"RESERVE_NOTIFICATIONS_OFF"}'::jsonb)::text
           where kind='RESERVE_MOVED' and detail::jsonb->'delivery'->>'status' in ('pending','retry') returning id`)
@@ -216,8 +268,8 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now, reserve
           await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',$2::jsonb)::text where id=$1`, [row.id, JSON.stringify(delivery)])
           results.push({ id: row.id, status: delivery.status })
         }
-        return { status: results.some(r => ['failed', 'retry'].includes(r.status)) ? 'DELIVERY_REVIEW' : 'OK', sent: results.filter(r => r.status === 'sent').length,
-          expired: expired.length, silenced: silenced.length, results }
+        return { status: ledgers.failed || results.some(r => ['failed', 'retry'].includes(r.status)) ? 'DELIVERY_REVIEW' : 'OK', sent: results.filter(r => r.status === 'sent').length,
+          expired: expired.length + ledgers.expired, silenced: silenced.length, ...planning, results }
       } finally { await db.query("select pg_advisory_unlock(hashtextextended('reserve-alert-delivery',0))") }
     } finally { db.release() }
   }

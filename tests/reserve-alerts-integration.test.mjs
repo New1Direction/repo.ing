@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { persistGraduationObservation, createReserveAlertDelivery, feeLedgerAlertDetail } from '../src/reserve-alerts.mjs'
+import { persistGraduationObservation, createReserveAlertDelivery, digestLedgerAlerts, feeLedgerAlertDetail, ledgerChecksAlertDetail, platformLedgerAlertDetail, pendingDelivery, reserveAlertText } from '../src/reserve-alerts.mjs'
+import { DIGEST_SETTLE_MS, DIGEST_SPACING_MS } from '../src/ledger-digest.mjs'
 
 test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retries, expiry, backlog and replica lock', async () => {
   const url = 'postgres://postgres:launchtest@127.0.0.1:55432/repoing_reserve_alert_test'
@@ -55,7 +56,7 @@ test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retrie
     await persist(make(280000000), db, false)
     const quiet = JSON.parse((await pool.query('select detail from graduation_alerts order by id desc limit 1')).rows[0].detail)
     assert.equal(quiet.deltaLamports, '70000000'); assert.deepEqual(quiet.delivery, { status: 'off' })
-    assert.deepEqual(await delivery().runOnce(), { status: 'OK', sent: 0, expired: 0, silenced: 0, results: [] })
+    assert.deepEqual(await delivery().runOnce(), { status: 'OK', sent: 0, expired: 0, silenced: 0, digested: 0, results: [] })
 
     // A backlog (a destination configured late, a long receiver outage) expires in one run and never holds up the alerts
     // behind it. Due now by the database's clock; observed by the test's.
@@ -98,4 +99,140 @@ test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retrie
     assert.equal((await pool.query('select count(*)::int n from liquidity_intents')).rows[0].n, 0)
     assert.equal((await pool.query('select count(*)::int n from builder_reinvest_intents')).rows[0].n, 0)
   } finally { db?.release(); await pool?.end(); if (created) await admin.query('drop database repoing_reserve_alert_test'); await admin.end() }
+})
+
+test('ledger alerts go out as one message: planned from stored rows, an hour apart, expired when old, unsent with no destination', async () => {
+  const url = 'postgres://postgres:launchtest@127.0.0.1:55432/repoing_reserve_alert_test'
+  assert.equal(process.env.DATABASE_URL, url)
+  const admin = new pg.Pool({ connectionString: url.replace('/repoing_reserve_alert_test', '/postgres') })
+  let pool, created = false
+  try {
+    await admin.query('create database repoing_reserve_alert_test'); created = true
+    pool = new pg.Pool({ connectionString: url }); await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
+    const markets = [998201, 998202].map(id => ({ githubRepoId: String(id), mint: `mint${id}`, pool: `curve${id}`, fullName: `local/ledger-${id}` }))
+    for (const market of markets) {
+      await pool.query("insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at) values($1,'local',$2,$3,1,0,false,now())", [market.githubRepoId, `ledger-${market.githubRepoId}`, market.fullName])
+      await pool.query("insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol) values($1,'prepared',$2,$3,'wallet','creator','Ledger','LED')", [market.githubRepoId, market.mint, market.pool])
+    }
+    const MINUTE = 60_000, iso = at => new Date(at).toISOString()
+    // The job's own clock, well before the database's: a message is due for sending as soon as it is written.
+    const T0 = Date.parse('2026-01-05T08:00:00.000Z')
+    let now = T0, keys = 0
+    // As the monitor records them (src/ledger-alerts.mjs): one row per ledger episode, waiting for a message.
+    const record = async (repoId, detail) => (await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values($1,$2,'RECONCILIATION_MISMATCH',$3) returning id`,
+      [`${repoId ?? 'protocol'}:RECONCILIATION_MISMATCH:test:${++keys}`, repoId, JSON.stringify(detail)])).rows[0].id
+    const fee = (market, reconciliation, lagging) => feeLedgerAlertDetail({ market, reconciliation, episode: { lagging, since: iso(now - 15 * MINUTE) }, observedAt: iso(now), now })
+    const stored = async id => JSON.parse((await pool.query('select detail from graduation_alerts where id=$1', [id])).rows[0].detail)
+    const messages = async () => (await pool.query(`select id,event_key,github_repo_id,detail from graduation_alerts where detail::jsonb->>'ledger'='digest' order by id`)).rows.map(row => ({ ...row, detail: JSON.parse(row.detail) }))
+    const texts = []
+    const delivery = (options = {}) => createReserveAlertDelivery({ pool, now: () => now, send: async ({ id, text }) => { texts.push({ id, text }); return { messageId: 'fixture' } }, ...options })
+
+    // Rows from before ledger alerts were sent at all, and a stock ledger's row, are never part of a message.
+    const before = await record(markets[0].githubRepoId, { status: 'MISMATCH' })
+    const stock = await record(markets[0].githubRepoId, { ledger: 'stock', status: 'MISMATCH', reason: 'CUSTODY_SHORTFALL', lagging: false, since: iso(now) })
+
+    // Two ledgers recorded on neighbouring passes: nothing goes out until the newer has settled, then one message, sent by
+    // the run that wrote it. Two workers running at once write it once.
+    const real = await record(markets[0].githubRepoId, fee(markets[0], { status: 'MISMATCH', difference: -5n }, false))
+    now += 80_000
+    const unread = await record(markets[1].githubRepoId, fee(markets[1], { status: 'UNAVAILABLE', reason: 'RPC_UNAVAILABLE' }, true))
+    now += DIGEST_SETTLE_MS - 1
+    assert.deepEqual(await delivery().runOnce(), { status: 'OK', sent: 0, expired: 0, silenced: 0, digested: 0, results: [] })
+    assert.deepEqual((await stored(real)).delivery, { status: 'digest', queuedAt: iso(T0) })
+    now += 1
+    const both = await Promise.all([delivery().runOnce(), delivery().runOnce()])
+    assert.deepEqual(both.map(run => run.sent ?? 0).sort(), [0, 1])
+    assert.equal(both.reduce((sum, run) => sum + (run.digested ?? 0), 0), 2)
+    const [first] = await messages()
+    assert.equal((await messages()).length, 1)
+    assert.deepEqual([first.event_key, first.github_repo_id, first.detail.count, first.detail.rows, first.detail.delivery.status], [`protocol:RECONCILIATION_MISMATCH:digest:${real}`, null, 2, 2, 'sent'])
+    assert.deepEqual(texts, [{ id: first.id, text: ['repo.ing · 2 ledgers need review', 'local/ledger-998201: Fee ledger does not match the chain', 'local/ledger-998202: Fee ledger could not be checked',
+      `Since: ${iso(T0 - 15 * MINUTE)}`, `Checked: ${iso(now)}`, 'https://repo.ing/operations/graduation', `Alert #${first.id}`].join('\n') }])
+    for (const id of [real, unread]) assert.deepEqual([(await stored(id)).delivery.status, (await stored(id)).delivery.digest], ['digest', first.id], 'each row names its message')
+    assert.deepEqual(await delivery().runOnce(), { status: 'OK', sent: 0, expired: 0, silenced: 0, digested: 0, results: [] }, 'nothing is planned or sent twice')
+    const sentAt = now
+
+    // Inside the hour a new problem waits, with whatever else is recorded meanwhile; a ledger recorded twice counts once.
+    now = sentAt + 10 * MINUTE
+    const platform = await record(null, platformLedgerAlertDetail({ revenue: { status: 'MISMATCH', problems: ['Allocations exceed claimed platform revenue'] }, liquidity: { status: 'MATCH', problems: [] }, episode: { since: iso(now - 15 * MINUTE) }, now }))
+    now = sentAt + 30 * MINUTE
+    assert.equal((await delivery().runOnce()).digested, 0)
+    const again = await record(markets[1].githubRepoId, fee(markets[1], { status: 'UNAVAILABLE', reason: 'RPC_RATE_LIMITED' }, true))
+    const once = await record(markets[1].githubRepoId, fee(markets[1], { status: 'ERROR', reason: 'EVIDENCE_UNAVAILABLE' }, false))
+    now = sentAt + DIGEST_SPACING_MS - 1
+    assert.equal((await delivery().runOnce()).digested, 0)
+    now = sentAt + DIGEST_SPACING_MS
+    texts.length = 0
+    const second = await delivery().runOnce()
+    assert.deepEqual([second.status, second.sent, second.digested], ['OK', 1, 3])
+    assert.match(texts[0].text, /^repo\.ing · 2 ledgers need review\nPlatform ledger does not match\nlocal\/ledger-998202: Fee ledger could not be reconciled\nSince: /)
+    assert.deepEqual((await messages()).map(message => message.detail.count), [2, 2])
+    for (const id of [platform, again, once]) assert.equal((await stored(id)).delivery.digest, (await messages())[1].id)
+
+    // The hour is counted from the last message, not the first. One ledger alone is sent as its own alert.
+    const secondAt = now
+    now = secondAt + 10 * MINUTE
+    const checks = ledgerChecksAlertDetail({ code: 'RPC_UNAVAILABLE', episode: { since: iso(now - 15 * MINUTE) }, now })
+    await record(null, checks)
+    now = secondAt + 15 * MINUTE
+    assert.equal((await delivery().runOnce()).digested, 0)
+    now = secondAt + DIGEST_SPACING_MS
+    texts.length = 0
+    assert.equal((await delivery().runOnce()).sent, 1)
+    assert.equal(texts[0].text, reserveAlertText(texts[0].id, checks))
+    assert.match(texts[0].text, /^repo\.ing · Ledger checks are not running\n/)
+
+    // Planning that fails writes nothing, is reported, and does not keep a queued alert from going out. The next run plans
+    // the same rows.
+    now += DIGEST_SPACING_MS
+    const waiting = await record(markets[0].githubRepoId, fee(markets[0], { status: 'MISMATCH', difference: -7n }, false))
+    await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values('ops-wallet-low:ledger-test',null,'OPS_WALLET_LOW',$1)`,
+      [JSON.stringify({ role: 'Builder payout signer', minimumLamports: '30000000', balanceLamports: '1000', observedAt: iso(now), delivery: { ...pendingDelivery(now), nextAttemptAt: '2020-01-01T00:00:00.000Z' } })])
+    now += DIGEST_SETTLE_MS
+    const count = async () => (await messages()).length, messagesBefore = await count()
+    const faulty = db => ({ query: async (...args) => { if (String(args[0]).includes("'{delivery,digest}'")) throw Error('injected database failure'); return db.query(...args) } })
+    texts.length = 0
+    const failed = await delivery({ digest: (db, options) => digestLedgerAlerts(faulty(db), options) }).runOnce()
+    assert.deepEqual([failed.status, failed.sent, failed.digested, failed.digestError], ['DELIVERY_REVIEW', 1, 0, 'LEDGER_DIGEST_FAILED'])
+    assert.match(texts[0].text, /Low operating balance\nBuilder payout signer/)
+    assert.equal(await count(), messagesBefore, 'the message was rolled back with the rest')
+    assert.deepEqual((await stored(waiting)).delivery, { status: 'digest', queuedAt: iso(now - DIGEST_SETTLE_MS) })
+    texts.length = 0
+    const retried = await delivery().runOnce()
+    assert.deepEqual([retried.status, retried.sent, retried.digested], ['OK', 1, 1])
+    assert.match(texts[0].text, /^repo\.ing · Fee ledger does not match the chain\nlocal\/ledger-998201\nThe ledger shows more fees than the chain holds\.\n/)
+
+    // With no destination the message is recorded unsent, and a destination set later is not handed it.
+    now += DIGEST_SPACING_MS
+    const unsent = await record(markets[0].githubRepoId, fee(markets[0], { status: 'MISMATCH', difference: -9n }, false))
+    now += DIGEST_SETTLE_MS
+    assert.deepEqual(await createReserveAlertDelivery({ pool, now: () => now }).runOnce(), { status: 'DESTINATION_REQUIRED', sent: 0, expired: 0, digested: 1 })
+    const off = (await messages()).at(-1)
+    assert.deepEqual(off.detail.delivery, { status: 'off', reason: 'DESTINATION_REQUIRED' })
+    assert.equal((await stored(unsent)).delivery.digest, off.id)
+    texts.length = 0
+    assert.deepEqual(await delivery().runOnce(), { status: 'OK', sent: 0, expired: 0, silenced: 0, digested: 0, results: [] })
+    assert.deepEqual(texts, [])
+
+    // Rows left waiting while no job ran are expired, not sent, however many; the ones still news go out, 500 to a message.
+    now += DIGEST_SPACING_MS
+    await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) select 'old:'||n,998201,'RECONCILIATION_MISMATCH',$1 from generate_series(1,30) n`,
+      [JSON.stringify({ ...fee(markets[0], { status: 'UNAVAILABLE', reason: 'RPC_UNAVAILABLE' }, true), delivery: { status: 'digest', queuedAt: iso(now - 7 * 3_600_000) } })])
+    await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) select 'new:'||n,998202,'RECONCILIATION_MISMATCH',$1 from generate_series(1,520) n`,
+      [JSON.stringify(fee(markets[1], { status: 'UNAVAILABLE', reason: 'RPC_UNAVAILABLE' }, true))])
+    now += DIGEST_SETTLE_MS
+    texts.length = 0
+    const backlog = await delivery().runOnce()
+    assert.deepEqual([backlog.status, backlog.sent, backlog.expired, backlog.digested], ['OK', 1, 30, 470], 'the oldest 500 rows: 30 expired, 470 in the message')
+    assert.match(texts[0].text, /^repo\.ing · Fee ledger could not be checked\nlocal\/ledger-998202\n/)
+    assert.equal((await pool.query(`select count(*)::int n from graduation_alerts where event_key like 'old:%' and detail::jsonb->'delivery'->>'status'='expired' and detail::jsonb->'delivery'->>'error'='ALERT_TOO_OLD'`)).rows[0].n, 30)
+    assert.equal((await pool.query(`select count(*)::int n from graduation_alerts where event_key like 'new:%' and detail::jsonb->'delivery'->>'digest' is null`)).rows[0].n, 50, 'the rest wait for the next message')
+    now += DIGEST_SPACING_MS
+    assert.deepEqual([(await delivery().runOnce()).digested, (await delivery().runOnce()).digested], [50, 0])
+
+    // Untouched throughout: the rows that were never ledger alerts of this kind.
+    assert.deepEqual(await stored(before), { status: 'MISMATCH' })
+    assert.equal((await stored(stock)).delivery, undefined)
+    assert.equal((await pool.query(`select count(*)::int n from graduation_alerts where detail::jsonb->'delivery'->>'status' in ('pending','retry')`)).rows[0].n, 0)
+  } finally { await pool?.end(); if (created) await admin.query('drop database repoing_reserve_alert_test'); await admin.end() }
 })

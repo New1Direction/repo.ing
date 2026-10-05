@@ -308,8 +308,11 @@ async function observeDevPulse(){
 }
 let reserveDelivery=null,reserveDeliveryTask=null,nextReserveDeliveryCheck=0
 if(process.env.RESERVE_ALERTS_ENABLED==='true'){
-  try{reserveDelivery=createReserveAlertDelivery({pool,send:createReserveWebhookSender(),reserveMoves:process.env.RESERVE_MOVE_NOTIFICATIONS==='true'})}
-  catch{console.log(JSON.stringify({reserveAlertError:'ALERT_DESTINATION_INVALID'}))}
+  // A destination that cannot work is reported once here. The queue still runs without a sender, as with none set: ledger
+  // alerts are gathered into messages recorded unsent (src/reserve-alerts.mjs digestLedgerAlerts), and nothing is sent.
+  let send=null
+  try{send=createReserveWebhookSender()}catch{console.log(JSON.stringify({reserveAlertError:'ALERT_DESTINATION_INVALID'}))}
+  reserveDelivery=createReserveAlertDelivery({pool,send,reserveMoves:process.env.RESERVE_MOVE_NOTIFICATIONS==='true'})
 }
 async function deliverReserveAlerts(){
   try{console.log(JSON.stringify({reserveAlerts:await reserveDelivery.runOnce()}))}
