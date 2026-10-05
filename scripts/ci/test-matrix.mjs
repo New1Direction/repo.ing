@@ -27,7 +27,7 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_parts_test'), launchtest('repoing_backers_test'), launchtest('repoing_launch_alerts_test'),
   launchtest('repoing_trust_test'), launchtest('repoing_trending_test'), launchtest('repoing_market_quality_test'),
   launchtest('repoing_graduation_race_test'), launchtest('repoing_milestone_alerts_test'), launchtest('repoing_server_speed_test'),
-  launchtest('repoing_opt_outs_test'),
+  launchtest('repoing_opt_outs_test'), launchtest('repoing_buyback_import_test'),
   // Launch and milestone alerts for Hugging Face model markets, and the read-only alerts preview.
   launchtest('repoing_alerts_models_test'),
   // Required (not opt-in) by replica-state, which is listed in needs-services.txt.
@@ -61,6 +61,7 @@ export const DEFAULT_ENV = {
   MILESTONE_ALERTS_TEST_DATABASE_URL: launchtest('repoing_milestone_alerts_test'),
   SERVER_SPEED_TEST_DATABASE_URL: launchtest('repoing_server_speed_test'),
   MAINTAINER_OPT_OUTS_TEST_DATABASE_URL: launchtest('repoing_opt_outs_test'),
+  BUYBACK_IMPORT_TEST_DATABASE_URL: launchtest('repoing_buyback_import_test'),
   ALERTS_MODELS_TEST_DATABASE_URL: launchtest('repoing_alerts_models_test'),
   LAUNCH_SESSIONS_TEST_DATABASE_URL: launchtest('repoing_launch_sessions_test'),
   VERIFICATION_BONUS_TEST_DATABASE_URL: launchtest('repoing_verification_bonus_test'),

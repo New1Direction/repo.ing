@@ -50,9 +50,9 @@ export function detectBuyback(tx, { wallet, source, mint = OFFICIAL_TOKEN.mint, 
     at: new Date(tx.blockTime * 1000).toISOString(), slot: String(tx.slot) }
 }
 
-// Where a buy that detectBuyback accepted put its tokens: the wallet's token account with the largest gain.
+// Where a buy that detectBuyback accepted put its tokens: the wallet's one token account that gained them. null when the
+// purchase was split over several of the wallet's accounts: no single account received it.
 export function buybackTokenAccount(tx, { wallet, mint = OFFICIAL_TOKEN.mint }) {
   const gains = (tokenDeltas(tx.meta) ?? []).filter(account => account.mint === mint && account.owner === wallet && account.delta > 0n)
-  const largest = gains.reduce((best, account) => !best || account.delta > best.delta ? account : best, null)
-  return largest ? accountKeys(tx)[largest.index] : null
+  return gains.length === 1 ? accountKeys(tx)[gains[0].index] : null
 }

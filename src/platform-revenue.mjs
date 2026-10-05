@@ -3,7 +3,8 @@ import { PublicKey } from '@solana/web3.js'
 import { loadBuybackReceipts } from '../app/lib/buyback-receipts-db.mjs'
 import { BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 import { buybackTokenAccount, detectBuyback } from './buyback-detection.mjs'
-import { loadFinalizedTransaction } from './finalized-transaction.mjs'
+import { loadFinalizedTransaction, UNSUPPORTED_TRANSACTION_SHAPE } from './finalized-transaction.mjs'
+import { releaseAfterUnlock } from './database-pool.mjs'
 
 // Canonical platform-revenue accounting. Builder and repository earnings are never
 // touched here: this ledger only covers revenue repo.ing owns (partner fees).
@@ -22,6 +23,7 @@ export const CUSTODY_FUNDED_BY = Object.freeze({ H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4
 export const BUYBACK_IMPORT_REFUSALS = Object.freeze({
   signature: 'Invalid buyback signature',
   unread: 'The buyback transaction could not be read from the chain. Try again in a moment.',
+  unreadable: 'The buyback transaction has a format this tool cannot read',
   unfinalized: 'Buyback transaction is not a finalized success',
   notBuyback: 'Not a $REPOING buy through its own pool, paid by the custody wallet',
   group: 'Unknown allocation group',
@@ -297,36 +299,44 @@ export function createPlatformRevenue({ pool, partnerWallet }) {
     // Read before the ledger lock is taken: a slow provider must not hold up an allocation.
     let tx
     try { tx = await loadTransaction(connection, signature) }
-    catch (cause) { throw Object.assign(Error(BUYBACK_IMPORT_REFUSALS.unread), { cause }) }
+    catch (cause) {
+      throw Object.assign(Error(cause?.message === UNSUPPORTED_TRANSACTION_SHAPE ? BUYBACK_IMPORT_REFUSALS.unreadable : BUYBACK_IMPORT_REFUSALS.unread), { cause })
+    }
     if (!tx?.meta || tx.meta.err) throw Error(BUYBACK_IMPORT_REFUSALS.unfinalized)
     const receipt = detectBuyback(tx, { wallet, source: 'custody', mint: token })
     const tokenAccount = receipt && buybackTokenAccount(tx, { wallet, mint: token })
     if (!receipt || !tokenAccount || BigInt(receipt.spentLamports) <= 0n) throw Error(BUYBACK_IMPORT_REFUSALS.notBuyback)
     const spent = BigInt(receipt.spentLamports)
     const client = await pool.connect()
+    let locked = false
     try {
       await client.query('select pg_advisory_lock(hashtextextended($1, 0))', [REVENUE_LOCK])
-      try {
-        const group = allocationGroup ?? (await client.query(`select allocation_group from platform_revenue_allocations order by created_at desc limit 1`)).rows[0]?.allocation_group
-        const { rows: [policyRow] } = await client.query(`select policy_version from platform_revenue_allocations
-          where allocation_group=$1 limit 1`, [group])
-        if (!policyRow) throw Error(BUYBACK_IMPORT_REFUSALS.group)
-        if (spent > await groupBuybackRemaining(client, group)) throw Error(BUYBACK_IMPORT_REFUSALS.reserve)
-        const idempotencyKey = `import.${signature.slice(0, 56)}`
-        const { rows: [intent] } = await client.query(`insert into buyback_intents
-          (idempotency_key, allocation_group, amount, wallet_source, destination_mint, destination_token_account,
-           expected_output, policy_version, network, status, expires_at, review, settled_at, signature, created_by)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,'mainnet','settled', now() + interval '30 minutes', $9,
-            to_timestamp($10), $11, $12)
-          on conflict (idempotency_key) do nothing returning id, idempotency_key as "idempotencyKey",
-            amount::text as amount, status, signature`, [idempotencyKey, group, spent.toString(), wallet,
-            token, tokenAccount, receipt.tokenBaseUnits, policyRow.policy_version,
-            JSON.stringify({ purpose: 'manual-buyback-import', importedBy: createdBy, signature, source: 'operator-executed swap' }),
-            tx.blockTime, signature, createdBy])
-        if (!intent) throw Error(BUYBACK_IMPORT_REFUSALS.recorded)
-        return intent
-      } finally { await client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [REVENUE_LOCK]) }
-    } finally { client.release() }
+      locked = true
+      const group = allocationGroup ?? (await client.query(`select allocation_group from platform_revenue_allocations order by created_at desc limit 1`)).rows[0]?.allocation_group
+      const { rows: [policyRow] } = await client.query(`select policy_version from platform_revenue_allocations
+        where allocation_group=$1 limit 1`, [group])
+      if (!policyRow) throw Error(BUYBACK_IMPORT_REFUSALS.group)
+      const idempotencyKey = `import.${signature.slice(0, 56)}`
+      // Said before the reserve is looked at: a buyback that is already recorded has used its share of it.
+      const { rows: [known] } = await client.query('select 1 from buyback_intents where idempotency_key=$1 or signature=$2 limit 1', [idempotencyKey, signature])
+      if (known) throw Error(BUYBACK_IMPORT_REFUSALS.recorded)
+      if (spent > await groupBuybackRemaining(client, group)) throw Error(BUYBACK_IMPORT_REFUSALS.reserve)
+      const { rows: [intent] } = await client.query(`insert into buyback_intents
+        (idempotency_key, allocation_group, amount, wallet_source, destination_mint, destination_token_account,
+         expected_output, policy_version, network, status, expires_at, review, settled_at, signature, created_by)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,'mainnet','settled', now() + interval '30 minutes', $9,
+          to_timestamp($10), $11, $12)
+        on conflict (idempotency_key) do nothing returning id, idempotency_key as "idempotencyKey",
+          amount::text as amount, status, signature`, [idempotencyKey, group, spent.toString(), wallet,
+          token, tokenAccount, receipt.tokenBaseUnits, policyRow.policy_version,
+          JSON.stringify({ purpose: 'manual-buyback-import', importedBy: createdBy, signature, source: 'operator-executed swap' }),
+          tx.blockTime, signature, createdBy])
+      if (!intent) throw Error(BUYBACK_IMPORT_REFUSALS.recorded)
+      return intent
+    } finally {
+      // The connection goes back to the pool unless the unlock failed (src/database-pool.mjs).
+      await releaseAfterUnlock(client, () => locked ? client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [REVENUE_LOCK]) : null)
+    }
   }
 
   return { createPolicy, activatePolicy, allocate, createIntent, reviewIntent, simulateIntent, executeIntent, importBuyback }

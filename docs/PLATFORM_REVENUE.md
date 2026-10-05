@@ -33,14 +33,14 @@ Execution requires `REPO_BUYBACK_EXECUTION_ENABLED=true` **plus** a complete, co
 
 ## Manual buyback import (2026-09-28, revised 2026-10-05)
 
-A buyback the operator made by hand, and that the worker's own detection missed, is recorded into the same settled-intent ledger through `intent.import` on the reviewed platform-revenue API (UI: `/operations/fees`). The finalized transaction is the authority, and it is read and judged exactly as the worker does it (`loadFinalizedTransaction`, then `detectBuyback` in `src/buyback-detection.mjs`): a successful buy of $REPOING through its own pool, paid by the custody wallet. Legacy, v0 and v1 transactions are all read, before the ledger lock is taken.
+A buyback the operator made by hand, and that the worker's own detection missed, is recorded into the same settled-intent ledger through `intent.import` on the reviewed platform-revenue API (UI: `/operations/fees`). The finalized transaction is the authority, and it is read and judged exactly as the worker does it (`loadFinalizedTransaction`, then `detectBuyback` in `src/buyback-detection.mjs`): a successful buy of $REPOING through its own pool, paid by the custody wallet, since 2026-09-27 21:00 UTC (`BUYBACK_SINCE`; the launch and early buys before it are not buybacks). Legacy, v0 and v1 transactions are all read, before the ledger lock is taken. A purchase split over several of the wallet's token accounts is refused: no single account received it.
 
 - **Amount:** the swap input, as on a published receipt. The network fee, a tip and rent for a new account are not buyback spend.
 - **Bound:** a spend larger than the allocation's remaining buyback share is refused.
-- **Once:** the settled intent's `idempotency_key` is `import.` plus the first 56 characters of the signature, and a signature the worker also published is counted once.
+- **Once:** the settled intent's `idempotency_key` is `import.` plus the first 56 characters of the signature. A signature that is already recorded is refused as such, and one the worker also published is counted once.
 - **Reconciliation:** imported intents are excluded from the execution-gate check, because the gate bounds protocol-initiated buybacks, not operator swaps already proven on-chain. Reserve coverage and spend totals include them.
 
-From commit `1aa5989` (2026-09-28) until 2026-10-05 the route behind this action had lost its imports, so every request failed and no import was recorded. `tests/platform-revenue-route.test.mjs` and `tests/buyback-import.test.mjs` now cover the operator's own path.
+From commit `1aa5989` (2026-09-28) until 2026-10-05 the route behind this action had lost its imports, so every request failed and no import was recorded. `tests/platform-revenue-route.test.mjs`, `tests/buyback-import.test.mjs` and `tests/buyback-import-db.test.mjs` (real PostgreSQL) now cover the operator's own path, and the route logs `platform_revenue_failed` with the kind of any failure it answers in general words.
 
 ## Verification
 
