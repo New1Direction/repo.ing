@@ -133,6 +133,77 @@ test('real PostgreSQL chart aggregation: canonical pool, 120+ history, OHLC, sam
   } finally { await client.query('rollback'); await client.end() }
 })
 
+test('real PostgreSQL live trades: only unfinalized swaps of the canonical pools, from the newest finalized slot, at most two minutes old', { skip: !process.env.CHART_TEST_DATABASE_URL }, async () => {
+  const url = new URL(process.env.CHART_TEST_DATABASE_URL)
+  assert.equal(url.hostname, '127.0.0.1')
+  assert.equal(url.port, '55441', 'Use the dedicated chart test DB, never the production tunnel')
+  const client = new pg.Client({ connectionString: url.href })
+  await client.connect()
+  try {
+    await client.query('begin')
+    await client.query(`create temporary table trade_events(pool text,signature text,event_index integer,slot bigint,traded_at timestamptz,direction text,input_base_units text,output_base_units text,next_sqrt_price text)`)
+    await client.query(`create temporary table finalized_chart_blocks(slot bigint primary key,blockhash text,previous_blockhash text,parent_slot bigint,signatures text[],checked_at timestamptz default now())`)
+    await client.query('create temporary table finalized_chart_positions(slot bigint,signature text,transaction_index integer,primary key(slot,signature))')
+    await client.query('create temporary table damm_trade_events(github_repo_id bigint,pool text,signature text,event_index integer,slot bigint,traded_at timestamptz,quote_amount bigint,direction text,next_sqrt_price text,base_amount bigint)')
+    await client.query('create temporary table graduation_events(github_repo_id bigint,pool text,signature text,slot bigint,evidence text,evidence_hash text)')
+    // The 0057 table's columns, types and key (its trigger and foreign key need the full schema).
+    await client.query(`create temporary table live_trade_events(signature varchar(88) not null,event_index integer not null,github_repo_id bigint not null,
+      venue varchar(4) not null,pool varchar(44) not null,slot bigint not null,traded_at timestamptz not null,direction varchar(4) not null,
+      quote_amount numeric(20,0) not null,base_amount numeric(20,0),next_sqrt_price numeric(39,0) not null,received_at timestamptz default now() not null,
+      primary key(signature,event_index))`)
+    const market = { pool: 'curve-pool', repoId: '991', mint: 'test-mint' }
+    const final = (signature, slot, seconds, price) => client.query('insert into trade_events values($1,$2,0,$3,$4,$5,$6,$7,$8)',
+      [market.pool, signature, slot, new Date(now - seconds * 1000), 'buy', '1000', '10', (sqrt * price).toString()])
+    const live = (signature, slot, seconds, price, { pool = market.pool, venue = 'DBC', receivedAgo = 0, lamports = '100' } = {}) => client.query(
+      `insert into live_trade_events(signature,event_index,github_repo_id,venue,pool,slot,traded_at,direction,quote_amount,base_amount,next_sqrt_price,received_at)
+       values($1,0,991,$2,$3,$4,$5,'sell',$6,7,$7,now()-make_interval(secs=>$8))`,
+      [signature, venue, pool, slot, new Date(now - seconds * 1000), lamports, (sqrt * price).toString(), receivedAgo])
+    await final('f1', 100, 120, 2n)
+    await final('f2', 110, 60, 3n)
+    await live('f2', 110, 60, 3n) // now finalized: the ledger's row is shown, once
+    await live('older', 105, 90, 9n) // older than the newest finalized slot and never finalized: dropped
+    await live('stale', 120, 20, 9n, { receivedAgo: 200 }) // over two minutes old: dropped
+    await live('elsewhere', 121, 15, 9n, { pool: 'other-pool' }) // not this market's canonical pool
+    await live('same-slot', 110, 59, 4n) // the newest finalized slot itself, but a swap the ledger does not hold yet
+    await live('live-a', 111, 30, 5n, { lamports: '200' })
+    await live('live-b', 112, 10, 6n, { lamports: '300' })
+
+    const finalized = await readMarketChart(client, market, '1h', now)
+    assert.equal(finalized.live, undefined)
+    assert.equal(finalized.latest.signature, 'f2')
+    assert.equal(finalized.totalTrades, 2)
+
+    const shown = await readMarketChart(client, market, '1h', now, { live: true })
+    assert.deepEqual(shown.trades.map(trade => [trade.signature, trade.pending ?? false]),
+      [['f1', false], ['f2', false], ['same-slot', true], ['live-a', true], ['live-b', true]])
+    assert.deepEqual(shown.live, { trades: 3 })
+    assert.equal(shown.totalTrades, 5)
+    assert.equal(shown.latest.signature, 'live-b')
+    assert.equal(shown.latest.priceSol, 0.036)
+    assert.equal(shown.latest.solLamports, '300')
+    assert.equal(shown.volume24hLamports, String(2 * 1000 + 100 + 200 + 300))
+    assert.equal(shown.candles.at(-1).close, 0.036)
+    assert.equal(shown.candles.at(-1).live, true)
+    assert.equal(shown.candles.reduce((n, bar) => n + bar.count, 0), 5)
+
+    // Graduated: the verified DAMM destination's live swaps continue the chart; another pool's never do.
+    const migration = { mint: market.mint, curve: market.pool, pool: 'damm-pool', signature: 'migration', slot: 250 }
+    await client.query('insert into graduation_events values($1,$2,$3,$4,$5,$6)', [991, migration.pool, migration.signature, 250, JSON.stringify({ migration }), evidenceHash(migration)])
+    await live('damm-live', 260, 5, 8n, { pool: 'damm-pool', venue: 'DAMM' })
+    await live('damm-elsewhere', 261, 4, 8n, { pool: 'unverified-pool', venue: 'DAMM' })
+    const graduated = await readMarketChart(client, market, 'all', now, { live: true })
+    assert.equal(graduated.latest.signature, 'damm-live')
+    assert.equal(graduated.latest.venue, 'DAMM')
+    assert.equal(graduated.live.trades, 4)
+    // Once the finalized DAMM ledger holds it, the live row is no longer shown.
+    await client.query("insert into damm_trade_events values(991,'damm-pool','damm-live',0,260,$1,100,'sell',$2,7)", [new Date(now - 5000), (sqrt * 8n).toString()])
+    const caughtUp = await readMarketChart(client, market, 'all', now, { live: true })
+    assert.equal(caughtUp.live, undefined)
+    assert.equal(caughtUp.latest.signature, 'damm-live')
+    assert.equal(caughtUp.latest.pending, undefined)
+  } finally { await client.query('rollback'); await client.end() }
+})
+
 test('quiet history retains fine time buckets rather than flattening old trades as time passes', () => {
   const first = '2026-09-25T03:16:48Z', last = '2026-09-25T03:23:17Z'
   assert.equal(chartWindow('all', first, now, last).interval, 60)

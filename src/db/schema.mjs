@@ -117,6 +117,23 @@ export const dammTradeEvents = pgTable('damm_trade_events', {
   index('damm_trade_events_repo_slot').on(t.githubRepoId,t.slot.desc(),t.eventIndex.desc()),
   check('damm_trade_amount_check',sql`${t.quoteAmount}>0`),check('damm_trade_direction_check',sql`${t.direction} in ('buy','sell')`),
   check('damm_trade_base_amount_check',sql`${t.baseAmount} is null or ${t.baseAmount}>=0`)])
+// Migration 0057: confirmed swaps a chart shows as confirming until the finalized ledgers above hold them
+// (src/live-trades.mjs). Display only, never a ledger; every row is deleted two minutes after it arrived.
+export const liveTradeEvents = pgTable('live_trade_events', {
+  signature: varchar('signature', { length: 88 }).notNull(), eventIndex: integer('event_index').notNull(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => markets.githubRepoId),
+  venue: varchar('venue', { length: 4 }).notNull(), pool: varchar('pool', { length: 44 }).notNull(),
+  slot: bigint('slot', { mode: 'bigint' }).notNull(), tradedAt: timestamp('traded_at', { withTimezone: true }).notNull(),
+  direction: varchar('direction', { length: 4 }).notNull(),
+  quoteAmount: numeric('quote_amount', { precision: 20, scale: 0 }).notNull(), baseAmount: numeric('base_amount', { precision: 20, scale: 0 }),
+  nextSqrtPrice: numeric('next_sqrt_price', { precision: 39, scale: 0 }).notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [primaryKey({ name: 'live_trade_events_pkey', columns: [t.signature, t.eventIndex] }),
+  index('live_trade_events_repo_slot').on(t.githubRepoId, t.slot), index('live_trade_events_received').on(t.receivedAt),
+  check('live_trade_events_venue_check', sql`${t.venue} in ('DBC', 'DAMM')`),
+  check('live_trade_events_direction_check', sql`${t.direction} in ('buy', 'sell')`),
+  check('live_trade_events_evidence_check', sql`${t.eventIndex} >= 0 and ${t.slot} > 0 and ${t.quoteAmount} > 0
+    and (${t.baseAmount} is null or ${t.baseAmount} >= 0) and ${t.nextSqrtPrice} > 0`)])
 
 export const trendCandidates = pgTable('trend_candidates', {
   githubRepoId: bigint('github_repo_id',{mode:'bigint'}).primaryKey(),

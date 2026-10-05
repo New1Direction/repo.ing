@@ -28,10 +28,11 @@ export function useTraderHandles(mint, newest) {
 // the quote amount's label (a stock pair's, app/lib/chart-quote.mjs); SOL's by default.
 export function RecentTradeRow({ trade, symbol, now, x = null, quoteLabel = recentTradeSol }) {
   const tokens = recentTradeTokens(trade)
-  return <li className="recent-trade">
+  // pending: confirmed but not finalized yet (a live chart trade, src/live-trades.mjs); it reads "Confirming" until it is.
+  return <li className={`recent-trade${trade.pending ? ' is-pending' : ''}`}>
     <span className={`recent-trade-side ${trade.direction}`}>{trade.direction === 'buy' ? 'Buy' : 'Sell'}</span>
     <span className="recent-trade-amount"><strong>{quoteLabel(trade)}</strong>{x && <XHandleLink link={x} avatar className="recent-trade-x"/>}{tokens && <small>{tokens} {symbol}</small>}</span>
-    <time dateTime={trade.tradedAt} title={new Date(trade.tradedAt).toLocaleString()}>{recentTradeAge(trade, now)}</time>
+    <time dateTime={trade.tradedAt} title={trade.pending ? 'Confirmed on Solana. Final in about 13 seconds.' : new Date(trade.tradedAt).toLocaleString()}>{trade.pending ? 'Confirming' : recentTradeAge(trade, now)}</time>
     <a className="recent-trade-tx" href={solscanTx(trade.signature)} target="_blank" rel="noopener noreferrer" aria-label={`View ${trade.direction} transaction on Solscan`}>Solscan<ArrowUpRight size={13}/></a>
   </li>
 }
@@ -46,8 +47,8 @@ export function RecentTrades({ mint, symbol, trades, failed, quoteLabel }) {
   return <section className="inner-card recent-trades" aria-labelledby="recent-trades-heading" aria-busy={loading}>
     <div className="recent-trades-heading"><h3 id="recent-trades-heading">Recent trades</h3><Link href={`/token/${mint}?view=activity`}>All activity →</Link></div>
     {loading ? <ol className="recent-trades-list" aria-hidden="true">{Array.from({ length: ROWS }, (_, index) => <li key={index} className="recent-trade is-placeholder"><span className="skeleton-text"/></li>)}</ol>
-      : !rows.length ? <p className="recent-trades-empty" role="status">{failed ? 'Recent trades are temporarily unavailable.' : 'No finalized trades yet.'}</p>
+      : !rows.length ? <p className="recent-trades-empty" role="status">{failed ? 'Recent trades are temporarily unavailable.' : 'No trades yet.'}</p>
       : <ol className="recent-trades-list">{rows.map(trade => <RecentTradeRow key={tradeKey(trade)} trade={trade} symbol={symbol} now={now} x={handles.get(tradeKey(trade)) ?? null} quoteLabel={quoteLabel}/>)}</ol>}
-    <small className="recent-trades-note">Last {ROWS} finalized swaps · updates with the chart</small>
+    <small className="recent-trades-note">Last {ROWS} swaps · updates with the chart</small>
   </section>
 }
