@@ -4,6 +4,7 @@ import { createTrendSources } from './trend-sources.mjs'
 import { TREND_INTERVAL_MS, trendScore, assertFreshTrend, transitionTrend, manualSignal, DAY } from './trend-rules.mjs'
 import { DISCOVERY_VERSION, DISCOVERY_WINDOW_MS } from './discovery-rewards.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
+import { releaseAfterUnlock } from './database-pool.mjs'
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export const trendError = error => /^[A-Z_]{3,60}$/.test(error?.message??'') ? error.message : 'TREND_SOURCE_UNAVAILABLE'
@@ -112,7 +113,7 @@ export function createTrendIntake({pool,sources=createTrendSources(),now=()=>Dat
       await syncTrendLaunches(db)
       await health(db,{source:'intake',status:results.some(r=>r.status!=='OBSERVED')?'PARTIAL':'OK',count:results.filter(r=>r.status==='OBSERVED').length,results})
       return {status:'COMPLETE',results,sources:seed.health}
-    }finally{await db.query("select pg_advisory_unlock(hashtextextended('trend-intake',0))");db.release()}
+    }finally{await releaseAfterUnlock(db,()=>db.query("select pg_advisory_unlock(hashtextextended('trend-intake',0))"))}
   }
   async function addManual(input,operator){
     const signal=manualSignal(input,now())

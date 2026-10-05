@@ -1,5 +1,6 @@
 import bs58 from 'bs58'
 import { readGenesisHash } from './rpc-usage.mjs'
+import { releaseAfterUnlock } from './database-pool.mjs'
 
 const MAINNET = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const fail = code => { throw Error(code) }
@@ -128,8 +129,7 @@ export function createChartOrdering({ pool, connection, verification, now = Date
       for (const [slot, time] of retryAfter) if (time <= now()) retryAfter.delete(slot)
       return result
     } finally {
-      if (locked) await db.query("select pg_advisory_unlock(hashtext('chart-block-ordering'))")
-      db.release()
+      await releaseAfterUnlock(db, () => locked ? db.query("select pg_advisory_unlock(hashtext('chart-block-ordering'))") : null)
     }
   } }
 }

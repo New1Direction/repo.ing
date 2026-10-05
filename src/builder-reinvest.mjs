@@ -6,6 +6,7 @@ import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { reconcileLiquidity } from './liquidity-deployment.mjs'
 import { reconcilePlatformRevenue } from './platform-revenue.mjs'
 import { createReconciler } from './reconcile.mjs'
+import { releaseAfterUnlock } from './database-pool.mjs'
 import { REINVEST_RULES, json, digest, agree, assertReinvestNetwork, agreedTransaction,
   canonicalReinvestPool, reinvestQuote, assertFreshReinvestQuote, buildReinvestTransaction, simulateReinvest } from './builder-reinvest-chain.mjs'
 
@@ -17,7 +18,7 @@ const amount = value => {
 async function lock(pool, repoId, fn) {
   const db=await pool.connect()
   try { await db.query('select pg_advisory_lock($1::bigint)',[repoId]); return await fn(db) }
-  finally { await db.query('select pg_advisory_unlock($1::bigint)',[repoId]); db.release() }
+  finally { await releaseAfterUnlock(db, () => db.query('select pg_advisory_unlock($1::bigint)',[repoId])) }
 }
 function termsFor(row) {
   const terms=JSON.parse(row.terms)
