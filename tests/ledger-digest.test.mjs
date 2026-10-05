@@ -362,7 +362,7 @@ function memoryStore(rows, recent = { lastAt: null, pending: false, covered: [] 
     commit: async plan => { calls.push(['commit', plan]) } }
 }
 
-test('the delivery job plans from the stored rows and the last six hours of messages, and writes the plan in one commit', async () => {
+test('the delivery job plans from the stored rows and the last seven hours of messages, and writes the plan in one commit', async () => {
   const now = START + DIGEST_SETTLE_MS, row = fee(7, START, real), other = fee(6, START, real), old = fee(8, START - DIGEST_ROW_MAX_AGE_MS - MINUTE), gone = fee(9, START, real)
   gone.detail.clearedAt = iso(START + MINUTE)
   const store = memoryStore([row, other, old, gone])

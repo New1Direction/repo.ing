@@ -58,8 +58,8 @@ export const RECONCILE_HOLD_MS = 15 * 60_000
 // days (3,851 swaps): the worker recorded a trade's fees in a median 21 s and at most about 10 min. A ledger that is behind
 // and has not moved for an hour is not catching up: the indexer stopped, or missed a trade.
 export const RECONCILE_BEHIND_HOLD_MS = 60 * 60_000
-// How long a ledger may go without one matching pass while it keeps recording. A market traded without a pause is behind
-// on every pass and still healthy; over those five days the longest such stretch was about 30 minutes.
+// How long a ledger may stay behind, without one matching pass, while it keeps recording. A market traded without a pause
+// is behind on every pass and still healthy; over those five days the longest such stretch was about 30 minutes.
 export const RECONCILE_BEHIND_MAX_MS = 6 * 60 * 60_000
 // A problem that persists is announced again once per period, so one missed or failed notification is not the last word.
 export const RECONCILE_REPEAT_MS = 6 * 60 * 60_000
@@ -77,7 +77,8 @@ const recordedSoFar = result => `${result.recordedEarned ?? ''}|${result.platfor
 // - What a pass found has its own hold, by kind (reconcileKind):
 //   - difference: seen again holdMs or more after it was first seen in the episode. Lag may hide it on the passes between.
 //   - unchecked: holdMs without one pass that completed a check. Any completed check starts the count again.
-//   - behind: behindHoldMs with nothing new recorded for the ledger (stalled), or behindMaxMs without one matching pass.
+//   - behind: behindHoldMs with nothing new recorded for the ledger (stalled), or still behind behindMaxMs after the pass
+//     that first found it behind, with no matching pass since.
 // - The key is the episode's start, the kind and the repeat period, so the caller's unique event key keeps one alert per
 //   kind per period. A problem that changes kind (reads fail, then a real difference shows) is announced as the new kind.
 //   repeat: this kind was already due in an earlier period of the episode.
@@ -94,13 +95,14 @@ export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOL
     if (kind === 'unchecked') return at - (episode.unchecked ??= at) >= holdMs
     const recorded = recordedSoFar(result)
     if (recorded !== episode.recorded) { episode.recorded = recorded; episode.moved = at }
-    return at - episode.moved >= behindHoldMs || at - episode.first >= behindMaxMs
+    // No other kind of pass starts the six hours again: one stale read in six hours must not keep a ledger that stays behind quiet.
+    return at - episode.moved >= behindHoldMs || at - (episode.behind ??= at) >= behindMaxMs
   }
   return {
     settle(key, result) {
       if (result?.status === 'MATCH') { episodes.delete(key); return null }
       const at = now(), known = episodes.get(key)
-      const episode = known && at - known.seen <= staleMs ? known : { first: at, difference: null, unchecked: null, recorded: null, moved: at, firstDue: {} }
+      const episode = known && at - known.seen <= staleMs ? known : { first: at, difference: null, unchecked: null, behind: null, recorded: null, moved: at, firstDue: {} }
       episode.seen = at
       episodes.set(key, episode)
       const kind = reconcileKind(result)

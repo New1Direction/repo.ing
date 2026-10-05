@@ -169,6 +169,8 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     const protocol={record:(key,detail)=>emitAlert(pool,null,LEDGER_ALERT,key,detail),clear:(ledger,at)=>clearLedgerAlerts(pool,null,ledger,at)}
     // A pass that cannot go on reports its own failure, with how many alert rows it could not store on the way.
     const stopped=error=>{if(alertFaults&&error instanceof Error)error.alertsNotRecorded=alertFaults;return error}
+    // A pass that ends says the same in its results.
+    const reported=results=>alertFaults?[...results,{repoId:null,status:'ALERTS_NOT_RECORDED',count:alertFaults,alerts:[]}]:results
     // One provider outage should not block the other worker recovery jobs once per market.
     try {
       if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
@@ -179,7 +181,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
       await pool.query("update graduation_observations set status='REVIEW',error_code=$1 where status<>'REVIEW'",[code])
       // While the chain cannot be verified no market is checked: that is recorded by itself once it has lasted its hold.
       const alerts=[await emitAlert(pool,null,'GRADUATION_REVIEW',code,{code}),await ledgerAlerts.checks(protocol,code)].filter(Boolean)
-      return [{repoId:null,status:'REVIEW',code,alerts}]
+      return reported([{repoId:null,status:'REVIEW',code,alerts}])
     }
     let ledgers
     // The pass ends here, as it always has, and again no market was checked.
@@ -204,8 +206,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     const slow=Math.max(now()-started,sincePrevious)>PUBLIC_GRADUATION_MAX_AGE_MS
     const recorded=[await ledgerAlerts.checks(protocol,slow?PASS_TOO_SLOW:null),await ledgerAlerts.platform(protocol,{revenue:revenueCheck,liquidity})].filter(Boolean)
     if(recorded.length)results.push({repoId:null,status:'REVIEW',alerts:recorded})
-    if(alertFaults)results.push({repoId:null,status:'ALERTS_NOT_RECORDED',count:alertFaults,alerts:[]})
-    return results
+    return reported(results)
   }
   return {runOnce,processMarket}
 }

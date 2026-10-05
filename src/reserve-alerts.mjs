@@ -133,7 +133,7 @@ function ledgerAlertText(id, detail) {
   const code = detail.reason ? ` (${detail.reason})` : ''
   if (detail.ledger === 'platform') return [title, `Revenue: ${detail.revenue} · Liquidity: ${detail.liquidity}`, ...(detail.problems ?? []), ...tail].join('\n')
   if (detail.ledger === 'checks') return [title, detail.reason === 'PASS_TOO_SLOW'
-    ? 'A pass over the markets takes longer than five minutes, so public progress expires between passes.'
+    ? 'Passes over the markets come round less often than every five minutes, so public progress expires between passes.'
     : `The monitor's pass stops before it has checked every market, so ledgers go unchecked${code}.`, ...tail].join('\n')
   if (detail.ledger === 'market') return [title, detail.fullName, `${detail.lagging ? "The monitor's reads for this market keep failing" : "The monitor's pass for this market fails"}${code}.`,
     'Its public progress is not refreshed while this lasts.', ...tail].join('\n')
