@@ -6,6 +6,7 @@ import { publicError } from './public-error.mjs'
 import { SITE_ORIGIN, blinkApiPath, sellApiPath } from './blink-links.mjs'
 import { launchFeeNotice } from '../../src/launch-fee-copy.mjs'
 import { parseReferrer } from '../../src/referral.mjs'
+import { EARLY_ACCESS_NOT_TRADABLE } from '../../src/early-access.mjs'
 import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
 
 // Solana Actions spec v2.4 (github.com/solana-developers/solana-actions). Hand-rolled: the @solana/actions
@@ -19,7 +20,7 @@ export const MAX_BUY_LAMPORTS = 50_000_000_000n
 const MAX_BODY_BYTES = 4096
 const LAMPORTS_PER_SOL = 1_000_000_000n
 // Only app-authored trader/preflight messages reach Blink clients; RPC and DB errors are logged and replaced.
-const SAFE = /^(Trading is not configured|Repository has no indexed|Canonical|Input amount|No executable output|You need approximately|Trade simulation|Trade transaction|Network cost estimate|Account setup estimate|Fixed DBC)/
+const SAFE = /^(Contributor early access|Trading is not configured|Repository has no indexed|Canonical|Input amount|No executable output|You need approximately|Trade simulation|Trade transaction|Network cost estimate|Account setup estimate|Fixed DBC)/
 
 // Allow-origin * is scoped to actions.json and /api/actions only (spec requirement for cross-origin Blink clients).
 export const ACTION_HEADERS = Object.freeze({
@@ -92,6 +93,8 @@ async function resolveMarket(mint, loadMarket) {
   catch (error) { throw new ActionError(publicError(error, () => false, 'Market lookup is temporarily unavailable', 'action market'), 503) }
   if (!market) throw new ActionError('No indexed repo.ing market for this token', 404)
   if (market.quoteMint) throw new ActionError(STOCK_PAIR_ACTIONS_UNAVAILABLE, 404)
+  // A contributor early access market (docs/EARLY_ACCESS.md) trades through a transfer hook the site does not build yet.
+  if (market.earlyAccessEnd) throw new ActionError(EARLY_ACCESS_NOT_TRADABLE, 404)
   return market
 }
 
@@ -217,7 +220,7 @@ export async function handleSellPost(request, rawMint, { loadMarket, tokenBalanc
 export async function loadActionMarket(pool, mint) {
   if (!pool) throw new ActionError('Market lookup is temporarily unavailable', 503)
   const { rows: [row] } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_symbol as symbol,
-      m.quote_mint as "quoteMint", r.full_name as "fullName", r.description
+      m.quote_mint as "quoteMint", m.early_access_end as "earlyAccessEnd", r.full_name as "fullName", r.description
     from markets m left join repositories r on r.github_repo_id = m.github_repo_id
     where m.mint = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [mint])
   return row ?? null

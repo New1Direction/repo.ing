@@ -5,8 +5,9 @@ contributors can buy the token; anyone can sell to the curve at any time. It is 
 hook, `programs/early-access-hook`, on its own Meteora DBC config. Launches without the option, and every existing market,
 are unchanged.
 
-Status: the hook program and its tests; the database, switches and the contributor wallet link (step 3), all dark. No launch
-uses the hook yet; nothing is deployed.
+Status: the hook program and its tests; the database, switches and the contributor wallet link (step 3); the early access
+config, its scripts and the launch (step 4); all dark. The code gate `EARLY_ACCESS_LAUNCHES_READY` stays `false`, so no launch
+offers or accepts early access; nothing is deployed.
 
 ## Decisions (owner, 2026-10-05)
 
@@ -105,9 +106,9 @@ path's limits allow it).
 
 **Switches** (`src/early-access.mjs`). `EARLY_ACCESS_ENABLED` (exactly "true") opens the contributor wallet link; anything
 else answers 404 on its page, its API and its GitHub sign-in. Launches also need the code gate `EARLY_ACCESS_LAUNCHES_READY`,
-which stays `false` until the launch, trades, claims and graduation for hook pools exist (`earlyAccessLaunchable`). Settings,
-names only for now: `EARLY_ACCESS_DBC_CONFIG`, `EARLY_ACCESS_LOOKUP_TABLE`, `EARLY_ACCESS_ORACLE_SECRET_KEY` (errors name the
-variable, never its value). The window is a whole number of seconds from 900 to 86,400 (`earlyAccessWindow`); the form offers
+which stays `false` until the launch, trades, claims and graduation for hook pools exist (`earlyAccessLaunchable`). Settings:
+`EARLY_ACCESS_DBC_CONFIG` and `EARLY_ACCESS_LOOKUP_TABLE` (the launch, step 4), `EARLY_ACCESS_ORACLE_SECRET_KEY` (step 4 uses only
+its public key, in `init_platform`); errors name the variable, never its value. The window is a whole number of seconds from 900 to 86,400 (`earlyAccessWindow`); the form offers
 15 minutes, 1 hour, 6 hours and 24 hours (`EARLY_ACCESS_WINDOWS`).
 
 **Database** (`drizzle/0059_early_access.sql`).
@@ -134,6 +135,83 @@ The link is written in one transaction: the challenge row is locked, checked (th
 the signature verified, the nonce used up, then the link upserted. There is no paste-an-address path. Read helpers for step 4:
 `linkForGithubUser`, `linksForGithubUsers`, `githubUserForWallet`.
 
+## The config and the launch (step 4)
+
+**Config** (`src/early-access-config.mjs`, curve `buildEarlyAccessCurve()` in `src/launch-curve.mjs`): exactly the `builders`
+profile (flat 1.75%, 1% builder allocation, 85 SOL graduation) with a Token-2022 base, made with `create_config_with_transfer_hook`:
+fee claimer the partner wallet (H7TK…), leftover receiver the creator signer (FeZX…, as on the builders configs), quote wrapped
+SOL, hook `Ew1wqkFk…`. The built transaction is checked (one DBC instruction, every account, every parameter equal to the curve,
+zero padding); the unsigned simulation's account is decoded as `ConfigWithTransferHook` and must hold our hook, wrapped SOL
+through SPL Token, a Token-2022 base, the expected fee claimer and leftover receiver, a flat 1.75% fee without the first-swap rule
+or a dynamic fee, every curve term of the curve, and equal the live SOL launch-fee config in every field but the launch fee and
+the token type. After the send the account must be the simulated bytes. The launcher checks the same (fee claimer aside) at
+every prepare.
+
+**Scripts** (the owner runs them; each is a dry run unless `--execute`, which needs the reviewed values approved in the
+environment; mainnet checked by genesis hash):
+
+| Script | Does | Approve with |
+| --- | --- | --- |
+| `scripts/init-early-access-platform.mjs --oracle <key> [--upgrade-authority <keypair.json>]` | `init_platform`: admin = the creator signer (`PLATFORM_CREATOR_SECRET_KEY`'s public key, FeZX…), oracle = `EARLY_ACCESS_ORACLE_SECRET_KEY`'s public key; signed by the program's upgrade authority | `APPROVED_EARLY_ACCESS_PLATFORM=<admin>:<oracle>` |
+| `scripts/create-early-access-config.mjs` | the config above; its keypair is `secrets/early-access-config-keypair.json` (git-ignored, made on the first dry run); paid by the partner (Keychain) | `APPROVED_EARLY_ACCESS_CONFIG`, `..._INSTRUCTION_SHA256`, `..._DEBIT_LAMPORTS` |
+| `scripts/create-early-access-lookup-table.mjs --config <config>` | one lookup table with the 12 shared keys (`earlyAccessLookupAddresses`): DBC pool authority, DBC event authority, DBC, Token-2022, SPL Token, System, Associated Token, instructions sysvar, wrapped SOL, the hook, its platform account, the config; partner pays and is its authority (it can add entries or close the table, never change one). Prints the address. | `APPROVED_LOOKUP_TABLE_ADDRESSES_SHA256`, `APPROVED_LOOKUP_TABLE_DEBIT_LAMPORTS` |
+
+Order: deploy the program, init the platform, create the config, create the table; set `EARLY_ACCESS_DBC_CONFIG` and
+`EARLY_ACCESS_LOOKUP_TABLE` on web and worker (the worker's launch indexer verifies early access markets on that config).
+
+**The launch** (`src/early-access-launch.mjs`, the same interface as the legacy launcher):
+
+1. Prepare (`/api/launch`, `app/lib/early-access-launch.mjs`). `earlyAccessSeconds` in the body asks for it. Refused, with a
+   message the page shows: while early access cannot launch, for a Hugging Face model, a trend or agent-draft (MCP, CLI) launch,
+   a stock pair, a window outside 15 minutes to 24 hours, or without both settings. Under the repository lock the coordinator
+   takes the contributor snapshot (`src/github-contributors.mjs`): `GET /repos/{owner}/{repo}/contributors?per_page=100`, up to
+   5 pages, users only (bots, `[bot]` logins, organizations and anonymous entries skipped), stored in `early_access_contributors`
+   (replaced in one transaction). GitHub lists accounts by commit author email, links at most 500 emails to accounts and may serve
+   a cached list for a while after new commits. A GitHub failure, a rate limit under the reserve (800 requests, as Dev Pulse) or
+   an empty list fails the prepare with a clear message; a launch never goes ahead on an empty snapshot.
+2. The window end is wall time plus the window, but never closer than 5 minutes to the program's 24-hour cap by the chain's
+   clock (read from the Clock sysvar), and refused if the chain's clock would leave under a minute. The market is stamped
+   (`early_access_end`, `transfer_hook_program`) with status `prepared`; a reused reservation clears both first.
+3. The transaction is v0 with `EARLY_ACCESS_LOOKUP_TABLE`: unit limit, unit price (simulated units +20%, at least +40k, priced
+   and capped as every launch), `init_mint` (payer: the launcher; admin: the creator signer; the launcher listed only with a first
+   buy), DBC `createPoolWithFirstBuyWithTransferHook` (`TransferHookBase` slice of 4, `transferHookAccounts(mint)`) or
+   `createPoolWithTransferHook` without a buy (the SDK's own compute budget instructions dropped), then `remove_wallets` for the
+   launcher unless its wallet is linked to a contributor in the snapshot. Measured on mainnet's programs: 1,110 bytes, about
+   205,000–216,000 compute units with a first buy (limit about 245,000–260,000). The review response also carries the window end,
+   the contributor count and how many have a linked wallet.
+4. Sign: the page decodes the review as v0 (`app/lib/launch-transaction.mjs`); wallet-standard wallets must declare version 0.
+   The server accepts the reviewed message, or it with 1–4 trailing Lighthouse assertions (`matchesReviewedVersionedLaunch`,
+   both read through the lookup table), verifies the launcher's signature, co-signs (creator, mint), sends it once and confirms it
+   as before (`sendLaunch`).
+5. Verify (`src/launch-evidence.mjs`, chosen by the stamp): DBC `initializeVirtualPoolWithToken2022TransferHook` on the early
+   access config by the recorded creator, mint, pool, hook (account 8) and launcher (payer, account 9), accounts read through the
+   lookup table; a Token-2022 mint whose transfer hook is ours (or the default key once the curve is full, as DBC sets it); the
+   hook's mint config holding this repository and exactly the stamped end. The SPL path is unchanged. The first buy's trade and
+   fees are not recorded yet (step 5).
+
+**Not SOL markets.** Early access markets have `quote_asset_id IS NULL` like SOL markets. In step 4:
+
+| Path | Now |
+| --- | --- |
+| `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
+| Trades: `/api/trade`, the curve and graduated traders, Blinks | refused: "Contributor early access markets are not tradable on the site yet." |
+| Builder fee claim (`src/claim.mjs`), discovery (`discoverySummary`), builder allocation (`allocationRecord`), platform fee listing and sweep (`listPlatformFees`), `platformFeeRecord`, DBC partner fee collection | skipped (`early_access_end is null`) or refused before any chain call |
+| Builder reminders, graduation monitor (`publicMarketSQL`) | skipped |
+| Launch first-buy indexing in `/api/launch` | skipped |
+
+Left for the next steps (each fails closed or is harmless until then):
+
+- Step 5: trades (`swap2WithTransferHook`, the trade evidence, sessions, Blinks), the external fee indexer (its per-market pass
+  reports ERROR for these markets: `quote_asset_id is null` list; the stock readiness check counts that list), live trades
+  (skipped: config unresolved), the launch's first buy, charts, the holder count (`app/lib/market-metrics.mjs` counts SPL Token
+  accounts only), market lists and the launch alert copy (they list these markets as SOL markets), and the oracle's upkeep that
+  adds linked contributors' wallets to a list during its window (nothing adds them yet).
+- Step 6: claims with `claim_creator_trading_fee2` / `claim_trading_fee2`, the builder allocation (Token-2022 leftover),
+  discovery and platform fees, then remove the step 4 skips. Early access markets are stamped with the discovery version, the
+  builder allocation (when `BUILDER_ALLOCATION_CONFIGS` lists the early access config) and the verification bonus like SOL
+  markets; the bonus is paid in SOL and needs no change.
+- Step 7: graduation (the monitor skips them), DAMM v2 with a Token-2022 token A (`tokenAProgram`), reconcile and graduated fees.
+
 ## Build and test
 
     scripts/build-early-access-hook.sh                 # writes tests/fixtures/validator/early_access_hook.so
@@ -141,17 +219,20 @@ the signature verified, the nonce used up, then the link upserted. There is no p
     node --test tests/early-access-hook-chain.test.mjs # mainnet's programs on a local validator (full suite)
     node --test tests/early-access.test.mjs            # switches, window, link message and refusals (quick suite)
     node scripts/ci/run-tests.mjs early-access-links-db # migration 0059, the link flow and its routes (PostgreSQL)
+    node --test tests/early-access-launch.test.mjs     # guard, window end, contributors, v0 review, config transaction, form (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table and launches end to end (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
-after any change to `programs/early-access-hook`. The chain test starts `scripts/ci/start-early-access-validator.sh` on port
-8929 when nothing answers there, and stops it after.
+after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port
+8929 when nothing answers there (it also loads Metaplex, for the SPL launch the launch test compares with), and stop it after.
 
 ## Plan
 
 1. Spike on mainnet's programs. Done.
 2. The hook program and its tests. Done.
-3. Database, switches and the GitHub-to-wallet link for contributors. This change.
-4. The early access config and the launch (v0 transaction, lookup table, window on the form, contributor list at prepare).
+3. Database, switches and the GitHub-to-wallet link for contributors. Done.
+4. The early access config and the launch (v0 transaction, lookup table, window on the form, contributor list at prepare). Done
+   (dark; see above).
 5. Curve trades, charts, lists and indexers for hook pools.
 6. Claims: builder fees, builder allocation, discovery and platform fees.
 7. Graduation and DAMM v2 trades with a Token-2022 market token.

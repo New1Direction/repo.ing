@@ -18,12 +18,13 @@ test('the SOL graduated trader quotes and prepares byte for byte as before the s
   assert.equal(outputs.buy.quoteMint, null)
 })
 
-test('the SOL graduation job lists exactly the markets it listed before, minus stock-paired ones; the stock job lists only those', () => {
+test('the SOL graduation job lists exactly the markets it listed before, minus stock-paired and early access ones; the stock job lists only stock pairs', () => {
   const before = `select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",r.full_name as "fullName"
   from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'`
-  assert.equal(publicMarketSQL, `${before} and m.quote_asset_id is null`)
+  // Contributor early access markets (docs/EARLY_ACCESS.md) graduate through a transfer hook: neither job lists them yet.
+  assert.equal(publicMarketSQL, `${before} and m.quote_asset_id is null and m.early_access_end is null`)
   // The two lists split the same indexed markets on one column (tests/stock-graduation-db.test.mjs runs both on PostgreSQL).
   const where = sql => sql.slice(sql.indexOf(' where '))
   assert.equal(where(STOCK_MARKET_SQL), where(before) + ' and m.quote_asset_id is not null')
-  assert.equal(where(publicMarketSQL).replace(/ is null$/, ''), where(STOCK_MARKET_SQL).replace(/ is not null$/, ''))
+  assert.equal(where(publicMarketSQL).replace(/ is null and m\.early_access_end is null$/, ''), where(STOCK_MARKET_SQL).replace(/ is not null$/, ''))
 })

@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import BN from 'bn.js'
-import { Keypair, PublicKey, SendTransactionError, Transaction, TransactionExpiredBlockheightExceededError } from '@solana/web3.js'
+import { Keypair, PublicKey, SendTransactionError, Transaction, TransactionExpiredBlockheightExceededError, VersionedTransaction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress, deriveTokenBadgeAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { SOL_QUOTE } from './quote-assets.mjs'
@@ -43,6 +43,50 @@ export function prepareLaunchSigning(tx, launcher, creator, mint) {
     if (!signed.verifySignatures()) throw new DefinitiveLaunchError('Launch signatures are incomplete or invalid')
     return { raw: signed.serialize(), signature: bs58.encode(signed.signature) }
   }
+}
+
+// Sends a co-signed launch (legacy or v0: the bytes as signed) once and waits for confirmation. Every refusal before it was
+// forwarded is definitive; anything after that is unknown until the worker proves otherwise (src/launch-expiry.mjs).
+export async function sendLaunch(connection, { raw, signature, blockhash, lastValidBlockHeight }) {
+  // Signed after its blockhash expired: it is never sent, and only this process holds the co-signed bytes, so it
+  // cannot land. The same holds when the height cannot be read: nothing has been sent yet.
+  let height
+  try { height = await connection.getBlockHeight('confirmed') }
+  catch { throw new DefinitiveLaunchError('Could not reach Solana to send the launch, so nothing was sent or charged. Refresh the review and try again.') }
+  if (height > Number(lastValidBlockHeight)) throw new DefinitiveLaunchError(LAUNCH_REVIEW_EXPIRED)
+  try { await connection.sendRawTransaction(raw, { skipPreflight: false }) }
+  catch (error) {
+    // An error answer from the RPC (failed simulation or validation) means it refused the transaction and did not
+    // forward it. A transport failure (timeout, dropped connection) is unknown and stays ambiguous, and so does
+    // "already processed": the transaction is sent once, so that answer would mean it landed.
+    if (!(error instanceof SendTransactionError)) throw error
+    const reason = String(error.transactionError?.message ?? error.message ?? '')
+    console.warn('launch_send_refused', { reason: reason.slice(0, 200) })
+    if (/already (been )?processed/i.test(reason)) throw error
+    throw new DefinitiveLaunchError(/blockhash not found|block height exceeded|expired/i.test(reason) ? LAUNCH_REVIEW_EXPIRED
+      : 'Solana refused the launch transaction before sending it, so nothing was charged. Refresh the review and try again.')
+  }
+  let result
+  try { result = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight: Number(lastValidBlockHeight) }, 'confirmed') }
+  catch (error) {
+    // Sent, but not confirmed before its blockhash expired: still unknown, so the attempt stays ambiguous until the
+    // worker proves it never landed (src/launch-expiry.mjs).
+    if (error instanceof TransactionExpiredBlockheightExceededError) {
+      throw new Error('The launch was sent but did not confirm before its transaction expired. If it did not land, you can launch again in about two minutes.')
+    }
+    throw error
+  }
+  if (result.value.err) throw new DefinitiveLaunchError(`Launch transaction failed: ${JSON.stringify(result.value.err)}`)
+}
+
+// The unsigned launch the wallet reviews, as base64: a legacy transaction exactly as before, or an early access launch's v0
+// transaction (src/early-access-launch.mjs).
+export const unsignedLaunchBase64 = tx => Buffer.from(tx instanceof VersionedTransaction ? tx.serialize()
+  : tx.serialize({ requireAllSignatures: false, verifySignatures: false })).toString('base64')
+
+// True when a stored review (base64) is an early access launch's v0 transaction. A legacy launch is read exactly as before.
+export function isVersionedLaunch(base64) {
+  try { return VersionedTransaction.deserialize(Buffer.from(String(base64 ?? ''), 'base64')).version === 0 } catch { return false }
 }
 
 // The config is created once using the curve in scripts/meteora-spike.mjs.
@@ -111,37 +155,7 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
       if (!tx.feePayer?.equals(launcher) || tx.recentBlockhash !== blockhash) throw new DefinitiveLaunchError('Prepared launch transaction does not match its review')
       return { mint, blockhash, lastValidBlockHeight: BigInt(lastValidBlockHeight), sign: prepareLaunchSigning(tx, launcher, creator, mintKeypair) }
     },
-    async submit({ raw, signature, blockhash, lastValidBlockHeight }) {
-      // Signed after its blockhash expired: it is never sent, and only this process holds the co-signed bytes, so it
-      // cannot land. The same holds when the height cannot be read: nothing has been sent yet.
-      let height
-      try { height = await connection.getBlockHeight('confirmed') }
-      catch { throw new DefinitiveLaunchError('Could not reach Solana to send the launch, so nothing was sent or charged. Refresh the review and try again.') }
-      if (height > Number(lastValidBlockHeight)) throw new DefinitiveLaunchError(LAUNCH_REVIEW_EXPIRED)
-      try { await connection.sendRawTransaction(raw, { skipPreflight: false }) }
-      catch (error) {
-        // An error answer from the RPC (failed simulation or validation) means it refused the transaction and did not
-        // forward it. A transport failure (timeout, dropped connection) is unknown and stays ambiguous, and so does
-        // "already processed": the transaction is sent once, so that answer would mean it landed.
-        if (!(error instanceof SendTransactionError)) throw error
-        const reason = String(error.transactionError?.message ?? error.message ?? '')
-        console.warn('launch_send_refused', { reason: reason.slice(0, 200) })
-        if (/already (been )?processed/i.test(reason)) throw error
-        throw new DefinitiveLaunchError(/blockhash not found|block height exceeded|expired/i.test(reason) ? LAUNCH_REVIEW_EXPIRED
-          : 'Solana refused the launch transaction before sending it, so nothing was charged. Refresh the review and try again.')
-      }
-      let result
-      try { result = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight: Number(lastValidBlockHeight) }, 'confirmed') }
-      catch (error) {
-        // Sent, but not confirmed before its blockhash expired: still unknown, so the attempt stays ambiguous until the
-        // worker proves it never landed (src/launch-expiry.mjs).
-        if (error instanceof TransactionExpiredBlockheightExceededError) {
-          throw new Error('The launch was sent but did not confirm before its transaction expired. If it did not land, you can launch again in about two minutes.')
-        }
-        throw error
-      }
-      if (result.value.err) throw new DefinitiveLaunchError(`Launch transaction failed: ${JSON.stringify(result.value.err)}`)
-    },
+    submit: launch => sendLaunch(connection, launch),
     async inspect({ mint, pool, launchSignature }) {
       const status = (await connection.getSignatureStatuses([launchSignature], { searchTransactionHistory: true })).value[0]
       if (!status || status.err || !['confirmed', 'finalized'].includes(status.confirmationStatus)) return false

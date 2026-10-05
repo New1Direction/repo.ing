@@ -75,15 +75,20 @@ export function createWalletProvider(choice) {
         onAccount(account?.address ?? null)
       })
     },
+    // A legacy transaction as before; a v0 transaction (an early access launch, docs/EARLY_ACCESS.md) only from a wallet that
+    // declares version 0, and read back as one.
     async signTransaction(transaction) {
       if (!account) throw new Error('Connect wallet before signing')
-      const { Transaction } = await import('@solana/web3.js')
-      const bytes = transaction.serialize({ requireAllSignatures: false, verifySignatures: false })
-      const [result] = await wallet.features['solana:signTransaction'].signTransaction({
+      const { Transaction, VersionedTransaction } = await import('@solana/web3.js')
+      const versioned = transaction instanceof VersionedTransaction
+      const feature = wallet.features['solana:signTransaction']
+      if (versioned && !feature.supportedTransactionVersions?.includes(0)) throw new Error(`${wallet.name} cannot sign this transaction. Try another wallet.`)
+      const bytes = versioned ? transaction.serialize() : transaction.serialize({ requireAllSignatures: false, verifySignatures: false })
+      const [result] = await feature.signTransaction({
         account, transaction: bytes, chain: SOLANA_MAINNET_CHAIN,
       })
       if (!(result?.signedTransaction instanceof Uint8Array)) throw new Error('Wallet returned an invalid transaction')
-      return Transaction.from(result.signedTransaction)
+      return versioned ? VersionedTransaction.deserialize(result.signedTransaction) : Transaction.from(result.signedTransaction)
     },
     async signMessage(message) {
       if (!account) throw new Error('Connect wallet before signing')

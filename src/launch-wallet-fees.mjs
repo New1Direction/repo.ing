@@ -1,4 +1,4 @@
-import { ComputeBudgetProgram, Transaction, VersionedTransaction } from '@solana/web3.js'
+import { ComputeBudgetProgram, Transaction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { MAX_PRIORITY_FEE_LAMPORTS, chooseComputeUnitPrice, priorityFeeLamports } from './trade-landing.mjs'
 
 // Phantom adds priority-fee instructions to unsigned transactions without an explicit compute budget, so the launch
@@ -53,6 +53,37 @@ export async function withLaunchPriorityFee(connection, transaction, { feePayer,
   return { transaction: budgeted(transaction.instructions, { feePayer, blockhash, units: computeUnitLimit, microLamports }),
     computeUnitLimit, microLamports, priorityFeeLamports: priorityFeeLamports({ units: computeUnitLimit, microLamports }) }
 }
+
+// The early access launch (docs/EARLY_ACCESS.md) as a v0 transaction with its address lookup table: the same budget rules,
+// [unit limit, unit price, ...the unchanged launch instructions], probed and priced exactly as withLaunchPriorityFee does.
+const versionedBudgeted = (instructions, { feePayer, blockhash, units, microLamports, lookupTables }) => new VersionedTransaction(
+  new TransactionMessage({ payerKey: feePayer, recentBlockhash: blockhash, instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports }), ...instructions] }).compileToV0Message(lookupTables))
+
+async function simulatedVersionedUnits(connection, probe, log) {
+  try {
+    const { value } = await connection.simulateTransaction(probe, { commitment: 'confirmed', sigVerify: false, replaceRecentBlockhash: true })
+    return value.err ? null : value.unitsConsumed
+  } catch (error) { log('launch priority fee: compute simulation unavailable, using fallback limit', error?.name ?? 'error'); return null }
+}
+
+export async function withVersionedLaunchPriorityFee(connection, instructions, { feePayer, blockhash, lookupTables, fetcher, log = console.warn }) {
+  if (instructions.some(isBudget)) throw new Error('Launch compute budget must be set exactly once')
+  const writableAccounts = [...new Map(instructions.flatMap(ix => ix.keys.filter(key => key.isWritable)
+    .map(key => [key.pubkey.toBase58(), key.pubkey]))).values()]
+  const probe = versionedBudgeted(instructions, { feePayer, blockhash, units: LAUNCH_CU_LIMIT_CEILING, microLamports: 0, lookupTables })
+  const [units, price] = await Promise.all([simulatedVersionedUnits(connection, probe, log),
+    chooseComputeUnitPrice(connection, { probe, writableAccounts, fetcher, log })])
+  const computeUnitLimit = launchComputeUnitLimit(units)
+  const microLamports = cappedLaunchPrice(computeUnitLimit, price)
+  return { transaction: versionedBudgeted(instructions, { feePayer, blockhash, units: computeUnitLimit, microLamports, lookupTables }),
+    computeUnitLimit, microLamports, priorityFeeLamports: priorityFeeLamports({ units: computeUnitLimit, microLamports }) }
+}
+
+// A v0 message's top-level instructions in the shape readLaunchComputeBudget reads: program ids are always static keys, and
+// a compute budget instruction names no accounts, so the lookup table is not needed to read the budget.
+export const compiledLaunchInstructions = message => message.compiledInstructions.map(ix => ({
+  programId: message.staticAccountKeys[ix.programIdIndex], keys: ix.accountKeyIndexes, data: Buffer.from(ix.data) }))
 
 // What a launch transaction declares: exactly one unit limit then one unit price, ahead of every other instruction,
 // within the launch bounds and the cap. Anything else fails closed (a wallet could otherwise re-price the launch).

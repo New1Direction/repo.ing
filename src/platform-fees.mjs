@@ -9,7 +9,8 @@ export async function platformFeeRecord(pool, repoId) {
   const id = String(repoId)
   const { rows: [market] } = await pool.query(`select github_repo_id::text as "githubRepoId", mint, pool,
     creator_wallet as "creatorWallet" from markets
-    where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`, [id])
+    where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'
+    and early_access_end is null`, [id])
   if (!market) return null
   const { rows: [state] } = await pool.query(`select coalesce((select sum(amount_base_units) from platform_fee_events
     where github_repo_id=$1),0)::text as earned`, [id])

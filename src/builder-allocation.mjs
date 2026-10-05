@@ -21,7 +21,8 @@ export function allocationEnabled(config) { return Boolean(config && allocationC
 export async function allocationRecord(pool, repoId) {
   const { rows: [market] } = await pool.query(`select github_repo_id::text as "githubRepoId", mint, pool,
     creator_wallet as "creatorWallet", builder_allocation_version as version from markets
-    where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`, [String(repoId)])
+    where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'
+    and early_access_end is null`, [String(repoId)])
   if (!market || market.version !== 1) return null
   const { rows: [latest] } = await pool.query(`select status, signature, wallet, amount::text from builder_allocation_claims
     where github_repo_id=$1 order by id desc limit 1`, [String(repoId)])

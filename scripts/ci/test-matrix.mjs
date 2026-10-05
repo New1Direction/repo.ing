@@ -86,6 +86,9 @@ export const PINNED_GROUPS = [
   { files: ['market-quote-db'], databaseUrl: launchtest('repoing_market_quote_test'), selfManaged: true },
   // Contributor early access: migration 0059 from 0058, the GitHub-to-wallet link flow and its routes (docs/EARLY_ACCESS.md).
   { files: ['early-access-links-db'], databaseUrl: launchtest('repoing_early_access_links_test'), selfManaged: true },
+  // Contributor early access launches (step 4): the config, platform and lookup table, then launches through the coordinator on the
+  // early access validator (scripts/ci/start-early-access-validator.sh, started when none is running), and a SOL launch beside them.
+  { files: ['early-access-launch-chain'], databaseUrl: launchtest('repoing_early_access_launch_chain_test'), selfManaged: true },
   // Starts its own validator with mainnet's programs (scripts/ci/start-stock-validator.sh, reads mainnet once).
   { files: ['stock-pair-chain'], databaseUrl: launchtest('repoing_stock_pair_chain_test'), selfManaged: true },
   // Stock fee collections and launcher payouts: the state machine on PostgreSQL, the worker with its flags unset (same output as

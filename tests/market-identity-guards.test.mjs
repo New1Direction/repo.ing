@@ -7,7 +7,7 @@ import { join } from 'node:path'
 // so a Hugging Face market id never reaches GitHub, where a 404 could become a decision about the market.
 // tests/market-identity-matrix.test.mjs checks that each guard throws before any request.
 const GUARDED = ['app/api/repo-logo/[repo]/route.js', 'app/lib/repo-images.mjs', 'app/lib/server.mjs', 'src/dev-pulse.mjs',
-  'src/github-app-auth.mjs', 'src/github-release.mjs', 'src/github-verification.mjs', 'src/github.mjs', 'src/repo-lineage.mjs', 'src/trend-sources.mjs',
+  'src/github-app-auth.mjs', 'src/github-contributors.mjs', 'src/github-release.mjs', 'src/github-verification.mjs', 'src/github.mjs', 'src/repo-lineage.mjs', 'src/trend-sources.mjs',
   'src/verification-bonus-accrual.mjs']
 
 const sources = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()

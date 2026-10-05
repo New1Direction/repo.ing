@@ -8,6 +8,7 @@ import { createGitHubAppVerifier } from '../src/github-verification.mjs'
 import { currentGithubAdminForRepository } from '../src/github-app-auth.mjs'
 import { createReleaseReader } from '../src/github-release.mjs'
 import { createDevPulseCollector } from '../src/dev-pulse.mjs'
+import { fetchRepositoryContributors } from '../src/github-contributors.mjs'
 import { createTrendSources } from '../src/trend-sources.mjs'
 import { checkLaunchLineage } from '../src/repo-lineage.mjs'
 import { readRepositoryFacts } from '../src/verification-bonus-accrual.mjs'
@@ -40,6 +41,7 @@ const githubCalls = {
   'release reader': (id, { fetchImpl }) => createReleaseReader({ fetchImpl }).latest({ repoId: id, owner: 'o', name: 'n' }),
   currentGithubAdminForRepository: (id, { fetchImpl }) => currentGithubAdminForRepository({ repoId: id, owner: 'o', name: 'n', githubUserId: '1', githubLogin: 'u', fetchImpl, identity }),
   readRepositoryFacts: (id, { fetchImpl }) => readRepositoryFacts(id, { fetchImpl, headers: async () => ({}) }),
+  'early access contributors': (id, { fetchImpl }) => fetchRepositoryContributors({ githubRepoId: id, fullName: 'o/n', fetchImpl, headers: async () => ({}) }),
   'trend observe': (id, { fetchImpl }) => createTrendSources({ fetchImpl, pause: async () => {} }).observe('https://github.com/o/n', id),
   'fork guard': (id, { fetchImpl, pool }) => checkLaunchLineage({ pool, repo: { githubRepoId: id, fullName: 'o/n', owner: 'o' }, fetchImpl, log: () => {} }),
   authorizationUrl: async (id, recorded) => verifier(recorded).authorizationUrl({ githubRepoId: id }),

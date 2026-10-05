@@ -1,5 +1,5 @@
 import { VersionedTransaction } from '@solana/web3.js'
-import { readLaunchComputeBudget } from './launch-wallet-fees.mjs'
+import { compiledLaunchInstructions, readLaunchComputeBudget } from './launch-wallet-fees.mjs'
 
 const LAMPORTS_PER_SIGNATURE = 5000n
 
@@ -21,13 +21,16 @@ export function launchCostBreakdown({ balance, after, networkFee, priorityFee = 
 // Read-only simulation of the exact prepared message, compute budget included: the simulated balance change and
 // getFeeForMessage both include the priority fee, so the total is exactly what the wallet pays. The user has not
 // signed it and this function never broadcasts. A failed simulation blocks review.
+// transaction: the legacy launch, or an early access launch's v0 transaction (docs/EARLY_ACCESS.md), whose fee payer is its first
+// static key and whose lookup table the simulation resolves itself.
 export async function estimateLaunchCosts(connection, transaction, initialBuyLamports) {
-  const payer = transaction.feePayer
+  const versioned = transaction instanceof VersionedTransaction
+  const payer = versioned ? transaction.message.staticAccountKeys[0] : transaction.feePayer
   const unavailable = () => { throw new Error('Could not check launch costs. Please retry shortly.') }
-  const { priorityFee } = readLaunchComputeBudget(transaction.instructions)
-  const message = transaction.compileMessage()
+  const { priorityFee } = readLaunchComputeBudget(versioned ? compiledLaunchInstructions(transaction.message) : transaction.instructions)
+  const message = versioned ? transaction.message : transaction.compileMessage()
   const before = await connection.getBalanceAndContext(payer, 'confirmed').catch(unavailable)
-  const encoded = transaction.serialize({ requireAllSignatures: false, verifySignatures: false })
+  const encoded = versioned ? transaction.serialize() : transaction.serialize({ requireAllSignatures: false, verifySignatures: false })
   const [simulation, fee] = await Promise.all([
     connection.simulateTransaction(VersionedTransaction.deserialize(encoded), {
       commitment: 'confirmed', sigVerify: false, minContextSlot: before.context.slot,

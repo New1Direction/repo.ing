@@ -13,6 +13,7 @@ import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../l
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
 import { verificationBonusTerms } from '../lib/verification-bonus-copy.mjs'
 import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
+import { decodeLaunchTransaction } from '../lib/launch-transaction.mjs'
 import '../launch-pair.css'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
@@ -37,14 +38,17 @@ async function launchRequest(body) {
 // and registry _id (repo.hfId), and its review carries the community-launch disclaimer.
 // quoteOptions: the pairs the server offers this repository (src/quote-assets.mjs quoteOptions). The pair chooser appears only
 // when an eligible stock pair is among them; the launch then sends the chosen quoteAssetId and nothing else about it.
-export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee = null, verificationBonus = null,
-  quoteOptions = null }) {
+// earlyAccess: { windows } (src/early-access.mjs EARLY_ACCESS_WINDOWS) while contributor early access can launch, else null. Offered
+// for a GitHub repository paired with SOL from its launch page (no trend or agent draft); the launch then sends earlyAccessSeconds.
+export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee: configLaunchFee = null,
+  verificationBonus = null, quoteOptions = null, earlyAccess = null }) {
   const model = repo.source === 'huggingface'
   const stockPair = model ? null : quoteOptions?.find(option => option.type === 'TOKENIZED_EQUITY' && option.eligible) ?? null
   const [quoteAssetId, setQuoteAssetId] = useState('sol')
   // A chosen stock pair is always sent, even if the server stops offering it before the launch is prepared: the server then
   // refuses it with its code. A pair is never dropped on the way, so a stock launch can never silently become SOL.
   const pairRequest = quoteAssetId === 'sol' ? {} : { quoteAssetId }
+  const [earlyAccessSeconds, setEarlyAccessSeconds] = useState(null)
   const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
@@ -81,6 +85,10 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const isDefault = !draft && name === defaultTokenName(repo.name) && symbol === defaultTokenSymbol(repo.name)
   const needsDetails = !tokenDetailsComplete({ name, symbol, image: tokenImage || imageBusy })
   const initialBuy = choice === 'none' ? '' : choice === 'custom' ? customBuy : quote ? formatUnits(quote.initialBuyLamports) : ''
+  const earlyAccessOffered = Boolean(earlyAccess?.windows?.length) && !model && !draft && trendRevision === undefined && !stockChosen
+  const earlyAccessRequest = earlyAccessOffered && earlyAccessSeconds !== null ? { earlyAccessSeconds } : {}
+  // An early access launch uses its own config: the flat 1.75% fee, without the launch fee.
+  const launchFee = earlyAccessRequest.earlyAccessSeconds ? null : configLaunchFee
 
   useEffect(() => { if (needsDetails) setCustomizing(true) }, [needsDetails])
   useEffect(() => {
@@ -165,7 +173,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         tokenName: name, tokenSymbol: symbol, tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports }
         : { action: 'prepare', repoId: repo.repoId, trendRevision, agentDraft: draft?.token,
           repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
-          tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports, ...pairRequest })
+          tokenImage: tokenImage.image, launcherWallet: address, ...earlyAccessRequest, initialBuyLamports, ...pairRequest })
       setReview({ ...result, wallet: address, quote: stockChosen ? null : quote, pair: stockChosen ? stockPair?.symbol ?? quoteAssetId : null }); setStage('')
     } catch (cause) { setError(cause.message || 'Could not prepare launch'); setFailure({canRetry:cause.canRetry??true,code:cause.code??null,supportCode:cause.supportCode??'LAUNCH-CONNECTION'}); setStage('Failed') }
     finally { working.current = false; setBusy(false) }
@@ -176,8 +184,8 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     working.current = true; setBusy(true); setError(''); setFailure(null); setCopied(false)
     try {
       setStage('Waiting for wallet')
-      const { Transaction } = await import('@solana/web3.js')
-      const transaction = Transaction.from(Uint8Array.from(atob(review.transaction), c => c.charCodeAt(0)))
+      // A legacy launch, or an early access launch's v0 transaction (docs/EARLY_ACCESS.md), as the review sent it.
+      const transaction = decodeLaunchTransaction(Uint8Array.from(atob(review.transaction), c => c.charCodeAt(0)), await import('@solana/web3.js'))
       const signed = await provider().signTransaction(transaction)
       submitted=true
       setStage('Checking submission')
@@ -222,6 +230,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
           </div>
         </details>
         {stockPair && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setPairDropped(false); setError('') }}/>}
+        {earlyAccessOffered && <LaunchEarlyAccess windows={earlyAccess.windows} value={earlyAccessSeconds} onChange={seconds => { setEarlyAccessSeconds(seconds); setError('') }}/>}
         {stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className="launch-buy-presets" role="group" aria-label="Initial token allocation">
@@ -258,6 +267,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         <div><dt>Network fee{BigInt(review.costs.priorityFee ?? '0') > 0n && <small>Includes {sol(review.costs.priorityFee)} priority fee</small>}</dt><dd>{sol(review.costs.networkFee)}</dd></div>
         <div className="launch-review-total"><dt>Estimated total</dt><dd>{sol(review.costs.total)}</dd></div></dl>
       <p>The launch and any initial buy happen together. The priority fee helps it land when Solana is busy. Check the final amount in your wallet.</p>
+      {review.earlyAccess && <p className="launch-review-early-access" role="note"><strong>Contributor early access until {new Date(review.earlyAccess.end).toLocaleString()}.</strong> Until then only this repository&apos;s contributors with a linked wallet can buy; anyone can sell. {review.earlyAccess.linkedWallets === 1 ? '1 contributor has' : `${review.earlyAccess.linkedWallets} contributors have`} a linked wallet now.{review.quote && !review.earlyAccess.launcherListed ? ' After your initial buy, your wallet can sell but not buy until the window ends.' : ''}</p>}
       {model && <p className="launch-review-disclaimer" role="note"><strong>{HF_DISCLAIMER}</strong></p>}
       {expired && <p role="status">This review expired. Refresh it for a fresh transaction, then approve it in your wallet right away.</p>}
       <div className="launch-review-actions"><button type="button" className="button primary" onClick={approve} disabled={busy || expired || wallet !== review.wallet}>{busy ? stage : 'Approve in wallet'}</button>
@@ -289,5 +299,20 @@ function LaunchPair({ pair, symbol, value, onChange }) {
     {stock && <p className="launch-pair-note" role="note"><strong>${symbol || 'TICKER'} / {pair.symbol}</strong> trades and pays its fees in {pair.symbol},
       tokenized {pair.company} stock{pair.provider === 'backed-xstocks' ? ' issued by Backed (xStocks), which are not available to U.S. persons' : ''}.
       Not affiliated with or endorsed by {pair.company}.</p>}
+  </fieldset>
+}
+
+// Contributor early access (docs/EARLY_ACCESS.md): off (the default) or a window the launcher picks. During it only the
+// repository's contributors with a linked wallet can buy; anyone can sell.
+function LaunchEarlyAccess({ windows, value, onChange }) {
+  const chosen = windows.find(window => window.seconds === value)
+  return <fieldset className="launch-early-access">
+    <legend className="field-label">Contributor early access <span className="muted">(optional)</span></legend>
+    <div className="launch-buy-presets" role="group" aria-label="Early access window">
+      <button type="button" aria-pressed={!chosen} onClick={() => onChange(null)}>Off</button>
+      {windows.map(window => <button key={window.seconds} type="button" aria-pressed={chosen?.seconds === window.seconds} onClick={() => onChange(window.seconds)}>{window.label}</button>)}
+    </div>
+    <p className="launch-buy-hint">{chosen ? `For the first ${chosen.label}, only this repository's contributors with a linked wallet can buy. Anyone can sell at any time.`
+      : 'Choose a window to let only this repository\'s contributors buy first. Anyone can sell at any time.'} Contributors link a wallet at <Link href="/contributors/link">/contributors/link</Link>.</p>
   </fieldset>
 }
