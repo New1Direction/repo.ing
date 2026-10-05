@@ -27,6 +27,7 @@ import { hfClient } from '../../lib/hf-client.mjs'
 import { MODEL_LOOKUP_LIMITED, takeModelLookup } from '../../lib/hf-launch.mjs'
 import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairsLaunchable } from '../../../src/quote-assets.mjs'
 import { composeGuards, launchPair, marketPairGuard, stockMintCheck, stockPairGuard } from '../../lib/stock-launch.mjs'
+import { refuseOverLimit } from '../../lib/request-limits.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -106,6 +107,8 @@ export async function POST(request) {
       assertSolBuyQuote(body)
       const config = configAddress()
       if (!config) throw new Error('Launch config is unavailable')
+      const refused = refuseOverLimit(request, 'launch:quote')
+      if (refused) return refused
       const dbc = new DynamicBondingCurveClient(chain(), 'confirmed')
       const fixed = await dbc.state.getPoolConfig(new PublicKey(config))
       if (!fixed) throw new Error('Launch config is unavailable')
@@ -135,6 +138,9 @@ export async function POST(request) {
       if (!pool || !config || !creator) throw new Error('Local launch is not configured')
       if (!/^\d+$/.test(String(body.repoId))) throw new Error('Canonical repository ID required')
       if (!body.tokenImage) throw new Error('Choose a token image before reviewing the launch.')
+      // Counted before GitHub or the chain is asked (app/lib/request-limits.mjs). The form offers "Refresh review" on canRetry.
+      const refused = refuseOverLimit(request, 'launch:prepare', { canRetry: true })
+      if (refused) return refused
       const resolved = await resolvePublicRepository(body.repositoryUrl)
       if (resolved.githubRepoId.toString() !== String(body.repoId)) throw new Error('Repository URL does not match canonical repository ID')
       await assertLaunchAllowed(pool, body.repoId)

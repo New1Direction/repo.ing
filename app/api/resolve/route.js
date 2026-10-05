@@ -6,6 +6,7 @@ import { activeDecision, OPT_OUT_ERROR } from '../../../src/maintainer-opt-outs.
 import { checkLaunchLineage, LineageError } from '../../../src/repo-lineage.mjs'
 import { namesHuggingFace } from '../../../src/hf-launch.mjs'
 import { resolveModelRequest } from '../../lib/hf-launch.mjs'
+import { refuseOverLimit } from '../../lib/request-limits.mjs'
 export const runtime = 'nodejs'
 export async function POST(request) {
   try {
@@ -24,6 +25,9 @@ export async function POST(request) {
         and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
         and r.synced_at > now() - interval '24 hours'`, [`${owner}/${name}`])
     if (known.rows[0]) return Response.json(known.rows[0])
+    // Counted only when GitHub must be asked (app/lib/request-limits.mjs).
+    const refused = refuseOverLimit(request, 'resolve')
+    if (refused) return refused
     const repo = await resolvePublicRepository(normalizedUrl)
     await persistLaunchRepository(pool, repo)
     const { rows } = await pool.query(`select mint from markets where github_repo_id = $1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`, [repo.githubRepoId.toString()])

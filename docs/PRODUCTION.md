@@ -81,7 +81,28 @@ From migration `0036_launch_sessions` on, the web service is replica-safe: no re
 - **Trades** (`trade_sessions`, above), **wallet challenges**, **holder-note / X-link / agent quotas** and the **Parts pledge prepare throttle** (`agent_request_limits`; 240/min overall, 12/min per client, 6/min per wallet) are database-backed. GitHub and X OAuth state rides in sealed cookies.
 - **Live market updates** come from PostgreSQL `NOTIFY` triggers; each replica holds its own `LISTEN` connection, so every replica sees every update.
 
-Per replica by design (correct with any number of replicas): short-TTL read caches (market list 15 s, Explore growth surface 15 s, chart payloads 3 s (dropped on the replica's own trade hint), holder counts 30 s, X handles 60 s — an unlinked handle can show on another replica for up to a minute — holder balances, repository images/logos, SOL price, release notes), the per-process concurrency caps (repo search 4, image uploads 2, 500 live-update viewers), the CSP-report limiter, and the CSP counters on `/operations/health` (they describe only the replica that served the page). If PostgreSQL is unreachable at trade prepare, that one trade falls back to in-process memory and can only be submitted on the same replica. Each replica opens its own connection pool plus one `LISTEN` connection; size `max_connections` for the replica count.
+Per replica by design (correct with any number of replicas): short-TTL read caches (market list 15 s, Explore growth surface 15 s, chart payloads 3 s (dropped on the replica's own trade hint), holder counts 30 s, X handles 60 s — an unlinked handle can show on another replica for up to a minute — holder balances, repository images/logos, SOL price, release notes), the per-process concurrency caps (repo search 4, image uploads 2, 500 live-update viewers), the [request limits](#request-limits), the CSP-report limiter, and the CSP counters on `/operations/health` (they describe only the replica that served the page). If PostgreSQL is unreachable at trade prepare, that one trade falls back to in-process memory and can only be submitted on the same replica. Each replica opens its own connection pool plus one `LISTEN` connection; size `max_connections` for the replica count.
+
+## Request limits
+
+The public trade, launch and repository-lookup routes cap requests per minute, for one address and in total (`app/lib/request-limits.mjs`). They keep one address, or a flood, from spending the RPC and GitHub budgets that every other request and the worker share. Over a cap the route answers HTTP 429 with `Retry-After` and `{"error":"Too many requests. Try again in a minute.","code":"RATE_LIMITED"}`, before it reads the database, the chain or GitHub. The web log gets one `{"requestLimited":{"action":…,"scope":"client"|"global"}}` line per action and scope per minute; the address is never logged or stored.
+
+| Action | Per address | Total | What one request costs |
+| --- | ---: | ---: | --- |
+| `/api/trade` `quote` | 120 | 600 | about 3 RPC calls |
+| `/api/trade` `costs` | 60 | 180 | about 15 RPC calls |
+| `/api/trade` `depth` | 30 | 120 | up to 3 RPC calls, cached 10 s |
+| `/api/trade` `prepare` | 20 | 60 | about 16 RPC calls and a trade session |
+| `/api/trade` `status` | 120 | 1200 | a few RPC calls |
+| `/api/launch` `quote` | 40 | 200 | 1 RPC call |
+| `/api/launch` `prepare` (GitHub repositories) | 12 | 30 | 3-4 GitHub calls, about 10 RPC calls, and the repository reserved for 2 minutes |
+| `/api/resolve` (when GitHub must be asked) | 20 | 60 | up to 3 GitHub calls |
+
+- The per-address caps are several times the heaviest honest use by one visitor: the trade panel refreshes a typed quote and its costs every 15 seconds and after each edit, and polls a signed trade every 3 seconds. Many people can share one address (an office, a VPN exit, a mobile carrier).
+- Never limited: a signed trade or launch (`submit`), releasing a review (`cancel`), and reading a launch's status. Model launches keep their own Hugging Face lookup quota.
+- Counts live in each web process. With several replicas each has its own caps, and a deploy starts them over.
+- The address is Cloudflare's `CF-Connecting-IP`, else the first `X-Forwarded-For` entry. It groups requests; it is not authentication. A request sent straight to the Railway service domain can claim any address, so the totals are the real bound.
+- `REQUEST_LIMITS_DISABLED=true` on the web service turns every cap off.
 
 ## Chart ordering verification
 
