@@ -2,7 +2,7 @@
 
 [Documentation](README.md) / Liquidity
 
-**Selected profile:** 85 SOL graduation with the 1% builder reservation, activated for new mainnet launches on September 26, 2026. This extends the balanced 85 SOL profile introduced September 25. Existing markets keep their original configurations.
+**Selected profile:** 85 SOL graduation with the 1% builder reservation, activated for new mainnet launches on September 26, 2026. Since October 1, 2026 new launches use the same profile with the 3-minute [launch fee](LAUNCH_FEE.md). This extends the balanced 85 SOL profile introduced September 25. Existing markets keep their original configurations.
 
 ## What we chose
 
@@ -75,13 +75,13 @@ Both portions are **permanently locked**, with zero immediately withdrawable liq
 
 The protected repo.ing creator signer controls the creator position and routes builder payouts after current GitHub authority and wallet checks. Verifying a repository does not transfer its position NFT to the user's wallet. Builder entitlement and payout enforcement are application-managed; the liquidity lock is enforced on chain. See [architecture](ARCHITECTURE.md#authorities-and-trust).
 
-Meteora provides a migrator service and a manual migration fallback. Threshold completion and successful migration are separate states. repo.ing shows a transition state until it verifies the destination pool, then trades that pool on-site (DAMM v2 `swap2`, ExactIn, minimum out at the trader's max slippage, 1% by default) with a **View pool on Meteora** link. [Official migration flow](https://github.com/MeteoraAg/dynamic-bonding-curve-sdk/blob/main/packages/dynamic-bonding-curve/README.md#flow).
+Meteora provides a migrator service and a manual migration fallback. Threshold completion and successful migration are separate states. repo.ing shows a transition state until it verifies the destination pool, then trades that pool on-site (DAMM v2 `swap2`, ExactIn, minimum out at the trader's max slippage, 1% by default) with a **View pool** link. [Official migration flow](https://github.com/MeteoraAg/dynamic-bonding-curve-sdk/blob/main/packages/dynamic-bonding-curve/README.md#flow).
 
 ## Fees and rewards
 
 ### Before graduation: DBC
 
-The fixed 1.75% total trading fee has nominal shares of **0.994% builders**, **0.406% repo.ing partner**, and **0.350% Meteora protocol**. Meteora receives 20% of the total fee; 71% of the remaining trading fee goes to the creator. Settlement uses exact integer amounts and per-trade rounding. [Fee proof](FEE_CONFIG.md).
+The 1.75% total trading fee (a new market's [launch fee](LAUNCH_FEE.md) starts at 50.44% and falls to 1.75% over its first 180 seconds; the launcher's own initial buy pays 1.75%) has nominal shares of **0.994% builders**, **0.406% repo.ing partner**, and **0.350% Meteora protocol**. Meteora receives 20% of the total fee; 71% of the remaining trading fee goes to the creator. Settlement uses exact integer amounts and per-trade rounding. [Fee proof](FEE_CONFIG.md).
 
 For enrolled markets, the launcher earns **50% of actual eligible partner fees**, approximately 0.203% of fee-paying trade value under this configuration. Accrual ends at the first of curve completion, 30 days, or the recorded lifetime cap (2.5 SOL for new v2 launches; 1 SOL for v1). The completing DBC swap is included. Builder fees and the total trader fee stay unchanged. Accrued rewards remain claimable afterward. [Discovery rules](DISCOVERY_REWARDS.md).
 
@@ -93,16 +93,17 @@ Remaining DBC builder fees and newly earned DAMM builder fees are included in re
 
 ## Existing markets and verification
 
-The original configuration graduates at **29.954748784 SOL**. Selecting the new config only affects future launches; existing canonical mints and pools keep their original curves. All three approved configurations remain recognized by web and worker. No treasury liquidity deposit or market buy was part of this change.
+The original configuration graduates at **29.954748784 SOL**. Selecting the new config only affects future launches; existing canonical mints and pools keep their original curves. All four approved configurations remain recognized by web and worker. No treasury liquidity deposit or market buy was part of this change.
 
 | Profile | Graduation threshold | Config |
 | --- | ---: | --- |
-| Current builders profile | 85 SOL | `2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M` |
+| Current launch-fee profile (the builders profile with the 3-minute launch fee) | 85 SOL | `8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3` |
+| Earlier builders profile | 85 SOL | `2YbBp7HDQXUA3bk75yxx1kefcVfYYn3oYBNyJGmvre1M` |
 | Earlier balanced profile | 85 SOL | `261xpZVAz5k3ZfwfxXdgkgLowiH6NUzFEHtihhD4YMq1` |
 | Original profile | 29.954748784 SOL | `D7oz8xQ4seaNaEgiDS4fu3YJfmUvR5iPuznxuqKV4u1c` |
 
  The [activation record](LIQUIDITY_REVIEW.md) includes the finalized creation receipt, comparisons, local migration tests, and deployment checks.
 
-As of the recorded rollout, local tests cover actual migration, locked positions, trading, builder payout, and recovery after a lost broadcast response. **The first mainnet graduation and graduated payout remain unobserved.** Verified DAMM trades and SOL volume are now indexed for graduation status and protocol analytics. Native DAMM trade execution and chart candles are not implemented; graduated trading uses the verified Meteora link.
+As of the recorded rollout, local tests cover actual migration, locked positions, trading, builder payout, and recovery after a lost broadcast response. **The first mainnet graduation and graduated payout were unobserved at that point; both happened on 2026-09-28, when $REPOING graduated.** Verified DAMM trades and SOL volume are indexed for graduation status and protocol analytics. Graduated markets trade in the app's own trade panel against the verified DAMM v2 pool, and their finalized swaps continue the price chart.
 
 Additional P3 protocol liquidity and P4 builder reinvestment remain disabled. Those later positions have separate ownership rules; the permanent locks described above apply specifically to the migrated creator/partner positions. [Activation boundaries](REPO_TOKEN.md#liquidity-and-reinvestment-gates).

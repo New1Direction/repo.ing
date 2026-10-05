@@ -17,9 +17,9 @@ Buyers must never mistake a copy for a launched original. A fork that carries an
   - A refusal names the original's mint (for a link to its market) only once that market is live: confirmed, indexed and finalized.
 - **Same account.** That case covers moving your own project to a new repository, for example renaming the old one and pushing its history to a new one. It is not a copy.
 - **"Older".** Decided by GitHub's creation time, so an original that launches after its copy is never refused.
-  - A creation time GitHub omits counts as the newer one.
+  - A creation time GitHub omits counts as the newer one for the repository being launched; an already-launched original with no stored creation time counts as the older one.
 - **The first commit.** It is the last page of `GET /repos/{owner}/{name}/commits?per_page=1`, two GitHub calls.
-  - It is read only for repositories that are not forks and have no market yet.
+  - It is read only for repositories that are not forks: at launch prepare and in the advisory checks while the repository has no market, and by the worker's backfill for markets launched before the guard.
   - A list longer than one page must name GitHub's own last page in its `Link` header. Otherwise the read fails rather than take the newest commit for the first.
   - It does not catch a copy whose history was squashed into a new first commit.
 

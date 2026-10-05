@@ -108,7 +108,7 @@ Only the completed bounded P3 mainnet proof plus final `MATCH` satisfies P4's pr
 
 | Condition | Public / operator behavior | Operator action |
 | --- | --- | --- |
-| Stale observation or chain time (>120 seconds) | No progress number or graduated link; review/unavailable | Restore provider/worker; obtain fresh finalized evidence |
+| Stale observation or chain time (>120 seconds for operator gates, >300 seconds for the public display) | No progress number or graduated link; review/unavailable | Restore provider/worker; obtain fresh finalized evidence |
 | RPC disagreement / wrong network | No verified update, operator alert | Investigate both providers; do not choose the convenient result |
 | Incorrect config/threshold or canonical pool mismatch | Review, no readiness | Compare approved config, derived pool and actual account ownership |
 | Target reached, migration incomplete | `CURVE`, 100%, migration pending | Observe migrator; separately review any fallback |

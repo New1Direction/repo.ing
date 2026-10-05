@@ -121,7 +121,7 @@ Payouts protect what the ledger can see automatically. They never spend in-fligh
 - Set `VERIFICATION_BONUS_PAYOUTS_ENABLED=false` to stop new payouts. In-flight payouts still settle through the worker, which needs no key.
 - Never delete bonus or payout rows.
 
-**Migration order.** `0047` carries journal `when` `1790910007000` and must stay the **last** journal entry. drizzle applies only journal entries whose `when` is newer than the last applied migration, so every earlier migration (0040–0046, from other branches) must be applied before 0047. Otherwise drizzle skips them. The migration is idempotent (`if not exists` throughout), so re-applying it is harmless.
+**Migration order.** `0047` carries journal `when` `1790910007000`. It was the last journal entry when it shipped; later migrations (0048 onward) carry larger `when` values. drizzle applies only journal entries whose `when` is newer than the last applied migration, so every earlier migration (0040–0046, from other branches) must be applied before 0047. Otherwise drizzle skips them. The migration is idempotent (`if not exists` throughout), so re-applying it is harmless.
 
 ## Data model (migration 0047)
 
@@ -133,7 +133,7 @@ Payouts protect what the ledger can see automatically. They never spend in-fligh
   - `evidence` (JSON: rule inputs and thresholds, wallet facts, volume split, GitHub facts, failures), the reason, the latest reviewer, the approver (kept even if the bonus is rejected later) and `paid_at`.
 
   Check constraints tie reasons, reviews and payment to the status.
-- `verification_bonus_payouts`: durable intents, with the attempt, a unique idempotency key, the wallet, payer, amount, memo, signature, signed bytes, last valid block height, network fee, slot, timestamps and resolution. It has unique indexes on the signature and the idempotency key, and the partial unique index `one live payout per bonus`.
+- `verification_bonus_payouts`: durable intents, with the attempt, a unique idempotency key, the wallet, payer, amount, memo, signature, signed bytes, last valid block height, network fee, slot, timestamps and resolution. It has unique indexes on the signature and the idempotency key, and the partial unique index `verification_bonus_payouts_one_live` (one live payout per bonus).
 
 ## Verification
 

@@ -1,11 +1,12 @@
 # Stock-paired markets
 
-Status: built dark through quote-aware creation (P6a) and the curve trade path with its trade panel (P6b). The registry, the
-market columns, the quote-options API, the "Choose pair" control, stock-pair creation and curve trading exist. Fee accrual,
-graduation and payouts are being built, on separate stock ledgers (migration 0054) under the decided fee policy. The code's
-own gate (`STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`) is open, but nothing can be launched against a stock until
-`STOCK_QUOTES_ENABLED` is also set to `true` on web ([go-live runbook](STOCK_GO_LIVE.md), step 6). Until then every surface
-offers SOL only.
+Status: live since 2026-10-04. The code's own gate (`STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`) is open and
+`STOCK_QUOTES_ENABLED` is `true` on web ([go-live runbook](STOCK_GO_LIVE.md), step 6), so a repository of a mapped company
+can be launched against that company's stock. No stock pair had been launched by 2026-10-05. The registry, the market
+columns, the quote-options API, the "Choose pair" control, stock-pair creation, curve trading, fee accrual, graduation and
+reconciliation are built, on separate stock ledgers (migration 0054) under the decided fee policy. Fee collection and
+launcher payouts are built too, and run only from `scripts/stock-execute.mjs`, behind two flags that are off by default.
+With the switch off, every surface offers SOL only.
 
 A launcher can pair a repository's market with SOL (the default, and the quote of every market launched so far) or, when
 the repository belongs to a GitHub organization mapped to a listed company, with that company's tokenized stock:
@@ -106,8 +107,9 @@ For the trade panel (P6b):
   Meteora's badge. A stock-paired launch has no initial buy yet; the form says so and the trade panel can buy right after.
 - **The reservation** stamps the pair and carries none of the SOL-denominated rewards (discovery, verification bonus,
   builder allocation).
-- **Launch evidence and the indexer** resolve the pool through the quote-aware resolver. Every other path still uses the SOL
-  resolver, which refuses a stock-paired market loudly, so nothing can misread one until it is made quote-aware.
+- **Launch evidence, the trade path, and the stock indexing, graduation, reconciliation and collection code** resolve the
+  pool through the quote-aware resolver. Every SOL-only path still uses the SOL resolver, which refuses a stock-paired
+  market loudly, so nothing can misread one.
 
 ## Trading a stock pair (P6b, curve)
 
@@ -291,8 +293,9 @@ is in exactly one).
     cumulative earnings (unclaimed + claimed, in the stock) at a finalized slot, crediting the growth since that side's last
     checkpoint. The creator side pays the launcher `floor(earned * 150 / 497)` as a running total; the partner side goes to the
     accumulator whole. A side whose earnings fell is refused for review.
-  - Later jobs (reconciliation) run inside the same pass through its hooks (`addHook`). The worker's pass
-    (`stockGraduationPass`) never rejects, whatever a hook returns: it runs un-awaited beside every SOL job.
+  - `addHook` lets a later job run inside the same pass. None is registered: the stock reconciliation runs as its own
+    worker task every minute. The worker's pass (`stockGraduationPass`) never rejects, whatever a hook returns: it runs
+    un-awaited beside every SOL job.
   - Anything it cannot verify makes the market REVIEW with a stable code and a `STOCK_GRADUATION_REVIEW` alert. A graduated
     pool Meteora has disabled cannot be traded but is still recorded, and is reported for review the same way. Stock alerts
     have their own kinds in `graduation_alerts`, so nothing meant for SOL markets (public milestone posts) reads them.
@@ -400,9 +403,10 @@ refusing stock markets. Amounts are raw units of each token.
   - A payout goes only to the market's `launcher_wallet`.
 - `stock_canonical_pools` and `stock_settlement_receipts`: at most one active REPOING/stock pool per stock, and verified
   settlement receipts.
-- **The market check:** a trigger refuses any row whose market, `asset_id` and `quote_mint` do not match the market's stamp,
-  so a SOL market or another stock can never enter these ledgers. Once stored, a row can never move to another market or
-  stock.
+- **The market check:** on every ledger table that carries a market, `asset_id` and `quote_mint` (all but
+  `stock_pool_cursors`, `stock_canonical_pools` and `stock_settlement_receipts`), a trigger refuses any row that does not
+  match the market's stamp, so a SOL market or another stock can never enter these ledgers. Once stored, a row can never
+  move to another market or stock.
 - **Live updates:** new stock trade and fee rows of a live market send hints on `repoing_stock_market_updates`
   (`{ "mint", "kind": "trade" | "fee" }`). The SOL channel is unchanged.
 
@@ -510,7 +514,8 @@ is not here: the owner does that himself from custody.
   platform fees. The worker and the web service never hold a stock execution key.
   - The script is a dry run by default. It prints what it would collect (with each terms hash), pay, settle, rebroadcast or
     abort, and loads, signs, sends and writes nothing.
-  - `--execute` runs the pass for real, only for the kinds whose flag is set. It reads each key from the macOS Keychain just
+  - `--execute` runs the pass for real for the kinds it selects (both, or only `--collections` or `--payouts`), and refuses
+    to start unless the flag of every selected kind is `true`. It reads each key from the macOS Keychain just
     before the first transaction that needs it, with no lock held, as `scripts/create-stock-quote-config.mjs` reads the partner
     key. A Keychain prompt waits at most 120 seconds, and a failed read is that transaction's ERROR:
     - `repo.ing.dbc.creator` (account `production`): the platform creator, for creator fees, checked against each collection's
@@ -605,8 +610,9 @@ Each phase ships dark behind `STOCK_QUOTES_ENABLED`:
 2. **P6a (done):** quote-aware creation: config per stock, pool derivation, launch checks, evidence and indexing.
    **P6b (done):** the curve trade path, and the trade panel in the stock's units.
 3. **P6, the rest:** quote-aware trading and indexing. Every remaining place that assumes SOL takes the market's quote:
-   - the worker's approved configs;
-   - trade preparation and verification (no wrapped SOL; Token-2022 quote accounts; decimals from the asset);
+   - the worker's approved configs (done);
+   - trade preparation and verification (no wrapped SOL; Token-2022 quote accounts; decimals from the asset) (done:
+     "Trading a stock pair" above);
    - DBC and DAMM event parsing and fee accrual (done, dark: "Indexing a stock pair's curve" and "Graduation" above);
    - graduation (done, dark: "Graduation" above);
    - charts, market cap and USD prices, with stock amounts shown as wallets show them (done, dark);

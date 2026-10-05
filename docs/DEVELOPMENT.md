@@ -42,20 +42,20 @@ Set `DATABASE_URL` explicitly. Drizzle's fallback database is an older test defa
 
 | Variable | Used by | Purpose |
 | --- | --- | --- |
-| `APP_ORIGIN` | Web | Canonical application origin, OAuth callback, metadata URLs |
+| `APP_ORIGIN` | Web, worker | Canonical application origin, OAuth callback, metadata URLs; the worker uses it for alert and reminder links |
 | `DATABASE_URL` | Web, worker, migrations | PostgreSQL connection |
 | `SOLANA_RPC_URL` | Web, worker, chain tools | RPC endpoint for the intended network |
 | `DBC_CONFIG` | Web, worker | Approved config for new launches |
 | `DBC_LEGACY_CONFIGS` | Web, worker | Comma-separated approved configs for existing markets |
-| `GITHUB_APP_CLIENT_ID` | Web | GitHub App identity used by authorization and App API access |
+| `GITHUB_APP_CLIENT_ID` | Web, worker | GitHub App identity used by authorization and App API access (worker: Dev Pulse, the fork guard backfill and the verification bonus) |
 | `GITHUB_APP_CLIENT_SECRET` | Web | OAuth exchange, session encryption, and signed application reviews |
-| `GITHUB_APP_INSTALLATION_ID` | Web | Installation used for authenticated repository metadata requests |
-| `GITHUB_APP_PRIVATE_KEY_BASE64` | Web | Base64-encoded App PEM for installation authentication |
+| `GITHUB_APP_INSTALLATION_ID` | Web, worker | Installation used for authenticated repository metadata requests |
+| `GITHUB_APP_PRIVATE_KEY_BASE64` | Web, worker | Base64-encoded App PEM for installation authentication |
 | `PLATFORM_CREATOR_SECRET_KEY` | Web | Creator fee authority; must match the configured pool creator |
 | `PLATFORM_PARTNER_SECRET_KEY` | Web | Partner authority for discovery payout signing |
 | `DISCOVERY_REWARDS_ENABLED` | Web | Enables enrollment for new launches when the partner signer is configured |
 | `PLATFORM_OPERATOR_GITHUB_IDS` | Web | Immutable GitHub user IDs allowed to manage platform treasury actions; empty denies access |
-| `REPO_LIQUIDITY_*` | Web | Explicit execution gate and reviewed [protocol liquidity limits](PROTOCOL_LIQUIDITY.md); disabled by default and off in production (current liquidity is added manually) |
+| `REPO_LIQUIDITY_*` | Web, worker | Explicit execution gate and reviewed [protocol liquidity limits](PROTOCOL_LIQUIDITY.md); disabled by default and off in production (current liquidity is added manually). The worker reads the limits only to report readiness |
 | `REPO_BUYBACK_*`, `REPO_TOKEN_MINT`, `REPO_TREASURY_TOKEN_ACCOUNT` | Web | Separate [buyback configuration](PLATFORM_REVENUE.md); execution remains disabled (current buybacks are manual; see `scripts/platform-sweep.mjs`) |
 | `LAUNCH_ALERTS_ENABLED` | Worker | `true` turns on public [launch alerts](PRODUCTION.md#launch-alerts); also needs the cutoff and a configured channel |
 | `LAUNCH_ALERTS_SINCE` | Worker | ISO timestamp; only markets indexed at/after it (and within 24 hours) are posted |
@@ -113,7 +113,7 @@ npm run start
 
 For deployment, follow [Production](PRODUCTION.md): apply required additive migrations, deploy a compatible worker, then web, and verify finalized indexing and reconciliation. Keep previous configs approved while their markets exist. Config creation and other mainnet actions need the separately reviewed transaction and signer authorization.
 
-This documentation update does not establish a GitHub Actions pipeline or change Railway's deployment source. A Git push saves source; production rollout is a separate operation.
+CI (`.github/workflows/test.yml`) runs on every pull request and every push to `main`: the quick tests and `next build` are required before a merge, and the full PostgreSQL and validator suite reports afterwards. CI does not deploy. A Git push saves source; production rollout is a separate operation.
 
 ## Recovery
 

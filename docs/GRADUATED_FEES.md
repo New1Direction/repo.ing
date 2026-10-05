@@ -8,7 +8,7 @@ The 85 SOL profile uses the existing DAMM v2 migration configuration `Hv8Lmzmnju
 
 The installed SDK computes position entitlement from integer fee-growth/checkpoint values. Lifetime earned equals unclaimed SOL plus the position's cumulative claimed SOL. Positive increases are stored as append-only `damm_fee_events`, with the finalized slot, raw public account evidence, evidence hash, migration signature, and a unique position/cumulative-entitlement key. These are account checkpoints, not invented swap events. A decreasing entitlement is an error. The `builder_fee_credits` view combines DBC transaction credits and DAMM checkpoint credits for lifetime earnings, badges, dashboard totals, and reconciliation.
 
-Reconciliation compares outstanding fees against both pools and independently compares DAMM cumulative withdrawals to settled DAMM payout amounts. It does not manufacture a payout to explain an external withdrawal. DAMM trade history is not added to the DBC chart or volume series by this change; graduated trading remains available through the verified Meteora link.
+Reconciliation compares outstanding fees against both pools and independently compares DAMM cumulative withdrawals to settled DAMM payout amounts. It does not manufacture a payout to explain an external withdrawal. DAMM trade history was not added to the DBC chart or volume series by this change, and graduated trading used the verified Meteora link. Both came later: finalized DAMM swaps are indexed into `damm_trade_events` and continue the chart, and the trade panel trades the graduated pool.
 
 ## Payouts and recovery
 

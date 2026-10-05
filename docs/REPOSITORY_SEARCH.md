@@ -6,7 +6,7 @@ September 27, 2026. User-approved scope extension advancing repository resolutio
 
 `/find-repos` offers one search input, three example searches, **All repos / No market yet / Live markets**, and an activity selector. Repository cards show GitHub stars/forks, measured star changes, checked age, current market state, and expandable original trend evidence. The list covers up to 48 fresh, verified, positive-score tracked candidates, instead of only five. It is not a full GitHub search engine.
 
-Pasting `owner/repo` or a GitHub URL bypasses AI and calls the existing `/api/resolve` path. Existing markets open their market page; other resolved repositories open the ordinary launch form. Approved trend cards retain `/launch/<id>?from=trend` and all existing approval/config/identity guards. Other cards link to GitHub. Search cannot approve, launch, trade, bind, or claim.
+Pasting `owner/repo` or a GitHub URL bypasses AI and calls the existing `/api/resolve` path. Existing markets open their market page; other resolved repositories open the ordinary launch form. Approved trend cards retain `/launch/<id>?from=trend` and all existing approval/config/identity guards. Other unlaunched cards that pass the trending-launch policy show **Launch** and open the ordinary `/launch/<id>` form; the rest link to GitHub. Search cannot approve, launch, trade, bind, or claim.
 
 Clear, empty/error/loading states, keyboard-accessible controls, URL-preserved query, theme tokens, and mobile layout are included. Editing/cancelling a pending search ignores its late response. Switching filters is instantaneous; they are disabled during a pending interpretation so a response cannot overwrite a new filter choice.
 

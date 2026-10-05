@@ -63,7 +63,7 @@ Every variable below goes on the **worker** service in Railway.
    ```
 
 5. **Confirm the worker picked it up.** Its log should show one `{"launchAlertsOn":…}` and one `{"milestoneAlertsOn":…}` line with the channels, cutoff, cap and whether models are included, and no `launchAlertError` or `milestoneAlertError` line. Run the check from step 2 once more.
-6. **Watch the first posts.** The worker logs `{"launchAlerts":{"posts":[…]}}` and `{"milestoneAlerts":{"posts":[…]}}` only when it posts. Open the X profile and the channel and read the first few. The first graduation run posts nothing: it only records where each market stands, and later crossings are posted. In the database:
+6. **Watch the first posts.** The worker logs `{"launchAlerts":{"posts":[…]}}` and `{"milestoneAlerts":{"posts":[…]}}` when it posts, and a `launchAlertError` or `milestoneAlertError` line when a run fails. Open the X profile and the channel and read the first few. The first graduation run posts nothing: it only records where each market stands, and later crossings are posted. In the database:
 
    ```sql
    select channel, status, attempts, message_url, error, created_at from launch_alerts order by id desc limit 20;

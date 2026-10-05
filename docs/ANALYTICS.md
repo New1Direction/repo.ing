@@ -18,8 +18,8 @@
 | Trading volume | DBC buy SOL input / sell SOL output, plus verified DAMM SOL quote amounts | `trade_events` + `damm_trade_events`, chain trade time |
 | Live markets | Confirmed, finalized launches with completed indexing | `markets` |
 | Graduated markets | Canonical markets with durable migration evidence | `graduation_events` |
-| Platform fees claimed | Settled DAMM partner fee claims | Existing platform revenue summary |
-| Buyback reserve | Buyback allocations minus settled buyback spending | Existing platform revenue ledger |
+| Platform fees claimed | Settled platform fee claims (DBC collections and DAMM partner-position claims) | Existing platform revenue summary |
+| Buyback reserve | Buyback allocations minus settled buyback intents and published buyback receipts (the custody and fee wallets, and team-wallet buys from 2026-09-29 23:00 UTC) | Existing platform revenue ledger |
 | Available liquidity reserve | Liquidity allocations minus open commitments and settled investment | Existing liquidity reserve summary |
 | Allocated to treasury | Cumulative treasury allocations, not a current wallet balance | `platform_revenue_allocations` |
 | SOL bought back | Verified buyback receipt totals, gross SOL including trading fees | `app/lib/buyback-receipts.mjs`; launch and early team purchases excluded |

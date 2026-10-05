@@ -1,5 +1,7 @@
 # RECONCILE transition
 
+> **Since this report:** reconciliation sums `builder_fee_credits` (`fee_events` plus graduated `damm_fee_events`), compares the unpaid remainder with the pool's `creatorQuoteFee` plus, after graduation, the creator position's unclaimed DAMM fees, and also checks the partner's fee capture and the graduated withdrawals (`src/reconcile.mjs`, [Graduated fees](GRADUATED_FEES.md)).
+
 The focused local-validator run passed on 2026-09-24 using `@meteora-ag/dynamic-bonding-curve-sdk@1.5.13`. `src/reconcile.mjs` reads the indexed canonical market, sums append-only `fee_events` and settled `repo_claims` for its immutable GitHub repository ID, and compares their difference to the finalized DBC pool's `creatorQuoteFee`. All amounts below are integer lamports of the SOL quote asset. The reported difference is **on-chain creator fee minus expected remaining**.
 
 | Evidence | Value |

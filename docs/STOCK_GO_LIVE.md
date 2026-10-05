@@ -7,9 +7,10 @@ Two switches control stock-pair launches:
 
 - `STOCK_PAIR_LAUNCHES_READY` in `src/quote-assets.mjs`, the code gate. It is a line of code, and it is on: the switch PR
   turned it on (step 6).
-- `STOCK_QUOTES_ENABLED` on the web service. It is a Railway variable. It stays off until you set it (step 6).
+- `STOCK_QUOTES_ENABLED` on the web service. It is a Railway variable, and it has been on since 2026-10-04 (step 6).
 
-Launches open only when both are on. Until then the site offers SOL pairs only.
+Launches open only when both are on, as they have been since 2026-10-04 (steps 2 to 6 are done). No stock
+pair had been launched by 2026-10-05 (step 7). With either switch off, the site offers SOL pairs only.
 
 Nothing here happens by itself. repo.ing's code never creates configs or pools on mainnet and never sends a transaction for
 you. Scripts that can send print a dry run first, and send only the exact amounts you approve.
@@ -154,9 +155,10 @@ web has deployed it, migration 0056. Both services must show the same `STOCK_QUO
 
 On chain: nothing. Cost: nothing.
 
-1. **The switch PR** sets `STOCK_PAIR_LAUNCHES_READY = true` in `src/quote-assets.mjs`. Merge it only after the rest of the
-   stock-pair work has merged and step 5 passes. Merging deploys nothing. After merging, deploy web first (its pre-deploy
-   step applies database migrations), then the worker. Launches stay closed, because `STOCK_QUOTES_ENABLED` is still off.
+1. **The switch PR** (merged) set `STOCK_PAIR_LAUNCHES_READY = true` in `src/quote-assets.mjs`. It was to be merged only
+   after the rest of the stock-pair work had merged and step 5 passed. Merging deployed nothing: web is deployed first
+   (its pre-deploy step applies database migrations), then the worker. With the code gate open, launches stay closed
+   while `STOCK_QUOTES_ENABLED` is off.
 2. **Then, on web,** set `STOCK_QUOTES_ENABLED=true`. Web restarts. Repositories owned by the facebook, microsoft and nvidia
    organizations on GitHub can now launch paired with their company's stock, for each stock that has a config in
    `STOCK_QUOTE_CONFIGS`.

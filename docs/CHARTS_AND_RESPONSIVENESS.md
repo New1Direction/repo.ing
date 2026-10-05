@@ -7,7 +7,7 @@ The market page uses pinned TradingView Lightweight Charts 5.2.1, loaded separat
 `GET /api/market/:mint/trades?range=all` reads the finalized `trade_events` ledger and, after canonical migration proof, `damm_trade_events` for the same repository’s destination pool. It does not contact Solana RPC or a price provider. The query aggregates all events in the selected window into bounded time buckets; the last-120 list is retained only for recent signatures and indexing feedback. SOL volumes are summed as database numeric integers and returned as lamport strings. Conversion to JavaScript numbers happens only for visualization.
 
 - **Block lists:** a recorded finalized block (`finalized_chart_blocks`) keeps every transaction signature in it (~100 KB) only while one of its trades may still need a position from it.
-  - Once every indexed trade in the block has a stored position (`finalized_chart_positions`) and the block is two days old, the chart-ordering job clears the list to an empty array (`pruneChartBlocks`, 50 blocks per pass).
+  - Once every indexed trade in the block has a stored position (`finalized_chart_positions`) and the block is seven days old, the chart-ordering job clears the list to an empty array (`pruneChartBlocks`, 50 blocks per pass).
   - A trade indexed later in a cleared block has no position, so the block is pending again. The next pass reads it from both RPCs and restores the list, provided it is the same block.
   - On 2026-10-05 these lists were 190 MB of a 268 MB database.
 - Candles describe the pool's **post-swap spot prices**, not average execution prices or indicative quotes.
@@ -58,7 +58,7 @@ A swap reaches a SOL market's chart about a second after it is **confirmed**, wi
 ## Loading and response time
 
 - Home streams its launch/search shell before the market list.
-- Explore streams All markets and highlights independently; All markets remains first.
+- Explore streams the Graduation race, All markets and highlights independently; the race comes first, then All markets.
 - Analytics streams a range-specific skeleton before its data. Bars expose exact amounts on hover/focus/tap as well as the data table.
 - Explore, Find repos, launches and market navigation have shaped skeletons. A shared error boundary offers recovery without suggesting re-submission of a pending transaction.
 - The signing/transaction library loads on demand for wallet signing, launch, trade, discovery claim and dormant reinvest UI. Wallet discovery/restoration no longer requires loading it globally.
