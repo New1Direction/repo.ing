@@ -1,4 +1,5 @@
 import { assertFreshGraduation, evidenceHash, evidenceJSON } from './graduation-state.mjs'
+import { GRADUATED_WITHDRAWAL_MISMATCH, PARTNER_CAPTURE_MISMATCH, POOL_IDENTITY_MISMATCH } from './reconcile.mjs'
 
 export const RESERVE_MOVE_MIN_LAMPORTS = 50_000_000n
 export const RESERVE_MOVE_COOLDOWN_MS = 5 * 60_000
@@ -82,10 +83,13 @@ const sol = value => {
   const fraction = String(n % 1_000_000_000n).padStart(9, '0').replace(/0+$/, '')
   return `${negative ? '-' : ''}${n / 1_000_000_000n}${fraction ? `.${fraction}` : ''} SOL`
 }
-// What a ledger alert records and sends. Fixed wording only: a failed read's own message is left out, because it can
-// quote a provider's response.
+// What a ledger alert records and sends. Fixed wording only: a reason is kept when it is one of this codebase's own (the
+// reconciler's constants, its claim count, a review code) and dropped otherwise, because a failed read's message can quote a
+// provider's response.
+const OWN_REASONS = [PARTNER_CAPTURE_MISMATCH, GRADUATED_WITHDRAWAL_MISMATCH, POOL_IDENTITY_MISMATCH]
+const ownReason = reason => OWN_REASONS.includes(reason) || /^(\d{1,6} unresolved claim intent\(s\)|[A-Z][A-Z_]{3,60})$/.test(reason ?? '') ? reason : null
 export const feeLedgerAlertDetail = ({ market, reconciliation, episode, observedAt, now }) => ({ ledger: 'fees', status: reconciliation.status,
-  reason: reconciliation.status === 'UNAVAILABLE' ? null : reconciliation.reason ?? null, lagging: episode.lagging, since: episode.since,
+  reason: ownReason(reconciliation.reason), lagging: episode.lagging, since: episode.since,
   difference: reconciliation.difference == null ? null : String(reconciliation.difference), fullName: market.fullName, observedAt,
   url: `https://repo.ing/token/${market.mint}`, delivery: pendingDelivery(now) })
 export const platformLedgerAlertDetail = ({ revenue, liquidity, episode, now }) => ({ ledger: 'platform', revenue: revenue.status, liquidity: liquidity.status,
@@ -97,7 +101,8 @@ function ledgerAlertText(id, detail) {
   const tail = [`Since: ${detail.since}`, `Checked: ${detail.observedAt}`, ...(detail.url ? [detail.url] : []), `Alert #${id}`]
   if (detail.ledger === 'platform') return ['repo.ing · Platform ledger does not match',
     `Revenue: ${detail.revenue} · Liquidity: ${detail.liquidity}`, ...(detail.problems ?? []), ...tail].join('\n')
-  const [title, fallback] = !detail.lagging ? ['Fee ledger does not match the chain',
+  const [title, fallback] = detail.status === 'ERROR' ? ['Fee ledger could not be reconciled', 'The reconciliation itself failed.']
+    : !detail.lagging ? ['Fee ledger does not match the chain',
     String(detail.difference ?? '').startsWith('-') ? 'The ledger shows more fees than the chain holds.' : 'The ledger and the chain disagree.']
     : detail.status === 'UNAVAILABLE' ? ['Fee ledger could not be checked', 'The on-chain read keeps failing.']
     : detail.status === 'PENDING_REVIEW' ? ['Builder claim still unresolved', 'A claim has not settled or been released.']
@@ -137,6 +142,8 @@ export function createReserveWebhookSender({ env = process.env, fetchImpl = fetc
 // matching always are; reserve moves only when their notifications are on (reserveMovePlan notify).
 const DELIVERED_KINDS = `'RESERVE_MOVED','OPS_WALLET_LOW','RECONCILIATION_MISMATCH'`
 const WAITING = `kind in (${DELIVERED_KINDS}) and detail::jsonb->'delivery'->>'status' in ('pending','retry')`
+// A timestamp read from an alert's detail. A value that is not one reads as null, so one malformed row never stops the queue.
+const time = field => `(case when ${field} ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}' then (${field})::timestamptz end)`
 // How many expired alerts one run names in its result; the count is always complete.
 const EXPIRED_NAMED = 20
 
@@ -153,9 +160,9 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now }) {
         // outage) never holds up the alerts behind it five at a time.
         const { rows: expired } = await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',
           (detail::jsonb->'delivery')||'{"status":"expired","error":"ALERT_TOO_OLD"}'::jsonb)::text
-          where ${WAITING} and (detail::jsonb->>'observedAt')::timestamptz < $1 returning id`, [new Date(now() - MAX_DELIVERY_AGE_MS)])
+          where ${WAITING} and ${time("detail::jsonb->>'observedAt'")} < $1 returning id`, [new Date(now() - MAX_DELIVERY_AGE_MS)])
         const { rows } = await db.query(`select id,detail,created_at from graduation_alerts where ${WAITING}
-          and (detail::jsonb->'delivery'->>'nextAttemptAt')::timestamptz <= now() order by id limit 5`)
+          and ${time("detail::jsonb->'delivery'->>'nextAttemptAt'")} <= now() order by id limit 5`)
         const results = expired.map(row => row.id).sort((a, b) => a - b).slice(0, EXPIRED_NAMED).map(id => ({ id, status: 'expired' }))
         for (const row of rows) {
           const detail = JSON.parse(row.detail), delivery = detail.delivery, time = now()

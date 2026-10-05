@@ -45,12 +45,15 @@ Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; exi
 Always queued for the receiver, when `RESERVE_ALERTS_ENABLED=true`:
 
 - `OPS_WALLET_LOW`: an operating wallet below its minimum (next section).
-- `RECONCILIATION_MISMATCH`: a market's fee ledger, or the platform's revenue and liquidity ledgers, stopped matching the chain. One alert per episode, not per pass (`src/reconcile.mjs` `createReconcileEpisodes`):
+- `RECONCILIATION_MISMATCH`: a SOL market's fee ledger, or the platform's revenue and liquidity ledgers, stopped matching the chain (`src/reconcile.mjs` `createReconcileEpisodes`):
   - a ledger **behind** the chain (fees from a trade the worker has not recorded yet), a claim in flight or a failed read normally clears by itself, so it alerts only after it has lasted **15 minutes**;
-  - anything else (a ledger ahead of the chain, a claim or withdrawal difference, a platform ledger problem) alerts **at once**;
-  - a mismatch of another kind starts a new episode, a match ends it, and trades moving the amounts do not repeat the alert. Episodes live in the worker process, so a mismatch that survives a deploy is reported again.
+  - anything else alerts **at once**: a ledger ahead of the chain, a claim or withdrawal difference, a pool that is not the market's, a reconciliation that itself fails, a platform ledger problem;
+  - there is **one alert per kind of mismatch per six hours**. Trades moving the amounts, the state flickering between passes, a restarted worker and a second worker never repeat it, and a problem that persists is announced again every six hours. After a real mismatch, lag in the same episode adds nothing. A match ends the episode;
+  - the 15-minute hold lives in the worker process, so it starts again after a restart.
 
-The alert text uses fixed wording; a failed read's own message is never sent. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are.
+The alert text uses fixed wording: a reason is sent only when it is one of this codebase's own, never a failed read's message. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are.
+
+Stock-pair ledgers raise the same kind from `src/stock-reconcile.mjs`. Those alerts are recorded for the operations pages and are **not queued for the receiver yet**.
 
 Queued only with `RESERVE_MOVE_NOTIFICATIONS=true`: `RESERVE_MOVED`.
 
