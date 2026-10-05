@@ -51,7 +51,12 @@ export async function recordGraduationEvidence(db,state,previous,reconciliation)
   return rows.length===1
 }
 
-export function createGraduationMonitor({pool,connection,verification,config,env=process.env}) {
+// The pause between markets in a pass. Curve accounts are read in batches for the whole pass (createCurveReads), so each
+// market adds only a few reads; the pause just spreads them. A pass is ~30 s + markets x (pause + ~0.5 s): keep it well under
+// half of PUBLIC_GRADUATION_MAX_AGE_MS (300 s) at the market counts expected, so one failed pass never lets public state
+// expire. 2 s per market made 51 markets take ~155 s, and ~108 markets would have reached the limit.
+export const GRADUATION_MARKET_PAUSE_MS=500
+export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS}) {
   const reconciler=createReconciler({pool,connection,config})
   async function processMarket(market,global,curveReads=null) {
     const db=await pool.connect(),repoId=String(market.githubRepoId),alerts=[]
@@ -141,7 +146,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     const curveReads=createCurveReads({connection,verification,config,markets})
     for(const market of markets){
       results.push(await processMarket(market,global,curveReads))
-      if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,2000))
+      if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,pauseMs))
     }
     if(revenueCheck.status!=='MATCH'||liquidity.status!=='MATCH'){
       const alert=await emitAlert(pool,null,'RECONCILIATION_MISMATCH',evidenceHash([revenueCheck,liquidity]),{revenue:revenueCheck.status,liquidity:liquidity.status})

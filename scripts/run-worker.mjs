@@ -313,8 +313,10 @@ if(!once)for(const observe of [observeLiveTrades,observeGraduatedTrades]){
   const tick=()=>{void observe().catch(()=>{}).finally(()=>setTimeout(tick,2000))};tick()
 }
 async function observeGraduation(){
-  const result={}
+  const result={},startedAt=Date.now()
   try{result.graduation=await graduation.runOnce()}catch{result.graduationError='Graduation readiness unavailable'}
+  // How long a pass took: public progress expires 300 s after a market's last verified pass (see GRADUATION_MARKET_PAUSE_MS).
+  result.graduationMs=Date.now()-startedAt
   if(result.graduationError||result.graduation?.some(item=>item.status==='REVIEW'))process.exitCode=1
   console.log(JSON.stringify(result))
 }
