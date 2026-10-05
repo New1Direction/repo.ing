@@ -71,3 +71,4 @@ stock-execution-chain
 stock-execution-db
 stock-execution-guards-db
 stock-execution-worker-db
+early-access-hook-chain

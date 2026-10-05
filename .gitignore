@@ -91,3 +91,6 @@ temp/
 /repo-video-assets.zip
 __pycache__/
 *.pyc
+
+# Rust build output (programs/*, scripts/build-early-access-hook.sh)
+programs/*/target/

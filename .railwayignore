@@ -69,3 +69,6 @@ test-ledger/
 *-ledger/
 .meteora-spike-keys/
 .meteora-spike-state.json
+
+# The early access hook program: deployed on Solana by the owner, not part of the app.
+programs/
