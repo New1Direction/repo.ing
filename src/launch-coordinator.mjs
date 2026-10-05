@@ -9,7 +9,10 @@ import { marketSource } from './market-identity.mjs'
 import { SOL_QUOTE, quoteStamp } from './quote-assets.mjs'
 import { validateTokenImage } from './token-image.mjs'
 
-export class IncompleteLaunchError extends Error {}
+// Named explicitly, like DefinitiveLaunchError: the production build renames classes.
+export class IncompleteLaunchError extends Error {
+  constructor(message) { super(message); this.name = 'IncompleteLaunchError' }
+}
 
 export async function waitForLaunchEvidence(inspect, market, attempts = 120, retryMs = 250) {
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -93,7 +96,8 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
         ;[market] = await db.update(markets).set({ status: 'confirmed' }).where(eq(markets.id, market.id)).returning()
         return { existing: market }
       }
-      throw new IncompleteLaunchError(`Repository ${repo.githubRepoId} has an incomplete launch (${market.status}); inspect chain evidence before retrying`)
+      // The worker releases an attempt proven never to land (src/launch-expiry.mjs) about two minutes after its review.
+      throw new IncompleteLaunchError(`This repository has an incomplete launch (${market.status}) that is still being checked on Solana. If its transaction did not land, you can launch again in about two minutes.`)
     }
     if (market?.status === 'prepared' && pendingReview && await pendingReview(market)) {
       throw new Error('This repository already has a launch awaiting wallet approval. Try again in a couple of minutes.')
