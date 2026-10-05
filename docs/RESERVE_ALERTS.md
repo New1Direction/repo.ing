@@ -2,7 +2,7 @@
 
 ## Scope
 
-Lightweight operator record of real reserve growth or decline, and the delivery queue for operator notifications. By default the queue sends only what needs an operator: a low operating balance (below) and a ledger that stopped matching the chain ([What is sent](#what-is-sent)). Reserve moves are recorded for the operations pages and sent only when `RESERVE_MOVE_NOTIFICATIONS=true`. No funnel events, attribution tokens, featured-market rules, economic policy changes or automated transactions.
+Lightweight operator record of real reserve growth or decline, and the delivery queue for operator notifications. By default the queue sends only what needs an operator: a low operating balance (below) and the ledgers that stopped matching the chain, as one message at most once an hour ([What is sent](#what-is-sent)). Reserve moves are recorded for the operations pages and sent only when `RESERVE_MOVE_NOTIFICATIONS=true`. No funnel events, attribution tokens, featured-market rules, economic policy changes or automated transactions.
 
 The existing P5 worker supplies fresh finalized pool/config snapshots agreed by both RPC providers. No extra Solana subscription or polling service is introduced. The worker checks all finalized indexed SOL-quoted markets in its paced graduation pass (30 seconds after each pass completes, plus per-market verification time); stock-paired markets raise no reserve movement alerts. Notification delivery runs independently two minutes after its previous batch, so a failed receiver cannot block fee indexing or transaction recovery. This is observation-based monitoring, not an instant notification for every trade.
 
@@ -26,7 +26,7 @@ Delivery is **at least once**, not exactly once: if a receiver accepts a request
 
 ## Worker configuration
 
-`RESERVE_ALERTS_ENABLED=true` starts observation and queue processing. The private `RESERVE_ALERT_WEBHOOK_URL` is optional until a destination is chosen. With no receiver, detection still records operator alerts and delivery reports `DESTINATION_REQUIRED`. It never claims that a user was notified.
+`RESERVE_ALERTS_ENABLED=true` starts observation and queue processing. The private `RESERVE_ALERT_WEBHOOK_URL` is optional until a destination is chosen. With no receiver, or one the sender refuses (`ALERT_DESTINATION_INVALID`), detection still records operator alerts and delivery reports `DESTINATION_REQUIRED`. It never claims that a user was notified.
 
 `RESERVE_MOVE_NOTIFICATIONS=true` also queues each reserve move for the receiver. Without it a move is recorded with `detail.delivery.status` `off` and shown on the operations pages only (one busy market produces about a hundred a day).
 
@@ -45,19 +45,24 @@ Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; exi
 Always queued for the receiver, when `RESERVE_ALERTS_ENABLED=true`:
 
 - `OPS_WALLET_LOW`: an operating wallet below its minimum (next section).
-- `RECONCILIATION_MISMATCH`: a ledger that has stayed unmatched, or could not be checked, for **15 minutes** (`src/ledger-alerts.mjs`, `src/reconcile.mjs` `createReconcileEpisodes`):
-  - **What is watched:** each SOL market's fee ledger, the platform's revenue and liquidity ledgers, and the monitor's own chain checks. While both RPC providers cannot be verified, no ledger is checked at all; that is an alert of its own.
-  - **One rule:** an episode runs from the first pass that does not match to the next that does, and alerts once it has lasted 15 minutes, whatever kept it from matching:
-    - the ledger behind the chain (fees from a trade the worker has not recorded yet; this normally clears in under a minute);
-    - a claim in flight, or a read that keeps failing;
-    - the ledger ahead of the chain, or a claim or withdrawal difference;
-    - a pass that fails before it reaches the ledger (for example a pool that is not the market's), which leaves the ledger unchecked.
-  - A ledger that matches again inside the 15 minutes never alerts.
-  - **Repeats:** while an episode lasts it is announced again every six hours. A new episode is a new alert.
-  - **Many at once:** an RPC or database fault touches every market in the same pass. One pass sends at most three new fee-ledger alerts one by one. The rest are recorded with `detail.delivery` `{"status":"off","reason":"SUMMARIZED"}`, and one alert says how many there are.
-  - **Restarts:** the hold lives in the worker process. After a restart, a ledger that still does not match alerts again once it has been seen unmatched for 15 minutes.
+- `RECONCILIATION_MISMATCH`: ledgers that have stayed unmatched, or could not be checked (`src/ledger-alerts.mjs`, `src/reconcile.mjs` `createReconcileEpisodes`, `src/ledger-digest.mjs`):
+  - **What is watched:** each SOL market's fee ledger, the platform's revenue and liquidity ledgers, and whether the monitor's pass reaches its markets at all. While the two RPC providers cannot be verified, or the pass's own ledger reads fail, no ledger is checked; that is recorded as a ledger of its own ("Ledger checks are not running").
+  - **When a ledger is recorded:** an episode runs from the first pass that does not match to the next that does.
+    - It is recorded **15 minutes** after it first showed anything other than the chain being ahead of the ledger: the ledger ahead of the chain, a claim or withdrawal difference, a claim in flight, a read that keeps failing, or a pass that fails before it reaches the ledger (for example a pool that is not the market's).
+    - A ledger that is **only behind the chain** (fees from trades the worker has not recorded yet) is recorded after **60 minutes**. On the busiest market, measured over five days, the worker recorded a trade's fees in a median 21 seconds, and the ledger was behind without a break for about 30 minutes at most.
+    - A ledger that matches again before that is never recorded.
+    - While an episode lasts it is recorded again every six hours. A new episode is a new record.
+    - A market another pass is holding (`BUSY`) is settled by that pass, not this one.
+  - **What is sent:** recorded ledgers are never sent one by one. The delivery job gathers them into **one message**:
+    - it waits until the newest recorded ledger is 3 minutes old, and 10 minutes at most, so the ledgers of one fault go out together;
+    - messages are **at least one hour apart**, whatever the ledgers do, and the next one covers everything recorded since;
+    - a message about one ledger is that ledger's own alert; about several, it names up to ten (the ones that need an operator most first), counts the rest and links the list on `/operations/graduation`;
+    - a ledger recorded more than six hours before the job could put it in a message is expired instead.
+  - **In the database:** a recorded ledger has `detail.delivery` `{"status":"digest","queuedAt":…}`, plus `"digest": <alert id>` once a message covers it. The message is a `graduation_alerts` row of its own (`detail.ledger` `"digest"`), delivered and retried like any other alert. Both are written in one transaction; a run that fails writes neither and the next run plans the same rows.
+  - **No destination:** the message is still written, with `detail.delivery` `{"status":"off","reason":"DESTINATION_REQUIRED"}`, so a destination set later is not sent old news.
+  - **Restarts:** the holds live in the worker process. After a restart, a ledger that still does not match is recorded again once it has been seen unmatched for its hold; the hour between messages is kept in the database and survives it.
 
-The alert text uses fixed wording: a reason is sent only when it is one of this codebase's own, never a failed read's message. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are.
+The alert text uses fixed wording: a reason is sent only when it is one of this codebase's own, never a failed read's message. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are, in no message.
 
 Stock-pair ledgers raise the same kind from `src/stock-reconcile.mjs`. Those alerts are recorded for the operations pages and are **not queued for the receiver yet**.
 

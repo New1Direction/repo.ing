@@ -47,6 +47,8 @@ export function firstP3Eligibility({state,reconciliation,revenue,reserve,liquidi
 }
 
 const LEDGER_ALERT='RECONCILIATION_MISMATCH'
+// Why no ledger was checked when the pass's own reads fail (readPassLedgers): a fixed code, never the read's message.
+const LEDGER_READS_FAILED='LEDGER_READS_FAILED'
 async function emitAlert(db,repoId,kind,key,detail) {
   const {rows}=await db.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values($1,$2,$3,$4)
     on conflict(event_key) do nothing returning id,kind,github_repo_id::text as "repoId",created_at as "createdAt"`,[`${repoId??'protocol'}:${kind}:${key}`,repoId,kind,evidenceJSON(detail)])
@@ -68,21 +70,29 @@ export async function recordGraduationEvidence(db,state,previous,reconciliation)
 // half of PUBLIC_GRADUATION_MAX_AGE_MS (300 s) at the market counts expected, so one failed pass never lets public state
 // expire. 2 s per market made 51 markets take ~155 s, and ~108 markets would have reached the limit.
 export const GRADUATION_MARKET_PAUSE_MS=500
+// What a pass reads once for all its markets: the platform's ledgers and the markets themselves.
+async function readPassLedgers(pool) {
+  const [revenue,reserve,liquidity,revenueCheck,{rows:markets}]=await Promise.all([platformRevenueSummary(pool),liquidityReserveSummary(pool),reconcileLiquidity(pool),reconcilePlatformRevenue(pool),pool.query(publicMarketSQL)])
+  return {revenue,reserve,liquidity,revenueCheck,markets}
+}
 // now, holdMs: the clock and the hold of the ledger alerts (src/ledger-alerts.mjs).
-export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,holdMs=RECONCILE_HOLD_MS}) {
-  const reconciler=createReconciler({pool,connection,config}),ledgerAlerts=createLedgerAlerts({now,holdMs})
-  // pass: the ledger alerts of the monitor pass this market is part of (runOnce); a market processed alone is its own pass.
-  async function processMarket(market,global,curveReads=null,pass=ledgerAlerts.beginPass()) {
+// reconciler, readState, readLedgers: a market's fee reconciliation, its chain state and the pass's own reads; tests replace them.
+export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,holdMs=RECONCILE_HOLD_MS,
+  reconciler=createReconciler({pool,connection,config}),readState=readGraduationState,readLedgers=readPassLedgers}) {
+  const ledgerAlerts=createLedgerAlerts({now,holdMs})
+  async function processMarket(market,global,curveReads=null) {
     const db=await pool.connect(),repoId=String(market.githubRepoId),alerts=[]
     const notify=async(kind,key,detail)=>{const a=await emitAlert(db,repoId,kind,key,detail);if(a)alerts.push(a);return a}
     // This market's fee ledger: settled as soon as the ledger is read, so no later step of the pass can skip it, or failed
-    // with the pass when it did not get that far. It alerts once it has stayed unmatched or unchecked for holdMs.
-    const ledger=pass.market((key,detail)=>notify(LEDGER_ALERT,key,detail),market)
+    // with the pass when it did not get that far. It is recorded once it has stayed unmatched or unchecked for its hold.
+    const ledger=ledgerAlerts.market((key,detail)=>notify(LEDGER_ALERT,key,detail),market)
     try {
+      // BUSY: another pass holds this market and settles its ledger in its own process, so nothing is settled here. Counting
+      // it as unchecked would record every market two workers keep taking turns on.
       if(!(await db.query('select pg_try_advisory_lock(hashtextextended($1,0)) as locked',[`graduation:${repoId}`])).rows[0].locked)return {repoId,status:'BUSY',alerts}
       try {
         const {rows:[previous]}=await db.query('select * from graduation_observations where github_repo_id=$1',[repoId])
-        const state=await readGraduationState({connection,verification,config,market,env,db:pool,curveReads})
+        const state=await readState({connection,verification,config,market,env,db:pool,curveReads})
         const {rows:[existing]}=await db.query('select signature from graduation_events where github_repo_id=$1',[repoId])
         if(existing&&!state.migration)throw Error('GRADUATION_STATE_DISAGREEMENT')
         const reconciliation=await reconciler.reconcile(repoId)
@@ -144,7 +154,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     }finally{db.release()}
   }
   async function runOnce(){
-    const pass=ledgerAlerts.beginPass(),protocolAlert=(key,detail)=>emitAlert(pool,null,LEDGER_ALERT,key,detail)
+    const protocolAlert=(key,detail)=>emitAlert(pool,null,LEDGER_ALERT,key,detail)
     // One provider outage should not block the other worker recovery jobs once per market.
     try {
       if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
@@ -153,12 +163,21 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     }catch(error){
       const code=graduationError(error)
       await pool.query("update graduation_observations set status='REVIEW',error_code=$1 where status<>'REVIEW'",[code])
-      // While the chain cannot be verified no ledger is checked: that alerts by itself once it has lasted holdMs.
-      const alerts=[await emitAlert(pool,null,'GRADUATION_REVIEW',code,{code}),await pass.checks(protocolAlert,code)].filter(Boolean)
+      // While the chain cannot be verified no ledger is checked: that is recorded by itself once it has lasted its hold.
+      const alerts=[await emitAlert(pool,null,'GRADUATION_REVIEW',code,{code}),await ledgerAlerts.checks(protocolAlert,code)].filter(Boolean)
       return [{repoId:null,status:'REVIEW',code,alerts}]
     }
-    await pass.checks(protocolAlert,null)
-    const [revenue,reserve,liquidity,revenueCheck,{rows:markets}]=await Promise.all([platformRevenueSummary(pool),liquidityReserveSummary(pool),reconcileLiquidity(pool),reconcilePlatformRevenue(pool),pool.query(publicMarketSQL)])
+    let ledgers
+    try{ledgers=await readLedgers(pool)}
+    catch(error){
+      // The pass ends here, as it always has, and again no ledger was checked. The failed read stays the error the pass
+      // reports: recording it must not replace it, and when the database is what failed there is nothing to record it in.
+      await ledgerAlerts.checks(protocolAlert,LEDGER_READS_FAILED).catch(()=>{})
+      throw error
+    }
+    const {revenue,reserve,liquidity,revenueCheck,markets}=ledgers
+    // The pass reaches its markets: the checks are running.
+    await ledgerAlerts.checks(protocolAlert,null)
     let rules=null
     // Parsing disabled-gate settings for a read-only readiness check never changes the execution environment.
     try{rules=liquidityConfig({...env,REPO_LIQUIDITY_EXECUTION_ENABLED:'true'})}catch{}
@@ -166,12 +185,12 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     // Curve markets share batched pool/config reads; each market is still agreed and freshness-checked on its own.
     const curveReads=createCurveReads({connection,verification,config,markets})
     for(const market of markets){
-      results.push(await processMarket(market,global,curveReads,pass))
+      results.push(await processMarket(market,global,curveReads))
       if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,pauseMs))
     }
-    // The platform's revenue and liquidity ledgers, then one alert for any fee-ledger alerts this pass recorded unsent.
-    const protocol=[await pass.platform(protocolAlert,{revenue:revenueCheck,liquidity}),await pass.finish(protocolAlert)].filter(Boolean)
-    if(protocol.length)results.push({repoId:null,status:'REVIEW',alerts:protocol})
+    // The platform's own revenue and liquidity ledgers, after the markets: recording them never holds a market's pass up.
+    const platformAlert=await ledgerAlerts.platform(protocolAlert,{revenue:revenueCheck,liquidity})
+    if(platformAlert)results.push({repoId:null,status:'REVIEW',alerts:[platformAlert]})
     return results
   }
   return {runOnce,processMarket}
