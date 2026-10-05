@@ -103,11 +103,11 @@ async function freshDatabase(extra = '') {
   try { await migrate(drizzle(pool), { migrationsFolder: 'drizzle' }); await pool.query(SEED); if (extra) await pool.query(extra) } finally { await pool.end() }
 }
 
-// Volatile values only: wall-clock times and the usage line's elapsed seconds.
+// Volatile values only: wall-clock times, the usage line's elapsed seconds, and measured durations (graduationMs…).
 const normalize = line => {
   let value
   try { value = JSON.parse(line) } catch { return line }
-  return JSON.stringify(value, (key, field) => (key === 'seconds' ? 0 : typeof field === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(field) ? '<time>' : field))
+  return JSON.stringify(value, (key, field) => (key === 'seconds' || key.endsWith('Ms') ? 0 : typeof field === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/.test(field) ? '<time>' : field))
 }
 
 // A fresh database, the script once, with only the variables a worker needs (never the developer's own environment).
