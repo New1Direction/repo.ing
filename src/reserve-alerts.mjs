@@ -1,6 +1,6 @@
 import { assertFreshGraduation, evidenceHash, evidenceJSON } from './graduation-state.mjs'
 import { GRADUATED_WITHDRAWAL_MISMATCH, PARTNER_CAPTURE_MISMATCH, POOL_IDENTITY_MISMATCH, POOL_STATE_MISSING } from './reconcile.mjs'
-import { DIGEST_REMINDER_MS, digestDelivery, ledgerKey, planLedgerDigest } from './ledger-digest.mjs'
+import { DIGEST_MEMORY_MS, digestDelivery, ledgerKey, planLedgerDigest } from './ledger-digest.mjs'
 import { releaseAfterUnlock } from './database-pool.mjs'
 import { ledgerAlertTitle } from '../app/lib/operator-alerts.mjs'
 
@@ -94,9 +94,11 @@ const ownReason = reason => OWN_REASONS.includes(reason) || /^(\d{1,6} unresolve
 // What the monitor records for a ledger that is due (src/ledger-alerts.mjs). Recorded for the next ledger message
 // (src/ledger-digest.mjs), never queued to be sent by itself. kind, repeat: from the episode (src/reconcile.mjs).
 const recordedLedger = (episode, now) => ({ kind: episode.kind, repeat: episode.repeat, since: episode.since, delivery: digestDelivery(now) })
-// A market's fee ledger.
+// A market's fee ledger. stalled: behind the chain with nothing new recorded for the hold, as opposed to behind for hours
+// while fees keep being recorded.
 export const feeLedgerAlertDetail = ({ market, reconciliation, episode, observedAt, now }) => ({ ledger: 'fees', status: reconciliation.status,
-  reason: ownReason(reconciliation.reason), lagging: episode.lagging, difference: reconciliation.difference == null ? null : String(reconciliation.difference),
+  reason: ownReason(reconciliation.reason), lagging: episode.lagging, stalled: Boolean(episode.stalled),
+  difference: reconciliation.difference == null ? null : String(reconciliation.difference),
   fullName: market.fullName, observedAt, url: `https://repo.ing/token/${market.mint}`, ...recordedLedger(episode, now) })
 // A market whose pass keeps ending in review. code: the review code. transient: a read that failed, not a finding.
 export const marketPassAlertDetail = ({ market, code, transient, episode, now }) => ({ ledger: 'market', status: transient ? 'UNAVAILABLE' : 'ERROR',
@@ -138,7 +140,8 @@ function ledgerAlertText(id, detail) {
   const fallback = !detail.lagging ? String(detail.difference ?? '').startsWith('-') ? 'The ledger shows more fees than the chain holds.' : 'The ledger and the chain disagree.'
     : detail.status === 'UNAVAILABLE' ? 'The on-chain read keeps failing.'
     : detail.status === 'PENDING_REVIEW' ? 'A claim has not settled or been released.'
-    : 'The chain shows fees the worker has not recorded. It normally catches up within minutes, so the fee indexer may be stuck or may have missed a trade.'
+    : detail.stalled === false ? 'The chain has shown fees the worker has not recorded for six hours without a break, though fees are still being recorded. The fee indexer may be falling behind.'
+    : 'The chain shows fees the worker has not recorded, and nothing new was recorded for an hour. The fee indexer may be stuck or may have missed a trade.'
   return [title, detail.fullName, detail.reason ?? fallback, ...tail].join('\n')
 }
 export function reserveAlertText(id, detail) {
@@ -177,6 +180,11 @@ function receiver(url) {
     return { url, body: { event, id, text, market: movement } }
   }
 }
+
+// The one message that shows a new destination works (scripts/send-test-alert.mjs). Each has an id of its own, so a
+// receiver that drops repeats still shows a second test.
+export const testAlertMessage = (now = Date.now()) => ({ id: `test-${now}`, text: ['repo.ing · Test alert', 'Operator alerts will arrive here.', `Sent: ${new Date(now).toISOString()}`].join('\n'),
+  detail: { test: true, observedAt: new Date(now).toISOString() } })
 
 // Why a send failed, as a fixed code: the receiver's HTTP status, a timeout, or the network. Never the receiver's answer.
 const sendFailure = code => Object.assign(Error('NOTIFICATION_SEND_FAILED'), { code })
@@ -218,15 +226,21 @@ const time = field => `(case when ${field} ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2
 // How many expired alerts one run names in its result; the count is always complete.
 const EXPIRED_NAMED = 20
 const markDelivery = change => `update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',(detail::jsonb->'delivery')||'${JSON.stringify(change)}'::jsonb)::text`
+// The delivery job's own statements each start with a tag: the stand-in database of the quick tests answers by it
+// (tests/reserve-alert-delivery.test.mjs). PostgreSQL runs them in tests/reserve-alerts-integration.test.mjs.
+const LOCK = "/* alert-queue:lock */ select pg_try_advisory_lock(hashtextextended('reserve-alert-delivery',0)) as locked"
+const UNLOCK = "/* alert-queue:unlock */ select pg_advisory_unlock(hashtextextended('reserve-alert-delivery',0))"
 
 // Recorded ledgers waiting for a message, oldest first; more than this many at once wait for the message after.
 const DIGEST_ROWS = 500
 const RECORDED_LEDGER = `kind='RECONCILIATION_MISMATCH' and ${DETAIL}->'delivery'->>'status'='digest'`
 
-// The ledger these alerts were recorded for matched again (src/ledger-alerts.mjs): they are marked with when. One that has
-// not gone out in a message yet no longer does.
-export const clearLedgerAlerts = (db, ids, at) => db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{clearedAt}',to_jsonb($2::text))::text
-  where id=any($1::int[]) and ${RECORDED_LEDGER} and ${DETAIL}->>'clearedAt' is null`, [ids, at])
+// A ledger matched again (src/ledger-alerts.mjs): every row recorded for it and not marked yet is marked with when,
+// whichever worker process recorded it. One that has not gone out in a message yet no longer does.
+// repoId: the market, or null for the platform ledgers and the monitor's checks. ledger: 'fees', 'market', 'platform', 'checks'.
+export const clearLedgerAlerts = (db, repoId, ledger, at) => db.query(`/* alert-queue:clear */ update graduation_alerts
+  set detail=jsonb_set(detail::jsonb,'{clearedAt}',to_jsonb($3::text))::text
+  where ${RECORDED_LEDGER} and github_repo_id is not distinct from $1::bigint and ${DETAIL}->>'ledger'=$2 and ${DETAIL}->>'clearedAt' is null`, [repoId, ledger, at])
 
 // The recorded ledgers and their messages in graduation_alerts, for digestLedgerAlerts. db: one connection; the caller
 // holds the delivery lock.
@@ -277,7 +291,7 @@ export function createLedgerDigestStore(db) {
 export async function digestLedgerAlerts(store, { now, deliver }) {
   const rows = await store.waiting()
   if (!rows.length) return { digested: 0, expired: 0, cleared: 0 }
-  const plan = planLedgerDigest({ rows, recent: await store.recent(now - DIGEST_REMINDER_MS), now,
+  const plan = planLedgerDigest({ rows, recent: await store.recent(now - DIGEST_MEMORY_MS), now,
     delivery: deliver ? pendingDelivery(now) : { status: 'off', reason: 'DESTINATION_REQUIRED' } })
   if (plan.expire.length || plan.drop.length || plan.digest) await store.commit(plan)
   return { digested: plan.digest?.covers.length ?? 0, expired: plan.expire.length, cleared: plan.drop.length }
@@ -313,7 +327,7 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now, reserve
       if (send && planningFailures >= PLANNING_FAILURES_BEFORE_NOTICE && !(planningNoticeAt !== null && now() - planningNoticeAt < PLANNING_NOTICE_EVERY_MS)) {
         const at = now()
         // The notice failing too leaves planningNoticeAt as it is, so the next failed run sends it.
-        try { await send({ id: 0, text: planningNoticeText(code, at), detail: { ledger: 'queue', reason: code, observedAt: new Date(at).toISOString() } }); planningNoticeAt = at } catch { /* sent by the next failed run */ }
+        try { await send({ id: `queue-${at}`, text: planningNoticeText(code, at), detail: { ledger: 'queue', reason: code, observedAt: new Date(at).toISOString() } }); planningNoticeAt = at } catch { /* sent by the next failed run */ }
       }
       return { digested: 0, expired: 0, cleared: 0, failed: code }
     }
@@ -322,21 +336,21 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now, reserve
     const db = await pool.connect()
     let locked = false
     try {
-      locked = (await db.query("select pg_try_advisory_lock(hashtextextended('reserve-alert-delivery',0)) as locked")).rows[0].locked
+      locked = (await db.query(LOCK)).rows[0].locked
       if (!locked) return { status: 'BUSY', sent: 0 }
       const ledgers = await planLedgers(db)
       const planning = { digested: ledgers.digested, ...(ledgers.failed ? { digestError: ledgers.failed } : {}) }
       if (!send) return { status: 'DESTINATION_REQUIRED', sent: 0, expired: ledgers.expired, ...planning }
-      const { rows: silenced } = reserveMoves ? { rows: [] } : await db.query(`${markDelivery({ status: 'off', error: 'RESERVE_NOTIFICATIONS_OFF' })}
+      const { rows: silenced } = reserveMoves ? { rows: [] } : await db.query(`/* alert-queue:silence */ ${markDelivery({ status: 'off', error: 'RESERVE_NOTIFICATIONS_OFF' })}
         where kind='RESERVE_MOVED' and ${DETAIL}->'delivery'->>'status' in ('pending','retry') returning id`)
       // Everything too old to send expires in one statement, so a backlog (a destination set late, a long receiver
       // outage) never holds up the alerts behind it five at a time.
-      const { rows: expired } = await db.query(`${markDelivery({ status: 'expired', error: 'ALERT_TOO_OLD' })}
+      const { rows: expired } = await db.query(`/* alert-queue:expire */ ${markDelivery({ status: 'expired', error: 'ALERT_TOO_OLD' })}
         where ${WAITING} and ${time(`${DETAIL}->>'observedAt'`)} < $1 returning id`, [new Date(now() - MAX_DELIVERY_AGE_MS)])
-      const { rows } = await db.query(`select id,detail,created_at from graduation_alerts where ${WAITING}
+      const { rows } = await db.query(`/* alert-queue:due */ select id,detail,created_at from graduation_alerts where ${WAITING}
         and ${time(`${DETAIL}->'delivery'->>'nextAttemptAt'`)} <= now() order by id limit 5`)
       const results = expired.map(row => row.id).sort((a, b) => a - b).slice(0, EXPIRED_NAMED).map(id => ({ id, status: 'expired' }))
-      const save = (id, delivery) => db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',$2::jsonb)::text where id=$1`, [id, JSON.stringify(delivery)])
+      const save = (id, delivery) => db.query(`/* alert-queue:save */ update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',$2::jsonb)::text where id=$1`, [id, JSON.stringify(delivery)])
       for (const row of rows) {
         const detail = JSON.parse(row.detail), delivery = detail.delivery, at = now()
         let text
@@ -359,9 +373,10 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now, reserve
         await save(row.id, delivery)
         results.push({ id: row.id, status: delivery.status, ...(delivery.errorCode ? { error: delivery.errorCode } : {}) })
       }
-      return { status: ledgers.failed || results.some(r => ['failed', 'retry'].includes(r.status)) ? 'DELIVERY_REVIEW' : 'OK', sent: results.filter(r => r.status === 'sent').length,
+      // Anything that could not be planned, sent or made, and anything that expired unsent, is worth a look.
+      return { status: ledgers.failed || results.some(r => r.status !== 'sent') ? 'DELIVERY_REVIEW' : 'OK', sent: results.filter(r => r.status === 'sent').length,
         expired: expired.length + ledgers.expired, silenced: silenced.length, ...planning, results }
-    } finally { await releaseAfterUnlock(db, () => locked ? db.query("select pg_advisory_unlock(hashtextextended('reserve-alert-delivery',0))") : null) }
+    } finally { await releaseAfterUnlock(db, () => locked ? db.query(UNLOCK) : null) }
   }
   return { runOnce }
 }

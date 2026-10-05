@@ -48,27 +48,32 @@ Always queued for the receiver, when `RESERVE_ALERTS_ENABLED=true`:
 - `RECONCILIATION_MISMATCH`: what the graduation monitor's checks found and could not clear (`src/ledger-alerts.mjs`, `src/reconcile.mjs` `createReconcileEpisodes`, `src/ledger-digest.mjs`):
   - **What is watched:**
     - each SOL market's fee ledger (`ledger: "fees"`);
-    - each SOL market's pass as a whole (`"market"`): a pass that keeps ending in review, at whichever step, leaves the market's public progress and its ledger unchecked;
+    - each SOL market's pass as a whole (`"market"`): a pass that keeps ending in review, at whichever step, leaves the market's public progress unrefreshed, and its ledger unchecked when it fails before the ledger is read;
     - the platform's revenue and liquidity ledgers (`"platform"`);
-    - whether the pass gets through its markets at all (`"checks"`): the two RPC providers cannot be verified, the pass's own ledger reads fail (`LEDGER_READS_FAILED`), it dies between two markets (`MARKET_PASS_FAILED`), or it takes longer than public progress lasts (`PASS_TOO_SLOW`, five minutes).
+    - whether the pass gets through its markets at all (`"checks"`): the two RPC providers cannot be verified, the pass's own ledger reads fail (`LEDGER_READS_FAILED`), it dies between two markets (`MARKET_PASS_FAILED`), or passes come round less often than public progress lasts (`PASS_TOO_SLOW`: a pass takes more than five minutes, or starts more than five minutes after the one before).
   - **When something is recorded:** an episode runs from the first pass that does not match (or verify) to the next that does. What a pass found has its own hold, by kind:
     - **a difference** (the ledger ahead of the chain, a claim or withdrawal difference, a pool that is missing or is not the market's): recorded when it is seen again **15 minutes** or more after it was first seen. One read from a lagging RPC node never is. Lag may hide a real difference on the passes between.
     - **unchecked** (a read that keeps failing, a claim in flight, a pass that fails first): recorded after **15 minutes** without one completed check. Any completed check starts the count again.
-    - **behind the chain** (fees from trades the worker has not recorded yet; normal after a trade): recorded when the worker has recorded **nothing new for the ledger for 60 minutes**, or when the ledger has gone **6 hours** without one matching pass. A market traded without a pause is behind on every pass and is not recorded while its fees keep being recorded. Measured on the busiest market over five days (3,851 swaps): fees recorded in a median 21 seconds, about 10 minutes at most.
+    - **behind the chain** (fees from trades the worker has not recorded yet; normal after a trade): recorded when the worker has recorded **nothing new for the ledger for 60 minutes** (`stalled`), or when the ledger has gone **6 hours** without one matching pass. A market traded without a pause is behind on every pass and is not recorded while its fees keep being recorded. Measured on the busiest market over five days (3,851 swaps): fees recorded in a median 21 seconds, about 10 minutes at most.
     - A problem that changes kind (reads fail, then a real difference shows) is recorded again as the new kind.
     - While an episode lasts, each kind is recorded again every six hours, as a repeat.
-    - A market another pass is holding (`BUSY`) is settled by that pass, not this one.
-    - When the ledger matches again, the rows its episode recorded are marked `clearedAt`.
+    - An episode also ends, without a match, when more than two passes in a row did not reach its ledger (the passes died first, or another worker held the market: `BUSY` is settled by that worker), or when nothing settled it for an hour. Slow passes do not end it.
+    - When the ledger matches again, every row recorded for it is marked `clearedAt`, also rows recorded by a worker that has since been replaced.
+    - Recording never fails the pass that did the checking. A row that cannot be stored or marked is counted in that pass's result (`ALERTS_NOT_RECORDED`) and is stored or marked by the next pass.
   - **What is sent:** recorded rows are never sent one by one. The delivery job gathers them into **one message**:
     - **News** is a ledger with a kind of trouble that no message has told the operator about. A message with news waits until its newest news is 3 minutes old (10 at most), so the rows of one fault go out together. Messages are **at least one hour apart**.
-    - **Reminders** are everything else: a repeat, or the same kind of trouble recorded again for a ledger that a message covered in the last six hours (a provider that fails on and off, a worker that restarted). Reminders ride along with news; by themselves they go out **once per six hours**. A real difference that was cleared and came back is news again.
+    - **Reminders** ride along with news; by themselves they go out **once per six hours**. A reminder is:
+      - a repeat of an episode already announced;
+      - trouble that a message covered in the last six hours and that has not cleared since (the same problem, recorded again by a worker that restarted);
+      - the same kind of trouble come back, after it cleared, for a ledger a message covered in the last six hours, **while it is less than an hour old** (a provider that fails on and off). Once it has lasted an hour it is news.
     - **One message at a time:** while the last message still waits to be sent, nothing new is written.
     - A ledger that matched again before its row went out is dropped (`detail.delivery` `{"status":"off","reason":"CLEARED"}`), and a row that waited more than eight hours is expired.
     - A message about one ledger is that ledger's own alert. About several, it names up to ten (the ones that need an operator most first), counts the rest and links the list on `/operations/graduation`.
   - **In the database:** a recorded row has `detail.delivery` `{"status":"digest","queuedAt":…}`, plus `"digest": <alert id>` once a message covers it. The message is a `graduation_alerts` row of its own (`detail.ledger` `"digest"`), delivered and retried like any other alert. Both are written in one transaction; a run that fails writes neither and the next run plans the same rows.
   - **No destination:** the message is still written, with `detail.delivery` `{"status":"off","reason":"DESTINATION_REQUIRED"}`, so a destination set later is not sent old news.
-  - **When planning fails:** the run reports `digestError` with a code and still sends whatever else is queued. After three failed runs in a row the queue says so itself through the destination, at most once per six hours.
-  - **Restarts:** the holds live in the worker process. After a restart, a problem that is still there is recorded again once it has been seen for its hold. If a message already covered it, that row is a reminder, not news. The spacing between messages is kept in the database and survives a restart.
+  - **When planning fails:** the run reports `digestError` with a code and still sends whatever else is queued. After three failed runs in a row the queue says so itself through the destination, at most once per six hours for one worker process.
+  - **Restarts:** the holds live in the worker process. After a restart, a problem that is still there is recorded again once it has been seen for its hold; a message that already covered it makes that row a reminder, not news. What the messages covered, and when the last one was written, is in the database and survives a restart.
+  - **What a message does not tell:** "Since" is when the running worker first saw the problem. A message that waited for a receiver that was down goes out as it was written. An acknowledged alert is still repeated while its problem lasts.
 
 The alert text uses fixed wording: a reason is sent only when it is one of this codebase's own, never a failed read's message. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are, in no message.
 
