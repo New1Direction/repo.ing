@@ -313,7 +313,7 @@ if(process.env.RESERVE_ALERTS_ENABLED==='true'){
   let send=null
   try{send=createReserveWebhookSender()}catch{console.log(JSON.stringify({reserveAlertError:'ALERT_DESTINATION_INVALID'}))}
   reserveDelivery=createReserveAlertDelivery({pool,send,reserveMoves:process.env.RESERVE_MOVE_NOTIFICATIONS==='true'})
-}
+}else console.log(JSON.stringify({reserveAlerts:'disabled'}))
 async function deliverReserveAlerts(){
   try{console.log(JSON.stringify({reserveAlerts:await reserveDelivery.runOnce()}))}
   catch{console.log(JSON.stringify({reserveAlertError:'RESERVE_DELIVERY_UNAVAILABLE'}))}
@@ -336,7 +336,13 @@ if(!once)for(const observe of [observeLiveTrades,observeGraduatedTrades]){
 }
 async function observeGraduation(){
   const result={},startedAt=Date.now()
-  try{result.graduation=await graduation.runOnce()}catch{result.graduationError='Graduation readiness unavailable'}
+  // By code only: what stopped the pass (an SQLSTATE, a Node error code or an error's name), and what it could not record.
+  try{result.graduation=await graduation.runOnce()}catch(error){
+    result.graduationError='Graduation readiness unavailable'
+    const code=String(error?.code??error?.name??'')
+    result.graduationErrorCode=/^[A-Za-z0-9][A-Za-z0-9_]{2,40}$/.test(code)?code:'UNKNOWN'
+    if(error?.alertNotRecorded)result.graduationAlertNotRecorded=error.alertNotRecorded
+  }
   // How long a pass took: public progress expires 300 s after a market's last verified pass (see GRADUATION_MARKET_PAUSE_MS).
   result.graduationMs=Date.now()-startedAt
   if(result.graduationError||result.graduation?.some(item=>item.status==='REVIEW'))process.exitCode=1

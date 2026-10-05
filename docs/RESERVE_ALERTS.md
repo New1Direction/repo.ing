@@ -20,7 +20,7 @@ The existing P5 worker supplies fresh finalized pool/config snapshots agreed by 
 
 The last notified baseline lives in `graduation_observations.observation.reserveAlert`. The baseline update and `graduation_alerts` event (kind `RESERVE_MOVED`) commit in one transaction under the existing market advisory lock. A crash cannot consume a move without recording its notification. Immutable event keys and a global delivery lock prevent ordinary replay or simultaneous delivery by worker replicas. Stale data, identity/config/pool mismatch, RPC disagreement and slot regression do not generate reserve movement notifications.
 
-Delivery metadata is stored separately from the evidence inside the existing alert's `detail.delivery`. No schema migration or second accounting ledger is added. HTTP retries use exponential backoff from 30 seconds to 15 minutes, with at most 12 attempts. Events older than six hours are marked expired instead of flooding a newly configured receiver: each run expires all of them in one statement before it sends, so a backlog never delays the alerts behind it. Permanent failure/expiry stays visible in the operator view. Acknowledging the operator alert does not falsely mark an external notification sent.
+Delivery metadata is stored separately from the evidence inside the existing alert's `detail.delivery`. No schema migration or second accounting ledger is added. HTTP retries use exponential backoff from 30 seconds to 15 minutes, and go on until the alert is six hours old. Then it is marked expired, like any event that old, instead of flooding a newly configured receiver: each run expires all of them in one statement before it sends, so a backlog never delays the alerts behind it. Why a send failed is kept as a fixed code in `detail.delivery.errorCode` (`HTTP_<status>`, `TIMEOUT` or `NETWORK`), never the receiver's answer. An alert whose text cannot be made fails at once with `RENDER_FAILED`. Failure and expiry stay visible in the operator view. Acknowledging the operator alert does not falsely mark an external notification sent.
 
 Delivery is **at least once**, not exactly once: if a receiver accepts a request and its response is lost, a retry may appear twice. Each message includes a stable alert ID; the generic webhook sends `Idempotency-Key: repoing-reserve-<id>` so the receiver can deduplicate. No money moves during delivery or retry.
 
@@ -45,22 +45,30 @@ Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; exi
 Always queued for the receiver, when `RESERVE_ALERTS_ENABLED=true`:
 
 - `OPS_WALLET_LOW`: an operating wallet below its minimum (next section).
-- `RECONCILIATION_MISMATCH`: ledgers that have stayed unmatched, or could not be checked (`src/ledger-alerts.mjs`, `src/reconcile.mjs` `createReconcileEpisodes`, `src/ledger-digest.mjs`):
-  - **What is watched:** each SOL market's fee ledger, the platform's revenue and liquidity ledgers, and whether the monitor's pass reaches its markets at all. While the two RPC providers cannot be verified, or the pass's own ledger reads fail, no ledger is checked; that is recorded as a ledger of its own ("Ledger checks are not running").
-  - **When a ledger is recorded:** an episode runs from the first pass that does not match to the next that does.
-    - It is recorded **15 minutes** after it first showed anything other than the chain being ahead of the ledger: the ledger ahead of the chain, a claim or withdrawal difference, a claim in flight, a read that keeps failing, or a pass that fails before it reaches the ledger (for example a pool that is not the market's).
-    - A ledger that is **only behind the chain** (fees from trades the worker has not recorded yet) is recorded after **60 minutes**. On the busiest market, measured over five days, the worker recorded a trade's fees in a median 21 seconds, and the ledger was behind without a break for about 30 minutes at most.
-    - A ledger that matches again before that is never recorded.
-    - While an episode lasts it is recorded again every six hours. A new episode is a new record.
+- `RECONCILIATION_MISMATCH`: what the graduation monitor's checks found and could not clear (`src/ledger-alerts.mjs`, `src/reconcile.mjs` `createReconcileEpisodes`, `src/ledger-digest.mjs`):
+  - **What is watched:**
+    - each SOL market's fee ledger (`ledger: "fees"`);
+    - each SOL market's pass as a whole (`"market"`): a pass that keeps ending in review, at whichever step, leaves the market's public progress and its ledger unchecked;
+    - the platform's revenue and liquidity ledgers (`"platform"`);
+    - whether the pass gets through its markets at all (`"checks"`): the two RPC providers cannot be verified, the pass's own ledger reads fail (`LEDGER_READS_FAILED`), it dies between two markets (`MARKET_PASS_FAILED`), or it takes longer than public progress lasts (`PASS_TOO_SLOW`, five minutes).
+  - **When something is recorded:** an episode runs from the first pass that does not match (or verify) to the next that does. What a pass found has its own hold, by kind:
+    - **a difference** (the ledger ahead of the chain, a claim or withdrawal difference, a pool that is missing or is not the market's): recorded when it is seen again **15 minutes** or more after it was first seen. One read from a lagging RPC node never is. Lag may hide a real difference on the passes between.
+    - **unchecked** (a read that keeps failing, a claim in flight, a pass that fails first): recorded after **15 minutes** without one completed check. Any completed check starts the count again.
+    - **behind the chain** (fees from trades the worker has not recorded yet; normal after a trade): recorded when the worker has recorded **nothing new for the ledger for 60 minutes**, or when the ledger has gone **6 hours** without one matching pass. A market traded without a pause is behind on every pass and is not recorded while its fees keep being recorded. Measured on the busiest market over five days (3,851 swaps): fees recorded in a median 21 seconds, about 10 minutes at most.
+    - A problem that changes kind (reads fail, then a real difference shows) is recorded again as the new kind.
+    - While an episode lasts, each kind is recorded again every six hours, as a repeat.
     - A market another pass is holding (`BUSY`) is settled by that pass, not this one.
-  - **What is sent:** recorded ledgers are never sent one by one. The delivery job gathers them into **one message**:
-    - it waits until the newest recorded ledger is 3 minutes old, and 10 minutes at most, so the ledgers of one fault go out together;
-    - messages are **at least one hour apart**, whatever the ledgers do, and the next one covers everything recorded since;
-    - a message about one ledger is that ledger's own alert; about several, it names up to ten (the ones that need an operator most first), counts the rest and links the list on `/operations/graduation`;
-    - a ledger recorded more than six hours before the job could put it in a message is expired instead.
-  - **In the database:** a recorded ledger has `detail.delivery` `{"status":"digest","queuedAt":…}`, plus `"digest": <alert id>` once a message covers it. The message is a `graduation_alerts` row of its own (`detail.ledger` `"digest"`), delivered and retried like any other alert. Both are written in one transaction; a run that fails writes neither and the next run plans the same rows.
+    - When the ledger matches again, the rows its episode recorded are marked `clearedAt`.
+  - **What is sent:** recorded rows are never sent one by one. The delivery job gathers them into **one message**:
+    - **News** is a ledger with a kind of trouble that no message has told the operator about. A message with news waits until its newest news is 3 minutes old (10 at most), so the rows of one fault go out together. Messages are **at least one hour apart**.
+    - **Reminders** are everything else: a repeat, or the same kind of trouble recorded again for a ledger that a message covered in the last six hours (a provider that fails on and off, a worker that restarted). Reminders ride along with news; by themselves they go out **once per six hours**. A real difference that was cleared and came back is news again.
+    - **One message at a time:** while the last message still waits to be sent, nothing new is written.
+    - A ledger that matched again before its row went out is dropped (`detail.delivery` `{"status":"off","reason":"CLEARED"}`), and a row that waited more than eight hours is expired.
+    - A message about one ledger is that ledger's own alert. About several, it names up to ten (the ones that need an operator most first), counts the rest and links the list on `/operations/graduation`.
+  - **In the database:** a recorded row has `detail.delivery` `{"status":"digest","queuedAt":…}`, plus `"digest": <alert id>` once a message covers it. The message is a `graduation_alerts` row of its own (`detail.ledger` `"digest"`), delivered and retried like any other alert. Both are written in one transaction; a run that fails writes neither and the next run plans the same rows.
   - **No destination:** the message is still written, with `detail.delivery` `{"status":"off","reason":"DESTINATION_REQUIRED"}`, so a destination set later is not sent old news.
-  - **Restarts:** the holds live in the worker process. After a restart, a ledger that still does not match is recorded again once it has been seen unmatched for its hold; the hour between messages is kept in the database and survives it.
+  - **When planning fails:** the run reports `digestError` with a code and still sends whatever else is queued. After three failed runs in a row the queue says so itself through the destination, at most once per six hours.
+  - **Restarts:** the holds live in the worker process. After a restart, a problem that is still there is recorded again once it has been seen for its hold. If a message already covered it, that row is a reminder, not news. The spacing between messages is kept in the database and survives a restart.
 
 The alert text uses fixed wording: a reason is sent only when it is one of this codebase's own, never a failed read's message. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are, in no message.
 
@@ -70,7 +78,7 @@ Queued only with `RESERVE_MOVE_NOTIFICATIONS=true`: `RESERVE_MOVED`. Without it 
 
 ## Destinations
 
-`RESERVE_ALERT_WEBHOOK_URL` on the worker is the one destination. The sender picks the format from its host, and refuses a destination that cannot work when the worker starts (`reserveAlertError: ALERT_DESTINATION_INVALID`):
+`RESERVE_ALERT_WEBHOOK_URL` on the worker is the one destination. The sender picks the format from its host. A destination whose form cannot work (not HTTPS, credentials in the URL, a Telegram URL without `chat_id`, a Discord URL that is not a webhook) is refused when the worker starts (`reserveAlertError: ALERT_DESTINATION_INVALID`); a well-formed address that is simply wrong shows only when something is sent, so test it:
 
 | Destination | Value of `RESERVE_ALERT_WEBHOOK_URL` | What is sent |
 | --- | --- | --- |
@@ -81,7 +89,11 @@ Queued only with `RESERVE_MOVE_NOTIFICATIONS=true`: `RESERVE_MOVED`. Without it 
 
 - **Telegram:** the token comes from @BotFather. `<chat>` is the numeric id of the chat or channel the bot was added to (a channel id starts with `-100`), or `@channelname` for a public channel.
 - The value is a secret: it lets anyone post to that channel. Keep it in Railway worker variables only.
-- **Test it:** `railway ssh --service worker -- node scripts/send-test-alert.mjs` sends one test message through the same sender. It reads no database and no chain. A destination counts as live once that message has arrived.
+- **Test it:** `railway ssh --service worker -- node scripts/send-test-alert.mjs` sends one test message through the same sender. It reads no database and no chain. A destination counts as live once that message has arrived. When the receiver refuses it, the script prints the same code the queue keeps:
+  - `HTTP_404`: the webhook or bot address does not exist (a wrong or revoked link);
+  - `HTTP_401` or `HTTP_403`: the token is wrong, or the bot may not post there;
+  - `HTTP_400` (Telegram): the `chat_id` is wrong, or the bot was not added to that chat;
+  - `HTTP_429`: the receiver is rate limiting; `TIMEOUT`, `NETWORK`: it could not be reached.
 
 ## Operating balances
 

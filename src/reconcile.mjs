@@ -12,6 +12,8 @@ export const PARTNER_CAPTURE_MISMATCH = 'Partner fee capture differs from chain 
 export const GRADUATED_WITHDRAWAL_MISMATCH = 'Graduated fee withdrawals differ from proven payouts'
 // The pool read succeeded, and it is not this market's pool: another config, mint or creator than the market records.
 export const POOL_IDENTITY_MISMATCH = 'Canonical Meteora pool does not match the market'
+// The pool read succeeded, and the chain has no such pool.
+export const POOL_STATE_MISSING = 'Canonical Meteora pool state is missing'
 
 const amount = value => { try { return value == null ? null : BigInt(value) } catch { return null } }
 
@@ -36,49 +38,76 @@ export function chainAheadOfLedger(result) {
   return difference !== null && difference > 0n
 }
 
-// How long a ledger must stay unmatched, or unchecked, before it alerts: a failed read or a lagging RPC node clears within
-// a pass or two.
+// What one pass found, for the holds below.
+// - behind: the chain ahead of the ledger. Fees from trades the worker has not recorded yet; normal after a trade.
+// - unchecked: no comparison was made. A read failed, a claim is in flight, or the pass failed before it got that far.
+// - difference: anything else a completed check found, and a pool that is missing or is not the market's.
+const FOUND_BY_THE_READ = [POOL_IDENTITY_MISMATCH, POOL_STATE_MISSING]
+export const reconcileKind = result => chainAheadOfLedger(result) ? 'behind'
+  : result?.status === 'PENDING_REVIEW' || result?.status === 'ERROR' || (result?.status === 'UNAVAILABLE' && !FOUND_BY_THE_READ.includes(result.reason)) ? 'unchecked'
+  : 'difference'
+// States that normally clear by themselves: the chain ahead of the ledger, a claim in flight, a read that failed. Decides an
+// alert's wording, not whether it is raised.
+export const reconcileLagging = result => result?.status === 'PENDING_REVIEW' || (result?.status === 'UNAVAILABLE' && !FOUND_BY_THE_READ.includes(result.reason)) ||
+  chainAheadOfLedger(result)
+
+// How long a difference, or a run of passes that could not check, must last before it alerts: one failed read or one read
+// from a lagging RPC node clears within a pass or two.
 export const RECONCILE_HOLD_MS = 15 * 60_000
-// How long when all that was ever wrong is the chain ahead of the ledger (fees from trades the worker has not recorded
-// yet). On the busiest market the worker records a trade's fees in a median 21 s and at most about 10 min, and trades
-// overlap: over five days its ledger was behind without a break for 17 minutes once and for about 30 minutes once, never
-// for an hour. A ledger behind for an hour means the indexer has stopped.
+// How long a ledger may stay behind the chain with nothing new recorded for it. Measured on the busiest market over five
+// days (3,851 swaps): the worker recorded a trade's fees in a median 21 s and at most about 10 min. A ledger that is behind
+// and has not moved for an hour is not catching up: the indexer stopped, or missed a trade.
 export const RECONCILE_BEHIND_HOLD_MS = 60 * 60_000
+// How long a ledger may go without one matching pass while it keeps recording. A market traded without a pause is behind
+// on every pass and still healthy; over those five days the longest such stretch was about 30 minutes.
+export const RECONCILE_BEHIND_MAX_MS = 6 * 60 * 60_000
 // A problem that persists is announced again once per period, so one missed or failed notification is not the last word.
 export const RECONCILE_REPEAT_MS = 6 * 60 * 60_000
 // An episode nobody has settled for this long is over: the passes were not reaching the ledger, and what they would have
-// found is unknown. A pass must come round to each ledger more often than this, or nothing would ever last its hold; the
-// graduation monitor already keeps a pass under half of PUBLIC_GRADUATION_MAX_AGE_MS (150 s) for the public curve state.
+// found is unknown. The caller may pass a function instead, to keep the limit above its own pass cadence
+// (src/ledger-alerts.mjs).
 export const RECONCILE_STALE_MS = 10 * 60_000
-// States that normally clear by themselves: the chain ahead of the ledger, a claim in flight, a read that failed. A pool
-// that was read and is not this market's is none of those. Decides an alert's wording, not whether it is raised.
-export const reconcileLagging = result => result?.status === 'PENDING_REVIEW' || (result?.status === 'UNAVAILABLE' && result.reason !== POOL_IDENTITY_MISMATCH) ||
-  chainAheadOfLedger(result)
+
+// The ledger's side of a fee reconciliation: what the worker has recorded so far. It moves whenever fees are recorded.
+const recordedSoFar = result => `${result.recordedEarned ?? ''}|${result.platform?.earned ?? ''}`
 
 // When a ledger that stopped matching becomes an operator alert. settle(key, result) returns null, or
-// { key, lagging, since } to alert on.
-// - An episode runs from the first pass that does not MATCH to the next that does. Its state may change on the way (lag and
-//   a real mismatch take turns on a trading market, a read fails now and then): it stays one episode.
-// - It alerts holdMs after it first showed anything other than the chain being ahead of the ledger (a mismatch, a claim in
-//   flight, a failed read), or once it has lasted behindHoldMs whatever it showed. From then on it alerts again once per
-//   repeatMs for as long as it lasts. A ledger that matches again before that never alerts.
-// - The key is the episode's start and its repeat period, so the caller's unique event key keeps one alert per period. A new
-//   episode is a new alert.
+// { key, kind, repeat, lagging, since } to alert on.
+// - An episode runs from the first pass that does not MATCH to the next that does.
+// - What a pass found has its own hold, by kind (reconcileKind):
+//   - difference: seen again holdMs or more after it was first seen in the episode. Lag may hide it on the passes between.
+//   - unchecked: holdMs without one pass that completed a check. Any completed check starts the count again.
+//   - behind: behindHoldMs with nothing new recorded for the ledger, or behindMaxMs without one matching pass.
+// - The key is the episode's start, the kind and the repeat period, so the caller's unique event key keeps one alert per
+//   kind per period. A problem that changes kind (reads fail, then a real difference shows) is announced as the new kind.
+//   repeat: this kind was already due in an earlier period of the episode.
 // - Episodes live in this process. After a restart, a ledger that still does not match starts a new episode and alerts once
 //   that has lasted its hold; since is when this process first saw it.
 export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOLD_MS, behindHoldMs = Math.max(holdMs, RECONCILE_BEHIND_HOLD_MS),
-  repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
+  behindMaxMs = Math.max(behindHoldMs, RECONCILE_BEHIND_MAX_MS), repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
   const episodes = new Map()
+  const staleLimit = typeof staleMs === 'function' ? staleMs : () => staleMs
+  // Whether what this pass found has gone on long enough.
+  function due(episode, kind, result, at) {
+    // A pass that compared the ledger with the chain ends any run of passes that could not.
+    if (kind !== 'unchecked') episode.unchecked = null
+    if (kind === 'difference') return at - (episode.difference ??= at) >= holdMs
+    if (kind === 'unchecked') return at - (episode.unchecked ??= at) >= holdMs
+    const recorded = recordedSoFar(result)
+    if (recorded !== episode.recorded) { episode.recorded = recorded; episode.moved = at }
+    return at - episode.moved >= behindHoldMs || at - episode.first >= behindMaxMs
+  }
   return { settle(key, result) {
     if (result?.status === 'MATCH') { episodes.delete(key); return null }
     const at = now(), known = episodes.get(key)
-    const episode = known && at - known.seen <= staleMs ? known : { first: at, otherFirst: null }
+    const episode = known && at - known.seen <= staleLimit() ? known : { first: at, difference: null, unchecked: null, recorded: null, moved: at, firstDue: {} }
     episode.seen = at
-    if (!chainAheadOfLedger(result)) episode.otherFirst ??= at
     episodes.set(key, episode)
-    const due = at - episode.first >= behindHoldMs || (episode.otherFirst !== null && at - episode.otherFirst >= holdMs)
-    if (!due) return null
-    return { key: `${episode.first}:${Math.floor((at - episode.first) / repeatMs)}`, lagging: reconcileLagging(result), since: new Date(episode.first).toISOString() }
+    const kind = reconcileKind(result)
+    if (!due(episode, kind, result, at)) return null
+    const period = Math.floor((at - episode.first) / repeatMs)
+    return { key: `${episode.first}:${kind}:${period}`, kind, repeat: period > (episode.firstDue[kind] ??= period), lagging: reconcileLagging(result),
+      since: new Date(episode.first).toISOString() }
   } }
 }
 
@@ -124,7 +153,7 @@ export function createReconciler({ pool, connection, config }) {
         } catch (error) {
           return { ...base, status: 'UNAVAILABLE', reason: `Meteora pool read failed: ${error.message}` }
         }
-        if (!state) return { ...base, status: 'UNAVAILABLE', reason: 'Canonical Meteora pool state is missing' }
+        if (!state) return { ...base, status: 'UNAVAILABLE', reason: POOL_STATE_MISSING }
         if (!state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(mintKey) ||
             !state.poolState.creator.equals(new PublicKey(market.creatorWallet))) {
           return { ...base, status: 'UNAVAILABLE', reason: POOL_IDENTITY_MISMATCH }
