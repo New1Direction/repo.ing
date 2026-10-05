@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
@@ -11,6 +11,8 @@ import { createGraduatedFees } from './graduated-fees.mjs'
 
 export const PARTNER_CAPTURE_MISMATCH = 'Partner fee capture differs from chain evidence'
 export const GRADUATED_WITHDRAWAL_MISMATCH = 'Graduated fee withdrawals differ from proven payouts'
+// The pool read succeeded, and it is not this market's pool: another config, mint or creator than the market records.
+export const POOL_IDENTITY_MISMATCH = 'Canonical Meteora pool does not match the market'
 
 const amount = value => { try { return value == null ? null : BigInt(value) } catch { return null } }
 
@@ -38,11 +40,17 @@ export function chainAheadOfLedger(result) {
 // How long a state that may be a moment's lag is held before it alerts (the stock reconciler's STOCK_RECONCILE_LAG_MS).
 // After a trade the worker records its fees in a median ~30 s, up to ~10 min.
 export const RECONCILE_LAG_MS = 15 * 60_000
-// States that may be a moment's lag: the chain ahead of the ledger, a claim in flight, a read that failed.
-export const reconcileLagging = result => ['PENDING_REVIEW', 'UNAVAILABLE'].includes(result?.status) || chainAheadOfLedger(result)
+// A problem that persists is announced again once per period, so one missed or failed notification is not the last word.
+export const RECONCILE_REPEAT_MS = 6 * 60 * 60_000
+// An episode nobody has observed for this long is over: the market's passes were failing before they reached its ledger.
+export const RECONCILE_STALE_MS = 10 * 60_000
+// States that may be a moment's lag: the chain ahead of the ledger, a claim in flight, a read that failed. A pool that was
+// read and is not this market's is none of those.
+export const reconcileLagging = result => result?.status === 'PENDING_REVIEW' || (result?.status === 'UNAVAILABLE' && result.reason !== POOL_IDENTITY_MISMATCH) ||
+  chainAheadOfLedger(result)
 
 // The kind of a mismatch, without its amounts: its reason, and which way the creator and partner sides differ. A persistent
-// mismatch keeps its kind while trades move the amounts, so it alerts once, not on every pass.
+// mismatch keeps its kind while trades move the amounts.
 const sign = value => value === null ? '?' : value > 0n ? '+' : value < 0n ? '-' : '0'
 const gap = (onchain, ledger) => { const a = amount(onchain), b = amount(ledger); return a === null || b === null ? null : a - b }
 export function reconcileMismatchKind(result) {
@@ -50,22 +58,32 @@ export function reconcileMismatchKind(result) {
   return [result.status, result.reason ?? '', sign(amount(result.difference)), platform].join(':')
 }
 
-// One operator alert per episode (the model of the stock reconciler's runner, src/stock-reconcile.mjs). An episode starts
-// when a ledger stops matching: a lagging state alerts once if it lasts lagMs, a real mismatch alerts at once, and a
-// mismatch of another kind starts a new episode. A MATCH ends it. settle returns null, or what to alert on: a key that
-// stays the same for the whole episode, whether it is lag, and when it began. Episodes live in this process; a restart
-// begins new ones, so a mismatch that survives a deploy is reported again.
-export function createReconcileEpisodes({ now = Date.now, lagMs = RECONCILE_LAG_MS } = {}) {
-  const episodes = new Map(), run = randomBytes(6).toString('hex')
-  let sequence = 0
+// When a ledger that stopped matching becomes an operator alert (the model of the stock reconciler's runner,
+// src/stock-reconcile.mjs). settle(key, result) returns null, or { key, lagging, since } to alert on.
+// - An episode runs from the first pass that does not MATCH to the next that does.
+// - A lagging state alerts only once it has lasted lagMs. A real mismatch alerts at once, and from then on lag in the same
+//   episode adds nothing: on a trading market a real mismatch and a moment's lag take turns from pass to pass.
+// - The alert's key names the kind of mismatch and the repeat period it falls in, nothing else. So trades moving the
+//   amounts, the state flickering, a restarted worker and a second worker all raise the same alert (the caller's unique
+//   event key keeps one row), and a problem that persists is announced again once per repeatMs.
+// - Episodes live in this process. A restart begins the lag hold again; it never repeats an alert.
+export function createReconcileEpisodes({ now = Date.now, lagMs = RECONCILE_LAG_MS, repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
+  const episodes = new Map()
   return { settle(key, result, kindOf = reconcileMismatchKind) {
     if (result?.status === 'MATCH') { episodes.delete(key); return null }
-    const lagging = reconcileLagging(result), kind = lagging ? 'lagging' : kindOf(result)
+    const at = now()
     let episode = episodes.get(key)
-    if (episode?.kind !== kind) episodes.set(key, episode = { kind, first: now(), id: ++sequence })
-    if (lagging && now() - episode.first < lagMs) return null
-    return { key: `episode:${createHash('sha256').update(JSON.stringify([run, kind, episode.first, episode.id])).digest('hex').slice(0, 32)}`,
-      lagging, since: new Date(episode.first).toISOString() }
+    if (!episode || at - episode.seen > staleMs) episodes.set(key, episode = { first: at, lagFirst: null, real: false })
+    episode.seen = at
+    const lagging = reconcileLagging(result)
+    if (lagging) {
+      if (episode.real) return null
+      episode.lagFirst ??= at
+      if (at - episode.lagFirst < lagMs) return null
+    } else episode.real = true
+    const kind = createHash('sha256').update(lagging ? 'lagging' : kindOf(result)).digest('hex').slice(0, 16)
+    return { key: `${lagging ? 'lagging' : 'mismatch'}:${kind}:${Math.floor(at / repeatMs)}`, lagging,
+      since: new Date(lagging ? episode.lagFirst : episode.first).toISOString() }
   } }
 }
 
@@ -111,10 +129,10 @@ export function createReconciler({ pool, connection, config }) {
         } catch (error) {
           return { ...base, status: 'UNAVAILABLE', reason: `Meteora pool read failed: ${error.message}` }
         }
-        if (!state || !state.poolState.config.equals(configKey) ||
-            !state.poolState.baseMint.equals(mintKey) ||
+        if (!state) return { ...base, status: 'UNAVAILABLE', reason: 'Canonical Meteora pool state is missing' }
+        if (!state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(mintKey) ||
             !state.poolState.creator.equals(new PublicKey(market.creatorWallet))) {
-          return { ...base, status: 'UNAVAILABLE', reason: 'Canonical Meteora pool state is missing or inconsistent' }
+          return { ...base, status: 'UNAVAILABLE', reason: POOL_IDENTITY_MISMATCH }
         }
         const graduated = await graduatedFees.read(market, state)
         const onchainCreatorFee = BigInt(state.poolState.creatorQuoteFee.toString()) + (graduated?.available ?? 0n)

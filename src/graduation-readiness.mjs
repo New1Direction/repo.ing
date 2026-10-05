@@ -79,7 +79,22 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         const state=await readGraduationState({connection,verification,config,market,env,db:pool,curveReads})
         const {rows:[existing]}=await db.query('select signature from graduation_events where github_repo_id=$1',[repoId])
         if(existing&&!state.migration)throw Error('GRADUATION_STATE_DISAGREEMENT')
-        const reconciliation=await reconciler.reconcile(repoId)
+        // The ledger's alert is settled as soon as the ledger is read, so no later step of the pass can skip it. One alert per
+        // episode, not per pass: a ledger the worker has not caught up yet (seconds after any trade) is held lagMs before it
+        // alerts, a real mismatch alerts at once (src/reconcile.mjs createReconcileEpisodes).
+        const ledgerAlert=async result=>{
+          const episode=episodes.settle(repoId,result)
+          if(episode)await notify('RECONCILIATION_MISMATCH',episode.key,feeLedgerAlertDetail({market,reconciliation:result,episode,observedAt:state.checkedAt,now:now()}))
+        }
+        let reconciliation
+        try{reconciliation=await reconciler.reconcile(repoId)}
+        catch(error){
+          // A ledger that cannot be reconciled is never skipped: a failed read is held like any lag, anything else alerts at once.
+          const code=graduationError(error)
+          await ledgerAlert(TRANSIENT_REVIEW_CODES.includes(code)?{status:'UNAVAILABLE'}:{status:'ERROR',reason:code})
+          throw error
+        }
+        await ledgerAlert(reconciliation)
         // Persist migration proof even when fee indexing/reconciliation still needs attention.
         await recordGraduationEvidence(db,state,previous,reconciliation)
         if(state.migration){
@@ -122,10 +137,6 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         if(state.platform&&BigInt(state.platform.earned)>0n)await notify('PARTNER_FEES_FIRST_ACCRUED','first',{earned:state.platform.earned,pool:state.destination.pool})
         if(state.platformClaimAvailable)await notify('PLATFORM_CLAIM_AVAILABLE',state.platform.claimed,{available:state.platform.available})
         if(state.p3.eligible)await notify('P3_FIRST_ELIGIBLE','first',{maximumInvestment:state.p3.maximumInvestment,execution:'manual only'})
-        // One alert per episode, not per pass: a ledger the worker has not caught up yet (seconds after any trade) is held
-        // lagMs before it alerts; a real mismatch alerts at once.
-        const mismatch=episodes.settle(repoId,reconciliation)
-        if(mismatch)await notify('RECONCILIATION_MISMATCH',mismatch.key,feeLedgerAlertDetail({market,reconciliation,episode:mismatch,observedAt:state.checkedAt,now:now()}))
         assertFreshGraduation(state)
         const reserveAlert=await persistGraduationObservation(db,{market,state,previous,reconciliation,enabled:env.RESERVE_ALERTS_ENABLED==='true',
           notify:env.RESERVE_MOVE_NOTIFICATIONS==='true'})

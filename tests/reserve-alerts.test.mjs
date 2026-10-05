@@ -102,6 +102,13 @@ test('ledger alert details carry fixed wording, a pending delivery and no provid
   const market = { githubRepoId: '998200', mint: 'mint', pool: 'curve', fullName: 'local/reserve' }
   const failed = feeLedgerAlertDetail({ market, episode, observedAt: '2026-10-05T08:15:00.000Z', now: at,
     reconciliation: { status: 'UNAVAILABLE', reason: 'Meteora pool read failed: 401 https://rpc.example/?api-key=secret', difference: null } })
+  // Only this codebase's own reasons are kept, whatever the status.
+  for (const reason of ['Meteora pool read failed: timeout', 'connect ECONNREFUSED 10.0.0.5:5432', 'fetch failed https://rpc.example/?api-key=secret', ''])
+    assert.equal(feeLedgerAlertDetail({ market, episode, observedAt: '', now: at, reconciliation: { status: 'MISMATCH', reason } }).reason, null)
+  for (const reason of ['Partner fee capture differs from chain evidence', 'Canonical Meteora pool does not match the market', '2 unresolved claim intent(s)', 'EVIDENCE_UNAVAILABLE'])
+    assert.equal(feeLedgerAlertDetail({ market, episode, observedAt: '', now: at, reconciliation: { status: 'MISMATCH', reason } }).reason, reason)
+  const broken = feeLedgerAlertDetail({ market, episode: { ...episode, lagging: false }, observedAt: '2026-10-05T08:15:00.000Z', now: at, reconciliation: { status: 'ERROR', reason: 'EVIDENCE_UNAVAILABLE' } })
+  assert.match(reserveAlertText(2, broken), /Fee ledger could not be reconciled\nlocal\/reserve\nEVIDENCE_UNAVAILABLE\n/)
   assert.deepEqual(failed, { ledger: 'fees', status: 'UNAVAILABLE', reason: null, lagging: true, since: episode.since, difference: null, fullName: 'local/reserve',
     observedAt: '2026-10-05T08:15:00.000Z', url: 'https://repo.ing/token/mint', delivery: pendingDelivery(at) })
   assert.doesNotMatch(reserveAlertText(1, failed), /secret|rpc\.example/)

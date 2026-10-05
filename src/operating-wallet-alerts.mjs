@@ -1,5 +1,6 @@
 import { PublicKey } from '@solana/web3.js'
 import { readGenesisHash } from './rpc-usage.mjs'
+import { pendingDelivery } from './reserve-alerts.mjs'
 const MAINNET='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 export const OPERATING_WALLETS=[
   {key:'OPS_PAYOUT_WALLET',role:'Builder payout signer',minimumLamports:'30000000'},
@@ -23,7 +24,7 @@ export function createOperatingWalletMonitor({pool,connections,env=process.env,n
       const state=operatingWalletObservation(role,minimumLamports,readings),time=now()
       if(state.low){
         const observedAt=new Date(time).toISOString()
-        const detail={...state,observedAt,delivery:{status:'pending',attempts:0,nextAttemptAt:observedAt}}
+        const detail={...state,observedAt,delivery:pendingDelivery(time)}
         // Durable daily dedup survives restarts and simultaneous worker replicas.
         await pool.query(`insert into graduation_alerts(event_key,kind,detail) values($1,'OPS_WALLET_LOW',$2) on conflict(event_key) do nothing`,
           [`ops-wallet-low:${key}:${observedAt.slice(0,10)}`,JSON.stringify(detail)])
