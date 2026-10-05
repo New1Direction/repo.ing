@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { reserveMovePlan, reserveAlertText, createReserveWebhookSender, pendingDelivery, feeLedgerAlertDetail, platformLedgerAlertDetail,
-  RESERVE_MOVE_COOLDOWN_MS } from '../src/reserve-alerts.mjs'
+import { reserveMovePlan, reserveAlertText, createReserveWebhookSender, pendingDelivery, feeLedgerAlertDetail, platformLedgerAlertDetail, RESERVE_MOVE_COOLDOWN_MS, ledgerSummaryAlertDetail, ledgerChecksAlertDetail } from '../src/reserve-alerts.mjs'
 
 const now = Date.now()
 const market = { githubRepoId: '998200', mint: 'mint', pool: 'curve', fullName: 'local/reserve' }
@@ -91,6 +90,13 @@ test('a ledger alert names the ledger, says whether it is lag or a real mismatch
   assert.match(reserveAlertText(15, { ...market, status: 'MISMATCH', reason: null, lagging: false, difference: '-12' }), /The ledger shows more fees than the chain holds\./)
   const platform = reserveAlertText(16, { ledger: 'platform', revenue: 'MISMATCH', liquidity: 'MATCH', problems: ['Allocations exceed claimed platform revenue'], since, observedAt })
   assert.match(platform, /^repo\.ing · Platform ledger does not match\nRevenue: MISMATCH · Liquidity: MATCH\nAllocations exceed claimed platform revenue\nSince: /)
+  // A pass that left some alerts unsent says how many, and where they are.
+  const summary = reserveAlertText(17, ledgerSummaryAlertDetail({ count: 49, now: Date.parse(observedAt) }))
+  assert.equal(summary, `repo.ing · 49 more fee ledgers need review\nThey stopped matching, or could not be checked, in the same pass. Each is listed on the operations health page.\nChecked: ${observedAt}\nAlert #17`)
+  // The monitor's own checks failing: no ledger is being checked at all.
+  const checks = reserveAlertText(18, ledgerChecksAlertDetail({ code: 'RPC_UNAVAILABLE', episode: { since }, now: Date.parse(observedAt) }))
+  assert.equal(checks, `repo.ing · Ledger checks are not running\nThe worker cannot verify the chain, so no ledger is being checked (RPC_UNAVAILABLE).\nSince: ${since}\nChecked: ${observedAt}\nAlert #18`)
+  assert.doesNotMatch(reserveAlertText(19, ledgerChecksAlertDetail({ code: 'fetch failed https://rpc.example/?api-key=secret', episode: { since }, now: 0 })), /secret|rpc\.example|\(/)
   // Sent as its own event, without delivery metadata.
   const events = []
   const sender = createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://example.com/hook' }, fetchImpl: async (_url, options) => { events.push(JSON.parse(options.body)); return { ok: true } } })
@@ -112,6 +118,11 @@ test('ledger alert details carry fixed wording, a pending delivery and no provid
   assert.deepEqual(failed, { ledger: 'fees', status: 'UNAVAILABLE', reason: null, lagging: true, since: episode.since, difference: null, fullName: 'local/reserve',
     observedAt: '2026-10-05T08:15:00.000Z', url: 'https://repo.ing/token/mint', delivery: pendingDelivery(at) })
   assert.doesNotMatch(reserveAlertText(1, failed), /secret|rpc\.example/)
+  // One a pass sums up instead of sending is recorded with its delivery off, and says why.
+  assert.deepEqual(feeLedgerAlertDetail({ market, episode, observedAt: '', now: at, deliver: false, reconciliation: { status: 'MISMATCH' } }).delivery, { status: 'off', reason: 'SUMMARIZED' })
+  assert.deepEqual(ledgerSummaryAlertDetail({ count: 3, now: at }), { ledger: 'summary', count: 3, since: '2026-10-05T08:15:00.000Z', observedAt: '2026-10-05T08:15:00.000Z', delivery: pendingDelivery(at) })
+  assert.deepEqual(ledgerChecksAlertDetail({ code: 'RPC_RATE_LIMITED', episode, now: at }), { ledger: 'checks', reason: 'RPC_RATE_LIMITED', since: episode.since,
+    observedAt: '2026-10-05T08:15:00.000Z', delivery: pendingDelivery(at) })
   const real = feeLedgerAlertDetail({ market, episode: { ...episode, lagging: false }, observedAt: '2026-10-05T08:15:00.000Z', now: at,
     reconciliation: { status: 'MISMATCH', reason: 'Graduated fee withdrawals differ from proven payouts', difference: -12n } })
   assert.equal(real.reason, 'Graduated fee withdrawals differ from proven payouts'); assert.equal(real.difference, '-12'); assert.equal(real.lagging, false)

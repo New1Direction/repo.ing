@@ -1,5 +1,6 @@
 import { assertFreshGraduation, evidenceHash, evidenceJSON } from './graduation-state.mjs'
 import { GRADUATED_WITHDRAWAL_MISMATCH, PARTNER_CAPTURE_MISMATCH, POOL_IDENTITY_MISMATCH } from './reconcile.mjs'
+import { ledgerAlertTitle } from '../app/lib/operator-alerts.mjs'
 
 export const RESERVE_MOVE_MIN_LAMPORTS = 50_000_000n
 export const RESERVE_MOVE_COOLDOWN_MS = 5 * 60_000
@@ -88,26 +89,35 @@ const sol = value => {
 // provider's response.
 const OWN_REASONS = [PARTNER_CAPTURE_MISMATCH, GRADUATED_WITHDRAWAL_MISMATCH, POOL_IDENTITY_MISMATCH]
 const ownReason = reason => OWN_REASONS.includes(reason) || /^(\d{1,6} unresolved claim intent\(s\)|[A-Z][A-Z_]{3,60})$/.test(reason ?? '') ? reason : null
-export const feeLedgerAlertDetail = ({ market, reconciliation, episode, observedAt, now }) => ({ ledger: 'fees', status: reconciliation.status,
+// deliver false: recorded for the operations pages only, because one alert sums up this and others (ledgerSummaryAlertDetail).
+export const feeLedgerAlertDetail = ({ market, reconciliation, episode, observedAt, now, deliver = true }) => ({ ledger: 'fees', status: reconciliation.status,
   reason: ownReason(reconciliation.reason), lagging: episode.lagging, since: episode.since,
   difference: reconciliation.difference == null ? null : String(reconciliation.difference), fullName: market.fullName, observedAt,
-  url: `https://repo.ing/token/${market.mint}`, delivery: pendingDelivery(now) })
+  url: `https://repo.ing/token/${market.mint}`, delivery: deliver ? pendingDelivery(now) : { status: 'off', reason: 'SUMMARIZED' } })
 export const platformLedgerAlertDetail = ({ revenue, liquidity, episode, now }) => ({ ledger: 'platform', revenue: revenue.status, liquidity: liquidity.status,
   problems: [...revenue.problems ?? [], ...liquidity.problems ?? []], since: episode.since, observedAt: new Date(now).toISOString(), delivery: pendingDelivery(now) })
+// One alert for the fee-ledger alerts a pass recorded unsent (src/ledger-alerts.mjs).
+export const ledgerSummaryAlertDetail = ({ count, now }) => ({ ledger: 'summary', count, since: new Date(now).toISOString(),
+  observedAt: new Date(now).toISOString(), delivery: pendingDelivery(now) })
+// The monitor cannot verify the chain at all, so no ledger is being checked. code: the review code of the failed check.
+export const ledgerChecksAlertDetail = ({ code, episode, now }) => ({ ledger: 'checks', reason: ownReason(code), since: episode.since,
+  observedAt: new Date(now).toISOString(), delivery: pendingDelivery(now) })
 
-// A ledger that stopped matching (src/reconcile.mjs createReconcileEpisodes): a market's fee ledger, or the platform's
-// revenue and liquidity ledgers. lagging: a state that normally clears by itself and has lasted too long.
+// A ledger that stayed unmatched or unchecked (src/ledger-alerts.mjs): a market's fee ledger, the platform's revenue and
+// liquidity ledgers, the monitor's own checks, or a pass's summary. lagging: a state that normally clears by itself.
 function ledgerAlertText(id, detail) {
+  const title = `repo.ing · ${ledgerAlertTitle(detail)}`
   const tail = [`Since: ${detail.since}`, `Checked: ${detail.observedAt}`, ...(detail.url ? [detail.url] : []), `Alert #${id}`]
-  if (detail.ledger === 'platform') return ['repo.ing · Platform ledger does not match',
-    `Revenue: ${detail.revenue} · Liquidity: ${detail.liquidity}`, ...(detail.problems ?? []), ...tail].join('\n')
-  const [title, fallback] = detail.status === 'ERROR' ? ['Fee ledger could not be reconciled', 'The reconciliation itself failed.']
-    : !detail.lagging ? ['Fee ledger does not match the chain',
-    String(detail.difference ?? '').startsWith('-') ? 'The ledger shows more fees than the chain holds.' : 'The ledger and the chain disagree.']
-    : detail.status === 'UNAVAILABLE' ? ['Fee ledger could not be checked', 'The on-chain read keeps failing.']
-    : detail.status === 'PENDING_REVIEW' ? ['Builder claim still unresolved', 'A claim has not settled or been released.']
-    : ['Fee ledger behind the chain', 'On-chain fees are still missing from the ledger. This normally clears in under a minute.']
-  return [`repo.ing · ${title}`, detail.fullName, detail.reason ?? fallback, ...tail].join('\n')
+  if (detail.ledger === 'platform') return [title, `Revenue: ${detail.revenue} · Liquidity: ${detail.liquidity}`, ...(detail.problems ?? []), ...tail].join('\n')
+  if (detail.ledger === 'summary') return [title, 'They stopped matching, or could not be checked, in the same pass. Each is listed on the operations health page.',
+    ...tail.slice(1)].join('\n')
+  if (detail.ledger === 'checks') return [title, `The worker cannot verify the chain, so no ledger is being checked${detail.reason ? ` (${detail.reason})` : ''}.`, ...tail].join('\n')
+  const fallback = detail.status === 'ERROR' ? 'The reconciliation itself failed.'
+    : !detail.lagging ? String(detail.difference ?? '').startsWith('-') ? 'The ledger shows more fees than the chain holds.' : 'The ledger and the chain disagree.'
+    : detail.status === 'UNAVAILABLE' ? 'The on-chain read keeps failing.'
+    : detail.status === 'PENDING_REVIEW' ? 'A claim has not settled or been released.'
+    : 'On-chain fees are still missing from the ledger. This normally clears in under a minute.'
+  return [title, detail.fullName, detail.reason ?? fallback, ...tail].join('\n')
 }
 export function reserveAlertText(id, detail) {
   if (detail.role && detail.minimumLamports) return ['repo.ing · Low operating balance',detail.role,
@@ -165,14 +175,14 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now }) {
           and ${time("detail::jsonb->'delivery'->>'nextAttemptAt'")} <= now() order by id limit 5`)
         const results = expired.map(row => row.id).sort((a, b) => a - b).slice(0, EXPIRED_NAMED).map(id => ({ id, status: 'expired' }))
         for (const row of rows) {
-          const detail = JSON.parse(row.detail), delivery = detail.delivery, time = now()
+          const detail = JSON.parse(row.detail), delivery = detail.delivery, at = now()
           delivery.attempts++
           try {
             const receipt = await send({ id: row.id, text: reserveAlertText(row.id, detail), detail })
-            Object.assign(delivery, { status: 'sent', sentAt: new Date(time).toISOString(), receipt, error: null })
+            Object.assign(delivery, { status: 'sent', sentAt: new Date(at).toISOString(), receipt, error: null })
           } catch {
             Object.assign(delivery, { status: delivery.attempts >= 12 ? 'failed' : 'retry', error: 'NOTIFICATION_SEND_FAILED',
-              nextAttemptAt: new Date(time + Math.min(900000, 30000 * 2 ** (delivery.attempts - 1))).toISOString() })
+              nextAttemptAt: new Date(at + Math.min(900000, 30000 * 2 ** (delivery.attempts - 1))).toISOString() })
           }
           await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',$2::jsonb)::text where id=$1`, [row.id, JSON.stringify(delivery)])
           results.push({ id: row.id, status: delivery.status })

@@ -4,7 +4,7 @@
 
 Lightweight operator record of real reserve growth or decline, and the delivery queue for operator notifications. By default the queue sends only what needs an operator: a low operating balance (below) and a ledger that stopped matching the chain ([What is sent](#what-is-sent)). Reserve moves are recorded for the operations pages and sent only when `RESERVE_MOVE_NOTIFICATIONS=true`. No funnel events, attribution tokens, featured-market rules, economic policy changes or automated transactions.
 
-The existing P5 worker supplies fresh finalized pool/config snapshots agreed by both RPC providers. No extra Solana subscription or polling service is introduced. The worker checks all finalized indexed markets in its paced graduation pass (30 seconds after each pass completes, plus per-market verification time). Notification delivery runs independently two minutes after its previous batch, so a failed receiver cannot block fee indexing or transaction recovery. This is observation-based monitoring, not an instant notification for every trade.
+The existing P5 worker supplies fresh finalized pool/config snapshots agreed by both RPC providers. No extra Solana subscription or polling service is introduced. The worker checks all finalized indexed SOL-quoted markets in its paced graduation pass (30 seconds after each pass completes, plus per-market verification time); stock-paired markets raise no reserve movement alerts. Notification delivery runs independently two minutes after its previous batch, so a failed receiver cannot block fee indexing or transaction recovery. This is observation-based monitoring, not an instant notification for every trade.
 
 ## Meaningful changes
 
@@ -45,11 +45,17 @@ Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; exi
 Always queued for the receiver, when `RESERVE_ALERTS_ENABLED=true`:
 
 - `OPS_WALLET_LOW`: an operating wallet below its minimum (next section).
-- `RECONCILIATION_MISMATCH`: a SOL market's fee ledger, or the platform's revenue and liquidity ledgers, stopped matching the chain (`src/reconcile.mjs` `createReconcileEpisodes`):
-  - a ledger **behind** the chain (fees from a trade the worker has not recorded yet), a claim in flight or a failed read normally clears by itself, so it alerts only after it has lasted **15 minutes**;
-  - anything else alerts **at once**: a ledger ahead of the chain, a claim or withdrawal difference, a pool that is not the market's, a reconciliation that itself fails, a platform ledger problem;
-  - there is **one alert per kind of mismatch per six hours**. Trades moving the amounts, the state flickering between passes, a restarted worker and a second worker never repeat it, and a problem that persists is announced again every six hours. After a real mismatch, lag in the same episode adds nothing. A match ends the episode;
-  - the 15-minute hold lives in the worker process, so it starts again after a restart.
+- `RECONCILIATION_MISMATCH`: a ledger that has stayed unmatched, or could not be checked, for **15 minutes** (`src/ledger-alerts.mjs`, `src/reconcile.mjs` `createReconcileEpisodes`):
+  - **What is watched:** each SOL market's fee ledger, the platform's revenue and liquidity ledgers, and the monitor's own chain checks. While both RPC providers cannot be verified, no ledger is checked at all; that is an alert of its own.
+  - **One rule:** an episode runs from the first pass that does not match to the next that does, and alerts once it has lasted 15 minutes, whatever kept it from matching:
+    - the ledger behind the chain (fees from a trade the worker has not recorded yet; this normally clears in under a minute);
+    - a claim in flight, or a read that keeps failing;
+    - the ledger ahead of the chain, or a claim or withdrawal difference;
+    - a pass that fails before it reaches the ledger (for example a pool that is not the market's), which leaves the ledger unchecked.
+  - A ledger that matches again inside the 15 minutes never alerts.
+  - **Repeats:** while an episode lasts it is announced again every six hours. A new episode is a new alert.
+  - **Many at once:** an RPC or database fault touches every market in the same pass. One pass sends at most three new fee-ledger alerts one by one. The rest are recorded with `detail.delivery` `{"status":"off","reason":"SUMMARIZED"}`, and one alert says how many there are.
+  - **Restarts:** the hold lives in the worker process. After a restart, a ledger that still does not match alerts again once it has been seen unmatched for 15 minutes.
 
 The alert text uses fixed wording: a reason is sent only when it is one of this codebase's own, never a failed read's message. `RECONCILIATION_MISMATCH` alerts recorded before these were delivered carry no `detail.delivery` and are left as they are.
 

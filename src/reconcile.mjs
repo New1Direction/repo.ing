@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
@@ -37,53 +36,40 @@ export function chainAheadOfLedger(result) {
   return difference !== null && difference > 0n
 }
 
-// How long a state that may be a moment's lag is held before it alerts (the stock reconciler's STOCK_RECONCILE_LAG_MS).
-// After a trade the worker records its fees in a median ~30 s, up to ~10 min.
-export const RECONCILE_LAG_MS = 15 * 60_000
+// How long a ledger must stay unmatched before it alerts. After a trade the worker records its fees in a median ~30 s, up
+// to ~10 min; a failed read or a lagging RPC node clears within a pass or two. (The stock reconciler holds its lagging
+// states as long: STOCK_RECONCILE_LAG_MS.)
+export const RECONCILE_HOLD_MS = 15 * 60_000
 // A problem that persists is announced again once per period, so one missed or failed notification is not the last word.
 export const RECONCILE_REPEAT_MS = 6 * 60 * 60_000
-// An episode nobody has observed for this long is over: the market's passes were failing before they reached its ledger.
+// An episode nobody has settled for this long is over: the passes were not reaching the ledger, and what they would have
+// found is unknown.
 export const RECONCILE_STALE_MS = 10 * 60_000
-// States that may be a moment's lag: the chain ahead of the ledger, a claim in flight, a read that failed. A pool that was
-// read and is not this market's is none of those.
+// States that normally clear by themselves: the chain ahead of the ledger, a claim in flight, a read that failed. A pool
+// that was read and is not this market's is none of those. Decides an alert's wording, not whether it is raised.
 export const reconcileLagging = result => result?.status === 'PENDING_REVIEW' || (result?.status === 'UNAVAILABLE' && result.reason !== POOL_IDENTITY_MISMATCH) ||
   chainAheadOfLedger(result)
 
-// The kind of a mismatch, without its amounts: its reason, and which way the creator and partner sides differ. A persistent
-// mismatch keeps its kind while trades move the amounts.
-const sign = value => value === null ? '?' : value > 0n ? '+' : value < 0n ? '-' : '0'
-const gap = (onchain, ledger) => { const a = amount(onchain), b = amount(ledger); return a === null || b === null ? null : a - b }
-export function reconcileMismatchKind(result) {
-  const platform = result.platform ? sign(gap(result.platform.onchainEarned, result.platform.earned)) + sign(gap(result.platform.onchainClaimed, result.platform.claimed)) : ''
-  return [result.status, result.reason ?? '', sign(amount(result.difference)), platform].join(':')
-}
-
-// When a ledger that stopped matching becomes an operator alert (the model of the stock reconciler's runner,
-// src/stock-reconcile.mjs). settle(key, result) returns null, or { key, lagging, since } to alert on.
-// - An episode runs from the first pass that does not MATCH to the next that does.
-// - A lagging state alerts only once it has lasted lagMs. A real mismatch alerts at once, and from then on lag in the same
-//   episode adds nothing: on a trading market a real mismatch and a moment's lag take turns from pass to pass.
-// - The alert's key names the kind of mismatch and the repeat period it falls in, nothing else. So trades moving the
-//   amounts, the state flickering, a restarted worker and a second worker all raise the same alert (the caller's unique
-//   event key keeps one row), and a problem that persists is announced again once per repeatMs.
-// - Episodes live in this process. A restart begins the lag hold again; it never repeats an alert.
-export function createReconcileEpisodes({ now = Date.now, lagMs = RECONCILE_LAG_MS, repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
+// When a ledger that stopped matching becomes an operator alert. settle(key, result) returns null, or
+// { key, lagging, since } to alert on.
+// - An episode runs from the first pass that does not MATCH to the next that does. Its state may change on the way (lag and
+//   a real mismatch take turns on a trading market, a read fails now and then): it stays one episode.
+// - It alerts once it has lasted holdMs, whatever kept it from matching, and again once per repeatMs for as long as it
+//   lasts. A ledger that matches again inside the hold never alerts.
+// - The key is the episode's start and its repeat period, so the caller's unique event key keeps one alert per period. A new
+//   episode is a new alert.
+// - Episodes live in this process. After a restart, a ledger that still does not match starts a new episode and alerts once
+//   that has lasted holdMs.
+export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOLD_MS, repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
   const episodes = new Map()
-  return { settle(key, result, kindOf = reconcileMismatchKind) {
+  return { settle(key, result) {
     if (result?.status === 'MATCH') { episodes.delete(key); return null }
-    const at = now()
-    let episode = episodes.get(key)
-    if (!episode || at - episode.seen > staleMs) episodes.set(key, episode = { first: at, lagFirst: null, real: false })
+    const at = now(), known = episodes.get(key)
+    const episode = known && at - known.seen <= staleMs ? known : { first: at }
     episode.seen = at
-    const lagging = reconcileLagging(result)
-    if (lagging) {
-      if (episode.real) return null
-      episode.lagFirst ??= at
-      if (at - episode.lagFirst < lagMs) return null
-    } else episode.real = true
-    const kind = createHash('sha256').update(lagging ? 'lagging' : kindOf(result)).digest('hex').slice(0, 16)
-    return { key: `${lagging ? 'lagging' : 'mismatch'}:${kind}:${Math.floor(at / repeatMs)}`, lagging,
-      since: new Date(lagging ? episode.lagFirst : episode.first).toISOString() }
+    episodes.set(key, episode)
+    if (at - episode.first < holdMs) return null
+    return { key: `${episode.first}:${Math.floor((at - episode.first) / repeatMs)}`, lagging: reconcileLagging(result), since: new Date(episode.first).toISOString() }
   } }
 }
 

@@ -89,7 +89,11 @@ test('P5 detects one real local graduation, indexes actual DAMM trades, alerts a
   await assert.rejects(readGraduationState({connection,verification,config,market:{...market,mint:trader.publicKey.toBase58()},env}),/approved DBC config/)
   await cycle()
   await pool.query('insert into platform_fee_events(github_repo_id,pool,position,slot,amount_base_units,cumulative_earned,cumulative_claimed,evidence_hash,evidence) values($1,$2,$3,1,1,999999999,0,$4,$5)',[repoId,snapshot.pool.toBase58(),snapshot.partner.position.toBase58(),'x'.repeat(64),'{}'])
-  const mismatch=await monitor().runOnce()
+  // A ledger alerts once it has stayed unmatched for the hold (src/ledger-alerts.mjs): the monitor's own default holds this
+  // one back, and with no hold it is raised on the pass that finds it.
+  const held=await monitor().runOnce()
+  assert.equal(held[0].reconciliation,'MISMATCH');assert.ok(!held[0].alerts.some(a=>a.kind==='RECONCILIATION_MISMATCH'))
+  const mismatch=await monitor({holdMs:0}).runOnce()
   assert.equal(mismatch[0].reconciliation,'MISMATCH');assert.ok(mismatch[0].alerts.some(a=>a.kind==='RECONCILIATION_MISMATCH'))
   // Same shape the public curve route reads: the durable migration proof hash comes from graduation_events.
   const mismatchedRow=(await pool.query(`select o.*,e.evidence_hash as migration_evidence_hash from graduation_observations o
