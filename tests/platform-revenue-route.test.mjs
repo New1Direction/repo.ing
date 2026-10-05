@@ -21,7 +21,7 @@ const TXS = JSON.parse(readFileSync(new URL('./fixtures/repoing-buyback-transact
 const custodyBuy = BUYBACK_RECEIPTS.find(receipt => receipt.source === 'custody'), teamBuy = BUYBACK_RECEIPTS.find(receipt => receipt.source === 'team')
 // A ledger with nothing claimed: totals are zero and lists are empty. With a buyback share, it also has one allocation.
 const ZERO = { amount: '0', buyback: '0', liquidity: '0', treasury: '0', assigned: '0', n: 0, b: '0', s: '0' }
-function ledger({ buybackShare = null, fault = null } = {}) {
+function ledger({ buybackShare = null, fault = null, connectFault = null } = {}) {
   const statements = []
   const query = async (sql, params = []) => {
     const text = sql.replace(/\s+/g, ' ').trim()
@@ -35,39 +35,41 @@ function ledger({ buybackShare = null, fault = null } = {}) {
     }
     return { rows: /count\(\*\)|coalesce\(sum/.test(text) && !/group by/.test(text) ? [ZERO] : [] }
   }
-  return { statements, query, connect: async () => ({ query, release() {} }) }
+  return { statements, query, connect: async () => { if (connectFault) throw connectFault; return { query, release() {} } } }
 }
+const found = call => Response.json({ jsonrpc: '2.0', id: call.id, result: TXS[call.params[0]] ?? null })
 
-async function asOperator(run, { pool = ledger(), rpcStatus = 200 } = {}) {
+// rpc: how the provider answers a call (default: the fixture transaction, or null for an unknown signature).
+// env: settings on top of the operator's (undefined removes one).
+async function asOperator(run, { pool = ledger(), rpc: provider = found, env = {} } = {}) {
   const endpoints = globalThis.__repoingRpcEndpoints
   const saved = { env: Object.fromEntries(ENV.map(key => [key, process.env[key]])), pool: globalThis.__gitfunPool, meter: globalThis.__repoingRpcMeter,
     endpoint: endpoints.get(RPC_URL), warn: console.warn }
-  Object.assign(process.env, { GITHUB_APP_CLIENT_SECRET: randomBytes(32).toString('hex'), PLATFORM_OPERATOR_GITHUB_IDS: '123', APP_ORIGIN: 'https://repo.ing',
-    DATABASE_URL: 'postgres://test-only', PLATFORM_PARTNER_SECRET_KEY: JSON.stringify([...Keypair.generate().secretKey]),
-    PLATFORM_FEE_TREASURY_WALLET: BUYBACK_WALLETS.custody })
-  delete process.env.SOLANA_RPC_URL
-  globalThis.__gitfunPool = pool
-  const rpc = [], warned = []
-  // Every RPC call is answered here; nothing reaches a network. The transaction reader asks the endpoint directly.
-  const answer = async (_url, init) => {
-    const call = JSON.parse(init.body)
-    rpc.push([call.method, call.params?.[1]?.maxSupportedTransactionVersion])
-    if (rpcStatus !== 200) return new Response('{"note":"the provider says the limit exceeds your plan"}', { status: rpcStatus })
-    return Response.json({ jsonrpc: '2.0', id: call.id, result: TXS[call.params[0]] ?? null })
-  }
-  globalThis.__repoingRpcMeter = { fetch: answer }
-  registerRpcEndpoint(RPC_URL, answer)
-  clearFinalizedTransactionCache()
-  console.warn = (...line) => warned.push(line)
-  const cookie = encryptGithubSession({ scope: 'builders', repoId: null, permission: 'identity', githubUserId: '123', accessToken: 'ghu_test_only',
-    sessionId: randomBytes(24).toString('hex'), expiresAt: Date.now() + 60000 })
-  const request = body => ({ url: 'https://repo.ing/api/platform-revenue', headers: new Headers({ origin: 'https://repo.ing' }),
-    cookies: { get: () => ({ value: cookie }) }, json: async () => body })
-  const record = async (signature, review) => {
-    const response = await revenue.POST(request({ action: 'intent.import', signature, review: review ?? (await (await revenue.GET(request())).json()).reviews.import }))
-    return [response.status, await response.json()]
-  }
-  try { return await run({ request, record, pool, rpc, warned }) } finally {
+  try {
+    const settings = { GITHUB_APP_CLIENT_SECRET: randomBytes(32).toString('hex'), PLATFORM_OPERATOR_GITHUB_IDS: '123', APP_ORIGIN: 'https://repo.ing',
+      DATABASE_URL: 'postgres://test-only', PLATFORM_PARTNER_SECRET_KEY: JSON.stringify([...Keypair.generate().secretKey]),
+      PLATFORM_FEE_TREASURY_WALLET: BUYBACK_WALLETS.custody, SOLANA_RPC_URL: undefined, ...env }
+    for (const [key, value] of Object.entries(settings)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
+    globalThis.__gitfunPool = pool
+    const rpc = [], warned = []
+    // Every RPC call is answered here; nothing reaches a network. The transaction reader asks the endpoint directly.
+    const answer = async (_url, init) => {
+      const call = JSON.parse(init.body)
+      rpc.push([call.method, call.params?.[1]?.maxSupportedTransactionVersion])
+      return provider(call)
+    }
+    globalThis.__repoingRpcMeter = { fetch: answer }
+    registerRpcEndpoint(RPC_URL, answer)
+    clearFinalizedTransactionCache()
+    console.warn = (...line) => warned.push(line)
+    const cookie = encryptGithubSession({ scope: 'builders', repoId: null, permission: 'identity', githubUserId: '123', accessToken: 'ghu_test_only',
+      sessionId: randomBytes(24).toString('hex'), expiresAt: Date.now() + 60000 })
+    const request = (body, { signedIn = true } = {}) => ({ url: 'https://repo.ing/api/platform-revenue', headers: new Headers({ origin: 'https://repo.ing' }),
+      cookies: { get: () => signedIn ? { value: cookie } : undefined }, json: async () => { if (body instanceof Error) throw body; return body } })
+    const post = async (body, options) => { const response = await revenue.POST(request(body, options)); return [response.status, await response.json()] }
+    const record = async (signature, review) => post({ action: 'intent.import', signature, review: review ?? (await (await revenue.GET(request())).json()).reviews.import })
+    return await run({ request, post, record, pool, rpc, warned })
+  } finally {
     for (const [key, value] of Object.entries(saved.env)) { if (value === undefined) delete process.env[key]; else process.env[key] = value }
     globalThis.__gitfunPool = saved.pool; globalThis.__repoingRpcMeter = saved.meter; console.warn = saved.warn
     if (saved.endpoint) endpoints.set(RPC_URL, saved.endpoint); else endpoints.delete(RPC_URL)
@@ -110,20 +112,54 @@ test('a refusal says why, in the service\'s own fixed words', () => asOperator(a
   assert.deepEqual(warned, [])
 }, { pool: ledger({ buybackShare: '1000' }) }))
 
-test('a provider failure is answered in fixed words and logged by kind, never echoed', () => asOperator(async ({ record, warned }) => {
-  const [status, body] = await record(custodyBuy.signature)
-  assert.deepEqual([status, body], [409, { status: 'failed', error: BUYBACK_IMPORT_REFUSALS.unread }])
-  assert.deepEqual(warned, [['platform_revenue_failed', { where: 'intent.import', code: 503 }]])
-}, { rpcStatus: 503 }))
+test('a provider failure is answered in fixed words and logged by kind, never echoed', async () => {
+  const failing = (rpc, refusal, code) => asOperator(async ({ record, warned, pool }) => {
+    assert.deepEqual(await record(custodyBuy.signature), [409, { status: 'failed', error: refusal }])
+    assert.deepEqual(warned, [['platform_revenue_failed', { where: 'intent.import', code }]])
+    assert.ok(!pool.statements.some(statement => /pg_advisory_lock/.test(statement)), 'the ledger lock was never taken')
+  }, { rpc })
+  // An HTTP failure, with the provider's own words in the body.
+  await failing(() => new Response('{"note":"the provider says the limit exceeds your plan"}', { status: 503 }), BUYBACK_IMPORT_REFUSALS.unread, 503)
+  // A JSON-RPC error on a successful HTTP response.
+  await failing(call => Response.json({ jsonrpc: '2.0', id: call.id, error: { code: -32004, message: 'Block not available for slot' } }), BUYBACK_IMPORT_REFUSALS.unread, 'error')
+  // A transaction format the reader does not know: trying again would not help, and it says so.
+  await failing(call => Response.json({ jsonrpc: '2.0', id: call.id, result: { ...TXS[call.params[0]], version: 2 } }), BUYBACK_IMPORT_REFUSALS.unreadable, 'error')
+})
 
-test('a fault is logged with its kind; an expired review is not a fault', async () => {
+const GENERAL = { status: 'failed', error: 'Refresh this page to review platform revenue and try again.' }
+
+test('whatever is answered in general words is logged by kind, so a route that stopped working cannot go unnoticed', async () => {
+  // The database is gone while the summary is read.
   await asOperator(async ({ request, warned }) => {
     const response = await revenue.GET(request())
     assert.deepEqual([response.status, (await response.json()).error], [503, 'Platform revenue is temporarily unavailable. Try refreshing.'])
     assert.deepEqual(warned, [['platform_revenue_failed', { where: 'summary', code: '57P01' }]])
   }, { pool: ledger({ fault: Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }) }) })
+  // A fault in the code itself, the kind that kept this route broken for a week.
   await asOperator(async ({ record, warned }) => {
-    assert.deepEqual(await record(custodyBuy.signature, 'not-a-review'), [409, { status: 'failed', error: 'Refresh this page to review platform revenue and try again.' }])
-    assert.deepEqual(warned, [])
-  })
+    assert.deepEqual(await record(custodyBuy.signature), [409, GENERAL])
+    assert.deepEqual(warned, [['platform_revenue_failed', { where: 'intent.import', code: 'ReferenceError' }]])
+  }, { pool: ledger({ connectFault: new ReferenceError('partnerSigner is not defined') }) })
+  // A setting that is missing on the service.
+  await asOperator(async ({ post, warned }) => {
+    assert.deepEqual(await post({ action: 'intent.simulate', id: 1 }), [409, GENERAL])
+    assert.deepEqual(warned, [['platform_revenue_failed', { where: 'intent.simulate', code: 'error' }]])
+  }, { env: { PLATFORM_PARTNER_SECRET_KEY: undefined } })
 })
+
+test('ordinary refusals are not faults: an old review, an unknown action, a request from another page', () => asOperator(async ({ request, post, record, warned }) => {
+  assert.deepEqual(await record(custodyBuy.signature, 'not-a-review'), [409, GENERAL])
+  assert.deepEqual(await post({ action: 'intent.remove' }), [409, GENERAL])
+  // A name every object has is not an action.
+  assert.deepEqual(await post({ action: 'constructor' }), [409, GENERAL])
+  assert.deepEqual(await post(null), [409, GENERAL])
+  const elsewhere = { ...request({ action: 'allocate' }), headers: new Headers({ origin: 'https://example.com' }) }
+  assert.equal((await revenue.POST(elsewhere)).status, 409)
+  assert.deepEqual(warned, [])
+}))
+
+test('an anonymous request is refused before its body is read, and logs nothing', () => asOperator(async ({ post, warned }) => {
+  assert.deepEqual(await post(new SyntaxError('Unexpected token'), { signedIn: false }), [401, { error: 'Sign in with your operator GitHub account.' }])
+  assert.deepEqual(await post({ action: 'intent.import', signature: custodyBuy.signature }, { signedIn: false }), [401, { error: 'Sign in with your operator GitHub account.' }])
+  assert.deepEqual(warned, [])
+}))

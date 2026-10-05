@@ -25,7 +25,9 @@ test('reproduces every hand-verified receipt exactly (legacy DBC and v1 DAMM, te
 test('resolves v0 lookup-table keys in account order', () => {
   const raw = tx('QBN3'), keys = raw.transaction.message.accountKeys
   const expected = detectBuyback(raw, team)
-  const moved = keys.splice(keys.length - 6)
+  // Everything after the signer and the two programs' first accounts comes from the table: the pool vault and the wallet's
+  // token account are read through it.
+  const moved = keys.splice(3)
   raw.version = 0
   raw.meta.loadedAddresses = { writable: moved.slice(0, 3), readonly: moved.slice(3) }
   assert.ok(moved.includes('9gu44zqNnRCxCt9jkrAmC3UBczYyuLbeJvGDsRJfYbur') || keys.includes('9gu44zqNnRCxCt9jkrAmC3UBczYyuLbeJvGDsRJfYbur'))

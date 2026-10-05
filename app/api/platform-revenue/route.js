@@ -10,13 +10,15 @@ const headers = { 'Cache-Control': 'private, no-store' }
 // Refusals whose own fixed wording (src/platform-revenue.mjs) is safe to show an operator as it is.
 const SHOWN = new Set([...Object.values(BUYBACK_IMPORT_REFUSALS), 'Buyback amount exceeds the remaining reserve for this allocation',
   'Intent exceeds the remaining buyback reserve'])
-// A fault (a missing import, a database or provider error) is answered in general words; its kind is logged so it cannot go
-// unnoticed. A refusal the service worded itself is a plain Error and is not a fault: null.
+// Refusals that are part of ordinary use and answered in general words: an old review, a request from another page.
+const ROUTINE = new Set(['Review expired', 'Unsupported platform revenue action', 'Open the claim page on repo.ing and try again'])
+// Anything else that is answered in general words, or could not be read from the chain, is logged by kind (a missing
+// import, a missing setting, a database or provider error), so a route that stopped working cannot go unnoticed.
 function faultKind(error) {
   const fault = error?.cause ?? error
-  return fault?.status ?? fault?.code ?? (fault?.name && fault.name !== 'Error' ? fault.name : error?.cause ? 'error' : null)
+  return fault?.status ?? fault?.code ?? (fault?.name && fault.name !== 'Error' ? fault.name : 'error')
 }
-const logFault = (where, kind) => console.warn('platform_revenue_failed', { where, code: kind })
+const logFault = (where, error) => console.warn('platform_revenue_failed', { where, code: faultKind(error) })
 
 function service() {
   const partner = partnerSigner()
@@ -52,7 +54,7 @@ export async function GET(request) {
       import: seal({ purpose: 'platform-revenue-intent.import', sessionId: session(request).sessionId,
         expiresAt: Date.now() + 10 * 60_000 }) } }, { headers })
   } catch (error) {
-    logFault('summary', faultKind(error) ?? 'error')
+    logFault('summary', error)
     return Response.json({ error: 'Platform revenue is temporarily unavailable. Try refreshing.' }, { status: 503, headers })
   }
 }
@@ -61,8 +63,9 @@ export async function POST(request) {
   let name = 'request'
   try {
     assertSameOrigin(request, publicOrigin(request.url))
-    const body = await request.json()
+    // The operator is checked before the body is read: an anonymous request is answered 401 whatever it sent.
     const current = session(request)
+    const body = await request.json()
     const actions = {
       'policy.create': () => {
         const review = reviewed(body, 'policy.create', current)
@@ -99,17 +102,17 @@ export async function POST(request) {
       'intent.simulate': () => service().simulateIntent({ id: Number(body.id) }),
       'intent.execute': () => service().executeIntent({ id: Number(body.id) }),
     }
-    const action = actions[body.action]
-    if (!action) throw Error('Unsupported platform revenue action')
+    if (!Object.hasOwn(actions, body?.action)) throw Error('Unsupported platform revenue action')
     name = body.action
+    const action = actions[name]
     return Response.json({ result: await action() }, { headers })
   } catch (error) {
-    if (error.status) return Response.json({ error: error.message }, { status: error.status, headers })
-    const message = /execution is disabled/.test(error.message) ? 'Buyback execution is disabled until the canonical $REPOING configuration exists.' :
-      /No claimed platform revenue/.test(error.message) ? 'No claimed platform revenue is available to allocate.' :
-      SHOWN.has(error.message) ? error.message : null
-    const kind = faultKind(error)
-    if (kind !== null) logFault(name, kind)
+    if (error?.status) return Response.json({ error: error.message }, { status: error.status, headers })
+    const said = String(error?.message ?? '')
+    const message = /execution is disabled/.test(said) ? 'Buyback execution is disabled until the canonical $REPOING configuration exists.' :
+      /No claimed platform revenue/.test(said) ? 'No claimed platform revenue is available to allocate.' :
+      SHOWN.has(said) ? said : null
+    if (error?.cause || (message === null && !ROUTINE.has(said))) logFault(name, error)
     return Response.json({ status: 'failed', error: message ?? 'Refresh this page to review platform revenue and try again.' }, { status: 409, headers })
   }
 }

@@ -1,6 +1,7 @@
 import { PublicKey } from '@solana/web3.js'
 import { rpcFetch } from './rpc-usage.mjs'
 
+export const UNSUPPORTED_TRANSACTION_SHAPE = 'Finalized transaction has an unsupported or incomplete RPC shape'
 // web3.js 1.98 parses legacy and v0 transactions but rejects Solana v1 messages.
 // The official JSON RPC shape has compiled instructions for all three versions.
 export function normalizeFinalizedTransaction(raw, signature) {
@@ -9,7 +10,7 @@ export function normalizeFinalizedTransaction(raw, signature) {
       raw.transaction?.signatures?.[0] !== signature ||
       !Array.isArray(raw.transaction?.message?.accountKeys) ||
       !Array.isArray(raw.transaction?.message?.instructions) || !raw.meta) {
-    throw new Error('Finalized transaction has an unsupported or incomplete RPC shape')
+    throw new Error(UNSUPPORTED_TRANSACTION_SHAPE)
   }
   const keys = [
     ...raw.transaction.message.accountKeys,

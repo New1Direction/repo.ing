@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { PublicKey } from '@solana/web3.js'
 import { BUYBACK_IMPORT_REFUSALS, createPlatformRevenue } from '../src/platform-revenue.mjs'
 import { normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
+import { detectBuyback } from '../src/buyback-detection.mjs'
 import { BUYBACK_RECEIPTS, BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
 import { OFFICIAL_TOKEN } from '../app/lib/official-token.mjs'
 
@@ -27,6 +28,7 @@ function ledger({ remaining = 10_000_000_000n, group = GROUP, recorded = false }
     if (/^select policy_version from platform_revenue_allocations where allocation_group=\$1/.test(text)) return { rows: params[0] === group ? [{ policy_version: 1 }] : [] }
     if (/sum\(buyback_amount\)/.test(text)) return { rows: [{ buyback: String(remaining) }] }
     if (/sum\(amount\).* as assigned/.test(text)) return { rows: [{ assigned: '0' }] }
+    if (/^select 1 from buyback_intents where idempotency_key=\$1 or signature=\$2/.test(text)) return { rows: recorded === 'before' ? [{}] : [] }
     if (/^insert into buyback_intents/.test(text)) {
       if (recorded) return { rows: [] }
       inserted.push(params)
@@ -85,11 +87,12 @@ test('legacy, v0 with lookup tables and v1 transactions are all read', async () 
     assert.equal((await importer({ wallet: BUYBACK_WALLETS.team }).record(known.signature)).amount, known.spentLamports)
   }
   assert.deepEqual(versions, new Set(['legacy', 1]))
-  // The same custody buy as a v0 transaction: its last six accounts come from an address lookup table.
+  // The same custody buy as a v0 transaction. Every account after the third comes from an address lookup table, so the pool
+  // vault and the wallet's token account are both read through it.
   const known = custodyBuys[0]
   const asV0 = tx => {
-    const moved = tx.transaction.message.accountKeys.splice(-6)
-    return Object.assign(tx, { version: 0, meta: { ...tx.meta, loadedAddresses: { writable: moved.slice(0, 3), readonly: moved.slice(3) } } })
+    const moved = tx.transaction.message.accountKeys.splice(3)
+    return Object.assign(tx, { version: 0, meta: { ...tx.meta, loadedAddresses: { writable: moved.slice(0, 5), readonly: moved.slice(5) } } })
   }
   const plain = importer(), tabled = importer({ loadTransaction: reader(asV0) })
   await plain.record(known.signature)
@@ -111,6 +114,18 @@ test('anything the worker would not publish as a custody buyback is refused befo
   // The same buy with the tokens also leaving one of the wallet's accounts: ambiguous, so not a receipt.
   await refused(custodyBuys[0].signature, { loadTransaction: reader(tx => {
     tx.meta.preTokenBalances.push({ accountIndex: 99, mint: OFFICIAL_TOKEN.mint, owner: BUYBACK_WALLETS.custody, uiTokenAmount: { amount: '5' } })
+    return tx
+  }) })
+  // The same buy before the buyback window opened (BUYBACK_SINCE): the launch and early buys are not buybacks.
+  await refused(custodyBuys[0].signature, { loadTransaction: reader(tx => { tx.blockTime = Date.parse('2026-09-27T20:59:59Z') / 1000; return tx }) })
+  // The same buy with a second account of the wallet also credited: no single account received the purchase.
+  await refused(custodyBuys[0].signature, { loadTransaction: reader(tx => {
+    const credit = { accountIndex: 7, mint: OFFICIAL_TOKEN.mint, owner: BUYBACK_WALLETS.custody }
+    assert.ok(!tx.meta.postTokenBalances.some(balance => balance.accountIndex === credit.accountIndex), 'an account the transaction did not already use for a token')
+    tx.meta.preTokenBalances.push({ ...credit, uiTokenAmount: { amount: '0' } })
+    tx.meta.postTokenBalances.push({ ...credit, uiTokenAmount: { amount: '1000' } })
+    // The worker would still publish it, with both credits summed.
+    assert.equal(detectBuyback(tx, { wallet: BUYBACK_WALLETS.custody, source: 'custody' }).tokenBaseUnits, String(BigInt(custodyBuys[0].tokenBaseUnits) + 1000n))
     return tx
   }) })
   // A failed transaction, and one the chain does not have.
@@ -135,6 +150,10 @@ test('a chain read that fails says so in fixed words, and no lock is taken', asy
     return true
   })
   assert.deepEqual(pool.statements, [])
+  // A transaction format the reader does not know is a different answer: trying again would not help.
+  const unknown = importer({ loadTransaction: reader(tx => { tx.version = 2; return tx }) })
+  await assert.rejects(unknown.record(custodyBuys[0].signature), { message: BUYBACK_IMPORT_REFUSALS.unreadable })
+  assert.deepEqual(unknown.pool.statements, [])
 })
 
 test('a buy larger than the allocation has left for buybacks is refused, and the ledger lock is released', async () => {
@@ -149,6 +168,10 @@ test('a buy larger than the allocation has left for buybacks is refused, and the
 
 test('the same buyback is recorded once; an unknown allocation is refused', async () => {
   const known = custodyBuys[0]
+  // Found already recorded, whatever the allocation has left; and recorded by someone else between that look and the write.
+  const before = ledger({ recorded: 'before', remaining: 0n })
+  await assert.rejects(importer({ pool: before }).record(known.signature), { message: BUYBACK_IMPORT_REFUSALS.recorded })
+  assert.ok(!before.statements.some(statement => /^insert/.test(statement)))
   await assert.rejects(importer({ pool: ledger({ recorded: true }) }).record(known.signature), { message: BUYBACK_IMPORT_REFUSALS.recorded })
   await assert.rejects(importer({ pool: ledger({ group: null }) }).record(known.signature), { message: BUYBACK_IMPORT_REFUSALS.group })
   const named = ledger()
