@@ -23,7 +23,7 @@ Every summary answers: gross earned per phase, claimed (settled into the recorde
 
 ## Allocation and reserve (P2.3)
 
-Each allocation consumes settled platform fee claims under the advisory lock. A unique index on `claim_signature` makes double allocation structurally impossible; parts always sum to the whole claim (check constraint). The buyback reserve equals buyback allocations minus settled buyback spend — zero spend until $REPO exists.
+Each allocation consumes settled platform fee claims under the advisory lock. A unique index on `claim_signature` makes double allocation structurally impossible; parts always sum to the whole claim (check constraint). The buyback reserve equals buyback allocations minus settled buyback intents and published buyback receipts (the custody and fee wallets, and team-wallet buys from 2026-09-29 23:00 UTC); buying beyond it is reported as "ahead".
 
 ## Intent state machine (P2.4–P2.5)
 
@@ -31,9 +31,16 @@ Each allocation consumes settled platform fee claims under the advisory lock. A 
 
 Execution requires `REPO_BUYBACK_EXECUTION_ENABLED=true` **plus** a complete, consistent configuration: canonical mint, treasury token account, approved venue, slippage and impact bounds, and min/max size bounds (see `.env.example`). Anything missing or malformed stops execution with an explicit error — no fallbacks. Even with the full gate, no venue implementation exists yet, so execution is impossible by construction until one is reviewed and deployed.
 
-## Manual buyback import (2026-09-28)
+## Manual buyback import (2026-09-28, revised 2026-10-05)
 
-Operator-executed swaps are recorded into the same settled-intent ledger through `intent.import` on the reviewed platform-revenue API (UI: `/operations/fees`). The finalized chain receipt is the authority: the server verifies custody-wallet SOL spent (net of network fee), a token gain on the canonical $REPOING mint, and custody ownership of the destination token account, then inserts a settled intent (`idempotency_key` = `import.<signature>`) that decrements the buyback reserve. Imported intents are excluded from the execution-gate reconciliation check, because the gate bounds protocol-initiated buybacks, not operator swaps already proven on-chain. Reserve coverage and spend totals include them.
+A buyback the operator made by hand, and that the worker's own detection missed, is recorded into the same settled-intent ledger through `intent.import` on the reviewed platform-revenue API (UI: `/operations/fees`). The finalized transaction is the authority, and it is read and judged exactly as the worker does it (`loadFinalizedTransaction`, then `detectBuyback` in `src/buyback-detection.mjs`): a successful buy of $REPOING through its own pool, paid by the custody wallet. Legacy, v0 and v1 transactions are all read, before the ledger lock is taken.
+
+- **Amount:** the swap input, as on a published receipt. The network fee, a tip and rent for a new account are not buyback spend.
+- **Bound:** a spend larger than the allocation's remaining buyback share is refused.
+- **Once:** the settled intent's `idempotency_key` is `import.` plus the first 56 characters of the signature, and a signature the worker also published is counted once.
+- **Reconciliation:** imported intents are excluded from the execution-gate check, because the gate bounds protocol-initiated buybacks, not operator swaps already proven on-chain. Reserve coverage and spend totals include them.
+
+From commit `1aa5989` (2026-09-28) until 2026-10-05 the route behind this action had lost its imports, so every request failed and no import was recorded. `tests/platform-revenue-route.test.mjs` and `tests/buyback-import.test.mjs` now cover the operator's own path.
 
 ## Verification
 

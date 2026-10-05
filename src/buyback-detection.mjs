@@ -19,6 +19,9 @@ function tokenDeltas(meta) {
   return [...accounts.values()].map(account => ({ ...account, delta: account.post - account.pre }))
 }
 
+// Every account of the transaction, in index order: its static keys, then the ones a lookup table loaded.
+const accountKeys = tx => [...tx.transaction.message.accountKeys, ...(tx.meta.loadedAddresses?.writable ?? []), ...(tx.meta.loadedAddresses?.readonly ?? [])].map(String)
+
 // A finalized, successful buy of $REPOING through the canonical pool paid by `wallet`, or null.
 // spentLamports is the swap input (trading and route fees included): WSOL gained by token accounts
 // the wallet does not own. Network fees and refundable rent are excluded. Anything ambiguous is null.
@@ -26,7 +29,7 @@ export function detectBuyback(tx, { wallet, source, mint = OFFICIAL_TOKEN.mint, 
   const meta = tx?.meta, message = tx?.transaction?.message
   if (!meta || meta.err !== null || !message || !Number.isSafeInteger(tx.blockTime)) return null
   if (tx.blockTime * 1000 < Date.parse(since)) return null
-  const keys = [...message.accountKeys, ...(meta.loadedAddresses?.writable ?? []), ...(meta.loadedAddresses?.readonly ?? [])].map(String)
+  const keys = accountKeys(tx)
   const payer = keys.indexOf(wallet)
   // Only a signer can spend its own SOL; the wallet must have paid.
   if (payer < 0 || payer >= message.header.numRequiredSignatures || !(BigInt(meta.postBalances[payer]) < BigInt(meta.preBalances[payer]))) return null
@@ -45,4 +48,11 @@ export function detectBuyback(tx, { wallet, source, mint = OFFICIAL_TOKEN.mint, 
   if (!signature) return null
   return { signature, source, wallet, mint, spentLamports: String(spentLamports), tokenBaseUnits: String(tokenBaseUnits),
     at: new Date(tx.blockTime * 1000).toISOString(), slot: String(tx.slot) }
+}
+
+// Where a buy that detectBuyback accepted put its tokens: the wallet's token account with the largest gain.
+export function buybackTokenAccount(tx, { wallet, mint = OFFICIAL_TOKEN.mint }) {
+  const gains = (tokenDeltas(tx.meta) ?? []).filter(account => account.mint === mint && account.owner === wallet && account.delta > 0n)
+  const largest = gains.reduce((best, account) => !best || account.delta > best.delta ? account : best, null)
+  return largest ? accountKeys(tx)[largest.index] : null
 }

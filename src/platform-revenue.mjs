@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { loadBuybackReceipts } from '../app/lib/buyback-receipts-db.mjs'
 import { BUYBACK_WALLETS } from '../app/lib/buyback-receipts.mjs'
+import { buybackTokenAccount, detectBuyback } from './buyback-detection.mjs'
+import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 
 // Canonical platform-revenue accounting. Builder and repository earnings are never
 // touched here: this ledger only covers revenue repo.ing owns (partner fees).
@@ -16,6 +18,16 @@ const REVENUE_LOCK = 'platform-revenue-allocation'
 // buys predate the policy and stay separate, so they don't pre-pay future platform buybacks.
 export const TEAM_BUYBACKS_COUNT_FROM = '2026-09-29T23:00:00.000Z'
 export const CUSTODY_FUNDED_BY = Object.freeze({ H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3: BUYBACK_WALLETS.custody })
+// Why recording a buyback by hand (importBuyback) is refused. Fixed wording, safe to show the operator as it is.
+export const BUYBACK_IMPORT_REFUSALS = Object.freeze({
+  signature: 'Invalid buyback signature',
+  unread: 'The buyback transaction could not be read from the chain. Try again in a moment.',
+  unfinalized: 'Buyback transaction is not a finalized success',
+  notBuyback: 'Not a $REPOING buy through its own pool, paid by the custody wallet',
+  group: 'Unknown allocation group',
+  reserve: 'Imported spend exceeds the remaining buyback reserve',
+  recorded: 'This buyback is already recorded',
+})
 
 export function buybackExecutionConfig(env = process.env) {
   if (env.REPO_BUYBACK_EXECUTION_ENABLED !== 'true') return null
@@ -273,35 +285,33 @@ export function createPlatformRevenue({ pool, partnerWallet }) {
     } finally { client.release() }
   }
 
-  async function importBuyback({ signature, allocationGroup, createdBy, connection, mint }) {
-    // Records an operator-executed on-chain buyback into the same settled-intent
-    // ledger the reviewed flow uses. The chain receipt is the authority: SOL spent,
-    // destination mint and treasury account all come from the finalized transaction.
-    if (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(signature ?? '')) throw Error('Invalid buyback signature')
+  // Records a buyback the operator made by hand, one the worker's own detection missed (src/buyback-receipts-job.mjs), as
+  // a settled intent. The same reader and the same detector decide, so both record the same thing: a finalized buy of the
+  // canonical token through its own pool, paid by this ledger's custody wallet. The spend is the swap input, as on a
+  // published receipt: the network fee, a tip and rent for a new account are not buyback spend.
+  async function importBuyback({ signature, allocationGroup, createdBy, connection, mint, loadTransaction = loadFinalizedTransaction }) {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(signature ?? '')) throw Error(BUYBACK_IMPORT_REFUSALS.signature)
     if (!connection) throw Error('A finalized chain connection is required to import a buyback')
-    const mintKey = mint && new PublicKey(mint)
-    if (!mintKey) throw Error('Canonical buyback mint is required')
+    if (!mint) throw Error('Canonical buyback mint is required')
+    const wallet = partnerWallet.toBase58(), token = new PublicKey(mint).toBase58()
+    // Read before the ledger lock is taken: a slow provider must not hold up an allocation.
+    let tx
+    try { tx = await loadTransaction(connection, signature) }
+    catch (cause) { throw Object.assign(Error(BUYBACK_IMPORT_REFUSALS.unread), { cause }) }
+    if (!tx?.meta || tx.meta.err) throw Error(BUYBACK_IMPORT_REFUSALS.unfinalized)
+    const receipt = detectBuyback(tx, { wallet, source: 'custody', mint: token })
+    const tokenAccount = receipt && buybackTokenAccount(tx, { wallet, mint: token })
+    if (!receipt || !tokenAccount || BigInt(receipt.spentLamports) <= 0n) throw Error(BUYBACK_IMPORT_REFUSALS.notBuyback)
+    const spent = BigInt(receipt.spentLamports)
     const client = await pool.connect()
     try {
       await client.query('select pg_advisory_lock(hashtextextended($1, 0))', [REVENUE_LOCK])
       try {
-        const receipt = await connection.getTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
-        if (!receipt?.meta || receipt.meta.err) throw Error('Buyback transaction is not a finalized success')
-        const keys = receipt.transaction.message.accountKeys
-        const index = keys.findIndex(key => key.equals(partnerWallet))
-        if (index < 0) throw Error('Custody wallet is absent from the buyback transaction')
-        const spent = BigInt(receipt.meta.preBalances[index]) - BigInt(receipt.meta.postBalances[index]) - BigInt(receipt.meta.fee)
-        if (spent <= 0n) throw Error('Transaction did not spend custody SOL beyond its network fee')
-        const gained = (receipt.meta.postTokenBalances ?? []).find(b => (b.mint?.toBase58?.() ?? b.mint) === mint)
-        const before = gained && (receipt.meta.preTokenBalances ?? []).find(b => b.accountIndex === gained.accountIndex)
-        if (!gained || !before || BigInt(gained.uiTokenAmount.amount) <= BigInt(before.uiTokenAmount.amount))
-          throw Error('No canonical token gain for the custody wallet in this transaction')
-        if (gained.owner !== partnerWallet.toBase58()) throw Error('Bought tokens are held outside the custody wallet')
         const group = allocationGroup ?? (await client.query(`select allocation_group from platform_revenue_allocations order by created_at desc limit 1`)).rows[0]?.allocation_group
         const { rows: [policyRow] } = await client.query(`select policy_version from platform_revenue_allocations
           where allocation_group=$1 limit 1`, [group])
-        if (!policyRow) throw Error('Unknown allocation group')
-        if (spent > await groupBuybackRemaining(client, group)) throw Error('Imported spend exceeds the remaining buyback reserve')
+        if (!policyRow) throw Error(BUYBACK_IMPORT_REFUSALS.group)
+        if (spent > await groupBuybackRemaining(client, group)) throw Error(BUYBACK_IMPORT_REFUSALS.reserve)
         const idempotencyKey = `import.${signature.slice(0, 56)}`
         const { rows: [intent] } = await client.query(`insert into buyback_intents
           (idempotency_key, allocation_group, amount, wallet_source, destination_mint, destination_token_account,
@@ -309,11 +319,11 @@ export function createPlatformRevenue({ pool, partnerWallet }) {
           values ($1,$2,$3,$4,$5,$6,$7,$8,'mainnet','settled', now() + interval '30 minutes', $9,
             to_timestamp($10), $11, $12)
           on conflict (idempotency_key) do nothing returning id, idempotency_key as "idempotencyKey",
-            amount::text as amount, status, signature`, [idempotencyKey, group, spent.toString(), partnerWallet.toBase58(),
-            mint, keys[gained.accountIndex].toBase58(), gained.uiTokenAmount.amount, policyRow.policy_version,
+            amount::text as amount, status, signature`, [idempotencyKey, group, spent.toString(), wallet,
+            token, tokenAccount, receipt.tokenBaseUnits, policyRow.policy_version,
             JSON.stringify({ purpose: 'manual-buyback-import', importedBy: createdBy, signature, source: 'operator-executed swap' }),
-            receipt.blockTime, signature, createdBy])
-        if (!intent) throw Error('This buyback is already recorded')
+            tx.blockTime, signature, createdBy])
+        if (!intent) throw Error(BUYBACK_IMPORT_REFUSALS.recorded)
         return intent
       } finally { await client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [REVENUE_LOCK]) }
     } finally { client.release() }
