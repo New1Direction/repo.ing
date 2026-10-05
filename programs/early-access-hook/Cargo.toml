@@ -1,0 +1,44 @@
+[package]
+name = "early-access-hook"
+version = "0.1.0"
+description = "repo.ing contributor early access: a Token-2022 transfer hook"
+edition = "2021"
+publish = false
+
+# Its own workspace: nothing else in this repository is Rust.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "early_access_hook"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "1.2.0"
+spl-transfer-hook-interface = "2.1.0"
+spl-tlv-account-resolution = "0.11.4"
+spl-discriminator = "0.5"
+spl-token-2022-interface = "2.1.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1
