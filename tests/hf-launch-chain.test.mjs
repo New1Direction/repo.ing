@@ -32,6 +32,8 @@ const GGUF = recorded['model-llama-2-7b-gguf'].body, THEBLOKE = recorded['user-t
 const REPOSITORY = { id: 1296269, name: 'Hello-World', full_name: 'octocat/Hello-World', description: 'My first repository on GitHub!',
   owner: { login: 'octocat', avatar_url: 'https://avatars.githubusercontent.com/u/583231?v=4' }, private: false, visibility: 'public',
   archived: false, updated_at: '2026-09-30T00:00:00Z', created_at: '2011-01-26T19:01:12Z', stargazers_count: 3000, forks_count: 900 }
+// The stub's answer to the fork guard's first-commit read (src/repo-lineage.mjs): one commit, one page.
+const REPOSITORY_API = 'https://api.github.com/repos/octocat/Hello-World', FIRST_COMMIT_API = `${REPOSITORY_API}/commits?per_page=1`, FIRST_COMMIT = 'a1'.repeat(20)
 const ENV = ['DATABASE_URL', 'DBC_CONFIG', 'PLATFORM_CREATOR_SECRET_KEY', 'HF_MARKETS_ENABLED', 'DISCOVERY_REWARDS_ENABLED',
   'PLATFORM_PARTNER_SECRET_KEY', 'BUILDER_ALLOCATION_CONFIGS', 'VERIFICATION_BONUS_LAMPORTS', 'APP_ORIGIN']
 
@@ -76,7 +78,7 @@ test('a model market launches end to end; a repository launch in the same run is
   const github = []
   globalThis.fetch = async (url, init) => {
     const href = String(url)
-    if (href.startsWith('https://api.github.com/')) { github.push(href); return Response.json(REPOSITORY) }
+    if (href.startsWith('https://api.github.com/')) { github.push(href); return Response.json(href === FIRST_COMMIT_API ? [{ sha: FIRST_COMMIT }] : REPOSITORY) }
     if (!/^http:\/\/(127\.0\.0\.1|localhost)[:/]/.test(href)) throw Error(`test fetch outside the local services: ${href}`)
     return saved.fetch(url, init)
   }
@@ -139,9 +141,10 @@ test('a model market launches end to end; a repository launch in the same run is
   assert.deepEqual(await marketRow('1296269'), [{ status: 'confirmed', mint: repoLaunched.mint, pool: repoLaunched.pool, signature: repoLaunched.signature,
     finality: 'finalized', indexed: true, launcher: wallet.publicKey.toBase58(), creator: creator.publicKey.toBase58(), tokenName: 'Hello Repo',
     tokenSymbol: 'HELLO', hasImage: true, discoveryVersion: DISCOVERY_VERSION, allocationVersion: 1, bonusLamports: '5000000' }])
-  const { rows: [repo] } = await pool.query(`select source, hf_model_ref, full_name as "fullName", stars, forks from repositories where github_repo_id = 1296269`)
-  assert.deepEqual(repo, { source: 'github', hf_model_ref: null, fullName: 'octocat/Hello-World', stars: 3000, forks: 900 })
-  assert.deepEqual([...new Set(github)], ['https://api.github.com/repos/octocat/Hello-World'])
+  const { rows: [repo] } = await pool.query(`select source, hf_model_ref, full_name as "fullName", stars, forks, root_commit as "rootCommit" from repositories where github_repo_id = 1296269`)
+  assert.deepEqual(repo, { source: 'github', hf_model_ref: null, fullName: 'octocat/Hello-World', stars: 3000, forks: 900, rootCommit: FIRST_COMMIT })
+  // GitHub is asked for the repository and, by the fork guard, its first commit; nothing else.
+  assert.deepEqual([...new Set(github)], [REPOSITORY_API, FIRST_COMMIT_API])
   assert.equal(hfServer.requests.length, modelRequests, 'a repository launch never asks Hugging Face')
   assert.equal((await pool.query('select count(*)::int as n from markets')).rows[0].n, 3)
 })

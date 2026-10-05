@@ -243,9 +243,11 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
       assert.deepEqual(selectWaiting(markets).map(market => market.repoId), [E])
 
       // octocat/Hello-World has no live GitHub market; the model market with that path must not answer for the GitHub URL.
-      const oldFetch = globalThis.fetch, requested = []
+      // GitHub is asked for the repository and, by the fork guard, its first commit (src/repo-lineage.mjs), stored on the GitHub row.
+      const oldFetch = globalThis.fetch, requested = [], api = 'https://api.github.com/repos/octocat/Hello-World', firstCommit = 'c'.repeat(40)
       globalThis.fetch = async url => {
         requested.push(String(url))
+        if (String(url) === `${api}/commits?per_page=1`) return Response.json([{ sha: firstCommit }])
         return Response.json({ id: Number(B), name: 'Hello-World', full_name: 'octocat/Hello-World', owner: { login: 'octocat', avatar_url: null },
           private: false, visibility: 'public', archived: false, updated_at: '2026-09-30T00:00:00Z', stargazers_count: 3001, forks_count: 900 })
       }
@@ -253,9 +255,10 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
         const response = await resolve(new Request('https://repo.ing/api/resolve', { method: 'POST', body: JSON.stringify({ url: 'github.com/octocat/Hello-World' }) }))
         assert.equal(response.status, 200)
         assert.deepEqual(await response.json(), { repoId: B, mint: null })
-        assert.deepEqual(requested, ['https://api.github.com/repos/octocat/Hello-World'])
+        assert.deepEqual(requested, [api, `${api}/commits?per_page=1`])
       } finally { globalThis.fetch = oldFetch }
-      assert.equal((await pool.query('select source from repositories where github_repo_id = $1', [B])).rows[0].source, 'github')
+      assert.deepEqual((await pool.query('select source, root_commit as "rootCommit" from repositories where github_repo_id = $1', [B])).rows[0],
+        { source: 'github', rootCommit: firstCommit })
     })
 
     await t.test('a GitHub batch binding that names a model market writes nothing', async () => {

@@ -88,16 +88,23 @@ test('real PostgreSQL: draft/retry/cancel do not reserve markets; renamed repos 
   const db = new pg.Client({ connectionString: url.href }); await db.connect(); await db.query('begin')
   try {
     await db.query(readFileSync('drizzle/0022_agent_request_limits.sql', 'utf8').replaceAll('CREATE TABLE', 'CREATE TEMPORARY TABLE'))
-    await db.query(`create temporary table repositories(github_repo_id bigint primary key, owner text,name text,full_name text,description text,avatar_url text,stars int,forks int,archived boolean,github_updated_at timestamptz,synced_at timestamptz default now(),github_created_at timestamptz);
+    // repositories carries the fork guard's columns (drizzle/0058_repository_lineage.sql): every statement here shares one
+    // transaction, so a read of a missing column would abort it for the statements after.
+    await db.query(`create temporary table repositories(github_repo_id bigint primary key, owner text,name text,full_name text,description text,avatar_url text,stars int,forks int,archived boolean,github_updated_at timestamptz,synced_at timestamptz default now(),github_created_at timestamptz,
+        root_commit varchar(40),fork_parent_id bigint,fork_parent_full_name text,lineage_checked_at timestamptz);
       create temporary table markets(github_repo_id bigint primary key,status text,launch_finality text,indexed_at timestamptz,mint text,pool text,launch_signature text,launcher_wallet text)`)
     await db.query(readFileSync('drizzle/0041_maintainer_opt_outs.sql', 'utf8').replaceAll('CREATE TABLE', 'CREATE TEMPORARY TABLE'))
     const repo = { githubRepoId: 123n, owner: 'owner', name: 'repo', fullName: 'owner/repo', stars: 1, forks: 0, archived: false, githubUpdatedAt: new Date() }
-    const options = { pool: db, origin: 'https://repo.ing', secret, config, discovery: true, allocation: true, candidates: async () => [], resolve: async () => repo, now: () => now }
+    // readRoot: the fork guard's first-commit read, stubbed so the test never reaches GitHub (null: an empty repository).
+    let rootReads = 0
+    const options = { pool: db, origin: 'https://repo.ing', secret, config, discovery: true, allocation: true, candidates: async () => [], resolve: async () => repo,
+      readRoot: async () => { rootReads++; return null }, now: () => now }
     const service = createAgentLaunchService(options)
     const draft = await service.createDraft({ repository: 'owner/repo' })
     assert.equal(draft.state, 'awaiting_browser_review'); assert.equal(draft.initialBuyPercent, 0)
     assert.equal(verifyLaunchDraft(new URL(draft.reviewUrl).searchParams.get('draft'), context).repoId, '123')
     const second = createAgentLaunchService(options); await second.createDraft({ repository: 'owner/repo' })
+    assert.equal(rootReads, 1, 'the retry uses the lineage the first draft stored')
     assert.equal((await db.query('select count(*)::int n from markets')).rows[0].n, 0)
     assert.equal((await service.getStatus({ repoId: '123' })).state, 'not_launched')
     await db.query("insert into markets values(123,'ambiguous',null,null,null,null,null,'other-wallet')")
