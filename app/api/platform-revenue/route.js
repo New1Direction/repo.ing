@@ -1,16 +1,19 @@
 import { requirePlatformOperator } from '../../lib/platform-operator.mjs'
-import { createPlatformRevenue, platformRevenueSummary } from '../../../src/platform-revenue.mjs'
+import { createPlatformRevenue, platformRevenueSummary, reconcilePlatformRevenue } from '../../../src/platform-revenue.mjs'
+import { chain, database, partnerSigner } from '../../lib/server.mjs'
 import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
 import { platformTreasuryWallet } from '../../../src/platform-dbc-fees.mjs'
 import { assertSameOrigin, githubSessionCookie, readGithubSession, seal, unseal } from '../../lib/auth.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'private, no-store' }
+// Why importBuyback (src/platform-revenue.mjs) refused a signature: its own fixed wording, safe to show an operator.
+const IMPORT_REFUSAL = /^(Invalid buyback signature|Buyback transaction is not a finalized success|Custody wallet is absent from the buyback transaction|Transaction did not spend custody SOL beyond its network fee|No canonical token gain for the custody wallet in this transaction|Bought tokens are held outside the custody wallet|Unknown allocation group|This buyback is already recorded)$/
 
 function service() {
   const partner = partnerSigner()
   if (!partner) throw Error('Platform revenue is not configured')
-  return createPlatformRevenue({ pool: database(), partnerWallet: platformTreasuryWallet(partner.publicKey), connection: chain() })
+  return createPlatformRevenue({ pool: database(), partnerWallet: platformTreasuryWallet(partner.publicKey) })
 }
 
 function session(request) {
@@ -65,7 +68,7 @@ export async function POST(request) {
         // Amount and destination are not reviewable before the fact: the finalized
         // chain receipt is the authority, verified inside importBuyback.
         return service().importBuyback({ signature: String(body.signature), allocationGroup: body.allocationGroup ?? null,
-          createdBy: current.githubUserId, mint: OFFICIAL_TOKEN.mint })
+          createdBy: current.githubUserId, mint: OFFICIAL_TOKEN.mint, connection: chain() })
       },
       'intent.create': () => {
         const review = reviewed(body, 'intent.create', current)
@@ -91,7 +94,9 @@ export async function POST(request) {
     if (error.status) return Response.json({ error: error.message }, { status: error.status, headers })
     const message = /execution is disabled/.test(error.message) ? 'Buyback execution is disabled until the canonical $REPOING configuration exists.' :
       /No claimed platform revenue/.test(error.message) ? 'No claimed platform revenue is available to allocate.' :
-      /exceeds/.test(error.message) ? error.message :
+      /exceeds/.test(error.message) || IMPORT_REFUSAL.test(error.message) ? error.message :
+      // importBuyback reads legacy and v0 transactions only.
+      /Transaction version/.test(error.message) ? 'This buyback uses a newer transaction format than this tool can read. The worker records custody and team buybacks on its own; check Buybacks on /stats.' :
       'Refresh this page to review platform revenue and try again.'
     return Response.json({ status: 'failed', error: message }, { status: 409, headers })
   }

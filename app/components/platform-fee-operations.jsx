@@ -134,7 +134,7 @@ export function PlatformFeeOperations() {
       </section>
       <section className="inner-card">
         <h2>Record a manual buyback</h2>
-        <p className="muted">Bought $REPOING from the custody wallet yourself? Paste the transaction signature. The server verifies the finalized receipt — custody SOL spent, canonical mint, treasury destination — before recording it as a settled buyback against the reserve.</p>
+        <p className="muted">Bought $REPOING from the custody wallet yourself? Paste the transaction signature. The server verifies the finalized receipt — custody SOL spent, canonical mint, treasury destination — before recording it as a settled buyback against the reserve. The worker already records custody and team buybacks on its own, so this is only for one it missed, and it must fit the newest allocation&apos;s buyback share.</p>
         <div className="operations-toolbar">
           <input className="text-input" style={{ flex: 1, minWidth: 240 }} placeholder="Transaction signature…" value={signatureInput}
             onChange={e => setSignatureInput(e.target.value)} aria-label="Buyback transaction signature"/>
