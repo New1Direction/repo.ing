@@ -11,6 +11,7 @@ import { settleConfirmedTrade } from '../../lib/trade-settlement.mjs'
 import { tradeRouter as trader } from '../../lib/trader.mjs'
 import { tradeSessions } from '../../lib/trade-sessions.mjs'
 import { publicError } from '../../lib/public-error.mjs'
+import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { statusOutcome, submitOutcome, trackTradeOutcome } from '../../lib/trade-tracking.mjs'
 import { recordReferredTrade } from '../../../src/referral-leaderboard.mjs'
 import { DEFAULT_SLIPPAGE_BPS, isPreflightSlippageError, parseSlippageBps, SLIPPAGE_EXCEEDED, slippageLabel, swapInstructionIndex } from '../../../src/trade-slippage.mjs'
@@ -38,10 +39,17 @@ function validSignature(signature) {
 export async function POST(request) {
   try {
     const body = await request.json()
-    if (body.action === 'depth') return Response.json(await (await trader()(body.githubRepoId)).buyDepth(body.githubRepoId), { headers: { 'Cache-Control': 'no-store' } })
+    // Each read action is counted once its input is valid and before it reads anything (app/lib/request-limits.mjs).
+    if (body.action === 'depth') {
+      const refused = refuseOverLimit(request, 'trade:depth')
+      if (refused) return refused
+      return Response.json(await (await trader()(body.githubRepoId)).buyDepth(body.githubRepoId), { headers: { 'Cache-Control': 'no-store' } })
+    }
     if (body.action === 'quote') {
       if (body.direction !== 'buy' && body.direction !== 'sell') throw new Error('Invalid trade direction')
       const slippageBps = parseSlippageBps(body.slippageBps)
+      const refused = refuseOverLimit(request, 'trade:quote')
+      if (refused) return refused
       const engine = await trader()(body.githubRepoId)
       const args = { githubRepoId: body.githubRepoId, wallet: body.wallet, slippageBps,
         [body.direction === 'sell' ? 'amountBaseUnits' : 'amountLamports']: body.amountBaseUnits }
@@ -51,6 +59,8 @@ export async function POST(request) {
     if (body.action === 'costs') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
       const slippageBps = parseSlippageBps(body.slippageBps)
+      const refused = refuseOverLimit(request, 'trade:costs')
+      if (refused) return refused
       const engine = await trader()(body.githubRepoId)
       const prepared = await prepareTrade(engine, body, null, slippageBps)
       // Read-only preview. Only prepare creates a signable session and simulates it.
@@ -59,6 +69,8 @@ export async function POST(request) {
     if (body.action === 'prepare') {
       if (!['buy', 'sell'].includes(body.direction)) throw new Error('Invalid trade direction')
       const slippageBps = parseSlippageBps(body.slippageBps)
+      const refused = refuseOverLimit(request, 'trade:prepare')
+      if (refused) return refused
       const engine = await trader()(body.githubRepoId)
       const build = referrer => prepareCheckedTrade({ engine, connection: chain(), direction: body.direction, githubRepoId: body.githubRepoId,
         wallet: body.wallet, amountBaseUnits: body.amountBaseUnits, referrer, slippageBps })
@@ -76,6 +88,8 @@ export async function POST(request) {
     }
     if (body.action === 'status') {
       if (!validSignature(body.signature)) throw new Error('Invalid transaction signature')
+      const refused = refuseOverLimit(request, 'trade:status')
+      if (refused) return refused
       const session = await tradeSessions().load(body.id).catch(() => null)
       if (session?.signature && session.signature !== body.signature) throw new Error('Transaction does not match prepared trade')
       const status = await tradeStatus(chain(), body.signature, session, body.lastValidBlockHeight)
