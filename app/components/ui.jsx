@@ -73,11 +73,12 @@ export function RepoAvatar({ repo, size = 'normal' }) {
   return <div className={`repo-avatar ${size}`}>{image ? <img src={image} alt="" width={px} height={px} loading={large ? 'eager' : 'lazy'} decoding="async" /> : placeholder}</div>
 }
 // Repositories and Hugging Face models alike: a model shows its source label where a repository shows "Public".
-export function RepoIdentity({ repo, compact = false, heading = false, children = null }) {
+// avatar: replaces the repository's own icon (the launch page shows the token image being picked there).
+export function RepoIdentity({ repo, compact = false, heading = false, children = null, avatar = null }) {
   const fullName = repo?.fullName ?? `${repo?.owner}/${repo?.name}`
   const slash = fullName.indexOf('/'), model = isModelMarket(repo)
   const displayName = slash < 0 ? fullName : <>{fullName.slice(0, slash + 1)}<wbr/>{fullName.slice(slash + 1)}</>
-  return <div className={`repo-identity ${compact ? 'compact' : ''}`}><RepoAvatar repo={repo} size={compact ? 'normal' : 'large'} /><div className="repo-identity-copy"><div className="repo-name-line">{heading ? <h1 className="repo-name-heading"><strong>{displayName}</strong></h1> : <strong>{displayName}</strong>}{!compact && (model ? <ModelSourceChip/> : <Badge>Public</Badge>)}</div>{children}<p>{repo?.description || (model ? 'Public Hugging Face model' : 'Public GitHub repository')}</p></div></div>
+  return <div className={`repo-identity ${compact ? 'compact' : ''}`}>{avatar ?? <RepoAvatar repo={repo} size={compact ? 'normal' : 'large'} />}<div className="repo-identity-copy"><div className="repo-name-line">{heading ? <h1 className="repo-name-heading"><strong>{displayName}</strong></h1> : <strong>{displayName}</strong>}{!compact && (model ? <ModelSourceChip/> : <Badge>Public</Badge>)}</div>{children}<p>{repo?.description || (model ? 'Public Hugging Face model' : 'Public GitHub repository')}</p></div></div>
 }
 export function RepoStats({ repo, detailed = false }) {
   if (isModelMarket(repo)) return <ModelStats view={modelView(repo)} detailed={detailed}/>

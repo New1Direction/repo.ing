@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ChevronDown, Image as ImageIcon, Info } from 'lucide-react'
 import { TokenImagePicker } from './token-image-picker'
+import { useShareLaunchTokenImage } from './launch-token-image'
 import { useWallet } from './wallet'
 import { LaunchSuccess } from './launch-success'
 import { TransactionStatus } from './ui'
@@ -65,6 +66,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const [balance, setBalance] = useState(null)
   const [launched, setLaunched] = useState(null)
   const [tokenImage, setTokenImage] = useState(null)
+  useShareLaunchTokenImage(tokenImage?.image)
   const [imageBusy, setImageBusy] = useState(true)
   // Agent drafts ask the user to confirm an image, so they start expanded.
   const [customizing, setCustomizing] = useState(!!draft)
