@@ -15,3 +15,11 @@ export function createDatabasePool(options, { log = console.error } = {}) {
   pool.on('error', () => {})
   return pool
 }
+
+// The end of a job that held a session-level advisory lock on its own connection: unlock, then release. The connection is
+// released whatever happens, and destroyed when the unlock failed (it is gone, or may still hold the lock). An unlock
+// that throws past release() would leave a dead connection counted against the pool's maximum for the life of the process.
+export async function releaseAfterUnlock(db, unlock) {
+  let broken = false
+  try { await unlock() } catch (error) { broken = true; throw error } finally { db.release(broken || undefined) }
+}
