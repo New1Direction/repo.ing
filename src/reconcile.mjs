@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
@@ -32,6 +33,40 @@ export function chainAheadOfLedger(result) {
   if (result.reason) return false
   const difference = amount(result.difference)
   return difference !== null && difference > 0n
+}
+
+// How long a state that may be a moment's lag is held before it alerts (the stock reconciler's STOCK_RECONCILE_LAG_MS).
+// After a trade the worker records its fees in a median ~30 s, up to ~10 min.
+export const RECONCILE_LAG_MS = 15 * 60_000
+// States that may be a moment's lag: the chain ahead of the ledger, a claim in flight, a read that failed.
+export const reconcileLagging = result => ['PENDING_REVIEW', 'UNAVAILABLE'].includes(result?.status) || chainAheadOfLedger(result)
+
+// The kind of a mismatch, without its amounts: its reason, and which way the creator and partner sides differ. A persistent
+// mismatch keeps its kind while trades move the amounts, so it alerts once, not on every pass.
+const sign = value => value === null ? '?' : value > 0n ? '+' : value < 0n ? '-' : '0'
+const gap = (onchain, ledger) => { const a = amount(onchain), b = amount(ledger); return a === null || b === null ? null : a - b }
+export function reconcileMismatchKind(result) {
+  const platform = result.platform ? sign(gap(result.platform.onchainEarned, result.platform.earned)) + sign(gap(result.platform.onchainClaimed, result.platform.claimed)) : ''
+  return [result.status, result.reason ?? '', sign(amount(result.difference)), platform].join(':')
+}
+
+// One operator alert per episode (the model of the stock reconciler's runner, src/stock-reconcile.mjs). An episode starts
+// when a ledger stops matching: a lagging state alerts once if it lasts lagMs, a real mismatch alerts at once, and a
+// mismatch of another kind starts a new episode. A MATCH ends it. settle returns null, or what to alert on: a key that
+// stays the same for the whole episode, whether it is lag, and when it began. Episodes live in this process; a restart
+// begins new ones, so a mismatch that survives a deploy is reported again.
+export function createReconcileEpisodes({ now = Date.now, lagMs = RECONCILE_LAG_MS } = {}) {
+  const episodes = new Map(), run = randomBytes(6).toString('hex')
+  let sequence = 0
+  return { settle(key, result, kindOf = reconcileMismatchKind) {
+    if (result?.status === 'MATCH') { episodes.delete(key); return null }
+    const lagging = reconcileLagging(result), kind = lagging ? 'lagging' : kindOf(result)
+    let episode = episodes.get(key)
+    if (episode?.kind !== kind) episodes.set(key, episode = { kind, first: now(), id: ++sequence })
+    if (lagging && now() - episode.first < lagMs) return null
+    return { key: `episode:${createHash('sha256').update(JSON.stringify([run, kind, episode.first, episode.id])).digest('hex').slice(0, 32)}`,
+      lagging, since: new Date(episode.first).toISOString() }
+  } }
 }
 
 export function createReconciler({ pool, connection, config }) {

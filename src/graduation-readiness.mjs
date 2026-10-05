@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
-import { createReconciler } from './reconcile.mjs'
+import { createReconciler, createReconcileEpisodes, RECONCILE_LAG_MS } from './reconcile.mjs'
 import { platformRevenueSummary, reconcilePlatformRevenue, assertPlatformReserveCustody } from './platform-revenue.mjs'
 import { liquidityConfig, liquidityReserveSummary, reconcileLiquidity } from './liquidity-deployment.mjs'
 import { createGraduatedFees } from './graduated-fees.mjs'
@@ -7,7 +7,7 @@ import { reinvestQuote } from './builder-reinvest-chain.mjs'
 import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { indexDammTradesLocked } from './damm-trades.mjs'
 import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
-import { persistGraduationObservation } from './reserve-alerts.mjs'
+import { persistGraduationObservation, feeLedgerAlertDetail, platformLedgerAlertDetail } from './reserve-alerts.mjs'
 import { readGenesisHash, transientRpcReason } from './rpc-usage.mjs'
 
 // A thrown error as a review code. A message that already is a code is kept. Prose (web3.js wraps an RPC failure in its own
@@ -66,8 +66,9 @@ export async function recordGraduationEvidence(db,state,previous,reconciliation)
 // half of PUBLIC_GRADUATION_MAX_AGE_MS (300 s) at the market counts expected, so one failed pass never lets public state
 // expire. 2 s per market made 51 markets take ~155 s, and ~108 markets would have reached the limit.
 export const GRADUATION_MARKET_PAUSE_MS=500
-export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS}) {
-  const reconciler=createReconciler({pool,connection,config})
+// now, lagMs: the clock and the hold of the ledger alerts (src/reconcile.mjs createReconcileEpisodes).
+export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,lagMs=RECONCILE_LAG_MS}) {
+  const reconciler=createReconciler({pool,connection,config}),episodes=createReconcileEpisodes({now,lagMs})
   async function processMarket(market,global,curveReads=null) {
     const db=await pool.connect(),repoId=String(market.githubRepoId),alerts=[]
     const notify=async(kind,key,detail)=>{const a=await emitAlert(db,repoId,kind,key,detail);if(a)alerts.push(a)}
@@ -121,9 +122,13 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         if(state.platform&&BigInt(state.platform.earned)>0n)await notify('PARTNER_FEES_FIRST_ACCRUED','first',{earned:state.platform.earned,pool:state.destination.pool})
         if(state.platformClaimAvailable)await notify('PLATFORM_CLAIM_AVAILABLE',state.platform.claimed,{available:state.platform.available})
         if(state.p3.eligible)await notify('P3_FIRST_ELIGIBLE','first',{maximumInvestment:state.p3.maximumInvestment,execution:'manual only'})
-        if(reconciliation.status!=='MATCH')await notify('RECONCILIATION_MISMATCH',evidenceHash(reconciliation),{status:reconciliation.status})
+        // One alert per episode, not per pass: a ledger the worker has not caught up yet (seconds after any trade) is held
+        // lagMs before it alerts; a real mismatch alerts at once.
+        const mismatch=episodes.settle(repoId,reconciliation)
+        if(mismatch)await notify('RECONCILIATION_MISMATCH',mismatch.key,feeLedgerAlertDetail({market,reconciliation,episode:mismatch,observedAt:state.checkedAt,now:now()}))
         assertFreshGraduation(state)
-        const reserveAlert=await persistGraduationObservation(db,{market,state,previous,reconciliation,enabled:env.RESERVE_ALERTS_ENABLED==='true'})
+        const reserveAlert=await persistGraduationObservation(db,{market,state,previous,reconciliation,enabled:env.RESERVE_ALERTS_ENABLED==='true',
+          notify:env.RESERVE_MOVE_NOTIFICATIONS==='true'})
         if(reserveAlert)alerts.push(reserveAlert)
         return {repoId,status:'VERIFIED',phase:state.phase,reconciliation:reconciliation.status,alerts}
       }catch(error){
@@ -157,8 +162,11 @@ export function createGraduationMonitor({pool,connection,verification,config,env
       results.push(await processMarket(market,global,curveReads))
       if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,pauseMs))
     }
-    if(revenueCheck.status!=='MATCH'||liquidity.status!=='MATCH'){
-      const alert=await emitAlert(pool,null,'RECONCILIATION_MISMATCH',evidenceHash([revenueCheck,liquidity]),{revenue:revenueCheck.status,liquidity:liquidity.status})
+    // The platform's revenue and liquidity ledgers have no lag to wait out: one alert per kind of mismatch.
+    const ledgers=episodes.settle('protocol',{status:revenueCheck.status==='MATCH'&&liquidity.status==='MATCH'?'MATCH':'MISMATCH'},
+      ()=>evidenceJSON([revenueCheck.status,revenueCheck.problems??[],liquidity.status,liquidity.problems??[]]))
+    if(ledgers){
+      const alert=await emitAlert(pool,null,'RECONCILIATION_MISMATCH',ledgers.key,platformLedgerAlertDetail({revenue:revenueCheck,liquidity,episode:ledgers,now:now()}))
       if(alert)results.push({repoId:null,status:'REVIEW',alerts:[alert]})
     }
     return results
