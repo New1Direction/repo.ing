@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { reserveMovePlan, reserveAlertText, createReserveWebhookSender, pendingDelivery, feeLedgerAlertDetail, platformLedgerAlertDetail, RESERVE_MOVE_COOLDOWN_MS, ledgerChecksAlertDetail } from '../src/reserve-alerts.mjs'
+import { reserveMovePlan, reserveAlertText, createReserveWebhookSender, pendingDelivery, feeLedgerAlertDetail, marketPassAlertDetail, platformLedgerAlertDetail, RESERVE_MOVE_COOLDOWN_MS, ledgerChecksAlertDetail } from '../src/reserve-alerts.mjs'
 import { digestDelivery } from '../src/ledger-digest.mjs'
 
 const now = Date.now()
@@ -126,21 +126,35 @@ test('a reserve move is recorded without a notification unless reserve notificat
 })
 test('a ledger alert names the ledger, says whether it is lag or a real mismatch, and since when', async () => {
   const since = '2026-10-05T08:00:00.000Z', observedAt = '2026-10-05T08:15:00.000Z', url = 'https://repo.ing/token/mint'
+  const tail = `Since: ${since}\nChecked: ${observedAt}\n${url}`
   const market = { ledger: 'fees', fullName: 'local/reserve', since, observedAt, url }
   const behind = reserveAlertText(11, { ...market, status: 'MISMATCH', reason: null, lagging: true })
-  assert.match(behind, /^repo\.ing · Fee ledger behind the chain\nlocal\/reserve\nThe chain shows fees the worker has not recorded yet\. It normally catches up within minutes, so the fee indexer may be stuck\.\n/)
-  assert.match(behind, /Since: 2026-10-05T08:00:00\.000Z\nChecked: 2026-10-05T08:15:00\.000Z\nhttps:\/\/repo\.ing\/token\/mint\nAlert #11$/)
+  assert.equal(behind, `repo.ing · Fee ledger behind the chain\nlocal/reserve\nThe chain shows fees the worker has not recorded. It normally catches up within minutes, so the fee indexer may be stuck or may have missed a trade.\n${tail}\nAlert #11`)
   assert.match(reserveAlertText(12, { ...market, status: 'UNAVAILABLE', reason: null, lagging: true }), /Fee ledger could not be checked\nlocal\/reserve\nThe on-chain read keeps failing\./)
   assert.match(reserveAlertText(13, { ...market, status: 'PENDING_REVIEW', reason: '1 unresolved claim intent(s)', lagging: true }), /Builder claim still unresolved\nlocal\/reserve\n1 unresolved claim intent/)
   const real = reserveAlertText(14, { ...market, status: 'MISMATCH', reason: 'Graduated fee withdrawals differ from proven payouts', lagging: false })
   assert.match(real, /Fee ledger does not match the chain\nlocal\/reserve\nGraduated fee withdrawals differ from proven payouts/)
   assert.match(reserveAlertText(15, { ...market, status: 'MISMATCH', reason: null, lagging: false, difference: '-12' }), /The ledger shows more fees than the chain holds\./)
+  assert.match(reserveAlertText(15, { ...market, status: 'MISMATCH', reason: null, lagging: false, difference: null }), /Fee ledger does not match the chain\nlocal\/reserve\nThe ledger and the chain disagree\./)
+  // A pool the chain does not have is a finding of the read, said in the reconciler's own words.
+  assert.match(reserveAlertText(15, { ...market, status: 'UNAVAILABLE', reason: 'Canonical Meteora pool state is missing', lagging: false }), /Fee ledger does not match the chain\nlocal\/reserve\nCanonical Meteora pool state is missing\n/)
   const platform = reserveAlertText(16, { ledger: 'platform', revenue: 'MISMATCH', liquidity: 'MATCH', problems: ['Allocations exceed claimed platform revenue'], since, observedAt })
   assert.match(platform, /^repo\.ing · Platform ledger does not match\nRevenue: MISMATCH · Liquidity: MATCH\nAllocations exceed claimed platform revenue\nSince: /)
-  // The monitor's pass failing before any market: no ledger is being checked at all.
-  const checks = reserveAlertText(18, ledgerChecksAlertDetail({ code: 'RPC_UNAVAILABLE', episode: { since }, now: Date.parse(observedAt) }))
-  assert.equal(checks, `repo.ing · Ledger checks are not running\nThe monitor's pass stops before it reaches any market, so no ledger is being checked (RPC_UNAVAILABLE).\nSince: ${since}\nChecked: ${observedAt}\nAlert #18`)
-  assert.doesNotMatch(reserveAlertText(19, ledgerChecksAlertDetail({ code: 'fetch failed https://rpc.example/?api-key=secret', episode: { since }, now: 0 })), /secret|rpc\.example|\(/)
+  // A market whose pass keeps ending in review: which market, the review code, and what it means for the site.
+  const episode = { kind: 'unchecked', repeat: false, since }, at = Date.parse(observedAt), listed = { mint: 'mint', fullName: 'local/reserve' }
+  assert.equal(reserveAlertText(20, marketPassAlertDetail({ market: listed, code: 'RPC_UNAVAILABLE', transient: true, episode, now: at })),
+    `repo.ing · Market could not be verified\nlocal/reserve\nThe monitor's reads for this market keep failing (RPC_UNAVAILABLE).\nIts public progress is not refreshed while this lasts.\n${tail}\nAlert #20`)
+  assert.equal(reserveAlertText(21, marketPassAlertDetail({ market: listed, code: 'CONFIG_OR_POOL_MISMATCH', transient: false, episode, now: at })),
+    `repo.ing · Market verification failed\nlocal/reserve\nThe monitor's pass for this market fails (CONFIG_OR_POOL_MISMATCH).\nIts public progress is not refreshed while this lasts.\n${tail}\nAlert #21`)
+  // The monitor's pass not getting through its markets, and getting through them too slowly.
+  const checks = reserveAlertText(18, ledgerChecksAlertDetail({ code: 'RPC_UNAVAILABLE', episode, now: at }))
+  assert.equal(checks, `repo.ing · Ledger checks are not running\nThe monitor's pass stops before it has checked every market, so ledgers go unchecked (RPC_UNAVAILABLE).\nSince: ${since}\nChecked: ${observedAt}\nAlert #18`)
+  assert.equal(reserveAlertText(22, ledgerChecksAlertDetail({ code: 'PASS_TOO_SLOW', episode, now: at })),
+    `repo.ing · Ledger checks are too slow\nA pass over the markets takes longer than five minutes, so public progress expires between passes.\nSince: ${since}\nChecked: ${observedAt}\nAlert #22`)
+  // A code that is not one is never sent, for a pass or for a market.
+  const leaky = 'fetch failed https://rpc.example/?api-key=secret'
+  assert.doesNotMatch(reserveAlertText(19, ledgerChecksAlertDetail({ code: leaky, episode, now: 0 })), /secret|rpc\.example|\(/)
+  assert.doesNotMatch(reserveAlertText(19, marketPassAlertDetail({ market: listed, code: leaky, transient: false, episode, now: 0 })), /secret|rpc\.example|\(/)
   // Sent as its own event, without delivery metadata.
   const events = []
   const sender = createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://example.com/hook' }, fetchImpl: async (_url, options) => { events.push(JSON.parse(options.body)); return { ok: true } } })
@@ -148,28 +162,47 @@ test('a ledger alert names the ledger, says whether it is lag or a real mismatch
   assert.equal(events[0].event, 'reconciliation_mismatch'); assert.equal(events[0].market.delivery, undefined); assert.equal(events[0].market.fullName, 'local/reserve')
 })
 test('ledger alert details carry fixed wording, a place in the next ledger message and no provider text', () => {
-  const episode = { key: 'episode:abc', lagging: true, since: '2026-10-05T08:00:00.000Z' }, at = Date.parse('2026-10-05T08:15:00.000Z')
+  const episode = { key: 'episode:abc', lagging: true, kind: 'unchecked', repeat: false, since: '2026-10-05T08:00:00.000Z' }, at = Date.parse('2026-10-05T08:15:00.000Z')
   const market = { githubRepoId: '998200', mint: 'mint', pool: 'curve', fullName: 'local/reserve' }
   const failed = feeLedgerAlertDetail({ market, episode, observedAt: '2026-10-05T08:15:00.000Z', now: at,
     reconciliation: { status: 'UNAVAILABLE', reason: 'Meteora pool read failed: 401 https://rpc.example/?api-key=secret', difference: null } })
   // Only this codebase's own reasons are kept, whatever the status.
   for (const reason of ['Meteora pool read failed: timeout', 'connect ECONNREFUSED 10.0.0.5:5432', 'fetch failed https://rpc.example/?api-key=secret', ''])
     assert.equal(feeLedgerAlertDetail({ market, episode, observedAt: '', now: at, reconciliation: { status: 'MISMATCH', reason } }).reason, null)
-  for (const reason of ['Partner fee capture differs from chain evidence', 'Canonical Meteora pool does not match the market', '2 unresolved claim intent(s)', 'EVIDENCE_UNAVAILABLE'])
+  for (const reason of ['Partner fee capture differs from chain evidence', 'Canonical Meteora pool does not match the market', 'Canonical Meteora pool state is missing',
+    '2 unresolved claim intent(s)', 'EVIDENCE_UNAVAILABLE'])
     assert.equal(feeLedgerAlertDetail({ market, episode, observedAt: '', now: at, reconciliation: { status: 'MISMATCH', reason } }).reason, reason)
-  const broken = feeLedgerAlertDetail({ market, episode: { ...episode, lagging: false }, observedAt: '2026-10-05T08:15:00.000Z', now: at, reconciliation: { status: 'ERROR', reason: 'EVIDENCE_UNAVAILABLE' } })
-  assert.match(reserveAlertText(2, broken), /Fee ledger could not be reconciled\nlocal\/reserve\nEVIDENCE_UNAVAILABLE\n/)
-  assert.deepEqual(failed, { ledger: 'fees', status: 'UNAVAILABLE', reason: null, lagging: true, since: episode.since, difference: null, fullName: 'local/reserve',
-    observedAt: '2026-10-05T08:15:00.000Z', url: 'https://repo.ing/token/mint', delivery: digestDelivery(at) })
+  // What the episode says about the row goes with it: its kind, whether it is a repeat, and since when.
+  const recorded = { kind: 'unchecked', repeat: false, since: episode.since, delivery: digestDelivery(at) }
+  assert.deepEqual(failed, { ledger: 'fees', status: 'UNAVAILABLE', reason: null, lagging: true, difference: null, fullName: 'local/reserve',
+    observedAt: '2026-10-05T08:15:00.000Z', url: 'https://repo.ing/token/mint', ...recorded })
   assert.doesNotMatch(reserveAlertText(1, failed), /secret|rpc\.example/)
   // None is queued to be sent by itself: the delivery job puts what was recorded into one message (src/ledger-digest.mjs).
   assert.deepEqual(digestDelivery(at), { status: 'digest', queuedAt: '2026-10-05T08:15:00.000Z' })
-  assert.deepEqual(ledgerChecksAlertDetail({ code: 'RPC_RATE_LIMITED', episode, now: at }), { ledger: 'checks', reason: 'RPC_RATE_LIMITED', since: episode.since,
-    observedAt: '2026-10-05T08:15:00.000Z', delivery: digestDelivery(at) })
-  const real = feeLedgerAlertDetail({ market, episode: { ...episode, lagging: false }, observedAt: '2026-10-05T08:15:00.000Z', now: at,
+  assert.deepEqual(ledgerChecksAlertDetail({ code: 'RPC_RATE_LIMITED', episode, now: at }), { ledger: 'checks', reason: 'RPC_RATE_LIMITED', observedAt: '2026-10-05T08:15:00.000Z', ...recorded })
+  assert.deepEqual(marketPassAlertDetail({ market, code: 'STALE_PROGRESS', transient: true, episode, now: at }), { ledger: 'market', status: 'UNAVAILABLE', reason: 'STALE_PROGRESS', lagging: true,
+    fullName: 'local/reserve', observedAt: '2026-10-05T08:15:00.000Z', url: 'https://repo.ing/token/mint', ...recorded })
+  assert.deepEqual(marketPassAlertDetail({ market, code: 'LP_SETTLEMENT_MISMATCH', transient: false, episode: { ...episode, repeat: true }, now: at }),
+    { ledger: 'market', status: 'ERROR', reason: 'LP_SETTLEMENT_MISMATCH', lagging: false, fullName: 'local/reserve', observedAt: '2026-10-05T08:15:00.000Z', url: 'https://repo.ing/token/mint',
+      ...recorded, repeat: true })
+  const real = feeLedgerAlertDetail({ market, episode: { ...episode, lagging: false, kind: 'difference' }, observedAt: '2026-10-05T08:15:00.000Z', now: at,
     reconciliation: { status: 'MISMATCH', reason: 'Graduated fee withdrawals differ from proven payouts', difference: -12n } })
-  assert.equal(real.reason, 'Graduated fee withdrawals differ from proven payouts'); assert.equal(real.difference, '-12'); assert.equal(real.lagging, false)
-  assert.deepEqual(platformLedgerAlertDetail({ revenue: { status: 'MISMATCH', problems: ['Allocations exceed claimed platform revenue'] }, liquidity: { status: 'MATCH', problems: [] }, episode, now: at }),
-    { ledger: 'platform', revenue: 'MISMATCH', liquidity: 'MATCH', problems: ['Allocations exceed claimed platform revenue'], since: episode.since,
-      observedAt: '2026-10-05T08:15:00.000Z', delivery: digestDelivery(at) })
+  assert.deepEqual([real.reason, real.difference, real.lagging, real.kind], ['Graduated fee withdrawals differ from proven payouts', '-12', false, 'difference'])
+  assert.deepEqual(platformLedgerAlertDetail({ revenue: { status: 'MISMATCH', problems: ['Allocations exceed claimed platform revenue'] }, liquidity: { status: 'MATCH', problems: [] },
+    episode: { ...episode, kind: 'difference' }, now: at }),
+    { ledger: 'platform', revenue: 'MISMATCH', liquidity: 'MATCH', problems: ['Allocations exceed claimed platform revenue'], observedAt: '2026-10-05T08:15:00.000Z', ...recorded, kind: 'difference' })
+})
+test('a send that fails says why by a fixed code: the receiver\'s status, a timeout or the network, never its answer', async () => {
+  const failure = fetchImpl => createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://example.com/hook' }, fetchImpl })({ id: 1, text: 'test', detail: { observedAt: '' } })
+    .then(() => null, error => [error.message, error.code, Object.keys(error)])
+  let cancelled = 0
+  const answered = status => async () => ({ ok: false, status, body: { cancel: async () => { cancelled++ } } })
+  assert.deepEqual(await failure(answered(404)), ['NOTIFICATION_SEND_FAILED', 'HTTP_404', ['code']])
+  assert.deepEqual(await failure(answered(400)), ['NOTIFICATION_SEND_FAILED', 'HTTP_400', ['code']])
+  assert.deepEqual(await failure(answered(503)), ['NOTIFICATION_SEND_FAILED', 'HTTP_503', ['code']])
+  assert.equal(cancelled, 3, 'the answer is discarded unread')
+  assert.deepEqual(await failure(async () => ({ ok: false })), ['NOTIFICATION_SEND_FAILED', 'HTTP_ERROR', ['code']])
+  assert.deepEqual(await failure(async () => { throw Object.assign(Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }) }), ['NOTIFICATION_SEND_FAILED', 'TIMEOUT', ['code']])
+  assert.deepEqual(await failure(async () => { throw TypeError('fetch failed: getaddrinfo ENOTFOUND hooks.example/secret-token') }), ['NOTIFICATION_SEND_FAILED', 'NETWORK', ['code']])
+  assert.equal(await failure(async () => ({ ok: true, status: 200 })), null)
 })

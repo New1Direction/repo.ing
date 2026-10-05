@@ -33,10 +33,10 @@ The only mutation on this surface acknowledges an alert; it requires operator au
 | First partner fees | Once per repo |
 | Platform claim available | Repo + cumulative claimed checkpoint; requires positive indexed/on-chain amount and no pending claim |
 | First P3 eligibility | Once per repo when all readiness checks and a bounded quote pass |
-| Reconciliation mismatch | Repo/protocol + report hash |
+| Reconciliation mismatch | Repo/protocol + ledger, episode start, kind and six-hour period ([what is sent](RESERVE_ALERTS.md#what-is-sent)) |
 | Evidence/provider/config review | Repo/protocol + safe error code |
 
-`graduation_alerts` persists unread/acknowledged status across worker restarts and closed browsers. Each newly inserted alert is also returned in structured worker logs. These are **operator dashboard and worker-log alerts**; P5 does not add email, Slack, browser push or an external paging service.
+`graduation_alerts` persists unread/acknowledged status across worker restarts and closed browsers. Each newly inserted alert is also returned in structured worker logs. These are **operator dashboard and worker-log alerts**; P5 itself added no email, Slack, browser push or external paging service. Since then, low operating balances and the ledgers that need review are also sent to one operator destination, when `RESERVE_ALERT_WEBHOOK_URL` is set on the worker ([RESERVE_ALERTS.md](RESERVE_ALERTS.md#what-is-sent)).
 
 ## Detection, durable proof and source reuse
 
