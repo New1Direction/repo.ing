@@ -47,6 +47,13 @@ export function buildLaunchCurve(profile = 'balanced') {
   return launchFee ? { ...curve, poolFees: { ...curve.poolFees, baseFee: launchFeeBaseFee() } } : curve
 }
 
+// The contributor early access config's curve (docs/EARLY_ACCESS.md): exactly the builders profile (flat 1.75%, 1% builder
+// allocation, 85 SOL graduation) with a Token-2022 base, which a transfer hook needs. No anti-sniper launch fee (owner decision,
+// 2026-10-05): during the window only contributors can buy.
+export function buildEarlyAccessCurve() {
+  return { ...buildLaunchCurve('builders'), tokenType: TokenType.Token2022 }
+}
+
 // A stock-paired market's curve (docs/STOCK_QUOTES.md): the launch-fee profile's fees, split, migration and locked liquidity,
 // with the stock's own decimals and a graduation threshold in whole units of that stock (the owner sets it when the config
 // is created; it moves with the stock's price, not SOL's). No builder allocation: stock-paired markets do not carry it.
