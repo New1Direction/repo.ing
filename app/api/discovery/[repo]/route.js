@@ -18,6 +18,8 @@ function service() {
 const problem = error => json({ error: error instanceof DiscoveryClaimError ? error.message :
   'Discovery rewards could not be checked. Please retry; any submitted payout will continue to be checked.' }, 400)
 
+const graduatedPools = globalThis.__repoingDiscoveryGraduated ??= new Set()
+
 export async function GET(_request, { params }) {
   try {
     const { repo } = await params
@@ -27,12 +29,14 @@ export async function GET(_request, { params }) {
     const [summary, verificationBonus] = await Promise.all([discoverySummary(options.pool, repo),
       readVerificationBonusView(options.pool, repo).catch(() => null)])
     if (!summary) return json({ enrolled: false, verificationBonus })
-    const dbc = new DynamicBondingCurveClient(options.connection, 'finalized')
-    let graduated = null
-    try {
+    // A curve that has graduated stays graduated: once this process has seen it, later polls skip the two chain reads.
+    let graduated = graduatedPools.has(summary.pool) ? true : null
+    if (graduated === null) try {
+      const dbc = new DynamicBondingCurveClient(options.connection, 'finalized')
       const marketConfig = createMarketConfigResolver(options.config)(summary)
       const [state, fixed] = await Promise.all([dbc.state.getPool(summary.pool), dbc.state.getPoolConfig(marketConfig)])
       if (state && fixed) graduated = state.poolState.isMigrated !== 0 || state.poolState.quoteReserve.gte(fixed.migrationQuoteThreshold)
+      if (graduated) graduatedPools.add(summary.pool)
     } catch { /* Accrued ledger remains visible during a temporary RPC outage. */ }
     return json({ enrolled: true, version: summary.version, cap: summary.cap, wallet: summary.wallet, earned: summary.earned, paid: summary.paid,
       remaining: summary.remaining, expiresAt: summary.expiresAt, capped: summary.capped, expired: summary.expired,

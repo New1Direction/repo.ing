@@ -1,4 +1,5 @@
 import { holdingValueLamports } from './portfolio.mjs'
+import { blockJoins, blockPosition } from '../../src/market-chart.mjs'
 
 // Average-cost P&L from one wallet's own indexed swaps in one market. Trades are
 // { direction, tokens, lamports } (token base units and SOL lamports as strings), in chain order.
@@ -41,7 +42,8 @@ export function holdingPnl(trades, balanceBaseUnits, priceSol) {
 }
 
 // One wallet's swaps across all requested markets in one query: DBC curve trades by pool, DAMM
-// trades by repository. Ordered like the chart (slot, finalized block order, signature, event).
+// trades by repository. Ordered like the chart (slot, finalized block order, signature, event): the stored position first,
+// the recorded block's list only for a trade without one (a cleared list has none; src/chart-ordering.mjs).
 export async function walletTrades(db, wallet, markets) {
   if (!markets.length) return new Map()
   const { rows } = await db.query(`with m as (select * from unnest($2::text[], $3::text[]) as m(repo_id, pool)),
@@ -53,8 +55,8 @@ export async function walletTrades(db, wallet, markets) {
       union all
       select m.repo_id, d.direction, d.slot, d.signature, d.event_index, d.base_amount::text, d.quote_amount::text
       from damm_trade_events d join m on d.github_repo_id = m.repo_id::bigint where d.trader = $1 and d.base_amount is not null)
-    select ev.repo_id as "repoId", ev.direction, ev.tokens, ev.lamports from ev left join finalized_chart_blocks b on b.slot = ev.slot
-    order by ev.repo_id, ev.slot, array_position(b.signatures, ev.signature::text) nulls last, ev.signature, ev.event_index`,
+    select ev.repo_id as "repoId", ev.direction, ev.tokens, ev.lamports from ev ${blockJoins('ev')}
+    order by ev.repo_id, ev.slot, ${blockPosition('ev')} nulls last, ev.signature, ev.event_index`,
   [wallet, markets.map(m => m.repoId), markets.map(m => m.pool)])
   const grouped = new Map()
   for (const row of rows) {

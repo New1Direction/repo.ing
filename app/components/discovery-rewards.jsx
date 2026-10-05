@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { pollStatus } from '../lib/status-polling.mjs'
 import { CheckCircle2, Compass } from 'lucide-react'
 import { useWallet } from './wallet'
 import { CopyAddress } from './copy-address'
@@ -15,7 +16,7 @@ export function DiscoveryRewards({ repoId }) {
   const [stage, setStage] = useState('')
   const [busy, setBusy] = useState(false)
   const [offer, setOffer] = useState(null)
-  const working = useRef(false)
+  const working = useRef(false), pollNow = useRef(null)
   const endpoint = `/api/discovery/${repoId}`
   useEffect(() => { setOffer(null); setError('') }, [wallet, endpoint])
   const request = async body => {
@@ -31,26 +32,28 @@ export function DiscoveryRewards({ repoId }) {
     setData(result)
     return result
   }
+  // Every 60 s while the tab is visible (3 s while a claim confirms, 10 s after a failed read), and at once when it becomes
+  // visible again (app/lib/status-polling.mjs). Each read can cost chain reads, so a background tab never polls.
   useEffect(() => {
     let active = true
-    let timer
-    async function poll() {
+    const poller = pollStatus(async () => {
       try {
         const response = await fetch(endpoint, { cache: 'no-store' })
         const result = await response.json()
         if (!response.ok) throw new Error(result.error)
-        if (!active) return
+        if (!active) return result
         setData(result)
         if (result.latestClaim?.status === 'pending' && !working.current) {
           await request({ action: 'check' })
         }
-        timer = setTimeout(poll, result.latestClaim?.status === 'pending' ? 3000 : 15000)
+        return result
       } catch (cause) {
-        if (active) { setError(cause.message || 'Could not refresh rewards'); timer = setTimeout(poll, 15000) }
+        if (active) setError(cause.message || 'Could not refresh rewards')
+        throw cause
       }
-    }
-    poll()
-    return () => { active = false; clearTimeout(timer) }
+    }, (result, failed) => failed ? 10000 : result?.latestClaim?.status === 'pending' ? 3000 : 60000)
+    pollNow.current = poller.now
+    return () => { active = false; poller.stop(); pollNow.current = null }
   }, [endpoint])
 
   async function claim(approve = false) {
@@ -77,11 +80,15 @@ export function DiscoveryRewards({ repoId }) {
         setStage('Payout submitted. Waiting for Solana finality…')
       }
       await refresh()
+      // A submitted payout is confirmed by the poll's 3 s checks: start them now, not at the next 60 s read.
+      pollNow.current?.()
     } catch (cause) {
       setError(cause.message || 'Claim was not completed. Check its status before retrying.')
       setOffer(null)
       setStage('')
       await refresh().catch(() => {})
+      // The payout may have been submitted before the error: let the poll's checks confirm it.
+      pollNow.current?.()
     } finally { working.current = false; setBusy(false) }
   }
 

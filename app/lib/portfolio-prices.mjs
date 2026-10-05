@@ -1,4 +1,4 @@
-import { chartMigration, chartSpotPrice } from '../../src/market-chart.mjs'
+import { blockJoins, blockPosition, chartMigration, chartSpotPrice } from '../../src/market-chart.mjs'
 import { latestSlotTrade } from './portfolio.mjs'
 
 const PRICE_TTL_MS = 10_000
@@ -35,8 +35,8 @@ export async function latestMarketPrices(db, markets, now = Date.now()) {
         from damm_trade_events d join m on d.pool = m.damm_pool and d.github_repo_id = m.repo_id::bigint and d.slot >= m.damm_slot
     ), top as (select repo_id, max(slot) as slot from ev group by repo_id)
     select ev.repo_id as "repoId", ev.signature, ev.event_index as "eventIndex", ev.next_sqrt_price as "nextSqrtPrice",
-      array_position(b.signatures, ev.signature::text) as "transactionIndex"
-    from ev join top on top.repo_id = ev.repo_id and top.slot = ev.slot left join finalized_chart_blocks b on b.slot = ev.slot`,
+      ${blockPosition('ev')} as "transactionIndex"
+    from ev join top on top.repo_id = ev.repo_id and top.slot = ev.slot ${blockJoins('ev')}`,
   [valid.map(m => m.repoId), valid.map(m => m.pool), migrations.map(m => m?.pool ?? null),
     migrations.map(m => m?.slot ?? null)]) : { rows: [] }
   const grouped = new Map()

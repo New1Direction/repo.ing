@@ -118,6 +118,9 @@ test('wallet trades load every market in one batched query, grouped per reposito
   assert.deepEqual(calls[0].params, ['W', ['1', '2'], ['P1', 'P2']])
   assert.match(calls[0].sql, /t\.trader = \$1/)
   assert.match(calls[0].sql, /d\.trader = \$1/)
+  // Chain order from the stored positions, the block's list only without one (a cleared list has none).
+  assert.match(calls[0].sql, /coalesce\(p\.transaction_index,array_position\(b\.signatures,ev\.signature::text\)\)/)
+  assert.match(calls[0].sql, /left join finalized_chart_positions p on p\.slot=ev\.slot and p\.signature=ev\.signature/)
   assert.deepEqual(grouped.get('1').map(r => r.direction), ['buy', 'sell'])
   assert.equal((await walletTrades(db, 'W', [])).size, 0)
   assert.equal(calls.length, 1)

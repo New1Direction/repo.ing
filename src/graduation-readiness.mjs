@@ -8,9 +8,19 @@ import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { indexDammTradesLocked } from './damm-trades.mjs'
 import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
 import { persistGraduationObservation } from './reserve-alerts.mjs'
-import { readGenesisHash } from './rpc-usage.mjs'
+import { readGenesisHash, transientRpcReason } from './rpc-usage.mjs'
 
-export const graduationError = error => /^[A-Z][A-Z_]{3,60}$/.test(error?.message??'') ? error.message : 'EVIDENCE_UNAVAILABLE'
+// A thrown error as a review code. A message that already is a code is kept. Prose (web3.js wraps an RPC failure in its own
+// message) is RPC_RATE_LIMITED or RPC_UNAVAILABLE when it names one or when transientRpcReason recognizes a transport failure
+// (429, 5xx, a timeout, a dropped connection, a lagging node); any other prose is EVIDENCE_UNAVAILABLE, never transient.
+export const graduationError = error => {
+  const message = String(error?.message ?? '')
+  if (/^[A-Z][A-Z_]{3,60}$/.test(message)) return message
+  const reason = transientRpcReason(error)
+  if (message.includes('RPC_RATE_LIMITED') || reason === 'rate limited' || reason === 'HTTP 429') return 'RPC_RATE_LIMITED'
+  if (message.includes('RPC_UNAVAILABLE') || reason) return 'RPC_UNAVAILABLE'
+  return 'EVIDENCE_UNAVAILABLE'
+}
 // SOL markets only; stock-paired markets graduate in src/stock-graduation-monitor.mjs (STOCK_MARKET_SQL is the other half).
 export const publicMarketSQL=`select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",r.full_name as "fullName"
   from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null`
@@ -51,7 +61,12 @@ export async function recordGraduationEvidence(db,state,previous,reconciliation)
   return rows.length===1
 }
 
-export function createGraduationMonitor({pool,connection,verification,config,env=process.env}) {
+// The pause between markets in a pass. Curve accounts are read in batches for the whole pass (createCurveReads), so each
+// market adds only a few reads; the pause just spreads them. A pass is ~30 s + markets x (pause + ~0.5 s): keep it well under
+// half of PUBLIC_GRADUATION_MAX_AGE_MS (300 s) at the market counts expected, so one failed pass never lets public state
+// expire. 2 s per market made 51 markets take ~155 s, and ~108 markets would have reached the limit.
+export const GRADUATION_MARKET_PAUSE_MS=500
+export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS}) {
   const reconciler=createReconciler({pool,connection,config})
   async function processMarket(market,global,curveReads=null) {
     const db=await pool.connect(),repoId=String(market.githubRepoId),alerts=[]
@@ -113,8 +128,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         return {repoId,status:'VERIFIED',phase:state.phase,reconciliation:reconciliation.status,alerts}
       }catch(error){
         const code=graduationError(error)
-        await db.query(`insert into graduation_observations(github_repo_id,checked_at,status,error_code) values($1,now(),'REVIEW',$2)
-          on conflict(github_repo_id) do update set checked_at=excluded.checked_at,status='REVIEW',error_code=excluded.error_code`,[repoId,code])
+        await recordGraduationReview(db,repoId,code)
         await notify('GRADUATION_REVIEW',code,{code})
         return {repoId,status:'REVIEW',code,alerts}
       }finally{await db.query('select pg_advisory_unlock(hashtextextended($1,0))',[`graduation:${repoId}`])}
@@ -141,7 +155,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     const curveReads=createCurveReads({connection,verification,config,markets})
     for(const market of markets){
       results.push(await processMarket(market,global,curveReads))
-      if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,2000))
+      if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,pauseMs))
     }
     if(revenueCheck.status!=='MATCH'||liquidity.status!=='MATCH'){
       const alert=await emitAlert(pool,null,'RECONCILIATION_MISMATCH',evidenceHash([revenueCheck,liquidity]),{revenue:revenueCheck.status,liquidity:liquidity.status})
@@ -152,8 +166,27 @@ export function createGraduationMonitor({pool,connection,verification,config,env
   return {runOnce,processMarket}
 }
 
-export function publicGraduation(row,now=Date.now()) {
-  if(!row||row.status!=='VERIFIED'||!row.observation)throw Error(row?.error_code??'PROGRESS_NOT_INDEXED')
+// Review codes for a check that failed to read, not for anything it found: an RPC outage or transport failure, a rate limit,
+// two providers not agreeing yet, or a read that came back stale. EVIDENCE_UNAVAILABLE (an unrecognized error) is not one.
+export const TRANSIENT_REVIEW_CODES=Object.freeze(['RPC_UNAVAILABLE','RPC_RATE_LIMITED','RPC_DISAGREEMENT','STALE_PROGRESS'])
+
+// A failed pass's review. A transient code never replaces a finding already on record (REVIEW with any other code), so a
+// failed read just after a real problem cannot let the curve endpoint serve the observation that problem withdrew; the next
+// verified pass replaces both.
+export async function recordGraduationReview(db,repoId,code) {
+  await db.query(`insert into graduation_observations(github_repo_id,checked_at,status,error_code) values($1,now(),'REVIEW',$2)
+    on conflict(github_repo_id) do update set checked_at=excluded.checked_at,status='REVIEW',
+      error_code=case when graduation_observations.status='REVIEW' and excluded.error_code=any($3::text[])
+        and not (coalesce(graduation_observations.error_code,'')=any($3::text[])) then graduation_observations.error_code
+        else excluded.error_code end`,[repoId,code,[...TRANSIENT_REVIEW_CODES]])
+}
+// transientReview: after one of those, serve the previous verified observation for the rest of its own freshness window
+// (PUBLIC_GRADUATION_MAX_AGE_MS), so one failed pass never takes a market page's progress and trade card offline. Only the
+// public curve endpoint asks for it; announcements, the graduation race, market lists, share cards and discoverer growth still
+// require a verified latest pass, and operator pages read the row's status directly.
+export function publicGraduation(row,now=Date.now(),{transientReview=false}={}) {
+  const usable=row?.status==='VERIFIED'||(transientReview&&row?.status==='REVIEW'&&TRANSIENT_REVIEW_CODES.includes(row.error_code))
+  if(!row||!usable||!row.observation)throw Error(row?.error_code??'PROGRESS_NOT_INDEXED')
   // Fee reconciliation trails the chain during active trading; it gates payouts and operator actions (and raises
   // RECONCILIATION_MISMATCH alerts), not public progress. Migration itself must still be durably proven below.
   const state=assertFreshGraduation(JSON.parse(row.observation),now,PUBLIC_GRADUATION_MAX_AGE_MS)

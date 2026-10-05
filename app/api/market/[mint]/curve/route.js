@@ -15,6 +15,7 @@ export const GET = withServerTiming(async (request, { params }) => {
     if (isStockMarket(market)) return Response.json(await readStockCurve(database(), market), { headers: marketCacheHeaders(request, MARKET_CURVE_CACHE) })
     const {rows:[row]}=await database().query(`select o.*,e.evidence_hash as migration_evidence_hash from graduation_observations o
       left join graduation_events e on e.github_repo_id=o.github_repo_id where o.github_repo_id=$1`,[market.repoId])
-    return Response.json(publicGraduation(row), { headers: marketCacheHeaders(request, MARKET_CURVE_CACHE) })
+    // The market page's progress and trade card ride out one failed pass on the last verified observation (transientReview).
+    return Response.json(publicGraduation(row, Date.now(), { transientReview: true }), { headers: marketCacheHeaders(request, MARKET_CURVE_CACHE) })
   } catch(error) { return Response.json({ error: 'Graduation progress is being verified.', code:graduationError(error) }, { status: 503,headers:NO_STORE }) }
 })
