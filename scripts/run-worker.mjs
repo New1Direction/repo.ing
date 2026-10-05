@@ -1,7 +1,7 @@
 import {createOperatingWalletMonitor} from '../src/operating-wallet-alerts.mjs'
 import {createBuilderReminders,createReminderSender,remindersConfigured} from '../src/builder-reminders.mjs'
 import {createReconciler} from '../src/reconcile.mjs'
-import pg from 'pg'
+import { createDatabasePool } from '../src/database-pool.mjs'
 import { createChartOrdering } from '../src/chart-ordering.mjs'
 import { createTrendIntake } from '../src/trend-intake.mjs'
 import { createLiquidityRecovery } from '../src/liquidity-settlement.mjs'
@@ -48,7 +48,7 @@ import { createStockReconcileRunner, STOCK_RECONCILE_INTERVAL_MS } from '../src/
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
 const once = process.argv.includes('--once')
-const pool = new pg.Pool({ connectionString: databaseUrl })
+const pool = createDatabasePool({ connectionString: databaseUrl })
 // Never promoted: PROMOTION_EXCLUDED_REPO_IDS plus maintainers' opt-outs (re-read at most every 30 s). Dev Pulse and the
 // launch/milestone alerts read it each run; a run that cannot read it does nothing.
 const promotionExcluded = createPromotionExclusions({ pool })

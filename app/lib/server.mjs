@@ -1,6 +1,6 @@
 import { cache } from 'react'
 import { allocationEnabled } from '../../src/builder-allocation.mjs'
-import pg from 'pg'
+import { createDatabasePool } from '../../src/database-pool.mjs'
 import { Connection, Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { chainAheadOfLedger, createReconciler } from '../../src/reconcile.mjs'
@@ -19,7 +19,7 @@ import { withStockStats } from './stock-market-stats.mjs'
 
 export function database() {
   if (!process.env.DATABASE_URL) return null
-  if (!globalThis.__gitfunPool) globalThis.__gitfunPool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
+  if (!globalThis.__gitfunPool) globalThis.__gitfunPool = createDatabasePool({ connectionString: process.env.DATABASE_URL })
   return globalThis.__gitfunPool
 }
 

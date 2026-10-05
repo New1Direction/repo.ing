@@ -59,6 +59,8 @@ Watch indexing freshness, migration evidence, reconciliation failures, and payou
 
 Preserve durable intents and settlement evidence through restarts and rollbacks. Never manually mark an unsettled financial action complete or alter a ledger to force `MATCH`. Restore a compatible prior application release when necessary; schema rollback and data recovery need their own reviewed procedure.
 
+A database restart, failover or dropped connection does not stop the web or worker process (`src/database-pool.mjs`). Each lost connection logs one or more `{"databaseConnectionError":{"code":…}}` lines (`57P01` when the server ended it), the statement in flight fails to its caller, and the next query opens a new connection.
+
 Use [encrypted backups](BACKUPS.md) for recovery. Keep recovery keys available outside the application host and verify restores into a disposable database before a cutover.
 
 ## Deploy-safe trades and the trade canary
