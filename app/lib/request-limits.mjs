@@ -1,4 +1,4 @@
-import { isIPv6 } from 'node:net'
+import { clientAddress } from '../../src/client-address.mjs'
 import { createRequestLimiter } from '../../src/request-limiter.mjs'
 
 // Per-address allowances on the public trade, launch and repository-lookup routes, held in each web process
@@ -23,25 +23,7 @@ export const REQUEST_LIMITS = Object.freeze({
   resolve: { burst: 30, perMinute: 8 },
 })
 
-// An IPv6 visitor holds a whole /64, so its first four groups are the visitor. An IPv4 address is itself.
-function addressKey(address) {
-  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(address)
-  if (mapped) return mapped[1]
-  if (!isIPv6(address)) return address.slice(0, 64)
-  const [head, tail = ''] = address.toLowerCase().split('::')
-  const left = head ? head.split(':') : [], right = tail ? tail.split(':') : []
-  const groups = [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right]
-  return `${groups.slice(0, 4).map(group => parseInt(group, 16).toString(16)).join(':')}::/64`
-}
-
-// The address a request came from: Cloudflare's own header when it proxied the request, else the first forwarded address,
-// else null. A grouping, not authentication: a request that reaches the origin without Cloudflare can claim any address.
-// Held in memory only, never stored or logged.
-export function clientAddress(request) {
-  const headers = request.headers
-  const address = headers.get('cf-connecting-ip')?.trim() || headers.get('x-forwarded-for')?.split(',')[0].trim() || headers.get('x-real-ip')?.trim()
-  return address ? addressKey(address) : null
-}
+export { clientAddress }
 
 const LOG_EVERY_MS = 60_000
 const MAX_COUNTED_CLIENTS = 1000
@@ -60,7 +42,7 @@ function noteRefusal(state, action, client, at, log) {
 
 // null when the request may proceed, else the 429 to return. extra: fields the route's clients read beside the error.
 // - REQUEST_LIMITS_DISABLED=true turns every limit off.
-// - A request with no address at all is not limited: everyone would share its allowance.
+// - A request with no address at all (src/client-address.mjs) is not limited: everyone would share its allowance.
 // - A fault in here never stops a request. It is logged, at most once a minute.
 export function refuseOverLimit(request, action, extra = {}, { env = process.env, log = line => console.warn(line), now = Date.now } = {}) {
   let state
@@ -71,9 +53,11 @@ export function refuseOverLimit(request, action, extra = {}, { env = process.env
     state = globalThis.__repoingRequestLimiter ??= { take: createRequestLimiter({ limits: REQUEST_LIMITS }), refused: new Map(), faultAt: -Infinity }
     const verdict = state.take(action, client)
     if (verdict.allowed) return null
-    noteRefusal(state, action, client, now(), log)
-    return Response.json({ error: 'Too many requests. Try again in a minute.', code: 'RATE_LIMITED', ...extra },
-      { status: 429, headers: { 'Retry-After': String(verdict.retryAfterSeconds), 'Cache-Control': 'no-store' } })
+    // The log is not part of the verdict.
+    try { noteRefusal(state, action, client, now(), log) } catch { /* refused all the same */ }
+    const seconds = verdict.retryAfterSeconds
+    return Response.json({ error: `Too many requests. Try again in ${seconds} second${seconds === 1 ? '' : 's'}.`, code: 'RATE_LIMITED', ...extra },
+      { status: 429, headers: { 'Retry-After': String(seconds), 'Cache-Control': 'no-store' } })
   } catch (error) {
     try {
       const at = now()

@@ -1,3 +1,5 @@
+import { clientAddress } from '../../src/client-address.mjs'
+
 export const CSP_REPORT_MAX_BYTES = 16 * 1024
 const FIELD_MAX = 200, MAX_TRACKED_CLIENTS = 5000
 
@@ -84,7 +86,7 @@ export function createCspStats({ maxReports = 200, maxKeys = 500, now = Date.now
 // Route handlers and pages can load separate module copies, so the process-wide instance lives on globalThis.
 export function cspStats() { return globalThis.__repoingCspStats ??= createCspStats() }
 
-const clientKey = request => request.headers.get('x-forwarded-for')?.split(',')[0].trim() || request.headers.get('x-real-ip') || 'unknown'
+const clientKey = request => clientAddress(request) ?? 'unknown'
 
 export async function handleCspReport(request, { limiter, log = console.error, stats = null } = {}) {
   if (!limiter(clientKey(request))) return new Response(null, { status: 429 })

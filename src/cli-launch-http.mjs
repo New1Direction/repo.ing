@@ -1,4 +1,5 @@
 import { AgentLaunchError } from './agent-launch-draft.mjs'
+import { clientAddress } from './client-address.mjs'
 import { readLimitedBody } from './token-image.mjs'
 
 // POST /api/cli/launch, for `repoing launch` (cli/): the existing signed launch draft (src/agent-launch.mjs) for the repository
@@ -9,9 +10,10 @@ export const CLI_BODY_LIMIT = 4096
 const INPUT_KEYS = new Set(['repository', 'tokenName', 'tokenSymbol', 'initialBuy'])
 const NO_STORE = { 'Cache-Control': 'no-store' }
 
-// As the MCP's: the first forwarded address. Not authentication; the global cap bounds callers that rotate it.
+// As the MCP's: the visitor's address (src/client-address.mjs). Not authentication; the global cap bounds callers that
+// rotate it.
 export function cliClientId(request) {
-  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
+  return clientAddress(request) ?? 'unknown'
 }
 
 export function validateCliLaunchInput(value) {

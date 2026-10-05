@@ -6,6 +6,7 @@ import { sumTokenAccountBalances } from './token-balance.mjs'
 import { createBalanceCache, readAtaBalances } from './holder-note-balances.mjs'
 import { publicNote } from './holder-note-format.mjs'
 import { xHandlesFor } from './x-links.mjs'
+import { clientAddress } from '../../src/client-address.mjs'
 export { publicNote }
 
 const MAX_OFFSET = 500
@@ -31,7 +32,7 @@ export function holderNotesService() {
 
 // Rate-limit key only: the raw address is never stored.
 export function clientKey(request) {
-  const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim() || request.headers.get('x-real-ip') || 'unknown'
+  const ip = clientAddress(request) ?? 'unknown'
   return createHmac('sha256', process.env.GITHUB_APP_CLIENT_SECRET || 'repo.ing holder notes').update(ip.slice(0, 64)).digest('hex').slice(0, 32)
 }
 
