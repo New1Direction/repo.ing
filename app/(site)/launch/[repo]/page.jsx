@@ -30,11 +30,11 @@ export default async function Launch({ params, searchParams }) {
   // The maintainer opted this repository out of repo.ing (or that cannot be checked): no launch form.
   const optOut = await maintainerDecision(repoId)
   if (optOut !== null) return <><AppHeader/><main className="section-wrap launch-page"><LaunchBlocked repo={repo} decision={optOut}/></main><Footer/></>
-  // The fork guard (src/repo-lineage.mjs): a fork or copy of a launched repository gets no launch form. Launch prepare checks
-  // again, so a database hiccup here only skips the early notice.
+  // The fork guard (src/repo-lineage.mjs): a fork or copy of a launched repository gets no launch form. Advisory: launch prepare
+  // checks again, so a database or GitHub hiccup here only skips the early notice.
   const pool = database()
   if (pool) {
-    try { await checkLaunchLineage({ pool, repo }) }
+    try { await checkLaunchLineage({ pool, repo, advisory: true }) }
     catch (error) {
       if (error instanceof LineageError) return <><AppHeader/><main className="section-wrap launch-page"><LaunchCopyBlocked error={error}/></main><Footer/></>
       console.warn('launch_lineage_unavailable', { code: error?.code ?? error?.name ?? 'error' })

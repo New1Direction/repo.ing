@@ -15,6 +15,8 @@ import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
 import '../launch-pair.css'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
+// A refusal by the fork guard (src/repo-lineage.mjs): final, so the form offers neither a retry nor a status check.
+const COPY_REFUSED = 'COPY_OF_LAUNCHED_REPOSITORY'
 // A launch transaction is valid for about 40 s from the review (150 blocks; src/launch-expiry.mjs), and the wallet's own
 // review counts against it. A review older than this must be refreshed before signing, so the wallet keeps about 20 s.
 const REVIEW_VALID_MS = 20_000
@@ -157,7 +159,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
           repositoryUrl: `https://github.com/${repo.fullName}`, tokenName: name, tokenSymbol: symbol,
           tokenImage: tokenImage.image, launcherWallet: address, initialBuyLamports, ...pairRequest })
       setReview({ ...result, wallet: address, quote: stockChosen ? null : quote, pair: stockChosen ? stockPair?.symbol ?? quoteAssetId : null }); setStage('')
-    } catch (cause) { setError(cause.message || 'Could not prepare launch'); setFailure({canRetry:cause.canRetry??true,supportCode:cause.supportCode??'LAUNCH-CONNECTION'}); setStage('Failed') }
+    } catch (cause) { setError(cause.message || 'Could not prepare launch'); setFailure({canRetry:cause.canRetry??true,code:cause.code??null,supportCode:cause.supportCode??'LAUNCH-CONNECTION'}); setStage('Failed') }
     finally { working.current = false; setBusy(false) }
   }
   async function approve() {
@@ -252,10 +254,10 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       {expired && <p role="status">This review expired. Refresh it for a fresh transaction, then approve it in your wallet right away.</p>}
       <div className="launch-review-actions"><button type="button" className="button primary" onClick={approve} disabled={busy || expired || wallet !== review.wallet}>{busy ? stage : 'Approve in wallet'}</button>
         <button type="button" className="button outline" disabled={busy} onClick={() => edit(expired)}>{expired ? 'Refresh review' : 'Edit launch'}</button></div>
-    </section> : failure?.canRetry === false ? <button type="button" className="button primary launch-submit" disabled={busy} onClick={checkLaunchStatus}>{busy?'Checking status…':'Check launch status'}</button> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : failure ? 'Refresh review' : 'Review launch'}</button>
+    </section> : failure?.code === COPY_REFUSED ? null : failure?.canRetry === false ? <button type="button" className="button primary launch-submit" disabled={busy} onClick={checkLaunchStatus}>{busy?'Checking status…':'Check launch status'}</button> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : failure ? 'Refresh review' : 'Review launch'}</button>
       <p className="form-fineprint">Review the total before signing. No platform launch fee.</p></>}
     <TransactionStatus stage={stage} error={error}/>
-    {failure && <div className="launch-recovery"><p className="form-fineprint">{failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
+    {failure && <div className="launch-recovery"><p className="form-fineprint">{failure.code===COPY_REFUSED?'This repository cannot have its own market on repo.ing.':failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
   </form>
 }
 
