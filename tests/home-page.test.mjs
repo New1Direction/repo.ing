@@ -29,6 +29,11 @@ test('the live card keeps only what it draws: bars, the newest swaps newest firs
   assert.equal(chart.trades.length, LIVE_TRADE_ROWS)
   assert.deepEqual(chart.trades.map(trade => trade.eventIndex), [4, 3, 2, 1])
   assert.deepEqual(Object.keys(chart.trades[0]).sort(), ['direction', 'eventIndex', 'signature', 'solLamports', 'tradedAt'])
+  // A swap confirmed but not finalized yet keeps its mark, so the card can say so.
+  const confirming = payload()
+  confirming.trades = confirming.trades.map((trade, i, all) => i === all.length - 1 ? { ...trade, pending: true } : trade)
+  assert.equal(liveChart(confirming).trades[0].pending, true)
+  assert.equal(liveChart(confirming).trades[1].pending, undefined)
   assert.equal(liveChart({ ...payload(), volume24hLamports: '1.5' }).volume24hLamports, null)
   assert.equal(liveChart({ ...payload(), latest: { priceSol: 0 } }).latest, null)
   for (const bad of [null, {}, { candles: [] }, { candles: 'x', interval: 60 }]) assert.equal(liveChart(bad), null, JSON.stringify(bad))

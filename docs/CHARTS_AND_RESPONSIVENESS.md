@@ -14,7 +14,42 @@ The market page uses pinned TradingView Lightweight Charts 5.2.1, loaded separat
 - USD market cap is estimated from on-chain supply and the current SOL/USD rate. Historical candles are revalued at that rate; they are **not historical USD valuations**.
 - After graduation, finalized DAMM post-swap prices continue the chart. Its volume includes both venues. The first DAMM price requires the same immutable repo, curve, mint, destination, slot, and receipt as the durable migration evidence. Before the first DAMM price is indexed, the curve history remains labeled. Missing historical DAMM prices are withheld; their verified volume is retained. The fresh graduation module supplies the trading link.
 
-Supply, holders and SOL/USD load independently through `GET /api/market/:mint/metrics`. Concurrent viewers share in-flight holder/supply and FX requests. Missing metrics remain unavailable rather than becoming zero. Metric display expires; a failed chart refresh retains the last prices with a delayed-update notice and Retry. Polls pause in hidden tabs. A confirmed transaction is not drawn until its swap evidence is indexed.
+Supply, holders and SOL/USD load independently through `GET /api/market/:mint/metrics`. Concurrent viewers share in-flight holder/supply and FX requests. Missing metrics remain unavailable rather than becoming zero. Metric display expires; a failed chart refresh retains the last prices with a delayed-update notice and Retry. Polls pause in hidden tabs. SOL markets also draw live trades: see below.
+
+### Live trades
+
+A swap reaches a SOL market's chart about a second after it is **confirmed**, without waiting for the finalized ledger.
+- **Worker** (`src/live-trades.mjs`):
+  - It holds one websocket to the primary RPC. At `confirmed`, it listens to every approved DBC config, which every curve swap names, and to each graduated market's verified DAMM pool, which is the immutable migration proof the chart checks.
+  - For each notification it reads the transaction once and parses it with the parsers the finalized indexers use (`canonicalTradeEvents`, `dammSwapEvents`).
+  - It writes the canonical swap events to `live_trade_events` (migration 0057). That table's trigger sends the same hint as a finalized trade, so open charts re-read at once.
+- **Read limits:**
+  - At most 5 reads a second (burst 10), because every notification costs one `getTransaction` on the primary provider the finalized indexers share.
+  - A flood is dropped, never queued; those swaps simply appear once finalized.
+  - No live read is made while the primary provider is backing off a rate limit.
+- **Missed trades:**
+  - If a subscribed market's finalized trade is more than 60 seconds newer than the last notification, the websocket missed it.
+  - The worker then moves every subscription to a fresh connection. The old socket's automatic reconnects are switched off and its unsubscribes are never awaited.
+  - Renewals back off: 10 minutes, doubling up to 2 hours. They stop after three in a row with nothing heard, logging `LIVE_WEBSOCKET_DEAF`.
+- **Chart** (`readMarketChart(..., { live: true })`, used by the market page, its API and the home `$REPOING` card):
+  - **What qualifies:** the canonical curve pool's and the verified DAMM destination's live rows, from the newest finalized slot on. Rows at most two minutes old, and never a swap either finalized ledger, or this read's own finalized trade list, already holds.
+  - **How they're drawn:** they are appended after the finalized history and marked `pending`. They're folded into their candle, which is marked `live`, and the newest becomes the latest price. The payload `source` gains `+confirmed`.
+  - **Buckets:** a bucket withholding prices for unproven order keeps withholding them.
+  - **Same-slot order:** live trades in one slot keep the order they arrived in until finalized block order replaces them.
+  - **Where it shows:** the footer reads "Live · N confirming", and those trades' rows read "Confirming" on the market page and the home card.
+  - **When they finalize:** each live trade is replaced by its finalized row about 13 seconds later.
+  - **Failures:** a failed live read or merge is logged (`liveTradesUnavailable`, at most once a minute) and leaves the finalized chart as it is.
+- **Finalized DAMM reads:** graduated markets' finalized DAMM swaps are no longer read only once per graduation pass over every market, which was about every 2.5 minutes with 51 markets.
+  - One primary read of the pool's newest finalized signature runs every 10 seconds, and again about 13 seconds after a live swap.
+  - Only when something is new does the existing two-provider walk run.
+  - Both this read and the graduation monitor's own walk take the DAMM walk lock (`indexDammTradesLocked`, key `damm-trades:<repo id>`), never the monitor's graduation lock. While either walks, the other only skips its walk, and the monitor's graduation observation is never delayed.
+- **Expiry:** the worker deletes every live row two minutes after it arrived. A swap that never finalizes disappears from the chart by itself.
+- **Display only:** no ledger, fee, claim, payout, P&L, analytics or alert reads `live_trade_events`. The Open Graph image and other readers keep finalized data only.
+- **Switches:**
+  - `LIVE_TRADES_ENABLED=false` on the worker turns the websocket off.
+  - `FAST_GRADUATED_TRADES_ENABLED=false` turns the 10-second finalized reads off and leaves graduated swaps to the graduation pass.
+  - If live rows stop, trades still appear once finalized, as before.
+- **Stock-paired markets:** their charts read the stock ledgers and are unchanged.
 
 ## Loading and response time
 

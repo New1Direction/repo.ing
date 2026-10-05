@@ -10,7 +10,8 @@ export const LIVE_MARKET_POLL_MS = 20_000
 const DIGITS = /^\d+$/
 
 // The parts of a /trades payload (src/market-chart.mjs) the card draws, in the same field names, so phoneMarketSummary reads
-// it as it reads the token page's chart. trades: the newest LIVE_TRADE_ROWS swaps, newest first. null for anything else.
+// it as it reads the token page's chart. trades: the newest LIVE_TRADE_ROWS swaps, newest first; pending marks one confirmed
+// but not finalized yet (src/market-chart.mjs mergeLiveTrades). null for anything else.
 export function liveChart(payload) {
   if (!payload || !Array.isArray(payload.candles) || !Number.isFinite(payload.interval)) return null
   return {
@@ -19,8 +20,8 @@ export function liveChart(payload) {
     latest: Number.isFinite(payload.latest?.priceSol) && payload.latest.priceSol > 0 ? { priceSol: payload.latest.priceSol } : null,
     candles: payload.candles.filter(bar => Number.isFinite(bar?.time)).map(({ time, open, close, orderingPending }) =>
       ({ time, open, close, ...orderingPending ? { orderingPending: true } : {} })),
-    trades: recentTrades(payload.trades, LIVE_TRADE_ROWS).map(({ signature, eventIndex, direction, tradedAt, solLamports }) =>
-      ({ signature, eventIndex, direction, tradedAt, solLamports })),
+    trades: recentTrades(payload.trades, LIVE_TRADE_ROWS).map(({ signature, eventIndex, direction, tradedAt, solLamports, pending }) =>
+      ({ signature, eventIndex, direction, tradedAt, solLamports, ...pending === true ? { pending: true } : {} })),
   }
 }
 

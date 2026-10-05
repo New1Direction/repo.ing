@@ -65,14 +65,85 @@ export const blockPosition = t => `coalesce(p.transaction_index,array_position(b
 export const blockJoins = t => `left join finalized_chart_positions p on p.slot=${t}.slot and p.signature=${t}.signature
   left join finalized_chart_blocks b on b.slot=${t}.slot and p.slot is null`
 
-export async function readMarketChart(db, market, range = 'all', now = Date.now()) {
+// Live trades (drizzle/0057_live_trade_events.sql, src/live-trades.mjs): confirmed swaps the finalized ledgers do not hold
+// yet. Only the canonical curve pool's and the verified DAMM destination's, from the newest finalized slot on, at most
+// LIVE_TRADE_MAX_AGE_SECONDS old (a swap that never finalizes drops out by itself), and never one a finalized ledger already
+// holds. A database before 0057 has none.
+export const LIVE_TRADE_MAX_AGE_SECONDS = 120
+export async function readLiveTrades(db, market, migration, fromSlot) {
+  if (!market.repoId) return []
+  try {
+    const { rows } = await db.query(`select l.signature, l.event_index as "eventIndex", l.slot::text, l.traded_at as "tradedAt",
+        l.direction, l.venue, l.next_sqrt_price::text as "nextSqrtPrice", l.quote_amount::text as "solLamports",
+        l.base_amount::text as "tokenBaseUnits"
+      from live_trade_events l
+      where l.github_repo_id = $1 and l.pool = any($2::text[]) and l.slot >= $3::bigint
+        and l.received_at > now() - make_interval(secs => $4)
+        and not exists (select 1 from trade_events t where t.signature = l.signature and t.event_index = l.event_index)
+        and not exists (select 1 from damm_trade_events d where d.signature = l.signature and d.event_index = l.event_index)
+      order by l.slot, l.received_at, l.signature, l.event_index limit 200`,
+    [String(market.repoId), [market.pool, migration?.pool].filter(Boolean), fromSlot ?? '0', LIVE_TRADE_MAX_AGE_SECONDS])
+    return rows
+  } catch (error) { if (error?.code === '42P01') return []; throw error }
+}
+
+// A chart with its live trades after the finalized history. Each is appended to the trade list and folded into its
+// bucket: a bucket the finalized history already has keeps its open, and one withholding prices for unproven order keeps
+// withholding them. The newest becomes the latest price. Live trades are marked pending, their candles live, and the source
+// says it includes confirmed trades. Same-slot live trades keep the order they were received in until finalized order
+// replaces them. A swap the finalized trade list already holds (it finalized between this read's queries) is left out.
+export function mergeLiveTrades(chart, rows, now = Date.now()) {
+  const finalized = new Set(chart.trades.map(trade => `${trade.signature}:${trade.eventIndex}`))
+  const live = rows.flatMap(row => {
+    if (finalized.has(`${row.signature}:${row.eventIndex}`)) return []
+    try {
+      return [{ signature: row.signature, eventIndex: row.eventIndex, direction: row.direction, venue: row.venue,
+        tradedAt: new Date(row.tradedAt).toISOString(), priceSol: chartSpotPrice(row.nextSqrtPrice), solLamports: String(row.solLamports),
+        tokenBaseUnits: row.tokenBaseUnits ?? null, pending: true }]
+    } catch { return [] } // An unreadable live row is left out; it never costs the finalized chart.
+  })
+  if (!live.length) return chart
+  const start = Date.parse(chart.start), bars = new Map(chart.candles.map(bar => [bar.time, bar]))
+  for (const trade of live) {
+    const at = Date.parse(trade.tradedAt)
+    if (at < start) continue
+    const time = Math.floor(at / 1000 / chart.interval) * chart.interval
+    const previous = bars.get(time)
+    const bar = previous ? { ...previous } : { time, open: trade.priceSol, high: trade.priceSol, low: trade.priceSol, volumeLamports: '0', count: 0 }
+    if (!bar.orderingPending) Object.assign(bar, { high: Math.max(bar.high, trade.priceSol), low: Math.min(bar.low, trade.priceSol), close: trade.priceSol })
+    bars.set(time, { ...bar, volumeLamports: (BigInt(bar.volumeLamports) + BigInt(trade.solLamports)).toString(), count: bar.count + 1, live: true })
+  }
+  const dayAgo = now - 86_400_000
+  const liveVolume = live.reduce((sum, trade) => Date.parse(trade.tradedAt) >= dayAgo ? sum + BigInt(trade.solLamports) : sum, 0n)
+  return { ...chart, candles: [...bars.values()].sort((a, b) => a.time - b.time), trades: [...chart.trades, ...live].slice(-120),
+    totalTrades: chart.totalTrades + live.length, volume24hLamports: (BigInt(chart.volume24hLamports) + liveVolume).toString(),
+    latest: live.at(-1), latestOrderingPending: false, live: { trades: live.length }, source: `${chart.source}+confirmed` }
+}
+
+// Live trades are an addition: a failed read or merge leaves them out and never costs the finalized chart. Logged at most
+// once a minute per process.
+let liveFailureLoggedAt = -Infinity
+function liveUnavailable(error) {
+  if (Date.now() - liveFailureLoggedAt < 60_000) return
+  liveFailureLoggedAt = Date.now()
+  console.warn(JSON.stringify({ liveTradesUnavailable: { code: error?.code ?? String(error?.message ?? 'error').slice(0, 80) } }))
+}
+
+const earliest = (...values) => values.filter(value => value != null).sort((a, b) => new Date(a) - new Date(b))[0] ?? null
+const newest = (...values) => values.filter(value => value != null).sort((a, b) => new Date(b) - new Date(a))[0] ?? null
+
+// live: also show confirmed trades the finalized ledgers do not hold yet (the market page and its API; see mergeLiveTrades).
+export async function readMarketChart(db, market, range = 'all', now = Date.now(), { live = false } = {}) {
   const migration = market.repoId ? chartMigration(market, (await db.query('select * from graduation_events where github_repo_id=$1', [market.repoId])).rows[0]) : null
   const params = (start, end, interval) => [market.pool, start, end, interval, migration?.pool ?? null, market.repoId ?? null, migration?.slot ?? null]
   const { rows: [summary] } = await db.query(`${canonicalEvents} select min(traded_at) as first, max(traded_at) as last,
-    count(*)::text as count, count(*) filter(where venue='DAMM')::int as damm_count,
+    count(*)::text as count, count(*) filter(where venue='DAMM')::int as damm_count, max(slot)::text as last_slot,
     coalesce(sum(quote_amount) filter (where traded_at >= $2::timestamptz - interval '24 hours'),0)::text as volume
     from canonical_events where traded_at <= $2 and $3::text is null and $4::text is null`, params(new Date(now), null, null))
-  const window = chartWindow(range, summary.first, now, summary.last)
+  let liveRows = []
+  if (live) try { liveRows = await readLiveTrades(db, market, migration, summary.last_slot) } catch (error) { liveUnavailable(error) }
+  const window = liveRows.length ? chartWindow(range, earliest(summary.first, liveRows[0].tradedAt), now, newest(summary.last, liveRows.at(-1).tradedAt))
+    : chartWindow(range, summary.first, now, summary.last)
   const [{ rows }, { rows: recent }] = await Promise.all([
     db.query(`${canonicalEvents}, events as (
       select t.*, ${blockPosition('t')} as transaction_index,
@@ -110,9 +181,11 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
     direction: row.direction, venue: row.venue, tradedAt: row.tradedAt.toISOString(),
     priceSol: row.nextSqrtPrice ? chartSpotPrice(row.nextSqrtPrice) : null,
     solLamports: row.solLamports ?? null, tokenBaseUnits: row.tokenBaseUnits ?? null }))
-  return { ...window, candles: rows.map(chartBar), trades, volume24hLamports: summary.volume,
+  const chart = { ...window, candles: rows.map(chartBar), trades, volume24hLamports: summary.volume,
     totalTrades: Number(summary.count), latest: latestAmbiguous || !trades.at(-1)?.priceSol ? null : trades.at(-1),
     latestOrderingPending: latestAmbiguous, fetchedAt: new Date(now).toISOString(),
     source: migration ? 'finalized-dbc-and-damm-swaps' : 'finalized-dbc-swaps',
     graduation: migration ? { ...migration, indexedTrades: summary.damm_count } : null }
+  if (!liveRows.length) return chart
+  try { return mergeLiveTrades(chart, liveRows, now) } catch (error) { liveUnavailable(error); return chart }
 }

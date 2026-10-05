@@ -48,7 +48,8 @@ export function LiveMarket({ market, initial, usdPerSol = null, renderedAt }) {
     document.addEventListener('visibilitychange', tick)
     return () => { active = false; controller?.abort(); clearInterval(timer); document.removeEventListener('visibilitychange', tick) }
   }, [market.mint])
-  const handles = useTraderHandles(market.mint, chart.trades[0] ? tradeKey(chart.trades[0]) : '')
+  // A confirming swap's trader handle is read again once it is finalized (the /traders read holds finalized swaps only).
+  const handles = useTraderHandles(market.mint, chart.trades[0] ? `${tradeKey(chart.trades[0])}${chart.trades[0].pending ? ':pending' : ''}` : '')
   const summary = phoneMarketSummary({ priceSol: market.priceSol, volume24hLamports: market.volume24hLamports, chart,
     metrics: usdPerSol ? { solUsd: usdPerSol } : null, now })
   const line = sparklinePath(summary.spark, W, H, PAD)
@@ -83,11 +84,11 @@ export function LiveMarket({ market, initial, usdPerSol = null, renderedAt }) {
     </dl>
     <ol className="live-trades" aria-label="Newest trades">
       {chart.trades.slice(0, LIVE_TRADE_ROWS).map(trade => { const key = tradeKey(trade), x = handles.get(key)
-        return <li key={key} className={`live-trade${arrived.has(key) ? ' is-new' : ''}`}>
+        return <li key={key} className={`live-trade${arrived.has(key) ? ' is-new' : ''}${trade.pending ? ' is-pending' : ''}`}>
           <span className={`live-trade-side ${trade.direction}`}>{trade.direction === 'buy' ? 'Buy' : 'Sell'}</span>
           <strong>{recentTradeSol(trade)}</strong>
           <span className="live-trade-who">{x && <XHandleLink link={x} avatar/>}</span>
-          <time dateTime={trade.tradedAt}>{recentTradeAge(trade, now)}</time>
+          <time dateTime={trade.tradedAt} title={trade.pending ? 'Confirmed on Solana. Final in about 13 seconds.' : undefined}>{trade.pending ? 'Confirming' : recentTradeAge(trade, now)}</time>
         </li> })}
     </ol>
     <Link href={`/token/${market.mint}`} className="button primary live-market-cta">Trade ${market.symbol}<ArrowRight size={17} aria-hidden="true"/></Link>

@@ -6,7 +6,7 @@ import { marketNotificationHub } from './market-hub.mjs'
 import { timed } from './server-timing.mjs'
 
 // A market's chart reader, by its quote: a stock-paired market reads the stock ledger (src/stock-market-chart.mjs); every
-// other market reads the SOL chart exactly as before.
+// other market reads the SOL chart, which marketCharts below asks for with its live trades.
 export const chartReader = market => isStockMarket(market) ? readStockMarketChart : readMarketChart
 
 // Built chart payloads (src/market-chart.mjs, serialized) per market and range, for /api/market/<mint>/trades and the home
@@ -19,7 +19,9 @@ export function marketCharts() {
       if (unavailable) throw Error(unavailable)
       if (!market) return null
       const read = chartReader(market)
-      return JSON.stringify(await timed('chart', () => read(database(), market, range)))
+      // live: a SOL chart also shows confirmed trades the finalized ledgers do not hold yet (src/market-chart.mjs
+      // mergeLiveTrades); the stock reader takes no options.
+      return JSON.stringify(await timed('chart', () => read(database(), market, range, Date.now(), { live: true })))
     },
     subscribe(mint, onChange) {
       const hub = marketNotificationHub()

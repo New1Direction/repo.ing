@@ -7,6 +7,7 @@ import { createTrendIntake } from '../src/trend-intake.mjs'
 import { createLiquidityRecovery } from '../src/liquidity-settlement.mjs'
 import { createBuilderReinvestRecovery } from '../src/builder-reinvest.mjs'
 import { createGraduationMonitor } from '../src/graduation-readiness.mjs'
+import { createGraduatedTradeIndexer, createLiveTrades, pruneLiveTrades } from '../src/live-trades.mjs'
 import { createStockGraduationMonitor, stockGraduationPass } from '../src/stock-graduation-monitor.mjs'
 import { createReserveAlertDelivery, createReserveWebhookSender } from '../src/reserve-alerts.mjs'
 import { createAllocationRecovery } from '../src/builder-allocation-settlement.mjs'
@@ -147,6 +148,42 @@ async function observeOperatingWallets(){
   catch{console.log(JSON.stringify({operatingWalletError:'OPERATING_BALANCE_UNVERIFIED'}))}
 }
 let nextGraduationCheck=0,graduationTask=null
+// Live chart trades (src/live-trades.mjs; docs/CHARTS_AND_RESPONSIVENESS.md, "Live trades"). Confirmed swaps arrive over the
+// primary RPC's websocket and go on charts at once, marked confirming until finalized. Graduated markets' finalized DAMM swaps
+// are read every 10 s (and as soon as a confirmed one should be final) instead of once per graduation pass over every market.
+// Each can be turned off alone: LIVE_TRADES_ENABLED=false (the websocket), FAST_GRADUATED_TRADES_ENABLED=false (the 10 s reads,
+// leaving graduated swaps to the graduation pass). Live reads pause while the primary provider backs off a rate limit.
+const graduatedTrades=process.env.FAST_GRADUATED_TRADES_ENABLED==='false'?null:createGraduatedTradeIndexer({pool,connection:graduationRPC(rpc),
+  verification:process.env.GRADUATION_VERIFICATION_RPC_URL?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
+const liveTrades=once||process.env.LIVE_TRADES_ENABLED==='false'?null:createLiveTrades({pool,config,connect:()=>rpcConnection(rpc,'confirmed'),
+  onDammSwap:repoId=>graduatedTrades?.wake(repoId),paused:()=>meter.backoff('primary')>0,track:fn=>meter.track('liveTrades',fn)})
+let liveLoggedAt=0,livePrunedAt=0,graduatedSkipLogged=false
+// Both never reject. Each runs on its own timer beside the main loop (and beside the other), so a slow pass anywhere never
+// delays a finalized read, a subscription refresh or the two-minute expiry.
+async function observeLiveTrades(){
+  const result={}
+  if(liveTrades){
+    try{const refreshed=await liveTrades.refresh();if(refreshed)result.refreshed=refreshed}
+    catch(error){result.refreshError=error?.code==='42P01'?'NOT_MIGRATED':'LIVE_REFRESH_UNAVAILABLE'}
+  }
+  if(Date.now()-livePrunedAt>=15000){
+    livePrunedAt=Date.now()
+    try{const pruned=await pruneLiveTrades(pool);if(pruned)result.pruned=pruned}
+    catch(error){if(error?.code!=='42P01')result.pruneError='LIVE_PRUNE_UNAVAILABLE'}
+  }
+  if(liveTrades&&Date.now()-liveLoggedAt>=60000){liveLoggedAt=Date.now();result.stats=liveTrades.stats()}
+  if(Object.keys(result).length)console.log(JSON.stringify({liveTrades:result}))
+}
+async function observeGraduatedTrades(){
+  if(!graduatedTrades)return
+  try{
+    const results=await graduatedTrades.runOnce()
+    const skipped=results.some(item=>item.status==='SKIPPED')
+    const shown=results.filter(item=>item.status==='INDEXED'||item.status==='ERROR'||(item.status==='SKIPPED'&&!graduatedSkipLogged))
+    graduatedSkipLogged=skipped
+    if(shown.length)console.log(JSON.stringify({graduatedTrades:shown}))
+  }catch{console.log(JSON.stringify({graduatedTrades:[{status:'ERROR',code:'GRADUATED_TRADES_UNAVAILABLE'}]}))}
+}
 const chartOrdering=createChartOrdering({pool,connection:graduationRPC(rpc),verification:process.env.GRADUATION_VERIFICATION_RPC_URL
   ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
 let chartOrderingTask=null,nextChartOrderingCheck=0
@@ -266,12 +303,15 @@ async function observeTrends(){
 // Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch and
 // milestone alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
 for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
-  tipMonitor,partsFunds,chartOrdering,graduation,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts})){
+  tipMonitor,partsFunds,chartOrdering,graduation,graduatedTrades,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts})){
   if(!worker)continue
   const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
 }
 const stopUsageReport=once?null:meter.report(60_000)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+if(!once)for(const observe of [observeLiveTrades,observeGraduatedTrades]){
+  const tick=()=>{void observe().catch(()=>{}).finally(()=>setTimeout(tick,2000))};tick()
+}
 async function observeGraduation(){
   const result={}
   try{result.graduation=await graduation.runOnce()}catch{result.graduationError='Graduation readiness unavailable'}

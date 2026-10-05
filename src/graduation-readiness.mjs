@@ -5,7 +5,7 @@ import { liquidityConfig, liquidityReserveSummary, reconcileLiquidity } from './
 import { createGraduatedFees } from './graduated-fees.mjs'
 import { reinvestQuote } from './builder-reinvest-chain.mjs'
 import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
-import { indexDammTrades } from './damm-trades.mjs'
+import { indexDammTradesLocked } from './damm-trades.mjs'
 import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
 import { persistGraduationObservation } from './reserve-alerts.mjs'
 import { readGenesisHash } from './rpc-usage.mjs'
@@ -67,7 +67,8 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         // Persist migration proof even when fee indexing/reconciliation still needs attention.
         await recordGraduationEvidence(db,state,previous,reconciliation)
         if(state.migration){
-          await indexDammTrades({db,connection,verification,market,graduation:state.migration})
+          // Skipped, not failed, while the worker's 10 s read walks the same pool (src/live-trades.mjs).
+          await indexDammTradesLocked({db,connection,verification,market,graduation:state.migration})
           await notify('GRADUATED',state.migration.signature,{signature:state.migration.signature,pool:state.migration.pool,slot:state.migration.slot})
         }
         const {rows:[volumes]}=await db.query(`select
