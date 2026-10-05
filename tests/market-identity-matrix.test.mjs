@@ -9,6 +9,7 @@ import { currentGithubAdminForRepository } from '../src/github-app-auth.mjs'
 import { createReleaseReader } from '../src/github-release.mjs'
 import { createDevPulseCollector } from '../src/dev-pulse.mjs'
 import { createTrendSources } from '../src/trend-sources.mjs'
+import { checkLaunchLineage } from '../src/repo-lineage.mjs'
 import { readRepositoryFacts } from '../src/verification-bonus-accrual.mjs'
 import { rewardStamps } from '../src/launch-coordinator.mjs'
 import { createClaim } from '../src/claim.mjs'
@@ -40,6 +41,7 @@ const githubCalls = {
   currentGithubAdminForRepository: (id, { fetchImpl }) => currentGithubAdminForRepository({ repoId: id, owner: 'o', name: 'n', githubUserId: '1', githubLogin: 'u', fetchImpl, identity }),
   readRepositoryFacts: (id, { fetchImpl }) => readRepositoryFacts(id, { fetchImpl, headers: async () => ({}) }),
   'trend observe': (id, { fetchImpl }) => createTrendSources({ fetchImpl, pause: async () => {} }).observe('https://github.com/o/n', id),
+  'fork guard': (id, { fetchImpl, pool }) => checkLaunchLineage({ pool, repo: { githubRepoId: id, fullName: 'o/n', owner: 'o' }, fetchImpl, log: () => {} }),
   authorizationUrl: async (id, recorded) => verifier(recorded).authorizationUrl({ githubRepoId: id }),
   verifyCallback: (id, recorded) => verifier(recorded).verifyCallback({ githubRepoId: id, expectedGithubRepoId: id, code: 'code', state: 's', expectedState: 's' }),
   verifyAccessToken: (id, recorded) => verifier(recorded).verifyAccessToken({ githubRepoId: id, accessToken: 'ghu_test' }),

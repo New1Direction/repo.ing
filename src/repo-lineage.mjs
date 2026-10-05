@@ -1,6 +1,7 @@
 import { githubApiHeaders } from './github-app-auth.mjs'
 import { resolvePublicRepositoryById, RepositoryResolutionError } from './github.mjs'
 import { persistLaunchRepository } from './repository-store.mjs'
+import { assertGithubRepoId } from './market-identity.mjs'
 
 // The fork guard (drizzle/0058_repository_lineage.sql; docs/FORK_GUARD.md). Buyers must not mistake a copy for a launched
 // original, while a fork that carries an abandoned project forward can still have its market.
@@ -79,6 +80,8 @@ export async function recordLineage(pool, repo, { root = null, checked = true } 
 // Every launch path: the verdict, with its reads stored. A first commit GitHub cannot list right now skips the copy check
 // (never blocks a launch on a GitHub hiccup) and is read again later.
 export async function checkLaunchLineage({ pool, repo, fetchImpl = fetch, readRoot = rootCommit, log = console.warn }) {
+  // A Hugging Face market id never reaches GitHub or a lineage read (src/market-identity.mjs).
+  assertGithubRepoId(String(repo.githubRepoId ?? repo.repoId))
   let root = null, checked = true
   if (!repo.fork) {
     try { root = await readRoot(repo.fullName, fetchImpl) }
@@ -99,6 +102,7 @@ export function createLineageBackfill({ pool, fetchImpl = fetch, limit = 5, reso
     const results = []
     for (const { repoId } of rows) {
       try {
+        assertGithubRepoId(repoId)
         const repo = await resolve(repoId, fetchImpl)
         await persistLaunchRepository(pool, repo)
         const root = repo.fork ? null : await readRoot(repo.fullName, fetchImpl)
