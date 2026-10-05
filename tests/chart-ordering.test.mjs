@@ -43,7 +43,7 @@ test('RPC failures retain a pending slot, back off and recover without recording
   assert.equal((await worker.runOnce()).verified,1);assert.equal(calls,2);assert.equal(released,3)
 })
 
-test('real PostgreSQL: a used-up block list is cleared after two days, and restored when a later trade needs it', { skip: !process.env.CHART_TEST_DATABASE_URL }, async () => {
+test('real PostgreSQL: a used-up block list is cleared after seven days, and restored when a later trade needs it', { skip: !process.env.CHART_TEST_DATABASE_URL }, async () => {
   const { default: pg } = await import('pg')
   const { pruneChartBlocks, recordChartBlock } = await import('../src/chart-ordering.mjs')
   const url = new URL(process.env.CHART_TEST_DATABASE_URL)
@@ -64,10 +64,10 @@ test('real PostgreSQL: a used-up block list is cleared after two days, and resto
     const position = (slot, signature, index) => db.query('insert into finalized_chart_positions values($1,$2,$3)', [slot, signature, index])
     const stored = async slot => (await db.query('select cardinality(signatures) as n from finalized_chart_blocks where slot=$1', [slot])).rows[0].n
     // 100: old, both indexed trades positioned (a curve swap and a DAMM swap). 200: old, one trade still without a position.
-    // 300: positioned but only a day old.
-    await block(100, list100, 3); await trade('trade_events', 100, sig(1)); await trade('damm_trade_events', 100, sig(2))
+    // 250: positioned but only a day old.
+    await block(100, list100, 8); await trade('trade_events', 100, sig(1)); await trade('damm_trade_events', 100, sig(2))
     await position(100, sig(1), 2); await position(100, sig(2), list100.length)
-    await block(200, [sig(3), sig(4), ...others], 3); await trade('trade_events', 200, sig(3)); await trade('stock_trade_events', 200, sig(4))
+    await block(200, [sig(3), sig(4), ...others], 8); await trade('trade_events', 200, sig(3)); await trade('stock_trade_events', 200, sig(4))
     await position(200, sig(3), 1)
     await block(250, [sig(6), sig(7), ...others], 1); await trade('trade_events', 250, sig(6)); await trade('trade_events', 250, sig(7))
     await position(250, sig(6), 1); await position(250, sig(7), 2)
@@ -75,7 +75,7 @@ test('real PostgreSQL: a used-up block list is cleared after two days, and resto
     assert.deepEqual([await stored(100), await stored(200), await stored(250)], [0, 22, 22])
     assert.equal(await pruneChartBlocks(db), 0, 'already cleared, and the others still need theirs')
     // A limit never lets a block that must keep its list hold up one that can be cleared.
-    await db.query("update finalized_chart_blocks set checked_at = now() - interval '3 days' where slot = 250")
+    await db.query("update finalized_chart_blocks set checked_at = now() - interval '8 days' where slot = 250")
     assert.equal(await pruneChartBlocks(db, { limit: 1 }), 1)
     assert.equal(await stored(250), 0)
     // A swap at slot 100 indexed only now: the fresh proof of the same block restores the list and positions it.

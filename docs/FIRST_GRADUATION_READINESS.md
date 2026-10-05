@@ -40,7 +40,7 @@ The only mutation on this surface acknowledges an alert; it requires operator au
 
 ## Detection, durable proof and source reuse
 
-The existing worker runs one background readiness pass every 30 seconds after the previous pass completes, paced at two seconds per remote market. Normal fee indexing and already-approved recovery continue independently. RPC calls have 15-second timeouts and do not retry a rate-limit response in a tight loop. A global provider outage invalidates observations once per pass. Local rehearsal RPCs are exempt from remote pacing; production cannot use the local-network exception.
+The existing worker runs one background readiness pass every 30 seconds after the previous pass completes, paced at half a second per remote market (two seconds until October 5, 2026; `GRADUATION_MARKET_PAUSE_MS`), and the worker logs each pass's `graduationMs`. Normal fee indexing and already-approved recovery continue independently. RPC calls have 15-second timeouts and do not retry a rate-limit response in a tight loop. A global provider outage invalidates observations once per pass. Local rehearsal RPCs are exempt from remote pacing; production cannot use the local-network exception.
 
 A migrated flag alone is insufficient. The existing `createGraduatedFees` / `migrationPosition` verifiers establish the exact canonical migration, DAMM pool, creator and partner positions, position NFT ownership, SOL-only fee mode and permanent locks. P5 adds a dual-RPC finalized receipt agreement check and stores one immutable `graduation_events` record with:
 

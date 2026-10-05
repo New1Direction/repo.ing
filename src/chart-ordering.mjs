@@ -64,10 +64,12 @@ const SYNC_POSITIONS = `insert into finalized_chart_positions(slot,signature,tra
 
 // A recorded block keeps every transaction signature in it (~100 KB) only while one of its trades may still need a position
 // from that list. Once every indexed trade in the block has a stored position and the block is keepMs old, the list is
-// cleared to an empty array: chart reads use the stored positions. A trade indexed later in such a block has no position,
-// so the block is pending again and the next pass reads it from both RPCs and restores the list (recordChartBlock).
-// pg_column_size reads a stored list's size without loading it. Blocks that still need their list never hold up others.
-export const CHART_BLOCK_KEEP_MS = 2 * 86_400_000
+// cleared to an empty array: chart, wallet price and P&L reads use the stored positions (blockPosition in market-chart.mjs).
+// A trade indexed later in such a block has no position, so the block is pending again and the next pass reads it from both
+// RPCs and restores the list (recordChartBlock). Seven days, so a trade indexed that late (an outage, a backfill) is rare,
+// and the verification RPC, which may not serve blocks that old, is rarely needed for it. pg_column_size reads a stored
+// list's size without loading it. Blocks that still need their list never hold up others.
+export const CHART_BLOCK_KEEP_MS = 7 * 86_400_000
 export async function pruneChartBlocks(db, { keepMs = CHART_BLOCK_KEEP_MS, limit = 50 } = {}) {
   const { rowCount } = await db.query(`with candidates as (
       select slot from finalized_chart_blocks where checked_at < now() - make_interval(secs => $1) and pg_column_size(signatures) > 64
@@ -95,7 +97,9 @@ export function createChartOrdering({ pool, connection, verification, now = Date
       locked = lock.locked
       if (!locked) return { status: 'locked', verified: 0 }
       await db.query(SYNC_POSITIONS)
-      const pruned = await pruneChartBlocks(db)
+      // Storage only: a failure here never stops the ordering below.
+      let pruned = 0, pruneError = null
+      try { pruned = await pruneChartBlocks(db) } catch (error) { pruneError = error?.code ?? 'CHART_PRUNE_UNAVAILABLE' }
       // Multi-transaction slots without a recorded block, or with a trade missing from it (no stored position after the
       // sync above). Never reads the blocks' signature lists, which used to be de-TOASTed in full on every pass.
       const { rows } = await db.query(`with all_trades as (
@@ -107,7 +111,7 @@ export function createChartOrdering({ pool, connection, verification, now = Date
         group by t.slot,b.slot having count(distinct t.signature)>1
         and (b.slot is null or count(distinct p.signature)<count(distinct t.signature))
         order by t.slot desc`)
-      const result = { status: 'checked', verified: 0, pending: rows.length, errors: [], ...pruned ? { pruned } : {} }
+      const result = { status: 'checked', verified: 0, pending: rows.length, errors: [], ...pruned ? { pruned } : {}, ...pruneError ? { pruneError } : {} }
       let attempted = 0
       for (const row of rows) {
         if ((retryAfter.get(row.slot) ?? 0) > now()) continue
