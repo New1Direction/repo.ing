@@ -158,13 +158,14 @@ export function createGraduationMonitor({pool,connection,verification,config,env
 }
 
 // Review codes for a check that failed to read, not for anything it found: an RPC outage, a rate limit, two providers not
-// agreeing yet, an unexpected read error, or a read that came back stale. After one of these the previous verified
-// observation stays public for the rest of its own freshness window (PUBLIC_GRADUATION_MAX_AGE_MS), so one failed pass never
-// takes a market's progress and trading offline. Every other review code withdraws it at once. Operator pages read the
-// row's status directly and still show the review.
+// agreeing yet, an unexpected read error, or a read that came back stale.
 export const TRANSIENT_REVIEW_CODES=Object.freeze(['RPC_UNAVAILABLE','RPC_RATE_LIMITED','RPC_DISAGREEMENT','EVIDENCE_UNAVAILABLE','STALE_PROGRESS'])
-export function publicGraduation(row,now=Date.now()) {
-  const usable=row?.status==='VERIFIED'||(row?.status==='REVIEW'&&TRANSIENT_REVIEW_CODES.includes(row.error_code))
+// transientReview: after one of those, serve the previous verified observation for the rest of its own freshness window
+// (PUBLIC_GRADUATION_MAX_AGE_MS), so one failed pass never takes a market page's progress and trade card offline. Only the
+// public curve endpoint asks for it; announcements, the graduation race, market lists, share cards and discoverer growth still
+// require a verified latest pass, and operator pages read the row's status directly.
+export function publicGraduation(row,now=Date.now(),{transientReview=false}={}) {
+  const usable=row?.status==='VERIFIED'||(transientReview&&row?.status==='REVIEW'&&TRANSIENT_REVIEW_CODES.includes(row.error_code))
   if(!row||!usable||!row.observation)throw Error(row?.error_code??'PROGRESS_NOT_INDEXED')
   // Fee reconciliation trails the chain during active trading; it gates payouts and operator actions (and raises
   // RECONCILIATION_MISMATCH alerts), not public progress. Migration itself must still be durably proven below.
