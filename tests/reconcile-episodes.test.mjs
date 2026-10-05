@@ -99,6 +99,22 @@ test('a ledger behind the chain while its fees keep being recorded is trading, n
   assert.deepEqual(observe(partnerSide.episodes, partnerSide.clock, pass => partner(BigInt(pass), BigInt(pass) + 4n), partnerSide.began + 3 * 3_600_000), [])
 })
 
+test('the six hours count from the first pass that found the ledger behind, not from the start of the episode', () => {
+  // The reads fail for more than six hours, then work again: the ledger is behind while its fees are being recorded.
+  const { clock, began, episodes } = start()
+  const readable = began + RECONCILE_BEHIND_MAX_MS + 10 * 60_000, firstBehind = began + PASS_MS * Math.ceil((readable - began) / PASS_MS)
+  const state = (pass, at) => at < readable ? unread : trading(at)
+  const before = observe(episodes, clock, state, firstBehind + RECONCILE_BEHIND_MAX_MS - 1)
+  assert.deepEqual([...new Set(before.map(alert => alert.kind))], ['unchecked'], 'minutes of trading lag are not six hours of it')
+  // Six hours after that pass it is, in the same episode.
+  const [alert, ...others] = observe(episodes, clock, state, firstBehind + RECONCILE_BEHIND_MAX_MS)
+  assert.deepEqual([alert.kind, alert.stalled, alert.since, others.length], ['behind', false, new Date(began + PASS_MS).toISOString(), 0])
+  // A pass that could not check in between does not start the six hours again.
+  const mixed = start(), from = mixed.began + PASS_MS
+  const raised = observe(mixed.episodes, mixed.clock, (pass, at) => pass % 50 === 49 ? unread : trading(at), from + RECONCILE_BEHIND_MAX_MS)
+  assert.deepEqual(raised.map(alert => [alert.kind, alert.stalled]), [['behind', false]])
+})
+
 test('a ledger behind the chain with nothing recorded for an hour alerts: the indexer stopped, or missed a trade', () => {
   for (const state of [() => behind(), () => partner(5n, 9n), () => behind(1n)]) {
     const { clock, began, episodes } = start()

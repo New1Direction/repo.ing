@@ -206,6 +206,12 @@ test('when the chain cannot be verified no market is read, and that is recorded 
   assert.equal(w.db.recorded('protocol:checks').length, 1)
   await passes(w, again + RECONCILE_HOLD_MS + 2 * PASS_MS)
   assert.deepEqual(w.db.recorded('protocol:checks').map(row => [row.reason, row.since]), [['RPC_UNAVAILABLE', iso(began + PASS_MS)], ['RPC_RATE_LIMITED', iso(again + PASS_MS)]])
+  // A row about it that cannot be stored is counted in this pass's result too.
+  const down = world({ holdMs: 0 })
+  down.found.chain = 'RPC_UNAVAILABLE'
+  down.db.fault.on = (sql, params) => sql.startsWith('insert into graduation_alerts') && params[2] === LEDGER
+  const [unstored] = await passes(down, down.clock.at + PASS_MS)
+  assert.deepEqual(unstored.map(result => [result.status, result.code, result.count]), [['REVIEW', 'RPC_UNAVAILABLE', undefined], ['ALERTS_NOT_RECORDED', undefined, 1]])
 })
 
 test('when the monitor own ledger reads fail the pass still fails, and no market being checked is recorded after the hold', async () => {
@@ -250,6 +256,13 @@ test('a pass that dies between two markets leaves the rest unchecked, and that i
   const through = await passes(w, w.clock.at + PASS_MS)
   assert.deepEqual(through.at(-1).map(result => result.status), ['VERIFIED', 'VERIFIED', 'VERIFIED'])
   assert.equal(w.db.recorded('protocol:checks')[0].clearedAt, iso(w.clock.at))
+  // Recording it failing too never replaces what stopped the pass: the error says how many rows could not be stored.
+  const down = world({ markets: [marketOf(1), marketOf(2)], holdMs: 0 })
+  let attempts = 0
+  down.db.fault.connect = () => ++attempts % 2 === 0
+  down.db.fault.on = (sql, params) => sql.startsWith('insert into graduation_alerts') && params[2] === LEDGER
+  const [died] = await passes(down, down.clock.at + PASS_MS)
+  assert.deepEqual([died?.message, died?.alertsNotRecorded], ['remaining connection slots are reserved', 1])
 })
 
 test('passes that come round less often than public progress lasts are recorded as too slow, though every market verified', async () => {

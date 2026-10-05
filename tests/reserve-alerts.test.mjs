@@ -139,6 +139,8 @@ test('a ledger alert names the ledger, says whether it is lag or a real mismatch
   // Behind for six hours while fees are still being recorded is worded as what it is.
   assert.equal(reserveAlertText(11, { ...market, status: 'MISMATCH', reason: null, lagging: true, stalled: false }),
     `repo.ing · Fee ledger behind the chain\nlocal/reserve\nThe chain has shown fees the worker has not recorded for six hours without a break, though fees are still being recorded. The fee indexer may be falling behind.\n${tail}\nAlert #11`)
+  // Only a row that says its ledger still records is worded so.
+  assert.equal(reserveAlertText(11, { ...market, status: 'MISMATCH', reason: null, lagging: true }), behind)
   assert.match(reserveAlertText(12, { ...market, status: 'UNAVAILABLE', reason: null, lagging: true }), /Fee ledger could not be checked\nlocal\/reserve\nThe on-chain read keeps failing\./)
   assert.match(reserveAlertText(13, { ...market, status: 'PENDING_REVIEW', reason: '1 unresolved claim intent(s)', lagging: true }), /Builder claim still unresolved\nlocal\/reserve\n1 unresolved claim intent/)
   const real = reserveAlertText(14, { ...market, status: 'MISMATCH', reason: 'Graduated fee withdrawals differ from proven payouts', lagging: false })
@@ -159,7 +161,7 @@ test('a ledger alert names the ledger, says whether it is lag or a real mismatch
   const checks = reserveAlertText(18, ledgerChecksAlertDetail({ code: 'RPC_UNAVAILABLE', episode, now: at }))
   assert.equal(checks, `repo.ing · Ledger checks are not running\nThe monitor's pass stops before it has checked every market, so ledgers go unchecked (RPC_UNAVAILABLE).\nSince: ${since}\nChecked: ${observedAt}\nAlert #18`)
   assert.equal(reserveAlertText(22, ledgerChecksAlertDetail({ code: 'PASS_TOO_SLOW', episode, now: at })),
-    `repo.ing · Ledger checks are too slow\nA pass over the markets takes longer than five minutes, so public progress expires between passes.\nSince: ${since}\nChecked: ${observedAt}\nAlert #22`)
+    `repo.ing · Ledger checks are too slow\nPasses over the markets come round less often than every five minutes, so public progress expires between passes.\nSince: ${since}\nChecked: ${observedAt}\nAlert #22`)
   // A code that is not one is never sent, for a pass or for a market.
   const leaky = 'fetch failed https://rpc.example/?api-key=secret'
   assert.doesNotMatch(reserveAlertText(19, ledgerChecksAlertDetail({ code: leaky, episode, now: 0 })), /secret|rpc\.example|\(/)

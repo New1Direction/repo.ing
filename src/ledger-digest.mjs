@@ -8,10 +8,11 @@
 //   together, and never longer than maxWaitMs past its oldest. Messages are at least spacingMs apart.
 // - Everything else is a reminder. Reminders ride along with news, and by themselves go out once per reminderMs:
 //   - a repeat of an episode already announced;
-//   - trouble a message covered in the last reminderMs that has not cleared since (the same problem, seen again by a
-//     worker that restarted);
-//   - the same kind of trouble come back, after it cleared, for a ledger a message covered in the last reminderMs,
-//     while it is younger than renewMs (a provider that fails on and off). Once it has lasted renewMs it is news.
+//   - trouble a recent message covered that has not cleared since (the same problem, seen again by a worker that
+//     restarted);
+//   - the same kind of trouble come back, after it cleared, for a ledger a recent message covered, while it is younger
+//     than renewMs (a provider that fails on and off). Once it has lasted renewMs it is news.
+//   Recent: written in the last DIGEST_MEMORY_MS, which is reminderMs and one spacingMs more.
 // - One message at a time: while the last one is still waiting to be sent, nothing new is written.
 // - A ledger that matched again before its row went out is dropped, and a row older than maxAgeMs is expired.
 // The plan is made from stored rows alone. A run that fails loses nothing: the next run plans the same rows again.
