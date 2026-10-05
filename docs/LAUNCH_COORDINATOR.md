@@ -63,4 +63,21 @@ Then run `npm run test:launch:chain` from this repository. Tests truncate the lo
 
 ## Limits
 
-The live GitHub lookup and the local chain launch were verified separately; the chain test injects a GitHub fixture for repeatability. Devnet and production signer operations remain unverified. The fixed config created by the test exists only in that validator ledger; a future environment must provision its own fixed config and supply its address. If RPC submission is ambiguous, the row remains incomplete and blocks another launch until chain inspection proves success; this slice has no operator tool for deciding a permanently unresolved submission. The Postgres lock spans wallet signing, so a wallet that never responds holds that repository's launch queue until the call is cancelled or the process exits. Metadata hosting and token images are not implemented.
+The live GitHub lookup and the local chain launch were verified separately; the chain test injects a GitHub fixture for repeatability. Devnet and production signer operations remain unverified. The fixed config created by the test exists only in that validator ledger; a future environment must provision its own fixed config and supply its address. If RPC submission is ambiguous, the row remains incomplete and blocks another launch until chain inspection proves success, or until its attempt is proven expired and released (see Signing window below). The Postgres lock spans wallet signing, so a wallet that never responds holds that repository's launch queue until the call is cancelled or the process exits. Metadata hosting and token images are not implemented.
+
+## Signing window and expired attempts
+
+A launch transaction is valid until its blockhash's `lastValidBlockHeight`, 150 blocks after the review is prepared. At mainnet's block rate on 2026-10-05 (3.67 blocks/s) that is about 40 s, and the wallet's own review counts against it.
+- **The launch form** expires its review after 20 s (`REVIEW_VALID_MS`), so the wallet keeps about 20 s. An expired review must be refreshed before signing.
+- **Submit (`src/meteora-launch.mjs`)** reads the confirmed block height before sending. A transaction whose blockhash has already expired is never sent; only the server holds the co-signed bytes, so it cannot land. The attempt fails definitively with "This launch review expired before it reached Solana", and the launcher can refresh and retry at once.
+- **An RPC error answer** to the send (failed preflight simulation or validation) means the RPC refused the transaction and did not forward it, so it is definitive too. A transport failure, or an "already processed" answer, stays `ambiguous`.
+- **Error names.** `DefinitiveLaunchError` and `IncompleteLaunchError` set `name` explicitly: the production build renames classes, and `launchFailure` (`src/launch-failure.mjs`) reads the name to decide whether the form offers "Refresh review" or "Check launch status".
+
+An `ambiguous` or `submitted` attempt is released for retry by the worker (`createLaunchIndexer({ expiredLaunch })`, `src/launch-expiry.mjs`) once two independent providers prove it never landed. The primary RPC and the verification RPC, on another host, must each show:
+- the finalized block height more than 150 blocks past the blockhash's `lastValidBlockHeight`;
+- the blockhash invalid;
+- no transaction and no signature status;
+- neither the mint nor the pool.
+
+That is about 90 s after the review. The release records a `LAUNCH_EXPIRED` operator alert carrying the evidence, and marks the market `failed` only while it is still the proven attempt. `scripts/recover-expired-launch.mjs --repo=<id> [--apply]` is the operator's manual path to the same proof and release.
+

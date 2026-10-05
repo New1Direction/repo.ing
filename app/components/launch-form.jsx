@@ -15,6 +15,9 @@ import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
 import '../launch-pair.css'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
+// A launch transaction is valid for about 40 s from the review (150 blocks; src/launch-expiry.mjs), and the wallet's own
+// review counts against it. A review older than this must be refreshed before signing, so the wallet keeps about 20 s.
+const REVIEW_VALID_MS = 20_000
 const cancelReview = id => fetch('/api/launch', { method: 'POST', keepalive: true,
   headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'cancel', id }) }).catch(() => {})
 async function launchRequest(body) {
@@ -98,7 +101,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
       if(!r.ok)throw Error(v.error)
       if(v.state==='live'){window.location.assign(`/token/${v.mint}`);return}
       if(v.state==='retry'){setFailure(null);setError('');setStage('');setDraftRestored(true)}
-      else setError('This launch is still being checked. Do not submit another transaction. Check status again shortly.')
+      else setError('This launch is still being checked on Solana. If its transaction did not land, you can launch again in about two minutes. Check status again then.')
     }catch(cause){setError(cause.message||'Could not check launch status.')}
     finally{setBusy(false)}
   }
@@ -132,7 +135,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   useEffect(() => {
     if (!review) return
     setExpired(false)
-    const timer = setTimeout(() => setExpired(true), 45_000)
+    const timer = setTimeout(() => setExpired(true), REVIEW_VALID_MS)
     return () => { clearTimeout(timer); cancelReview(review.id) }
   }, [review])
   useEffect(() => {
@@ -246,7 +249,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         <div className="launch-review-total"><dt>Estimated total</dt><dd>{sol(review.costs.total)}</dd></div></dl>
       <p>The launch and any initial buy happen together. The priority fee helps it land when Solana is busy. Check the final amount in your wallet.</p>
       {model && <p className="launch-review-disclaimer" role="note"><strong>{HF_DISCLAIMER}</strong></p>}
-      {expired && <p role="status">This review expired. Edit and review again for a fresh transaction.</p>}
+      {expired && <p role="status">This review expired. Refresh it for a fresh transaction, then approve it in your wallet right away.</p>}
       <div className="launch-review-actions"><button type="button" className="button primary" onClick={approve} disabled={busy || expired || wallet !== review.wallet}>{busy ? stage : 'Approve in wallet'}</button>
         <button type="button" className="button outline" disabled={busy} onClick={() => edit(expired)}>{expired ? 'Refresh review' : 'Edit launch'}</button></div>
     </section> : failure?.canRetry === false ? <button type="button" className="button primary launch-submit" disabled={busy} onClick={checkLaunchStatus}>{busy?'Checking status…':'Check launch status'}</button> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : failure ? 'Refresh review' : 'Review launch'}</button>

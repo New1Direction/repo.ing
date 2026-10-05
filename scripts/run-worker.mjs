@@ -15,6 +15,7 @@ import { createPlatformFeeRecovery } from '../src/platform-fees.mjs'
 import { Connection } from '@solana/web3.js'
 import { createLaunchEvidenceVerifier } from '../src/launch-evidence.mjs'
 import { createLaunchIndexer } from '../src/launch-indexer.mjs'
+import { createExpiredLaunchCheck } from '../src/launch-expiry.mjs'
 import { expireLaunchSessions } from '../src/launch-sessions.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
@@ -69,8 +70,17 @@ if (verificationUrls.length) { providerFetches.set(verificationUrls[0], verifica
 const rpcConnection = (url, commitment, provider = 'primary') => new Connection(url, { commitment, disableRetryOnRateLimit: true, fetch: providerFetch(url, provider) })
 const connection = rpcConnection(rpc, 'finalized')
 const verify = createLaunchEvidenceVerifier({ connection, config })
+// An attempt whose transaction never landed is released for retry once two independent providers prove its blockhash
+// expired (src/launch-expiry.mjs): the primary, and the verification side on another host. Each read times out after 15 s
+// so a stalled provider never holds up the loop. Without an independent provider, it waits for an operator.
+const hostOf = url => { try { return new URL(url).host } catch { return null } }
+const proofFetch = (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(15000) })
+const proofConnection = (url, fetch) => new Connection(url, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch })
+const expiredLaunch = hostOf(verificationUrls[0]) && hostOf(verificationUrls[0]) !== hostOf(rpc)
+  ? createExpiredLaunchCheck({ connections: [proofConnection(rpc, meter.fetchFor('primary', proofFetch)),
+    proofConnection(verificationUrls[0], verificationFetch(proofFetch))] }) : null
 // A launch still settling is verified every cycle; an indexed finalized launch is re-checked hourly.
-const launches = createLaunchIndexer({ pool, verify, reverifyAfterMs: 3_600_000 })
+const launches = createLaunchIndexer({ pool, verify, expiredLaunch, reverifyAfterMs: 3_600_000 })
 // Idle markets are checked less often; new config-account signatures and repo.ing trades wake them early.
 const fees = createExternalFeeIndexer({ pool, connection, config, schedule: createActivitySchedule(),
   feed: createConfigActivityFeed({ connection, configs: approvedConfigs(config), loadTransaction: loadFinalizedTransaction }) })

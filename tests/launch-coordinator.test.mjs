@@ -10,6 +10,7 @@ import { DefinitiveLaunchError } from '../src/meteora-launch.mjs'
 import sharp from 'sharp'
 import { normalizeTokenImage, validateTokenImage } from '../src/token-image.mjs'
 import { createLaunchSessionStore, launchSessionKey } from '../src/launch-sessions.mjs'
+import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:launchtest@127.0.0.1:55432/gitfun_launch'
 const testDatabase = new URL(databaseUrl)
@@ -109,6 +110,38 @@ test('ambiguous submit does not become canonical or allow another launch', async
   assert.equal((await drizzle(pool).select().from(markets))[0].status, 'ambiguous')
   await assert.rejects(() => ambiguous.launch(request()), IncompleteLaunchError)
   assert.equal(serial, 1)
+})
+
+test('the worker releases an attempt proven expired, with its alert, and the repository launches again', async () => {
+  const stuck = createLaunchCoordinator({ pool, launcher: fakeLauncher({ submit: async () => { throw Error('RPC timeout') }, inspect: async () => false }), fetchImpl: fakeFetch })
+  await assert.rejects(() => stuck.launch(request()), /RPC timeout/)
+  const [market] = await drizzle(pool).select().from(markets)
+  assert.equal(market.status, 'ambiguous')
+  await pool.query(`delete from graduation_alerts where kind = 'LAUNCH_EXPIRED'`)
+  const unavailable = async () => ({ state: 'unavailable', reason: 'Finalized launch transaction is not available from this RPC' })
+  const asked = []
+  // Not proven yet, or the evidence contradicts the record: the attempt stays and still blocks a new launch.
+  const waiting = createLaunchIndexer({ pool, verify: unavailable, expiredLaunch: async row => { asked.push(row); return null } })
+  assert.equal((await waiting.runOnce())[0].state, 'unavailable')
+  const mismatched = createLaunchIndexer({ pool, verify: async () => ({ state: 'mismatch', reason: 'Recorded pool is not derived' }),
+    expiredLaunch: async () => { throw Error('a contradicted attempt is never released') } })
+  assert.equal((await mismatched.runOnce())[0].state, 'mismatch')
+  assert.equal((await drizzle(pool).select().from(markets))[0].status, 'ambiguous')
+  await assert.rejects(() => stuck.launch(request()), IncompleteLaunchError)
+  // Proven: released once, with the alert carrying its evidence.
+  const proof = { status: 'EXPIRED_UNLANDED', evidenceHash: 'hash' }
+  const releasing = createLaunchIndexer({ pool, verify: unavailable, expiredLaunch: async row => { asked.push(row); return { proof, evidence: { observations: [] } } } })
+  const [released] = await releasing.runOnce()
+  assert.deepEqual([released.state, released.evidenceHash], ['released', 'hash'])
+  assert.deepEqual([asked.at(-1).launch_signature, asked.at(-1).last_valid_block_height, asked.at(-1).status], [market.launchSignature, '100', 'ambiguous'])
+  assert.equal((await drizzle(pool).select().from(markets))[0].status, 'failed')
+  const { rows: alerts } = await pool.query(`select event_key, github_repo_id::text, (detail::jsonb)->>'reviewedBy' as by from graduation_alerts where kind = 'LAUNCH_EXPIRED'`)
+  assert.deepEqual(alerts, [{ event_key: `launch-expired:${market.launchSignature}`, github_repo_id: '123', by: 'worker' }])
+  assert.deepEqual(await releasing.runOnce(), [])
+  // The repository launches again, on the same market row.
+  const retry = createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: fakeFetch })
+  assert.equal((await retry.launch(request())).status, 'confirmed')
+  assert.equal((await drizzle(pool).select().from(markets)).length, 1)
 })
 
 test('definitively failed transaction can retry; submitted chain evidence can be recovered', async () => {

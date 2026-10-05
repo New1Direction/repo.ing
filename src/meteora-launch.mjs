@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import BN from 'bn.js'
-import { Keypair, PublicKey, Transaction } from '@solana/web3.js'
+import { Keypair, PublicKey, SendTransactionError, Transaction, TransactionExpiredBlockheightExceededError } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress, deriveTokenBadgeAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { SOL_QUOTE } from './quote-assets.mjs'
@@ -8,8 +8,13 @@ import { launchBuyQuote } from './launch-buy.mjs'
 import { isApprovedLaunchFee } from './launch-fee.mjs'
 import { withLaunchPriorityFee } from './launch-wallet-fees.mjs'
 import { matchesReviewedLaunch } from './launch-wallet-assertions.mjs'
+import { LAUNCH_REVIEW_EXPIRED } from './launch-expiry.mjs'
 
-export class DefinitiveLaunchError extends Error {}
+// The launch did not happen and cannot happen from this attempt, so it may be reviewed again. The name is set explicitly:
+// the production build renames classes, and launchFailure (src/launch-failure.mjs) recognizes this error by its name.
+export class DefinitiveLaunchError extends Error {
+  constructor(message) { super(message); this.name = 'DefinitiveLaunchError' }
+}
 
 // Phantom must receive the transaction before the mint/creator co-signers sign.
 // Capture the reviewed bytes; only trailing, constrained safety assertions may differ.
@@ -107,8 +112,34 @@ export function createMeteoraLauncher({ connection, config, creator, metadataOri
       return { mint, blockhash, lastValidBlockHeight: BigInt(lastValidBlockHeight), sign: prepareLaunchSigning(tx, launcher, creator, mintKeypair) }
     },
     async submit({ raw, signature, blockhash, lastValidBlockHeight }) {
-      await connection.sendRawTransaction(raw, { skipPreflight: false })
-      const result = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight: Number(lastValidBlockHeight) }, 'confirmed')
+      // Signed after its blockhash expired: it is never sent, and only this process holds the co-signed bytes, so it
+      // cannot land. The same holds when the height cannot be read: nothing has been sent yet.
+      let height
+      try { height = await connection.getBlockHeight('confirmed') }
+      catch { throw new DefinitiveLaunchError('Could not reach Solana to send the launch, so nothing was sent or charged. Refresh the review and try again.') }
+      if (height > Number(lastValidBlockHeight)) throw new DefinitiveLaunchError(LAUNCH_REVIEW_EXPIRED)
+      try { await connection.sendRawTransaction(raw, { skipPreflight: false }) }
+      catch (error) {
+        // An error answer from the RPC (failed simulation or validation) means it refused the transaction and did not
+        // forward it. A transport failure (timeout, dropped connection) is unknown and stays ambiguous, and so does
+        // "already processed": the transaction is sent once, so that answer would mean it landed.
+        if (!(error instanceof SendTransactionError)) throw error
+        const reason = String(error.transactionError?.message ?? error.message ?? '')
+        console.warn('launch_send_refused', { reason: reason.slice(0, 200) })
+        if (/already (been )?processed/i.test(reason)) throw error
+        throw new DefinitiveLaunchError(/blockhash not found|block height exceeded|expired/i.test(reason) ? LAUNCH_REVIEW_EXPIRED
+          : 'Solana refused the launch transaction before sending it, so nothing was charged. Refresh the review and try again.')
+      }
+      let result
+      try { result = await connection.confirmTransaction({ signature, blockhash, lastValidBlockHeight: Number(lastValidBlockHeight) }, 'confirmed') }
+      catch (error) {
+        // Sent, but not confirmed before its blockhash expired: still unknown, so the attempt stays ambiguous until the
+        // worker proves it never landed (src/launch-expiry.mjs).
+        if (error instanceof TransactionExpiredBlockheightExceededError) {
+          throw new Error('The launch was sent but did not confirm before its transaction expired. If it did not land, you can launch again in about two minutes.')
+        }
+        throw error
+      }
       if (result.value.err) throw new DefinitiveLaunchError(`Launch transaction failed: ${JSON.stringify(result.value.err)}`)
     },
     async inspect({ mint, pool, launchSignature }) {
