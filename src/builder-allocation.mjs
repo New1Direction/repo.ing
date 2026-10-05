@@ -85,12 +85,15 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
     const graduated = await graduation.read(market, state, fixed)
     return { state, fixed, graduated }
   }
-  async function status(repoId) {
+  // knownGraduated: the caller already saw this market graduate (graduation never reverses), so display status skips the
+  // chain reads. A claim never takes this shortcut: claim() inspects the chain itself.
+  async function status(repoId, { knownGraduated = false } = {}) {
     const market = await allocationRecord(pool, repoId)
     if (!market) return { enrolled: false }
     if (market.latest?.status === 'settled' || market.latest?.status === 'pending') {
       return { enrolled: true, amount: String(BUILDER_ALLOCATION), state: market.latest.status, receipt: market.latest }
     }
+    if (knownGraduated) return { enrolled: true, amount: String(BUILDER_ALLOCATION), state: 'available' }
     const { graduated } = await inspect(market)
     return { enrolled: true, amount: String(BUILDER_ALLOCATION), state: graduated ? 'available' : 'locked' }
   }

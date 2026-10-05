@@ -1,18 +1,28 @@
 'use client'
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CopyAddress } from './copy-address'
+import { pollStatus } from '../lib/status-polling.mjs'
 
 export function BuilderAllocation({ repoId }) {
   const [data,setData] = useState(null), [error,setError] = useState(''), [busy,setBusy] = useState(false)
   const endpoint = `/api/allocation/${repoId}`
+  const pollNow = useRef(null)
   async function refresh() {
     const response = await fetch(endpoint,{cache:'no-store'})
     const next = await response.json()
     if (!response.ok) throw Error(next.error)
     setData(next); setError('')
+    return next
   }
-  useEffect(()=>{let active=true; let timer; async function poll(){try{await refresh()}catch(cause){if(active)setError(cause.message)}if(active)timer=setTimeout(poll,10000)}poll();return()=>{active=false;clearTimeout(timer)}},[endpoint])
+  // Every 60 s while the tab is visible (5 s while a payout confirms), at once when it becomes visible again, and not at
+  // all once the allocation is paid or the market has none (app/lib/status-polling.mjs). Each status read can cost chain reads.
+  useEffect(()=>{
+    const poller=pollStatus(async()=>{try{return await refresh()}catch(cause){setError(cause.message);throw cause}},
+      next=>next?.enrolled===false||next?.state==='settled'?null:next?.state==='pending'?5000:60000)
+    pollNow.current=poller.now
+    return()=>{poller.stop();pollNow.current=null}
+  },[endpoint])
   async function claim() {
     setBusy(true);setError('')
     try {
@@ -20,6 +30,7 @@ export function BuilderAllocation({ repoId }) {
       const result=await response.json()
       if(!response.ok)throw Error(result.error)
       setData(current=>({...current,state:result.status,receipt:result,review:null}))
+      pollNow.current?.()
     }catch(cause){setError(cause.message)}finally{setBusy(false)}
   }
   if(data?.enrolled===false)return null

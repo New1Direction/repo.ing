@@ -5,10 +5,21 @@ import { database, chain, configAddress } from './server.mjs'
 import { seal } from './auth.mjs'
 import { sealHfAllocationReview } from './hf-auth.mjs'
 
+// Markets this process has seen graduate. The token page polls allocation status; once a market has graduated it stays
+// graduated, so later polls skip the chain reads (status's knownGraduated). Claims always read the chain again.
+const graduatedMarkets = globalThis.__repoingAllocationGraduated ??= new Set()
+export async function allocationStatus(repoId, read) {
+  const key = String(repoId)
+  const data = await read({ knownGraduated: graduatedMarkets.has(key) })
+  if (data?.state === 'available') graduatedMarkets.add(key)
+  return data
+}
+
 export async function allocationView(repoId, session) {
   const pool = database(), config = configAddress()
   if (!pool || !config) throw Error('Allocation status unavailable')
-  const data = await createBuilderAllocation({ pool, connection: chain(), config }).status(repoId)
+  const allocation = createBuilderAllocation({ pool, connection: chain(), config })
+  const data = await allocationStatus(repoId, options => allocation.status(repoId, options))
   if (!data.enrolled) return data
   const { rows: [beneficiary] } = await pool.query('select wallet, bound_at, github_user_id::text as user from repo_beneficiaries where github_repo_id=$1', [repoId])
   const expiresAt = Math.min(session?.expiresAt ?? 0, Date.now() + 10 * 60_000)
@@ -28,7 +39,8 @@ export async function allocationView(repoId, session) {
 export async function modelAllocationView(repoId, session) {
   const pool = database(), config = configAddress()
   if (!pool || !config) throw Error('Allocation status unavailable')
-  const data = await createBuilderAllocation({ pool, connection: chain(), config }).status(repoId)
+  const allocation = createBuilderAllocation({ pool, connection: chain(), config })
+  const data = await allocationStatus(repoId, options => allocation.status(repoId, options))
   if (!data.enrolled) return data
   // A pasted address whose hold has passed becomes the binding first (database only), so no review names a recipient that
   // is no longer current (app/lib/payout-destination.mjs does the same for the claim page).
