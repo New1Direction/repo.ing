@@ -207,7 +207,8 @@ test('Dev Pulse is hidden for a declined market and unavailable, never cached, w
 test('agent drafts refuse an opted-out repository and report it from resolve_repo', async () => {
   const repo = { githubRepoId: 700n, owner: 'octo', name: 'declined', fullName: 'octo/declined', stars: 1, forks: 0, archived: false, githubUpdatedAt: new Date() }
   const service = active => createAgentLaunchService({ pool: fakePool(active), origin: 'https://repo.ing', secret: 'test-only-agent-draft-secret-at-least-32-bytes',
-    config: '1'.repeat(32), discovery: false, allocation: false, candidates: async () => [], resolve: async () => repo })
+    config: '1'.repeat(32), discovery: false, allocation: false, candidates: async () => [], resolve: async () => repo,
+    readRoot: async () => null })
   await assert.rejects(service(['700']).createDraft({ repository: 'octo/declined' }), error => error instanceof AgentLaunchError && error.message === OPT_OUT_ERROR)
   assert.equal((await service(['700']).resolveRepo({ repository: 'octo/declined' })).maintainerOptedOut, true)
   const draft = await service([]).createDraft({ repository: 'octo/declined' })

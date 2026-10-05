@@ -31,9 +31,9 @@ export async function POST(request) {
     if (!rows[0]?.mint && await activeDecision(pool, repo.githubRepoId.toString())) {
       return Response.json({ error: OPT_OUT_ERROR, code: 'MAINTAINER_OPTED_OUT' }, { status: 403 })
     }
-    // The fork guard (src/repo-lineage.mjs), said here before anyone fills in a launch review.
+    // The fork guard (src/repo-lineage.mjs), said here before anyone fills in a launch review. Advisory: launch prepare checks again.
     if (!rows[0]?.mint) {
-      try { await checkLaunchLineage({ pool, repo }) }
+      try { await checkLaunchLineage({ pool, repo, advisory: true }) }
       catch (error) {
         if (!(error instanceof LineageError)) throw error
         return Response.json({ error: error.message, code: error.code, original: error.original }, { status: 409 })

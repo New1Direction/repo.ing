@@ -1,5 +1,5 @@
 import { resolvePublicRepository } from './github.mjs'
-import { checkLaunchLineage, LineageError } from './repo-lineage.mjs'
+import { checkLaunchLineage, LineageError, rootCommit } from './repo-lineage.mjs'
 import { launchRepositoryUrl } from './launch-links.mjs'
 import { AgentLaunchError, signLaunchDraft } from './agent-launch-draft.mjs'
 import { simpleSearch, applySearchResult } from './repo-search.mjs'
@@ -20,8 +20,10 @@ export function projectLaunchStatus(row, origin) {
   return { state: row.status === 'failed' ? 'needs_review' : row.status === 'confirmed' ? 'indexing' : 'pending', live: false }
 }
 
+// readRoot: how a repository's first commit is read for the fork guard (src/repo-lineage.mjs rootCommit).
 export function createAgentLaunchService({ pool, origin, secret, config, discovery, allocation, candidates,
-  resolve = repository => resolvePublicRepository(repository, (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(10000) })), now = Date.now }) {
+  resolve = repository => resolvePublicRepository(repository, (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(10000) })),
+  readRoot = rootCommit, now = Date.now }) {
   const status = async repoId => {
     const { rows } = await pool.query('select status,launch_finality,indexed_at,mint,pool,launch_signature,launcher_wallet from markets where github_repo_id=$1', [repoId])
     return { repoId, ...projectLaunchStatus(rows[0], origin), observedAt: new Date(now()).toISOString() }
@@ -38,7 +40,8 @@ export function createAgentLaunchService({ pool, origin, secret, config, discove
     // forkOf: the repository it was forked from, when it is a fork that may launch.
     let copyOf = null, forkOf = null
     if (launch.state === 'not_launched') {
-      try { forkOf = (await checkLaunchLineage({ pool, repo })).forkOf?.fullName ?? null }
+      // Advisory, like the launch page: the launch itself is checked again at prepare.
+      try { forkOf = (await checkLaunchLineage({ pool, repo, readRoot, advisory: true })).forkOf?.fullName ?? null }
       catch (error) {
         if (!(error instanceof LineageError)) throw error
         copyOf = { fullName: error.original.fullName, reason: error.message, marketUrl: error.original.mint ? `${origin}/token/${error.original.mint}` : null }
