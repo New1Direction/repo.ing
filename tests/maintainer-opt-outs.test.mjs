@@ -128,7 +128,10 @@ test('launches are refused for an opted-out repository', async () => {
 })
 
 // Route tests share one environment: a fake pool behind database() and a fake GitHub behind fetch.
-async function withRoute(pool, run) {
+// asked: every URL requested of GitHub. It answers the repository lookup and the fork guard's first-commit read
+// (src/repo-lineage.mjs), nothing else.
+const DECLINED_API = 'https://api.github.com/repos/octo/declined', FIRST_COMMIT_API = `${DECLINED_API}/commits?per_page=1`
+async function withRoute(pool, run, asked = []) {
   const saved = { db: process.env.DATABASE_URL, config: process.env.DBC_CONFIG, creator: process.env.PLATFORM_CREATOR_SECRET_KEY }
   const savedPool = globalThis.__gitfunPool, savedFetch = globalThis.fetch
   process.env.DATABASE_URL = 'postgres://test-only'
@@ -136,7 +139,9 @@ async function withRoute(pool, run) {
   process.env.PLATFORM_CREATOR_SECRET_KEY = JSON.stringify([...Keypair.generate().secretKey])
   globalThis.__gitfunPool = pool
   globalThis.fetch = async url => {
-    assert.equal(String(url), 'https://api.github.com/repos/octo/declined', 'only the public repository lookup')
+    asked.push(String(url))
+    if (String(url) === FIRST_COMMIT_API) return Response.json([{ sha: 'd'.repeat(40) }])
+    assert.equal(String(url), DECLINED_API, 'only the public repository lookup and its first commit')
     return Response.json({ id: 700, full_name: 'octo/declined', name: 'declined', owner: { login: 'octo' }, private: false, archived: false, updated_at: '2026-09-30T00:00:00Z' })
   }
   try { return await run() } finally {
@@ -151,27 +156,31 @@ async function withRoute(pool, run) {
 test('/api/resolve refuses an opted-out repository without a market and still opens markets', async () => {
   const { POST } = await import('../app/api/resolve/route.js')
   const resolve = () => POST(new Request('https://repo.ing/api/resolve', { method: 'POST', body: JSON.stringify({ url: 'github.com/octo/declined' }) }))
-  const refused = await withRoute(fakePool(['700']), resolve)
+  const asked = { refused: [], allowed: [], market: [] }
+  const refused = await withRoute(fakePool(['700']), resolve, asked.refused)
   assert.equal(refused.status, 403)
   assert.deepEqual(await refused.json(), { error: OPT_OUT_ERROR, code: 'MAINTAINER_OPTED_OUT' })
-  const allowed = await withRoute(fakePool([]), resolve)
+  const allowed = await withRoute(fakePool([]), resolve, asked.allowed)
   assert.deepEqual([allowed.status, await allowed.json()], [200, { repoId: '700', mint: null }])
   // A declined repository's existing market still opens: holders must be able to reach it.
   const withMarket = fakePool(['700'], sql => ({ rows: /select mint from markets/.test(sql) ? [{ mint: 'DeclinedMint111111111111111111111111111111' }] : [] }))
-  const market = await withRoute(withMarket, resolve)
+  const market = await withRoute(withMarket, resolve, asked.market)
   assert.deepEqual(await market.json(), { repoId: '700', mint: 'DeclinedMint111111111111111111111111111111' })
+  // The first commit is read only for a repository that may still launch: not a declined one, not one with a market.
+  assert.deepEqual(asked, { refused: [DECLINED_API], allowed: [DECLINED_API, FIRST_COMMIT_API], market: [DECLINED_API] })
 })
 
 test('/api/launch prepare refuses an opted-out repository before anything is reserved', async () => {
   const { POST } = await import('../app/api/launch/route.js')
-  const pool = fakePool(['700'], sql => assert.fail(`no other statement: ${sql}`))
+  const pool = fakePool(['700'], sql => assert.fail(`no other statement: ${sql}`)), asked = []
   const response = await withRoute(pool, () => POST(new Request('https://repo.ing/api/launch', { method: 'POST', body: JSON.stringify({
     action: 'prepare', repoId: '700', repositoryUrl: 'https://github.com/octo/declined', tokenImage: 'data:image/png;base64,AAAA',
-    tokenName: 'Declined', tokenSymbol: 'NOPE', launcherWallet: Keypair.generate().publicKey.toBase58() }) })))
+    tokenName: 'Declined', tokenSymbol: 'NOPE', launcherWallet: Keypair.generate().publicKey.toBase58() }) })), asked)
   const body = await response.json()
   assert.equal(response.status, 400)
   assert.equal(body.error, OPT_OUT_ERROR)
   assert.deepEqual(pool.statements.filter(sql => !/maintainer_opt_outs/.test(sql)), [])
+  assert.deepEqual(asked, [DECLINED_API], 'refused before the first commit is read')
 })
 
 test('Dev Pulse is hidden for a declined market and unavailable, never cached, while the decision cannot be read', async () => {
