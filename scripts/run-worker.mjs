@@ -151,11 +151,12 @@ let nextGraduationCheck=0,graduationTask=null
 // Live chart trades (src/live-trades.mjs; docs/CHARTS_AND_RESPONSIVENESS.md, "Live trades"). Confirmed swaps arrive over the
 // primary RPC's websocket and go on charts at once, marked confirming until finalized. Graduated markets' finalized DAMM swaps
 // are read every 10 s (and as soon as a confirmed one should be final) instead of once per graduation pass over every market.
-// LIVE_TRADES_ENABLED=false turns the websocket off; the finalized reads stay.
-const graduatedTrades=createGraduatedTradeIndexer({pool,connection:graduationRPC(rpc),verification:process.env.GRADUATION_VERIFICATION_RPC_URL
-  ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
+// Each can be turned off alone: LIVE_TRADES_ENABLED=false (the websocket), FAST_GRADUATED_TRADES_ENABLED=false (the 10 s reads,
+// leaving graduated swaps to the graduation pass). Live reads pause while the primary provider backs off a rate limit.
+const graduatedTrades=process.env.FAST_GRADUATED_TRADES_ENABLED==='false'?null:createGraduatedTradeIndexer({pool,connection:graduationRPC(rpc),
+  verification:process.env.GRADUATION_VERIFICATION_RPC_URL?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
 const liveTrades=once||process.env.LIVE_TRADES_ENABLED==='false'?null:createLiveTrades({pool,config,connect:()=>rpcConnection(rpc,'confirmed'),
-  onDammSwap:repoId=>graduatedTrades.wake(repoId),track:fn=>meter.track('liveTrades',fn)})
+  onDammSwap:repoId=>graduatedTrades?.wake(repoId),paused:()=>meter.backoff('primary')>0,track:fn=>meter.track('liveTrades',fn)})
 let liveLoggedAt=0,livePrunedAt=0,graduatedSkipLogged=false
 // Both never reject. Each runs on its own timer beside the main loop (and beside the other), so a slow pass anywhere never
 // delays a finalized read, a subscription refresh or the two-minute expiry.
@@ -174,6 +175,7 @@ async function observeLiveTrades(){
   if(Object.keys(result).length)console.log(JSON.stringify({liveTrades:result}))
 }
 async function observeGraduatedTrades(){
+  if(!graduatedTrades)return
   try{
     const results=await graduatedTrades.runOnce()
     const skipped=results.some(item=>item.status==='SKIPPED')

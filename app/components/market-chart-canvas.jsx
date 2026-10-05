@@ -134,7 +134,7 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
   const label = value => Number.isFinite(multiplier) && multiplier > 0 ? `${unit === 'USD' ? '$' : ''}${chartPriceLabel(value * multiplier)}` : '—'
   return <div className="market-chart-plot">
     <div className="chart-readout" aria-hidden="true">
-      <time>{current ? `${new Date(current.time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC` : 'Finalized trade history'}</time>
+      <time>{current ? `${new Date(current.time * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })} UTC` : 'Trade history'}</time>
       <div className="chart-readout-values">{['open', 'high', 'low', 'close'].map(key => <span key={key}>{key[0].toUpperCase()} <b>{current && !current.orderingPending ? label(current[key]) : '—'}</b></span>)}<span>Vol <b>{current ? volumeLabel(current) : '—'}</b></span></div>
     </div>
     <div className="market-chart-stage">

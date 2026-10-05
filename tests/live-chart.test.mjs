@@ -28,6 +28,18 @@ test('a live trade in the newest finalized bucket keeps its open, extends its ra
   assert.equal(chart.volume24hLamports, '1800')
   assert.deepEqual(chart.live, { trades: 2 })
   assert.equal(chart.latestOrderingPending, false)
+  assert.equal(chart.source, 'finalized-dbc-and-damm-swaps+confirmed', 'the payload says it includes confirmed trades')
+})
+
+test('a swap that finalized between the chart\'s reads is counted once, as finalized', () => {
+  const chart = mergeLiveTrades(finalized(), [{ ...row('final', 20, 3n, '500'), eventIndex: 0 }, row('live', 25, 1n, '50')], now)
+  assert.deepEqual(chart.trades.map(trade => [trade.signature, trade.pending ?? false]), [['final', false], ['live', true]])
+  assert.equal(chart.totalTrades, 4)
+  assert.equal(chart.candles.at(-1).volumeLamports, '550')
+  assert.deepEqual(chart.live, { trades: 1 })
+  // Only already-finalized rows: the finalized chart, unchanged.
+  const base = finalized()
+  assert.equal(mergeLiveTrades(base, [{ ...row('final', 20, 3n, '500'), eventIndex: 0 }], now), base)
 })
 
 test('a live trade after the newest bucket opens a new live candle at its own price', () => {

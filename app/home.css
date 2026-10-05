@@ -171,3 +171,5 @@
   .live-trade.is-new{animation:none}
   .home-hero-links svg,.home-board-more svg,.live-market-cta svg,.home-hero .repo-search{transition:none}
 }
+/* A swap confirmed but not finalized yet (live chart trades) reads "Confirming". */
+.live-trade.is-pending time{color:var(--green-dark)}

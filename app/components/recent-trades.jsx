@@ -42,7 +42,8 @@ export function RecentTrades({ mint, symbol, trades, failed, quoteLabel }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15000); return () => clearInterval(timer) }, [])
   const rows = recentTrades(trades, ROWS)
-  const handles = useTraderHandles(mint, rows[0] ? tradeKey(rows[0]) : '')
+  // A confirming swap's trader handle is read again once it is finalized (the /traders read holds finalized swaps only).
+  const handles = useTraderHandles(mint, rows[0] ? `${tradeKey(rows[0])}${rows[0].pending ? ':pending' : ''}` : '')
   const loading = !trades && !failed
   return <section className="inner-card recent-trades" aria-labelledby="recent-trades-heading" aria-busy={loading}>
     <div className="recent-trades-heading"><h3 id="recent-trades-heading">Recent trades</h3><Link href={`/token/${mint}?view=activity`}>All activity →</Link></div>

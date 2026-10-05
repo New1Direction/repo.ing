@@ -201,6 +201,14 @@ test('real PostgreSQL live trades: only unfinalized swaps of the canonical pools
     assert.equal(caughtUp.live, undefined)
     assert.equal(caughtUp.latest.signature, 'damm-live')
     assert.equal(caughtUp.latest.pending, undefined)
+    // A live read that fails for any reason leaves the finalized chart as it is.
+    await live('after-break', 300, 1, 9n, { pool: 'damm-pool', venue: 'DAMM' })
+    const failing = { query: (sql, params) => /from live_trade_events/.test(sql)
+      ? Promise.reject(Object.assign(Error('canceling statement due to statement timeout'), { code: '57014' })) : client.query(sql, params) }
+    const broken = await readMarketChart(failing, market, 'all', now, { live: true })
+    assert.equal(broken.live, undefined)
+    assert.deepEqual(broken, await readMarketChart(client, market, 'all', now))
+    assert.equal((await readMarketChart(client, market, 'all', now, { live: true })).live.trades, 1, 'the same rows read fine without the failure')
   } finally { await client.query('rollback'); await client.end() }
 })
 

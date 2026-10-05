@@ -6,7 +6,7 @@ import { NATIVE_MINT } from '@solana/spl-token'
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
-import { dammSwapEvents } from '../src/damm-trades.mjs'
+import { dammSwapEvents, dammTradesLockKey, indexDammTradesLocked } from '../src/damm-trades.mjs'
 import { createGraduatedTradeIndexer, createLiveTrades, insertLiveTrades, liveTradeRows, pruneLiveTrades } from '../src/live-trades.mjs'
 
 // Real mainnet transactions; no RPC is touched. $REPOING's graduated DAMM pool, and a curve market's swap2 sell.
@@ -73,10 +73,11 @@ test('rows go in as one statement that ignores swaps already written, and expiry
 
 // Like web3.js 1.x: identical subscriptions share one Set of callbacks, and removing a client subscription deletes its callback
 // from that Set (the server subscription ends when the Set is empty).
-function fakeConnection() {
+function fakeConnection({ hangUnsubscribe = false } = {}) {
   const sets = new Map(), ids = new Map(), removed = []
+  const socket = { autoReconnect: true, setAutoReconnect(value) { this.autoReconnect = value } }
   let next = 1
-  return { sets, removed,
+  return { sets, removed, socket, _rpcWebSocket: socket,
     onLogs(key, callback, commitment) {
       assert.equal(commitment, 'confirmed')
       const address = key.toBase58(), id = next++
@@ -86,6 +87,7 @@ function fakeConnection() {
     },
     async removeOnLogsListener(id) {
       const { address, callback } = ids.get(id); ids.delete(id); removed.push(address)
+      if (hangUnsubscribe) { sets.get(address).delete(callback); if (!sets.get(address).size) sets.delete(address); return new Promise(() => {}) }
       sets.get(address).delete(callback)
       if (!sets.get(address).size) sets.delete(address)
     },
@@ -186,15 +188,81 @@ test('a websocket that missed a finalized trade moves to a fresh connection; a q
   assert.deepEqual(addresses(connections[0]), [])
   assert.deepEqual(addresses(connections[1]), [CONFIG, swaps.pool].sort())
   assert.equal(live.stats().renewals, 1)
+  // The old socket stops reconnecting by itself, so one that never answers cannot keep a loop going.
+  assert.equal(connections[0].socket.autoReconnect, false)
+  assert.equal(connections[1].socket.autoReconnect, true)
   // The renewal counts as hearing: the same evidence does not renew again.
   clock += 60_000
   assert.equal((await live.refresh()).renewed, false)
   assert.equal(connections.length, 2)
 })
 
-function graduatedFixture({ newest = 'new-signature', cursor = 'old-signature', locked = true, index } = {}) {
+test('renewals back off from ten minutes, stop after three in a row with nothing heard, and start over once heard', async () => {
+  let clock = 0
+  const connections = []
+  const live = createLiveTrades({ pool: {}, config: CONFIG, legacyConfigs: '', now: () => clock, markets: async () => watched,
+    connect: () => { connections.push(fakeConnection({ hangUnsubscribe: true })); return connections.at(-1) },
+    newestFinalized: async () => new Date(clock - 1000) })
+  await live.refresh()
+  const renewedAt = []
+  for (clock = 120_000; clock <= 3 * 3600_000; clock += 60_000) if ((await live.refresh()).renewed) renewedAt.push(clock / 60_000)
+  // At 2 min, then 10 and 20 minutes later; then it stops, an unanswered unsubscribe never holding anything up.
+  assert.deepEqual(renewedAt, [2, 12, 32])
+  assert.equal(connections.length, 4)
+  assert.equal(live.stats().errors.LIVE_WEBSOCKET_DEAF, 1)
+  // Heard again, then a finalized trade over a minute later goes unannounced: renewals are allowed again.
+  connections.at(-1).deliver(swaps.pool, { signature: 'heard-again', err: { InstructionError: [0, 'Custom'] } })
+  clock += 60_000
+  assert.equal((await live.refresh()).renewed, false, 'heard a minute ago')
+  clock += 60_000
+  assert.equal((await live.refresh()).renewed, true)
+})
+
+test('a deafness check that cannot be read still lets the subscriptions follow the markets', async () => {
+  let current = watched
+  const connection = fakeConnection()
+  const live = createLiveTrades({ pool: {}, connect: () => connection, config: CONFIG, legacyConfigs: '', markets: async () => current,
+    newestFinalized: async () => { throw Object.assign(Error('timeout'), { code: '57014' }) } })
+  await live.refresh()
+  current = { curves: new Map(), damms: watched.damms }
+  const result = await live.refresh({ force: true })
+  await settle()
+  assert.equal(result.renewed, false)
+  assert.deepEqual(addresses(connection), [swaps.pool])
+  assert.deepEqual(live.stats().errors, { DB_57014: 1 })
+})
+
+test('reads are capped (a flood is dropped, not queued) and skipped while the primary provider backs off', async () => {
+  let clock = 0, paused = false
+  const connection = fakeConnection(), loads = []
+  const live = createLiveTrades({ pool: { query: async () => ({ rowCount: 0 }) }, connect: () => connection, config: CONFIG, legacyConfigs: '',
+    now: () => clock, markets: async () => watched, readsPerSecond: 1, burst: 2, delays: [0], paused: () => paused,
+    loadTransaction: async (rpc, signature) => { loads.push(signature); return signature === 'retry' && loads.length < 2 ? null : load(swaps.buy) } })
+  await live.refresh()
+  for (const signature of ['a', 'b', 'c', 'd']) connection.deliver(swaps.pool, { signature, err: null })
+  await settle()
+  assert.deepEqual(loads, ['a', 'b'])
+  let stats = live.stats()
+  assert.equal(stats.limited, 2)
+  // A second later one token is back; a retry needs one of its own.
+  clock += 1000
+  loads.length = 0
+  connection.deliver(swaps.pool, { signature: 'retry', err: null })
+  await settle()
+  assert.deepEqual(loads, ['retry'])
+  assert.equal(live.stats().limited, 1)
+  clock += 5000
+  paused = true
+  connection.deliver(swaps.pool, { signature: 'during-backoff', err: null })
+  await settle()
+  stats = live.stats()
+  assert.equal(stats.paused, 1)
+  assert.equal(loads.includes('during-backoff'), false)
+})
+
+function graduatedFixture({ newest = 'new-signature', cursor = 'old-signature', busy = false, index } = {}) {
   const queries = [], indexed = []
-  const db = { query: async (sql, params) => { queries.push(sql); return { rows: [{ locked }] } }, release() { queries.push('release') } }
+  const db = { query: async sql => { queries.push(sql); return { rows: [] } }, release() { queries.push('release') } }
   const pool = { query: async (sql, params) => ({ rows: cursor === null ? [] : [{ last_signature: cursor }] }), connect: async () => db }
   const connection = { reads: 0, async getSignaturesForAddress(key, options, commitment) {
     this.reads++
@@ -203,7 +271,7 @@ function graduatedFixture({ newest = 'new-signature', cursor = 'old-signature', 
   } }
   const markets = async () => ({ damms: watched.damms })
   return { queries, indexed, pool, connection, markets,
-    index: index ?? (async args => { indexed.push(args); return { complete: true, transactions: 2 } }) }
+    index: index ?? (async args => { indexed.push(args); return busy ? { complete: false, busy: true, transactions: 0 } : { complete: true, transactions: 2 } }) }
 }
 
 test('graduated markets: one primary read skips the two-provider walk when nothing new is finalized', async () => {
@@ -219,7 +287,7 @@ test('graduated markets: one primary read skips the two-provider walk when nothi
   assert.equal(f.connection.reads, 2)
 })
 
-test('graduated markets: a new finalized swap is indexed under the graduation lock with the verified migration', async () => {
+test('graduated markets: a new finalized swap is walked with the verified migration on its own client', async () => {
   const f = graduatedFixture()
   const indexer = createGraduatedTradeIndexer({ pool: f.pool, connection: f.connection, verification: { verification: true }, index: f.index, markets: f.markets })
   assert.deepEqual(await indexer.runOnce(), [{ repoId: repoing.repoId, status: 'INDEXED', transactions: 2 }])
@@ -227,21 +295,19 @@ test('graduated markets: a new finalized swap is indexed under the graduation lo
   assert.deepEqual(args.graduation, { pool: swaps.pool, signature: 'migration-signature', slot: 451432143 })
   assert.equal(args.market.githubRepoId, repoing.repoId)
   assert.deepEqual(args.verification, { verification: true })
-  assert.match(f.queries[0], /pg_try_advisory_lock/)
-  assert.match(f.queries[1], /pg_advisory_unlock/)
-  assert.equal(f.queries[2], 'release')
+  assert.equal(args.db.release !== undefined, true)
+  assert.deepEqual(f.queries, ['release'], 'the client is released; the walk takes its own lock (indexDammTradesLocked)')
   // With no cursor yet, the migration itself is the boundary.
   const fresh = graduatedFixture({ newest: 'migration-signature', cursor: null })
   const idle = createGraduatedTradeIndexer({ pool: fresh.pool, connection: fresh.connection, verification: {}, index: fresh.index, markets: fresh.markets })
   assert.equal((await idle.runOnce())[0].status, 'CURRENT')
 })
 
-test('graduated markets: a busy lock retries in 2 s, a failure backs off, and a wake rechecks until the swap is final', async () => {
+test('graduated markets: a walk already running retries in 2 s, a failure backs off, and a wake rechecks until the swap is final', async () => {
   let clock = 0
-  const busy = graduatedFixture({ locked: false })
+  const busy = graduatedFixture({ busy: true })
   const waiting = createGraduatedTradeIndexer({ pool: busy.pool, connection: busy.connection, verification: {}, now: () => clock, index: busy.index, markets: busy.markets })
   assert.equal((await waiting.runOnce())[0].status, 'BUSY')
-  assert.equal(busy.indexed.length, 0)
   assert.equal(busy.queries.at(-1), 'release')
   clock += 2_000
   assert.equal((await waiting.runOnce())[0].status, 'BUSY')
@@ -266,4 +332,24 @@ test('graduated markets: a busy lock retries in 2 s, a failure backs off, and a 
 
   assert.deepEqual(await createGraduatedTradeIndexer({ pool: quiet.pool, connection: quiet.connection, verification: null, markets: quiet.markets }).runOnce(),
     [{ status: 'SKIPPED', code: 'VERIFICATION_RPC_REQUIRED' }])
+})
+
+test('one DAMM walk per market: its own lock, never the graduation lock, released even when the walk fails', async () => {
+  const run = (locked, index) => {
+    const queries = []
+    const db = { query: async (sql, params) => { queries.push([sql.match(/pg_\w+/)[0], params[0]]); return { rows: [{ locked }] } } }
+    return { queries, result: indexDammTradesLocked({ db, market: { githubRepoId: '1388219884' } }, index) }
+  }
+  assert.equal(dammTradesLockKey('1388219884'), 'damm-trades:1388219884')
+  const walked = run(true, async () => ({ complete: true, transactions: 3 }))
+  assert.deepEqual(await walked.result, { complete: true, transactions: 3 })
+  assert.deepEqual(walked.queries, [['pg_try_advisory_lock', 'damm-trades:1388219884'], ['pg_advisory_unlock', 'damm-trades:1388219884']])
+  let called = false
+  const busy = run(false, async () => { called = true })
+  assert.deepEqual(await busy.result, { complete: false, busy: true, transactions: 0 })
+  assert.equal(called, false)
+  assert.deepEqual(busy.queries, [['pg_try_advisory_lock', 'damm-trades:1388219884']])
+  const failing = run(true, async () => { throw Error('DAMM_HISTORY_INCOMPLETE') })
+  await assert.rejects(failing.result, /DAMM_HISTORY_INCOMPLETE/)
+  assert.equal(failing.queries.at(-1)[0], 'pg_advisory_unlock')
 })

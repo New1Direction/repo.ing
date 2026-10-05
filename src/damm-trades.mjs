@@ -46,6 +46,18 @@ export function dammSwapEvents(transaction,market,destination,coder) {
   return result
 }
 
+// One DAMM trade walk per market at a time, whoever runs it: the graduation monitor's pass (graduation-readiness.mjs) and
+// the worker's 10 s reads (live-trades.mjs). Its own advisory key, never the monitor's graduation lock, so a walk in progress
+// only makes the other caller skip its walk, never the monitor's graduation observation. db: one client (the lock is held by
+// its session). { busy: true } when another walk holds the lock.
+export const dammTradesLockKey=repoId=>`damm-trades:${repoId}`
+export async function indexDammTradesLocked(args,index=indexDammTrades) {
+  const key=dammTradesLockKey(String(args.market.githubRepoId))
+  if(!(await args.db.query('select pg_try_advisory_lock(hashtextextended($1,0)) as locked',[key])).rows[0].locked)return {complete:false,busy:true,transactions:0}
+  try{return await index(args)}
+  finally{await args.db.query('select pg_advisory_unlock(hashtextextended($1,0))',[key])}
+}
+
 // Uses the existing cursor table with the DAMM address. Inserts only actual finalized swap CPIs.
 export async function indexDammTrades({db,connection,verification,market,graduation}) {
   const address=graduation.pool,repoId=String(market.githubRepoId),coder=new CpAmm(connection)._program.coder

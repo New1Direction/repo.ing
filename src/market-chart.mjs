@@ -89,10 +89,13 @@ export async function readLiveTrades(db, market, migration, fromSlot) {
 
 // A chart with its live trades after the finalized history. Each is appended to the trade list and folded into its
 // bucket: a bucket the finalized history already has keeps its open, and one withholding prices for unproven order keeps
-// withholding them. The newest becomes the latest price. Live trades are marked pending and their candles live. Same-slot
-// live trades keep the order they were received in until finalized order replaces them.
+// withholding them. The newest becomes the latest price. Live trades are marked pending, their candles live, and the source
+// says it includes confirmed trades. Same-slot live trades keep the order they were received in until finalized order
+// replaces them. A swap the finalized trade list already holds (it finalized between this read's queries) is left out.
 export function mergeLiveTrades(chart, rows, now = Date.now()) {
+  const finalized = new Set(chart.trades.map(trade => `${trade.signature}:${trade.eventIndex}`))
   const live = rows.flatMap(row => {
+    if (finalized.has(`${row.signature}:${row.eventIndex}`)) return []
     try {
       return [{ signature: row.signature, eventIndex: row.eventIndex, direction: row.direction, venue: row.venue,
         tradedAt: new Date(row.tradedAt).toISOString(), priceSol: chartSpotPrice(row.nextSqrtPrice), solLamports: String(row.solLamports),
@@ -114,7 +117,16 @@ export function mergeLiveTrades(chart, rows, now = Date.now()) {
   const liveVolume = live.reduce((sum, trade) => Date.parse(trade.tradedAt) >= dayAgo ? sum + BigInt(trade.solLamports) : sum, 0n)
   return { ...chart, candles: [...bars.values()].sort((a, b) => a.time - b.time), trades: [...chart.trades, ...live].slice(-120),
     totalTrades: chart.totalTrades + live.length, volume24hLamports: (BigInt(chart.volume24hLamports) + liveVolume).toString(),
-    latest: live.at(-1), latestOrderingPending: false, live: { trades: live.length } }
+    latest: live.at(-1), latestOrderingPending: false, live: { trades: live.length }, source: `${chart.source}+confirmed` }
+}
+
+// Live trades are an addition: a failed read or merge leaves them out and never costs the finalized chart. Logged at most
+// once a minute per process.
+let liveFailureLoggedAt = -Infinity
+function liveUnavailable(error) {
+  if (Date.now() - liveFailureLoggedAt < 60_000) return
+  liveFailureLoggedAt = Date.now()
+  console.warn(JSON.stringify({ liveTradesUnavailable: { code: error?.code ?? String(error?.message ?? 'error').slice(0, 80) } }))
 }
 
 const earliest = (...values) => values.filter(value => value != null).sort((a, b) => new Date(a) - new Date(b))[0] ?? null
@@ -128,7 +140,8 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
     count(*)::text as count, count(*) filter(where venue='DAMM')::int as damm_count, max(slot)::text as last_slot,
     coalesce(sum(quote_amount) filter (where traded_at >= $2::timestamptz - interval '24 hours'),0)::text as volume
     from canonical_events where traded_at <= $2 and $3::text is null and $4::text is null`, params(new Date(now), null, null))
-  const liveRows = live ? await readLiveTrades(db, market, migration, summary.last_slot) : []
+  let liveRows = []
+  if (live) try { liveRows = await readLiveTrades(db, market, migration, summary.last_slot) } catch (error) { liveUnavailable(error) }
   const window = liveRows.length ? chartWindow(range, earliest(summary.first, liveRows[0].tradedAt), now, newest(summary.last, liveRows.at(-1).tradedAt))
     : chartWindow(range, summary.first, now, summary.last)
   const [{ rows }, { rows: recent }] = await Promise.all([
@@ -173,5 +186,6 @@ export async function readMarketChart(db, market, range = 'all', now = Date.now(
     latestOrderingPending: latestAmbiguous, fetchedAt: new Date(now).toISOString(),
     source: migration ? 'finalized-dbc-and-damm-swaps' : 'finalized-dbc-swaps',
     graduation: migration ? { ...migration, indexedTrades: summary.damm_count } : null }
-  return liveRows.length ? mergeLiveTrades(chart, liveRows, now) : chart
+  if (!liveRows.length) return chart
+  try { return mergeLiveTrades(chart, liveRows, now) } catch (error) { liveUnavailable(error); return chart }
 }
