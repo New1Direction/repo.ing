@@ -308,7 +308,7 @@ async function observeDevPulse(){
 }
 let reserveDelivery=null,reserveDeliveryTask=null,nextReserveDeliveryCheck=0
 if(process.env.RESERVE_ALERTS_ENABLED==='true'){
-  try{reserveDelivery=createReserveAlertDelivery({pool,send:createReserveWebhookSender()})}
+  try{reserveDelivery=createReserveAlertDelivery({pool,send:createReserveWebhookSender(),reserveMoves:process.env.RESERVE_MOVE_NOTIFICATIONS==='true'})}
   catch{console.log(JSON.stringify({reserveAlertError:'ALERT_DESTINATION_INVALID'}))}
 }
 async function deliverReserveAlerts(){

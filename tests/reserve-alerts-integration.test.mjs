@@ -33,7 +33,7 @@ test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retrie
     assert.equal((await pool.query('select count(*)::int n from graduation_alerts')).rows[0].n, 1)
     assert.equal((await createReserveAlertDelivery({ pool }).runOnce()).status, 'DESTINATION_REQUIRED')
     let sent = 0
-    const delivery = () => createReserveAlertDelivery({ pool, now: () => now, send: async ({ text }) => { sent++; assert.match(text, /Alert #/); if (sent === 1) throw Error('never expose token'); return { messageId: 'fixture' } } })
+    const delivery = () => createReserveAlertDelivery({ pool, now: () => now, reserveMoves: true, send: async ({ text }) => { sent++; assert.match(text, /Alert #/); if (sent === 1) throw Error('never expose token'); return { messageId: 'fixture' } } })
     assert.equal((await delivery().runOnce()).status, 'DELIVERY_REVIEW')
     assert.equal((await delivery().runOnce()).sent, 0)
     await pool.query("update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery,nextAttemptAt}',to_jsonb(now()-interval '1 second'))::text")
@@ -55,7 +55,7 @@ test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retrie
     await persist(make(280000000), db, false)
     const quiet = JSON.parse((await pool.query('select detail from graduation_alerts order by id desc limit 1')).rows[0].detail)
     assert.equal(quiet.deltaLamports, '70000000'); assert.deepEqual(quiet.delivery, { status: 'off' })
-    assert.deepEqual(await delivery().runOnce(), { status: 'OK', sent: 0, expired: 0, results: [] })
+    assert.deepEqual(await delivery().runOnce(), { status: 'OK', sent: 0, expired: 0, silenced: 0, results: [] })
 
     // A backlog (a destination configured late, a long receiver outage) expires in one run and never holds up the alerts
     // behind it. Due now by the database's clock; observed by the test's.
@@ -68,12 +68,32 @@ test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retrie
     // A mismatch alert from before these were delivered carries no delivery, and is left as it is.
     await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values('998200:RECONCILIATION_MISMATCH:before',998200,'RECONCILIATION_MISMATCH','{"status":"MISMATCH"}')`)
     const texts = []
-    const caughtUp = await createReserveAlertDelivery({ pool, now: () => now, send: async ({ text }) => { texts.push(text); return { messageId: 'fixture' } } }).runOnce()
+    const collect = async ({ text }) => { texts.push(text); return { messageId: 'fixture' } }
+    const caughtUp = await createReserveAlertDelivery({ pool, now: () => now, reserveMoves: true, send: collect }).runOnce()
     assert.equal(caughtUp.status, 'OK'); assert.equal(caughtUp.expired, 40); assert.equal(caughtUp.sent, 2)
     assert.equal(caughtUp.results.filter(result => result.status === 'expired').length, 20, 'a run names at most 20 of the alerts it expired')
     assert.match(texts[0], /Low operating balance\nBuilder payout signer/); assert.match(texts[1], /Fee ledger behind the chain\nlocal\/reserve\n/)
     assert.equal((await pool.query(`select count(*)::int n from graduation_alerts where detail::jsonb->'delivery'->>'status' in ('pending','retry')`)).rows[0].n, 0)
     assert.equal((await pool.query(`select detail from graduation_alerts where event_key='998200:RECONCILIATION_MISMATCH:before'`)).rows[0].detail, '{"status":"MISMATCH"}')
+
+    // Reserve notifications off (the worker's default): moves that are still queued, fresh or waiting for a retry, are
+    // marked off and never sent, while a problem queued beside them is.
+    await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) select 'queued:'||n,998200,'RESERVE_MOVED',$1 from generate_series(1,7) n`,
+      [JSON.stringify({ observedAt: at, delivery: due })])
+    await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values('queued:retry',998200,'RESERVE_MOVED',$1),('ops-wallet-low:second',null,'OPS_WALLET_LOW',$2)`,
+      [JSON.stringify({ observedAt: at, delivery: { ...due, status: 'retry', attempts: 3 } }),
+        JSON.stringify({ role: 'Fee collection signer', minimumLamports: '10000000', balanceLamports: '1000', observedAt: at, delivery: due })])
+    texts.length = 0
+    const quietRun = await createReserveAlertDelivery({ pool, now: () => now, send: collect }).runOnce()
+    assert.deepEqual({ status: quietRun.status, sent: quietRun.sent, expired: quietRun.expired, silenced: quietRun.silenced }, { status: 'OK', sent: 1, expired: 0, silenced: 8 })
+    assert.equal(texts.length, 1); assert.match(texts[0], /Low operating balance\nFee collection signer/)
+    const { rows: off } = await pool.query(`select detail::jsonb->'delivery' as delivery from graduation_alerts where event_key like 'queued:%' order by id`)
+    assert.equal(off.length, 8)
+    for (const { delivery: marked } of off) assert.deepEqual([marked.status, marked.error], ['off', 'RESERVE_NOTIFICATIONS_OFF'])
+    assert.equal(off.at(-1).delivery.attempts, 3, 'what was tried before is kept')
+    // Nothing that was sent or expired before is touched.
+    assert.equal((await pool.query(`select count(*)::int n from graduation_alerts where kind='RESERVE_MOVED' and detail::jsonb->'delivery'->>'status'='expired'`)).rows[0].n, 41)
+    assert.equal((await pool.query(`select count(*)::int n from graduation_alerts where kind='RESERVE_MOVED' and detail::jsonb->'delivery'->>'status'='sent'`)).rows[0].n, 1)
     assert.equal((await pool.query('select count(*)::int n from trade_events')).rows[0].n, 0)
     assert.equal((await pool.query('select count(*)::int n from liquidity_intents')).rows[0].n, 0)
     assert.equal((await pool.query('select count(*)::int n from builder_reinvest_intents')).rows[0].n, 0)

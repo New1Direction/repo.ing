@@ -61,7 +61,7 @@ The alert text uses fixed wording: a reason is sent only when it is one of this 
 
 Stock-pair ledgers raise the same kind from `src/stock-reconcile.mjs`. Those alerts are recorded for the operations pages and are **not queued for the receiver yet**.
 
-Queued only with `RESERVE_MOVE_NOTIFICATIONS=true`: `RESERVE_MOVED`.
+Queued only with `RESERVE_MOVE_NOTIFICATIONS=true`: `RESERVE_MOVED`. Without it the delivery job also marks any move that is still queued as `off` (`RESERVE_NOTIFICATIONS_OFF`) instead of sending it: the moves recorded before this setting existed, and any queued while it was on.
 
 ## Slack and operating balances
 

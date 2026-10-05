@@ -159,13 +159,18 @@ const EXPIRED_NAMED = 20
 
 // External sends are at-least-once: an ambiguous provider timeout can cause a
 // retry with the same alert ID. Delivery metadata never changes reserve evidence.
-export function createReserveAlertDelivery({ pool, send, now = Date.now }) {
+// reserveMoves: whether reserve moves are sent at all (RESERVE_MOVE_NOTIFICATIONS). While they are not, a move that is
+// still queued (from before the setting existed, or from while it was on) is marked off instead of being sent.
+export function createReserveAlertDelivery({ pool, send, now = Date.now, reserveMoves = false }) {
   async function runOnce() {
     if (!send) return { status: 'DESTINATION_REQUIRED', sent: 0 }
     const db = await pool.connect()
     try {
       if (!(await db.query("select pg_try_advisory_lock(hashtextextended('reserve-alert-delivery',0)) as locked")).rows[0].locked) return { status: 'BUSY', sent: 0 }
       try {
+        const { rows: silenced } = reserveMoves ? { rows: [] } : await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',
+          (detail::jsonb->'delivery')||'{"status":"off","error":"RESERVE_NOTIFICATIONS_OFF"}'::jsonb)::text
+          where kind='RESERVE_MOVED' and detail::jsonb->'delivery'->>'status' in ('pending','retry') returning id`)
         // Everything too old to send expires in one statement, so a backlog (a destination set late, a long receiver
         // outage) never holds up the alerts behind it five at a time.
         const { rows: expired } = await db.query(`update graduation_alerts set detail=jsonb_set(detail::jsonb,'{delivery}',
@@ -188,7 +193,7 @@ export function createReserveAlertDelivery({ pool, send, now = Date.now }) {
           results.push({ id: row.id, status: delivery.status })
         }
         return { status: results.some(r => ['failed', 'retry'].includes(r.status)) ? 'DELIVERY_REVIEW' : 'OK', sent: results.filter(r => r.status === 'sent').length,
-          expired: expired.length, results }
+          expired: expired.length, silenced: silenced.length, results }
       } finally { await db.query("select pg_advisory_unlock(hashtextextended('reserve-alert-delivery',0))") }
     } finally { db.release() }
   }
