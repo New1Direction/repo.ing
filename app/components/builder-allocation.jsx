@@ -15,11 +15,12 @@ export function BuilderAllocation({ repoId }) {
     setData(next); setError('')
     return next
   }
-  // Every 60 s while the tab is visible (5 s while a payout confirms), at once when it becomes visible again, and not at
-  // all once the allocation is paid or the market has none (app/lib/status-polling.mjs). Each status read can cost chain reads.
+  // Every 60 s while the tab is visible (5 s while a payout confirms, 10 s after a failed read), at once when it becomes
+  // visible again, and not at all once the allocation is paid or the market has none (app/lib/status-polling.mjs). Each status
+  // read can cost chain reads.
   useEffect(()=>{
     const poller=pollStatus(async()=>{try{return await refresh()}catch(cause){setError(cause.message);throw cause}},
-      next=>next?.enrolled===false||next?.state==='settled'?null:next?.state==='pending'?5000:60000)
+      (next,failed)=>failed?10000:next?.enrolled===false||next?.state==='settled'?null:next?.state==='pending'?5000:60000)
     pollNow.current=poller.now
     return()=>{poller.stop();pollNow.current=null}
   },[endpoint])

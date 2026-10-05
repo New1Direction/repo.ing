@@ -32,8 +32,8 @@ export function DiscoveryRewards({ repoId }) {
     setData(result)
     return result
   }
-  // Every 60 s while the tab is visible (3 s while a claim confirms), and at once when it becomes visible again
-  // (app/lib/status-polling.mjs). Each read can cost chain reads, so a background tab never polls.
+  // Every 60 s while the tab is visible (3 s while a claim confirms, 10 s after a failed read), and at once when it becomes
+  // visible again (app/lib/status-polling.mjs). Each read can cost chain reads, so a background tab never polls.
   useEffect(() => {
     let active = true
     const poller = pollStatus(async () => {
@@ -51,7 +51,7 @@ export function DiscoveryRewards({ repoId }) {
         if (active) setError(cause.message || 'Could not refresh rewards')
         throw cause
       }
-    }, result => result?.latestClaim?.status === 'pending' ? 3000 : 60000)
+    }, (result, failed) => failed ? 10000 : result?.latestClaim?.status === 'pending' ? 3000 : 60000)
     pollNow.current = poller.now
     return () => { active = false; poller.stop(); pollNow.current = null }
   }, [endpoint])
@@ -87,6 +87,8 @@ export function DiscoveryRewards({ repoId }) {
       setOffer(null)
       setStage('')
       await refresh().catch(() => {})
+      // The payout may have been submitted before the error: let the poll's checks confirm it.
+      pollNow.current?.()
     } finally { working.current = false; setBusy(false) }
   }
 

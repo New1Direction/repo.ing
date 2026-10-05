@@ -75,13 +75,23 @@ test('a failed read still schedules the next one; now() reads at once; stop() en
   assert.equal(reads, 2)
 })
 
-test('one read at a time: a read asked for while one runs is skipped', async () => {
-  const page = fakePage(), clock = fakeClock()
+test('one read at a time: now() during a read reads once more right after it; a tab shown during a read does not', async () => {
+  const page = fakePage(), clock = fakeClock(), delays = []
   let release, reads = 0
-  const poller = pollStatus(() => { reads++; return new Promise(resolve => { release = resolve }) }, () => 60000, { page, clock })
-  poller.now(); page.show()
-  assert.equal(reads, 1)
-  release({}); await settle()
+  const poller = pollStatus(() => { reads++; return new Promise(resolve => { release = resolve }) },
+    (result, failed) => { delays.push(result.n); return 60000 }, { page, clock })
+  page.show(); await settle()
+  assert.equal(reads, 1, 'shown while reading: no second read')
+  release({ n: 1 }); await settle()
+  assert.deepEqual(delays, [1])
+  void clock.fire(); await settle() // the read it starts stays open until released below
+  assert.equal(reads, 2)
+  poller.now(); poller.now() // a claim ends while this read runs: its result may be from before the claim
+  release({ n: 2 }); await settle()
+  assert.equal(reads, 3, 'read again at once, and only once')
+  assert.deepEqual(delays, [1], 'the pre-claim result never set the next delay')
+  release({ n: 3 }); await settle()
+  assert.deepEqual(delays, [1, 3])
   assert.deepEqual(clock.delays(), [60000])
 })
 
