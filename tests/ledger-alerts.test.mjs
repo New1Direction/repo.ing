@@ -1,32 +1,34 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createLedgerAlerts } from '../src/ledger-alerts.mjs'
-import { RECONCILE_BEHIND_HOLD_MS, RECONCILE_HOLD_MS, RECONCILE_REPEAT_MS, RECONCILE_STALE_MS } from '../src/reconcile.mjs'
+import { createLedgerAlerts, LEDGER_MISSED_PASSES } from '../src/ledger-alerts.mjs'
+import { RECONCILE_BEHIND_HOLD_MS, RECONCILE_HOLD_MS, RECONCILE_REPEAT_MS } from '../src/reconcile.mjs'
 
 const PASS_MS = 80_000
 const marketOf = id => ({ githubRepoId: String(id), mint: `mint${id}`, pool: `pool${id}`, fullName: `local/market-${id}` })
 const MATCH = { status: 'MATCH', difference: 0n }, ahead = { status: 'MISMATCH', difference: -5n }, behind = { status: 'MISMATCH', difference: 5n }
-// The alert feed: a row is stored once per event key, and rows can be marked as cleared.
+// The alert feed: a row is stored once per event key, and every uncleared row of one ledger can be marked as cleared.
 function store() {
-  const rows = new Map(), failing = { clear: false }
+  const rows = new Map(), failing = { clear: false, record: false }, clears = []
   const feed = repoId => ({
     record: async (key, detail) => {
+      if (failing.record) throw Error('connect ECONNREFUSED')
       const eventKey = `${repoId ?? 'protocol'}:${key}`
       if (rows.has(eventKey)) return null
       const row = { id: rows.size + 1, eventKey, detail: { ...detail } }
       rows.set(eventKey, row)
       return row
     },
-    clear: async (ids, at) => {
+    clear: async (ledger, at) => {
+      clears.push(`${repoId ?? 'protocol'}:${ledger}`)
       if (failing.clear) throw Error('connect ECONNREFUSED')
-      for (const row of rows.values()) if (ids.includes(row.id)) row.detail.clearedAt = at
+      for (const row of rows.values()) if (row.eventKey.startsWith(`${repoId ?? 'protocol'}:${ledger}:`) && !row.detail.clearedAt) row.detail.clearedAt = at
     },
   })
-  return { rows, feed, failing, of: prefix => [...rows.values()].filter(row => row.eventKey.startsWith(prefix)).map(row => row.detail) }
+  return { rows, feed, failing, clears, of: prefix => [...rows.values()].filter(row => row.eventKey.startsWith(prefix)).map(row => row.detail) }
 }
 function monitor(options = {}) {
-  const clock = { at: Date.parse('2026-10-05T08:00:00.000Z') }
-  return { clock, alerts: createLedgerAlerts({ now: () => clock.at, ...options }), ...store() }
+  const clock = { at: Date.parse('2026-10-05T08:00:00.000Z') }, faults = []
+  return { clock, faults, alerts: createLedgerAlerts({ now: () => clock.at, onFault: error => faults.push(error.message), ...options }), ...store() }
 }
 // Runs passes until `until`; each pass does what `each()` does. Returns the rows stored per pass.
 async function passes({ clock, alerts, rows }, until, each, passMs = PASS_MS) {
@@ -49,7 +51,7 @@ test('a market whose ledger stays unmatched is recorded once, at the hold, for t
   assert.deepEqual(stored.filter(pass => pass.rows).map(pass => pass.rows), [1])
   const raisedAt = stored.find(pass => pass.rows).at
   assert.deepEqual([...m.rows.keys()], [`7:fees:${began + PASS_MS}:difference:0`])
-  assert.deepEqual(m.of('7:'), [{ ledger: 'fees', status: 'MISMATCH', reason: null, lagging: false, difference: '-5', fullName: 'local/market-7',
+  assert.deepEqual(m.of('7:'), [{ ledger: 'fees', status: 'MISMATCH', reason: null, lagging: false, stalled: false, difference: '-5', fullName: 'local/market-7',
     observedAt: '2026-10-05T08:00:30.000Z', url: 'https://repo.ing/token/mint7', kind: 'difference', repeat: false, since: iso(began + PASS_MS), delivery: queued(raisedAt) }])
   // A ledger that matches is never recorded.
   await passes(m, m.clock.at + 2 * RECONCILE_HOLD_MS, () => m.alerts.market(m.feed(8), marketOf(8)).settle(MATCH))
@@ -61,7 +63,7 @@ test('a ledger that is behind the chain with nothing recorded is recorded after 
   await passes(m, began + RECONCILE_BEHIND_HOLD_MS - 1, () => m.alerts.market(m.feed(7), marketOf(7)).settle(behind))
   assert.deepEqual(m.of('7:'), [])
   await passes(m, began + RECONCILE_BEHIND_HOLD_MS + 2 * PASS_MS, () => m.alerts.market(m.feed(7), marketOf(7)).settle(behind))
-  assert.deepEqual(m.of('7:').map(detail => [detail.status, detail.lagging, detail.kind, detail.difference]), [['MISMATCH', true, 'behind', '5']])
+  assert.deepEqual(m.of('7:').map(detail => [detail.status, detail.lagging, detail.stalled, detail.kind, detail.difference]), [['MISMATCH', true, true, 'behind', '5']])
 })
 
 test('a market whose pass keeps ending in review is recorded as itself, whichever step failed; its fee ledger keeps its own finding', async () => {
@@ -149,7 +151,7 @@ test('two workers that both watch a ledger each record it; the same worker never
   assert.equal(new Set(m.of('1:').map(detail => detail.since)).size, 2)
 })
 
-test('a ledger that matches again is marked cleared on every row its episode recorded', async () => {
+test('a ledger that matches again is marked cleared on every row recorded for it', async () => {
   const m = monitor(), began = m.clock.at
   const market = () => m.alerts.market(m.feed(7), marketOf(7))
   await passes(m, began + RECONCILE_HOLD_MS + RECONCILE_REPEAT_MS + 2 * PASS_MS, () => market().settle(ahead))
@@ -158,13 +160,16 @@ test('a ledger that matches again is marked cleared on every row its episode rec
   await market().settle(MATCH)
   const clearedAt = iso(m.clock.at)
   assert.deepEqual(m.of('7:').map(detail => detail.clearedAt), [clearedAt, clearedAt])
-  // Marked once: later matching passes change nothing, and a new episode's row starts uncleared.
+  // Marked once: later matching passes ask for nothing, and a new episode's row starts uncleared.
   m.clock.at += PASS_MS
   await market().settle(MATCH)
-  assert.deepEqual(m.of('7:').map(detail => detail.clearedAt), [clearedAt, clearedAt])
+  assert.deepEqual([m.of('7:').map(detail => detail.clearedAt), m.clears], [[clearedAt, clearedAt], ['7:fees']])
   await passes(m, m.clock.at + RECONCILE_HOLD_MS + 2 * PASS_MS, () => market().settle(ahead))
   assert.deepEqual(m.of('7:').map(detail => detail.clearedAt), [clearedAt, clearedAt, undefined])
-  // The same for a market's pass, the checks and the platform ledgers.
+  m.clock.at += PASS_MS
+  await market().settle(MATCH)
+  assert.deepEqual([m.of('7:').at(-1).clearedAt, m.clears], [iso(m.clock.at), ['7:fees', '7:fees']])
+  // The same for a market's pass, the checks and the platform ledgers, each by its own name.
   const others = monitor(), revenue = { status: 'MISMATCH', problems: [] }, liquidity = { status: 'MATCH', problems: [] }
   await passes(others, others.clock.at + RECONCILE_HOLD_MS + 2 * PASS_MS, async () => {
     await others.alerts.market(others.feed(3), marketOf(3)).failed('RPC_UNAVAILABLE', true)
@@ -177,20 +182,62 @@ test('a ledger that matches again is marked cleared on every row its episode rec
   await others.alerts.checks(others.feed(null), null)
   await others.alerts.platform(others.feed(null), { revenue: { status: 'MATCH' }, liquidity })
   assert.deepEqual([...others.rows.values()].map(row => row.detail.clearedAt), Array(3).fill(iso(others.clock.at)))
+  assert.deepEqual(others.clears, ['3:market', 'protocol:checks', 'protocol:platform'])
 })
 
-test('marking as cleared never fails the pass that found the match, and is done by the next matching pass', async () => {
+test('rows recorded before a restart are cleared by the first pass of the new worker that finds the ledger matching', async () => {
+  const m = monitor(), began = m.clock.at
+  // What a worker recorded before it was replaced: a fee row and a pass row for market 7, and a row for another market.
+  await m.feed(7).record('fees:old:difference:0', { ledger: 'fees' })
+  await m.feed(7).record('market:old:unchecked:0', { ledger: 'market' })
+  await m.feed(8).record('fees:old:difference:0', { ledger: 'fees' })
+  // The new worker has never recorded anything. Its first pass finds market 7 matching and verified.
+  m.clock.at = began + PASS_MS
+  const market = m.alerts.market(m.feed(7), marketOf(7))
+  await market.settle(MATCH)
+  await market.verified()
+  assert.deepEqual([m.of('7:fees:')[0].clearedAt, m.of('7:market:')[0].clearedAt, m.of('8:')[0].clearedAt], [iso(m.clock.at), iso(m.clock.at), undefined])
+  // Once per ledger: the passes after that ask for nothing.
+  await passes(m, m.clock.at + 5 * PASS_MS, async () => { const again = m.alerts.market(m.feed(7), marketOf(7)); await again.settle(MATCH); await again.verified() })
+  assert.deepEqual(m.clears, ['7:fees', '7:market'])
+  // A ledger that does not match when the new worker starts keeps its old rows open until it does.
+  await passes(m, m.clock.at + 3 * PASS_MS, () => m.alerts.market(m.feed(8), marketOf(8)).settle(ahead))
+  assert.equal(m.of('8:')[0].clearedAt, undefined)
+  m.clock.at += PASS_MS
+  await m.alerts.market(m.feed(8), marketOf(8)).settle(MATCH)
+  assert.equal(m.of('8:')[0].clearedAt, iso(m.clock.at))
+})
+
+test('alert bookkeeping never fails the pass that did the checking: what could not be stored or marked is done by the next pass', async () => {
   const m = monitor(), began = m.clock.at
   const market = () => m.alerts.market(m.feed(7), marketOf(7))
-  await passes(m, began + RECONCILE_HOLD_MS + 2 * PASS_MS, () => market().settle(ahead))
+  // The row cannot be stored on the pass that makes it due.
+  await passes(m, began + RECONCILE_HOLD_MS, () => market().settle(ahead))
+  m.failing.record = true
+  m.clock.at += PASS_MS
+  assert.equal(await market().settle(ahead), null)
+  assert.deepEqual([m.rows.size, m.faults], [0, ['connect ECONNREFUSED']])
+  m.failing.record = false
+  m.clock.at += PASS_MS
+  assert.notEqual(await market().settle(ahead), null, 'the same row, one pass later')
+  assert.equal(m.rows.size, 1)
+  // The row cannot be marked on the pass that finds the match.
   m.failing.clear = true
   m.clock.at += PASS_MS
   assert.equal(await market().settle(MATCH), null)
-  assert.deepEqual(m.of('7:').map(detail => detail.clearedAt), [undefined])
+  assert.deepEqual([m.of('7:').map(detail => detail.clearedAt), m.faults.length], [[undefined], 2])
   m.failing.clear = false
   m.clock.at += PASS_MS
   await market().settle(MATCH)
-  assert.deepEqual(m.of('7:').map(detail => detail.clearedAt), [iso(m.clock.at)])
+  assert.deepEqual([m.of('7:').map(detail => detail.clearedAt), m.faults.length], [[iso(m.clock.at)], 2])
+  // The pass, the checks and the platform ledgers are isolated the same way.
+  const all = monitor({ holdMs: 0 })
+  all.failing.record = true
+  all.clock.at += PASS_MS
+  assert.equal(await all.alerts.market(all.feed(1), marketOf(1)).failed('RPC_UNAVAILABLE', true), null)
+  assert.equal(await all.alerts.checks(all.feed(null), 'RPC_UNAVAILABLE'), null)
+  assert.equal(await all.alerts.platform(all.feed(null), { revenue: { status: 'MISMATCH', problems: [] }, liquidity: { status: 'MATCH', problems: [] } }), null)
+  assert.equal(all.faults.length, 3)
 })
 
 test('the monitor not getting through its markets is recorded after the hold; a pass that does ends it', async () => {
@@ -261,18 +308,22 @@ test('each thing the monitor watches is its own ledger: none ends, hides or rena
   assert.deepEqual([named.of('checks:').length, named.of('platform:').length], [1, 1])
 })
 
-test('slow passes do not end every episode on every pass: the stale limit follows the pass cadence', async () => {
-  // A provider that hangs on one read makes a pass over the markets take thirteen minutes, longer than the fixed stale limit.
+test('slow passes are still one episode; a ledger the passes stop reaching is not', async () => {
+  // A provider that hangs on one read makes a pass over the markets take thirteen minutes.
   const SLOW_PASS_MS = 13 * 60_000
-  assert.ok(SLOW_PASS_MS > RECONCILE_STALE_MS)
   const m = monitor(), began = m.clock.at
   const stored = await passes(m, began + 3 * 3_600_000, () => m.alerts.market(m.feed(7), marketOf(7)).settle(ahead), SLOW_PASS_MS)
   assert.equal(stored.reduce((sum, pass) => sum + pass.rows, 0), 1)
-  assert.equal(m.of('7:')[0].since, iso(began + 2 * SLOW_PASS_MS), 'one episode, from the pass on which the new pace was known')
-  // A real gap is still a gap: after passes at the usual pace, nothing settles the ledger for an hour, and the episode is over.
-  const gap = monitor(), start = gap.clock.at
-  await passes(gap, start + 10 * PASS_MS, () => gap.alerts.market(gap.feed(7), marketOf(7)).settle(ahead))
-  gap.clock.at += 3_600_000
-  const after = await passes(gap, gap.clock.at + 5 * PASS_MS, () => gap.alerts.market(gap.feed(7), marketOf(7)).settle(ahead))
-  assert.deepEqual(after.map(pass => pass.rows), [0, 0, 0, 0, 0], 'a new hold starts when the passes resume')
+  assert.equal(m.of('7:')[0].since, iso(began + SLOW_PASS_MS), 'one episode from the first slow pass on')
+  // Passes that die before they reach a ledger, or find another worker holding it: after more than the allowed number in
+  // a row, what the ledger did meanwhile is unknown and its hold starts again.
+  for (const [missed, rows] of [[LEDGER_MISSED_PASSES, 1], [LEDGER_MISSED_PASSES + 1, 0]]) {
+    const gap = monitor(), start = gap.clock.at
+    const settle = () => gap.alerts.market(gap.feed(7), marketOf(7)).settle(ahead)
+    await passes(gap, start + 8 * PASS_MS, settle)
+    await passes(gap, gap.clock.at + missed * PASS_MS, async () => {})
+    // The pass that reaches it again is past the hold of the old episode.
+    await passes(gap, start + RECONCILE_HOLD_MS + 2 * PASS_MS, settle)
+    assert.equal(gap.rows.size, rows, `${missed} passes missed`)
+  }
 })

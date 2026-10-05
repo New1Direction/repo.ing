@@ -315,8 +315,12 @@ if(process.env.RESERVE_ALERTS_ENABLED==='true'){
   reserveDelivery=createReserveAlertDelivery({pool,send,reserveMoves:process.env.RESERVE_MOVE_NOTIFICATIONS==='true'})
 }else console.log(JSON.stringify({reserveAlerts:'disabled'}))
 async function deliverReserveAlerts(){
+  // By code only: an SQLSTATE, a Node error code or an error's name.
   try{console.log(JSON.stringify({reserveAlerts:await reserveDelivery.runOnce()}))}
-  catch{console.log(JSON.stringify({reserveAlertError:'RESERVE_DELIVERY_UNAVAILABLE'}))}
+  catch(error){
+    const code=String(error?.code??error?.name??'')
+    console.log(JSON.stringify({reserveAlertError:'RESERVE_DELIVERY_UNAVAILABLE',code:/^[A-Za-z0-9][A-Za-z0-9_]{2,40}$/.test(code)?code:'UNKNOWN'}))
+  }
 }
 async function observeTrends(){
   try{console.log(JSON.stringify({trends:await trends.runOnce()}))}
@@ -341,7 +345,7 @@ async function observeGraduation(){
     result.graduationError='Graduation readiness unavailable'
     const code=String(error?.code??error?.name??'')
     result.graduationErrorCode=/^[A-Za-z0-9][A-Za-z0-9_]{2,40}$/.test(code)?code:'UNKNOWN'
-    if(error?.alertNotRecorded)result.graduationAlertNotRecorded=error.alertNotRecorded
+    if(error?.alertsNotRecorded)result.graduationAlertsNotRecorded=error.alertsNotRecorded
   }
   // How long a pass took: public progress expires 300 s after a market's last verified pass (see GRADUATION_MARKET_PAUSE_MS).
   result.graduationMs=Date.now()-startedAt

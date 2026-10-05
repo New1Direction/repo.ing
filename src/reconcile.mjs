@@ -63,21 +63,21 @@ export const RECONCILE_BEHIND_HOLD_MS = 60 * 60_000
 export const RECONCILE_BEHIND_MAX_MS = 6 * 60 * 60_000
 // A problem that persists is announced again once per period, so one missed or failed notification is not the last word.
 export const RECONCILE_REPEAT_MS = 6 * 60 * 60_000
-// An episode nobody has settled for this long is over: the passes were not reaching the ledger, and what they would have
-// found is unknown. The caller may pass a function instead, to keep the limit above its own pass cadence
-// (src/ledger-alerts.mjs).
-export const RECONCILE_STALE_MS = 10 * 60_000
+// An episode nobody has settled for this long is over: nothing was watching the ledger, and what it did meanwhile is
+// unknown. Well above any pass a slow provider can cause, so slow passes stay one episode. The graduation monitor also
+// ends an episode that its passes stopped reaching (src/ledger-alerts.mjs).
+export const RECONCILE_STALE_MS = 60 * 60_000
 
 // The ledger's side of a fee reconciliation: what the worker has recorded so far. It moves whenever fees are recorded.
 const recordedSoFar = result => `${result.recordedEarned ?? ''}|${result.platform?.earned ?? ''}`
 
 // When a ledger that stopped matching becomes an operator alert. settle(key, result) returns null, or
-// { key, kind, repeat, lagging, since } to alert on.
+// { key, kind, repeat, lagging, stalled, since } to alert on. forget(key) ends an episode without a match.
 // - An episode runs from the first pass that does not MATCH to the next that does.
 // - What a pass found has its own hold, by kind (reconcileKind):
 //   - difference: seen again holdMs or more after it was first seen in the episode. Lag may hide it on the passes between.
 //   - unchecked: holdMs without one pass that completed a check. Any completed check starts the count again.
-//   - behind: behindHoldMs with nothing new recorded for the ledger, or behindMaxMs without one matching pass.
+//   - behind: behindHoldMs with nothing new recorded for the ledger (stalled), or behindMaxMs without one matching pass.
 // - The key is the episode's start, the kind and the repeat period, so the caller's unique event key keeps one alert per
 //   kind per period. A problem that changes kind (reads fail, then a real difference shows) is announced as the new kind.
 //   repeat: this kind was already due in an earlier period of the episode.
@@ -86,7 +86,6 @@ const recordedSoFar = result => `${result.recordedEarned ?? ''}|${result.platfor
 export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOLD_MS, behindHoldMs = Math.max(holdMs, RECONCILE_BEHIND_HOLD_MS),
   behindMaxMs = Math.max(behindHoldMs, RECONCILE_BEHIND_MAX_MS), repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
   const episodes = new Map()
-  const staleLimit = typeof staleMs === 'function' ? staleMs : () => staleMs
   // Whether what this pass found has gone on long enough.
   function due(episode, kind, result, at) {
     // A pass that compared the ledger with the chain ends any run of passes that could not.
@@ -97,18 +96,21 @@ export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOL
     if (recorded !== episode.recorded) { episode.recorded = recorded; episode.moved = at }
     return at - episode.moved >= behindHoldMs || at - episode.first >= behindMaxMs
   }
-  return { settle(key, result) {
-    if (result?.status === 'MATCH') { episodes.delete(key); return null }
-    const at = now(), known = episodes.get(key)
-    const episode = known && at - known.seen <= staleLimit() ? known : { first: at, difference: null, unchecked: null, recorded: null, moved: at, firstDue: {} }
-    episode.seen = at
-    episodes.set(key, episode)
-    const kind = reconcileKind(result)
-    if (!due(episode, kind, result, at)) return null
-    const period = Math.floor((at - episode.first) / repeatMs)
-    return { key: `${episode.first}:${kind}:${period}`, kind, repeat: period > (episode.firstDue[kind] ??= period), lagging: reconcileLagging(result),
-      since: new Date(episode.first).toISOString() }
-  } }
+  return {
+    settle(key, result) {
+      if (result?.status === 'MATCH') { episodes.delete(key); return null }
+      const at = now(), known = episodes.get(key)
+      const episode = known && at - known.seen <= staleMs ? known : { first: at, difference: null, unchecked: null, recorded: null, moved: at, firstDue: {} }
+      episode.seen = at
+      episodes.set(key, episode)
+      const kind = reconcileKind(result)
+      if (!due(episode, kind, result, at)) return null
+      const period = Math.floor((at - episode.first) / repeatMs)
+      return { key: `${episode.first}:${kind}:${period}`, kind, repeat: period > (episode.firstDue[kind] ??= period), lagging: reconcileLagging(result),
+        stalled: kind === 'behind' && at - episode.moved >= behindHoldMs, since: new Date(episode.first).toISOString() }
+    },
+    forget(key) { episodes.delete(key) },
+  }
 }
 
 export function createReconciler({ pool, connection, config }) {

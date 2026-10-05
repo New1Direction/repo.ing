@@ -6,10 +6,12 @@
 // - News is a ledger, with a kind of trouble, that no message has told the operator about. A message with news waits
 //   until its newest news is settleMs old, so the rows of one fault that cross their holds on neighbouring passes go out
 //   together, and never longer than maxWaitMs past its oldest. Messages are at least spacingMs apart.
-// - Everything else is a reminder: a repeat of an episode already announced, or the same kind of trouble recorded again
-//   for a ledger that a message covered in the last reminderMs (a provider that fails on and off, a worker that
-//   restarted). Reminders ride along with news, and by themselves go out once per reminderMs.
-//   A real difference that was cleared and came back is news again.
+// - Everything else is a reminder. Reminders ride along with news, and by themselves go out once per reminderMs:
+//   - a repeat of an episode already announced;
+//   - trouble a message covered in the last reminderMs that has not cleared since (the same problem, seen again by a
+//     worker that restarted);
+//   - the same kind of trouble come back, after it cleared, for a ledger a message covered in the last reminderMs,
+//     while it is younger than renewMs (a provider that fails on and off). Once it has lasted renewMs it is news.
 // - One message at a time: while the last one is still waiting to be sent, nothing new is written.
 // - A ledger that matched again before its row went out is dropped, and a row older than maxAgeMs is expired.
 // The plan is made from stored rows alone. A run that fails loses nothing: the next run plans the same rows again.
@@ -18,6 +20,11 @@ export const DIGEST_SETTLE_MS = 3 * 60_000
 export const DIGEST_MAX_WAIT_MS = 10 * 60_000
 export const DIGEST_SPACING_MS = 60 * 60_000
 export const DIGEST_REMINDER_MS = 6 * 60 * 60_000
+// How long trouble that came back must have lasted before it is announced a second time inside the reminder period.
+export const DIGEST_RENEW_MS = 60 * 60_000
+// How far back the planner is told what messages covered: a little further than the reminder period, so that rows waiting
+// for a reminder are still seen as one when it comes due.
+export const DIGEST_MEMORY_MS = DIGEST_REMINDER_MS + DIGEST_SPACING_MS
 // Above the reminder period, so a reminder that waited its turn is still sent.
 export const DIGEST_ROW_MAX_AGE_MS = 8 * 60 * 60_000
 // Ledgers a message names; the rest are counted. Keeps the text inside every receiver's limit (Discord: 2,000 characters).
@@ -35,11 +42,11 @@ const order = (a, b) => a < b ? -1 : a > b ? 1 : 0
 
 // rows: [{ id, repoId, detail }] not yet in a message.
 // recent: { lastAt, pending, covered }: when the last message was written (ms, or null), whether it is still waiting to be
-//   sent, and the rows that messages covered in the last reminderMs as [{ ledger, kind, cleared }].
+//   sent, and the rows that the messages of the last DIGEST_MEMORY_MS covered, as [{ ledger, kind, cleared }].
 // delivery: the delivery the new message is stored with.
 // Returns { expire: [id], drop: [id], digest: null | { covers: [id], detail } }.
 export function planLedgerDigest({ rows, recent = {}, now, delivery, maxAgeMs = DIGEST_ROW_MAX_AGE_MS, settleMs = DIGEST_SETTLE_MS, maxWaitMs = DIGEST_MAX_WAIT_MS,
-  spacingMs = DIGEST_SPACING_MS, reminderMs = DIGEST_REMINDER_MS, named = DIGEST_NAMED }) {
+  spacingMs = DIGEST_SPACING_MS, reminderMs = DIGEST_REMINDER_MS, renewMs = DIGEST_RENEW_MS, named = DIGEST_NAMED }) {
   const { lastAt = null, pending = false, covered = [] } = recent
   const queued = rows.map(row => ({ row, at: Date.parse(row.detail?.delivery?.queuedAt) }))
   // A row whose time cannot be read expires with the old ones, so it never holds the others up.
@@ -49,7 +56,12 @@ export function planLedgerDigest({ rows, recent = {}, now, delivery, maxAgeMs = 
   const fresh = live.filter(({ row }) => !row.detail.clearedAt)
   if (!fresh.length) return { expire, drop, digest: null }
   const told = new Set(covered.map(row => `${row.ledger}|${row.kind}`)), open = new Set(covered.filter(row => !row.cleared).map(row => `${row.ledger}|${row.kind}`))
-  const reminder = row => row.detail.repeat === true || (row.detail.kind === 'difference' ? open : told).has(`${ledgerKey(row)}|${row.detail.kind}`)
+  // since: when the worker first saw the trouble. One whose start cannot be read counts as old, so it is told, not held.
+  const young = row => { const age = now - Date.parse(row.detail.since); return Number.isFinite(age) && age < renewMs }
+  const reminder = row => {
+    const trouble = `${ledgerKey(row)}|${row.detail.kind}`
+    return row.detail.repeat === true || open.has(trouble) || (told.has(trouble) && young(row))
+  }
   const news = fresh.filter(({ row }) => !reminder(row))
   const times = (news.length ? news : fresh).map(({ at }) => at)
   const settled = now - Math.max(...times) >= settleMs || now - Math.min(...times) >= maxWaitMs

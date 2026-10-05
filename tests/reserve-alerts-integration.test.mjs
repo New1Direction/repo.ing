@@ -5,7 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { persistGraduationObservation, clearLedgerAlerts, createLedgerDigestStore, createReserveAlertDelivery, digestLedgerAlerts, feeLedgerAlertDetail, ledgerChecksAlertDetail,
   marketPassAlertDetail, platformLedgerAlertDetail, pendingDelivery, reserveAlertText } from '../src/reserve-alerts.mjs'
-import { DIGEST_REMINDER_MS, DIGEST_SETTLE_MS, DIGEST_SPACING_MS } from '../src/ledger-digest.mjs'
+import { DIGEST_REMINDER_MS, DIGEST_RENEW_MS, DIGEST_SETTLE_MS, DIGEST_SPACING_MS } from '../src/ledger-digest.mjs'
 
 test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retries, expiry, backlog and replica lock', async () => {
   const url = 'postgres://postgres:launchtest@127.0.0.1:55432/repoing_reserve_alert_test'
@@ -72,7 +72,7 @@ test('durable baseline/outbox: atomic rollback, restart, dedupe, delivery retrie
     const texts = []
     const collect = async ({ text }) => { texts.push(text); return { messageId: 'fixture' } }
     const caughtUp = await createReserveAlertDelivery({ pool, now: () => now, reserveMoves: true, send: collect }).runOnce()
-    assert.equal(caughtUp.status, 'OK'); assert.equal(caughtUp.expired, 40); assert.equal(caughtUp.sent, 2)
+    assert.equal(caughtUp.status, 'DELIVERY_REVIEW', 'alerts that expired unsent are worth a look'); assert.equal(caughtUp.expired, 40); assert.equal(caughtUp.sent, 2)
     assert.equal(caughtUp.results.filter(result => result.status === 'expired').length, 20, 'a run names at most 20 of the alerts it expired')
     assert.match(texts[0], /Low operating balance\nBuilder payout signer/); assert.match(texts[1], /Fee ledger behind the chain\nlocal\/reserve\n/)
     assert.equal((await pool.query(`select count(*)::int n from graduation_alerts where detail::jsonb->'delivery'->>'status' in ('pending','retry')`)).rows[0].n, 0)
@@ -217,18 +217,31 @@ test('ledger alerts go out as one message: news an hour apart, reminders every s
     assert.match(texts[0].text, /^repo\.ing · Fee ledger does not match the chain\nlocal\/ledger-998201\n/)
     const fourthAt = now
 
-    // The monitor marks a ledger that matched again (clearLedgerAlerts), once. A real difference that comes back after that
-    // is news. Trouble that normally clears by itself is a reminder even after it cleared, and when it clears again before
-    // its turn it is dropped, never sent.
+    // The monitor marks a ledger that matched again (clearLedgerAlerts): every row recorded for that ledger of that market,
+    // once, and no other row. Trouble that comes back after that is a reminder while it is young, and news once it has
+    // lasted an hour.
     now = fourthAt + 5 * MINUTE
-    await clearLedgerAlerts(pool, [real, repeat, before, stock, poison], iso(now))
-    await clearLedgerAlerts(pool, [real, repeat], iso(now + HOUR))
-    assert.deepEqual([(await stored(real)).clearedAt, (await stored(repeat)).clearedAt, (await stored(before)).clearedAt, (await stored(stock)).clearedAt], [iso(now), iso(now), undefined, undefined])
+    const clearedAt = iso(now)
+    // The same market's pass, recorded and sent long ago, is another ledger.
+    const itsPass = await record(one.githubRepoId, { ...marketPassAlertDetail({ market: one, code: 'RPC_UNAVAILABLE', transient: true, episode: episode('unchecked', true), now: T0 }),
+      delivery: { status: 'digest', queuedAt: iso(T0), digest: first.id } })
+    await clearLedgerAlerts(pool, one.githubRepoId, 'fees', clearedAt)
+    await clearLedgerAlerts(pool, one.githubRepoId, 'fees', iso(now + HOUR))
+    assert.deepEqual([(await stored(real)).clearedAt, (await stored(repeat)).clearedAt], [clearedAt, clearedAt])
+    assert.deepEqual([(await stored(before)).clearedAt, (await stored(stock)).clearedAt, (await stored(failing)).clearedAt, (await stored(platform)).clearedAt, (await stored(checksRow)).clearedAt,
+      (await stored(itsPass)).clearedAt], Array(6).fill(undefined), 'not the rows of another kind, another market or another ledger')
+    await clearLedgerAlerts(pool, one.githubRepoId, 'market', clearedAt)
+    assert.equal((await stored(itsPass)).clearedAt, clearedAt)
     now = fourthAt + 62 * MINUTE
     const back = await record(one.githubRepoId, difference(one))
+    const cameBack = now - 15 * MINUTE
     now += DIGEST_SETTLE_MS
+    assert.deepEqual(await delivery().runOnce(), quiet, 'young: it may be gone again in a moment')
+    now = cameBack + DIGEST_RENEW_MS - 1
+    assert.deepEqual(await delivery().runOnce(), quiet)
+    now = cameBack + DIGEST_RENEW_MS
     const returned = await delivery().runOnce()
-    assert.deepEqual([returned.sent, returned.digested, (await messages()).at(-1).detail.reminder], [1, 1, false], 'news an hour after the last message, not a reminder in six')
+    assert.deepEqual([returned.sent, returned.digested, (await messages()).at(-1).detail.reminder], [1, 1, false], 'it has lasted an hour: news')
     assert.equal((await stored(back)).delivery.digest, (await messages()).at(-1).id)
     const backAt = now
     // News again an hour later, and a repeat recorded meanwhile rides along with it.
@@ -244,8 +257,9 @@ test('ledger alerts go out as one message: news an hour apart, reminders every s
     now = fifthAt + 70 * MINUTE
     const flap = await record(null, ledgerChecksAlertDetail({ code: 'RPC_RATE_LIMITED', episode: episode('unchecked', true), now }))
     now += DIGEST_SETTLE_MS
-    assert.deepEqual(await delivery().runOnce(), quiet, 'the same trouble again inside six hours waits for a reminder')
-    await clearLedgerAlerts(pool, [flap], iso(now))
+    assert.deepEqual(await delivery().runOnce(), quiet, 'the same trouble again, not cleared since it was announced, waits for a reminder')
+    await clearLedgerAlerts(pool, null, 'checks', iso(now))
+    assert.deepEqual([(await stored(lapse)).clearedAt, (await stored(flap)).clearedAt, (await stored(riding)).clearedAt], [iso(now), iso(now), undefined])
     now += 2 * MINUTE
     assert.deepEqual(await delivery().runOnce(), quiet)
     assert.deepEqual((await stored(flap)).delivery, { status: 'off', reason: 'CLEARED', queuedAt: iso(fifthAt + 70 * MINUTE) })
@@ -336,7 +350,7 @@ test('ledger alerts go out as one message: news an hour apart, reminders every s
     const runs = []
     for (let run = 0; run < 5; run++) runs.push(await failingJob.runOnce())
     assert.deepEqual(runs.map(run => [run.status, run.digestError]), Array(5).fill(['DELIVERY_REVIEW', 'UNKNOWN']))
-    assert.deepEqual(texts.map(text => text.id), [0], 'one notice')
+    assert.deepEqual(texts.map(text => text.id), [`queue-${now}`], 'one notice')
     assert.match(texts[0].text, /^repo\.ing · Ledger messages cannot be written\nThe alert queue could not plan them 3 runs in a row \(UNKNOWN\)\.\n/)
     assert.doesNotMatch(texts[0].text, /relation|graduation_alerts/)
     texts.length = 0
@@ -379,11 +393,23 @@ test('ledger alerts go out as one message: news an hour apart, reminders every s
     now = backlogAt + DIGEST_REMINDER_MS
     assert.deepEqual([(await delivery().runOnce()).digested, (await delivery().runOnce()).digested, await left()], [50, 0, 0])
     assert.equal((await messages()).at(-1).detail.reminder, true)
-    // What a message covered more than six hours ago is news again when it is recorded anew.
-    now += DIGEST_REMINDER_MS + HOUR
+    // What a message covered long ago (further back than the planner is told about) is news again when it is recorded anew.
+    now += DIGEST_REMINDER_MS + 2 * HOUR
     await record(three.githubRepoId, feeLedgerAlertDetail({ market: three, reconciliation: { status: 'MISMATCH', difference: 5n }, episode: episode('behind', true), observedAt: iso(now), now }))
     now += DIGEST_SETTLE_MS
     assert.deepEqual([(await delivery().runOnce()).sent, (await messages()).at(-1).detail.reminder], [1, false])
+
+    // A run sends five alerts at most, the oldest first, and only the kinds the queue owns: a row of another kind is left
+    // alone whatever its detail says.
+    const waitingNow = { ...pendingDelivery(now), nextAttemptAt: '2020-01-01T00:00:00.000Z' }
+    const foreign = (await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values('foreign-kind',null,'GRADUATION_REVIEW',$1) returning id`,
+      [JSON.stringify({ code: 'RPC_UNAVAILABLE', observedAt: iso(now), delivery: waitingNow })])).rows[0].id
+    await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) select 'ops-wallet-low:many:'||n,null,'OPS_WALLET_LOW',$1 from generate_series(1,7) n`,
+      [JSON.stringify({ role: 'Builder payout signer', minimumLamports: '30000000', balanceLamports: '1000', observedAt: iso(now), delivery: waitingNow })])
+    texts.length = 0
+    assert.deepEqual([(await delivery().runOnce()).sent, (await delivery().runOnce()).sent, (await delivery().runOnce()).sent], [5, 2, 0])
+    assert.deepEqual([texts.length, [...texts.map(text => text.id)].sort((a, b) => a - b).join() === texts.map(text => text.id).join(), (await stored(foreign)).delivery.status], [7, true, 'pending'])
+    await pool.query('delete from graduation_alerts where id=$1', [foreign])
 
     // Untouched throughout: the rows that were never ledger alerts of this kind.
     assert.deepEqual(await stored(before), { status: 'MISMATCH' })

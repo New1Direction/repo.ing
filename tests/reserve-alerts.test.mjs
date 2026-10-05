@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { reserveMovePlan, reserveAlertText, createReserveWebhookSender, pendingDelivery, feeLedgerAlertDetail, marketPassAlertDetail, platformLedgerAlertDetail, RESERVE_MOVE_COOLDOWN_MS, ledgerChecksAlertDetail } from '../src/reserve-alerts.mjs'
+import { reserveMovePlan, reserveAlertText, createReserveWebhookSender, pendingDelivery, feeLedgerAlertDetail, marketPassAlertDetail, platformLedgerAlertDetail, RESERVE_MOVE_COOLDOWN_MS, ledgerChecksAlertDetail,
+  testAlertMessage } from '../src/reserve-alerts.mjs'
 import { digestDelivery } from '../src/ledger-digest.mjs'
 
 const now = Date.now()
@@ -94,11 +95,16 @@ test('Slack, Discord and Telegram each get the message in their own shape; any o
     ['https://api.telegram.org/bot123:secret/sendMessage', { chat_id: '@repoing_ops', text, link_preview_options: { is_disabled: true } }])
   const [, generic] = await sent('https://example.com/hook')
   assert.deepEqual([generic.event, generic.id, generic.text, generic.market.role, generic.market.delivery], ['operating_wallet_low', 9, text, 'Builder payout signer', undefined])
-  // The test message of scripts/send-test-alert.mjs is its own event.
+  // The test message of scripts/send-test-alert.mjs is its own event, and each one has an id of its own: a receiver that
+  // drops a repeated id still shows a second test.
+  const sentAt = Date.parse('2026-10-05T08:15:00.000Z'), headers = []
   let tested
-  await createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://example.com/hook' }, fetchImpl: async (_url, options) => { tested = JSON.parse(options.body); return { ok: true } } })(
-    { id: 0, text: 'repo.ing · Test alert', detail: { test: true, observedAt: '2026-10-05T08:15:00.000Z' } })
-  assert.deepEqual([tested.event, tested.id, tested.text], ['test', 0, 'repo.ing · Test alert'])
+  const testSender = createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://example.com/hook' }, fetchImpl: async (_url, options) => { tested = JSON.parse(options.body); headers.push(options.headers['Idempotency-Key']); return { ok: true } } })
+  await testSender(testAlertMessage(sentAt))
+  assert.deepEqual([tested.event, tested.id, tested.text], ['test', `test-${sentAt}`, 'repo.ing · Test alert\nOperator alerts will arrive here.\nSent: 2026-10-05T08:15:00.000Z'])
+  await testSender(testAlertMessage(sentAt + 1000))
+  assert.deepEqual(headers, [`repoing-reserve-test-${sentAt}`, `repoing-reserve-test-${sentAt + 1000}`])
+  assert.match(testAlertMessage().id, /^test-\d{13}$/)
   // A message longer than the receiver takes is cut, not refused.
   const long = 'x'.repeat(5000), cut = async destination => {
     let body
@@ -128,8 +134,11 @@ test('a ledger alert names the ledger, says whether it is lag or a real mismatch
   const since = '2026-10-05T08:00:00.000Z', observedAt = '2026-10-05T08:15:00.000Z', url = 'https://repo.ing/token/mint'
   const tail = `Since: ${since}\nChecked: ${observedAt}\n${url}`
   const market = { ledger: 'fees', fullName: 'local/reserve', since, observedAt, url }
-  const behind = reserveAlertText(11, { ...market, status: 'MISMATCH', reason: null, lagging: true })
-  assert.equal(behind, `repo.ing · Fee ledger behind the chain\nlocal/reserve\nThe chain shows fees the worker has not recorded. It normally catches up within minutes, so the fee indexer may be stuck or may have missed a trade.\n${tail}\nAlert #11`)
+  const behind = reserveAlertText(11, { ...market, status: 'MISMATCH', reason: null, lagging: true, stalled: true })
+  assert.equal(behind, `repo.ing · Fee ledger behind the chain\nlocal/reserve\nThe chain shows fees the worker has not recorded, and nothing new was recorded for an hour. The fee indexer may be stuck or may have missed a trade.\n${tail}\nAlert #11`)
+  // Behind for six hours while fees are still being recorded is worded as what it is.
+  assert.equal(reserveAlertText(11, { ...market, status: 'MISMATCH', reason: null, lagging: true, stalled: false }),
+    `repo.ing · Fee ledger behind the chain\nlocal/reserve\nThe chain has shown fees the worker has not recorded for six hours without a break, though fees are still being recorded. The fee indexer may be falling behind.\n${tail}\nAlert #11`)
   assert.match(reserveAlertText(12, { ...market, status: 'UNAVAILABLE', reason: null, lagging: true }), /Fee ledger could not be checked\nlocal\/reserve\nThe on-chain read keeps failing\./)
   assert.match(reserveAlertText(13, { ...market, status: 'PENDING_REVIEW', reason: '1 unresolved claim intent(s)', lagging: true }), /Builder claim still unresolved\nlocal\/reserve\n1 unresolved claim intent/)
   const real = reserveAlertText(14, { ...market, status: 'MISMATCH', reason: 'Graduated fee withdrawals differ from proven payouts', lagging: false })
@@ -174,7 +183,7 @@ test('ledger alert details carry fixed wording, a place in the next ledger messa
     assert.equal(feeLedgerAlertDetail({ market, episode, observedAt: '', now: at, reconciliation: { status: 'MISMATCH', reason } }).reason, reason)
   // What the episode says about the row goes with it: its kind, whether it is a repeat, and since when.
   const recorded = { kind: 'unchecked', repeat: false, since: episode.since, delivery: digestDelivery(at) }
-  assert.deepEqual(failed, { ledger: 'fees', status: 'UNAVAILABLE', reason: null, lagging: true, difference: null, fullName: 'local/reserve',
+  assert.deepEqual(failed, { ledger: 'fees', status: 'UNAVAILABLE', reason: null, lagging: true, stalled: false, difference: null, fullName: 'local/reserve',
     observedAt: '2026-10-05T08:15:00.000Z', url: 'https://repo.ing/token/mint', ...recorded })
   assert.doesNotMatch(reserveAlertText(1, failed), /secret|rpc\.example/)
   // None is queued to be sent by itself: the delivery job puts what was recorded into one message (src/ledger-digest.mjs).
@@ -188,6 +197,8 @@ test('ledger alert details carry fixed wording, a place in the next ledger messa
   const real = feeLedgerAlertDetail({ market, episode: { ...episode, lagging: false, kind: 'difference' }, observedAt: '2026-10-05T08:15:00.000Z', now: at,
     reconciliation: { status: 'MISMATCH', reason: 'Graduated fee withdrawals differ from proven payouts', difference: -12n } })
   assert.deepEqual([real.reason, real.difference, real.lagging, real.kind], ['Graduated fee withdrawals differ from proven payouts', '-12', false, 'difference'])
+  const stuck = feeLedgerAlertDetail({ market, episode: { ...episode, kind: 'behind', stalled: true }, observedAt: '', now: at, reconciliation: { status: 'MISMATCH', difference: 5n } })
+  assert.deepEqual([stuck.kind, stuck.stalled, stuck.difference], ['behind', true, '5'])
   assert.deepEqual(platformLedgerAlertDetail({ revenue: { status: 'MISMATCH', problems: ['Allocations exceed claimed platform revenue'] }, liquidity: { status: 'MATCH', problems: [] },
     episode: { ...episode, kind: 'difference' }, now: at }),
     { ledger: 'platform', revenue: 'MISMATCH', liquidity: 'MATCH', problems: ['Allocations exceed claimed platform revenue'], observedAt: '2026-10-05T08:15:00.000Z', ...recorded, kind: 'difference' })

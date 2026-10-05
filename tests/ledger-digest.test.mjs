@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { planLedgerDigest, ledgerKey, DIGEST_SETTLE_MS, DIGEST_MAX_WAIT_MS, DIGEST_SPACING_MS, DIGEST_REMINDER_MS, DIGEST_ROW_MAX_AGE_MS, DIGEST_NAMED } from '../src/ledger-digest.mjs'
+import { planLedgerDigest, ledgerKey, DIGEST_SETTLE_MS, DIGEST_MAX_WAIT_MS, DIGEST_SPACING_MS, DIGEST_REMINDER_MS, DIGEST_RENEW_MS, DIGEST_MEMORY_MS, DIGEST_ROW_MAX_AGE_MS, DIGEST_NAMED } from '../src/ledger-digest.mjs'
 import { reconcileKind, reconcileLagging } from '../src/reconcile.mjs'
 import { createReserveWebhookSender, digestLedgerAlerts, feeLedgerAlertDetail, ledgerChecksAlertDetail, marketPassAlertDetail, pendingDelivery, platformLedgerAlertDetail,
   reserveAlertText } from '../src/reserve-alerts.mjs'
@@ -26,9 +26,9 @@ const checks = (at, since = at - 15 * MINUTE) => ({ id: ++lastId, repoId: null, 
 function job() {
   const waiting = [], covered = [], digests = [], expired = [], dropped = [], receiver = { down: false }
   const clear = (rows, at) => { for (const row of rows) row.detail.clearedAt = iso(at) }
-  // What the messages written in the last reminder period covered.
+  // What the messages written lately covered, as far back as the job asks its store.
   const recent = now => ({ lastAt: digests.at(-1)?.at ?? null, pending: digests.at(-1)?.pending ?? false,
-    covered: covered.filter(({ at }) => at >= now - DIGEST_REMINDER_MS).map(({ row }) => ({ ledger: ledgerKey(row), kind: row.detail.kind, cleared: Boolean(row.detail.clearedAt) })) })
+    covered: covered.filter(({ at }) => at >= now - DIGEST_MEMORY_MS).map(({ row }) => ({ ledger: ledgerKey(row), kind: row.detail.kind, cleared: Boolean(row.detail.clearedAt) })) })
   return { waiting, covered, digests, expired, dropped, receiver, clear, add: (...rows) => { waiting.push(...rows) },
     run(now, options = {}) {
       const plan = planLedgerDigest({ rows: [...waiting], recent: recent(now), now, delivery: pendingDelivery(now), ...options })
@@ -41,6 +41,12 @@ function job() {
 }
 const minutes = j => j.digests.map(digest => (digest.at - START) / MINUTE)
 const nothing = { expire: [], drop: [], digest: null }
+
+test('the planner keeps the times the documentation gives', () => {
+  // docs/RESERVE_ALERTS.md, "What is sent": 3 and 10 minutes to gather, an hour between messages with news, six hours
+  // between reminders, an hour before trouble that came back is news again, eight hours before a waiting row expires.
+  assert.deepEqual([DIGEST_SETTLE_MS, DIGEST_MAX_WAIT_MS, DIGEST_SPACING_MS, DIGEST_REMINDER_MS, DIGEST_RENEW_MS, DIGEST_ROW_MAX_AGE_MS].map(ms => ms / MINUTE), [3, 10, 60, 360, 60, 480])
+})
 
 test('ledger rows are recorded for a message of their own, not for delivery one by one', () => {
   for (const row of [fee(7, START), pass(7, START), platform(START), checks(START)]) assert.deepEqual(row.detail.delivery, { status: 'digest', queuedAt: iso(START) })
@@ -107,21 +113,24 @@ test('a new problem inside the hour waits for the hour, then is sent with everyt
   assert.equal(digest.detail.reminder, false)
 })
 
-test('a provider that fails on and off all day is one message, then a reminder every six hours while it still fails', () => {
-  const j = job(), open = []
-  // Every forty minutes all 52 markets cannot be read for twenty: each is recorded fifteen minutes in and matches again at twenty.
-  for (let at = START + RUN_MS; at <= START + 24 * HOUR; at += RUN_MS) {
-    const minute = ((at - START) / MINUTE) % 40
-    if (minute === 16) { const rows = Array.from({ length: 52 }, (_, i) => pass(100 + i, at - MINUTE)); open.push(...rows); j.add(...rows) }
-    if (minute === 20) j.clear(open.splice(0), at)
-    j.run(at)
+test('trouble that comes and goes all day is one message, then a reminder every six hours while it is still there', () => {
+  // Every forty minutes all 52 markets are in trouble for twenty: each is recorded fifteen minutes in and matches again at
+  // twenty. A provider that fails on and off, and the same for a real difference that comes and goes.
+  for (const row of [(repo, at) => pass(repo, at), (repo, at) => fee(repo, at, real)]) {
+    const j = job(), open = []
+    for (let at = START + RUN_MS; at <= START + 24 * HOUR; at += RUN_MS) {
+      const minute = ((at - START) / MINUTE) % 40
+      if (minute === 16) { const rows = Array.from({ length: 52 }, (_, i) => row(100 + i, at - MINUTE)); open.push(...rows); j.add(...rows) }
+      if (minute === 20) j.clear(open.splice(0), at)
+      j.run(at)
+    }
+    assert.deepEqual(minutes(j), [18, 378, 738, 1098])
+    assert.deepEqual(j.digests.map(digest => [digest.detail.count, digest.detail.reminder]), [[52, false], [52, true], [52, true], [52, true]])
+    assert.equal(reserveAlertText(5, j.digests[1].detail).split('\n')[0], 'repo.ing · 52 ledgers still need review')
+    // Every time in between it was recorded, cleared before its turn came, and never sent.
+    assert.equal(j.dropped.length, (36 - 4) * 52)
+    assert.deepEqual([j.expired.length, j.waiting.length], [0, 0])
   }
-  assert.deepEqual(minutes(j), [18, 378, 738, 1098])
-  assert.deepEqual(j.digests.map(digest => [digest.detail.count, digest.detail.reminder]), [[52, false], [52, true], [52, true], [52, true]])
-  assert.equal(reserveAlertText(5, j.digests[1].detail).split('\n')[0], 'repo.ing · 52 ledgers still need review')
-  // Every outage in between was recorded, cleared before its turn came, and never sent.
-  assert.equal(j.dropped.length, (36 - 4) * 52)
-  assert.deepEqual([j.expired.length, j.waiting.length], [0, 0])
 })
 
 test('a lasting incident that spreads is announced as it spreads, then repeated every six hours, not every hour', () => {
@@ -152,22 +161,69 @@ test('a worker that restarts during a lasting problem does not announce it again
     j.run(at)
   }
   assert.deepEqual(minutes(j), [18, 378, 738, 1098])
-  assert.deepEqual(j.digests.map(digest => digest.detail.count), [1, 1, 1, 1])
+  assert.deepEqual(j.digests.map(digest => [digest.detail.count, digest.detail.reminder]), [[1, false], [1, true], [1, true], [1, true]])
 })
 
-test('a real difference that was cleared and came back is news; trouble that normally clears by itself is not', () => {
-  for (const [state, again] of [[real, [18, 138]], [unread, [18]], [behind, [18]]]) {
-    const j = job(), first = fee(7, START + 15 * MINUTE, state)
-    j.add(first)
-    for (let at = START + RUN_MS; at <= START + 5 * HOUR; at += RUN_MS) {
-      const minute = (at - START) / MINUTE
-      // Matches again an hour in; the same trouble comes back and is recorded at 2 h 15.
-      if (minute === 60) j.clear([first], at)
-      if (minute === 136) j.add(fee(7, at - MINUTE, state))
-      j.run(at)
+test('trouble that came back after it cleared is announced again once it has lasted an hour, whatever its kind', () => {
+  for (const state of [real, unread, behind]) {
+    // Announced, cleared an hour in, back at 2 h and recorded at 2 h 15. lasts: for how long it stays that second time.
+    const timeline = lasts => {
+      const j = job(), first = fee(7, START + 15 * MINUTE, state)
+      j.add(first)
+      let second = null
+      for (let at = START + RUN_MS; at <= START + 5 * HOUR; at += RUN_MS) {
+        const minute = (at - START) / MINUTE
+        if (minute === 60) j.clear([first], at)
+        if (minute === 136) { second = fee(7, at - MINUTE, state, { since: START + 2 * HOUR }); j.add(second) }
+        if (second && minute === 120 + lasts) j.clear([second], at)
+        j.run(at)
+      }
+      return minutes(j)
     }
-    assert.deepEqual(minutes(j), again, state.status + String(state.difference ?? ''))
+    const label = state.status + String(state.difference ?? '')
+    assert.deepEqual(timeline(30), [18], `${label}: gone again inside the hour, never announced`)
+    assert.deepEqual(timeline(58), [18], label)
+    assert.deepEqual(timeline(400), [18, 120 + DIGEST_RENEW_MS / MINUTE], `${label}: announced when it has lasted the hour`)
   }
+})
+
+test('all checks stopping a second time is announced: an earlier, shorter outage does not silence a later, longer one', () => {
+  const j = job()
+  // The chain cannot be verified from 0:00 to 0:25 (announced), and again from 3:00 to 4:30.
+  let first = null, second = null
+  for (let at = START + RUN_MS; at <= START + 8 * HOUR; at += RUN_MS) {
+    const minute = (at - START) / MINUTE
+    if (minute === 16) { first = checks(at - MINUTE, START); j.add(first) }
+    if (minute === 26) j.clear([first], at)
+    if (minute === 196) { second = checks(at - MINUTE, START + 3 * HOUR); j.add(second) }
+    if (minute === 270) j.clear([second], at)
+    j.run(at)
+  }
+  assert.deepEqual(minutes(j), [18, 240], 'the second outage is told one hour in')
+  assert.deepEqual(j.digests.map(digest => digest.detail.reminder), [false, false])
+})
+
+test('a problem that never cleared is the same problem after a worker restart, however long it has lasted', () => {
+  const j = job()
+  // Reads fail from 0:00 on and never recover. The worker restarts at 1:30 and records the market again fifteen minutes later.
+  j.add(pass(7, START + 15 * MINUTE, 'RPC_UNAVAILABLE', true, START))
+  for (let at = START + RUN_MS; at <= START + 7 * HOUR; at += RUN_MS) {
+    if ((at - START) / MINUTE === 106) j.add(pass(7, at - MINUTE, 'RPC_UNAVAILABLE', true, START + 90 * MINUTE))
+    j.run(at)
+  }
+  assert.deepEqual(minutes(j), [18, 378], 'not announced again an hour after the restart: its earlier row never cleared')
+  assert.deepEqual(j.digests.map(digest => digest.detail.reminder), [false, true])
+})
+
+test('trouble whose start cannot be read is told, not held as young', () => {
+  const j = job(), first = fee(7, START, unread)
+  j.add(first)
+  j.run(START + DIGEST_SETTLE_MS)
+  j.clear([first], START + 10 * MINUTE)
+  const again = fee(7, START + 70 * MINUTE, unread)
+  again.detail.since = 'not a time'
+  j.add(again)
+  assert.deepEqual(j.run(START + 70 * MINUTE + DIGEST_SETTLE_MS).digest.covers, [again.id])
 })
 
 test('a reminder that just arrived does not hold back news that has settled', () => {
@@ -312,7 +368,8 @@ test('the delivery job plans from the stored rows and the last six hours of mess
   const store = memoryStore([row, other, old, gone])
   assert.deepEqual(await digestLedgerAlerts(store, { now, deliver: true }), { digested: 2, expired: 1, cleared: 1 })
   assert.deepEqual(store.calls.map(call => call[0]), ['waiting', 'recent', 'commit'])
-  assert.equal(store.calls[1][1], now - DIGEST_REMINDER_MS)
+  assert.equal(store.calls[1][1], now - DIGEST_MEMORY_MS)
+  assert.equal(DIGEST_MEMORY_MS, DIGEST_REMINDER_MS + DIGEST_SPACING_MS)
   const plan = store.calls[2][1]
   assert.deepEqual([plan.expire, plan.drop, plan.digest.covers, plan.digest.detail.delivery], [[old.id], [gone.id], [row.id, other.id], pendingDelivery(now)])
   // Rows that only expired, or were only cleared, are written too, with no message.

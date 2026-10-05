@@ -26,12 +26,14 @@ function database() {
     return { rows: [{ id: alerts.size, kind, repoId, createdAt: new Date() }] }
   }
   const query = async (sql, params = []) => {
-    if (fault.on?.(sql)) throw Error('connect ECONNREFUSED 10.0.0.5:5432')
+    if (fault.on?.(sql, params)) throw Error('connect ECONNREFUSED 10.0.0.5:5432')
     if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: !busy.has(params[0]) }] }
     if (sql.startsWith('insert into graduation_alerts') && sql.includes("'RESERVE_MOVED'")) return store(params[0], params[1], 'RESERVE_MOVED', params[2])
     if (sql.startsWith('insert into graduation_alerts')) return store(...params)
-    if (sql.startsWith('update graduation_alerts') && sql.includes('{clearedAt}')) {
-      for (const alert of alerts.values()) if (params[0].includes(alert.id) && alert.kind === LEDGER) alert.detail.clearedAt = params[1]
+    // clearLedgerAlerts: every uncleared row recorded for one ledger of one market (or of the protocol).
+    if (sql.includes('alert-queue:clear')) {
+      const [repoId, ledger, at] = params
+      for (const alert of alerts.values()) if (alert.kind === LEDGER && (alert.repoId ?? null) === (repoId ?? null) && alert.detail.ledger === ledger && !alert.detail.clearedAt) alert.detail.clearedAt = at
       return { rows: [] }
     }
     if (sql.startsWith('insert into graduation_observations') && sql.includes("'VERIFIED'")) { observations.set(params[0], { github_repo_id: params[0], status: 'VERIFIED', observation: params[1], reconciliation: params[2] }); return { rows: [] } }
@@ -152,6 +154,14 @@ test('the ledger is settled as soon as it is read: a later step of the pass fail
   assert.deepEqual(failing.at(-1).map(result => [result.status, result.code]), [['REVIEW', 'RPC_UNAVAILABLE']])
   assert.deepEqual(refused.db.recorded('7:fees').map(row => [row.status, row.kind]), [['MISMATCH', 'difference']])
   assert.deepEqual(refused.db.recorded('7:market').map(row => [row.status, row.reason]), [['UNAVAILABLE', 'RPC_UNAVAILABLE']])
+  // The very next step fails (the migration proof cannot be stored): the same.
+  const unproven = world(), from = unproven.clock.at
+  unproven.found.state = market => stateOf(market, { migration: { signature: 'signature', pool: 'damm', slot: 9 }, migrationHash: 'hash' })
+  unproven.found.reconcile = () => ahead
+  unproven.db.fault.on = sql => sql.startsWith('insert into graduation_events')
+  const unstored = await passes(unproven, from + RECONCILE_HOLD_MS + 2 * PASS_MS)
+  assert.deepEqual(unstored.at(-1).map(result => result.status), ['REVIEW'])
+  assert.deepEqual(unproven.db.recorded('7:fees').map(row => [row.status, row.kind]), [['MISMATCH', 'difference']])
 })
 
 test('a market another pass holds is settled by that pass, not this one', async () => {
@@ -161,6 +171,18 @@ test('a market another pass holds is settled by that pass, not this one', async 
   const results = await passes(w, began + 2 * RECONCILE_HOLD_MS)
   assert.deepEqual(results.at(-1).map(result => [result.repoId, result.status]), [['7', 'BUSY']])
   assert.deepEqual([...w.db.alerts.values()], [])
+  // Held for a pass or two in the middle of an episode, the ledger's hold goes on. Held for longer, what it did meanwhile is
+  // unknown here, and its hold starts again when this worker reaches it.
+  for (const [held, since] of [[2, PASS_MS], [3, 12 * PASS_MS]]) {
+    const turns = world(), start = turns.clock.at
+    turns.found.reconcile = () => ahead
+    await passes(turns, start + 8 * PASS_MS)
+    turns.db.busy.add('graduation:7')
+    await passes(turns, turns.clock.at + held * PASS_MS)
+    turns.db.busy.clear()
+    await passes(turns, start + 12 * PASS_MS + RECONCILE_HOLD_MS)
+    assert.deepEqual(turns.db.recorded('7:fees').map(row => row.since), [iso(start + since)], `held for ${held} passes`)
+  }
 })
 
 test('when the chain cannot be verified no market is read, and that is recorded by itself after the hold', async () => {
@@ -194,13 +216,13 @@ test('when the monitor own ledger reads fail the pass still fails, and no market
   for (const result of results) assert.equal(result?.message, unread, 'the pass rejects with the read failure, as before')
   assert.deepEqual(w.db.recorded('protocol:checks').map(row => [row.ledger, row.reason, row.since]), [['checks', 'LEDGER_READS_FAILED', iso(began + PASS_MS)]])
   assert.doesNotMatch(JSON.stringify([...w.db.alerts.values()]), /relation|platform_revenue_policies/)
-  assert.equal(results.at(-1).alertNotRecorded, undefined)
-  // Recording it failing too never replaces the error the pass reports, and is carried on it by code.
+  assert.equal(results.at(-1).alertsNotRecorded, undefined)
+  // Recording it failing too never replaces the error the pass reports: the pass says how many rows it could not store.
   const down = world({ holdMs: 0 })
   down.found.ledgers = unread
   down.db.fault.on = sql => sql.startsWith('insert into graduation_alerts')
   const [failed] = await passes(down, down.clock.at + PASS_MS)
-  assert.deepEqual([failed?.message, failed?.alertNotRecorded], [unread, 'Error'])
+  assert.deepEqual([failed?.message, failed?.alertsNotRecorded], [unread, 1])
   // The reads work again: the markets are checked and the episode is over. Failing again is a new one.
   w.found.ledgers = null
   const recovered = await passes(w, w.clock.at + PASS_MS)
@@ -230,7 +252,7 @@ test('a pass that dies between two markets leaves the rest unchecked, and that i
   assert.equal(w.db.recorded('protocol:checks')[0].clearedAt, iso(w.clock.at))
 })
 
-test('a pass that takes longer than public progress lasts is recorded as too slow, though every market verified', async () => {
+test('passes that come round less often than public progress lasts are recorded as too slow, though every market verified', async () => {
   const w = world(), began = w.clock.at
   // Reading the market takes twelve minutes of the monitor's clock: passes that far apart must still add up to one episode.
   w.found.state = market => { w.clock.at += 12 * 60_000; return stateOf(market) }
@@ -238,14 +260,55 @@ test('a pass that takes longer than public progress lasts is recorded as too slo
   assert.ok(results.every(pass => pass[0].status === 'VERIFIED'))
   assert.deepEqual(w.db.recorded('protocol:checks').map(row => [row.reason, row.kind]), [['PASS_TOO_SLOW', 'unchecked']])
   assert.deepEqual(w.db.recorded('7:market'), [])
-  // At the limit exactly a pass is in time; back at its usual pace the row is cleared.
-  const exact = world()
-  exact.found.state = market => { exact.clock.at += PUBLIC_GRADUATION_MAX_AGE_MS; return stateOf(market) }
-  await passes(exact, exact.clock.at + 3 * 3_600_000)
-  assert.deepEqual(exact.db.recorded('protocol:checks'), [])
+  // Back at its usual pace the row is cleared.
   w.found.state = market => stateOf(market)
-  await passes(w, w.clock.at + PASS_MS)
+  await passes(w, w.clock.at + 2 * PASS_MS)
   assert.equal(w.db.recorded('protocol:checks')[0].clearedAt, iso(w.clock.at))
+  // What counts is how far apart a market's verified passes are: a pass and the wait before it, together. At the limit
+  // exactly the passes are in time; one millisecond more and they are not.
+  for (const [extra, rows] of [[0, 0], [1, 1]]) {
+    const edge = world()
+    edge.found.state = market => { edge.clock.at += PUBLIC_GRADUATION_MAX_AGE_MS - PASS_MS + extra; return stateOf(market) }
+    await passes(edge, edge.clock.at + 3 * 3_600_000)
+    assert.equal(edge.db.recorded('protocol:checks').length, rows, `${extra} ms over`)
+  }
+  // Quick passes that start too far apart (the worker's loop is held up by its other jobs) are too slow as well.
+  const starved = world(), start = starved.clock.at
+  while (starved.clock.at < start + 3 * 3_600_000) { starved.clock.at += 6 * 60_000; await starved.monitor.runOnce() }
+  assert.deepEqual(starved.db.recorded('protocol:checks').map(row => row.reason), ['PASS_TOO_SLOW'])
+})
+
+test('an alert row that cannot be stored never fails a market: the pass says so, and the next pass stores it', async () => {
+  const w = world({ holdMs: 0 })
+  w.found.reconcile = () => ahead
+  w.db.fault.on = (sql, params) => sql.startsWith('insert into graduation_alerts') && params[2] === LEDGER
+  const [failed] = await passes(w, w.clock.at + PASS_MS)
+  assert.deepEqual(failed.map(result => [result.repoId, result.status, result.count]), [['7', 'VERIFIED', undefined], [null, 'ALERTS_NOT_RECORDED', 1]])
+  assert.deepEqual(w.db.recorded('7:fees'), [])
+  w.db.fault.on = null
+  const [stored] = await passes(w, w.clock.at + PASS_MS)
+  assert.deepEqual([stored.map(result => result.status), w.db.recorded('7:fees').length], [['VERIFIED'], 1])
+  // The same when it is the mark of a cleared row that cannot be written.
+  w.found.reconcile = () => MATCH
+  w.db.fault.on = sql => sql.includes('alert-queue:clear')
+  const [unmarked] = await passes(w, w.clock.at + PASS_MS)
+  assert.deepEqual(unmarked.map(result => result.status), ['VERIFIED', 'ALERTS_NOT_RECORDED'])
+  assert.equal(w.db.recorded('7:fees')[0].clearedAt, undefined)
+  w.db.fault.on = null
+  await passes(w, w.clock.at + PASS_MS)
+  assert.equal(w.db.recorded('7:fees')[0].clearedAt, iso(w.clock.at))
+})
+
+test('a new worker clears what the one before it recorded, the first time it finds the market matching and verified', async () => {
+  const w = world()
+  // Rows a replaced worker left behind for this market, and one of the protocol's.
+  const left = (eventKey, repoId, ledger) => w.db.alerts.set(eventKey, { id: w.db.alerts.size + 1, repoId, kind: LEDGER, detail: { ledger, since: iso(w.clock.at), delivery: { status: 'digest' } } })
+  left('7:RECONCILIATION_MISMATCH:fees:old', '7', 'fees'); left('7:RECONCILIATION_MISMATCH:market:old', '7', 'market')
+  left('protocol:RECONCILIATION_MISMATCH:checks:old', null, 'checks'); left('protocol:RECONCILIATION_MISMATCH:platform:old', null, 'platform')
+  left('8:RECONCILIATION_MISMATCH:fees:old', '8', 'fees')
+  await passes(w, w.clock.at + PASS_MS)
+  const cleared = name => [...w.db.alerts].filter(([eventKey]) => eventKey.includes(name)).map(([, row]) => Boolean(row.detail.clearedAt))
+  assert.deepEqual([cleared('7:RECON'), cleared('protocol:'), cleared('8:RECON')], [[true, true], [true, true], [false]], 'each of its own ledgers, and no other market')
 })
 
 test('a market lock that cannot be released costs its connection, not the pool: the connection is discarded', async () => {

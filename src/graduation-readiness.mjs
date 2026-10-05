@@ -15,8 +15,6 @@ import { releaseAfterUnlock } from './database-pool.mjs'
 // A thrown error as a review code. A message that already is a code is kept. Prose (web3.js wraps an RPC failure in its own
 // message) is RPC_RATE_LIMITED or RPC_UNAVAILABLE when it names one or when transientRpcReason recognizes a transport failure
 // (429, 5xx, a timeout, a dropped connection, a lagging node); any other prose is EVIDENCE_UNAVAILABLE, never transient.
-// A failure's code when it is one (an SQLSTATE, a Node error code, one of this codebase's own), never its message.
-const failureCode=error=>{const code=String(error?.code??error?.name??'');return /^[A-Za-z0-9][A-Za-z0-9_]{2,40}$/.test(code)?code:'UNKNOWN'}
 export const graduationError = error => {
   const message = String(error?.message ?? '')
   if (/^[A-Z][A-Z_]{3,60}$/.test(message)) return message
@@ -51,7 +49,8 @@ export function firstP3Eligibility({state,reconciliation,revenue,reserve,liquidi
 
 const LEDGER_ALERT='RECONCILIATION_MISMATCH'
 // Why a pass did not get through its markets, when it is no review code: fixed codes of the monitor's own, never a failure's
-// message. Its own reads failed (readPassLedgers); it died between two markets; or it took longer than public progress lasts.
+// message. Its own reads failed (readPassLedgers); it died between two markets; or passes come round less often than public
+// progress lasts.
 const LEDGER_READS_FAILED='LEDGER_READS_FAILED',MARKET_PASS_FAILED='MARKET_PASS_FAILED',PASS_TOO_SLOW='PASS_TOO_SLOW'
 async function emitAlert(db,repoId,kind,key,detail) {
   const {rows}=await db.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail) values($1,$2,$3,$4)
@@ -83,13 +82,15 @@ async function readPassLedgers(pool) {
 // reconciler, readState, readLedgers: a market's fee reconciliation, its chain state and the pass's own reads; tests replace them.
 export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,holdMs=RECONCILE_HOLD_MS,
   reconciler=createReconciler({pool,connection,config}),readState=readGraduationState,readLedgers=readPassLedgers}) {
-  const ledgerAlerts=createLedgerAlerts({now,holdMs})
+  // Alert rows that could not be stored or marked in the pass in progress. Never a reason to fail the pass: reported with it.
+  let alertFaults=0,lastStarted=null
+  const ledgerAlerts=createLedgerAlerts({now,holdMs,onFault:()=>{alertFaults+=1}})
   async function processMarket(market,global,curveReads=null) {
     const db=await pool.connect(),repoId=String(market.githubRepoId),alerts=[]
     const notify=async(kind,key,detail)=>{const a=await emitAlert(db,repoId,kind,key,detail);if(a)alerts.push(a);return a}
     // What this pass finds about the market, for the operator alerts: its fee ledger, settled as soon as the ledger is read so
     // no later step can skip it, and the pass as a whole, verified or failed. Each is recorded once it has lasted its hold.
-    const watched=ledgerAlerts.market({record:(key,detail)=>notify(LEDGER_ALERT,key,detail),clear:(ids,at)=>clearLedgerAlerts(db,ids,at)},market)
+    const watched=ledgerAlerts.market({record:(key,detail)=>notify(LEDGER_ALERT,key,detail),clear:(ledger,at)=>clearLedgerAlerts(db,repoId,ledger,at)},market)
     let locked=false
     try {
       // BUSY: another pass holds this market and settles it in its own process, so nothing is settled here. Counting it as
@@ -161,15 +162,13 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     }finally{await releaseAfterUnlock(db,()=>locked?db.query('select pg_advisory_unlock(hashtextextended($1,0))',[`graduation:${repoId}`]):null)}
   }
   async function runOnce(){
-    const started=now()
+    const started=now(),sincePrevious=lastStarted===null?0:started-lastStarted
+    lastStarted=started
+    alertFaults=0
     ledgerAlerts.beginPass()
-    const protocol={record:(key,detail)=>emitAlert(pool,null,LEDGER_ALERT,key,detail),clear:(ids,at)=>clearLedgerAlerts(pool,ids,at)}
-    // A pass that cannot go on still reports its own failure. Recording that no market was checked must not replace that
-    // failure, so what could not be recorded is carried on it (the worker logs both).
-    const unchecked=async(error,code)=>{
-      try{await ledgerAlerts.checks(protocol,code)}catch(notRecorded){if(error instanceof Error)error.alertNotRecorded=failureCode(notRecorded)}
-      return error
-    }
+    const protocol={record:(key,detail)=>emitAlert(pool,null,LEDGER_ALERT,key,detail),clear:(ledger,at)=>clearLedgerAlerts(pool,null,ledger,at)}
+    // A pass that cannot go on reports its own failure, with how many alert rows it could not store on the way.
+    const stopped=error=>{if(alertFaults&&error instanceof Error)error.alertsNotRecorded=alertFaults;return error}
     // One provider outage should not block the other worker recovery jobs once per market.
     try {
       if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
@@ -184,7 +183,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     }
     let ledgers
     // The pass ends here, as it always has, and again no market was checked.
-    try{ledgers=await readLedgers(pool)}catch(error){throw await unchecked(error,LEDGER_READS_FAILED)}
+    try{ledgers=await readLedgers(pool)}catch(error){await ledgerAlerts.checks(protocol,LEDGER_READS_FAILED);throw stopped(error)}
     const {revenue,reserve,liquidity,revenueCheck,markets}=ledgers
     let rules=null
     // Parsing disabled-gate settings for a read-only readiness check never changes the execution environment.
@@ -198,12 +197,14 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         if(!/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(connection.rpcEndpoint))await new Promise(resolve=>setTimeout(resolve,pauseMs))
       }
     // A pass that dies between two markets leaves every market after that one unchecked.
-    }catch(error){throw await unchecked(error,MARKET_PASS_FAILED)}
-    // After the markets, so recording never holds a market's pass up: whether the pass got through them in time, then the
-    // platform's own revenue and liquidity ledgers.
-    const recorded=[await ledgerAlerts.checks(protocol,now()-started>PUBLIC_GRADUATION_MAX_AGE_MS?PASS_TOO_SLOW:null),
-      await ledgerAlerts.platform(protocol,{revenue:revenueCheck,liquidity})].filter(Boolean)
+    }catch(error){await ledgerAlerts.checks(protocol,MARKET_PASS_FAILED);throw stopped(error)}
+    // After the markets, so recording never holds a market's pass up. A market's public progress lasts
+    // PUBLIC_GRADUATION_MAX_AGE_MS from its last verified pass: a pass that takes longer than that, or starts later than that
+    // after the one before, lets it expire. Then the platform's own revenue and liquidity ledgers.
+    const slow=Math.max(now()-started,sincePrevious)>PUBLIC_GRADUATION_MAX_AGE_MS
+    const recorded=[await ledgerAlerts.checks(protocol,slow?PASS_TOO_SLOW:null),await ledgerAlerts.platform(protocol,{revenue:revenueCheck,liquidity})].filter(Boolean)
     if(recorded.length)results.push({repoId:null,status:'REVIEW',alerts:recorded})
+    if(alertFaults)results.push({repoId:null,status:'ALERTS_NOT_RECORDED',count:alertFaults,alerts:[]})
     return results
   }
   return {runOnce,processMarket}

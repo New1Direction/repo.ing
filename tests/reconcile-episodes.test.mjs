@@ -87,9 +87,13 @@ test('a ledger behind the chain while its fees keep being recorded is trading, n
   const { clock, began, episodes } = start()
   // A market traded without a pause: every pass finds the chain ahead and the ledger further on than the pass before.
   assert.deepEqual(observe(episodes, clock, trading, began + RECONCILE_BEHIND_MAX_MS - 1), [])
-  // Only a ledger that has not matched once in six hours is announced whatever it recorded.
-  const [alert, ...more] = observe(episodes, clock, pass => trading(pass + 10_000), began + RECONCILE_BEHIND_MAX_MS + 2 * PASS_MS)
-  assert.deepEqual([alert.lagging, alert.since, more.length], [true, new Date(began + PASS_MS).toISOString(), 0])
+  // Only a ledger that has not matched once in six hours is announced whatever it recorded: on the pass exactly six hours
+  // after its first, and as one that still records.
+  clock.at = began + PASS_MS + RECONCILE_BEHIND_MAX_MS - PASS_MS
+  assert.equal(episodes.settle('7', trading(20_000)), null, 'one pass short of six hours')
+  clock.at += PASS_MS
+  const alert = episodes.settle('7', trading(20_001))
+  assert.deepEqual([alert.lagging, alert.stalled, alert.since, alert.kind], [true, false, new Date(began + PASS_MS).toISOString(), 'behind'])
   // The partner side moving counts the same.
   const partnerSide = start()
   assert.deepEqual(observe(partnerSide.episodes, partnerSide.clock, pass => partner(BigInt(pass), BigInt(pass) + 4n), partnerSide.began + 3 * 3_600_000), [])
@@ -102,7 +106,7 @@ test('a ledger behind the chain with nothing recorded for an hour alerts: the in
     assert.deepEqual(observe(episodes, clock, state, began + RECONCILE_BEHIND_HOLD_MS - 1), [], 'catching up after trades can take most of an hour')
     clock.at = began + RECONCILE_BEHIND_HOLD_MS
     const alert = episodes.settle('7', state())
-    assert.deepEqual([alert.lagging, alert.since], [true, new Date(began).toISOString()])
+    assert.deepEqual([alert.lagging, alert.stalled, alert.since], [true, true, new Date(began).toISOString()])
   }
   // The hour counts from the last time the ledger moved: trading for ninety minutes with one trade's fees missed, then quiet.
   const { clock, began, episodes } = start()
@@ -120,9 +124,11 @@ test('one bad read during a long run of trading is not a problem: what it showed
   // A failed read on one pass: the next completed check ends it.
   const failed = start()
   assert.deepEqual(observe(failed.episodes, failed.clock, pass => pass === 4 ? unread : trading(pass), failed.began + 3 * 3_600_000), [])
-  // A stale read on one pass shows the ledger ahead of the chain: alone it is nothing.
-  const stale = start()
-  assert.deepEqual(observe(stale.episodes, stale.clock, pass => pass === 4 ? ahead() : trading(pass), stale.began + 3 * 3_600_000), [])
+  // A stale read on one pass shows the ledger ahead of the chain: alone it is nothing, early or late in the stretch.
+  for (const when of [4, 30, 100]) {
+    const stale = start()
+    assert.deepEqual(observe(stale.episodes, stale.clock, pass => pass === when ? ahead() : trading(pass), stale.began + 3 * 3_600_000), [], `on pass ${when}`)
+  }
   // Seen again the hold later, in the same unmatched stretch, it is a difference.
   const twice = start()
   const raised = observe(twice.episodes, twice.clock, pass => pass === 4 || pass === 30 ? ahead() : trading(pass), twice.began + 3 * 3_600_000)
@@ -176,6 +182,13 @@ test('an episode that lasts is announced again once per repeat period, with its 
   assert.equal(raised.length, 3)
   assert.equal(new Set(raised.map(alert => alert.since)).size, 1)
   assert.equal(new Set(raised.map(alert => alert.key)).size, 3)
+  // The periods are counted from the episode's own start, whatever the time of day: the repeat comes exactly one period on.
+  const exact = start(), first = exact.began + PASS_MS
+  observe(exact.episodes, exact.clock, () => withdrawal, first + RECONCILE_REPEAT_MS - PASS_MS)
+  const before = exact.episodes.settle('7', withdrawal)
+  exact.clock.at = first + RECONCILE_REPEAT_MS
+  const after = exact.episodes.settle('7', withdrawal)
+  assert.deepEqual([before.key, before.repeat, after.key, after.repeat], [`${first}:difference:0`, false, `${first}:difference:1`, true])
 })
 
 test('ledgers are held apart, and a restarted worker starts its hold again instead of alerting at once', () => {
@@ -189,30 +202,52 @@ test('ledgers are held apart, and a restarted worker starts its hold again inste
   assert.equal(observe(restarted, clock, () => withdrawal, again + RECONCILE_HOLD_MS + PASS_MS).length, 1)
 })
 
-test('an episode nobody has settled for a while is over: what happened before an outage does not alert the moment passes resume', () => {
+test('an episode nobody has settled for an hour is over: what happened before a long outage does not alert the moment passes resume', () => {
   const { clock, began, episodes } = start()
   assert.equal(episodes.settle('7', unread), null)
-  // No pass reaches the ledger for longer than the hold.
-  clock.at = began + RECONCILE_HOLD_MS + RECONCILE_STALE_MS + 1
+  // Nothing settles the ledger for longer than the stale limit.
+  clock.at = began + RECONCILE_STALE_MS + 1
   const resumed = clock.at
   assert.equal(episodes.settle('7', unread), null, 'a new hold starts')
   assert.deepEqual(observe(episodes, clock, () => unread, resumed + RECONCILE_HOLD_MS - 1), [])
   clock.at = resumed + RECONCILE_HOLD_MS
   assert.equal(episodes.settle('7', unread).since, new Date(resumed).toISOString())
-  // A gap of exactly the stale limit keeps the episode.
+  // A gap of exactly the stale limit keeps the episode: it was not checked for all that time, and says so at once.
   const kept = start()
   kept.episodes.settle('7', unread)
   kept.clock.at = kept.began + RECONCILE_STALE_MS
-  kept.episodes.settle('7', unread)
-  kept.clock.at = kept.began + RECONCILE_HOLD_MS
   assert.equal(kept.episodes.settle('7', unread).since, new Date(kept.began).toISOString())
 })
 
-test('the holds are longer than the slowest fee indexing seen, and a pass must reach a ledger more often than the stale limit', () => {
+test('slow passes are still one episode: a pass over the markets that takes thirteen minutes does not start every hold again', () => {
+  const SLOW_PASS_MS = 13 * 60_000
+  for (const [state, due] of [[() => withdrawal, 2], [() => unread, 2], [() => behind(), 5]]) {
+    const clock = { at: 1_000_000 }, began = clock.at, episodes = createReconcileEpisodes({ now: () => clock.at }), raised = []
+    for (let pass = 1; pass <= 8; pass++) {
+      clock.at = began + pass * SLOW_PASS_MS
+      const alert = episodes.settle('7', state())
+      if (alert) raised.push([pass, alert.since])
+    }
+    assert.deepEqual(raised[0], [1 + due, new Date(began + SLOW_PASS_MS).toISOString()], 'due on the first pass past its hold, counted from the first slow pass')
+  }
+})
+
+test('an episode can be ended without a match: the caller stopped reaching the ledger', () => {
+  const { clock, began, episodes } = start()
+  observe(episodes, clock, () => withdrawal, began + RECONCILE_HOLD_MS - PASS_MS)
+  episodes.forget('7')
+  const resumed = clock.at
+  assert.deepEqual(observe(episodes, clock, () => withdrawal, resumed + RECONCILE_HOLD_MS), [], 'a new hold from the next time it is settled')
+  assert.equal(observe(episodes, clock, () => withdrawal, resumed + RECONCILE_HOLD_MS + 2 * PASS_MS)[0].since, new Date(resumed + PASS_MS).toISOString())
+  episodes.forget('never settled')
+})
+
+test('the holds are longer than the slowest fee indexing seen, and the stale limit is longer than the slowest pass', () => {
   assert.ok(RECONCILE_HOLD_MS >= 15 * 60_000)
   // Measured on the busiest market over five days: behind without a break for at most about 30 minutes.
   assert.ok(RECONCILE_BEHIND_HOLD_MS >= 2 * 30 * 60_000)
-  assert.ok(RECONCILE_STALE_MS >= 5 * PASS_MS && RECONCILE_STALE_MS < RECONCILE_HOLD_MS)
+  // An episode survives passes far slower than any provider has made them, and never a gap as long as the longest hold.
+  assert.ok(RECONCILE_STALE_MS >= 4 * 13 * 60_000 && RECONCILE_STALE_MS <= RECONCILE_BEHIND_HOLD_MS)
   assert.ok(RECONCILE_REPEAT_MS >= 4 * RECONCILE_BEHIND_HOLD_MS)
   // A ledger that never matches is announced by the time its first repeat would be.
   assert.ok(RECONCILE_BEHIND_MAX_MS >= RECONCILE_BEHIND_HOLD_MS && RECONCILE_BEHIND_MAX_MS <= RECONCILE_REPEAT_MS)
@@ -247,19 +282,4 @@ test('an alert says whether its kind was already announced in this episode', () 
   again.clock.at += PASS_MS
   assert.deepEqual(again.episodes.settle('7', withdrawal), first)
   assert.equal(first.repeat, false)
-})
-
-test('the stale limit can follow the pass cadence: slow passes must not end every episode on every pass', () => {
-  const SLOW_PASS_MS = 13 * 60_000
-  const slow = (staleMs) => {
-    const clock = { at: 1_000_000 }, episodes = createReconcileEpisodes({ now: () => clock.at, staleMs }), raised = new Map()
-    for (let pass = 0; pass < 20; pass++) {
-      clock.at += SLOW_PASS_MS
-      const alert = episodes.settle('7', withdrawal)
-      if (alert) raised.set(alert.key, alert)
-    }
-    return raised.size
-  }
-  assert.equal(slow(RECONCILE_STALE_MS), 0, 'with the fixed limit every pass starts a new episode')
-  assert.ok(slow(() => 3 * SLOW_PASS_MS) >= 1, 'a limit above the cadence keeps the episode')
 })
