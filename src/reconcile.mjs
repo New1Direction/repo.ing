@@ -36,14 +36,19 @@ export function chainAheadOfLedger(result) {
   return difference !== null && difference > 0n
 }
 
-// How long a ledger must stay unmatched before it alerts. After a trade the worker records its fees in a median ~30 s, up
-// to ~10 min; a failed read or a lagging RPC node clears within a pass or two. (The stock reconciler holds its lagging
-// states as long: STOCK_RECONCILE_LAG_MS.)
+// How long a ledger must stay unmatched, or unchecked, before it alerts: a failed read or a lagging RPC node clears within
+// a pass or two.
 export const RECONCILE_HOLD_MS = 15 * 60_000
+// How long when all that was ever wrong is the chain ahead of the ledger (fees from trades the worker has not recorded
+// yet). On the busiest market the worker records a trade's fees in a median 21 s and at most about 10 min, and trades
+// overlap: over five days its ledger was behind without a break for 17 minutes once and for about 30 minutes once, never
+// for an hour. A ledger behind for an hour means the indexer has stopped.
+export const RECONCILE_BEHIND_HOLD_MS = 60 * 60_000
 // A problem that persists is announced again once per period, so one missed or failed notification is not the last word.
 export const RECONCILE_REPEAT_MS = 6 * 60 * 60_000
 // An episode nobody has settled for this long is over: the passes were not reaching the ledger, and what they would have
-// found is unknown.
+// found is unknown. A pass must come round to each ledger more often than this, or nothing would ever last its hold; the
+// graduation monitor already keeps a pass under half of PUBLIC_GRADUATION_MAX_AGE_MS (150 s) for the public curve state.
 export const RECONCILE_STALE_MS = 10 * 60_000
 // States that normally clear by themselves: the chain ahead of the ledger, a claim in flight, a read that failed. A pool
 // that was read and is not this market's is none of those. Decides an alert's wording, not whether it is raised.
@@ -54,21 +59,25 @@ export const reconcileLagging = result => result?.status === 'PENDING_REVIEW' ||
 // { key, lagging, since } to alert on.
 // - An episode runs from the first pass that does not MATCH to the next that does. Its state may change on the way (lag and
 //   a real mismatch take turns on a trading market, a read fails now and then): it stays one episode.
-// - It alerts once it has lasted holdMs, whatever kept it from matching, and again once per repeatMs for as long as it
-//   lasts. A ledger that matches again inside the hold never alerts.
+// - It alerts holdMs after it first showed anything other than the chain being ahead of the ledger (a mismatch, a claim in
+//   flight, a failed read), or once it has lasted behindHoldMs whatever it showed. From then on it alerts again once per
+//   repeatMs for as long as it lasts. A ledger that matches again before that never alerts.
 // - The key is the episode's start and its repeat period, so the caller's unique event key keeps one alert per period. A new
 //   episode is a new alert.
 // - Episodes live in this process. After a restart, a ledger that still does not match starts a new episode and alerts once
-//   that has lasted holdMs.
-export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOLD_MS, repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
+//   that has lasted its hold; since is when this process first saw it.
+export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOLD_MS, behindHoldMs = Math.max(holdMs, RECONCILE_BEHIND_HOLD_MS),
+  repeatMs = RECONCILE_REPEAT_MS, staleMs = RECONCILE_STALE_MS } = {}) {
   const episodes = new Map()
   return { settle(key, result) {
     if (result?.status === 'MATCH') { episodes.delete(key); return null }
     const at = now(), known = episodes.get(key)
-    const episode = known && at - known.seen <= staleMs ? known : { first: at }
+    const episode = known && at - known.seen <= staleMs ? known : { first: at, otherFirst: null }
     episode.seen = at
+    if (!chainAheadOfLedger(result)) episode.otherFirst ??= at
     episodes.set(key, episode)
-    if (at - episode.first < holdMs) return null
+    const due = at - episode.first >= behindHoldMs || (episode.otherFirst !== null && at - episode.otherFirst >= holdMs)
+    if (!due) return null
     return { key: `${episode.first}:${Math.floor((at - episode.first) / repeatMs)}`, lagging: reconcileLagging(result), since: new Date(episode.first).toISOString() }
   } }
 }
