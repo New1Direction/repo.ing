@@ -13,7 +13,7 @@ import { useWatchlist, WatchlistSettings } from './watchlist'
 // modelsEnabled (HF_MARKETS_ENABLED, read on the server): adds the "Market source" filter, ?source=models|repos.
 export function ExploreList({ markets, usdPerSol, modelsEnabled = false }) {
   const router = useRouter(), params = useSearchParams()
-  const tab = ['new', 'shipping', 'watchlist'].includes(params.get('view')) ? params.get('view') : 'trending'
+  const tab = ['mcap', 'new', 'shipping', 'watchlist'].includes(params.get('view')) ? params.get('view') : 'trending'
   const category = MARKET_CATEGORIES.some(c => c.id === params.get('category')) ? params.get('category') : 'all'
   const ownership = ['verified', 'unverified', 'official'].includes(params.get('owner')) ? params.get('owner') : 'all'
   const source = modelsEnabled && ['models', 'repos'].includes(params.get('source')) ? params.get('source') : 'all'
@@ -40,15 +40,15 @@ export function ExploreList({ markets, usdPerSol, modelsEnabled = false }) {
     else if (ownership !== 'all') rows = rows.filter(m => Boolean(m.wasVerified) === (ownership === 'verified'))
     if (category !== 'all') rows = rows.filter(m => m.categories.includes(category))
     if (tab === 'watchlist') rows = rows.filter(m => state.items.some(item => item.repoId === m.repoId))
-    return tab === 'shipping' ? orderByShipping(rows) : orderMarkets(rows, tab === 'new' ? 'New' : 'Trending')
-  }, [categorized, source, ownership, category, tab, query, state.items])
+    return tab === 'shipping' ? orderByShipping(rows) : orderMarkets(rows, tab === 'new' ? 'New' : tab === 'mcap' ? 'Market cap' : 'Trending', { usdPerSol })
+  }, [categorized, source, ownership, category, tab, query, state.items, usdPerSol])
   const modelCount = useMemo(() => modelsEnabled ? markets.filter(isModelMarket).length : 0, [markets, modelsEnabled])
   const empty = tab === 'watchlist' && !state.items.length ? 'Watch a repository to keep it here. Use the eye button beside any market.'
     : source === 'models' ? 'No Hugging Face model markets match these filters.' : 'No repositories match these filters.'
   return <>
     <div className="explore-search"><Search size={20}/><input ref={searchInput} aria-label="Search markets" placeholder={modelsEnabled ? 'Search repositories, models or tokens...' : 'Search repositories or tokens...'} value={query} onChange={e => setQuery(e.target.value)}/><kbd>⌘ K</kbd></div>
     <div className="discovery-controls"><div className="discovery-tabs" aria-label="Market views">
-      {[['trending','Trending'],['shipping','Shipping'],['new','New'],['watchlist','Watchlist']].map(([value,label]) => <button type="button" key={value} aria-pressed={tab === value} onClick={() => filter('view',value)}>{value === 'watchlist' && <Eye size={15}/>}{value === 'shipping' && <Activity size={15} className="shipping-tab-icon"/>} {label}{value === 'watchlist' && ready && <span className="count-badge">{state.items.length}</span>}</button>)}
+      {[['trending','Trending'],['mcap','Market cap'],['shipping','Shipping'],['new','New'],['watchlist','Watchlist']].map(([value,label]) => <button type="button" key={value} aria-pressed={tab === value} onClick={() => filter('view',value)}>{value === 'watchlist' && <Eye size={15}/>}{value === 'shipping' && <Activity size={15} className="shipping-tab-icon"/>} {label}{value === 'watchlist' && ready && <span className="count-badge">{state.items.length}</span>}</button>)}
     </div><div className="discovery-filters">
       {modelsEnabled && <label><span className="sr-only">Market source</span><select aria-label="Market source" value={source} onChange={event => filter('source', event.target.value)}><option value="all">Repos &amp; models</option><option value="repos">GitHub repos ({markets.length - modelCount})</option><option value="models">Hugging Face models ({modelCount})</option></select></label>}
       <label><span className="sr-only">Category</span><select aria-label="Repository category" title="Categories use repository names and descriptions" value={category} onChange={event => filter('category',event.target.value)}><option value="all">All categories</option>{MARKET_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label} ({categorized.filter(m => m.categories.includes(c.id)).length})</option>)}</select></label>
@@ -56,7 +56,7 @@ export function ExploreList({ markets, usdPerSol, modelsEnabled = false }) {
     </div></div>
     {tab === 'watchlist' && <WatchlistSettings/>}
     {storageError && tab !== 'watchlist' && <p className="subtle-notice" role="status">{storageError}</p>}
-    <div className="discovery-caption"><span>{tab === 'new' ? 'Latest launches' : tab === 'shipping' ? 'Ranked by code shipped this week: commits, merged pull requests and releases' : tab === 'watchlist' ? 'Repositories you’re watching' : `Ranked by 24h volume · new repos below ${PROMOTION_MIN_PERCENT}% of their graduation target come last`}</span>{(source !== 'all' || category !== 'all' || ownership !== 'all' || query) && <button type="button" onClick={() => { setQuery(''); router.replace(`/explore${tab !== 'trending' ? `?view=${tab}` : ''}`, { scroll: false }) }}>Clear filters</button>}</div>
+    <div className="discovery-caption"><span>{tab === 'new' ? 'Latest launches' : tab === 'shipping' ? 'Ranked by code shipped this week: commits, merged pull requests and releases' : tab === 'watchlist' ? 'Repositories you’re watching' : tab === 'mcap' ? `Ranked by market cap (last trade price × 1B supply) · new repos below ${PROMOTION_MIN_PERCENT}% of their graduation target come last` : `Ranked by 24h volume · new repos below ${PROMOTION_MIN_PERCENT}% of their graduation target come last`}</span>{(source !== 'all' || category !== 'all' || ownership !== 'all' || query) && <button type="button" onClick={() => { setQuery(''); router.replace(`/explore${tab !== 'trending' ? `?view=${tab}` : ''}`, { scroll: false }) }}>Clear filters</button>}</div>
     <MarketTable markets={tab === 'watchlist' && !ready ? [] : shown} usdPerSol={usdPerSol} empty={!ready && tab === 'watchlist' ? 'Loading your watchlist…' : empty}/>
     <div className="table-count">Showing {shown.length} of {markets.length} indexed markets{ownership === 'verified' && ' · Verification records repository admin access, not token endorsement.'}{ownership === 'official' && ' · Official: the verified maintainer launched the market from their payout wallet. Not an endorsement of the token.'}</div>
   </>
