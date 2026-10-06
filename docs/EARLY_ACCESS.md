@@ -144,8 +144,8 @@ SOL, hook `Ew1wqkFk…`. The built transaction is checked (one DBC instruction, 
 zero padding); the unsigned simulation's account is decoded as `ConfigWithTransferHook` and must hold our hook, wrapped SOL
 through SPL Token, a Token-2022 base, the expected fee claimer and leftover receiver, a flat 1.75% fee without the first-swap rule
 or a dynamic fee, every curve term of the curve, and equal the live SOL launch-fee config in every field but the launch fee and
-the token type. After the send the account must be the simulated bytes. The launcher checks the same (fee claimer aside) at
-every prepare.
+the token type. After the send the account must be the simulated bytes. The launcher checks the same at every prepare,
+fee claimer included (the partner wallet, `EARLY_ACCESS_FEE_CLAIMER`), so a setting that names a look-alike config is refused.
 
 **Scripts** (the owner runs them; each is a dry run unless `--execute`, which needs the reviewed values approved in the
 environment; mainnet checked by genesis hash):
@@ -176,13 +176,19 @@ Order: deploy the program, init the platform, create the config, create the tabl
    and capped as every launch), `init_mint` (payer: the launcher; admin: the creator signer; the launcher listed only with a first
    buy), DBC `createPoolWithFirstBuyWithTransferHook` (`TransferHookBase` slice of 4, `transferHookAccounts(mint)`) or
    `createPoolWithTransferHook` without a buy (the SDK's own compute budget instructions dropped), then `remove_wallets` for the
-   launcher unless its wallet is linked to a contributor in the snapshot. Measured on mainnet's programs: 1,110 bytes, about
-   205,000–216,000 compute units with a first buy (limit about 245,000–260,000). The review response also carries the window end,
-   the contributor count and how many have a linked wallet.
+   launcher unless its wallet is linked to a contributor in the snapshot. Measured on mainnet's programs, with the production
+   metadata link: 1,190 bytes with a first buy and a short name, 1,223 with the longest ASCII name and ticker (32 and 10), 878
+   without a buy; about 205,000–216,000 compute units with a first buy (limit about 245,000–260,000). A name of multi-byte
+   characters can still pass the length check and not fit: that prepare is refused with a message ("use a shorter token name or
+   ticker, or launch without an initial buy"). The review response also carries the window end, the contributor count and how
+   many have a linked wallet.
 4. Sign: the page decodes the review as v0 (`app/lib/launch-transaction.mjs`); wallet-standard wallets must declare version 0.
    The server accepts the reviewed message, or it with 1–4 trailing Lighthouse assertions (`matchesReviewedVersionedLaunch`,
-   both read through the lookup table), verifies the launcher's signature, co-signs (creator, mint), sends it once and confirms it
-   as before (`sendLaunch`).
+   both read through the lookup table) as long as it stays within 1,232 bytes, verifies the launcher's signature, co-signs
+   (creator, mint), sends it once and confirms it as before (`sendLaunch`). Room for assertions (measured): the first adds 48
+   bytes (Lighthouse's key and the instruction), each next 16, so none fits with a first buy and 20 without one. A wallet that
+   insists on adding one to a first-buy launch cannot sign it; whether Phantom then signs without them is not known yet (check
+   before switching on). A body that is not a v0 transaction is refused with a message the page shows.
 5. Verify (`src/launch-evidence.mjs`, chosen by the stamp): DBC `initializeVirtualPoolWithToken2022TransferHook` on the early
    access config by the recorded creator, mint, pool, hook (account 8) and launcher (payer, account 9), accounts read through the
    lookup table; a Token-2022 mint whose transfer hook is ours (or the default key once the curve is full, as DBC sets it); the
@@ -196,21 +202,27 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
 | Trades: `/api/trade`, the curve and graduated traders, Blinks | refused: "Contributor early access markets are not tradable on the site yet." |
 | Builder fee claim (`src/claim.mjs`), discovery (`discoverySummary`), builder allocation (`allocationRecord`), platform fee listing and sweep (`listPlatformFees`), `platformFeeRecord`, DBC partner fee collection | skipped (`early_access_end is null`) or refused before any chain call |
-| Builder reminders, graduation monitor (`publicMarketSQL`) | skipped |
+| Builder reminders, graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped |
+| Builder dashboard (`app/lib/builders.mjs`) | not listed (its fee check is SOL-only) |
+| Verification bonus accrual (`src/verification-bonus-accrual.mjs`, candidates and market facts) | skipped, left undecided: its volume rule reads `trade_events`, which hook pools do not write yet, and a decided bonus is never re-evaluated |
+| `scripts/recover-expired-launch.mjs` | refused with a message (manual recovery of an early access launch is a later step; the worker still releases a proven expired attempt) |
 | Launch first-buy indexing in `/api/launch` | skipped |
 
 Left for the next steps (each fails closed or is harmless until then):
 
-- Step 5: trades (`swap2WithTransferHook`, the trade evidence, sessions, Blinks), the external fee indexer (its per-market pass
+- Step 5: trades (`swap2WithTransferHook`, the trade evidence, sessions, Blinks), and with them the verification bonus accrual
+  (drop its `early_access_end is null` in `candidates` and `marketFacts` once their trades are in `trade_events`), the external fee indexer (its per-market pass
   reports ERROR for these markets: `quote_asset_id is null` list; the stock readiness check counts that list), live trades
   (skipped: config unresolved), the launch's first buy, charts, the holder count (`app/lib/market-metrics.mjs` counts SPL Token
   accounts only), market lists and the launch alert copy (they list these markets as SOL markets), and the oracle's upkeep that
   adds linked contributors' wallets to a list during its window (nothing adds them yet).
-- Step 6: claims with `claim_creator_trading_fee2` / `claim_trading_fee2`, the builder allocation (Token-2022 leftover),
+- Step 6: claims with `claim_creator_trading_fee2` / `claim_trading_fee2` and the builder dashboard, the builder allocation (Token-2022 leftover),
   discovery and platform fees, then remove the step 4 skips. Early access markets are stamped with the discovery version, the
   builder allocation (when `BUILDER_ALLOCATION_CONFIGS` lists the early access config) and the verification bonus like SOL
   markets; the bonus is paid in SOL and needs no change.
-- Step 7: graduation (the monitor skips them), DAMM v2 with a Token-2022 token A (`tokenAProgram`), reconcile and graduated fees.
+- Step 7: graduation (the monitor and its operator view skip them), DAMM v2 with a Token-2022 token A (`tokenAProgram`), reconcile
+  and graduated fees.
+- Later: manual recovery of an expired early access launch (`scripts/recover-expired-launch.mjs` refuses one).
 
 ## Build and test
 
@@ -220,7 +232,7 @@ Left for the next steps (each fails closed or is harmless until then):
     node --test tests/early-access.test.mjs            # switches, window, link message and refusals (quick suite)
     node scripts/ci/run-tests.mjs early-access-links-db # migration 0059, the link flow and its routes (PostgreSQL)
     node --test tests/early-access-launch.test.mjs     # guard, window end, contributors, v0 review, config transaction, form (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table and launches end to end (PostgreSQL + validator)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

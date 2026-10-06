@@ -16,6 +16,9 @@ const CREATE_CONFIG_WITH_TRANSFER_HOOK = Buffer.from([216, 37, 1, 57, 88, 226, 2
 // ConfigWithTransferHook is { config: PoolConfig, transfer_hook_program, padding_0: [u64; 6] } after the discriminator.
 const PADDING_BYTES = 6 * 8
 
+// The partner wallet: fee claimer (and payer) of every repo.ing DBC config, the early access config included.
+export const EARLY_ACCESS_FEE_CLAIMER = new PublicKey('H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3')
+
 const key = value => new PublicKey(value)
 const coderFor = connection => new DynamicBondingCurveClient(connection, 'confirmed').state.getProgram().coder
 
@@ -161,12 +164,14 @@ export async function verifyCreatedEarlyAccessConfig({ connection, config, accou
   return decodeEarlyAccessConfig(info.data, coderFor(connection))
 }
 
-// The config a launch uses, read from chain and checked (the launcher, at every prepare): the creator signer is the leftover
-// receiver, as on every builders config (src/builder-allocation.mjs).
-export async function readEarlyAccessConfig(connection, config, { leftoverReceiver, hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, commitment = 'confirmed' }) {
+// The config a launch uses, read from chain and checked (the launcher, at every prepare): the partner wallet claims its fees and
+// the creator signer is the leftover receiver, as on every builders config (src/builder-allocation.mjs). A setting that names a
+// look-alike config with another fee claimer is refused.
+export async function readEarlyAccessConfig(connection, config, { leftoverReceiver, feeClaimer = EARLY_ACCESS_FEE_CLAIMER,
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, commitment = 'confirmed' }) {
   const info = await connection.getAccountInfo(key(config), commitment)
   if (!info?.owner.equals(DBC_PROGRAM_ID)) throw Error('Early access config is missing')
   const decoded = decodeEarlyAccessConfig(info.data, coderFor(connection))
-  assertEarlyAccessConfig(decoded, { feeClaimer: null, leftoverReceiver, hookProgram })
+  assertEarlyAccessConfig(decoded, { feeClaimer, leftoverReceiver, hookProgram })
   return decoded
 }

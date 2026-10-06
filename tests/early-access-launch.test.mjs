@@ -1,17 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { AddressLookupTableAccount, ComputeBudgetProgram, Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction,
-  TransactionMessage, VersionedTransaction } from '@solana/web3.js'
+import { AddressLookupTableAccount, ComputeBudgetProgram, Connection, Keypair, PACKET_DATA_SIZE, PublicKey, SystemProgram, Transaction, TransactionInstruction,
+  TransactionMessage, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
 import { EARLY_ACCESS_LAUNCHES_READY, EARLY_ACCESS_NOT_TRADABLE, EARLY_ACCESS_WINDOWS, EarlyAccessError, isEarlyAccessMarket } from '../src/early-access.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS } from '../src/early-access-hook.mjs'
-import { EARLY_ACCESS_CHAIN_MARGIN_SECONDS, earlyAccessEnd, prepareVersionedLaunchSigning } from '../src/early-access-launch.mjs'
+import { EARLY_ACCESS_CHAIN_MARGIN_SECONDS, UNREADABLE_SIGNED_LAUNCH, earlyAccessEnd, prepareVersionedLaunchSigning, readSignedVersionedLaunch } from '../src/early-access-launch.mjs'
 import { assertEarlyAccessConfigTransaction, buildEarlyAccessConfigTransaction, earlyAccessLookupAddresses } from '../src/early-access-config.mjs'
 import { CONTRIBUTOR_ERRORS, contributorsFromPage, fetchRepositoryContributors, resetContributorPause } from '../src/github-contributors.mjs'
 import { EARLY_ACCESS_REFUSALS, contributorSnapshotStep, earlyAccessGuard, earlyAccessRequest } from '../app/lib/early-access-launch.mjs'
 import { DefinitiveLaunchError, isVersionedLaunch, unsignedLaunchBase64 } from '../src/meteora-launch.mjs'
-import { LIGHTHOUSE_PROGRAM, matchesReviewedVersionedLaunch } from '../src/launch-wallet-assertions.mjs'
+import { LIGHTHOUSE_PROGRAM, MAX_VERSIONED_LAUNCH_ASSERTIONS, matchesReviewedVersionedLaunch } from '../src/launch-wallet-assertions.mjs'
 import { compiledLaunchInstructions, readLaunchComputeBudget, withVersionedLaunchPriorityFee } from '../src/launch-wallet-fees.mjs'
 import { estimateLaunchCosts } from '../src/launch-costs.mjs'
 import { createMarketConfigResolver } from '../src/market-config.mjs'
@@ -166,21 +166,29 @@ function versionedFixture() {
       keys: [{ pubkey: creator.publicKey, isSigner: true, isWritable: true }, { pubkey: shared, isSigner: false, isWritable: true },
         { pubkey: HOOK, isSigner: false, isWritable: false }] })]
   const blockhash = Keypair.generate().publicKey.toBase58()
-  const compile = list => new VersionedTransaction(new TransactionMessage({ payerKey: launcher.publicKey, recentBlockhash: blockhash, instructions: list })
-    .compileToV0Message([table]))
+  const compile = (list, { tables = [table], recentBlockhash = blockhash } = {}) => new VersionedTransaction(new TransactionMessage({ payerKey: launcher.publicKey,
+    recentBlockhash, instructions: list }).compileToV0Message(tables))
   const tx = compile(instructions)
   return { launcher, creator, mint, table, instructions, compile, tx, loadTables: async () => [table],
     sign: prepareVersionedLaunchSigning(tx, launcher.publicKey, creator, mint, async () => [table]) }
 }
-const lighthouse = key => new TransactionInstruction({ programId: new PublicKey(LIGHTHOUSE_PROGRAM), keys: [{ pubkey: key, isSigner: false, isWritable: false }],
-  data: Buffer.from([2, 1, 0, 0]) })
+const lighthouse = (key, data = Buffer.from([2, 1, 0, 0]), extra = []) => new TransactionInstruction({ programId: new PublicKey(LIGHTHOUSE_PROGRAM),
+  keys: [{ pubkey: key, isSigner: false, isWritable: false }, ...extra], data })
+
+// The same message with its header changed (signer and writable counts), the rest of the bytes as they were.
+const withHeader = (tx, change) => {
+  const message = VersionedMessage.deserialize(tx.message.serialize())
+  message.header = change(message.header)
+  return new VersionedTransaction(message)
+}
 
 test('v0 review: the reviewed message, or it with trailing Lighthouse assertions, is co-signed; anything else is refused', async () => {
   const f = versionedFixture(), reviewed = Buffer.from(f.tx.message.serialize())
+  const otherTable = new AddressLookupTableAccount({ key: Keypair.generate().publicKey, state: f.table.state })
   const bySigner = (tx, signer) => { tx.sign([signer]); return tx }
   assert.equal(await matchesReviewedVersionedLaunch(reviewed, VersionedTransaction.deserialize(f.tx.serialize()), f.loadTables), true)
   const asserted = f.compile([...f.instructions, lighthouse(f.mint.publicKey)])
-  assert.equal(await matchesReviewedVersionedLaunch(reviewed, asserted, f.loadTables), true, 'a trailing Lighthouse assertion')
+  assert.equal(await matchesReviewedVersionedLaunch(reviewed, asserted, f.loadTables, { maxAssertions: 1 }), true, 'a trailing Lighthouse assertion')
   for (const [label, changed] of [
     ['a changed instruction', f.compile([...f.instructions.slice(0, 2), SystemProgram.createAccount({ fromPubkey: f.launcher.publicKey,
       newAccountPubkey: f.mint.publicKey, lamports: 2, space: 0, programId: SystemProgram.programId }), f.instructions[3]])],
@@ -188,19 +196,46 @@ test('v0 review: the reviewed message, or it with trailing Lighthouse assertions
     ['an assertion that makes an account writable', f.compile([...f.instructions, new TransactionInstruction({ ...lighthouse(HOOK), keys: [{ pubkey: HOOK, isSigner: false, isWritable: true }] })])],
     ['an assertion on a new account', f.compile([...f.instructions, lighthouse(Keypair.generate().publicKey)])],
     ['an appended transfer', f.compile([...f.instructions, SystemProgram.transfer({ fromPubkey: f.launcher.publicKey, toPubkey: Keypair.generate().publicKey, lamports: 1 })])],
-    ['five assertions', f.compile([...f.instructions, ...Array.from({ length: 5 }, () => lighthouse(f.mint.publicKey))])],
+    ['more assertions than fit', f.compile([...f.instructions, ...Array.from({ length: MAX_VERSIONED_LAUNCH_ASSERTIONS + 1 }, () => lighthouse(f.mint.publicKey))])],
     ['no lookup table', new VersionedTransaction(new TransactionMessage({ payerKey: f.launcher.publicKey, recentBlockhash: f.tx.message.recentBlockhash,
       instructions: f.instructions }).compileToV0Message([]))],
+    ['another lookup table with the same addresses', f.compile(f.instructions, { tables: [otherTable] })],
+    ['another lookup table, with an assertion', f.compile([...f.instructions, lighthouse(f.mint.publicKey)], { tables: [otherTable] })],
+    ['another blockhash', f.compile(f.instructions, { recentBlockhash: Keypair.generate().publicKey.toBase58() })],
+    ['another blockhash, with an assertion', f.compile([...f.instructions, lighthouse(f.mint.publicKey)], { recentBlockhash: Keypair.generate().publicKey.toBase58() })],
+    ['a header that makes an account writable', withHeader(f.tx, header => ({ ...header, numReadonlyUnsignedAccounts: header.numReadonlyUnsignedAccounts - 1 }))],
+    ['a header that makes an account a signer', withHeader(f.tx, header => ({ ...header, numRequiredSignatures: header.numRequiredSignatures + 1 }))],
+    ['a header change beside an assertion', withHeader(f.compile([...f.instructions, lighthouse(f.mint.publicKey)]),
+      header => ({ ...header, numReadonlyUnsignedAccounts: header.numReadonlyUnsignedAccounts - 1 }))],
+    ['a two-account Lighthouse instruction', f.compile([...f.instructions, lighthouse(f.mint.publicKey, undefined, [{ pubkey: f.launcher.publicKey, isSigner: false, isWritable: false }])])],
+    ['a Lighthouse memory write', f.compile([...f.instructions, lighthouse(f.mint.publicKey, Buffer.from([0, 0, 0, 0]))])],
+    ['a Lighthouse memory close', f.compile([...f.instructions, lighthouse(f.mint.publicKey, Buffer.from([1, 0, 0, 0]))])],
+    ['an unknown Lighthouse variant', f.compile([...f.instructions, lighthouse(f.mint.publicKey, Buffer.from([42, 0, 0, 0]))])],
+    ['an assertion too short to be one', f.compile([...f.instructions, lighthouse(f.mint.publicKey, Buffer.from([2, 0]))])],
   ]) assert.equal(await matchesReviewedVersionedLaunch(reviewed, changed, f.loadTables), false, label)
+  const allowed = f.compile([...f.instructions, ...Array.from({ length: MAX_VERSIONED_LAUNCH_ASSERTIONS }, () => lighthouse(f.mint.publicKey))])
+  assert.equal(await matchesReviewedVersionedLaunch(reviewed, allowed, f.loadTables), MAX_VERSIONED_LAUNCH_ASSERTIONS > 0, 'as many as fit')
+  // Never a transaction too large to send, whatever the count allowed (web3.js cannot even encode one).
+  const oversized = f.compile([...f.instructions, ...Array.from({ length: 5 }, () => lighthouse(f.mint.publicKey, Buffer.from([2, ...Buffer.alloc(249)])))])
+  assert.throws(() => oversized.serialize(), /overruns/)
+  assert.equal(await matchesReviewedVersionedLaunch(reviewed, oversized, f.loadTables, { maxAssertions: 5 }), false, 'over 1,232 bytes')
+  const nearLimit = f.compile([...f.instructions, ...Array.from({ length: 3 }, () => lighthouse(f.mint.publicKey, Buffer.from([2, ...Buffer.alloc(200)])))])
+  assert.ok(nearLimit.serialize().length <= PACKET_DATA_SIZE)
+  assert.equal(await matchesReviewedVersionedLaunch(reviewed, nearLimit, f.loadTables, { maxAssertions: 3 }), true, 'within the limit, as many as allowed')
   assert.equal(await matchesReviewedVersionedLaunch(reviewed, new Transaction(), f.loadTables), false, 'a legacy transaction')
 
   // Co-signing: the wallet signs first; the creator and the mint sign the returned message; the launch signature is the payer's.
   const signed = await f.sign(async tx => bySigner(VersionedTransaction.deserialize(tx.serialize()), f.launcher))
   const landed = VersionedTransaction.deserialize(signed.raw)
   assert.equal(landed.signatures.filter(signature => signature.some(byte => byte !== 0)).length, 3)
-  const g = versionedFixture()
-  const withAssertion = await g.sign(async () => bySigner(g.compile([...g.instructions, lighthouse(g.mint.publicKey)]), g.launcher))
-  assert.equal(VersionedTransaction.deserialize(withAssertion.raw).message.compiledInstructions.length, 5)
+  if (MAX_VERSIONED_LAUNCH_ASSERTIONS > 0) {
+    const g = versionedFixture()
+    const withAssertion = await g.sign(async () => bySigner(g.compile([...g.instructions, lighthouse(g.mint.publicKey)]), g.launcher))
+    assert.equal(VersionedTransaction.deserialize(withAssertion.raw).message.compiledInstructions.length, 5)
+  }
+  // Anything but a v0 transaction back from the wallet (or the page) is refused with a message the page can show.
+  await assert.rejects(versionedFixture().sign(async () => new Transaction()), error => error instanceof DefinitiveLaunchError && error.message === UNREADABLE_SIGNED_LAUNCH)
+  await assert.rejects(versionedFixture().sign(async () => null), error => error.message === UNREADABLE_SIGNED_LAUNCH)
   const h = versionedFixture()
   await assert.rejects(h.sign(async tx => bySigner(h.compile(h.instructions.slice(0, 3)), h.launcher)), DefinitiveLaunchError)
   await assert.rejects(versionedFixture().sign(async tx => VersionedTransaction.deserialize(tx.serialize())), /Launcher signature missing/)
@@ -284,4 +319,16 @@ test('the launch form offers early access only when it can launch, for a GitHub 
   assert.doesNotMatch(render({ earlyAccess: { windows: WINDOWS }, trendRevision: 4 }), /Contributor early access/, 'not on a trend launch')
   assert.doesNotMatch(render({ earlyAccess: { windows: WINDOWS }, draft: { token: 't', tokenName: 'A', tokenSymbol: 'A' } }), /Contributor early access/, 'not on an agent draft')
   assert.doesNotMatch(render({ earlyAccess: { windows: WINDOWS }, repo: { ...repo, source: 'huggingface', hfId: 'x' } }), /Contributor early access/, 'not for a model')
+})
+
+test('the signed v0 launch the page posts back is read only as v0; anything else is a message the page can show', () => {
+  const f = versionedFixture()
+  const legacy = new Transaction({ feePayer: f.launcher.publicKey, recentBlockhash: f.tx.message.recentBlockhash })
+    .add(SystemProgram.transfer({ fromPubkey: f.launcher.publicKey, toPubkey: f.mint.publicKey, lamports: 1 }))
+  for (const body of [undefined, null, 42, '', 'not base64 at all!', Buffer.from([1, 2, 3]).toString('base64'),
+    legacy.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64')]) {
+    assert.throws(() => readSignedVersionedLaunch(body), error => error instanceof DefinitiveLaunchError && error.message === UNREADABLE_SIGNED_LAUNCH, String(body))
+  }
+  const v0 = Buffer.from(f.tx.serialize()).toString('base64')
+  assert.equal(readSignedVersionedLaunch(v0).version, 0)
 })

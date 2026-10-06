@@ -11,7 +11,7 @@ import { matchesReviewedVersionedLaunch } from './launch-wallet-assertions.mjs'
 import { readChainPoint } from './chain-clock.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID, MAX_EARLY_ACCESS_SECONDS, decodePlatform, initMintInstruction, platformAddress, removeWalletsInstruction,
   transferHookAccounts } from './early-access-hook.mjs'
-import { earlyAccessLookupAddresses, readEarlyAccessConfig } from './early-access-config.mjs'
+import { EARLY_ACCESS_FEE_CLAIMER, earlyAccessLookupAddresses, readEarlyAccessConfig } from './early-access-config.mjs'
 import { earlyAccessWindow } from './early-access.mjs'
 
 // The contributor early access launch (docs/EARLY_ACCESS.md): one v0 transaction with the early access lookup table, holding,
@@ -55,13 +55,27 @@ export const lookupTableLoader = connection => async message => Promise.all(mess
   return table
 }))
 
+export const UNREADABLE_SIGNED_LAUNCH = 'Your wallet returned a transaction this launch cannot read. Refresh this page and review the launch again.'
+
+// The signed v0 launch the page posts back (base64). Anything else (missing, malformed, a legacy transaction) is refused with a
+// message the page can show; nothing has been sent.
+export function readSignedVersionedLaunch(base64) {
+  let tx = null
+  try { if (typeof base64 === 'string') tx = VersionedTransaction.deserialize(Buffer.from(base64, 'base64')) } catch {}
+  if (tx?.version !== 0) throw new DefinitiveLaunchError(UNREADABLE_SIGNED_LAUNCH)
+  return tx
+}
+
 // As prepareLaunchSigning (src/meteora-launch.mjs) for the v0 launch: the wallet receives it before the creator and mint sign;
 // only the reviewed message, or it with trailing Lighthouse assertions, is co-signed.
 export function prepareVersionedLaunchSigning(tx, launcher, creator, mint, loadLookupTables) {
   const reviewed = Buffer.from(tx.message.serialize())
   return async signTransaction => {
     const signed = await signTransaction(tx)
-    const payerMatches = signed instanceof VersionedTransaction && signed.message.staticAccountKeys[0]?.equals(launcher)
+    if (!(signed instanceof VersionedTransaction) || signed.version !== 0 || !Array.isArray(signed.signatures)) {
+      throw new DefinitiveLaunchError(UNREADABLE_SIGNED_LAUNCH)
+    }
+    const payerMatches = signed.message.staticAccountKeys[0]?.equals(launcher) === true
     if (!payerMatches || !await matchesReviewedVersionedLaunch(reviewed, signed, loadLookupTables)) {
       console.warn('launch_wallet_message_changed', {
         validTransaction: signed instanceof VersionedTransaction, version: signed?.version ?? null,
@@ -82,8 +96,9 @@ export function prepareVersionedLaunchSigning(tx, launcher, creator, mint, loadL
 }
 
 // config: EARLY_ACCESS_DBC_CONFIG; lookupTable: EARLY_ACCESS_LOOKUP_TABLE (needed to prepare; a restored review names its own).
+// feeClaimer: the partner wallet the config must name (tests pass their own).
 export function createEarlyAccessLauncher({ connection, config, creator, lookupTable = null, metadataOrigin = null,
-  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, now = Date.now }) {
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, feeClaimer = EARLY_ACCESS_FEE_CLAIMER, now = Date.now }) {
   const configKey = new PublicKey(config), hook = new PublicKey(hookProgram)
   const client = new DynamicBondingCurveClient(connection, 'confirmed')
   const loadLookupTables = lookupTableLoader(connection)
@@ -92,7 +107,7 @@ export function createEarlyAccessLauncher({ connection, config, creator, lookupT
   async function readSetup() {
     if (!lookupTable) throw new EarlyAccessLaunchError('Early access launches are not configured.')
     const [decoded, platformInfo, table, clock] = await Promise.all([
-      readEarlyAccessConfig(connection, configKey, { leftoverReceiver: creator.publicKey, hookProgram: hook }),
+      readEarlyAccessConfig(connection, configKey, { leftoverReceiver: creator.publicKey, feeClaimer, hookProgram: hook }),
       connection.getAccountInfo(platformAddress(hook), 'confirmed'),
       connection.getAddressLookupTable(new PublicKey(lookupTable), { commitment: 'confirmed' }).then(result => result.value),
       readChainPoint(connection, ActivationType.Timestamp),
@@ -140,8 +155,12 @@ export function createEarlyAccessLauncher({ connection, config, creator, lookupT
       const latest = await connection.getLatestBlockhash('confirmed')
       const { transaction: tx, ...landing } = await withVersionedLaunchPriorityFee(connection, instructions,
         { feePayer: launcher, blockhash: latest.blockhash, lookupTables: [table] })
+      // Long token names (multi-byte characters count several bytes each) can push a launch with a first buy past Solana's size limit.
       const size = tx.serialize().length
-      if (size > PACKET_DATA_SIZE) throw new Error(`Early access launch transaction is too large (${size} bytes)`)
+      if (size > PACKET_DATA_SIZE) {
+        console.warn('early_access_launch_too_large', { bytes: size })
+        throw new EarlyAccessLaunchError('This early access launch does not fit in one Solana transaction. Use a shorter token name or ticker, or launch without an initial buy.')
+      }
       return {
         mint: mint.publicKey.toBase58(), pool: pool.toBase58(), initialBuyOutput: buy?.outputAmount.toString() ?? null,
         blockhash: latest.blockhash, lastValidBlockHeight: BigInt(latest.lastValidBlockHeight),
