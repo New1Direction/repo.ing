@@ -29,9 +29,26 @@ Use [`.env.example`](../.env.example) and the [development environment reference
 1. Verify the exact source revision, lockfile, focused checks, and production build. Never run destructive fixture tests against production.
 2. Check a recent encrypted backup and a tested recovery path before schema changes.
 3. Apply required additive migrations using the reviewed database target. Preserve evidence and existing market records.
-4. Deploy a compatible worker, then web. Record each deployed revision and verify loaded settings without exposing secrets.
+4. Deploy web, then the worker (web's pre-deploy runs `db:migrate`; the worker's does not, so a worker that reads a new column must follow web). Use `scripts/ops/deploy.sh` (below). Record each deployed revision and verify loaded settings without exposing secrets.
 5. Confirm the public launch, market, Explore, and builder pages respond. Verify operator endpoints reject anonymous access.
 6. Observe finalized indexing across existing markets, worker recovery after restart, and builder/platform/liquidity reconciliation. Investigate disagreements before financial activation.
+
+### Deploying
+
+The owner starts deploys. `scripts/ops/deploy.sh <expected short sha> <service>...` deploys `origin/main` and nothing else:
+
+```bash
+git fetch -q origin && git show origin/main:scripts/ops/deploy.sh | bash -s -- 88426c8 web worker
+```
+
+- It stops before anything moves unless `origin/main` is the expected commit, so nothing merged after the review ships by
+  accident. Do not merge while a deploy for a pinned commit is waiting to run.
+- It makes a fresh worktree of `origin/main` for each run, checks it (`package.json` present, clean, the right `HEAD`),
+  runs `railway up` per service in the order given (web before worker; it refuses the reverse), waits for each deployment's
+  result, stops at the first one that does not succeed, and removes the worktree. Long-lived deploy folders under `/tmp`
+  lost their `.git` file and `package.json` to temp cleanup once, and Railway built a static image from what was left.
+- Run from any checkout of this repository: it reads `origin/main`, never the checkout's files; the `git show … | bash`
+  form runs the reviewed copy of the script itself. `DEPLOY_WORK_DIR` moves the worktree (default `$TMPDIR/repoing-deploy`).
 
 A Git push saves source; it does not by itself establish a successful production rollout. Database migrations and deployment are separate operations. Documentation-only cleanup does not require a runtime deployment.
 

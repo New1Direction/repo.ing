@@ -206,6 +206,22 @@ test('transfer is capped at the buyback share owed so liquidity and treasury sta
   assert.equal(surplusSmaller.amount, sol(100_000_000n - KEEP_LAMPORTS - 5000n))
 })
 
+test('a dry run plans the transfer the execute would make when buybacks are ahead of the policy', async () => {
+  // 2026-10-05: 31.99 SOL ahead and 0.487 SOL of this run's buyback share. The execute allocated, owed nothing and sent 0;
+  // the dry run used to plan 0.487 SOL. Now both send nothing, and a share larger than the lead plans only the rest.
+  const run = (available, ahead) => runPlatformSweep({ execute: false, dbcEnabled: false, listFees: async () => [], feeService: () => ({}),
+    summary: summaryFake([summaryState({ available, buybackReserve: '0', buybackAhead: ahead })]), allocate: forbidden('allocate'),
+    connection: chainFake({ balance: 1_000_000_000 }), signer: partner, balanceOf: async () => 0 })
+  const ahead = await run('812296585', '31990036482')
+  assert.equal(ahead.ok, true, ahead.error)
+  assert.deepEqual([ahead.allocation.status, ahead.allocation.split.buyback], ['planned', '0.487377951'])
+  assert.deepEqual([ahead.transfer.status, ahead.transfer.amount], ['skipped-below-minimum', '0.000000000'])
+  const partly = await run('812296585', '187377951')
+  assert.deepEqual([partly.transfer.status, partly.transfer.amount], ['planned', '0.300000000'], '0.487 share − 0.187 lead = 0.3 SOL owed')
+  const none = await run('812296585', '0')
+  assert.deepEqual([none.transfer.status, none.transfer.amount], ['planned', '0.487377951'], 'nothing ahead: the whole share')
+})
+
 test('a re-run never re-sends buyback SOL already moved to custody but not yet spent', async () => {
   // 0.543 SOL is still owed (already sent, not yet bought) and this run claims nothing new.
   const report = await runPlatformSweep({ execute: true, dbcEnabled: false, listFees: async () => [], feeService: () => ({}),
