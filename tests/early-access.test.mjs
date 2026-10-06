@@ -55,7 +55,8 @@ test('settings: unset is null, a valid key parses, a malformed one throws naming
   assert.equal(earlyAccessDbcConfig({ EARLY_ACCESS_DBC_CONFIG: config }).toBase58(), config)
   assert.equal(earlyAccessLookupTable({ EARLY_ACCESS_LOOKUP_TABLE: ` ${table}\n` }).toBase58(), table)
   assert.throws(() => earlyAccessDbcConfig({ EARLY_ACCESS_DBC_CONFIG: 'not-a-key' }), /^Error: EARLY_ACCESS_DBC_CONFIG must be a base58 public key$/)
-  assert.throws(() => earlyAccessLookupTable({ EARLY_ACCESS_LOOKUP_TABLE: `${table}x` }), /EARLY_ACCESS_LOOKUP_TABLE/)
+  // '0' is never a base58 character. (Appending 'x' left a valid key about 1 time in 68, measured: issue #212.)
+  assert.throws(() => earlyAccessLookupTable({ EARLY_ACCESS_LOOKUP_TABLE: `${table}0` }), /EARLY_ACCESS_LOOKUP_TABLE/)
 
   const oracle = Keypair.generate()
   assert.equal(earlyAccessOracle({}), null)
