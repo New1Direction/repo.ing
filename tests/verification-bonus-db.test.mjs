@@ -39,13 +39,16 @@ const decline = (pool, id) => pool.query(`insert into maintainer_opt_outs(github
 const withdraw = (pool, id) => pool.query(`update maintainer_opt_outs set withdrawn_at = now(), withdrawn_by_github_user_id = 501
   where github_repo_id = $1 and withdrawn_at is null`, [id])
 
-async function seedMarket(pool, id, { launcher, activatedAt, stamp = AMOUNT, discovery = 2 }) {
+// earlyAccess: a contributor early access market (docs/EARLY_ACCESS.md), stamped with its window and hook program.
+async function seedMarket(pool, id, { launcher, activatedAt, stamp = AMOUNT, discovery = 2, earlyAccess = false }) {
   await pool.query(`insert into repositories(github_repo_id, owner, name, full_name, stars, forks, archived, github_updated_at)
     values ($1, 'octo', $2, $3, 25, 1, false, now())`, [id, `repo-${id}`, `octo/repo-${id}`])
   await pool.query(`insert into markets(github_repo_id, status, mint, pool, launcher_wallet, creator_wallet, token_name, token_symbol,
-      launch_signature, launch_slot, launch_finality, indexed_at, last_verified_at, discovery_version, launch_block_time, verification_bonus_lamports)
-    values ($1, 'confirmed', $2, $3, $4, $5, 'Repo', 'REPO', $6, 1, 'finalized', now(), now(), $7, $8, $9)`,
-  [id, `Mint${id}`, `Pool${id}`, launcher, creator, `Launch${id}`, discovery, activatedAt, stamp === null ? null : String(stamp)])
+      launch_signature, launch_slot, launch_finality, indexed_at, last_verified_at, discovery_version, launch_block_time, verification_bonus_lamports,
+      early_access_end, transfer_hook_program)
+    values ($1, 'confirmed', $2, $3, $4, $5, 'Repo', 'REPO', $6, 1, 'finalized', now(), now(), $7, $8, $9, $10, $11)`,
+  [id, `Mint${id}`, `Pool${id}`, launcher, creator, `Launch${id}`, discovery, activatedAt, stamp === null ? null : String(stamp),
+    earlyAccess ? activatedAt : null, earlyAccess ? 'Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep' : null])
 }
 async function verify(pool, id, { at, userId = 501, login = 'maintainer' }) {
   const { rows: [row] } = await pool.query(`insert into repo_verifications(github_repo_id, github_user_id, github_login, permission, verified_at)
@@ -175,7 +178,13 @@ test('real PostgreSQL: verification bonus stamping, accrual, review and payout i
       await verify(pool, 9202, { at: new Date(now - 2 * DAY) })
       await seedMarket(pool, 9203, { launcher: key(), activatedAt })
       await verify(pool, 9203, { at: new Date(now - 60_000) })
-      assert.deepEqual(await accrual.candidates(), ['9201'], 'unstamped markets and verifications inside the grace period wait')
+      // An early access market waits undecided until its trades are indexed (step 5 of docs/EARLY_ACCESS.md): never a candidate,
+      // and never recorded, so it is evaluated once its volume can be read.
+      await seedMarket(pool, 9204, { launcher: key(), activatedAt, earlyAccess: true })
+      await verify(pool, 9204, { at: new Date(now - 2 * DAY) })
+      assert.deepEqual(await accrual.candidates(), ['9201'], 'unstamped markets, verifications inside the grace period and early access markets wait')
+      assert.deepEqual(await accrual.accrue('9204'), { repoId: '9204', status: 'not-enrolled' })
+      assert.equal(await bonusRow(pool, 9204), undefined, 'no bonus row: nothing is decided for it yet')
       assert.deepEqual(await accrual.runOnce(), [{ repoId: '9201', status: 'pending_review' }])
       const bonus = await bonusRow(pool, 9201)
       assert.deepEqual([bonus.status, bonus.amount, bonus.launcher_wallet, bonus.verification_id, bonus.verifier_login, bonus.reason],
@@ -247,7 +256,8 @@ test('real PostgreSQL: verification bonus stamping, accrual, review and payout i
       assert.equal((await bonusRow(pool, 9205)).reason, 'Wash trading between two fresh wallets')
       const { bonuses, checking } = await review.list()
       assert.deepEqual(bonuses.slice(0, 2).map(bonus => [bonus.repoId, bonus.status]), [['9305', 'pending_review'], ['9201', 'approved']])
-      assert.deepEqual(checking.map(item => item.repoId), ['9203'])
+      // Undecided: the market inside its grace period, and the early access market waiting for step 5 (verified earlier, listed first).
+      assert.deepEqual(checking.map(item => item.repoId), ['9204', '9203'])
       const listed = bonuses.find(bonus => bonus.repoId === '9201')
       assert.deepEqual([listed.fullName, listed.curveVolume, listed.verifierLinkedToLauncher], ['octo/repo-9201', '26000000000', false])
       // A pasted payout address naming the launcher wallet is inert for 48 hours, longer than accrual waits; the reviewer

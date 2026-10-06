@@ -31,6 +31,9 @@ export const isEarlyAccessMarket = market => (market?.earlyAccessEnd ?? null) !=
 // Trades on the site (step 5) and claims (step 6).
 export const EARLY_ACCESS_NOT_TRADABLE = 'Contributor early access markets are not tradable on the site yet.'
 export const EARLY_ACCESS_NOT_CLAIMABLE = 'Contributor early access markets cannot be claimed on the site yet.'
+// scripts/recover-expired-launch.mjs (the worker releases a proven expired early access launch itself).
+export const EARLY_ACCESS_NO_MANUAL_RECOVERY = 'This is a contributor early access launch: manual recovery is not available yet. ' +
+  'The worker releases it once two providers prove it expired without landing.'
 
 export class EarlyAccessError extends Error {
   constructor(message, status = 400) { super(message); this.name = 'EarlyAccessError'; this.status = status }
