@@ -228,11 +228,12 @@ account `3k6oDeconrAagqSCKNbQj4WP6MBRsRGAjRRNcKTRcJfR` and `opsWallet` (read fro
 | Platform | upgrade authority | 0.005913 SOL |
 | Lookup table | partner (Keychain) | 0.003216 SOL |
 
-**Settings the site will need** (names only; no code reads them yet, they are proposals for the launch path):
-`BUNDLE_LAUNCHES_ENABLED` (exists, exactly "true", with the code gate), `BUNDLE_DBC_CONFIG` (step 2's address; the launch path
-should check it with `readBundleConfig` and against the platform's `curveConfig`), `BUNDLE_LOOKUP_TABLE` (step 4's address),
-`BUNDLE_LAUNCH_SIGNER_SECRET_KEY` (the launch signer), `BUNDLE_ADMIN_SECRET_KEY` (only if the site co-signs new bundles itself)
-and `BUNDLE_OPERATOR_SECRET_KEYS` (the vault agents, worker only), with the existing `SOLANA_RPC_URL`.
+**Settings the site reads** (names only; the launch path and worker are in the Bundle site PRs): `BUNDLE_LAUNCHES_ENABLED`
+(exactly "true", with the code gate), `BUNDLE_DBC_CONFIG` (step 2's address), `BUNDLE_LOOKUP_TABLE` (step 4's address),
+`BUNDLE_LAUNCH_SIGNER_SECRET_KEY` (the launch signer, worker), `BUNDLE_OPERATOR_SECRET_KEY` (one vault operator, worker) and
+`BUNDLE_AGENTS_LIVE` (the vault agent trades only when "true"). The platform's admin is the existing creator signer
+(`PLATFORM_CREATOR_SECRET_KEY`): it co-signs new bundles and the pool creation, and signs `record_graduation`. So step 3 runs with
+`--admin` set to that signer's address (FeZX…).
 
 ## Not built yet
 
