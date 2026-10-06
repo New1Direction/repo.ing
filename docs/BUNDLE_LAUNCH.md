@@ -21,6 +21,11 @@ Builders keep their 0.994%.
 | After graduation | Backers keep 80% of the partner LP position's fees (after the vault's rebate). |
 | Backer receipt | A program account (`Backer`), not a token. |
 | Fees | 5% of a raise to operations; of the partner fees, the vault's own back to it, then 80% backers / 20% repo.ing. No discovery reward on bundle markets. |
+| Operations wallet | The bundle launch signer itself: the 5% funds its launches and cranks. |
+| Treasury | Buyback custody FgzeY…: repo.ing's 20% arrives there as wrapped SOL, for $REPOING buys. |
+| Builder allocation | Yes, as on standard markets: the bundle config is added to `BUILDER_ALLOCATION_CONFIGS`. |
+| Vault agent | Trades from the first day a vault may trade (after the launch fee): `BUNDLE_AGENTS_LIVE=true` with an operator key. |
+| Site raises | 1–10 SOL (default 5), from the simulation (docs/BUNDLE_SIMULATION.md). |
 
 ## The flow
 
@@ -181,11 +186,14 @@ and migration are today's); `leftoverReceiver` is the creator signer FeZX…; `p
 Keychain, as the other config scripts); `dammConfig` is `Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp` (FixedBps100);
 `totalDebitLamports` about 5,984,080 (0.005974 SOL rent, two signatures). A check that fails stops the script with its reason.
 
-**3. Init the platform** (signed by the upgrade authority from step 1):
+**3. Init the platform** (signed by the upgrade authority from step 1). With the owner's choices: the admin is the creator signer, the
+launch signer and the operator are the keys in the main checkout's git-ignored `secrets/bundle-launch-signer-keypair.json` and
+`secrets/bundle-operator-keypair.json`, the operations wallet is the launch signer, the treasury owner is the buyback custody:
 
 ```sh
-node scripts/init-bundle-platform.mjs --config <config> --admin <key> --launch-signer <key> --operator <key> [--operator <key> ...] \
-  --ops-wallet <key> --treasury-owner <key>
+node scripts/init-bundle-platform.mjs --config <config> --admin FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1 \
+  --launch-signer 9h6uMSfKZNNXdCAHZsxR3nvxHmQXAGqTvBdJwGn3PReN --operator 9uoqHv5jkC5vCk7hexsZ9dM7fQzYqDtAQskh4EUX8Eq8 \
+  --ops-wallet 9h6uMSfKZNNXdCAHZsxR3nvxHmQXAGqTvBdJwGn3PReN --treasury-owner FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy
 APPROVED_BUNDLE_PLATFORM_INSTRUCTION_SHA256=<instructionSha256> APPROVED_BUNDLE_PLATFORM_DEBIT_LAMPORTS=<totalDebitLamports> \
   node scripts/init-bundle-platform.mjs <the same flags> --upgrade-authority <upgrade-authority.json> --execute
 ```
