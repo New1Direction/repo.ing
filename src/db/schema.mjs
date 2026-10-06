@@ -268,6 +268,9 @@ export const markets = pgTable('markets', {
   // protect_market_early_access).
   earlyAccessEnd: timestamp('early_access_end', { withTimezone: true }),
   transferHookProgram: varchar('transfer_hook_program', { length: 44 }),
+  // Migration 0060 (docs/BUNDLE_LAUNCH.md): null except for a market launched from a bundle (its vault bought first, its router
+  // claims the partner fees). SOL and GitHub only, one market per bundle, immutable once the launch was sent (protect_market_bundle).
+  bundleId: bigint('bundle_id', { mode: 'bigint' }),
 }, (table) => [
   uniqueIndex('markets_github_repo_id_unique').on(table.githubRepoId),
   uniqueIndex('markets_mint_unique').on(table.mint),
@@ -286,6 +289,37 @@ export const markets = pgTable('markets', {
   index('markets_early_access_end_idx').on(table.earlyAccessEnd).where(sql`${table.earlyAccessEnd} is not null`),
   check('markets_early_access_check', sql`(${table.earlyAccessEnd} is null and ${table.transferHookProgram} is null) or (${table.earlyAccessEnd} is not null and ${table.transferHookProgram} is not null and ${table.transferHookProgram} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$' and ${table.transferHookProgram} <> '11111111111111111111111111111111' and ${table.githubRepoId} < 4503599627370496)`),
   check('markets_early_access_sol_only', sql`${table.earlyAccessEnd} is null or (${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null)`),
+  uniqueIndex('markets_bundle_id_unique').on(table.bundleId).where(sql`${table.bundleId} is not null`),
+  check('markets_bundle_check', sql`${table.bundleId} is null or (${table.bundleId} > 0 and ${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null and ${table.earlyAccessEnd} is null and ${table.transferHookProgram} is null and ${table.githubRepoId} < 4503599627370496)`),
+])
+
+export const bundleIdSeq = pgSequence('bundle_id_seq', { startWith: 1 })
+
+// Migration 0060: the bundles the site opened (docs/BUNDLE_LAUNCH.md). The chain holds the raise, deposits and vault; this row ties
+// a bundle to its repository and tracks the site's own steps. One live bundle per repository.
+export const bundles = pgTable('bundles', {
+  bundleId: bigint('bundle_id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  address: varchar('address', { length: 44 }).notNull().unique(),
+  creatorWallet: varchar('creator_wallet', { length: 44 }).notNull(),
+  tokenName: text('token_name').notNull(),
+  tokenSymbol: varchar('token_symbol', { length: 16 }).notNull(),
+  tokenImage: text('token_image'),
+  targetLamports: numeric('target_lamports', { precision: 20, scale: 0 }).notNull(),
+  minDepositLamports: numeric('min_deposit_lamports', { precision: 20, scale: 0 }).notNull(),
+  deadline: timestamp('deadline', { withTimezone: true }).notNull(),
+  status: varchar('status', { length: 16 }).notNull().default('opening'),
+  createSignature: varchar('create_signature', { length: 88 }),
+  launchSignature: varchar('launch_signature', { length: 88 }),
+  launchMint: varchar('launch_mint', { length: 44 }),
+  launchError: text('launch_error'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('bundles_one_live_per_repo').on(table.githubRepoId).where(sql`${table.status} in ('opening', 'raising', 'launching', 'launched')`),
+  check('bundles_id_check', sql`${table.bundleId} > 0`),
+  check('bundles_status_check', sql`${table.status} in ('opening', 'raising', 'launching', 'launched', 'failed', 'expired')`),
+  check('bundles_amounts_check', sql`${table.targetLamports} > 0 and ${table.minDepositLamports} > 0 and ${table.minDepositLamports} <= ${table.targetLamports}`),
 ])
 
 // All DBC partner fees share this evidence ledger; eligibility preserves the

@@ -54,7 +54,7 @@ async function marketFacts(db, repoId) {
       where github_repo_id = m.github_repo_id and permission = 'admin' order by verified_at, id limit 1) v on true
     where m.github_repo_id = $1 and m.verification_bonus_lamports is not null and m.status = 'confirmed'
       and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null
-      and m.early_access_end is null`, [String(repoId)])
+      and m.early_access_end is null and m.bundle_id is null`, [String(repoId)])
   return market ?? null
 }
 
@@ -82,7 +82,7 @@ export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRe
       from markets m join repositories r on r.github_repo_id = m.github_repo_id and r.source = 'github'
       join repo_verifications v on v.github_repo_id = m.github_repo_id and v.permission = 'admin'
       where m.verification_bonus_lamports is not null and m.status = 'confirmed' and m.indexed_at is not null
-        and m.launch_finality = 'finalized' and m.launch_block_time is not null and m.early_access_end is null
+        and m.launch_finality = 'finalized' and m.launch_block_time is not null and m.early_access_end is null and m.bundle_id is null
         and not exists (select 1 from verification_bonuses b where b.github_repo_id = m.github_repo_id)
       group by m.github_repo_id having min(v.verified_at) <= $1 order by first, m.github_repo_id limit $2`,
     [new Date(now() - graceMs), limit * 10])

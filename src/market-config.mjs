@@ -3,6 +3,7 @@ import { NATIVE_MINT } from '@solana/spl-token'
 import { deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { quoteOfMarket } from './quote-assets.mjs'
 import { stockQuoteConfigs } from './quote-configs.mjs'
+import { bundleCurveConfig } from './bundles.mjs'
 
 // The operator-approved DBC configs: the current one first, then DBC_LEGACY_CONFIGS.
 export function approvedConfigs(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '') {
@@ -18,15 +19,25 @@ export function approvedConfigs(config, legacyConfigs = process.env.DBC_LEGACY_C
 // (markets.transfer_hook_program set, migration 0059) is refused here, so a path that still assumes SOL fails loudly on it
 // instead of misreading its pool. Paths that handle any quote use
 // createQuoteAwareConfigResolver.
-export function createMarketConfigResolver(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '') {
-  const approved = approvedConfigs(config, legacyConfigs)
+// A bundle market (markets.bundle_id, migration 0060) is a SOL market on the bundle config (BUNDLE_DBC_CONFIG), approved here
+// beside the others; when the market says it is one (bundleId), only the bundle config may match its pool.
+export function createMarketConfigResolver(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '', bundleConfig = bundleCurveConfig()) {
+  const bundle = bundleConfig ? new PublicKey(bundleConfig) : null
+  const approved = [...approvedConfigs(config, legacyConfigs), ...bundle ? [bundle] : []]
   return market => {
     if (market.quoteMint || market.quoteAssetId) throw Error('Stock-paired market needs a quote-aware path')
     // A contributor early access market (docs/EARLY_ACCESS.md) is a transfer-hook pool on its own config: never a SOL path's.
     if (market.earlyAccessEnd || market.transferHookProgram) throw Error('Contributor early access market needs a transfer-hook-aware path')
     const mint = new PublicKey(market.mint), pool = new PublicKey(market.pool)
+    if (market.bundleId !== undefined && market.bundleId !== null) {
+      if (!bundle) throw Error('Bundle market needs BUNDLE_DBC_CONFIG')
+      if (!deriveDbcPoolAddress(NATIVE_MINT, mint, bundle).equals(pool)) throw Error('Canonical market does not match the bundle config')
+      return bundle
+    }
     const match = approved.find(key => deriveDbcPoolAddress(NATIVE_MINT, mint, key).equals(pool))
     if (!match) throw Error('Canonical market does not match an approved DBC config')
+    // A market read with its bundle stamp (bundleId null: not a bundle) never resolves to the bundle config.
+    if (market.bundleId === null && bundle && match.equals(bundle)) throw Error('Only a bundle market is on the bundle config')
     return match
   }
 }

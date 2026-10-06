@@ -400,6 +400,13 @@
       "when": 1790910019000,
       "tag": "0059_early_access",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1790910020000,
+      "tag": "0060_bundles",
+      "breakpoints": true
     }
   ]
 }

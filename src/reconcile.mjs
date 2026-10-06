@@ -1,3 +1,4 @@
+import { isBundleMarket } from './bundles.mjs'
 import { PublicKey } from '@solana/web3.js'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
@@ -165,7 +166,9 @@ export function createReconciler({ pool, connection, config }) {
         const graduated = await graduatedFees.read(market, state)
         const onchainCreatorFee = BigInt(state.poolState.creatorQuoteFee.toString()) + (graduated?.available ?? 0n)
         let platform = null
-        if (graduated?.partner) {
+        // A bundle market's partner position is the bundle router's (docs/BUNDLE_LAUNCH.md): repo.ing's platform ledgers never
+        // book it, so they are not compared with it.
+        if (graduated?.partner && !isBundleMarket(market)) {
           const { rows: [events] } = await client.query(`select coalesce(sum(amount_base_units),0)::text as earned
             from platform_fee_events where github_repo_id=$1`, [String(repoId)])
           const { rows: [paid] } = await client.query(`select coalesce(sum(amount),0)::text as paid

@@ -25,7 +25,7 @@ export const graduationError = error => {
 }
 // SOL markets only; stock-paired markets graduate in src/stock-graduation-monitor.mjs (STOCK_MARKET_SQL is the other half).
 // Contributor early access markets (transfer-hook pools, docs/EARLY_ACCESS.md) are in neither list until their graduation ships.
-export const publicMarketSQL=`select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",r.full_name as "fullName"
+export const publicMarketSQL=`select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",m.bundle_id::text as "bundleId",r.full_name as "fullName"
   from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null and m.early_access_end is null`
 
 export function firstP3Eligibility({state,reconciliation,revenue,reserve,liquidity,volume,rules,walletBalance,pendingClaims=0}) {
@@ -119,7 +119,8 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         let walletBalance=null
         if(state.partnerWallet)walletBalance=String(agreeGraduation(...await Promise.all([connection,verification].map(c=>c.getBalance(new PublicKey(state.partnerWallet),'finalized')))))
         const {rows:[pending]}=await db.query("select count(*)::int as count from platform_fee_claims where github_repo_id=$1 and status='pending'",[repoId])
-        state.p3=firstP3Eligibility({state,reconciliation:reconciliation.status,...global,volume:volumes.lifetime,walletBalance,pendingClaims:pending.count})
+        state.p3=state.partnerWallet?firstP3Eligibility({state,reconciliation:reconciliation.status,...global,volume:volumes.lifetime,walletBalance,pendingClaims:pending.count})
+          :{eligible:false,reason:'Bundle market: its partner fees go to the bundle router'}
         if(state.p3.eligible){
           try{await assertPlatformReserveCustody(db,new PublicKey(state.partnerWallet))}
           catch{state.p3={eligible:false,reason:'Revenue is held in the receiving treasury; review spending authority first'}}

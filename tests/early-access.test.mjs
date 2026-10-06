@@ -152,9 +152,9 @@ test('wallets must be canonical base58 public keys', () => {
   for (const value of [undefined, '', ` ${address}`, `${address}1`, 'not a wallet', wrongCase]) assert.throws(() => canonicalWallet(value), refusal('wallet'), String(value))
 })
 
-test('migration 0059 is journaled last, re-appliable, and its constraint names match the schema', () => {
+test('migration 0059 is journaled, re-appliable, and its constraint names match the schema', () => {
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
-  assert.deepEqual(entries.at(-1), { idx: 59, version: '7', when: 1790910019000, tag: '0059_early_access', breakpoints: true })
+  assert.deepEqual(entries.find(entry => entry.tag === '0059_early_access'), { idx: 59, version: '7', when: 1790910019000, tag: '0059_early_access', breakpoints: true })
   const sql = readFileSync('drizzle/0059_early_access.sql', 'utf8')
   for (const statement of sql.split('--> statement-breakpoint').map(part => part.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean)) {
     assert.match(statement, /^(SET LOCAL|ALTER TABLE "markets" ADD COLUMN IF NOT EXISTS|DO \$\$ BEGIN\s+IF NOT EXISTS|CREATE OR REPLACE FUNCTION|CREATE TABLE IF NOT EXISTS|CREATE INDEX IF NOT EXISTS)/, statement.slice(0, 80))
