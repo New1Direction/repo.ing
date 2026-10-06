@@ -175,7 +175,12 @@ export async function runPlatformSweep({ execute = false, dbcEnabled, listFees, 
     // Move only the buyback share of what THIS run allocated: earlier shares were already sent to custody (possibly
     // not yet spent), so capping at the total still owed would send them twice. Never more than is still owed.
     const latest = await summary()
-    const owed = BigInt(latest.buybackReserve) + (execute || !policy || unallocated <= 0n ? 0n : splitOf(unallocated, policy).buyback)
+    // What the policy owes after this run's allocation: reserve − ahead + this run's share, never below zero (buybacks
+    // already ahead of the policy absorb the share first). An execute has allocated, so its summary already holds it; a dry
+    // run adds the share it would allocate, so it plans the transfer the execute would make.
+    const share = execute || !policy || unallocated <= 0n ? 0n : splitOf(unallocated, policy).buyback
+    const outstanding = BigInt(latest.buybackReserve) - BigInt(latest.buybackAhead ?? '0') + share
+    const owed = outstanding > 0n ? outstanding : 0n
     const allocatedNow = !policy || unallocated <= 0n ? 0n
       : execute ? BigInt(report.allocation?.status === 'allocated' ? toLamports(report.allocation.split.buyback) : 0n)
       : splitOf(unallocated, policy).buyback
