@@ -6,6 +6,7 @@ builder-allocation
 builder-binding
 builder-payouts
 builder-reinvest
+bundle-vault-chain
 claim
 config-rotation
 discovery-claims
