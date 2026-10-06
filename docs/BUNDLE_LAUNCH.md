@@ -114,7 +114,9 @@ start in this program, since a failed CPI ends with the inner program's number).
 
 ```sh
 node --test tests/bundle-vault.test.mjs        # quick suite: client/program agreement, fixture hash, math, flags
+node --test tests/bundle-config.test.mjs       # quick suite: the setup kit's config, checker, lookup addresses, platform terms
 node --test tests/bundle-vault-chain.test.mjs  # full suite: starts scripts/ci/start-bundle-validator.sh (port 8939)
+node --test tests/bundle-setup-chain.test.mjs  # full suite: the mainnet setup kit, then a launch on it (same validator)
 scripts/build-bundle-vault.sh                  # after any change to programs/bundle-vault (the fixture hash test fails otherwise)
 ```
 
@@ -124,14 +126,116 @@ one-transaction launch, its refusals and replays; the cooldown and every vault l
 exactly on the pool's counter, concurrent routings paying once; backer claims pro rata, concurrent and replayed claims paying
 once, rounding bounds; graduation, the router's LP position, DAMM v2 vault trades, rebates within one lamport and claims.
 
+The setup chain test runs the setup scripts' code in their order: the bundle config built, simulated, created and checked
+(equal to a launch-fee config in every field but the fee claimer, and to the live one in `tests/fixtures/launch-fee-config-mainnet.json`;
+look-alikes with another fee claimer or leftover receiver refused); the platform refused for another config (`BadSettings`)
+and another signer (`NotUpgradeAuthority`), then created with both wrapped SOL accounts (after lamports were sent to the
+platform and treasury addresses), equal to the reviewed terms, once only, and changed by the admin only (`NotAdmin`); the 14-key lookup table; then a 5 SOL raise launched in one v0 transaction
+through that table (1,140 bytes), the vault holding exactly the quoted tokens. Every step's payer loses exactly the network
+fee plus the rent of the accounts it creates.
+
 ## Costs
 
-The program is ~537 KB: about 3.7 SOL of rent to deploy (more during the upload). A bundle account and a backer account
-cost their rent (returned to backers on refund).
+The program is 555,576 bytes: 2.824 SOL of rent at mainnet's rent of 2026-10-06 (more during the upload, see below). A
+bundle account and a backer account cost their rent (returned to backers on refund).
+
+## Mainnet setup (the owner runs it)
+
+Nothing here switches Bundle launches on: `BUNDLE_LAUNCHES_READY` stays false and no code reads the config or the table yet.
+Run every command from the main checkout (its git-ignored `secrets/` holds the program keypair, and the config keypair is
+written there), with `SOLANA_RPC_URL` set to an https mainnet RPC. The scripts check mainnet by genesis hash and read no other
+setting (unlike the early access scripts, they do not fall back to reading the RPC from Railway). Each script is a dry run
+unless `--execute`: it builds the transaction, checks it, simulates it unsigned against mainnet and prints every value, the
+instruction or address hash and the exact debit (the network fee plus the rent of the accounts it creates, nothing else).
+`--execute` sends only when those printed values are approved in the environment, simulates again signed, then checks the
+result on chain. Costs below are at mainnet's rent on 2026-10-06 (5,080 lamports per byte plus 650,240 per account); the dry
+run prints the exact figure.
+
+**1. Deploy the program** (`5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw`). Deploy the committed build as it is (the copy
+the tests ran; do not rebuild first, step 3 refuses a program whose bytes differ from it):
+
+```sh
+solana-keygen pubkey secrets/bundle-vault-program-keypair.json   # must print 5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw
+solana program deploy tests/fixtures/validator/bundle_vault.so --program-id secrets/bundle-vault-program-keypair.json \
+  --upgrade-authority <upgrade-authority.json> --keypair <payer.json> --url "$SOLANA_RPC_URL" [--with-compute-unit-price <micro-lamports>]
+solana program show 5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw --url "$SOLANA_RPC_URL"   # authority and data length 555576
+```
+
+Cost: the program data account 2.823205 SOL and the program account 0.000833 SOL, kept while the program exists (returned
+if it is closed); during the upload a buffer account holds another 2.823164 SOL, returned when the deploy completes; about
+560 write transactions at 5,000 lamports (about 0.003 SOL) plus any priority fee. Keep about 5.7 SOL in the payer. The
+upgrade authority is the only key init_platform accepts and it can change the program: keep it offline; a multisig or freezing
+upgrades is a decision for after the audit. A later, larger build needs `solana program extend` first.
+
+**2. Create the bundle config** (the program must be deployed; the script checks it):
+
+```sh
+node scripts/create-bundle-config.mjs     # first run writes secrets/bundle-config-keypair.json (the config's address, mode 0600)
+APPROVED_BUNDLE_CONFIG=<config> APPROVED_BUNDLE_CONFIG_INSTRUCTION_SHA256=<instructionSha256> \
+  APPROVED_BUNDLE_CONFIG_DEBIT_LAMPORTS=<totalDebitLamports> node scripts/create-bundle-config.mjs --execute
+```
+
+Check in the dry run: `feeClaimer` is the router `A4HN8dLeZt46HhnYssYvHvQXxVrGQDZep6VyMPAfzTuQ`; `differsFromReferenceOnlyIn`
+is `["feeClaimer"]` (the reference is the live SOL launch-fee config `8TXNGgx6…`, so the curve, launch fee, split, leftover
+and migration are today's); `leftoverReceiver` is the creator signer FeZX…; `payer` is the partner wallet H7TK… (signed from the
+Keychain, as the other config scripts); `dammConfig` is `Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp` (FixedBps100);
+`totalDebitLamports` about 5,984,080 (0.005974 SOL rent, two signatures). A check that fails stops the script with its reason.
+
+**3. Init the platform** (signed by the upgrade authority from step 1):
+
+```sh
+node scripts/init-bundle-platform.mjs --config <config> --admin <key> --launch-signer <key> --operator <key> [--operator <key> ...] \
+  --ops-wallet <key> --treasury-owner <key>
+APPROVED_BUNDLE_PLATFORM_INSTRUCTION_SHA256=<instructionSha256> APPROVED_BUNDLE_PLATFORM_DEBIT_LAMPORTS=<totalDebitLamports> \
+  node scripts/init-bundle-platform.mjs <the same flags> --upgrade-authority <upgrade-authority.json> --execute
+```
+
+The wallets are flags, never defaults: the admin (co-signs every bundle, tightens or pauses vaults, cancels raises, changes
+these terms), the launch signer (runs each launch transaction), one to four operators (the vault agents' keys), the operations
+wallet (5% of each raise; it is in the lookup table) and the treasury owner (its wrapped SOL account receives repo.ing's 20% of
+the routed fees). The DAMM v2 config comes from the bundle config; the shares, cooldown, grace period and loosest vault policy
+from `BUNDLE_DEFAULTS`. Check in the dry run: `deployedProgramIsReviewedBuild: true`; `signer` is your upgrade authority; each
+wallet in `terms`; `treasury` and `routerSol` (`C6gTwTLcMWfkHzRv6ozGLzSBvwLKbcxqf166deaFyUZ8`) are the wrapped SOL accounts;
+`curveConfig` is step 2's config; `backerBps` 8000, `opsBps` 500, `launchCooldownSecs` 180, `launchGraceSecs` 86400 and `limits`;
+`createsTokenAccounts` lists the router's and the treasury's wrapped SOL accounts when they are missing (created in the same
+transaction, before init_platform); `totalDebitLamports` about 5,913,040 (two token accounts at 0.001488 SOL, the platform
+account at 0.002931 SOL). It refuses a deployed program that differs from the fixture, a config that fails a check or differs
+from the live launch-fee config in any field but the fee claimer (the lookup table script checks the same), and an existing
+platform (it prints it instead; exit 0 when it already holds these terms). Lamports someone sent to the platform or treasury
+addresses beforehand do not block it: the accounts are still created there and the payer tops up the rest. Do not close the treasury's wrapped SOL
+account (move wrapped SOL out with a token transfer): routing fails while it does not exist.
+
+Later changes: the same flags with `--set` (and `--admin-keypair <admin.json>` to execute); it prints each change, signed by the
+current admin, and applies to bundles created afterwards. A new operations wallet also needs a new lookup table.
+
+**4. Create the lookup table**:
+
+```sh
+node scripts/create-bundle-lookup-table.mjs --config <config>
+APPROVED_BUNDLE_LOOKUP_TABLE_ADDRESSES_SHA256=<addressesSha256> APPROVED_BUNDLE_LOOKUP_TABLE_DEBIT_LAMPORTS=<totalDebitLamports> \
+  node scripts/create-bundle-lookup-table.mjs --config <config> --execute
+```
+
+Check in the dry run: 14 `addresses` (`bundleLookupAddresses`): DBC pool authority, DBC event authority, DBC, SPL Token, System,
+instructions sysvar, wrapped SOL, the bundle program, the config, Associated Token, Metaplex, Compute Budget, the platform
+account `3k6oDeconrAagqSCKNbQj4WP6MBRsRGAjRRNcKTRcJfR` and `opsWallet` (read from the platform); `totalDebitLamports` about
+3,215,560 (0.003211 SOL rent). The partner wallet pays and is the table's authority. `--execute` prints the table's address.
+
+| Step | Signer | Cost |
+| --- | --- | --- |
+| Deploy | payer (and the upgrade authority) | 2.824 SOL kept, 2.823 SOL more during the upload, ~0.003 SOL fees |
+| Bundle config | partner (Keychain) + the config keypair | 0.005984 SOL |
+| Platform | upgrade authority | 0.005913 SOL |
+| Lookup table | partner (Keychain) | 0.003216 SOL |
+
+**Settings the site will need** (names only; no code reads them yet, they are proposals for the launch path):
+`BUNDLE_LAUNCHES_ENABLED` (exists, exactly "true", with the code gate), `BUNDLE_DBC_CONFIG` (step 2's address; the launch path
+should check it with `readBundleConfig` and against the platform's `curveConfig`), `BUNDLE_LOOKUP_TABLE` (step 4's address),
+`BUNDLE_LAUNCH_SIGNER_SECRET_KEY` (the launch signer), `BUNDLE_ADMIN_SECRET_KEY` (only if the site co-signs new bundles itself)
+and `BUNDLE_OPERATOR_SECRET_KEYS` (the vault agents, worker only), with the existing `SOLANA_RPC_URL`.
 
 ## Not built yet
 
 The site's raise and claim pages and routes, the bundle tables (separate ledgers, as for stock pairs), indexing of raises,
-vault trades and routings, the vault agents and the routing crank, Bundle + early access/fair ramp, an external audit, and the
-mainnet setup (deploy, bundle config with the router as fee claimer, platform account, lookup table) — each a step the owner
-runs.
+vault trades and routings, the vault agents and the routing crank, Bundle + early access/fair ramp, and an external audit.
+The mainnet setup (above) is ready for the owner to run; none of it has run on mainnet.
