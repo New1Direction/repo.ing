@@ -22,7 +22,9 @@ test('the SOL graduation job lists exactly the markets it listed before, minus s
   const before = `select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",r.full_name as "fullName"
   from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'`
   // Contributor early access markets (docs/EARLY_ACCESS.md) graduate through a transfer hook: neither job lists them yet.
-  assert.equal(publicMarketSQL, `${before} and m.quote_asset_id is null and m.early_access_end is null`)
+  // Bundle markets (docs/BUNDLE_LAUNCH.md) graduate as SOL markets, read with their stamp (no partner claim for them).
+  const withBundle = before.replace(',r.full_name', ',m.bundle_id::text as "bundleId",r.full_name')
+  assert.equal(publicMarketSQL, `${withBundle} and m.quote_asset_id is null and m.early_access_end is null`)
   // The two lists split the same indexed markets on one column (tests/stock-graduation-db.test.mjs runs both on PostgreSQL).
   const where = sql => sql.slice(sql.indexOf(' where '))
   assert.equal(where(STOCK_MARKET_SQL), where(before) + ' and m.quote_asset_id is not null')

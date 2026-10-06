@@ -4,6 +4,7 @@ import { createFeeAccrual } from './fee-accrual.mjs'
 import { createTradeRecorder, UnparseableTradeError } from './trade-evidence.mjs'
 import { graduatedReadDue } from './indexer-schedule.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
+import { isBundleMarket } from './bundles.mjs'
 
 const PAGE_SIZE = 1000
 const FIRST_PAGE = 100
@@ -126,7 +127,8 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
             const graduatedSnapshot = await graduatedFees.read(canonical)
             graduated = graduatedSnapshot !== null
             graduatedCredit = await recordGraduatedFees(client, canonical, graduatedSnapshot)
-            platformCredit = await recordPlatformFees(client, canonical, graduatedSnapshot?.partner ?? null)
+            // A bundle market's partner position belongs to the bundle router (docs/BUNDLE_LAUNCH.md): not repo.ing revenue.
+            platformCredit = isBundleMarket(market) ? 0n : await recordPlatformFees(client, canonical, graduatedSnapshot?.partner ?? null)
           } finally { await client.query('select pg_advisory_unlock($1::bigint)',[String(repoId)]) }
         }
         const cursor = (await client.query('select last_signature, last_slot::text from pool_fee_cursors where pool = $1',
@@ -143,7 +145,7 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
   async function runOnce() {
     // SOL markets only: stock-paired markets are indexed by stock-fee-indexer.mjs into the stock ledgers.
     const { rows } = await databasePool.query(`select github_repo_id::text as "repoId", mint, pool,
-      launch_signature as "launchSignature", creator_wallet as "creatorWallet"${schedule ? ACTIVITY_COLUMNS : ''} from markets where status = 'confirmed'
+      launch_signature as "launchSignature", creator_wallet as "creatorWallet", bundle_id::text as "bundleId"${schedule ? ACTIVITY_COLUMNS : ''} from markets where status = 'confirmed'
       and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null order by github_repo_id`)
     const results = []
     if (!schedule) {

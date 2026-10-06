@@ -1,3 +1,4 @@
+import { isBundleMarket } from './bundles.mjs'
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
@@ -129,7 +130,9 @@ export async function readGraduationState({connection,verification,config,market
   value.positionEvidence={creator:g.evidence,partner:g.partner.evidence}
   Object.assign(value,graduationProgress(state.quoteReserve.toString(),fixed.migrationQuoteThreshold.toString(),true),{
     destination:{pool:g.pool.toBase58(),url:`https://app.meteora.ag/dammv2/${g.pool.toBase58()}`},
-    dammSolLamports:g.poolState.tokenBAmount.toString(),partnerWallet:fixed.feeClaimer.toBase58(),
-    platform:{earned:String(g.partner.earned),claimed:String(g.partner.claimed),available:String(g.partner.available)}})
+    dammSolLamports:g.poolState.tokenBAmount.toString(),
+    // A bundle market's partner position is the bundle router's, not repo.ing's (docs/BUNDLE_LAUNCH.md).
+    partnerWallet:isBundleMarket(market)?null:fixed.feeClaimer.toBase58(),
+    platform:isBundleMarket(market)?null:{earned:String(g.partner.earned),claimed:String(g.partner.claimed),available:String(g.partner.available)}})
   return assertFreshGraduation(value)
 }

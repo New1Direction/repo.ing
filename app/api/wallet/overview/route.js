@@ -26,7 +26,7 @@ export async function GET(request) {
         coalesce((select sum(f.partner_amount) from discovery_fee_events f where f.github_repo_id=m.github_repo_id and f.discovery_eligible),0)::text as "partnerEarned",
         coalesce((select sum(c.amount) from discovery_claims c where c.github_repo_id=m.github_repo_id and c.status='settled'),0)::text as paid
         from markets m where m.launcher_wallet=$1 and m.discovery_version in (1,2) and m.indexed_at is not null
-        and m.status='confirmed' and m.launch_finality='finalized'`, [wallet]),
+        and m.status='confirmed' and m.launch_finality='finalized' and m.bundle_id is null`, [wallet]),
       chain().getBalance(owner, 'confirmed').catch(() => null),
       chain().getTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }, { commitment: 'confirmed', dataSlice: SPL_ACCOUNT_SLICE }).catch(() => null),
       chain().getTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }, { commitment: 'confirmed', dataSlice: TOKEN_2022_ACCOUNT_SLICE }).catch(() => null),

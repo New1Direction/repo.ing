@@ -46,7 +46,7 @@ export async function listPlatformFees({ pool, feeService, review = () => null, 
       exists (select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) as graduated
       from markets m left join repositories r on r.github_repo_id = m.github_repo_id
       where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null
-      and m.early_access_end is null
+      and m.early_access_end is null and m.bundle_id is null
       order by m.github_repo_id`)
     const queue = [...repos], results = []
     const worker = async () => {
