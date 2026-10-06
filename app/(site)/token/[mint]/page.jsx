@@ -36,6 +36,7 @@ import { builderEarningsHeadline } from '../../../lib/builder-earnings.mjs'
 import { Backers, BackersFallback, BackersPill } from '../../../components/backers'
 import { TrustPanel } from '../../../components/trust-panel'
 import { OfficialBadge, ForkOfLabel } from '../../../components/market-signals'
+import { EarlyAccessNote } from '../../../components/early-access-note'
 import { featuredMarkets, labeledRacers, repoFactsView } from '../../../lib/repo-quality.mjs'
 import { MarketsToWatch, MarketsToWatchFallback, MarketsToWatchLists } from '../../../components/markets-to-watch'
 import { newestLaunches, topOfRace, WATCH_LIMIT } from '../../../lib/graduation-race.mjs'
@@ -131,6 +132,7 @@ export default async function Token({ params, searchParams }) {
     <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}
       {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
+    <EarlyAccessNote market={market}/>
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={stockPair ? <StockFeeHeadlineFallback market={market}/> : <EarningsHeadlineFallback/>}>{stockPair ? <StockFeeHeadline market={market} href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}/> : <EarningsHeadline market={market}/>}</Suspense></div>
       <div className="market-hero-main"><RepoIdentity repo={repo} heading>

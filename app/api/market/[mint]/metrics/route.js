@@ -25,7 +25,8 @@ export const GET = withServerTiming(async (_request, { params }) => {
   if (!market) return Response.json({ error: 'Market unavailable' }, { status: 404, headers: NO_STORE })
   const stock = isStockMarket(market)
   const [solUsd, metrics, quote] = await Promise.all([
-    solUsdPrice(), timed('tokenMetrics', () => marketTokenMetrics(chain(), market.mint, market.pool)).catch(() => null),
+    solUsdPrice(), timed('tokenMetrics', () => marketTokenMetrics(chain(), market.mint, market.pool, undefined,
+      { token2022: Boolean(market.transferHookProgram) })).catch(() => null),
     stock ? unitsOf(market) : null,
   ])
   // A response without chain metrics (RPC unavailable), or a stock pair's without its units, is never shared from the
