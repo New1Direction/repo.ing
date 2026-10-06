@@ -9,8 +9,8 @@ import { launchBuyQuote } from './launch-buy.mjs'
 import { withVersionedLaunchPriorityFee } from './launch-wallet-fees.mjs'
 import { matchesReviewedVersionedLaunch } from './launch-wallet-assertions.mjs'
 import { readChainPoint } from './chain-clock.mjs'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID, MAX_EARLY_ACCESS_SECONDS, decodePlatform, initMintInstruction, platformAddress, removeWalletsInstruction,
-  transferHookAccounts } from './early-access-hook.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID, MAX_EARLY_ACCESS_SECONDS, RULES, dbcBaseVault, decodePlatform, initMintInstruction, platformAddress,
+  removeWalletsInstruction, transferHookAccounts } from './early-access-hook.mjs'
 import { EARLY_ACCESS_FEE_CLAIMER, earlyAccessLookupAddresses, readEarlyAccessConfig } from './early-access-config.mjs'
 import { earlyAccessWindow } from './early-access.mjs'
 
@@ -134,21 +134,21 @@ export function createEarlyAccessLauncher({ connection, config, creator, lookupT
       const end = earlyAccessEnd({ windowSeconds: earlyAccess.windowSeconds, wallNow: Math.floor(now() / 1000), chainNow })
       const buy = launchBuyQuote(client, fixed, initialBuyLamports)
       const mint = Keypair.generate()
-      const pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, configKey)
+      const pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, configKey), vault = dbcBaseVault(mint.publicKey, pool)
       const createPoolParam = { baseMint: mint.publicKey, config: configKey, name: tokenName, symbol: tokenSymbol,
         uri: metadataOrigin ? `${metadataOrigin}/api/token-metadata/${mint.publicKey.toBase58()}` : '',
         payer: launcher, poolCreator: creator.publicKey, transferHookProgram: hook }
       // The first buy names the hook's accounts itself: the mint does not exist until this transaction creates it.
       const built = buy ? await client.creator.createPoolWithFirstBuyWithTransferHook({ createPoolParam,
         firstBuyParam: { buyer: launcher, buyAmount: new BN(initialBuyLamports), minimumAmountOut: buy.minimumAmountOut, referralTokenAccount: null,
-          transferHookAccountsInfo: { slices: [{ accountsType: AccountsType.TransferHookBase, length: 4 }] },
-          transferHookAccounts: transferHookAccounts(mint.publicKey, hook) } })
+          transferHookAccountsInfo: { slices: [{ accountsType: AccountsType.TransferHookBase, length: 5 }] },
+          transferHookAccounts: transferHookAccounts(mint.publicKey, vault, hook) } })
         : await client.creator.createPoolWithTransferHook(createPoolParam)
       const removeLauncher = Boolean(buy) && !earlyAccess.keepLauncher
       // The SDK's own compute budget instructions are dropped: the launch sets its budget exactly once (duplicates fail).
       const instructions = [
-        initMintInstruction({ payer: launcher, admin: creator.publicKey, mint: mint.publicKey, repoId: earlyAccess.repoId, earlyAccessEnd: end,
-          wallets: buy ? [launcher] : [], programId: hook }),
+        initMintInstruction({ payer: launcher, admin: creator.publicKey, mint: mint.publicKey, repoId: earlyAccess.repoId, rules: RULES.EARLY_ACCESS,
+          earlyAccessEnd: end, wallets: buy ? [launcher] : [], pool, vault, programId: hook }),
         ...built.instructions.filter(ix => !isBudget(ix)),
         ...removeLauncher ? [removeWalletsInstruction({ authority: creator.publicKey, mint: mint.publicKey, wallets: [launcher], programId: hook })] : [],
       ]
