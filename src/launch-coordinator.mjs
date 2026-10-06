@@ -47,14 +47,20 @@ export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificat
 // earlyAccess: null (default), or contributor early access (docs/EARLY_ACCESS.md) as { windowSeconds, snapshot({ repo, wallet })
 // → { contributors, linkedWallets, keepLauncher } }. The launcher must then be the early access launcher
 // (src/early-access-launch.mjs); the window end and hook program it prepared are stamped on the market with status 'prepared'.
+// bundle: null (default), or a Bundle launch (docs/BUNDLE_LAUNCH.md) as { id }: the launcher must be the bundle launcher
+// (src/bundle-launcher.mjs), the reservation is stamped with the bundle id, and it carries no discovery reward and no verification
+// bonus (the partner fees go to the bundle's backers; owner decision 2026-10-06).
 export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null,
-  verificationBonusLamports = null, source = null, quote = SOL_QUOTE, earlyAccess = null }) {
+  verificationBonusLamports = null, source = null, quote = SOL_QUOTE, earlyAccess = null, bundle = null }) {
   if (verificationBonusLamports !== null && (typeof verificationBonusLamports !== 'bigint' || verificationBonusLamports <= 0n)) {
     throw new Error('Verification bonus stamp must be positive bigint lamports')
   }
   if (earlyAccess && (quote.type !== 'SOL' || source || typeof earlyAccess.snapshot !== 'function')) {
     throw new Error('Early access launches are GitHub repositories paired with SOL, with a contributor snapshot')
+  }
+  if (bundle && (quote.type !== 'SOL' || source || earlyAccess || !/^[1-9]\d{0,17}$/.test(String(bundle.id)))) {
+    throw new Error('Bundle launches are GitHub repositories paired with SOL, without early access, with their bundle id')
   }
   async function withRepoLock(id, callback) {
     const client = await pool.connect()
@@ -113,8 +119,9 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       launcherWallet: wallet, creatorWallet: launcher.creatorWallet,
       tokenName, tokenSymbol, tokenImage: image, launchSignature: null,
       blockhash: null, lastValidBlockHeight: null,
-      discoveryVersion: discoveryEnabled && quote.type === 'SOL' ? DISCOVERY_VERSION : null, launchBlockTime: null,
-      ...rewardStamps(repo.githubRepoId, { builderAllocationEnabled, verificationBonusLamports, quote }),
+      discoveryVersion: discoveryEnabled && quote.type === 'SOL' && !bundle ? DISCOVERY_VERSION : null, launchBlockTime: null,
+      ...rewardStamps(repo.githubRepoId, { builderAllocationEnabled, verificationBonusLamports: bundle ? null : verificationBonusLamports, quote }),
+      bundleId: bundle ? BigInt(bundle.id) : null,
       ...quoteStamp(quote),
       // A reused reservation never keeps an earlier attempt's early access stamp; an early access launch sets it at prepare.
       earlyAccessEnd: null, transferHookProgram: null,
@@ -133,8 +140,10 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       // Early access: the repository's contributor snapshot first (GitHub), then the launch with its window.
       const snapshot = earlyAccess ? await earlyAccess.snapshot({ repo, wallet }) : null
       let prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports,
-        ...snapshot ? { earlyAccess: { windowSeconds: earlyAccess.windowSeconds, repoId: String(repo.githubRepoId), keepLauncher: snapshot.keepLauncher } } : {} })
+        ...snapshot ? { earlyAccess: { windowSeconds: earlyAccess.windowSeconds, repoId: String(repo.githubRepoId), keepLauncher: snapshot.keepLauncher } } : {},
+        ...bundle ? { bundle: { id: String(bundle.id) } } : {} })
       if (Boolean(snapshot) !== Boolean(prepared.earlyAccess)) throw new Error('Launcher does not match the early access choice')
+      if (Boolean(bundle) !== Boolean(prepared.bundle) || (bundle && prepared.bundle.id !== String(bundle.id))) throw new Error('Launcher does not match the bundle')
       ;[market] = await db.update(markets).set({
         status: 'prepared', mint: prepared.mint, pool: prepared.pool,
         blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight,

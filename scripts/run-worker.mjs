@@ -38,6 +38,9 @@ import { createRpcMeter, registerRpcEndpoint } from '../src/rpc-usage.mjs'
 import { createFailoverFetch, verificationRpcUrls } from '../src/rpc-failover.mjs'
 import { createActivitySchedule, createConfigActivityFeed } from '../src/indexer-schedule.mjs'
 import { approvedConfigs } from '../src/market-config.mjs'
+import { bundleCurveConfig } from '../src/bundles.mjs'
+import { bundleJobSettings, createBundleJobs } from '../src/bundle-jobs.mjs'
+import { allocationEnabled } from '../src/builder-allocation.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { createDevPulseCollector } from '../src/dev-pulse.mjs'
 import { createPromotionExclusions } from '../app/lib/promotion-exclusions.mjs'
@@ -84,7 +87,9 @@ const expiredLaunch = hostOf(verificationUrls[0]) && hostOf(verificationUrls[0])
 const launches = createLaunchIndexer({ pool, verify, expiredLaunch, reverifyAfterMs: 3_600_000 })
 // Idle markets are checked less often; new config-account signatures and repo.ing trades wake them early.
 const fees = createExternalFeeIndexer({ pool, connection, config, schedule: createActivitySchedule(),
-  feed: createConfigActivityFeed({ connection, configs: approvedConfigs(config), loadTransaction: loadFinalizedTransaction }) })
+  // Bundle markets (docs/BUNDLE_LAUNCH.md) are SOL markets on the bundle config: watched with the others.
+  feed: createConfigActivityFeed({ connection, configs: [...approvedConfigs(config), ...(() => { try { return [bundleCurveConfig()].filter(Boolean) } catch { return [] } })()],
+    loadTransaction: loadFinalizedTransaction }) })
 // Stock-paired curves (docs/STOCK_QUOTES.md): their own ledgers, cursors and schedule; the feed watches the stock configs. A
 // malformed STOCK_QUOTE_CONFIGS fails only stock markets: each one resolves its config itself and reports the ERROR.
 const stockFees = createStockFeeIndexer({ pool, connection, config, schedule: createActivitySchedule(),
@@ -120,6 +125,17 @@ async function observePartsFunds(){
       transfers:r.transfers?.map(t=>({fundId:t.fundId,kind:t.kind,mint:t.mint,status:t.status,signature:t.signature}))}}))
     if(r.pledges.some(p=>p.state==='review')||r.decided.some(d=>d.status==='review')||r.transfers?.some(t=>t.status==='failed'))process.exitCode=1
   }catch(error){console.log(JSON.stringify({partsFundError:error?.code==='42P01'?'PARTS_NOT_MIGRATED':'PARTS_FUND_UNAVAILABLE'}))}
+}
+// Bundle launches (docs/BUNDLE_LAUNCH.md): dark unless BUNDLE_LAUNCHES_ENABLED and the code gate are both open. The jobs sign with the
+// bundle launch signer (and the creator signer as the bundle program's admin, for record_graduation only).
+const bundleSettings = (() => { try { return bundleJobSettings() } catch { return { error: 'BUNDLE_SETTINGS_INVALID' } } })()
+const bundleJobs = bundleSettings?.config ? createBundleJobs({ pool, connection, settings: bundleSettings,
+  builderAllocationEnabled: allocationEnabled(bundleSettings.config.toBase58()) }) : null
+let bundleTask=null,nextBundleCheck=0
+async function observeBundles(){
+  if(!bundleJobs){ if(bundleSettings)console.log(JSON.stringify({bundlesUnavailable:bundleSettings.missing??bundleSettings.error})); return }
+  try{await bundleJobs.runOnce()}
+  catch(error){console.log(JSON.stringify({bundleError:error?.code==='42P01'||error?.code==='42703'?'BUNDLES_NOT_MIGRATED':'BUNDLE_JOBS_UNAVAILABLE'}))}
 }
 const allocations = createAllocationRecovery({ pool, connection })
 const discovery = createDiscoveryClaims({ pool, connection, config })
@@ -395,6 +411,11 @@ try {
     if(once)await observePartsFunds()
     else if(!partsTask&&Date.now()>=nextPartsCheck)
       partsTask=observePartsFunds().finally(()=>{nextPartsCheck=Date.now()+30000;partsTask=null})
+    if(bundleSettings){
+      if(once)await observeBundles()
+      else if(!bundleTask&&Date.now()>=nextBundleCheck)
+        bundleTask=observeBundles().finally(()=>{nextBundleCheck=Date.now()+30000;bundleTask=null})
+    }
     if(once)await observeTipWallet()
     else if(!tipMonitorTask&&Date.now()>=nextTipMonitorCheck)
       tipMonitorTask=observeTipWallet().finally(()=>{nextTipMonitorCheck=Date.now()+300000;tipMonitorTask=null})
