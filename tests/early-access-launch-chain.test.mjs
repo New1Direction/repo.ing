@@ -9,7 +9,12 @@ import { join } from 'node:path'
 import { AddressLookupTableProgram, Connection, Keypair, PACKET_DATA_SIZE, PublicKey, SystemProgram, Transaction, TransactionInstruction, TransactionMessage, VersionedTransaction,
   sendAndConfirmTransaction } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, getTransferHook } from '@solana/spl-token'
-import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import BN from 'bn.js'
+import { DynamicBondingCurveClient, SwapMode } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { createFeeAccrual } from '../src/fee-accrual.mjs'
+import { createTradeRecorder } from '../src/trade-evidence.mjs'
+import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
+import { watchedMarkets } from '../src/live-trades.mjs'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { createLaunchCoordinator } from '../src/launch-coordinator.mjs'
@@ -174,7 +179,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
     const row = async id => (await pool.query(`select status, early_access_end, transfer_hook_program, discovery_version, builder_allocation_version,
       verification_bonus_lamports::text, quote_asset_id from markets where id = $1`, [id])).rows[0]
 
-    let firstMarket, firstEnd
+    let firstMarket, firstEnd, secondMarket
     await t.test('prepared on one replica, signed as v0 by the wallet, submitted from another; the launcher is taken off the list', async () => {
       const launcher = await funded(connection)
       const a = replica({ repo: REPOS.first }), b = replica({ repo: REPOS.first }), id = crypto.randomUUID()
@@ -261,6 +266,44 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       assert.equal(market.status, 'confirmed')
       assert.deepEqual(await allowList(market.mint), [contributor.publicKey.toBase58()])
       assert.ok(await evidence(market))
+      secondMarket = market
+    })
+
+    // Step 5 (docs/EARLY_ACCESS.md): an early access market's curve trades are indexed like any other once a path opts in with
+    // EARLY_ACCESS_DBC_CONFIG: the launch's first buy and a contributor's swap2 with the transfer hook, into trade_events and
+    // fee_events, by the fee accrual, the trade recorder, the external fee indexer and the live-trades watch list.
+    await t.test('its curve trades are indexed: the first buy and a contributor\'s hook swap; paths that do not opt in refuse it', async () => {
+      const market = secondMarket, config = solConfig.toBase58(), poolKey = new PublicKey(market.pool)
+      assert.equal((await createLaunchIndexer({ pool, verify }).processMarket(market.githubRepoId)).state, 'indexed')
+      const buy = await dbc.pool.swap2WithTransferHook({ owner: contributor.publicKey, payer: contributor.publicKey, pool: poolKey,
+        amountIn: new BN(20_000_000), minimumAmountOut: new BN(0), swapBaseForQuote: false, swapMode: SwapMode.ExactIn, referralTokenAccount: null })
+      const swapSignature = await sendAndConfirmTransaction(connection, buy, [contributor], { commitment: 'confirmed' })
+      const signatures = [market.launchSignature, swapSignature]
+      // Without the opt-in every path still refuses the market.
+      await assert.rejects(createTradeRecorder({ pool, connection, config, earlyAccess: null })(market, swapSignature), /transfer-hook-aware path/)
+      const skipped = (await createExternalFeeIndexer({ pool, connection, config, earlyAccess: null }).runOnce()).find(r => r.githubRepoId === String(market.githubRepoId))
+      assert.equal(skipped.status, 'SKIPPED')
+      // With it: both trades recorded once, their fees accrued once (finalized evidence).
+      const record = createTradeRecorder({ pool, connection, config, earlyAccess: eaConfig })
+      const accrual = createFeeAccrual({ pool, connection, config, earlyAccess: eaConfig })
+      await until(async () => { try { for (const signature of signatures) await record(market, signature); return true } catch (error) {
+        if (/finalized/i.test(error.message)) return null; throw error } }, 240)
+      const fees = await accrual.recordTradeFees({ githubRepoId: BigInt(market.githubRepoId), signatures })
+      assert.ok(fees.creditedBaseUnits > 0n, 'the builder fee of both buys')
+      const again = await accrual.recordTradeFees({ githubRepoId: BigInt(market.githubRepoId), signatures })
+      assert.equal(again.creditedBaseUnits, 0n, 'credited once')
+      const trades = (await pool.query('select signature, direction, trader from trade_events where pool = $1 order by slot', [market.pool])).rows
+      assert.deepEqual(trades.map(t => [t.signature, t.direction, t.trader]),
+        [[market.launchSignature, 'buy', contributor.publicKey.toBase58()], [swapSignature, 'buy', contributor.publicKey.toBase58()]])
+      const feeRows = (await pool.query('select distinct signature from fee_events where pool = $1', [market.pool])).rows.map(r => r.signature).sort()
+      assert.deepEqual(feeRows, [...signatures].sort())
+      // The external fee indexer passes over it with nothing new and no error; its graduated (DAMM) read waits for step 7.
+      const indexed = (await createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig }).runOnce()).find(r => r.githubRepoId === String(market.githubRepoId))
+      assert.equal(indexed.status, 'OK', indexed.error)
+      assert.equal(indexed.creditedBaseUnits, 0n)
+      // The live-trades watch list has its curve; the opt-in resolver maps it to the early access config.
+      const watched = await watchedMarkets(pool)
+      assert.ok(watched.curves.has(market.pool))
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

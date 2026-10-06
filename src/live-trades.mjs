@@ -2,6 +2,7 @@ import { PublicKey } from '@solana/web3.js'
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createMarketConfigResolver } from './market-config.mjs'
+import { earlyAccessDbcConfig } from './early-access.mjs'
 import { canonicalTradeEvents } from './trade-evidence.mjs'
 import { dammSwapEvents, indexDammTradesLocked } from './damm-trades.mjs'
 import { loadTransactionAt } from './finalized-transaction.mjs'
@@ -34,11 +35,9 @@ const RETRY_DELAYS_MS = [300, 700, 1500]
 const SEEN_MAX = 4000
 const QUEUE_MAX = 500
 
-// Contributor early access markets (transfer-hook pools on their own config) wait for their own indexing: listed now, their
-// config would not resolve on every refresh.
-const SOL_MARKETS = `select github_repo_id::text as "repoId", mint, pool from markets
-  where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null
-  and early_access_end is null and transfer_hook_program is null`
+const SOL_MARKETS = `select github_repo_id::text as "repoId", mint, pool, early_access_end as "earlyAccessEnd",
+  transfer_hook_program as "transferHookProgram" from markets
+  where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null`
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 const errorCode = error => error?.code === '42P01' ? 'NOT_MIGRATED' : /^[A-Z][A-Z0-9_]{3,60}$/.test(error?.message ?? '') ? error.message
@@ -53,6 +52,8 @@ export async function watchedMarkets(pool) {
   for (const market of markets) {
     const proof = byRepo.get(market.repoId)
     if (!proof) { curves.set(market.pool, market); continue }
+    // A graduated contributor early access market (Token-2022 in its DAMM v2 pool) waits for docs/EARLY_ACCESS.md step 7.
+    if (market.earlyAccessEnd || market.transferHookProgram) continue
     try {
       const migration = chartMigration(market, proof)
       damms.set(migration.pool, { market, migration })
@@ -119,12 +120,13 @@ export async function pruneLiveTrades(pool, maxAgeMs = LIVE_TRADE_TTL_MS) {
 // again whenever the websocket proves deaf. onDammSwap(repoId): a graduated market's swap just confirmed, so its finalized
 // indexing can be due as soon as it finalizes. track(fn): runs each transaction's handling (the worker attributes its RPC
 // reads to this job). paused(): the primary provider is backing off a rate limit, so reads are skipped until it recovers.
-export function createLiveTrades({ pool, connect, config, legacyConfigs, loadTransaction = (rpc, signature) => loadTransactionAt(rpc, signature, 'confirmed'),
+// earlyAccess: EARLY_ACCESS_DBC_CONFIG, so contributor early access curves are watched on their own config.
+export function createLiveTrades({ pool, connect, config, legacyConfigs, earlyAccess = earlyAccessDbcConfig(), loadTransaction = (rpc, signature) => loadTransactionAt(rpc, signature, 'confirmed'),
   onDammSwap = () => {}, now = Date.now, concurrency = 4, delays = RETRY_DELAYS_MS, refreshMs = LIVE_REFRESH_MS, deafMs = LIVE_DEAF_MARGIN_MS,
   renewBaseMs = LIVE_RENEW_BASE_MS, renewMaxMs = LIVE_RENEW_MAX_MS, maxRenewals = LIVE_MAX_RENEWALS,
   readsPerSecond = LIVE_READS_PER_SECOND, burst = LIVE_READ_BURST, paused = () => false,
   markets = watchedMarkets, newestFinalized = newestFinalizedTrade, track = fn => fn() }) {
-  const resolveConfig = createMarketConfigResolver(config, legacyConfigs)
+  const resolveConfig = createMarketConfigResolver(config, legacyConfigs, undefined, { earlyAccess })
   let connection = connect()
   const parsers = { resolveConfig, dbc: new DynamicBondingCurveClient(connection, 'confirmed'), coder: new CpAmm(connection)._program.coder }
   let watched = { curves: new Map(), damms: new Map() }, refreshedAt = -Infinity, renewedAt = now(), active = 0, stopped = false

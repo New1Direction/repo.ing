@@ -72,6 +72,7 @@ export async function selectCanaryMarkets(db, { isMigrated, officialRepoId = OFF
       sum((case when t.direction = 'buy' then t.input_base_units else t.output_base_units end)::numeric) as total
     from markets m join trade_events t on t.pool = m.pool
     where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and m.github_repo_id <> $1
+      and m.early_access_end is null and m.transfer_hook_program is null
     group by m.github_repo_id, m.token_symbol order by recent desc, total desc limit 10`, [officialRepoId])
   const { rows: [official] } = await db.query('select token_symbol as symbol from markets where github_repo_id = $1', [officialRepoId])
   const picked = []
