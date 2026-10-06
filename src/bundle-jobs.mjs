@@ -20,7 +20,9 @@ import { createLaunchCoordinator } from './launch-coordinator.mjs'
 // - the vault agent: its decision is logged every pass; it trades only with BUNDLE_AGENTS_LIVE=true and an operator key.
 // One action per bundle per pass, so a failure on one never blocks the others and nothing is retried in a tight loop.
 
-export const BUNDLE_STALE_OPENING_MS = 30 * 60 * 1000
+// A create transaction is co-signed only within 2 minutes of its review (the raise routes), so an opening row older than this never
+// becomes a bundle: it frees the repository.
+export const BUNDLE_STALE_OPENING_MS = 5 * 60 * 1000
 // Route curve fees once at least this much is claimable (each routing costs a transaction fee).
 export const ROUTE_MIN_LAMPORTS = 10_000_000n
 // Route the router's DAMM v2 position at most this often (its pending fee is not read from one account).

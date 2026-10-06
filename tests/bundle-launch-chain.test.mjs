@@ -17,7 +17,7 @@ import { STATUS, bundleAddress, createBundleInstruction, decodeBundle, depositIn
   tokenAccountOf } from '../src/bundle-vault.mjs'
 import { bundleLaunchLookupAddresses } from '../src/bundle-launcher.mjs'
 import { createBundleJobs } from '../src/bundle-jobs.mjs'
-import { createLaunchCoordinator } from '../src/launch-coordinator.mjs'
+import { BUNDLE_IN_PROGRESS, createLaunchCoordinator } from '../src/launch-coordinator.mjs'
 import { createLaunchEvidenceVerifier } from '../src/launch-evidence.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
@@ -115,6 +115,14 @@ test('bundle launches through the worker: launch, evidence, vault, routing, fail
     const pass = async () => { const results = await jobs.runOnce(); history.push(...results); return Object.fromEntries(results.map(result => [result.bundleId, result])) }
     const status = async id => (await pool.query('select status from bundles where bundle_id=$1', [String(id)])).rows[0].status
     const chainBundle = async id => decodeBundle((await connection.getAccountInfo(bundleAddress(id))).data)
+
+    await t.test('a live bundle keeps its repository: any other launch path is refused before anything is reserved', async () => {
+      const standard = createLaunchCoordinator({ pool, fetchImpl: github, launcher: { creatorWallet: creator.publicKey.toBase58(),
+        prepare: async () => { throw Error('never reached') }, inspect: async () => false } })
+      await assert.rejects(standard.launch({ repositoryUrl: 'https://github.com/octocat/Hello-World', tokenName: 'Hello', tokenSymbol: 'HELLO',
+        launcherWallet: Keypair.generate().publicKey.toBase58(), signTransaction: async tx => tx }), error => error.message === BUNDLE_IN_PROGRESS)
+      assert.equal((await pool.query('select count(*)::int as n from markets')).rows[0].n, 0)
+    })
 
     await t.test('the rows follow the chain, and a full raise launches server-signed into a stamped bundle market', async () => {
       const first = await pass()

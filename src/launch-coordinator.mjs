@@ -1,7 +1,7 @@
 import { drizzle } from 'drizzle-orm/node-postgres'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { PublicKey } from '@solana/web3.js'
-import { markets, repositories } from './db/schema.mjs'
+import { bundles, markets, repositories } from './db/schema.mjs'
 import { resolvePublicRepository } from './github.mjs'
 import { DefinitiveLaunchError } from './meteora-launch.mjs'
 import { DISCOVERY_VERSION } from './discovery-rewards.mjs'
@@ -13,6 +13,10 @@ import { validateTokenImage } from './token-image.mjs'
 export class IncompleteLaunchError extends Error {
   constructor(message) { super(message); this.name = 'IncompleteLaunchError' }
 }
+
+export const BUNDLE_IN_PROGRESS = 'This repository has a Bundle raise in progress. Its market launches when the raise fills; if the raise fails, it can be launched again.'
+// A bundle that may still launch this repository's one market (docs/BUNDLE_LAUNCH.md): no other launch may take it meanwhile.
+const LIVE_BUNDLE_STATUSES = ['opening', 'raising', 'launching']
 
 export async function waitForLaunchEvidence(inspect, market, attempts = 120, retryMs = 250) {
   for (let attempt = 0; attempt < attempts; attempt++) {
@@ -110,6 +114,12 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       }
       // The worker releases an attempt proven never to land (src/launch-expiry.mjs) about two minutes after its review.
       throw new IncompleteLaunchError(`This repository has an incomplete launch (${market.status}) that is still being checked on Solana. If its transaction did not land, you can launch again in about two minutes.`)
+    }
+    // Every launch path (site, CLI, agents) comes through here: a live bundle keeps the repository for its own launch.
+    if (!bundle) {
+      const [live] = await db.select({ id: bundles.bundleId }).from(bundles)
+        .where(and(eq(bundles.githubRepoId, repo.githubRepoId), inArray(bundles.status, LIVE_BUNDLE_STATUSES))).limit(1)
+      if (live) throw new Error(BUNDLE_IN_PROGRESS)
     }
     if (market?.status === 'prepared' && pendingReview && await pendingReview(market)) {
       throw new Error('This repository already has a launch awaiting wallet approval. Try again in a couple of minutes.')
