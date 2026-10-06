@@ -8,11 +8,14 @@ import { discoveryFeeEvents, feeEvents, markets } from './db/schema.mjs'
 import { eligibleDiscoveryFee } from './discovery-rewards.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { canonicalDbcSwapEvents, UnparseableTradeError } from './trade-evidence.mjs'
+import { earlyAccessDbcConfig } from './early-access.mjs'
 
 const KIND = 'dbc_creator_quote'
 
-export function createFeeAccrual({ pool: databasePool, connection, config }) {
-  const resolveConfig = createMarketConfigResolver(config)
+// earlyAccess: EARLY_ACCESS_DBC_CONFIG, so a contributor early access market's curve trades (swap2 with the transfer hook, parsed
+// like any DBC swap) accrue as well; unset, those markets are refused as before.
+export function createFeeAccrual({ pool: databasePool, connection, config, earlyAccess = earlyAccessDbcConfig() }) {
+  const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const db = drizzle(databasePool)
   const earnedIn = async (executor, repoId) => {

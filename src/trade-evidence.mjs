@@ -5,6 +5,7 @@ import { NATIVE_MINT } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { DBC_SWAP_PAYER, swapTrader } from './swap-trader.mjs'
+import { earlyAccessDbcConfig } from './early-access.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
@@ -101,8 +102,9 @@ export function canonicalTradeEvents(transaction, market, config, dbc) {
   })
 }
 
-export function createTradeRecorder({ pool, connection, config }) {
-  const resolveConfig = createMarketConfigResolver(config)
+// earlyAccess: as createFeeAccrual (src/fee-accrual.mjs): early access curve trades are recorded when EARLY_ACCESS_DBC_CONFIG is set.
+export function createTradeRecorder({ pool, connection, config, earlyAccess = earlyAccessDbcConfig() }) {
+  const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   return async function record(market, signature) {
     const transaction = await loadFinalizedTransaction(connection, signature)

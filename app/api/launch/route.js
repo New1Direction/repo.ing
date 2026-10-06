@@ -232,8 +232,8 @@ export async function POST(request) {
       if (result?.state !== 'match') throw new Error('Launch confirmed but final indexing is not ready')
       const indexed = await createLaunchIndexer({ pool, verify }).processMarket(repoId)
       if (!['indexed', 'verified'].includes(indexed.state)) throw new Error('Canonical market did not index')
-      // A hook pool's trades are indexed from step 5 of docs/EARLY_ACCESS.md on; the first buy of an early access launch waits for it.
-      if (BigInt(session.initialBuyLamports) > 0n && !versioned) {
+      // An early access launch's first buy (a hook pool, v0 transaction) is indexed like any other (docs/EARLY_ACCESS.md step 5).
+      if (BigInt(session.initialBuyLamports) > 0n) {
         try {
           await createFeeAccrual({ pool, connection, config })
             .recordTradeFees({ githubRepoId: repoId, signatures: [market.launchSignature] })

@@ -4,6 +4,7 @@ import { createFeeAccrual } from './fee-accrual.mjs'
 import { createTradeRecorder, UnparseableTradeError } from './trade-evidence.mjs'
 import { graduatedReadDue } from './indexer-schedule.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
+import { earlyAccessDbcConfig } from './early-access.mjs'
 import { isBundleMarket } from './bundles.mjs'
 
 const PAGE_SIZE = 1000
@@ -34,25 +35,28 @@ const latest = (...values) => values.reduce((max, value) => {
 // schedule/feed (worker only, see indexer-schedule.mjs): check a market only when it is due — recent or signalled
 // activity, else its idle tier — and read graduated fees only when they can have changed. Without them every
 // market is fully checked on every run (one-shot scripts and tests).
-export function createExternalFeeIndexer({ pool: databasePool, connection, config,
+const isEarlyAccess = market => Boolean(market.earlyAccessEnd || market.transferHookProgram)
+// earlyAccess: EARLY_ACCESS_DBC_CONFIG. Set, a contributor early access market's curve trades are indexed like any other; its
+// graduated (DAMM v2) fees wait for docs/EARLY_ACCESS.md step 7. Unset, such a market is reported as skipped.
+export function createExternalFeeIndexer({ pool: databasePool, connection, config, earlyAccess = earlyAccessDbcConfig(),
   graduatedFees = createGraduatedFees({ connection, config, db: databasePool }),
-  accrual = createFeeAccrual({ pool: databasePool, connection, config }),
-  recordTrade = createTradeRecorder({ pool: databasePool, connection, config }),
+  accrual = createFeeAccrual({ pool: databasePool, connection, config, earlyAccess }),
+  recordTrade = createTradeRecorder({ pool: databasePool, connection, config, earlyAccess }),
   schedule = null, feed = null, now = Date.now, log = line => console.log(line) }) {
   const graduatedReads = new Map()
   let feedLoggedAt = -Infinity, resolveConfig
   // The approved configs (current and legacy) that the indexed markets were launched on; null lists them all.
   const configsWithMarkets = rows => {
-    try { resolveConfig ??= createMarketConfigResolver(config) } catch { return null }
+    try { resolveConfig ??= createMarketConfigResolver(config, undefined, undefined, { earlyAccess }) } catch { return null }
     const used = new Set()
     for (const market of rows) { try { used.add(resolveConfig(market).toBase58()) } catch { /* not an approved market */ } }
     return used
   }
 
   async function processMarket(market, { readGraduated = () => true } = {}) {
-    // A contributor early access market (a Token-2022 transfer-hook pool, docs/EARLY_ACCESS.md) is not indexed here yet: it is
-    // reported as skipped, never as an error on every pass.
-    if (market.earlyAccessEnd || market.transferHookProgram) return { githubRepoId: market.repoId, pool: market.pool, status: 'SKIPPED', reason: 'early access market' }
+    // A contributor early access market (a Token-2022 transfer-hook pool, docs/EARLY_ACCESS.md) without its config is reported
+    // as skipped, never as an error on every pass.
+    if (isEarlyAccess(market) && !earlyAccess) return { githubRepoId: market.repoId, pool: market.pool, status: 'SKIPPED', reason: 'early access market' }
     const client = await databasePool.connect()
     const poolKey = new PublicKey(market.pool)
     const repoId = BigInt(market.repoId)
@@ -122,7 +126,7 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
           [market.pool, item.signature, item.slot.toString()])
         }
         let graduatedCredit = 0n, platformCredit = 0n, graduated = null
-        const graduatedRead = readGraduated(discovered.length)
+        const graduatedRead = !isEarlyAccess(market) && readGraduated(discovered.length)
         if (graduatedRead) {
           await client.query('select pg_advisory_lock($1::bigint)',[String(repoId)])
           try {
