@@ -74,6 +74,7 @@ export function fakePool({ bundles = new Map(), hasMarket = false } = {}) {
     async query(sql, params = []) {
       queries.push({ sql, params })
       if (/nextval\('bundle_id_seq'\)/.test(sql)) return { rows: [{ id: String(nextId++) }] }
+      if (/select exists\(select 1 from bundles\)/.test(sql)) return { rows: [{ any: bundles.size > 0 }] }
       if (/exists\(select 1 from markets/.test(sql)) {
         const live = [...bundles.values()].find(row => row.githubRepoId === params[0] && params[1].includes(row.status))
         return { rows: [{ hasMarket, liveBundle: live?.status ?? null, liveBundleId: live?.bundleId ?? null }] }

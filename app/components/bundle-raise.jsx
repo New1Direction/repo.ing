@@ -11,6 +11,7 @@ import '../bundles.css'
 
 // The raise page's live part (app/(site)/bundle/[id]): progress, deadline, backers, the deposit form and the connected wallet's
 // share with its refund or claim. initial: the server's read (app/lib/bundle-state.mjs), refreshed every 15 s while visible.
+// depositsOpen: false while Bundle launches are switched off; the page is then read-only for new money (refunds and claims stay).
 
 const REFRESH_MS = 15_000
 const sol = lamports => formatSolDisplay(lamports)
@@ -55,7 +56,7 @@ function useNow(start) {
   return now
 }
 
-export function BundleRaise({ initial }) {
+export function BundleRaise({ initial, depositsOpen = true }) {
   const [state, refresh, wallet] = useBundleState(initial)
   const now = useNow(initial.checkedAt)
   const phase = raisePhase(state, now), figures = raiseFigures(state)
@@ -77,7 +78,8 @@ export function BundleRaise({ initial }) {
       {phase === 'launched' && state.marketMint && <Link className="button primary" href={`/token/${state.marketMint}`}>Open the ${state.tokenSymbol} market</Link>}
     </section>
     <div className="bundle-side">
-      {phase === 'raising' && <DepositForm state={state} figures={figures} onDone={refresh}/>}
+      {phase === 'raising' && (depositsOpen ? <DepositForm state={state} figures={figures} onDone={refresh}/>
+        : <p className="inner-card bundle-note" role="note">New deposits are paused on repo.ing right now. Refunds and claims stay open.</p>)}
       <BackerShare state={state} wallet={wallet} phase={phase} onDone={refresh}/>
     </div>
   </div>

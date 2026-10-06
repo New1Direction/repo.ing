@@ -18,8 +18,9 @@ import { chain, creatorSigner, database } from './server.mjs'
 
 // The raise flow's API (docs/BUNDLE_LAUNCH.md): POST /api/bundles opens a raise (prepare, then submit the wallet-signed
 // transaction), GET /api/bundles/[id] reads one, POST /api/bundles/[id] prepares a deposit, refund or claim for a wallet to sign
-// and relays it once signed (send). Dark: every handler answers 404 unless bundleLaunchable(). The dependencies are injectable so
-// tests run without services; the routes use the defaults.
+// and relays it once signed (send). Dark: only what starts or funds a raise (opening one, a deposit, relaying a deposit) answers
+// 404 unless bundleLaunchable(). Bundles that already exist are read, refunded and claimed whatever the switch says, so a backer
+// is never locked out. The dependencies are injectable so tests run without services; the routes use the defaults.
 
 const headers = { 'Cache-Control': 'private, no-store' }
 const reply = (body, status = 200) => Response.json(body, { status, headers })
@@ -130,7 +131,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
   }
 
   return {
-    // POST /api/bundles
+    // POST /api/bundles: starts a raise, so only while Bundle launches are on.
     async open(request) {
       if (!launchable()) return notFound()
       try {
@@ -141,9 +142,8 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
       } catch (error) { return failure(error) }
     },
 
-    // GET /api/bundles/[id]?wallet=
+    // GET /api/bundles/[id]?wallet=: whatever the switch says.
     async read(request, id) {
-      if (!launchable()) return notFound()
       try {
         const bundleId = bundleIdOf(id)
         if (bundleId === null) return notFound()
@@ -157,14 +157,15 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
       } catch (error) { return failure(error) }
     },
 
-    // POST /api/bundles/[id]: deposit | refund | claim → an unsigned transaction; send → the signed one relayed.
+    // POST /api/bundles/[id]: deposit | refund | claim → an unsigned transaction; send → the signed one relayed. A deposit (and its
+    // relay) funds a raise, so only while Bundle launches are on; a refund or a claim whatever the switch says.
     async act(request, id) {
-      if (!launchable()) return notFound()
       try {
         const bundleId = bundleIdOf(id)
         if (bundleId === null) return notFound()
         const body = await jsonBody(request, MAX_ACTION_BODY)
         if (body?.action !== 'send' && !BUNDLE_ACTIONS.includes(body?.action)) throw new BundleRaiseError('Unsupported bundle action')
+        if (body.action === 'deposit' && !launchable()) return notFound()
         // A signed transaction is never limited (as a trade's submit); preparing one simulates it and reads fees.
         const refused = body.action === 'send' ? null : limit(request, 'bundle:prepare')
         if (refused) return refused
@@ -174,6 +175,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
         const rpc = connection()
         if (body.action === 'send') {
           const accepted = acceptSignedAction({ id: bundleId, wallet: body.wallet, transactionBase64: body.transaction })
+          if (accepted.action === 'deposit' && !launchable()) return notFound()
           const sent = await sendSigned(rpc, { raw: accepted.raw, signature: accepted.signature, lastValidBlockHeight: Number(body.lastValidBlockHeight) },
             broadcast)
           return reply({ action: accepted.action, ...sent }, sent.confirmed ? 200 : 202)

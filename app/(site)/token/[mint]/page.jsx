@@ -55,7 +55,6 @@ import { StockFeeHeadline, StockFeeHeadlineFallback, StockFeeRouting } from '../
 import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 import { BundleVault, BundleVaultFallback } from '../../../components/bundle-vault'
 import { isBundleMarket } from '../../../../src/bundles.mjs'
-import { bundleLaunchable } from '../../../../src/bundle-launch.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -118,9 +117,9 @@ export default async function Token({ params, searchParams }) {
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
       <RepositoryEarnings market={market} declined={decision !== null}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
-    // A market launched from a Bundle (docs/BUNDLE_LAUNCH.md): its vault, its routed fees and the backers' claim, while Bundle
-    // launches are on. #bundle-vault (linked from /wallet) opens it.
-    ...isBundleMarket(market) && bundleLaunchable() ? [{ id: 'bundle', anchor: 'bundle-vault', label: 'Bundle vault',
+    // A market launched from a Bundle (docs/BUNDLE_LAUNCH.md): its vault, its routed fees and the backers' claim, whatever Bundle
+    // launches' switch says. #bundle-vault (linked from /wallet) opens it.
+    ...isBundleMarket(market) ? [{ id: 'bundle', anchor: 'bundle-vault', label: 'Bundle vault',
       content: <Suspense fallback={<BundleVaultFallback/>}><BundleVault market={market}/></Suspense> }] : [],
     // #rewards (linked from /wallet) opens this tab so a launcher lands on the claim button.
     ...rewards ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards">

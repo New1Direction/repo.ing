@@ -8,7 +8,8 @@ import { MAX_RAISE_SECS, MAX_TARGET, MIN_DEPOSIT_FLOOR, MIN_TARGET, bundleLaunch
 export const bundleLaunchesEnabled = (env = process.env) => env.BUNDLE_LAUNCHES_ENABLED === 'true'
 
 // The code's own readiness, independent of the switch. Closed: the vault agents and the fee-routing crank are not built yet,
-// and the program has had no external audit or mainnet setup. The site's raise pages and routes exist but stay dark with it.
+// and the program has had no external audit or mainnet setup. It gates what starts or funds a raise; reads, refunds and claims
+// of bundles that already exist never wait for it (app/lib/bundle-api.mjs).
 export const BUNDLE_LAUNCHES_READY = false
 export const bundleLaunchable = (env = process.env) => BUNDLE_LAUNCHES_READY && bundleLaunchesEnabled(env)
 export const BUNDLE_LAUNCHES_DISABLED = 'Bundle launches are not available.'
