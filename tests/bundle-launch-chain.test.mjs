@@ -159,8 +159,11 @@ test('bundle launches through the worker: launch, evidence, vault, routing, fail
     await t.test('a raise past its deadline fails through the crank and its row follows', async () => {
       while ((await chainTime()) <= now + 31) await sleep(1_000)
       for (let i = 0; i < 3 && await status(2) !== 'failed'; i++) await pass()
-      const crank = history.find(result => result.bundleId === '2' && result.action === 'fail_raise')
-      assert.ok(crank?.sent, JSON.stringify(crank))
+      // The worker decides by the server's clock and the program by the chain's: with the validator's clock behind (CI), an earlier
+      // pass tries too soon and the program refuses it in simulation (nothing is sent). A later pass sends it.
+      const cranks = history.filter(result => result.bundleId === '2' && result.action === 'fail_raise')
+      assert.ok(cranks.some(result => result.sent), JSON.stringify(cranks))
+      assert.ok(cranks.every(result => result.sent || result.reason === 'RaiseOpen'), JSON.stringify(cranks))
       assert.equal(await status(2), 'failed')
       assert.equal((await chainBundle(2)).status, STATUS.FAILED)
     })
