@@ -1,4 +1,4 @@
-import { bundleLaunchInstructions, policyValid } from './bundle-vault.mjs'
+import { MAX_RAISE_SECS, MAX_TARGET, MIN_DEPOSIT_FLOOR, MIN_TARGET, bundleLaunchInstructions, policyValid } from './bundle-vault.mjs'
 
 // Bundle launches (docs/BUNDLE_LAUNCH.md): the switch, the code gate and the settings the owner chose. Dark: no page, route
 // or job builds a Bundle launch unless BUNDLE_LAUNCHES_ENABLED is exactly "true" and the code gate below is open as well.
@@ -7,8 +7,8 @@ import { bundleLaunchInstructions, policyValid } from './bundle-vault.mjs'
 // Off unless exactly "true".
 export const bundleLaunchesEnabled = (env = process.env) => env.BUNDLE_LAUNCHES_ENABLED === 'true'
 
-// The code's own readiness, independent of the switch. Closed: the site's raise pages and routes, the bundle tables, the
-// vault agents and the fee-routing crank are not built yet, and the program has had no external audit or mainnet setup.
+// The code's own readiness, independent of the switch. Closed: the vault agents and the fee-routing crank are not built yet,
+// and the program has had no external audit or mainnet setup. The site's raise pages and routes exist but stay dark with it.
 export const BUNDLE_LAUNCHES_READY = false
 export const bundleLaunchable = (env = process.env) => BUNDLE_LAUNCHES_READY && bundleLaunchesEnabled(env)
 export const BUNDLE_LAUNCHES_DISABLED = 'Bundle launches are not available.'
@@ -27,6 +27,30 @@ export const BUNDLE_DEFAULTS = Object.freeze({
   policy: Object.freeze({ maxTradeBps: 200, maxDailyBuyBps: 1_000, maxDailySellBps: 100, floorBps: 10_000, gapSecs: 600 }),
 })
 if (!policyValid(BUNDLE_DEFAULTS.limits) || !policyValid(BUNDLE_DEFAULTS.policy)) throw Error('Invalid bundle defaults')
+
+// The raises the site opens (v1). The program allows more (targets up to 10,000 SOL, deadlines up to 30 days, deposits from
+// 0.001 SOL); the site starts small because a raise is all or nothing and most bundles earn little at today's volume. A new
+// bundle's vault policy is BUNDLE_DEFAULTS.policy.
+export const BUNDLE_RAISE = Object.freeze({
+  minTargetLamports: 1_000_000_000n,
+  maxTargetLamports: 10_000_000_000n,
+  defaultTargetLamports: 5_000_000_000n,
+  minDepositLamports: 50_000_000n,
+  deadlineDays: Object.freeze([1, 3, 7]),
+  defaultDeadlineDays: 3,
+})
+if (BUNDLE_RAISE.minTargetLamports < MIN_TARGET || BUNDLE_RAISE.maxTargetLamports > MAX_TARGET || BUNDLE_RAISE.minDepositLamports < MIN_DEPOSIT_FLOOR ||
+  BUNDLE_RAISE.minDepositLamports > BUNDLE_RAISE.minTargetLamports || Math.max(...BUNDLE_RAISE.deadlineDays) * 86_400 > MAX_RAISE_SECS) {
+  throw Error('Bundle raise settings are outside the program\'s limits')
+}
+
+// The raise terms as the launch form shows them (plain values: lamports as digits, the shares as percents).
+export const bundleFormSettings = () => ({
+  minTargetLamports: String(BUNDLE_RAISE.minTargetLamports), maxTargetLamports: String(BUNDLE_RAISE.maxTargetLamports),
+  defaultTargetLamports: String(BUNDLE_RAISE.defaultTargetLamports), minDepositLamports: String(BUNDLE_RAISE.minDepositLamports),
+  deadlineDays: [...BUNDLE_RAISE.deadlineDays], defaultDeadlineDays: BUNDLE_RAISE.defaultDeadlineDays,
+  opsPercent: `${BUNDLE_DEFAULTS.opsBps / 100}%`, backerPercent: `${BUNDLE_DEFAULTS.backerBps / 100}%`,
+})
 
 // The one entry point that builds a launch for the site. Refuses while launches are dark.
 export function prepareBundleLaunch(options, env = process.env) {

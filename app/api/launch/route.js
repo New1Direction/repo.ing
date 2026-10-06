@@ -31,6 +31,8 @@ import { QUOTE_ERRORS, QuoteAssetError, SOL_QUOTE, resolveQuoteAsset, stockPairs
 import { composeGuards, launchPair, marketPairGuard, stockMintCheck, stockPairGuard } from '../../lib/stock-launch.mjs'
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
 import { contributorSnapshotStep, earlyAccessGuard, earlyAccessRequest, earlyAccessSettings } from '../../lib/early-access-launch.mjs'
+import { bundleLaunchable } from '../../../src/bundle-launch.mjs'
+import { repositoryBlockers } from '../../../src/bundle-raise-store.mjs'
 export const runtime = 'nodejs'
 // Launch reviews live in PostgreSQL (launch_sessions) so prepare and submit/cancel may land on different replicas.
 const launchSessions = (pool, creator) => createLaunchSessionStore({ pool, key: launchSessionKey(creator.secretKey) })
@@ -157,6 +159,9 @@ export async function POST(request) {
       const resolved = await resolvePublicRepository(body.repositoryUrl)
       if (resolved.githubRepoId.toString() !== String(body.repoId)) throw new Error('Repository URL does not match canonical repository ID')
       await assertLaunchAllowed(pool, body.repoId)
+      // A repository with a live Bundle (docs/BUNDLE_LAUNCH.md) launches from its raise: a market launched beside it would make the
+      // raise fail. Read only while Bundle launches are on.
+      if (bundleLaunchable() && (await repositoryBlockers(pool, body.repoId)).liveBundle) throw new Error('This repository has a Bundle raise. Its market launches from the raise.')
       // The fork guard (src/repo-lineage.mjs): a fork or copy of a launched repository is refused here, on every launch path.
       await persistLaunchRepository(pool, resolved)
       await checkLaunchLineage({ pool, repo: resolved })

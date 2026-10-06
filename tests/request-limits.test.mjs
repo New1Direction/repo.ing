@@ -67,13 +67,15 @@ test('a clock that steps back cannot wedge an allowance', () => {
 })
 
 test('every action the routes count has an allowance, and each fits several heavy visitors behind one address', () => {
-  const counted = ['trade', 'launch', 'resolve'].flatMap(route => [...readFileSync(new URL(`../app/api/${route}/route.js`, import.meta.url), 'utf8')
-    .matchAll(/refuseOverLimit\(request, '([^']+)'/g)].map(match => match[1]))
+  const counted = ['api/trade/route.js', 'api/launch/route.js', 'api/resolve/route.js', 'lib/bundle-api.mjs']
+    .flatMap(file => [...readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8').matchAll(/(?:refuseOverLimit|limit)\(request, '([^']+)'/g)].map(match => match[1]))
   // A name without an allowance would never be limited, silently.
   assert.deepEqual([...new Set(counted)].sort(), Object.keys(REQUEST_LIMITS).sort())
   // Heaviest honest use by one visitor per minute, from the client code: the trade panel refreshes a typed quote and its
   // costs every 15 s and after each edit, and polls a signed trade every 3 s; the launch form's review lasts 20 s.
-  const heavy = { 'trade:quote': 25, 'trade:costs': 25, 'trade:depth': 3, 'trade:prepare': 2, 'trade:status': 20, 'launch:quote': 7, 'launch:prepare': 3, resolve: 5 }
+  const heavy = { 'trade:quote': 25, 'trade:costs': 25, 'trade:depth': 3, 'trade:prepare': 2, 'trade:status': 20, 'launch:quote': 7, 'launch:prepare': 3, resolve: 5,
+    // The raise page reads its bundle every 15 s; a backer prepares a deposit, a refund or a claim now and then.
+    'bundle:read': 6, 'bundle:prepare': 2 }
   assert.deepEqual(Object.keys(REQUEST_LIMITS).sort(), Object.keys(heavy).sort())
   for (const [action, { burst, perMinute }] of Object.entries(REQUEST_LIMITS)) {
     assert.ok(burst >= heavy[action] * 4, `${action}: four heavy visitors at once`)
