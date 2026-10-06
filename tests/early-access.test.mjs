@@ -146,7 +146,10 @@ test('only a personal GitHub account links: bots and organizations are refused, 
 test('wallets must be canonical base58 public keys', () => {
   const { address } = signer()
   assert.equal(canonicalWallet(address), address)
-  for (const value of [undefined, '', ` ${address}`, `${address}1`, 'not a wallet', address.toLowerCase()]) assert.throws(() => canonicalWallet(value), refusal('wallet'), String(value))
+  // Wrong case: a fixed key whose lower-case form is not a key (a random key's lower-case form is a valid other key about a
+  // quarter of the time, which made this check flaky).
+  const wrongCase = 'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3'.toLowerCase()
+  for (const value of [undefined, '', ` ${address}`, `${address}1`, 'not a wallet', wrongCase]) assert.throws(() => canonicalWallet(value), refusal('wallet'), String(value))
 })
 
 test('migration 0059 is journaled last, re-appliable, and its constraint names match the schema', () => {
