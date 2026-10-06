@@ -106,7 +106,10 @@ test('callback state is checked against the sealed cookie (CSRF), expiry, cancel
     const [body, mac] = sealed.split('.')
     const forged = Buffer.from(JSON.stringify({ ...state, wallet: wallet().publicKey.toBase58() })).toString('base64url')
     assert.equal(unseal(`${forged}.${mac}`), null)
-    assert.equal(unseal(`${body}.${mac.slice(0, -2)}AA`), null)
+    // A different first character, so the tampered MAC always differs (ending it in "AA" left it unchanged about 1 run in 1,000).
+    const tampered = `${mac[0] === 'A' ? 'B' : 'A'}${mac.slice(1)}`
+    assert.notEqual(tampered, mac)
+    assert.equal(unseal(`${body}.${tampered}`), null)
   } finally { if (saved === undefined) delete process.env.GITHUB_APP_CLIENT_SECRET; else process.env.GITHUB_APP_CLIENT_SECRET = saved }
 })
 
