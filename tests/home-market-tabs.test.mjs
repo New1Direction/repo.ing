@@ -15,5 +15,25 @@ test('home tabs match the client ordering, top 5 only, with only rendered fields
   }
   assert.notDeepEqual(tabs.Trending.map(m => m.mint), tabs.New.map(m => m.mint))
   assert.deepEqual(Object.keys(tabs.New[0]).sort(), ['claimed', 'description', 'earned', 'fullName', 'mint', 'remaining', 'repoId', 'stars', 'symbol', 'tokenName', 'volume24hLamports', 'wasVerified', 'priceSol', 'bondingPercent', 'graduated', 'pulse', 'newRepo', 'officialLaunch'].sort())
-  assert.deepEqual(homeMarketTabs([]), { Trending: [], New: [] })
+  assert.deepEqual(homeMarketTabs([]), { Trending: [], 'Market cap': [], New: [] })
+})
+
+test('the Market cap tab ranks by last trade price × supply in USD, SOL rows and stock pairs together; no trade goes last', () => {
+  const at = new Date('2026-10-01T00:00:00Z')
+  const row = (mint, extra) => ({ repoId: mint, mint, fullName: `o/${mint}`, symbol: mint, indexedAt: at, volume24hLamports: '0', ...extra })
+  // busy has more volume, valuable the higher price: Trending and Market cap disagree.
+  const busy = row('busy', { priceSol: 0.0000000348, volume24hLamports: '63080000000' })
+  const valuable = row('valuable', { priceSol: 0.0000000398, volume24hLamports: '14070000000' })
+  const untraded = row('untraded', { priceSol: null })
+  // A stock pair: 2e-8 METAx per token at $700 per METAx = $14,000 cap, above both SOL rows at $120 per SOL.
+  const stock = row('stock', { priceSol: null, stock: { symbol: 'METAx', decimals: 8, uiMultiplier: 1, usdPrice: 700, price: 0.00000002 } })
+  const hidden = row('hidden', { priceSol: 0.001, promoted: false })
+  const markets = [untraded, busy, valuable, stock, hidden]
+  assert.deepEqual(orderMarkets(markets, 'Market cap', { usdPerSol: 120 }).map(m => m.mint), ['stock', 'valuable', 'busy', 'untraded', 'hidden'],
+    'by cap; a new repo under its promotion mark still comes last')
+  assert.deepEqual(orderMarkets(markets, 'Trending').map(m => m.mint).slice(0, 2), ['busy', 'valuable'], 'Trending is unchanged: 24h volume')
+  // Without a SOL price, SOL rows still rank among themselves; a stock pair has no comparable figure and goes last.
+  assert.deepEqual(orderMarkets([stock, busy, valuable], 'Market cap').map(m => m.mint), ['valuable', 'busy', 'stock'])
+  const tabs = homeMarketTabs(markets, { usdPerSol: 120 })
+  assert.deepEqual(tabs['Market cap'].map(m => m.mint), ['stock', 'valuable', 'busy', 'hidden'], 'the home tab lists traded markets only')
 })

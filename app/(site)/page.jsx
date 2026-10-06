@@ -41,6 +41,7 @@ export default function Home() {
   const models = hfMarketsEnabled()
   const tabs = [
     { id: 'trending', label: 'Trending', note: 'Ranked by 24h volume.' },
+    { id: 'mcap', label: 'Market cap', note: 'Ranked by market cap: last trade price × 1B supply.' },
     { id: 'new', label: 'New', note: 'The newest launches.' },
     { id: 'graduating', label: 'Graduating', note: 'Closest to their graduation target, from verified on-chain reserves. At graduation, trading moves to a Meteora pool.' },
     { id: 'shipping', label: 'Shipping', note: 'The repositories whose developers shipped the most code this week.' },
@@ -48,6 +49,7 @@ export default function Home() {
   ]
   const panels = {
     trending: <Suspense fallback={<ContentSkeleton label="Loading markets"/>}><MarketListContent tab="Trending"/></Suspense>,
+    mcap: <Suspense fallback={<ContentSkeleton label="Loading markets"/>}><MarketListContent tab="Market cap"/></Suspense>,
     new: <Suspense fallback={<ContentSkeleton label="Loading markets"/>}><MarketListContent tab="New"/></Suspense>,
     graduating: <Suspense fallback={<GraduationRaceFallback/>}><GraduationRaceContent/></Suspense>,
     shipping: <Suspense fallback={<ContentSkeleton label="Loading what builders shipped"/>}><ShippingLeadersContent/></Suspense>,
@@ -105,13 +107,13 @@ const homeLists = cache(async () => {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
   const promotable = await promotableMarkets(shownMarkets(markets))
   const notice = unavailable || (!promotable && 'Markets are temporarily unavailable.')
-  return { notice, usdPerSol, tabs: homeMarketTabs(withModelFacts(await withPulse(featuredMarkets(promotable ?? [])), { schedule: after })) }
+  return { notice, usdPerSol, tabs: homeMarketTabs(withModelFacts(await withPulse(featuredMarkets(promotable ?? [])), { schedule: after }), { usdPerSol }) }
 })
 
 async function MarketListContent({ tab }) {
   const { notice, usdPerSol, tabs } = await homeLists()
   return <>{notice && <p className="subtle-notice">{notice}</p>}<MarketTable markets={tabs[tab]} usdPerSol={usdPerSol}
-    empty={tab === 'Trending' ? 'Nothing has traded in the last 24 hours. See the newest launches under New.' : 'No indexed markets yet. Paste a repository above to start one.'}/></>
+    empty={tab === 'Trending' ? 'Nothing has traded in the last 24 hours. See the newest launches under New.' : tab === 'Market cap' ? 'No market has traded yet.' : 'No indexed markets yet. Paste a repository above to start one.'}/></>
 }
 
 // Hugging Face model markets (HF_MARKETS_ENABLED only), under the same do-not-promote rule as the lists.
