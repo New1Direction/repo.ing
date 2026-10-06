@@ -89,6 +89,9 @@ export const PINNED_GROUPS = [
   // Bundle launches: migration 0060 from 0059, the market stamp and the bundles table, and the partner-fee paths that skip bundle
   // markets (docs/BUNDLE_LAUNCH.md).
   { files: ['bundles-db'], databaseUrl: launchtest('repoing_bundles_test'), selfManaged: true },
+  // Bundle launches through the worker on the bundle validator (scripts/ci/start-bundle-validator.sh, started when none is running):
+  // the server-signed launch, its evidence, the vault, routing, a failed raise and graduation.
+  { files: ['bundle-launch-chain'], databaseUrl: launchtest('repoing_bundle_launch_chain_test'), selfManaged: true },
   // Contributor early access launches (step 4): the config, platform and lookup table, then launches through the coordinator on the
   // early access validator (scripts/ci/start-early-access-validator.sh, started when none is running), and a SOL launch beside them.
   { files: ['early-access-launch-chain'], databaseUrl: launchtest('repoing_early_access_launch_chain_test'), selfManaged: true },
