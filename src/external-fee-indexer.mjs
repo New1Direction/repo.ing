@@ -50,6 +50,9 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
   }
 
   async function processMarket(market, { readGraduated = () => true } = {}) {
+    // A contributor early access market (a Token-2022 transfer-hook pool, docs/EARLY_ACCESS.md) is not indexed here yet: it is
+    // reported as skipped, never as an error on every pass.
+    if (market.earlyAccessEnd || market.transferHookProgram) return { githubRepoId: market.repoId, pool: market.pool, status: 'SKIPPED', reason: 'early access market' }
     const client = await databasePool.connect()
     const poolKey = new PublicKey(market.pool)
     const repoId = BigInt(market.repoId)
@@ -145,7 +148,8 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
   async function runOnce() {
     // SOL markets only: stock-paired markets are indexed by stock-fee-indexer.mjs into the stock ledgers.
     const { rows } = await databasePool.query(`select github_repo_id::text as "repoId", mint, pool,
-      launch_signature as "launchSignature", creator_wallet as "creatorWallet", bundle_id::text as "bundleId"${schedule ? ACTIVITY_COLUMNS : ''} from markets where status = 'confirmed'
+      launch_signature as "launchSignature", creator_wallet as "creatorWallet", bundle_id::text as "bundleId",
+      early_access_end as "earlyAccessEnd", transfer_hook_program as "transferHookProgram"${schedule ? ACTIVITY_COLUMNS : ''} from markets where status = 'confirmed'
       and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null order by github_repo_id`)
     const results = []
     if (!schedule) {

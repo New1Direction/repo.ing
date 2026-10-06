@@ -34,8 +34,11 @@ const RETRY_DELAYS_MS = [300, 700, 1500]
 const SEEN_MAX = 4000
 const QUEUE_MAX = 500
 
+// Contributor early access markets (transfer-hook pools on their own config) wait for their own indexing: listed now, their
+// config would not resolve on every refresh.
 const SOL_MARKETS = `select github_repo_id::text as "repoId", mint, pool from markets
-  where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null`
+  where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized' and quote_asset_id is null
+  and early_access_end is null and transfer_hook_program is null`
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 const errorCode = error => error?.code === '42P01' ? 'NOT_MIGRATED' : /^[A-Z][A-Z0-9_]{3,60}$/.test(error?.message ?? '') ? error.message
