@@ -107,6 +107,6 @@ export function repoFactsView(repo, pulse = null, now = Date.now(), { promoted =
     scoreDetail: `Stars ${parts.stars}/${REPO_SCORE_MAX.stars} · forks ${parts.forks}/${REPO_SCORE_MAX.forks} · age ${parts.age}/${REPO_SCORE_MAX.age} · activity ${parts.activity}/${REPO_SCORE_MAX.activity}` }
 }
 
-export const REPO_FACTS_TIP = `From GitHub. New repo: created in the last ${NEW_REPO_DAYS} days or fewer than ${NEW_REPO_MIN_STARS} stars; repo.ing doesn't feature `
-  + `its market until it reaches ${PROMOTION_MIN_PERCENT}% of its graduation target. Repo score (0–100): stars up to 40, forks up to 15, `
+export const REPO_FACTS_TIP = `From GitHub. New repo: created in the last ${NEW_REPO_DAYS} days or fewer than ${NEW_REPO_MIN_STARS} stars; its market is labeled `
+  + `and left out of the ticker and launch posts until it reaches ${PROMOTION_MIN_PERCENT}% of its graduation target. Repo score (0–100): stars up to 40, forks up to 15, `
   + 'age up to 20, and this week\'s developers and commits up to 25.'
