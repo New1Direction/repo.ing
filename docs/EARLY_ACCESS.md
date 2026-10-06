@@ -20,6 +20,14 @@ offers or accepts early access; nothing is deployed.
 | Contributor | A GitHub account with at least 1 commit in the repository (GitHub's contributor list), bots excluded, with a wallet linked to that account on repo.ing. |
 | Fee | Flat 1.75% (the `builders` curve), not the anti-sniper launch fee: during the window only contributors can buy. |
 
+Two more rules in the same program (owner, 2026-10-06), each one the launcher selects; any mix of the three is possible, and
+star unlocks needs the fair ramp:
+
+| Rule | Decision |
+| --- | --- |
+| Fair ramp | One wallet can hold at most 2% of the supply at the start. The limit rises in a straight line to 10% while the curve sells, and there is no limit from 50% curve progress on (the 10% end point is the agent's choice; the owner set 2% and 50%). |
+| Star unlocks | Every 100 GitHub stars the repository gains after the launch add 0.5% of the supply to the fair ramp's limit (the oracle reports the star count), up to a cap stored per mint (+5% suggested; stars never lift the limit away). |
+
 ## The program
 
 Program id `Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep` (its keypair is in the main checkout's git-ignored `secrets/`).
@@ -30,21 +38,42 @@ Anchor 1.2. Client: `src/early-access-hook.mjs`.
 | Account | Address | Holds |
 | --- | --- | --- |
 | Platform | `["platform"]` | admin (repo.ing's launch co-signer) and oracle (keeps lists current) |
-| Mint config | `["config", mint]` | repository id, window end, rent receiver and its deposit, the list's bump |
+| Mint config | `["config", mint]` | repository id, rules, window end, rent receiver and its deposit, the list's bump, the curve's base vault, ramp and star settings, the last star count |
 | Allow list | `["allow", mint]` | sorted wallet keys (at most 1,024), read by binary search and changed in place (never copied to the 32 KiB heap) |
-| Extra account metas | `["extra-account-metas", mint]` | tells Token-2022 to pass the mint config and the allow list |
+| Extra account metas | `["extra-account-metas", mint]` | tells Token-2022 to pass the mint config, the allow list and the curve's base vault |
 
-Both extra accounts are derived from the mint alone. Meteora's DBC SDK resolves a hook's accounts with the default key as
+The config and the list are derived from the mint alone, and the vault is a fixed address stored at setup. Meteora's DBC SDK resolves a hook's accounts with the default key as
 source, destination and owner, so an account seeded from the receiver (one "pass" per wallet) would break its swap and claim
 builders. One list per mint also works for Phantom, Jupiter and any other client.
 
-**The rule** (`transfer_hook`, run by Token-2022 on every transfer). Until `early_access_end`, a transfer of more than 0
-tokens goes through only to
-- a token account owned by Meteora DBC's pool authority `FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM` (a sell), or
-- an associated token account (ImmutableOwner) whose owner is on the allow list. Any other token account could change owner
-  after receiving, which would let a contributor pass tokens on.
+**The rules** (`transfer_hook`, run by Token-2022 on every transfer). A transfer of 0 tokens, and a transfer to a token
+account owned by Meteora DBC's pool authority `FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM` (a sell), always pass. Otherwise:
 
-After the window every transfer goes through, and the hook no longer reads the list.
+- **Contributor early access** (`RULE_EARLY_ACCESS`): until `early_access_end`, only the associated token account of an owner
+  on the allow list can receive (the hook derives the ATA and compares). Any other token account could change owner after
+  receiving, which would let a contributor pass tokens on. After the window the hook no longer reads the list.
+- **Fair ramp** (`RULE_FAIR_RAMP`): the receiving account may hold at most `start_bps` + (`end_cap_bps` − `start_bps`) × sold
+  ÷ span of the supply. Sold is how far the curve's base vault has emptied from `vault_start` (the span ends at `vault_end`),
+  *minus what the receiving account held before this transfer*: a wallet's own tokens are never progress for it, so neither
+  one large buy nor many small ones can carry a wallet past its limit. A buy from the vault is measured against the vault as
+  it was before the buy. Once others have sold the whole span there is no limit for that wallet; if sells refill the vault
+  above the span's end, the limit comes back (holders can always sell). A large holder may need others to buy before it can
+  buy more. Only the receiver's associated token account can receive while the limit applies (a second account per owner,
+  even one with ImmutableOwner, would hold the limit again). The limit may rise at most one token per token sold
+  (`init_mint` refuses a steeper ramp). The hook checks that the vault is a Token-2022 account of the mint owned by DBC's
+  pool authority before reading it, and `init_mint` checks that it is the pool's own vault.
+- **Star unlocks** (`RULE_STAR_UNLOCKS`, with the fair ramp only): every `star_step` stars gained since `stars_at_launch`, as
+  the oracle last reported, add `star_bonus_bps` to the limit, at most `star_max_bonus_bps` whatever the oracle reports.
+  Stars lost never lower the limit below the ramp's own. Set `stars_at_launch` from a fresh read at prepare, or the first
+  report gives an instant bonus.
+
+A transfer into a Token-2022 account owned by DBC's pool authority that is not the pool's vault (anyone can create one) skips
+the rules, but only DBC can sign for that owner and it signs only for its pools' vaults: the tokens are locked for good, and
+the sender gains nothing. The supply is read live, so a burn lowers every limit in proportion.
+
+A wallet with many addresses can still hold more than the limit across them: the ramp makes that more expensive, not
+impossible. `walletCapBps(config, vaultBalance)` in the client computes the limit exactly as the hook does, so a page can
+show it and size a buy as the limit minus what the wallet holds.
 
 **Instructions**
 
@@ -52,16 +81,19 @@ After the window every transfer goes through, and the hook no longer reads the l
 | --- | --- | --- |
 | `init_platform` | the program's upgrade authority, once | sets admin and oracle (neither may be the default key) |
 | `set_platform` | admin | changes admin and oracle |
-| `init_mint` | admin authorizes, `payer` pays | window end (now < end <= now + 24 h; there is no "off"), first wallets; creates the three mint accounts. No instruction changes the window later. |
+| `init_mint` | admin authorizes, `payer` pays | the rules (a bit set, not empty), the pool and its base vault (accounts; the vault must be DBC's `["token_vault", mint, pool]`), the window end (with early access: now < end <= now + 24 h; without it: 0) and first wallets, the ramp settings (present with the fair ramp only); creates the three mint accounts. Nothing changes later except the star count. |
+| `report_stars` | oracle only | the repository's star count now (star unlocks only; it may go down) |
 | `add_wallets` | oracle only, during the window | up to 24 wallets per call; the oracle pays for the larger list |
 | `remove_wallets` | oracle or admin | up to 24 wallets per call; the launch transaction uses it with the admin's signature |
 | `close_allow_list` | anyone, after the window | the payer of `init_mint` gets its deposit back, the oracle the rest |
 
 Errors (Anchor numbers from 6000): NotUpgradeAuthority, NotAdmin, NotOracle, BadWindow, TooManyWallets, WindowClosed,
-WindowOpen, BadAllowList, BadDestination, NotAssociatedAccount (6009), NotContributor (6010), MathOverflow, BadKey.
+WindowOpen, BadAllowList, BadDestination, NotAssociatedAccount (6009), NotContributor (6010), MathOverflow, BadKey, WalletLimit
+(6013), BadVault, BadRules, BadRamp.
 `hookErrorName` names them from the hook's own failure line only: DBC and Token-2022 report the same numbers.
 
-**What people trust.** The oracle decides who is on a list; it cannot change a window. The admin sets a token's window once
+**What people trust.** The oracle decides who is on a list and reports the star count, which can raise a fair ramp's limit
+by at most the mint's star cap; it cannot change a window or the ramp. The admin sets a token's window once
 and can take wallets off a list, but cannot add them (it signs every launch, so it is the hotter key). The upgrade authority
 can replace the program, and the hook runs on every transfer of every early access token until its curve is full: a broken
 upgrade (or closing the program) would stop every such token from trading, sells included, until fixed. It cannot move
@@ -98,7 +130,7 @@ path's limits allow it).
 
 ## Costs (mainnet)
 
-- Program account: about 2.4 SOL for 345,696 bytes (returned if the program is closed).
+- Program account: about 2.6 SOL for 379,392 bytes (returned if the program is closed).
 - Lookup table: about 0.004 SOL.
 - Per launch: the three mint accounts, about 0.004 SOL, paid by the launcher; the list's share comes back when it is closed.
 
@@ -174,10 +206,10 @@ Order: deploy the program, init the platform, create the config, create the tabl
    (`early_access_end`, `transfer_hook_program`) with status `prepared`; a reused reservation clears both first.
 3. The transaction is v0 with `EARLY_ACCESS_LOOKUP_TABLE`: unit limit, unit price (simulated units +20%, at least +40k, priced
    and capped as every launch), `init_mint` (payer: the launcher; admin: the creator signer; the launcher listed only with a first
-   buy), DBC `createPoolWithFirstBuyWithTransferHook` (`TransferHookBase` slice of 4, `transferHookAccounts(mint)`) or
+   buy), DBC `createPoolWithFirstBuyWithTransferHook` (`TransferHookBase` slice of 5, `transferHookAccounts(mint, vault)`) or
    `createPoolWithTransferHook` without a buy (the SDK's own compute budget instructions dropped), then `remove_wallets` for the
    launcher unless its wallet is linked to a contributor in the snapshot. Measured on mainnet's programs, with the production
-   metadata link: 1,190 bytes with a first buy and a short name, 1,223 with the longest ASCII name and ticker (32 and 10), 878
+   metadata link: 1,190 bytes with a first buy and a short name, 1,223 with the longest ASCII name and ticker (32 and 10) — about 4 bytes more since the fair ramp change (the rules byte, the ramp's empty option, the pool and vault as account indexes), so about 1,194 and 1,227 — 878
    without a buy; about 205,000–216,000 compute units with a first buy (limit about 245,000–260,000). A name of multi-byte
    characters can still pass the length check and not fit: that prepare is refused with a message ("use a shorter token name or
    ticker, or launch without an initial buy"). The review response also carries the window end, the contributor count and how
@@ -245,6 +277,10 @@ after any change to `programs/early-access-hook`. The chain tests start `scripts
 3. Database, switches and the GitHub-to-wallet link for contributors. Done.
 4. The early access config and the launch (v0 transaction, lookup table, window on the form, contributor list at prepare). Done
    (dark; see above).
+4b. Fair ramp and star unlocks in the program (this change). Left for the launch: the form's two options, the ramp settings
+   at prepare (`vault_start` = the supply, `vault_end` = the vault's balance at 50% curve progress, from the curve), sizing
+   the launcher's first buy under 2%; for the oracle: reporting stars; for trades: showing the limit and refusing a buy past
+   it with its own message.
 5. Curve trades, charts, lists and indexers for hook pools.
 6. Claims: builder fees, builder allocation, discovery and platform fees.
 7. Graduation and DAMM v2 trades with a Token-2022 market token.

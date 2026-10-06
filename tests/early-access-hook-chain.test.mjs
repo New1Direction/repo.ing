@@ -8,13 +8,13 @@ import { join } from 'node:path'
 import { AddressLookupTableProgram, ComputeBudgetProgram, Connection, Keypair, PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY, SystemProgram, Transaction,
   TransactionMessage, VersionedTransaction, sendAndConfirmTransaction } from '@solana/web3.js'
 import { ASSOCIATED_TOKEN_PROGRAM_ID, ExtensionType, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction,
-  createInitializeAccount3Instruction, createTransferCheckedInstruction, createTransferCheckedWithTransferHookInstruction, getAccountLenForMint,
+  createInitializeAccount3Instruction, createInitializeImmutableOwnerInstruction, getAccountLen, createTransferCheckedInstruction, createTransferCheckedWithTransferHookInstruction, getAccountLenForMint,
   getAssociatedTokenAddressSync, getExtensionTypes, getMint, getTransferHook } from '@solana/spl-token'
 import { AccountsType, DAMM_V2_MIGRATION_FEE_ADDRESS, DynamicBondingCurveClient, SwapMode, TokenType, deriveDammV2PoolAddress, deriveDbcEventAuthority,
   deriveDbcPoolAddress, deriveDbcPoolAuthority } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { CpAmm, SwapMode as AmmSwapMode } from '@meteora-ag/cp-amm-sdk'
 import { buildLaunchCurve } from '../src/launch-curve.mjs'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWalletsInstruction, closeAllowListInstruction, decodeAllowList, decodeMintConfig, decodePlatform,
+import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, RULES, addWalletsInstruction, dbcBaseVault, reportStarsInstruction, walletCapBps, closeAllowListInstruction, decodeAllowList, decodeMintConfig, decodePlatform,
   earlyAccessAddresses, hookErrorName, initMintInstruction, initPlatformInstruction, platformAddress, removeWalletsInstruction,
   setPlatformInstruction, transferHookAccounts } from '../src/early-access-hook.mjs'
 
@@ -107,18 +107,18 @@ test('contributor early access on mainnet\'s programs: one-transaction launch, t
     const config = Keypair.generate()
     await send(await dbc.partner.createConfigWithTransferHook({ config: config.publicKey, feeClaimer: partner.publicKey, leftoverReceiver: partner.publicKey,
       payer: partner.publicKey, quoteMint: NATIVE_MINT, transferHookProgram: HOOK, ...buildLaunchCurve('builders'), tokenType: TokenType.Token2022 }), [partner, config])
-    const mint = Keypair.generate(), pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, config.publicKey)
+    const mint = Keypair.generate(), pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, config.publicKey), vault = dbcBaseVault(mint.publicKey, pool)
     const { allowList, config: mintConfig } = earlyAccessAddresses(mint.publicKey)
     const ata = owner => getAssociatedTokenAddressSync(mint.publicKey, owner.publicKey ?? owner, false, TOKEN_2022_PROGRAM_ID)
     const held = async owner => BigInt((await connection.getTokenAccountBalance(ata(owner)).catch(() => ({ value: { amount: '0' } }))).value.amount)
-    let end
+    let end, lookup
 
     await t.test('a launch fits one v0 transaction: hook setup, pool, first buy, launcher off the list', async () => {
       // Lamports sent to the allow list's address first do not stop the setup.
       await send(new Transaction().add(SystemProgram.transfer({ fromPubkey: outsider.publicKey, toPubkey: allowList, lamports: 1_000_000 })), [outsider])
       const now = await chainTime()
       const setup = (admin, earlyAccessEnd) => () => send(new Transaction().add(initMintInstruction({ payer: launcher.publicKey, admin: admin.publicKey,
-        mint: mint.publicKey, repoId: 1, earlyAccessEnd, wallets: [] })), [launcher, admin].filter((key, index, all) => all.indexOf(key) === index))
+        mint: mint.publicKey, repoId: 1, earlyAccessEnd, wallets: [], pool, vault })), [launcher, admin].filter((key, index, all) => all.indexOf(key) === index))
       assert.equal(await refusal(setup(outsider, now + WINDOW_SECONDS)), 'NotAdmin')
       assert.equal(await refusal(setup(creator, now + MAX_EARLY_ACCESS_SECONDS + 600)), 'BadWindow')
       assert.equal(await refusal(setup(creator, now - 60)), 'BadWindow')
@@ -127,9 +127,9 @@ test('contributor early access on mainnet\'s programs: one-transaction launch, t
         createPoolParam: { name: 'Early Access', symbol: 'EARLY', uri: 'https://repo.ing/early.json', payer: launcher.publicKey,
           poolCreator: creator.publicKey, config: config.publicKey, baseMint: mint.publicKey, transferHookProgram: HOOK },
         firstBuyParam: { buyer: launcher.publicKey, buyAmount: new BN(100_000_000), minimumAmountOut: new BN(1), referralTokenAccount: null,
-          transferHookAccountsInfo: { slices: [{ accountsType: AccountsType.TransferHookBase, length: 4 }] }, transferHookAccounts: transferHookAccounts(mint.publicKey) } })
+          transferHookAccountsInfo: { slices: [{ accountsType: AccountsType.TransferHookBase, length: 5 }] }, transferHookAccounts: transferHookAccounts(mint.publicKey, vault) } })
       const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
-        initMintInstruction({ payer: launcher.publicKey, admin: creator.publicKey, mint: mint.publicKey, repoId: 1388219884, earlyAccessEnd: end, wallets: [launcher.publicKey] }),
+        initMintInstruction({ payer: launcher.publicKey, admin: creator.publicKey, mint: mint.publicKey, repoId: 1388219884, earlyAccessEnd: end, wallets: [launcher.publicKey], pool, vault }),
         ...created.instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId)),
         removeWalletsInstruction({ authority: creator.publicKey, mint: mint.publicKey, wallets: [launcher.publicKey] })]
       const legacy = new Transaction({ feePayer: launcher.publicKey, ...await connection.getLatestBlockhash() }).add(...instructions)
@@ -140,7 +140,6 @@ test('contributor early access on mainnet\'s programs: one-transaction launch, t
       await send(new Transaction().add(createTable, AddressLookupTableProgram.extendLookupTable({ payer: creator.publicKey, authority: creator.publicKey,
         lookupTable: table, addresses: [deriveDbcPoolAuthority(), deriveDbcEventAuthority(), DBC_PROGRAM, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID,
           SystemProgram.programId, SYSVAR_INSTRUCTIONS_PUBKEY, NATIVE_MINT, HOOK, platformAddress(), config.publicKey, ASSOCIATED_TOKEN_PROGRAM_ID] })), [creator])
-      let lookup
       for (let i = 0; i < 40 && !(lookup?.state.addresses.length); i++) { await sleep(250); lookup = (await connection.getAddressLookupTable(table)).value }
       assert.ok(lookup?.state.addresses.length, 'the lookup table is readable')
       // It is usable from the slot after its last extension.
@@ -221,6 +220,139 @@ test('contributor early access on mainnet\'s programs: one-transaction launch, t
       assert.equal((await connection.getAccountInfo(allowList)).data.length, 44 + expected.length * 32, 'no space past the last key')
       const bought = await buy(contributor, 20_000_000)()
       console.log(JSON.stringify({ listedWallets: expected.length, hookBuyComputeUnits: await units(bought) }))
+    })
+
+    // Fair ramp mints on the same config, without early access. `ramped`: 2% of the supply rising to 10% until the vault has
+    // sold 100M tokens, +0.5% per 100 stars gained. `flat`: 2% until then, so a transfer can meet the limit.
+    const SUPPLY = 10n ** 15n
+    function rampToken(name, rules, ramp) {
+      const keypair = Keypair.generate(), pool = deriveDbcPoolAddress(NATIVE_MINT, keypair.publicKey, config.publicKey)
+      const vault = dbcBaseVault(keypair.publicKey, pool), configAddress = earlyAccessAddresses(keypair.publicKey).config
+      const ata = owner => getAssociatedTokenAddressSync(keypair.publicKey, owner.publicKey ?? owner, false, TOKEN_2022_PROGRAM_ID)
+      const held = async owner => BigInt((await connection.getTokenAccountBalance(ata(owner)).catch(() => ({ value: { amount: '0' } }))).value.amount)
+      // The limit for `wallet` (a fresh wallet when omitted): its own tokens are not progress for it.
+      const cap = async wallet => {
+        const bps = walletCapBps(decodeMintConfig((await connection.getAccountInfo(configAddress)).data),
+          BigInt((await connection.getTokenAccountBalance(vault)).value.amount), wallet ? await held(wallet) : 0n)
+        return bps === null ? null : SUPPLY * BigInt(bps) / 10_000n
+      }
+      // ExactOut: the buyer ends up holding exactly `target`.
+      const buyTo = (wallet, target, maximumIn = 6_000_000_000) => async () => send(await dbc.pool.swap2WithTransferHook({ owner: wallet.publicKey,
+        payer: wallet.publicKey, pool, swapBaseForQuote: false, swapMode: SwapMode.ExactOut, amountOut: new BN(String(target - await held(wallet))),
+        maximumAmountIn: new BN(maximumIn), referralTokenAccount: null }), [wallet])
+      const sellHalf = wallet => async () => send(await dbc.pool.swap2WithTransferHook({ owner: wallet.publicKey, payer: wallet.publicKey, pool,
+        swapBaseForQuote: true, swapMode: SwapMode.ExactIn, amountIn: new BN(String((await held(wallet)) / 2n)), minimumAmountOut: new BN(0),
+        referralTokenAccount: null }), [wallet])
+      const sendTo = (from, to, amount) => async () => send(new Transaction().add(await createTransferCheckedWithTransferHookInstruction(connection,
+        ata(from), keypair.publicKey, to, from.publicKey, amount, 6, [], 'confirmed', TOKEN_2022_PROGRAM_ID)), [from])
+      const launch = async () => {
+        const created = await dbc.creator.createPoolWithTransferHook({ name, symbol: name.slice(0, 4).toUpperCase(), uri: 'https://repo.ing/ramp.json',
+          payer: launcher.publicKey, poolCreator: creator.publicKey, config: config.publicKey, baseMint: keypair.publicKey, transferHookProgram: HOOK })
+        const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+          initMintInstruction({ payer: launcher.publicKey, admin: creator.publicKey, mint: keypair.publicKey, repoId: 2, rules, pool, vault, ramp }),
+          ...created.instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId))]
+        const message = new TransactionMessage({ payerKey: launcher.publicKey, recentBlockhash: (await connection.getLatestBlockhash()).blockhash, instructions })
+          .compileToV0Message([lookup])
+        const tx = new VersionedTransaction(message)
+        tx.sign([launcher, creator, keypair])
+        const signature = await connection.sendTransaction(tx)
+        assert.equal((await connection.confirmTransaction({ signature, ...await connection.getLatestBlockhash() }, 'confirmed')).value.err, null)
+      }
+      return { mint: keypair.publicKey, pool, vault, configAddress, ata, held, cap, buyTo, sellHalf, sendTo, launch, ramp, rules }
+    }
+    const ramped = rampToken('Fair Ramp', RULES.FAIR_RAMP | RULES.STAR_UNLOCKS,
+      { startBps: 200, endCapBps: 1000, vaultStart: SUPPLY, vaultEnd: SUPPLY - 10n ** 14n, starsAtLaunch: 40, starStep: 100, starBonusBps: 50, starMaxBonusBps: 500 })
+    const flat = rampToken('Flat Ramp', RULES.FAIR_RAMP,
+      { startBps: 200, endCapBps: 200, vaultStart: SUPPLY, vaultEnd: SUPPLY - 10n ** 14n, starsAtLaunch: 0, starStep: 0, starBonusBps: 0, starMaxBonusBps: 0 })
+
+    await t.test('fair ramp + star unlocks without early access: set up in the launch transaction, checked on chain', async () => {
+      const bad = (rules, extra = {}, pool = ramped.pool) => () => send(new Transaction().add(initMintInstruction({ payer: launcher.publicKey, admin: creator.publicKey,
+        mint: ramped.mint, repoId: 2, rules, pool, vault: ramped.vault, ramp: { ...ramped.ramp, ...extra } })), [launcher, creator])
+      assert.equal(await refusal(bad(ramped.rules, {}, Keypair.generate().publicKey)), 'BadVault', 'the vault must be the pool\'s own')
+      assert.equal(await refusal(bad(ramped.rules, { vaultEnd: SUPPLY - 7n * 10n ** 13n })), 'BadRamp', 'a limit rising faster than the curve sells')
+      assert.equal(await refusal(bad(ramped.rules, { starMaxBonusBps: 10 })), 'BadRamp', 'a star cap below one step')
+      assert.equal(await refusal(bad(ramped.rules, { startBps: 1200 })), 'BadRamp', 'start above the end cap')
+      assert.equal(await refusal(bad(ramped.rules, { vaultEnd: SUPPLY })), 'BadRamp', 'an empty span')
+      assert.equal(await refusal(bad(ramped.rules, { starStep: 0 })), 'BadRamp')
+      assert.equal(await refusal(bad(RULES.FAIR_RAMP)), 'BadRules', 'star settings without star unlocks')
+      await ramped.launch()
+      await flat.launch()
+      assert.equal(BigInt((await connection.getTokenAccountBalance(ramped.vault)).value.amount), SUPPLY, 'DBC mints the whole supply into the base vault')
+      const stored = decodeMintConfig((await connection.getAccountInfo(ramped.configAddress)).data)
+      assert.deepEqual([stored.rules, stored.earlyAccessEnd, stored.vault.toBase58(), stored.starsNow, stored.ramp],
+        [ramped.rules, 0, ramped.vault.toBase58(), 40, ramped.ramp])
+      assert.deepEqual([await ramped.cap(), await flat.cap()], [SUPPLY / 50n, SUPPLY / 50n], '2% at the start')
+    })
+
+    await t.test('the fair ramp: a buy is held to the limit before it, and the limit rises as the curve sells', async () => {
+      const [first, whale] = [await funded(10_000_000_000), await funded(40_000_000_000)]
+      const cap = await ramped.cap()
+      // One buy of the whole ramp would end past it, where there is no limit: it is measured against the 2% before it.
+      assert.equal(await refusal(ramped.buyTo(whale, ramped.ramp.vaultStart - ramped.ramp.vaultEnd + 1_000_000n, 35_000_000_000)), 'WalletLimit')
+      assert.equal(await refusal(ramped.buyTo(first, cap + 1n)), 'WalletLimit', 'one unit past 2% is refused')
+      const bought = await ramped.buyTo(first, cap)()
+      console.log(JSON.stringify({ rampBuyComputeUnits: await units(bought) }))
+      assert.equal(await ramped.held(first), cap, 'exactly the limit is fine')
+      // Its own buy is not progress for it: many small buys cannot ratchet one wallet past 2%.
+      assert.equal(await ramped.cap(first), cap)
+      assert.equal(await refusal(ramped.buyTo(first, cap + 1n)), 'WalletLimit')
+      const risen = await ramped.cap()
+      assert.equal(risen, SUPPLY * (200n + 800n * cap / 10n ** 14n) / 10_000n, 'the curve sold 2% of the supply: the limit rose by 0.8 × that')
+      await ramped.sellHalf(first)()
+    })
+
+    await t.test('transfers meet the limit too; ATAs only while it applies; selling from a wallet at the limit works', async () => {
+      const [a, b] = [await funded(10_000_000_000), await funded(10_000_000_000)]
+      const cap = await flat.cap()
+      await flat.buyTo(a, cap)()
+      await send(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(b.publicKey, flat.ata(b), b.publicKey, flat.mint,
+        TOKEN_2022_PROGRAM_ID)), [b])
+      await flat.sendTo(a, flat.ata(b), cap)()
+      assert.equal(await flat.held(b), cap, 'a transfer up to the limit passes')
+      await flat.buyTo(a, cap)()
+      assert.equal(await refusal(flat.sendTo(a, flat.ata(b), 1n)), 'WalletLimit', 'one unit past it does not')
+      const plain = Keypair.generate(), space = getAccountLenForMint(await getMint(connection, flat.mint, 'confirmed', TOKEN_2022_PROGRAM_ID))
+      await send(new Transaction().add(SystemProgram.createAccount({ fromPubkey: a.publicKey, newAccountPubkey: plain.publicKey, space,
+        lamports: await connection.getMinimumBalanceForRentExemption(space), programId: TOKEN_2022_PROGRAM_ID }),
+        createInitializeAccount3Instruction(plain.publicKey, flat.mint, a.publicKey, TOKEN_2022_PROGRAM_ID)), [a, plain])
+      assert.equal(await refusal(flat.sendTo(a, plain.publicKey, 1_000n)), 'NotAssociatedAccount', 'a second account per owner would dodge the limit')
+      // Not even one with ImmutableOwner: only the owner's associated token account.
+      const fixed = Keypair.generate(), fixedSpace = getAccountLen([ExtensionType.ImmutableOwner, ExtensionType.TransferHookAccount])
+      await send(new Transaction().add(SystemProgram.createAccount({ fromPubkey: a.publicKey, newAccountPubkey: fixed.publicKey, space: fixedSpace,
+        lamports: await connection.getMinimumBalanceForRentExemption(fixedSpace), programId: TOKEN_2022_PROGRAM_ID }),
+        createInitializeImmutableOwnerInstruction(fixed.publicKey, TOKEN_2022_PROGRAM_ID),
+        createInitializeAccount3Instruction(fixed.publicKey, flat.mint, a.publicKey, TOKEN_2022_PROGRAM_ID)), [a, fixed])
+      assert.equal(await refusal(flat.sendTo(a, fixed.publicKey, 1_000n)), 'NotAssociatedAccount')
+      await flat.sellHalf(b)()
+    })
+
+    await t.test('star unlocks: only the oracle reports stars; 300 new stars add 1.5% to the limit', async () => {
+      assert.equal(await refusal(() => send(new Transaction().add(reportStarsInstruction({ oracle: outsider.publicKey, mint: ramped.mint, stars: 9999 })), [outsider])), 'NotOracle')
+      assert.equal(await refusal(() => send(new Transaction().add(reportStarsInstruction({ oracle: oracle.publicKey, mint: flat.mint, stars: 9 })), [oracle])), 'BadRules',
+        'a fair ramp without star unlocks takes no stars')
+      const before = await ramped.cap()
+      await send(new Transaction().add(reportStarsInstruction({ oracle: oracle.publicKey, mint: ramped.mint, stars: 340 })), [oracle])
+      assert.equal(decodeMintConfig((await connection.getAccountInfo(ramped.configAddress)).data).starsNow, 340)
+      const after = await ramped.cap()
+      assert.equal(after - before, SUPPLY * 150n / 10_000n, '+1.5% of the supply')
+      const fan = await funded(10_000_000_000)
+      await ramped.buyTo(fan, after)()
+      assert.equal(await ramped.held(fan), after, 'a wallet can hold the raised limit')
+      // However many stars the oracle reports, they add at most the mint's star cap (+5%).
+      await send(new Transaction().add(reportStarsInstruction({ oracle: oracle.publicKey, mint: ramped.mint, stars: 4_000_000_000 })), [oracle])
+      const capped = await ramped.cap()
+      assert.ok(capped !== null, 'stars never lift the limit away')
+      await send(new Transaction().add(reportStarsInstruction({ oracle: oracle.publicKey, mint: ramped.mint, stars: 40 })), [oracle])
+      assert.equal(capped - await ramped.cap(), SUPPLY * 500n / 10_000n, 'exactly +5% at most')
+    })
+
+    await t.test('once wallets under the limit have bought past the ramp, there is no limit', async () => {
+      let buyers = 0
+      for (let cap = await ramped.cap(); cap !== null && buyers < 12; cap = await ramped.cap(), buyers++) await ramped.buyTo(await funded(10_000_000_000), cap)()
+      assert.equal(await ramped.cap(), null, `the ramp is over after ${buyers} more wallets bought up to the limit`)
+      const whale = await funded(30_000_000_000)
+      await ramped.buyTo(whale, SUPPLY * 12n / 100n, 25_000_000_000)()
+      assert.equal(await ramped.held(whale), SUPPLY * 12n / 100n, 'one wallet holds 12% now, above the ramp\'s 10%')
     })
 
     await t.test('after the window: everyone trades; the list closes, its rent back to the launch payer and the oracle', async () => {

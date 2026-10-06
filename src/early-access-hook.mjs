@@ -1,10 +1,16 @@
-// Client for the contributor early access transfer hook (programs/early-access-hook, docs/EARLY_ACCESS.md): its addresses,
-// instructions, accounts and errors. The program id is the declare_id! of programs/early-access-hook/src/lib.rs.
+// Client for repo.ing's launch-rules transfer hook (programs/early-access-hook, docs/EARLY_ACCESS.md): contributor early
+// access, fair ramp and star unlocks. Its addresses, instructions, accounts and errors. The program id is the declare_id! of
+// programs/early-access-hook/src/lib.rs.
 import { createHash } from 'node:crypto'
 import { PublicKey, SystemProgram, TransactionInstruction } from '@solana/web3.js'
 
 export const EARLY_ACCESS_HOOK_PROGRAM_ID = new PublicKey('Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep')
 const UPGRADEABLE_LOADER = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
+const DBC_PROGRAM_ID = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
+
+// The rules a mint turns on at setup (MintConfig.rules bits). Star unlocks needs the fair ramp.
+export const RULES = Object.freeze({ EARLY_ACCESS: 1, FAIR_RAMP: 2, STAR_UNLOCKS: 4 })
+export const BPS = 10_000
 
 // The program's own limits (lib.rs).
 export const MAX_EARLY_ACCESS_SECONDS = 24 * 60 * 60
@@ -13,7 +19,8 @@ export const MAX_ALLOW_LIST = 1024
 
 // Anchor error numbers, in the order of HookError.
 const ERROR_NAMES = ['NotUpgradeAuthority', 'NotAdmin', 'NotOracle', 'BadWindow', 'TooManyWallets', 'WindowClosed', 'WindowOpen',
-  'BadAllowList', 'BadDestination', 'NotAssociatedAccount', 'NotContributor', 'MathOverflow', 'BadKey']
+  'BadAllowList', 'BadDestination', 'NotAssociatedAccount', 'NotContributor', 'MathOverflow', 'BadKey', 'WalletLimit', 'BadVault',
+  'BadRules', 'BadRamp']
 export const HOOK_ERRORS = Object.freeze(Object.fromEntries(ERROR_NAMES.map((name, index) => [6000 + index, name])))
 
 const ALLOW_LIST_DISCRIMINATOR = Buffer.from('ea-allow')
@@ -40,14 +47,20 @@ export function earlyAccessAddresses(mint, programId = EARLY_ACCESS_HOOK_PROGRAM
   }
 }
 
+// The curve's base vault: DBC's ["token_vault", mint, pool]. The fair ramp reads how much it still holds.
+export const dbcBaseVault = (mint, pool) => pda([Buffer.from('token_vault'), key(mint).toBuffer(), key(pool).toBuffer()], DBC_PROGRAM_ID)
+
 // The accounts a transfer of the mint needs on top of Token-2022's own, in spl-token's resolution order (the extra
-// accounts, the hook program, its account list). Meteora DBC takes them as one TransferHookBase slice; they depend only on
-// the mint, so they can be named before the mint exists (the launch transaction's first buy).
-export function transferHookAccounts(mint, programId = EARLY_ACCESS_HOOK_PROGRAM_ID) {
+// accounts — config, allow list, base vault — then the hook program and its account list). Meteora DBC takes them as one
+// TransferHookBase slice; they depend only on the mint and its vault, so they can be named before the mint exists (the
+// launch transaction's first buy).
+export function transferHookAccounts(mint, vault, programId = EARLY_ACCESS_HOOK_PROGRAM_ID) {
   const { config, allowList, extraAccountMetas } = earlyAccessAddresses(mint, programId)
-  return [readonly(config), readonly(allowList), readonly(programId), readonly(extraAccountMetas)]
+  return [readonly(config), readonly(allowList), readonly(vault), readonly(programId), readonly(extraAccountMetas)]
 }
 
+const u8 = value => Buffer.from([value])
+const u16 = value => { const buffer = Buffer.alloc(2); buffer.writeUInt16LE(value); return buffer }
 const u32 = value => { const buffer = Buffer.alloc(4); buffer.writeUInt32LE(value); return buffer }
 const u64 = value => { const buffer = Buffer.alloc(8); buffer.writeBigUInt64LE(BigInt(value)); return buffer }
 const i64 = value => { const buffer = Buffer.alloc(8); buffer.writeBigInt64LE(BigInt(value)); return buffer }
@@ -70,14 +83,34 @@ export function setPlatformInstruction({ admin, newAdmin, newOracle, programId =
     [key(newAdmin).toBuffer(), key(newOracle).toBuffer()])
 }
 
-// A mint's window and first wallets; `payer` pays the rent and gets its share back when the allow list is closed. The window
-// must end in the future (the program refuses 0: there is no "early access off" for a mint set up here).
-export function initMintInstruction({ payer, admin, mint, repoId, earlyAccessEnd, wallets = [], programId = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
-  if (!Number.isSafeInteger(earlyAccessEnd) || earlyAccessEnd <= 0) throw Error('earlyAccessEnd must be a unix time in seconds')
+// One mint's rules (RULES bits), set once. Early access: the window end (a unix time in the future) and the first wallets;
+// without it, earlyAccessEnd is 0 and there are no wallets. pool: the mint's DBC pool; vault: dbcBaseVault(mint, pool) (the
+// program checks it). ramp (fair ramp, star unlocks): { startBps, endCapBps, vaultStart, vaultEnd, starsAtLaunch, starStep,
+// starBonusBps, starMaxBonusBps }, sent with the fair ramp only.
+// `payer` pays the rent and gets its share back when the allow list is closed.
+export function initMintInstruction({ payer, admin, mint, repoId, rules = RULES.EARLY_ACCESS, earlyAccessEnd = 0, wallets = [], pool, vault, ramp = {},
+  programId = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
+  if (!Number.isInteger(rules) || rules <= 0 || rules > 7) throw Error('rules must be a non-empty set of RULES')
+  if (rules & RULES.STAR_UNLOCKS && !(rules & RULES.FAIR_RAMP)) throw Error('Star unlocks needs the fair ramp')
+  if (rules & RULES.EARLY_ACCESS) {
+    if (!Number.isSafeInteger(earlyAccessEnd) || earlyAccessEnd <= 0) throw Error('earlyAccessEnd must be a unix time in seconds')
+  } else if (earlyAccessEnd !== 0 || wallets.length) throw Error('Without early access there is no window and no wallets')
+  if (!pool || !vault) throw Error('pool and vault are the mint\'s DBC pool and its base vault (dbcBaseVault)')
   const { config, allowList, extraAccountMetas } = earlyAccessAddresses(mint, programId)
+  // ramp is Option<RampSettings>: present with the fair ramp only.
+  const r = { startBps: 0, endCapBps: 0, vaultStart: 0n, vaultEnd: 0n, starsAtLaunch: 0, starStep: 0, starBonusBps: 0, starMaxBonusBps: 0, ...ramp }
+  const settings = rules & RULES.FAIR_RAMP ? [u8(1), u16(r.startBps), u16(r.endCapBps), u64(r.vaultStart), u64(r.vaultEnd), u32(r.starsAtLaunch),
+    u32(r.starStep), u16(r.starBonusBps), u16(r.starMaxBonusBps)] : [u8(0)]
   return instruction(programId, 'init_mint', [writable(payer, true), readonly(admin, true), readonly(platformAddress(programId)), readonly(mint),
-    writable(config), writable(allowList), writable(extraAccountMetas), readonly(SystemProgram.programId)],
-  [u64(repoId), i64(earlyAccessEnd), walletList(wallets)])
+    readonly(pool), readonly(vault), writable(config), writable(allowList), writable(extraAccountMetas), readonly(SystemProgram.programId)],
+  [u64(repoId), u8(rules), i64(earlyAccessEnd), walletList(wallets), ...settings])
+}
+
+// Oracle: the repository's star count now (star unlocks only).
+export function reportStarsInstruction({ oracle, mint, stars, programId = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
+  if (!Number.isInteger(stars) || stars < 0 || stars > 0xffffffff) throw Error('stars must be a whole number')
+  return instruction(programId, 'report_stars', [readonly(oracle, true), readonly(platformAddress(programId)),
+    writable(earlyAccessAddresses(mint, programId).config)], [u32(stars)])
 }
 
 // Oracle only, while the window is open; the oracle pays for the larger list and gets that back when it is closed.
@@ -103,9 +136,32 @@ export function closeAllowListInstruction({ mint, rentReceiver, oracle, programI
 
 export function decodeMintConfig(data) {
   const buffer = Buffer.from(data)
-  if (buffer.length < 8 + 32 + 8 + 8 + 32 + 8 + 1 + 1 || !buffer.subarray(0, 8).equals(MINT_CONFIG_DISCRIMINATOR)) throw Error('Not an early access mint config')
-  return { mint: new PublicKey(buffer.subarray(8, 40)), repoId: buffer.readBigUInt64LE(40).toString(), earlyAccessEnd: Number(buffer.readBigInt64LE(48)),
-    rentReceiver: new PublicKey(buffer.subarray(56, 88)), listDeposit: buffer.readBigUInt64LE(88), allowBump: buffer[96], bump: buffer[97] }
+  if (buffer.length < 175 || !buffer.subarray(0, 8).equals(MINT_CONFIG_DISCRIMINATOR)) throw Error('Not an early access mint config')
+  return { mint: new PublicKey(buffer.subarray(8, 40)), repoId: buffer.readBigUInt64LE(40).toString(), rules: buffer[48],
+    earlyAccessEnd: Number(buffer.readBigInt64LE(49)), rentReceiver: new PublicKey(buffer.subarray(57, 89)), listDeposit: buffer.readBigUInt64LE(89),
+    allowBump: buffer[97], bump: buffer[98], vault: new PublicKey(buffer.subarray(99, 131)),
+    ramp: { startBps: buffer.readUInt16LE(131), endCapBps: buffer.readUInt16LE(133), vaultStart: buffer.readBigUInt64LE(135),
+      vaultEnd: buffer.readBigUInt64LE(143), starsAtLaunch: buffer.readUInt32LE(151), starStep: buffer.readUInt32LE(155), starBonusBps: buffer.readUInt16LE(159),
+      starMaxBonusBps: buffer.readUInt16LE(161) },
+    starsNow: buffer.readUInt32LE(163), starsUpdatedAt: Number(buffer.readBigInt64LE(167)) }
+}
+
+// The fair ramp's limit for one wallet, in basis points of the supply, as the hook computes it (null: no limit), from the
+// mint config, the base vault's balance now and what the wallet holds now (its own tokens never count as progress for it).
+// It is the limit the wallet's next buy is measured against (the hook adds a buy's own amount back to the vault), so a page
+// can show it and size a buy as the limit minus what the wallet holds.
+export function walletCapBps(config, vaultBalance, held = 0n) {
+  if (!(config.rules & RULES.FAIR_RAMP)) return null
+  const { startBps, endCapBps, vaultStart, vaultEnd, starsAtLaunch, starStep, starBonusBps, starMaxBonusBps } = config.ramp
+  const left = BigInt(vaultBalance), own = BigInt(held), span = vaultStart - vaultEnd
+  const raw = vaultStart > left ? vaultStart - left : 0n, sold = raw > own ? raw - own : 0n
+  if (sold >= span) return null
+  let cap = BigInt(startBps) + BigInt(endCapBps - startBps) * sold / span
+  if (config.rules & RULES.STAR_UNLOCKS) {
+    const bonus = BigInt(Math.max(0, config.starsNow - starsAtLaunch)) / BigInt(starStep) * BigInt(starBonusBps)
+    cap += bonus < BigInt(starMaxBonusBps) ? bonus : BigInt(starMaxBonusBps)
+  }
+  return cap >= BigInt(BPS) ? null : Number(cap)
 }
 
 export function decodePlatform(data) {

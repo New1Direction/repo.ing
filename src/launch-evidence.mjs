@@ -4,7 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getTransferHook, unpackMint } from '@solana/spl-token'
 import { ActivationType, DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { usesActivationClock } from './launch-clock.mjs'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID, decodeMintConfig, earlyAccessAddresses } from './early-access-hook.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID, RULES, decodeMintConfig, earlyAccessAddresses } from './early-access-hook.mjs'
 import { earlyAccessDbcConfig, isEarlyAccessMarket } from './early-access.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
@@ -160,7 +160,8 @@ function earlyAccessVerifier({ connection, dbc, earlyAccessConfig }) {
       return { state: 'mismatch', reason: 'Mint transfer hook is not the early access program' }
     }
     try { window = hookConfig.owner.equals(hook) ? decodeMintConfig(hookConfig.data) : null } catch {}
-    if (!window || !window.mint.equals(mint) || window.repoId !== String(market.githubRepoId) || window.earlyAccessEnd * 1000 !== end) {
+    if (!window || !window.mint.equals(mint) || window.repoId !== String(market.githubRepoId) || window.earlyAccessEnd * 1000 !== end ||
+      window.rules !== RULES.EARLY_ACCESS || !window.vault.equals(state.poolState.baseVault)) {
       return { state: 'mismatch', reason: 'Early access window on chain differs from the recorded window' }
     }
     return launchEvidence(market, transaction, state, fixed)
