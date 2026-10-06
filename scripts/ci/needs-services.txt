@@ -6,6 +6,7 @@ builder-allocation
 builder-binding
 builder-payouts
 builder-reinvest
+bundle-setup-chain
 bundle-vault-chain
 bundles-db
 claim
