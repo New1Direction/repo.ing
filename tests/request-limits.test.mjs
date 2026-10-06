@@ -75,7 +75,7 @@ test('every action the routes count has an allowance, and each fits several heav
   // costs every 15 s and after each edit, and polls a signed trade every 3 s; the launch form's review lasts 20 s.
   const heavy = { 'trade:quote': 25, 'trade:costs': 25, 'trade:depth': 3, 'trade:prepare': 2, 'trade:status': 20, 'launch:quote': 7, 'launch:prepare': 3, resolve: 5,
     // The raise page reads its bundle every 15 s; a backer prepares a deposit, a refund or a claim now and then.
-    'bundle:read': 6, 'bundle:prepare': 2 }
+    'bundle:read': 6, 'bundle:prepare': 2, 'bundle:submit': 2, 'bundle:send': 2 }
   assert.deepEqual(Object.keys(REQUEST_LIMITS).sort(), Object.keys(heavy).sort())
   for (const [action, { burst, perMinute }] of Object.entries(REQUEST_LIMITS)) {
     assert.ok(burst >= heavy[action] * 4, `${action}: four heavy visitors at once`)

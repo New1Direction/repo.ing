@@ -1,6 +1,8 @@
 // The bundles table (migration 0060) as the raise flow uses it. This flow inserts a row as 'opening' when it prepares a bundle's
-// create transaction and moves it to 'raising' once that transaction landed; the worker moves it on from there (launching,
-// launched, failed) and expires an 'opening' row that never landed. Amounts are lamports as text.
+// create transaction, records the one transaction repo.ing co-signs for it (create_signature, before sending) and moves it to
+// 'raising' once that transaction landed; it expires an 'opening' row only to replace one that can no longer land. The worker
+// moves rows on from there (launching, launched, failed) and expires stale 'opening' rows. Amounts are lamports as text.
+// pool: a pg Pool, or a client already holding a lock (the functions below only call query).
 
 export const LIVE_BUNDLE_STATUSES = Object.freeze(['opening', 'raising', 'launching', 'launched'])
 
@@ -16,14 +18,62 @@ const COLUMNS = `b.bundle_id::text as "bundleId", b.github_repo_id::text as "git
     and m.launch_finality = 'finalized') as "marketMint"`
 
 // What stops a repository from opening a bundle: any market row that did not fail (a market, or a launch in progress), and a
-// live bundle (its status, so the page can say why, and its id, so it can link to it).
+// live bundle (its status, so the page can say why; its id, so it can link to it; its age on the database clock).
 export async function repositoryBlockers(pool, repoId) {
   const { rows: [row] } = await pool.query(`select
       exists(select 1 from markets where github_repo_id = $1 and status <> 'failed') as "hasMarket",
-      b.status as "liveBundle", b.bundle_id::text as "liveBundleId"
-    from (select 1) one left join lateral (select status, bundle_id from bundles where github_repo_id = $1 and status = any($2::text[])
+      b.status as "liveBundle", b.bundle_id::text as "liveBundleId", (extract(epoch from (now() - b.created_at)) * 1000)::bigint::text as "liveBundleAgeMs"
+    from (select 1) one left join lateral (select status, bundle_id, created_at from bundles where github_repo_id = $1 and status = any($2::text[])
       limit 1) b on true`, [String(repoId), LIVE_BUNDLE_STATUSES])
-  return { hasMarket: row?.hasMarket === true, liveBundle: row?.liveBundle ?? null, liveBundleId: row?.liveBundleId ?? null }
+  return { hasMarket: row?.hasMarket === true, liveBundle: row?.liveBundle ?? null, liveBundleId: row?.liveBundleId ?? null,
+    liveBundleAgeMs: row?.liveBundleAgeMs === null || row?.liveBundleAgeMs === undefined ? null : Number(row.liveBundleAgeMs) }
+}
+
+// The repository's lock, the one the launch coordinator takes (src/launch-coordinator.mjs: pg_advisory_lock on the GitHub repo id),
+// so a bundle's checks and its row, and a standard launch's checks and its market, never interleave. callback(client).
+export async function withRepositoryLock(pool, repoId, callback) {
+  const client = await pool.connect()
+  try {
+    await client.query('select pg_advisory_lock($1::bigint)', [String(repoId)])
+    try { return await callback(client) }
+    finally { await client.query('select pg_advisory_unlock($1::bigint)', [String(repoId)]) }
+  } finally { client.release() }
+}
+
+// One bundle's submit at a time (a transaction-scoped lock in its own key space, apart from repository ids). callback(client) runs
+// inside the transaction; it commits when the callback returns and rolls back when it throws.
+export async function withBundleLock(pool, id, callback) {
+  const client = await pool.connect()
+  try {
+    await client.query('begin')
+    await client.query(`select pg_advisory_xact_lock(hashtextextended('repo.ing bundle ' || $1::text, 0))`, [String(id)])
+    const result = await callback(client)
+    await client.query('commit')
+    return result
+  } catch (error) {
+    await client.query('rollback').catch(() => {})
+    throw error
+  } finally { client.release() }
+}
+
+// How many bundles a wallet has waiting for its signature ('opening'), across repositories.
+export async function openingCount(pool, wallet) {
+  const { rows: [row] } = await pool.query(`select count(*)::int as count from bundles where creator_wallet = $1 and status = 'opening'`, [wallet])
+  return row?.count ?? 0
+}
+
+// An 'opening' row that can no longer land is replaced: 'expired'. Returns whether this call moved it.
+export async function expireOpening(pool, id) {
+  const { rowCount } = await pool.query(`update bundles set status = 'expired', updated_at = now() where bundle_id = $1 and status = 'opening'`, [String(id)])
+  return rowCount > 0
+}
+
+// The one create transaction repo.ing co-signs for this row, recorded before it is co-signed and sent: false when another was
+// recorded first (a second co-sign of the same row is refused).
+export async function claimCreate(pool, id, signature) {
+  const { rowCount } = await pool.query(`update bundles set create_signature = $2, updated_at = now()
+    where bundle_id = $1 and status = 'opening' and create_signature is null`, [String(id), signature])
+  return rowCount > 0
 }
 
 // Whether the site ever opened a bundle: until it has, /wallet makes no Backer read at all.

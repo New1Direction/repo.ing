@@ -1,6 +1,6 @@
 import { backerShareBps, pendingBackerFees } from '../../src/bundle-vault.mjs'
 import { STATUS_NAMES } from '../../src/bundle-raise.mjs'
-import { countBackers, readBacker, readBundle } from '../../src/bundle-raise-chain.mjs'
+import { createBackerCounter, readBacker, readBundle } from '../../src/bundle-raise-chain.mjs'
 import { loadBundle } from '../../src/bundle-raise-store.mjs'
 
 // A bundle as the raise page, its API and the token page show it (docs/BUNDLE_LAUNCH.md): the site's row (repository, token,
@@ -33,9 +33,12 @@ export function bundleJson({ row, bundle, backers = null, backer = null, wallet 
     checkedAt: new Date(now).toISOString() }
 }
 
+// The raise page and the token page share one backer count per bundle per 30 s (the API keeps its own, app/lib/bundle-api.mjs).
+const sharedBackerCount = createBackerCounter()
+
 // The site's row, then the chain (the account, its backer count and the wallet's backer account, read together); null when the
 // site never opened this bundle. wallet: a PublicKey or null.
-export async function readBundleState({ pool, connection, id, wallet = null }) {
+export async function readBundleState({ pool, connection, id, wallet = null, countBackers = sharedBackerCount }) {
   const row = await loadBundle(pool, id)
   if (!row) return null
   const [bundle, backers, backer] = await Promise.all([readBundle(connection, id), countBackers(connection, id),

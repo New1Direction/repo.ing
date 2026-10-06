@@ -65,39 +65,51 @@ export function fakeChain() {
   return chain
 }
 
-// The raise flow's queries against a bundles table and a markets table held in memory. Every query is recorded.
+// The raise flow's queries against a bundles table and a markets table held in memory. Every query is recorded with whether it
+// ran on a connection taken with connect() (`client`), so tests can see what ran under a lock.
 export function fakePool({ bundles = new Map(), hasMarket = false } = {}) {
   const queries = []
   let nextId = 7n
+  async function query(sql, params = [], client = false) {
+    queries.push({ sql, params, client })
+    if (/pg_advisory|^(begin|commit|rollback)$/.test(sql.trim())) return { rows: [], rowCount: 0 }
+    if (/nextval\('bundle_id_seq'\)/.test(sql)) return { rows: [{ id: String(nextId++) }] }
+    if (/select exists\(select 1 from bundles\)/.test(sql)) return { rows: [{ any: bundles.size > 0 }] }
+    if (/exists\(select 1 from markets/.test(sql)) {
+      const live = [...bundles.values()].find(row => row.githubRepoId === params[0] && params[1].includes(row.status))
+      return { rows: [{ hasMarket, liveBundle: live?.status ?? null, liveBundleId: live?.bundleId ?? null, liveBundleAgeMs: live?.ageMs ?? null }] }
+    }
+    if (/count\(\*\)::int as count from bundles where creator_wallet/.test(sql)) {
+      return { rows: [{ count: [...bundles.values()].filter(row => row.creatorWallet === params[0] && row.status === 'opening').length }] }
+    }
+    if (/insert into bundles/.test(sql)) {
+      const [bundleId, githubRepoId, address, creatorWallet, tokenName, tokenSymbol, tokenImage, targetLamports, minDepositLamports, deadline] = params
+      if ([...bundles.values()].some(row => row.githubRepoId === githubRepoId && ['opening', 'raising', 'launching', 'launched'].includes(row.status))) {
+        throw Object.assign(Error('duplicate key value violates unique constraint "bundles_one_live_per_repo"'), { code: '23505', constraint: 'bundles_one_live_per_repo' })
+      }
+      bundles.set(bundleId, { bundleId, githubRepoId, address, creatorWallet, tokenName, tokenSymbol, tokenImage, targetLamports, minDepositLamports,
+        deadline: new Date(deadline * 1000), status: 'opening', createSignature: null, createdAt: new Date(), ageMs: '0', fullName: 'octo/widget', owner: 'octo',
+        name: 'widget', avatarUrl: null, description: 'A widget', marketMint: null })
+      return { rows: [], rowCount: 1 }
+    }
+    if (/from bundles b join repositories r/.test(sql) && /b\.bundle_id = \$1/.test(sql)) {
+      const row = bundles.get(params[0])
+      return { rows: row ? [{ ...row }] : [] }
+    }
+    if (/from bundles b join repositories r/.test(sql)) return { rows: params[0].map(id => bundles.get(id)).filter(Boolean) }
+    const update = (where, change) => {
+      const row = bundles.get(params[0])
+      if (!row || !where(row)) return { rows: [], rowCount: 0 }
+      bundles.set(params[0], { ...row, ...change(row) })
+      return { rows: [], rowCount: 1 }
+    }
+    if (/update bundles set status = 'raising'/.test(sql)) return update(row => row.status === 'opening', row => ({ status: 'raising', createSignature: params[1] ?? row.createSignature }))
+    if (/update bundles set status = 'expired'/.test(sql)) return update(row => row.status === 'opening', () => ({ status: 'expired' }))
+    if (/update bundles set create_signature = \$2/.test(sql)) return update(row => row.status === 'opening' && !row.createSignature, () => ({ createSignature: params[1] }))
+    throw Error(`unexpected query: ${sql.slice(0, 60)}`)
+  }
   return {
-    queries, bundles, setHasMarket(value) { hasMarket = value },
-    async query(sql, params = []) {
-      queries.push({ sql, params })
-      if (/nextval\('bundle_id_seq'\)/.test(sql)) return { rows: [{ id: String(nextId++) }] }
-      if (/select exists\(select 1 from bundles\)/.test(sql)) return { rows: [{ any: bundles.size > 0 }] }
-      if (/exists\(select 1 from markets/.test(sql)) {
-        const live = [...bundles.values()].find(row => row.githubRepoId === params[0] && params[1].includes(row.status))
-        return { rows: [{ hasMarket, liveBundle: live?.status ?? null, liveBundleId: live?.bundleId ?? null }] }
-      }
-      if (/insert into bundles/.test(sql)) {
-        const [bundleId, githubRepoId, address, creatorWallet, tokenName, tokenSymbol, tokenImage, targetLamports, minDepositLamports, deadline] = params
-        bundles.set(bundleId, { bundleId, githubRepoId, address, creatorWallet, tokenName, tokenSymbol, tokenImage, targetLamports, minDepositLamports,
-          deadline: new Date(deadline * 1000), status: 'opening', createSignature: null, createdAt: new Date(), ageMs: '0', fullName: 'octo/widget', owner: 'octo',
-          name: 'widget', avatarUrl: null, description: 'A widget', marketMint: null })
-        return { rows: [], rowCount: 1 }
-      }
-      if (/from bundles b join repositories r/.test(sql) && /b\.bundle_id = \$1/.test(sql)) {
-        const row = bundles.get(params[0])
-        return { rows: row ? [{ ...row }] : [] }
-      }
-      if (/from bundles b join repositories r/.test(sql)) return { rows: params[0].map(id => bundles.get(id)).filter(Boolean) }
-      if (/update bundles set status = 'raising'/.test(sql)) {
-        const row = bundles.get(params[0])
-        if (!row || row.status !== 'opening') return { rows: [], rowCount: 0 }
-        bundles.set(params[0], { ...row, status: 'raising', createSignature: params[1] ?? row.createSignature })
-        return { rows: [], rowCount: 1 }
-      }
-      throw Error(`unexpected query: ${sql.slice(0, 60)}`)
-    },
+    queries, bundles, setHasMarket(value) { hasMarket = value }, query,
+    async connect() { return { query: (sql, params) => query(sql, params, true), release() {} } },
   }
 }

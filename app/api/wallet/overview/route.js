@@ -10,6 +10,7 @@ import { readWalletVerificationBonuses } from '../../../../src/verification-bonu
 import { shownMarkets } from '../../../lib/hf-markets.mjs'
 import { walletStockPairs } from '../../../lib/stock-wallet.mjs'
 import { walletBundleFields } from '../../../lib/bundle-wallet.mjs'
+import { refuseOverLimit } from '../../../lib/request-limits.mjs'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -46,7 +47,7 @@ export async function GET(request) {
     // stock-pair row gets exactly the response it always did.
     const { rows, fields: stockFields } = await walletStockPairs(db, chain, wallet, solRows)
     // Bundle launches (app/lib/bundle-wallet.mjs): the bundles this wallet backs, so its refunds and claims are always reachable.
-    const bundleFields = await walletBundleFields(db, chain, wallet)
+    const bundleFields = await walletBundleFields(db, chain, wallet, { allowed: () => !refuseOverLimit(request, 'bundle:read') })
     const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
     // Prices and P&L are best-effort: balances, launches and rewards still render if either fails.
     const [prices, trades] = await Promise.all([latestMarketPrices(db, held).catch(() => null),

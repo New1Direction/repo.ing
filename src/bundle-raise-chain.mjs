@@ -36,6 +36,22 @@ export async function countBackers(connection, id) {
   return accounts.length
 }
 
+// countBackers once per bundle per ttlMs for every viewer of this process: a program-wide scan is the costliest read here, and
+// the raise page polls it. At most `max` bundles are kept (the oldest goes first).
+export const BACKER_COUNT_TTL_MS = 30_000
+export function createBackerCounter({ ttlMs = BACKER_COUNT_TTL_MS, max = 1_000, now = Date.now } = {}) {
+  const counts = new Map()
+  return async (connection, id) => {
+    const key = String(id), hit = counts.get(key), at = now()
+    if (hit && at < hit.expiresAt) return hit.value
+    const value = await countBackers(connection, id)
+    counts.delete(key)
+    if (counts.size >= max) counts.delete(counts.keys().next().value)
+    counts.set(key, { value, expiresAt: at + ttlMs })
+    return value
+  }
+}
+
 // Every bundle a wallet backs: its Backer accounts and their bundles, decoded ({ id, bundle, backer }).
 export async function walletBackers(connection, wallet) {
   const accounts = await connection.getProgramAccounts(BUNDLE_VAULT_PROGRAM_ID, { commitment: COMMITMENT, filters: backerFilter(BACKER_WALLET_OFFSET, wallet) })
@@ -70,7 +86,8 @@ const PROBE_UNITS = 1_400_000
 // The unsigned transaction a wallet signs: [unit limit, unit price, ...instructions], paid by feePayer. Both budget instructions
 // are set so the wallet does not add its own (src/launch-wallet-fees.mjs). It is simulated first, signatures unchecked: a
 // failure is refused here with its plain message (simulationFailure), so nothing that would fail is offered for signing.
-// fallback: the message when the logs name no known cause.
+// fallback: the message when the logs name no known cause. budget: what the transaction was built with, for a server-side review
+// (src/bundle-raise.mjs sealBundleReview); never needed by the wallet.
 export async function walletTransaction(connection, instructions, { feePayer, fallback, log = console.warn }) {
   const latest = await connection.getLatestBlockhash(COMMITMENT)
   const probe = budgeted(instructions, { feePayer, blockhash: latest.blockhash, units: PROBE_UNITS, microLamports: 0 })
@@ -82,7 +99,8 @@ export async function walletTransaction(connection, instructions, { feePayer, fa
   const microLamports = await chooseComputeUnitPrice(connection, { probe, writableAccounts, log })
   const transaction = budgeted(instructions, { feePayer, blockhash: latest.blockhash, units, microLamports })
   return { transaction: transaction.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64'),
-    lastValidBlockHeight: latest.lastValidBlockHeight, priorityFeeLamports: priorityFeeLamports({ units, microLamports }).toString() }
+    lastValidBlockHeight: latest.lastValidBlockHeight, priorityFeeLamports: priorityFeeLamports({ units, microLamports }).toString(),
+    budget: { blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight, units, microLamports: String(microLamports) } }
 }
 
 // Sends signed bytes and waits until they confirm, fail or expire (src/trade-landing.mjs broadcastUntilSettled):

@@ -1,9 +1,11 @@
 import { bundleLaunchable } from '../../src/bundle-launch.mjs'
 import { STATUS, bundleAddress, pendingBackerFees } from '../../src/bundle-vault.mjs'
-import { BUNDLE_ACTIONS, BundleRaiseError, RAISE_REFUSALS, acceptSignedAction, acceptSignedCreate, actionInstructions, bundleMatchesRow,
-  createInstructionFor, depositRefusal, lamportsOf, raiseTerms, tokenFields, walletKey } from '../../src/bundle-raise.mjs'
-import { hasWrappedSolAccount, readBacker, readBundle, sendSigned, walletTransaction } from '../../src/bundle-raise-chain.mjs'
-import { insertOpeningBundle, loadBundle, markRaising, nextBundleId, repositoryBlockers } from '../../src/bundle-raise-store.mjs'
+import { BUNDLE_ACTIONS, BundleRaiseError, RAISE_REFUSALS, acceptSignedAction, acceptSignedCreate, actionInstructions, bundleIdFrom,
+  bundleMatchesRow, bundleReviewKey, createInstructionFor, depositRefusal, lamportsOf, openBundleReview, raiseTerms, sealBundleReview, tokenFields,
+  walletKey } from '../../src/bundle-raise.mjs'
+import { createBackerCounter, hasWrappedSolAccount, readBacker, readBundle, sendSigned, walletTransaction } from '../../src/bundle-raise-chain.mjs'
+import { claimCreate, expireOpening, insertOpeningBundle, loadBundle, markRaising, nextBundleId, openingCount, repositoryBlockers, withBundleLock,
+  withRepositoryLock } from '../../src/bundle-raise-store.mjs'
 import { resolvePublicRepositoryById } from '../../src/github.mjs'
 import { RepositoryResolutionError } from '../../src/github-url.mjs'
 import { isGithubRepoId } from '../../src/market-identity.mjs'
@@ -28,6 +30,11 @@ export const notFound = () => reply({ error: 'Not found' }, 404)
 // A prepared opening is co-signed and sent only this long after it was prepared (as a launch review, src/launch-sessions.mjs):
 // its blockhash lasts about a minute, and an 'opening' row older than this can no longer become a raise through this route.
 export const OPENING_SUBMIT_MS = 120_000
+// An unsigned 'opening' row older than this whose Bundle account does not exist can no longer land (its review was co-signable for
+// two minutes, with a blockhash that lasts about one): a new prepare for the repository replaces it.
+export const OPENING_REPLACE_MS = 5 * 60_000
+// Bundles one wallet may have waiting for its signature at once, across repositories.
+export const MAX_OPENING_PER_WALLET = 2
 const MAX_OPEN_BODY = 600_000
 const MAX_ACTION_BODY = 16_000
 const IMAGE_MESSAGE = /^(Token image|Invalid token image|Choose a token image|Image is)/
@@ -42,7 +49,6 @@ function failure(error) {
     ...safe && typeof error.code === 'string' ? { code: error.code } : {} }, status)
 }
 
-const bundleIdOf = value => /^[1-9]\d{0,18}$/.test(String(value ?? '')) ? BigInt(value) : null
 async function jsonBody(request, limit) {
   try { return JSON.parse((await readLimitedBody(request, limit)).toString('utf8')) }
   catch { throw new BundleRaiseError('Invalid request') }
@@ -54,15 +60,17 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
   const services = () => {
     const db = pool(), signer = admin()
     if (!db || !signer) throw unconfigured()
-    return { db, signer, rpc: connection() }
+    return { db, signer, rpc: connection(), reviewKey: bundleReviewKey(signer.secretKey) }
   }
+  const countBackers = createBackerCounter()
 
   // Repository checks exactly as a standard launch review makes them (app/api/launch/route.js): a public GitHub repository read
-  // by its id, the maintainer's opt-out, the fork guard; then no market (or launch in progress) and no live bundle.
+  // by its id, the maintainer's opt-out, the fork guard; then, under the repository's lock (the launch coordinator's, so a standard
+  // launch cannot slip in between), no market or launch in progress, no live bundle, and the wallet's waiting bundles under the cap.
   async function prepareOpen(request, body) {
     const refused = limit(request, 'launch:prepare', { canRetry: true })
     if (refused) return refused
-    const { db, signer, rpc } = services()
+    const { db, signer, rpc, reviewKey } = services()
     const repoId = String(body.repoId ?? '')
     if (!isGithubRepoId(repoId)) throw new BundleRaiseError(RAISE_REFUSALS.repository)
     const terms = raiseTerms(body, now()), token = tokenFields(body), creator = walletKey(body.launcherWallet)
@@ -72,39 +80,59 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
     await launchAllowed(db, repoId)
     await persistRepository(db, repo)
     await lineage({ pool: db, repo })
-    const blockers = await repositoryBlockers(db, repoId)
-    if (blockers.hasMarket) throw new BundleRaiseError(RAISE_REFUSALS.market, 409)
-    if (blockers.liveBundle) throw new BundleRaiseError(RAISE_REFUSALS[blockers.liveBundle === 'opening' ? 'opening' : 'live'], 409)
-    const bundleId = await nextBundleId(db)
-    const row = { bundleId, githubRepoId: repoId, creatorWallet: creator.toBase58(), targetLamports: terms.targetLamports,
-      minDepositLamports: terms.minDepositLamports, deadline: new Date(terms.deadline * 1000) }
-    // Simulated before the row exists: a raise Solana would refuse is never recorded or offered for signing.
-    const prepared = await walletTransaction(rpc, [createInstructionFor(row, signer.publicKey)], { feePayer: creator,
-      fallback: 'Solana refused to open this bundle. Try again shortly.' })
-    const address = bundleAddress(bundleId).toBase58()
-    if (!await insertOpeningBundle(db, { ...row, address, ...token, tokenImage, deadline: terms.deadline })) throw new BundleRaiseError(RAISE_REFUSALS.live, 409)
-    return reply({ bundleId: bundleId.toString(), address, ...prepared })
+    return withRepositoryLock(db, repoId, async client => {
+      const blockers = await repositoryBlockers(client, repoId)
+      if (blockers.hasMarket) throw new BundleRaiseError(RAISE_REFUSALS.market, 409)
+      if (blockers.liveBundle && !await replaceableOpening(client, rpc, blockers)) {
+        throw new BundleRaiseError(RAISE_REFUSALS[blockers.liveBundle === 'opening' ? 'opening' : 'live'], 409)
+      }
+      if (await openingCount(client, creator.toBase58()) >= MAX_OPENING_PER_WALLET) throw new BundleRaiseError(RAISE_REFUSALS.wallets, 429)
+      const bundleId = await nextBundleId(client)
+      const row = { bundleId, githubRepoId: repoId, creatorWallet: creator.toBase58(), targetLamports: terms.targetLamports,
+        minDepositLamports: terms.minDepositLamports, deadline: new Date(terms.deadline * 1000) }
+      // Simulated before the row exists: a raise Solana would refuse is never recorded or offered for signing.
+      const { budget, ...prepared } = await walletTransaction(rpc, [createInstructionFor(row, signer.publicKey)], { feePayer: creator,
+        fallback: 'Solana refused to open this bundle. Try again shortly.' })
+      const address = bundleAddress(bundleId).toBase58()
+      if (!await insertOpeningBundle(client, { ...row, address, ...token, tokenImage, deadline: terms.deadline })) throw new BundleRaiseError(RAISE_REFUSALS.live, 409)
+      return reply({ bundleId: bundleId.toString(), address, ...prepared, review: sealBundleReview(reviewKey, { bundleId, ...budget }) })
+    })
   }
 
-  // The wallet signed the opening: checked against the row, co-signed by repo.ing's admin, sent, confirmed, read back from the
-  // chain, and only then is the row 'raising'. Repeating it after a timeout finds the account on chain and answers the same.
-  async function submitOpen(body) {
-    const { db, signer, rpc } = services()
-    const bundleId = bundleIdOf(body.bundleId)
-    const row = bundleId === null ? null : await loadBundle(db, bundleId)
-    if (!row || ['expired', 'failed'].includes(row.status)) throw new BundleRaiseError(RAISE_REFUSALS.expired)
-    if (row.status !== 'opening') return reply({ bundleId: row.bundleId, signature: row.createSignature, status: row.status })
-    const signed = acceptSignedCreate(row, signer, body.transaction)
-    const landed = await readBundle(rpc, bundleId)
-    if (landed) {
-      // An earlier attempt landed and its answer was lost: its signature is recorded when this is that transaction.
-      const status = await rpc.getSignatureStatuses([signed.signature]).then(result => result.value?.[0] ?? null, () => null)
-      return opened(db, row, landed, status && !status.err ? signed.signature : null)
-    }
-    if (Number(row.ageMs) > OPENING_SUBMIT_MS) throw new BundleRaiseError(RAISE_REFUSALS.expired)
-    const sent = await sendSigned(rpc, { raw: signed.raw, signature: signed.signature, lastValidBlockHeight: Number(body.lastValidBlockHeight) }, broadcast)
-    if (!sent.confirmed) return reply({ bundleId: row.bundleId, signature: sent.signature, status: 'opening', pending: true }, 202)
-    const bundle = await readBundle(rpc, bundleId)
+  // A live 'opening' bundle that never landed and can no longer land is expired so this prepare can replace it.
+  async function replaceableOpening(client, rpc, { liveBundle, liveBundleId, liveBundleAgeMs }) {
+    if (liveBundle !== 'opening' || !(liveBundleAgeMs > OPENING_REPLACE_MS) || await readBundle(rpc, BigInt(liveBundleId))) return false
+    await expireOpening(client, liveBundleId)
+    return true
+  }
+
+  // The wallet signed the opening. Under the bundle's own lock, once: checked against the row and the sealed review, its signature
+  // recorded (claimCreate), co-signed by repo.ing's admin. Then sent, confirmed, read back from the chain, and only then is the row
+  // 'raising'. A repeat finds the recorded transaction: it answers from the chain and never co-signs again.
+  async function submitOpen(request, body) {
+    const refused = limit(request, 'bundle:submit')
+    if (refused) return refused
+    const { db, signer, rpc, reviewKey } = services()
+    const bundleId = bundleIdFrom(body.bundleId)
+    if (bundleId === null) throw new BundleRaiseError(RAISE_REFUSALS.expired)
+    const review = openBundleReview(reviewKey, body.review, bundleId)
+    const decided = await withBundleLock(db, bundleId, async client => {
+      const row = await loadBundle(client, bundleId)
+      if (!row || ['expired', 'failed'].includes(row.status)) throw new BundleRaiseError(RAISE_REFUSALS.expired)
+      if (row.status !== 'opening') return { answer: reply({ bundleId: row.bundleId, signature: row.createSignature, status: row.status }) }
+      const landed = await readBundle(rpc, bundleId)
+      if (landed) return { answer: await opened(client, row, landed, row.createSignature) }
+      if (row.createSignature) return { answer: reply({ bundleId: row.bundleId, signature: row.createSignature, status: 'opening', pending: true }, 202) }
+      if (Number(row.ageMs) > OPENING_SUBMIT_MS) throw new BundleRaiseError(RAISE_REFUSALS.expired)
+      const signed = acceptSignedCreate(row, signer, body.transaction, review)
+      if (!await claimCreate(client, bundleId, signed.signature)) throw new BundleRaiseError(RAISE_REFUSALS.expired)
+      return { row, signed }
+    })
+    if (decided.answer) return decided.answer
+    const { row, signed } = decided
+    // The review's own last valid height: the client's copy is never used to decide how long to send.
+    const sent = await sendSigned(rpc, { raw: signed.raw, signature: signed.signature, lastValidBlockHeight: review.lastValidBlockHeight }, broadcast)
+    const bundle = sent.confirmed ? await readBundle(rpc, bundleId) : null
     if (!bundle) return reply({ bundleId: row.bundleId, signature: sent.signature, status: 'opening', pending: true }, 202)
     return opened(db, row, bundle, sent.signature)
   }
@@ -137,7 +165,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
       try {
         const body = await jsonBody(request, MAX_OPEN_BODY)
         if (body?.action === 'prepare') return await prepareOpen(request, body)
-        if (body?.action === 'submit') return await submitOpen(body)
+        if (body?.action === 'submit') return await submitOpen(request, body)
         throw new BundleRaiseError('Unsupported bundle action')
       } catch (error) { return failure(error) }
     },
@@ -145,14 +173,14 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
     // GET /api/bundles/[id]?wallet=: whatever the switch says.
     async read(request, id) {
       try {
-        const bundleId = bundleIdOf(id)
+        const bundleId = bundleIdFrom(id)
         if (bundleId === null) return notFound()
         const refused = limit(request, 'bundle:read')
         if (refused) return refused
         const db = pool()
         if (!db) throw unconfigured()
         const wallet = new URL(request.url).searchParams.get('wallet')
-        const state = await readBundleState({ pool: db, connection: connection(), id: bundleId, wallet: wallet ? walletKey(wallet) : null })
+        const state = await readBundleState({ pool: db, connection: connection(), id: bundleId, wallet: wallet ? walletKey(wallet) : null, countBackers })
         return state ? reply(state) : notFound()
       } catch (error) { return failure(error) }
     },
@@ -161,13 +189,13 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
     // relay) funds a raise, so only while Bundle launches are on; a refund or a claim whatever the switch says.
     async act(request, id) {
       try {
-        const bundleId = bundleIdOf(id)
+        const bundleId = bundleIdFrom(id)
         if (bundleId === null) return notFound()
         const body = await jsonBody(request, MAX_ACTION_BODY)
         if (body?.action !== 'send' && !BUNDLE_ACTIONS.includes(body?.action)) throw new BundleRaiseError('Unsupported bundle action')
         if (body.action === 'deposit' && !launchable()) return notFound()
-        // A signed transaction is never limited (as a trade's submit); preparing one simulates it and reads fees.
-        const refused = body.action === 'send' ? null : limit(request, 'bundle:prepare')
+        // Preparing simulates and reads fees (bundle:prepare); relaying sends and polls until it settles (bundle:send).
+        const refused = body.action === 'send' ? limit(request, 'bundle:send') : limit(request, 'bundle:prepare')
         if (refused) return refused
         const db = pool()
         if (!db) throw unconfigured()

@@ -7,7 +7,9 @@ import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { BUNDLE_VAULT_PROGRAM_ID, STATUS, backerAddress, bundleAddress, claimBackerFeesInstruction, createBundleInstruction, decodeBundle,
   depositInstruction, refundInstruction, tokenAccountOf } from '../src/bundle-vault.mjs'
 import { BUNDLE_DEFAULTS, BUNDLE_RAISE, bundleFormSettings } from '../src/bundle-launch.mjs'
-import { RAISE_REFUSALS, acceptSignedAction, raiseTerms, simulationFailure, tokenFields } from '../src/bundle-raise.mjs'
+import { RAISE_REFUSALS, acceptSignedAction, acceptSignedCreate, bundleIdFrom, bundleReviewKey, openBundleReview, raiseTerms, simulationFailure,
+  tokenFields } from '../src/bundle-raise.mjs'
+import { createBackerCounter } from '../src/bundle-raise-chain.mjs'
 import { DecisionError, OPT_OUT_ERROR } from '../src/maintainer-opt-outs.mjs'
 import { LineageError } from '../src/repo-lineage.mjs'
 import { createBundleApi } from '../app/lib/bundle-api.mjs'
@@ -83,12 +85,13 @@ test('dark: the routes that start or fund a raise answer 404 while Bundle launch
   } finally { if (saved === undefined) delete process.env.BUNDLE_LAUNCHES_ENABLED; else process.env.BUNDLE_LAUNCHES_ENABLED = saved }
 })
 
-test('dark: the launch form\'s option and the launch API\'s check follow the switch; existing bundles are shown whatever it says', () => {
+test('dark: the launch form\'s option follows the switch; existing bundles are shown whatever it says', () => {
   const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
   const launchPage = source('app/(site)/launch/[repo]/page.jsx'), raisePage = source('app/(site)/bundle/[id]/page.jsx')
   assert.match(launchPage, /const bundle = bundleLaunchable\(\) \? bundleFormSettings\(\) : null/)
   assert.match(launchPage, /const liveBundleId = pool \?/, 'a live bundle is shown whatever the switch says')
-  assert.match(source('app/api/launch/route.js'), /if \(bundleLaunchable\(\) && \(await repositoryBlockers\(pool, body\.repoId\)\)\.liveBundle\)/)
+  // A standard launch beside a live bundle is refused by the launch coordinator, under the repository lock, whatever the switch.
+  assert.doesNotMatch(source('app/api/launch/route.js'), /bundle/i)
   // The raise page and the token page's vault tab never hide an existing bundle; the page only stops taking deposits.
   assert.doesNotMatch(raisePage, /if \(!bundleLaunchable\(\)\) notFound\(\)/)
   assert.match(raisePage, /<BundleRaise initial=\{state\} depositsOpen=\{bundleLaunchable\(\)\}\/>/)
@@ -183,38 +186,97 @@ test('opening: the create transaction is [limit, price, create_bundle] with the 
   assert.equal(row.deadline.getTime(), NOW + 3 * 86_400_000)
 })
 
-test('opening: submit co-signs only the prepared transaction, sends it, reads the bundle back and marks the row raising', async t => {
+const wire = tx => tx.serialize({ requireAllSignatures: false }).toString('base64')
+const submit = (h, body, transaction, fields = {}) => call(h.api.open(post('/api/bundles', { action: 'submit', bundleId: body.bundleId, review: body.review,
+  transaction: typeof transaction === 'string' ? transaction : wire(transaction), ...fields })))
+// Landing the opening creates the Bundle account the row describes.
+const landsAs = (h, row) => raw => {
+  const landed = Transaction.from(raw)
+  assert.ok(landed.verifySignatures(), 'creator and admin signatures')
+  assert.deepEqual(landed.signatures.map(entry => entry.publicKey.toBase58()), [creator.publicKey, admin.publicKey].map(String))
+  h.chain.setProgramAccount(bundleAddress(7n), bundleData({ id: 7n, repoId: BigInt(REPO), creator: creator.publicKey, target: 5n * SOL,
+    minDeposit: 50_000_000n, deadline: row.deadline.getTime() / 1000 }))
+}
+const lighthouse = target => new TransactionInstruction({ programId: new PublicKey('L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95'),
+  keys: [{ pubkey: target, isSigner: false, isWritable: false }], data: Buffer.from([5, 0, 2, 0]) })
+
+test('opening: submit co-signs once, only the prepared transaction under its sealed review, sends it and marks the row raising', async t => {
   quiet(t)
   const h = harness()
   const body = await prepared(h)
-  const tx = transactionOf(body.transaction)
-  // An altered transaction is refused before repo.ing signs or sends anything.
-  const altered = transactionOf(body.transaction)
-  altered.add(SystemProgram.transfer({ fromPubkey: creator.publicKey, toPubkey: admin.publicKey, lamports: 1 }))
+  assert.match(body.review, /^[\w-]+\.[\w-]+$/, 'a sealed review, not the blockhash in the clear')
+  // An altered transaction, an unsigned one, a missing or forged review, another bundle's review: refused before anything is
+  // co-signed, recorded or sent.
+  const altered = transactionOf(body.transaction).add(SystemProgram.transfer({ fromPubkey: creator.publicKey, toPubkey: admin.publicKey, lamports: 1 }))
   altered.partialSign(creator)
-  assert.deepEqual(await call(h.api.open(post('/api/bundles', { action: 'submit', bundleId: '7', transaction: altered.serialize({ requireAllSignatures: false }).toString('base64'),
-    lastValidBlockHeight: 1_000 }))), { status: 400, body: { error: RAISE_REFUSALS.altered } })
-  const unsigned = await call(h.api.open(post('/api/bundles', { action: 'submit', bundleId: '7', transaction: body.transaction, lastValidBlockHeight: 1_000 })))
-  assert.deepEqual(unsigned, { status: 400, body: { error: RAISE_REFUSALS.unsigned } })
+  assert.deepEqual(await submit(h, body, altered), { status: 400, body: { error: RAISE_REFUSALS.altered } })
+  assert.deepEqual(await submit(h, body, body.transaction), { status: 400, body: { error: RAISE_REFUSALS.unsigned } })
+  const tx = transactionOf(body.transaction)
+  tx.partialSign(creator)
+  const [payload, mac] = body.review.split('.')
+  const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload, 'base64url')), units: 1_400_000 })).toString('base64url')
+  for (const review of [undefined, `${forged}.${mac}`, `${payload}.${mac}x`]) {
+    assert.deepEqual(await submit(h, { ...body, review }, tx), { status: 400, body: { error: RAISE_REFUSALS.expired } })
+  }
+  // The same instructions under a blockhash of the client's choosing are not the prepared message.
+  const rehashed = new Transaction({ feePayer: creator.publicKey, recentBlockhash: Keypair.generate().publicKey.toBase58() }).add(...tx.instructions)
+  rehashed.partialSign(creator)
+  assert.deepEqual(await submit(h, body, rehashed), { status: 400, body: { error: RAISE_REFUSALS.altered } })
+  assert.equal(h.pool.bundles.get('7').createSignature, null)
   assert.equal(h.chain.sent.length, 0)
 
-  tx.partialSign(creator)
-  const row = h.pool.bundles.get('7')
-  h.chain.onSend = raw => {
-    const landed = Transaction.from(raw)
-    assert.ok(landed.verifySignatures(), 'creator and admin signatures')
-    assert.deepEqual(landed.signatures.map(entry => entry.publicKey.toBase58()), [creator.publicKey, admin.publicKey].map(String))
-    h.chain.setProgramAccount(bundleAddress(7n), bundleData({ id: 7n, repoId: BigInt(REPO), creator: creator.publicKey, target: 5n * SOL,
-      minDeposit: 50_000_000n, deadline: row.deadline.getTime() / 1000 }))
-  }
-  const submitted = await call(h.api.open(post('/api/bundles', { action: 'submit', bundleId: '7',
-    transaction: tx.serialize({ requireAllSignatures: false }).toString('base64'), lastValidBlockHeight: 1_000 })))
-  assert.deepEqual(submitted, { status: 200, body: { bundleId: '7', signature: bs58.encode(tx.signature), status: 'raising' } })
+  h.chain.onSend = landsAs(h, h.pool.bundles.get('7'))
+  assert.deepEqual(await submit(h, body, tx), { status: 200, body: { bundleId: '7', signature: bs58.encode(tx.signature), status: 'raising' } })
   assert.equal(h.chain.sent.length, 1)
   assert.deepEqual([h.pool.bundles.get('7').status, h.pool.bundles.get('7').createSignature], ['raising', bs58.encode(tx.signature)])
+  // The decision ran in a transaction under the bundle's own lock.
+  const locked = h.pool.queries.filter(query => query.client && /pg_advisory_xact_lock|^(begin|commit|rollback)$/.test(query.sql.trim()))
+    .map(query => query.sql.trim().split('(')[0])
+  assert.deepEqual(locked.slice(locked.lastIndexOf('begin')), ['begin', 'select pg_advisory_xact_lock', 'commit'])
+  assert.equal(locked.filter(sql => sql === 'rollback').length, 3, 'the three refused transactions rolled back; a bad review never took the lock')
   // Repeating it answers the same and sends nothing.
-  const again = await call(h.api.open(post('/api/bundles', { action: 'submit', bundleId: '7', transaction: tx.serialize({ requireAllSignatures: false }).toString('base64') })))
+  const again = await submit(h, body, tx)
   assert.deepEqual([again.status, again.body.status, h.chain.sent.length], [200, 'raising', 1])
+})
+
+test('opening: a second co-sign of the same row is refused; a repeat answers from the chain', async t => {
+  quiet(t)
+  const h = harness()
+  const body = await prepared(h)
+  // A first submit was recorded and sent but has not landed yet (its answer was lost).
+  h.pool.bundles.set('7', { ...h.pool.bundles.get('7'), createSignature: 'FirstSignature' })
+  const other = transactionOf(body.transaction).add(lighthouse(creator.publicKey))
+  other.partialSign(creator)
+  assert.deepEqual(await submit(h, body, other), { status: 202, body: { bundleId: '7', signature: 'FirstSignature', status: 'opening', pending: true } })
+  assert.equal(h.chain.sent.length, 0, 'never co-signed or sent again')
+  // Once it landed, a repeat marks the row raising with the recorded signature, still without co-signing.
+  const row = h.pool.bundles.get('7')
+  h.chain.setProgramAccount(bundleAddress(7n), bundleData({ id: 7n, repoId: BigInt(REPO), creator: creator.publicKey, target: 5n * SOL,
+    minDeposit: 50_000_000n, deadline: row.deadline.getTime() / 1000 }))
+  assert.deepEqual(await submit(h, body, other), { status: 200, body: { bundleId: '7', signature: 'FirstSignature', status: 'raising' } })
+  assert.deepEqual([h.pool.bundles.get('7').status, h.chain.sent.length], ['raising', 0])
+})
+
+test('opening: wallet assertions may name only the creator, never the admin; the creator cannot be the admin; slots must match', async t => {
+  quiet(t)
+  const h = harness()
+  const body = await prepared(h)
+  const onAdmin = transactionOf(body.transaction).add(lighthouse(admin.publicKey))
+  onAdmin.partialSign(creator)
+  assert.deepEqual(await submit(h, body, onAdmin), { status: 400, body: { error: RAISE_REFUSALS.altered } })
+  // One signature slot too many on the wire.
+  const signed = transactionOf(body.transaction)
+  signed.partialSign(creator)
+  const bytes = signed.serialize({ requireAllSignatures: false })
+  const padded = Buffer.concat([Buffer.from([bytes[0] + 1]), bytes.subarray(1, 1 + 64 * bytes[0]), Buffer.alloc(64), bytes.subarray(1 + 64 * bytes[0])])
+  assert.deepEqual(await submit(h, body, padded.toString('base64')), { status: 400, body: { error: RAISE_REFUSALS.altered } })
+  const asserted = transactionOf(body.transaction).add(lighthouse(creator.publicKey))
+  asserted.partialSign(creator)
+  h.chain.onSend = landsAs(h, h.pool.bundles.get('7'))
+  assert.equal((await submit(h, body, asserted)).body.status, 'raising', 'an assertion on the creator is the wallet\'s own')
+  const review = openBundleReview(bundleReviewKey(admin.secretKey), body.review, 7n)
+  assert.throws(() => acceptSignedCreate({ ...h.pool.bundles.get('7'), creatorWallet: admin.publicKey.toBase58() }, admin, wire(asserted), review),
+    { message: RAISE_REFUSALS.creator })
 })
 
 test('opening: a review older than two minutes is never co-signed', async () => {
@@ -223,9 +285,79 @@ test('opening: a review older than two minutes is never co-signed', async () => 
   const tx = transactionOf(body.transaction)
   tx.partialSign(creator)
   h.pool.bundles.set('7', { ...h.pool.bundles.get('7'), ageMs: '121000' })
-  assert.deepEqual(await call(h.api.open(post('/api/bundles', { action: 'submit', bundleId: '7', transaction: tx.serialize({ requireAllSignatures: false }).toString('base64'),
-    lastValidBlockHeight: 1_000 }))), { status: 400, body: { error: RAISE_REFUSALS.expired } })
+  assert.deepEqual(await submit(h, body, tx), { status: 400, body: { error: RAISE_REFUSALS.expired } })
   assert.equal(h.chain.sent.length, 0)
+})
+
+test('opening: under the repository lock, a stale unsigned opening is replaced, a live one is not, and a wallet may wait on two at most', async () => {
+  const h = harness()
+  await prepared(h)
+  const refusedFor = async () => (await call(h.api.open(post('/api/bundles', openBody({ launcherWallet: backer.publicKey.toBase58() }))))).body.error
+  assert.equal(await refusedFor(), RAISE_REFUSALS.opening, 'young')
+  h.pool.bundles.set('7', { ...h.pool.bundles.get('7'), ageMs: String(5 * 60_000 + 1) })
+  h.chain.setProgramAccount(bundleAddress(7n), bundleData({ id: 7n }))
+  assert.equal(await refusedFor(), RAISE_REFUSALS.opening, 'its account exists: it landed')
+  h.chain.accounts.delete(bundleAddress(7n).toBase58())
+  const replaced = await call(h.api.open(post('/api/bundles', openBody({ launcherWallet: backer.publicKey.toBase58() }))))
+  assert.equal(replaced.status, 200)
+  assert.deepEqual([h.pool.bundles.get('7').status, replaced.body.bundleId, h.pool.bundles.get(replaced.body.bundleId).status], ['expired', '8', 'opening'])
+  // Checks, replacement and insert all ran on the locked connection, between lock and unlock on the repository id.
+  const onClient = h.pool.queries.filter(query => query.client).map(query => query.sql.trim())
+  const lock = onClient.lastIndexOf('select pg_advisory_lock($1::bigint)'), unlock = onClient.lastIndexOf('select pg_advisory_unlock($1::bigint)')
+  assert.ok(lock >= 0 && unlock > lock)
+  assert.deepEqual(onClient.slice(lock + 1, unlock).map(sql => sql.split(/\s+/).slice(0, 2).join(' ')),
+    ['select exists(select', 'update bundles', 'select count(*)::int', "select nextval('bundle_id_seq')::text", 'insert into'])
+  assert.deepEqual(h.pool.queries.find(query => query.sql.includes('pg_advisory_lock')).params, [REPO])
+  // Two waiting bundles for one wallet (other repositories): a third is refused.
+  const capped = harness()
+  for (const id of ['1', '2']) capped.pool.bundles.set(id, { bundleId: id, githubRepoId: `1${id}`, creatorWallet: creator.publicKey.toBase58(), status: 'opening' })
+  assert.deepEqual(await call(capped.api.open(post('/api/bundles', openBody()))), { status: 429, body: { error: RAISE_REFUSALS.wallets } })
+})
+
+test('limits: opening counts as a launch review, its submit and every relay have their own allowance', async () => {
+  const counted = []
+  const h = harness({ overrides: { limit: (request, action) => { counted.push(action); return null } } })
+  raising(h)
+  await call(h.api.open(post('/api/bundles', openBody({ repoId: '1' }))))
+  await call(h.api.open(post('/api/bundles', { action: 'submit', bundleId: '7' })))
+  await call(h.api.read(get('/api/bundles/7'), '7'))
+  await act(h, { action: 'deposit', lamports: String(SOL) })
+  await act(h, { action: 'send', transaction: 'AA==' })
+  assert.deepEqual(counted, ['launch:prepare', 'bundle:submit', 'bundle:read', 'bundle:prepare', 'bundle:send'])
+  const refused = harness({ overrides: { limit: () => Response.json({ error: 'Too many requests. Try again in 3 seconds.', code: 'RATE_LIMITED' }, { status: 429 }) } })
+  assert.equal((await call(refused.api.open(post('/api/bundles', { action: 'submit', bundleId: '7' })))).status, 429)
+  assert.equal((await act(refused, { action: 'send', transaction: 'AA==' })).status, 429)
+})
+
+test('token fields fit Metaplex\'s byte caps and carry no hidden characters; bundle ids stay within bigint', async () => {
+  assert.throws(() => tokenFields({ tokenName: 'é'.repeat(17), tokenSymbol: 'W' }), { message: RAISE_REFUSALS.tokenBytes })
+  assert.throws(() => tokenFields({ tokenName: 'Widget', tokenSymbol: 'ÉÉÉÉÉÉ' }), { message: RAISE_REFUSALS.tokenBytes })
+  for (const hidden of ['​', '‍', '‮', '⁦', '﻿', '\u0007', '\n', '­']) {
+    assert.throws(() => tokenFields({ tokenName: `Wid${hidden}get`, tokenSymbol: 'W' }), { message: RAISE_REFUSALS.tokenCharacters }, JSON.stringify(hidden))
+    assert.throws(() => tokenFields({ tokenName: 'Widget', tokenSymbol: `W${hidden}` }), { message: RAISE_REFUSALS.tokenCharacters }, JSON.stringify(hidden))
+  }
+  assert.deepEqual(tokenFields({ tokenName: 'Ünïcødé ✓', tokenSymbol: 'ÜÑ' }), { tokenName: 'Ünïcødé ✓', tokenSymbol: 'ÜÑ' })
+  assert.deepEqual([bundleIdFrom('9223372036854775807'), bundleIdFrom('9223372036854775808'), bundleIdFrom('9999999999999999999'), bundleIdFrom('0'),
+    bundleIdFrom('07'), bundleIdFrom(7)], [9223372036854775807n, null, null, null, null, 7n])
+  const h = harness()
+  assert.equal((await call(h.api.read(get('/api/bundles/9223372036854775808'), '9223372036854775808'))).status, 404)
+  assert.equal(h.pool.queries.length, 0, 'never reaches PostgreSQL')
+})
+
+test('reads: one backer count per bundle per 30 s; /wallet\'s Backer read follows the bundle:read limit', async () => {
+  const h = harness()
+  raising(h)
+  await call(h.api.read(get('/api/bundles/7'), '7'))
+  await call(h.api.read(get('/api/bundles/7'), '7'))
+  assert.equal(h.chain.programReads.length, 1)
+  let at = 0
+  const count = createBackerCounter({ now: () => at })
+  await count(h.chain, 7n); at = 29_999; await count(h.chain, 7n)
+  assert.equal(h.chain.programReads.length, 2)
+  at = 30_000; await count(h.chain, 7n)
+  assert.equal(h.chain.programReads.length, 3)
+  assert.deepEqual(await walletBundleFields(h.pool, () => h.chain, backer.publicKey.toBase58(), { allowed: () => false }), { bundles: null })
+  assert.equal(h.chain.programReads.length, 3, 'no Backer read when refused')
 })
 
 // A raising bundle 7 on chain with its site row; `fields` override the chain account.

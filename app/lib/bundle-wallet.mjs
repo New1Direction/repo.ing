@@ -8,10 +8,12 @@ import { backerJson, bundleJson } from './bundle-state.mjs'
 // - Until the site has opened a bundle, and for a wallet that backs none, the overview gets no extra field and makes no chain read
 //   beyond one database check: a wallet's response is unchanged.
 // - Otherwise { bundles }: the site's bundles the wallet backs (a refunded backer account is closed, so it drops out), or null
-//   when they cannot be read now. connection: returns the RPC connection, called only then.
-export async function walletBundleFields(db, connection, wallet) {
+//   when they cannot be read now. connection: returns the RPC connection, called only then. allowed(): whether this address may
+//   make the program-wide Backer read now (the bundle:read limit, app/lib/request-limits.mjs); when it may not, null.
+export async function walletBundleFields(db, connection, wallet, { allowed = () => true } = {}) {
   try {
     if (!await anyBundles(db)) return {}
+    if (!allowed()) return { bundles: null }
     const backed = await walletBackers(connection(), wallet)
     const rows = await loadBundles(db, backed.map(item => item.id))
     const bundles = backed.filter(item => rows.has(item.id.toString())).map(({ id, bundle, backer }) => {

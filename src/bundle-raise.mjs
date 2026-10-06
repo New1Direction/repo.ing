@@ -1,5 +1,6 @@
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import bs58 from 'bs58'
-import { ComputeBudgetProgram, PublicKey, Transaction } from '@solana/web3.js'
+import { ComputeBudgetProgram, Message, PublicKey, Transaction } from '@solana/web3.js'
 import { NATIVE_MINT, createCloseAccountInstruction } from '@solana/spl-token'
 import { STATUS, bundleErrorName, claimBackerFeesInstruction, createBundleInstruction, depositInstruction, refundInstruction,
   tokenAccountOf } from './bundle-vault.mjs'
@@ -22,6 +23,8 @@ export const RAISE_REFUSALS = Object.freeze({
   target: `Choose a target from ${sol(BUNDLE_RAISE.minTargetLamports)} to ${sol(BUNDLE_RAISE.maxTargetLamports)}.`,
   deadline: `Choose a deadline of ${BUNDLE_RAISE.deadlineDays.join(', ')} days.`,
   token: 'Token name (1–32) and symbol (1–10) are required',
+  tokenBytes: 'Token name must fit 32 bytes and symbol 10 bytes on Solana. Use fewer special characters.',
+  tokenCharacters: 'Token name and symbol cannot contain control or invisible characters.',
   wallet: 'Invalid wallet address',
   amount: 'Enter a deposit amount in SOL.',
   repository: 'Bundle launches are for public GitHub repositories only.',
@@ -29,6 +32,7 @@ export const RAISE_REFUSALS = Object.freeze({
   live: 'This repository already has a bundle.',
   opening: 'This repository has a bundle waiting for its creator\'s wallet. If it is not signed, it expires within a few minutes.',
   creator: 'This wallet cannot open a bundle.',
+  wallets: 'This wallet already has bundles waiting for its signature. Sign them, or open another in a few minutes.',
   expired: 'This bundle review expired. Open the bundle again.',
   altered: 'Your wallet changed the transaction. Review it again.',
   unsigned: 'The wallet signature is missing or invalid. Review it again.',
@@ -45,12 +49,27 @@ export function raiseTerms({ targetLamports, deadlineDays }, now = Date.now()) {
   return { targetLamports: target, minDepositLamports: BUNDLE_RAISE.minDepositLamports, deadline: Math.floor(now / 1000) + days * 86_400 }
 }
 
-// The token the launch will create, with the standard launch's limits (src/launch-coordinator.mjs). The image is checked by
-// validateTokenImage (src/token-image.mjs) in the route, as for a standard launch.
+// Control characters, and format characters: bidi overrides and isolates, zero-width spaces and joiners, the BOM. They could
+// make a token's name read differently from what it is.
+const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}\u2028\u2029]/u
+
+// The token the launch will create, with the standard launch's limits (src/launch-coordinator.mjs) and Metaplex's byte caps (name
+// 32 bytes, symbol 10, in UTF-8), without hidden characters. The image is checked by validateTokenImage (src/token-image.mjs) in
+// the route, as for a standard launch.
 export function tokenFields({ tokenName, tokenSymbol }) {
   if (typeof tokenName !== 'string' || typeof tokenSymbol !== 'string' || !tokenName || tokenName.length > 32 || !tokenSymbol ||
     tokenSymbol.length > 10) throw refuse('token')
+  if (HIDDEN_CHARACTERS.test(tokenName) || HIDDEN_CHARACTERS.test(tokenSymbol)) throw refuse('tokenCharacters')
+  if (Buffer.byteLength(tokenName, 'utf8') > 32 || Buffer.byteLength(tokenSymbol, 'utf8') > 10) throw refuse('tokenBytes')
   return { tokenName, tokenSymbol }
+}
+
+// A bundle id from a path or a body: digits within the program's u64 and Postgres's bigint (at most 2^63 - 1), else null.
+const MAX_BUNDLE_ID = (1n << 63n) - 1n
+export function bundleIdFrom(value) {
+  if (!/^[1-9]\d{0,18}$/.test(String(value ?? ''))) return null
+  const id = BigInt(value)
+  return id <= MAX_BUNDLE_ID ? id : null
 }
 
 // A wallet address as a canonical, on-curve base58 key (a PDA cannot sign).
@@ -84,8 +103,29 @@ export const bundleMatchesRow = (bundle, row) => bundle.id === BigInt(row.bundle
   bundle.creator.toBase58() === row.creatorWallet && bundle.target === BigInt(row.targetLamports) &&
   bundle.minDeposit === BigInt(row.minDepositLamports) && bundle.deadline === unixSeconds(row.deadline)
 
+// The compact-u16 count that starts a transaction's wire form, and its length in bytes.
+function shortVec(bytes) {
+  let value = 0
+  for (let index = 0; index < 3; index++) {
+    const byte = bytes[index]
+    if (byte === undefined) throw Error('Short transaction')
+    value |= (byte & 0x7f) << (7 * index)
+    if (!(byte & 0x80)) return [value, index + 1]
+  }
+  throw Error('Bad transaction length')
+}
+
+// A signed transaction from base64, with exactly as many signature slots on the wire as its message requires: an extra or a
+// missing slot is refused before any signature is checked.
 function signedTransaction(base64) {
-  try { return Transaction.from(Buffer.from(String(base64 ?? ''), 'base64')) } catch { throw refuse('altered') }
+  try {
+    const bytes = Buffer.from(String(base64 ?? ''), 'base64')
+    const [count, length] = shortVec(bytes)
+    const message = Message.from(bytes.subarray(length + count * 64))
+    const signed = Transaction.from(bytes)
+    if (count !== message.header.numRequiredSignatures || signed.signatures.length !== count) throw Error('Signature count')
+    return signed
+  } catch { throw refuse('altered') }
 }
 
 // The compute budget a prepared transaction carries ahead of everything else: one unit limit and one unit price, within the
@@ -94,15 +134,19 @@ function preparedBudget(signed) {
   let budget
   try { budget = readTradeComputeBudget(signed.instructions) } catch { throw refuse('altered') }
   if (budget.count !== 2 || budget.limit === null) throw refuse('altered')
-  return [ComputeBudgetProgram.setComputeUnitLimit({ units: budget.limit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: budget.microLamports })]
+  return { blockhash: signed.recentBlockhash, units: budget.limit, microLamports: budget.microLamports }
 }
+const budgetInstructions = ({ units, microLamports }) => [ComputeBudgetProgram.setComputeUnitLimit({ units }),
+  ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(microLamports) })]
 
-// The message the wallet reviewed, for `instructions` after the signed transaction's own budget and blockhash; the wallet may
-// only append constrained Lighthouse assertions to it (src/launch-wallet-assertions.mjs).
-function matchesPrepared(signed, feePayer, instructions) {
-  if (!signed.feePayer?.equals(feePayer)) return false
-  const reviewed = new Transaction({ feePayer, recentBlockhash: signed.recentBlockhash }).add(...preparedBudget(signed), ...instructions)
-  return matchesReviewedTransaction(Buffer.from(reviewed.serializeMessage()), signed)
+// The message the wallet reviewed: [unit limit, unit price, ...instructions] with `budget`'s blockhash and prices (the prepared
+// ones, else the signed transaction's own, which a wallet-only transaction may carry); the wallet may only append constrained
+// Lighthouse assertions to it (src/launch-wallet-assertions.mjs). assertionsOn: the one account those assertions may name.
+function matchesPrepared(signed, feePayer, instructions, { budget = preparedBudget(signed), assertionsOn = null } = {}) {
+  if (!signed.feePayer?.equals(feePayer) || signed.recentBlockhash !== budget.blockhash) return false
+  const reviewed = new Transaction({ feePayer, recentBlockhash: budget.blockhash }).add(...budgetInstructions(budget), ...instructions)
+  if (!matchesReviewedTransaction(Buffer.from(reviewed.serializeMessage()), signed)) return false
+  return !assertionsOn || signed.instructions.slice(reviewed.instructions.length).every(ix => ix.keys.every(key => key.pubkey.equals(assertionsOn)))
 }
 
 function walletSigned(signed, wallet) {
@@ -110,12 +154,41 @@ function walletSigned(signed, wallet) {
   if (!entry?.signature || !signed.verifySignatures(false)) throw refuse('unsigned')
 }
 
-// The opening transaction after the creator's wallet signed it: exactly [unit limit, unit price, create_bundle(row)], paid by the
-// creator, plus at most the wallet's own assertions. Only then does repo.ing's admin co-sign (the wallet signs first, as for a
-// standard launch: a wallet that appends assertions would void an earlier co-signature). Returns the bytes to send.
-export function acceptSignedCreate(row, admin, transactionBase64) {
+// The opening's review, sealed by the server at prepare and handed back with the signed transaction: the blockhash, its last valid
+// block height and the compute budget the server chose. The client cannot change them (HMAC with a key only the server holds,
+// derived from the admin key as launch sessions derive theirs, src/launch-sessions.mjs), so submit co-signs exactly the prepared
+// message, and sends it only while that blockhash can land.
+export function bundleReviewKey(secretKey) {
+  if (!secretKey?.length) throw Error('Admin key required for bundle reviews')
+  return createHmac('sha256', Buffer.from(secretKey)).update('repo.ing bundle review v1').digest()
+}
+const reviewMac = (key, payload) => createHmac('sha256', key).update(`bundle-review:v1:${payload}`).digest()
+
+export function sealBundleReview(key, { bundleId, blockhash, lastValidBlockHeight, units, microLamports }) {
+  const payload = Buffer.from(JSON.stringify({ id: String(bundleId), blockhash, lastValidBlockHeight, units, microLamports: String(microLamports) })).toString('base64url')
+  return `${payload}.${reviewMac(key, payload).toString('base64url')}`
+}
+
+// The review of this bundle, or a refusal (an expired or altered review reads the same).
+export function openBundleReview(key, sealed, bundleId) {
+  const [payload, mac, extra] = String(sealed ?? '').split('.')
+  const given = Buffer.from(mac ?? '', 'base64url'), expected = payload ? reviewMac(key, payload) : null
+  if (extra !== undefined || !expected || given.length !== expected.length || !timingSafeEqual(given, expected)) throw refuse('expired')
+  let review
+  try { review = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) } catch { throw refuse('expired') }
+  if (review?.id !== String(bundleId) || !Number.isSafeInteger(review.lastValidBlockHeight) || !Number.isSafeInteger(review.units) ||
+    !/^\d{1,20}$/.test(review.microLamports) || typeof review.blockhash !== 'string') throw refuse('expired')
+  return review
+}
+
+// The opening transaction after the creator's wallet signed it: exactly [unit limit, unit price, create_bundle(row)] with the
+// review's blockhash and budget, paid by the creator, plus at most the wallet's own assertions on the creator's account (never on
+// the admin's). Only then does repo.ing's admin co-sign (the wallet signs first, as for a standard launch: a wallet that appends
+// assertions would void an earlier co-signature). Returns the bytes to send.
+export function acceptSignedCreate(row, admin, transactionBase64, review) {
   const signed = signedTransaction(transactionBase64), creator = new PublicKey(row.creatorWallet)
-  if (!matchesPrepared(signed, creator, [createInstructionFor(row, admin.publicKey)])) throw refuse('altered')
+  if (creator.equals(admin.publicKey)) throw refuse('creator')
+  if (!matchesPrepared(signed, creator, [createInstructionFor(row, admin.publicKey)], { budget: review, assertionsOn: creator })) throw refuse('altered')
   walletSigned(signed, creator)
   signed.partialSign(admin)
   if (!signed.verifySignatures()) throw refuse('unsigned')
