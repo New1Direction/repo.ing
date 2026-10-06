@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import { AppHeader, Footer, RepoIdentity } from '../../../components/ui'
 import { BundleRaise } from '../../../components/bundle-raise'
 import { BUNDLE_DEFAULTS, bundleLaunchable } from '../../../../src/bundle-launch.mjs'
+import { bundleIdFrom } from '../../../../src/bundle-raise.mjs'
 import { bundleTokenImage } from '../../../../src/bundle-raise-store.mjs'
 import { readBundleState } from '../../../lib/bundle-state.mjs'
 import { chain, database } from '../../../lib/server.mjs'
@@ -16,13 +17,14 @@ export const metadata = { title: 'Bundle raise · repo.ing', robots: { index: fa
 // take a refund or claim; while it is off the page takes no deposit.
 export default async function BundlePage({ params }) {
   const { id } = await params
-  if (!/^[1-9]\d{0,18}$/.test(String(id))) notFound()
+  const bundleId = bundleIdFrom(id)
+  if (bundleId === null) notFound()
   const pool = database()
   if (!pool) notFound()
   let state, image = null
   try {
-    state = await readBundleState({ pool, connection: chain(), id: BigInt(id) })
-    if (state) image = await bundleTokenImage(pool, id).catch(() => null)
+    state = await readBundleState({ pool, connection: chain(), id: bundleId })
+    if (state) image = await bundleTokenImage(pool, bundleId).catch(() => null)
   } catch (error) {
     console.warn('bundle_page_unavailable', { code: error?.code ?? error?.name ?? 'error' })
     return <><AppHeader/><main className="section-wrap bundle-page"><h1>Bundle unavailable</h1><p>This bundle cannot be read right now. Try again shortly.</p></main><Footer/></>

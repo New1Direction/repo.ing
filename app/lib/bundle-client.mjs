@@ -28,7 +28,7 @@ export async function openBundle(details, { provider, onStage = () => {} }) {
   onStage('Waiting for wallet')
   const transaction = await signPrepared(prepared, provider)
   onStage('Opening the bundle')
-  return bundleRequest('/api/bundles', { action: 'submit', bundleId: prepared.bundleId, transaction, lastValidBlockHeight: prepared.lastValidBlockHeight })
+  return bundleRequest('/api/bundles', { action: 'submit', bundleId: prepared.bundleId, review: prepared.review, transaction })
 }
 
 // deposit (lamports as digits), refund or claim for the connected wallet: prepare, sign, send. Resolves { signature, confirmed }.
