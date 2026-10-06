@@ -19,7 +19,7 @@ import { shippingLeaders } from '../lib/pulse-rank.mjs'
 import { ShippingLeaders } from '../components/shipping-leaders'
 import { promotableMarkets, promotionExcluded } from '../lib/maintainer-opt-outs.mjs'
 import { OFFICIAL_TOKEN } from '../lib/official-token.mjs'
-import { featuredMarkets, labeledRacers, featuredTicker } from '../lib/repo-quality.mjs'
+import { labeledRacers, featuredTicker } from '../lib/repo-quality.mjs'
 import { hfMarketsEnabled, shownMarkets, withModelFacts } from '../lib/hf-markets.mjs'
 import { selectModelStrip } from '../lib/hf-model-display.mjs'
 import { ModelsStrip } from '../components/hf/models-strip'
@@ -100,14 +100,14 @@ async function LiveMarketContent() {
     usdPerSol={usdPerSol} renderedAt={Date.now()}/>
 }
 
-// Both list tabs from one read per render. Home lists promote: never a do-not-promote or maintainer-declined repository
-// (nothing when that list is unreadable), and only markets that earned promotion (repo-quality.mjs): new repositories wait
-// until 10% of their graduation target. /explore still lists every market.
+// The list tabs from one read per render. Home lists never show a do-not-promote or maintainer-declined repository (nothing
+// when that list is unreadable). New repositories show in their real place with their "New repo" label (owner, 2026-10-06);
+// launch posts and the pulse ticker still wait until they earn promotion (repo-quality.mjs).
 const homeLists = cache(async () => {
   const [{ markets, unavailable }, usdPerSol] = await Promise.all([listMarkets(), solUsdPrice()])
   const promotable = await promotableMarkets(shownMarkets(markets))
   const notice = unavailable || (!promotable && 'Markets are temporarily unavailable.')
-  return { notice, usdPerSol, tabs: homeMarketTabs(withModelFacts(await withPulse(featuredMarkets(promotable ?? [])), { schedule: after }), { usdPerSol }) }
+  return { notice, usdPerSol, tabs: homeMarketTabs(withModelFacts(await withPulse(promotable ?? []), { schedule: after }), { usdPerSol }) }
 })
 
 async function MarketListContent({ tab }) {
@@ -139,12 +139,12 @@ async function PulseTickerContent() {
   return unavailable ? null : <PulseTicker items={featuredTicker(items, markets)}/>
 }
 
-// The community repositories that shipped the most code this week ($REPOING, do-not-promote and maintainer-declined repos,
-// and new repos that have not earned promotion, excluded; unavailable while the do-not-promote set is unreadable).
+// The community repositories that shipped the most code this week ($REPOING, do-not-promote and maintainer-declined repos
+// excluded; new repos included, labeled; unavailable while the do-not-promote set is unreadable).
 async function ShippingLeadersContent() {
   const [{ markets }, index, excluded] = await Promise.all([listMarkets(), pulseIndex(), promotionExcluded()])
   if (!excluded) return <p className="home-board-empty">Shipping leaders are temporarily unavailable.</p>
-  const leaders = shippingLeaders(featuredMarkets(shownMarkets(markets)).map(market => ({ ...market, pulse: index.get(String(market.repoId)) ?? null })),
+  const leaders = shippingLeaders(shownMarkets(markets).map(market => ({ ...market, pulse: index.get(String(market.repoId)) ?? null })),
     { excluded, skipMints: [OFFICIAL_TOKEN.mint], limit: 5 })
   return <ShippingLeaders markets={leaders}/>
 }

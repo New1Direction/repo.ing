@@ -3,6 +3,7 @@ import { ArrowRight } from 'lucide-react'
 import { MarketLink } from './market-link'
 import { RepoAvatar } from './ui'
 import { formatCount } from '../lib/pulse-format.mjs'
+import { NewRepoLabel } from './market-signals'
 
 // Home board, Shipping tab: the repositories whose developers shipped the most code this week, from Dev Pulse.
 export function ShippingLeaders({ markets }) {
@@ -10,7 +11,7 @@ export function ShippingLeaders({ markets }) {
   return <>
     <ol className="shipping-leaders-list">{markets.map((market, index) => <li key={market.mint}><MarketLink mint={market.mint} className="shipping-card">
       <span className="shipping-rank" aria-hidden="true">{index + 1}</span><RepoAvatar repo={market}/>
-      <span className="shipping-name"><strong>{market.fullName}</strong><small>${market.symbol}</small></span>
+      <span className="shipping-name"><strong>{market.fullName}</strong><small>${market.symbol}{market.newRepo && <NewRepoLabel compact/>}</small></span>
       <span className="shipping-stats"><span><b>{formatCount(market.pulse.commits7d)}</b> commits</span><span><b>{formatCount(market.pulse.merged7d)}</b> PRs merged</span>
         {market.pulse.devs7d > 0 && <span><b>{formatCount(market.pulse.devs7d)}</b> dev{market.pulse.devs7d === 1 ? '' : 's'}</span>}</span>
     </MarketLink></li>)}</ol>

@@ -6,7 +6,7 @@ import '../market-signals.css'
 // place: the maintainer is verified and launched the market from their payout wallet. compact: small cards.
 export const OFFICIAL_TITLE = "Official: launched by the repository's verified maintainer, from the payout wallet they set on repo.ing"
 export const NEW_REPO_TITLE = `New repo: created in the last ${NEW_REPO_DAYS} days or fewer than ${NEW_REPO_MIN_STARS} stars on GitHub. `
-  + `repo.ing features it only after it reaches ${PROMOTION_MIN_PERCENT}% of its graduation target.`
+  + `Check the repository before you buy. repo.ing announces it only after it reaches ${PROMOTION_MIN_PERCENT}% of its graduation target.`
 
 export function OfficialBadge({ compact = false }) {
   return <span className={`badge official${compact ? ' compact' : ''}`} title={OFFICIAL_TITLE}>
