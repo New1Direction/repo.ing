@@ -5,6 +5,8 @@
 #   - the DAMM v2 pool config a SOL curve migrates into (FixedBps100), the snapshot start-validator.sh loads;
 #   - the bundle vault program (tests/fixtures/validator/bundle_vault.so, built by scripts/build-bundle-vault.sh) as an
 #     upgradeable program whose upgrade authority is a test key written to <work-dir>/bundle-authority.json.
+#   - a second copy of it at another address (<work-dir>/decoy-program.json) whose upgrade authority is another key
+#     (<work-dir>/decoy-authority.json): init_platform must refuse that copy's ProgramData.
 # Mainnet is read once per work dir (MAINNET_RPC_URL overrides the RPC). Usage: scripts/ci/start-bundle-validator.sh <work-dir>
 set -euo pipefail
 
@@ -32,6 +34,10 @@ for program in "dbc:$DBC" "cp_amm:$DAMM" "token2022:$TOKEN_2022" "metaplex:$META
   [ -s "$FIXTURES/$name.so" ] || solana program dump "$id" "$FIXTURES/$name.so" --url "$MAINNET" > /dev/null
 done
 [ -s "$WORK_DIR/bundle-authority.json" ] || solana-keygen new --no-bip39-passphrase --silent --force -o "$WORK_DIR/bundle-authority.json" > /dev/null
+for key in decoy-program decoy-authority; do
+  [ -s "$WORK_DIR/$key.json" ] || solana-keygen new --no-bip39-passphrase --silent --force -o "$WORK_DIR/$key.json" > /dev/null
+done
+DECOY=$(solana-keygen pubkey "$WORK_DIR/decoy-program.json")
 
 solana-test-validator --reset \
   --ledger "$WORK_DIR/ledger" \
@@ -42,6 +48,7 @@ solana-test-validator --reset \
   --bpf-program "$TOKEN_2022" "$FIXTURES/token2022.so" \
   --bpf-program "$METAPLEX" "$FIXTURES/metaplex.so" \
   --upgradeable-program "$BUNDLE" "$REPO_ROOT/tests/fixtures/validator/bundle_vault.so" "$WORK_DIR/bundle-authority.json" \
+  --upgradeable-program "$DECOY" "$REPO_ROOT/tests/fixtures/validator/bundle_vault.so" "$WORK_DIR/decoy-authority.json" \
   --account "$DAMM_MIGRATION_CONFIG" "$REPO_ROOT/tests/fixtures/validator/$DAMM_MIGRATION_CONFIG.json" \
   > "$WORK_DIR/validator.log" 2>&1 &
 echo $! > "$WORK_DIR/validator.pid"
