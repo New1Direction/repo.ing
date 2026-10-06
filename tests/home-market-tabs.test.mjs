@@ -35,5 +35,18 @@ test('the Market cap tab ranks by last trade price × supply in USD, SOL rows an
   // Without a SOL price, SOL rows still rank among themselves; a stock pair has no comparable figure and goes last.
   assert.deepEqual(orderMarkets([stock, busy, valuable], 'Market cap').map(m => m.mint), ['valuable', 'busy', 'stock'])
   const tabs = homeMarketTabs(markets, { usdPerSol: 120 })
-  assert.deepEqual(tabs['Market cap'].map(m => m.mint), ['stock', 'valuable', 'busy', 'hidden'], 'the home tab lists traded markets only')
+  assert.deepEqual(tabs['Market cap'].map(m => m.mint), ['hidden', 'stock', 'valuable', 'busy'],
+    'the home tab lists traded markets only, a new repo under its mark in its real place')
+})
+
+test('home tabs show a new repository under its promotion mark in its real place; Explore still puts it last', () => {
+  const at = new Date('2026-10-06T00:00:00Z')
+  const row = (mint, volume, price, extra = {}) => ({ repoId: mint, mint, fullName: `o/${mint}`, symbol: mint, indexedAt: at,
+    volume24hLamports: String(volume), priceSol: price, ...extra })
+  const big = row('big', 60e9, 0.00000004), fresh = row('fresh', 14e9, 0.000000035, { promoted: false, newRepo: true }), small = row('small', 1e9, 0.00000003)
+  const tabs = homeMarketTabs([small, fresh, big], { usdPerSol: 120 })
+  assert.deepEqual(tabs.Trending.map(m => m.mint), ['big', 'fresh', 'small'], 'by 24h volume, the new repo included')
+  assert.deepEqual(tabs['Market cap'].map(m => m.mint), ['big', 'fresh', 'small'], 'by market cap, the new repo included')
+  assert.equal(tabs.Trending.find(m => m.mint === 'fresh').newRepo, true, 'its row keeps the "New repo" label')
+  assert.deepEqual(orderMarkets([small, fresh, big], 'Trending').map(m => m.mint), ['big', 'small', 'fresh'], 'Explore keeps the promotion rule')
 })

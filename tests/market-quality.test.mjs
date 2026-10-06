@@ -81,7 +81,7 @@ test('repository facts read plainly: age, stars, forks and the score with its pa
   assert.deepEqual([known.isNew, known.tone, known.title, known.counts], [false, 'neutral', 'Repo 3 years old', '1,234 stars · 56 forks'])
   assert.equal(repoFactsView({ stars: 1, forks: 0 }, null, NOW).title, 'New repo')
   assert.equal(repoFactsView({ stars: 40 }, null, NOW).title, 'Repo age unknown')
-  assert.equal(NEW_REPO_NOTE, "New repo — it won't be featured until it reaches 10% of its graduation target.")
+  assert.equal(NEW_REPO_NOTE, 'New repo — its market carries a "New repo" label until it reaches 10% of its graduation target.')
 })
 
 const row = (id, extra = {}) => ({ repoId: String(id), mint: `mint${id}`, fullName: `o/r${id}`, symbol: `S${id}`, volume24hLamports: '0',

@@ -16,11 +16,12 @@ export function marketCapRank(market, usdPerSol = null) {
 
 // Trending: markets that earned promotion (app/lib/repo-quality.mjs; rows without the flag count as promoted) before new
 // repositories still under their 10% mark, then by 24h volume. Market cap: the same promotion rule, then by market cap
-// (marketCapRank; rows without a trade last). Ties and the New tab go newest first.
-export function orderMarkets(markets, tab = 'Trending', { usdPerSol = null } = {}) {
+// (marketCapRank; rows without a trade last). Ties and the New tab go newest first. promotedFirst: false (the home lists)
+// drops the promotion rule, so a new repository sits in its real place (its row still carries the "New repo" label).
+export function orderMarkets(markets, tab = 'Trending', { usdPerSol = null, promotedFirst = true } = {}) {
   const caps = tab === 'Market cap' ? new Map(markets.map(market => [market, marketCapRank(market, usdPerSol)])) : null
   return [...markets].sort((a, b) => {
-    if (tab === 'Trending' || tab === 'Market cap') {
+    if (promotedFirst && (tab === 'Trending' || tab === 'Market cap')) {
       const ap = a.promoted !== false, bp = b.promoted !== false
       if (ap !== bp) return ap ? -1 : 1
     }
@@ -45,9 +46,10 @@ export const tradedToday = market => BigInt(market.volume24hLamports ?? '0') > 0
 // stock pair's figures (`stock`, app/lib/stock-market-stats.mjs) ride along the same way; SOL rows never carry them.
 const HOME_MARKET_FIELDS = ['repoId', 'mint', 'fullName', 'description', 'symbol', 'tokenName', 'wasVerified', 'volume24hLamports', 'earned', 'claimed', 'remaining', 'stars', 'priceSol', 'bondingPercent', 'graduated', 'pulse', 'newRepo', 'officialLaunch']
 // usdPerSol: ranks the Market cap tab across SOL rows and stock pairs (orderMarkets); that tab lists only markets with a trade.
+// New repositories are in their real place on every home tab (owner, 2026-10-06), labeled on their rows.
 export function homeMarketTabs(markets, { usdPerSol = null } = {}) {
   const rowsFor = tab => tab === 'Trending' ? markets.filter(tradedToday) : tab === 'Market cap' ? markets.filter(market => marketCapRank(market, usdPerSol) !== null) : markets
-  return Object.fromEntries(HOME_MARKET_TABS.map(tab => [tab, orderMarkets(rowsFor(tab), tab, { usdPerSol }).slice(0, HOME_MARKET_LIMIT)
+  return Object.fromEntries(HOME_MARKET_TABS.map(tab => [tab, orderMarkets(rowsFor(tab), tab, { usdPerSol, promotedFirst: false }).slice(0, HOME_MARKET_LIMIT)
     .map(market => ({ ...Object.fromEntries(HOME_MARKET_FIELDS.map(key => [key, market[key]])), ...(market.likes !== undefined && { likes: market.likes }),
       ...(market.stock !== undefined && { stock: market.stock }) }))]))
 }

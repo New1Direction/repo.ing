@@ -8,7 +8,7 @@ export const NEW_REPO_DAYS = 30
 export const NEW_REPO_MIN_STARS = 10
 // A new repository's market earns promotion once its bonding curve holds this percent of its graduation target, or graduates.
 export const PROMOTION_MIN_PERCENT = 10
-export const NEW_REPO_NOTE = `New repo — it won't be featured until it reaches ${PROMOTION_MIN_PERCENT}% of its graduation target.`
+export const NEW_REPO_NOTE = `New repo — its market carries a "New repo" label until it reaches ${PROMOTION_MIN_PERCENT}% of its graduation target.`
 
 function createdTime(repo) {
   const value = repo?.githubCreatedAt
