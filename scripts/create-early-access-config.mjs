@@ -5,7 +5,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import bs58 from 'bs58'
 import { Connection, Keypair, VersionedTransaction, sendAndConfirmTransaction } from '@solana/web3.js'
-import { buildEarlyAccessConfigTransaction, reviewEarlyAccessConfig, verifyCreatedEarlyAccessConfig } from '../src/early-access-config.mjs'
+import { EARLY_ACCESS_FEE_CLAIMER, buildEarlyAccessConfigTransaction, reviewEarlyAccessConfig, verifyCreatedEarlyAccessConfig } from '../src/early-access-config.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID } from '../src/early-access-hook.mjs'
 
 // Creates the contributor early access DBC config on mainnet (docs/EARLY_ACCESS.md). DRY RUN BY DEFAULT: builds the
@@ -21,7 +21,7 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID } from '../src/early-access-hook.mjs'
 //
 // SOLANA_RPC_URL (https) selects the RPC; otherwise the production web RPC is read (read-only) from Railway.
 const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
-const PARTNER = 'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3' // fee claimer and rent payer, as for every prior config
+const PARTNER = EARLY_ACCESS_FEE_CLAIMER.toBase58() // fee claimer and rent payer, as for every prior config
 const LEFTOVER_RECEIVER = 'FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1' // the creator signer, as on the builders configs
 const REFERENCE_CONFIG = '8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3' // the live SOL launch-fee config (docs/LAUNCH_FEE.md)
 const USAGE = 'Usage: node scripts/create-early-access-config.mjs [--keypair <path>] [--execute]'

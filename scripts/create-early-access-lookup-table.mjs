@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import bs58 from 'bs58'
 import { AddressLookupTableProgram, Connection, Keypair, PublicKey, Transaction, VersionedTransaction, sendAndConfirmTransaction } from '@solana/web3.js'
-import { earlyAccessLookupAddresses, readEarlyAccessConfig } from '../src/early-access-config.mjs'
+import { EARLY_ACCESS_FEE_CLAIMER, earlyAccessLookupAddresses, readEarlyAccessConfig } from '../src/early-access-config.mjs'
 
 // Creates the address lookup table every contributor early access launch is built with (docs/EARLY_ACCESS.md): one table
 // holding the keys all those launches share, so the launch fits one v0 transaction. DRY RUN BY DEFAULT: checks the config is
@@ -19,7 +19,7 @@ import { earlyAccessLookupAddresses, readEarlyAccessConfig } from '../src/early-
 // need a new one); no one can change an entry. The table's address depends on the slot it is created at, so it is known only
 // after --execute. SOLANA_RPC_URL (https) selects the RPC; otherwise the production web RPC is read (read-only) from Railway.
 const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
-const PARTNER = 'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3'
+const PARTNER = EARLY_ACCESS_FEE_CLAIMER.toBase58() // fee claimer, payer and the table's authority
 const CREATOR = 'FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1' // the launch co-signer: the config's leftover receiver
 const USAGE = 'Usage: node scripts/create-early-access-lookup-table.mjs --config <early access config> [--execute]'
 
@@ -43,7 +43,7 @@ const rpc = productionRpc()
 assert(rpc?.startsWith('https://'), 'Mainnet RPC URL is missing or not HTTPS')
 const connection = new Connection(rpc, 'confirmed')
 assert.equal(await connection.getGenesisHash(), MAINNET_GENESIS, 'RPC is not Solana mainnet')
-await readEarlyAccessConfig(connection, config, { leftoverReceiver: new PublicKey(CREATOR) })
+await readEarlyAccessConfig(connection, config, { leftoverReceiver: new PublicKey(CREATOR), feeClaimer: EARLY_ACCESS_FEE_CLAIMER })
 
 const addresses = earlyAccessLookupAddresses(config)
 const addressesSha256 = createHash('sha256').update(addresses.map(address => address.toBase58()).join('\n')).digest('hex')

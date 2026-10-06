@@ -1,10 +1,10 @@
 import { launchFailure } from '../../../src/launch-failure.mjs'
 import { randomUUID } from 'node:crypto'
-import { PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
+import { PublicKey, Transaction } from '@solana/web3.js'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createLaunchCoordinator } from '../../../src/launch-coordinator.mjs'
 import { createMeteoraLauncher, isVersionedLaunch, unsignedLaunchBase64 } from '../../../src/meteora-launch.mjs'
-import { createEarlyAccessLauncher } from '../../../src/early-access-launch.mjs'
+import { createEarlyAccessLauncher, readSignedVersionedLaunch } from '../../../src/early-access-launch.mjs'
 import { launchBuyPreset, launchBuyQuote } from '../../../src/launch-buy.mjs'
 import { estimateLaunchCosts } from '../../../src/launch-costs.mjs'
 import { createLaunchEvidenceVerifier } from '../../../src/launch-evidence.mjs'
@@ -219,8 +219,7 @@ export async function POST(request) {
       // Parsed inside the signing step so a malformed body fails the review (market 'failed') like a wallet mismatch.
       const market = await coordinator.submitPrepared({ marketId: session.marketId, githubRepoId: session.githubRepoId, mint: session.mint,
         repo: { githubRepoId: repoId, fullName: session.repoFullName }, prepared, launchGuard,
-        signTransaction: async () => versioned ? VersionedTransaction.deserialize(Buffer.from(body.transaction, 'base64'))
-          : Transaction.from(Buffer.from(body.transaction, 'base64')) })
+        signTransaction: async () => versioned ? readSignedVersionedLaunch(body.transaction) : Transaction.from(Buffer.from(body.transaction, 'base64')) })
       // An early access market's pool is on its own config, which the verifier resolves by the market's stamp.
       const verify = versioned ? createLaunchEvidenceVerifier({ connection, config: configAddress() ?? config, earlyAccessConfig: config })
         : createLaunchEvidenceVerifier({ connection, config })

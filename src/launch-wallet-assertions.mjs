@@ -1,4 +1,4 @@
-import { Message, Transaction, TransactionMessage, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
+import { Message, PACKET_DATA_SIZE, Transaction, TransactionMessage, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 
 export const LIGHTHOUSE_PROGRAM = 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95'
 // Lighthouse v2 Borsh variants: account data/info, mint and token assertions.
@@ -42,13 +42,19 @@ export function matchesReviewedLaunch(reviewedBytes, returned) {
 }
 
 // The early access launch's v0 transaction (docs/EARLY_ACCESS.md), by the same rule: the reviewed message exactly, or that
-// message with 1 to 4 trailing Lighthouse assertions and nothing else. Both messages are read through their lookup tables
+// message with trailing Lighthouse assertions and nothing else. Both messages are read through their lookup tables
 // (loadLookupTables(message) → the AddressLookupTableAccounts it names), so an account moved between the static keys and the
 // table cannot hide a change; removing only the trailing assertions and compiling again must give the reviewed bytes.
-export async function matchesReviewedVersionedLaunch(reviewedBytes, returned, loadLookupTables) {
+// The launch leaves little room under Solana's 1,232-byte limit (measured in tests/early-access-launch-chain.test.mjs): one
+// assertion adds 48 bytes (the Lighthouse program's key and the instruction), each next one 16. With a first buy there is room
+// for none (1,190-1,223 bytes with the production metadata link); without one (878 bytes) for 20. So: at most 4, as for legacy
+// launches, and never a transaction over the limit (web3.js cannot encode one, so it is refused here first).
+export const MAX_VERSIONED_LAUNCH_ASSERTIONS = 4
+export async function matchesReviewedVersionedLaunch(reviewedBytes, returned, loadLookupTables, { maxAssertions = MAX_VERSIONED_LAUNCH_ASSERTIONS } = {}) {
   if (!(returned instanceof VersionedTransaction) || returned.version !== 0) return false
   try {
     if (Buffer.from(returned.message.serialize()).equals(reviewedBytes)) return true
+    if (returned.serialize().length > PACKET_DATA_SIZE) return false
     const reviewed = VersionedMessage.deserialize(reviewedBytes), actual = returned.message
     if (reviewed.version !== 0) return false
     const tableKeys = message => message.addressTableLookups.map(lookup => lookup.accountKey.toBase58()).join(',')
@@ -58,7 +64,7 @@ export async function matchesReviewedVersionedLaunch(reviewedBytes, returned, lo
     const changed = TransactionMessage.decompile(actual, { addressLookupTableAccounts: tables })
     const count = original.instructions.length
     const additions = changed.instructions.slice(count)
-    if (additions.length < 1 || additions.length > 4) return false
+    if (additions.length < 1 || additions.length > maxAssertions) return false
     const reviewedKeys = reviewed.getAccountKeys({ addressLookupTableAccounts: tables }).keySegments().flat()
     const expectedKeys = new Set(reviewedKeys.map(k => k.toBase58()))
     if (expectedKeys.has(LIGHTHOUSE_PROGRAM)) return false
