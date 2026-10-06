@@ -230,6 +230,19 @@ test('the stock-paired market beside it gets no owner claim on any of those path
   assert.deepEqual(rows[0], { claims: 0, fees: 0 }, 'nothing of the stock pair ever reached a SOL ledger')
 })
 
+test('a contributor early access market the maintainer administers is not on the builder dashboard until its claims ship', async () => {
+  const EARLY = '8801'
+  github.repos.push([EARLY, 'octocat/early'])
+  await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,description,avatar_url,stars,forks,archived,github_updated_at) values
+    (${EARLY},'octocat','early','octocat/early',null,null,5,0,false,now())`)
+  await pool.query(`insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,blockhash,
+    last_valid_block_height,launch_slot,launch_finality,indexed_at,last_verified_at,early_access_end,transfer_hook_program)
+    values ($1,'confirmed','MintEarly','PoolEarly',$2,$3,'Early','EARLY','LaunchEarly','Hash',100,30,'finalized',now(),now(),now(),'Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep')`,
+  [EARLY, beneficiary, creator.publicKey.toBase58()])
+  const overview = await builderOverview(builders)
+  assert.deepEqual(overview.repositories.map(repository => repository.repoId).sort(), [DOCS, HELLO].sort())
+})
+
 test('with the stock ledgers unreadable, a SOL wallet still gets its overview exactly as before, with no stock field', async () => {
   const before = await walletOverview(beneficiary)
   await pool.query('drop table stock_launcher_payouts cascade')

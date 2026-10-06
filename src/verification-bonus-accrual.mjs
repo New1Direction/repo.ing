@@ -41,7 +41,9 @@ export function withStoredCreation(repository, storedCreatedAt) {
   return { ...repository, githubCreatedAt: repository.createdAt, createdAt: stored.toISOString(), createdAtSource: 'stored' }
 }
 
-// The stamped, finalized market and its FIRST admin verification (earliest verified_at, then id).
+// The stamped, finalized market and its FIRST admin verification (earliest verified_at, then id). A contributor early access
+// market (docs/EARLY_ACCESS.md) waits, undecided: the volume rule reads trade_events, which its transfer-hook pool does not write
+// until step 5, and a decided bonus is never re-evaluated. Step 5 drops this condition here and in candidates().
 async function marketFacts(db, repoId) {
   const { rows: [market] } = await db.query(`select m.github_repo_id::text as "repoId", m.pool, m.launcher_wallet as "launcherWallet",
       m.verification_bonus_lamports::text as amount, m.launch_block_time as "activatedAt", v.id as "verificationId",
@@ -51,7 +53,8 @@ async function marketFacts(db, repoId) {
     join lateral (select id, github_user_id, github_login, verified_at from repo_verifications
       where github_repo_id = m.github_repo_id and permission = 'admin' order by verified_at, id limit 1) v on true
     where m.github_repo_id = $1 and m.verification_bonus_lamports is not null and m.status = 'confirmed'
-      and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null`, [String(repoId)])
+      and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null
+      and m.early_access_end is null`, [String(repoId)])
   return market ?? null
 }
 
@@ -79,7 +82,7 @@ export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRe
       from markets m join repositories r on r.github_repo_id = m.github_repo_id and r.source = 'github'
       join repo_verifications v on v.github_repo_id = m.github_repo_id and v.permission = 'admin'
       where m.verification_bonus_lamports is not null and m.status = 'confirmed' and m.indexed_at is not null
-        and m.launch_finality = 'finalized' and m.launch_block_time is not null
+        and m.launch_finality = 'finalized' and m.launch_block_time is not null and m.early_access_end is null
         and not exists (select 1 from verification_bonuses b where b.github_repo_id = m.github_repo_id)
       group by m.github_repo_id having min(v.verified_at) <= $1 order by first, m.github_repo_id limit $2`,
     [new Date(now() - graceMs), limit * 10])

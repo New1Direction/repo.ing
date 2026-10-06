@@ -254,7 +254,7 @@ export async function graduationOperatorView(pool,env=process.env) {
       o.status,o.observation,o.reconciliation,o.error_code,o.checked_at,e.evidence_hash as migration_evidence_hash from markets m
       join repositories r on r.github_repo_id=m.github_repo_id left join graduation_observations o on o.github_repo_id=m.github_repo_id
       left join graduation_events e on e.github_repo_id=m.github_repo_id
-      where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null`),
+      where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null and m.early_access_end is null`),
     platformRevenueSummary(pool),liquidityReserveSummary(pool),reconcileLiquidity(pool),reconcilePlatformRevenue(pool),
     pool.query(`select a.id,a.kind,a.github_repo_id::text as "repoId",r.full_name as "fullName",a.detail,a.created_at as "createdAt",a.acknowledged_at as "acknowledgedAt"
       from graduation_alerts a left join repositories r on r.github_repo_id=a.github_repo_id order by a.id desc limit 100`)

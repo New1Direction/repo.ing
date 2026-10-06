@@ -28,14 +28,19 @@ insert into repositories(github_repo_id,owner,name,full_name,description,avatar_
   (41881900,'microsoft','vscode','microsoft/vscode',null,null,180000,35000,false,'2026-10-01T00:00:00Z'),
   (10270250,'facebook','react','facebook/react',null,null,240000,49000,false,'2026-10-01T00:00:00Z'),
   (1296269,'octocat','Hello-World','octocat/Hello-World',null,null,3000,900,false,'2026-10-01T00:00:00Z'),
-  (7,'fixture','pending','fixture/pending',null,null,1,0,false,'2026-10-01T00:00:00Z');
+  (7,'fixture','pending','fixture/pending',null,null,1,0,false,'2026-10-01T00:00:00Z'),
+  (8,'fixture','early','fixture/early',null,null,1,0,false,'2026-10-01T00:00:00Z');
 insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,blockhash,
     last_valid_block_height,launch_slot,launch_finality,indexed_at,last_verified_at,quote_asset_id,quote_mint,quote_registry_version) values
   (94911145,'confirmed','${fixture.market.mint}','${fixture.market.curve}','Launcher','${fixture.market.creator}','Docusaurus','DOCUSAURUS','LaunchDocs','Hash',100,10,'finalized',now(),now(),'meta-xstock','${META.mint}',1),
   (41881900,'confirmed','MintCode','PoolCode','Launcher','Creator','VSCode','VSCODE','LaunchCode','Hash',100,10,'finalized',now(),now(),'msft-xstock','${MSFT.mint}',1),
   (10270250,'submitted','MintReact','PoolReact','Launcher','Creator','React','REACT','LaunchReact','Hash',100,null,null,null,null,'meta-xstock','${META.mint}',1),
   (1296269,'confirmed','MintSol','PoolSol','Launcher','Creator','Hello','HELLO','LaunchSol','Hash',100,10,'finalized',now(),now(),null,null,null),
-  (7,'submitted','MintPending','PoolPending','Launcher','Creator','Pending','PEND','LaunchPending','Hash',100,null,null,null,null,null,null,null);`
+  (7,'submitted','MintPending','PoolPending','Launcher','Creator','Pending','PEND','LaunchPending','Hash',100,null,null,null,null,null,null,null);
+-- A contributor early access market (docs/EARLY_ACCESS.md): SOL-quoted, but a transfer-hook pool neither graduation job lists yet.
+insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,blockhash,
+    last_valid_block_height,launch_slot,launch_finality,indexed_at,last_verified_at,early_access_end,transfer_hook_program) values
+  (8,'confirmed','MintEarly','PoolEarly','Launcher','Creator','Early','EARLY','LaunchEarly','Hash',100,10,'finalized',now(),now(),now(),'Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep');`
 const ALL_INDEXED = `select m.github_repo_id::text as "githubRepoId" from markets m join repositories r on r.github_repo_id=m.github_repo_id
   where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized'`
 const ids = rows => rows.map(row => row.githubRepoId ?? row.repoId).sort()
@@ -60,12 +65,12 @@ test('stock graduation ledgers on PostgreSQL', { timeout: 120_000 }, async t => 
     await pool.query(SEED)
     const market = (await pool.query(`${STOCK_MARKET_SQL} and m.github_repo_id=94911145`)).rows[0]
 
-    await t.test('partition: the SOL and stock graduation jobs split every indexed market, with no overlap', async () => {
+    await t.test('partition: the SOL and stock graduation jobs split every indexed market but early access ones, with no overlap', async () => {
       const all = ids((await pool.query(ALL_INDEXED)).rows), sol = ids((await pool.query(publicMarketSQL)).rows)
       const stock = ids((await pool.query(STOCK_MARKET_SQL)).rows)
       assert.deepEqual(sol, ['1296269'])
       assert.deepEqual(stock, ['41881900', '94911145'])
-      assert.deepEqual([...sol, ...stock].sort(), all, 'SOL + stock = every indexed market')
+      assert.deepEqual([...sol, ...stock, '8'].sort(), all, 'SOL + stock = every indexed market but the early access one')
       assert.equal(sol.filter(id => stock.includes(id)).length, 0, 'no market in both')
       // The operator views split the same way.
       const view = await graduationOperatorView(pool, {})
