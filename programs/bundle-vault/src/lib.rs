@@ -933,6 +933,30 @@ fn meteora_account<'a, 'info: 'a>(info: &'a AccountInfo<'info>, program: &Pubkey
     Ok(data)
 }
 
+// Shared account checks. Anchor's own `address` and `seeds` constraints repeat their error building at every account (about 500
+// and 1,100 bytes each, so rent); these run the same checks on the same field, with the same error codes and log lines, once.
+#[inline(never)]
+fn key_is(key: &Pubkey, want: &Pubkey, error: impl Into<anchor_lang::error::Error>, name: &str) -> Result<()> {
+    if key != want {
+        return Err(error.into().with_account_name(name).with_pubkeys((*key, *want)));
+    }
+    Ok(())
+}
+
+// `seeds = [...], bump = <stored bump>`: the address the seeds and that bump make under this program.
+#[inline(never)]
+fn pda_is(key: &Pubkey, seeds: &[&[u8]], name: &str) -> Result<()> {
+    let want = Pubkey::create_program_address(seeds, &crate::ID)
+        .map_err(|_| anchor_lang::error::Error::from(anchor_lang::error::ErrorCode::ConstraintSeeds).with_account_name(name))?;
+    key_is(key, &want, anchor_lang::error::ErrorCode::ConstraintSeeds, name)
+}
+
+// `seeds = [...], bump`: the canonical address of the seeds under this program.
+#[inline(never)]
+fn pda_found(key: &Pubkey, seeds: &[&[u8]], name: &str) -> Result<()> {
+    key_is(key, &Pubkey::find_program_address(seeds, &crate::ID).0, anchor_lang::error::ErrorCode::ConstraintSeeds, name)
+}
+
 // The upgrade authority in an upgradeable loader ProgramData account: the variant (3, u32), the last deploy slot (u64), then an
 // Option<Pubkey>. Read by hand: Anchor's ProgramData type decodes it with bincode, whose error text added ~60 KB to the program.
 fn upgrade_authority_of(info: &AccountInfo) -> Result<Option<Pubkey>> {
@@ -1168,7 +1192,7 @@ pub struct InitPlatform<'info> {
     /// CHECK: the bundle config (checked in `apply_platform`)
     pub curve_config: UncheckedAccount<'info>,
     /// CHECK: the router PDA
-    #[account(seeds = [ROUTER_SEED], bump)]
+    #[account(constraint = { pda_found(&router.key(), &[ROUTER_SEED], "router")?; true })]
     pub router: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
@@ -1176,7 +1200,7 @@ pub struct InitPlatform<'info> {
 #[derive(Accounts)]
 pub struct SetPlatform<'info> {
     pub admin: Signer<'info>,
-    #[account(mut, seeds = [PLATFORM_SEED], bump = platform.bump, has_one = admin @ BundleError::NotAdmin)]
+    #[account(mut, constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true }, has_one = admin @ BundleError::NotAdmin)]
     pub platform: Box<Account<'info, Platform>>,
     /// CHECK: checked in `apply_platform`
     pub treasury: UncheckedAccount<'info>,
@@ -1185,7 +1209,7 @@ pub struct SetPlatform<'info> {
     /// CHECK: checked in `apply_platform`
     pub curve_config: UncheckedAccount<'info>,
     /// CHECK: the router PDA
-    #[account(seeds = [ROUTER_SEED], bump)]
+    #[account(constraint = { pda_found(&router.key(), &[ROUTER_SEED], "router")?; true })]
     pub router: UncheckedAccount<'info>,
 }
 
@@ -1194,9 +1218,9 @@ pub struct SetPlatform<'info> {
 pub struct CreateBundle<'info> {
     #[account(mut)]
     pub creator: Signer<'info>,
-    #[account(address = platform.admin @ BundleError::NotAdmin)]
+    #[account(constraint = { key_is(&admin.key(), &platform.admin, BundleError::NotAdmin, "admin")?; true })]
     pub admin: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(init, payer = creator, space = 8 + Bundle::INIT_SPACE, seeds = [BUNDLE_SEED, args.id.to_le_bytes().as_ref()], bump)]
     pub bundle: Box<Account<'info, Bundle>>,
@@ -1216,9 +1240,9 @@ pub struct Deposit<'info> {
 
 #[derive(Accounts)]
 pub struct AdminBundle<'info> {
-    #[account(address = platform.admin @ BundleError::NotAdmin)]
+    #[account(constraint = { key_is(&admin.key(), &platform.admin, BundleError::NotAdmin, "admin")?; true })]
     pub admin: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
@@ -1236,37 +1260,36 @@ pub struct Refund<'info> {
     pub wallet: Signer<'info>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
-    #[account(mut, close = wallet, seeds = [BACKER_SEED, bundle.key().as_ref(), wallet.key().as_ref()], bump = backer.bump,
-        has_one = wallet @ BundleError::NotBacker, has_one = bundle @ BundleError::NotBacker)]
+    #[account(mut, close = wallet, constraint = { pda_is(&backer.key(), &[BACKER_SEED, bundle.key().as_ref(), wallet.key().as_ref(), &[backer.bump]], "backer")?; true }, has_one = wallet @ BundleError::NotBacker, has_one = bundle @ BundleError::NotBacker)]
     pub backer: Account<'info, Backer>,
 }
 
 #[derive(Accounts)]
 pub struct Release<'info> {
-    #[account(mut, address = platform.launch_signer @ BundleError::NotLaunchSigner)]
+    #[account(mut, constraint = { key_is(&launch_signer.key(), &platform.launch_signer, BundleError::NotLaunchSigner, "launch_signer")?; true })]
     pub launch_signer: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
     /// CHECK: the operations wallet (address checked)
-    #[account(mut, address = platform.ops_wallet @ BundleError::BadSettings)]
+    #[account(mut, constraint = { key_is(&ops_wallet.key(), &platform.ops_wallet, BundleError::BadSettings, "ops_wallet")?; true })]
     pub ops_wallet: UncheckedAccount<'info>,
     /// CHECK: the instructions sysvar (address checked)
-    #[account(address = INSTRUCTIONS_SYSVAR)]
+    #[account(constraint = { key_is(&instructions.key(), &INSTRUCTIONS_SYSVAR, anchor_lang::error::ErrorCode::ConstraintAddress, "instructions")?; true })]
     pub instructions: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
 pub struct Settle<'info> {
-    #[account(address = platform.launch_signer @ BundleError::NotLaunchSigner)]
+    #[account(constraint = { key_is(&launch_signer.key(), &platform.launch_signer, BundleError::NotLaunchSigner, "launch_signer")?; true })]
     pub launch_signer: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
     /// CHECK: the vault PDA
-    #[account(seeds = [VAULT_SEED, bundle.key().as_ref()], bump = bundle.vault_bump)]
+    #[account(constraint = { pda_is(&vault.key(), &[VAULT_SEED, bundle.key().as_ref(), &[bundle.vault_bump]], "vault")?; true })]
     pub vault: UncheckedAccount<'info>,
     /// CHECK: the new DBC pool (owner, type and config checked in `settle`)
     pub pool: UncheckedAccount<'info>,
@@ -1285,7 +1308,7 @@ pub struct OpenVault<'info> {
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
     /// CHECK: the vault PDA
-    #[account(seeds = [VAULT_SEED, bundle.key().as_ref()], bump = bundle.vault_bump)]
+    #[account(constraint = { pda_is(&vault.key(), &[VAULT_SEED, bundle.key().as_ref(), &[bundle.vault_bump]], "vault")?; true })]
     pub vault: UncheckedAccount<'info>,
     /// CHECK: created by the associated token program, which checks the address
     #[account(mut)]
@@ -1294,13 +1317,13 @@ pub struct OpenVault<'info> {
     #[account(mut)]
     pub pot: UncheckedAccount<'info>,
     /// CHECK: wrapped SOL
-    #[account(address = WSOL)]
+    #[account(constraint = { key_is(&wsol_mint.key(), &WSOL, anchor_lang::error::ErrorCode::ConstraintAddress, "wsol_mint")?; true })]
     pub wsol_mint: UncheckedAccount<'info>,
     /// CHECK: SPL Token
-    #[account(address = SPL_TOKEN)]
+    #[account(constraint = { key_is(&token_program.key(), &SPL_TOKEN, anchor_lang::error::ErrorCode::ConstraintAddress, "token_program")?; true })]
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: the associated token program
-    #[account(address = ATA_PROGRAM)]
+    #[account(constraint = { key_is(&ata_program.key(), &ATA_PROGRAM, anchor_lang::error::ErrorCode::ConstraintAddress, "ata_program")?; true })]
     pub ata_program: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
@@ -1308,21 +1331,21 @@ pub struct OpenVault<'info> {
 #[derive(Accounts)]
 pub struct VaultSwapCurve<'info> {
     pub operator: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
     /// CHECK: the vault PDA
-    #[account(seeds = [VAULT_SEED, bundle.key().as_ref()], bump = bundle.vault_bump)]
+    #[account(constraint = { pda_is(&vault.key(), &[VAULT_SEED, bundle.key().as_ref(), &[bundle.vault_bump]], "vault")?; true })]
     pub vault: UncheckedAccount<'info>,
     /// CHECK: the bundle's DBC pool
-    #[account(mut, address = bundle.pool @ BundleError::BadPool)]
+    #[account(mut, constraint = { key_is(&pool.key(), &bundle.pool, BundleError::BadPool, "pool")?; true })]
     pub pool: UncheckedAccount<'info>,
     /// CHECK: the bundle's config
-    #[account(address = bundle.curve_config @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&config.key(), &bundle.curve_config, BundleError::BadPool, "config")?; true })]
     pub config: UncheckedAccount<'info>,
     /// CHECK: DBC's pool authority
-    #[account(address = DBC_POOL_AUTHORITY)]
+    #[account(constraint = { key_is(&pool_authority.key(), &DBC_POOL_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "pool_authority")?; true })]
     pub pool_authority: UncheckedAccount<'info>,
     /// CHECK: DBC checks it against the pool
     #[account(mut)]
@@ -1331,41 +1354,41 @@ pub struct VaultSwapCurve<'info> {
     #[account(mut)]
     pub quote_vault: UncheckedAccount<'info>,
     /// CHECK: the market token
-    #[account(address = bundle.mint @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&base_mint.key(), &bundle.mint, BundleError::BadPool, "base_mint")?; true })]
     pub base_mint: UncheckedAccount<'info>,
     /// CHECK: wrapped SOL
-    #[account(address = WSOL)]
+    #[account(constraint = { key_is(&quote_mint.key(), &WSOL, anchor_lang::error::ErrorCode::ConstraintAddress, "quote_mint")?; true })]
     pub quote_mint: UncheckedAccount<'info>,
     /// CHECK: the vault's token account
-    #[account(mut, address = bundle.vault_tokens @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&vault_tokens.key(), &bundle.vault_tokens, BundleError::BadVaultAccount, "vault_tokens")?; true })]
     pub vault_tokens: UncheckedAccount<'info>,
     /// CHECK: the vault's wrapped SOL account
-    #[account(mut, address = bundle.vault_sol @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&vault_sol.key(), &bundle.vault_sol, BundleError::BadVaultAccount, "vault_sol")?; true })]
     pub vault_sol: UncheckedAccount<'info>,
     /// CHECK: SPL Token
-    #[account(address = SPL_TOKEN)]
+    #[account(constraint = { key_is(&token_program.key(), &SPL_TOKEN, anchor_lang::error::ErrorCode::ConstraintAddress, "token_program")?; true })]
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: DBC's event authority
-    #[account(address = DBC_EVENT_AUTHORITY)]
+    #[account(constraint = { key_is(&event_authority.key(), &DBC_EVENT_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "event_authority")?; true })]
     pub event_authority: UncheckedAccount<'info>,
     /// CHECK: DBC
-    #[account(address = DBC)]
+    #[account(constraint = { key_is(&dbc_program.key(), &DBC, anchor_lang::error::ErrorCode::ConstraintAddress, "dbc_program")?; true })]
     pub dbc_program: UncheckedAccount<'info>,
     /// CHECK: the instructions sysvar (address checked)
-    #[account(address = INSTRUCTIONS_SYSVAR)]
+    #[account(constraint = { key_is(&instructions.key(), &INSTRUCTIONS_SYSVAR, anchor_lang::error::ErrorCode::ConstraintAddress, "instructions")?; true })]
     pub instructions: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
 pub struct RecordGraduation<'info> {
-    #[account(address = platform.admin @ BundleError::NotAdmin)]
+    #[account(constraint = { key_is(&admin.key(), &platform.admin, BundleError::NotAdmin, "admin")?; true })]
     pub admin: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
     /// CHECK: the bundle's DBC pool
-    #[account(address = bundle.pool @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&pool.key(), &bundle.pool, BundleError::BadPool, "pool")?; true })]
     pub pool: UncheckedAccount<'info>,
     /// CHECK: checked in `record_graduation`
     pub damm_pool: UncheckedAccount<'info>,
@@ -1374,25 +1397,25 @@ pub struct RecordGraduation<'info> {
     /// CHECK: checked in `record_graduation`
     pub router_position_nft: UncheckedAccount<'info>,
     /// CHECK: the router PDA
-    #[account(seeds = [ROUTER_SEED], bump)]
+    #[account(constraint = { pda_found(&router.key(), &[ROUTER_SEED], "router")?; true })]
     pub router: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
 pub struct VaultSwapPool<'info> {
     pub operator: Signer<'info>,
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
     /// CHECK: the vault PDA
-    #[account(seeds = [VAULT_SEED, bundle.key().as_ref()], bump = bundle.vault_bump)]
+    #[account(constraint = { pda_is(&vault.key(), &[VAULT_SEED, bundle.key().as_ref(), &[bundle.vault_bump]], "vault")?; true })]
     pub vault: UncheckedAccount<'info>,
     /// CHECK: the bundle's DAMM v2 pool
-    #[account(mut, address = bundle.damm_pool @ BundleError::BadPool)]
+    #[account(mut, constraint = { key_is(&damm_pool.key(), &bundle.damm_pool, BundleError::BadPool, "damm_pool")?; true })]
     pub damm_pool: UncheckedAccount<'info>,
     /// CHECK: DAMM v2's pool authority
-    #[account(address = DAMM_POOL_AUTHORITY)]
+    #[account(constraint = { key_is(&pool_authority.key(), &DAMM_POOL_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "pool_authority")?; true })]
     pub pool_authority: UncheckedAccount<'info>,
     /// CHECK: DAMM v2 checks it against the pool
     #[account(mut)]
@@ -1401,37 +1424,37 @@ pub struct VaultSwapPool<'info> {
     #[account(mut)]
     pub token_b_vault: UncheckedAccount<'info>,
     /// CHECK: the market token
-    #[account(address = bundle.mint @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&token_a_mint.key(), &bundle.mint, BundleError::BadPool, "token_a_mint")?; true })]
     pub token_a_mint: UncheckedAccount<'info>,
     /// CHECK: wrapped SOL
-    #[account(address = WSOL)]
+    #[account(constraint = { key_is(&token_b_mint.key(), &WSOL, anchor_lang::error::ErrorCode::ConstraintAddress, "token_b_mint")?; true })]
     pub token_b_mint: UncheckedAccount<'info>,
     /// CHECK: the vault's token account
-    #[account(mut, address = bundle.vault_tokens @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&vault_tokens.key(), &bundle.vault_tokens, BundleError::BadVaultAccount, "vault_tokens")?; true })]
     pub vault_tokens: UncheckedAccount<'info>,
     /// CHECK: the vault's wrapped SOL account
-    #[account(mut, address = bundle.vault_sol @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&vault_sol.key(), &bundle.vault_sol, BundleError::BadVaultAccount, "vault_sol")?; true })]
     pub vault_sol: UncheckedAccount<'info>,
     /// CHECK: the router's LP position (its liquidity measures the vault's partner fees)
-    #[account(address = bundle.router_position @ BundleError::BadPosition)]
+    #[account(constraint = { key_is(&router_position.key(), &bundle.router_position, BundleError::BadPosition, "router_position")?; true })]
     pub router_position: UncheckedAccount<'info>,
     /// CHECK: SPL Token
-    #[account(address = SPL_TOKEN)]
+    #[account(constraint = { key_is(&token_program.key(), &SPL_TOKEN, anchor_lang::error::ErrorCode::ConstraintAddress, "token_program")?; true })]
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: DAMM v2's event authority
-    #[account(address = DAMM_EVENT_AUTHORITY)]
+    #[account(constraint = { key_is(&event_authority.key(), &DAMM_EVENT_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "event_authority")?; true })]
     pub event_authority: UncheckedAccount<'info>,
     /// CHECK: DAMM v2
-    #[account(address = DAMM)]
+    #[account(constraint = { key_is(&damm_program.key(), &DAMM, anchor_lang::error::ErrorCode::ConstraintAddress, "damm_program")?; true })]
     pub damm_program: UncheckedAccount<'info>,
     /// CHECK: the instructions sysvar (address checked)
-    #[account(address = INSTRUCTIONS_SYSVAR)]
+    #[account(constraint = { key_is(&instructions.key(), &INSTRUCTIONS_SYSVAR, anchor_lang::error::ErrorCode::ConstraintAddress, "instructions")?; true })]
     pub instructions: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
 pub struct RouteCurveFees<'info> {
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
@@ -1439,13 +1462,13 @@ pub struct RouteCurveFees<'info> {
     #[account(seeds = [ROUTER_SEED], bump)]
     pub router: UncheckedAccount<'info>,
     /// CHECK: the bundle's DBC pool
-    #[account(mut, address = bundle.pool @ BundleError::BadPool)]
+    #[account(mut, constraint = { key_is(&pool.key(), &bundle.pool, BundleError::BadPool, "pool")?; true })]
     pub pool: UncheckedAccount<'info>,
     /// CHECK: the bundle's config
-    #[account(address = bundle.curve_config @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&config.key(), &bundle.curve_config, BundleError::BadPool, "config")?; true })]
     pub config: UncheckedAccount<'info>,
     /// CHECK: DBC's pool authority
-    #[account(address = DBC_POOL_AUTHORITY)]
+    #[account(constraint = { key_is(&pool_authority.key(), &DBC_POOL_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "pool_authority")?; true })]
     pub pool_authority: UncheckedAccount<'info>,
     /// CHECK: DBC checks it against the pool
     #[account(mut)]
@@ -1454,40 +1477,40 @@ pub struct RouteCurveFees<'info> {
     #[account(mut)]
     pub quote_vault: UncheckedAccount<'info>,
     /// CHECK: the market token
-    #[account(address = bundle.mint @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&base_mint.key(), &bundle.mint, BundleError::BadPool, "base_mint")?; true })]
     pub base_mint: UncheckedAccount<'info>,
     /// CHECK: wrapped SOL
-    #[account(address = WSOL)]
+    #[account(constraint = { key_is(&quote_mint.key(), &WSOL, anchor_lang::error::ErrorCode::ConstraintAddress, "quote_mint")?; true })]
     pub quote_mint: UncheckedAccount<'info>,
     /// CHECK: the router's account for the market token (checked in the handler)
     #[account(mut)]
     pub router_tokens: UncheckedAccount<'info>,
     /// CHECK: the router's wrapped SOL account
-    #[account(mut, address = platform.router_sol @ BundleError::BadRouterAccount)]
+    #[account(mut, constraint = { key_is(&router_sol.key(), &platform.router_sol, BundleError::BadRouterAccount, "router_sol")?; true })]
     pub router_sol: UncheckedAccount<'info>,
     /// CHECK: the vault's wrapped SOL account
-    #[account(mut, address = bundle.vault_sol @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&vault_sol.key(), &bundle.vault_sol, BundleError::BadVaultAccount, "vault_sol")?; true })]
     pub vault_sol: UncheckedAccount<'info>,
     /// CHECK: the backers' pot
-    #[account(mut, address = bundle.pot @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&pot.key(), &bundle.pot, BundleError::BadVaultAccount, "pot")?; true })]
     pub pot: UncheckedAccount<'info>,
     /// CHECK: repo.ing's treasury account
-    #[account(mut, address = platform.treasury @ BundleError::BadSettings)]
+    #[account(mut, constraint = { key_is(&treasury.key(), &platform.treasury, BundleError::BadSettings, "treasury")?; true })]
     pub treasury: UncheckedAccount<'info>,
     /// CHECK: SPL Token
-    #[account(address = SPL_TOKEN)]
+    #[account(constraint = { key_is(&token_program.key(), &SPL_TOKEN, anchor_lang::error::ErrorCode::ConstraintAddress, "token_program")?; true })]
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: DBC's event authority
-    #[account(address = DBC_EVENT_AUTHORITY)]
+    #[account(constraint = { key_is(&event_authority.key(), &DBC_EVENT_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "event_authority")?; true })]
     pub event_authority: UncheckedAccount<'info>,
     /// CHECK: DBC
-    #[account(address = DBC)]
+    #[account(constraint = { key_is(&dbc_program.key(), &DBC, anchor_lang::error::ErrorCode::ConstraintAddress, "dbc_program")?; true })]
     pub dbc_program: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
 pub struct RoutePoolFees<'info> {
-    #[account(seeds = [PLATFORM_SEED], bump = platform.bump)]
+    #[account(constraint = { pda_is(&platform.key(), &[PLATFORM_SEED, &[platform.bump]], "platform")?; true })]
     pub platform: Box<Account<'info, Platform>>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
@@ -1495,16 +1518,16 @@ pub struct RoutePoolFees<'info> {
     #[account(seeds = [ROUTER_SEED], bump)]
     pub router: UncheckedAccount<'info>,
     /// CHECK: the bundle's DAMM v2 pool
-    #[account(address = bundle.damm_pool @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&damm_pool.key(), &bundle.damm_pool, BundleError::BadPool, "damm_pool")?; true })]
     pub damm_pool: UncheckedAccount<'info>,
     /// CHECK: the router's LP position
-    #[account(mut, address = bundle.router_position @ BundleError::BadPosition)]
+    #[account(mut, constraint = { key_is(&router_position.key(), &bundle.router_position, BundleError::BadPosition, "router_position")?; true })]
     pub router_position: UncheckedAccount<'info>,
     /// CHECK: the router's position NFT account
-    #[account(address = bundle.router_position_nft @ BundleError::BadPosition)]
+    #[account(constraint = { key_is(&router_position_nft.key(), &bundle.router_position_nft, BundleError::BadPosition, "router_position_nft")?; true })]
     pub router_position_nft: UncheckedAccount<'info>,
     /// CHECK: DAMM v2's pool authority
-    #[account(address = DAMM_POOL_AUTHORITY)]
+    #[account(constraint = { key_is(&pool_authority.key(), &DAMM_POOL_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "pool_authority")?; true })]
     pub pool_authority: UncheckedAccount<'info>,
     /// CHECK: DAMM v2 checks it against the pool
     #[account(mut)]
@@ -1513,34 +1536,34 @@ pub struct RoutePoolFees<'info> {
     #[account(mut)]
     pub token_b_vault: UncheckedAccount<'info>,
     /// CHECK: the market token
-    #[account(address = bundle.mint @ BundleError::BadPool)]
+    #[account(constraint = { key_is(&token_a_mint.key(), &bundle.mint, BundleError::BadPool, "token_a_mint")?; true })]
     pub token_a_mint: UncheckedAccount<'info>,
     /// CHECK: wrapped SOL
-    #[account(address = WSOL)]
+    #[account(constraint = { key_is(&token_b_mint.key(), &WSOL, anchor_lang::error::ErrorCode::ConstraintAddress, "token_b_mint")?; true })]
     pub token_b_mint: UncheckedAccount<'info>,
     /// CHECK: the router's account for the market token (checked in the handler)
     #[account(mut)]
     pub router_tokens: UncheckedAccount<'info>,
     /// CHECK: the router's wrapped SOL account
-    #[account(mut, address = platform.router_sol @ BundleError::BadRouterAccount)]
+    #[account(mut, constraint = { key_is(&router_sol.key(), &platform.router_sol, BundleError::BadRouterAccount, "router_sol")?; true })]
     pub router_sol: UncheckedAccount<'info>,
     /// CHECK: the vault's wrapped SOL account
-    #[account(mut, address = bundle.vault_sol @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&vault_sol.key(), &bundle.vault_sol, BundleError::BadVaultAccount, "vault_sol")?; true })]
     pub vault_sol: UncheckedAccount<'info>,
     /// CHECK: the backers' pot
-    #[account(mut, address = bundle.pot @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&pot.key(), &bundle.pot, BundleError::BadVaultAccount, "pot")?; true })]
     pub pot: UncheckedAccount<'info>,
     /// CHECK: repo.ing's treasury account
-    #[account(mut, address = platform.treasury @ BundleError::BadSettings)]
+    #[account(mut, constraint = { key_is(&treasury.key(), &platform.treasury, BundleError::BadSettings, "treasury")?; true })]
     pub treasury: UncheckedAccount<'info>,
     /// CHECK: SPL Token
-    #[account(address = SPL_TOKEN)]
+    #[account(constraint = { key_is(&token_program.key(), &SPL_TOKEN, anchor_lang::error::ErrorCode::ConstraintAddress, "token_program")?; true })]
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: DAMM v2's event authority
-    #[account(address = DAMM_EVENT_AUTHORITY)]
+    #[account(constraint = { key_is(&event_authority.key(), &DAMM_EVENT_AUTHORITY, anchor_lang::error::ErrorCode::ConstraintAddress, "event_authority")?; true })]
     pub event_authority: UncheckedAccount<'info>,
     /// CHECK: DAMM v2
-    #[account(address = DAMM)]
+    #[account(constraint = { key_is(&damm_program.key(), &DAMM, anchor_lang::error::ErrorCode::ConstraintAddress, "damm_program")?; true })]
     pub damm_program: UncheckedAccount<'info>,
 }
 
@@ -1549,17 +1572,16 @@ pub struct ClaimBackerFees<'info> {
     pub wallet: Signer<'info>,
     #[account(mut)]
     pub bundle: Box<Account<'info, Bundle>>,
-    #[account(mut, seeds = [BACKER_SEED, bundle.key().as_ref(), wallet.key().as_ref()], bump = backer.bump,
-        has_one = wallet @ BundleError::NotBacker, has_one = bundle @ BundleError::NotBacker)]
+    #[account(mut, constraint = { pda_is(&backer.key(), &[BACKER_SEED, bundle.key().as_ref(), wallet.key().as_ref(), &[backer.bump]], "backer")?; true }, has_one = wallet @ BundleError::NotBacker, has_one = bundle @ BundleError::NotBacker)]
     pub backer: Account<'info, Backer>,
     /// CHECK: the backers' pot
-    #[account(mut, address = bundle.pot @ BundleError::BadVaultAccount)]
+    #[account(mut, constraint = { key_is(&pot.key(), &bundle.pot, BundleError::BadVaultAccount, "pot")?; true })]
     pub pot: UncheckedAccount<'info>,
     /// CHECK: a wrapped SOL account of the backer's choice (checked in the handler)
     #[account(mut)]
     pub destination: UncheckedAccount<'info>,
     /// CHECK: SPL Token
-    #[account(address = SPL_TOKEN)]
+    #[account(constraint = { key_is(&token_program.key(), &SPL_TOKEN, anchor_lang::error::ErrorCode::ConstraintAddress, "token_program")?; true })]
     pub token_program: UncheckedAccount<'info>,
 }
 

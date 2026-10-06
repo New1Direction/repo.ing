@@ -63,6 +63,7 @@ test('the client and the program agree on the program id, the constants, the err
 test('the program fixture was built from the sources in the tree (rebuild with scripts/build-bundle-vault.sh)', async () => {
   const hash = createHash('sha256')
   for (const path of ['Cargo.toml', 'Cargo.lock', 'src/lib.rs']) hash.update(await readFile(program(path)))
+  hash.update(await readFile(new URL('../scripts/build-bundle-vault.sh', import.meta.url)))
   const recorded = (await readFile(new URL('fixtures/validator/bundle_vault.sources.sha256', import.meta.url), 'utf8')).trim()
   assert.equal(hash.digest('hex'), recorded)
 })
