@@ -142,10 +142,12 @@ fee plus the rent of the accounts it creates.
 
 ## Costs
 
-The program is 409,920 bytes: 2.084 SOL of rent at mainnet's rent of 2026-10-06. It is built for size (`opt-level = "z"`;
-`init_platform` reads the ProgramData account's upgrade authority by hand instead of through bincode, whose error text cost
-~60 KB): 145,656 bytes and 0.740 SOL less than the first build. A bundle account and a backer account cost their rent (returned
-to backers on refund).
+The program is 346,848 bytes: 1.764 SOL of rent at mainnet's rent of 2026-10-06, 1.060 SOL less than the first build
+(555,576 bytes). It is built for size: `opt-level = "z"`; SBPFv3 (`scripts/build-bundle-vault.sh`; deployable on mainnet since
+epoch 993), which has no relocation table; `init_platform` reads the ProgramData account's upgrade authority by hand instead of
+through bincode, whose error text cost ~60 KB; and the accounts' `address` and `seeds` checks run through three shared functions
+(`key_is`, `pda_is`, `pda_found`) instead of Anchor's per-account constraint code (~500 and ~1,100 bytes each), with the same
+checks, error codes and log lines. A bundle account and a backer account cost their rent (returned to backers on refund).
 
 ## Mainnet setup (the owner runs it)
 
@@ -166,13 +168,13 @@ the tests ran; do not rebuild first, step 3 refuses a program whose bytes differ
 solana-keygen pubkey secrets/bundle-vault-program-keypair.json   # must print 5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw
 solana program deploy tests/fixtures/validator/bundle_vault.so --program-id secrets/bundle-vault-program-keypair.json \
   --upgrade-authority <upgrade-authority.json> --keypair <payer.json> --url "$SOLANA_RPC_URL" [--with-compute-unit-price <micro-lamports>]
-solana program show 5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw --url "$SOLANA_RPC_URL"   # authority and data length 409920
+solana program show 5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw --url "$SOLANA_RPC_URL"   # authority and data length 346848
 ```
 
-Cost: the program data account 2.083272 SOL and the program account 0.000833 SOL, kept while the program exists (returned
-if it is closed); about 413 write transactions at 5,000 lamports (about 0.002 SOL) plus any priority fee. During the upload a
-buffer account holds 2.083232 SOL; the deploy instruction moves it back to the payer before it funds the program data account
-(the upgradeable loader's "Drain the Buffer account to payer"), so the payer never holds both. Keep about 2.1 SOL in the payer. The
+Cost: the program data account 1.762867 SOL and the program account 0.000833 SOL, kept while the program exists (returned
+if it is closed); about 350 write transactions at 5,000 lamports (about 0.002 SOL) plus any priority fee. During the upload a
+buffer account holds 1.762826 SOL; the deploy instruction moves it back to the payer before it funds the program data account
+(the upgradeable loader's "Drain the Buffer account to payer"), so the payer never holds both. Keep about 1.8 SOL in the payer. The
 upgrade authority is the only key init_platform accepts and it can change the program: keep it offline; a multisig or freezing
 upgrades is a decision for after the audit. A later, larger build needs `solana program extend` first.
 
@@ -235,7 +237,7 @@ account `3k6oDeconrAagqSCKNbQj4WP6MBRsRGAjRRNcKTRcJfR` and `opsWallet` (read fro
 
 | Step | Signer | Cost |
 | --- | --- | --- |
-| Deploy | payer (and the upgrade authority) | 2.084 SOL kept (the upload's buffer is returned within the deploy), ~0.002 SOL fees |
+| Deploy | payer (and the upgrade authority) | 1.764 SOL kept (the upload's buffer is returned within the deploy), ~0.002 SOL fees |
 | Bundle config | partner (Keychain) + the config keypair | 0.005984 SOL |
 | Platform | upgrade authority | 0.005913 SOL |
 | Lookup table | partner (Keychain) | 0.003216 SOL |
