@@ -31,6 +31,8 @@ solana-instructions-sysvar = "3.0.1"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
 
 [profile.release]
+# Built for size: the deploy rent is per byte (docs/BUNDLE_LAUNCH.md, "Costs").
+opt-level = "z"
 overflow-checks = true
 lto = "fat"
 codegen-units = 1

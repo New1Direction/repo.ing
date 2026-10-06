@@ -14,7 +14,7 @@ import { CpAmm, SwapMode as AmmSwapMode } from '@meteora-ag/cp-amm-sdk'
 import { buildLaunchCurve } from '../src/launch-curve.mjs'
 import { ACC_SCALE, BUNDLE_ERRORS, BUNDLE_VAULT_PROGRAM_ID as PROGRAM, STATUS, bundleAccounts, bundleAddress, bundleBuyQuote, bundleLaunchInstructions, backerAddress,
   cancelBundleInstruction, claimBackerFeesInstruction, createBundleInstruction, decodeBacker, decodeBundle, decodePlatform, depositInstruction,
-  failRaiseInstruction, initPlatformInstruction, launchAmounts, openVaultInstruction, pendingBackerFees, platformAddress, recordGraduationInstruction,
+  failRaiseInstruction, initPlatformInstruction, launchAmounts, openVaultInstruction, pendingBackerFees, platformAddress, programDataAddress, recordGraduationInstruction,
   refundInstruction, releaseInstruction, routeCurveFeesInstruction, routePoolFeesInstruction, routerAddress, setPausedInstruction, setPlatformInstruction,
   setPolicyInstruction, settleInstruction, splitClaim, tokenAccountOf, vaultAddress, vaultSwapCurveInstruction, vaultSwapPoolInstruction } from '../src/bundle-vault.mjs'
 
@@ -57,7 +57,10 @@ test('bundle launches on mainnet\'s programs: raises, refunds, launch, vault lim
       assert.equal(run.status, 0, 'bundle validator started')
     }
     assert.ok(work, 'the validator work dir with the program upgrade authority')
-    const upgradeAuthority = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(await readFile(join(work, 'bundle-authority.json'), 'utf8'))))
+    const workKey = async name => Keypair.fromSecretKey(Uint8Array.from(JSON.parse(await readFile(join(work, name), 'utf8'))))
+    const upgradeAuthority = await workKey('bundle-authority.json')
+    // A second copy of the program, upgradeable by another key (start-bundle-validator.sh): its ProgramData passes every check but the address.
+    const decoyAuthority = await workKey('decoy-authority.json'), decoyProgram = (await workKey('decoy-program.json')).publicKey
     const dbc = new DynamicBondingCurveClient(connection, 'confirmed'), amm = new CpAmm(connection)
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
     const send = (tx, signers) => sendAndConfirmTransaction(connection, tx, signers, { commitment: 'confirmed' })
@@ -109,6 +112,12 @@ test('bundle launches on mainnet\'s programs: raises, refunds, launch, vault lim
 
     await t.test('the platform: set once by the upgrade authority, changed only by the admin, its settings checked', async () => {
       assert.equal(await refusal(async () => sendIx(initPlatformInstruction({ ...platformArgs, upgradeAuthority: outsider.publicKey }), [outsider])), 'NotUpgradeAuthority')
+      const decoyData = await connection.getAccountInfo(programDataAddress(decoyProgram))
+      assert.ok(new PublicKey(decoyData.data.subarray(13, 45)).equals(decoyAuthority.publicKey), 'the decoy copy is the signer\'s to upgrade')
+      await airdrop(decoyAuthority.publicKey, SOL)
+      const init = initPlatformInstruction({ ...platformArgs, upgradeAuthority: decoyAuthority.publicKey })
+      const decoy = { ...init, keys: init.keys.map((meta, index) => index === 3 ? { ...meta, pubkey: programDataAddress(decoyProgram) } : meta) }
+      assert.equal(await refusal(async () => sendIx(decoy, [decoyAuthority])), 'NotUpgradeAuthority', 'another program\'s ProgramData, even one the signer controls')
       assert.equal(await refusal(async () => sendIx(initPlatformInstruction({ ...platformArgs, upgradeAuthority: upgradeAuthority.publicKey, launchCooldownSecs: 60 }),
         [upgradeAuthority])), 'BadSettings', 'no cooldown shorter than the launch fee')
       assert.equal(await refusal(async () => sendIx(initPlatformInstruction({ ...platformArgs, upgradeAuthority: upgradeAuthority.publicKey, treasury: outsider.publicKey }),

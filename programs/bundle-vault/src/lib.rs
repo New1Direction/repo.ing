@@ -37,6 +37,7 @@ pub const TOKEN_2022: Pubkey = pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPx
 pub const ATA_PROGRAM: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 pub const WSOL: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
 pub const INSTRUCTIONS_SYSVAR: Pubkey = pubkey!("Sysvar1nstructions1111111111111111111111111");
+pub const BPF_LOADER_UPGRADEABLE: Pubkey = pubkey!("BPFLoaderUpgradeab1e11111111111111111111111");
 
 // Instruction and account discriminators of the Meteora programs (their IDLs, @meteora-ag SDKs).
 const DBC_SWAP: [u8; 8] = [248, 198, 158, 145, 225, 117, 135, 200];
@@ -932,6 +933,14 @@ fn meteora_account<'a, 'info: 'a>(info: &'a AccountInfo<'info>, program: &Pubkey
     Ok(data)
 }
 
+// The upgrade authority in an upgradeable loader ProgramData account: the variant (3, u32), the last deploy slot (u64), then an
+// Option<Pubkey>. Read by hand: Anchor's ProgramData type decodes it with bincode, whose error text added ~60 KB to the program.
+fn upgrade_authority_of(info: &AccountInfo) -> Result<Option<Pubkey>> {
+    let data = info.try_borrow_data()?;
+    require!(data.len() >= 45 && data[..4] == [3, 0, 0, 0] && data[12] <= 1, BundleError::NotUpgradeAuthority);
+    Ok(if data[12] == 1 { Some(read_key(&data, 13)?) } else { None })
+}
+
 fn read_key(data: &[u8], offset: usize) -> Result<Pubkey> {
     let bytes = data.get(offset..offset + 32).ok_or(BundleError::BadPool)?;
     Ok(Pubkey::try_from(bytes).unwrap())
@@ -1145,10 +1154,13 @@ pub struct InitPlatform<'info> {
     pub upgrade_authority: Signer<'info>,
     #[account(init, payer = upgrade_authority, space = 8 + Platform::INIT_SPACE, seeds = [PLATFORM_SEED], bump)]
     pub platform: Box<Account<'info, Platform>>,
-    #[account(constraint = program.programdata_address()? == Some(program_data.key()) @ BundleError::NotUpgradeAuthority)]
     pub program: Program<'info, crate::program::BundleVault>,
-    #[account(constraint = program_data.upgrade_authority_address == Some(upgrade_authority.key()) @ BundleError::NotUpgradeAuthority)]
-    pub program_data: Account<'info, ProgramData>,
+    /// CHECK: this program's ProgramData account (the loader's address for it, owned by the loader); its upgrade authority is
+    /// read by `upgrade_authority_of`
+    #[account(owner = BPF_LOADER_UPGRADEABLE @ BundleError::NotUpgradeAuthority,
+        constraint = program_data.key() == Pubkey::find_program_address(&[crate::ID.as_ref()], &BPF_LOADER_UPGRADEABLE).0 @ BundleError::NotUpgradeAuthority,
+        constraint = upgrade_authority_of(&program_data)? == Some(upgrade_authority.key()) @ BundleError::NotUpgradeAuthority)]
+    pub program_data: UncheckedAccount<'info>,
     /// CHECK: repo.ing's wrapped SOL account (checked in `apply_platform`)
     pub treasury: UncheckedAccount<'info>,
     /// CHECK: the router's wrapped SOL account (checked in `apply_platform`)
