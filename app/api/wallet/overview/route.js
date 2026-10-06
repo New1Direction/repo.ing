@@ -9,6 +9,7 @@ import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { readWalletVerificationBonuses } from '../../../../src/verification-bonus.mjs'
 import { shownMarkets } from '../../../lib/hf-markets.mjs'
 import { walletStockPairs } from '../../../lib/stock-wallet.mjs'
+import { walletBundleFields } from '../../../lib/bundle-wallet.mjs'
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
@@ -44,6 +45,8 @@ export async function GET(request) {
     // Stock pairs (app/lib/stock-wallet.mjs): no builder claim, and a launcher's earnings in the stock. A wallet without a
     // stock-pair row gets exactly the response it always did.
     const { rows, fields: stockFields } = await walletStockPairs(db, chain, wallet, solRows)
+    // Bundle launches (app/lib/bundle-wallet.mjs): the bundles this wallet backs, only while they are not dark.
+    const bundleFields = await walletBundleFields(db, chain, wallet)
     const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
     // Prices and P&L are best-effort: balances, launches and rewards still render if either fails.
     const [prices, trades] = await Promise.all([latestMarketPrices(db, held).catch(() => null),
@@ -52,7 +55,7 @@ export async function GET(request) {
     const priced = trades ? withHoldingPnl(valued, trades) : valued
     return Response.json({ wallet, solBalance: Number.isSafeInteger(sol) && sol >= 0 ? String(sol) : null,
       holdingsAvailable: Boolean(balances), pricesAvailable: Boolean(prices), usdPerSol,
-      portfolio: portfolioSummary(priced), launcherRewards: launcherRewardTotals(rows), markets: priced, checkedAt: new Date().toISOString(), ...stockFields },
+      portfolio: portfolioSummary(priced), launcherRewards: launcherRewardTotals(rows), markets: priced, checkedAt: new Date().toISOString(), ...stockFields, ...bundleFields },
     { headers: { 'Cache-Control': 'private, no-store' } })
   } catch { return Response.json({ error: 'Your wallet overview is temporarily unavailable. Please retry.' }, { status: 503 }) }
 }

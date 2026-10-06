@@ -11,7 +11,10 @@ import { createRequestLimiter } from '../../src/request-limiter.mjs'
 //   office, a VPN exit, a mobile carrier.
 // - perMinute: the rate after that. Above one heavy visitor's for every action. The two that read GitHub refill slowest:
 //   its budget is 5,000 calls an hour for the web and the worker together.
-// Never limited: a signed trade or launch (submit), releasing a review (cancel), and reading a launch's status.
+// - Bundle raises (app/lib/bundle-api.mjs): the raise page reads its bundle every 15 s (bundle:read, three chain reads); a
+//   deposit, refund or claim is simulated and priced before the wallet signs it (bundle:prepare). Opening one is a launch review.
+// Never limited: a signed trade, launch or bundle transaction (submit, send), releasing a review (cancel), and reading a launch's
+// status.
 export const REQUEST_LIMITS = Object.freeze({
   'trade:quote': { burst: 120, perMinute: 120 },
   'trade:costs': { burst: 120, perMinute: 60 },
@@ -21,6 +24,8 @@ export const REQUEST_LIMITS = Object.freeze({
   'launch:quote': { burst: 40, perMinute: 40 },
   'launch:prepare': { burst: 30, perMinute: 6 },
   resolve: { burst: 30, perMinute: 8 },
+  'bundle:read': { burst: 30, perMinute: 30 },
+  'bundle:prepare': { burst: 20, perMinute: 20 },
 })
 
 export { clientAddress }

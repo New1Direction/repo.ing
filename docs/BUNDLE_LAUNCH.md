@@ -1,6 +1,7 @@
 # Bundle launches
 
-**Status: dark (v1 program and client only).** Nothing on the site offers, builds or indexes a Bundle launch. The program
+**Status: dark (v1 program, client and the site's raise flow).** Nothing on the site offers, builds or indexes a Bundle launch
+while it is dark: its pages are not found and its routes answer 404 (see "The site" below). The program
 (`programs/bundle-vault`, id `5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw`) is **not deployed on mainnet**, no platform
 account or bundle config exists there, and `BUNDLE_LAUNCHES_ENABLED` plus the code gate `BUNDLE_LAUNCHES_READY`
 (`src/bundle-launch.mjs`) keep it off. The program key is in the main checkout's git-ignored `secrets/`.
@@ -243,8 +244,25 @@ account `3k6oDeconrAagqSCKNbQj4WP6MBRsRGAjRRNcKTRcJfR` and `opsWallet` (read fro
 (`PLATFORM_CREATOR_SECRET_KEY`): it co-signs new bundles and the pool creation, and signs `record_graduation`. So step 3 runs with
 `--admin` set to that signer's address (FeZX…).
 
+## The site (dark)
+
+Every route and page below answers 404 (not found) unless `bundleLaunchable()`; the launch form, the token page and `/wallet`
+show nothing of Bundles until then.
+
+| Where | What |
+| --- | --- |
+| `/launch/[repo]` | "Bundle (community-funded)" beside the standard launch: a target of 1–10 SOL (5 by default), a deadline of 1, 3 or 7 days (3), the token's name, symbol and image (`BUNDLE_RAISE`, `src/bundle-launch.mjs`). A repository with a live bundle shows its raise instead, and `/api/launch` refuses a standard launch beside it. |
+| `POST /api/bundles` | `prepare`: the standard launch review's repository checks (opt-out, fork guard, no market or launch in progress) plus no live bundle; an id from `bundle_id_seq`; `create_bundle` with a compute budget, simulated; the row inserted as `opening`. `submit`: the wallet signed first; the transaction must be exactly the one the row describes (only the wallet's Lighthouse assertions may follow), within 2 minutes of the prepare on the database clock; then repo.ing's admin (`creatorSigner()`) co-signs, it is sent and confirmed, the account is read back, and the row becomes `raising`. |
+| `GET /api/bundles/[id]` | The row, the chain's Bundle (the truth for the raise, deadline, status and routed fees), the backer count and, with `?wallet=`, that wallet's shares, share and claimable fees. |
+| `POST /api/bundles/[id]` | `deposit`, `refund`, `claim`: checked against the chain, simulated, returned unsigned for the wallet. A claim creates the wallet's wrapped SOL account (idempotent), claims into it and closes it to unwrap to SOL; an account that existed (the referral payout account) is created again after the close. `send`: relays only one of those exact transactions, signed by the wallet. |
+| `/bundle/[id]` | The raise page: repository, token, progress, deadline, backers, deposit, the wallet's share, refund once failed, claim once launched, the market once live. |
+| `/token/[mint]` | A bundle market's "Bundle vault" tab: vault tokens and SOL, vault volume, fees routed to backers, rebated to the vault and to repo.ing, and the wallet's claim. |
+| `/wallet` | The bundles the wallet backs (its Backer accounts), with refund or claim. |
+
+The worker moves rows on from `raising` (and activates or expires an `opening` row by the chain); these routes only insert
+`opening` and set `raising` on a confirmed create.
+
 ## Not built yet
 
-The site's raise and claim pages and routes, the bundle tables (separate ledgers, as for stock pairs), indexing of raises,
-vault trades and routings, the vault agents and the routing crank, Bundle + early access/fair ramp, and an external audit.
-The mainnet setup (above) is ready for the owner to run; none of it has run on mainnet.
+The bundle tables' separate ledgers (as for stock pairs), indexing of raises, vault trades and routings, Bundle + early
+access/fair ramp, and an external audit. The mainnet setup (above) is ready for the owner to run; none of it has run on mainnet.

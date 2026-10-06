@@ -179,7 +179,8 @@ export async function protocolStats() {
   } catch { return { stats: null, unavailable: 'Protocol stats are temporarily unavailable.' } }
 }
 
-// Filter the canonical market first. These aggregates only read evidence for that market.
+// Filter the canonical market first. These aggregates only read evidence for that market. bundleId: the Bundle the market was
+// launched from (migration 0060), null for every other market (src/bundles.mjs isBundleMarket).
 async function singleMarket(column, value) {
   const pool = database()
   if (!pool) return { market: null, unavailable: 'Database is not configured.' }
@@ -188,6 +189,7 @@ async function singleMarket(column, value) {
       m.token_name as "tokenName", m.token_symbol as symbol, m.indexed_at as "indexedAt",
       m.builder_allocation_version as "allocationVersion", m.discovery_version as "discoveryVersion", m.launcher_wallet as "launcherWallet",
       m.verification_bonus_lamports::text as "verificationBonusLamports", m.quote_asset_id as "quoteAssetId", m.quote_mint as "quoteMint",
+      m.bundle_id::text as "bundleId",
       r.owner, r.name, r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.source, r.fork_parent_full_name as "forkParent",
       r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt", b.method as "beneficiaryMethod",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,

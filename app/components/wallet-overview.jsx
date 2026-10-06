@@ -15,6 +15,7 @@ import { useReferralPayouts } from './refer-link'
 import { VerificationBonusWalletValue } from './verification-bonus-status'
 import { isModelMarket } from '../lib/hf-model-display.mjs'
 import { StockLauncherTile, StockLauncherValue } from './stock-launcher-wallet'
+import { WalletBundles } from './wallet-bundles'
 
 export function WalletOverview() {
   const { wallet, connect, restoring, provider } = useWallet()
@@ -56,6 +57,8 @@ export function WalletOverview() {
         setTab('Rewards'); requestAnimationFrame(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
       }}/><StockLauncherTile stockLauncher={current.stockLauncher}/></div>
       <ReferralEarnings wallet={wallet} provider={provider}/>
+      {/* Bundle launches: present only while they are on (app/lib/bundle-wallet.mjs). */}
+      <WalletBundles bundles={current.bundles} onChanged={() => setRefresh(v => v + 1)}/>
       <div className="segmented" role="tablist" aria-label="Your markets" ref={tabsRef}>{['Holdings', 'Launched', 'Rewards'].map(name => <button key={name} role="tab" aria-selected={tab === name} className={tab === name ? 'selected' : ''} onClick={() => setTab(name)}>{name}</button>)}</div>
       {tab === 'Holdings' && !current.holdingsAvailable ? <p role="status" className="state-card">Token balances are temporarily unavailable. Your launches and rewards are still available in their tabs.</p> : shown.length ? <div className="wallet-market-list">{shown.map(m => <article className="inner-card wallet-market" key={m.mint}>
         <Link className="wallet-market-title" href={`/token/${m.mint}`}><img src={`/api/repo-logo/${m.repoId}?v=3&w=128`} alt="" width={44} height={44} loading="lazy" decoding="async"/><div><strong>${m.symbol}</strong><span>{m.fullName}</span></div></Link>

@@ -1,0 +1,72 @@
+/* Bundle launches (docs/BUNDLE_LAUNCH.md): the launch form's mode and raise fields (components/launch-bundle.jsx), the raise page
+   (app/(site)/bundle/[id], components/bundle-raise.jsx), the token page's vault tab (components/bundle-vault.jsx) and /wallet's
+   backed bundles (components/wallet-bundles.jsx). */
+.launch-mode{min-width:0;margin:18px 0 4px;padding:0;border:0}
+.launch-mode legend{padding:0;margin-bottom:8px}
+.launch-mode-options{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:10px}
+.launch-mode-option{position:relative;display:flex;flex-direction:column;gap:3px;min-width:0;padding:12px 14px 12px 40px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);cursor:pointer;transition:border-color .15s,background-color .15s}
+.launch-mode-option input{position:absolute;top:15px;left:14px;width:16px;height:16px;margin:0;accent-color:var(--green)}
+.launch-mode-option:hover{border-color:var(--green)}
+.launch-mode-option:has(input:focus-visible){outline:2px solid var(--green);outline-offset:2px}
+.launch-mode-option.is-selected{border-color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface))}
+.launch-mode-name{color:var(--text);font-size:15px;font-weight:700}
+.launch-mode-name .muted{font-weight:500;font-size:13px}
+.launch-mode-option small{color:var(--muted);font-size:12px;line-height:1.4}
+.launch-fieldset:disabled .launch-mode-option{cursor:default;opacity:.7}
+.bundle-raise-fields{margin-top:18px}
+.bundle-raise-fields .launch-buy-hint{margin:10px 0 0}
+.bundle-raise-fields .field-hint{margin-bottom:16px}
+.bundle-notes ul,.bundle-terms ul{display:grid;gap:12px;margin:0;padding:0;list-style:none}
+.bundle-notes li,.bundle-terms li{position:relative;padding-left:16px;color:var(--muted);font-size:13px;line-height:1.55}
+.bundle-notes li:before,.bundle-terms li:before{content:"";position:absolute;left:0;top:.6em;width:6px;height:6px;border-radius:50%;background:var(--green)}
+.bundle-notes strong{color:var(--text)}
+
+.bundle-page{padding-bottom:48px}
+.bundle-hero{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 28px;margin-bottom:22px}
+.bundle-hero .eyebrow{grid-column:1/-1;margin:0}
+.bundle-token{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+.bundle-token .preview-avatar{width:56px;height:56px;flex:none}
+.bundle-token>div:last-child{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bundle-token strong{font-size:20px;line-height:1.1}
+.bundle-token small{color:var(--muted);font-size:12px}
+.bundle-raise{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(300px,1fr);gap:22px;align-items:start}
+.bundle-side{display:flex;flex-direction:column;gap:18px}
+.bundle-progress-card{gap:14px;border-color:color-mix(in srgb,var(--green) 24%,var(--border))}
+.bundle-status-line{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.bundle-phase{font-size:12px;font-weight:600;letter-spacing:.02em;padding:3px 10px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+.bundle-phase.is-raising,.bundle-phase.is-full,.bundle-phase.is-launching{color:var(--green);border-color:color-mix(in srgb,var(--green) 45%,var(--border))}
+.bundle-phase.is-launched{color:#101713;background:var(--green);border-color:var(--green)}
+.bundle-phase.is-failed,.bundle-phase.is-closing{color:var(--red);border-color:color-mix(in srgb,var(--red) 45%,var(--border))}
+.bundle-countdown{font-variant-numeric:tabular-nums;color:var(--text);font-size:14px;font-weight:600}
+.bundle-raised{margin:0;font-size:clamp(28px,4vw,40px);line-height:1.05;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+.bundle-raised span{display:block;margin-top:6px;color:var(--muted);font-size:14px;font-weight:500;letter-spacing:0}
+.bundle-progress{height:14px;border-radius:999px;background:var(--surface2);border:1px solid var(--border);overflow:hidden}
+.bundle-progress>span{display:block;height:100%;background:var(--green);transform-origin:left center;transition:transform .6s cubic-bezier(.16,1,.3,1)}
+.bundle-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:14px 18px;margin:4px 0}
+.bundle-facts div{min-width:0}
+.bundle-facts dt{color:var(--muted);font-size:12px}
+.bundle-facts dd{margin:2px 0 0;color:var(--text);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.bundle-note{margin:0;color:var(--muted);font-size:13px;line-height:1.55}
+.bundle-progress-card .button{align-self:flex-start}
+.bundle-deposit,.bundle-share{gap:14px}
+.bundle-deposit h3,.bundle-share h3{margin:0}
+.bundle-deposit .launch-buy-presets{margin-bottom:0}
+.bundle-deposit .inline-error{margin:0}
+.bundle-share p{margin:0;color:var(--muted);font-size:13px}
+.bundle-terms{margin-top:22px}
+.bundle-terms h2{margin:0 0 12px;font-size:18px}
+
+.bundle-vault{gap:14px}
+.bundle-vault-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+.bundle-vault-heading h3{margin:0}
+.bundle-vault-heading a{color:var(--green);font-size:14px}
+.bundle-vault-lede{margin:0;color:var(--muted);font-size:13px;line-height:1.55}
+.bundle-vault .bundle-share{padding:16px;border:1px solid var(--border);border-radius:9px;background:var(--surface2)}
+
+.wallet-bundles{margin-top:26px}
+.wallet-bundles h2{margin:0 0 4px;font-size:20px}
+.wallet-bundle .transaction-status{margin-top:4px}
+
+@media(max-width:900px){.bundle-raise{grid-template-columns:1fr}.bundle-hero{grid-template-columns:1fr}}
+@media(max-width:700px){.launch-mode-options{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.launch-mode-option,.bundle-progress>span{transition:none}}

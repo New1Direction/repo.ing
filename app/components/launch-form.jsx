@@ -14,6 +14,7 @@ import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../
 import { verificationBonusTerms } from '../lib/verification-bonus-copy.mjs'
 import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
 import { decodeLaunchTransaction } from '../lib/launch-transaction.mjs'
+import { BundleNotes, BundleOpenButton, BundleRaiseFields, LaunchModeChoice, useOpenBundle } from './launch-bundle'
 import '../launch-pair.css'
 
 const sol = value => `${formatUnits(value, 9)} SOL`
@@ -40,8 +41,11 @@ async function launchRequest(body) {
 // when an eligible stock pair is among them; the launch then sends the chosen quoteAssetId and nothing else about it.
 // earlyAccess: { windows } (src/early-access.mjs EARLY_ACCESS_WINDOWS) while contributor early access can launch, else null. Offered
 // for a GitHub repository paired with SOL from its launch page (no trend or agent draft); the launch then sends earlyAccessSeconds.
+// bundle: the raise terms (app/(site)/launch/[repo] bundleSettings) while Bundle launches can be opened, else null. Offered, like
+// early access, for a GitHub repository from its launch page; choosing it replaces the pair, early access and initial buy with
+// the raise's target and deadline, and opens a raise instead of launching (app/components/launch-bundle.jsx).
 export function LaunchForm({ repo, available, discoveryEnabled = false, allocationEnabled = false, trendRevision, draft, launchFee: configLaunchFee = null,
-  verificationBonus = null, quoteOptions = null, earlyAccess = null }) {
+  verificationBonus = null, quoteOptions = null, earlyAccess = null, bundle = null }) {
   const model = repo.source === 'huggingface'
   const stockPair = model ? null : quoteOptions?.find(option => option.type === 'TOKENIZED_EQUITY' && option.eligible) ?? null
   const [quoteAssetId, setQuoteAssetId] = useState('sol')
@@ -85,7 +89,13 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const isDefault = !draft && name === defaultTokenName(repo.name) && symbol === defaultTokenSymbol(repo.name)
   const needsDetails = !tokenDetailsComplete({ name, symbol, image: tokenImage || imageBusy })
   const initialBuy = choice === 'none' ? '' : choice === 'custom' ? customBuy : quote ? formatUnits(quote.initialBuyLamports) : ''
-  const earlyAccessOffered = Boolean(earlyAccess?.windows?.length) && !model && !draft && trendRevision === undefined && !stockChosen
+  const bundleOffered = Boolean(bundle) && !model && !draft && trendRevision === undefined
+  const [bundleChosen, setBundleChosen] = useState(false)
+  const bundleMode = bundleOffered && bundleChosen
+  const [raise, setRaise] = useState(() => bundle ? { target: formatUnits(bundle.defaultTargetLamports, 9, 2), days: bundle.defaultDeadlineDays } : null)
+  const opening = useOpenBundle({ repo, settings: bundle, token: { name, symbol, image: tokenImage?.image }, raise,
+    ready: !imageBusy && Boolean(tokenImage) && Boolean(name) && Boolean(symbol) })
+  const earlyAccessOffered = Boolean(earlyAccess?.windows?.length) && !model && !draft && trendRevision === undefined && !stockChosen && !bundleMode
   const earlyAccessRequest = earlyAccessOffered && earlyAccessSeconds !== null ? { earlyAccessSeconds } : {}
   // An early access launch uses its own config: the flat 1.75% fee, without the launch fee.
   const launchFee = earlyAccessRequest.earlyAccessSeconds ? null : configLaunchFee
@@ -205,12 +215,12 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   }
   // A stock pair is never dropped on the way (pairRequest), so a confirmed launch with one chosen is that stock pair.
   if (launched) return <LaunchSuccess repo={repo} launched={launched} symbol={symbol} image={tokenImage?.image} quote={stockChosen ? { symbol: stockPair?.symbol ?? null } : null}/>
-  return <form className="launch-panel" onSubmit={prepare}>
+  return <form className="launch-panel" onSubmit={bundleMode ? opening.open : prepare}>
     {draftRestored && <p className="form-fineprint" role="status">Your saved launch details have been restored. Review current costs before signing.</p>}
     {pairDropped && <p className="form-fineprint" role="status">The stock pair you chose before is not offered for this repository right now, so this launch is paired with SOL.</p>}
     {draft && <p className="agent-review-note" role="status">Prepared with an agent. Review these details, choose an image, and approve the final costs in your wallet. Your signing wallet receives discovery attribution.</p>}
     <div className="launch-columns">
-      <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review}>
+      <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review || opening.busy}>
         <h2>Launch token</h2><p className="launch-subtitle">{model ? "Create a community market for this model. Every trade pays the model's owner." : 'Create a market for this repository. Every trade pays the builders.'}</p>
         <div className="launch-token-summary" role="group" aria-label="Token preview">
           <div className="preview-avatar">{tokenImage ? <img src={tokenImage.image} alt="Token artwork preview"/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
@@ -229,9 +239,10 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
             <TokenImagePicker repoId={repo.repoId} value={tokenImage} onChange={setTokenImage} onBusyChange={setImageBusy} disabled={busy || !!review} subject={model ? 'model' : 'repository'}/>
           </div>
         </details>
-        {stockPair && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setPairDropped(false); setError('') }}/>}
+        {bundleOffered && <LaunchModeChoice value={bundleMode} onChange={chosen => { setBundleChosen(chosen); setError('') }}/>}
+        {stockPair && !bundleMode && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setPairDropped(false); setError('') }}/>}
         {earlyAccessOffered && <LaunchEarlyAccess windows={earlyAccess.windows} value={earlyAccessSeconds} onChange={seconds => { setEarlyAccessSeconds(seconds); setError('') }}/>}
-        {stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
+        {bundleMode ? <BundleRaiseFields settings={bundle} value={raise} onChange={setRaise}/> : stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
         <div className="launch-buy-presets" role="group" aria-label="Initial token allocation">
           {[[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]].map(([value, label]) =>
@@ -250,15 +261,15 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         {quoteError && <div className="inline-error" role="alert">{quoteError}</div>}
         </>}
       </fieldset>
-      <div className="launch-side">
+      <div className="launch-side">{bundleMode ? <BundleNotes settings={bundle}/> : <>
         {allocationEnabled && !stockChosen && (model ? <div className="inner-card discovery-launch"><h3>1% for the model&apos;s owner</h3><strong>10 million tokens reserved</strong><p>The model&apos;s verified owner on Hugging Face can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>
           : <div className="inner-card discovery-launch"><h3>1% for the builders</h3><strong>10 million tokens reserved</strong><p>The verified repository admin can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>)}
         {discoveryEnabled && !stockChosen && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. Claim in SOL from the market page by signing a message; repo.ing sends the reward and pays the network fee.</p></div>}
         {verificationBonus && !stockChosen && <div className="inner-card discovery-launch"><p style={{ margin: 0 }}><strong>Verification bonus:</strong> {verificationBonusTerms(verificationBonus)}</p></div>}
         <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line">{model ? <span>Model owner share<small>Accrues for the model&apos;s verified owner</small></span> : <span>Repository creator share<small>Accrues for the verified repository owner</small></span>}<strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>{launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}<div className="fee-note"><Info size={18}/><span>{launchFee ? `${launchFeeSentence(launchFee)} ${LAUNCH_FEE_SPLIT} ${launcherBuySentence(launchFee) ?? ''} ` : ''}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
-      </div>
+      </>}</div>
     </div>
-    {review ? <section className="launch-review inner-card" aria-labelledby="launch-review-heading" aria-live="polite">
+    {bundleMode ? <BundleOpenButton opening={opening} disabled={imageBusy || !tokenImage || !name || !symbol}/> : review ? <section className="launch-review inner-card" aria-labelledby="launch-review-heading" aria-live="polite">
       <h3 id="launch-review-heading">Review your launch</h3>
       {tokenImage && <img className="launch-review-image" src={tokenImage.image} alt="Token artwork to be saved at launch"/>}
       <p>{name} · {symbol}{review.pair ? ` · Paired with ${review.pair}` : ''}{review.quote ? ` · ≈ ${(review.quote.supplyBps / 100).toFixed(2)}% initial allocation` : ' · No initial buy'}</p>
@@ -274,8 +285,8 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         <button type="button" className="button outline" disabled={busy} onClick={() => edit(expired)}>{expired ? 'Refresh review' : 'Edit launch'}</button></div>
     </section> : failure?.code === COPY_REFUSED ? null : failure?.canRetry === false ? <button type="button" className="button primary launch-submit" disabled={busy} onClick={checkLaunchStatus}>{busy?'Checking status…':'Check launch status'}</button> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : failure ? 'Refresh review' : 'Review launch'}</button>
       <p className="form-fineprint">Review the total before signing. No platform launch fee.</p></>}
-    <TransactionStatus stage={stage} error={error}/>
-    {failure && <div className="launch-recovery"><p className="form-fineprint">{failure.code===COPY_REFUSED?'This repository cannot have its own market on repo.ing.':failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
+    {!bundleMode && <TransactionStatus stage={stage} error={error}/>}
+    {failure && !bundleMode && <div className="launch-recovery"><p className="form-fineprint">{failure.code===COPY_REFUSED?'This repository cannot have its own market on repo.ing.':failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
   </form>
 }
 
