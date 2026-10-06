@@ -38,7 +38,8 @@ jobs:
   tests:
     name: node --test (PostgreSQL + solana-test-validator)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The suite ran 50-58 minutes before the early access chain tests; 60 cut PR #199's run off mid-suite with no failure.
+    timeout-minutes: 90
     services:
       postgres:
         image: postgres:17-alpine
