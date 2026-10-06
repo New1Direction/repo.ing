@@ -1,0 +1,41 @@
+[package]
+name = "bundle-vault-spike"
+version = "0.0.1"
+description = "SPIKE ONLY: proves the Bundle launch mode's on-chain unknowns on Meteora's mainnet programs (local validator)"
+edition = "2021"
+publish = false
+
+# Its own workspace: nothing else in this repository is Rust.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "bundle_vault_spike"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+anchor-debug = []
+custom-heap = []
+custom-panic = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "1.2.0"
+solana-instructions-sysvar = "3.0.1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))'] }
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1

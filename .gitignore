@@ -94,3 +94,4 @@ __pycache__/
 
 # Rust build output (programs/*, scripts/build-early-access-hook.sh)
 programs/*/target/
+spikes/*/program/target/

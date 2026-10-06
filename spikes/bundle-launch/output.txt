@@ -1,0 +1,64 @@
+early access validator ready on http://127.0.0.1:8929
+{
+  "ok": true,
+  "config": {
+    "feeClaimerIsRouterPda": true,
+    "enableFirstSwapWithMinFee": 1
+  },
+  "launchSdkInstructions": [
+    "dbcij3",
+    "AToken",
+    "AToken",
+    "111111",
+    "Tokenk",
+    "dbcij3",
+    "Tokenk"
+  ],
+  "launch": {
+    "legacyBytes": 1193,
+    "v0Bytes": 1043,
+    "computeUnits": 192857,
+    "released": "19 SOL",
+    "vaultShareOfSupply": "41.59%",
+    "minFeeQuote": "415879115969147",
+    "launchFeeQuote": "260540934626877"
+  },
+  "cpiFirstSwap": {
+    "refusedAtMinFeeQuote": "ExceededSlippage",
+    "landedWithMinOut1": true,
+    "tokensFor1Sol": "17886309443625",
+    "minFeeQuote": "34879866377149",
+    "launchFeeQuote": "17886309443625",
+    "paidLaunchFee": true,
+    "computeUnits": 172115
+  },
+  "vaultDbc": {
+    "buyComputeUnits": 44291,
+    "sellComputeUnits": 42469,
+    "operatorOnly": true,
+    "otherProgramsRefused": true
+  },
+  "routerDbcClaim": {
+    "owedQuoteLamports": "448964938",
+    "routerWsolAfter": "448964938",
+    "computeUnits": 57798
+  },
+  "curveAtMigration": {
+    "quoteReserve": "85000000001",
+    "threshold": "85000000000",
+    "migrationProgress": 2,
+    "whaleTokens": "368010658880596"
+  },
+  "graduation": {
+    "vaultShareAtGraduation": "41.52%",
+    "routerPositions": 1,
+    "creatorPositions": 1
+  },
+  "damm": {
+    "vaultSellComputeUnits": 26826,
+    "vaultBuyComputeUnits": 27394,
+    "routerClaimedLamports": "29709435",
+    "routerClaimComputeUnits": 42622
+  }
+}
+exit 0
