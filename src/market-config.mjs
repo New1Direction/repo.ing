@@ -4,6 +4,7 @@ import { deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { quoteOfMarket } from './quote-assets.mjs'
 import { stockQuoteConfigs } from './quote-configs.mjs'
 import { bundleCurveConfig } from './bundles.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
 
 // The operator-approved DBC configs: the current one first, then DBC_LEGACY_CONFIGS.
 export function approvedConfigs(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '') {
@@ -21,14 +22,26 @@ export function approvedConfigs(config, legacyConfigs = process.env.DBC_LEGACY_C
 // createQuoteAwareConfigResolver.
 // A bundle market (markets.bundle_id, migration 0060) is a SOL market on the bundle config (BUNDLE_DBC_CONFIG), approved here
 // beside the others; when the market says it is one (bundleId), only the bundle config may match its pool.
-export function createMarketConfigResolver(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '', bundleConfig = bundleCurveConfig()) {
+// A contributor early access market resolves only for a path that handles its Token-2022 transfer-hook pool and says so with
+// { earlyAccess: <EARLY_ACCESS_DBC_CONFIG> }: then a stamped market (earlyAccessEnd or transferHookProgram) resolves only to
+// that config, with the hook program it was launched with, and an unstamped market never does. Every other path still refuses it.
+export function createMarketConfigResolver(config, legacyConfigs = process.env.DBC_LEGACY_CONFIGS ?? '', bundleConfig = bundleCurveConfig(),
+  { earlyAccess = null, hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID } = {}) {
   const bundle = bundleConfig ? new PublicKey(bundleConfig) : null
+  const earlyAccessConfig = earlyAccess ? new PublicKey(earlyAccess) : null
   const approved = [...approvedConfigs(config, legacyConfigs), ...bundle ? [bundle] : []]
   return market => {
     if (market.quoteMint || market.quoteAssetId) throw Error('Stock-paired market needs a quote-aware path')
-    // A contributor early access market (docs/EARLY_ACCESS.md) is a transfer-hook pool on its own config: never a SOL path's.
-    if (market.earlyAccessEnd || market.transferHookProgram) throw Error('Contributor early access market needs a transfer-hook-aware path')
     const mint = new PublicKey(market.mint), pool = new PublicKey(market.pool)
+    // A contributor early access market (docs/EARLY_ACCESS.md) is a transfer-hook pool on its own config.
+    if (market.earlyAccessEnd || market.transferHookProgram) {
+      if (!earlyAccessConfig) throw Error('Contributor early access market needs a transfer-hook-aware path')
+      if (!market.transferHookProgram || !new PublicKey(market.transferHookProgram).equals(new PublicKey(hookProgram))) {
+        throw Error('Early access market is not stamped with the early access hook program')
+      }
+      if (!deriveDbcPoolAddress(NATIVE_MINT, mint, earlyAccessConfig).equals(pool)) throw Error('Canonical market does not match the early access config')
+      return earlyAccessConfig
+    }
     if (market.bundleId !== undefined && market.bundleId !== null) {
       if (!bundle) throw Error('Bundle market needs BUNDLE_DBC_CONFIG')
       if (!deriveDbcPoolAddress(NATIVE_MINT, mint, bundle).equals(pool)) throw Error('Canonical market does not match the bundle config')
@@ -38,6 +51,8 @@ export function createMarketConfigResolver(config, legacyConfigs = process.env.D
     if (!match) throw Error('Canonical market does not match an approved DBC config')
     // A market read with its bundle stamp (bundleId null: not a bundle) never resolves to the bundle config.
     if (market.bundleId === null && bundle && match.equals(bundle)) throw Error('Only a bundle market is on the bundle config')
+    // Nor does an unstamped market resolve to the early access config, even if it were listed among the legacy configs.
+    if (earlyAccessConfig && match.equals(earlyAccessConfig)) throw Error('Only an early access market is on the early access config')
     return match
   }
 }

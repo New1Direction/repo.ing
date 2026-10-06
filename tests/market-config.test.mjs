@@ -4,6 +4,7 @@ import { Keypair } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { approvedConfigs, createMarketConfigResolver, readPoolConfig } from '../src/market-config.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from '../src/early-access-hook.mjs'
 
 test('config rotation preserves legacy markets and rejects unapproved pools', () => {
   const current = Keypair.generate().publicKey, legacy = Keypair.generate().publicKey, other = Keypair.generate().publicKey
@@ -50,4 +51,25 @@ test('DBC config reads are shared per endpoint and commitment; misses and failur
   const before = calls
   await readPoolConfig(client('https://four.example'), config, { now: () => clock })
   assert.equal(calls, before + 1, 'hourly backstop refresh')
+})
+
+test('a contributor early access market resolves only on a path that opts in, only to the early access config and hook', () => {
+  const current = Keypair.generate().publicKey, earlyAccess = Keypair.generate().publicKey, mint = Keypair.generate().publicKey
+  const hook = EARLY_ACCESS_HOOK_PROGRAM_ID.toBase58()
+  const on = key => deriveDbcPoolAddress(NATIVE_MINT, mint, key).toBase58()
+  const stamped = { mint: mint.toBase58(), pool: on(earlyAccess), earlyAccessEnd: new Date(), transferHookProgram: hook }
+  // Every path that does not opt in refuses it, as before.
+  assert.throws(() => createMarketConfigResolver(current, '', null)(stamped), /transfer-hook-aware path/)
+  assert.throws(() => createMarketConfigResolver(current, '', null)({ ...stamped, earlyAccessEnd: null }), /transfer-hook-aware path/)
+  const resolve = createMarketConfigResolver(current, '', null, { earlyAccess })
+  assert.ok(resolve(stamped).equals(earlyAccess))
+  assert.ok(resolve({ ...stamped, earlyAccessEnd: null }).equals(earlyAccess), 'stamped by its hook program alone')
+  // Only the hook program it is meant to have, and only a pool on the early access config.
+  assert.throws(() => resolve({ ...stamped, transferHookProgram: Keypair.generate().publicKey.toBase58() }), /early access hook program/)
+  assert.throws(() => resolve({ ...stamped, transferHookProgram: null }), /early access hook program/)
+  assert.throws(() => resolve({ ...stamped, pool: on(current) }), /early access config/)
+  // An unstamped market never resolves to the early access config, even listed among the legacy configs.
+  assert.throws(() => createMarketConfigResolver(current, earlyAccess.toBase58(), null, { earlyAccess })({ mint: mint.toBase58(), pool: on(earlyAccess) }), /Only an early access market/)
+  // SOL markets resolve as before with the opt-in.
+  assert.ok(resolve({ mint: mint.toBase58(), pool: on(current) }).equals(current))
 })
