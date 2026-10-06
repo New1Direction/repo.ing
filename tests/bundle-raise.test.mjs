@@ -66,7 +66,7 @@ test('the site\'s raise terms: 1 to 10 SOL (5 by default), deposits from 0.05 SO
     { tokenName: 'W', tokenSymbol: 7 }, { tokenName: ['W'], tokenSymbol: 'W' }]) assert.throws(() => tokenFields(fields), { message: RAISE_REFUSALS.token })
 })
 
-test('dark: every bundle route answers 404 and the raise page is not found while Bundle launches are off', async () => {
+test('dark: the routes that start or fund a raise answer 404 while Bundle launches are off', async () => {
   const saved = process.env.BUNDLE_LAUNCHES_ENABLED
   try {
     for (const flag of [undefined, 'false', 'true']) {
@@ -74,27 +74,25 @@ test('dark: every bundle route answers 404 and the raise page is not found while
       const { POST: open } = await import('../app/api/bundles/route.js')
       const item = await import('../app/api/bundles/[id]/route.js')
       const params = { params: Promise.resolve({ id: '1' }) }
-      for (const response of [await open(post('/api/bundles', openBody())), await item.GET(get('/api/bundles/1'), params),
+      for (const response of [await open(post('/api/bundles', openBody())), await open(post('/api/bundles', { action: 'submit', bundleId: '1' })),
         await item.POST(post('/api/bundles/1', { action: 'deposit', wallet: backer.publicKey.toBase58(), lamports: '50000000' }), params)]) {
         assert.equal(response.status, 404, String(flag))
         assert.deepEqual(await response.json(), { error: 'Not found' })
       }
-      const page = await appModule('app/(site)/bundle/[id]/page.jsx')
-      await assert.rejects(page.default({ params: Promise.resolve({ id: '1' }) }), error => String(error.digest).startsWith('NEXT_HTTP_ERROR_FALLBACK;404'))
-      // /wallet makes no bundle read and adds no field.
-      let read = false
-      assert.deepEqual(await walletBundleFields({}, () => { read = true }, backer.publicKey.toBase58()), {})
-      assert.equal(read, false)
     }
   } finally { if (saved === undefined) delete process.env.BUNDLE_LAUNCHES_ENABLED; else process.env.BUNDLE_LAUNCHES_ENABLED = saved }
 })
 
-test('dark: the launch page, the token page and the launch API read or offer nothing of Bundles unless they can be opened', () => {
+test('dark: the launch form\'s option and the launch API\'s check follow the switch; existing bundles are shown whatever it says', () => {
   const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
-  assert.match(source('app/(site)/launch/[repo]/page.jsx'), /const bundle = bundleLaunchable\(\) \? bundleFormSettings\(\) : null/)
-  assert.match(source('app/(site)/launch/[repo]/page.jsx'), /const liveBundleId = bundle && pool \?/)
-  assert.match(source('app/(site)/token/[mint]/page.jsx'), /\.\.\.isBundleMarket\(market\) && bundleLaunchable\(\) \? \[\{ id: 'bundle'/)
+  const launchPage = source('app/(site)/launch/[repo]/page.jsx'), raisePage = source('app/(site)/bundle/[id]/page.jsx')
+  assert.match(launchPage, /const bundle = bundleLaunchable\(\) \? bundleFormSettings\(\) : null/)
+  assert.match(launchPage, /const liveBundleId = pool \?/, 'a live bundle is shown whatever the switch says')
   assert.match(source('app/api/launch/route.js'), /if \(bundleLaunchable\(\) && \(await repositoryBlockers\(pool, body\.repoId\)\)\.liveBundle\)/)
+  // The raise page and the token page's vault tab never hide an existing bundle; the page only stops taking deposits.
+  assert.doesNotMatch(raisePage, /if \(!bundleLaunchable\(\)\) notFound\(\)/)
+  assert.match(raisePage, /<BundleRaise initial=\{state\} depositsOpen=\{bundleLaunchable\(\)\}\/>/)
+  assert.match(source('app/(site)/token/[mint]/page.jsx'), /\.\.\.isBundleMarket\(market\) \? \[\{ id: 'bundle'/)
 })
 
 test('the launch form offers a Bundle only when the page passes its terms', async () => {
@@ -353,7 +351,7 @@ test('read: the row, the chain\'s raise, the backer count and the wallet\'s shar
   assert.equal((await call(h.api.read(get('/api/bundles/x'), 'x'))).status, 404)
 
   // /wallet: the wallet's Backer accounts (wallet at offset 40) and their bundles.
-  const fields = await walletBundleFields(h.pool, () => h.chain, creator.publicKey.toBase58(), { launchable: () => true })
+  const fields = await walletBundleFields(h.pool, () => h.chain, creator.publicKey.toBase58())
   assert.deepEqual(fields.bundles.map(item => [item.id, item.backer.shares, item.backer.shareBps]), [['7', String(4n * SOL), 8_000]], 'bundle 9 is not the site\'s')
   assert.deepEqual(h.chain.programReads.at(-1).filters.map(filter => filter.memcmp.offset), [0, 40])
 })
@@ -374,4 +372,44 @@ test('the page\'s view of a raise: its phase, its percent and the time left', ()
   assert.deepEqual([timeLeft('2026-10-08T16:30:00Z', NOW), timeLeft('2026-10-06T15:12:00Z', NOW), timeLeft('2026-10-06T12:12:30Z', NOW), timeLeft('2026-10-06T11:00:00Z', NOW)],
     ['2d 4h left', '3h 12m left', '12m 30s left', null])
   assert.equal(decodeBundle(bundleData({ id: 7n, target: 5n })).target, 5n, 'the fixture writes the program\'s layout')
+})
+
+test('existing bundles while dark: read, refund, claim and their relay work; a deposit and its relay answer 404; /wallet lists them', async t => {
+  quiet(t)
+  const dark = harness({ overrides: { launchable: () => false } })
+  raising(dark, { status: STATUS.FAILED })
+  dark.chain.setProgramAccount(backerAddress(bundleAddress(7n), backer.publicKey), backerData({ bundle: bundleAddress(7n), wallet: backer.publicKey, shares: SOL }))
+  assert.equal((await call(dark.api.read(get(`/api/bundles/7?wallet=${backer.publicKey.toBase58()}`), '7'))).body.wallet.backer.shares, String(SOL))
+  assert.deepEqual(await call(dark.api.open(post('/api/bundles', openBody()))), { status: 404, body: { error: 'Not found' } })
+  assert.deepEqual(await act(dark, { action: 'deposit', lamports: String(SOL) }), { status: 404, body: { error: 'Not found' } })
+  const refund = await act(dark, { action: 'refund' })
+  assert.equal(refund.status, 200)
+  const signed = transactionOf(refund.body.transaction)
+  signed.sign(backer)
+  const sent = await act(dark, { action: 'send', transaction: signed.serialize().toString('base64'), lastValidBlockHeight: 1_000 })
+  assert.deepEqual([sent.status, sent.body.action, sent.body.confirmed], [200, 'refund', true])
+  // A deposit signed while launches were on is not relayed once they are off.
+  const on = harness()
+  raising(on)
+  const deposit = transactionOf((await act(on, { action: 'deposit', lamports: String(SOL) })).body.transaction)
+  deposit.sign(backer)
+  assert.deepEqual(await act(dark, { action: 'send', transaction: deposit.serialize().toString('base64'), lastValidBlockHeight: 1_000 }), { status: 404, body: { error: 'Not found' } })
+  assert.equal(dark.chain.sent.length, 1, 'only the refund')
+  raising(dark, { status: STATUS.LAUNCHED, raised: 5n * SOL, accPerShare: 2n * 10n ** 15n })
+  assert.equal((await act(dark, { action: 'claim' })).status, 200)
+  // /wallet: the wallet's bundles whatever the switch says; no Backer read at all until the site has opened a bundle.
+  assert.deepEqual((await walletBundleFields(dark.pool, () => dark.chain, backer.publicKey.toBase58())).bundles.map(item => item.id), ['7'])
+  let read = false
+  assert.deepEqual(await walletBundleFields(fakePool(), () => { read = true }, backer.publicKey.toBase58()), {})
+  assert.equal(read, false)
+  assert.deepEqual(await walletBundleFields(dark.pool, () => dark.chain, Keypair.generate().publicKey.toBase58()), {}, 'a wallet that backs none gets no field')
+  // The raise page without new money: no deposit form, refunds and claims stay.
+  const { BundleRaise } = await appModule('app/components/bundle-raise.jsx')
+  const state = (await call(dark.api.read(get('/api/bundles/7'), '7'))).body
+  raising(dark)
+  const live = (await call(dark.api.read(get('/api/bundles/7'), '7'))).body
+  assert.match(html(h(BundleRaise, { initial: live }), { wallet: true }), /Back this bundle/)
+  assert.doesNotMatch(html(h(BundleRaise, { initial: live, depositsOpen: false }), { wallet: true }), /Back this bundle/)
+  assert.match(html(h(BundleRaise, { initial: live, depositsOpen: false }), { wallet: true }), /New deposits are paused/)
+  assert.equal(state.chain.status, 'launched')
 })

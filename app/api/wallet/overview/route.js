@@ -45,7 +45,7 @@ export async function GET(request) {
     // Stock pairs (app/lib/stock-wallet.mjs): no builder claim, and a launcher's earnings in the stock. A wallet without a
     // stock-pair row gets exactly the response it always did.
     const { rows, fields: stockFields } = await walletStockPairs(db, chain, wallet, solRows)
-    // Bundle launches (app/lib/bundle-wallet.mjs): the bundles this wallet backs, only while they are not dark.
+    // Bundle launches (app/lib/bundle-wallet.mjs): the bundles this wallet backs, so its refunds and claims are always reachable.
     const bundleFields = await walletBundleFields(db, chain, wallet)
     const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
     // Prices and P&L are best-effort: balances, launches and rewards still render if either fails.

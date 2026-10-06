@@ -12,9 +12,9 @@ export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Bundle raise · repo.ing', robots: { index: false, follow: false } }
 
 // A Bundle raise (docs/BUNDLE_LAUNCH.md): the repository, the token the launch will create, the raise's progress and deadline,
-// and the connected wallet's deposit, share, refund or claim. Dark: not found unless Bundle launches can be opened.
+// and the connected wallet's deposit, share, refund or claim. Shown whatever Bundle launches' switch says, so backers can always
+// take a refund or claim; while it is off the page takes no deposit.
 export default async function BundlePage({ params }) {
-  if (!bundleLaunchable()) notFound()
   const { id } = await params
   if (!/^[1-9]\d{0,18}$/.test(String(id))) notFound()
   const pool = database()
@@ -42,7 +42,7 @@ export default async function BundlePage({ params }) {
         <div><strong>${state.tokenSymbol}</strong><span>{state.tokenName}</span><small>{state.marketMint ? 'Trading now.' : 'Created when the raise is full and the market launches.'}</small></div>
       </div>
     </header>
-    <BundleRaise initial={state}/>
+    <BundleRaise initial={state} depositsOpen={bundleLaunchable()}/>
     <section className="inner-card bundle-terms" aria-labelledby="bundle-terms-title">
       <h2 id="bundle-terms-title">What backers get</h2>
       <ul>

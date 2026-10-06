@@ -26,6 +26,12 @@ export async function repositoryBlockers(pool, repoId) {
   return { hasMarket: row?.hasMarket === true, liveBundle: row?.liveBundle ?? null, liveBundleId: row?.liveBundleId ?? null }
 }
 
+// Whether the site ever opened a bundle: until it has, /wallet makes no Backer read at all.
+export async function anyBundles(pool) {
+  const { rows: [row] } = await pool.query('select exists(select 1 from bundles) as "any"')
+  return row?.any === true
+}
+
 // The next bundle id: the only source of ids, since the program's Bundle PDA is seeded with it and only repo.ing co-signs.
 export async function nextBundleId(pool) {
   const { rows: [row] } = await pool.query(`select nextval('bundle_id_seq')::text as id`)

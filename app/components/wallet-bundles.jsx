@@ -7,7 +7,7 @@ import { PHASE_LABELS, raiseFigures, raisePhase, raisedPercent, sharePercent } f
 import '../bundles.css'
 
 // /wallet: the bundles this wallet backs (app/lib/bundle-wallet.mjs), each with its raise, the wallet's deposit and share, and
-// its refund (a failed raise) or claim (a launched one). bundles: null when they cannot be read now; absent while dark.
+// its refund (a failed raise) or claim (a launched one). bundles: null when they cannot be read now; absent when it backs none.
 export function WalletBundles({ bundles, onChanged }) {
   if (bundles === undefined) return null
   return <section className="wallet-bundles" aria-labelledby="wallet-bundles-title">

@@ -1,7 +1,7 @@
 # Bundle launches
 
-**Status: dark (v1 program, client and the site's raise flow).** Nothing on the site offers, builds or indexes a Bundle launch
-while it is dark: its pages are not found and its routes answer 404 (see "The site" below). The program
+**Status: dark (v1 program, client and the site's raise flow).** Nothing on the site offers or opens a Bundle launch, or takes a
+deposit, while it is dark: those routes answer 404 (see "The site" below). The program
 (`programs/bundle-vault`, id `5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw`) is **not deployed on mainnet**, no platform
 account or bundle config exists there, and `BUNDLE_LAUNCHES_ENABLED` plus the code gate `BUNDLE_LAUNCHES_READY`
 (`src/bundle-launch.mjs`) keep it off. The program key is in the main checkout's git-ignored `secrets/`.
@@ -244,10 +244,13 @@ account `3k6oDeconrAagqSCKNbQj4WP6MBRsRGAjRRNcKTRcJfR` and `opsWallet` (read fro
 (`PLATFORM_CREATOR_SECRET_KEY`): it co-signs new bundles and the pool creation, and signs `record_graduation`. So step 3 runs with
 `--admin` set to that signer's address (FeZX…).
 
-## The site (dark)
+## The site
 
-Every route and page below answers 404 (not found) unless `bundleLaunchable()`; the launch form, the token page and `/wallet`
-show nothing of Bundles until then.
+The switch gates only what starts or funds a raise: the launch form's Bundle option, `POST /api/bundles` (prepare, submit) and
+deposits (and relaying one) answer 404 unless `bundleLaunchable()`. Everything for a bundle that already exists works whatever the
+switch says, so a backer is never locked out: reading it, its page (without the deposit form while the switch is off), refunds,
+claims and their relay, the token page's vault tab and `/wallet`'s list. All of it is rate limited (`bundle:read`,
+`bundle:prepare`; opening one counts as `launch:prepare`).
 
 | Where | What |
 | --- | --- |
