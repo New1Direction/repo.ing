@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { forkOf, readLaunchedRepositoryById, resolvePublicRepository, RepositoryResolutionError } from '../src/github.mjs'
+import { forkOf, readLaunchedRepositoryById, readRepositoryStars, resolvePublicRepository, RepositoryResolutionError } from '../src/github.mjs'
 import { checkLaunchLineage, createLineageBackfill, launchLineage, LineageError, recordLineage, rootCommit } from '../src/repo-lineage.mjs'
 import { launchFailure } from '../src/launch-failure.mjs'
 import { selectLaunchableTrends } from '../src/trend-launchable.mjs'
@@ -68,6 +68,19 @@ test('a launched repository read again: gone (404, private) is null, archived st
       !(error instanceof RepositoryResolutionError) && error.message === `GITHUB_REPOSITORY_HTTP_${status}`)
   }
   await assert.rejects(readLaunchedRepositoryById('77', async () => json(body({ id: 78 }))), RepositoryResolutionError)
+})
+
+test('star unlocks read a repository\'s stars by its id: no usable count or a gone repository is null, never 0', async () => {
+  const urls = []
+  const read = (body, options) => readRepositoryStars('77', async url => { urls.push(url); return json(body, options) })
+  assert.equal(await read({ id: 77, stargazers_count: 1234, archived: true }), 1234)
+  assert.equal(urls[0], 'https://api.github.com/repositories/77')
+  for (const count of [undefined, null, -1, 1.5, '12', 2 ** 32]) assert.equal(await read({ id: 77, stargazers_count: count }), null)
+  assert.equal(await read({}, { status: 404 }), null)
+  assert.equal(await read({ id: 77, private: true, stargazers_count: 5 }), null)
+  await assert.rejects(read({}, { status: 403 }), { message: 'GITHUB_REPOSITORY_HTTP_403' })
+  await assert.rejects(read({ id: 78, stargazers_count: 5 }), RepositoryResolutionError)
+  await assert.rejects(readRepositoryStars('0x1'), RepositoryResolutionError)
 })
 
 test('advisory checks use what was stored and write nothing; launch prepare always reads the first commit again', async () => {
