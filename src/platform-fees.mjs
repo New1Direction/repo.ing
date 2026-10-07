@@ -20,6 +20,26 @@ export async function platformFeeRecord(pool, repoId) {
   return { ...market, earned: BigInt(state.earned), paid, claims }
 }
 
+const CHECKPOINT_READS = 10, CHECKPOINT_WAIT_MS = 1_000
+// After a settled DAMM claim the partner position's claim checkpoint must have moved by exactly the settled amount. A finalized
+// read right after the claim can come from an RPC node still behind the claim's slot (the 2026-10-07 sweep reported a settled claim
+// as failed that way), so a read older than the claim's slot is repeated, up to `reads` times, before anything is compared.
+export async function checkSettledCheckpoint({ connection, signature, read, before, amount, reads = CHECKPOINT_READS, waitMs = CHECKPOINT_WAIT_MS,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  let claimSlot = null
+  for (let attempt = 1; ; attempt++) {
+    claimSlot ??= (await connection.getTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }))?.slot ?? null
+    const settled = await read()
+    if (!settled?.partner) return
+    if (claimSlot !== null && settled.partner.slot >= claimSlot) {
+      if (settled.partner.claimed - before !== amount) throw Error('Partner claim checkpoint differs from the settled amount')
+      return
+    }
+    if (attempt >= reads) throw Error('Partner claim settled, but its position checkpoint is not readable yet: the RPC node is behind the claim')
+    await sleep(waitMs)
+  }
+}
+
 export function createPlatformFees({ pool, connection, config, partner }) {
   const graduatedFees = createGraduatedFees({ connection, config, db: pool })
 
@@ -84,9 +104,8 @@ export function createPlatformFees({ pool, connection, config, partner }) {
         await connection.confirmTransaction({ signature, ...latest }, 'finalized')
         const receipt = await settlePlatformClaim(client, connection, intent)
         if (!receipt) throw Error('Platform fee submitted; final receipt is being checked')
-        const settled = await graduatedFees.read(record)
-        if (settled?.partner && settled.partner.claimed - snapshot.partner.claimed !== BigInt(receipt.amount))
-          throw Error('Partner claim checkpoint differs from the settled amount')
+        await checkSettledCheckpoint({ connection, signature, read: () => graduatedFees.read(record), before: snapshot.partner.claimed,
+          amount: BigInt(receipt.amount) })
         return receipt
       } finally { await client.query('select pg_advisory_unlock($1::bigint)', [repoId]) }
     } finally { client.release() }
