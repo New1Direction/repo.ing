@@ -11,6 +11,7 @@ import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GR
 import { clearLedgerAlerts, persistGraduationObservation } from './reserve-alerts.mjs'
 import { readGenesisHash, transientRpcReason } from './rpc-usage.mjs'
 import { releaseAfterUnlock } from './database-pool.mjs'
+import { isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
 
 // A thrown error as a review code. A message that already is a code is kept. Prose (web3.js wraps an RPC failure in its own
 // message) is RPC_RATE_LIMITED or RPC_UNAVAILABLE when it names one or when transientRpcReason recognizes a transport failure
@@ -24,9 +25,16 @@ export const graduationError = error => {
   return 'EVIDENCE_UNAVAILABLE'
 }
 // SOL markets only; stock-paired markets graduate in src/stock-graduation-monitor.mjs (STOCK_MARKET_SQL is the other half).
-// Contributor early access markets (transfer-hook pools, docs/EARLY_ACCESS.md) are in neither list until their graduation ships.
+// Contributor early access markets (transfer-hook pools, docs/EARLY_ACCESS.md) are earlyAccessMarketSQL, read only where
+// EARLY_ACCESS_DBC_CONFIG is set (step 7a).
 export const publicMarketSQL=`select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",m.bundle_id::text as "bundleId",r.full_name as "fullName"
   from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null and m.early_access_end is null`
+
+export const earlyAccessMarketSQL=`select m.github_repo_id::text as "githubRepoId",m.mint,m.pool,m.creator_wallet as "creatorWallet",m.bundle_id::text as "bundleId",r.full_name as "fullName",
+  m.early_access_end as "earlyAccessEnd",m.transfer_hook_program as "transferHookProgram"
+  from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null and m.early_access_end is not null`
+// Owner decision (2026-10-07): a graduated early access market is not eligible for liquidity deployment (P3) or builder reinvest.
+export const EARLY_ACCESS_NO_P3='Early access markets are not eligible for liquidity deployment'
 
 export function firstP3Eligibility({state,reconciliation,revenue,reserve,liquidity,volume,rules,walletBalance,pendingClaims=0}) {
   const no=reason=>({eligible:false,reason})
@@ -75,14 +83,19 @@ export async function recordGraduationEvidence(db,state,previous,reconciliation)
 // expire. 2 s per market made 51 markets take ~155 s, and ~108 markets would have reached the limit.
 export const GRADUATION_MARKET_PAUSE_MS=500
 // What a pass reads once for all its markets: the platform's ledgers and the markets themselves.
-async function readPassLedgers(pool) {
-  const [revenue,reserve,liquidity,revenueCheck,{rows:markets}]=await Promise.all([platformRevenueSummary(pool),liquidityReserveSummary(pool),reconcileLiquidity(pool),reconcilePlatformRevenue(pool),pool.query(publicMarketSQL)])
-  return {revenue,reserve,liquidity,revenueCheck,markets}
+// earlyAccess: the early access markets are read too (EARLY_ACCESS_DBC_CONFIG set).
+async function readPassLedgers(pool,{earlyAccess=false}={}) {
+  const [revenue,reserve,liquidity,revenueCheck,{rows:markets},{rows:early}]=await Promise.all([platformRevenueSummary(pool),liquidityReserveSummary(pool),reconcileLiquidity(pool),reconcilePlatformRevenue(pool),pool.query(publicMarketSQL),
+    earlyAccess?pool.query(earlyAccessMarketSQL):{rows:[]}])
+  return {revenue,reserve,liquidity,revenueCheck,markets:[...markets,...early]}
 }
 // now, holdMs: the clock and the hold of the ledger alerts (src/ledger-alerts.mjs).
 // reconciler, readState, readLedgers: a market's fee reconciliation, its chain state and the pass's own reads; tests replace them.
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): contributor early access markets are monitored too, before and after their graduation
+// (docs/EARLY_ACCESS.md, step 7a); they are never eligible for liquidity deployment.
 export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,holdMs=RECONCILE_HOLD_MS,
-  reconciler=createReconciler({pool,connection,config}),readState=readGraduationState,readLedgers=readPassLedgers}) {
+  earlyAccess=null,reconciler=createReconciler({pool,connection,config,earlyAccess,earlyAccessGraduated:true}),readState=readGraduationState,
+  readLedgers=pool=>readPassLedgers(pool,{earlyAccess:Boolean(earlyAccess)})}) {
   // Alert rows that could not be stored or marked in the pass in progress. Never a reason to fail the pass: reported with it.
   let alertFaults=0,lastStarted=null
   const ledgerAlerts=createLedgerAlerts({now,holdMs,onFault:()=>{alertFaults+=1}})
@@ -100,7 +113,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
       if(!locked)return {repoId,status:'BUSY',alerts}
       try {
         const {rows:[previous]}=await db.query('select * from graduation_observations where github_repo_id=$1',[repoId])
-        const state=await readState({connection,verification,config,market,env,db:pool,curveReads})
+        const state=await readState({connection,verification,config,market,env,db:pool,curveReads,earlyAccess})
         const {rows:[existing]}=await db.query('select signature from graduation_events where github_repo_id=$1',[repoId])
         if(existing&&!state.migration)throw Error('GRADUATION_STATE_DISAGREEMENT')
         const reconciliation=await reconciler.reconcile(repoId)
@@ -119,7 +132,8 @@ export function createGraduationMonitor({pool,connection,verification,config,env
         let walletBalance=null
         if(state.partnerWallet)walletBalance=String(agreeGraduation(...await Promise.all([connection,verification].map(c=>c.getBalance(new PublicKey(state.partnerWallet),'finalized')))))
         const {rows:[pending]}=await db.query("select count(*)::int as count from platform_fee_claims where github_repo_id=$1 and status='pending'",[repoId])
-        state.p3=state.partnerWallet?firstP3Eligibility({state,reconciliation:reconciliation.status,...global,volume:volumes.lifetime,walletBalance,pendingClaims:pending.count})
+        state.p3=isEarlyAccessMarket(market)?{eligible:false,reason:EARLY_ACCESS_NO_P3}
+          :state.partnerWallet?firstP3Eligibility({state,reconciliation:reconciliation.status,...global,volume:volumes.lifetime,walletBalance,pendingClaims:pending.count})
           :{eligible:false,reason:'Bundle market: its partner fees go to the bundle router'}
         if(state.p3.eligible){
           try{await assertPlatformReserveCustody(db,new PublicKey(state.partnerWallet))}
@@ -131,7 +145,8 @@ export function createGraduationMonitor({pool,connection,verification,config,env
             await reinvestQuote(connection,{amm:snapshot.amm,state:snapshot.poolState,pool:snapshot.pool},state.p3.maximumInvestment)
           }catch{state.p3={eligible:false,reason:'Bounded liquidity quote unavailable; wait for a fresh review'}}
         }
-        state.platformClaimAvailable=Boolean(state.platform&&BigInt(state.platform.available)>0n&&reconciliation.status==='MATCH'&&pending.count===0)
+        // An early access market's graduated partner fees are collected from step 7d on.
+        state.platformClaimAvailable=Boolean(!isEarlyAccessMarket(market)&&state.platform&&BigInt(state.platform.available)>0n&&reconciliation.status==='MATCH'&&pending.count===0)
         state.protocolLiquidityAdded=null
         if(state.phase==='GRADUATED'&&reconciliation.status==='MATCH'&&global.liquidity.status==='MATCH'){
           const {rows:positions}=await db.query("select * from liquidity_intents where github_repo_id=$1 and status='settled' and network='mainnet'",[repoId])
@@ -194,7 +209,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
     try{rules=liquidityConfig({...env,REPO_LIQUIDITY_EXECUTION_ENABLED:'true'})}catch{}
     const global={revenue:{...revenue,reconciliation:revenueCheck},reserve,liquidity,rules},results=[]
     // Curve markets share batched pool/config reads; each market is still agreed and freshness-checked on its own.
-    const curveReads=createCurveReads({connection,verification,config,markets})
+    const curveReads=createCurveReads({connection,verification,config,markets,earlyAccess})
     try {
       for(const market of markets){
         results.push(await processMarket(market,global,curveReads))
@@ -249,13 +264,15 @@ function assertDurableGraduation(row,state){
     state.curve!==state.migration.curve||state.config!==state.migration.config||state.mint!==state.migration.mint)
     throw Error('MIGRATION_EVIDENCE_INCOMPLETE')
 }
+// Contributor early access markets are listed where EARLY_ACCESS_DBC_CONFIG is set (step 7a).
 export async function graduationOperatorView(pool,env=process.env) {
+  const earlyAccess=Boolean(tradingEarlyAccessConfig(env))
   const [{rows},revenue,reserve,liquidity,revenueCheck,{rows:alerts}]=await Promise.all([
     pool.query(`select m.github_repo_id::text as "githubRepoId",m.mint,r.full_name as "fullName",
       o.status,o.observation,o.reconciliation,o.error_code,o.checked_at,e.evidence_hash as migration_evidence_hash from markets m
       join repositories r on r.github_repo_id=m.github_repo_id left join graduation_observations o on o.github_repo_id=m.github_repo_id
       left join graduation_events e on e.github_repo_id=m.github_repo_id
-      where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null and m.early_access_end is null`),
+      where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null and (m.early_access_end is null or $1::boolean)`,[earlyAccess]),
     platformRevenueSummary(pool),liquidityReserveSummary(pool),reconcileLiquidity(pool),reconcilePlatformRevenue(pool),
     pool.query(`select a.id,a.kind,a.github_repo_id::text as "repoId",r.full_name as "fullName",a.detail,a.created_at as "createdAt",a.acknowledged_at as "acknowledgedAt"
       from graduation_alerts a left join repositories r on r.github_repo_id=a.github_repo_id order by a.id desc limit 100`)

@@ -119,9 +119,10 @@ export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOL
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG), passed only by a path that handles them: a contributor early access market's builder fees
 // are reconciled on its curve like any other's (docs/EARLY_ACCESS.md, step 6a). Without it (every other caller, the fee status the
 // token page and the claim preview read included) such a market is refused by name.
-export function createReconciler({ pool, connection, config, earlyAccess = null }) {
+// earlyAccessGraduated: the caller also handles a graduated early access market (the graduation monitor; step 7).
+export function createReconciler({ pool, connection, config, earlyAccess = null, earlyAccessGraduated = false }) {
   const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
-  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess, earlyAccessGraduated })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
 
   const reconcile = async githubRepoId => {

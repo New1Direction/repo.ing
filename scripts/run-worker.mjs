@@ -41,7 +41,6 @@ import { approvedConfigs } from '../src/market-config.mjs'
 import { bundleCurveConfig } from '../src/bundles.mjs'
 import { bundleJobSettings, createBundleJobs } from '../src/bundle-jobs.mjs'
 import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
-import { createEarlyAccessReconcileWatch } from '../src/early-access-reconcile.mjs'
 import { earlyAccessEnabled, earlyAccessOracle, tradingEarlyAccessConfig } from '../src/early-access.mjs'
 import { allocationEnabled } from '../src/builder-allocation.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
@@ -175,18 +174,11 @@ const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetry
     if(!response.ok){await response.body?.cancel();throw Error(response.status===429?'RPC_RATE_LIMITED':'RPC_UNAVAILABLE')}
     return response
   }})
-// Their builder fee ledgers against their pools, with the monitor's alerts, while the graduation monitor leaves them out (step 6a).
-// Only where EARLY_ACCESS_DBC_CONFIG is set: without it no path takes these markets.
+// Contributor early access markets (EARLY_ACCESS_DBC_CONFIG set; docs/EARLY_ACCESS.md): the graduation monitor watches them before
+// and after their graduation, with its fee ledger alerts (step 7a).
 const earlyAccessConfigured = tradingEarlyAccessConfig()
-const earlyAccessReconcile = earlyAccessConfigured ? createEarlyAccessReconcileWatch({ pool,
-  reconciler: createReconciler({ pool, connection: graduationRPC(rpc), config, earlyAccess: earlyAccessConfigured }) }) : null
-let earlyAccessReconcileTask=null,nextEarlyAccessReconcileCheck=0
-async function observeEarlyAccessReconcile(){
-  try{await earlyAccessReconcile.runOnce()}
-  catch(error){console.log(JSON.stringify({earlyAccessReconcileError:error?.code==='42P01'||error?.code==='42703'?'EARLY_ACCESS_NOT_MIGRATED':'EARLY_ACCESS_RECONCILE_UNAVAILABLE'}))}
-}
 const graduation=createGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
-  ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null})
+  ?graduationRPC(process.env.GRADUATION_VERIFICATION_RPC_URL):null,earlyAccess:earlyAccessConfigured})
 // Stock-paired markets (docs/STOCK_QUOTES.md): graduation proof, DAMM swaps and fee checkpoints in the stock ledgers. Its own pass,
 // so a long stock backlog never delays SOL graduation.
 const stockGraduation=createStockGraduationMonitor({pool,connection:graduationRPC(rpc),config,verification:process.env.GRADUATION_VERIFICATION_RPC_URL
@@ -442,11 +434,6 @@ try {
       if(once)await observeBundles()
       else if(!bundleTask&&Date.now()>=nextBundleCheck)
         bundleTask=observeBundles().finally(()=>{nextBundleCheck=Date.now()+30000;bundleTask=null})
-    }
-    if(earlyAccessReconcile){
-      if(once)await observeEarlyAccessReconcile()
-      else if(!earlyAccessReconcileTask&&Date.now()>=nextEarlyAccessReconcileCheck)
-        earlyAccessReconcileTask=observeEarlyAccessReconcile().finally(()=>{nextEarlyAccessReconcileCheck=Date.now()+120000;earlyAccessReconcileTask=null})
     }
     // Once a minute: a contributor who links a wallet during a window can buy within about a minute.
     if(earlyAccessKey){

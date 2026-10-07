@@ -52,8 +52,6 @@ export async function watchedMarkets(pool) {
   for (const market of markets) {
     const proof = byRepo.get(market.repoId)
     if (!proof) { curves.set(market.pool, market); continue }
-    // A graduated contributor early access market (Token-2022 in its DAMM v2 pool) waits for docs/EARLY_ACCESS.md step 7.
-    if (market.earlyAccessEnd || market.transferHookProgram) continue
     try {
       const migration = chartMigration(market, proof)
       damms.set(migration.pool, { market, migration })

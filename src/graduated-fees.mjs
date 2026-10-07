@@ -70,9 +70,11 @@ async function proofQuery(db, text, params) {
 }
 
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG), passed only by a path that handles them: a contributor early access market is read on its
-// curve (no graduated fees before it migrates); a migrated one is refused by name until its graduation ships (docs/EARLY_ACCESS.md,
-// step 7). Without it such a market is refused by name.
-export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = null }) {
+// curve (no graduated fees before it migrates). A migrated one is read (its DAMM v2 pool has the Token-2022 market token as token A)
+// only by a path that also handles its graduated phase (earlyAccessGraduated; docs/EARLY_ACCESS.md, step 7); every other path is
+// refused by name. Without earlyAccess such a market is refused by name.
+export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = null,
+  earlyAccessGraduated = false }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const amm = new CpAmm(connection)
   const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
@@ -94,10 +96,15 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
   async function storeProof(market, configKey, target, proof) {
     if (!db || repoId(market) == null) return proof
     const row = proofRow(market, configKey, target, proof)
-    const inserted = await proofQuery(db, `insert into graduated_migration_proofs (github_repo_id, curve, config, mint, pool, signature, slot, creator_position,
-      creator_nft_account, creator_nft_mint, partner_position, partner_nft_account, partner_nft_mint)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) on conflict (github_repo_id) do nothing`,
-    [String(repoId(market)), ...Object.values(row)])
+    let inserted
+    // Two reads of one market (a pass's primary and verification providers) can store the same proof at once: the other's row may
+    // win on the pool's unique key, so that conflict is checked against the stored row exactly like the repository's.
+    try {
+      inserted = await proofQuery(db, `insert into graduated_migration_proofs (github_repo_id, curve, config, mint, pool, signature, slot, creator_position,
+        creator_nft_account, creator_nft_mint, partner_position, partner_nft_account, partner_nft_mint)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) on conflict (github_repo_id) do nothing`,
+      [String(repoId(market)), ...Object.values(row)])
+    } catch (error) { if (error?.code !== '23505') throw error; inserted = true }
     if (!inserted) return proof
     const { rows: [stored] } = await db.query(`select ${PROOF_COLUMNS} from graduated_migration_proofs where github_repo_id=$1`, [String(repoId(market))])
     if (!sameRow(row, stored)) throw Error('Conflicting graduated migration proof; review required')
@@ -112,7 +119,7 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
     if (!state || !fixed || !state.poolState.config.equals(configKey) ||
         state.poolState.baseMint.toBase58() !== market.mint || state.poolState.creator.toBase58() !== market.creatorWallet) throw Error('Invalid canonical creator pool')
     if (!state.poolState.isMigrated) return null
-    if (isEarlyAccessMarket(market)) throw Error(EARLY_ACCESS_GRADUATION_PENDING)
+    if (isEarlyAccessMarket(market) && !earlyAccessGraduated) throw Error(EARLY_ACCESS_GRADUATION_PENDING)
     if (fixed.migrationOption !== MigrationOption.MET_DAMM_V2 || !fixed.quoteMint.equals(NATIVE_MINT) ||
         fixed.creatorPermanentLockedLiquidityPercentage !== 50 || fixed.partnerPermanentLockedLiquidityPercentage !== 50) throw Error('Unsupported graduated fee configuration')
     const feeConfig = DAMM_V2_MIGRATION_FEE_ADDRESS[fixed.migrationFeeOption]
