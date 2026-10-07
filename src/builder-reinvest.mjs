@@ -6,6 +6,7 @@ import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { reconcileLiquidity } from './liquidity-deployment.mjs'
 import { reconcilePlatformRevenue } from './platform-revenue.mjs'
 import { createReconciler } from './reconcile.mjs'
+import { EARLY_ACCESS_NO_REINVEST, isEarlyAccessMarket } from './early-access.mjs'
 import { releaseAfterUnlock } from './database-pool.mjs'
 import { REINVEST_RULES, json, digest, agree, assertReinvestNetwork, agreedTransaction,
   canonicalReinvestPool, reinvestQuote, assertFreshReinvestQuote, buildReinvestTransaction, simulateReinvest } from './builder-reinvest-chain.mjs'
@@ -69,10 +70,13 @@ export function createBuilderReinvest({pool,connection,verification,config,githu
     if(!binding||binding.wallet!==wallet) throw Error('Wrong builder wallet; use the bound payout wallet')
     return new Date(binding.bound_at).toISOString()
   }
+  // A contributor early access market is refused by name (owner decision, docs/EARLY_ACCESS.md), not only by its config.
   async function market(db,repoId) {
-    const {rows:[m]}=await db.query(`select github_repo_id::text as "githubRepoId",mint,pool,creator_wallet as "creatorWallet"
+    const {rows:[m]}=await db.query(`select github_repo_id::text as "githubRepoId",mint,pool,creator_wallet as "creatorWallet",
+      early_access_end as "earlyAccessEnd",transfer_hook_program as "transferHookProgram"
       from markets where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`,[repoId])
     if(!m) throw Error('Repository has no indexed canonical market')
+    if(isEarlyAccessMarket(m)) throw Error(EARLY_ACCESS_NO_REINVEST)
     return m
   }
   async function funding(db,repoId,wallet,signature) {

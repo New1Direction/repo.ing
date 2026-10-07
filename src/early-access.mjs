@@ -34,6 +34,9 @@ export const EARLY_ACCESS_NOT_TRADABLE = 'Contributor early access markets are n
 export const EARLY_ACCESS_NOT_CLAIMABLE = 'Contributor early access markets cannot be claimed on the site yet.'
 // A graduated contributor early access market (DAMM v2 with a Token-2022 token): read, traded and claimed from step 7 on.
 export const EARLY_ACCESS_GRADUATION_PENDING = 'EARLY_ACCESS_GRADUATION_PENDING'
+// Owner decision (2026-10-07, step 7): a graduated early access market gets no liquidity deployment and no builder reinvest.
+export const EARLY_ACCESS_NO_P3 = 'Early access markets are not eligible for liquidity deployment'
+export const EARLY_ACCESS_NO_REINVEST = 'Early access markets are not eligible for builder reinvest'
 // scripts/recover-expired-launch.mjs (the worker releases a proven expired early access launch itself).
 export const EARLY_ACCESS_NO_MANUAL_RECOVERY = 'This is a contributor early access launch: manual recovery is not available yet. ' +
   'The worker releases it once two providers prove it expired without landing.'

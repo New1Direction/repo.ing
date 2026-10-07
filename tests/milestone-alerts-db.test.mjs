@@ -129,3 +129,24 @@ test('real PostgreSQL: milestone alert store and job', { skip: !url }, async () 
     assert.deepEqual(inner, { locked: true, value: false }, 'a second holder is refused while the lock is held')
   } finally { await pool.end() }
 })
+
+// Contributor early access (docs/EARLY_ACCESS.md, step 7a): while a market's window is open its transfer hook refuses buyers off its
+// list, so its progress is not posted; after the window, or once it graduated (the filling swap revoked the hook), it is.
+test('real PostgreSQL: an early access market\'s milestones are held while its window is open, unless it graduated', { skip: !url }, async () => {
+  const pool = new pg.Pool({ connectionString: url })
+  try {
+    await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
+    await seed(pool)
+    for (const [id, endsInMs, graduated] of [[7, 3_600_000, false], [8, -60_000, false], [9, 3_600_000, true]]) {
+      await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at)
+        values($1,'octo',$2,$3,1,0,false,now())`, [id, `repo-${id}`, `octo/repo-${id}`])
+      await pool.query(`insert into markets(github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,
+        launch_slot,launch_finality,indexed_at,last_verified_at,early_access_end,transfer_hook_program)
+        values($1,'confirmed',$2,$3,'w','w','Repo',$4,$5,1,'finalized',now(),now(),$6,'Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep')`,
+      [id, `Mint${id}`, `Pool${id}`, `R${id}`, `Sig${id}`, new Date(Date.now() + endsInMs)])
+      await observe(pool, id, { reserveSol: graduated ? 85n : 80n, graduated })
+    }
+    const rows = await createMilestoneAlertStore(pool).progressRows()
+    assert.deepEqual(rows.map(row => row.githubRepoId), ['1', '2', '3', '5', '8', '9'], 'market 7 (window open) is held')
+  } finally { await pool.end() }
+})

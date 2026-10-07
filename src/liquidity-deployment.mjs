@@ -6,6 +6,7 @@ import { getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@s
 import { CpAmm, SwapMode, getCurrentPoint, deriveTokenVaultAddress } from '@meteora-ag/cp-amm-sdk'
 import { createGraduatedFees } from './graduated-fees.mjs'
 import { createReconciler } from './reconcile.mjs'
+import { EARLY_ACCESS_NO_P3, isEarlyAccessMarket } from './early-access.mjs'
 import { activePolicy, assertPlatformReserveCustody } from './platform-revenue.mjs'
 import { settleLiquidityIntent } from './liquidity-settlement.mjs'
 export { settleLiquidityIntent, createLiquidityRecovery } from './liquidity-settlement.mjs'
@@ -64,8 +65,10 @@ export function createLiquidityDeployment({ pool, connection, config, partner })
     if (await connection.getGenesisHash() !== MAINNET) throw Error('Liquidity execution requires the mainnet genesis')
     return 'mainnet'
   }
+  // A contributor early access market is refused by name (owner decision, docs/EARLY_ACCESS.md), not only by its config.
   async function marketRecord(db,repoId) {
-    const {rows:[market]} = await db.query(`select github_repo_id::text as "githubRepoId",mint,pool,creator_wallet as "creatorWallet"
+    const {rows:[market]} = await db.query(`select github_repo_id::text as "githubRepoId",mint,pool,creator_wallet as "creatorWallet",
+      early_access_end as "earlyAccessEnd",transfer_hook_program as "transferHookProgram"
       from markets where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'`,[String(repoId)])
     return market
   }
@@ -75,6 +78,7 @@ export function createLiquidityDeployment({ pool, connection, config, partner })
     catch { return {eligible:false,reason:'Liquidity reserve is held in a different treasury wallet; review its spending authority'} }
     const market = await marketRecord(db,repoId)
     if(!market)return {eligible:false,reason:'Market is not indexed'}
+    if(isEarlyAccessMarket(market))return {eligible:false,reason:EARLY_ACCESS_NO_P3}
     const snapshot = await graduated.read(market)
     if(!snapshot)return {eligible:false,reason:'Market has not graduated to DAMM'}
     const check = await reconciler.reconcile(repoId)
@@ -88,7 +92,9 @@ export function createLiquidityDeployment({ pool, connection, config, partner })
       tokenAMint:state.tokenAMint.toBase58(),tokenBMint:state.tokenBMint.toBase58(),volumeLamports:volume.lamports,poolSolLamports:state.tokenBAmount.toString()}
   }
   async function quoteBudget(db,repoId,amount,rules) {
-    const market = await marketRecord(db,repoId), snapshot = await graduated.read(market)
+    const market = await marketRecord(db,repoId)
+    if(isEarlyAccessMarket(market))throw Error(EARLY_ACCESS_NO_P3)
+    const snapshot = await graduated.read(market)
     if(!snapshot)throw Error('Canonical graduation required')
     const state = await amm.fetchPoolState(snapshot.pool), swapAmount = amount/2n
     const quote = amm.getQuote2({inputTokenMint:NATIVE_MINT,poolState:state,currentPoint:await getCurrentPoint(connection,state.activationType),

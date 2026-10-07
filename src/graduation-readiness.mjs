@@ -11,7 +11,7 @@ import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GR
 import { clearLedgerAlerts, persistGraduationObservation } from './reserve-alerts.mjs'
 import { readGenesisHash, transientRpcReason } from './rpc-usage.mjs'
 import { releaseAfterUnlock } from './database-pool.mjs'
-import { isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
+import { EARLY_ACCESS_NO_P3, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
 
 // A thrown error as a review code. A message that already is a code is kept. Prose (web3.js wraps an RPC failure in its own
 // message) is RPC_RATE_LIMITED or RPC_UNAVAILABLE when it names one or when transientRpcReason recognizes a transport failure
@@ -34,7 +34,7 @@ export const earlyAccessMarketSQL=`select m.github_repo_id::text as "githubRepoI
   m.early_access_end as "earlyAccessEnd",m.transfer_hook_program as "transferHookProgram"
   from markets m join repositories r on r.github_repo_id=m.github_repo_id where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null and m.early_access_end is not null`
 // Owner decision (2026-10-07): a graduated early access market is not eligible for liquidity deployment (P3) or builder reinvest.
-export const EARLY_ACCESS_NO_P3='Early access markets are not eligible for liquidity deployment'
+export { EARLY_ACCESS_NO_P3 }
 
 export function firstP3Eligibility({state,reconciliation,revenue,reserve,liquidity,volume,rules,walletBalance,pendingClaims=0}) {
   const no=reason=>({eligible:false,reason})
