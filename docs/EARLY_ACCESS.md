@@ -213,8 +213,9 @@ Order: deploy the program, init the platform, create the config, create the tabl
    buy), DBC `createPoolWithFirstBuyWithTransferHook` (`TransferHookBase` slice of 5, `transferHookAccounts(mint, vault)`) or
    `createPoolWithTransferHook` without a buy (the SDK's own compute budget instructions dropped), then `remove_wallets` for the
    launcher unless its wallet is linked to a contributor in the snapshot. Measured on mainnet's programs, with the production
-   metadata link: 1,190 bytes with a first buy and a short name, 1,223 with the longest ASCII name and ticker (32 and 10) — about 4 bytes more since the fair ramp change (the rules byte, the ramp's empty option, the pool and vault as account indexes), so about 1,194 and 1,227 — 878
-   without a buy; about 205,000–216,000 compute units with a first buy (limit about 245,000–260,000). A name of multi-byte
+   origin's short metadata link (`/m/<repository id>`) and a 16-digit repository id (GitHub's have 10 or fewer, so real launches
+   are a few bytes smaller): 1,150 bytes with a first buy and a short name, 1,182 with the longest ASCII name and ticker (32 and
+   10), 836 without a buy; the fair ramp and star unlocks add 32 (1,182, 1,214 and 868). About 205,000–216,000 compute units with a first buy (limit about 245,000–260,000). A name of multi-byte
    characters can still pass the length check and not fit: that prepare is refused with a message ("use a shorter token name or
    ticker, or launch without an initial buy"). The review response also carries the window end, the contributor count and how
    many have a linked wallet.
@@ -584,8 +585,9 @@ also look at the worker's log since its deploy: no `earlyAccessOracleUnavailable
 `ORACLE_NOT_PLATFORM_ORACLE` (the key is not the platform's oracle; the oracle checks it once at start).
 
 **7. Open launches.** The READY PR sets `EARLY_ACCESS_LAUNCHES_READY = true`; merge and deploy it. The first launch: by the owner,
-on a repository they own, with a small first buy, from Phantom. Phantom has not been seen signing a first-buy launch (no room
-for its Lighthouse assertions, step 4): if it refuses, launch without a first buy and tell the agent. To close launches again,
+on a repository they own, with a small first buy, from Phantom. Phantom has not been seen signing a first-buy launch: with the short
+metadata link there is room for 1 to 3 of its Lighthouse assertions (0 or 1 with the fair ramp; step 4). If it refuses, launch
+without a first buy and tell the agent. To close launches again,
 revert the READY PR (the code gate): markets already launched keep trading, and the oracle keeps their lists until their
 windows end and closes them. `EARLY_ACCESS_ENABLED` off also closes launches and the wallet link, but it stops the oracle too:
 open windows' lists stop changing and are not closed (their rent not returned), and star unlock markets get no star reports
