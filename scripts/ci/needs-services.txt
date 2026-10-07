@@ -77,4 +77,5 @@ stock-execution-guards-db
 stock-execution-worker-db
 early-access-hook-chain
 early-access-links-db
+repo-inference-handoff-db
 early-access-launch-chain
