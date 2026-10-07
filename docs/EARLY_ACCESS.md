@@ -322,9 +322,12 @@ Left for the next steps (each fails closed or is harmless until then):
   (`graduatedClaimInstructions`, through a one-time WSOL account) and checked exactly by `assertGraduatedClaimInstructions` before
   signing and again after the network fee is added. SOL markets still use the SDK's `claimPositionFee2`, unchanged.
 - The first claim opens the partner's Token-2022 account for the token (about 0.002 SOL of rent, once per market). The settlement
-  (`settlePlatformClaim`, every market) now counts rent the claim put into an account it opened and left open as part of the
-  claim, so it records exactly the claim event's amount; before, a new market's first claim on an active pool could record that
-  much less than the position's checkpoint.
+  (`settlePlatformClaim`, every market) now records the claim event's amount (CP-AMM's one `EvtClaimPositionFee`, for this pool
+  and the partner, with no token A fee), so it equals the position's checkpoint exactly. Balance changes only bound it: the
+  partner's change, its network fee and what it put into accounts left holding more (a new token account, pre-funded by anyone
+  or not) must cover the claim. Before, the amount came from the partner's balance change, so a new market's first claim on an
+  active pool, a pre-funded token account address or lamports sent to the partner's WSOL account could record the wrong amount
+  and block the market's later claims.
 
 ## Graduated trades on the site and through Blinks (step 7b)
 

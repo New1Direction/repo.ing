@@ -9,6 +9,7 @@ import { CU_LIMIT_CEILING, CU_PRICE_MAX, LAMPORTS_PER_SIGNATURE, MAX_PRIORITY_FE
   isDustPayout, maxPayoutNetworkFee, priorityFeeLamports, readTradeComputeBudget, signedWithPriorityFee } from '../src/trade-landing.mjs'
 import { DBC_MAX_NETWORK_FEE_LAMPORTS, settleDbcPlatformClaim } from '../src/platform-dbc-fees.mjs'
 import { settlePlatformClaim } from '../src/platform-fees.mjs'
+import { claimPositionFeeEvent, dammClaimReceipt } from './fixtures/damm-claim-receipt.mjs'
 import { platformFeeReview } from '../src/platform-fee-operations.mjs'
 import { PARTNER_WALLET, claimOne } from '../src/platform-sweep.mjs'
 
@@ -96,10 +97,11 @@ test('sweep reports a service-side dust skip without treating it as claimed', as
 
 test('DAMM settlement with a priority fee: claimed = receiver delta + meta.fee exactly', async () => {
   const receiver = Keypair.generate().publicKey, fee = 5000 + 800_000
-  const connection = { getTransaction: async () => ({ meta: { err: null, fee, preBalances: [50_000_000], postBalances: [50_000_000 + 400_000_000 - fee] },
-    transaction: { message: { accountKeys: [receiver] } } }) }
+  const pool = Keypair.generate().publicKey
+  const connection = { getTransaction: async () => dammClaimReceipt({ keys: [receiver], pre: [50_000_000], post: [50_000_000 + 400_000_000 - fee], fee,
+    events: [claimPositionFeeEvent({ pool, owner: receiver, feeB: 400_000_000n })] }) }
   const db = { query: async (sql, params) => ({ rows: [{ status: 'settled', signature: params[0], amount: params[1] }] }) }
-  const settled = await settlePlatformClaim(db, connection, { signature: 'sig', wallet: receiver.toBase58(), amount: '400000000' })
+  const settled = await settlePlatformClaim(db, connection, { signature: 'sig', wallet: receiver.toBase58(), amount: '400000000', pool: pool.toBase58() })
   assert.equal(settled.amount, '400000000')
 })
 
