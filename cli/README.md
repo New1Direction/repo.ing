@@ -62,12 +62,15 @@ computer (`--credits-origin`, or `REPOING_CREDITS_ORIGIN`).
 ```bash
 repoing credits key                         # asks for a spending limit (default: all your credits)
 repoing credits key --limit 20 --label cursor
+repoing credits list                        # your keys: live, expired or revoked, with what each has spent
+repoing credits revoke <key-id>             # stops a key at once
 ```
 
 The command signs you in through repo.ing in the same way and makes one key that can only run inference, valid 30 days,
-with a spending limit of at most your credits. It prints `OPENAI_BASE_URL` and `OPENAI_API_KEY` for any OpenAI-compatible
-tool, once; the key cannot buy credits or make other keys. The gateway is a sandbox on this computer for now
-(`--inference-origin`, or `REPOING_INFERENCE_ORIGIN`).
+with a spending limit of at most your credits (at most 5 live keys). It prints `OPENAI_BASE_URL` and `OPENAI_API_KEY` for
+an OpenAI-compatible tool, once, and the key's ID; the key cannot buy credits or make other keys. If a key leaks, revoke
+it. The AI gateway is a sandbox on this computer for now (`--inference-origin`, or `REPOING_INFERENCE_ORIGIN`), and must
+be running for the tool to work.
 
 ## Development
 
