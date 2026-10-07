@@ -36,10 +36,10 @@ const latest = (...values) => values.reduce((max, value) => {
 // activity, else its idle tier — and read graduated fees only when they can have changed. Without them every
 // market is fully checked on every run (one-shot scripts and tests).
 const isEarlyAccess = market => Boolean(market.earlyAccessEnd || market.transferHookProgram)
-// earlyAccess: EARLY_ACCESS_DBC_CONFIG. Set, a contributor early access market's curve trades are indexed like any other; its
-// graduated (DAMM v2) fees wait for docs/EARLY_ACCESS.md step 7. Unset, such a market is reported as skipped.
+// earlyAccess: EARLY_ACCESS_DBC_CONFIG. Set, a contributor early access market's curve trades are indexed like any other, and after
+// its graduation its DAMM v2 position fees (docs/EARLY_ACCESS.md step 7a). Unset, such a market is reported as skipped.
 export function createExternalFeeIndexer({ pool: databasePool, connection, config, earlyAccess = tradingEarlyAccessConfig(),
-  graduatedFees = createGraduatedFees({ connection, config, db: databasePool }),
+  graduatedFees = createGraduatedFees({ connection, config, db: databasePool, earlyAccess, earlyAccessGraduated: true }),
   accrual = createFeeAccrual({ pool: databasePool, connection, config, earlyAccess }),
   recordTrade = createTradeRecorder({ pool: databasePool, connection, config, earlyAccess }),
   schedule = null, feed = null, now = Date.now, log = line => console.log(line) }) {
@@ -126,7 +126,7 @@ export function createExternalFeeIndexer({ pool: databasePool, connection, confi
           [market.pool, item.signature, item.slot.toString()])
         }
         let graduatedCredit = 0n, platformCredit = 0n, graduated = null
-        const graduatedRead = !isEarlyAccess(market) && readGraduated(discovered.length)
+        const graduatedRead = readGraduated(discovered.length)
         if (graduatedRead) {
           await client.query('select pg_advisory_lock($1::bigint)',[String(repoId)])
           try {

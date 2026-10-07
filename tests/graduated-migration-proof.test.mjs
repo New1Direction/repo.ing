@@ -194,10 +194,30 @@ test('a missing proof table falls back to the chain scan and logs once per proce
 
 test('other database errors still fail the read', async t => {
   t.mock.method(console, 'error', () => {})
-  for (const [code, when] of [['57P01', () => true], ['23505', text => /^insert/.test(text.trim())], [undefined, () => true]]) {
+  for (const [code, when] of [['57P01', () => true], [undefined, () => true]]) {
     const db = failing(code, when), { connection, loadTransaction } = chain({ endpoint: `fake://db-error-${code}-${when.length}` })
     await assert.rejects((await coldProcess())({ connection, config, db, loadTransaction }).read(market, state, fixed), /db failure/)
   }
+})
+
+test('a unique-key conflict on the insert (another read stored it at once) is checked against the stored row', async t => {
+  t.mock.method(console, 'error', () => {})
+  // Nothing stored under this repository: the conflict was another market's row, so it is a conflicting proof.
+  const lone = failing('23505', text => /^insert/.test(text.trim())), first = chain({ endpoint: 'fake://unique-lone' })
+  await assert.rejects((await coldProcess())({ connection: first.connection, config, db: lone, loadTransaction: first.loadTransaction }).read(market, state, fixed),
+    /Conflicting graduated migration proof; review required/)
+  // The same proof stored by the concurrent read: the read goes on with it.
+  const db = database(), seed = chain({ endpoint: 'fake://unique-seed' })
+  await (await coldProcess())({ connection: seed.connection, config, db, loadTransaction: seed.loadTransaction }).read(market, state, fixed)
+  const stored = db.rows.get('1388219884'), select = db.query
+  db.rows.delete('1388219884')
+  db.query = async (text, params) => {
+    if (/^insert/.test(text.trim())) { db.rows.set('1388219884', stored); throw Object.assign(Error('duplicate key'), { code: '23505' }) }
+    return select(text, params)
+  }
+  const raced = chain({ endpoint: 'fake://unique-raced' })
+  const snapshot = await (await coldProcess())({ connection: raced.connection, config, db, loadTransaction: raced.loadTransaction }).read(market, state, fixed)
+  assert.equal(snapshot.evidence.migration, MIGRATION)
 })
 
 test('a mismatched stored row still throws when the fallback exists', async () => {

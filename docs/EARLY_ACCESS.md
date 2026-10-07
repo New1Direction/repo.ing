@@ -236,7 +236,7 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | Builder allocation (`allocationRecord`) and graduated platform fees (`platformFeeRecord`) | skipped or refused before any chain call (step 7) |
 | Platform fee listing, sweep and DBC partner fee collection | listed and collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 6f); skipped otherwise |
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
-| Graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped (step 7) |
+| Graduation monitor and its operator view (`graduationOperatorView`) | monitored where `EARLY_ACCESS_DBC_CONFIG` is set (`earlyAccessMarketSQL`, step 7a) |
 | Builder dashboard (`app/lib/builders.mjs`) | listed, with their fee check, where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); not listed otherwise |
 | Verification bonus accrual (`src/verification-bonus-accrual.mjs`, candidates and market facts) | decided like any other where `EARLY_ACCESS_DBC_CONFIG` is set (their trades are in `trade_events` there; step 6h); otherwise left undecided, as a decided bonus is never re-evaluated |
 | `scripts/recover-expired-launch.mjs` | refused with a message (manual recovery of an early access launch is a later step; the worker still releases a proven expired attempt) |
@@ -284,17 +284,26 @@ Left for the next steps (each fails closed or is harmless until then):
 ## Fee ledgers (step 6a)
 
 - The reconciler (`src/reconcile.mjs`) and the graduated fee reads (`src/graduated-fees.mjs`) take an early access market when a
-  path that handles them passes `EARLY_ACCESS_DBC_CONFIG` (the watch below; claims from 6c): its builder fee ledger is compared
-  with its pool's creator fee on the curve. Every other caller, the fee status the token page and the claim preview read
-  included, still refuses these markets until the step that opens them. A migrated one is refused by name
-  (`EARLY_ACCESS_GRADUATION_PENDING`) until step 7, and the watch is retired in the step that lets the graduation monitor take
-  these markets.
-- The graduation monitor leaves these markets out until step 7, so a worker pass (`src/early-access-reconcile.mjs`, every two
-  minutes where the setting is set) reconciles each one and records the monitor's operator alert (`RECONCILIATION_MISMATCH` in
-  `graduation_alerts`, gathered by the ledger digest) when a difference lasts its hold; a match clears it. It runs before any
-  claim can pay from these ledgers.
-- A malformed `EARLY_ACCESS_DBC_CONFIG` now refuses early access markets only in the indexers as well (fee accrual, trade
-  recorder, external fee indexer, live trades); before, it stopped those modules from starting.
+  path that handles them passes `EARLY_ACCESS_DBC_CONFIG`: its builder fee ledger is compared with its pool's creator fee on the
+  curve, and after its graduation (`earlyAccessGraduated`, step 7a) with its DAMM v2 position fees too. Every other caller still
+  refuses a graduated one by name (`EARLY_ACCESS_GRADUATION_PENDING`) until the step that handles it.
+- A malformed `EARLY_ACCESS_DBC_CONFIG` refuses early access markets only in the indexers as well (fee accrual, trade recorder,
+  external fee indexer, live trades); before, it stopped those modules from starting.
+- Step 6a's own reconcile watch (`src/early-access-reconcile.mjs`) was retired in step 7a: the graduation monitor watches these
+  markets, with its fee ledger alerts.
+
+## Graduation (step 7a)
+
+- Where `EARLY_ACCESS_DBC_CONFIG` is set, the graduation monitor (`src/graduation-readiness.mjs`, `earlyAccessMarketSQL`) and its
+  operator view take early access markets, before and after their graduation: their curve progress (read from the transfer-hook
+  pool and config), the migration proof (the same `migration_damm_v2`, with the Token-2022 program for the base), their DAMM v2
+  pool (token A is the Token-2022 market token, `tokenAFlag` 1; the hook was revoked by the filling swap) and positions, and the
+  fee ledger alerts. Meteora's keeper migrates them as it does every other curve (owner decision, 2026-10-07; step 8 checks on
+  mainnet that it does for Token-2022 pools).
+- They are never eligible for liquidity deployment or builder reinvest (owner decision, 2026-10-07), and their graduated partner
+  fees are not offered for collection until step 7d.
+- The external fee indexer records their DAMM v2 position fees (builder and platform ledgers) and live trades watch their DAMM v2
+  pool. Trades on it (7b), builder claims of it (7c), the platform's collection (7d) and the builder allocation (7e) follow.
 
 ## Builder claims (steps 6b and 6c)
 
@@ -371,9 +380,9 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-trade.test.mjs      # the hook swap check, the window's allow list, the hook's refusals (quick)
     node --test tests/early-access-blinks.test.mjs     # Blinks: offered where the trader takes them, the window, Token-2022 sells (quick)
     node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
-    node --test tests/early-access-reconcile.test.mjs  # the fee ledger watch and its alerts; reconcile with and without the setting (quick)
+    node --test tests/early-access-graduation.test.mjs # graduated reads with and without the setting; the monitor's lists (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, sizes and the launch API (PostgreSQL + validator)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

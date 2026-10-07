@@ -8,10 +8,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AddressLookupTableProgram, Connection, Keypair, PACKET_DATA_SIZE, PublicKey, SystemProgram, Transaction, TransactionInstruction, TransactionMessage, VersionedTransaction,
   sendAndConfirmTransaction } from '@solana/web3.js'
-import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, getTransferHook, unpackMint } from '@solana/spl-token'
+import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, getTransferHook, unpackMint } from '@solana/spl-token'
 import BN from 'bn.js'
 import bs58 from 'bs58'
-import { DynamicBondingCurveClient, SwapMode } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { DAMM_V2_MIGRATION_FEE_ADDRESS, DynamicBondingCurveClient, SwapMode, deriveDammV2PoolAddress, deriveDbcPoolAuthority } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { CpAmm, SwapMode as AmmSwapMode } from '@meteora-ag/cp-amm-sdk'
+import { createGraduationMonitor } from '../src/graduation-readiness.mjs'
+import { readGraduationState } from '../src/graduation-state.mjs'
 import { createFeeAccrual } from '../src/fee-accrual.mjs'
 import { createTradeRecorder } from '../src/trade-evidence.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
@@ -33,7 +36,6 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWall
 import { EARLY_ACCESS_NOT_CLAIMABLE, EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
 import { contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
 import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
-import { createEarlyAccessReconcileWatch } from '../src/early-access-reconcile.mjs'
 import { createReconciler } from '../src/reconcile.mjs'
 import { createClaim } from '../src/claim.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
@@ -506,9 +508,9 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
     })
 
     // Step 6a: once the worker's indexer has caught up with every trade (the Blink trades above are recorded by it alone), each early
-    // access market's builder fee ledger equals its pool's creator fee and the discovery ledger its partner fee; the worker's watch
-    // finds both matching. Without the setting the reconciler refuses them by name.
-    await t.test('their fee ledgers reconcile with their pools; the watch finds them matching', async () => {
+    // access market's builder fee ledger equals its pool's creator fee and the discovery ledger its partner fee. Without the setting
+    // the reconciler refuses them by name. (The graduation monitor watches them from step 7a on.)
+    await t.test('their fee ledgers reconcile with their pools', async () => {
       const config = solConfig.toBase58(), markets = [firstMarket, secondMarket]
       const indexer = createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig })
       const reconciler = createReconciler({ pool, connection, config, earlyAccess: eaConfig })
@@ -533,8 +535,6 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         const { rows: [partner] } = await pool.query('select coalesce(sum(partner_amount), 0)::text as total from discovery_fee_events where pool = $1', [market.pool])
         assert.equal(BigInt(partner.total), BigInt(state.poolState.partnerQuoteFee.toString()), 'the partner fee equals the discovery ledger')
       }
-      const watched = await createEarlyAccessReconcileWatch({ pool, reconciler, log: () => {} }).runOnce()
-      assert.deepEqual(watched.markets.map(entry => [entry.repoId, entry.status]), markets.map(market => [String(market.githubRepoId), 'MATCH']))
       await assert.rejects(createReconciler({ pool, connection, config, earlyAccess: null }).reconcile(secondMarket.githubRepoId), /transfer-hook-aware path/)
     })
 
@@ -658,6 +658,73 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       console.log(JSON.stringify({ earlyAccessPlatformClaim: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
         computeUnits: landed.meta.computeUnitsConsumed } }))
       assert.equal((await fees.status(repoId)).available, '0', 'nothing left to collect')
+    })
+
+    // Step 7a: the curve fills and migrates (Meteora's keeper does this on mainnet; on this validator the pool authority needs SOL for
+    // the migration's accounts). The graduation monitor then verifies the graduated market from its migration proof and its DAMM v2
+    // pool, whose token A is the Token-2022 market token; liquidity deployment is refused for it; a DAMM v2 trade's builder fee is
+    // indexed, so the builder ledger matches again. Paths that do not handle the graduated phase yet (claims, trades) still refuse it.
+    await t.test('the curve graduates: the monitor verifies it and its DAMM v2 fees are indexed', async () => {
+      const config = solConfig.toBase58(), market = secondMarket, repoId = String(market.githubRepoId)
+      const poolKey = new PublicKey(market.pool), mint = new PublicKey(market.mint)
+      const funding = await connection.requestAirdrop(contributor.publicKey, 120_000_000_000)
+      await connection.confirmTransaction({ signature: funding, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
+      const fill = await dbc.pool.swap2WithTransferHook({ owner: contributor.publicKey, payer: contributor.publicKey, pool: poolKey,
+        amountIn: new BN(110_000_000_000), minimumAmountOut: new BN(0), swapBaseForQuote: false, swapMode: SwapMode.PartialFill, referralTokenAccount: null })
+      await sendAndConfirmTransaction(connection, fill, [contributor], { commitment: 'confirmed' })
+      assert.equal(getTransferHook(await getMint(connection, mint, 'confirmed', TOKEN_2022_PROGRAM_ID)).programId.toBase58(), PublicKey.default.toBase58(),
+        'the filling swap revoked the hook')
+      await sendAndConfirmTransaction(connection, new Transaction().add(SystemProgram.transfer({ fromPubkey: contributor.publicKey,
+        toPubkey: deriveDbcPoolAuthority(), lamports: 1_000_000_000 })), [contributor], { commitment: 'confirmed' })
+      const dammConfig = DAMM_V2_MIGRATION_FEE_ADDRESS[(await dbc.state.getPoolConfig(new PublicKey(eaConfig))).migrationFeeOption]
+      const migration = await dbc.migration.migrateToDammV2({ pool: poolKey, dammConfig, payer: contributor.publicKey })
+      await sendAndConfirmTransaction(connection, migration.transaction, [contributor, migration.firstPositionNftKeypair, migration.secondPositionNftKeypair],
+        { commitment: 'confirmed' })
+      const dammPool = deriveDammV2PoolAddress(dammConfig, mint, NATIVE_MINT), amm = new CpAmm(connection)
+      const poolState = await amm.fetchPoolState(dammPool)
+      assert.deepEqual([poolState.tokenAFlag, poolState.tokenBFlag], [1, 0], 'Token-2022 market token, SPL wrapped SOL')
+
+      // The state the monitor reads: without the setting the market is refused; with it, graduated, from its migration proof.
+      const verification = local()
+      const marketRow = { githubRepoId: repoId, mint: market.mint, pool: market.pool, creatorWallet: market.creatorWallet, fullName: REPOS.second.full_name,
+        earlyAccessEnd: market.earlyAccessEnd, transferHookProgram: market.transferHookProgram }
+      await assert.rejects(readGraduationState({ connection, verification, config, market: marketRow, env: {} }), /transfer-hook-aware path/)
+      const state = await until(async () => { try { const read = await readGraduationState({ connection, verification, config, market: marketRow, env: {},
+        earlyAccess: eaConfig }); return read.phase === 'GRADUATED' ? read : null } catch (error) { if (/STALE|finalized|MIGRATION|DISAGREEMENT/i.test(error.message)) return null; throw error } }, 240)
+      assert.ok(state, 'graduated, from finalized evidence')
+      assert.deepEqual([state.migration.pool, state.migration.mint, state.migration.curve], [dammPool.toBase58(), market.mint, market.pool])
+
+      // The monitor's pass: the market verified as graduated, its proof recorded, never eligible for liquidity deployment.
+      const monitor = createGraduationMonitor({ pool, connection, verification, config, earlyAccess: eaConfig, pauseMs: 0, env: {} })
+      const entry = (await monitor.runOnce()).find(result => result.repoId === repoId)
+      assert.deepEqual([entry?.status, entry?.phase], ['VERIFIED', 'GRADUATED'], JSON.stringify(entry))
+      const { rows: [event] } = await pool.query('select pool from graduation_events where github_repo_id = $1', [repoId])
+      assert.equal(event.pool, dammPool.toBase58())
+      const observation = JSON.parse((await pool.query('select observation from graduation_observations where github_repo_id = $1', [repoId])).rows[0].observation)
+      assert.deepEqual([observation.p3.eligible, observation.p3.reason, observation.platformClaimAvailable],
+        [false, 'Early access markets are not eligible for liquidity deployment', false])
+
+      // A DAMM v2 trade on the graduated pool (Token-2022 token A, no hook any more); the indexer records the builder's position fee and
+      // the ledger matches the chain, curve and DAMM v2 together.
+      const tokens = { tokenAMint: poolState.tokenAMint, tokenBMint: poolState.tokenBMint, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
+        tokenAProgram: TOKEN_2022_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID }
+      await sendAndConfirmTransaction(connection, await amm.swap2({ payer: contributor.publicKey, pool: dammPool, poolState, swapMode: AmmSwapMode.ExactIn,
+        inputTokenMint: NATIVE_MINT, outputTokenMint: mint, ...tokens, referralTokenAccount: null, amountIn: new BN(2_000_000_000), minimumAmountOut: new BN(1) }),
+      [contributor], { commitment: 'confirmed' })
+      const indexer = createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig })
+      const reconciler = createReconciler({ pool, connection, config, earlyAccess: eaConfig, earlyAccessGraduated: true })
+      // The ledgers hold finalized evidence only: wait until the trade's position fee is recorded, then for the match.
+      const dammFees = async () => BigInt((await pool.query('select coalesce(sum(amount_base_units), 0)::text as total from damm_fee_events where github_repo_id = $1',
+        [repoId])).rows[0].total)
+      const matched = await until(async () => {
+        await indexer.runOnce()
+        if (await dammFees() === 0n) return null
+        const result = await reconciler.reconcile(repoId)
+        return result.status === 'MATCH' && result.graduated ? result : null
+      }, 240)
+      assert.ok(matched, 'the DAMM v2 position fee is in the builder ledger, which matches the curve and DAMM v2 fees')
+      // Claims and the token page read it as waiting for its graduated phase (steps 7b, 7c).
+      await assert.rejects(createReconciler({ pool, connection, config, earlyAccess: eaConfig }).reconcile(repoId), /EARLY_ACCESS_GRADUATION_PENDING/)
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

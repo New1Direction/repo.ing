@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { isEarlyAccessMarket } from './early-access.mjs'
+import { decodeEarlyAccessConfig } from './early-access-config.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { createGraduatedFees, migrationPosition } from './graduated-fees.mjs'
 import { forgetFinalizedTransaction, loadFinalizedTransaction } from './finalized-transaction.mjs'
@@ -54,8 +56,9 @@ export async function agreedFinalizedTransaction(connection,verification,signatu
 // plus one getBlockTime per batch instead of per market. A batch serves markets for at most maxAgeMs, so each
 // observation still carries the slot and chain time it was actually read at; agreement and freshness are checked
 // per market exactly as for a single read. A batch without a block time is never kept.
-export function createCurveReads({connection,verification,config,markets,maxAgeMs=15_000,maxAccounts=100,now=Date.now}) {
-  const resolve=createMarketConfigResolver(config)
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): contributor early access markets among `markets` are read on their own config.
+export function createCurveReads({connection,verification,config,markets,maxAgeMs=15_000,maxAccounts=100,now=Date.now,earlyAccess=null}) {
+  const resolve=createMarketConfigResolver(config,undefined,undefined,{earlyAccess})
   let batch=null
   // This market first, then the ones processed after it, up to maxAccounts accounts.
   async function load(first) {
@@ -85,13 +88,15 @@ export function createCurveReads({connection,verification,config,markets,maxAgeM
 
 // No estimates. The worker persists only independently verified finalized observations; within one graduation pass,
 // curveReads may supply both providers' pool/config reads from a batch at most 15 s old.
-export async function readGraduationState({connection,verification,config,market,env=process.env,db=null,curveReads=null}) {
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market is read from its transfer-hook pool and config, and after its
+// migration from its DAMM v2 pool (Token-2022 token A; docs/EARLY_ACCESS.md, step 7a).
+export async function readGraduationState({connection,verification,config,market,env=process.env,db=null,curveReads=null,earlyAccess=null}) {
   if(!verification)throw Error('VERIFICATION_RPC_REQUIRED')
   const local=[connection,verification].every(c=>/^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(c.rpcEndpoint))
   if(connection.rpcEndpoint===verification.rpcEndpoint&&!(local&&env.NODE_ENV!=='production'))throw Error('INDEPENDENT_RPC_REQUIRED')
   const genesis=agreeGraduation(...await Promise.all([connection,verification].map(c=>readGenesisHash(c))))
   if(genesis!=='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'&&!(local&&env.NODE_ENV!=='production'))throw Error('NETWORK_MISMATCH')
-  const configKey=createMarketConfigResolver(config)(market),poolKey=new PublicKey(market.pool)
+  const configKey=createMarketConfigResolver(config,undefined,undefined,{earlyAccess})(market),poolKey=new PublicKey(market.pool)
   const addresses=[poolKey,configKey]
   const fetched=curveReads?await curveReads.read(market):await Promise.all([connection,verification].map(async c=>{
     const snapshot=await c.getMultipleAccountsInfoAndContext(addresses,'finalized')
@@ -104,8 +109,15 @@ export async function readGraduationState({connection,verification,config,market
     return {snapshot,evidence,time}
   })
   agreeGraduation(...reads.map(r=>r.evidence))
-  const dbc=new DynamicBondingCurveClient(connection,'finalized'),coder=dbc.state.getProgram().coder.accounts
-  const state=coder.decode('virtualPool',reads[0].snapshot.value[0].data).poolState,fixed=coder.decode('poolConfig',reads[0].snapshot.value[1].data)
+  const dbc=new DynamicBondingCurveClient(connection,'finalized'),root=dbc.state.getProgram().coder,coder=root.accounts
+  // An early access market's pool and config are the transfer-hook accounts, with the hook program it was stamped with.
+  let state,fixed
+  if(isEarlyAccessMarket(market)){
+    state=coder.decode('transferHookPool',reads[0].snapshot.value[0].data).poolState
+    const decoded=decodeEarlyAccessConfig(reads[0].snapshot.value[1].data,root)
+    if(!decoded.transferHookProgram.equals(new PublicKey(market.transferHookProgram)))throw Error('CONFIG_OR_POOL_MISMATCH')
+    fixed=decoded.config
+  }else{state=coder.decode('virtualPool',reads[0].snapshot.value[0].data).poolState;fixed=coder.decode('poolConfig',reads[0].snapshot.value[1].data)}
   if(!state.config.equals(configKey)||state.baseMint.toBase58()!==market.mint||state.creator.toBase58()!==market.creatorWallet||!fixed.quoteMint.equals(NATIVE_MINT))throw Error('CONFIG_OR_POOL_MISMATCH')
   const value={...graduationProgress(state.quoteReserve.toString(),fixed.migrationQuoteThreshold.toString()),
     repoId:String(market.githubRepoId??market.repoId),config:configKey.toBase58(),curve:market.pool,mint:market.mint,
@@ -113,7 +125,7 @@ export async function readGraduationState({connection,verification,config,market
     slots:reads.map(r=>r.snapshot.context.slot),accountEvidence:reads[0].evidence,destination:null}
   assertFreshGraduation(value)
   if(!state.isMigrated)return value
-  const snapshots=await Promise.all([connection,verification].map(c=>createGraduatedFees({connection:c,config,db}).read(market,{poolState:state},fixed)))
+  const snapshots=await Promise.all([connection,verification].map(c=>createGraduatedFees({connection:c,config,db,earlyAccess,earlyAccessGraduated:true}).read(market,{poolState:state},fixed)))
   if(snapshots.some(s=>!s))throw Error('GRADUATION_STATE_DISAGREEMENT')
   agreeGraduation(...snapshots.map(s=>({evidence:s.evidence,partner:s.partner.evidence})))
   const g=snapshots[0]
