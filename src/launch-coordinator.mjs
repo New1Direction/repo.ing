@@ -7,6 +7,7 @@ import { DefinitiveLaunchError } from './meteora-launch.mjs'
 import { DISCOVERY_VERSION } from './discovery-rewards.mjs'
 import { marketSource } from './market-identity.mjs'
 import { SOL_QUOTE, quoteStamp } from './quote-assets.mjs'
+import { RULES } from './early-access-hook.mjs'
 import { validateTokenImage } from './token-image.mjs'
 
 // Named explicitly, like DefinitiveLaunchError: the production build renames classes.
@@ -134,7 +135,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       bundleId: bundle ? BigInt(bundle.id) : null,
       ...quoteStamp(quote),
       // A reused reservation never keeps an earlier attempt's early access stamp; an early access launch sets it at prepare.
-      earlyAccessEnd: null, transferHookProgram: null,
+      earlyAccessEnd: null, transferHookProgram: null, hookRules: null,
     }
     if (market) {
       ;[market] = await db.update(markets).set(values).where(eq(markets.id, market.id)).returning()
@@ -149,15 +150,18 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     try {
       // Early access: the repository's contributor snapshot first (GitHub), then the launch with its window.
       const snapshot = earlyAccess ? await earlyAccess.snapshot({ repo, wallet }) : null
+      // rules: the hook's options (src/early-access-rules.mjs); starsAtLaunch: the repository's star count read fresh for this launch.
       let prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports,
-        ...snapshot ? { earlyAccess: { windowSeconds: earlyAccess.windowSeconds, repoId: String(repo.githubRepoId), keepLauncher: snapshot.keepLauncher } } : {},
+        ...snapshot ? { earlyAccess: { windowSeconds: earlyAccess.windowSeconds, repoId: String(repo.githubRepoId), keepLauncher: snapshot.keepLauncher,
+          rules: earlyAccess.rules ?? RULES.EARLY_ACCESS, starsAtLaunch: repo.stars } } : {},
         ...bundle ? { bundle: { id: String(bundle.id) } } : {} })
       if (Boolean(snapshot) !== Boolean(prepared.earlyAccess)) throw new Error('Launcher does not match the early access choice')
       if (Boolean(bundle) !== Boolean(prepared.bundle) || (bundle && prepared.bundle.id !== String(bundle.id))) throw new Error('Launcher does not match the bundle')
       ;[market] = await db.update(markets).set({
         status: 'prepared', mint: prepared.mint, pool: prepared.pool,
         blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight,
-        ...snapshot ? { earlyAccessEnd: new Date(prepared.earlyAccess.end * 1000), transferHookProgram: prepared.earlyAccess.hookProgram } : {},
+        ...snapshot ? { earlyAccessEnd: new Date(prepared.earlyAccess.end * 1000), transferHookProgram: prepared.earlyAccess.hookProgram,
+          hookRules: prepared.earlyAccess.rules } : {},
       }).where(eq(markets.id, market.id)).returning()
       if (snapshot) prepared = { ...prepared, earlyAccess: { ...prepared.earlyAccess, contributors: snapshot.contributors, linkedWallets: snapshot.linkedWallets } }
       if (launchGuard) await launchGuard({ repo, market, stage: 'prepare' })

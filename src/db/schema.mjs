@@ -268,6 +268,8 @@ export const markets = pgTable('markets', {
   // protect_market_early_access).
   earlyAccessEnd: timestamp('early_access_end', { withTimezone: true }),
   transferHookProgram: varchar('transfer_hook_program', { length: 44 }),
+  // The hook's rules (migration 0061): 1 early access, 3 with the fair ramp, 7 with star unlocks too; set exactly with the window.
+  hookRules: smallint('hook_rules'),
   // Migration 0060 (docs/BUNDLE_LAUNCH.md): null except for a market launched from a bundle (its vault bought first, its router
   // claims the partner fees). SOL and GitHub only, one market per bundle, immutable once the launch was sent (protect_market_bundle).
   bundleId: bigint('bundle_id', { mode: 'bigint' }),
@@ -288,6 +290,7 @@ export const markets = pgTable('markets', {
   check('markets_quote_asset_check', sql`(${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null) or (${table.quoteAssetId} is not null and ${table.quoteMint} is not null and ${table.quoteRegistryVersion} is not null and ${table.quoteAssetId} ~ '^[a-z0-9][a-z0-9-]{1,31}$' and ${table.quoteAssetId} <> 'sol' and ${table.quoteMint} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$' and ${table.quoteMint} <> 'So11111111111111111111111111111111111111112' and ${table.quoteRegistryVersion} >= 1 and ${table.githubRepoId} < 4503599627370496)`),
   index('markets_early_access_end_idx').on(table.earlyAccessEnd).where(sql`${table.earlyAccessEnd} is not null`),
   check('markets_early_access_check', sql`(${table.earlyAccessEnd} is null and ${table.transferHookProgram} is null) or (${table.earlyAccessEnd} is not null and ${table.transferHookProgram} is not null and ${table.transferHookProgram} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$' and ${table.transferHookProgram} <> '11111111111111111111111111111111' and ${table.githubRepoId} < 4503599627370496)`),
+  check('markets_hook_rules_check', sql`(${table.hookRules} is null and ${table.earlyAccessEnd} is null) or (${table.hookRules} is not null and ${table.earlyAccessEnd} is not null and ${table.hookRules} in (1, 3, 7))`),
   check('markets_early_access_sol_only', sql`${table.earlyAccessEnd} is null or (${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null)`),
   uniqueIndex('markets_bundle_id_unique').on(table.bundleId).where(sql`${table.bundleId} is not null`),
   check('markets_bundle_check', sql`${table.bundleId} is null or (${table.bundleId} > 0 and ${table.quoteAssetId} is null and ${table.quoteMint} is null and ${table.quoteRegistryVersion} is null and ${table.earlyAccessEnd} is null and ${table.transferHookProgram} is null and ${table.githubRepoId} < 4503599627370496)`),

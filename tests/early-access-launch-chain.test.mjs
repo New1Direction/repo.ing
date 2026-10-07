@@ -33,10 +33,12 @@ import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 import { estimateLaunchCosts } from '../src/launch-costs.mjs'
 import { assertEarlyAccessConfig, buildEarlyAccessConfigTransaction, earlyAccessLookupAddresses, reviewEarlyAccessConfig,
   verifyCreatedEarlyAccessConfig } from '../src/early-access-config.mjs'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWalletsInstruction, decodeAllowList, decodeMintConfig, earlyAccessAddresses,
-  initPlatformInstruction } from '../src/early-access-hook.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWalletsInstruction, dbcBaseVault, decodeAllowList, decodeMintConfig,
+  earlyAccessAddresses, initPlatformInstruction, reportStarsInstruction, walletCapBps } from '../src/early-access-hook.mjs'
+import { rampSettings } from '../src/early-access-rules.mjs'
+import { launchBuyQuote } from '../src/launch-buy.mjs'
 import { EARLY_ACCESS_NOT_CLAIMABLE, EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
-import { contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
+import { EARLY_ACCESS_WALLET_LIMIT, contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
 import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
 import { createReconciler } from '../src/reconcile.mjs'
 import { createClaim } from '../src/claim.mjs'
@@ -76,7 +78,7 @@ const repository = (id, fullName, ownerId) => ({ id, name: fullName.split('/')[1
   type: 'User', avatar_url: null }, description: null, stargazers_count: 5, forks_count: 1, archived: false, private: false, visibility: 'public',
   updated_at: '2026-10-01T00:00:00Z' })
 const REPOS = { first: repository(700001, 'octo/first', 91), second: repository(700002, 'octo/second', 91), third: repository(700003, 'octo/third', 91),
-  legacy: repository(700004, 'octo/legacy', 91) }
+  legacy: repository(700004, 'octo/legacy', 91), ramp: repository(700007, 'octo/ramp', 91) }
 const github = repo => async () => ({ ok: true, status: 200, json: async () => repo })
 const connections = []
 const local = () => { const connection = new Connection(RPC, 'confirmed'); connections.push(connection); return connection }
@@ -187,7 +189,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         { email: 'x@example.com', name: 'X', type: 'Anonymous', contributions: 3 }]), { status: 200, headers: { 'x-ratelimit-remaining': '4000' } })
     }
     const launchable = () => true, configured = () => eaConfig
-    const replica = ({ repo, windowSeconds = WINDOW_SECONDS, early = true }) => {
+    const replica = ({ repo, windowSeconds = WINDOW_SECONDS, early = true, rules = 1 }) => {
       const creatorKey = Keypair.fromSecretKey(creatorSecret)
       const launcher = early ? createEarlyAccessLauncher({ connection: local(), config: eaConfig, creator: creatorKey, lookupTable: lookupTable.toBase58(),
         feeClaimer: partner.publicKey })
@@ -195,7 +197,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const store = createLaunchSessionStore({ pool, key: launchSessionKey(creatorKey.secretKey) })
       const coordinator = createLaunchCoordinator({ pool, launcher, fetchImpl: github(repo), discoveryEnabled: true, builderAllocationEnabled: true,
         verificationBonusLamports: 250_000_000n, pendingReview: market => store.pending(market.id),
-        earlyAccess: early ? { windowSeconds, snapshot: contributorSnapshotStep({ pool, fetchImpl: contributorsFetch }) } : null })
+        earlyAccess: early ? { windowSeconds, rules, snapshot: contributorSnapshotStep({ pool, fetchImpl: contributorsFetch }) } : null })
       return { launcher, store, coordinator }
     }
     const guard = versioned => composeGuards(earlyAccessGuard(eaConfig, { versioned, launchable, configured }))
@@ -1025,6 +1027,51 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         assert.equal((await allocation.status(repoId)).state, 'settled')
         await assert.rejects(allocation.claim({ review: review(), githubAuthorization: {} }), /already submitted or paid/)
       } finally { saved === undefined ? delete process.env.BUILDER_ALLOCATION_CONFIGS : process.env.BUILDER_ALLOCATION_CONFIGS = saved }
+    })
+
+    // The fair ramp and star unlocks (owner decisions 2026-10-06 and 2026-10-07: options of an early access launch only). The launch
+    // sets both in the hook's mint config (2% to 10% of the supply until the curve is half sold by SOL; +0.5% per 100 stars gained,
+    // at most +5%) and stamps the market's rules; a first buy above the ramp's start is refused at prepare; the hook holds a listed
+    // wallet to its limit; the oracle's star report raises it.
+    await t.test('the fair ramp and star unlocks: set at launch, the first buy held to 2%, the hook holds a wallet to its limit', async () => {
+      const { coordinator } = replica({ repo: REPOS.ramp, windowSeconds: 3600, rules: 7 })
+      const fixed = await dbc.state.getPoolConfig(new PublicKey(eaConfig)), SUPPLY = 1_000_000_000_000_000n
+      // The SOL that buys about 2.5% of the supply at launch: more than the ramp's 2%, less than the 3% every launch allows.
+      const output = lamports => { try { return BigInt(launchBuyQuote(dbc, fixed, String(lamports)).outputAmount.toString()) } catch { return SUPPLY } }
+      let low = 1n, high = 20_000_000_000n
+      while (low < high) { const mid = (low + high) / 2n; if (output(mid) * 1000n < SUPPLY * 25n) low = mid + 1n; else high = mid }
+      const launch = initialBuyLamports => coordinator.launch({ repositoryUrl: `https://github.com/${REPOS.ramp.full_name}`, tokenName: 'Ramp', tokenSymbol: 'RAMP',
+        launcherWallet: contributor.publicKey.toBase58(), initialBuyLamports, launchGuard: guard(true), signTransaction: async tx => { tx.sign([contributor]); return tx } })
+      await assert.rejects(launch(String(low)), /With the fair ramp, the first buy can get at most 2% of the supply/)
+      const market = await launch('50000000')
+      assert.equal(market.status, 'confirmed')
+      assert.equal((await pool.query('select hook_rules from markets where id = $1', [market.id])).rows[0].hook_rules, 7)
+      const mint = new PublicKey(market.mint), poolKey = new PublicKey(market.pool)
+      const mintConfig = async () => decodeMintConfig((await connection.getAccountInfo(earlyAccessAddresses(mint).config, 'confirmed')).data)
+      const set = await mintConfig(), want = rampSettings(fixed, { starUnlocks: true, starsAtLaunch: REPOS.ramp.stargazers_count })
+      assert.equal(set.rules, 7)
+      assert.deepEqual(Object.keys(want).map(field => String(set.ramp[field])), Object.values(want).map(String), 'the settings the config gives')
+      assert.ok(await evidence(market), 'the launch evidence accepts the options')
+      // The launcher (a listed contributor) holds its first buy; a buy taking it past its limit is refused by the hook itself.
+      const vault = dbcBaseVault(mint, poolKey), own = getAssociatedTokenAddressSync(mint, contributor.publicKey, false, TOKEN_2022_PROGRAM_ID)
+      const amount = async account => BigInt((await connection.getTokenAccountBalance(account, 'confirmed')).value.amount)
+      const capBps = async () => walletCapBps(await mintConfig(), await amount(vault), await amount(own))
+      const before = await capBps()
+      assert.ok(before >= 200 && before < 210, `${before}`)
+      const big = await dbc.pool.swap2WithTransferHook({ owner: contributor.publicKey, payer: contributor.publicKey, pool: poolKey, amountIn: new BN(String(low)),
+        minimumAmountOut: new BN(0), swapBaseForQuote: false, swapMode: SwapMode.ExactIn, referralTokenAccount: null })
+      big.feePayer = contributor.publicKey
+      big.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash
+      const refused = await connection.simulateTransaction(big)
+      assert.ok(refused.value.err, 'past the limit')
+      assert.equal(hookRefusal(refused.value.logs), EARLY_ACCESS_WALLET_LIMIT)
+      // 100 stars more than at launch: +0.5% (50 basis points) on the limit.
+      const funding = await connection.requestAirdrop(oracle.publicKey, 1_000_000_000)
+      await connection.confirmTransaction({ signature: funding, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
+      await sendAndConfirmTransaction(connection, new Transaction().add(reportStarsInstruction({ oracle: oracle.publicKey, mint,
+        stars: REPOS.ramp.stargazers_count + 100 })), [oracle], { commitment: 'confirmed' })
+      assert.equal((await mintConfig()).starsNow, REPOS.ramp.stargazers_count + 100)
+      assert.equal(await capBps(), before + 50)
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

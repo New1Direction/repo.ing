@@ -13,6 +13,7 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID, MAX_EARLY_ACCESS_SECONDS, RULES, dbcBaseV
   removeWalletsInstruction, transferHookAccounts } from './early-access-hook.mjs'
 import { EARLY_ACCESS_FEE_CLAIMER, earlyAccessLookupAddresses, readEarlyAccessConfig } from './early-access-config.mjs'
 import { earlyAccessWindow } from './early-access.mjs'
+import { FAIR_RAMP, HOOK_RULE_SETS, firstBuyCapBaseUnits, hasFairRamp, hasStarUnlocks, rampSettings } from './early-access-rules.mjs'
 
 // The contributor early access launch (docs/EARLY_ACCESS.md): one v0 transaction with the early access lookup table, holding,
 // in order, the compute budget, the hook's init_mint (the launcher listed only when it buys), DBC's pool creation on the early
@@ -124,15 +125,25 @@ export function createEarlyAccessLauncher({ connection, config, creator, lookupT
 
   return {
     creatorWallet: creator.publicKey.toBase58(),
-    // earlyAccess: { windowSeconds, repoId, keepLauncher } — keepLauncher: the launcher's wallet is linked to a contributor in
-    // the repository's snapshot, so a first buy leaves it on the list.
+    // earlyAccess: { windowSeconds, repoId, keepLauncher, rules, starsAtLaunch } — keepLauncher: the launcher's wallet is linked to
+    // a contributor in the repository's snapshot, so a first buy leaves it on the list. rules: early access alone (default), with
+    // the fair ramp, or with star unlocks too (src/early-access-rules.mjs); starsAtLaunch: the repository's star count now.
     async prepare({ launcherWallet, tokenName, tokenSymbol, initialBuyLamports = '0', earlyAccess }) {
       const launcher = new PublicKey(launcherWallet)
       if (launcher.equals(creator.publicKey)) throw new Error('Launcher and platform creator must differ')
       if (!earlyAccess || !/^[1-9]\d{0,15}$/.test(String(earlyAccess.repoId))) throw new Error('Early access launch needs its repository and window')
+      const rules = earlyAccess.rules ?? RULES.EARLY_ACCESS
+      if (!HOOK_RULE_SETS.includes(rules)) throw new Error('Early access launch options are not one of the offered sets')
       const { fixed, table, chainNow } = await readSetup()
       const end = earlyAccessEnd({ windowSeconds: earlyAccess.windowSeconds, wallNow: Math.floor(now() / 1000), chainNow })
       const buy = launchBuyQuote(client, fixed, initialBuyLamports)
+      // With the fair ramp the launcher's first buy is held to the ramp's start too (the hook refuses more): refused here, with the most
+      // it may get, rather than as a failed launch.
+      const firstBuyCap = firstBuyCapBaseUnits(fixed, rules)
+      if (buy && firstBuyCap !== null && BigInt(buy.outputAmount.toString()) > firstBuyCap) {
+        throw new EarlyAccessLaunchError(`With the fair ramp, the first buy can get at most ${FAIR_RAMP.startBps / 100}% of the supply. Enter less SOL.`)
+      }
+      const ramp = hasFairRamp(rules) ? rampSettings(fixed, { starUnlocks: hasStarUnlocks(rules), starsAtLaunch: earlyAccess.starsAtLaunch }) : undefined
       const mint = Keypair.generate()
       const pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, configKey), vault = dbcBaseVault(mint.publicKey, pool)
       const createPoolParam = { baseMint: mint.publicKey, config: configKey, name: tokenName, symbol: tokenSymbol,
@@ -147,8 +158,8 @@ export function createEarlyAccessLauncher({ connection, config, creator, lookupT
       const removeLauncher = Boolean(buy) && !earlyAccess.keepLauncher
       // The SDK's own compute budget instructions are dropped: the launch sets its budget exactly once (duplicates fail).
       const instructions = [
-        initMintInstruction({ payer: launcher, admin: creator.publicKey, mint: mint.publicKey, repoId: earlyAccess.repoId, rules: RULES.EARLY_ACCESS,
-          earlyAccessEnd: end, wallets: buy ? [launcher] : [], pool, vault, programId: hook }),
+        initMintInstruction({ payer: launcher, admin: creator.publicKey, mint: mint.publicKey, repoId: earlyAccess.repoId, rules,
+          earlyAccessEnd: end, wallets: buy ? [launcher] : [], pool, vault, ...ramp ? { ramp } : {}, programId: hook }),
         ...built.instructions.filter(ix => !isBudget(ix)),
         ...removeLauncher ? [removeWalletsInstruction({ authority: creator.publicKey, mint: mint.publicKey, wallets: [launcher], programId: hook })] : [],
       ]
@@ -165,7 +176,8 @@ export function createEarlyAccessLauncher({ connection, config, creator, lookupT
         mint: mint.publicKey.toBase58(), pool: pool.toBase58(), initialBuyOutput: buy?.outputAmount.toString() ?? null,
         blockhash: latest.blockhash, lastValidBlockHeight: BigInt(latest.lastValidBlockHeight),
         priorityFee: { computeUnitLimit: landing.computeUnitLimit, microLamports: landing.microLamports, lamports: landing.priorityFeeLamports.toString() },
-        earlyAccess: { end, hookProgram: hook.toBase58(), launcherListed: Boolean(buy) && !removeLauncher },
+        earlyAccess: { end, hookProgram: hook.toBase58(), launcherListed: Boolean(buy) && !removeLauncher, rules,
+          ...ramp ? { ramp: Object.fromEntries(Object.entries(ramp).map(([field, value]) => [field, value.toString()])) } : {} },
         transaction: tx, mintSecretKey: mint.secretKey,
         sign: prepareVersionedLaunchSigning(tx, launcher, creator, mint, loadLookupTables),
       }
