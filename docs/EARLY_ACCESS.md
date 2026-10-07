@@ -365,6 +365,13 @@ Left for the next steps (each fails closed or is harmless until then):
   early access payout claims one of them (`earlyAccessClaimAmounts`): when both are owed, the curve part first; the DAMM v2 fees
   stay in the ledger for the next claim. The builder's first claim after graduation therefore takes two claims. The receipt
   check is unchanged.
+- The claim page, the builder dashboard and the claim preview offer (and seal in the review) what the next claim pays
+  (`nextClaimAmount`; the fee status of an early access market also gives `graduatedCreatorFee`), and the claim page says how much
+  follows in the second claim. A review for the curve part cannot pay again: the paid total changes when it settles.
+- The claim page offers no Reinvest for these markets (builder reinvest refuses them, owner decision).
+- Known limits: the reminders read every market of a builder in one pass, so a graduated early access market whose read keeps
+  failing delays that builder's reminder, as a SOL market's does. The curve part always goes first, so if its claim ever failed
+  after the migration (a DBC change), the DAMM v2 part would wait behind it; the chain test claims both on mainnet's programs.
 
 ## Discovery rewards (step 6e)
 

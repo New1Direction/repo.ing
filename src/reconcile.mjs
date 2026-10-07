@@ -1,4 +1,5 @@
 import { isBundleMarket } from './bundles.mjs'
+import { isEarlyAccessMarket } from './early-access.mjs'
 import { PublicKey } from '@solana/web3.js'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
@@ -188,7 +189,10 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
           if (BigInt(damm.paid) !== graduated.claimed) return { ...base, onchainCreatorFee, platform, status: 'MISMATCH', reason: GRADUATED_WITHDRAWAL_MISMATCH }
         }
         const difference = onchainCreatorFee - expectedRemaining
+        // An early access market also says how much of the fee is its DAMM v2 position's: its payouts claim one part at a time
+        // (earlyAccessClaimAmounts, nextClaimAmount in src/claim-amounts.mjs).
         return { ...base, onchainCreatorFee, platform, difference, graduated: Boolean(graduated),
+          ...isEarlyAccessMarket(market) ? { earlyAccess: true, graduatedCreatorFee: graduated?.available ?? 0n } : {},
           status: difference === 0n ? 'MATCH' : 'MISMATCH' }
       } finally { await client.query('select pg_advisory_unlock($1::bigint)', [repoId.toString()]) }
     } finally { client.release() }

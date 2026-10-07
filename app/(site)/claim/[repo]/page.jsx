@@ -24,6 +24,8 @@ import { currentPayoutDestinations } from '../../../lib/payout-destination.mjs'
 import { ModelClaimPage } from '../../../components/hf/claim-page'
 import { StockPairClaimPage } from '../../../components/stock-pair-claim'
 import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
+import { nextClaimAmount } from '../../../../src/claim-amounts.mjs'
+import { isEarlyAccessMarket } from '../../../../src/early-access.mjs'
 export const dynamic = 'force-dynamic'
 
 export default async function ClaimPage({ params, searchParams }) {
@@ -78,7 +80,10 @@ async function ClaimContent({ market, repo, query }) {
   const session = readGithubSession(cookieStore.get(githubSessionCookie)?.value)
   // Only the public identity is passed to the UI; the GitHub credential stays encrypted and HttpOnly.
   const verifiedUser = session?.repoId === repoId ? { githubLogin: session.githubLogin, expiresAt: session.expiresAt } : null
-  const claimable = fees.status === 'MATCH' ? fees.onchainCreatorFee?.toString() ?? null : null
+  // What this claim pays. An early access market owed both curve and DAMM v2 fees pays the curve part now and the DAMM v2 part in
+  // the next claim (docs/EARLY_ACCESS.md, step 7c); the summary says how much follows.
+  const claimable = nextClaimAmount(fees)?.toString() ?? null
+  const followsLater = claimable === null ? 0n : BigInt(fees.onchainCreatorFee) - BigInt(claimable)
   const beneficiary = destination.active
   // Who pasted a waiting address is shown to the verified admin of this repository only.
   const pendingAddress = destination.pending && (verifiedUser ? destination.pending : { ...destination.pending, requestedByLogin: null })
@@ -89,7 +94,8 @@ async function ClaimContent({ market, repo, query }) {
   }) : null
   const usdEstimate = claimable === null ? null : formatUsdEstimate(claimable, usdPerSol)
   let reinvestEnabled = false
-  if (verifiedUser && process.env.BUILDER_REINVEST_ENABLED === 'true' && process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL) {
+  // Builder reinvest never takes an early access market (owner decision; src/builder-reinvest.mjs refuses it).
+  if (verifiedUser && !isEarlyAccessMarket(market) && process.env.BUILDER_REINVEST_ENABLED === 'true' && process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL) {
     try {
       await assertBuilderReinvestEnabled({pool, connection:chain(), verification:new Connection(process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL,'finalized'), config:configAddress()})
       reinvestEnabled = true
@@ -97,6 +103,8 @@ async function ClaimContent({ market, repo, query }) {
   }
   const summary = <div className="claim-amount-summary inner-card">
     <div><span>Available to claim</span><strong title={claimable === null ? undefined : `${formatUnits(claimable)} SOL`}>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
+    {followsLater > 0n && <p className="muted claim-follows">Then {formatSolDisplay(followsLater.toString())} SOL of graduated pool fees in a second claim: an early
+      access payout claims its curve fees and its graduated pool fees one at a time.</p>}
     <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
   </div>
   return <ClaimSteps summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}

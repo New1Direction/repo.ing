@@ -871,7 +871,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const dammFee = before.onchainCreatorFee - curveFee
       assert.ok(curveFee > 0n && dammFee > 0n, JSON.stringify({ curveFee: String(curveFee), dammFee: String(dammFee) }))
 
-      // The token page's fee status and the claim preview read both parts.
+      // The fee status reads both parts; the claim preview offers what the next claim pays: the curve part.
       const ENV = ['DATABASE_URL', 'SOLANA_RPC_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'BUNDLE_DBC_CONFIG', 'EARLY_ACCESS_DBC_CONFIG']
       const saved = { env: Object.fromEntries(ENV.map(name => [name, process.env[name]])), pool: globalThis.__gitfunPool }
       try {
@@ -879,9 +879,10 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         Object.assign(process.env, { DATABASE_URL: URL_, SOLANA_RPC_URL: RPC, DBC_CONFIG: config, EARLY_ACCESS_DBC_CONFIG: eaConfig })
         globalThis.__gitfunPool = pool
         const fees = await feeStatus(repoId)
-        assert.deepEqual([fees.status, fees.graduated, fees.onchainCreatorFee], ['MATCH', true, curveFee + dammFee])
+        assert.deepEqual([fees.status, fees.graduated, fees.onchainCreatorFee, fees.earlyAccess, fees.graduatedCreatorFee],
+          ['MATCH', true, curveFee + dammFee, true, dammFee])
         const preview = await claimPreviewRoute(new Request(`https://repo.ing/api/claim/${repoId}/preview`), { params: Promise.resolve({ repo: repoId }) })
-        assert.deepEqual(await preview.json(), { available: String(curveFee + dammFee) })
+        assert.deepEqual(await preview.json(), { available: String(curveFee) })
       } finally {
         for (const [name, value] of Object.entries(saved.env)) value === undefined ? delete process.env[name] : process.env[name] = value
         globalThis.__gitfunPool = saved.pool
@@ -895,8 +896,13 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
           calls: tx.transaction.message.instructions.map(ix => ({ program: keys[ix.programIdIndex].toBase58(), data: Buffer.from(bs58.decode(ix.data)),
             accounts: ix.accounts.map(index => keys[index].toBase58()) })) }
       }
+      // Each claim carries the review the claim page seals for it (src/claim-review.mjs): the amount the next claim pays.
+      const { rows: [binding] } = await pool.query('select wallet, bound_at from repo_beneficiaries where github_repo_id = $1', [repoId])
+      const reviewFor = (amount, paid) => ({ repoId, wallet: binding.wallet, boundAt: new Date(binding.bound_at).toISOString(), amount: String(amount),
+        includeGraduatedFees: true, paid: String(paid), expiresAt: Date.now() + 600_000 })
       // The curve part alone.
-      const first = await claimant.claim(request)
+      const curveReview = reviewFor(curveFee, before.recordedClaimed)
+      const first = await claimant.claim({ ...request, review: curveReview })
       assert.equal(first.status, 'settled')
       assert.deepEqual([first.amountBaseUnits, first.dammAmountBaseUnits], [curveFee, 0n])
       assert.ok(first.receiverDeltaLamports >= first.amountBaseUnits, 'the bound wallet received it')
@@ -906,8 +912,10 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       assert.equal(curveClaim.calls.filter(call => call.program === CP_AMM_PROGRAM_ID.toBase58()).length, 0)
       const between = await matched()
       assert.deepEqual([between.expectedRemaining, between.onchainCreatorFee], [dammFee, dammFee], 'the DAMM v2 fees wait for the next claim')
-      // Then the DAMM v2 part: claim_position_fee with token A on Token-2022.
-      const second = await claimant.claim(request)
+      // The curve part's review cannot pay again (paid changed); a fresh review pays the DAMM v2 part: claim_position_fee, token A on
+      // Token-2022.
+      await assert.rejects(claimant.claim({ ...request, review: curveReview }), /already used/)
+      const second = await claimant.claim({ ...request, review: reviewFor(dammFee, between.recordedClaimed) })
       assert.equal(second.status, 'settled')
       assert.deepEqual([second.amountBaseUnits, second.dammAmountBaseUnits], [dammFee, dammFee])
       assert.ok(second.receiverDeltaLamports >= second.amountBaseUnits, 'the bound wallet received it')

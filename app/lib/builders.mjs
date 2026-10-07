@@ -8,6 +8,7 @@ import { activeDecisions } from '../../src/maintainer-opt-outs.mjs'
 import { currentPayoutDestinations } from './payout-destination.mjs'
 import { STOCK_PAIR_NO_OWNER_CLAIM, noOwnerClaimMessage, stockPairStamps } from '../../src/stock-owner-claims.mjs'
 import { tradingEarlyAccessConfig } from '../../src/early-access.mjs'
+import { nextClaimAmount } from '../../src/claim-amounts.mjs'
 
 // Contributor early access markets (docs/EARLY_ACCESS.md) are listed where EARLY_ACCESS_DBC_CONFIG is set: their fees are read and
 // claimed like any other (step 6c). Without it they are left out, as their fee check would only show an error row.
@@ -40,7 +41,8 @@ export async function builderOverview(session) {
   const repositories = await mapLimited(rows, 3, async row => {
     const stockPair = stockPairs.has(row.repoId)
     const fees = stockPair ? { status: STOCK_PAIR_NO_OWNER_CLAIM, onchainCreatorFee: null } : await feeStatus(row.repoId)
-    const available = fees.status === 'MATCH' ? fees.onchainCreatorFee?.toString() ?? null : null
+    // What the next claim pays: an early access market's DAMM v2 fees follow its curve part in a second claim.
+    const available = nextClaimAmount(fees)?.toString() ?? null
     const ready = payoutReady && row.wallet && !row.pendingSignature && available && BigInt(available) > 0n
     const expiresAt = Math.min(session.expiresAt, Date.now() + 30 * 60_000)
     const review = ready ? seal({ purpose: 'builder-claim-review', sessionId: session.sessionId,
