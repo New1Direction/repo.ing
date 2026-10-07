@@ -149,8 +149,10 @@ test('wallets must be canonical base58 public keys', () => {
   assert.equal(canonicalWallet(address), address)
   // Wrong case: a fixed key whose lower-case form is not a key (a random key's lower-case form is a valid other key about a
   // quarter of the time, which made this check flaky).
-  const wrongCase = 'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3'.toLowerCase()
-  for (const value of [undefined, '', ` ${address}`, `${address}1`, 'not a wallet', wrongCase]) assert.throws(() => canonicalWallet(value), refusal('wallet'), String(value))
+  const fixed = 'H7TKxmpTzCrujJQETuCTL5sjCgaZ8g4yW94ZEQPC7RY3', wrongCase = fixed.toLowerCase()
+  // A trailing character on a fixed key: on a random key it gives another valid key about once in 58 (the value times 58 can still
+  // fit in 32 bytes), which made this check flaky too. This key's value is too large for that.
+  for (const value of [undefined, '', ` ${address}`, `${fixed}1`, 'not a wallet', wrongCase]) assert.throws(() => canonicalWallet(value), refusal('wallet'), String(value))
 })
 
 test('migration 0059 is journaled, re-appliable, and its constraint names match the schema', () => {
