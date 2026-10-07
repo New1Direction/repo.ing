@@ -725,7 +725,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         return result.status === 'MATCH' && result.graduated ? result : null
       }, 240)
       assert.ok(matched, 'the DAMM v2 position fee is in the builder ledger, which matches the curve and DAMM v2 fees')
-      // Claims and the token page read it as waiting for its graduated phase (steps 7b, 7c).
+      // A reconciler that does not handle the graduated phase still refuses it by name.
       await assert.rejects(createReconciler({ pool, connection, config, earlyAccess: eaConfig }).reconcile(repoId), /EARLY_ACCESS_GRADUATION_PENDING/)
     })
 
@@ -847,6 +847,78 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         for (const name of GLOBALS) delete globalThis[name]
         Object.assign(globalThis, Object.fromEntries(Object.entries(saved.globals).filter(([, value]) => value !== undefined)))
       }
+    })
+
+    // Step 7c: the builder claims after the graduation. The curve's creator fee left from before the migration and the DAMM v2
+    // position's fees need more than one transaction's bytes together, so the first claim pays the curve part
+    // (claim_creator_trading_fee2) and the next the DAMM v2 part (claim_position_fee, token A on Token-2022), each checked exactly
+    // before it is signed. The token page and the claim preview read both; the ledgers match after each claim.
+    await t.test('the builder claims after the graduation: the curve part first, then the DAMM v2 part', async () => {
+      const config = solConfig.toBase58(), market = secondMarket, repoId = String(market.githubRepoId)
+      const creatorKey = Keypair.fromSecretKey(creatorSecret)
+      const githubVerifier = { verifyCurrentAuthority: async ({ githubRepoId }) => ({ verified: true, permission: 'admin', githubRepoId, githubUserId: 91n, verifiedAt: new Date() }) }
+      const request = { githubRepoId: repoId, githubAuthorization: {} }
+      const indexer = createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig })
+      const reconciler = createReconciler({ pool, connection, config, earlyAccess: eaConfig, earlyAccessGraduated: true })
+      const matched = () => until(async () => { await indexer.runOnce(); const result = await reconciler.reconcile(repoId)
+        return result.status === 'MATCH' ? result : null }, 240)
+      const before = await matched()
+      assert.ok(before?.graduated, 'the ledgers match the curve and the DAMM v2 pool')
+      const curveFee = BigInt((await new DynamicBondingCurveClient(connection, 'finalized').state.getPool(new PublicKey(market.pool))).poolState.creatorQuoteFee.toString())
+      const dammFee = before.onchainCreatorFee - curveFee
+      assert.ok(curveFee > 0n && dammFee > 0n, JSON.stringify({ curveFee: String(curveFee), dammFee: String(dammFee) }))
+
+      // The token page's fee status and the claim preview read both parts.
+      const ENV = ['DATABASE_URL', 'SOLANA_RPC_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'BUNDLE_DBC_CONFIG', 'EARLY_ACCESS_DBC_CONFIG']
+      const saved = { env: Object.fromEntries(ENV.map(name => [name, process.env[name]])), pool: globalThis.__gitfunPool }
+      try {
+        for (const name of ENV) delete process.env[name]
+        Object.assign(process.env, { DATABASE_URL: URL_, SOLANA_RPC_URL: RPC, DBC_CONFIG: config, EARLY_ACCESS_DBC_CONFIG: eaConfig })
+        globalThis.__gitfunPool = pool
+        const fees = await feeStatus(repoId)
+        assert.deepEqual([fees.status, fees.graduated, fees.onchainCreatorFee], ['MATCH', true, curveFee + dammFee])
+        const preview = await claimPreviewRoute(new Request(`https://repo.ing/api/claim/${repoId}/preview`), { params: Promise.resolve({ repo: repoId }) })
+        assert.deepEqual(await preview.json(), { available: String(curveFee + dammFee) })
+      } finally {
+        for (const [name, value] of Object.entries(saved.env)) value === undefined ? delete process.env[name] : process.env[name] = value
+        globalThis.__gitfunPool = saved.pool
+      }
+
+      const claimant = createClaim({ pool, connection, config, creator: creatorKey, githubVerifier, earlyAccess: eaConfig })
+      const landed = async signature => {
+        const tx = await connection.getTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+        const keys = tx.transaction.message.accountKeys
+        return { bytes: tx.transaction.message.serialize().length + 64 * tx.transaction.signatures.length, computeUnits: tx.meta.computeUnitsConsumed,
+          calls: tx.transaction.message.instructions.map(ix => ({ program: keys[ix.programIdIndex].toBase58(), data: Buffer.from(bs58.decode(ix.data)),
+            accounts: ix.accounts.map(index => keys[index].toBase58()) })) }
+      }
+      // The curve part alone.
+      const first = await claimant.claim(request)
+      assert.equal(first.status, 'settled')
+      assert.deepEqual([first.amountBaseUnits, first.dammAmountBaseUnits], [curveFee, 0n])
+      assert.ok(first.receiverDeltaLamports >= first.amountBaseUnits, 'the bound wallet received it')
+      const curveClaim = await landed(first.signature)
+      assert.deepEqual(curveClaim.calls.filter(call => call.program === 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN').map(call => call.data.subarray(0, 8).toString('hex')),
+        [CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR.toString('hex')])
+      assert.equal(curveClaim.calls.filter(call => call.program === CP_AMM_PROGRAM_ID.toBase58()).length, 0)
+      const between = await matched()
+      assert.deepEqual([between.expectedRemaining, between.onchainCreatorFee], [dammFee, dammFee], 'the DAMM v2 fees wait for the next claim')
+      // Then the DAMM v2 part: claim_position_fee with token A on Token-2022.
+      const second = await claimant.claim(request)
+      assert.equal(second.status, 'settled')
+      assert.deepEqual([second.amountBaseUnits, second.dammAmountBaseUnits], [dammFee, dammFee])
+      assert.ok(second.receiverDeltaLamports >= second.amountBaseUnits, 'the bound wallet received it')
+      const dammClaim = await landed(second.signature)
+      const positionClaims = dammClaim.calls.filter(call => call.program === CP_AMM_PROGRAM_ID.toBase58())
+      assert.equal(positionClaims.length, 1)
+      assert.equal(positionClaims[0].data.toString('hex'), 'b4269a118521a2d3', 'claim_position_fee')
+      assert.deepEqual([positionClaims[0].accounts[7], positionClaims[0].accounts[11]], [market.mint, TOKEN_2022_PROGRAM_ID.toBase58()])
+      assert.equal(dammClaim.calls.filter(call => call.program === 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN').length, 0)
+      console.log(JSON.stringify({ earlyAccessGraduatedClaims: { curve: { bytes: curveClaim.bytes, computeUnits: curveClaim.computeUnits },
+        damm: { bytes: dammClaim.bytes, computeUnits: dammClaim.computeUnits } } }))
+      const after = await matched()
+      assert.deepEqual([after.expectedRemaining, after.onchainCreatorFee, after.recordedClaimed - before.recordedClaimed], [0n, 0n, curveFee + dammFee])
+      await assert.rejects(claimant.claim(request), /No accrued creator fees remain to claim/, 'nothing left to claim')
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

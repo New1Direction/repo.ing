@@ -1,12 +1,13 @@
 import BN from 'bn.js'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { assertClaimSnapshot } from './claim-review.mjs'
-import { claimAmounts } from './claim-amounts.mjs'
+import { claimAmounts, earlyAccessClaimAmounts } from './claim-amounts.mjs'
 import bs58 from 'bs58'
 import { ComputeBudgetProgram, Keypair, PublicKey, Transaction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { CP_AMM_PROGRAM_ID, derivePoolAuthority } from '@meteora-ag/cp-amm-sdk'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq, sql } from 'drizzle-orm'
 import { markets, repoClaims } from './db/schema.mjs'
@@ -17,7 +18,7 @@ import { resolvePayoutRecipient } from './payout-address.mjs'
 import { settleClaim } from './claim-settlement.mjs'
 import { broadcastUntilSettled, signedWithPriorityFee } from './trade-landing.mjs'
 import { EARLY_ACCESS_NOT_CLAIMABLE, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
-import { assertHookClaimInstructions, hookClaimInstructions } from './dbc-hook-claims.mjs'
+import { accountsAre, assertHookClaimInstructions, hookClaimInstructions, idempotentAta } from './dbc-hook-claims.mjs'
 
 // The creator's WSOL ATA is permissionless to create and fund, so routing payouts through it lets
 // anyone perturb a claim's receipt. Graduated fees unwrap through a one-time authority instead
@@ -38,6 +39,30 @@ export async function graduatedClaimInstructions(graduated, { owner, receiver, t
   ]
 }
 
+const CLAIM_POSITION_FEE = Buffer.from([180, 38, 154, 17, 133, 33, 162, 211])
+const DAMM_EVENT_AUTHORITY = PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], CP_AMM_PROGRAM_ID)[0]
+const CLOSE_ACCOUNT = 9
+
+// Exactly the four instructions graduatedClaimInstructions builds, for this graduated pool, position, owner, receiver and one-time
+// account: the receiver's token A account (Token-2022 for an early access market), the one-time WSOL account, claim_position_fee
+// with every account in its IDL place and its signer and writable flags, and the WSOL account's close to the receiver.
+export function assertGraduatedClaimInstructions(instructions, { owner, receiver, temporary, graduated, tokenAProgram }) {
+  const fail = () => { throw Error('Claim transaction does not match the expected claim') }
+  if (!Array.isArray(instructions) || instructions.length !== 4) fail()
+  const [tokenAAccount, wsolAccount, claim, close] = instructions, p = graduated.poolState
+  const tokenA = getAssociatedTokenAddressSync(p.tokenAMint, receiver, true, tokenAProgram)
+  const tokenB = getAssociatedTokenAddressSync(NATIVE_MINT, temporary, false, TOKEN_PROGRAM_ID)
+  if (!p.tokenBMint.equals(NATIVE_MINT) ||
+      !idempotentAta(tokenAAccount, { payer: owner, account: tokenA, owner: receiver, mint: p.tokenAMint, program: tokenAProgram }) ||
+      !idempotentAta(wsolAccount, { payer: owner, account: tokenB, owner: temporary, mint: NATIVE_MINT, program: TOKEN_PROGRAM_ID })) fail()
+  if (!claim?.programId.equals(CP_AMM_PROGRAM_ID) || !claim.data.equals(CLAIM_POSITION_FEE) || !accountsAre(claim, [[derivePoolAuthority(), false, false],
+    [graduated.pool, false, false], [graduated.position, false, true], [tokenA, false, true], [tokenB, false, true], [p.tokenAVault, false, true],
+    [p.tokenBVault, false, true], [p.tokenAMint, false, false], [NATIVE_MINT, false, false], [graduated.nftAccount, false, false], [owner, true, false],
+    [tokenAProgram, false, false], [TOKEN_PROGRAM_ID, false, false], [DAMM_EVENT_AUTHORITY, false, false], [CP_AMM_PROGRAM_ID, false, false]])) fail()
+  if (!close?.programId.equals(TOKEN_PROGRAM_ID) || close.data.length !== 1 || close.data[0] !== CLOSE_ACCOUNT ||
+      !accountsAre(close, [[tokenB, false, true], [receiver, false, true], [temporary, true, false]])) fail()
+}
+
 // A model market's binding names the model owner's _id when it was made (drizzle/0051_model_authority.sql). After a
 // transfer, the new owner's fees must never go to the previous owner's wallet: the claim is refused until they bind one.
 export function assertBindingAuthority(beneficiary, source, authority) {
@@ -50,14 +75,15 @@ export function assertBindingAuthority(beneficiary, source, authority) {
 // githubVerifier: the market's payout authority. GitHub's (no source field) for repositories; a Hugging Face model market
 // takes one with source 'huggingface' (app/lib/hf-session.mjs), whose fresh check also names the model's current owner.
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market's curve fees are claimed with
-// claim_creator_trading_fee2 (src/dbc-hook-claims.mjs, docs/EARLY_ACCESS.md step 6c); unset, such a market is refused by name.
+// claim_creator_trading_fee2 (src/dbc-hook-claims.mjs, docs/EARLY_ACCESS.md step 6c) and, after its graduation, its DAMM v2 fees with
+// claim_position_fee with token A on Token-2022 (step 7c); unset, such a market is refused by name.
 export function createClaim({ pool, connection, config, creator, githubVerifier, earlyAccess = tradingEarlyAccessConfig() }) {
   if (!githubVerifier?.verifyCallback && !githubVerifier?.verifyCurrentAuthority) throw new Error('Fresh GitHub App verifier required')
   const source = githubVerifier.source ?? 'github'
   const authorityName = source === 'huggingface' ? 'Hugging Face owner' : 'GitHub admin'
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
-  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess, earlyAccessGraduated: true })
 
   const claim = async request => {
     const report = stage => { try { request.onProgress?.(stage) } catch { /* UI progress never changes payout settlement. */ } }
@@ -129,14 +155,16 @@ export function createClaim({ pool, connection, config, creator, githubVerifier,
           from builder_fee_credits where github_repo_id=$1`, [String(repoId)])
         const outstanding = BigInt(ledger.earned) - BigInt(settled.paid)
         const dbcFee = BigInt(state.poolState.creatorQuoteFee.toString())
-        const { payoutAmount, dbcPayout, dammFee, surplus } = claimAmounts({ dbcFee, dammFee: graduated?.available ?? 0n, outstanding, review: request.review })
+        const amounts = claimAmounts({ dbcFee, dammFee: graduated?.available ?? 0n, outstanding, review: request.review })
+        const { payoutAmount, dbcPayout, dammFee, surplus } = hook ? earlyAccessClaimAmounts(amounts) : amounts
         if (surplus > 0n) console.error('claim fee surplus: Meteora holds unindexed creator fees', { repo: repoId.toString(), surplus: surplus.toString() })
-        const beforeFee = dbcFee + dammFee
+        const beforeFee = dbcFee + (graduated?.available ?? 0n)
         report('Repository fees match the Solana pools. Preparing payout…')
         const payout = new Transaction()
         const temporaries = []
-        // The hook claim's exact instructions, for its checks before and after the network fee is added.
-        let hookClaim = null
+        // An early access payout's exact claims (the hook claim, or after graduation the DAMM v2 one), checked before and after the
+        // network fee is added.
+        let hookClaim = null, dammClaim = null
         if (dbcPayout > 0n) {
           const temporary = Keypair.generate()
           temporaries.push(temporary)
@@ -154,19 +182,27 @@ export function createClaim({ pool, connection, config, creator, githubVerifier,
         if (dammFee > 0n) {
           const temporary = Keypair.generate()
           temporaries.push(temporary)
-          payout.add(...await graduatedClaimInstructions(graduated, { owner: creator.publicKey, receiver: receiverKey,
-            temporary: temporary.publicKey, tokenAProgram: fixed.tokenType === 0 ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID }))
+          const spec = { owner: creator.publicKey, receiver: receiverKey, temporary: temporary.publicKey, graduated,
+            tokenAProgram: fixed.tokenType === 0 ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID }
+          const instructions = await graduatedClaimInstructions(graduated, spec)
+          if (hook) {
+            dammClaim = { ...spec, tokenAProgram: TOKEN_2022_PROGRAM_ID }
+            assertGraduatedClaimInstructions(instructions, dammClaim)
+          }
+          payout.add(...instructions)
         }
         const latest = await connection.getLatestBlockhash('confirmed')
         // The platform creator signer pays the network fee (base + priority); the beneficiary's receipt is unaffected.
         const { transaction } = await signedWithPriorityFee(connection, payout, { feePayer: creator.publicKey,
           blockhash: latest.blockhash, signers: [creator, ...temporaries] })
-        // A hook claim is the only thing an early access payout does before graduation: besides the network fee (at most a unit limit
-        // and a price), exactly its four instructions.
-        if (hookClaim) {
+        // An early access payout does one claim (earlyAccessClaimAmounts): besides the network fee (at most a unit limit and a price),
+        // exactly the four instructions of its hook claim or of its DAMM v2 claim.
+        if (hook) {
           const budget = transaction.instructions.filter(ix => ix.programId.equals(ComputeBudgetProgram.programId))
-          if (budget.length > 2) throw new Error('Claim transaction does not match the expected claim')
-          assertHookClaimInstructions(transaction.instructions.filter(ix => !budget.includes(ix)), hookClaim)
+          const claimed = transaction.instructions.filter(ix => !budget.includes(ix))
+          if (budget.length > 2 || Boolean(hookClaim) === Boolean(dammClaim)) throw new Error('Claim transaction does not match the expected claim')
+          if (hookClaim) assertHookClaimInstructions(claimed, hookClaim)
+          else assertGraduatedClaimInstructions(claimed, dammClaim)
         }
         const signature = bs58.encode(transaction.signature)
         const simulation = await connection.simulateTransaction(transaction)

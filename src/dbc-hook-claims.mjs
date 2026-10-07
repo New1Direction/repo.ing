@@ -42,9 +42,9 @@ export async function hookClaimInstructions(dbc, { kind, authority, payer, pool,
 }
 
 // [pubkey, signer, writable] for each account, in order.
-const accountsAre = (ix, expected) => ix.keys.length === expected.length &&
+export const accountsAre = (ix, expected) => ix.keys.length === expected.length &&
   expected.every(([pubkey, signer, writable], index) => ix.keys[index].pubkey.equals(pubkey) && ix.keys[index].isSigner === signer && ix.keys[index].isWritable === writable)
-const idempotentAta = (ix, { payer, account, owner, mint, program }) => Boolean(ix?.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID) &&
+export const idempotentAta = (ix, { payer, account, owner, mint, program }) => Boolean(ix?.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID) &&
   ix.data.length === 1 && ix.data[0] === 1 && accountsAre(ix, [[payer, true, true], [account, false, true], [owner, false, false], [mint, false, false],
     [SystemProgram.programId, false, false], [program, false, false]]))
 

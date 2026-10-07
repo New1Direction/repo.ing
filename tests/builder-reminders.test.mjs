@@ -60,17 +60,17 @@ test('real PostgreSQL: explicit confirmation, immutable retries, daily cap, no r
  await assert.rejects(service.act(token,'confirm'),/invalid/)
  }finally{await db.query('rollback');await db.end()}
 })
-test('real PostgreSQL: early access markets are reminded of only with the setting; a graduated one never stops the others', {skip:!process.env.CHART_TEST_DATABASE_URL},async()=>{
+test('real PostgreSQL: early access markets are reminded of only with the setting, also after their graduation', {skip:!process.env.CHART_TEST_DATABASE_URL},async()=>{
  const url=new URL(process.env.CHART_TEST_DATABASE_URL);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55441')
  const db=new pg.Client({connectionString:url.href});await db.connect();await db.query('begin')
  const pool={query:(...a)=>db.query(...a),connect:async()=>({query:(...a)=>db.query(...a),release(){}})}
  const now=Date.parse('2026-09-27T00:00:00Z'),reconciled=[],emails=[]
  const service=earlyAccess=>createBuilderReminders({pool,secret,origin:'https://repo.ing',now:()=>now,earlyAccess,send:async m=>{emails.push(m);return 'accepted'},
-  reconcile:async id=>{reconciled.push(id);if(id==='3')throw Error('EARLY_ACCESS_GRADUATION_PENDING');return {status:'MATCH',onchainCreatorFee:100000000n,recordedEarned:100000000n}}})
+  reconcile:async id=>{reconciled.push(id);return {status:'MATCH',onchainCreatorFee:100000000n,recordedEarned:100000000n}}})
  try{
  await db.query(readFileSync('drizzle/0021_builder_reminders.sql','utf8').replaceAll('CREATE TABLE','CREATE TEMPORARY TABLE'))
  await db.query('create temporary table repo_beneficiaries(github_repo_id bigint,github_user_id bigint,wallet text);create temporary table markets(github_repo_id bigint,mint text,status text,launch_finality text,indexed_at timestamptz,quote_asset_id text,early_access_end timestamptz);create temporary table repositories(github_repo_id bigint,full_name text)')
- // 1: a SOL market; 2: an early access market; 3: a graduated early access market (its reconcile waits for step 7).
+ // 1: a SOL market; 2: an early access market; 3: a graduated early access market (the worker's reconciler reads it, step 7c).
  await db.query("insert into repo_beneficiaries values(1,7,'wallet'),(2,7,'wallet'),(3,7,'wallet');insert into markets values(1,'mint1','confirmed','finalized',now(),null,null),(2,'mint2','confirmed','finalized',now(),null,now()),(3,'mint3','confirmed','finalized',now(),null,now());insert into repositories values(1,'owner/one'),(2,'owner/two'),(3,'owner/three')")
  const off=service(false)
  await off.subscribe('7','owner@example.com')
@@ -85,6 +85,6 @@ test('real PostgreSQL: early access markets are reminded of only with the settin
  await db.query('update builder_reminders set next_check_at=$1,last_sent_at=null,delivery=null',[new Date(now)])
  await service(true).runOnce()
  assert.deepEqual([...reconciled].sort(),['1','2','3'],'with it the early access markets too')
- assert.equal(emails.length,1,'the graduated one does not stop the reminder')
+ assert.equal(emails.length,1)
  }finally{await db.query('rollback');await db.end()}
 })
