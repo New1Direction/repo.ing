@@ -62,6 +62,24 @@ test('a reconciliation that throws is unchecked with a fixed code; a failed read
   assert.ok(!JSON.stringify(logged).includes('SECRET'))
   assert.equal(logged[1].reason, 'Meteora pool read failed')
   assert.deepEqual(await createEarlyAccessReconcileWatch({ pool: database([]), reconciler: {} }).runOnce(), { status: 'IDLE', markets: [] })
+  // A graduated market keeps its own code (it waits for step 7).
+  const graduated = createEarlyAccessReconcileWatch({ pool: database(markets), reconciler: { reconcile: async () => { throw Error(EARLY_ACCESS_GRADUATION_PENDING) } }, log: () => {} })
+  assert.equal((await graduated.runOnce()).markets[0].reason, EARLY_ACCESS_GRADUATION_PENDING)
+})
+
+test('alert rows that cannot be stored are counted per pass and logged', async () => {
+  const markets = [{ githubRepoId: '700003', mint: 'm', pool: 'p', fullName: 'octo/third' }]
+  const db = { query: async sql => { if (/from markets m/.test(sql)) return { rows: markets }; throw Error('insert failed') } }
+  let at = 0
+  const logged = []
+  const watch = createEarlyAccessReconcileWatch({ pool: db, reconciler: { reconcile: async () => ({ status: 'MISMATCH', difference: -1n }) }, now: () => at,
+    log: entry => logged.push(entry) })
+  await watch.runOnce()
+  at += HOLD
+  assert.equal((await watch.runOnce()).alertFaults, 1)
+  assert.deepEqual(logged.at(-1), { alertFaults: 1 })
+  at += HOLD
+  assert.equal((await watch.runOnce()).alertFaults, 1, 'counted again in the next pass, never accumulated')
 })
 
 test('reconcile and graduated reads take an early access curve only with the setting; a graduated one waits for step 7', async () => {
@@ -69,8 +87,9 @@ test('reconcile and graduated reads take an early access curve only with the set
   const market = { githubRepoId: 7n, mint: mint.toBase58(), pool: deriveDbcPoolAddress(NATIVE_MINT, mint, earlyAccess).toBase58(), earlyAccessEnd: new Date(),
     transferHookProgram: HOOK.toBase58(), creatorWallet: Keypair.generate().publicKey.toBase58() }
   const offline = new Connection('http://127.0.0.1:1', 'confirmed')
-  // Unset: the resolver refuses it by name before any read.
+  // Unset, and by default (every caller that does not handle them): the resolver refuses it by name before any read.
   await assert.rejects(createGraduatedFees({ connection: offline, config: config.toBase58(), earlyAccess: null }).destination(market), /transfer-hook-aware path/)
+  await assert.rejects(createGraduatedFees({ connection: offline, config: config.toBase58() }).destination(market), /transfer-hook-aware path/)
   // Set: its curve state decides. Not migrated: no graduated fees; migrated: refused by name.
   const state = migrated => ({ poolState: { config: earlyAccess, baseMint: mint, creator: new PublicKey(market.creatorWallet), isMigrated: migrated ? 1 : 0 } })
   const fees = createGraduatedFees({ connection: offline, config: config.toBase58(), earlyAccess })

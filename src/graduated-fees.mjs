@@ -6,7 +6,7 @@ import { DynamicBondingCurveClient, DAMM_V2_MIGRATION_FEE_ADDRESS, deriveDammV2P
 import { CpAmm, CP_AMM_PROGRAM_ID, getUnClaimLpFee } from '@meteora-ag/cp-amm-sdk'
 import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
-import { EARLY_ACCESS_GRADUATION_PENDING, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
+import { EARLY_ACCESS_GRADUATION_PENDING, isEarlyAccessMarket } from './early-access.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const verifiedMigrations = new Map()
@@ -69,9 +69,10 @@ async function proofQuery(db, text, params) {
   }
 }
 
-// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market is read on its curve (no graduated fees before it
-// migrates); a migrated one is refused by name until its graduation ships (docs/EARLY_ACCESS.md, step 7).
-export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = tradingEarlyAccessConfig() }) {
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG), passed only by a path that handles them: a contributor early access market is read on its
+// curve (no graduated fees before it migrates); a migrated one is refused by name until its graduation ships (docs/EARLY_ACCESS.md,
+// step 7). Without it such a market is refused by name.
+export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = null }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const amm = new CpAmm(connection)
   const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })

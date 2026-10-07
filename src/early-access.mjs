@@ -68,8 +68,13 @@ export const earlyAccessDbcConfig = (env = process.env) => publicKeySetting(env,
 export const earlyAccessEndUtc = end => `${new Date(end).toISOString().slice(0, 16).replace('T', ' ')} UTC`
 // For every path that opts in (traders, indexers, reconciliation): a malformed EARLY_ACCESS_DBC_CONFIG refuses early access markets
 // only (logged by name), never every trade, index or claim.
+// Logged once per process (paths read it per request).
+const reportedSettings = new Set()
 export function tradingEarlyAccessConfig(env = process.env, log = console.error) {
-  try { return earlyAccessDbcConfig(env) } catch (error) { log(`${error.message}; early access markets are not tradable`); return null }
+  try { return earlyAccessDbcConfig(env) } catch (error) {
+    if (!reportedSettings.has(error.message)) { reportedSettings.add(error.message); log(`${error.message}; early access markets are not tradable`) }
+    return null
+  }
 }
 // The address lookup table early access launches (v0 transactions) are built with.
 export const earlyAccessLookupTable = (env = process.env) => publicKeySetting(env, 'EARLY_ACCESS_LOOKUP_TABLE')
