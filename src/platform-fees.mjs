@@ -2,6 +2,7 @@ import bs58 from 'bs58'
 import { broadcastUntilSettled, isDustPayout, maxPayoutNetworkFee, signedWithPriorityFee } from './trade-landing.mjs'
 import { ComputeBudgetProgram, Keypair, PublicKey, Transaction } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { CP_AMM_PROGRAM_ID, CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { createGraduatedFees, recordPlatformFees } from './graduated-fees.mjs'
 import { assertGraduatedClaimInstructions, graduatedClaimInstructions } from './claim.mjs'
 import { isEarlyAccessMarket } from './early-access.mjs'
@@ -135,26 +136,44 @@ export function createPlatformFees({ pool, connection, config, partner, earlyAcc
   }
   return { status, claim }
 }
-export async function settlePlatformClaim(db, connection, intent) {
+// The position fee claims CP-AMM emitted in a transaction (its self-CPI event instructions).
+const EVENT_IX = 'e445a52e51cb9a1d'
+export function positionFeeClaimEvents(receipt, coder) {
+  const keys = receipt.transaction.message.accountKeys, events = []
+  for (const group of receipt.meta.innerInstructions ?? []) for (const ix of group.instructions) {
+    if (!keys[ix.programIdIndex]?.equals(CP_AMM_PROGRAM_ID)) continue
+    const bytes = Buffer.from(bs58.decode(ix.data))
+    if (bytes.subarray(0, 8).toString('hex') !== EVENT_IX) continue
+    const event = coder.events.decode(bytes.subarray(8).toString('base64'))
+    if (event?.name === 'evtClaimPositionFee' || event?.name === 'EvtClaimPositionFee') events.push(event.data)
+  }
+  return events
+}
+
+export async function settlePlatformClaim(db, connection, intent, { coder = new CpAmm(connection)._program.coder } = {}) {
   const receipt = await connection.getTransaction(intent.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
   if (!receipt?.meta || receipt.meta.err) return null
   const receiver = new PublicKey(intent.wallet)
-  const index = receipt.transaction.message.accountKeys.findIndex(key => key.equals(receiver))
+  const keys = receipt.transaction.message.accountKeys
+  const index = keys.findIndex(key => key.equals(receiver))
   if (index < 0) throw Error('Receiver is absent from the settled platform fee transaction')
-  const delta = BigInt(receipt.meta.postBalances[index] ?? 0) - BigInt(receipt.meta.preBalances[index] ?? 0)
-  // claimPositionFee takes everything accrued at execution, so an active pool settles a little MORE than was
-  // reviewed. The receiver is the fee payer (it pays the network fee; wrapped-SOL rent nets to zero), so the
-  // claimed amount is delta + fee, plus the rent it put into an account this transaction opened and left open (its
-  // first claim's account for the market token: a Token-2022 one for an early access market). Record what actually
-  // settled, within sane bounds; the caller checks it against the position claim checkpoint.
-  const opened = receipt.transaction.message.accountKeys.reduce((sum, _key, i) => i !== index &&
-    BigInt(receipt.meta.preBalances[i] ?? 0) === 0n && BigInt(receipt.meta.postBalances[i] ?? 0) > 0n ? sum + BigInt(receipt.meta.postBalances[i]) : sum, 0n)
-  const reviewed = BigInt(intent.amount), claimed = delta + BigInt(receipt.meta.fee) + opened
+  // What was claimed is the claim event's amount: CP-AMM emits exactly one EvtClaimPositionFee, for this pool and the partner, with
+  // no token A fee (SOL-only fees). claimPositionFee takes everything accrued at execution, so an active pool settles a little MORE
+  // than was reviewed. Record exactly that, within sane bounds; the caller checks it against the position claim checkpoint.
+  const events = positionFeeClaimEvents(receipt, coder)
+  if (events.length !== 1 || events[0].pool.toBase58() !== intent.pool || !events[0].owner.equals(receiver) ||
+      BigInt(events[0].feeAClaimed.toString()) !== 0n) throw Error('Settled platform fee event differs from the claim')
+  const reviewed = BigInt(intent.amount), claimed = BigInt(events[0].feeBClaimed.toString())
   if (claimed + 5_000_000n < reviewed || claimed > reviewed * 3n + 1_000_000_000n)
-    throw Error('Settled platform fee delta differs from the reviewed amount')
-  const settledAmount = claimed > reviewed ? claimed : reviewed
+    throw Error('Settled platform fee differs from the reviewed amount')
+  // The receiver (the fee payer) got it: its balance change and network fee, plus what it put into accounts left holding more than
+  // before (a token account the claim opened, pre-funded or not), cover the claim. Lamports someone put into an account the claim
+  // closed only add to its balance.
+  const lamports = i => BigInt(receipt.meta.postBalances[i] ?? 0) - BigInt(receipt.meta.preBalances[i] ?? 0)
+  const kept = keys.reduce((sum, _key, i) => i !== index && lamports(i) > 0n ? sum + lamports(i) : sum, 0n)
+  if (lamports(index) + BigInt(receipt.meta.fee) + kept < claimed) throw Error('Platform fee receiver did not receive the claimed amount')
   const { rows: [updated] } = await db.query(`update platform_fee_claims set status='settled', settled_at=now(), amount=$2
-    where signature=$1 and status='pending' returning status, signature, wallet, amount::text`, [intent.signature, settledAmount.toString()])
+    where signature=$1 and status='pending' returning status, signature, wallet, amount::text`, [intent.signature, claimed.toString()])
   return updated ?? null
 }
 

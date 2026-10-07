@@ -704,6 +704,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const { rows: [event] } = await pool.query('select pool from graduation_events where github_repo_id = $1', [repoId])
       assert.equal(event.pool, dammPool.toBase58())
       const observation = JSON.parse((await pool.query('select observation from graduation_observations where github_repo_id = $1', [repoId])).rows[0].observation)
+      // Nothing for the platform to claim yet: the DAMM v2 pool has had no trade (its claim is offered from step 7d on, below).
       assert.deepEqual([observation.p3.eligible, observation.p3.reason, observation.platformClaimAvailable],
         [false, 'Early access markets are not eligible for liquidity deployment', false])
 
