@@ -7,9 +7,10 @@ import { mapLimited } from '../../src/builder-queue.mjs'
 import { activeDecisions } from '../../src/maintainer-opt-outs.mjs'
 import { currentPayoutDestinations } from './payout-destination.mjs'
 import { STOCK_PAIR_NO_OWNER_CLAIM, noOwnerClaimMessage, stockPairStamps } from '../../src/stock-owner-claims.mjs'
+import { tradingEarlyAccessConfig } from '../../src/early-access.mjs'
 
-// Contributor early access markets (docs/EARLY_ACCESS.md) are not listed until their fee claims ship (step 6): their fee check is
-// SOL-only and would show an error row.
+// Contributor early access markets (docs/EARLY_ACCESS.md) are listed where EARLY_ACCESS_DBC_CONFIG is set: their fees are read and
+// claimed like any other (step 6c). Without it they are left out, as their fee check would only show an error row.
 export async function builderOverview(session) {
   const pool = database()
   const verifier = createGitHubAppVerifier({ pool, clientId: process.env.GITHUB_APP_CLIENT_ID,
@@ -23,7 +24,7 @@ export async function builderOverview(session) {
     (select claim_signature from repo_claims where github_repo_id=m.github_repo_id and status='pending' limit 1) as "pendingSignature"
     from markets m join repositories r on r.github_repo_id=m.github_repo_id
     where m.github_repo_id=any($1::bigint[]) and m.status='confirmed' and m.indexed_at is not null
-    and m.launch_finality='finalized' and m.early_access_end is null order by r.full_name`, [ids])
+    and m.launch_finality='finalized' and (m.early_access_end is null or $2::boolean) order by r.full_name`, [ids, tradingEarlyAccessConfig() !== null])
   // Only the active binding is a recipient; a waiting pasted address (pending) is shown, never paid.
   const rows = marketRows.map(row => {
     const { active, pending } = destinations.get(row.repoId) ?? { active: null, pending: null }

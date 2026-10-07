@@ -40,6 +40,8 @@ import { CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR } from '../src/dbc-hook-claims
 import { associatedAccountLength } from '../src/trade-costs.mjs'
 import { POST as tradeRoute } from '../app/api/trade/route.js'
 import { GET as balanceRoute } from '../app/api/market/[mint]/balance/route.js'
+import { GET as claimPreviewRoute } from '../app/api/claim/[repo]/preview/route.js'
+import { feeStatus } from '../app/lib/server.mjs'
 import { handleBuyGet, handleBuyPost, handleSellPost, loadActionMarket } from '../app/lib/solana-actions.mjs'
 import { prepareActionTrade, walletTokenBalance } from '../app/lib/action-trades.mjs'
 import { contributorSnapshot } from '../src/github-contributors.mjs'
@@ -565,6 +567,29 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const after = await reconciler.reconcile(repoId)
       assert.deepEqual([after.status, after.recordedClaimed, after.expectedRemaining], ['MATCH', paid.amountBaseUnits, 0n])
       await assert.rejects(claimant.claim(request), /No accrued creator fees remain to claim/, 'nothing left to claim')
+    })
+
+    // Step 6d: the fee status the token page, the claim page, the builder dashboard and the reminders read takes an early access
+    // market where the setting is set, so its earnings and claim show; without it the market reads as unavailable, as before.
+    await t.test('the token page\'s fee status and the claim preview read it only with the setting', async () => {
+      const ENV = ['DATABASE_URL', 'SOLANA_RPC_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'BUNDLE_DBC_CONFIG', 'EARLY_ACCESS_DBC_CONFIG']
+      const saved = { env: Object.fromEntries(ENV.map(name => [name, process.env[name]])), pool: globalThis.__gitfunPool }
+      try {
+        for (const name of ENV) delete process.env[name]
+        Object.assign(process.env, { DATABASE_URL: URL_, SOLANA_RPC_URL: RPC, DBC_CONFIG: solConfig.toBase58(), EARLY_ACCESS_DBC_CONFIG: eaConfig })
+        globalThis.__gitfunPool = pool
+        const repoId = String(firstMarket.githubRepoId)
+        const fees = await feeStatus(repoId)
+        assert.equal(fees.status, 'MATCH')
+        assert.ok(fees.onchainCreatorFee > 0n, 'the first market\'s builder fees are unclaimed')
+        const preview = await claimPreviewRoute(new Request(`https://repo.ing/api/claim/${repoId}/preview`), { params: Promise.resolve({ repo: repoId }) })
+        assert.deepEqual(await preview.json(), { available: String(fees.onchainCreatorFee) })
+        delete process.env.EARLY_ACCESS_DBC_CONFIG
+        assert.deepEqual(await feeStatus(repoId), { status: 'UNAVAILABLE', onchainCreatorFee: null })
+      } finally {
+        for (const [name, value] of Object.entries(saved.env)) value === undefined ? delete process.env[name] : process.env[name] = value
+        globalThis.__gitfunPool = saved.pool
+      }
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {
