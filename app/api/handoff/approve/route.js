@@ -3,7 +3,7 @@ import { callbackUrl, createHandoff } from '../../../../src/repo-inference-hando
 import { takeQuota } from '../../../../src/request-quota.mjs'
 import { assertSameOrigin, githubSessionCookie, readGithubSession } from '../../../lib/auth.mjs'
 import { sessionVerifier } from '../../../lib/github-session.mjs'
-import { HANDOFF_COOKIE, handoffAvailable, noStore, readHandoffCookie } from '../../../lib/handoff.mjs'
+import { HANDOFF_COOKIE, consentMatches, handoffAvailable, noStore, readHandoffCookie } from '../../../lib/handoff.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { database } from '../../../lib/server.mjs'
 export const runtime = 'nodejs'
@@ -26,10 +26,13 @@ export async function POST(request) {
   if (form?.get('decision') !== 'approve') return back({ error: 'access_denied' })
   const session = readGithubSession(request.cookies.get(githubSessionCookie)?.value)
   if (session?.scope !== 'builders') return noStore(NextResponse.redirect(new URL('/handoff', origin), 303))
+  // Only the request the page showed, to this session: another tab may have replaced the request cookie since.
+  if (!consentMatches(form.get('consent'), handoff, session)) return noStore(NextResponse.redirect(new URL('/handoff', origin), 303))
   const pool = database()
   if (!await takeQuota(pool, [[`handoff:approve:${session.githubUserId}`, 10, 60]])) return back({ error: 'slow_down' })
-  try { await sessionVerifier(session, request.url, { dashboard: true }).verifyCurrentAuthority({ githubRepoId: handoff.repoId }) }
+  let admin
+  try { admin = await sessionVerifier(session, request.url, { dashboard: true }).verifyCurrentAuthority({ githubRepoId: handoff.repoId }) }
   catch { return back({ error: 'not_admin' }) }
-  const { code } = await createHandoff(pool, { request: handoff, githubUserId: session.githubUserId, login: session.githubLogin })
+  const { code } = await createHandoff(pool, { request: handoff, githubUserId: session.githubUserId, login: admin.githubLogin ?? session.githubLogin })
   return back({ code })
 }

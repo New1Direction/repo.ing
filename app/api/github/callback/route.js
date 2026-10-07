@@ -9,7 +9,8 @@ export const runtime = 'nodejs'
 export async function GET(request) {
   const origin = publicOrigin(request.url)
   const stateSession = unseal(request.cookies.get('gitfun_oauth')?.value)
-  if (!stateSession) return NextResponse.redirect(new URL('/explore', origin))
+  // A sealed value made for another purpose (a handoff request, a review) is never an OAuth state.
+  if (!stateSession || stateSession.purpose !== undefined) return NextResponse.redirect(new URL('/explore', origin))
   // A contributor or handoff sign-in started before its feature was turned off does not finish.
   if ((stateSession.mode === 'contributor' && !contributorWalletAvailable()) || (stateSession.mode === 'handoff' && !handoffAvailable())) {
     const closed = NextResponse.redirect(new URL('/explore', origin))

@@ -51,6 +51,16 @@ export function callbackUrl(request, result) {
   return url.href
 }
 
+// A short code made from the CLI's challenge, shown both in the terminal and on the consent page, so the builder approves the
+// sign-in they started (cli/src/claim.mjs makes the same code). Letters and digits that cannot be confused with each other.
+const CHECK_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+export function handoffCheckCode(challenge) {
+  const digest = createHash('sha256').update(`repoing-handoff-check\n${challenge}`).digest()
+  const letters = [...digest.subarray(0, 8)].map(byte => CHECK_ALPHABET[byte % 32]).join('')
+  return `${letters.slice(0, 4)}-${letters.slice(4)}`
+}
+export const challengeHash = challenge => createHash('sha256').update(String(challenge)).digest('hex')
+
 /** The text repo.ing signs and the credit ledger checks (repo-inference: src/conversion.rs, assertion_message). */
 export function assertionMessage({ handoffId, githubUserId, login, repoId, permission, verifiedAt }) {
   return ['repoing-handoff-v1', HANDOFF_AUDIENCE, handoffId, githubUserId, login, repoId, permission, verifiedAt].join('\n')
@@ -64,8 +74,9 @@ const sameText = (a, b) => typeof a === 'string' && typeof b === 'string' && a.l
 /** Whether the presented client secret is the configured one (constant time). */
 export const clientAuthorized = (authorization, settings) => sameText(authorization, `Bearer ${settings.clientSecret}`)
 
-/** An approved handoff: a single-use code for the CLI (only its hash is stored). */
+/** An approved handoff: a single-use code for the CLI (only its hash is stored). Rows older than a day are deleted. */
 export async function createHandoff(pool, { request, githubUserId, login, verifiedAt = new Date() }) {
+  await pool.query(`delete from auth_handoffs where expires_at < now() - interval '1 day'`)
   if (!/^[1-9]\d{0,18}$/.test(String(githubUserId)) || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(login ?? '')) throw new HandoffError('Invalid GitHub account.')
   const code = randomBytes(32).toString('base64url'), handoffId = randomBytes(18).toString('base64url')
   await pool.query(`insert into auth_handoffs(handoff_id,code_hash,audience,github_repo_id,github_user_id,github_login,code_challenge,verified_at,expires_at)
@@ -77,9 +88,11 @@ export async function createHandoff(pool, { request, githubUserId, login, verifi
  * Redeems a code once, atomically: the first redemption consumes it, whatever happens next. The code verifier must match
  * the challenge (PKCE S256). null for an unknown, expired, used or mismatched code.
  */
+export const redemptionWellFormed = ({ audience, code, codeVerifier }) => audience === HANDOFF_AUDIENCE && typeof code === 'string' && code.length === 43
+  && B64URL.test(code) && typeof codeVerifier === 'string' && /^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)
+export const codeHash = code => sha256(code)
 export async function redeemHandoff(pool, { audience, code, codeVerifier }, settings) {
-  if (audience !== HANDOFF_AUDIENCE || typeof code !== 'string' || code.length !== 43 || !B64URL.test(code)
-    || typeof codeVerifier !== 'string' || !/^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)) return null
+  if (!redemptionWellFormed({ audience, code, codeVerifier })) return null
   const { rows: [row] } = await pool.query(`update auth_handoffs set consumed_at=now() where code_hash=$1 and audience=$2 and consumed_at is null
     and expires_at>now() returning handoff_id as "handoffId",github_repo_id::text as "repoId",github_user_id::text as "githubUserId",
     github_login as login,code_challenge as challenge,verified_at as "verifiedAt"`, [sha256(code), audience])

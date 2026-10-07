@@ -17,5 +17,7 @@
 .handoff-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .handoff-actions .button{min-height:40px;padding:0 18px}
 .handoff-note{color:var(--dim);font-size:12.5px}
+.handoff-check{font-size:14px}
+.handoff-check strong{font-family:var(--mono,ui-monospace,monospace);letter-spacing:.06em}
 .handoff-card .inline-error{margin:0}
 @media(max-width:700px){.handoff-intro p{font-size:16px}.handoff-actions{align-self:stretch}.handoff-actions .button{flex:1 1 auto}}

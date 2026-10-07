@@ -1,19 +1,20 @@
 import { cookies } from 'next/headers'
 import { notFound } from 'next/navigation'
 import { AppHeader, Footer } from '../../components/ui'
-import { HANDOFF_AUDIENCE_LABEL } from '../../../src/repo-inference-handoff.mjs'
+import { HANDOFF_AUDIENCE_LABEL, handoffCheckCode } from '../../../src/repo-inference-handoff.mjs'
 import { githubSessionCookie, readGithubSession } from '../../lib/auth.mjs'
 import { sessionVerifier } from '../../lib/github-session.mjs'
-import { HANDOFF_COOKIE, handoffAvailable, readHandoffCookie } from '../../lib/handoff.mjs'
-import { repositoryById } from '../../lib/server.mjs'
+import { HANDOFF_COOKIE, handoffAvailable, readHandoffCookie, sealConsent } from '../../lib/handoff.mjs'
+import { marketByRepo, repositoryById } from '../../lib/server.mjs'
 import '../../handoff.css'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Confirm it is you · repo.ing', robots: { index: false, follow: false } }
 
 // The consent page of the repo.ing AI credits sign-in handoff (src/repo-inference-handoff.mjs, step 2). The CLI's request
-// comes only from the sealed cookie /api/handoff/start set, never from this URL. The admin check runs live here and again
-// on approval. Dark: not found unless the handoff is configured.
+// comes only from the sealed cookie /api/handoff/start set, never from this URL; the form carries a sealed copy of what
+// this page showed (approval refuses anything else) and the check code the terminal shows too. The admin check here
+// writes nothing; approval runs the recorded one. Dark: not found unless the handoff is configured.
 export default async function HandoffPage() {
   if (!handoffAvailable()) notFound()
   const cookieStore = await cookies()
@@ -24,8 +25,9 @@ export default async function HandoffPage() {
   let admin = false
   if (request && session?.scope === 'builders') {
     try {
-      await sessionVerifier(session, process.env.APP_ORIGIN || 'http://localhost:3000', { dashboard: true }).verifyCurrentAuthority({ githubRepoId: request.repoId })
-      admin = true
+      const { market } = await marketByRepo(request.repoId)
+      admin = Boolean(market) && (await sessionVerifier(session, process.env.APP_ORIGIN || 'http://localhost:3000', { dashboard: true })
+        .verifyRepositoryAdmin({ githubRepoId: request.repoId })).admin === true
     } catch { admin = false }
   }
   return <><AppHeader/><main className="section-wrap handoff-page">
@@ -55,11 +57,13 @@ export default async function HandoffPage() {
           <li>that you are an admin of {name}</li>
           <li className="handoff-not">not your GitHub token, and nothing that can move your funds</li>
         </ul>
+        <p className="handoff-check">Check code <strong>{handoffCheckCode(request.challenge)}</strong>: approve only if your terminal shows the same code.</p>
         <form className="handoff-actions" method="post" action="/api/handoff/approve">
+          <input type="hidden" name="consent" value={sealConsent(request, session)}/>
           <button className="button primary" type="submit" name="decision" value="approve">Approve</button>
           <button className="button" type="submit" name="decision" value="deny">Cancel</button>
         </form>
-        <p className="handoff-note">Your browser then returns to the CLI on this computer (127.0.0.1:{request.port}). Approve only if you just ran <code>repoing claim</code>.</p>
+        <p className="handoff-note">Your browser then returns to the CLI on this computer (127.0.0.1:{request.port}).</p>
       </>}
     </section>}
   </main><Footer/></>
