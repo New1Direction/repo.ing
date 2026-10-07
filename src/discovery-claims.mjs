@@ -3,9 +3,12 @@ import { createMarketConfigResolver } from './market-config.mjs'
 import BN from 'bn.js'
 import bs58 from 'bs58'
 import { Keypair, PublicKey, SystemInstruction, SystemProgram, Transaction, TransactionInstruction, VersionedTransaction } from '@solana/web3.js'
-import { ACCOUNT_SIZE, NATIVE_MINT, createCloseAccountInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { ACCOUNT_SIZE, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, createCloseAccountInstruction, getAssociatedTokenAddressSync, unpackMint } from '@solana/spl-token'
 import { CollectFeeMode, DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { discoverySummary } from './discovery-rewards.mjs'
+import { isEarlyAccessMarket } from './early-access.mjs'
+import { assertHookClaimInstructions, hookClaimInstructions } from './dbc-hook-claims.mjs'
+import { associatedAccountLength } from './trade-costs.mjs'
 import { provablyExpiredUnlanded } from './expiry-proof.mjs'
 import { broadcastUntilSettled, isDustPayout, maxPayoutNetworkFee, signedWithPriorityFee } from './trade-landing.mjs'
 import { DISCOVERY_CLAIM_MESSAGE_MS, MIN_DISCOVERY_CLAIM_LAMPORTS, discoveryClaimMessage, formatLamportsAsSol,
@@ -30,12 +33,14 @@ const isLegacy = claim => claim.auth_message === null || claim.auth_message === 
 // temporary authority receives the claimed quote fee (so no account of the launcher's is created or closed), and
 // exactly the claimed lamports are transferred to the launcher wallet in the same transaction. The fully signed
 // payout is committed as 'pending' BEFORE any broadcast; recovery only ever rebroadcasts those bytes.
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market's reward is paid from its Token-2022 hook pool with
+// claim_trading_fee2 (src/dbc-hook-claims.mjs, docs/EARLY_ACCESS.md step 6e); without it such a market is not enrolled here.
 export function createDiscoveryClaims({ pool, connection, config, partner = null, now = Date.now,
-  minClaimLamports = MIN_DISCOVERY_CLAIM_LAMPORTS, submitBroadcastMs = SUBMIT_BROADCAST_MS }) {
+  minClaimLamports = MIN_DISCOVERY_CLAIM_LAMPORTS, submitBroadcastMs = SUBMIT_BROADCAST_MS, earlyAccess = null }) {
   // Derived per claim so no key is stored. It only controls this claim's temporary accounts.
   const temporaryAuthority = id => Keypair.fromSeed(createHmac('sha256', Buffer.from(partner.secretKey))
     .update(`repo.ing discovery temporary WSOL v1:${id}`).digest())
-  const resolveConfig = createMarketConfigResolver(config)
+  const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const withLock = async (repoId, callback) => {
     if (!/^\d+$/.test(String(repoId)) || BigInt(repoId) <= 0n) fail('Valid repository ID required')
@@ -140,7 +145,7 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
   }
 
   async function requireMarket(db, repoId) {
-    const market = await discoverySummary(db, repoId)
+    const market = await discoverySummary(db, repoId, { earlyAccess: Boolean(earlyAccess) })
     if (!market) fail('This market is not enrolled in discovery rewards')
     const configKey = resolveConfig(market)
     if (!deriveDbcPoolAddress(NATIVE_MINT, new PublicKey(market.mint), configKey).equals(new PublicKey(market.pool))) {
@@ -157,7 +162,7 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
         !state.poolState.baseMint.equals(new PublicKey(market.mint)) ||
         !state.poolState.creator.equals(new PublicKey(market.creatorWallet)) ||
         !fixed.feeClaimer.equals(partner.publicKey) || !fixed.quoteMint.equals(NATIVE_MINT) ||
-        fixed.collectFeeMode !== CollectFeeMode.QuoteToken || fixed.tokenType !== 0) fail('Canonical partner fee authority needs review')
+        fixed.collectFeeMode !== CollectFeeMode.QuoteToken || fixed.tokenType !== (isEarlyAccessMarket(market) ? 1 : 0)) fail('Canonical partner fee authority needs review')
     if (BigInt(state.poolState.partnerQuoteFee.toString()) < amount) {
       fail('Partner fees need reconciliation before this reward can be paid. Your recorded reward is preserved.')
     }
@@ -207,25 +212,40 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
 
   // The payout: claim the partner quote fee to the temporary authority (fresh base + WSOL accounts it owns), then
   // send exactly `amount` to the launcher, return the WSOL deposit to the partner and close the empty base account
-  // to the partner. Every signer is a server key.
+  // to the partner. Every signer is a server key. An early access market's claim is claim_trading_fee2 from its hook
+  // pool, checked before signing (src/dbc-hook-claims.mjs); its base account is the temporary authority's Token-2022 one.
   async function buildPayout(claim, market) {
     const temporary = temporaryAuthority(claim.id)
-    const wallet = new PublicKey(claim.wallet), amount = BigInt(claim.amount)
-    const claimTx = await dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
-      receiver: temporary.publicKey, tempWSolAcc: temporary.publicKey, pool: new PublicKey(market.pool),
-      maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) })
+    const wallet = new PublicKey(claim.wallet), amount = BigInt(claim.amount), mint = new PublicKey(market.mint), pool = new PublicKey(market.pool)
+    const hook = isEarlyAccessMarket(market)
+    const claimTx = new Transaction()
+    if (hook) {
+      const expected = { kind: 'partner', authority: partner.publicKey, payer: partner.publicKey, pool, config: resolveConfig(market), mint,
+        maxQuoteAmount: amount, receiver: temporary.publicKey, temporary: temporary.publicKey }
+      const instructions = await hookClaimInstructions(dbc, expected)
+      assertHookClaimInstructions(instructions, expected)
+      claimTx.add(...instructions)
+    } else {
+      claimTx.add(await dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
+        receiver: temporary.publicKey, tempWSolAcc: temporary.publicKey, pool,
+        maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) }))
+    }
     const rent = await connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE)
+    // The base account's deposit, which its close returns to the partner: a Token-2022 account is sized by its mint's extensions.
+    const baseRent = hook ? await connection.getMinimumBalanceForRentExemption(associatedAccountLength(unpackMint(mint,
+      await connection.getAccountInfo(mint, 'confirmed'), TOKEN_2022_PROGRAM_ID))) : rent
     claimTx.add(
       SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: wallet, lamports: amount }),
       SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: partner.publicKey, lamports: rent }),
-      createCloseAccountInstruction(getAssociatedTokenAddressSync(new PublicKey(market.mint), temporary.publicKey),
-        partner.publicKey, temporary.publicKey),
+      hook ? createCloseAccountInstruction(getAssociatedTokenAddressSync(mint, temporary.publicKey, true, TOKEN_2022_PROGRAM_ID),
+        partner.publicKey, temporary.publicKey, [], TOKEN_2022_PROGRAM_ID)
+        : createCloseAccountInstruction(getAssociatedTokenAddressSync(mint, temporary.publicKey), partner.publicKey, temporary.publicKey),
       new TransactionInstruction({ programId: MEMO, keys: [], data: Buffer.from(
         `repo.ing discovery reward v2 claim ${claim.id} repo ${claim.github_repo_id} lamports ${amount}`) }))
     const latest = await connection.getLatestBlockhash('confirmed')
     const { transaction } = await signedWithPriorityFee(connection, claimTx, { feePayer: partner.publicKey,
       blockhash: latest.blockhash, signers: [partner, temporary] })
-    return { transaction, latest, rent }
+    return { transaction, latest, rent, baseRent }
   }
 
   async function submit({ repoId, id, signature: walletSignature, transaction: legacyTransaction }) {
@@ -256,12 +276,12 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
       if (claim.wallet !== market.wallet) fail('Wallet signature does not match this claim')
       if (BigInt(market.remaining) < amount) fail('This reward changed. Start the claim again.')
       await requirePartnerFees(market, amount)
-      const { transaction, latest, rent } = await buildPayout(claim, market)
+      const { transaction, latest, rent, baseRent } = await buildPayout(claim, market)
       const fee = (await connection.getFeeForMessage(transaction.compileMessage(), 'confirmed')).value
       if (fee === null || BigInt(fee) > DISCOVERY_MAX_NETWORK_FEE_LAMPORTS || isDustPayout(amount, fee)) {
         fail('Solana network fees are unusually high right now. Try again shortly; your signature stays valid until it expires.')
       }
-      if (await connection.getBalance(partner.publicKey, 'confirmed') < rent * 2 + fee) {
+      if (await connection.getBalance(partner.publicKey, 'confirmed') < rent + baseRent + fee) {
         console.error('discovery payout signer needs operating SOL', { repo: String(repoId) })
         fail('Discovery payouts are temporarily unavailable. Your rewards remain accrued.')
       }

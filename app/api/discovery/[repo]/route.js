@@ -6,6 +6,7 @@ import { publicOrigin } from '../../../lib/origin.mjs'
 import { createMarketConfigResolver } from '../../../../src/market-config.mjs'
 import { MIN_DISCOVERY_CLAIM_LAMPORTS } from '../../../../src/discovery-claim-message.mjs'
 import { readVerificationBonusView } from '../../../../src/verification-bonus.mjs'
+import { tradingEarlyAccessConfig } from '../../../../src/early-access.mjs'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -13,7 +14,8 @@ const json = (body, status = 200) => Response.json(body, { status, headers: { 'c
 function service() {
   const pool = database(), config = configAddress()
   if (!pool || !config) throw new DiscoveryClaimError('Discovery rewards are temporarily unavailable')
-  return { pool, config, connection: chain() }
+  // Contributor early access markets (docs/EARLY_ACCESS.md, step 6e) are enrolled where EARLY_ACCESS_DBC_CONFIG is set.
+  return { pool, config, connection: chain(), earlyAccess: tradingEarlyAccessConfig() }
 }
 const problem = error => json({ error: error instanceof DiscoveryClaimError ? error.message :
   'Discovery rewards could not be checked. Please retry; any submitted payout will continue to be checked.' }, 400)
@@ -26,14 +28,14 @@ export async function GET(_request, { params }) {
     if (!/^\d{1,18}$/.test(repo)) throw new DiscoveryClaimError('Valid repository ID required')
     const options = service()
     // The one-time verification bonus shares this card; its status is best effort and never blocks the reward ledger.
-    const [summary, verificationBonus] = await Promise.all([discoverySummary(options.pool, repo),
+    const [summary, verificationBonus] = await Promise.all([discoverySummary(options.pool, repo, { earlyAccess: options.earlyAccess !== null }),
       readVerificationBonusView(options.pool, repo).catch(() => null)])
     if (!summary) return json({ enrolled: false, verificationBonus })
     // A curve that has graduated stays graduated: once this process has seen it, later polls skip the two chain reads.
     let graduated = graduatedPools.has(summary.pool) ? true : null
     if (graduated === null) try {
       const dbc = new DynamicBondingCurveClient(options.connection, 'finalized')
-      const marketConfig = createMarketConfigResolver(options.config)(summary)
+      const marketConfig = createMarketConfigResolver(options.config, undefined, undefined, { earlyAccess: options.earlyAccess })(summary)
       const [state, fixed] = await Promise.all([dbc.state.getPool(summary.pool), dbc.state.getPoolConfig(marketConfig)])
       if (state && fixed) graduated = state.poolState.isMigrated !== 0 || state.poolState.quoteReserve.gte(fixed.migrationQuoteThreshold)
       if (graduated) graduatedPools.add(summary.pool)

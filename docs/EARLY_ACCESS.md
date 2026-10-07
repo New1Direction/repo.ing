@@ -233,7 +233,7 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | --- | --- |
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
 | Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it, and for the graduated trader: refused, "Contributor early access markets are not tradable on the site yet." |
-| Builder fee claim (`src/claim.mjs`), discovery (`discoverySummary`), builder allocation (`allocationRecord`), platform fee listing and sweep (`listPlatformFees`), `platformFeeRecord`, DBC partner fee collection | skipped (`early_access_end is null`) or refused before any chain call |
+| Builder allocation (`allocationRecord`), platform fee listing and sweep (`listPlatformFees`), `platformFeeRecord`, DBC partner fee collection | skipped (`early_access_end is null`) or refused before any chain call |
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
 | Graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped (step 7) |
 | Builder dashboard (`app/lib/builders.mjs`) | listed, with their fee check, where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); not listed otherwise |
@@ -313,6 +313,17 @@ Left for the next steps (each fails closed or is harmless until then):
   markets where `EARLY_ACCESS_DBC_CONFIG` is set, so their earnings and claim show like any other's; the dashboard and the
   reminders list them only then. Without the setting they read as unavailable and are left out, as before.
 
+## Discovery rewards (step 6e)
+
+- Where `EARLY_ACCESS_DBC_CONFIG` is set, an early access market is enrolled in discovery rewards like any other
+  (`discoverySummary` with `{ earlyAccess }`, the discovery API and the worker's recovery pass it). Without it, it is not
+  enrolled, as before.
+- The payout is `claim_trading_fee2` from the hook pool to the claim's one-time authority (`hookClaimInstructions`, checked by
+  `assertHookClaimInstructions` before signing), then exactly the reward to the launcher, the WSOL deposit back to the partner and
+  the one-time authority's Token-2022 account closed to the partner. The partner spends only the network fee; the receipt check
+  is unchanged (the claim emits the same event). Measured on mainnet's programs: 1,176 bytes (the longest repository ID and
+  amount add about 15 bytes; the limit is 1,232), about 90,000 compute units.
+
 ## The oracle's upkeep of the lists (step 5f)
 
 The launch puts only the launcher on the list (for its first buy) and takes it off again unless it is a linked contributor. The
@@ -349,7 +360,7 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
     node --test tests/early-access-reconcile.test.mjs  # the fee ledger watch and its alerts; reconcile with and without the setting (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, sizes and the launch API (PostgreSQL + validator)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

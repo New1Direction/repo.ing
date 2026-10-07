@@ -154,7 +154,7 @@ async function observeEarlyAccess(){
   catch(error){console.log(JSON.stringify({earlyAccessOracleError:error?.code==='42P01'||error?.code==='42703'?'EARLY_ACCESS_NOT_MIGRATED':'EARLY_ACCESS_ORACLE_UNAVAILABLE'}))}
 }
 const allocations = createAllocationRecovery({ pool, connection })
-const discovery = createDiscoveryClaims({ pool, connection, config })
+const discovery = createDiscoveryClaims({ pool, connection, config, earlyAccess: tradingEarlyAccessConfig() })
 // Verification bonus: accrue bonuses from first maintainer verifications (PostgreSQL + public GitHub reads) and settle
 // or rebroadcast payouts already signed on web. No key: the worker never signs or creates a payout.
 const bonusAccrual = createVerificationBonusAccrual({ pool })
