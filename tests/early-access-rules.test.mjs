@@ -1,6 +1,8 @@
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
+import BN from 'bn.js'
+import { Rounding, getBaseTokenForSwap, getDeltaAmountQuoteUnsigned } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { buildEarlyAccessCurve } from '../src/launch-curve.mjs'
 import { RULES } from '../src/early-access-hook.mjs'
 import { FAIR_RAMP, HOOK_RULE_SETS, STAR_UNLOCKS, firstBuyCapBaseUnits, hookRules, marketHookRules, rampSettings, rulesMatch,
@@ -20,6 +22,29 @@ test('the rule sets: early access alone, with the fair ramp, with star unlocks t
   assert.equal(marketHookRules({ earlyAccessEnd: new Date(), hookRules: 7 }), 7)
   assert.equal(marketHookRules({ earlyAccessEnd: new Date(), hookRules: null }), 1, 'stamped before 0061: early access alone')
   assert.equal(marketHookRules({ earlyAccessEnd: null, hookRules: null }), null)
+})
+
+// The ramp's end found another way: the sqrt price where the curve's SOL reaches half the threshold, by bisection, and the tokens
+// sold up to it by the SDK's own getBaseTokenForSwap (the walk in vaultAtProgress uses getNextSqrtPriceFromInput instead).
+test('the ramp\'s end agrees with the SDK\'s own count of tokens sold at half the threshold', () => {
+  const points = curve.curve.filter(point => !new BN(point.liquidity.toString()).isZero())
+  const quoteTo = price => {
+    let lower = new BN(curve.sqrtStartPrice.toString()), total = new BN(0)
+    for (const point of points) {
+      const upper = BN.min(new BN(point.sqrtPrice.toString()), price)
+      if (upper.lte(lower)) break
+      total = total.add(getDeltaAmountQuoteUnsigned(lower, upper, new BN(point.liquidity.toString()), Rounding.Up))
+      lower = new BN(point.sqrtPrice.toString())
+    }
+    return total
+  }
+  const target = new BN(curve.migrationQuoteThreshold.toString()).divn(2)
+  let low = new BN(curve.sqrtStartPrice.toString()), high = new BN(points.at(-1).sqrtPrice.toString())
+  while (high.sub(low).gtn(1)) { const middle = low.add(high).divn(2); if (quoteTo(middle).lte(target)) low = middle; else high = middle }
+  const sold = BigInt(getBaseTokenForSwap(new BN(curve.sqrtStartPrice.toString()), low, curve.curve).toString())
+  const walked = SUPPLY - vaultAtProgress(config, FAIR_RAMP.progressPercent)
+  const gap = sold > walked ? sold - walked : walked - sold
+  assert.ok(gap * 1_000_000n <= walked, `${sold} vs ${walked}: within one part in a million`)
 })
 
 test('the ramp ends where the curve is half sold by SOL: about 63% of the supply, 79% at migration', () => {
@@ -64,7 +89,7 @@ test('migration 0061 is journaled last, re-appliable, and its constraint name ma
   assert.deepEqual(entries.at(-1), { idx: 61, version: '7', when: 1790910021000, tag: '0061_hook_rules', breakpoints: true })
   const sql = readFileSync('drizzle/0061_hook_rules.sql', 'utf8')
   for (const statement of sql.split('--> statement-breakpoint').map(part => part.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean)) {
-    assert.match(statement, /^(SET LOCAL|ALTER TABLE "markets" ADD COLUMN IF NOT EXISTS|UPDATE "markets" SET "hook_rules" = 1 WHERE "early_access_end" IS NOT NULL AND "hook_rules" IS NULL|DO \$\$ BEGIN\s+IF NOT EXISTS|CREATE OR REPLACE FUNCTION)/, statement.slice(0, 80))
+    assert.match(statement, /^(SET LOCAL|ALTER TABLE "markets" ADD COLUMN IF NOT EXISTS|DO \$\$ BEGIN\s+IF NOT EXISTS|CREATE OR REPLACE FUNCTION)/, statement.slice(0, 80))
   }
   const names = [...sql.matchAll(/CONSTRAINT "(\w+)"|conname = '(\w+)'/g)].map(match => match[1] ?? match[2])
   assert.deepEqual([...new Set(names)], ['markets_hook_rules_check'])

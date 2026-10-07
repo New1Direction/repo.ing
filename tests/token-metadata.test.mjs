@@ -38,3 +38,35 @@ test('community tokens name their repository, keep the disclaimer and link their
   assert.equal(json.external_url, `${origin}/token/${other}`)
   assert.equal(json.website, `${origin}/token/${other}`)
 })
+
+// The short link early access launches carry (/m/<GitHub repository id>) serves what /api/token-metadata/<mint> serves for that
+// repository's market; anything but a GitHub repository id is refused before the database is read.
+test('the short metadata link reads the market by repository id; the mint link by mint', async () => {
+  const { GET: byRepo } = await import('../app/m/[id]/route.js')
+  const { GET: byMint } = await import('../app/api/token-metadata/[mint]/route.js')
+  const queries = [], mint = 'E859MeM9CYWAoQGcNLQYgg8qHPim1EQN4LYqveubrJ6A'
+  const row = { mint, repoId: '1296269', name: 'Hello', symbol: 'HELLO', hasImage: false, fullName: 'octocat/Hello-World', quoteAssetId: null }
+  const saved = { url: process.env.DATABASE_URL, origin: process.env.APP_ORIGIN, pool: globalThis.__gitfunPool }
+  Object.assign(process.env, { DATABASE_URL: 'postgres://unused', APP_ORIGIN: origin })
+  globalThis.__gitfunPool = { query: async (sql, params) => { queries.push([sql.match(/where (m\.\w+) = \$1/)[1], params]); return { rows: params[0] === '404' ? [] : [row] } } }
+  try {
+    const short = await byRepo(new Request('https://repo.ing/m/1296269'), { params: Promise.resolve({ id: '1296269' }) })
+    assert.equal(short.status, 200)
+    const json = await short.json()
+    assert.deepEqual([json.name, json.symbol, json.external_url, json.github], ['Hello', 'HELLO', `${origin}/token/${mint}`, 'https://github.com/octocat/Hello-World'])
+    const long = await byMint(new Request(`https://repo.ing/api/token-metadata/${mint}`), { params: Promise.resolve({ mint }) })
+    assert.deepEqual(await long.json(), json)
+    assert.deepEqual(queries, [['m.github_repo_id', ['1296269']], ['m.mint', [mint]]])
+    assert.equal((await byRepo(new Request('https://repo.ing/m/404'), { params: Promise.resolve({ id: '404' }) })).status, 404)
+    for (const id of ['0', '01', 'abc', '1e9', '99999999999999999999', '4503599627370496']) {
+      const refused = await byRepo(new Request(`https://repo.ing/m/${id}`), { params: Promise.resolve({ id }) })
+      assert.equal(refused.status, 400, id)
+    }
+    assert.equal(queries.length, 3, 'a refused id reads nothing')
+  } finally {
+    for (const [name, value] of [['DATABASE_URL', saved.url], ['APP_ORIGIN', saved.origin]]) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value
+    }
+    globalThis.__gitfunPool = saved.pool
+  }
+})

@@ -6,7 +6,7 @@ import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
 import { EARLY_ACCESS_LAUNCHES_READY, EARLY_ACCESS_NOT_TRADABLE, EARLY_ACCESS_WINDOWS, EarlyAccessError, isEarlyAccessMarket } from '../src/early-access.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS } from '../src/early-access-hook.mjs'
-import { EARLY_ACCESS_CHAIN_MARGIN_SECONDS, UNREADABLE_SIGNED_LAUNCH, earlyAccessEnd, prepareVersionedLaunchSigning, readSignedVersionedLaunch } from '../src/early-access-launch.mjs'
+import { EARLY_ACCESS_CHAIN_MARGIN_SECONDS, UNREADABLE_SIGNED_LAUNCH, earlyAccessEnd, earlyAccessMetadataUri, prepareVersionedLaunchSigning, readSignedVersionedLaunch } from '../src/early-access-launch.mjs'
 import { assertEarlyAccessConfigTransaction, buildEarlyAccessConfigTransaction, earlyAccessLookupAddresses } from '../src/early-access-config.mjs'
 import { CONTRIBUTOR_ERRORS, contributorsFromPage, fetchRepositoryContributors, resetContributorPause } from '../src/github-contributors.mjs'
 import { earlyAccessOptionTerms } from '../src/early-access-rules.mjs'
@@ -339,6 +339,13 @@ test('with a window the form offers the fair ramp, and star unlocks only with it
   assert.equal((both.match(/is-selected/g) ?? []).length, 2)
   assert.doesNotMatch(render({ starUnlocks: true }), /checked=""/, 'star unlocks without the fair ramp is never shown as chosen')
   assert.doesNotMatch(render({ value: null }), /Fair ramp/, 'no window: no options')
+})
+
+test('an early access launch links its metadata by repository id (app/m/[id]): about 50 bytes shorter than by mint', () => {
+  assert.equal(earlyAccessMetadataUri('https://repo.ing', '1296269'), 'https://repo.ing/m/1296269')
+  assert.equal(earlyAccessMetadataUri(null, '1296269'), '')
+  const mint = Keypair.generate().publicKey.toBase58()
+  assert.ok(`https://repo.ing/api/token-metadata/${mint}`.length - earlyAccessMetadataUri('https://repo.ing', '1388219884').length >= 50)
 })
 
 test('the signed v0 launch the page posts back is read only as v0; anything else is a message the page can show', () => {

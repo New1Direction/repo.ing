@@ -95,7 +95,7 @@ test('token metadata of a stock pair (wallets, DEX Screener, Jupiter) names its 
   assert.equal(json.description, `$DOCUSAURUS is the repo.ing market for github.com/facebook/docusaurus. ${LINE} ` +
     'Community launch: does not imply endorsement by the repository\'s maintainers.')
   // The route reads the stamp it decides by, for every market (SOL rows read null and keep their description).
-  assert.match(readFileSync(new URL('../app/api/token-metadata/[mint]/route.js', import.meta.url), 'utf8'), /m\.quote_asset_id as "quoteAssetId"/)
+  assert.match(readFileSync(new URL('../app/lib/token-metadata-read.mjs', import.meta.url), 'utf8'), /m\.quote_asset_id as "quoteAssetId"/)
 })
 
 test('X posts of a stock pair, after a trade and after its launch, say what its trades pay in the stock', async () => {

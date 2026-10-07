@@ -2,12 +2,14 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { and, eq, inArray } from 'drizzle-orm'
 import { PublicKey } from '@solana/web3.js'
 import { bundles, markets, repositories } from './db/schema.mjs'
-import { resolvePublicRepository } from './github.mjs'
+import { readRepositoryStars, resolvePublicRepository } from './github.mjs'
 import { DefinitiveLaunchError } from './meteora-launch.mjs'
 import { DISCOVERY_VERSION } from './discovery-rewards.mjs'
 import { marketSource } from './market-identity.mjs'
 import { SOL_QUOTE, quoteStamp } from './quote-assets.mjs'
 import { RULES } from './early-access-hook.mjs'
+import { EarlyAccessError } from './early-access.mjs'
+import { hasStarUnlocks } from './early-access-rules.mjs'
 import { validateTokenImage } from './token-image.mjs'
 
 // Named explicitly, like DefinitiveLaunchError: the production build renames classes.
@@ -39,6 +41,9 @@ export function rewardStamps(githubRepoId, { builderAllocationEnabled, verificat
   if (marketSource(githubRepoId) !== 'github') return { builderAllocationVersion, verificationBonusLamports: null }
   return { builderAllocationVersion, verificationBonusLamports }
 }
+
+// The refusal when GitHub gives no star count for a star unlock launch (starsAtLaunch below).
+export const STARS_UNREADABLE = 'GitHub did not give this repository\'s star count. Try again, or launch without star unlocks.'
 
 // pendingReview(market) → true while a persisted launch review (src/launch-sessions.mjs) still owns a 'prepared'
 // market; a second prepare is then refused instead of replacing the mint the first wallet is reviewing.
@@ -150,10 +155,15 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     try {
       // Early access: the repository's contributor snapshot first (GitHub), then the launch with its window.
       const snapshot = earlyAccess ? await earlyAccess.snapshot({ repo, wallet }) : null
-      // rules: the hook's options (src/early-access-rules.mjs); starsAtLaunch: the repository's star count read fresh for this launch.
+      // rules: the hook's options (src/early-access-rules.mjs); starsAtLaunch: with star unlocks, the repository's star count read
+      // again here by its id, exactly as GitHub gives it (a missing count is refused, never taken as 0: the first report would then
+      // give a bonus at once).
+      const rules = earlyAccess?.rules ?? RULES.EARLY_ACCESS
+      const starsAtLaunch = snapshot && hasStarUnlocks(rules) ? await readRepositoryStars(String(repo.githubRepoId), fetchImpl) : repo.stars
+      if (starsAtLaunch === null) throw new EarlyAccessError(STARS_UNREADABLE)
       let prepared = await launcher.prepare({ launcherWallet: wallet, tokenName, tokenSymbol, initialBuyLamports,
         ...snapshot ? { earlyAccess: { windowSeconds: earlyAccess.windowSeconds, repoId: String(repo.githubRepoId), keepLauncher: snapshot.keepLauncher,
-          rules: earlyAccess.rules ?? RULES.EARLY_ACCESS, starsAtLaunch: repo.stars } } : {},
+          rules, starsAtLaunch } } : {},
         ...bundle ? { bundle: { id: String(bundle.id) } } : {} })
       if (Boolean(snapshot) !== Boolean(prepared.earlyAccess)) throw new Error('Launcher does not match the early access choice')
       if (Boolean(bundle) !== Boolean(prepared.bundle) || (bundle && prepared.bundle.id !== String(bundle.id))) throw new Error('Launcher does not match the bundle')
