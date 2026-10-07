@@ -277,3 +277,24 @@ test('a failing star query never stops the lists\' upkeep, and is logged once', 
   await oracle.runOnce()
   assert.deepEqual(logged.filter(record => record.stars), [{ stars: { error: 'STARS_NOT_MIGRATED' } }])
 })
+
+test('star unlocks: GitHub\'s rate limit pauses reads for 15 minutes; an unreadable chain is one logged result', async () => {
+  const [a, b] = [key(), key()]
+  const starMarkets = [{ repoId: '700050', mint: a }, { repoId: '700051', mint: b }]
+  const configs = { [a]: starConfigOf(a, { repoId: '700050' }), [b]: starConfigOf(b, { repoId: '700051' }) }
+  let t = 0, limited = true
+  const reads = [], run = setup({ markets: [], starMarkets, configs })
+  const oracle = create(run, { clock: () => t, readStars: async id => { reads.push(id); if (limited) throw Error('GITHUB_RATE_LIMITED'); return 10 } })
+  assert.deepEqual((await oracle.runOnce()).stars, [{ mint: a, error: 'GITHUB_RATE_LIMITED' }])
+  t += 14 * 60_000
+  assert.deepEqual(await oracle.runOnce(), { status: 'IDLE' }, 'paused: b waits too')
+  limited = false
+  t += 60_000
+  assert.deepEqual((await oracle.runOnce()).stars.map(result => result.mint), [b, a], 'b, never read, goes first')
+  assert.deepEqual(reads, ['700050', '700051', '700050'])
+  const down = setup({ markets: [], starMarkets, configs }), logged = []
+  down.connection.getMultipleAccountsInfo = async () => { throw Error('fetch failed') }
+  const result = await create(down, { log: record => logged.push(record), readStars: async () => 10 }).runOnce()
+  assert.deepEqual(result.stars, [{ error: 'STAR_CONFIGS_UNAVAILABLE' }])
+  assert.deepEqual(logged, [{ stars: { error: 'STAR_CONFIGS_UNAVAILABLE' } }])
+})

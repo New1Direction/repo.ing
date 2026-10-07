@@ -45,24 +45,35 @@ test('the short metadata link reads the market by repository id; the mint link b
   const { GET: byRepo } = await import('../app/m/[id]/route.js')
   const { GET: byMint } = await import('../app/api/token-metadata/[mint]/route.js')
   const queries = [], mint = 'E859MeM9CYWAoQGcNLQYgg8qHPim1EQN4LYqveubrJ6A'
-  const row = { mint, repoId: '1296269', name: 'Hello', symbol: 'HELLO', hasImage: false, fullName: 'octocat/Hello-World', quoteAssetId: null }
+  let row = { mint, status: 'confirmed', repoId: '1296269', name: 'Hello', symbol: 'HELLO', hasImage: false, fullName: 'octocat/Hello-World', quoteAssetId: null }
+  const sqls = []
   const saved = { url: process.env.DATABASE_URL, origin: process.env.APP_ORIGIN, pool: globalThis.__gitfunPool }
   Object.assign(process.env, { DATABASE_URL: 'postgres://unused', APP_ORIGIN: origin })
-  globalThis.__gitfunPool = { query: async (sql, params) => { queries.push([sql.match(/where (m\.\w+) = \$1/)[1], params]); return { rows: params[0] === '404' ? [] : [row] } } }
+  globalThis.__gitfunPool = { query: async (sql, params) => { sqls.push(sql); queries.push([sql.match(/where (m\.\w+) = \$1/)[1], params]); return { rows: params[0] === '404' ? [] : [row] } } }
   try {
     const short = await byRepo(new Request('https://repo.ing/m/1296269'), { params: Promise.resolve({ id: '1296269' }) })
     assert.equal(short.status, 200)
     const json = await short.json()
     assert.deepEqual([json.name, json.symbol, json.external_url, json.github], ['Hello', 'HELLO', `${origin}/token/${mint}`, 'https://github.com/octocat/Hello-World'])
+    assert.equal(short.headers.get('cache-control'), 'public, max-age=300')
+    // By repository id: early access markets only, and only once the launch was sent (an id is guessable, an unsent mint is not).
+    assert.match(sqls[0], /m\.early_access_end is not null and m\.status in \('submitted', 'confirmed', 'ambiguous'\)/)
+    assert.doesNotMatch(sqls[0], /prepared/)
     const long = await byMint(new Request(`https://repo.ing/api/token-metadata/${mint}`), { params: Promise.resolve({ mint }) })
     assert.deepEqual(await long.json(), json)
-    assert.deepEqual(queries, [['m.github_repo_id', ['1296269']], ['m.mint', [mint]]])
+    assert.match(sqls[1], /m\.mint = \$1 and m\.status in \('prepared', 'submitted', 'confirmed', 'ambiguous'\)/)
+    assert.doesNotMatch(sqls[1], /early_access_end/)
+    // A launch sent but not yet confirmed: served, never cached (a failed attempt's row is reused with a new mint).
+    row = { ...row, status: 'submitted' }
+    const sent = await byRepo(new Request('https://repo.ing/m/1296269'), { params: Promise.resolve({ id: '1296269' }) })
+    assert.equal(sent.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(queries, [['m.github_repo_id', ['1296269']], ['m.mint', [mint]], ['m.github_repo_id', ['1296269']]])
     assert.equal((await byRepo(new Request('https://repo.ing/m/404'), { params: Promise.resolve({ id: '404' }) })).status, 404)
     for (const id of ['0', '01', 'abc', '1e9', '99999999999999999999', '4503599627370496']) {
       const refused = await byRepo(new Request(`https://repo.ing/m/${id}`), { params: Promise.resolve({ id }) })
       assert.equal(refused.status, 400, id)
     }
-    assert.equal(queries.length, 3, 'a refused id reads nothing')
+    assert.equal(queries.length, 4, 'a refused id reads nothing')
   } finally {
     for (const [name, value] of [['DATABASE_URL', saved.url], ['APP_ORIGIN', saved.origin]]) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value
