@@ -241,6 +241,17 @@ account `3k6oDeconrAagqSCKNbQj4WP6MBRsRGAjRRNcKTRcJfR` and `opsWallet` (read fro
 | Bundle config | partner (Keychain) + the config keypair | 0.005984 SOL |
 | Platform | upgrade authority | 0.005913 SOL |
 | Lookup table | partner (Keychain) | 0.003216 SOL |
+| Launch signer balance | payer | about 0.05 SOL, a working balance |
+
+**5. Fund the launch signer** (`9h6uMSfKZNNXdCAHZsxR3nvxHmQXAGqTvBdJwGn3PReN`). It pays every worker transaction (`src/bundle-jobs.mjs`:
+`fail_raise`, `open_vault`, fee routing, `record_graduation`, the vault agent's trades) and each launch's network and priority
+fee, which are charged before the launch's `release` pays it its 5%. Until a first raise launches nothing else funds it:
+
+```sh
+solana transfer 9h6uMSfKZNNXdCAHZsxR3nvxHmQXAGqTvBdJwGn3PReN 0.05 --keypair <payer.json> --url "$SOLANA_RPC_URL" --allow-unfunded-recipient
+```
+
+The vault operator only signs: it needs no SOL.
 
 **Settings the site reads** (names only; the launch path and worker are in the Bundle site PRs): `BUNDLE_LAUNCHES_ENABLED`
 (exactly "true", with the code gate), `BUNDLE_DBC_CONFIG` (step 2's address), `BUNDLE_LOOKUP_TABLE` (step 4's address),
