@@ -1009,6 +1009,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         const keys = landed.transaction.message.accountKeys, programs = landed.transaction.message.instructions.map(ix => keys[ix.programIdIndex].toBase58())
         assert.ok(programs.includes('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN'), 'withdraw_leftover')
         assert.equal(programs.filter(program => program === TOKEN_2022_PROGRAM_ID.toBase58()).length, 1, 'one Token-2022 transfer')
+        assert.equal(programs[programs.indexOf(TOKEN_2022_PROGRAM_ID.toBase58()) - 1], 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr', 'a memo right before it')
         console.log(JSON.stringify({ earlyAccessAllocation: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
           computeUnits: landed.meta.computeUnitsConsumed } }))
         assert.equal((await allocation.status(repoId)).state, 'settled')

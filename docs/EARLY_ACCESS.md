@@ -233,7 +233,7 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | --- | --- |
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
 | Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e and the graduated pool's trades from step 7b (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it: refused, "Contributor early access markets are not tradable on the site yet." |
-| Builder allocation (`allocationRecord`) | claimable after graduation where `EARLY_ACCESS_DBC_CONFIG` is set and the config is in `BUILDER_ALLOCATION_CONFIGS` (step 7e); not enrolled otherwise |
+| Builder allocation (`allocationRecord`) | claimable after graduation where `EARLY_ACCESS_DBC_CONFIG` is set and the config is in `BUILDER_ALLOCATION_CONFIGS` (step 7e); without the setting not enrolled; a config later removed from the list reads as unavailable, as for SOL markets |
 | Graduated platform fees (`platformFeeRecord`, the sweep's DAMM phase) | collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 7d); not enrolled otherwise |
 | Platform fee listing, sweep and DBC partner fee collection | listed and collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 6f); skipped otherwise |
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
@@ -320,7 +320,8 @@ Left for the next steps (each fails closed or is harmless until then):
   enrolls them; the early access config must be listed in `BUILDER_ALLOCATION_CONFIGS` like any approved config.
 - After graduation the grant is the same as for SOL markets: `withdraw_leftover` pays the curve's leftover tokens to the
   protected creator (the SDK picks Token-2022 from the config's `tokenType`), which transfers exactly 1% of the supply with
-  `transferChecked` under Token-2022 to the bound wallet's Token-2022 account. Before building it, the token must be as the
+  `transferChecked` under Token-2022 to the bound wallet's Token-2022 account, with a memo just before it (so an account whose
+  owner requires memos on incoming transfers still receives it). Before building it, the token must be as the
   trader requires (`assertRevokedHookMint`: hook program and authority revoked, no mint or freeze authority, only DBC's
   extensions), so the transfer needs no hook accounts. The reserve check takes `tokenType` 1 for these markets and 0 for every
   other.
