@@ -862,6 +862,9 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const reconciler = createReconciler({ pool, connection, config, earlyAccess: eaConfig, earlyAccessGraduated: true })
       const matched = () => until(async () => { await indexer.runOnce(); const result = await reconciler.reconcile(repoId)
         return result.status === 'MATCH' ? result : null }, 240)
+      // Every earlier trade (the Blink's last sell above) final first: the ledgers and the claims read finalized state.
+      const confirmedSlot = await connection.getSlot('confirmed')
+      assert.ok(await until(async () => await connection.getSlot('finalized') >= confirmedSlot, 240), 'earlier trades finalized')
       const before = await matched()
       assert.ok(before?.graduated, 'the ledgers match the curve and the DAMM v2 pool')
       const curveFee = BigInt((await new DynamicBondingCurveClient(connection, 'finalized').state.getPool(new PublicKey(market.pool))).poolState.creatorQuoteFee.toString())
