@@ -47,8 +47,9 @@ export function matchesReviewedLaunch(reviewedBytes, returned) {
 // table cannot hide a change; removing only the trailing assertions and compiling again must give the reviewed bytes.
 // The launch leaves little room under Solana's 1,232-byte limit (measured in tests/early-access-launch-chain.test.mjs): one
 // assertion adds 48 bytes (the Lighthouse program's key and the instruction), each next one 16. With a first buy there is room
-// for none (1,190-1,223 bytes with the production metadata link); without one (878 bytes) for 20. So: at most 4, as for legacy
-// launches, and never a transaction over the limit (web3.js cannot encode one, so it is refused here first).
+// for 1 to 3 (1,150-1,182 bytes with the short metadata link; 0 or 1 with the fair ramp's 32 bytes more); without one (836 bytes)
+// for 22. So: at most 4, as for legacy launches, and never a transaction over the limit (web3.js cannot encode one, so it is
+// refused here first).
 export const MAX_VERSIONED_LAUNCH_ASSERTIONS = 4
 export async function matchesReviewedVersionedLaunch(reviewedBytes, returned, loadLookupTables, { maxAssertions = MAX_VERSIONED_LAUNCH_ASSERTIONS } = {}) {
   if (!(returned instanceof VersionedTransaction) || returned.version !== 0) return false
