@@ -1,12 +1,13 @@
 import BN from 'bn.js'
 import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import bs58 from 'bs58'
-import { ComputeBudgetProgram, Message, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
-import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { ComputeBudgetProgram, Message, PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY, SystemProgram, Transaction } from '@solana/web3.js'
+import { ASSOCIATED_TOKEN_PROGRAM_ID, ExtensionType, getAssociatedTokenAddressSync, getExtensionTypes, getTransferHook, NATIVE_MINT, TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID, unpackMint } from '@solana/spl-token'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
-import { CpAmm, CP_AMM_PROGRAM_ID, SwapMode, deriveTokenVaultAddress } from '@meteora-ag/cp-amm-sdk'
+import { CpAmm, CP_AMM_PROGRAM_ID, SwapMode, derivePoolAuthority, deriveTokenVaultAddress } from '@meteora-ag/cp-amm-sdk'
 import { markets } from './db/schema.mjs'
 import { createMarketConfigResolver, createQuoteAwareConfigResolver } from './market-config.mjs'
 import { quoteOfMarket } from './quote-assets.mjs'
@@ -30,12 +31,14 @@ export const DAMM_SLIPPAGE_BPS = DEFAULT_SLIPPAGE_BPS
 const SWAP = '414b3f4ceb5b5b88'
 const SWAPS = ['f8c69e91e17587c8', SWAP]
 const U64_MAX = 18446744073709551615n
+const POOL_AUTHORITY = derivePoolAuthority()
+const EVENT_AUTHORITY = PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], CP_AMM_PROGRAM_ID)[0]
 const disc = data => Buffer.from(bs58.decode(data)).subarray(0, 8).toString('hex')
 const big = value => BigInt(value.toString())
 
 export const dammMinimumOut = (output, slippageBps = DAMM_SLIPPAGE_BPS) => minimumOutAfterSlippage(output, slippageBps)
 
-// Only the migrated SOL pair with SOL-only fees, classic SPL vaults and swaps enabled is tradable here.
+// Only the migrated SOL pair with SOL-only fees, SPL vaults (token A on Token-2022 for token2022) and swaps enabled is tradable here.
 // token2022: a contributor early access market's pool (docs/EARLY_ACCESS.md, step 7b), whose token A is Token-2022 (tokenAFlag 1)
 // with its transfer hook already revoked by the curve's filling swap, so its swap needs no hook accounts.
 export function assertTradablePool(poolState, pool, mint, { token2022 = false } = {}) {
@@ -43,6 +46,20 @@ export function assertTradablePool(poolState, pool, mint, { token2022 = false } 
       poolState.tokenAFlag !== (token2022 ? 1 : 0) || poolState.tokenBFlag !== 0 || poolState.poolStatus !== 0 ||
       !poolState.tokenAVault.equals(deriveTokenVaultAddress(mint, pool)) ||
       !poolState.tokenBVault.equals(deriveTokenVaultAddress(NATIVE_MINT, pool))) {
+    throw Error('Canonical DAMM pool is not tradable')
+  }
+}
+
+// A graduated early access token: a Token-2022 mint with only the extensions DBC gives it (metadata pointer, metadata, transfer
+// hook), no mint or freeze authority, and its hook program and hook authority revoked (the default key) by the filling swap. Anything
+// else (a live hook, a transfer fee, a pause, a delegate) is refused before a quote: the swap and its receipt check assume none.
+const REVOKED_HOOK_MINT_EXTENSIONS = new Set([ExtensionType.MetadataPointer, ExtensionType.TokenMetadata, ExtensionType.TransferHook])
+export function assertRevokedHookMint(info, mint) {
+  let parsed = null
+  try { if (info?.owner.equals(TOKEN_2022_PROGRAM_ID)) parsed = unpackMint(mint, info, TOKEN_2022_PROGRAM_ID) } catch { parsed = null }
+  const hook = parsed && getTransferHook(parsed)
+  if (!hook || parsed.mintAuthority || parsed.freezeAuthority || !hook.programId.equals(PublicKey.default) || !hook.authority.equals(PublicKey.default) ||
+      getExtensionTypes(parsed.tlvData).some(type => !REVOKED_HOOK_MINT_EXTENSIONS.has(type))) {
     throw Error('Canonical DAMM pool is not tradable')
   }
 }
@@ -90,7 +107,8 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
     } else if (ix.programId.equals(ComputeBudgetProgram.programId)) {
       continue
     } else if (ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
-      if (ix.data.length !== 1 || ix.data[0] !== 1 || !k[0]?.equals(wallet) || !k[2]?.equals(wallet) ||
+      if (ix.data.length !== 1 || ix.data[0] !== 1 || k.length !== 6 || !k[0]?.equals(wallet) || !k[2]?.equals(wallet) ||
+          !k[4].equals(SystemProgram.programId) ||
           !(k[1]?.equals(tokenAta) && k[3]?.equals(mint) && k[5]?.equals(tokenProgram) ||
             k[1]?.equals(wsolAta) && k[3]?.equals(NATIVE_MINT) && k[5]?.equals(TOKEN_PROGRAM_ID))) throw Error('Trade transaction contains an unexpected account setup')
     } else if (ix.programId.equals(SystemProgram.programId)) {
@@ -103,8 +121,11 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
       if (!sync && !close) throw Error('Trade transaction contains an unexpected token instruction')
       if (close) closes++
     } else if (ix.programId.equals(CP_AMM_PROGRAM_ID)) {
+      // swap2's 14 accounts; the only remaining account the SDK adds is the instructions sysvar (while a rate limiter applies).
+      const sysvar = k.length === 15 && k[14].equals(SYSVAR_INSTRUCTIONS_PUBKEY) && !ix.keys[14].isWritable && !ix.keys[14].isSigner
       const d = ix.data
-      if (d.length !== 25 || d.subarray(0, 8).toString('hex') !== SWAP || d.readBigUInt64LE(8) !== amountIn ||
+      if (!(k.length === 14 || sysvar) || !k[0].equals(POOL_AUTHORITY) || !k[12].equals(EVENT_AUTHORITY) || !k[13].equals(CP_AMM_PROGRAM_ID) ||
+          d.length !== 25 || d.subarray(0, 8).toString('hex') !== SWAP || d.readBigUInt64LE(8) !== amountIn ||
           d.readBigUInt64LE(16) !== minimumAmountOut || d[24] !== SwapMode.ExactIn || !k[1]?.equals(pool) ||
           !k[2]?.equals(input) || !k[3]?.equals(output) || !k[4]?.equals(poolState.tokenAVault) || !k[5]?.equals(poolState.tokenBVault) ||
           !k[6]?.equals(mint) || !k[7]?.equals(NATIVE_MINT) || !k[8]?.equals(wallet) || !k[9]?.equals(tokenProgram) ||
@@ -187,10 +208,10 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const amm = new CpAmm(connection)
-  const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool, earlyAccess, earlyAccessGraduated: true })
+  const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool, earlyAccess, hookProgram, earlyAccessGraduated: true })
   // A stock-paired market's graduated pool, quote, swap and receipt (src/stock-damm-trade.mjs); every SOL line below is unchanged.
   const stock = createStockDammTrading({ connection, amm, loadTransaction, graduation: stockGraduation ?? createStockGraduation({ connection, config, db: databasePool }) })
-  const destinations = new Map()
+  const destinations = new Map(), revokedMints = new Set()
   const loadIndexedMarket = marketLoader ?? (async repoId => {
     const market = (await drizzle(databasePool).select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
@@ -236,11 +257,18 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   }
   const poolSnapshot = async market => {
     if (isStockMarket(market)) return stock.poolSnapshot(market)
-    const pool = await canonicalPool(market), mint = new PublicKey(market.mint)
-    const info = await connection.getAccountInfo(pool, 'confirmed')
+    const pool = await canonicalPool(market), mint = new PublicKey(market.mint), token2022 = isEarlyAccessMarket(market)
+    // An early access token is checked once per process: with its hook and the authorities revoked, nothing can change it.
+    const checkMint = token2022 && !revokedMints.has(market.mint)
+    const [info, mintInfo] = await Promise.all([connection.getAccountInfo(pool, 'confirmed'), checkMint ? connection.getAccountInfo(mint, 'confirmed') : null])
     if (!info?.owner.equals(CP_AMM_PROGRAM_ID)) throw Error('Canonical DAMM pool is missing')
     const poolState = amm._program.coder.accounts.decode('pool', info.data)
-    assertTradablePool(poolState, pool, mint, { token2022: isEarlyAccessMarket(market) })
+    assertTradablePool(poolState, pool, mint, { token2022 })
+    if (checkMint) {
+      assertRevokedHookMint(mintInfo, mint)
+      if (revokedMints.size >= 1000) revokedMints.delete(revokedMints.values().next().value)
+      revokedMints.add(market.mint)
+    }
     return { pool, mint, poolState }
   }
   const quote = async (request, direction) => {

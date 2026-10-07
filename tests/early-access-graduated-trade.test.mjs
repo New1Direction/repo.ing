@@ -2,10 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import BN from 'bn.js'
-import { Connection, Keypair, PublicKey, TransactionInstruction } from '@solana/web3.js'
-import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { Connection, Keypair, PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY, TransactionInstruction } from '@solana/web3.js'
+import { ASSOCIATED_TOKEN_PROGRAM_ID, ExtensionType, MintLayout, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { CpAmm, CP_AMM_PROGRAM_ID, SwapMode } from '@meteora-ag/cp-amm-sdk'
-import { assertPreparedSwap, assertTradablePool, createDammTrader, dammQuote } from '../src/canonical-damm-trade.mjs'
+import { assertPreparedSwap, assertRevokedHookMint, assertTradablePool, createDammTrader, dammQuote } from '../src/canonical-damm-trade.mjs'
 import { EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID } from '../src/early-access-hook.mjs'
 
@@ -33,6 +34,11 @@ const withKey = (tx, find, index, pubkey) => {
   const ix = tx.instructions[at]
   tx.instructions[at] = new TransactionInstruction({ programId: ix.programId, data: ix.data,
     keys: ix.keys.map((key, i) => i === index ? { ...key, pubkey } : key) })
+  return tx
+}
+const withExtraKey = (tx, find, key) => {
+  const at = tx.instructions.findIndex(find), ix = tx.instructions[at]
+  tx.instructions[at] = new TransactionInstruction({ programId: ix.programId, data: ix.data, keys: [...ix.keys, key] })
   return tx
 }
 const isSwap = ix => ix.programId.equals(CP_AMM_PROGRAM_ID)
@@ -93,4 +99,55 @@ test('the graduated trader takes an early access market only with EARLY_ACCESS_D
     graduatedFees, stockGraduation: {} })
   await assert.rejects(opted.quoteBuy(request), /has not graduated/)
   assert.deepEqual(asked, [1])
+})
+
+test('the swap\'s fixed accounts and account count, and each account setup\'s, are checked; only the instructions sysvar may follow', async () => {
+  const direction = 'buy', amountIn = 10_000_000n
+  const { minimumAmountOut } = dammQuote({ amm, poolState, direction, amountIn, currentPoint })
+  const spec = { wallet, pool, poolState, direction, amountIn, minimumAmountOut, tokenProgram: TOKEN_2022_PROGRAM_ID }
+  const fresh = () => build({ direction, amountIn, minimumAmountOut })
+  const other = Keypair.generate().publicKey
+  // The rate limiter's read-only instructions sysvar is the one remaining account accepted.
+  assertPreparedSwap(withExtraKey(await fresh(), isSwap, { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false }), spec)
+  for (const extra of [{ pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: true }, { pubkey: other, isSigner: false, isWritable: false }]) {
+    const tx = withExtraKey(await fresh(), isSwap, extra)
+    assert.throws(() => assertPreparedSwap(tx, spec), /does not match the quote/, extra.pubkey.toBase58())
+  }
+  const twice = withExtraKey(withExtraKey(await fresh(), isSwap, { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false }), isSwap,
+    { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false })
+  assert.throws(() => assertPreparedSwap(twice, spec), /does not match the quote/, '16 accounts')
+  // The pool authority, the event authority and the program in the swap.
+  for (const index of [0, 12, 13]) {
+    const tx = withKey(await fresh(), isSwap, index, other)
+    assert.throws(() => assertPreparedSwap(tx, spec), /does not match the quote/, `swap account ${index}`)
+  }
+  // An account setup: the system program and exactly six accounts.
+  const systemChanged = withKey(await fresh(), isTokenSetup, 4, other)
+  assert.throws(() => assertPreparedSwap(systemChanged, spec), /unexpected account setup/)
+  const seventh = withExtraKey(await fresh(), isTokenSetup, { pubkey: other, isSigner: false, isWritable: true })
+  assert.throws(() => assertPreparedSwap(seventh, spec), /unexpected account setup/)
+})
+
+// A Token-2022 mint account as DBC leaves it after the filling swap (base mint, account type, then each extension's type, length, data).
+const mintAccount = ({ owner = TOKEN_2022_PROGRAM_ID, mintAuthority = null, freezeAuthority = null, hookProgram = PublicKey.default,
+  hookAuthority = PublicKey.default, extra = [] } = {}) => {
+  const base = Buffer.alloc(MintLayout.span)
+  MintLayout.encode({ mintAuthorityOption: mintAuthority ? 1 : 0, mintAuthority: mintAuthority ?? PublicKey.default, supply: 1_000_000_000_000_000n, decimals: 6,
+    isInitialized: true, freezeAuthorityOption: freezeAuthority ? 1 : 0, freezeAuthority: freezeAuthority ?? PublicKey.default }, base)
+  const tlv = ([type, data]) => { const head = Buffer.alloc(4); head.writeUInt16LE(type, 0); head.writeUInt16LE(data.length, 2); return Buffer.concat([head, data]) }
+  const extensions = [[ExtensionType.MetadataPointer, Buffer.concat([PublicKey.default.toBuffer(), mint.toBuffer()])],
+    [ExtensionType.TokenMetadata, Buffer.alloc(120, 1)], [ExtensionType.TransferHook, Buffer.concat([hookAuthority.toBuffer(), hookProgram.toBuffer()])], ...extra]
+  return { owner, lamports: 1, executable: false, data: Buffer.concat([base, Buffer.alloc(165 - MintLayout.span), Buffer.from([1]), ...extensions.map(tlv)]) }
+}
+
+test('a graduated early access token must have its hook and authorities revoked and only DBC\'s extensions', () => {
+  assertRevokedHookMint(mintAccount(), mint)
+  const other = Keypair.generate().publicKey
+  for (const [label, account] of [['a live hook', mintAccount({ hookProgram: EARLY_ACCESS_HOOK_PROGRAM_ID })], ['a hook authority', mintAccount({ hookAuthority: other })],
+    ['a mint authority', mintAccount({ mintAuthority: other })], ['a freeze authority', mintAccount({ freezeAuthority: other })],
+    ['a transfer fee', mintAccount({ extra: [[ExtensionType.TransferFeeConfig, Buffer.alloc(108)]] })],
+    ['a permanent delegate', mintAccount({ extra: [[ExtensionType.PermanentDelegate, other.toBuffer()]] })],
+    ['an SPL mint', { ...mintAccount(), owner: TOKEN_PROGRAM_ID }], ['no account', null], ['a short account', { ...mintAccount(), data: Buffer.alloc(82) }]]) {
+    assert.throws(() => assertRevokedHookMint(account, mint), /not tradable/, label)
+  }
 })

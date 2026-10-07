@@ -15,6 +15,7 @@ import bs58 from 'bs58'
 import { DAMM_V2_MIGRATION_FEE_ADDRESS, DynamicBondingCurveClient, SwapMode, deriveDammV2PoolAddress, deriveDbcPoolAuthority } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { CP_AMM_PROGRAM_ID, CpAmm, SwapMode as AmmSwapMode } from '@meteora-ag/cp-amm-sdk'
 import { createGraduationMonitor } from '../src/graduation-readiness.mjs'
+import { assertRevokedHookMint } from '../src/canonical-damm-trade.mjs'
 import { readGraduationState } from '../src/graduation-state.mjs'
 import { createFeeAccrual } from '../src/fee-accrual.mjs'
 import { createTradeRecorder } from '../src/trade-evidence.mjs'
@@ -774,6 +775,11 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
           return { costs: prepared.body.costs, result: submitted.body, tx }
         }
 
+        // The token as the filling swap left it: hook program and hook authority revoked, no mint or freeze authority, only DBC's
+        // extensions (the trader checks this before its first quote). The first market's token, whose curve has not filled, is refused.
+        assertRevokedHookMint(await connection.getAccountInfo(mint, 'confirmed'), mint)
+        const live = await connection.getAccountInfo(new PublicKey(firstMarket.mint), 'confirmed')
+        assert.throws(() => assertRevokedHookMint(live, new PublicKey(firstMarket.mint)), /not tradable/)
         const quote = await post({ action: 'quote', githubRepoId: repoId, direction: 'buy', amountBaseUnits: '10000000' })
         assert.equal(quote.status, 200, JSON.stringify(quote.body))
         assert.equal(quote.body.venue, 'damm')

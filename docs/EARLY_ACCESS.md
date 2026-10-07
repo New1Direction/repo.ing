@@ -319,14 +319,19 @@ Left for the next steps (each fails closed or is harmless until then):
   where `EARLY_ACCESS_DBC_CONFIG` is set; without it the market is refused by name, before any read. The pool is the one the
   finalized migration names (`createGraduatedFees` with `earlyAccessGraduated`), as for every graduated market.
 - The pool must have its token A on Token-2022 (`tokenAFlag` 1) and wrapped SOL on SPL Token (`assertTradablePool` with
-  `token2022`). The trader builds the SDK's `swap2` with token A on Token-2022, and the check before the wallet signs
-  (`assertPreparedSwap` with `tokenProgram`) now also checks both token programs of the swap and of each account setup (the
-  wallet's Token-2022 account for the token, its SPL WSOL account). The swap needs no hook accounts: the curve's filling swap
-  revoked the hook. The receipt check is unchanged; it reads the Token-2022 balances the same way.
+  `token2022`), and the token must be a Token-2022 mint with only DBC's extensions (metadata pointer, metadata, transfer hook),
+  no mint or freeze authority, and its hook program and hook authority revoked by the filling swap (`assertRevokedHookMint`,
+  checked once per process: nothing can change it after that). The trader builds the SDK's `swap2` with token A on Token-2022.
+  The check before the wallet signs (`assertPreparedSwap` with `tokenProgram`) now also checks, for every market, both token
+  programs of the swap and of each account setup (the wallet's Token-2022 account for the token, its SPL WSOL account), the
+  swap's pool authority, event authority and program, and its account count (14, or 15 with the instructions sysvar the SDK adds
+  while a rate limiter applies). The swap needs no hook accounts. The receipt check is unchanged; it reads the Token-2022
+  balances the same way.
 - Anyone can buy and sell the graduated pool, also when the curve filled inside the window. The token page and the Blink card
-  no longer show the window note once the market is graduated (`earlyAccessNotice`; the page's `graduated`, and for Blinks a
-  recorded `graduation_events` row). A referral is paid in SOL as on any graduated market; Blinks pass it (the curve trader still
-  leaves it out). The trade costs count the wallet's new Token-2022 account at its size (`estimateTradeCosts`, from step 5d).
+  no longer show the window note once the market's migration is recorded (`earlyAccessNotice`: `migrated`, from
+  `graduation_events`, or the page's fresh `graduated`). A referral is paid in SOL as on any graduated market; Blinks pass it
+  once the migration is recorded (the curve trader leaves it out). The trade costs count the wallet's new Token-2022 account at
+  its size (`estimateTradeCosts`, from step 5d).
 - Known limit: if the curve fills inside the window, the oracle keeps the allow list up to date until the window ends (only
   network fees; the list's growth rent comes back when it closes).
 

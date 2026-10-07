@@ -28,8 +28,9 @@ export const EARLY_ACCESS_WINDOWS = Object.freeze([
 // A market stamped for contributor early access (migration 0059): a transfer-hook pool with a Token-2022 mint on the early
 // access config. Until the steps that handle hook pools ship, the site's SOL paths refuse or skip these markets.
 export const isEarlyAccessMarket = market => (market?.earlyAccessEnd ?? null) !== null || (market?.transferHookProgram ?? null) !== null
-// Trades the site cannot make yet: the graduated pool (step 7), or any trade while EARLY_ACCESS_DBC_CONFIG is unset. Curve trades
-// on the site and through Blinks go through swap2WithTransferHook (src/early-access-trade.mjs, steps 5d and 5e). Claims: step 6.
+// Any trade while EARLY_ACCESS_DBC_CONFIG is unset. With it, curve trades on the site and through Blinks go through
+// swap2WithTransferHook (src/early-access-trade.mjs, steps 5d and 5e) and the graduated pool's through swap2 with token A on
+// Token-2022 (src/canonical-damm-trade.mjs, step 7b).
 export const EARLY_ACCESS_NOT_TRADABLE = 'Contributor early access markets are not tradable on the site yet.'
 export const EARLY_ACCESS_NOT_CLAIMABLE = 'Contributor early access markets cannot be claimed on the site yet.'
 // A graduated contributor early access market (DAMM v2 with a Token-2022 token): read, traded and claimed from step 7 on.
