@@ -4,6 +4,8 @@ import { prepareCheckedTrade } from '../../src/trade-prepare.mjs'
 import { chain } from './server.mjs'
 import { tradeRouter } from './trader.mjs'
 import { STOCK_PAIR_ACTIONS_UNAVAILABLE } from './solana-actions.mjs'
+import { EARLY_ACCESS_NOT_TRADABLE } from '../../src/early-access.mjs'
+import { SWAP2_TRANSFER_HOOK_DISCRIMINATOR } from '../../src/early-access-trade.mjs'
 
 // Solana Actions (Blink) trades: the site's canonical curve/graduated trader, the same balance + simulation preflight as
 // /api/trade's prepare, and the trader's default 1% slippage. As on the site, a referral must never cost the trader a
@@ -15,10 +17,13 @@ export async function prepareActionTrade(direction, request, { router = tradeRou
       wallet: request.wallet, amountBaseUnits: direction === 'sell' ? request.amountBaseUnits : request.amountLamports, referrer })
     // Backstop to resolveMarket's refusal (app/lib/solana-actions.mjs): a stock-paired trade is never offered as a Blink.
     if (prepared.quoteMint) throw Error(STOCK_PAIR_ACTIONS_UNAVAILABLE)
+    // Nor is a contributor early access swap (Blinks for them are step 5e, docs/EARLY_ACCESS.md).
+    if (prepared.transaction.instructions.some(ix => ix.data.subarray(0, 8).equals(SWAP2_TRANSFER_HOOK_DISCRIMINATOR))) throw Error(EARLY_ACCESS_NOT_TRADABLE)
     return prepared
   }
+  const final = new Set([STOCK_PAIR_ACTIONS_UNAVAILABLE, EARLY_ACCESS_NOT_TRADABLE])
   try { return await build(request.referrer ?? null) }
-  catch (error) { if (!request.referrer || error.message === STOCK_PAIR_ACTIONS_UNAVAILABLE) throw error; return build(null) }
+  catch (error) { if (!request.referrer || final.has(error.message)) throw error; return build(null) }
 }
 
 // A sell spends the wallet's associated token account, so that account's balance is what a sell percentage applies to.

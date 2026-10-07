@@ -7,10 +7,10 @@ import { launchFeeJson, poolFeeFacts, quotePoint } from './launch-fee.mjs'
 import { quoteDisplay } from './trade-quote-display.mjs'
 import bs58 from 'bs58'
 import { ComputeBudgetProgram, PublicKey, Transaction } from '@solana/web3.js'
-import { getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
+import { getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
-import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { DynamicBondingCurveClient, SwapMode, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { markets } from './db/schema.mjs'
 import { keptWsolRent, parseReferrer, resolveReferral } from './referral.mjs'
 import { ATA_PROGRAM, createWsolAtaInstruction, isCreateWsolAta, TOKEN_PROGRAM, wsolAta } from './wsol-account.mjs'
@@ -18,7 +18,9 @@ import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from '
 import { preparedFromRecord, readTradeRecord, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
 import { DEFAULT_SLIPPAGE_BPS, minimumOutAfterSlippage, parseSlippageBps } from './trade-slippage.mjs'
 import { quoteOfMarket } from './quote-assets.mjs'
-import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket } from './early-access.mjs'
+import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
+import { SWAP2_TRANSFER_HOOK_DISCRIMINATOR, assertListedDuringWindow, assertPreparedDbcHookSwap } from './early-access-trade.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
@@ -123,26 +125,34 @@ export function assertDbcSettlement({ direction, amountIn, minimumAmountOut, tok
   }
 }
 
-export function createCanonicalTrader({ pool: databasePool, connection, config, loadMarket: marketLoader = null }) {
+// earlyAccess: the contributor early access DBC config (EARLY_ACCESS_DBC_CONFIG). While it is unset an early access market is
+// refused by name; with it, its curve trades through swap2WithTransferHook (docs/EARLY_ACCESS.md, step 5d).
+export function createCanonicalTrader({ pool: databasePool, connection, config, loadMarket: marketLoader = null, earlyAccess = tradingEarlyAccessConfig(),
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
   const db = drizzle(databasePool)
-  // SOL markets on the approved configs; a stock-paired market on its stock's config (docs/STOCK_QUOTES.md).
-  const resolveConfig = createQuoteAwareConfigResolver(config)
+  // SOL markets on the approved configs; a stock-paired market on its stock's config (docs/STOCK_QUOTES.md); an early access
+  // market on the early access config, with the hook program it was stamped with.
+  const resolveConfig = createQuoteAwareConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const loadMarket = marketLoader ?? (async repoId => {
     const market = (await db.select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
       throw new Error('Repository has no indexed canonical market')
     }
-    // A transfer-hook pool (docs/EARLY_ACCESS.md) trades through swap2WithTransferHook, which the site builds from step 5 on.
-    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     return market
   })
+  // A transfer-hook pool (docs/EARLY_ACCESS.md) trades only where the early access config is set; elsewhere it is refused by name.
+  const tradableMarket = async repoId => {
+    const market = await loadMarket(repoId)
+    if (isEarlyAccessMarket(market) && !earlyAccess) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
+    return market
+  }
   const quote = async (request, direction) => {
     if ('pool' in request || 'mint' in request || 'market' in request) throw new Error('Pool and mint are selected by canonical repository ID only')
     const slippageBps = parseSlippageBps(request.slippageBps)
     const input = BigInt(direction === 'buy' ? request.amountLamports : request.amountBaseUnits)
     if (input <= 0n || input > 18446744073709551615n) throw new Error('Input amount must be a positive u64 base-unit integer')
-    const market = await loadMarket(request.githubRepoId)
+    const market = await tradableMarket(request.githubRepoId)
     const configKey = resolveConfig(market)
     const mint = new PublicKey(market.mint)
     const pool = new PublicKey(market.pool)
@@ -150,7 +160,9 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const quoteMint = quoteAsset.type === 'SOL' ? NATIVE_MINT : new PublicKey(quoteAsset.mint)
     if (!deriveDbcPoolAddress(quoteMint, mint, configKey).equals(pool)) throw new Error('Canonical pool does not match fixed DBC config')
     const state = await dbc.state.getPool(pool)
-    if (!state || !state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(mint) || state.poolState.isMigrated !== 0) {
+    // An early access pool's base is its Token-2022 mint (pool type 1); every other curve's an SPL Token mint (0).
+    if (!state || !state.poolState.config.equals(configKey) || !state.poolState.baseMint.equals(mint) || state.poolState.isMigrated !== 0 ||
+        state.poolState.poolType !== (isEarlyAccessMarket(market) ? 1 : 0)) {
       throw new Error('Canonical DBC pool is missing, changed, or migrated')
     }
     const fixed = await readPoolConfig(dbc, configKey)
@@ -170,16 +182,23 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const mint = new PublicKey(market.mint)
     // A stock-paired market: no referral and no wrapped SOL; its swap is asserted by assertPreparedStockDbcSwap.
     const stock = quoteAsset.type !== 'SOL'
+    // An early access market: swap2WithTransferHook with the hook's accounts and no referral (its referral needs a second hook
+    // slice); during the window a buy is refused up front unless the wallet is on the mint's allow list.
+    const hook = isEarlyAccessMarket(market)
+    if (hook && direction === 'buy') await assertListedDuringWindow({ connection, market, wallet, hookProgram })
     const [referral, wsolRent] = stock ? [null, null]
-      : await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
+      : await Promise.all([hook ? null : resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
-    const swapTx = await dbc.pool.swap({ owner: wallet, payer: wallet, pool, amountIn,
-      minimumAmountOut: result.minimumAmountOut, swapBaseForQuote: direction === 'sell', referralTokenAccount: referral })
+    const swapTx = hook
+      ? await dbc.pool.swap2WithTransferHook({ owner: wallet, payer: wallet, pool, amountIn, minimumAmountOut: result.minimumAmountOut,
+        swapBaseForQuote: direction === 'sell', swapMode: SwapMode.ExactIn, referralTokenAccount: null })
+      : await dbc.pool.swap({ owner: wallet, payer: wallet, pool, amountIn,
+        minimumAmountOut: result.minimumAmountOut, swapBaseForQuote: direction === 'sell', referralTokenAccount: referral })
     if (keepWsol) swapTx.add(createWsolAtaInstruction(wallet))
     const expected = { wallet, pool, config: resolveConfig(market), mint, amountIn: BigInt(amountIn.toString()),
       minimumAmountOut: BigInt(result.minimumAmountOut.toString()), referral, keepWsol,
-      ...stock ? { quoteMint: new PublicKey(quoteAsset.mint), direction } : {} }
-    const assertSwap = stock ? assertPreparedStockDbcSwap : assertPreparedDbcSwap
+      ...stock ? { quoteMint: new PublicKey(quoteAsset.mint), direction } : {}, ...hook ? { direction, hookProgram } : {} }
+    const assertSwap = stock ? assertPreparedStockDbcSwap : hook ? assertPreparedDbcHookSwap : assertPreparedDbcSwap
     assertSwap(swapTx, expected)
     const latest = await connection.getLatestBlockhash('confirmed')
     // Priority is priced on the curve and its two vaults (swap accounts 2, 5, 6): the accounts every trade contends for.
@@ -205,7 +224,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
   }
   const verifyTrade = async (prepared, signature) => {
     const saved = readTradeRecord(prepared?.record, 'curve')
-    const market = await loadMarket(saved.githubRepoId)
+    const market = await tradableMarket(saved.githubRepoId)
     const configKey = resolveConfig(market)
     if (market.id !== saved.marketId || market.mint !== saved.mint.toBase58() || market.pool !== saved.pool.toBase58()) {
       throw new Error('Canonical market changed before trade verification')
@@ -226,8 +245,10 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
       throw new Error('Canonical market changed before trade verification')
     }
     const quoteMint = saved.quoteMint ?? NATIVE_MINT
+    // An early access market's swap is swap2WithTransferHook, with the same accounts in the same places; its token is Token-2022.
+    const hook = isEarlyAccessMarket(market)
     const swap = message.instructions?.find(ix => keyAt(ix.programIdIndex, DBC_PROGRAM) &&
-      Buffer.from(bs58.decode(ix.data)).subarray(0, 8).equals(SWAP_DISCRIMINATOR) &&
+      Buffer.from(bs58.decode(ix.data)).subarray(0, 8).equals(hook ? SWAP2_TRANSFER_HOOK_DISCRIMINATOR : SWAP_DISCRIMINATOR) &&
       keyAt(ix.accounts[1], configKey) && keyAt(ix.accounts[2], saved.pool) &&
       keyAt(ix.accounts[7], saved.mint) && keyAt(ix.accounts[8], quoteMint) &&
       keyAt(ix.accounts[9], saved.wallet) && keyAt(ix.accounts[REFERRAL_SLOT], saved.referral ?? DBC_PROGRAM))
@@ -242,7 +263,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const wsolAfter = wsolIndex < 0 ? 0n : BigInt(tx.meta.postBalances[wsolIndex])
     const walletSol = solDelta + (wsolIndex < 0 ? 0n : wsolAfter - BigInt(tx.meta.preBalances[wsolIndex]))
     if (saved.wsolRent !== null ? wsolAfter !== saved.wsolRent : wsolAfter !== 0n) throw new Error('Trade balances did not settle to the user wallet')
-    const ata = getAssociatedTokenAddressSync(saved.mint, saved.wallet)
+    const ata = getAssociatedTokenAddressSync(saved.mint, saved.wallet, false, hook ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID)
     const ataIndex = keys.findIndex(key => key.equals(ata))
     if (ataIndex < 0) throw new Error('Trade transaction omitted wallet token account')
     const amountAt = (balances, accountIndex, mint) => BigInt(
@@ -309,7 +330,7 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     const key = String(repoId)
     const cached = depthCache.get(key)
     if (cached && cached.expiresAt > Date.now()) return cached.value
-    const market = await loadMarket(repoId), configKey = resolveConfig(market)
+    const market = await tradableMarket(repoId), configKey = resolveConfig(market)
     const [state, fixed] = await Promise.all([dbc.state.getPool(market.pool), readPoolConfig(dbc, configKey)])
     if (!state || !fixed || state.poolState.isMigrated || !state.poolState.config.equals(configKey) ||
         state.poolState.baseMint.toBase58() !== market.mint || fixed.collectFeeMode !== 0) throw Error('Trade size guide unavailable')
