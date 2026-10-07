@@ -36,6 +36,9 @@ import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
 import { createEarlyAccessReconcileWatch } from '../src/early-access-reconcile.mjs'
 import { createReconciler } from '../src/reconcile.mjs'
 import { createClaim } from '../src/claim.mjs'
+import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
+import { discoverySummary } from '../src/discovery-rewards.mjs'
+import { sign as signBytes } from 'node:crypto'
 import { CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR } from '../src/dbc-hook-claims.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
 import { POST as tradeRoute } from '../app/api/trade/route.js'
@@ -590,6 +593,41 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         for (const [name, value] of Object.entries(saved.env)) value === undefined ? delete process.env[name] : process.env[name] = value
         globalThis.__gitfunPool = saved.pool
       }
+    })
+
+    // Step 6e: the launcher of an early access market claims its discovery reward. The payout is claim_trading_fee2 from the hook
+    // pool to a one-time authority, checked before signing; the launcher receives exactly the reward and the partner spends only
+    // the network fee (both temporary accounts are closed back to it). Without the setting the market is not enrolled.
+    await t.test('its launcher claims the discovery reward with claim_trading_fee2', async () => {
+      const config = solConfig.toBase58(), repoId = String(secondMarket.githubRepoId), wallet = contributor.publicKey.toBase58()
+      const signMessage = (keypair, message) => bs58.encode(signBytes(null, Buffer.from(message, 'utf8'), { format: 'der', type: 'pkcs8',
+        key: Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), Buffer.from(keypair.secretKey.subarray(0, 32))]) }))
+      await assert.rejects(createDiscoveryClaims({ pool, connection, config, partner, minClaimLamports: 1n }).prepare({ repoId, wallet }), /not enrolled/)
+      // A larger buy, so the reward (half the eligible partner fees) passes the claim minimum and is worth its payout's network fee.
+      const buy = await dbc.pool.swap2WithTransferHook({ owner: contributor.publicKey, payer: contributor.publicKey, pool: new PublicKey(secondMarket.pool),
+        amountIn: new BN(3_000_000_000), minimumAmountOut: new BN(0), swapBaseForQuote: false, swapMode: SwapMode.ExactIn, referralTokenAccount: null })
+      await sendAndConfirmTransaction(connection, buy, [contributor], { commitment: 'confirmed' })
+      const indexer = createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig })
+      assert.ok(await until(async () => { await indexer.runOnce()
+        return BigInt((await discoverySummary(pool, repoId, { earlyAccess: true })).remaining) > 3_000_000n }, 240), 'the reward accrued')
+      const claims = createDiscoveryClaims({ pool, connection, config, partner, earlyAccess: eaConfig })
+      const offer = await claims.prepare({ repoId, wallet })
+      assert.equal(offer.status, 'prepared')
+      assert.ok(BigInt(offer.amount) > 0n, 'a reward accrued from the trades above')
+      const submitted = await claims.submit({ repoId, id: offer.id, signature: signMessage(contributor, offer.message) })
+      assert.equal(submitted.status, 'pending')
+      const settled = await until(async () => { const result = await claims.recover(repoId); return result?.status === 'settled' ? result : null }, 240)
+      assert.ok(settled, 'settled once final')
+      const landed = await connection.getTransaction(submitted.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+      const keys = landed.transaction.message.accountKeys, delta = key => BigInt(landed.meta.postBalances[keys.findIndex(k => k.equals(key))]) -
+        BigInt(landed.meta.preBalances[keys.findIndex(k => k.equals(key))])
+      assert.equal(delta(contributor.publicKey), BigInt(offer.amount), 'the launcher receives exactly the reward')
+      assert.equal(delta(partner.publicKey), -BigInt(landed.meta.fee), 'the partner spends only the network fee')
+      const dbcClaims = landed.transaction.message.instructions.filter(ix => keys[ix.programIdIndex].toBase58() === 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
+      assert.equal(dbcClaims.length, 1)
+      assert.equal(Buffer.from(bs58.decode(dbcClaims[0].data)).subarray(0, 8).toString('hex'), '54bf473209a237c1', 'claim_trading_fee2')
+      console.log(JSON.stringify({ earlyAccessDiscoveryClaim: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
+        computeUnits: landed.meta.computeUnitsConsumed } }))
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {
