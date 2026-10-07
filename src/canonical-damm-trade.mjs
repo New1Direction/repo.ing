@@ -22,7 +22,8 @@ import { createWsolAtaInstruction, isCreateWsolAta } from './wsol-account.mjs'
 import { broadcastUntilSettled, readTradeComputeBudget, withPriorityFee } from './trade-landing.mjs'
 import { preparedFromRecord, readTradeRecord, recordWithSignedMessage, serializeUnsigned, TRADE_RECORD_VERSION } from './trade-record.mjs'
 import { DEFAULT_SLIPPAGE_BPS, minimumOutAfterSlippage, parseSlippageBps } from './trade-slippage.mjs'
-import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket } from './early-access.mjs'
+import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
 
 // Same tolerance (1% unless the trader chose another) and floor rounding as curve trades.
 export const DAMM_SLIPPAGE_BPS = DEFAULT_SLIPPAGE_BPS
@@ -172,7 +173,10 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
   return { tokenDelta, solDelta, quoteAmount, baseAmount, referralFee, slot: BigInt(tx.slot) }
 }
 
-export function createDammTrader({ pool: databasePool, connection, config, graduatedFees = null, loadTransaction = loadTransactionAt, loadMarket: marketLoader = null, stockGraduation = null }) {
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): routing reads a contributor early access market's curve with it, so its curve trades go to
+// the curve trader; its graduated pool (DAMM v2 with a Token-2022 token) is refused by name until step 7 (docs/EARLY_ACCESS.md).
+export function createDammTrader({ pool: databasePool, connection, config, graduatedFees = null, loadTransaction = loadTransactionAt, loadMarket: marketLoader = null,
+  stockGraduation = null, earlyAccess = tradingEarlyAccessConfig(), hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const amm = new CpAmm(connection)
@@ -180,24 +184,29 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   // A stock-paired market's graduated pool, quote, swap and receipt (src/stock-damm-trade.mjs); every SOL line below is unchanged.
   const stock = createStockDammTrading({ connection, amm, loadTransaction, graduation: stockGraduation ?? createStockGraduation({ connection, config, db: databasePool }) })
   const destinations = new Map()
-  const loadMarket = marketLoader ?? (async repoId => {
+  const loadIndexedMarket = marketLoader ?? (async repoId => {
     const market = (await drizzle(databasePool).select().from(markets).where(eq(markets.githubRepoId, BigInt(repoId))).limit(1))[0]
     if (!market || market.status !== 'confirmed' || market.indexedAt === null || market.launchFinality !== 'finalized') {
       throw new Error('Repository has no indexed canonical market')
     }
-    // A transfer-hook pool (docs/EARLY_ACCESS.md) trades through swap2WithTransferHook, which the site builds from step 5 on.
-    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     return market
   })
+  // A transfer-hook pool (docs/EARLY_ACCESS.md) trades on its curve only (the curve trader); its graduated pool waits for step 7.
+  const loadMarket = async repoId => {
+    const market = await loadIndexedMarket(repoId)
+    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
+    return market
+  }
   // A curve migrates once, so a migrated answer is permanent; an active answer is always re-read.
   // Routing reads a stock-paired market's curve through its quote-aware config (docs/STOCK_QUOTES.md); a graduated stock-paired
   // market trades below through the stock branch (src/stock-damm-trade.mjs), whose pool is proven in src/stock-graduation.mjs.
-  const resolveCurveConfig = createQuoteAwareConfigResolver(config)
+  const resolveCurveConfig = createQuoteAwareConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
   const migrated = new Set()
   const isMigrated = async repoId => {
-    const market = await loadMarket(repoId)
+    const market = await loadIndexedMarket(repoId)
+    if (isEarlyAccessMarket(market) && !earlyAccess) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     const key = `${market.id}:${market.pool}`
-    if (migrated.has(key)) return true
+    if (migrated.has(key)) return graduatedTradable(market)
     const configKey = resolveCurveConfig(market), mint = new PublicKey(market.mint), curve = new PublicKey(market.pool)
     const quote = quoteOfMarket(market), quoteMint = quote.type === 'SOL' ? NATIVE_MINT : new PublicKey(quote.mint)
     if (!deriveDbcPoolAddress(quoteMint, mint, configKey).equals(curve)) throw Error('Canonical pool does not match fixed DBC config')
@@ -206,6 +215,10 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     if (!state.poolState.isMigrated) return false
     if (migrated.size >= 1000) migrated.delete(migrated.values().next().value)
     migrated.add(key)
+    return graduatedTradable(market)
+  }
+  const graduatedTradable = market => {
+    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     return true
   }
   // The pool address is immutable once proven by the finalized migrate instruction; pool state is re-read every time.

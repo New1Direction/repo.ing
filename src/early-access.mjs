@@ -28,7 +28,8 @@ export const EARLY_ACCESS_WINDOWS = Object.freeze([
 // A market stamped for contributor early access (migration 0059): a transfer-hook pool with a Token-2022 mint on the early
 // access config. Until the steps that handle hook pools ship, the site's SOL paths refuse or skip these markets.
 export const isEarlyAccessMarket = market => (market?.earlyAccessEnd ?? null) !== null || (market?.transferHookProgram ?? null) !== null
-// Trades on the site (step 5) and claims (step 6).
+// Trades the site cannot make yet: Blinks (step 5e) and the graduated pool (step 7), or any trade while EARLY_ACCESS_DBC_CONFIG is
+// unset. Curve trades on the site go through swap2WithTransferHook (src/early-access-trade.mjs, step 5d). Claims: step 6.
 export const EARLY_ACCESS_NOT_TRADABLE = 'Contributor early access markets are not tradable on the site yet.'
 export const EARLY_ACCESS_NOT_CLAIMABLE = 'Contributor early access markets cannot be claimed on the site yet.'
 // scripts/recover-expired-launch.mjs (the worker releases a proven expired early access launch itself).
@@ -61,6 +62,10 @@ function publicKeySetting(env, name) {
 
 // The Meteora DBC config every early access pool is created on (create_config_with_transfer_hook, Token-2022).
 export const earlyAccessDbcConfig = (env = process.env) => publicKeySetting(env, 'EARLY_ACCESS_DBC_CONFIG')
+// For the traders: a malformed EARLY_ACCESS_DBC_CONFIG refuses early access markets only (logged by name), never every trade.
+export function tradingEarlyAccessConfig(env = process.env, log = console.error) {
+  try { return earlyAccessDbcConfig(env) } catch (error) { log(`${error.message}; early access markets are not tradable`); return null }
+}
 // The address lookup table early access launches (v0 transactions) are built with.
 export const earlyAccessLookupTable = (env = process.env) => publicKeySetting(env, 'EARLY_ACCESS_LOOKUP_TABLE')
 
