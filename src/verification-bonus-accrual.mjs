@@ -42,9 +42,9 @@ export function withStoredCreation(repository, storedCreatedAt) {
 }
 
 // The stamped, finalized market and its FIRST admin verification (earliest verified_at, then id). A contributor early access
-// market (docs/EARLY_ACCESS.md) waits, undecided: the volume rule reads trade_events, which its transfer-hook pool does not write
-// until step 5, and a decided bonus is never re-evaluated. Step 5 drops this condition here and in candidates().
-async function marketFacts(db, repoId) {
+// market (docs/EARLY_ACCESS.md) is decided only where its trades are indexed (EARLY_ACCESS_DBC_CONFIG set; includeEarlyAccess):
+// the volume rule reads trade_events, and a decided bonus is never re-evaluated. Elsewhere it waits, undecided.
+async function marketFacts(db, repoId, includeEarlyAccess = false) {
   const { rows: [market] } = await db.query(`select m.github_repo_id::text as "repoId", m.pool, m.launcher_wallet as "launcherWallet",
       m.verification_bonus_lamports::text as amount, m.launch_block_time as "activatedAt", v.id as "verificationId",
       v.github_user_id::text as "verifierGithubUserId", v.github_login as "verifierLogin", v.verified_at as "verifiedAt",
@@ -54,7 +54,7 @@ async function marketFacts(db, repoId) {
       where github_repo_id = m.github_repo_id and permission = 'admin' order by verified_at, id limit 1) v on true
     where m.github_repo_id = $1 and m.verification_bonus_lamports is not null and m.status = 'confirmed'
       and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null
-      and m.early_access_end is null and m.bundle_id is null`, [String(repoId)])
+      and (m.early_access_end is null or $2::boolean) and m.bundle_id is null`, [String(repoId), includeEarlyAccess === true])
   return market ?? null
 }
 
@@ -75,17 +75,17 @@ export async function readVolumeFacts(db, { pool, launcherWallet, before }) {
 const RETRY_BASE_MS = 60_000, RETRY_MAX_MS = 60 * 60_000
 
 export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRepository = readRepositoryFacts, now = Date.now,
-  graceMs = ACCRUAL_GRACE_MS, volumeSettleMs = VOLUME_SETTLE_MS, limit = 10 }) {
+  graceMs = ACCRUAL_GRACE_MS, volumeSettleMs = VOLUME_SETTLE_MS, limit = 10, includeEarlyAccess = false }) {
   const retry = new Map()
   async function candidates() {
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", min(v.verified_at) as first
       from markets m join repositories r on r.github_repo_id = m.github_repo_id and r.source = 'github'
       join repo_verifications v on v.github_repo_id = m.github_repo_id and v.permission = 'admin'
       where m.verification_bonus_lamports is not null and m.status = 'confirmed' and m.indexed_at is not null
-        and m.launch_finality = 'finalized' and m.launch_block_time is not null and m.early_access_end is null and m.bundle_id is null
+        and m.launch_finality = 'finalized' and m.launch_block_time is not null and (m.early_access_end is null or $3::boolean) and m.bundle_id is null
         and not exists (select 1 from verification_bonuses b where b.github_repo_id = m.github_repo_id)
       group by m.github_repo_id having min(v.verified_at) <= $1 order by first, m.github_repo_id limit $2`,
-    [new Date(now() - graceMs), limit * 10])
+    [new Date(now() - graceMs), limit * 10, includeEarlyAccess === true])
     return rows.map(row => row.repoId).filter(repoId => !((retry.get(repoId)?.at ?? 0) > now())).slice(0, limit)
   }
   const later = (repoId, result) => {
@@ -95,7 +95,7 @@ export function createVerificationBonusAccrual({ pool, fetchImpl = fetch, readRe
   }
 
   async function accrue(repoId) {
-    const market = await marketFacts(pool, repoId)
+    const market = await marketFacts(pool, repoId, includeEarlyAccess)
     if (!market) return { repoId: String(repoId), status: 'not-enrolled' }
     const [wallets, volume, decision] = await Promise.all([readSelfLaunchFacts(pool, { repoId, verifierGithubUserId: market.verifierGithubUserId,
       launcherWallet: market.launcherWallet }), readVolumeFacts(pool, { pool: market.pool, launcherWallet: market.launcherWallet, before: market.verifiedAt }),

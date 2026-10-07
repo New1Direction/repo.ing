@@ -4,6 +4,7 @@
 // Hugging Face model markets get their own copy (bottom of this file), cleaned the same way.
 import { HF_DISCLAIMER_SHORT } from './hf-copy.mjs'
 import { isMarketId, marketSource } from './market-identity.mjs'
+import { earlyAccessEndUtc } from './early-access.mjs'
 
 export const X_MAX_WEIGHT = 280
 // X counts every link as 23 characters, whatever its length.
@@ -63,14 +64,23 @@ export function truncate(text, fits) {
 
 export const tokenUrl = (origin, mint) => `${origin}/token/${encodeURIComponent(mint)}`
 
-function lines({ repo, symbol, stars, description, url }) {
-  return [`🚀 New on repo.ing: ${repo}${symbol ? ` — $${symbol}` : ''}`, `⭐ ${stars}${description ? ` · ${description}` : ''}`, TAGLINE, url]
+function lines({ repo, symbol, stars, description, window, url }) {
+  return [`🚀 New on repo.ing: ${repo}${symbol ? ` — $${symbol}` : ''}`, `⭐ ${stars}${description ? ` · ${description}` : ''}`,
+    ...window ? [window] : [], TAGLINE, url]
 }
 
-// market: { fullName, tokenSymbol, stars, description, mint }. channel: 'telegram' (HTML) or 'x' (plain, ≤ 280 weighted).
-export function buildLaunchMessage(market, { channel, origin }) {
+// A contributor early access market (docs/EARLY_ACCESS.md) still in its window: only the repository's contributors can buy, so
+// the post says so (a follower's buy would be refused). Nothing once the window has closed.
+export function earlyAccessWindowLine(market, now = Date.now()) {
+  const end = market?.earlyAccessEnd ? new Date(market.earlyAccessEnd).getTime() : NaN
+  return now < end ? `🔒 Contributor early access: only its contributors can buy until ${earlyAccessEndUtc(end)}.` : null
+}
+
+// market: { fullName, tokenSymbol, stars, description, mint, earlyAccessEnd }. channel: 'telegram' (HTML) or 'x' (plain, ≤ 280 weighted).
+export function buildLaunchMessage(market, { channel, origin, now = Date.now() }) {
   if (isModelAlert(market)) return buildModelLaunchMessage(market, { channel, origin })
-  const base = { repo: cleanRepoName(market.fullName), symbol: cleanSymbol(market.tokenSymbol), stars: formatStars(market.stars), url: tokenUrl(origin, market.mint) }
+  const base = { repo: cleanRepoName(market.fullName), symbol: cleanSymbol(market.tokenSymbol), stars: formatStars(market.stars), url: tokenUrl(origin, market.mint),
+    window: earlyAccessWindowLine(market, now) }
   const description = cleanDescription(market.description)
   if (channel === 'telegram') {
     const short = truncate(description, text => [...text].length <= TELEGRAM_DESCRIPTION_CHARS)

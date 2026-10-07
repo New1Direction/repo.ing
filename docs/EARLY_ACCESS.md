@@ -238,20 +238,20 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
 | Graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped (step 7) |
 | Builder dashboard (`app/lib/builders.mjs`) | listed, with their fee check, where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); not listed otherwise |
-| Verification bonus accrual (`src/verification-bonus-accrual.mjs`, candidates and market facts) | skipped, left undecided: its volume rule reads `trade_events`, which hook pools do not write yet, and a decided bonus is never re-evaluated |
+| Verification bonus accrual (`src/verification-bonus-accrual.mjs`, candidates and market facts) | decided like any other where `EARLY_ACCESS_DBC_CONFIG` is set (their trades are in `trade_events` there; step 6h); otherwise left undecided, as a decided bonus is never re-evaluated |
 | `scripts/recover-expired-launch.mjs` | refused with a message (manual recovery of an early access launch is a later step; the worker still releases a proven expired attempt) |
-| Launch first-buy indexing in `/api/launch` | skipped |
+| Launch first-buy indexing in `/api/launch` | indexed where `EARLY_ACCESS_DBC_CONFIG` is set (step 5b) |
+| Launch alerts (`src/launch-alerts-message.mjs`) | while the window is open, the post says only the repository's contributors can buy until its end (step 6h) |
 
 Left for the next steps (each fails closed or is harmless until then):
 
-- Step 5, left: the verification bonus accrual (drop its `early_access_end is null` in `candidates` and `marketFacts`), market
-  lists and the launch alert copy (they list these markets as SOL markets). Done: their trades and fees indexed (5b), the holder
-  count and the window note (5c), curve trades on the site (5d) and through Blinks (5e), and the oracle's upkeep of the lists
-  (5f), below.
+- Step 5, done: the resolver opt-in (5a), their trades and fees indexed (5b), the holder count and the window note (5c), curve
+  trades on the site (5d) and through Blinks (5e), and the oracle's upkeep of the lists (5f), below. Market lists show these
+  markets as the SOL markets they are; the token page's note and the launch alert show the window.
 - Step 6 (owner decisions, 2026-10-07: gated by `EARLY_ACCESS_DBC_CONFIG` alone, like trades; the builder allocation moves to step
   7): 6a the fee ledgers reconciled and watched (below); 6b a builder and check for `claim_creator_trading_fee2` /
   `claim_trading_fee2`; 6c builder claims; 6d the builder dashboard and reminders; 6e discovery; 6f the platform's DBC partner
-  fee collection; then remove the step 4 skips. Early access markets are stamped with the discovery version, the builder
+  fee collection; 6h the verification bonus and the launch alert. Done. Early access markets are stamped with the discovery version, the builder
   allocation (when `BUILDER_ALLOCATION_CONFIGS` lists the early access config) and the verification bonus like SOL markets; the
   bonus is paid in SOL and needs no change.
 - Step 7: graduation (the monitor and its operator view skip them), DAMM v2 with a Token-2022 token A (`tokenAProgram`), reconcile

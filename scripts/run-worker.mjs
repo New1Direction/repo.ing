@@ -157,7 +157,8 @@ const allocations = createAllocationRecovery({ pool, connection })
 const discovery = createDiscoveryClaims({ pool, connection, config, earlyAccess: tradingEarlyAccessConfig() })
 // Verification bonus: accrue bonuses from first maintainer verifications (PostgreSQL + public GitHub reads) and settle
 // or rebroadcast payouts already signed on web. No key: the worker never signs or creates a payout.
-const bonusAccrual = createVerificationBonusAccrual({ pool })
+// Contributor early access markets are decided only where their trades are indexed (EARLY_ACCESS_DBC_CONFIG).
+const bonusAccrual = createVerificationBonusAccrual({ pool, includeEarlyAccess: Boolean(tradingEarlyAccessConfig()) })
 const bonusPayouts = createVerificationBonusPayouts({ pool, connection })
 let bonusAccrualTask=null,nextBonusAccrualCheck=0
 async function observeVerificationBonuses(){
