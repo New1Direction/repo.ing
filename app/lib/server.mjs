@@ -4,6 +4,7 @@ import { createDatabasePool } from '../../src/database-pool.mjs'
 import { Connection, Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { chainAheadOfLedger, createReconciler } from '../../src/reconcile.mjs'
+import { tradingEarlyAccessConfig } from '../../src/early-access.mjs'
 import { createRpcMeter, registerRpcEndpoint } from '../../src/rpc-usage.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
@@ -261,11 +262,13 @@ export async function repositoryById(repoId) {
   } catch { return row }
 }
 
+// A contributor early access market's fees are read where EARLY_ACCESS_DBC_CONFIG is set: its builder claims them like any other
+// (docs/EARLY_ACCESS.md, step 6c). Without it the reconciler refuses it, which reads as UNAVAILABLE.
 export async function feeStatus(repoId) {
   const pool = database()
   const config = configAddress()
   if (!pool || !config) return { status: 'UNAVAILABLE', onchainCreatorFee: null }
-  try { return await createReconciler({ pool, connection: chain(), config }).reconcile(repoId) }
+  try { return await createReconciler({ pool, connection: chain(), config, earlyAccess: tradingEarlyAccessConfig() }).reconcile(repoId) }
   catch { return { status: 'UNAVAILABLE', onchainCreatorFee: null } }
 }
 

@@ -62,7 +62,8 @@ export function createReminderSender(env = process.env, fetchImpl = fetch) {
   }
 }
 
-export function createBuilderReminders({ pool, send, reconcile, secret, origin, now = Date.now }) {
+// earlyAccess: whether reconcile takes contributor early access markets (EARLY_ACCESS_DBC_CONFIG); only then are they reminded of.
+export function createBuilderReminders({ pool, send, reconcile, secret, origin, now = Date.now, earlyAccess = false }) {
   const link = (row, purpose) => `${origin}/builders/reminders#${purpose}=${reminderToken(row, purpose, secret)}`
   const withLock = async (id, work) => {
     const db = await pool.connect()
@@ -157,7 +158,7 @@ export function createBuilderReminders({ pool, send, reconcile, secret, origin, 
         // SOL markets only: a stock pair has no owner claim (src/stock-owner-claims.mjs), so never a "claim your fees" reminder.
         const { rows: markets } = await db.query(`select m.github_repo_id::text as "repoId",m.mint,r.full_name as "fullName",b.wallet
           from repo_beneficiaries b join markets m on m.github_repo_id=b.github_repo_id join repositories r on r.github_repo_id=m.github_repo_id
-          where b.github_user_id=$1 and m.early_access_end is null and m.status='confirmed' and m.launch_finality='finalized' and m.indexed_at is not null and m.quote_asset_id is null limit 100`, [row.github_user_id])
+          where b.github_user_id=$1 and (m.early_access_end is null or $2::boolean) and m.status='confirmed' and m.launch_finality='finalized' and m.indexed_at is not null and m.quote_asset_id is null limit 100`, [row.github_user_id, earlyAccess])
         const repos = []
         for (const market of markets) {
           const fees = await reconcile(market.repoId)

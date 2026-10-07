@@ -234,8 +234,9 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
 | Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it, and for the graduated trader: refused, "Contributor early access markets are not tradable on the site yet." |
 | Builder fee claim (`src/claim.mjs`), discovery (`discoverySummary`), builder allocation (`allocationRecord`), platform fee listing and sweep (`listPlatformFees`), `platformFeeRecord`, DBC partner fee collection | skipped (`early_access_end is null`) or refused before any chain call |
-| Builder reminders, graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped |
-| Builder dashboard (`app/lib/builders.mjs`) | not listed (its fee check is SOL-only) |
+| Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
+| Graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped (step 7) |
+| Builder dashboard (`app/lib/builders.mjs`) | listed, with their fee check, where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); not listed otherwise |
 | Verification bonus accrual (`src/verification-bonus-accrual.mjs`, candidates and market facts) | skipped, left undecided: its volume rule reads `trade_events`, which hook pools do not write yet, and a decided bonus is never re-evaluated |
 | `scripts/recover-expired-launch.mjs` | refused with a message (manual recovery of an early access launch is a later step; the worker still releases a proven expired attempt) |
 | Launch first-buy indexing in `/api/launch` | skipped |
@@ -307,7 +308,10 @@ Left for the next steps (each fails closed or is harmless until then):
 - The builder claim (`src/claim.mjs`) uses it for an early access market where `EARLY_ACCESS_DBC_CONFIG` is set; without it the
   claim is refused by name. The receipt check is unchanged (the claim emits the same event). Measured on mainnet's programs: 967
   bytes, about 51,000 to 54,000 compute units.
-- Not yet shown on the token page, the builder dashboard and reminders (6d): their fee status still refuses these markets.
+- Step 6d: the fee status the token page, the claim page and its preview, the builder dashboard, the reminders, the operator's
+  invites and the MCP earnings tool read (`feeStatus` in `app/lib/server.mjs`, the worker's reminder reconciler) takes these
+  markets where `EARLY_ACCESS_DBC_CONFIG` is set, so their earnings and claim show like any other's; the dashboard and the
+  reminders list them only then. Without the setting they read as unavailable and are left out, as before.
 
 ## The oracle's upkeep of the lists (step 5f)
 
@@ -345,7 +349,7 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
     node --test tests/early-access-reconcile.test.mjs  # the fee ledger watch and its alerts; reconcile with and without the setting (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, sizes and the launch API (PostgreSQL + validator)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port
