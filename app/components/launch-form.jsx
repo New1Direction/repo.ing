@@ -39,8 +39,9 @@ async function launchRequest(body) {
 // and registry _id (repo.hfId), and its review carries the community-launch disclaimer.
 // quoteOptions: the pairs the server offers this repository (src/quote-assets.mjs quoteOptions). The pair chooser appears only
 // when an eligible stock pair is among them; the launch then sends the chosen quoteAssetId and nothing else about it.
-// earlyAccess: { windows } (src/early-access.mjs EARLY_ACCESS_WINDOWS) while contributor early access can launch, else null. Offered
-// for a GitHub repository paired with SOL from its launch page (no trend or agent draft); the launch then sends earlyAccessSeconds.
+// earlyAccess: { windows, ramp, stars } (src/early-access.mjs EARLY_ACCESS_WINDOWS; src/early-access-rules.mjs earlyAccessOptionTerms)
+// while contributor early access can launch, else null. Offered for a GitHub repository paired with SOL from its launch page (no
+// trend or agent draft); the launch then sends earlyAccessSeconds, and fairRamp and starUnlocks when chosen (options of a window).
 // bundle: the raise terms (app/(site)/launch/[repo] bundleSettings) while Bundle launches can be opened, else null. Offered, like
 // early access, for a GitHub repository from its launch page; choosing it replaces the pair, early access and initial buy with
 // the raise's target and deadline, and opens a raise instead of launching (app/components/launch-bundle.jsx).
@@ -53,6 +54,8 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   // refuses it with its code. A pair is never dropped on the way, so a stock launch can never silently become SOL.
   const pairRequest = quoteAssetId === 'sol' ? {} : { quoteAssetId }
   const [earlyAccessSeconds, setEarlyAccessSeconds] = useState(null)
+  const [fairRamp, setFairRamp] = useState(false)
+  const [starUnlocks, setStarUnlocks] = useState(false)
   const [name, setName] = useState(draft?.tokenName ?? defaultTokenName(repo.name))
   const [symbol, setSymbol] = useState(draft?.tokenSymbol ?? defaultTokenSymbol(repo.name))
   const [stage, setStage] = useState('')
@@ -96,11 +99,17 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const opening = useOpenBundle({ repo, settings: bundle, token: { name, symbol, image: tokenImage?.image }, raise,
     ready: !imageBusy && Boolean(tokenImage) && Boolean(name) && Boolean(symbol) })
   const earlyAccessOffered = Boolean(earlyAccess?.windows?.length) && !model && !draft && trendRevision === undefined && !stockChosen && !bundleMode
-  const earlyAccessRequest = earlyAccessOffered && earlyAccessSeconds !== null ? { earlyAccessSeconds } : {}
+  const earlyAccessChosen = earlyAccessOffered && earlyAccessSeconds !== null
+  // The fair ramp holds the first buy to its starting limit (the server refuses more with the same words).
+  const ramp = earlyAccessChosen && fairRamp ? earlyAccess.ramp : null
+  const earlyAccessRequest = earlyAccessChosen ? { earlyAccessSeconds, ...ramp ? { fairRamp: true, ...starUnlocks ? { starUnlocks: true } : {} } : {} } : {}
+  const rampBuyError = ramp && quote && BigInt(quote.tokenBaseUnits) > BigInt(ramp.firstBuyMaxBaseUnits)
+    ? `With the fair ramp, the first buy can get at most ${ramp.startPercent}% of the supply. Enter less SOL.` : ''
   // An early access launch uses its own config: the flat 1.75% fee, without the launch fee.
   const launchFee = earlyAccessRequest.earlyAccessSeconds ? null : configLaunchFee
 
   useEffect(() => { if (needsDetails) setCustomizing(true) }, [needsDetails])
+  useEffect(() => { if (ramp && choice === '300') setChoice('200') }, [ramp, choice])
   useEffect(() => {
     let saved=null
     try { if(!draft) saved=readLaunchDraft(window.sessionStorage,repo.repoId) } catch {}
@@ -172,7 +181,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
 
   async function prepare(event) {
     event.preventDefault()
-    if (working.current || failure?.canRetry === false || quoting || quoteError || imageBusy || !tokenImage) return
+    if (working.current || failure?.canRetry === false || quoting || quoteError || rampBuyError || imageBusy || !tokenImage) return
     working.current = true; setBusy(true); setError(''); setFailure(null); setCopied(false)
     try {
       if (!available) throw new Error('Launch is temporarily unavailable. Please try again shortly.')
@@ -241,24 +250,27 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         </details>
         {bundleOffered && <LaunchModeChoice value={bundleMode} onChange={chosen => { setBundleChosen(chosen); setError('') }}/>}
         {stockPair && !bundleMode && <LaunchPair pair={stockPair} symbol={symbol} value={quoteAssetId} onChange={id => { setQuoteAssetId(id); setPairDropped(false); setError('') }}/>}
-        {earlyAccessOffered && <LaunchEarlyAccess windows={earlyAccess.windows} value={earlyAccessSeconds} onChange={seconds => { setEarlyAccessSeconds(seconds); setError('') }}/>}
+        {earlyAccessOffered && <LaunchEarlyAccess terms={earlyAccess} value={earlyAccessSeconds} onChange={seconds => { setEarlyAccessSeconds(seconds); setError('') }}
+          fairRamp={fairRamp} starUnlocks={starUnlocks} onFairRamp={on => { setFairRamp(on); if (!on) setStarUnlocks(false); setError('') }}
+          onStarUnlocks={on => { setStarUnlocks(on); setError('') }}/>}
         {bundleMode ? <BundleRaiseFields settings={bundle} value={raise} onChange={setRaise}/> : stockChosen ? <p className="launch-buy-hint launch-pair-buy-note" role="note">Stock-paired launches start without an initial buy. You can buy right after the launch.</p> : <>
         <label className="field-label" htmlFor="initial-buy">Initial buy <span className="muted">(optional)</span></label>
-        <div className="launch-buy-presets" role="group" aria-label="Initial token allocation">
-          {[[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]].map(([value, label]) =>
+        <div className={`launch-buy-presets${ramp ? ' launch-buy-presets-ramp' : ''}`} role="group" aria-label="Initial token allocation">
+          {(ramp ? [[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', 'Max 2%' ]] : [[ 'none', 'No buy' ], [ '100', '1%' ], [ '200', '2%' ], [ '300', 'Max 3%' ]]).map(([value, label]) =>
             <button key={value} type="button" aria-pressed={choice === value} onClick={() => { setChoice(value); setError('') }}>{label}</button>)}
         </div>
         <div className="input-suffix"><input id="initial-buy" placeholder={quoting ? 'Getting quote…' : '0.00'} inputMode="decimal" autoComplete="off" value={initialBuy}
           onChange={e => { setCustomBuy(e.target.value); setChoice('custom') }} aria-describedby="initial-buy-hint"/><span>SOL</span></div>
         <div className="field-hint">{wallet ? balance?.wallet === wallet ? balance.unavailable ? 'Wallet balance temporarily unavailable.' : `Wallet balance: ${sol(balance.lamports)}` : 'Checking wallet SOL balance…' : 'Connect your wallet to review launch costs.'}</div>
-        <div id="initial-buy-hint" className="launch-buy-hint">Buy up to 3% of supply in the launch transaction. This limit applies to the initial buy; later market purchases are separate.{launchFee?.launcherBuyPercent && ` Your initial buy pays the regular ${launchFee.launcherBuyPercent} fee; the launch fee applies only to later trades.`}</div>
+        <div id="initial-buy-hint" className="launch-buy-hint">{ramp ? `Buy up to ${ramp.startPercent}% of supply in the launch transaction: the fair ramp's starting limit. Later buys by every wallet follow the fair ramp.`
+          : 'Buy up to 3% of supply in the launch transaction. This limit applies to the initial buy; later market purchases are separate.'}{launchFee?.launcherBuyPercent && ` Your initial buy pays the regular ${launchFee.launcherBuyPercent} fee; the launch fee applies only to later trades.`}</div>
         <div className="launch-buy-quote" role="status" aria-live="polite">
           {quoting ? 'Calculating your initial buy…' : quote ? <>
             <strong>≈ {formatUnits(quote.tokenBaseUnits, 6, 0)} tokens · {(quote.supplyBps / 100).toFixed(2)}% of supply</strong>
             <span>Trading fee included: {sol(quote.tradingFeeLamports)}</span>
           </> : !quoteError ? 'No token purchase. You pay only launch account costs and the network fee.' : null}
         </div>
-        {quoteError && <div className="inline-error" role="alert">{quoteError}</div>}
+        {(quoteError || rampBuyError) && <div className="inline-error" role="alert">{quoteError || rampBuyError}</div>}
         </>}
       </fieldset>
       <div className="launch-side">{bundleMode ? <BundleNotes settings={bundle}/> : <>
@@ -278,12 +290,12 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
         <div><dt>Network fee{BigInt(review.costs.priorityFee ?? '0') > 0n && <small>Includes {sol(review.costs.priorityFee)} priority fee</small>}</dt><dd>{sol(review.costs.networkFee)}</dd></div>
         <div className="launch-review-total"><dt>Estimated total</dt><dd>{sol(review.costs.total)}</dd></div></dl>
       <p>The launch and any initial buy happen together. The priority fee helps it land when Solana is busy. Check the final amount in your wallet.</p>
-      {review.earlyAccess && <p className="launch-review-early-access" role="note"><strong>Contributor early access until {new Date(review.earlyAccess.end).toLocaleString()}.</strong> Until then only this repository&apos;s contributors with a linked wallet can buy; anyone can sell. {review.earlyAccess.linkedWallets === 1 ? '1 contributor has' : `${review.earlyAccess.linkedWallets} contributors have`} a linked wallet now.{review.quote && !review.earlyAccess.launcherListed ? ' After your initial buy, your wallet can sell but not buy until the window ends.' : ''}</p>}
+      {review.earlyAccess && <p className="launch-review-early-access" role="note"><strong>Contributor early access until {new Date(review.earlyAccess.end).toLocaleString()}.</strong> Until then only this repository&apos;s contributors with a linked wallet can buy; anyone can sell. {review.earlyAccess.linkedWallets === 1 ? '1 contributor has' : `${review.earlyAccess.linkedWallets} contributors have`} a linked wallet now.{review.quote && !review.earlyAccess.launcherListed ? ' After your initial buy, your wallet can sell but not buy until the window ends.' : ''}{review.earlyAccess.ramp ? ` Fair ramp: one wallet can hold at most ${review.earlyAccess.ramp.startBps / 100}% of the supply at first, rising to ${review.earlyAccess.ramp.endCapBps / 100}% as the curve sells.` : ''}{Number(review.earlyAccess.ramp?.starStep) > 0 ? ` Star unlocks: every ${review.earlyAccess.ramp.starStep} new GitHub stars add ${review.earlyAccess.ramp.starBonusBps / 100}%, up to ${review.earlyAccess.ramp.starMaxBonusBps / 100}%.` : ''}</p>}
       {model && <p className="launch-review-disclaimer" role="note"><strong>{HF_DISCLAIMER}</strong></p>}
       {expired && <p role="status">This review expired. Refresh it for a fresh transaction, then approve it in your wallet right away.</p>}
       <div className="launch-review-actions"><button type="button" className="button primary" onClick={approve} disabled={busy || expired || wallet !== review.wallet}>{busy ? stage : 'Approve in wallet'}</button>
         <button type="button" className="button outline" disabled={busy} onClick={() => edit(expired)}>{expired ? 'Refresh review' : 'Edit launch'}</button></div>
-    </section> : failure?.code === COPY_REFUSED ? null : failure?.canRetry === false ? <button type="button" className="button primary launch-submit" disabled={busy} onClick={checkLaunchStatus}>{busy?'Checking status…':'Check launch status'}</button> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : failure ? 'Refresh review' : 'Review launch'}</button>
+    </section> : failure?.code === COPY_REFUSED ? null : failure?.canRetry === false ? <button type="button" className="button primary launch-submit" disabled={busy} onClick={checkLaunchStatus}>{busy?'Checking status…':'Check launch status'}</button> : <><button type="submit" className="button primary launch-submit" disabled={busy || quoting || !!quoteError || !!rampBuyError || imageBusy || !tokenImage || !name || !symbol}>{busy ? stage : imageBusy ? 'Preparing image…' : failure ? 'Refresh review' : 'Review launch'}</button>
       <p className="form-fineprint">Review the total before signing. No platform launch fee.</p></>}
     {!bundleMode && <TransactionStatus stage={stage} error={error}/>}
     {failure && !bundleMode && <div className="launch-recovery"><p className="form-fineprint">{failure.code===COPY_REFUSED?'This repository cannot have its own market on repo.ing.':failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
@@ -314,8 +326,9 @@ function LaunchPair({ pair, symbol, value, onChange }) {
 }
 
 // Contributor early access (docs/EARLY_ACCESS.md): off (the default) or a window the launcher picks. During it only the
-// repository's contributors with a linked wallet can buy; anyone can sell.
-function LaunchEarlyAccess({ windows, value, onChange }) {
+// repository's contributors with a linked wallet can buy; anyone can sell. With a window, two options (both off by default): the
+// fair ramp (a limit on what one wallet holds, rising as the curve sells) and star unlocks (new GitHub stars raise that limit).
+export function LaunchEarlyAccess({ terms: { windows, ramp, stars }, value, onChange, fairRamp, starUnlocks, onFairRamp, onStarUnlocks }) {
   const chosen = windows.find(window => window.seconds === value)
   return <fieldset className="launch-early-access">
     <legend className="field-label">Contributor early access <span className="muted">(optional)</span></legend>
@@ -325,5 +338,19 @@ function LaunchEarlyAccess({ windows, value, onChange }) {
     </div>
     <p className="launch-buy-hint">{chosen ? `For the first ${chosen.label}, only this repository's contributors with a linked wallet can buy. Anyone can sell at any time.`
       : 'Choose a window to let only this repository\'s contributors buy first. Anyone can sell at any time.'} Contributors link a wallet at <Link href="/contributors/link">/contributors/link</Link>.</p>
+    {chosen && <div className="launch-early-access-options" role="group" aria-label="Early access options">
+      <label className={`launch-pair-option launch-early-access-option${fairRamp ? ' is-selected' : ''}`}>
+        <input type="checkbox" checked={fairRamp} onChange={event => onFairRamp(event.target.checked)}/>
+        <span className="launch-pair-symbol">Fair ramp</span>
+        <small>One wallet can hold at most {ramp.startPercent}% of the supply at first. The limit rises to {ramp.endPercent}% as the curve
+          sells and ends at {ramp.progressPercent}% curve progress. It also holds your initial buy to {ramp.startPercent}%.</small>
+      </label>
+      <label className={`launch-pair-option launch-early-access-option${fairRamp && starUnlocks ? ' is-selected' : ''}`}>
+        <input type="checkbox" checked={fairRamp && starUnlocks} disabled={!fairRamp} onChange={event => onStarUnlocks(event.target.checked)}/>
+        <span className="launch-pair-symbol">Star unlocks</span>
+        <small>Every {stars.step} new GitHub stars raise each wallet&apos;s limit by {stars.bonusPercent}% of the supply, up to
+          {' '}{stars.maxPercent}%. {fairRamp ? 'Stars are checked every 15 minutes.' : 'Choose the fair ramp first.'}</small>
+      </label>
+    </div>}
   </fieldset>
 }

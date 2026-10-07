@@ -9,6 +9,7 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS } from '
 import { EARLY_ACCESS_CHAIN_MARGIN_SECONDS, UNREADABLE_SIGNED_LAUNCH, earlyAccessEnd, prepareVersionedLaunchSigning, readSignedVersionedLaunch } from '../src/early-access-launch.mjs'
 import { assertEarlyAccessConfigTransaction, buildEarlyAccessConfigTransaction, earlyAccessLookupAddresses } from '../src/early-access-config.mjs'
 import { CONTRIBUTOR_ERRORS, contributorsFromPage, fetchRepositoryContributors, resetContributorPause } from '../src/github-contributors.mjs'
+import { earlyAccessOptionTerms } from '../src/early-access-rules.mjs'
 import { EARLY_ACCESS_REFUSALS, contributorSnapshotStep, earlyAccessGuard, earlyAccessRequest } from '../app/lib/early-access-launch.mjs'
 import { DefinitiveLaunchError, isVersionedLaunch, unsignedLaunchBase64 } from '../src/meteora-launch.mjs'
 import { LIGHTHOUSE_PROGRAM, MAX_VERSIONED_LAUNCH_ASSERTIONS, matchesReviewedVersionedLaunch } from '../src/launch-wallet-assertions.mjs'
@@ -19,7 +20,7 @@ import { handleBuyGet } from '../app/lib/solana-actions.mjs'
 import { decodeLaunchTransaction } from '../app/lib/launch-transaction.mjs'
 import { POST as launchRoute } from '../app/api/launch/route.js'
 
-const { LaunchForm } = await appModule('app/components/launch-form.jsx')
+const { LaunchEarlyAccess, LaunchForm } = await appModule('app/components/launch-form.jsx')
 const WINDOWS = EARLY_ACCESS_WINDOWS.map(window => ({ ...window }))
 const refusal = key => error => error instanceof EarlyAccessError && error.message === EARLY_ACCESS_REFUSALS[key]
 const body = extra => ({ action: 'prepare', repoId: '1296269', repositoryUrl: 'https://github.com/octocat/Hello-World', tokenName: 'Hello',
@@ -310,15 +311,34 @@ test('the launch form offers early access only when it can launch, for a GitHub 
   const repo = { repoId: '1296269', owner: 'octocat', name: 'Hello-World', fullName: 'octocat/Hello-World', source: 'github' }
   const render = props => html(h(LaunchForm, { repo, available: true, quoteOptions: null, ...props }), { wallet: true })
   assert.doesNotMatch(render({}), /Contributor early access/, 'switched off: not offered')
-  const offered = render({ earlyAccess: { windows: WINDOWS } })
+  const offered = render({ earlyAccess: { windows: WINDOWS, ...earlyAccessOptionTerms() } })
   assert.match(offered, /<legend class="field-label">Contributor early access/)
   for (const window of WINDOWS) assert.match(offered, new RegExp(`>${window.label}</button>`))
   assert.match(offered, /aria-pressed="true"[^>]*>Off<\/button>/)
   assert.match(offered, /only this repository&#x27;s contributors buy first\. Anyone can sell at any time\./)
   assert.match(offered, /href="\/contributors\/link"/)
+  assert.doesNotMatch(offered, /Fair ramp|Star unlocks/, 'the options come with a window')
   assert.doesNotMatch(render({ earlyAccess: { windows: WINDOWS }, trendRevision: 4 }), /Contributor early access/, 'not on a trend launch')
   assert.doesNotMatch(render({ earlyAccess: { windows: WINDOWS }, draft: { token: 't', tokenName: 'A', tokenSymbol: 'A' } }), /Contributor early access/, 'not on an agent draft')
   assert.doesNotMatch(render({ earlyAccess: { windows: WINDOWS }, repo: { ...repo, source: 'huggingface', hfId: 'x' } }), /Contributor early access/, 'not for a model')
+})
+
+test('with a window the form offers the fair ramp, and star unlocks only with it, with the terms the launch sets', () => {
+  const terms = { windows: WINDOWS, ...earlyAccessOptionTerms() }
+  assert.deepEqual([terms.ramp, terms.stars], [{ startPercent: 2, endPercent: 10, progressPercent: 50, firstBuyMaxBaseUnits: '20000000000000' },
+    { step: 100, bonusPercent: 0.5, maxPercent: 5 }])
+  const render = props => html(h(LaunchEarlyAccess, { terms, value: 3600, onChange() {}, onFairRamp() {}, onStarUnlocks() {}, fairRamp: false, starUnlocks: false, ...props }))
+  const off = render({})
+  assert.match(off, /aria-label="Early access options"/)
+  assert.match(off, /Fair ramp<\/span><small>One wallet can hold at most 2% of the supply at first\. The limit rises to 10% as the curve\s+sells and ends at 50% curve progress\. It also holds your initial buy to 2%\./)
+  assert.match(off, /<input type="checkbox"\/><span class="launch-pair-symbol">Fair ramp/)
+  assert.match(off, /<input type="checkbox" disabled=""\/><span class="launch-pair-symbol">Star unlocks<\/span><small>Every 100 new GitHub stars raise each wallet&#x27;s limit by 0\.5% of the supply, up to\s*5%\. Choose the fair ramp first\./)
+  const both = render({ fairRamp: true, starUnlocks: true })
+  assert.match(both, /<input type="checkbox" checked=""\/><span class="launch-pair-symbol">Fair ramp/)
+  assert.match(both, /<input type="checkbox" checked=""\/><span class="launch-pair-symbol">Star unlocks<\/span>.*Stars are checked every 15 minutes\./s)
+  assert.equal((both.match(/is-selected/g) ?? []).length, 2)
+  assert.doesNotMatch(render({ starUnlocks: true }), /checked=""/, 'star unlocks without the fair ramp is never shown as chosen')
+  assert.doesNotMatch(render({ value: null }), /Fair ramp/, 'no window: no options')
 })
 
 test('the signed v0 launch the page posts back is read only as v0; anything else is a message the page can show', () => {

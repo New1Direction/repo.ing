@@ -22,3 +22,10 @@
 .launch-early-access .launch-buy-hint{margin:10px 0 0}
 .launch-review-early-access strong{color:var(--text)}
 @media(max-width:520px){.launch-early-access .launch-buy-presets{grid-template-columns:repeat(3,minmax(0,1fr))}}
+/* The early access options (fair ramp, star unlocks): checkbox cards in the pair chooser's style. */
+.launch-early-access-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.launch-early-access-option:has(input:disabled){cursor:default;opacity:.6}
+.launch-early-access-option:has(input:disabled):hover{border-color:var(--border-strong)}
+@media(max-width:700px){.launch-early-access-options{grid-template-columns:1fr}}
+/* With the fair ramp the first buy has three presets (No buy, 1%, Max 2%): three equal columns. */
+.launch-buy-presets.launch-buy-presets-ramp{grid-template-columns:repeat(3,minmax(0,1fr))}

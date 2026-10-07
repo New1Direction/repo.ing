@@ -3,7 +3,7 @@ import BN from 'bn.js'
 export const INITIAL_BUY_CAP_BPS = 300
 const MAX_U64 = 18446744073709551615n
 // The fixed mainnet config mints one billion base tokens with six decimals.
-const FIXED_SUPPLY_BASE_UNITS = 1_000_000_000_000_000n
+export const FIXED_SUPPLY_BASE_UNITS = 1_000_000_000_000_000n
 
 // The launch buy is the pool's first swap, in the pool-creation transaction. On a config with
 // enableFirstSwapWithMinFee the program charges it the scheduler's minimum fee (1.75% for the launch-fee

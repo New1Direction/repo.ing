@@ -1,6 +1,7 @@
 import BN from 'bn.js'
 import { Rounding, getDeltaAmountBaseUnsigned, getDeltaAmountQuoteUnsigned, getNextSqrtPriceFromInput } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { BPS, RULES } from './early-access-hook.mjs'
+import { FIXED_SUPPLY_BASE_UNITS } from './launch-buy.mjs'
 
 // The two options of a contributor early access launch (docs/EARLY_ACCESS.md; owner decisions 2026-10-06 and 2026-10-07), set in
 // the hook's mint config by init_mint and never changed: the fair ramp (one wallet holds at most 2% of the supply at the start,
@@ -16,6 +17,13 @@ export function hookRules({ fairRamp = false, starUnlocks = false } = {}) {
   if (starUnlocks && !fairRamp) throw Error('Star unlocks needs the fair ramp')
   return RULES.EARLY_ACCESS | (fairRamp ? RULES.FAIR_RAMP : 0) | (starUnlocks ? RULES.STAR_UNLOCKS : 0)
 }
+// The options' terms as the launch form and the token page show them, in plain numbers (the form is a client component).
+export const earlyAccessOptionTerms = () => ({
+  ramp: { startPercent: FAIR_RAMP.startBps / 100, endPercent: FAIR_RAMP.endCapBps / 100, progressPercent: FAIR_RAMP.progressPercent,
+    firstBuyMaxBaseUnits: (FIXED_SUPPLY_BASE_UNITS * BigInt(FAIR_RAMP.startBps) / BigInt(BPS)).toString() },
+  stars: { step: STAR_UNLOCKS.starStep, bonusPercent: STAR_UNLOCKS.starBonusBps / 100, maxPercent: STAR_UNLOCKS.starMaxBonusBps / 100 },
+})
+
 // A stamped market's rules: hook_rules, or early access alone for a row read without it.
 export const marketHookRules = market => market?.hookRules ?? (market?.earlyAccessEnd ? RULES.EARLY_ACCESS : null)
 export const hasFairRamp = rules => Boolean(rules & RULES.FAIR_RAMP)

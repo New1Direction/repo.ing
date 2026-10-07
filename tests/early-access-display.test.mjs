@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { Keypair } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
-import { earlyAccessNotice } from '../app/lib/early-access-display.mjs'
+import { earlyAccessNotice, fairRampNotice } from '../app/lib/early-access-display.mjs'
 import { marketTokenMetrics, tokenAccountFilters } from '../app/lib/market-metrics.mjs'
 
 const { EarlyAccessNote } = await appModule('app/components/early-access-note.jsx')
@@ -28,6 +28,22 @@ test('the token page note: contributors who linked a wallet can buy until the en
   assert.match(out, /Contributor\? <a href="\/contributors\/link">Link your\s+wallet<\/a>\./)
   assert.equal(html(h(EarlyAccessNote, { market: market('2026-10-07T11:00:00Z'), now: NOW })), '')
   assert.equal(html(h(EarlyAccessNote, { market: { mint: 'x' }, now: NOW })), '')
+})
+
+test('the fair ramp note: on the curve, after the window too, with star unlocks when chosen; gone once the curve migrates', () => {
+  const ended = rules => ({ ...market('2026-10-07T11:00:00Z'), hookRules: rules })
+  assert.deepEqual(fairRampNotice(ended(3)), { ramp: { startPercent: 2, endPercent: 10, progressPercent: 50, firstBuyMaxBaseUnits: '20000000000000' } })
+  assert.deepEqual(fairRampNotice(ended(7)).stars, { step: 100, bonusPercent: 0.5, maxPercent: 5 })
+  for (const m of [ended(1), ended(null), { ...ended(3), graduated: true }, { ...ended(7), migrated: true }, { hookRules: 3 }, null]) {
+    assert.equal(fairRampNotice(m), null, JSON.stringify(m))
+  }
+  const out = html(h(EarlyAccessNote, { market: { ...market('2026-10-07T12:15:00Z'), hookRules: 7 }, now: NOW }))
+  assert.equal((out.match(/class="early-access-note"/g) ?? []).length, 2, 'the window and the ramp')
+  assert.match(out, /<strong>Fair ramp<\/strong> · One wallet can hold at most 2% of\s+the supply at first, rising to 10% as the curve sells\. No limit from 50% curve progress\./)
+  assert.match(out, /Star unlocks: every 100 new GitHub stars since the launch add 0\.5%, up\s+to 5%\./)
+  const after = html(h(EarlyAccessNote, { market: ended(3), now: NOW }))
+  assert.match(after, /Fair ramp/)
+  assert.doesNotMatch(after, /Contributor early access|Star unlocks/)
 })
 
 test('holders of a Token-2022 mint are read from Token-2022 accounts by their account type, not their size', async () => {
