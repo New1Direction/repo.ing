@@ -9,6 +9,27 @@ export const agentRequestLimits = pgTable('agent_request_limits', {
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 }, table => [check('agent_request_limits_hits_check', sql`${table.hits} > 0`), index('agent_request_limits_expiry').on(table.expiresAt)])
 
+// Migration 0062 (src/repo-inference-handoff.mjs): sign-in handoffs for repo.ing AI credits; a code's hash, single use.
+export const authHandoffs = pgTable('auth_handoffs', {
+  handoffId: varchar('handoff_id', { length: 32 }).primaryKey(),
+  codeHash: char('code_hash', { length: 64 }).notNull().unique(),
+  audience: varchar('audience', { length: 32 }).notNull(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  githubLogin: varchar('github_login', { length: 39 }).notNull(),
+  codeChallenge: varchar('code_challenge', { length: 43 }).notNull(),
+  verifiedAt: timestamp('verified_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  consumedAt: timestamp('consumed_at', { withTimezone: true }),
+}, table => [
+  check('auth_handoffs_audience_check', sql`${table.audience} in ('repo-inference')`),
+  check('auth_handoffs_code_check', sql`${table.codeHash} ~ '^[0-9a-f]{64}$' and ${table.codeChallenge} ~ '^[A-Za-z0-9_-]{43}$'`),
+  check('auth_handoffs_ids_check', sql`${table.githubRepoId} > 0 and ${table.githubUserId} > 0 and ${table.handoffId} ~ '^[A-Za-z0-9_-]{16,32}$'`),
+  check('auth_handoffs_expiry_check', sql`${table.expiresAt} > ${table.createdAt} and ${table.expiresAt} <= ${table.createdAt} + interval '10 minutes'`),
+  index('auth_handoffs_expires_idx').on(table.expiresAt),
+])
+
 export const builderReminders = pgTable('builder_reminders', {
   githubUserId: bigint('github_user_id', {mode:'bigint'}).primaryKey(),
   email: text('email').notNull(), revision: varchar('revision',{length:32}).notNull(),

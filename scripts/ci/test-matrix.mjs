@@ -89,6 +89,9 @@ export const PINNED_GROUPS = [
   // Bundle launches: migration 0060 from 0059, the market stamp and the bundles table, and the partner-fee paths that skip bundle
   // markets (docs/BUNDLE_LAUNCH.md).
   { files: ['bundles-db'], databaseUrl: launchtest('repoing_bundles_test'), selfManaged: true },
+  // The repo.ing AI credits sign-in handoff: migration 0062, single-use codes with PKCE and the start, approve and token routes
+  // (src/repo-inference-handoff.mjs).
+  { files: ['repo-inference-handoff-db'], databaseUrl: launchtest('repoing_handoff_test'), selfManaged: true },
   // Bundle launches through the worker on the bundle validator (scripts/ci/start-bundle-validator.sh, started when none is running):
   // the server-signed launch, its evidence, the vault, routing, a failed raise and graduation.
   { files: ['bundle-launch-chain'], databaseUrl: launchtest('repoing_bundle_launch_chain_test'), selfManaged: true },
