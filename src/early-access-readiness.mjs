@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
+import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID, decodePlatform, platformAddress, programDataAddress } from './early-access-hook.mjs'
-import { EARLY_ACCESS_FEE_CLAIMER, earlyAccessLookupAddresses, readEarlyAccessConfig } from './early-access-config.mjs'
+import { EARLY_ACCESS_FEE_CLAIMER, assertEarlyAccessConfig, decodeEarlyAccessConfig, earlyAccessLookupAddresses } from './early-access-config.mjs'
 import { EARLY_ACCESS_LAUNCHES_READY } from './early-access.mjs'
 import { MIN_ORACLE_LAMPORTS } from './early-access-oracle.mjs'
 import { allocationConfigs } from './builder-allocation.mjs'
+import { redactor } from './stock-readiness.mjs'
 
 // The contributor early access go-live checklist (docs/EARLY_ACCESS.md, step 8): PASS / FAIL / TODO with a one-line reason each,
 // then the switches ON or OFF. READ-ONLY: mainnet accounts, and with a database a few catalog SELECTs in a READ ONLY transaction
@@ -19,6 +21,9 @@ export const COMMITMENT = 'finalized'
 // (tests/early-access-readiness.test.mjs checks them against the file).
 export const HOOK_BUILD = Object.freeze({ bytes: 379_392, sha256: 'a99d53f28106a76407a664861d9bb7718a0d6c1d4b2b1d5bd6a4cd035ef99ab0' })
 export const CREATOR = new PublicKey('FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1') // admin: the launch co-signer
+// The live SOL launch-fee config the early access config must equal but for the fee and token type (scripts/create-early-access-config.mjs).
+export const REFERENCE_CONFIG = new PublicKey('8TXNGgx6g5TcsVCYt7wz3cAxJkynzzBZWXeQtXZaz6A3')
+const DBC_PROGRAM_ID = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 // Enough for a day of list upkeep and closes; the oracle adds nothing below MIN_ORACLE_LAMPORTS (src/early-access-oracle.mjs).
 export const ORACLE_TARGET_LAMPORTS = 50_000_000
 // The owner's question for step 8, answered read-only on mainnet (docs/EARLY_ACCESS.md, "Meteora's keeper").
@@ -46,7 +51,32 @@ export function lookupTableProblem(table, config) {
   return JSON.stringify(want) === JSON.stringify(have) ? null : `holds ${have.length} addresses, not the ${want.length} shared keys`
 }
 
+// RPC and database URLs, their credentials, query values and path tokens never reach the output (src/stock-readiness.mjs).
 export async function checkEarlyAccessReadiness({ env = {}, connection, db = null, dbError = null, oracle = null }) {
+  const redact = redactor(env)
+  try {
+    const report = await checks({ env, connection, db, dbError, oracle })
+    return { ...report, items: report.items.map(entry => ({ ...entry, reason: redact(entry.reason).slice(0, 300) })) }
+  } catch (error) {
+    return { ok: false, items: [item(STATUS.FAIL, 'Chain reads', `could not read mainnet: ${redact(error?.message ?? error).slice(0, 200)}`)] }
+  }
+}
+
+// The early access config read from chain and checked: the launcher's checks (our hook, the partner wallet claims, the creator signer
+// gets the leftover, the curve and fee), and equal to the live SOL launch-fee config in every field but the fee and token type.
+async function configProblem(connection, config) {
+  const [info, referenceInfo] = await Promise.all([connection.getAccountInfo(config, COMMITMENT), connection.getAccountInfo(REFERENCE_CONFIG, COMMITMENT)])
+  if (!info?.owner.equals(DBC_PROGRAM_ID)) return 'no DBC config at this address'
+  if (!referenceInfo?.owner.equals(DBC_PROGRAM_ID)) return `the reference config ${REFERENCE_CONFIG.toBase58()} is missing`
+  const coder = new DynamicBondingCurveClient(connection, COMMITMENT).state.getProgram().coder
+  try {
+    assertEarlyAccessConfig(decodeEarlyAccessConfig(info.data, coder), { feeClaimer: EARLY_ACCESS_FEE_CLAIMER, leftoverReceiver: CREATOR,
+      reference: coder.accounts.decode('poolConfig', referenceInfo.data) })
+    return null
+  } catch (error) { return error.message }
+}
+
+async function checks({ env, connection, db, dbError, oracle }) {
   const items = []
   const genesis = await connection.getGenesisHash()
   if (genesis !== MAINNET_GENESIS) return { ok: false, items: [item(STATUS.FAIL, 'Network', 'the RPC is not Solana mainnet')] }
@@ -77,10 +107,9 @@ export async function checkEarlyAccessReadiness({ env = {}, connection, db = nul
   if (!config) items.push(item(env.EARLY_ACCESS_DBC_CONFIG ? STATUS.FAIL : STATUS.TODO, 'Config', env.EARLY_ACCESS_DBC_CONFIG
     ? 'EARLY_ACCESS_DBC_CONFIG is not a public key' : 'EARLY_ACCESS_DBC_CONFIG is not set (runbook step 3)'))
   else {
-    try {
-      await readEarlyAccessConfig(connection, config, { leftoverReceiver: CREATOR, commitment: COMMITMENT })
-      items.push(item(STATUS.PASS, 'Config', `${config.toBase58()}: the reviewed profile, our hook, the partner wallet claims, the creator signer gets the leftover`))
-    } catch (error) { items.push(item(STATUS.FAIL, 'Config', `${config.toBase58()}: ${error.message}`)) }
+    const problem = await configProblem(connection, config)
+    items.push(problem ? item(STATUS.FAIL, 'Config', `${config.toBase58()}: ${problem}`)
+      : item(STATUS.PASS, 'Config', `${config.toBase58()}: our hook, the partner wallet claims, the creator signer gets the leftover, the live config but its fee and token type`))
   }
   if (!config) items.push(item(STATUS.TODO, 'Lookup table', 'needs the config first'))
   else if (!table) items.push(item(env.EARLY_ACCESS_LOOKUP_TABLE ? STATUS.FAIL : STATUS.TODO, 'Lookup table', env.EARLY_ACCESS_LOOKUP_TABLE
@@ -89,11 +118,13 @@ export async function checkEarlyAccessReadiness({ env = {}, connection, db = nul
     const problem = lookupTableProblem((await connection.getAddressLookupTable(table, { commitment: COMMITMENT })).value, config)
     items.push(item(problem ? STATUS.FAIL : STATUS.PASS, 'Lookup table', problem ? `${table.toBase58()}: ${problem}` : `${table.toBase58()}: active, the shared keys`))
   }
+  // A market launched while the config is not listed never gets the 1% allocation, and a list that does not parse stops every launch.
   if (config) {
-    let listed = false
-    try { listed = allocationConfigs(env.BUILDER_ALLOCATION_CONFIGS ?? '').includes(config.toBase58()) } catch { listed = false }
-    items.push(item(listed ? STATUS.PASS : STATUS.TODO, 'Builder allocation', listed ? 'BUILDER_ALLOCATION_CONFIGS lists the config'
-      : 'add the config to BUILDER_ALLOCATION_CONFIGS before launches open: a market launched without it gets no 1% allocation'))
+    let listed = null
+    try { listed = allocationConfigs(env.BUILDER_ALLOCATION_CONFIGS ?? '').includes(config.toBase58()) } catch { listed = null }
+    items.push(listed === null ? item(STATUS.FAIL, 'Builder allocation', 'BUILDER_ALLOCATION_CONFIGS does not parse (comma-separated public keys)')
+      : item(listed ? STATUS.PASS : STATUS.FAIL, 'Builder allocation', listed ? 'BUILDER_ALLOCATION_CONFIGS lists the config'
+        : 'BUILDER_ALLOCATION_CONFIGS must list the config before launches open: a market launched without it gets no 1% allocation'))
   }
   items.push(await checkDatabase({ db, dbError }))
   items.push(item(STATUS.PASS, 'Meteora keeper', `checked on mainnet ${KEEPER_CHECKED.on}: ${KEEPER_CHECKED.summary}; MIGRATION_OVERDUE watches each market`))

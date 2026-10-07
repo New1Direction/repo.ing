@@ -428,7 +428,7 @@ function switchItems({ env, launchesReady }) {
 // ---------- report ----------
 // Secret-bearing settings are never printed: the RPC and database URLs whole, the database password, and the RPC's
 // credentials, query values and path tokens (providers put API keys in either).
-function redactor(env) {
+export function redactor(env) {
   const secrets = new Set()
   const decoded = text => { try { return decodeURIComponent(text) } catch { return text } }
   const parts = (value, rpc) => {

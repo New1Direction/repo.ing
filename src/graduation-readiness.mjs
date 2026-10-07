@@ -96,6 +96,12 @@ async function readPassLedgers(pool,{earlyAccess=false}={}) {
 // A full curve that is still not migrated this long after it filled is reported once, by message (docs/EARLY_ACCESS.md, step 8):
 // Meteora's keeper migrates curves, and migration is permissionless, so anyone can still do it.
 export const MIGRATION_OVERDUE='MIGRATION_OVERDUE',MIGRATION_OVERDUE_MS=30*60_000
+// The alert's detail for a full curve not migrated overdueMs after it filled (by the chain's time), or null.
+export function migrationOverdue(state,market,{overdueMs=MIGRATION_OVERDUE_MS,now=Date.now}={}) {
+  const waiting=state.curveFinishedAt&&!state.migration?Date.parse(state.chainTime)-Date.parse(state.curveFinishedAt):NaN
+  return waiting>=overdueMs?{fullName:market.fullName,curve:state.curve,curveFinishedAt:state.curveFinishedAt,minutes:Math.floor(waiting/60000),
+    observedAt:state.checkedAt,delivery:pendingDelivery(now())}:null
+}
 export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,holdMs=RECONCILE_HOLD_MS,migrationOverdueMs=MIGRATION_OVERDUE_MS,
   earlyAccess=null,reconciler=createReconciler({pool,connection,config,earlyAccess,earlyAccessGraduated:true}),readState=readGraduationState,
   readLedgers=pool=>readPassLedgers(pool,{earlyAccess:Boolean(earlyAccess)})}) {
@@ -117,9 +123,8 @@ export function createGraduationMonitor({pool,connection,verification,config,env
       try {
         const {rows:[previous]}=await db.query('select * from graduation_observations where github_repo_id=$1',[repoId])
         const state=await readState({connection,verification,config,market,env,db:pool,curveReads,earlyAccess})
-        const waiting=state.curveFinishedAt&&!state.migration?Date.parse(state.chainTime)-Date.parse(state.curveFinishedAt):-1
-        if(waiting>=migrationOverdueMs)await notify(MIGRATION_OVERDUE,state.curveFinishedAt,{fullName:market.fullName,curve:state.curve,
-          curveFinishedAt:state.curveFinishedAt,minutes:Math.floor(waiting/60000),observedAt:state.checkedAt,delivery:pendingDelivery(now())})
+        const overdue=migrationOverdue(state,market,{overdueMs:migrationOverdueMs,now})
+        if(overdue)await notify(MIGRATION_OVERDUE,state.curveFinishedAt,overdue)
         const {rows:[existing]}=await db.query('select signature from graduation_events where github_repo_id=$1',[repoId])
         if(existing&&!state.migration)throw Error('GRADUATION_STATE_DISAGREEMENT')
         const reconciliation=await reconciler.reconcile(repoId)

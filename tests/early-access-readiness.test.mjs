@@ -8,6 +8,8 @@ import { CREATOR, HOOK_BUILD, MAINNET_GENESIS, ORACLE_TARGET_LAMPORTS, STATUS, c
 import { EARLY_ACCESS_HOOK_PROGRAM_ID, platformAddress, programDataAddress } from '../src/early-access-hook.mjs'
 import { EARLY_ACCESS_FEE_CLAIMER, earlyAccessLookupAddresses } from '../src/early-access-config.mjs'
 import { readinessEnv } from '../scripts/early-access-readiness.mjs'
+import { migrationOverdue } from '../src/graduation-readiness.mjs'
+import { createReserveWebhookSender } from '../src/reserve-alerts.mjs'
 
 // Step 8 (docs/EARLY_ACCESS.md): the go-live checklist, read-only. On mainnet it is run by the owner (the runbook).
 const so = readFileSync(new URL('./fixtures/validator/early_access_hook.so', import.meta.url))
@@ -83,4 +85,45 @@ test('the database check reads the catalog in a read-only transaction and rolls 
 test('the script takes only the variables its checks use', () => {
   assert.deepEqual(readinessEnv({ SOLANA_RPC_URL: 'https://rpc', EARLY_ACCESS_ORACLE_SECRET_KEY: 'secret', PLATFORM_PARTNER_SECRET_KEY: 'secret',
     EARLY_ACCESS_DBC_CONFIG: 'x' }), { SOLANA_RPC_URL: 'https://rpc', EARLY_ACCESS_DBC_CONFIG: 'x' })
+})
+
+test('RPC errors reach the output redacted, and a failed read is a FAIL, never a crash', async () => {
+  const rpc = 'https://rpc.example.com/v1/?api-key=SECRETKEY123456'
+  const failing = { getGenesisHash: async () => { throw Error(`500 Internal Server Error: {"upstream":"${rpc}","key":"SECRETKEY123456"}`) } }
+  const report = await checkEarlyAccessReadiness({ env: { SOLANA_RPC_URL: rpc }, connection: failing })
+  assert.equal(report.ok, false)
+  assert.equal(report.items[0].status, STATUS.FAIL)
+  assert.doesNotMatch(JSON.stringify(report), /SECRETKEY123456|rpc\.example\.com\/v1/)
+})
+
+test('the builder allocation setting must list the config: unlisted or unparsable is a FAIL', async () => {
+  const config = Keypair.generate().publicKey.toBase58()
+  const connection = { getGenesisHash: async () => MAINNET_GENESIS, getBalance: async () => 0, getAccountInfo: async () => null,
+    getAddressLookupTable: async () => ({ value: null }) }
+  const allocation = async value => (await checkEarlyAccessReadiness({ env: { EARLY_ACCESS_DBC_CONFIG: config, ...value === undefined ? {} : { BUILDER_ALLOCATION_CONFIGS: value } },
+    connection })).items.find(entry => entry.name === 'Builder allocation')
+  assert.equal((await allocation(undefined)).status, STATUS.FAIL)
+  assert.equal((await allocation(Keypair.generate().publicKey.toBase58())).status, STATUS.FAIL)
+  assert.match((await allocation('not-a-key,')).reason, /does not parse/)
+  assert.equal((await allocation(`${Keypair.generate().publicKey.toBase58()},${config}`)).status, STATUS.PASS)
+})
+
+test('the overdue-migration alert: a full curve, not migrated, past the overdue time by the chain\'s clock', () => {
+  const state = { curve: 'Curve1', curveFinishedAt: '2026-10-07T08:00:00.000Z', chainTime: '2026-10-07T08:31:00.000Z', checkedAt: '2026-10-07T08:31:05.000Z' }
+  const market = { fullName: 'octo/second' }, now = () => Date.parse('2026-10-07T08:31:05Z')
+  const detail = migrationOverdue(state, market, { now })
+  assert.deepEqual({ ...detail, delivery: detail.delivery.status }, { fullName: 'octo/second', curve: 'Curve1', curveFinishedAt: state.curveFinishedAt, minutes: 31,
+    observedAt: state.checkedAt, delivery: 'pending' })
+  assert.equal(migrationOverdue({ ...state, chainTime: '2026-10-07T08:29:59.000Z' }, market, { now }), null, 'not yet')
+  assert.equal(migrationOverdue({ ...state, migration: { pool: 'p' } }, market, { now }), null, 'migrated')
+  assert.equal(migrationOverdue({ ...state, curveFinishedAt: undefined }, market, { now }), null, 'not full')
+  assert.ok(migrationOverdue({ ...state, chainTime: state.curveFinishedAt }, market, { now, overdueMs: 0 }), 'the chain test\'s zero')
+})
+
+test('a generic webhook receives the overdue alert as its own event', async () => {
+  const bodies = []
+  const send = createReserveWebhookSender({ env: { RESERVE_ALERT_WEBHOOK_URL: 'https://hooks.example.com/repoing' },
+    fetchImpl: async (_url, options) => { bodies.push(JSON.parse(options.body)); return { ok: true, status: 200, body: null } } })
+  await send({ id: 9, text: 'repo.ing · Full curve not migrated', detail: { curve: 'Curve1', curveFinishedAt: '2026-10-07T08:00:00.000Z', minutes: 31, delivery: {} } })
+  assert.deepEqual([bodies[0].event, bodies[0].market.curve, 'delivery' in bodies[0].market], ['migration_overdue', 'Curve1', false])
 })

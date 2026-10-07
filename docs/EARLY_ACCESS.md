@@ -471,8 +471,11 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
   wallets (migration is permissionless).
 - **The overdue alert.** The graduation state records when a full curve filled (`curveFinishedAt`, from the pool's
   `finish_curve_timestamp`). A curve still not migrated `MIGRATION_OVERDUE_MS` (30 minutes) later is reported once, as
-  `MIGRATION_OVERDUE`, delivered by message like a low operating balance (`RESERVE_ALERT_WEBHOOK_URL` on the worker) and shown
-  in the operator view, for every market. Anyone can then migrate it (permissionless).
+  `MIGRATION_OVERDUE`, delivered by message like a low operating balance (`RESERVE_ALERTS_ENABLED=true` and
+  `RESERVE_ALERT_WEBHOOK_URL` on the worker; docs/RESERVE_ALERTS.md) and shown in the operator view, for SOL and early access
+  markets (stock pairs have their own monitor). Anyone can then migrate it (permissionless).
+- The oracle checks once per process, even before any window opens, that its key is the platform's oracle, and logs
+  `ORACLE_NOT_PLATFORM_ORACLE` if not (runbook step 6).
 
 ## Mainnet setup (the owner runs it)
 
@@ -486,6 +489,7 @@ dry run unless `--execute`: it checks, simulates unsigned against mainnet and pr
 tests ran; do not rebuild first, the readiness check refuses other bytes):
 
 ```sh
+solana rent 379437 --url "$SOLANA_RPC_URL"                             # the program data's rent today (1.928190 SOL on 2026-10-07)
 solana-keygen pubkey secrets/early-access-hook-program-keypair.json   # must print Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep
 solana program deploy tests/fixtures/validator/early_access_hook.so --program-id secrets/early-access-hook-program-keypair.json \
   --upgrade-authority <upgrade-authority.json> --keypair <payer.json> --url "$SOLANA_RPC_URL" [--with-compute-unit-price <micro-lamports>]
@@ -494,19 +498,24 @@ solana program show Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep --url "$SOLANA_
 
 Cost: 1.928190 SOL program data and 0.000833 SOL program account, kept; about 380 write transactions at 5,000 lamports (about
 0.002 SOL) plus any priority fee. Keep about 1.95 SOL in the payer. The upgrade authority is the only key `init_platform`
-accepts and it can change the program: keep it offline.
+accepts and it can change the program: keep it offline (a multisig or freezing upgrades is a decision for after the audit).
+If the deploy stops partway, its buffer still holds the rent: do not simply run it again (that needs the rent a second time).
+Resume it with the buffer's keypair (`solana-keygen recover` from the seed phrase the CLI printed, then `solana program deploy
+--buffer <buffer keypair> …`), or get the rent back with `solana program close --buffers --keypair <payer.json>`.
 
 **2. The oracle and the platform.** Make the oracle key (it keeps the lists current; the worker holds it) and fund it:
 
 ```sh
 solana-keygen new --no-bip39-passphrase -o secrets/early-access-oracle-keypair.json   # prints its public key
 solana transfer <oracle public key> 0.05 --keypair <payer.json> --url "$SOLANA_RPC_URL" --allow-unfunded-recipient
+solana transfer <upgrade authority public key> 0.005 --keypair <payer.json> --url "$SOLANA_RPC_URL" --allow-unfunded-recipient   # it pays init_platform
 node scripts/init-early-access-platform.mjs --oracle <oracle public key>
 APPROVED_EARLY_ACCESS_PLATFORM=FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1:<oracle public key> \
   node scripts/init-early-access-platform.mjs --oracle <oracle public key> --upgrade-authority <upgrade-authority.json> --execute
 ```
 
-The admin defaults to the creator signer (FeZX…, the launch co-signer). The platform account costs about 0.001 SOL.
+The admin defaults to the creator signer (FeZX…, the launch co-signer). The upgrade authority signs and pays: the platform
+account (about 0.001 SOL) and the fee; skip its transfer above if it already holds that.
 
 **3. The config**: `node scripts/create-early-access-config.mjs` (its first run writes `secrets/early-access-config-keypair.json`),
 then with the printed values `APPROVED_EARLY_ACCESS_CONFIG=<config> APPROVED_EARLY_ACCESS_CONFIG_INSTRUCTION_SHA256=<hash>
@@ -515,7 +524,9 @@ pays (Keychain).
 
 **4. The lookup table**: `node scripts/create-early-access-lookup-table.mjs --config <config>`, then
 `APPROVED_LOOKUP_TABLE_ADDRESSES_SHA256=<hash> APPROVED_LOOKUP_TABLE_DEBIT_LAMPORTS=<lamports> node
-scripts/create-early-access-lookup-table.mjs --config <config> --execute`; it prints the table's address.
+scripts/create-early-access-lookup-table.mjs --config <config> --execute`; it prints the table's address. Each `--execute`
+makes a new table (its address depends on the slot): if one ends without printing the address, look at the partner wallet's
+latest transactions for it before running it again.
 
 **5. Settings**, then deploy web and worker from a fresh worktree of main:
 
@@ -526,7 +537,7 @@ scripts/create-early-access-lookup-table.mjs --config <config> --execute`; it pr
 | `EARLY_ACCESS_ORACLE_SECRET_KEY` | worker | the contents of `secrets/early-access-oracle-keypair.json` (set it from the file; never paste it anywhere) |
 | `BUILDER_ALLOCATION_CONFIGS` | web and worker | the current list plus the config, comma-separated (before launches open: a market launched without it gets no 1% allocation) |
 | `EARLY_ACCESS_ENABLED` | web and worker | `true`: opens the contributor wallet link (`/contributors/link`); launches still wait for the code gate |
-| `RESERVE_ALERT_WEBHOOK_URL` | worker | already set if operator alerts arrive; the overdue-migration alert uses it |
+| `RESERVE_ALERTS_ENABLED`, `RESERVE_ALERT_WEBHOOK_URL` | worker | already set if operator alerts arrive (`true` and the destination); the overdue-migration alert uses them |
 
 With `EARLY_ACCESS_DBC_CONFIG` set, the site trades, claims, indexes and monitors early access markets; there are none until
 launches open. Do not unset it later while early access markets exist: their trades and claims need it.
@@ -538,12 +549,16 @@ railway ssh --service web -- node scripts/early-access-readiness.mjs --oracle <o
 railway ssh --service worker -- node scripts/early-access-readiness.mjs --oracle <oracle public key>
 ```
 
-No FAIL; the switches read `EARLY_ACCESS_ENABLED ON`, `EARLY_ACCESS_LAUNCHES_READY OFF`.
+No FAIL on either; the switches read `EARLY_ACCESS_ENABLED ON`, `EARLY_ACCESS_LAUNCHES_READY OFF`. The check reads no key, so
+also look at the worker's log since its deploy: no `earlyAccessOracleUnavailable` (the key is missing or malformed) and no
+`ORACLE_NOT_PLATFORM_ORACLE` (the key is not the platform's oracle; the oracle checks it once at start).
 
 **7. Open launches.** The READY PR sets `EARLY_ACCESS_LAUNCHES_READY = true`; merge and deploy it. The first launch: by the owner,
 on a repository they own, with a small first buy, from Phantom. Phantom has not been seen signing a first-buy launch (no room
-for its Lighthouse assertions, step 4): if it refuses, launch without a first buy and tell the agent. To close launches again:
-`EARLY_ACCESS_ENABLED` off (also closes the wallet link); markets already launched keep trading.
+for its Lighthouse assertions, step 4): if it refuses, launch without a first buy and tell the agent. To close launches again,
+revert the READY PR (the code gate): markets already launched keep trading, and the oracle keeps their lists until their
+windows end and closes them. `EARLY_ACCESS_ENABLED` off also closes launches and the wallet link, but it stops the oracle too:
+open windows' lists stop changing and are not closed (their rent not returned) until it is on again.
 
 | Step | Signer | Cost |
 | --- | --- | --- |

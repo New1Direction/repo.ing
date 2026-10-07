@@ -45,6 +45,9 @@ Pause delivery and reserve observations with `RESERVE_ALERTS_ENABLED=false`; exi
 Always queued for the receiver, when `RESERVE_ALERTS_ENABLED=true`:
 
 - `OPS_WALLET_LOW`: an operating wallet below its minimum (next section).
+- `MIGRATION_OVERDUE`: a full curve (a SOL or contributor early access market) still not migrated 30 minutes after it filled,
+  once per curve (`src/graduation-readiness.mjs`, docs/EARLY_ACCESS.md step 8). A generic HTTPS receiver gets it as
+  `event: "migration_overdue"` with `market: { fullName, curve, curveFinishedAt, minutes, observedAt }`.
 - `RECONCILIATION_MISMATCH`: what the graduation monitor's checks found and could not clear (`src/ledger-alerts.mjs`, `src/reconcile.mjs` `createReconcileEpisodes`, `src/ledger-digest.mjs`):
   - **What is watched:**
     - each SOL market's fee ledger (`ledger: "fees"`);
