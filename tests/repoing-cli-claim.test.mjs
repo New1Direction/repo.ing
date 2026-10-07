@@ -1,0 +1,117 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { DEFAULT_CREDITS_ORIGIN, claimStatus, handoffUrl, lamportsToSol, listenForCode, parseClaimArgs, runClaim, solToLamports, usd,
+  validateCreditsOrigin } from '../cli/src/claim.mjs'
+
+// `repoing claim` (cli/src/claim.mjs): arguments, amounts, the one-time loopback listener, and the whole flow with repo.ing and
+// the credit service scripted (the listener is real, on 127.0.0.1).
+const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value })
+
+test('arguments: wallet or convert (not both), exact SOL amounts, safe origins', () => {
+  assert.deepEqual(parseClaimArgs(['octo/widget'], {}), { command: 'claim', repository: 'octo/widget', mode: null, lamports: null, open: true,
+    origin: 'https://repo.ing', creditsOrigin: DEFAULT_CREDITS_ORIGIN })
+  assert.equal(parseClaimArgs(['--to-wallet'], {}).mode, 'wallet')
+  assert.deepEqual([parseClaimArgs(['--convert', '0.5'], {}).mode, parseClaimArgs(['--convert', '0.5'], {}).lamports], ['convert', 500_000_000n])
+  assert.equal(parseClaimArgs([], { REPOING_CREDITS_ORIGIN: 'https://credits.example' }).creditsOrigin, 'https://credits.example')
+  for (const [args, message] of [[['--to-wallet', '--convert', '1'], /either/], [['--convert', '0.001'], /0\.01 to 100/], [['--convert', '101'], /0\.01 to 100/],
+    [['--convert', '1.0000000001'], /9 decimals/], [['--convert'], /requires a value/], [['--credits-origin', 'http://credits.example'], /HTTPS/], [['--bogus'], /Unknown/]]) {
+    assert.throws(() => parseClaimArgs(args, {}), message, args.join(' '))
+  }
+  assert.equal(parseClaimArgs(['--help'], {}).command, 'claim-help')
+  assert.deepEqual([solToLamports('1'), solToLamports('0.000000001'), lamportsToSol(1_500_000_000n), lamportsToSol(10_000_000n), usd(75_000_000), usd(150_123_457)],
+    [1_000_000_000n, 1n, '1.5', '0.01', '$75.00', '$150.12'])
+  assert.equal(validateCreditsOrigin('http://localhost:8794/x'), 'http://localhost:8794')
+})
+
+test('the listener answers only its own state on /callback, then closes; a refusal or a timeout rejects', async () => {
+  const listening = await listenForCode({ state: 's'.repeat(22) })
+  const base = `http://127.0.0.1:${listening.port}`
+  assert.equal((await fetch(`${base}/callback?code=${'c'.repeat(43)}&state=other`)).status, 404)
+  assert.equal((await fetch(`${base}/elsewhere?code=${'c'.repeat(43)}&state=${'s'.repeat(22)}`)).status, 404)
+  const page = await fetch(`${base}/callback?code=${'c'.repeat(43)}&state=${'s'.repeat(22)}`)
+  assert.match(await page.text(), /Signed in\. You can close this tab/)
+  assert.equal(await listening.code, 'c'.repeat(43))
+  await assert.rejects(fetch(`${base}/callback`), 'closed after one code')
+  const refused = await listenForCode({ state: 't'.repeat(22) })
+  await fetch(`http://127.0.0.1:${refused.port}/callback?error=not_admin&state=${'t'.repeat(22)}`)
+  await assert.rejects(refused.code, /not list this account as an admin/)
+  const slow = await listenForCode({ state: 'u'.repeat(22), timeoutMs: 50 })
+  await assert.rejects(slow.code, /timed out/)
+})
+
+// repo.ing and the credit service, scripted; every request recorded.
+function services({ available = '600000000', mint = 'MintWidget', outcome = { status: 'credited', credit_micro: 75_000_000 } } = {}) {
+  const requests = []
+  const fetchImpl = async (url, init = {}) => {
+    const target = new URL(url), body = init.body ? JSON.parse(init.body) : null
+    requests.push({ url: target.href, method: init.method ?? 'GET', body, headers: init.headers })
+    if (target.pathname === '/api/resolve') return json({ repoId: '77', mint })
+    if (target.pathname === '/api/claim/77/preview') return json({ available })
+    if (target.pathname === '/sessions') return json({ account_id: 'a', login: 'octocat', repo_id: '77', token: `rik_${'ab'.repeat(32)}` })
+    if (target.pathname === '/quotes') return json({ id: 'q1', lamports: Number(body.lamports), credit_micro: 75_000_000, price_micro_per_sol: 150_000_000,
+      expires_at: new Date(Date.now() + 900_000).toISOString(), solana_pay_url: `solana:Treasury?amount=${body.lamports}`, status: 'awaiting_payment' })
+    if (target.pathname === '/quotes/q1') return json({ id: 'q1', ...outcome })
+    return json({ error: 'not found' }, 404)
+  }
+  return { fetchImpl, requests }
+}
+const options = extra => ({ origin: 'https://repo.ing', creditsOrigin: 'http://127.0.0.1:8794', open: true, mode: null, lamports: null, ...extra })
+
+test('convert: sign in through repo.ing with PKCE, a quote for the chosen SOL, its Solana Pay link, then the credit', async () => {
+  const { fetchImpl, requests } = services()
+  const printed = [], asked = []
+  const io = { print: line => printed.push(line), ask: async question => { asked.push(question); return asked.length === 1 ? '2' : '0.5' },
+    // The browser: approves at once and repo.ing redirects to the listener with the code and the state.
+    open: async url => {
+      const start = new URL(url)
+      assert.equal(start.origin + start.pathname, 'https://repo.ing/api/handoff/start')
+      setTimeout(() => fetch(`http://127.0.0.1:${start.searchParams.get('port')}/callback?code=${'k'.repeat(43)}&state=${start.searchParams.get('state')}`), 10)
+      return true
+    } }
+  const result = await runClaim(options(), { repository: 'https://github.com/octo/widget', io, fetchImpl, wait: async () => ({ status: 'credited', credit_micro: 75_000_000 }) })
+  assert.deepEqual(result.outcome, 'credited')
+  assert.match(asked[1], /SOL to convert \(0\.01 to 100\) \[0\.6\]/, 'the claimable amount is suggested')
+  const session = requests.find(r => r.url.endsWith('/sessions'))
+  const start = new URL(handoffUrl('https://repo.ing', { repoId: 77, challenge: 'x', port: 1, state: 'y' }))
+  assert.equal(start.searchParams.get('audience'), 'repo-inference')
+  assert.equal(session.body.code, 'k'.repeat(43))
+  assert.equal(session.body.code_verifier.length, 43)
+  const quote = requests.find(r => r.url.endsWith('/quotes'))
+  assert.deepEqual([quote.body, quote.headers.authorization], [{ lamports: '500000000' }, `Bearer rik_${'ab'.repeat(32)}`])
+  assert.match(quote.headers['idempotency-key'], /^[A-Za-z0-9_-]{22}$/)
+  assert.ok(printed.some(line => /Pay exactly 0\.5 SOL/.test(line) && /solana:Treasury\?amount=500000000/.test(line)))
+  assert.ok(printed.some(line => /You get \$75\.00 of AI credits \(SOL at \$150\.00\)/.test(line)))
+  assert.ok(printed.includes('✓ credited: $75.00 of AI credits'))
+})
+
+test('the verifier sent to the credit service is the one whose S256 was in the sign-in link', async () => {
+  const { fetchImpl, requests } = services()
+  let challenge
+  const io = { print: () => {}, ask: async () => '', open: async url => {
+    const start = new URL(url); challenge = start.searchParams.get('challenge')
+    setTimeout(() => fetch(`http://127.0.0.1:${start.searchParams.get('port')}/callback?code=${'k'.repeat(43)}&state=${start.searchParams.get('state')}`), 10)
+    return true } }
+  await runClaim(options({ mode: 'convert', lamports: 100_000_000n }), { repository: 'https://github.com/octo/widget', io, fetchImpl, wait: async () => null })
+  const verifier = requests.find(r => r.url.endsWith('/sessions')).body.code_verifier
+  assert.equal(createHash('sha256').update(verifier).digest('base64url'), challenge)
+})
+
+test('claim to wallet opens the claim page; no market or a stock pair says so; review and expiry are reported', async () => {
+  const opened = []
+  const io = { print: () => {}, ask: async () => '1', open: async url => { opened.push(url); return true } }
+  const wallet = await runClaim(options(), { repository: 'https://github.com/octo/widget', io, fetchImpl: services().fetchImpl })
+  assert.deepEqual([wallet.outcome, opened], ['claim_page', ['https://repo.ing/claim/77']])
+  assert.equal((await runClaim(options(), { repository: 'r', io, fetchImpl: services({ mint: null }).fetchImpl })).outcome, 'no_market')
+  const stock = async url => url.endsWith('/preview') ? json({ error: 'Stock pairs have no owner claim.' }, 409) : services().fetchImpl(url, {})
+  assert.deepEqual((await claimStatus({ origin: 'https://repo.ing', repository: 'r', fetchImpl: stock })), { repoId: '77', mint: 'MintWidget', available: null, note: 'Stock pairs have no owner claim.' })
+  for (const [outcome, expected] of [[{ status: 'awaiting_payment', review_pending: true }, /needs a review/], [{ status: 'expired' }, /expired without a payment/]]) {
+    const printed = []
+    const browser = { print: line => printed.push(line), ask: async () => '', open: async url => {
+      const start = new URL(url)
+      setTimeout(() => fetch(`http://127.0.0.1:${start.searchParams.get('port')}/callback?code=${'k'.repeat(43)}&state=${start.searchParams.get('state')}`), 10)
+      return true } }
+    await runClaim(options({ mode: 'convert', lamports: 100_000_000n }), { repository: 'r', io: browser, fetchImpl: services().fetchImpl, wait: async () => outcome })
+    assert.ok(printed.some(line => expected.test(line)), printed.join('\n'))
+  }
+})

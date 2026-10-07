@@ -1,6 +1,6 @@
 const GITHUB_HOST = 'github.com'
 export const DEFAULT_ORIGIN = 'https://repo.ing'
-export const VERSION = '0.1.0'
+export const VERSION = '0.2.0'
 
 function cleanRepoPath(pathname) {
   const parts = pathname.replace(/^\/+|\/+$/g, '').split('/')
@@ -147,6 +147,7 @@ export const HELP = `repoing — launch an open-source market from your terminal
 
 Usage:
   repoing launch [owner/repo|github-url] [options]
+  repoing claim [owner/repo|github-url] [options]   (your fees as SOL or AI credits; repoing claim --help)
 
 If no repository is supplied, repoing reads the current git origin.
 

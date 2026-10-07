@@ -39,6 +39,24 @@ An optional launch buy can be 0%, 1%, 2%, or the 3% maximum. The browser requote
 
 If a canonical market already exists, the command opens that market instead of creating another launch draft.
 
+## Your fees: `repoing claim`
+
+```bash
+repoing claim                  # asks: claim to your wallet, or convert to AI credits
+repoing claim --to-wallet      # opens the claim page on repo.ing (unchanged)
+repoing claim --convert 0.5    # 0.5 SOL of your fees as AI credits
+```
+
+The command shows what the next claim of the repository pays. **Claim to wallet** opens repo.ing's claim page, where your
+fees go to your bound wallet as before. **Convert to AI credits** signs you in through repo.ing: your browser opens, you
+approve on repo.ing that you are an admin of the repository, and repo.ing sends a single-use code to a one-time listener on
+this computer (PKCE; the credit service never gets your GitHub token). Then the credit service quotes the credits for the
+SOL you chose, at the SOL/USD price of the moment, and the command prints a Solana Pay link. You pay it from your own
+wallet; credits come only after the payment is finalized on chain, and a payment that does not match goes to a review.
+
+The AI credits service is a devnet sandbox until repo.ing switches it on: by default the command uses one running on this
+computer (`--credits-origin`, or `REPOING_CREDITS_ORIGIN`).
+
 ## Development
 
 From `cli/`:

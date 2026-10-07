@@ -2,6 +2,7 @@
 
 import { execFileSync, spawn } from 'node:child_process'
 import process from 'node:process'
+import { createInterface } from 'node:readline/promises'
 import {
   HELP,
   VERSION,
@@ -10,6 +11,7 @@ import {
   requestLaunchDraft,
   safeBrowserUrl,
 } from '../src/core.mjs'
+import { CLAIM_HELP, parseClaimArgs, runClaim } from '../src/claim.mjs'
 
 function currentGitRemote() {
   try {
@@ -60,7 +62,23 @@ function printHuman(repository, result, opened) {
   if (result.expiresAt) console.log(`  review expires ${result.expiresAt}`)
 }
 
+async function claim(argv) {
+  const options = parseClaimArgs(argv)
+  if (options.command === 'claim-help') { console.log(CLAIM_HELP); return }
+  const repository = normalizeGithubRepository(options.repository || currentGitRemote())
+  const prompt = createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    await runClaim(options, { repository, io: {
+      print: line => console.log(line),
+      ask: question => prompt.question(question),
+      // Only links on the repo.ing origin are opened; anything else is printed.
+      open: async url => { const target = safeBrowserUrl(url, options.origin); if (target) openUrl(target); return Boolean(target) },
+    } })
+  } finally { prompt.close() }
+}
+
 async function main() {
+  if (process.argv[2] === 'claim') return claim(process.argv.slice(3))
   const options = parseArgs(process.argv.slice(2))
   if (options.command === 'help') {
     console.log(HELP)
