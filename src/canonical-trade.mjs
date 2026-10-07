@@ -20,7 +20,7 @@ import { DEFAULT_SLIPPAGE_BPS, minimumOutAfterSlippage, parseSlippageBps } from 
 import { quoteOfMarket } from './quote-assets.mjs'
 import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
-import { SWAP2_TRANSFER_HOOK_DISCRIMINATOR, assertListedDuringWindow, assertPreparedDbcHookSwap } from './early-access-trade.mjs'
+import { SWAP2_TRANSFER_HOOK_DISCRIMINATOR, assertListedDuringWindow, assertPreparedDbcHookSwap, assertWithinWalletLimit } from './early-access-trade.mjs'
 
 const DBC_PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const SWAP_DISCRIMINATOR = Buffer.from([248, 198, 158, 145, 225, 117, 135, 200])
@@ -185,7 +185,11 @@ export function createCanonicalTrader({ pool: databasePool, connection, config, 
     // An early access market: swap2WithTransferHook with the hook's accounts and no referral (its referral needs a second hook
     // slice); during the window a buy is refused up front unless the wallet is on the mint's allow list.
     const hook = isEarlyAccessMarket(market)
-    if (hook && direction === 'buy') await assertListedDuringWindow({ connection, market, wallet, hookProgram })
+    if (hook && direction === 'buy') {
+      await assertListedDuringWindow({ connection, market, wallet, hookProgram })
+      // With the fair ramp, a buy past the wallet's limit is refused here with the room left (the hook would refuse it anyway).
+      await assertWithinWalletLimit({ connection, market, wallet, outputAmount: BigInt(result.outputAmount.toString()), hookProgram })
+    }
     const [referral, wsolRent] = stock ? [null, null]
       : await Promise.all([hook ? null : resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null

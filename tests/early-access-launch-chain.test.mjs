@@ -41,6 +41,7 @@ import { EARLY_ACCESS_NOT_CLAIMABLE, EARLY_ACCESS_NOT_TRADABLE } from '../src/ea
 import { EARLY_ACCESS_WALLET_LIMIT, contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
 import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
 import { createReconciler } from '../src/reconcile.mjs'
+import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createClaim } from '../src/claim.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { discoverySummary } from '../src/discovery-rewards.mjs'
@@ -1065,6 +1066,13 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const refused = await connection.simulateTransaction(big)
       assert.ok(refused.value.err, 'past the limit')
       assert.equal(hookRefusal(refused.value.logs), EARLY_ACCESS_WALLET_LIMIT)
+      // The site's curve trader (and so its Blinks) refuses the same buy before anything is built, with the room left; a buy within
+      // the limit is built.
+      assert.equal((await createLaunchIndexer({ pool, verify }).processMarket(market.githubRepoId)).state, 'indexed')
+      const trader = createCanonicalTrader({ pool, connection, config: solConfig.toBase58(), earlyAccess: eaConfig })
+      const ask = lamports => trader.prepareBuy({ githubRepoId: String(market.githubRepoId), wallet: contributor.publicKey.toBase58(), amountLamports: String(lamports) })
+      await assert.rejects(ask(low), /^Error: Contributor early access: with the fair ramp one wallet can hold at most 2(\.\d+)?% of the supply right now/)
+      assert.ok((await ask(10_000_000)).transaction, 'within the limit')
       // 100 stars more than at launch: +0.5% (50 basis points) on the limit.
       const funding = await connection.requestAirdrop(oracle.publicKey, 1_000_000_000)
       await connection.confirmTransaction({ signature: funding, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
