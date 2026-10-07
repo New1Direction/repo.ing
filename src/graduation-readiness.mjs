@@ -8,7 +8,7 @@ import { reinvestQuote } from './builder-reinvest-chain.mjs'
 import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
 import { indexDammTradesLocked } from './damm-trades.mjs'
 import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
-import { clearLedgerAlerts, persistGraduationObservation } from './reserve-alerts.mjs'
+import { clearLedgerAlerts, pendingDelivery, persistGraduationObservation } from './reserve-alerts.mjs'
 import { readGenesisHash, transientRpcReason } from './rpc-usage.mjs'
 import { releaseAfterUnlock } from './database-pool.mjs'
 import { EARLY_ACCESS_NO_P3, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
@@ -93,7 +93,10 @@ async function readPassLedgers(pool,{earlyAccess=false}={}) {
 // reconciler, readState, readLedgers: a market's fee reconciliation, its chain state and the pass's own reads; tests replace them.
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG): contributor early access markets are monitored too, before and after their graduation
 // (docs/EARLY_ACCESS.md, step 7a); they are never eligible for liquidity deployment.
-export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,holdMs=RECONCILE_HOLD_MS,
+// A full curve that is still not migrated this long after it filled is reported once, by message (docs/EARLY_ACCESS.md, step 8):
+// Meteora's keeper migrates curves, and migration is permissionless, so anyone can still do it.
+export const MIGRATION_OVERDUE='MIGRATION_OVERDUE',MIGRATION_OVERDUE_MS=30*60_000
+export function createGraduationMonitor({pool,connection,verification,config,env=process.env,pauseMs=GRADUATION_MARKET_PAUSE_MS,now=Date.now,holdMs=RECONCILE_HOLD_MS,migrationOverdueMs=MIGRATION_OVERDUE_MS,
   earlyAccess=null,reconciler=createReconciler({pool,connection,config,earlyAccess,earlyAccessGraduated:true}),readState=readGraduationState,
   readLedgers=pool=>readPassLedgers(pool,{earlyAccess:Boolean(earlyAccess)})}) {
   // Alert rows that could not be stored or marked in the pass in progress. Never a reason to fail the pass: reported with it.
@@ -114,6 +117,9 @@ export function createGraduationMonitor({pool,connection,verification,config,env
       try {
         const {rows:[previous]}=await db.query('select * from graduation_observations where github_repo_id=$1',[repoId])
         const state=await readState({connection,verification,config,market,env,db:pool,curveReads,earlyAccess})
+        const waiting=state.curveFinishedAt&&!state.migration?Date.parse(state.chainTime)-Date.parse(state.curveFinishedAt):-1
+        if(waiting>=migrationOverdueMs)await notify(MIGRATION_OVERDUE,state.curveFinishedAt,{fullName:market.fullName,curve:state.curve,
+          curveFinishedAt:state.curveFinishedAt,minutes:Math.floor(waiting/60000),observedAt:state.checkedAt,delivery:pendingDelivery(now())})
         const {rows:[existing]}=await db.query('select signature from graduation_events where github_repo_id=$1',[repoId])
         if(existing&&!state.migration)throw Error('GRADUATION_STATE_DISAGREEMENT')
         const reconciliation=await reconciler.reconcile(repoId)

@@ -124,6 +124,8 @@ export async function readGraduationState({connection,verification,config,market
     checkedAt:new Date().toISOString(),chainTime:new Date(Math.min(...reads.map(r=>r.time))*1000).toISOString(),
     slots:reads.map(r=>r.snapshot.context.slot),accountEvidence:reads[0].evidence,destination:null}
   assertFreshGraduation(value)
+  // A full curve waiting for its migration: when it filled, from the pool's own record (the monitor's MIGRATION_OVERDUE alert).
+  if(!state.isMigrated&&BigInt(state.finishCurveTimestamp?.toString()??'0')>0n)value.curveFinishedAt=new Date(Number(state.finishCurveTimestamp.toString())*1000).toISOString()
   if(!state.isMigrated)return value
   const snapshots=await Promise.all([connection,verification].map(c=>createGraduatedFees({connection:c,config,db,earlyAccess,earlyAccessGraduated:true}).read(market,{poolState:state},fixed)))
   if(snapshots.some(s=>!s))throw Error('GRADUATION_STATE_DISAGREEMENT')

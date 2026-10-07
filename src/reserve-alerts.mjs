@@ -145,6 +145,10 @@ function ledgerAlertText(id, detail) {
   return [title, detail.fullName, detail.reason ?? fallback, ...tail].join('\n')
 }
 export function reserveAlertText(id, detail) {
+  // A full curve still not migrated (src/graduation-readiness.mjs MIGRATION_OVERDUE).
+  if (detail.curveFinishedAt) return ['repo.ing · Full curve not migrated', detail.fullName,
+    `The curve filled at ${detail.curveFinishedAt} and has not migrated after ${detail.minutes} minutes. Meteora's keeper migrates curves;`,
+    'migration is permissionless, so anyone can do it (docs/EARLY_ACCESS.md, step 8).', `Curve: ${detail.curve}`, `Alert #${id}`].join('\n')
   if (detail.role && detail.minimumLamports) return ['repo.ing · Low operating balance',detail.role,
     `Balance: ${sol(detail.balanceLamports)}`,`Top-up threshold: ${sol(detail.minimumLamports)}`,
     `Checked: ${detail.observedAt}`,`Alert #${id}`].join('\n')
@@ -219,7 +223,7 @@ const DETAIL = `(case when detail like '%"delivery":%' then detail::jsonb end)`
 // The kinds the delivery job sends: those written with a pending delivery. Low operating balances always are; ledgers that
 // stopped matching as one message for several (digestLedgerAlerts); reserve moves only when their notifications are on
 // (reserveMovePlan notify).
-const DELIVERED_KINDS = `'RESERVE_MOVED','OPS_WALLET_LOW','RECONCILIATION_MISMATCH'`
+const DELIVERED_KINDS = `'RESERVE_MOVED','OPS_WALLET_LOW','RECONCILIATION_MISMATCH','MIGRATION_OVERDUE'`
 const WAITING = `kind in (${DELIVERED_KINDS}) and ${DETAIL}->'delivery'->>'status' in ('pending','retry')`
 // A timestamp read from an alert's detail. A value that is not one reads as null, so one malformed row never stops the queue.
 const time = field => `(case when ${field} ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}' then (${field})::timestamptz end)`
