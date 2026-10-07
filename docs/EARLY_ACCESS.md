@@ -464,8 +464,10 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
   at most 2% of the supply. Enter less SOL."): the hook would refuse it.
 - **Prepare.** `init_mint` gets the ramp's settings: `vault_start` the supply, `vault_end` the base vault's balance when the
   curve's SOL reaches 50% of the migration threshold (from the config's curve, `vaultAtProgress`), 2% to 10%; with star unlocks
-  100 stars per step, +0.5% each, at most +5%, and `stars_at_launch` the repository's star count as GitHub gives it at prepare. The settings add 32 bytes: with a first buy, names up to the measured length fit with a ticker of 10
-  (`rampLaunchSizes` in the chain test); a longer one is refused with the size message (a shorter name, or no first buy).
+  100 stars per step, +0.5% each, at most +5%, and `stars_at_launch` the repository's star count as GitHub gives it at prepare (refused without one). The settings add 32 bytes. To keep room for them, an early access launch links its metadata by repository id
+  (`/m/<id>`, `app/m/[id]/route.js`, about 50 bytes shorter than `/api/token-metadata/<mint>`): every name and ticker the form
+  allows fits with a first buy and both options (`rampLaunchSizes` in the chain test). The link is on chain for ever: keep the
+  route.
 - **Stamp and evidence.** `markets.hook_rules` (migration 0061) holds 1, 3 or 7, only with the window, immutable once the launch was
   sent (the same trigger as the window); a window without it is early access alone. The launch evidence reads the mint config and
   accepts the market only when its rules and settings are exactly what the stamp and the config give (`rulesMatch`).
@@ -474,10 +476,13 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
   one wallet can hold at most X% of the supply right now (it rises as the curve sells). This wallet can get about N more
   tokens."). The hook refuses it on chain in any case (`EARLY_ACCESS_WALLET_LIMIT`). The token page states the rule while the curve
   trades (after the window too); after the migration nothing is shown (the filling swap revoked the hook).
-- **Stars.** The oracle reads the star count of each star unlock market's repository from GitHub (`/repositories/{id}`) every 15
-  minutes until its curve migrates, and reports it (`report_stars`) when the bonus it gives changes, down as well as up. A
-  repository GitHub no longer serves publicly, or a count GitHub does not give, keeps the last report. Reports are simulated first,
-  like list changes, and come from the same run (lock, 45-second budget, at most 20 repositories per run).
+- **Stars.** The oracle reads the star count of each indexed star unlock market's repository from GitHub (`/repositories/{id}`)
+  every 15 minutes until its curve migrates, and reports it (`report_stars`) when the bonus it gives changes, down as well as up.
+  A repository GitHub no longer serves publicly, or a count GitHub does not give, keeps the last report; a mint config for another
+  repository is refused. Reports are simulated first, like list changes, and come after the lists in the same run (lock, 45-second
+  budget, at most 20 repositories per run; a failure there never stops the lists). GitHub's rate limit (HTTP 403 or 429) ends the
+  run's reads; below 0.005 SOL the oracle reads and reports nothing. The star count at launch is read again by repository id at
+  prepare; a launch GitHub gives no count for is refused.
 
 ## Readiness, the keeper and the overdue alert (step 8)
 
@@ -583,7 +588,8 @@ on a repository they own, with a small first buy, from Phantom. Phantom has not 
 for its Lighthouse assertions, step 4): if it refuses, launch without a first buy and tell the agent. To close launches again,
 revert the READY PR (the code gate): markets already launched keep trading, and the oracle keeps their lists until their
 windows end and closes them. `EARLY_ACCESS_ENABLED` off also closes launches and the wallet link, but it stops the oracle too:
-open windows' lists stop changing and are not closed (their rent not returned) until it is on again.
+open windows' lists stop changing and are not closed (their rent not returned), and star unlock markets get no star reports
+(their limits keep the last reported count), until it is on again.
 
 | Step | Signer | Cost |
 | --- | --- | --- |

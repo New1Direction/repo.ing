@@ -96,6 +96,11 @@ export function prepareVersionedLaunchSigning(tx, launcher, creator, mint, loadL
   }
 }
 
+// The token's metadata link: the short form by repository id (app/m/[id]/route.js), about 50 bytes shorter than
+// /api/token-metadata/<mint> (a mint is 44 characters, a GitHub repository id 10 digits or fewer). The launch is one
+// transaction under Solana's 1,232 bytes, and the fair ramp's settings take 32 of them. No origin (tests and local runs): no link.
+export const earlyAccessMetadataUri = (origin, repoId) => origin ? `${origin}/m/${repoId}` : ''
+
 // config: EARLY_ACCESS_DBC_CONFIG; lookupTable: EARLY_ACCESS_LOOKUP_TABLE (needed to prepare; a restored review names its own).
 // feeClaimer: the partner wallet the config must name (tests pass their own).
 export function createEarlyAccessLauncher({ connection, config, creator, lookupTable = null, metadataOrigin = null,
@@ -147,7 +152,7 @@ export function createEarlyAccessLauncher({ connection, config, creator, lookupT
       const mint = Keypair.generate()
       const pool = deriveDbcPoolAddress(NATIVE_MINT, mint.publicKey, configKey), vault = dbcBaseVault(mint.publicKey, pool)
       const createPoolParam = { baseMint: mint.publicKey, config: configKey, name: tokenName, symbol: tokenSymbol,
-        uri: metadataOrigin ? `${metadataOrigin}/api/token-metadata/${mint.publicKey.toBase58()}` : '',
+        uri: earlyAccessMetadataUri(metadataOrigin, earlyAccess.repoId),
         payer: launcher, poolCreator: creator.publicKey, transferHookProgram: hook }
       // The first buy names the hook's accounts itself: the mint does not exist until this transaction creates it.
       const built = buy ? await client.creator.createPoolWithFirstBuyWithTransferHook({ createPoolParam,

@@ -23,7 +23,7 @@ import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
 import { watchedMarkets } from '../src/live-trades.mjs'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
-import { createLaunchCoordinator } from '../src/launch-coordinator.mjs'
+import { createLaunchCoordinator, STARS_UNREADABLE } from '../src/launch-coordinator.mjs'
 import { createMeteoraLauncher, isVersionedLaunch, unsignedLaunchBase64 } from '../src/meteora-launch.mjs'
 import { UNREADABLE_SIGNED_LAUNCH, createEarlyAccessLauncher, lookupTableLoader } from '../src/early-access-launch.mjs'
 import { LIGHTHOUSE_PROGRAM, MAX_VERSIONED_LAUNCH_ASSERTIONS, matchesReviewedVersionedLaunch } from '../src/launch-wallet-assertions.mjs'
@@ -1043,6 +1043,11 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       while (low < high) { const mid = (low + high) / 2n; if (output(mid) * 1000n < SUPPLY * 25n) low = mid + 1n; else high = mid }
       const launch = initialBuyLamports => coordinator.launch({ repositoryUrl: `https://github.com/${REPOS.ramp.full_name}`, tokenName: 'Ramp', tokenSymbol: 'RAMP',
         launcherWallet: contributor.publicKey.toBase58(), initialBuyLamports, launchGuard: guard(true), signTransaction: async tx => { tx.sign([contributor]); return tx } })
+      // GitHub gives no star count: refused before anything is built (never a 0 that the first report would turn into a bonus).
+      const { coordinator: starless } = replica({ repo: { ...REPOS.ramp, stargazers_count: undefined }, windowSeconds: 3600, rules: 7 })
+      await assert.rejects(starless.launch({ repositoryUrl: `https://github.com/${REPOS.ramp.full_name}`, tokenName: 'Ramp', tokenSymbol: 'RAMP',
+        launcherWallet: contributor.publicKey.toBase58(), initialBuyLamports: '50000000', launchGuard: guard(true),
+        signTransaction: async () => { throw Error('never signed') } }), { message: STARS_UNREADABLE })
       await assert.rejects(launch(String(low)), /With the fair ramp, the first buy can get at most 2% of the supply/)
       const market = await launch('50000000')
       assert.equal(market.status, 'confirmed')
@@ -1104,10 +1109,10 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
     })
 
     // The largest realistic launch: a first buy by a wallet with neither token account yet, taken off the list after it, with the
-    // longest ASCII name and ticker the form allows and the production metadata link. How many trailing Lighthouse assertions (the
-    // smallest a wallet adds: one 12-byte account-info or token-account check on an account already in the transaction; the first
-    // also adds the Lighthouse program's key) still fit under Solana's 1,232 bytes. Measured: none with a first buy, so a wallet
-    // that insists on adding one cannot sign such a launch; at least MAX_VERSIONED_LAUNCH_ASSERTIONS without a buy.
+    // longest ASCII name and ticker the form allows, the production origin's short metadata link and the largest repository id
+    // the launcher takes (16 digits; GitHub's are 10 or fewer). How many trailing Lighthouse assertions (the smallest a wallet adds:
+    // one 12-byte account-info or token-account check on an account already in the transaction; the first also adds the Lighthouse
+    // program's key) still fit under Solana's 1,232 bytes, and the matcher takes exactly those.
     await t.test('sizes: the largest realistic launch fits; the Lighthouse assertions that still fit', async () => {
       const launcher = await funded(connection)
       const sized = createEarlyAccessLauncher({ connection, config: eaConfig, creator: Keypair.fromSecretKey(creatorSecret), lookupTable: lookupTable.toBase58(),
@@ -1134,19 +1139,22 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         perAssertion: { first: sizeWith(noBuy, 1) - sizeWith(noBuy, 0), next: sizeWith(noBuy, 2) - sizeWith(noBuy, 1) }, limit: PACKET_DATA_SIZE }
       console.log(JSON.stringify({ launchSizes: sizes }))
       assert.ok(bytes <= PACKET_DATA_SIZE, `${bytes} bytes`)
-      assert.deepEqual([sizes.assertionsThatFit.largestFirstBuy, sizes.assertionsThatFit.shortNameFirstBuy], [0, 0], 'no room for one with a first buy')
+      assert.ok(largest.transaction.message.compiledInstructions.length > 0)
+      assert.ok(sizes.assertionsThatFit.largestFirstBuy >= 1, 'with the short link a first buy leaves room for a wallet\'s first assertion')
       assert.ok(sizes.assertionsThatFit.noBuy >= MAX_VERSIONED_LAUNCH_ASSERTIONS, 'the cap is reachable without a buy')
-      // The matcher refuses a first-buy launch with an assertion (it could not be sent) and accepts a no-buy launch with the cap.
+      // The matcher accepts the assertions that fit (up to the cap) and refuses one more: over the limit it could not be sent.
       const asserted = (prepared, count) => new VersionedTransaction(new TransactionMessage({ ...TransactionMessage.decompile(prepared.transaction.message,
         { addressLookupTableAccounts: tables }), instructions: [...TransactionMessage.decompile(prepared.transaction.message, { addressLookupTableAccounts: tables }).instructions,
         ...Array.from({ length: count }, () => assertion(launcher.publicKey))] }).compileToV0Message(tables))
       const load = lookupTableLoader(connection)
-      assert.equal(await matchesReviewedVersionedLaunch(Buffer.from(largest.transaction.message.serialize()), asserted(largest, 1), load), false)
+      const fit = Math.min(sizes.assertionsThatFit.largestFirstBuy, MAX_VERSIONED_LAUNCH_ASSERTIONS)
+      assert.equal(await matchesReviewedVersionedLaunch(Buffer.from(largest.transaction.message.serialize()), asserted(largest, fit), load), true)
+      assert.equal(await matchesReviewedVersionedLaunch(Buffer.from(largest.transaction.message.serialize()), asserted(largest, fit + 1), load), false)
       assert.equal(await matchesReviewedVersionedLaunch(Buffer.from(noBuy.transaction.message.serialize()), asserted(noBuy, MAX_VERSIONED_LAUNCH_ASSERTIONS), load), true)
       // A name of multi-byte characters can pass the length check and still not fit: refused with a message, never sent.
       await assert.rejects(shape('名'.repeat(32), 'S'.repeat(10)), /does not fit in one Solana transaction/)
-      // With the fair ramp (and star unlocks) init_mint carries the ramp's settings: 32 bytes more. Every name fits without a buy; with
-      // a first buy the longest names do not, and are refused with the same message.
+      // With the fair ramp (and star unlocks) init_mint carries the ramp's settings: 32 bytes more. With the short metadata link every
+      // name and ticker the form allows still fits with a first buy (a longer one would be refused with the same message).
       const ramped = (tokenName, tokenSymbol, initialBuyLamports = '100000000') => sized.prepare({ launcherWallet: launcher.publicKey.toBase58(), tokenName,
         tokenSymbol, initialBuyLamports, earlyAccess: { windowSeconds: MAX_EARLY_ACCESS_SECONDS, repoId: '4503599627370495', keepLauncher: false, rules: 7, starsAtLaunch: 5 } })
       const rampSmall = await ramped('First', 'FIRST'), rampNoBuy = await ramped('N'.repeat(32), 'S'.repeat(10), '0')
@@ -1156,7 +1164,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         longestNameWithTickerOf10FirstBuy: longest, extra: rampSmall.transaction.serialize().length - sizes.shortNameFirstBuy }
       console.log(JSON.stringify({ rampLaunchSizes: rampSizes }))
       assert.equal(rampSizes.extra, 32)
-      assert.ok(longest >= 20, `a first buy with the ramp fits names up to ${longest} characters`)
+      assert.equal(longest, 32, 'every name the form allows')
     })
 
     await t.test('a wallet that changes the v0 transaction is refused and nothing is sent', async () => {

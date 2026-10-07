@@ -39,7 +39,7 @@ test('the plan: add the missing linked wallets; remove an unlinked one only when
 // A scripted database and chain: markets, the contributor snapshot and links, the on-chain lists (state.lists, changeable between runs);
 // every sent transaction is recorded with what it was confirmed against.
 function setup({ markets, starMarkets = [], configs = {}, links = {}, snapshot = {}, lists = {}, platformOracle = null, refuse = null,
-  balance = 1_000_000_000 } = {}) {
+  balance = 1_000_000_000, starQueryError = null } = {}) {
   const oracle = Keypair.generate(), sent = [], confirms = [], queries = [], state = { lists, configs }
   const allowListData = (mint, wallets) => Buffer.concat([Buffer.from('ea-allow'), new PublicKey(mint).toBuffer(),
     Buffer.from(Uint32Array.of(wallets.length).buffer), ...wallets.map(w => new PublicKey(w).toBuffer())])
@@ -47,7 +47,7 @@ function setup({ markets, starMarkets = [], configs = {}, links = {}, snapshot =
     queries.push(sql.trim().split(/\s+/).slice(0, 3).join(' '))
     if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ locked: true }] }
     if (/pg_advisory_unlock/.test(sql)) return { rows: [] }
-    if (/hook_rules/.test(sql)) return { rows: starMarkets }
+    if (/hook_rules/.test(sql)) { if (starQueryError) throw starQueryError; return { rows: starMarkets } }
     if (/from markets m/.test(sql)) return { rows: markets }
     if (/join github_wallet_links/.test(sql)) return { rows: (links[params[0]] ?? []).map(wallet => ({ wallet })) }
     if (/count\(\*\)::int as snapshot/.test(sql)) return { rows: [{ snapshot: snapshot[params[0]] ?? 0 }] }
@@ -177,9 +177,10 @@ test('after the window the list is closed: rent back to the mint config\'s recei
 })
 
 // Star unlocks: a mint config in its real layout, with the launch's settings (+0.5% per 100 stars, at most +5%).
-function starConfig(mint, { rules = 7, starsAtLaunch = 10, starsNow = starsAtLaunch } = {}) {
+function starConfigOf(mint, { repoId = '0', rules = 7, starsAtLaunch = 10, starsNow = starsAtLaunch } = {}) {
   const data = Buffer.alloc(175)
   discriminator('account:MintConfig').copy(data); new PublicKey(mint).toBuffer().copy(data, 8)
+  data.writeBigUInt64LE(BigInt(repoId), 40)
   data[48] = rules
   data.writeUInt32LE(rules & 4 ? starsAtLaunch : 0, 151); data.writeUInt32LE(rules & 4 ? 100 : 0, 155)
   data.writeUInt16LE(rules & 4 ? 50 : 0, 159); data.writeUInt16LE(rules & 4 ? 500 : 0, 161); data.writeUInt32LE(starsNow, 163)
@@ -187,7 +188,7 @@ function starConfig(mint, { rules = 7, starsAtLaunch = 10, starsNow = starsAtLau
 }
 
 test('star unlocks: a report is needed only when the bonus changes, down as well as up, never past the cap', () => {
-  const config = starsNow => decodeMintConfig(starConfig(key(), { starsNow }).data)
+  const config = starsNow => decodeMintConfig(starConfigOf(key(), { starsNow }).data)
   assert.deepEqual([9, 10, 109, 110, 1009, 1010, 5000].map(stars => starBonusBps(config(10).ramp, stars)), [0, 0, 0, 50, 450, 500, 500])
   assert.equal(starReportNeeded(config(10), 109), false)
   assert.equal(starReportNeeded(config(10), 110), true)
@@ -195,15 +196,16 @@ test('star unlocks: a report is needed only when the bonus changes, down as well
   assert.equal(starReportNeeded(config(150), 205), false, 'the same step')
   assert.equal(starReportNeeded(config(1010), 9000), false, 'at the cap')
   assert.equal(starReportNeeded(config(1010), 1009), true)
-  assert.equal(starBonusBps(decodeMintConfig(starConfig(key(), { rules: 3 }).data).ramp, 9000), 0, 'no star unlocks: no bonus')
+  assert.equal(starBonusBps(decodeMintConfig(starConfigOf(key(), { rules: 3 }).data).ramp, 9000), 0, 'no star unlocks: no bonus')
 })
 
 test('star unlocks: the oracle reads each repository every 15 minutes and reports its stars when the bonus changes', async () => {
   const [mint, other, ramp, gone] = [key(), key(), key(), key()]
   const starMarkets = [{ repoId: '700010', mint }, { repoId: '700011', mint: other }, { repoId: '700012', mint: ramp }, { repoId: '700013', mint: gone }]
   const stars = { 700010: 260, 700011: 50, 700012: 900, 700013: null }, reads = []
-  const run = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint), [other]: starConfig(other), [ramp]: starConfig(ramp, { rules: 3 }),
-    [gone]: starConfig(gone) } })
+  const starConfig = starConfigOf
+  const run = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint, { repoId: '700010' }), [other]: starConfig(other, { repoId: '700011' }),
+    [ramp]: starConfig(ramp, { repoId: '700012', rules: 3 }), [gone]: starConfig(gone, { repoId: '700013' }) } })
   let t = 0
   const logged = []
   const oracle = create(run, { clock: () => t, log: record => logged.push(record), readStars: async id => { reads.push(id); return stars[id] } })
@@ -218,10 +220,11 @@ test('star unlocks: the oracle reads each repository every 15 minutes and report
     [platformAddress().toBase58(), false, false], [earlyAccessAddresses(mint).config.toBase58(), false, true]])
   assert.deepEqual(logged.map(record => record.stars.mint), [mint, ramp, gone], 'reports and problems are logged')
   assert.deepEqual(reads, ['700010', '700011', '700013'], 'a config that is not star unlocks is never read from GitHub')
-  // Within 15 minutes nothing is read again; after, the chain holds the report and a count in the same step sends nothing.
+  // Within 15 minutes nothing is read again (and nothing is read from the chain); after, the chain holds the report and a count in
+  // the same step sends nothing.
   t += 14 * 60_000
-  assert.deepEqual(await oracle.runOnce(), { status: 'OK', results: [] })
-  run.state.configs[mint] = starConfig(mint, { starsNow: 260 })
+  assert.deepEqual(await oracle.runOnce(), { status: 'IDLE' })
+  run.state.configs[mint] = starConfig(mint, { repoId: '700010', starsNow: 260 })
   stars[700010] = 299
   t += 60_000
   assert.deepEqual((await oracle.runOnce()).stars[0], { mint, stars: 299 })
@@ -233,7 +236,7 @@ test('star unlocks: the oracle reads each repository every 15 minutes and report
 })
 
 test('star unlocks: a refused report and a failed read are logged; the platform must name the oracle; the run budget holds', async () => {
-  const mint = key(), starMarkets = [{ repoId: '700020', mint }]
+  const mint = key(), starMarkets = [{ repoId: '700020', mint }], starConfig = (m, options) => starConfigOf(m, { repoId: '700020', ...options })
   const refused = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint) }, refuse: () => true })
   assert.deepEqual((await create(refused, { readStars: async () => 500 }).runOnce()).stars, [{ mint, stars: 500, error: 'WindowClosed' }])
   assert.equal(refused.sent.length, 0)
@@ -247,4 +250,30 @@ test('star unlocks: a refused report and a failed read are logged; the platform 
   const slow = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint) } })
   assert.deepEqual(await create(slow, { clock: () => (t += 50_000), readStars: async () => 500 }).runOnce(), { status: 'OK', results: [] },
     'past the budget: left for the next run')
+})
+
+test('star unlocks: a config for another repository is refused; GitHub\'s rate limit ends the run\'s reads; a low balance waits', async () => {
+  const [a, b, c] = [key(), key(), key()]
+  const starMarkets = [{ repoId: '700030', mint: a }, { repoId: '700031', mint: b }, { repoId: '700032', mint: c }]
+  const configs = { [a]: starConfigOf(a, { repoId: '700099' }), [b]: starConfigOf(b, { repoId: '700031' }), [c]: starConfigOf(c, { repoId: '700032' }) }
+  const reads = [], logged = []
+  const limited = setup({ markets: [], starMarkets, configs })
+  const result = await create(limited, { log: record => logged.push(record), readStars: async id => { reads.push(id); throw Error('GITHUB_REPOSITORY_HTTP_429') } }).runOnce()
+  assert.deepEqual(result.stars, [{ mint: a, error: 'MINT_CONFIG_MISMATCH' }, { mint: b, error: 'GITHUB_REPOSITORY_HTTP_429' }])
+  assert.deepEqual(reads, ['700031'], 'the mismatched config is never read from GitHub; after the rate limit nothing more')
+  assert.deepEqual(logged.map(record => record.stars.error), ['MINT_CONFIG_MISMATCH', 'GITHUB_REPOSITORY_HTTP_429'])
+  const poor = setup({ markets: [], starMarkets, configs, balance: MIN_ORACLE_LAMPORTS - 1 }), poorReads = []
+  assert.deepEqual(await create(poor, { readStars: async id => { poorReads.push(id); return 900 } }).runOnce(), { status: 'OK', results: [] })
+  assert.deepEqual([poorReads, poor.sent.length], [[], 0], 'nothing read or sent while the balance is low')
+})
+
+test('a failing star query never stops the lists\' upkeep, and is logged once', async () => {
+  const mint = key(), repoId = '700040', logged = []
+  const markets = [{ repoId, mint, earlyAccessEnd: new Date(END) }]
+  const run = setup({ markets, links: { [repoId]: [key()] }, snapshot: { [repoId]: 1 }, lists: { [mint]: [] },
+    starQueryError: Object.assign(Error('column m.hook_rules does not exist'), { code: '42703' }) })
+  const oracle = create(run, { log: record => logged.push(record) })
+  assert.deepEqual((await oracle.runOnce()).results, [{ mint, added: 1, removed: 0, closed: false, signatures: ['sig1'] }])
+  await oracle.runOnce()
+  assert.deepEqual(logged.filter(record => record.stars), [{ stars: { error: 'STARS_NOT_MIGRATED' } }])
 })

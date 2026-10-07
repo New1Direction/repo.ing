@@ -14,7 +14,9 @@ import { readRepositoryStars } from './github.mjs'
 // would take more than half of a list of more than four wallets holds them all and logs it.
 // Star unlocks (docs/EARLY_ACCESS.md): until a star-unlock market's curve migrates (the fair ramp's limits apply only on the curve), the
 // oracle reads the repository's GitHub star count every 15 minutes and reports it when the bonus it gives changes (it may go down
-// as well as up: stars taken back are not gained). A repository GitHub no longer serves publicly keeps its last report.
+// as well as up: stars taken back are not gained). A repository GitHub no longer serves publicly keeps its last report. Star
+// reports are their own step after the lists' upkeep (a failure there never stops it), wait while the oracle's balance is low,
+// and stop for the run at GitHub's rate limit.
 // Each change is simulated first and sent only if it passes; the oracle signs and pays. One run at a time (advisory lock).
 
 const ADD_MARGIN_MS = 30_000
@@ -141,7 +143,9 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
     const mint = new PublicKey(market.mint)
     if (!info?.owner.equals(program)) return { mint: market.mint, error: 'NO_MINT_CONFIG' }
     const config = decodeMintConfig(info.data)
-    if (!config.mint.equals(mint) || !(config.rules & RULES.STAR_UNLOCKS)) return { mint: market.mint, error: 'MINT_CONFIG_MISMATCH' }
+    if (!config.mint.equals(mint) || config.repoId !== market.repoId || !(config.rules & RULES.STAR_UNLOCKS)) {
+      return { mint: market.mint, error: 'MINT_CONFIG_MISMATCH' }
+    }
     const stars = await readStars(market.repoId)
     if (stars === null) return { mint: market.mint, error: 'STARS_UNREADABLE' }
     if (!starReportNeeded(config, stars)) return { mint: market.mint, stars }
@@ -156,8 +160,9 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
       .sort((a, b) => (starsReadAt.get(a.mint) ?? -Infinity) - (starsReadAt.get(b.mint) ?? -Infinity)).slice(0, STAR_READS_PER_RUN)
   }
 
-  async function starReports(markets, deadline) {
-    const due = starsDue(markets), results = []
+  // due: the markets starsDue picked. A GitHub refusal for the rate limit ends the run's reads (the rest wait for the next run).
+  async function starReports(due, deadline) {
+    const results = []
     if (!due.length) return results
     const configs = await connection.getMultipleAccountsInfo(due.map(market => earlyAccessAddresses(market.mint, program).config), 'confirmed')
     for (const [index, market] of due.entries()) {
@@ -165,11 +170,31 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
       // Marked before the read, so a failing repository waits its turn like the others.
       starsReadAt.set(market.mint, clock())
       let result
-      try { result = await reportStars(market, configs[index]) } catch (error) { result = { mint: market.mint, error: error?.name ?? 'Error' } }
+      try { result = await reportStars(market, configs[index]) } catch (error) {
+        result = { mint: market.mint, error: /^GITHUB_REPOSITORY_HTTP_\d{3}$/.test(error?.message) ? error.message : error?.name ?? 'Error' }
+      }
       if (result.reported || result.error) log({ stars: result })
       results.push(result)
+      if (/^GITHUB_REPOSITORY_HTTP_(403|429)$/.test(result.error)) break
     }
     return results
+  }
+
+  // The star-unlock markets due a read, or [] when their query fails (logged once until it works again).
+  let starsQueryFailed = false
+  async function dueStarMarkets(client) {
+    try {
+      const { rows } = await client.query(`select m.github_repo_id::text as "repoId", m.mint from markets m
+        where (m.hook_rules & $2) <> 0 and m.transfer_hook_program = $1 and m.status = 'confirmed' and m.mint is not null
+          and m.indexed_at is not null and not exists (select 1 from graduation_events g where g.github_repo_id = m.github_repo_id)
+        order by m.github_repo_id`, [program.toBase58(), RULES.STAR_UNLOCKS])
+      starsQueryFailed = false
+      return starsDue(rows)
+    } catch (error) {
+      if (!starsQueryFailed) log({ stars: { error: error?.code === '42703' ? 'STARS_NOT_MIGRATED' : 'STARS_UNAVAILABLE' } })
+      starsQueryFailed = true
+      return []
+    }
   }
 
   async function runOnce() {
@@ -181,10 +206,7 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
         const { rows: markets } = await client.query(`select m.github_repo_id::text as "repoId", m.mint, m.early_access_end as "earlyAccessEnd"
           from markets m where m.early_access_end is not null and m.transfer_hook_program = $1 and m.status = 'confirmed' and m.mint is not null
             and m.early_access_end > $2 order by m.early_access_end`, [program.toBase58(), new Date(now() - CLOSE_WITHIN_MS)])
-        const { rows: starMarkets } = await client.query(`select m.github_repo_id::text as "repoId", m.mint from markets m
-          where (m.hook_rules & $2) <> 0 and m.transfer_hook_program = $1 and m.status = 'confirmed' and m.mint is not null
-            and not exists (select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) order by m.github_repo_id`,
-        [program.toBase58(), RULES.STAR_UNLOCKS])
+        const starMarkets = await dueStarMarkets(client)
         if (!markets.length && !starMarkets.length) {
           if (!platformChecked) { platformChecked = true; if (!await oracleMatches()) log({ error: 'ORACLE_NOT_PLATFORM_ORACLE' }) }
           return { status: 'IDLE' }
@@ -204,7 +226,7 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
           if (result.added || result.removed || result.closed || result.error || result.overflow || result.held || result.waiting) log(result)
           results.push(result)
         }
-        const stars = await starReports(starMarkets, deadline)
+        const stars = lowBalance ? [] : await starReports(starMarkets, deadline)
         return { status: 'OK', results, ...stars.length ? { stars } : {} }
       } finally { await client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [LOCK_KEY]) }
     } finally { client.release() }
