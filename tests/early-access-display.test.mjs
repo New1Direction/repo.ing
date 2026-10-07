@@ -13,7 +13,9 @@ const market = end => ({ transferHookProgram: HOOK, earlyAccessEnd: end })
 test('the early access notice shows only while the window is open, with its end in UTC', () => {
   assert.deepEqual(earlyAccessNotice(market('2026-10-07T12:15:00Z'), NOW), { endsAt: '2026-10-07T12:15:00.000Z', endsLabel: 'Oct 7, 12:15 UTC' })
   assert.equal(earlyAccessNotice(market(new Date('2026-10-08T09:05:00Z')), NOW).endsLabel, 'Oct 8, 09:05 UTC')
-  for (const m of [market('2026-10-07T12:00:00Z'), market('2026-10-07T11:00:00Z'), market(null), { earlyAccessEnd: '2026-10-07T13:00:00Z' }, market('not a date'), null, {}]) {
+  // Graduated inside the window (step 7b): the filling swap revoked the hook, so anyone can buy and nothing is shown.
+  for (const m of [market('2026-10-07T12:00:00Z'), market('2026-10-07T11:00:00Z'), market(null), { earlyAccessEnd: '2026-10-07T13:00:00Z' }, market('not a date'), null, {},
+    { ...market('2026-10-07T12:15:00Z'), graduated: true }]) {
     assert.equal(earlyAccessNotice(m, NOW), null, JSON.stringify(m))
   }
 })
