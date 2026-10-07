@@ -28,7 +28,7 @@ export async function GET(_request, { params }) {
     if (!/^\d{1,18}$/.test(repo)) throw new DiscoveryClaimError('Valid repository ID required')
     const options = service()
     // The one-time verification bonus shares this card; its status is best effort and never blocks the reward ledger.
-    const [summary, verificationBonus] = await Promise.all([discoverySummary(options.pool, repo, { earlyAccess: options.earlyAccess !== null }),
+    const [summary, verificationBonus] = await Promise.all([discoverySummary(options.pool, repo, { includeEarlyAccess: options.earlyAccess !== null }),
       readVerificationBonusView(options.pool, repo).catch(() => null)])
     if (!summary) return json({ enrolled: false, verificationBonus })
     // A curve that has graduated stays graduated: once this process has seen it, later polls skip the two chain reads.

@@ -145,12 +145,20 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
   }
 
   async function requireMarket(db, repoId) {
-    const market = await discoverySummary(db, repoId, { earlyAccess: Boolean(earlyAccess) })
+    const market = await discoverySummary(db, repoId, { includeEarlyAccess: Boolean(earlyAccess) })
     if (!market) fail('This market is not enrolled in discovery rewards')
     const configKey = resolveConfig(market)
     if (!deriveDbcPoolAddress(NATIVE_MINT, new PublicKey(market.mint), configKey).equals(new PublicKey(market.pool))) {
       fail('Discovery market does not match the canonical DBC config')
     }
+    return market
+  }
+
+  // A payout already signed and stored is only ever settled from its own bytes and finalized receipt (its pool's event), so its
+  // market is read whatever the early access setting is now: a pending early access payout settles even if the setting goes away.
+  async function signedClaimMarket(db, repoId) {
+    const market = await discoverySummary(db, repoId, { includeEarlyAccess: true })
+    if (!market) fail('This market is not enrolled in discovery rewards')
     return market
   }
 
@@ -257,7 +265,7 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
       if (!claim) fail('Discovery claim was not found')
       if (claim.status === 'settled') return offer(claim)
       if (claim.status === 'aborted') fail('This claim expired or failed. Start the claim again.')
-      if (claim.status === 'pending') return settle(db, claim, await requireMarket(db, repoId))
+      if (claim.status === 'pending') return settle(db, claim, await signedClaimMarket(db, repoId))
       if (isLegacy(claim)) {
         await abort(db, claim, 'Replaced by a message-confirmed claim')
         fail('This claim offer is out of date. Reload the page and claim again.')
@@ -309,7 +317,7 @@ export function createDiscoveryClaims({ pool, connection, config, partner = null
     return withLock(repoId, async db => {
       const claim = await activeClaim(db, repoId)
       if (!claim) return null
-      const market = await requireMarket(db, repoId)
+      const market = claim.status === 'pending' ? await signedClaimMarket(db, repoId) : await requireMarket(db, repoId)
       const result = await settle(db, claim, market)
       if (result.status === 'pending') {
         try {

@@ -609,14 +609,16 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       await sendAndConfirmTransaction(connection, buy, [contributor], { commitment: 'confirmed' })
       const indexer = createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig })
       assert.ok(await until(async () => { await indexer.runOnce()
-        return BigInt((await discoverySummary(pool, repoId, { earlyAccess: true })).remaining) > 3_000_000n }, 240), 'the reward accrued')
+        return BigInt((await discoverySummary(pool, repoId, { includeEarlyAccess: true })).remaining) > 3_000_000n }, 240), 'the reward accrued')
       const claims = createDiscoveryClaims({ pool, connection, config, partner, earlyAccess: eaConfig })
       const offer = await claims.prepare({ repoId, wallet })
       assert.equal(offer.status, 'prepared')
       assert.ok(BigInt(offer.amount) > 0n, 'a reward accrued from the trades above')
       const submitted = await claims.submit({ repoId, id: offer.id, signature: signMessage(contributor, offer.message) })
       assert.equal(submitted.status, 'pending')
-      const settled = await until(async () => { const result = await claims.recover(repoId); return result?.status === 'settled' ? result : null }, 240)
+      // A payout already signed settles from its own receipt even where the setting is gone (the worker without it).
+      const unset = createDiscoveryClaims({ pool, connection, config, partner })
+      const settled = await until(async () => { const result = await unset.recover(repoId); return result?.status === 'settled' ? result : null }, 240)
       assert.ok(settled, 'settled once final')
       const landed = await connection.getTransaction(submitted.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
       const keys = landed.transaction.message.accountKeys, delta = key => BigInt(landed.meta.postBalances[keys.findIndex(k => k.equals(key))]) -
