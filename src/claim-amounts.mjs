@@ -28,6 +28,14 @@ export function earlyAccessClaimAmounts(amounts) {
   return amounts.dbcPayout > 0n && amounts.dammFee > 0n ? { ...amounts, payoutAmount: amounts.dbcPayout, dammFee: 0n } : amounts
 }
 
+// What the next builder claim pays, from a fee status (src/reconcile.mjs) that MATCHes: all of it, except for an early access market
+// owed both curve and DAMM v2 fees, whose next claim pays the curve part (earlyAccessClaimAmounts); the DAMM v2 part follows.
+export function nextClaimAmount(fees) {
+  if (fees?.status !== 'MATCH' || fees.onchainCreatorFee == null) return null
+  const total = BigInt(fees.onchainCreatorFee), graduated = BigInt(fees.graduatedCreatorFee ?? 0n)
+  return fees.earlyAccess && graduated > 0n && total > graduated ? total - graduated : total
+}
+
 // The receiver must get at least the proven payout plus refunded rent. More is tolerated: a third
 // party can only add lamports (e.g. front-running a temporary account), never take them.
 export function receiverPaid(receiverDelta, provenAmount, rentRefund) {

@@ -4,7 +4,7 @@ import { Connection, Keypair, TransactionInstruction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { assertGraduatedClaimInstructions, graduatedClaimInstructions } from '../src/claim.mjs'
-import { claimAmounts, earlyAccessClaimAmounts } from '../src/claim-amounts.mjs'
+import { claimAmounts, earlyAccessClaimAmounts, nextClaimAmount } from '../src/claim-amounts.mjs'
 
 // Step 7c (docs/EARLY_ACCESS.md): a graduated early access market's builder claim. The DAMM v2 claim with token A on Token-2022 is
 // checked exactly before it is signed; a payout claims either the curve part or the DAMM v2 part, never both. On chain:
@@ -58,4 +58,15 @@ test('an early access payout claims the curve part alone when both are owed; the
   // Only the curve part owed (before graduation): unchanged.
   const curve = claimAmounts({ dbcFee: 500n, dammFee: 0n, outstanding: 500n })
   assert.deepEqual(earlyAccessClaimAmounts(curve), curve)
+})
+
+test('the claim page, the dashboard and the preview offer what the next claim pays', () => {
+  const fees = (extra = {}) => ({ status: 'MATCH', onchainCreatorFee: 1000n, graduated: true, ...extra })
+  assert.equal(nextClaimAmount(fees()), 1000n, 'a SOL market: everything')
+  assert.equal(nextClaimAmount(fees({ earlyAccess: true, graduatedCreatorFee: 300n })), 700n, 'both owed: the curve part')
+  assert.equal(nextClaimAmount(fees({ earlyAccess: true, graduatedCreatorFee: 1000n })), 1000n, 'only the DAMM v2 part left')
+  assert.equal(nextClaimAmount(fees({ earlyAccess: true, graduatedCreatorFee: 0n })), 1000n, 'only the curve part')
+  assert.equal(nextClaimAmount(fees({ graduatedCreatorFee: 300n })), 1000n, 'not an early access market')
+  assert.equal(nextClaimAmount({ status: 'MISMATCH', onchainCreatorFee: 1000n }), null)
+  assert.equal(nextClaimAmount({ status: 'UNAVAILABLE', onchainCreatorFee: null }), null)
 })
