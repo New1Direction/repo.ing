@@ -20,13 +20,14 @@ offers or accepts early access; nothing is deployed.
 | Contributor | A GitHub account with at least 1 commit in the repository (GitHub's contributor list), bots excluded, with a wallet linked to that account on repo.ing. |
 | Fee | Flat 1.75% (the `builders` curve), not the anti-sniper launch fee: during the window only contributors can buy. |
 
-Two more rules in the same program (owner, 2026-10-06), each one the launcher selects; any mix of the three is possible, and
-star unlocks needs the fair ramp:
+Two more rules in the same program (owner, 2026-10-06), each one the launcher selects. They are options of an early access
+launch only (owner, 2026-10-07), and star unlocks needs the fair ramp, so a launch's rules are early access, early access with the
+fair ramp, or all three (1, 3 or 7):
 
 | Rule | Decision |
 | --- | --- |
 | Fair ramp | One wallet can hold at most 2% of the supply at the start. The limit rises in a straight line to 10% while the curve sells, and there is no limit from 50% curve progress on (the 10% end point is the agent's choice; the owner set 2% and 50%). |
-| Star unlocks | Every 100 GitHub stars the repository gains after the launch add 0.5% of the supply to the fair ramp's limit (the oracle reports the star count), up to a cap stored per mint (+5% suggested; stars never lift the limit away). |
+| Star unlocks | Every 100 GitHub stars the repository gains after the launch add 0.5% of the supply to the fair ramp's limit (the oracle reports the star count), up to a cap stored per mint (+5%, owner, 2026-10-07; stars never lift the limit away). |
 
 ## The program
 
@@ -452,7 +453,31 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
   when the platform names another oracle. One run at a time (advisory lock), and a run stops sending after 45 seconds (the next
   run goes on). The oracle signs and pays: keep its key funded (fees, and about 0.00022 SOL per wallet of list growth, returned
   when the list is closed). Below 0.005 SOL it adds nothing and logs `ORACLE_LOW_BALANCE`; removals and closes go on.
-- Star counts (`report_stars`) wait for the star unlock launch option.
+- Star counts for star unlocks: see "The launch options" below.
+
+## The launch options: fair ramp and star unlocks (step 4b)
+
+- **Form.** With a window chosen, the launch form shows two cards, both off: the fair ramp, and star unlocks (only with the fair
+  ramp). The request carries `fairRamp: true` and `starUnlocks: true`; anything but true, false or absent, an option without a
+  window, or star unlocks without the fair ramp is refused with a message the page shows. With the fair ramp the buy presets are
+  1% and "Max 2%", and a custom buy over 2% is refused on the form and again at prepare ("With the fair ramp, the first buy can get
+  at most 2% of the supply. Enter less SOL."): the hook would refuse it.
+- **Prepare.** `init_mint` gets the ramp's settings: `vault_start` the supply, `vault_end` the base vault's balance when the
+  curve's SOL reaches 50% of the migration threshold (from the config's curve, `vaultAtProgress`), 2% to 10%; with star unlocks
+  100 stars per step, +0.5% each, at most +5%, and `stars_at_launch` the repository's star count as GitHub gives it at prepare. The settings add 32 bytes: with a first buy, names up to the measured length fit with a ticker of 10
+  (`rampLaunchSizes` in the chain test); a longer one is refused with the size message (a shorter name, or no first buy).
+- **Stamp and evidence.** `markets.hook_rules` (migration 0061) holds 1, 3 or 7, only with the window, immutable once the launch was
+  sent (the same trigger as the window); a window without it is early access alone. The launch evidence reads the mint config and
+  accepts the market only when its rules and settings are exactly what the stamp and the config give (`rulesMatch`).
+- **Trades.** The site's curve trader (and its Blinks) reads the mint config, the mint, the base vault and the wallet's account
+  before it builds a buy, and refuses one past the wallet's limit with the room left ("Contributor early access: with the fair ramp
+  one wallet can hold at most X% of the supply right now (it rises as the curve sells). This wallet can get about N more
+  tokens."). The hook refuses it on chain in any case (`EARLY_ACCESS_WALLET_LIMIT`). The token page states the rule while the curve
+  trades (after the window too); after the migration nothing is shown (the filling swap revoked the hook).
+- **Stars.** The oracle reads the star count of each star unlock market's repository from GitHub (`/repositories/{id}`) every 15
+  minutes until its curve migrates, and reports it (`report_stars`) when the bonus it gives changes, down as well as up. A
+  repository GitHub no longer serves publicly, or a count GitHub does not give, keeps the last report. Reports are simulated first,
+  like list changes, and come from the same run (lock, 45-second budget, at most 20 repositories per run).
 
 ## Readiness, the keeper and the overdue alert (step 8)
 
@@ -598,13 +623,10 @@ after any change to `programs/early-access-hook`. The chain tests start `scripts
 3. Database, switches and the GitHub-to-wallet link for contributors. Done.
 4. The early access config and the launch (v0 transaction, lookup table, window on the form, contributor list at prepare). Done
    (dark; see above).
-4b. Fair ramp and star unlocks in the program (this change). Left for the launch: the form's two options, the ramp settings
-   at prepare (`vault_start` = the supply, `vault_end` = the vault's balance at 50% curve progress, from the curve), sizing
-   the launcher's first buy under 2%; for the oracle: reporting stars; for trades: showing the limit and refusing a buy past
-   it with its own message.
+4b. Fair ramp and star unlocks: in the program, then the launch options (above). Done (dark with the rest).
 5. Curve trades, charts, lists and indexers for hook pools. Done.
 6. Claims: builder fees, discovery and platform fees. Done.
 7. Graduation, DAMM v2 trades with a Token-2022 market token, the claims after it and the builder allocation. Done.
 8. A readiness check, the overdue-migration alert, the keeper check and the runbook (below). The owner deploys the program,
    creates the config and the lookup table, and switches it on.
-9. Later (owner's choice, 2026-10-07 recommendation: after go-live): the fair ramp and star unlock launch options (4b's list).
+9. Later: recovery of expired early access launches by hand; a minimum claim amount.

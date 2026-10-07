@@ -19,6 +19,7 @@ import { isHfMarketId } from '../../../../src/hf-launch.mjs'
 import { ModelLaunch } from '../../../components/hf/model-launch'
 import { quoteOptions, stockPairsLaunchable } from '../../../../src/quote-assets.mjs'
 import { EARLY_ACCESS_WINDOWS, earlyAccessLaunchable } from '../../../../src/early-access.mjs'
+import { earlyAccessOptionTerms } from '../../../../src/early-access-rules.mjs'
 import { bundleFormSettings, bundleLaunchable } from '../../../../src/bundle-launch.mjs'
 import { repositoryBlockers } from '../../../../src/bundle-raise-store.mjs'
 export const dynamic = 'force-dynamic'
@@ -61,7 +62,7 @@ export default async function Launch({ params, searchParams }) {
   // SOL, plus the owner's company stock when stock pairs can be launched; from the owner GitHub reported in the read above.
   const pairs = quoteOptions(repo, { enabled: stockPairsLaunchable() })
   // Contributor early access (docs/EARLY_ACCESS.md): offered only while it can launch; the form shows it for SOL launches from here.
-  const earlyAccess = earlyAccessLaunchable() ? { windows: EARLY_ACCESS_WINDOWS.map(window => ({ ...window })) } : null
+  const earlyAccess = earlyAccessLaunchable() ? { windows: EARLY_ACCESS_WINDOWS.map(window => ({ ...window })), ...earlyAccessOptionTerms() } : null
   // Bundle launches (docs/BUNDLE_LAUNCH.md): offered only while a raise can be opened; the form shows it beside the standard launch.
   const bundle = bundleLaunchable() ? bundleFormSettings() : null
   // A repository with a live bundle launches from its raise, whatever the switch says (the launch coordinator refuses a standard
