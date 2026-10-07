@@ -6,6 +6,7 @@ import { DynamicBondingCurveClient, DAMM_V2_MIGRATION_FEE_ADDRESS, deriveDammV2P
 import { CpAmm, CP_AMM_PROGRAM_ID, getUnClaimLpFee } from '@meteora-ag/cp-amm-sdk'
 import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
+import { EARLY_ACCESS_GRADUATION_PENDING, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const verifiedMigrations = new Map()
@@ -68,10 +69,12 @@ async function proofQuery(db, text, params) {
   }
 }
 
-export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction }) {
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market is read on its curve (no graduated fees before it
+// migrates); a migrated one is refused by name until its graduation ships (docs/EARLY_ACCESS.md, step 7).
+export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = tradingEarlyAccessConfig() }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const amm = new CpAmm(connection)
-  const resolve = createMarketConfigResolver(config)
+  const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
   const proven = verifiedMigrations
   const repoId = market => market.githubRepoId ?? market.repoId
   // A stored proof is only a pointer: its signature is reloaded from finalized chain state and must
@@ -108,6 +111,7 @@ export function createGraduatedFees({ connection, config, db = null, loadTransac
     if (!state || !fixed || !state.poolState.config.equals(configKey) ||
         state.poolState.baseMint.toBase58() !== market.mint || state.poolState.creator.toBase58() !== market.creatorWallet) throw Error('Invalid canonical creator pool')
     if (!state.poolState.isMigrated) return null
+    if (isEarlyAccessMarket(market)) throw Error(EARLY_ACCESS_GRADUATION_PENDING)
     if (fixed.migrationOption !== MigrationOption.MET_DAMM_V2 || !fixed.quoteMint.equals(NATIVE_MINT) ||
         fixed.creatorPermanentLockedLiquidityPercentage !== 50 || fixed.partnerPermanentLockedLiquidityPercentage !== 50) throw Error('Unsupported graduated fee configuration')
     const feeConfig = DAMM_V2_MIGRATION_FEE_ADDRESS[fixed.migrationFeeOption]

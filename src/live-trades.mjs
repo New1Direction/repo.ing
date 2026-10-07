@@ -2,7 +2,7 @@ import { PublicKey } from '@solana/web3.js'
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createMarketConfigResolver } from './market-config.mjs'
-import { earlyAccessDbcConfig } from './early-access.mjs'
+import { tradingEarlyAccessConfig } from './early-access.mjs'
 import { canonicalTradeEvents } from './trade-evidence.mjs'
 import { dammSwapEvents, indexDammTradesLocked } from './damm-trades.mjs'
 import { loadTransactionAt } from './finalized-transaction.mjs'
@@ -121,7 +121,7 @@ export async function pruneLiveTrades(pool, maxAgeMs = LIVE_TRADE_TTL_MS) {
 // indexing can be due as soon as it finalizes. track(fn): runs each transaction's handling (the worker attributes its RPC
 // reads to this job). paused(): the primary provider is backing off a rate limit, so reads are skipped until it recovers.
 // earlyAccess: EARLY_ACCESS_DBC_CONFIG, so contributor early access curves are watched on their own config.
-export function createLiveTrades({ pool, connect, config, legacyConfigs, earlyAccess = earlyAccessDbcConfig(), loadTransaction = (rpc, signature) => loadTransactionAt(rpc, signature, 'confirmed'),
+export function createLiveTrades({ pool, connect, config, legacyConfigs, earlyAccess = tradingEarlyAccessConfig(), loadTransaction = (rpc, signature) => loadTransactionAt(rpc, signature, 'confirmed'),
   onDammSwap = () => {}, now = Date.now, concurrency = 4, delays = RETRY_DELAYS_MS, refreshMs = LIVE_REFRESH_MS, deafMs = LIVE_DEAF_MARGIN_MS,
   renewBaseMs = LIVE_RENEW_BASE_MS, renewMaxMs = LIVE_RENEW_MAX_MS, maxRenewals = LIVE_MAX_RENEWALS,
   readsPerSecond = LIVE_READS_PER_SECOND, burst = LIVE_READ_BURST, paused = () => false,

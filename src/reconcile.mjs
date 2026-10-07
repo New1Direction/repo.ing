@@ -1,6 +1,7 @@
 import { isBundleMarket } from './bundles.mjs'
 import { PublicKey } from '@solana/web3.js'
 import { createMarketConfigResolver } from './market-config.mjs'
+import { tradingEarlyAccessConfig } from './early-access.mjs'
 import { NATIVE_MINT } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { drizzle } from 'drizzle-orm/node-postgres'
@@ -116,9 +117,11 @@ export function createReconcileEpisodes({ now = Date.now, holdMs = RECONCILE_HOL
   }
 }
 
-export function createReconciler({ pool, connection, config }) {
-  const resolveConfig = createMarketConfigResolver(config)
-  const graduatedFees = createGraduatedFees({ connection, config, db: pool })
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market's builder fees are reconciled on its curve like any
+// other's (docs/EARLY_ACCESS.md, step 6a); unset, such a market is refused by name.
+export function createReconciler({ pool, connection, config, earlyAccess = tradingEarlyAccessConfig() }) {
+  const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess })
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
 
   const reconcile = async githubRepoId => {

@@ -32,6 +32,8 @@ export const isEarlyAccessMarket = market => (market?.earlyAccessEnd ?? null) !=
 // on the site and through Blinks go through swap2WithTransferHook (src/early-access-trade.mjs, steps 5d and 5e). Claims: step 6.
 export const EARLY_ACCESS_NOT_TRADABLE = 'Contributor early access markets are not tradable on the site yet.'
 export const EARLY_ACCESS_NOT_CLAIMABLE = 'Contributor early access markets cannot be claimed on the site yet.'
+// A graduated contributor early access market (DAMM v2 with a Token-2022 token): read, traded and claimed from step 7 on.
+export const EARLY_ACCESS_GRADUATION_PENDING = 'EARLY_ACCESS_GRADUATION_PENDING'
 // scripts/recover-expired-launch.mjs (the worker releases a proven expired early access launch itself).
 export const EARLY_ACCESS_NO_MANUAL_RECOVERY = 'This is a contributor early access launch: manual recovery is not available yet. ' +
   'The worker releases it once two providers prove it expired without landing.'
@@ -64,7 +66,8 @@ function publicKeySetting(env, name) {
 export const earlyAccessDbcConfig = (env = process.env) => publicKeySetting(env, 'EARLY_ACCESS_DBC_CONFIG')
 // A window's end in trade messages: "2026-10-07 12:15 UTC".
 export const earlyAccessEndUtc = end => `${new Date(end).toISOString().slice(0, 16).replace('T', ' ')} UTC`
-// For the traders: a malformed EARLY_ACCESS_DBC_CONFIG refuses early access markets only (logged by name), never every trade.
+// For every path that opts in (traders, indexers, reconciliation): a malformed EARLY_ACCESS_DBC_CONFIG refuses early access markets
+// only (logged by name), never every trade, index or claim.
 export function tradingEarlyAccessConfig(env = process.env, log = console.error) {
   try { return earlyAccessDbcConfig(env) } catch (error) { log(`${error.message}; early access markets are not tradable`); return null }
 }
