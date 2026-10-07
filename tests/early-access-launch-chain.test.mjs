@@ -38,6 +38,7 @@ import { createReconciler } from '../src/reconcile.mjs'
 import { createClaim } from '../src/claim.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { discoverySummary } from '../src/discovery-rewards.mjs'
+import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from '../src/platform-dbc-fees.mjs'
 import { sign as signBytes } from 'node:crypto'
 import { CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR } from '../src/dbc-hook-claims.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
@@ -630,6 +631,33 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       assert.equal(Buffer.from(bs58.decode(dbcClaims[0].data)).subarray(0, 8).toString('hex'), '54bf473209a237c1', 'claim_trading_fee2')
       console.log(JSON.stringify({ earlyAccessDiscoveryClaim: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
         computeUnits: landed.meta.computeUnitsConsumed } }))
+    })
+
+    // Step 6f: the platform collects the rest of the market's partner fees (all but the launcher's discovery reward) with
+    // claim_trading_fee2, behind PLATFORM_DBC_COLLECTION_ENABLED and an exact review: the treasury receives exactly that amount,
+    // the temporary accounts open and close inside the transaction, and nothing is left to collect. Without the setting the market
+    // is not listed.
+    await t.test('the platform collects its share of the partner fees with claim_trading_fee2', async () => {
+      const config = solConfig.toBase58(), repoId = String(secondMarket.githubRepoId), treasury = Keypair.generate().publicKey
+      const env = { PLATFORM_DBC_COLLECTION_ENABLED: 'true', PLATFORM_FEE_TREASURY_WALLET: treasury.toBase58() }
+      await assert.rejects(createDbcPlatformFees({ pool, connection, config, partner, env }).status(repoId), /not finalized and indexed/)
+      const fees = createDbcPlatformFees({ pool, connection, config, partner, env, earlyAccess: eaConfig })
+      const status = await fees.status(repoId)
+      assert.equal(status.hook, true)
+      assert.equal(status.receiver, treasury.toBase58())
+      assert.ok(BigInt(status.available) > 0n, JSON.stringify(status))
+      const review = { purpose: 'platform-fee-review', phase: 'DBC', repoId, receiver: status.receiver, amount: status.available,
+        termsHash: status.termsHash, maxNetworkFeeLamports: String(DBC_MAX_NETWORK_FEE_LAMPORTS), expiresAt: Date.now() + 120_000 }
+      const receipt = await fees.claim({ review })
+      assert.deepEqual([receipt.status, receipt.amount], ['settled', status.available])
+      assert.equal(await connection.getBalance(treasury, 'finalized'), Number(status.available), 'the treasury received exactly the collected fees')
+      const landed = await connection.getTransaction(receipt.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+      const keys = landed.transaction.message.accountKeys
+      const dbcClaims = landed.transaction.message.instructions.filter(ix => keys[ix.programIdIndex].toBase58() === 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
+      assert.equal(Buffer.from(bs58.decode(dbcClaims[0].data)).subarray(0, 8).toString('hex'), '54bf473209a237c1', 'claim_trading_fee2')
+      console.log(JSON.stringify({ earlyAccessPlatformClaim: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
+        computeUnits: landed.meta.computeUnitsConsumed } }))
+      assert.equal((await fees.status(repoId)).available, '0', 'nothing left to collect')
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

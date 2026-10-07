@@ -233,7 +233,8 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | --- | --- |
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
 | Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it, and for the graduated trader: refused, "Contributor early access markets are not tradable on the site yet." |
-| Builder allocation (`allocationRecord`), platform fee listing and sweep (`listPlatformFees`), `platformFeeRecord`, DBC partner fee collection | skipped (`early_access_end is null`) or refused before any chain call |
+| Builder allocation (`allocationRecord`) and graduated platform fees (`platformFeeRecord`) | skipped or refused before any chain call (step 7) |
+| Platform fee listing, sweep and DBC partner fee collection | listed and collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 6f); skipped otherwise |
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
 | Graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped (step 7) |
 | Builder dashboard (`app/lib/builders.mjs`) | listed, with their fee check, where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); not listed otherwise |
@@ -324,6 +325,18 @@ Left for the next steps (each fails closed or is harmless until then):
   is unchanged (the claim emits the same event). Measured on mainnet's programs: 1,176 bytes (the longest repository ID and
   amount add about 15 bytes; the limit is 1,232), about 90,000 compute units.
 
+## The platform's partner fees (step 6f)
+
+- Where `EARLY_ACCESS_DBC_CONFIG` is set, the operator's DBC partner fee collection (`src/platform-dbc-fees.mjs`, behind
+  `PLATFORM_DBC_COLLECTION_ENABLED` and an exact review; the operator panel, `scripts/platform-sweep.mjs` and
+  `scripts/collect-dbc-platform-fees.mjs`) lists and collects an early access market's share: the pool and config are read as
+  the transfer-hook accounts (`TransferHookPool`, `ConfigWithTransferHook` with this hook program, Token-2022), and the claim is
+  `claim_trading_fee2` to a one-time authority (`hookClaimInstructions`, checked before signing), then exactly the amount to the
+  treasury, the WSOL deposit back to the partner and the authority's Token-2022 account closed to the partner. The settlement is
+  unchanged: the treasury's exact delta, the partner's network fee only, every temporary account at zero before and after, the
+  quote vault's debit and the claim's event. Measured on mainnet's programs: 1,041 bytes, about 52,000 compute units.
+- Without the setting these markets are not listed and are refused, as before.
+
 ## The oracle's upkeep of the lists (step 5f)
 
 The launch puts only the launcher on the list (for its first buy) and takes it off again unless it is a linked contributor. The
@@ -360,7 +373,7 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
     node --test tests/early-access-reconcile.test.mjs  # the fee ledger watch and its alerts; reconcile with and without the setting (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, sizes and the launch API (PostgreSQL + validator)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

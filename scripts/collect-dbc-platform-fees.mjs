@@ -1,6 +1,7 @@
 // Operator CLI. Review and simulation do not broadcast. Claim consumes only an
 // exact, unexpired review file produced by this tool; no unattended sweep mode.
 import { readFile } from 'node:fs/promises'
+import { tradingEarlyAccessConfig } from '../src/early-access.mjs'
 import pg from 'pg'
 import bs58 from 'bs58'
 import { Connection, Keypair } from '@solana/web3.js'
@@ -16,7 +17,7 @@ const partner = Keypair.fromSecretKey(secret.startsWith('[') ? Uint8Array.from(J
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
 try {
   const service = createDbcPlatformFees({ pool, connection: new Connection(process.env.SOLANA_RPC_URL, 'finalized'),
-    config: process.env.DBC_CONFIG, partner, verification: process.env.GRADUATION_VERIFICATION_RPC_URL ?
+    config: process.env.DBC_CONFIG, partner, earlyAccess: tradingEarlyAccessConfig(), verification: process.env.GRADUATION_VERIFICATION_RPC_URL ?
       new Connection(process.env.GRADUATION_VERIFICATION_RPC_URL, 'finalized') : null })
   if (mode === 'review') {
     const current = await service.status(argument)

@@ -2,6 +2,7 @@ import { Connection } from '@solana/web3.js'
 import { createPlatformFees } from './platform-fees.mjs'
 import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from './platform-dbc-fees.mjs'
 import { retryRpcRead } from './rpc-usage.mjs'
+import { tradingEarlyAccessConfig } from './early-access.mjs'
 
 // Shared by the operator panel (app/api/operations/platform-fees) and scripts/platform-sweep.mjs:
 // one source of truth for which repo/phase has claimable platform fees and what a claim review pins.
@@ -11,8 +12,9 @@ export const PLATFORM_FEE_PHASES = Object.freeze(['DBC', 'DAMM'])
 
 // `verification` overrides the DBC verification connection otherwise made from GRADUATION_VERIFICATION_RPC_URL
 // (the sweep passes one that goes through its RPC meter).
+// Contributor early access markets' curve fees (docs/EARLY_ACCESS.md, step 6f) are collected where EARLY_ACCESS_DBC_CONFIG is set.
 export function platformFeeService(phase = 'DBC', { pool, connection, config, partner, env = process.env, verification }) {
-  if (phase === 'DBC') return createDbcPlatformFees({ pool, connection, config, partner,
+  if (phase === 'DBC') return createDbcPlatformFees({ pool, connection, config, partner, earlyAccess: tradingEarlyAccessConfig(env),
     verification: verification ?? (env.GRADUATION_VERIFICATION_RPC_URL ? new Connection(env.GRADUATION_VERIFICATION_RPC_URL, 'finalized') : null) })
   if (phase === 'DAMM') return createPlatformFees({ pool, connection, config, partner })
   throw Error('Invalid fee phase')
@@ -37,8 +39,9 @@ export function allocationReview({ sessionId, policyVersion, now = Date.now() })
 // `review` is only asked for rows with a positive balance. The panel reads four markets at once without retries.
 // The sweep reads one market at a time, `paceMs` apart, and passes `retry` (retryRpcRead options) so a transient RPC
 // error is retried; an entry then carries the `retries` it spent, also when it still failed.
+// earlyAccess: whether the fee service takes contributor early access markets (EARLY_ACCESS_DBC_CONFIG); only then are they listed.
 export async function listPlatformFees({ pool, feeService, review = () => null, concurrency = 4, paceMs = 0, retry = null,
-  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), earlyAccess = Boolean(tradingEarlyAccessConfig()) }) {
   const db = await pool.connect()
   try {
     const { rows: repos } = await db.query(`select m.github_repo_id::text as "repoId", m.mint,
@@ -46,8 +49,8 @@ export async function listPlatformFees({ pool, feeService, review = () => null, 
       exists (select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) as graduated
       from markets m left join repositories r on r.github_repo_id = m.github_repo_id
       where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.quote_asset_id is null
-      and m.early_access_end is null and m.bundle_id is null
-      order by m.github_repo_id`)
+      and (m.early_access_end is null or $1::boolean) and m.bundle_id is null
+      order by m.github_repo_id`, [Boolean(earlyAccess)])
     const queue = [...repos], results = []
     const worker = async () => {
       let started = false

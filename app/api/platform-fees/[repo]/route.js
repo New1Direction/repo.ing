@@ -1,4 +1,5 @@
 import { requirePlatformOperator } from '../../../lib/platform-operator.mjs'
+import { tradingEarlyAccessConfig } from '../../../../src/early-access.mjs'
 import { createPlatformFees } from '../../../../src/platform-fees.mjs'
 import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from '../../../../src/platform-dbc-fees.mjs'
 import { Connection } from '@solana/web3.js'
@@ -11,7 +12,7 @@ const headers = { 'Cache-Control': 'private, no-store' }
 function service(phase = 'DAMM') {
   const partner = partnerSigner()
   if (!partner) throw Error('Platform fee claiming is not configured')
-  if (phase === 'DBC') return createDbcPlatformFees({ pool: database(), connection: chain(), config: configAddress(), partner,
+  if (phase === 'DBC') return createDbcPlatformFees({ pool: database(), connection: chain(), config: configAddress(), partner, earlyAccess: tradingEarlyAccessConfig(),
     verification: process.env.GRADUATION_VERIFICATION_RPC_URL ? new Connection(process.env.GRADUATION_VERIFICATION_RPC_URL, 'finalized') : null })
   if (phase !== 'DAMM') throw Error('Invalid fee phase')
   return createPlatformFees({ pool: database(), connection: chain(), config: configAddress(), partner })

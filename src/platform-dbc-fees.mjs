@@ -3,9 +3,15 @@ import { broadcastUntilSettled, isDustPayout, maxPayoutNetworkFee, signedWithPri
 import BN from 'bn.js'
 import bs58 from 'bs58'
 import { Keypair, PublicKey, SystemProgram, Transaction, VersionedTransaction } from '@solana/web3.js'
-import { ACCOUNT_SIZE, NATIVE_MINT, TOKEN_PROGRAM_ID, createCloseAccountInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { ACCOUNT_SIZE, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createCloseAccountInstruction, getAssociatedTokenAddressSync,
+  unpackMint } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createMarketConfigResolver } from './market-config.mjs'
+import { isEarlyAccessMarket } from './early-access.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
+import { decodeEarlyAccessConfig } from './early-access-config.mjs'
+import { assertHookClaimInstructions, hookClaimInstructions } from './dbc-hook-claims.mjs'
+import { associatedAccountLength } from './trade-costs.mjs'
 import { discoveryEarned } from './discovery-rewards.mjs'
 
 const PROGRAM = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
@@ -31,10 +37,14 @@ export function dbcPlatformEntitlement({ gross, eligible, discoveryPaid, platfor
     platformPaid: String(platformPaid), onchainAvailable: String(onchain), available: String(expected - reserved) }
 }
 
-export function createDbcPlatformFees({ pool, connection, config, partner, verification = null, env = process.env }) {
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG), passed by the paths that collect from them: a contributor early access market's partner
+// fees are collected from its Token-2022 hook pool with claim_trading_fee2 (src/dbc-hook-claims.mjs, docs/EARLY_ACCESS.md step 6f).
+// Without it such a market is refused, as before.
+export function createDbcPlatformFees({ pool, connection, config, partner, verification = null, env = process.env, earlyAccess = null,
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
-  const resolve = createMarketConfigResolver(config)
-  const coder = dbc.state.getProgram().coder.accounts
+  const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
+  const rootCoder = dbc.state.getProgram().coder, coder = rootCoder.accounts
   const destination = () => platformTreasuryWallet(partner.publicKey, env)
   async function withLock(repoId, fn) {
     if (!/^[1-9]\d*$/.test(String(repoId))) throw Error('Invalid repository')
@@ -47,21 +57,32 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
   async function inspect(db, repoId) {
     if (!partner) throw Error('Protected partner signer is required')
     const { rows: [m] } = await db.query(`select github_repo_id::text as "repoId",mint,pool,
-      creator_wallet as "creatorWallet",discovery_version as version from markets
+      creator_wallet as "creatorWallet",discovery_version as version,early_access_end as "earlyAccessEnd",
+      transfer_hook_program as "transferHookProgram" from markets
       where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'
-      and early_access_end is null and bundle_id is null`, [String(repoId)])
+      and (early_access_end is null or $2::boolean) and bundle_id is null`, [String(repoId), Boolean(earlyAccess)])
     if (!m) throw Error('Market is not finalized and indexed')
+    const hook = isEarlyAccessMarket(m)
     const configKey = resolve(m), poolKey = new PublicKey(m.pool), receiver = destination()
     if (!local(connection) && !verification) throw Error('Independent RPC verification is required for collection')
     const keys = [poolKey, configKey]
     const reads = await Promise.all([connection, ...(verification ? [verification] : [])].map(c => c.getMultipleAccountsInfoAndContext(keys, 'finalized')))
     for (const read of reads) for (const a of read.value) if (!a?.owner.equals(PROGRAM)) throw Error('Invalid canonical DBC account')
     if (reads.length === 2 && reads[0].value.some((a, i) => !a.data.equals(reads[1].value[i].data))) throw Error('RPC disagreement; refresh before collection')
-    const s = coder.decode('virtualPool', reads[0].value[0].data).poolState
-    const fixed = coder.decode('poolConfig', reads[0].value[1].data)
+    // An early access pool and its config are the transfer-hook accounts (TransferHookPool, ConfigWithTransferHook) with this hook.
+    let s, fixed
+    if (hook) {
+      s = coder.decode('transferHookPool', reads[0].value[0].data).poolState
+      const decoded = decodeEarlyAccessConfig(reads[0].value[1].data, rootCoder)
+      if (!decoded.transferHookProgram.equals(new PublicKey(hookProgram))) throw Error('Canonical partner config or SOL fee mode mismatch')
+      fixed = decoded.config
+    } else {
+      s = coder.decode('virtualPool', reads[0].value[0].data).poolState
+      fixed = coder.decode('poolConfig', reads[0].value[1].data)
+    }
     if (!s.config.equals(configKey) || s.baseMint.toBase58() !== m.mint || s.creator.toBase58() !== m.creatorWallet ||
       !deriveDbcPoolAddress(NATIVE_MINT, s.baseMint, configKey).equals(poolKey) || !fixed.feeClaimer.equals(partner.publicKey) ||
-      !fixed.quoteMint.equals(NATIVE_MINT) || fixed.collectFeeMode !== 0 || fixed.tokenType !== 0 ||
+      !fixed.quoteMint.equals(NATIVE_MINT) || fixed.collectFeeMode !== 0 || fixed.tokenType !== (hook ? 1 : 0) ||
       !s.partnerBaseFee.isZero()) throw Error('Canonical partner config or SOL fee mode mismatch')
     if (receiver.toBase58() === m.creatorWallet) throw Error('Treasury must not be the builder payout signer')
     const { rows: [totals] } = await db.query(`select
@@ -76,7 +97,7 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
     const terms = { phase: 'DBC', repoId: String(repoId), mint: m.mint, pool: m.pool, config: configKey.toBase58(),
       receiver: receiver.toBase58(), source: partner.publicKey.toBase58(), ...entitlement }
     return { ...terms, termsHash: hash(terms), slot: reads[0].context.slot, quoteVault: s.quoteVault.toBase58(),
-      creatorUnclaimed: s.creatorQuoteFee.toString(), enrolled: true, state: 'available' }
+      creatorUnclaimed: s.creatorQuoteFee.toString(), enrolled: true, state: 'available', hook }
   }
   // `retryRead` wraps each read made before the claim is signed (the sweep retries transient RPC errors there).
   // Signing, the fee and balance checks, simulation, the durable intent, broadcast and settlement never use it.
@@ -98,16 +119,29 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
       if (!/^[1-9]\d*$/.test(String(review.maxNetworkFeeLamports)) || BigInt(review.maxNetworkFeeLamports) > DBC_MAX_NETWORK_FEE_LAMPORTS) throw Error('Invalid reviewed network fee limit')
       // Fresh temporary ATAs keep the claim from closing any existing wallet
       // token account. Both rent deposits return to the fee payer atomically.
-      const temporary = Keypair.generate(), receiver = new PublicKey(current.receiver)
-      const claimTx = await retryRead(() => dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
-        receiver: temporary.publicKey, tempWSolAcc: temporary.publicKey, pool: new PublicKey(current.pool),
-        maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) }))
+      const temporary = Keypair.generate(), receiver = new PublicKey(current.receiver), mint = new PublicKey(current.mint)
+      // An early access market: claim_trading_fee2 from its hook pool, checked before signing; its base account is the temporary
+      // authority's Token-2022 one, whose deposit (sized by the mint's extensions) its close returns to the partner.
+      const claimTx = new Transaction()
+      if (current.hook) {
+        const expected = { kind: 'partner', authority: partner.publicKey, payer: partner.publicKey, pool: new PublicKey(current.pool),
+          config: new PublicKey(current.config), mint, maxQuoteAmount: amount, receiver: temporary.publicKey, temporary: temporary.publicKey, hookProgram }
+        const instructions = await retryRead(() => hookClaimInstructions(dbc, expected))
+        assertHookClaimInstructions(instructions, expected)
+        claimTx.add(...instructions)
+      } else {
+        claimTx.add(await retryRead(() => dbc.partner.claimPartnerTradingFee({ feeClaimer: partner.publicKey, payer: partner.publicKey,
+          receiver: temporary.publicKey, tempWSolAcc: temporary.publicKey, pool: new PublicKey(current.pool),
+          maxBaseAmount: new BN(0), maxQuoteAmount: new BN(amount.toString()) })))
+      }
       const rent = await retryRead(() => connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE))
-      const baseAccount = getAssociatedTokenAddressSync(new PublicKey(current.mint), temporary.publicKey)
+      const baseRent = current.hook ? await retryRead(async () => connection.getMinimumBalanceForRentExemption(associatedAccountLength(
+        unpackMint(mint, await connection.getAccountInfo(mint, 'finalized'), TOKEN_2022_PROGRAM_ID)))) : rent
+      const baseAccount = getAssociatedTokenAddressSync(mint, temporary.publicKey, true, current.hook ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID)
       const quoteAccount = getAssociatedTokenAddressSync(NATIVE_MINT, temporary.publicKey)
       claimTx.add(SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: receiver, lamports: amount }),
         SystemProgram.transfer({ fromPubkey: temporary.publicKey, toPubkey: partner.publicKey, lamports: rent }),
-        createCloseAccountInstruction(baseAccount, partner.publicKey, temporary.publicKey))
+        createCloseAccountInstruction(baseAccount, partner.publicKey, temporary.publicKey, [], current.hook ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID))
       const latest = await retryRead(() => connection.getLatestBlockhash('confirmed'))
       // Rebuilt as [limit, price, ...claim] and signed by both the partner (fee payer) and the temporary authority.
       const { transaction: tx } = await signedWithPriorityFee(connection, claimTx, { feePayer: partner.publicKey,
@@ -115,14 +149,14 @@ export function createDbcPlatformFees({ pool, connection, config, partner, verif
       const fee = (await connection.getFeeForMessage(tx.compileMessage(), 'confirmed')).value
       if (fee == null || BigInt(fee) > BigInt(review.maxNetworkFeeLamports) || amount <= BigInt(fee)) throw Error('Claim does not cover its reviewed network cost')
       if (isDustPayout(amount, fee)) return { ...current, networkFee: String(fee), status: 'skipped-dust', broadcast: false }
-      if (await connection.getBalance(partner.publicKey, 'confirmed') < rent * 2 + fee) throw Error('Partner signer needs operating SOL for temporary deposits')
+      if (await connection.getBalance(partner.publicKey, 'confirmed') < rent + baseRent + fee) throw Error('Partner signer needs operating SOL for temporary deposits')
       const simulation = await connection.simulateTransaction(VersionedTransaction.deserialize(tx.serialize()), { sigVerify: true, commitment: 'confirmed' })
       if (simulation.value.err) throw Error(`DBC platform collection preflight failed: ${JSON.stringify(simulation.value.err)}`)
       if (review.expiresAt <= Date.now()) throw Error('Platform fee review expired')
       const evidence = { ...current, networkFee: String(fee), genesis, maxNetworkFeeLamports: String(review.maxNetworkFeeLamports),
         temporaryAccounts: [temporary.publicKey.toBase58(), baseAccount.toBase58(), quoteAccount.toBase58()] }
-      if (simulateOnly) return { ...current, networkFee: String(fee), temporaryDeposit: String(rent * 2),
-        depositRefund: String(rent * 2), status: 'simulated', broadcast: false }
+      if (simulateOnly) return { ...current, networkFee: String(fee), temporaryDeposit: String(rent + baseRent),
+        depositRefund: String(rent + baseRent), status: 'simulated', broadcast: false }
       const signature = bs58.encode(tx.signature), signedTransaction = tx.serialize().toString('base64')
       await db.query(`insert into platform_fee_claims (github_repo_id,pool,wallet,amount,status,signature,signed_transaction,last_valid_block_height,phase,evidence)
         values($1,$2,$3,$4,'pending',$5,$6,$7,'DBC',$8)`, [current.repoId, current.pool, current.receiver, current.available,
