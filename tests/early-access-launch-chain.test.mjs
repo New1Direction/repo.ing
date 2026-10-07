@@ -678,6 +678,15 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       await sendAndConfirmTransaction(connection, fill, [contributor], { commitment: 'confirmed' })
       assert.equal(getTransferHook(await getMint(connection, mint, 'confirmed', TOKEN_2022_PROGRAM_ID)).programId.toBase58(), PublicKey.default.toBase58(),
         'the filling swap revoked the hook')
+      // Step 8: the full curve waits for its migration. Past the overdue time (here 0) the monitor records one alert for the operator,
+      // to be delivered by message (MIGRATION_OVERDUE).
+      const overdueAlerts = async () => (await pool.query("select detail from graduation_alerts where github_repo_id = $1 and kind = 'MIGRATION_OVERDUE'",
+        [repoId])).rows.map(row => JSON.parse(row.detail))
+      const overdue = createGraduationMonitor({ pool, connection, verification: local(), config, earlyAccess: eaConfig, pauseMs: 0, env: {}, migrationOverdueMs: 0 })
+      assert.ok(await until(async () => { await overdue.runOnce(); return (await overdueAlerts()).length > 0 }, 240), 'the overdue migration was reported')
+      const [overdueAlert] = await overdueAlerts()
+      assert.deepEqual([overdueAlert.curve, overdueAlert.fullName, overdueAlert.delivery.status], [market.pool, REPOS.second.full_name, 'pending'])
+      assert.ok(Date.parse(overdueAlert.curveFinishedAt) > 0 && overdueAlert.minutes >= 0, JSON.stringify(overdueAlert))
       await sendAndConfirmTransaction(connection, new Transaction().add(SystemProgram.transfer({ fromPubkey: contributor.publicKey,
         toPubkey: deriveDbcPoolAuthority(), lamports: 1_000_000_000 })), [contributor], { commitment: 'confirmed' })
       const dammConfig = DAMM_V2_MIGRATION_FEE_ADDRESS[(await dbc.state.getPoolConfig(new PublicKey(eaConfig))).migrationFeeOption]
@@ -704,6 +713,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       assert.deepEqual([entry?.status, entry?.phase], ['VERIFIED', 'GRADUATED'], JSON.stringify(entry))
       const { rows: [event] } = await pool.query('select pool from graduation_events where github_repo_id = $1', [repoId])
       assert.equal(event.pool, dammPool.toBase58())
+      assert.equal((await overdueAlerts()).length, 1, 'once migrated, nothing more is reported')
       const observation = JSON.parse((await pool.query('select observation from graduation_observations where github_repo_id = $1', [repoId])).rows[0].observation)
       // Nothing for the platform to claim yet: the DAMM v2 pool has had no trade (its claim is offered from step 7d on, below).
       assert.deepEqual([observation.p3.eligible, observation.p3.reason, observation.platformClaimAvailable],

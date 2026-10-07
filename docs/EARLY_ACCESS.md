@@ -130,8 +130,11 @@ path's limits allow it).
 
 ## Costs (mainnet)
 
-- Program account: about 2.6 SOL for 379,392 bytes (returned if the program is closed).
-- Lookup table: about 0.004 SOL.
+- Program: 1.928190 SOL for the program data (379,392 bytes plus its 45-byte header, at mainnet's rent on 2026-10-07: 5,080
+  lamports per byte plus 650,240 per account) and 0.000833 SOL for the program account, kept while it exists (returned if it is
+  closed). The upload's buffer is moved back to the payer before the program data is funded, so the payer never holds both.
+- Platform account about 0.001 SOL, config about 0.006 SOL, lookup table about 0.004 SOL; the oracle wallet's working balance
+  0.05 SOL. The dry runs print the exact figures (runbook below).
 - Per launch: the three mint accounts, about 0.004 SOL, paid by the launcher; the list's share comes back when it is closed.
 
 ## Switches, database and the contributor wallet link (step 3)
@@ -451,6 +454,105 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
   when the list is closed). Below 0.005 SOL it adds nothing and logs `ORACLE_LOW_BALANCE`; removals and closes go on.
 - Star counts (`report_stars`) wait for the star unlock launch option.
 
+## Readiness, the keeper and the overdue alert (step 8)
+
+- `scripts/early-access-readiness.mjs` (checks in `src/early-access-readiness.mjs`) prints PASS / FAIL / TODO for: mainnet; the
+  hook program deployed as the committed, tested build (`HOOK_BUILD`: its bytes and sha256, the rest of the program data zero) and
+  its upgrade authority; the platform account (admin the creator signer, oracle the key given with `--oracle`); the oracle
+  wallet's balance; the config (`readEarlyAccessConfig`: the reviewed profile, our hook, the partner wallet claims, the creator
+  signer gets the leftover); the lookup table (active, the partner wallet's, exactly the 12 shared keys); whether
+  `BUILDER_ALLOCATION_CONFIGS` lists the config; migration 0059; and the switches. It reads no key and writes nothing; it exits
+  1 on a FAIL.
+- **Meteora's keeper** (owner decision, step 8: check it on mainnet). Checked read-only on 2026-10-07 through the production RPC:
+  mainnet has 4,565 DBC transfer-hook pools (Token-2022 bases, 2,051 configs); 472 have migrated and none is full and waiting.
+  The 12 most recent migrations (12 creators) and 9 of 15 sampled across 15 other launchpads' configs were sent by
+  `Asi5DTGEeiso6k7ya6ndDabEZ7DRCgfTpCBLPH5E3aQs`, the same migrator as $REPOING's own migration, as `migration_damm_v2`,
+  mostly within 0 to 2 seconds of the curve filling (at most 239 seconds in the sample); the other six were sent by other
+  wallets (migration is permissionless).
+- **The overdue alert.** The graduation state records when a full curve filled (`curveFinishedAt`, from the pool's
+  `finish_curve_timestamp`). A curve still not migrated `MIGRATION_OVERDUE_MS` (30 minutes) later is reported once, as
+  `MIGRATION_OVERDUE`, delivered by message like a low operating balance (`RESERVE_ALERT_WEBHOOK_URL` on the worker) and shown
+  in the operator view, for every market. Anyone can then migrate it (permissionless).
+
+## Mainnet setup (the owner runs it)
+
+Nothing before step 8 here opens a launch: `EARLY_ACCESS_LAUNCHES_READY` stays false until the READY PR. Run every command from
+the main checkout (its git-ignored `secrets/` holds the program keypair), on main with every step 7 PR merged, and with
+`SOLANA_RPC_URL` set to an https mainnet RPC (the scripts otherwise read the production web RPC from Railway). Each script is a
+dry run unless `--execute`: it checks, simulates unsigned against mainnet and prints every value, a hash and the exact debit;
+`--execute` sends only when those printed values are approved in the environment.
+
+**1. Deploy the program** (`Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep`). Deploy the committed build as it is (the copy the
+tests ran; do not rebuild first, the readiness check refuses other bytes):
+
+```sh
+solana-keygen pubkey secrets/early-access-hook-program-keypair.json   # must print Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep
+solana program deploy tests/fixtures/validator/early_access_hook.so --program-id secrets/early-access-hook-program-keypair.json \
+  --upgrade-authority <upgrade-authority.json> --keypair <payer.json> --url "$SOLANA_RPC_URL" [--with-compute-unit-price <micro-lamports>]
+solana program show Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep --url "$SOLANA_RPC_URL"   # authority, data length 379392
+```
+
+Cost: 1.928190 SOL program data and 0.000833 SOL program account, kept; about 380 write transactions at 5,000 lamports (about
+0.002 SOL) plus any priority fee. Keep about 1.95 SOL in the payer. The upgrade authority is the only key `init_platform`
+accepts and it can change the program: keep it offline.
+
+**2. The oracle and the platform.** Make the oracle key (it keeps the lists current; the worker holds it) and fund it:
+
+```sh
+solana-keygen new --no-bip39-passphrase -o secrets/early-access-oracle-keypair.json   # prints its public key
+solana transfer <oracle public key> 0.05 --keypair <payer.json> --url "$SOLANA_RPC_URL" --allow-unfunded-recipient
+node scripts/init-early-access-platform.mjs --oracle <oracle public key>
+APPROVED_EARLY_ACCESS_PLATFORM=FeZX15P6abpTZZdRaFaGgewrudBPHywe7X21iT7DYnX1:<oracle public key> \
+  node scripts/init-early-access-platform.mjs --oracle <oracle public key> --upgrade-authority <upgrade-authority.json> --execute
+```
+
+The admin defaults to the creator signer (FeZX…, the launch co-signer). The platform account costs about 0.001 SOL.
+
+**3. The config**: `node scripts/create-early-access-config.mjs` (its first run writes `secrets/early-access-config-keypair.json`),
+then with the printed values `APPROVED_EARLY_ACCESS_CONFIG=<config> APPROVED_EARLY_ACCESS_CONFIG_INSTRUCTION_SHA256=<hash>
+APPROVED_EARLY_ACCESS_CONFIG_DEBIT_LAMPORTS=<lamports> node scripts/create-early-access-config.mjs --execute`. The partner wallet
+pays (Keychain).
+
+**4. The lookup table**: `node scripts/create-early-access-lookup-table.mjs --config <config>`, then
+`APPROVED_LOOKUP_TABLE_ADDRESSES_SHA256=<hash> APPROVED_LOOKUP_TABLE_DEBIT_LAMPORTS=<lamports> node
+scripts/create-early-access-lookup-table.mjs --config <config> --execute`; it prints the table's address.
+
+**5. Settings**, then deploy web and worker from a fresh worktree of main:
+
+| Setting | Service | Value |
+| --- | --- | --- |
+| `EARLY_ACCESS_DBC_CONFIG` | web and worker | step 3's config |
+| `EARLY_ACCESS_LOOKUP_TABLE` | web and worker | step 4's table |
+| `EARLY_ACCESS_ORACLE_SECRET_KEY` | worker | the contents of `secrets/early-access-oracle-keypair.json` (set it from the file; never paste it anywhere) |
+| `BUILDER_ALLOCATION_CONFIGS` | web and worker | the current list plus the config, comma-separated (before launches open: a market launched without it gets no 1% allocation) |
+| `EARLY_ACCESS_ENABLED` | web and worker | `true`: opens the contributor wallet link (`/contributors/link`); launches still wait for the code gate |
+| `RESERVE_ALERT_WEBHOOK_URL` | worker | already set if operator alerts arrive; the overdue-migration alert uses it |
+
+With `EARLY_ACCESS_DBC_CONFIG` set, the site trades, claims, indexes and monitors early access markets; there are none until
+launches open. Do not unset it later while early access markets exist: their trades and claims need it.
+
+**6. Readiness** (reads only), on each service with its own settings:
+
+```sh
+railway ssh --service web -- node scripts/early-access-readiness.mjs --oracle <oracle public key>
+railway ssh --service worker -- node scripts/early-access-readiness.mjs --oracle <oracle public key>
+```
+
+No FAIL; the switches read `EARLY_ACCESS_ENABLED ON`, `EARLY_ACCESS_LAUNCHES_READY OFF`.
+
+**7. Open launches.** The READY PR sets `EARLY_ACCESS_LAUNCHES_READY = true`; merge and deploy it. The first launch: by the owner,
+on a repository they own, with a small first buy, from Phantom. Phantom has not been seen signing a first-buy launch (no room
+for its Lighthouse assertions, step 4): if it refuses, launch without a first buy and tell the agent. To close launches again:
+`EARLY_ACCESS_ENABLED` off (also closes the wallet link); markets already launched keep trading.
+
+| Step | Signer | Cost |
+| --- | --- | --- |
+| Deploy | payer and the upgrade authority | 1.929 SOL kept, about 0.002 SOL fees |
+| Oracle | payer | 0.05 SOL working balance |
+| Platform | upgrade authority | about 0.001 SOL |
+| Config | partner (Keychain) and the config keypair | about 0.006 SOL (printed) |
+| Lookup table | partner (Keychain) | about 0.004 SOL (printed) |
+
 ## Build and test
 
     scripts/build-early-access-hook.sh                 # writes tests/fixtures/validator/early_access_hook.so
@@ -467,7 +569,8 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
     node --test tests/early-access-graduated-claims.test.mjs # the DAMM v2 claim check; one claim per payout (quick)
     node --test tests/early-access-allocation.test.mjs # the allocation settlement under Token-2022 (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, the builder's claims after it, the platform's graduated fees, the builder allocation, sizes and the launch API (PostgreSQL + validator)
+    node --test tests/early-access-readiness.test.mjs  # the go-live checklist, read-only (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, the builder's claims after it, the platform's graduated fees, the builder allocation, the overdue-migration alert, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port
@@ -484,7 +587,9 @@ after any change to `programs/early-access-hook`. The chain tests start `scripts
    at prepare (`vault_start` = the supply, `vault_end` = the vault's balance at 50% curve progress, from the curve), sizing
    the launcher's first buy under 2%; for the oracle: reporting stars; for trades: showing the limit and refusing a buy past
    it with its own message.
-5. Curve trades, charts, lists and indexers for hook pools.
-6. Claims: builder fees, builder allocation, discovery and platform fees.
-7. Graduation and DAMM v2 trades with a Token-2022 market token.
-8. A readiness check and a runbook; the owner deploys the program, creates the config and the lookup table, and switches it on.
+5. Curve trades, charts, lists and indexers for hook pools. Done.
+6. Claims: builder fees, discovery and platform fees. Done.
+7. Graduation, DAMM v2 trades with a Token-2022 market token, the claims after it and the builder allocation. Done.
+8. A readiness check, the overdue-migration alert, the keeper check and the runbook (below). The owner deploys the program,
+   creates the config and the lookup table, and switches it on.
+9. Later (owner's choice, 2026-10-07 recommendation: after go-live): the fair ramp and star unlock launch options (4b's list).

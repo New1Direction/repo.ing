@@ -219,3 +219,12 @@ test('a send that fails says why by a fixed code: the receiver\'s status, a time
   assert.deepEqual(await failure(async () => { throw TypeError('fetch failed: getaddrinfo ENOTFOUND hooks.example/secret-token') }), ['NOTIFICATION_SEND_FAILED', 'NETWORK', ['code']])
   assert.equal(await failure(async () => ({ ok: true, status: 200 })), null)
 })
+
+// Step 8 (docs/EARLY_ACCESS.md): a full curve still not migrated is delivered as its own message.
+test('a full curve not migrated reads as its own alert message', () => {
+  const text = reserveAlertText(7, { fullName: 'octo/second', curve: 'Curve1111', curveFinishedAt: '2026-10-07T08:00:00.000Z', minutes: 31,
+    observedAt: '2026-10-07T08:31:00.000Z', delivery: { status: 'pending' } })
+  assert.equal(text.split('\n')[0], 'repo.ing · Full curve not migrated')
+  assert.match(text, /octo\/second\nThe curve filled at 2026-10-07T08:00:00.000Z and has not migrated after 31 minutes\./)
+  assert.match(text, /Curve: Curve1111\nAlert #7$/)
+})
