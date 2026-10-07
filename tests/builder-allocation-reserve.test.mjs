@@ -36,3 +36,11 @@ test('reserve ownership and pool identity checks are unchanged', () => {
   assert.equal(valid({ mint: { ...mint, decimals: 9 } }), false)
   assert.equal(valid({ state: null }), false)
 })
+
+// Step 7e (docs/EARLY_ACCESS.md): a contributor early access market's token is Token-2022 (tokenType 1); every other is SPL Token.
+test('an early access market\'s reserve is Token-2022 and only it; a SOL market\'s is SPL Token', () => {
+  const stamped = { ...market, earlyAccessEnd: new Date(), transferHookProgram: 'Ew1wqkFkxDADJi7iQnBTqy8fELDDotEeE8uzvg7TL6ep' }
+  assert.equal(valid({ market: stamped, fixed: { ...fixed, tokenType: 1 } }), true)
+  assert.equal(valid({ market: stamped }), false, 'an SPL config for an early access market')
+  assert.equal(valid({ fixed: { ...fixed, tokenType: 1 } }), false, 'a Token-2022 config for a SOL market')
+})

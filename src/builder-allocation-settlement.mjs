@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import { PublicKey, Transaction } from '@solana/web3.js'
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { provablyExpiredUnlanded } from './expiry-proof.mjs'
 
 const AMOUNT = 10_000_000_000_000n
@@ -15,19 +15,23 @@ export async function settleAllocation(client, connection, intent) {
     return { status: 'aborted', signature: intent.signature }
   }
   const mint = new PublicKey(intent.mint), wallet = new PublicKey(intent.wallet)
-  const destination = getAssociatedTokenAddressSync(mint, wallet)
   const keys = tx.transaction.message.accountKeys
-  const recipientIndex = keys.findIndex(key => key.equals(destination))
-  const transfers = tx.transaction.message.instructions.filter(ix => {
-    const data = Buffer.from(bs58.decode(ix.data))
-    return keys[ix.programIdIndex]?.equals(TOKEN_PROGRAM_ID) && data.length === 10 && data[0] === 12 &&
-      data.readBigUInt64LE(1) === AMOUNT && data[9] === 6 && keys[ix.accounts[1]]?.equals(mint) && ix.accounts[2] === recipientIndex
+  // The grant's one transferChecked, under SPL Token or, for a contributor early access market's token, Token-2022
+  // (docs/EARLY_ACCESS.md, step 7e), to the recipient's associated account under that same program.
+  const transfers = [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID].flatMap(program => {
+    const recipientIndex = keys.findIndex(key => key.equals(getAssociatedTokenAddressSync(mint, wallet, false, program)))
+    return tx.transaction.message.instructions.filter(ix => {
+      const data = Buffer.from(bs58.decode(ix.data))
+      return recipientIndex >= 0 && keys[ix.programIdIndex]?.equals(program) && data.length === 10 && data[0] === 12 &&
+        data.readBigUInt64LE(1) === AMOUNT && data[9] === 6 && keys[ix.accounts[1]]?.equals(mint) && ix.accounts[2] === recipientIndex
+    }).map(() => ({ program, recipientIndex }))
   })
   if (String(intent.amount) !== String(AMOUNT) || transfers.length !== 1) throw Error('Allocation transfer does not match the fixed grant')
+  const [{ program, recipientIndex }] = transfers
   const pre = tx.meta.preTokenBalances?.find(b => b.accountIndex === recipientIndex)
   const post = tx.meta.postTokenBalances?.find(b => b.accountIndex === recipientIndex)
   if (!post || post.owner !== intent.wallet || post.mint !== intent.mint || post.uiTokenAmount.decimals !== 6 ||
-      post.programId !== TOKEN_PROGRAM_ID.toBase58() ||
+      post.programId !== program.toBase58() ||
       (pre && (pre.owner !== intent.wallet || pre.mint !== intent.mint)) ||
       BigInt(post.uiTokenAmount.amount) - BigInt(pre?.uiTokenAmount.amount ?? '0') !== AMOUNT) throw Error('Bound recipient did not receive exactly 1% of supply')
   await client.query("update builder_allocation_claims set status='settled',settled_at=now() where signature=$1 and status='pending'", [intent.signature])

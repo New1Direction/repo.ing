@@ -44,6 +44,7 @@ import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { discoverySummary } from '../src/discovery-rewards.mjs'
 import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from '../src/platform-dbc-fees.mjs'
 import { createPlatformFees } from '../src/platform-fees.mjs'
+import { BUILDER_ALLOCATION, createBuilderAllocation } from '../src/builder-allocation.mjs'
 import { sign as signBytes } from 'node:crypto'
 import { CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR } from '../src/dbc-hook-claims.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
@@ -980,6 +981,39 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       assert.ok(reconciled, 'the ledgers match')
       assert.equal(reconciled.platform.claimed, reconciled.platform.onchainClaimed, 'the platform ledger equals the position\'s claimed fees')
       await assert.rejects(fees.claim({ review: { ...review, expiresAt: Date.now() + 120_000 } }), /No platform fees remain to claim/)
+    })
+
+    // Step 7e: the builder claims the 1% allocation of the graduated market. withdraw_leftover pays the curve's leftover Token-2022
+    // tokens to the protected creator, which transfers exactly 1% of the supply to the bound wallet's Token-2022 account (the hook
+    // is checked revoked first); the settlement reads the grant under Token-2022. The early access config must be approved for
+    // allocations like any other (BUILDER_ALLOCATION_CONFIGS). Without the setting the market is not enrolled.
+    await t.test('the builder claims the 1% allocation in the Token-2022 token', async () => {
+      const config = solConfig.toBase58(), market = secondMarket, repoId = String(market.githubRepoId), mint = new PublicKey(market.mint)
+      const creatorKey = Keypair.fromSecretKey(creatorSecret)
+      const githubVerifier = { verifyCurrentAuthority: async ({ githubRepoId }) => ({ verified: true, permission: 'admin', githubRepoId, githubUserId: 91n, verifiedAt: new Date() }) }
+      const saved = process.env.BUILDER_ALLOCATION_CONFIGS
+      try {
+        process.env.BUILDER_ALLOCATION_CONFIGS = `${config},${eaConfig}`
+        assert.deepEqual(await createBuilderAllocation({ pool, connection, config, creator: creatorKey, githubVerifier, earlyAccess: null }).status(repoId),
+          { enrolled: false })
+        const allocation = createBuilderAllocation({ pool, connection, config, creator: creatorKey, githubVerifier, earlyAccess: eaConfig })
+        assert.deepEqual(await allocation.status(repoId), { enrolled: true, amount: String(BUILDER_ALLOCATION), state: 'available' })
+        const { rows: [binding] } = await pool.query('select wallet, bound_at from repo_beneficiaries where github_repo_id = $1', [repoId])
+        const review = () => ({ repoId, githubUserId: '91', wallet: binding.wallet, boundAt: binding.bound_at.toISOString(), amount: String(BUILDER_ALLOCATION),
+          expiresAt: Date.now() + 120_000 })
+        const receipt = await allocation.claim({ review: review(), githubAuthorization: {} })
+        assert.deepEqual([receipt.status, receipt.amount, receipt.wallet], ['settled', String(BUILDER_ALLOCATION), binding.wallet])
+        const account = getAssociatedTokenAddressSync(mint, new PublicKey(binding.wallet), false, TOKEN_2022_PROGRAM_ID)
+        assert.equal(BigInt((await connection.getTokenAccountBalance(account, 'finalized')).value.amount), BUILDER_ALLOCATION, 'exactly 1% of the supply')
+        const landed = await connection.getTransaction(receipt.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+        const keys = landed.transaction.message.accountKeys, programs = landed.transaction.message.instructions.map(ix => keys[ix.programIdIndex].toBase58())
+        assert.ok(programs.includes('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN'), 'withdraw_leftover')
+        assert.equal(programs.filter(program => program === TOKEN_2022_PROGRAM_ID.toBase58()).length, 1, 'one Token-2022 transfer')
+        console.log(JSON.stringify({ earlyAccessAllocation: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
+          computeUnits: landed.meta.computeUnitsConsumed } }))
+        assert.equal((await allocation.status(repoId)).state, 'settled')
+        await assert.rejects(allocation.claim({ review: review(), githubAuthorization: {} }), /already submitted or paid/)
+      } finally { saved === undefined ? delete process.env.BUILDER_ALLOCATION_CONFIGS : process.env.BUILDER_ALLOCATION_CONFIGS = saved }
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {
