@@ -9,10 +9,12 @@ import { register } from 'node:module'
 register(`data:text/javascript,${encodeURIComponent(`
 const STUBS = {
   'next/headers': 'export const cookies = async () => ({ get: name => globalThis.__handoffCookies?.[name] === undefined ? undefined : { value: globalThis.__handoffCookies[name] } })',
-  'github-session': 'export const sessionVerifier = () => ({ verifyCurrentAuthority: async () => { if (!globalThis.__handoffAdmin) throw new Error("Current GitHub admin permission required") } })',
+  'github-session': 'export const sessionVerifier = () => ({ verifyRepositoryAdmin: async () => ({ admin: Boolean(globalThis.__handoffAdmin) }), verifyCurrentAuthority: async () => { throw new Error("the page never records a check") } })',
+  'server': 'export const database = () => ({}); export const marketByRepo = async id => ({ market: globalThis.__handoffMarket === false ? null : { repoId: id } }); export const repositoryById = async () => ({ fullName: "octo/widget" })',
 }
 export async function resolve(specifier, context, next) {
-  const name = specifier === 'next/headers' || specifier === 'next/headers.js' ? 'next/headers' : /\\/lib\\/github-session\\.mjs$/.test(specifier) ? 'github-session' : null
+  const name = specifier === 'next/headers' || specifier === 'next/headers.js' ? 'next/headers' : /\\/lib\\/github-session\\.mjs$/.test(specifier) ? 'github-session'
+    : /^\\.\\.?\\/(\\.\\.\\/)*(lib\\/)?server\\.mjs$/.test(specifier) && context.parentURL?.includes('/app/') ? 'server' : null
   if (name) return { url: 'repoing-test:' + name, shortCircuit: true }
   return next(specifier, context)
 }
@@ -50,10 +52,15 @@ test('the consent page: expired, sign in, not an admin, and the approval that na
   assert.match(notAdmin, /Not an admin of octo\/widget/)
   assert.match(notAdmin, /<strong>@octocat<\/strong> as an admin of octo\/widget/)
   assert.doesNotMatch(notAdmin, /value="approve"/)
+  globalThis.__handoffMarket = false
+  assert.match(await render({ [HANDOFF_COOKIE]: request, [githubSessionCookie]: session }, true), /Not an admin of octo\/widget/, 'no market: no approval')
+  globalThis.__handoffMarket = true
   const consent = await render({ [HANDOFF_COOKIE]: request, [githubSessionCookie]: session }, true)
   assert.match(consent, /Signed in as @octocat/)
   assert.match(consent, /<li>your GitHub user ID and login<\/li><li>that you are an admin of octo\/widget<\/li><li class="handoff-not">not your GitHub token, and nothing that can move your funds<\/li>/)
+  assert.match(consent, /Check code <strong>[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}<\/strong>: approve only if your terminal shows the same code/)
   const form = consent.match(/<form[^>]*>.*?<\/form>/s)[0]
+  assert.match(form, /<input type="hidden" name="consent" value="[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"\/>/, 'the sealed copy of what the page showed')
   assert.match(form, /action="\/api\/handoff\/approve"/)
   assert.match(form, /method="post"/)
   assert.match(form, /<button class="button primary" type="submit" (?=[^>]*value="approve")(?=[^>]*name="decision")[^>]*>Approve<\/button>/)

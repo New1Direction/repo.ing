@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { HANDOFF_REFUSED, clientAuthorized, handoffSettings, redeemHandoff } from '../../../../src/repo-inference-handoff.mjs'
+import { HANDOFF_REFUSED, clientAuthorized, codeHash, handoffSettings, redeemHandoff, redemptionWellFormed } from '../../../../src/repo-inference-handoff.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
 import { database } from '../../../lib/server.mjs'
 export const runtime = 'nodejs'
@@ -11,11 +11,14 @@ export async function POST(request) {
   const settings = handoffSettings(), pool = database()
   if (!settings || !pool) return reply({ error: 'Not found' }, 404)
   if (!clientAuthorized(request.headers.get('authorization'), settings)) return reply({ error: 'Unauthorized' }, 401)
-  if (!await takeQuota(pool, [['handoff:token', 120, 60]])) return reply({ error: 'Too many requests' }, 429)
   const text = await request.text()
   if (text.length > 2048) return reply({ error: 'Request too large' }, 413)
   let body
   try { body = JSON.parse(text) } catch { return reply({ error: 'Invalid JSON' }, 400) }
-  const assertion = await redeemHandoff(pool, { audience: body?.audience, code: body?.code, codeVerifier: body?.code_verifier }, settings)
+  const redemption = { audience: body?.audience, code: body?.code, codeVerifier: body?.code_verifier }
+  if (!redemptionWellFormed(redemption)) return reply({ error: HANDOFF_REFUSED }, 410)
+  // A wide limit for the whole service and a narrow one per code, so one caller cannot block every sign-in.
+  if (!await takeQuota(pool, [['handoff:token', 600, 60], [`handoff:code:${codeHash(redemption.code)}`, 5, 60]])) return reply({ error: 'Too many requests' }, 429)
+  const assertion = await redeemHandoff(pool, redemption, settings)
   return assertion ? reply(assertion) : reply({ error: HANDOFF_REFUSED }, 410)
 }

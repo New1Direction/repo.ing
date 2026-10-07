@@ -79,12 +79,14 @@ test('the repo.ing AI credits handoff on PostgreSQL: migration 0062, single-use 
     }
     const { NextRequest } = await import('next/server')
     const { encryptGithubSession, githubSessionCookie } = await import('../app/lib/auth.mjs')
-    const { HANDOFF_COOKIE, sealHandoffRequest } = await import('../app/lib/handoff.mjs')
+    const { HANDOFF_COOKIE, sealConsent, sealHandoffRequest } = await import('../app/lib/handoff.mjs')
+    const callback = (await import('../app/api/github/callback/route.js')).GET
     const start = (await import('../app/api/handoff/start/route.js')).GET
     const approve = (await import('../app/api/handoff/approve/route.js')).POST
     const token = (await import('../app/api/handoff/token/route.js')).POST
-    const builders = encryptGithubSession({ scope: 'builders', repoId: null, permission: 'identity', githubUserId: '583231', githubLogin: 'octocat',
-      accessToken: 'ghu_test_only', sessionId: randomBytes(24).toString('hex'), expiresAt: Date.now() + 60_000 })
+    const buildersSession = { scope: 'builders', repoId: null, permission: 'identity', githubUserId: '583231', githubLogin: 'octocat',
+      accessToken: 'ghu_test_only', sessionId: randomBytes(24).toString('hex'), expiresAt: Date.now() + 60_000 }
+    const builders = encryptGithubSession(buildersSession)
     const redeem = (body, authorization = `Bearer ${CLIENT}`) => token(new NextRequest('https://repo.ing/api/handoff/token', { method: 'POST',
       headers: { authorization, 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) }))
 
@@ -101,9 +103,10 @@ test('the repo.ing AI credits handoff on PostgreSQL: migration 0062, single-use 
     })
 
     await t.test('approve: same origin only; deny or approve goes back to the CLI with the state; approve checks admin live', async () => {
-      const v = verifier(), cookie = sealHandoffRequest(request({ challenge: challengeOf(v) }))
-      const post = (decision, { origin = 'https://repo.ing', session = builders, handoff = cookie } = {}) => approve(new NextRequest('https://repo.ing/api/handoff/approve', {
-        method: 'POST', body: new URLSearchParams({ decision }), headers: { origin, 'content-type': 'application/x-www-form-urlencoded',
+      const v = verifier(), shown = request({ challenge: challengeOf(v) }), cookie = sealHandoffRequest(shown)
+      const consent = sealConsent(shown, buildersSession)
+      const post = (decision, { origin = 'https://repo.ing', session = builders, handoff = cookie, seal = consent } = {}) => approve(new NextRequest('https://repo.ing/api/handoff/approve', {
+        method: 'POST', body: new URLSearchParams({ decision, ...seal ? { consent: seal } : {} }), headers: { origin, 'content-type': 'application/x-www-form-urlencoded',
           cookie: [handoff && `${HANDOFF_COOKIE}=${handoff}`, session && `${githubSessionCookie}=${session}`].filter(Boolean).join('; ') } }))
       assert.equal((await post('approve', { origin: 'https://evil.example' })).status, 403)
       const noRequest = await post('approve', { handoff: null })
@@ -112,6 +115,16 @@ test('the repo.ing AI credits handoff on PostgreSQL: migration 0062, single-use 
       assert.equal(denied.headers.get('location'), `http://127.0.0.1:54321/callback?error=access_denied&state=${'s'.repeat(22)}`)
       const noSession = await post('approve', { session: null })
       assert.equal(new URL(noSession.headers.get('location')).pathname, '/handoff')
+      // Only the request the page showed, to this session: no consent, another request (swapped in by another tab), another
+      // session: back to the page, and no code is made.
+      const swapped = sealConsent(request({ challenge: challengeOf(verifier()) }), buildersSession)
+      const otherSession = sealConsent(shown, { ...buildersSession, sessionId: randomBytes(24).toString('hex') })
+      for (const seal of [null, swapped, otherSession, 'not-sealed']) {
+        const refused = await post('approve', { seal })
+        assert.deepEqual([refused.status, new URL(refused.headers.get('location')).pathname], [303, '/handoff'], String(seal))
+      }
+      const { rows: [{ made }] } = await pool.query(`select count(*)::int as made from auth_handoffs where code_challenge=$1`, [shown.challenge])
+      assert.equal(made, 0)
       permission = 'write'
       const writer = await post('approve')
       assert.equal(writer.headers.get('location'), `http://127.0.0.1:54321/callback?error=not_admin&state=${'s'.repeat(22)}`)
@@ -133,6 +146,11 @@ test('the repo.ing AI credits handoff on PostgreSQL: migration 0062, single-use 
       assert.deepEqual([again.status, (await again.json()).error], [410, HANDOFF_REFUSED])
       assert.equal((await redeem('{bad')).status, 400)
       assert.equal((await redeem('x'.repeat(3000))).status, 413)
+    })
+
+    await t.test('the GitHub callback never takes a sealed handoff request for its OAuth state', async () => {
+      const planted = await callback(new NextRequest('https://repo.ing/api/github/callback?code=x&state=y', { headers: { cookie: `gitfun_oauth=${sealHandoffRequest(request())}` } }))
+      assert.equal(new URL(planted.headers.get('location')).pathname, '/explore')
     })
 
     await t.test('dark: every route answers 404 without the handoff secrets', async () => {

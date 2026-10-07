@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { HANDOFF_AUDIENCE, HandoffError, assertionMessage, callbackUrl, clientAuthorized, handoffSettings, readHandoffRequest,
+import { HANDOFF_AUDIENCE, HandoffError, assertionMessage, callbackUrl, clientAuthorized, handoffCheckCode, handoffSettings, readHandoffRequest,
   signAssertion } from '../src/repo-inference-handoff.mjs'
+import { checkCode } from '../cli/src/claim.mjs'
 
 // The repo.ing AI credits sign-in handoff (src/repo-inference-handoff.mjs): request parsing, the loopback callback, the
 // signed assertion (the same vector is checked by the credit ledger, repo-inference src/conversion.rs) and the settings.
@@ -26,6 +27,12 @@ test('the assertion: the canonical text and its HMAC, as the credit ledger check
   const facts = { handoffId: 'AbCdEfGhIjKlMnOpQrStUvWx', githubUserId: '583231', login: 'octocat', repoId: '1296269', permission: 'admin', verifiedAt: '2026-10-07T19:00:00.000Z' }
   assert.equal(assertionMessage(facts), 'repoing-handoff-v1\nrepo-inference\nAbCdEfGhIjKlMnOpQrStUvWx\n583231\noctocat\n1296269\nadmin\n2026-10-07T19:00:00.000Z')
   assert.equal(signAssertion('handoff-assertion-vector-secret-0123456789', facts), '5d2b2550ac3647200189d4f65ea200c87f187f83c618e46ce4bf74405a471ec1')
+})
+
+test('the check code the page shows is the one the CLI prints for the same challenge', () => {
+  assert.equal(handoffCheckCode('c'.repeat(43)), checkCode('c'.repeat(43)))
+  assert.match(handoffCheckCode('c'.repeat(43)), /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/)
+  assert.notEqual(handoffCheckCode('c'.repeat(43)), handoffCheckCode('d'.repeat(43)))
 })
 
 test('settings: both secrets, 32 to 256 characters, different from each other and from the GitHub App secret', () => {

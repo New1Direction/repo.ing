@@ -38,6 +38,13 @@ export function newSignIn() {
   const verifier = randomBytes(32).toString('base64url')
   return { verifier, challenge: createHash('sha256').update(verifier).digest('base64url'), state: randomBytes(16).toString('base64url') }
 }
+// The short code the consent page shows for this sign-in (repo.ing: src/repo-inference-handoff.mjs, handoffCheckCode).
+const CHECK_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+export function checkCode(challenge) {
+  const digest = createHash('sha256').update(`repoing-handoff-check\n${challenge}`).digest()
+  const letters = [...digest.subarray(0, 8)].map(byte => CHECK_ALPHABET[byte % 32]).join('')
+  return `${letters.slice(0, 4)}-${letters.slice(4)}`
+}
 export function handoffUrl(origin, { repoId, challenge, port, state }) {
   const query = new URLSearchParams({ audience: HANDOFF_AUDIENCE, repo: String(repoId), challenge, port: String(port), state })
   return `${validateOrigin(origin)}/api/handoff/start?${query}`
@@ -193,6 +200,7 @@ export async function runClaim(options, { repository, io, fetchImpl = fetch, lis
   const url = handoffUrl(options.origin, { repoId: status.repoId, challenge: pkce.challenge, port: listener.port, state: pkce.state })
   const opened = options.open && await io.open(url)
   io.print(opened ? '→ approve on repo.ing in your browser (opened)…' : `→ open this link and approve on repo.ing:\n${url}`)
+  io.print(`  check code ${checkCode(pkce.challenge)}: approve only if repo.ing shows the same code`)
   const code = await listener.code
   const session = await creditsSession({ creditsOrigin: options.creditsOrigin, code, verifier: pkce.verifier, fetchImpl })
   if (!session.token) throw new Error(session.note ?? 'The sign-in was already used. Run repoing claim again.')
