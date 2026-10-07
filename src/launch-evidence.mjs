@@ -4,8 +4,9 @@ import { PublicKey } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, getTransferHook, unpackMint } from '@solana/spl-token'
 import { ActivationType, DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { usesActivationClock } from './launch-clock.mjs'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID, RULES, decodeMintConfig, earlyAccessAddresses } from './early-access-hook.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID, decodeMintConfig, earlyAccessAddresses } from './early-access-hook.mjs'
 import { earlyAccessDbcConfig, isEarlyAccessMarket } from './early-access.mjs'
+import { hasFairRamp, marketHookRules, rulesMatch } from './early-access-rules.mjs'
 import { bundleCurveConfig, isBundleMarket } from './bundles.mjs'
 import { BUNDLE_VAULT_PROGRAM_ID, STATUS, bundleAddress, decodeBundle } from './bundle-vault.mjs'
 
@@ -134,7 +135,7 @@ function earlyAccessVerifier({ connection, dbc, earlyAccessConfig }) {
         connection.getTransaction(market.launchSignature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }),
         dbc.state.getPool(pool),
         connection.getAccountInfo(mint, 'finalized'),
-        usesActivationClock(market) ? readPoolConfig(dbc, configKey) : null,
+        usesActivationClock(market) || hasFairRamp(marketHookRules(market)) ? readPoolConfig(dbc, configKey) : null,
         connection.getAccountInfo(earlyAccessAddresses(mint, hook).config, 'finalized'),
       ])
     } catch (error) {
@@ -168,8 +169,13 @@ function earlyAccessVerifier({ connection, dbc, earlyAccessConfig }) {
     }
     try { window = hookConfig.owner.equals(hook) ? decodeMintConfig(hookConfig.data) : null } catch {}
     if (!window || !window.mint.equals(mint) || window.repoId !== String(market.githubRepoId) || window.earlyAccessEnd * 1000 !== end ||
-      window.rules !== RULES.EARLY_ACCESS || !window.vault.equals(state.poolState.baseVault)) {
+      !window.vault.equals(state.poolState.baseVault)) {
       return { state: 'mismatch', reason: 'Early access window on chain differs from the recorded window' }
+    }
+    // The options (src/early-access-rules.mjs): exactly the stamped rules, and with the fair ramp the settings its config gives.
+    if (!fixed && hasFairRamp(marketHookRules(market))) return { state: 'unavailable', reason: 'Early access config is not readable' }
+    if (!rulesMatch(window, marketHookRules(market), fixed)) {
+      return { state: 'mismatch', reason: 'Early access options on chain differ from the recorded options' }
     }
     return launchEvidence(market, transaction, state, fixed)
   }

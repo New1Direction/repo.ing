@@ -407,6 +407,13 @@
       "when": 1790910020000,
       "tag": "0060_bundles",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1790910021000,
+      "tag": "0061_hook_rules",
+      "breakpoints": true
     }
   ]
 }

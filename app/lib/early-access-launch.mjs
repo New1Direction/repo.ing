@@ -1,6 +1,7 @@
 import { isGithubRepoId } from '../../src/market-identity.mjs'
 import { EarlyAccessError, earlyAccessDbcConfig, earlyAccessLaunchable, earlyAccessLookupTable, earlyAccessWindow } from '../../src/early-access.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID } from '../../src/early-access-hook.mjs'
+import { hookRules } from '../../src/early-access-rules.mjs'
 import { CONTRIBUTOR_ERRORS, fetchRepositoryContributors, replaceContributorSnapshot } from '../../src/github-contributors.mjs'
 import { linksForGithubUsers } from '../../src/github-wallet-links.mjs'
 
@@ -14,19 +15,30 @@ export const EARLY_ACCESS_REFUSALS = Object.freeze({
   sol: 'Contributor early access launches are paired with SOL only.',
   configured: 'Contributor early access is not configured.',
   changed: 'Contributor early access changed. Review the launch again.',
+  options: 'The fair ramp and star unlocks are options of a contributor early access launch: choose a window too.',
+  stars: 'Star unlocks needs the fair ramp.',
 })
 const refuse = key => new EarlyAccessError(EARLY_ACCESS_REFUSALS[key])
 
-// null when the request does not ask for early access (body.earlyAccessSeconds absent), else { windowSeconds }. Refused: while
-// early access cannot launch (switch or code gate), for a Hugging Face model, a trend or agent-draft (MCP, CLI) launch, a stock
-// pair, or a window outside 15 minutes to 24 hours.
+// null when the request does not ask for early access (body.earlyAccessSeconds absent), else { windowSeconds, rules }: rules adds
+// the fair ramp (body.fairRamp) and star unlocks (body.starUnlocks, with the fair ramp only), each exactly true or absent; they
+// are options of an early access launch only (owner decision, 2026-10-07). Refused: while early access cannot launch (switch or
+// code gate), for a Hugging Face model, a trend or agent-draft (MCP, CLI) launch, a stock pair, or a window outside 15 minutes
+// to 24 hours.
 export function earlyAccessRequest(body, { launchable = earlyAccessLaunchable() } = {}) {
-  if (body?.earlyAccessSeconds === undefined || body.earlyAccessSeconds === null) return null
+  const option = name => { const value = body?.[name]; if (value === undefined || value === null || value === false) return false
+    if (value !== true) throw refuse('options'); return true }
+  const fairRamp = option('fairRamp'), starUnlocks = option('starUnlocks')
+  if (body?.earlyAccessSeconds === undefined || body.earlyAccessSeconds === null) {
+    if (fairRamp || starUnlocks) throw refuse('options')
+    return null
+  }
   if (!launchable) throw refuse('unavailable')
   if (body.hfId !== undefined || !isGithubRepoId(String(body.repoId ?? ''))) throw refuse('github')
   if (body.trendRevision !== undefined || body.agentDraft !== undefined) throw refuse('launchPage')
   if (body.quoteAssetId !== undefined && body.quoteAssetId !== null && body.quoteAssetId !== 'sol') throw refuse('sol')
-  return { windowSeconds: earlyAccessWindow(body.earlyAccessSeconds) }
+  if (starUnlocks && !fairRamp) throw refuse('stars')
+  return { windowSeconds: earlyAccessWindow(body.earlyAccessSeconds), rules: hookRules({ fairRamp, starUnlocks }) }
 }
 
 // The settings an early access launch needs: its DBC config and its lookup table (base58), or a refusal naming neither value.

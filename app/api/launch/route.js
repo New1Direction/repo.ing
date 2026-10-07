@@ -171,7 +171,7 @@ export async function POST(request) {
         // The early access config reserves the builder allocation when it is listed like any other config (src/builder-allocation.mjs).
         builderAllocationEnabled: earlyAccess ? allocationEnabled(config) : builderAllocationEnabled(),
         pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), quote: pair.quote,
-        earlyAccess: earlyAccess ? { windowSeconds: earlyAccess.windowSeconds, snapshot: contributorSnapshotStep({ pool }) } : null })
+        earlyAccess: earlyAccess ? { windowSeconds: earlyAccess.windowSeconds, rules: earlyAccess.rules, snapshot: contributorSnapshotStep({ pool }) } : null })
       if (body.trendRevision !== undefined && (!Number.isSafeInteger(body.trendRevision) || body.trendRevision < 1)) throw Error('Invalid trend approval')
       const launchGuard = earlyAccess ? earlyAccessGuard(config, { versioned: true })
         : pair.quote.type !== 'SOL' ? stockPairGuard(pair.quote, config, { mintUsable: stockMintCheck(connection) })
@@ -192,7 +192,8 @@ export async function POST(request) {
       if (!prepared) throw new Error('No wallet signature requested')
       // An early access review also says when the window closes and how many contributors can buy now (linked wallets).
       return Response.json({ id, costs, transaction, ...prepared.earlyAccess ? { earlyAccess: { end: new Date(prepared.earlyAccess.end * 1000).toISOString(),
-        contributors: prepared.earlyAccess.contributors, linkedWallets: prepared.earlyAccess.linkedWallets, launcherListed: prepared.earlyAccess.launcherListed } } : {} })
+        contributors: prepared.earlyAccess.contributors, linkedWallets: prepared.earlyAccess.linkedWallets, launcherListed: prepared.earlyAccess.launcherListed,
+        rules: prepared.earlyAccess.rules, ...prepared.earlyAccess.ramp ? { ramp: prepared.earlyAccess.ramp } : {} } } : {} })
     }
     if (body.action === 'submit') {
       const pool = database(), creator = creatorSigner()

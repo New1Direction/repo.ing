@@ -44,9 +44,10 @@ test('the resolver approves the bundle config for bundle markets, and only for t
   assert.throws(() => resolve(marketOn(bundle, { bundleId: '3', quoteMint: PublicKey.default.toBase58() })), /Stock-paired/)
 })
 
-test('migration 0060 is journaled last, re-appliable, and its constraint names match the schema', () => {
+test('migration 0060 is journaled after 0059, re-appliable, and its constraint names match the schema', () => {
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
-  assert.deepEqual(entries.at(-1), { idx: 60, version: '7', when: 1790910020000, tag: '0060_bundles', breakpoints: true })
+  assert.deepEqual(entries.find(entry => entry.tag === '0060_bundles'), { idx: 60, version: '7', when: 1790910020000, tag: '0060_bundles', breakpoints: true })
+  assert.equal(entries.findIndex(entry => entry.tag === '0060_bundles'), entries.findIndex(entry => entry.tag === '0059_early_access') + 1)
   const sql = readFileSync('drizzle/0060_bundles.sql', 'utf8')
   for (const statement of sql.split('--> statement-breakpoint').map(part => part.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean)) {
     assert.match(statement, /^(SET LOCAL|ALTER TABLE "markets" ADD COLUMN IF NOT EXISTS|DO \$\$ BEGIN\s+IF NOT EXISTS|CREATE OR REPLACE FUNCTION|CREATE TABLE IF NOT EXISTS|CREATE SEQUENCE IF NOT EXISTS|CREATE (UNIQUE )?INDEX IF NOT EXISTS)/, statement.slice(0, 80))

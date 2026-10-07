@@ -41,8 +41,8 @@ test('a prepare request asks for early access only for a GitHub repository paire
   const open = { launchable: true }
   assert.equal(earlyAccessRequest(body({ earlyAccessSeconds: undefined }), open), null)
   assert.equal(earlyAccessRequest(body({ earlyAccessSeconds: null }), { launchable: false }), null, 'not asked: nothing to refuse')
-  assert.deepEqual(earlyAccessRequest(body(), open), { windowSeconds: 3600 })
-  assert.deepEqual(earlyAccessRequest(body({ earlyAccessSeconds: '900', quoteAssetId: 'sol' }), open), { windowSeconds: 900 })
+  assert.deepEqual(earlyAccessRequest(body(), open), { windowSeconds: 3600, rules: 1 })
+  assert.deepEqual(earlyAccessRequest(body({ earlyAccessSeconds: '900', quoteAssetId: 'sol' }), open), { windowSeconds: 900, rules: 1 })
   assert.throws(() => earlyAccessRequest(body(), { launchable: false }), refusal('unavailable'))
   assert.throws(() => earlyAccessRequest(body({ repoId: '4503599627370497', hfId: 'abc' }), open), refusal('github'))
   assert.throws(() => earlyAccessRequest(body({ hfId: '65f0c0ffee' }), open), refusal('github'))
@@ -331,4 +331,18 @@ test('the signed v0 launch the page posts back is read only as v0; anything else
   }
   const v0 = Buffer.from(f.tx.serialize()).toString('base64')
   assert.equal(readSignedVersionedLaunch(v0).version, 0)
+})
+
+// The fair ramp and star unlocks (owner decisions 2026-10-06 and 2026-10-07): options of an early access launch only, star unlocks
+// with the fair ramp only, each exactly true (false or absent: off).
+test('the fair ramp and star unlocks are options of an early access launch only', () => {
+  const open = { launchable: true }
+  assert.deepEqual(earlyAccessRequest(body({ fairRamp: true }), open), { windowSeconds: 3600, rules: 3 })
+  assert.deepEqual(earlyAccessRequest(body({ fairRamp: true, starUnlocks: true }), open), { windowSeconds: 3600, rules: 7 })
+  assert.deepEqual(earlyAccessRequest(body({ fairRamp: false, starUnlocks: false }), open), { windowSeconds: 3600, rules: 1 })
+  assert.throws(() => earlyAccessRequest(body({ starUnlocks: true }), open), refusal('stars'))
+  for (const extra of [{ earlyAccessSeconds: undefined, fairRamp: true }, { earlyAccessSeconds: null, starUnlocks: true, fairRamp: true },
+    { fairRamp: 'yes' }, { fairRamp: 1 }, { starUnlocks: 'true', fairRamp: true }]) {
+    assert.throws(() => earlyAccessRequest(body(extra), open), refusal('options'), JSON.stringify(extra))
+  }
 })
