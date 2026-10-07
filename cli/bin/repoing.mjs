@@ -12,6 +12,7 @@ import {
   safeBrowserUrl,
 } from '../src/core.mjs'
 import { CLAIM_HELP, parseClaimArgs, runClaim } from '../src/claim.mjs'
+import { CREDITS_HELP, parseCreditsArgs, runCreditsKey } from '../src/credits.mjs'
 
 function currentGitRemote() {
   try {
@@ -62,13 +63,12 @@ function printHuman(repository, result, opened) {
   if (result.expiresAt) console.log(`  review expires ${result.expiresAt}`)
 }
 
-async function claim(argv) {
-  const options = parseClaimArgs(argv)
-  if (options.command === 'claim-help') { console.log(CLAIM_HELP); return }
+// The terminal for `repoing claim` and `repoing credits key`.
+async function interactive(options, run) {
   const repository = normalizeGithubRepository(options.repository || currentGitRemote())
   const prompt = createInterface({ input: process.stdin, output: process.stdout })
   try {
-    await runClaim(options, { repository, io: {
+    await run(options, { repository, io: {
       print: line => console.log(line),
       ask: question => prompt.question(question),
       // Only links on the repo.ing origin are opened; anything else is printed.
@@ -77,8 +77,21 @@ async function claim(argv) {
   } finally { prompt.close() }
 }
 
+async function claim(argv) {
+  const options = parseClaimArgs(argv)
+  if (options.command === 'claim-help') { console.log(CLAIM_HELP); return }
+  await interactive(options, runClaim)
+}
+
+async function credits(argv) {
+  const options = parseCreditsArgs(argv)
+  if (options.command === 'credits-help') { console.log(CREDITS_HELP); return }
+  await interactive(options, runCreditsKey)
+}
+
 async function main() {
   if (process.argv[2] === 'claim') return claim(process.argv.slice(3))
+  if (process.argv[2] === 'credits') return credits(process.argv.slice(3))
   const options = parseArgs(process.argv.slice(2))
   if (options.command === 'help') {
     console.log(HELP)
