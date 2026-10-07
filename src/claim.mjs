@@ -3,7 +3,7 @@ import { createMarketConfigResolver } from './market-config.mjs'
 import { assertClaimSnapshot } from './claim-review.mjs'
 import { claimAmounts } from './claim-amounts.mjs'
 import bs58 from 'bs58'
-import { Keypair, PublicKey, Transaction } from '@solana/web3.js'
+import { ComputeBudgetProgram, Keypair, PublicKey, Transaction } from '@solana/web3.js'
 import { NATIVE_MINT, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync,
   createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction } from '@solana/spl-token'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -16,7 +16,8 @@ import { createGraduatedFees, recordGraduatedFees } from './graduated-fees.mjs'
 import { resolvePayoutRecipient } from './payout-address.mjs'
 import { settleClaim } from './claim-settlement.mjs'
 import { broadcastUntilSettled, signedWithPriorityFee } from './trade-landing.mjs'
-import { EARLY_ACCESS_NOT_CLAIMABLE, isEarlyAccessMarket } from './early-access.mjs'
+import { EARLY_ACCESS_NOT_CLAIMABLE, isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
+import { assertHookClaimInstructions, hookClaimInstructions } from './dbc-hook-claims.mjs'
 
 // The creator's WSOL ATA is permissionless to create and fund, so routing payouts through it lets
 // anyone perturb a claim's receipt. Graduated fees unwrap through a one-time authority instead
@@ -48,13 +49,15 @@ export function assertBindingAuthority(beneficiary, source, authority) {
 
 // githubVerifier: the market's payout authority. GitHub's (no source field) for repositories; a Hugging Face model market
 // takes one with source 'huggingface' (app/lib/hf-session.mjs), whose fresh check also names the model's current owner.
-export function createClaim({ pool, connection, config, creator, githubVerifier }) {
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a contributor early access market's curve fees are claimed with
+// claim_creator_trading_fee2 (src/dbc-hook-claims.mjs, docs/EARLY_ACCESS.md step 6c); unset, such a market is refused by name.
+export function createClaim({ pool, connection, config, creator, githubVerifier, earlyAccess = tradingEarlyAccessConfig() }) {
   if (!githubVerifier?.verifyCallback && !githubVerifier?.verifyCurrentAuthority) throw new Error('Fresh GitHub App verifier required')
   const source = githubVerifier.source ?? 'github'
   const authorityName = source === 'huggingface' ? 'Hugging Face owner' : 'GitHub admin'
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
-  const resolveConfig = createMarketConfigResolver(config)
-  const graduatedFees = createGraduatedFees({ connection, config, db: pool })
+  const resolveConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess })
 
   const claim = async request => {
     const report = stage => { try { request.onProgress?.(stage) } catch { /* UI progress never changes payout settlement. */ } }
@@ -73,9 +76,9 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         if (!market || market.status !== 'confirmed' || !market.indexedAt || market.launchFinality !== 'finalized') {
           throw new Error('Repository has no indexed canonical market')
         }
-        // A transfer-hook pool's fees are claimed with claim_creator_trading_fee2, which the site builds from step 6 of
-        // docs/EARLY_ACCESS.md on.
-        if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_CLAIMABLE)
+        // A transfer-hook pool's fees are claimed with claim_creator_trading_fee2 (below), only where the early access config is set.
+        const hook = isEarlyAccessMarket(market)
+        if (hook && !earlyAccess) throw new Error(EARLY_ACCESS_NOT_CLAIMABLE)
         const mintKey = new PublicKey(market.mint)
         const configKey = resolveConfig(market)
         const poolKey = new PublicKey(market.pool)
@@ -132,11 +135,21 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         report('Repository fees match the Solana pools. Preparing payout…')
         const payout = new Transaction()
         const temporaries = []
+        // The hook claim's exact instructions, for its checks before and after the network fee is added.
+        let hookClaim = null
         if (dbcPayout > 0n) {
           const temporary = Keypair.generate()
           temporaries.push(temporary)
-          payout.add(await dbc.creator.claimCreatorTradingFee({ creator: creator.publicKey, payer: creator.publicKey, pool: poolKey,
-            maxBaseAmount: new BN(0), maxQuoteAmount: new BN(dbcPayout.toString()), receiver: receiverKey, tempWSolAcc: temporary.publicKey }))
+          if (hook) {
+            hookClaim = { kind: 'creator', authority: creator.publicKey, payer: creator.publicKey, pool: poolKey, config: configKey, mint: mintKey,
+              maxQuoteAmount: dbcPayout, receiver: receiverKey, temporary: temporary.publicKey }
+            const instructions = await hookClaimInstructions(dbc, hookClaim)
+            assertHookClaimInstructions(instructions, hookClaim)
+            payout.add(...instructions)
+          } else {
+            payout.add(await dbc.creator.claimCreatorTradingFee({ creator: creator.publicKey, payer: creator.publicKey, pool: poolKey,
+              maxBaseAmount: new BN(0), maxQuoteAmount: new BN(dbcPayout.toString()), receiver: receiverKey, tempWSolAcc: temporary.publicKey }))
+          }
         }
         if (dammFee > 0n) {
           const temporary = Keypair.generate()
@@ -148,6 +161,13 @@ export function createClaim({ pool, connection, config, creator, githubVerifier 
         // The platform creator signer pays the network fee (base + priority); the beneficiary's receipt is unaffected.
         const { transaction } = await signedWithPriorityFee(connection, payout, { feePayer: creator.publicKey,
           blockhash: latest.blockhash, signers: [creator, ...temporaries] })
+        // A hook claim is the only thing an early access payout does before graduation: besides the network fee (at most a unit limit
+        // and a price), exactly its four instructions.
+        if (hookClaim) {
+          const budget = transaction.instructions.filter(ix => ix.programId.equals(ComputeBudgetProgram.programId))
+          if (budget.length > 2) throw new Error('Claim transaction does not match the expected claim')
+          assertHookClaimInstructions(transaction.instructions.filter(ix => !budget.includes(ix)), hookClaim)
+        }
         const signature = bs58.encode(transaction.signature)
         const simulation = await connection.simulateTransaction(transaction)
         if (simulation.value.err) throw new Error(`Claim preflight failed: ${JSON.stringify(simulation.value.err)}`)

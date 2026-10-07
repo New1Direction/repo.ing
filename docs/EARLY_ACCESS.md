@@ -294,6 +294,21 @@ Left for the next steps (each fails closed or is harmless until then):
 - A malformed `EARLY_ACCESS_DBC_CONFIG` now refuses early access markets only in the indexers as well (fee accrual, trade
   recorder, external fee indexer, live trades); before, it stopped those modules from starting.
 
+## Builder claims (steps 6b and 6c)
+
+- DBC pays a hook pool's fees only through `claim_creator_trading_fee2` / `claim_trading_fee2`. The SDK's builders for them send
+  the SOL through the signer's permanent WSOL account, which anyone can create and fund, so `src/dbc-hook-claims.mjs` builds the
+  same instruction from the SDK's parts with a one-time WSOL authority, as every other repo.ing claim does: the receiver's
+  Token-2022 account for the token (the instruction names it; no token moves), the one-time WSOL account, the claim, and that
+  account's close to the receiver.
+- `assertHookClaimInstructions` checks exactly those four instructions before signing and again after the network fee is added:
+  the discriminator, base 0, the quoted maximum, one `TransferHookBase` slice of the hook's five accounts read-only (or none once
+  the curve's last swap revoked the hook), and every account in its IDL place with its signer and writable flags.
+- The builder claim (`src/claim.mjs`) uses it for an early access market where `EARLY_ACCESS_DBC_CONFIG` is set; without it the
+  claim is refused by name. The receipt check is unchanged (the claim emits the same event). Measured on mainnet's programs: 967
+  bytes, about 51,000 to 54,000 compute units.
+- Not yet shown on the token page, the builder dashboard and reminders (6d): their fee status still refuses these markets.
+
 ## The oracle's upkeep of the lists (step 5f)
 
 The launch puts only the launcher on the list (for its first buy) and takes it off again unless it is a linked contributor. The
@@ -329,7 +344,8 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-blinks.test.mjs     # Blinks: offered where the trader takes them, the window, Token-2022 sells (quick)
     node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
     node --test tests/early-access-reconcile.test.mjs  # the fee ledger watch and its alerts; reconcile with and without the setting (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, sizes and the launch API (PostgreSQL + validator)
+    node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port
