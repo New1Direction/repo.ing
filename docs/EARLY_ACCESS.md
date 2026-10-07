@@ -281,9 +281,12 @@ Left for the next steps (each fails closed or is harmless until then):
 
 ## Fee ledgers (step 6a)
 
-- The reconciler (`src/reconcile.mjs`) and the graduated fee reads (`src/graduated-fees.mjs`) take an early access market where
-  `EARLY_ACCESS_DBC_CONFIG` is set: its builder fee ledger is compared with its pool's creator fee on the curve. A migrated one
-  is refused by name (`EARLY_ACCESS_GRADUATION_PENDING`) until step 7.
+- The reconciler (`src/reconcile.mjs`) and the graduated fee reads (`src/graduated-fees.mjs`) take an early access market when a
+  path that handles them passes `EARLY_ACCESS_DBC_CONFIG` (the watch below; claims from 6c): its builder fee ledger is compared
+  with its pool's creator fee on the curve. Every other caller, the fee status the token page and the claim preview read
+  included, still refuses these markets until the step that opens them. A migrated one is refused by name
+  (`EARLY_ACCESS_GRADUATION_PENDING`) until step 7, and the watch is retired in the step that lets the graduation monitor take
+  these markets.
 - The graduation monitor leaves these markets out until step 7, so a worker pass (`src/early-access-reconcile.mjs`, every two
   minutes where the setting is set) reconciles each one and records the monitor's operator alert (`RECONCILIATION_MISMATCH` in
   `graduation_alerts`, gathered by the ledger digest) when a difference lasts its hold; a match clears it. It runs before any

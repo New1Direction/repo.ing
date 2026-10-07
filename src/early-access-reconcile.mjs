@@ -2,6 +2,7 @@ import { createLedgerAlerts } from './ledger-alerts.mjs'
 import { clearLedgerAlerts } from './reserve-alerts.mjs'
 import { evidenceJSON } from './graduation-state.mjs'
 import { RECONCILE_HOLD_MS } from './reconcile.mjs'
+import { EARLY_ACCESS_GRADUATION_PENDING } from './early-access.mjs'
 
 // Contributor early access markets' builder fee ledgers (docs/EARLY_ACCESS.md, step 6a; owner decision 2026-10-07). The graduation
 // monitor does not watch these markets until their graduation ships (step 7), so this pass reconciles each one against its pool and
@@ -12,7 +13,8 @@ export const EARLY_ACCESS_RECONCILE_MARKETS_SQL = `select m.github_repo_id::text
   where m.early_access_end is not null and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'
   order by m.github_repo_id`
 const LEDGER_ALERT = 'RECONCILIATION_MISMATCH'
-// A reconciliation that threw (a fixed code; a failure's own message never reaches an alert).
+// A reconciliation that threw (a fixed code; a failure's own message never reaches an alert). A market that graduated is named
+// as such: it waits for step 7 (this watch is retired in the step that lets the graduation monitor take these markets).
 export const EARLY_ACCESS_RECONCILE_FAILED = 'EARLY_ACCESS_RECONCILE_FAILED'
 
 async function recordAlert(db, repoId, key, detail) {
@@ -21,12 +23,14 @@ async function recordAlert(db, repoId, key, detail) {
   return rows[0] ?? null
 }
 
-// reconciler: src/reconcile.mjs createReconciler (with the early access config), or a test's.
+// reconciler: src/reconcile.mjs createReconciler (with the early access config), or a test's. A pass reports how many alert rows it
+// could not store or mark (alertFaults), as the monitor does.
 export function createEarlyAccessReconcileWatch({ pool, reconciler, now = Date.now, holdMs = RECONCILE_HOLD_MS,
   log = record => console.log(JSON.stringify({ earlyAccessReconcile: record })) }) {
   let faults = 0
   const ledgerAlerts = createLedgerAlerts({ now, holdMs, onFault: () => { faults += 1 } })
   async function runOnce() {
+    faults = 0
     const { rows: markets } = await pool.query(EARLY_ACCESS_RECONCILE_MARKETS_SQL)
     if (!markets.length) return { status: 'IDLE', markets: [] }
     ledgerAlerts.beginPass()
@@ -34,7 +38,7 @@ export function createEarlyAccessReconcileWatch({ pool, reconciler, now = Date.n
     for (const market of markets) {
       let result
       try { result = await reconciler.reconcile(market.githubRepoId) }
-      catch { result = { status: 'UNAVAILABLE', reason: EARLY_ACCESS_RECONCILE_FAILED } }
+      catch (error) { result = { status: 'UNAVAILABLE', reason: error?.message === EARLY_ACCESS_GRADUATION_PENDING ? EARLY_ACCESS_GRADUATION_PENDING : EARLY_ACCESS_RECONCILE_FAILED } }
       const watched = ledgerAlerts.market({ record: (key, detail) => recordAlert(pool, market.githubRepoId, key, detail),
         clear: (ledger, at) => clearLedgerAlerts(pool, market.githubRepoId, ledger, at) }, market)
       const alert = await watched.settle(result)
@@ -44,6 +48,7 @@ export function createEarlyAccessReconcileWatch({ pool, reconciler, now = Date.n
       if (result.status !== 'MATCH') log(entry)
       results.push(entry)
     }
+    if (faults) log({ alertFaults: faults })
     return { status: 'OK', markets: results, ...faults ? { alertFaults: faults } : {} }
   }
   return { runOnce }
