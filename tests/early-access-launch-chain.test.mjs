@@ -10,6 +10,7 @@ import { AddressLookupTableProgram, Connection, Keypair, PACKET_DATA_SIZE, Publi
   sendAndConfirmTransaction } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, getMint, getTransferHook, unpackMint } from '@solana/spl-token'
 import BN from 'bn.js'
+import bs58 from 'bs58'
 import { DynamicBondingCurveClient, SwapMode } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createFeeAccrual } from '../src/fee-accrual.mjs'
 import { createTradeRecorder } from '../src/trade-evidence.mjs'
@@ -29,11 +30,13 @@ import { assertEarlyAccessConfig, buildEarlyAccessConfigTransaction, earlyAccess
   verifyCreatedEarlyAccessConfig } from '../src/early-access-config.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWalletsInstruction, decodeAllowList, decodeMintConfig, earlyAccessAddresses,
   initPlatformInstruction } from '../src/early-access-hook.mjs'
-import { EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
+import { EARLY_ACCESS_NOT_CLAIMABLE, EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
 import { contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
 import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
 import { createEarlyAccessReconcileWatch } from '../src/early-access-reconcile.mjs'
 import { createReconciler } from '../src/reconcile.mjs'
+import { createClaim } from '../src/claim.mjs'
+import { CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR } from '../src/dbc-hook-claims.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
 import { POST as tradeRoute } from '../app/api/trade/route.js'
 import { GET as balanceRoute } from '../app/api/market/[mint]/balance/route.js'
@@ -527,6 +530,41 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const watched = await createEarlyAccessReconcileWatch({ pool, reconciler, log: () => {} }).runOnce()
       assert.deepEqual(watched.markets.map(entry => [entry.repoId, entry.status]), markets.map(market => [String(market.githubRepoId), 'MATCH']))
       await assert.rejects(createReconciler({ pool, connection, config, earlyAccess: null }).reconcile(secondMarket.githubRepoId), /transfer-hook-aware path/)
+    })
+
+    // Step 6c: the builder claims an early access market's curve fees. The payout is claim_creator_trading_fee2 with a one-time WSOL
+    // account, checked before it is signed; the bound wallet receives the whole ledger; the pool's creator fee falls to zero and the
+    // ledgers still reconcile; nothing is left to claim. Without the setting the claim is refused by name.
+    await t.test('the builder claims its curve fees with claim_creator_trading_fee2', async () => {
+      const config = solConfig.toBase58(), market = secondMarket, repoId = String(market.githubRepoId)
+      const builder = Keypair.generate(), creatorKey = Keypair.fromSecretKey(creatorSecret)
+      await pool.query('insert into repo_beneficiaries (github_repo_id, github_user_id, wallet) values ($1, 91, $2)', [repoId, builder.publicKey.toBase58()])
+      const githubVerifier = { verifyCurrentAuthority: async ({ githubRepoId }) => ({ verified: true, permission: 'admin', githubRepoId, githubUserId: 91n, verifiedAt: new Date() }) }
+      const request = { githubRepoId: repoId, githubAuthorization: {} }
+      await assert.rejects(createClaim({ pool, connection, config, creator: creatorKey, githubVerifier, earlyAccess: null }).claim(request), { message: EARLY_ACCESS_NOT_CLAIMABLE })
+      const reconciler = createReconciler({ pool, connection, config, earlyAccess: eaConfig })
+      const before = await reconciler.reconcile(repoId)
+      assert.equal(before.status, 'MATCH')
+      const claimant = createClaim({ pool, connection, config, creator: creatorKey, githubVerifier, earlyAccess: eaConfig })
+      const paid = await claimant.claim(request)
+      assert.equal(paid.status, 'settled')
+      assert.equal(paid.amountBaseUnits, before.recordedEarned, 'the whole builder ledger')
+      assert.ok(paid.receiverDeltaLamports >= paid.amountBaseUnits, 'the bound wallet received it')
+      assert.equal(await connection.getBalance(builder.publicKey, 'finalized'), Number(paid.receiverDeltaLamports))
+      const landed = await connection.getTransaction(paid.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+      const claims = landed.transaction.message.instructions.filter(ix => landed.transaction.message.accountKeys[ix.programIdIndex].toBase58() ===
+        'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
+      assert.equal(claims.length, 1)
+      assert.ok(Buffer.from(bs58.decode(claims[0].data)).subarray(0, 8).equals(CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR))
+      console.log(JSON.stringify({ earlyAccessClaim: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
+        computeUnits: landed.meta.computeUnitsConsumed } }))
+      const { rows: [row] } = await pool.query("select status, amount_base_units::text as amount from repo_claims where github_repo_id = $1", [repoId])
+      assert.deepEqual(row, { status: 'settled', amount: String(paid.amountBaseUnits) })
+      const pool_ = await new DynamicBondingCurveClient(connection, 'finalized').state.getPool(new PublicKey(market.pool))
+      assert.equal(pool_.poolState.creatorQuoteFee.toString(), '0')
+      const after = await reconciler.reconcile(repoId)
+      assert.deepEqual([after.status, after.recordedClaimed, after.expectedRemaining], ['MATCH', paid.amountBaseUnits, 0n])
+      await assert.rejects(claimant.claim(request), /No accrued creator fees remain to claim/, 'nothing left to claim')
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {
