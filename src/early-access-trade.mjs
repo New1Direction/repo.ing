@@ -1,9 +1,11 @@
 import { ComputeBudgetProgram, PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY, SystemProgram } from '@solana/web3.js'
-import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync, unpackAccount, unpackMint } from '@solana/spl-token'
 import { deriveDbcEventAuthority, deriveDbcPoolAuthority, deriveDbcTokenVaultAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { readTradeComputeBudget } from './trade-landing.mjs'
 import { ATA_PROGRAM, NATIVE_MINT, TOKEN_PROGRAM, isCreateWsolAta, wsolAta } from './wsol-account.mjs'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID, decodeAllowList, earlyAccessAddresses, hookErrorName, transferHookAccounts } from './early-access-hook.mjs'
+import { BPS, EARLY_ACCESS_HOOK_PROGRAM_ID, dbcBaseVault, decodeAllowList, decodeMintConfig, earlyAccessAddresses, hookErrorName, transferHookAccounts,
+  walletCapBps } from './early-access-hook.mjs'
+import { hasFairRamp, marketHookRules } from './early-access-rules.mjs'
 import { earlyAccessEndUtc } from './early-access.mjs'
 
 // Curve trades of a contributor early access market (docs/EARLY_ACCESS.md, step 5d): Meteora DBC's swap2WithTransferHook on the
@@ -107,6 +109,29 @@ export async function assertListedDuringWindow({ connection, market, wallet, hoo
 export const contributorsOnly = (end = null) =>
   `Contributor early access: only this repository's linked contributors can buy until ${end ? earlyAccessEndUtc(end) : 'the early access window ends'}.`
 export const EARLY_ACCESS_WALLET_LIMIT = 'Contributor early access: this buy would put more of the supply in one wallet than the launch allows now. Try a smaller amount.'
+// The fair ramp's own refusal, before anything is built: the limit now and about how many whole tokens still fit.
+export const fairRampLimit = (capBps, room) => `Contributor early access: with the fair ramp one wallet can hold at most ${(capBps / 100).toFixed(2).replace(/\.?0+$/, '')}% of the ` +
+  `supply right now (it rises as the curve sells). This wallet can get about ${(room / 1_000_000n).toLocaleString('en-US')} more tokens.`
+
+// A buy under the fair ramp (src/early-access-rules.mjs) that would take the wallet past its limit is refused before anything is
+// built, as the hook would refuse it: the limit is measured with the curve's vault and the wallet's balance before the buy, and the
+// wallet may then hold at most limit × supply (the live supply). outputAmount: the quoted tokens. Unreadable accounts: the hook decides.
+export async function assertWithinWalletLimit({ connection, market, wallet, outputAmount, hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
+  if (!hasFairRamp(marketHookRules(market))) return
+  const mint = new PublicKey(market.mint), program = new PublicKey(hookProgram)
+  const vault = dbcBaseVault(mint, new PublicKey(market.pool)), account = getAssociatedTokenAddressSync(mint, new PublicKey(wallet), false, TOKEN_2022_PROGRAM_ID)
+  const [configInfo, mintInfo, vaultInfo, heldInfo] = await connection.getMultipleAccountsInfo([earlyAccessAddresses(mint, program).config, mint, vault, account], 'confirmed')
+  let capBps, supply, held
+  try {
+    if (!configInfo?.owner.equals(program)) return
+    supply = unpackMint(mint, mintInfo, TOKEN_2022_PROGRAM_ID).supply
+    held = heldInfo ? unpackAccount(account, heldInfo, TOKEN_2022_PROGRAM_ID).amount : 0n
+    capBps = walletCapBps(decodeMintConfig(configInfo.data), unpackAccount(vault, vaultInfo, TOKEN_2022_PROGRAM_ID).amount, held)
+  } catch { return }
+  if (capBps === null || (held + BigInt(outputAmount)) * BigInt(BPS) <= supply * BigInt(capBps)) return
+  const room = supply * BigInt(capBps) / BigInt(BPS) - held
+  throw new Error(fairRampLimit(capBps, room > 0n ? room : 0n))
+}
 export const EARLY_ACCESS_TRANSFER_REFUSED = 'Contributor early access: the token\'s launch rules refused this trade.'
 
 // The words for a failed simulation's logs when the hook itself refused the transfer; null for any other failure.
