@@ -34,6 +34,8 @@ import { contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
 import { POST as tradeRoute } from '../app/api/trade/route.js'
 import { GET as balanceRoute } from '../app/api/market/[mint]/balance/route.js'
+import { handleBuyGet, handleBuyPost, handleSellPost, loadActionMarket } from '../app/lib/solana-actions.mjs'
+import { prepareActionTrade, walletTokenBalance } from '../app/lib/action-trades.mjs'
 import { contributorSnapshot } from '../src/github-contributors.mjs'
 import { EARLY_ACCESS_REFUSALS, contributorSnapshotStep, earlyAccessGuard } from '../app/lib/early-access-launch.mjs'
 import { POST as launchRoute } from '../app/api/launch/route.js'
@@ -316,7 +318,7 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
     // checked before the wallet signs and verified after it lands. During the window a listed contributor buys and sells, a wallet the
     // oracle adds buys (its Token-2022 account's rent is in the costs), a holder who is not listed sells, and anyone else's buy is
     // refused before anything is built. Without EARLY_ACCESS_DBC_CONFIG the market is refused by name.
-    await t.test('the site trades its curve during the window: listed wallets buy, holders sell, anyone else is refused', async () => {
+    await t.test('the site and its Blinks trade the curve during the window: listed wallets buy, holders sell, anyone else is refused', async () => {
       const ENV = ['DATABASE_URL', 'SOLANA_RPC_URL', 'DBC_CONFIG', 'DBC_LEGACY_CONFIGS', 'BUNDLE_DBC_CONFIG', 'EARLY_ACCESS_DBC_CONFIG']
       const GLOBALS = ['__gitfunPool', '__gitfunTrader', '__gitfunTraderConfig', '__gitfunTradeSessions', '__gitfunTradeSessionsRouter']
       const saved = { env: Object.fromEntries(ENV.map(name => [name, process.env[name]])), globals: Object.fromEntries(GLOBALS.map(name => [name, globalThis[name]])) }
@@ -396,6 +398,40 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         assert.equal(BigInt(launcherSold.result.tokenDelta), -(launcherHeld / 2n))
         assert.ok(BigInt(launcherSold.result.solDelta) > 0n)
 
+        // Step 5e: the same market as a Blink. The card leads with the window; a buy and a sell are built by the same trader and
+        // checks, and the wallet signs and sends them itself; a sell is a share of the wallet's Token-2022 balance; a wallet off the
+        // list is refused with the window's end.
+        const actions = { loadMarket: forMint => loadActionMarket(pool, forMint), prepareBuy: request => prepareActionTrade('buy', request),
+          prepareSell: request => prepareActionTrade('sell', request), tokenBalance: (owner, forMint, options) => walletTokenBalance(owner, forMint, connection, options) }
+        const card = await handleBuyGet(market.mint, actions)
+        assert.equal(card.status, 200)
+        assert.match((await card.json()).description, /^Contributor early access until [A-Z][a-z]{2} \d{1,2}, \d\d:\d\d UTC: only this repository's linked contributors can buy\./)
+        const blink = async (handler, path, signer) => {
+          const response = await handler(new Request(`https://repo.ing${path}`, { method: 'POST', body: JSON.stringify({ account: signer.publicKey.toBase58() }) }),
+            market.mint, actions)
+          return { status: response.status, body: await response.json() }
+        }
+        const sendBlink = async (answer, signer) => {
+          assert.equal(answer.status, 200, JSON.stringify(answer.body))
+          const tx = Transaction.from(Buffer.from(answer.body.transaction, 'base64'))
+          assert.equal(tx.instructions.filter(ix => ix.programId.toBase58() === 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN' &&
+            ix.data.subarray(0, 8).equals(Buffer.from([183, 93, 153, 40, 24, 230, 194, 151]))).length, 1)
+          tx.sign(signer)
+          const signature = await connection.sendRawTransaction(tx.serialize())
+          const confirmed = await connection.confirmTransaction({ signature, blockhash: tx.recentBlockhash,
+            lastValidBlockHeight: (await connection.getLatestBlockhash('confirmed')).lastValidBlockHeight }, 'confirmed')
+          assert.equal(confirmed.value.err, null)
+        }
+        const beforeBlink = await held(market.mint, contributor)
+        await sendBlink(await blink(handleBuyPost, `/api/actions/buy/${market.mint}?amount=0.01`, contributor), contributor)
+        const afterBuy = await held(market.mint, contributor)
+        assert.ok(afterBuy > beforeBlink, 'the Blink buy landed')
+        await sendBlink(await blink(handleSellPost, `/api/actions/sell/${market.mint}?percent=25`, contributor), contributor)
+        assert.equal(await held(market.mint, contributor), afterBuy - afterBuy * 25n / 100n, 'a quarter of the Token-2022 balance sold')
+        const stranger = await funded(connection)
+        const blinkRefused = await blink(handleBuyPost, `/api/actions/buy/${market.mint}?amount=0.01`, stranger)
+        assert.deepEqual([blinkRefused.status, blinkRefused.body.message], [400, contributorsOnly(market.earlyAccessEnd.getTime())])
+
         // The route recorded each curve trade's fees once its swap finalized; recording them again credits nothing.
         const signatures = [bought, sold, added].map(done => done.result.signature)
         const accrual = createFeeAccrual({ pool, connection, config: solConfig.toBase58(), earlyAccess: eaConfig })
@@ -406,11 +442,13 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         assert.deepEqual(recorded, [...signatures].sort())
         for (const done of [bought, sold, added]) assert.equal(done.result.feeIndexing === 'recorded' || done.result.feeIndexing === 'pending', true)
 
-        // Without the setting the router refuses the market by name, before any chain read.
+        // Without the setting the router and the Blink refuse the market by name, before any chain read.
         delete process.env.EARLY_ACCESS_DBC_CONFIG
         fresh()
         const off = await post({ action: 'quote', githubRepoId: repoId, direction: 'buy', amountBaseUnits: '10000000' })
         assert.deepEqual([off.status, off.body.error], [400, EARLY_ACCESS_NOT_TRADABLE])
+        const offCard = await handleBuyGet(market.mint, actions)
+        assert.deepEqual([offCard.status, (await offCard.json()).message], [404, EARLY_ACCESS_NOT_TRADABLE])
       } finally {
         for (const [name, value] of Object.entries(saved.env)) value === undefined ? delete process.env[name] : process.env[name] = value
         for (const name of GLOBALS) delete globalThis[name]

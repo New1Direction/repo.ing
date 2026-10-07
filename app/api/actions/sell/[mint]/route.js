@@ -12,7 +12,7 @@ export async function GET(request, { params }) {
   return handleSellGet((await params).mint, { loadMarket, tradingEnabled: tradeAvailable, ref: new URL(request.url).searchParams.get('ref') })
 }
 export async function POST(request, { params }) {
-  return handleSellPost(request, (await params).mint, { loadMarket, tokenBalance: walletTokenBalance,
+  return handleSellPost(request, (await params).mint, { loadMarket, tokenBalance: (owner, mint, options) => walletTokenBalance(owner, mint, undefined, options),
     prepareSell: trade => prepareActionTrade('sell', trade) })
 }
 export function OPTIONS() { return actionOptions() }

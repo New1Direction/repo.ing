@@ -6,7 +6,8 @@ import { publicError } from './public-error.mjs'
 import { SITE_ORIGIN, blinkApiPath, sellApiPath } from './blink-links.mjs'
 import { launchFeeNotice } from '../../src/launch-fee-copy.mjs'
 import { parseReferrer } from '../../src/referral.mjs'
-import { EARLY_ACCESS_NOT_TRADABLE } from '../../src/early-access.mjs'
+import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket, tradingEarlyAccessConfig } from '../../src/early-access.mjs'
+import { earlyAccessNotice } from './early-access-display.mjs'
 import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
 
 // Solana Actions spec v2.4 (github.com/solana-developers/solana-actions). Hand-rolled: the @solana/actions
@@ -87,14 +88,18 @@ function parseMint(value) {
   try { return new PublicKey(value).toBase58() } catch { throw new ActionError('Invalid token mint', 400) }
 }
 
-async function resolveMarket(mint, loadMarket) {
+// Whether the site's trader takes contributor early access markets (EARLY_ACCESS_DBC_CONFIG set and well formed); the trader logs
+// a malformed value itself.
+const earlyAccessTradesDefault = () => tradingEarlyAccessConfig(process.env, () => {}) !== null
+
+async function resolveMarket(mint, loadMarket, earlyAccessTrades = earlyAccessTradesDefault) {
   let market
   try { market = await loadMarket(mint) }
   catch (error) { throw new ActionError(publicError(error, () => false, 'Market lookup is temporarily unavailable', 'action market'), 503) }
   if (!market) throw new ActionError('No indexed repo.ing market for this token', 404)
   if (market.quoteMint) throw new ActionError(STOCK_PAIR_ACTIONS_UNAVAILABLE, 404)
-  // A contributor early access market (docs/EARLY_ACCESS.md) trades through a transfer hook the site does not build yet.
-  if (market.earlyAccessEnd) throw new ActionError(EARLY_ACCESS_NOT_TRADABLE, 404)
+  // A contributor early access market (docs/EARLY_ACCESS.md) trades through its transfer hook where the trader takes it.
+  if (isEarlyAccessMarket(market) && !earlyAccessTrades()) throw new ActionError(EARLY_ACCESS_NOT_TRADABLE, 404)
   return market
 }
 
@@ -109,18 +114,21 @@ const disabledUnless = tradingEnabled => tradingEnabled ? {} : { disabled: true,
 const sellLinks = (market, ref) => SELL_PERCENTS.map(percent => ({ type: 'transaction', label: percent === 100 ? 'Sell all' : `Sell ${percent}%`,
   href: withRef(`${sellApiPath(market.mint)}?percent=${percent}`, ref) }))
 
-// The market Blink (actions.json maps /token/* here): buy presets, a custom amount and, for holders, sell buttons.
-export function buyAction(market, { tradingEnabled = true, ref = null } = {}) {
+// The market Blink (actions.json maps /token/* here): buy presets, a custom amount and, for holders, sell buttons. While a contributor
+// early access window is open the description leads with it, as the token page's note does (app/lib/early-access-display.mjs).
+export function buyAction(market, { tradingEnabled = true, ref = null, now = Date.now() } = {}) {
   const href = blinkApiPath(market.mint)
   const repo = repoName(market)
+  const notice = earlyAccessNotice(market, now)
+  const windowNote = notice && `Contributor early access until ${notice.endsLabel}: only this repository's linked contributors can buy. Anyone can sell.`
   return {
     type: 'action',
     icon: tokenIcon(market),
     title: `$${market.symbol} · ${repo}`,
     // A Hugging Face model market's Blink leads with the disclaimer and names who its fees pay.
-    description: isModelMarket(market)
+    description: `${windowNote ? `${windowNote} ` : ''}${isModelMarket(market)
       ? `${HF_DISCLAIMER_SHORT}. Market for the Hugging Face model ${repo}. Every trade pays the model's owner. Trades use the canonical repo.ing pool with 1% max slippage.`
-      : `${(market.description || `Open source market for ${repo}.`).slice(0, 180)} Every trade pays the builders. Trades use the canonical repo.ing pool with 1% max slippage.`,
+      : `${(market.description || `Open source market for ${repo}.`).slice(0, 180)} Every trade pays the builders. Trades use the canonical repo.ing pool with 1% max slippage.`}`,
     label: 'Buy',
     ...disabledUnless(tradingEnabled),
     links: { actions: [
@@ -147,9 +155,9 @@ export function sellAction(market, { tradingEnabled = true, ref = null } = {}) {
   }
 }
 
-async function actionGet(rawMint, { loadMarket, tradingEnabled = () => true, ref = null }, build) {
+async function actionGet(rawMint, { loadMarket, tradingEnabled = () => true, ref = null, earlyAccessTrades }, build) {
   try {
-    const market = await resolveMarket(parseMint(rawMint), loadMarket)
+    const market = await resolveMarket(parseMint(rawMint), loadMarket, earlyAccessTrades)
     return actionJson(build(market, { tradingEnabled: tradingEnabled(), ref: parseActionReferrer(ref) }), { cache: 'public, max-age=60' })
   } catch (error) { return respondError(error, 'action get') }
 }
@@ -170,15 +178,17 @@ const completed = (market, title, description) => ({ next: { type: 'inline', act
   title, label: 'Done', description: `${description} See the market at ${SITE_ORIGIN}/token/${market.mint}` } } })
 
 // Builds the unsigned buy through the same canonical trader as the site; nothing is signed or sent here.
-export async function handleBuyPost(request, rawMint, { loadMarket, prepareBuy }) {
+export async function handleBuyPost(request, rawMint, { loadMarket, prepareBuy, earlyAccessTrades }) {
   try {
     const mint = parseMint(rawMint)
     const query = new URL(request.url).searchParams
     const lamports = parseBuyAmount(query.get('amount'))
     const referrer = parseActionReferrer(query.get('ref'))
     const account = await readAccount(request)
-    const market = await resolveMarket(mint, loadMarket)
-    const prepared = await prepareBuy({ githubRepoId: market.repoId, wallet: account.toBase58(), amountLamports: lamports.toString(), ...referrerArgs(referrer) })
+    const market = await resolveMarket(mint, loadMarket, earlyAccessTrades)
+    // An early access market's trade never pays a referral (the trader leaves it out), so none is passed.
+    const prepared = await prepareBuy({ githubRepoId: market.repoId, wallet: account.toBase58(), amountLamports: lamports.toString(),
+      ...referrerArgs(isEarlyAccessMarket(market) ? null : referrer) })
     if (prepared.mint !== market.mint || prepared.direction !== 'buy' || prepared.amountIn !== lamports ||
         !prepared.transaction.feePayer?.equals(account)) throw new Error('Prepared action trade does not match the request')
     const sol = formatUnits(lamports)
@@ -191,22 +201,23 @@ export async function handleBuyPost(request, rawMint, { loadMarket, prepareBuy }
 }
 
 // Sells a share of the wallet's own token account, read here from the account in the POST: the client never names an
-// amount. Same canonical trader, preflight and 1% slippage as buys.
-export async function handleSellPost(request, rawMint, { loadMarket, tokenBalance, prepareSell }) {
+// amount. Same canonical trader, preflight and 1% slippage as buys. A contributor early access token is read from its Token-2022 account.
+export async function handleSellPost(request, rawMint, { loadMarket, tokenBalance, prepareSell, earlyAccessTrades }) {
   try {
     const mint = parseMint(rawMint)
     const query = new URL(request.url).searchParams
     const percent = parseSellPercent(query.get('percent'))
     const referrer = parseActionReferrer(query.get('ref'))
     const account = await readAccount(request)
-    const market = await resolveMarket(mint, loadMarket)
+    const market = await resolveMarket(mint, loadMarket, earlyAccessTrades)
     let balance
-    try { balance = BigInt(await tokenBalance(account, market.mint)) }
+    try { balance = BigInt(await tokenBalance(account, market.mint, { token2022: isEarlyAccessMarket(market) })) }
     catch (error) { throw new ActionError(publicError(error, () => false, 'Your token balance is temporarily unavailable. Try again shortly.', 'action balance'), 503) }
     if (balance <= 0n) throw new ActionError(`This wallet holds no $${market.symbol} to sell.`)
     const amount = balance * BigInt(percent) / 100n
     if (amount <= 0n) throw new ActionError(`Your $${market.symbol} balance is too small to sell ${percent}%. Try selling all of it.`)
-    const prepared = await prepareSell({ githubRepoId: market.repoId, wallet: account.toBase58(), amountBaseUnits: amount.toString(), ...referrerArgs(referrer) })
+    const prepared = await prepareSell({ githubRepoId: market.repoId, wallet: account.toBase58(), amountBaseUnits: amount.toString(),
+      ...referrerArgs(isEarlyAccessMarket(market) ? null : referrer) })
     if (prepared.mint !== market.mint || prepared.direction !== 'sell' || prepared.amountIn !== amount ||
         !prepared.transaction.feePayer?.equals(account)) throw new Error('Prepared action trade does not match the request')
     const tokens = formatUnits(amount, 6)
@@ -220,7 +231,7 @@ export async function handleSellPost(request, rawMint, { loadMarket, tokenBalanc
 export async function loadActionMarket(pool, mint) {
   if (!pool) throw new ActionError('Market lookup is temporarily unavailable', 503)
   const { rows: [row] } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_symbol as symbol,
-      m.quote_mint as "quoteMint", m.early_access_end as "earlyAccessEnd", r.full_name as "fullName", r.description
+      m.quote_mint as "quoteMint", m.early_access_end as "earlyAccessEnd", m.transfer_hook_program as "transferHookProgram", r.full_name as "fullName", r.description
     from markets m left join repositories r on r.github_repo_id = m.github_repo_id
     where m.mint = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [mint])
   return row ?? null
