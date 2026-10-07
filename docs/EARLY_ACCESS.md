@@ -232,7 +232,7 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | Path | Now |
 | --- | --- |
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
-| Trades: `/api/trade` and the trade panel | the curve trades from step 5d (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it, and for the graduated trader and Blinks: refused, "Contributor early access markets are not tradable on the site yet." |
+| Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it, and for the graduated trader: refused, "Contributor early access markets are not tradable on the site yet." |
 | Builder fee claim (`src/claim.mjs`), discovery (`discoverySummary`), builder allocation (`allocationRecord`), platform fee listing and sweep (`listPlatformFees`), `platformFeeRecord`, DBC partner fee collection | skipped (`early_access_end is null`) or refused before any chain call |
 | Builder reminders, graduation monitor (`publicMarketSQL`) and its operator view (`graduationOperatorView`) | skipped |
 | Builder dashboard (`app/lib/builders.mjs`) | not listed (its fee check is SOL-only) |
@@ -242,11 +242,10 @@ Order: deploy the program, init the platform, create the config, create the tabl
 
 Left for the next steps (each fails closed or is harmless until then):
 
-- Step 5, left: Blinks (5e: `app/lib/solana-actions.mjs` refuses these markets, and `app/lib/action-trades.mjs` reads SPL Token
-  balances only), the oracle's upkeep that adds linked contributors' wallets to a list during its window (5f: nothing adds them
+- Step 5, left: the oracle's upkeep that adds linked contributors' wallets to a list during its window (5f: nothing adds them
   yet), the verification bonus accrual (drop its `early_access_end is null` in `candidates` and `marketFacts`), market lists and
   the launch alert copy (they list these markets as SOL markets). Done: their trades and fees indexed (5b), the holder count and
-  the window note (5c), curve trades on the site (5d, below).
+  the window note (5c), curve trades on the site (5d) and through Blinks (5e), below.
 - Step 6: claims with `claim_creator_trading_fee2` / `claim_trading_fee2` and the builder dashboard, the builder allocation (Token-2022 leftover),
   discovery and platform fees, then remove the step 4 skips. Early access markets are stamped with the discovery version, the
   builder allocation (when `BUILDER_ALLOCATION_CONFIGS` lists the early access config) and the verification bonus like SOL
@@ -255,7 +254,7 @@ Left for the next steps (each fails closed or is harmless until then):
   and graduated fees.
 - Later: manual recovery of an expired early access launch (`scripts/recover-expired-launch.mjs` refuses one).
 
-## Curve trades on the site (step 5d)
+## Curve trades on the site and through Blinks (steps 5d and 5e)
 
 - `/api/trade` (the trade panel) trades an early access market's curve once `EARLY_ACCESS_DBC_CONFIG` is set; without it the
   market is refused by name. The router reads the curve with that config, so the market goes to the curve trader
@@ -271,8 +270,12 @@ Left for the next steps (each fails closed or is harmless until then):
   server's clock may differ from the chain's, so only the hook decides.) Sells go to the pool and are open to anyone. If the hook still refuses a trade in the simulation, the page shows the hook's reason (not on the list, the fair
   ramp's wallet limit, or the launch rules) instead of the generic message.
 - Costs: the wallet's Token-2022 account for the token is sized by the mint's extensions (the hook adds one), like a stock's.
-- A malformed `EARLY_ACCESS_DBC_CONFIG` is logged by name and refuses early access markets only; other trades go on. Blinks
-  still refuse these markets (`resolveMarket`), and refuse a prepared hook swap as a backstop.
+- A malformed `EARLY_ACCESS_DBC_CONFIG` is logged by name and refuses early access markets only; other trades go on.
+- Blinks (step 5e, `app/lib/solana-actions.mjs`): offered for these markets only where the trader takes them (the setting is set
+  and well formed); otherwise "not tradable". While the window is open the Blink card leads with it ("Contributor early access
+  until <end> UTC: only this repository's linked contributors can buy. Anyone can sell."). Buys and sells go through the same
+  trader and checks; a sell is a share of the wallet's Token-2022 account; the trader's early access refusals are shown and
+  never retried without the referral.
 
 ## Build and test
 
@@ -283,7 +286,8 @@ Left for the next steps (each fails closed or is harmless until then):
     node scripts/ci/run-tests.mjs early-access-links-db # migration 0059, the link flow and its routes (PostgreSQL)
     node --test tests/early-access-launch.test.mjs     # guard, window end, contributors, v0 review, config transaction, form (quick)
     node --test tests/early-access-trade.test.mjs      # the hook swap check, the window's allow list, the hook's refusals (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade, sizes and the launch API (PostgreSQL + validator)
+    node --test tests/early-access-blinks.test.mjs     # Blinks: offered where the trader takes them, the window, Token-2022 sells (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

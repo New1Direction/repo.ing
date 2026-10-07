@@ -10,7 +10,6 @@ import { EARLY_ACCESS_TRANSFER_REFUSED, EARLY_ACCESS_WALLET_LIMIT, assertListedD
   from '../src/early-access-trade.mjs'
 import { EARLY_ACCESS_NOT_TRADABLE, tradingEarlyAccessConfig } from '../src/early-access.mjs'
 import { estimateTradeCosts } from '../src/trade-costs.mjs'
-import { prepareActionTrade } from '../app/lib/action-trades.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader } from '../src/canonical-damm-trade.mjs'
 import { createWsolAtaInstruction, wsolAta } from '../src/wsol-account.mjs'
@@ -195,14 +194,4 @@ test('costs: a Token-2022 account for a market mint that is not a Token-2022 min
   await assert.rejects(estimateTradeCosts(connection, { transaction: tx, direction: 'buy', amountIn: '1', mint: splMint.toBase58() }), /Account setup estimate unavailable/)
   // Another mint's Token-2022 account is refused before anything is read.
   await assert.rejects(estimateTradeCosts(connection, { transaction: tx, direction: 'buy', amountIn: '1', mint: key().toBase58() }), /Account setup estimate unavailable/)
-})
-
-test('Blinks: a prepared early access swap is refused as a backstop, and not retried without the referral', async () => {
-  const requests = []
-  const tx = await hookSwap({ change: p => ({ ...p, before: p.before.slice(2) }) }) // the wallet's accounts exist
-  const engine = { prepareBuy: async request => { requests.push(request); return { transaction: tx, direction: 'buy', amountIn: AMOUNT_IN, minimumAmountOut: MINIMUM_OUT, mint: mint.toBase58() } } }
-  const connection = { getBalance: async () => 1e12, getFeeForMessage: async () => ({ value: 5000 }), simulateTransaction: async () => ({ value: { err: null } }) }
-  await assert.rejects(prepareActionTrade('buy', { githubRepoId: '7', wallet: wallet.toBase58(), amountLamports: String(AMOUNT_IN), referrer: key().toBase58() },
-    { router: async () => engine, connection }), { message: EARLY_ACCESS_NOT_TRADABLE })
-  assert.equal(requests.length, 1)
 })

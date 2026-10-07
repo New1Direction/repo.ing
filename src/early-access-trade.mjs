@@ -4,6 +4,7 @@ import { deriveDbcEventAuthority, deriveDbcPoolAuthority, deriveDbcTokenVaultAdd
 import { readTradeComputeBudget } from './trade-landing.mjs'
 import { ATA_PROGRAM, NATIVE_MINT, TOKEN_PROGRAM, isCreateWsolAta, wsolAta } from './wsol-account.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID, decodeAllowList, earlyAccessAddresses, hookErrorName, transferHookAccounts } from './early-access-hook.mjs'
+import { earlyAccessEndUtc } from './early-access.mjs'
 
 // Curve trades of a contributor early access market (docs/EARLY_ACCESS.md, step 5d): Meteora DBC's swap2WithTransferHook on the
 // market's Token-2022 transfer-hook pool, built by the SDK and checked here before anything is signed; the hook's refusals in
@@ -103,9 +104,8 @@ export async function assertListedDuringWindow({ connection, market, wallet, hoo
   if (!listed) throw new Error(contributorsOnly(end))
 }
 
-const utc = ms => `${new Date(ms).toISOString().slice(0, 16).replace('T', ' ')} UTC`
 export const contributorsOnly = (end = null) =>
-  `Contributor early access: only this repository's linked contributors can buy until ${end ? utc(end) : 'the early access window ends'}.`
+  `Contributor early access: only this repository's linked contributors can buy until ${end ? earlyAccessEndUtc(end) : 'the early access window ends'}.`
 export const EARLY_ACCESS_WALLET_LIMIT = 'Contributor early access: this buy would put more of the supply in one wallet than the launch allows now. Try a smaller amount.'
 export const EARLY_ACCESS_TRANSFER_REFUSED = 'Contributor early access: the token\'s launch rules refused this trade.'
 
