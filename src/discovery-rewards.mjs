@@ -28,9 +28,9 @@ export function eligibleDiscoveryFee(market, data) {
   return time >= start && time < start + DISCOVERY_WINDOW_MS
 }
 
-// earlyAccess: whether the caller takes contributor early access markets (EARLY_ACCESS_DBC_CONFIG; docs/EARLY_ACCESS.md, step 6e).
-// Only then is such a market enrolled here; its stamp comes with it, for the config resolver.
-export async function discoverySummary(pool, repoId, { earlyAccess = false } = {}) {
+// includeEarlyAccess: whether the caller takes contributor early access markets (EARLY_ACCESS_DBC_CONFIG; docs/EARLY_ACCESS.md,
+// step 6e). Only then is such a market enrolled here; its stamp comes with it, for the config resolver.
+export async function discoverySummary(pool, repoId, { includeEarlyAccess = false } = {}) {
   const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.pool,
     m.early_access_end as "earlyAccessEnd", m.transfer_hook_program as "transferHookProgram",
     m.launcher_wallet as wallet, m.creator_wallet as "creatorWallet", m.launch_block_time as "launchedAt", m.discovery_version as version,
@@ -38,7 +38,7 @@ export async function discoverySummary(pool, repoId, { earlyAccess = false } = {
     coalesce((select sum(c.amount) from discovery_claims c where c.github_repo_id = m.github_repo_id and c.status = 'settled'),0)::text as paid
     from markets m where m.github_repo_id = $1 and m.discovery_version in (1,2) and m.status = 'confirmed'
     and m.indexed_at is not null and m.launch_finality = 'finalized' and m.launch_block_time is not null
-    and (m.early_access_end is null or $2::boolean) and m.bundle_id is null`, [String(repoId), earlyAccess])
+    and (m.early_access_end is null or $2::boolean) and m.bundle_id is null`, [String(repoId), includeEarlyAccess === true])
   const market = rows[0]
   if (!market) return null
   const cap = discoveryCap(market.version)
