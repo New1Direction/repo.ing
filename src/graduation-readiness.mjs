@@ -145,8 +145,7 @@ export function createGraduationMonitor({pool,connection,verification,config,env
             await reinvestQuote(connection,{amm:snapshot.amm,state:snapshot.poolState,pool:snapshot.pool},state.p3.maximumInvestment)
           }catch{state.p3={eligible:false,reason:'Bounded liquidity quote unavailable; wait for a fresh review'}}
         }
-        // An early access market's graduated partner fees are collected from step 7d on.
-        state.platformClaimAvailable=Boolean(!isEarlyAccessMarket(market)&&state.platform&&BigInt(state.platform.available)>0n&&reconciliation.status==='MATCH'&&pending.count===0)
+        state.platformClaimAvailable=Boolean(state.platform&&BigInt(state.platform.available)>0n&&reconciliation.status==='MATCH'&&pending.count===0)
         state.protocolLiquidityAdded=null
         if(state.phase==='GRADUATED'&&reconciliation.status==='MATCH'&&global.liquidity.status==='MATCH'){
           const {rows:positions}=await db.query("select * from liquidity_intents where github_repo_id=$1 and status='settled' and network='mainnet'",[repoId])

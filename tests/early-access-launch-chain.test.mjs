@@ -43,6 +43,7 @@ import { createClaim } from '../src/claim.mjs'
 import { createDiscoveryClaims } from '../src/discovery-claims.mjs'
 import { discoverySummary } from '../src/discovery-rewards.mjs'
 import { DBC_MAX_NETWORK_FEE_LAMPORTS, createDbcPlatformFees } from '../src/platform-dbc-fees.mjs'
+import { createPlatformFees } from '../src/platform-fees.mjs'
 import { sign as signBytes } from 'node:crypto'
 import { CLAIM_CREATOR_TRADING_FEE2_DISCRIMINATOR } from '../src/dbc-hook-claims.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
@@ -930,6 +931,54 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const after = await matched()
       assert.deepEqual([after.expectedRemaining, after.onchainCreatorFee, after.recordedClaimed - before.recordedClaimed], [0n, 0n, curveFee + dammFee])
       await assert.rejects(claimant.claim(request), /No accrued creator fees remain to claim/, 'nothing left to claim')
+    })
+
+    // Step 7d: the platform collects its share of the graduated pool's fees (the partner position) with claim_position_fee, token A
+    // on Token-2022, through a one-time WSOL account, checked exactly before signing. The ledger records exactly the claim event's
+    // amount (the rent of the partner's new Token-2022 account for the token counts as paid, not lost), the platform ledger matches
+    // the position again, and nothing is left. Without the setting the market is not enrolled.
+    await t.test('the platform collects its share of the graduated pool\'s fees with claim_position_fee', async () => {
+      const config = solConfig.toBase58(), repoId = String(secondMarket.githubRepoId)
+      assert.deepEqual(await createPlatformFees({ pool, connection, config, partner }).status(repoId), { enrolled: false })
+      const fees = createPlatformFees({ pool, connection, config, partner, earlyAccess: eaConfig })
+      const indexer = createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig })
+      // The platform ledger holds finalized evidence: wait until it equals the partner position's fee.
+      const status = await until(async () => { await indexer.runOnce(); const read = await fees.status(repoId)
+        return read.enrolled && BigInt(read.available) > 0n && read.available === read.onchainAvailable ? read : null }, 240)
+      assert.ok(status, 'the platform ledger equals the partner position')
+      const review = { purpose: 'platform-fee-review', phase: 'DAMM', repoId, receiver: partner.publicKey.toBase58(), amount: status.available,
+        expiresAt: Date.now() + 120_000 }
+      const receipt = await fees.claim({ review })
+      assert.deepEqual([receipt.status, receipt.amount], ['settled', status.available])
+      const landed = await connection.getTransaction(receipt.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
+      const keys = landed.transaction.message.accountKeys
+      const { rows: [proof] } = await pool.query('select partner_position from graduated_migration_proofs where github_repo_id = $1', [repoId])
+      const positionClaims = landed.transaction.message.instructions.filter(ix => keys[ix.programIdIndex].equals(CP_AMM_PROGRAM_ID))
+      assert.equal(positionClaims.length, 1)
+      assert.equal(Buffer.from(bs58.decode(positionClaims[0].data)).toString('hex'), 'b4269a118521a2d3', 'claim_position_fee')
+      assert.deepEqual([2, 7, 11].map(i => keys[positionClaims[0].accounts[i]].toBase58()), [proof.partner_position, secondMarket.mint, TOKEN_2022_PROGRAM_ID.toBase58()])
+      // The claim event's amount is what was recorded: the partner's balance change, its network fee and the rent of the account it opened.
+      const amm = new CpAmm(connection), events = []
+      for (const group of landed.meta.innerInstructions ?? []) for (const ix of group.instructions) {
+        const bytes = Buffer.from(bs58.decode(ix.data))
+        if (keys[ix.programIdIndex].equals(CP_AMM_PROGRAM_ID) && bytes.subarray(0, 8).toString('hex') === 'e445a52e51cb9a1d') {
+          const event = amm._program.coder.events.decode(bytes.subarray(8).toString('base64'))
+          if (event?.name === 'evtClaimPositionFee') events.push(BigInt(event.data.feeBClaimed.toString()))
+        }
+      }
+      const at = keys.findIndex(key => key.equals(partner.publicKey))
+      const opened = keys.reduce((sum, _key, i) => i !== at && landed.meta.preBalances[i] === 0 && landed.meta.postBalances[i] > 0 ? sum + landed.meta.postBalances[i] : sum, 0)
+      assert.ok(opened > 0, 'the partner\'s Token-2022 account for the token was opened by this first claim')
+      assert.deepEqual(events, [BigInt(receipt.amount)])
+      assert.equal(BigInt(landed.meta.postBalances[at] - landed.meta.preBalances[at] + landed.meta.fee + opened), BigInt(receipt.amount))
+      console.log(JSON.stringify({ earlyAccessPlatformDammClaim: { bytes: landed.transaction.message.serialize().length + 64 * landed.transaction.signatures.length,
+        computeUnits: landed.meta.computeUnitsConsumed } }))
+      assert.equal((await fees.status(repoId)).available, '0', 'nothing left to collect')
+      const reconciled = await until(async () => { const result = await createReconciler({ pool, connection, config, earlyAccess: eaConfig, earlyAccessGraduated: true })
+        .reconcile(repoId); return result.status === 'MATCH' ? result : null }, 240)
+      assert.ok(reconciled, 'the ledgers match')
+      assert.equal(reconciled.platform.claimed, reconciled.platform.onchainClaimed, 'the platform ledger equals the position\'s claimed fees')
+      await assert.rejects(fees.claim({ review: { ...review, expiresAt: Date.now() + 120_000 } }), /No platform fees remain to claim/)
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

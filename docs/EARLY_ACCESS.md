@@ -233,7 +233,8 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | --- | --- |
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
 | Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e and the graduated pool's trades from step 7b (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it: refused, "Contributor early access markets are not tradable on the site yet." |
-| Builder allocation (`allocationRecord`) and graduated platform fees (`platformFeeRecord`) | skipped or refused before any chain call (step 7) |
+| Builder allocation (`allocationRecord`) | skipped or refused before any chain call (step 7e) |
+| Graduated platform fees (`platformFeeRecord`, the sweep's DAMM phase) | collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 7d); not enrolled otherwise |
 | Platform fee listing, sweep and DBC partner fee collection | listed and collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 6f); skipped otherwise |
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
 | Graduation monitor and its operator view (`graduationOperatorView`) | monitored where `EARLY_ACCESS_DBC_CONFIG` is set (`earlyAccessMarketSQL`, step 7a) |
@@ -302,7 +303,7 @@ Left for the next steps (each fails closed or is harmless until then):
   mainnet that it does for Token-2022 pools).
 - They are never eligible for liquidity deployment or builder reinvest (owner decision, 2026-10-07): the monitor shows them as not
   eligible, and `src/liquidity-deployment.mjs` and `src/builder-reinvest.mjs` refuse them by name from their stamp
-  (`EARLY_ACCESS_NO_P3`, `EARLY_ACCESS_NO_REINVEST`). Their graduated partner fees are not offered for collection until step 7d.
+  (`EARLY_ACCESS_NO_P3`, `EARLY_ACCESS_NO_REINVEST`). Their graduated partner fees are collected from step 7d on.
 - The monitor checks their fee ledgers only after it read their graduation state. A market whose state read keeps failing shows
   as a graduation review and a market pass alert, not as a fee ledger alert (the same as for SOL markets); claims check their own
   amounts either way.
@@ -310,7 +311,20 @@ Left for the next steps (each fails closed or is harmless until then):
   the hook refuses), unless it graduated.
 - The external fee indexer records their DAMM v2 position fees (builder and platform ledgers) and live trades watch their DAMM v2
   pool. The indexer also reads their curves for graduated fees before they graduate; the SDK reads each hook pool account twice
-  (the plain kind first), a small RPC cost. The platform's collection (7d) and the builder allocation (7e) follow.
+  (the plain kind first), a small RPC cost. The builder allocation (7e) follows.
+
+## The platform's graduated fees (step 7d)
+
+- Where `EARLY_ACCESS_DBC_CONFIG` is set, the operator's DAMM v2 fee collection (`src/platform-fees.mjs`: the operator panel, the
+  per-repository route and the sweep's DAMM phase) enrolls a graduated early access market, and the monitor offers its claim
+  (`platformClaimAvailable`). Without the setting it is not enrolled.
+- The claim is `claim_position_fee` on the partner position with token A on Token-2022, built like the builder's
+  (`graduatedClaimInstructions`, through a one-time WSOL account) and checked exactly by `assertGraduatedClaimInstructions` before
+  signing and again after the network fee is added. SOL markets still use the SDK's `claimPositionFee2`, unchanged.
+- The first claim opens the partner's Token-2022 account for the token (about 0.002 SOL of rent, once per market). The settlement
+  (`settlePlatformClaim`, every market) now counts rent the claim put into an account it opened and left open as part of the
+  claim, so it records exactly the claim event's amount; before, a new market's first claim on an active pool could record that
+  much less than the position's checkpoint.
 
 ## Graduated trades on the site and through Blinks (step 7b)
 
@@ -434,7 +448,7 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-graduated-trade.test.mjs # the graduated pool's Token-2022 checks and the trader's gate (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
     node --test tests/early-access-graduated-claims.test.mjs # the DAMM v2 claim check; one claim per payout (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, the builder's claims after it, sizes and the launch API (PostgreSQL + validator)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, the builder's claims after it, the platform's graduated fees, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port
