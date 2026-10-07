@@ -382,3 +382,17 @@ test('real PostgreSQL: launch alert store', { skip: !url }, async () => {
     assert.equal(sent.filter(text => /octo\/repo-[12] —/.test(text)).length, 2, 'never posted twice')
   } finally { await pool.end() }
 })
+
+test('an early access market\'s alert says only its contributors can buy until the window ends; after it, nothing', () => {
+  const end = Date.parse('2026-10-07T12:15:00Z')
+  const market = { fullName: 'octo/early', tokenSymbol: 'EARLY', stars: 120, description: 'An early access repository. '.repeat(12), mint: 'MintEA1', earlyAccessEnd: new Date(end) }
+  const line = '🔒 Contributor early access: only its contributors can buy until 2026-10-07 12:15 UTC.'
+  for (const channel of ['x', 'telegram']) {
+    const text = buildLaunchMessage(market, { channel, origin: 'https://repo.ing', now: end - 60_000 })
+    assert.equal(text.split('\n')[2], line, channel)
+    assert.match(text, /https:\/\/repo\.ing\/token\/MintEA1$/)
+    if (channel === 'x') assert.ok(xWeight(text) <= X_MAX_WEIGHT)
+    assert.ok(!buildLaunchMessage(market, { channel, origin: 'https://repo.ing', now: end }).includes('Contributor early access'), `${channel}: closed`)
+  }
+  assert.ok(!buildLaunchMessage({ ...market, earlyAccessEnd: null }, { channel: 'x', origin: 'https://repo.ing' }).includes('🔒'))
+})

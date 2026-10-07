@@ -178,13 +178,15 @@ test('real PostgreSQL: verification bonus stamping, accrual, review and payout i
       await verify(pool, 9202, { at: new Date(now - 2 * DAY) })
       await seedMarket(pool, 9203, { launcher: key(), activatedAt })
       await verify(pool, 9203, { at: new Date(now - 60_000) })
-      // An early access market waits undecided until its trades are indexed (step 5 of docs/EARLY_ACCESS.md): never a candidate,
-      // and never recorded, so it is evaluated once its volume can be read.
+      // An early access market is decided only where its trades are indexed (EARLY_ACCESS_DBC_CONFIG; docs/EARLY_ACCESS.md): without
+      // the setting it is never a candidate and never recorded, so it is evaluated once its volume can be read.
       await seedMarket(pool, 9204, { launcher: key(), activatedAt, earlyAccess: true })
       await verify(pool, 9204, { at: new Date(now - 2 * DAY) })
       assert.deepEqual(await accrual.candidates(), ['9201'], 'unstamped markets, verifications inside the grace period and early access markets wait')
       assert.deepEqual(await accrual.accrue('9204'), { repoId: '9204', status: 'not-enrolled' })
       assert.equal(await bonusRow(pool, 9204), undefined, 'no bonus row: nothing is decided for it yet')
+      const withSetting = createVerificationBonusAccrual({ pool, readRepository, now: () => clock, includeEarlyAccess: true })
+      assert.deepEqual(await withSetting.candidates(), ['9201', '9204'], 'with the setting it is a candidate like any other')
       assert.deepEqual(await accrual.runOnce(), [{ repoId: '9201', status: 'pending_review' }])
       const bonus = await bonusRow(pool, 9201)
       assert.deepEqual([bonus.status, bonus.amount, bonus.launcher_wallet, bonus.verification_id, bonus.verifier_login, bonus.reason],

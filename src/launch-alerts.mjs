@@ -96,7 +96,7 @@ export function createLaunchAlertSenders(config, { fetchImpl = fetch } = {}) {
 const MARKET_FIELDS = `m.github_repo_id::text as "githubRepoId", m.mint, m.token_symbol as "tokenSymbol", m.indexed_at as "indexedAt",
   r.full_name as "fullName", r.description, r.stars, r.github_created_at as "githubCreatedAt",
   o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash",
-  h.hf_id as "hfId", h.repo_path as "modelPath"`
+  h.hf_id as "hfId", h.repo_path as "modelPath", m.early_access_end as "earlyAccessEnd"`
 const ELIGIBLE = `m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.mint is not null
   and m.indexed_at >= $2 and m.indexed_at >= now() - make_interval(secs => $3)`
 
