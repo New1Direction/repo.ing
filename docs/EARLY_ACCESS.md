@@ -246,12 +246,14 @@ Left for the next steps (each fails closed or is harmless until then):
   lists and the launch alert copy (they list these markets as SOL markets). Done: their trades and fees indexed (5b), the holder
   count and the window note (5c), curve trades on the site (5d) and through Blinks (5e), and the oracle's upkeep of the lists
   (5f), below.
-- Step 6: claims with `claim_creator_trading_fee2` / `claim_trading_fee2` and the builder dashboard, the builder allocation (Token-2022 leftover),
-  discovery and platform fees, then remove the step 4 skips. Early access markets are stamped with the discovery version, the
-  builder allocation (when `BUILDER_ALLOCATION_CONFIGS` lists the early access config) and the verification bonus like SOL
-  markets; the bonus is paid in SOL and needs no change.
+- Step 6 (owner decisions, 2026-10-07: gated by `EARLY_ACCESS_DBC_CONFIG` alone, like trades; the builder allocation moves to step
+  7): 6a the fee ledgers reconciled and watched (below); 6b a builder and check for `claim_creator_trading_fee2` /
+  `claim_trading_fee2`; 6c builder claims; 6d the builder dashboard and reminders; 6e discovery; 6f the platform's DBC partner
+  fee collection; then remove the step 4 skips. Early access markets are stamped with the discovery version, the builder
+  allocation (when `BUILDER_ALLOCATION_CONFIGS` lists the early access config) and the verification bonus like SOL markets; the
+  bonus is paid in SOL and needs no change.
 - Step 7: graduation (the monitor and its operator view skip them), DAMM v2 with a Token-2022 token A (`tokenAProgram`), reconcile
-  and graduated fees.
+  and graduated fees, and the builder allocation (`withdraw_leftover` of a Token-2022 base, then its transfer to the builder).
 - Later: manual recovery of an expired early access launch (`scripts/recover-expired-launch.mjs` refuses one).
 
 ## Curve trades on the site and through Blinks (steps 5d and 5e)
@@ -276,6 +278,18 @@ Left for the next steps (each fails closed or is harmless until then):
   until <end> UTC: only this repository's linked contributors can buy. Anyone can sell."). Buys and sells go through the same
   trader and checks; a sell is a share of the wallet's Token-2022 account; the trader's early access refusals are shown and
   never retried without the referral.
+
+## Fee ledgers (step 6a)
+
+- The reconciler (`src/reconcile.mjs`) and the graduated fee reads (`src/graduated-fees.mjs`) take an early access market where
+  `EARLY_ACCESS_DBC_CONFIG` is set: its builder fee ledger is compared with its pool's creator fee on the curve. A migrated one
+  is refused by name (`EARLY_ACCESS_GRADUATION_PENDING`) until step 7.
+- The graduation monitor leaves these markets out until step 7, so a worker pass (`src/early-access-reconcile.mjs`, every two
+  minutes where the setting is set) reconciles each one and records the monitor's operator alert (`RECONCILIATION_MISMATCH` in
+  `graduation_alerts`, gathered by the ledger digest) when a difference lasts its hold; a match clears it. It runs before any
+  claim can pay from these ledgers.
+- A malformed `EARLY_ACCESS_DBC_CONFIG` now refuses early access markets only in the indexers as well (fee accrual, trade
+  recorder, external fee indexer, live trades); before, it stopped those modules from starting.
 
 ## The oracle's upkeep of the lists (step 5f)
 
@@ -311,7 +325,8 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-trade.test.mjs      # the hook swap check, the window's allow list, the hook's refusals (quick)
     node --test tests/early-access-blinks.test.mjs     # Blinks: offered where the trader takes them, the window, Token-2022 sells (quick)
     node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, sizes and the launch API (PostgreSQL + validator)
+    node --test tests/early-access-reconcile.test.mjs  # the fee ledger watch and its alerts; reconcile with and without the setting (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

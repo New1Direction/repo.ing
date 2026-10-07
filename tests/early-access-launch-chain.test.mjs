@@ -32,6 +32,8 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWall
 import { EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
 import { contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
 import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
+import { createEarlyAccessReconcileWatch } from '../src/early-access-reconcile.mjs'
+import { createReconciler } from '../src/reconcile.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
 import { POST as tradeRoute } from '../app/api/trade/route.js'
 import { GET as balanceRoute } from '../app/api/market/[mint]/balance/route.js'
@@ -492,6 +494,39 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         await upkeep.runOnce()
       }
       assert.deepEqual(await lists(), [[alice], [alice]])
+    })
+
+    // Step 6a: once the worker's indexer has caught up with every trade (the Blink trades above are recorded by it alone), each early
+    // access market's builder fee ledger equals its pool's creator fee and the discovery ledger its partner fee; the worker's watch
+    // finds both matching. Without the setting the reconciler refuses them by name.
+    await t.test('their fee ledgers reconcile with their pools; the watch finds them matching', async () => {
+      const config = solConfig.toBase58(), markets = [firstMarket, secondMarket]
+      const indexer = createExternalFeeIndexer({ pool, connection, config, earlyAccess: eaConfig })
+      const reconciler = createReconciler({ pool, connection, config, earlyAccess: eaConfig })
+      // The ledgers hold finalized trades only, and the reconciler reads the pool at finalized: wait until the pools' confirmed and
+      // finalized fees agree (every trade above is final), then until the ledgers match.
+      const finalized = new DynamicBondingCurveClient(connection, 'finalized')
+      const fees = async (client, market) => (await client.state.getPool(new PublicKey(market.pool))).poolState
+      const matched = await until(async () => {
+        for (const market of markets) {
+          const [now, final] = await Promise.all([fees(dbc, market), fees(finalized, market)])
+          if (!now.creatorQuoteFee.eq(final.creatorQuoteFee) || !now.partnerQuoteFee.eq(final.partnerQuoteFee)) return null
+        }
+        await indexer.runOnce()
+        const results = await Promise.all(markets.map(market => reconciler.reconcile(market.githubRepoId)))
+        return results.every(result => result.status === 'MATCH') ? results : null
+      }, 240)
+      assert.ok(matched, 'both ledgers match their pools')
+      for (const [index, market] of markets.entries()) {
+        assert.ok(matched[index].recordedEarned > 0n, `${market.mint}: builder fees recorded`)
+        assert.equal(matched[index].onchainCreatorFee, matched[index].recordedEarned, 'nothing claimed yet: all of it is still in the pool')
+        const state = { poolState: await fees(finalized, market) }
+        const { rows: [partner] } = await pool.query('select coalesce(sum(partner_amount), 0)::text as total from discovery_fee_events where pool = $1', [market.pool])
+        assert.equal(BigInt(partner.total), BigInt(state.poolState.partnerQuoteFee.toString()), 'the partner fee equals the discovery ledger')
+      }
+      const watched = await createEarlyAccessReconcileWatch({ pool, reconciler, log: () => {} }).runOnce()
+      assert.deepEqual(watched.markets.map(entry => [entry.repoId, entry.status]), markets.map(market => [String(market.githubRepoId), 'MATCH']))
+      await assert.rejects(createReconciler({ pool, connection, config, earlyAccess: null }).reconcile(secondMarket.githubRepoId), /transfer-hook-aware path/)
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

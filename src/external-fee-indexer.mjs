@@ -4,7 +4,7 @@ import { createFeeAccrual } from './fee-accrual.mjs'
 import { createTradeRecorder, UnparseableTradeError } from './trade-evidence.mjs'
 import { graduatedReadDue } from './indexer-schedule.mjs'
 import { createMarketConfigResolver } from './market-config.mjs'
-import { earlyAccessDbcConfig } from './early-access.mjs'
+import { tradingEarlyAccessConfig } from './early-access.mjs'
 import { isBundleMarket } from './bundles.mjs'
 
 const PAGE_SIZE = 1000
@@ -38,7 +38,7 @@ const latest = (...values) => values.reduce((max, value) => {
 const isEarlyAccess = market => Boolean(market.earlyAccessEnd || market.transferHookProgram)
 // earlyAccess: EARLY_ACCESS_DBC_CONFIG. Set, a contributor early access market's curve trades are indexed like any other; its
 // graduated (DAMM v2) fees wait for docs/EARLY_ACCESS.md step 7. Unset, such a market is reported as skipped.
-export function createExternalFeeIndexer({ pool: databasePool, connection, config, earlyAccess = earlyAccessDbcConfig(),
+export function createExternalFeeIndexer({ pool: databasePool, connection, config, earlyAccess = tradingEarlyAccessConfig(),
   graduatedFees = createGraduatedFees({ connection, config, db: databasePool }),
   accrual = createFeeAccrual({ pool: databasePool, connection, config, earlyAccess }),
   recordTrade = createTradeRecorder({ pool: databasePool, connection, config, earlyAccess }),
