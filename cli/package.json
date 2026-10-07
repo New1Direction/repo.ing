@@ -1,7 +1,7 @@
 {
   "name": "@repoing/cli",
   "version": "0.2.0",
-  "description": "Launch canonical open-source markets on repo.ing and claim or convert your fees from your terminal.",
+  "description": "Launch canonical open-source markets on repo.ing, claim or convert your fees, and make AI keys for coding tools from your terminal.",
   "type": "module",
   "license": "AGPL-3.0-only",
   "bin": {
@@ -25,6 +25,6 @@
     "url": "https://github.com/New1Direction/repo.ing/issues"
   },
   "scripts": {
-    "test": "node --test ../tests/repoing-cli.test.mjs"
+    "test": "node --test ../tests/repoing-cli.test.mjs ../tests/repoing-cli-claim.test.mjs ../tests/repoing-cli-credits.test.mjs"
   }
 }

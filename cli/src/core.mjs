@@ -148,6 +148,7 @@ export const HELP = `repoing — launch an open-source market from your terminal
 Usage:
   repoing launch [owner/repo|github-url] [options]
   repoing claim [owner/repo|github-url] [options]   (your fees as SOL or AI credits; repoing claim --help)
+  repoing credits key [owner/repo] [options]        (a key for your coding tool; repoing credits --help)
 
 If no repository is supplied, repoing reads the current git origin.
 

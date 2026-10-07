@@ -57,6 +57,18 @@ wallet; credits come only after the payment is finalized on chain, and a payment
 The AI credits service is a devnet sandbox until repo.ing switches it on: by default the command uses one running on this
 computer (`--credits-origin`, or `REPOING_CREDITS_ORIGIN`).
 
+## A key for your coding tool: `repoing credits key`
+
+```bash
+repoing credits key                         # asks for a spending limit (default: all your credits)
+repoing credits key --limit 20 --label cursor
+```
+
+The command signs you in through repo.ing in the same way and makes one key that can only run inference, valid 30 days,
+with a spending limit of at most your credits. It prints `OPENAI_BASE_URL` and `OPENAI_API_KEY` for any OpenAI-compatible
+tool, once; the key cannot buy credits or make other keys. The gateway is a sandbox on this computer for now
+(`--inference-origin`, or `REPOING_INFERENCE_ORIGIN`).
+
 ## Development
 
 From `cli/`:

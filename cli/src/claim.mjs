@@ -70,7 +70,7 @@ export async function listenForCode({ state, timeoutMs = SIGN_IN_TIMEOUT_MS }) {
       : error === 'slow_down' ? 'Too many sign-ins; wait a minute and try again.' : 'Sign-in cancelled.'))
   })
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve) })
-  const timer = setTimeout(() => settle.reject(new Error('Sign-in timed out. Run repoing claim again.')), timeoutMs)
+  const timer = setTimeout(() => settle.reject(new Error('Sign-in timed out. Run the command again.')), timeoutMs)
   const done = result.finally(() => { clearTimeout(timer); server.close() })
   done.catch(() => {})
   return { port: server.address().port, code: done }
@@ -92,6 +92,7 @@ async function call(fetchImpl, url, { method = 'GET', body, headers = {}, timeou
     throw error
   } finally { clearTimeout(timer) }
 }
+export const requestJson = call
 /** The repository's id and market on repo.ing, and what the next claim pays (lamports, or null). */
 export async function claimStatus({ origin, repository, fetchImpl = fetch }) {
   const base = validateOrigin(origin)
@@ -167,6 +168,24 @@ Converting never moves your claimed fees by itself: you pay the quote from your 
 the payment is finalized on chain.`
 
 /**
+ * Signs in to the credit service through repo.ing: the browser approves; the code comes back to this computer only and is
+ * redeemed with the PKCE verifier. Returns the session (a conversion key that lives one hour).
+ */
+export async function signInForCredits(options, { repoId, io, fetchImpl = fetch, listen = listenForCode, signIn = newSignIn }) {
+  const pkce = signIn()
+  const listener = await listen({ state: pkce.state })
+  const url = handoffUrl(options.origin, { repoId, challenge: pkce.challenge, port: listener.port, state: pkce.state })
+  const opened = options.open && await io.open(url)
+  io.print(opened ? '→ approve on repo.ing in your browser (opened)…' : `→ open this link and approve on repo.ing:\n${url}`)
+  io.print(`  check code ${checkCode(pkce.challenge)}: approve only if repo.ing shows the same code`)
+  const code = await listener.code
+  const session = await creditsSession({ creditsOrigin: options.creditsOrigin, code, verifier: pkce.verifier, fetchImpl })
+  if (!session.token) throw new Error(session.note ?? 'The sign-in was already used. Run the command again.')
+  io.print(`✓ signed in as @${session.login}`)
+  return session
+}
+
+/**
  * The whole `repoing claim` flow. io: { print(line), ask(question) → answer, open(url) → whether it opened }.
  * Returns what happened, for --json and tests.
  */
@@ -194,17 +213,7 @@ export async function runClaim(options, { repository, io, fetchImpl = fetch, lis
     lamports = solToLamports(answer)
     if (lamports < 10_000_000n || lamports > 100n * LAMPORTS_PER_SOL) throw new Error('A conversion is 0.01 to 100 SOL.')
   }
-  // Sign in through repo.ing: the browser approves; the code comes back to this computer only.
-  const pkce = signIn()
-  const listener = await listen({ state: pkce.state })
-  const url = handoffUrl(options.origin, { repoId: status.repoId, challenge: pkce.challenge, port: listener.port, state: pkce.state })
-  const opened = options.open && await io.open(url)
-  io.print(opened ? '→ approve on repo.ing in your browser (opened)…' : `→ open this link and approve on repo.ing:\n${url}`)
-  io.print(`  check code ${checkCode(pkce.challenge)}: approve only if repo.ing shows the same code`)
-  const code = await listener.code
-  const session = await creditsSession({ creditsOrigin: options.creditsOrigin, code, verifier: pkce.verifier, fetchImpl })
-  if (!session.token) throw new Error(session.note ?? 'The sign-in was already used. Run repoing claim again.')
-  io.print(`✓ signed in as @${session.login}`)
+  const session = await signInForCredits(options, { repoId: status.repoId, io, fetchImpl, listen, signIn })
   const quote = await requestQuote({ creditsOrigin: options.creditsOrigin, token: session.token, lamports, fetchImpl })
   io.print(`\nPay exactly ${lamportsToSol(quote.lamports)} SOL from your wallet with this Solana Pay link:\n${quote.solana_pay_url}`)
   io.print(`You get ${usd(quote.credit_micro)} of AI credits (SOL at ${usd(quote.price_micro_per_sol)}). The quote expires ${new Date(quote.expires_at).toLocaleTimeString()}.`)
