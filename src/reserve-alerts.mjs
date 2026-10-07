@@ -180,7 +180,8 @@ function receiver(url) {
   }
   return ({ id, text, detail }) => {
     const { delivery: _delivery, ...movement } = detail
-    const event = detail.test ? 'test' : detail.role ? 'operating_wallet_low' : detail.ledger ? 'reconciliation_mismatch' : 'reserve_moved'
+    const event = detail.test ? 'test' : detail.role ? 'operating_wallet_low' : detail.ledger ? 'reconciliation_mismatch'
+      : detail.curveFinishedAt ? 'migration_overdue' : 'reserve_moved'
     return { url, body: { event, id, text, market: movement } }
   }
 }

@@ -77,6 +77,9 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
   }
 
   // The platform must name this key as its oracle, or every instruction would be refused.
+  // Whether this process has checked the platform's oracle yet: checked once even while no window is open, so a wrong key shows in
+  // the worker's log before launches open (docs/EARLY_ACCESS.md, runbook step 6).
+  let platformChecked = false
   async function oracleMatches() {
     const info = await connection.getAccountInfo(platformAddress(program), 'confirmed')
     if (!info?.owner.equals(program)) return false
@@ -131,7 +134,11 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
         const { rows: markets } = await client.query(`select m.github_repo_id::text as "repoId", m.mint, m.early_access_end as "earlyAccessEnd"
           from markets m where m.early_access_end is not null and m.transfer_hook_program = $1 and m.status = 'confirmed' and m.mint is not null
             and m.early_access_end > $2 order by m.early_access_end`, [program.toBase58(), new Date(now() - CLOSE_WITHIN_MS)])
-        if (!markets.length) return { status: 'IDLE' }
+        if (!markets.length) {
+          if (!platformChecked) { platformChecked = true; if (!await oracleMatches()) log({ error: 'ORACLE_NOT_PLATFORM_ORACLE' }) }
+          return { status: 'IDLE' }
+        }
+        platformChecked = true
         if (!await oracleMatches()) { log({ error: 'ORACLE_NOT_PLATFORM_ORACLE' }); return { status: 'ORACLE_MISMATCH' } }
         const balance = await connection.getBalance(oracle.publicKey, 'confirmed')
         const lowBalance = balance < MIN_ORACLE_LAMPORTS

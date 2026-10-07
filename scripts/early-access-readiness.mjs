@@ -48,4 +48,11 @@ async function main(args) {
   } finally { await db?.end().catch(() => {}) }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) await main(process.argv.slice(2))
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main(process.argv.slice(2)).catch(error => {
+    const secrets = [process.env.SOLANA_RPC_URL, process.env.DATABASE_URL].map(value => value?.trim()).filter(Boolean)
+    const message = secrets.reduce((text, secret) => text.split(secret).join('[redacted]'), String(error?.message ?? error)).slice(0, 300)
+    process.stderr.write(`early access readiness could not run: ${message}\n`)
+    process.exitCode = 1
+  })
+}

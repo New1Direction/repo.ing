@@ -134,6 +134,12 @@ test('nothing is sent when the platform names another oracle or a change does no
   assert.equal(refused.sent.length, 0)
   const none = setup({ markets: [] })
   assert.deepEqual(await create(none).runOnce(), { status: 'IDLE' })
+  // A wrong key shows in the log once per process even before any window opens (runbook step 6); nothing is sent.
+  const early = setup({ markets: [], platformOracle: Keypair.generate().publicKey }), earlyLog = []
+  const idle = create(early, { log: record => earlyLog.push(record) })
+  assert.deepEqual([await idle.runOnce(), await idle.runOnce()], [{ status: 'IDLE' }, { status: 'IDLE' }])
+  assert.deepEqual(earlyLog, [{ error: 'ORACLE_NOT_PLATFORM_ORACLE' }])
+  assert.equal(early.sent.length, 0)
   const missing = setup({ markets, links: { [repoId]: [key()] } })
   assert.deepEqual((await create(missing).runOnce()).results, [{ mint, error: 'NO_ALLOW_LIST' }])
   const poor = setup({ markets, links: { [repoId]: [key(), key()] }, lists: { [mint]: [] }, balance: MIN_ORACLE_LAMPORTS - 1 })
