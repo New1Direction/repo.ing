@@ -2,7 +2,7 @@ import BN from 'bn.js'
 import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import bs58 from 'bs58'
 import { ComputeBudgetProgram, Message, PublicKey, SystemProgram, Transaction } from '@solana/web3.js'
-import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { eq } from 'drizzle-orm'
 import { DynamicBondingCurveClient, deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -36,9 +36,11 @@ const big = value => BigInt(value.toString())
 export const dammMinimumOut = (output, slippageBps = DAMM_SLIPPAGE_BPS) => minimumOutAfterSlippage(output, slippageBps)
 
 // Only the migrated SOL pair with SOL-only fees, classic SPL vaults and swaps enabled is tradable here.
-export function assertTradablePool(poolState, pool, mint) {
+// token2022: a contributor early access market's pool (docs/EARLY_ACCESS.md, step 7b), whose token A is Token-2022 (tokenAFlag 1)
+// with its transfer hook already revoked by the curve's filling swap, so its swap needs no hook accounts.
+export function assertTradablePool(poolState, pool, mint, { token2022 = false } = {}) {
   if (!poolState.tokenAMint.equals(mint) || !poolState.tokenBMint.equals(NATIVE_MINT) || poolState.collectFeeMode !== 1 ||
-      poolState.tokenAFlag !== 0 || poolState.tokenBFlag !== 0 || poolState.poolStatus !== 0 ||
+      poolState.tokenAFlag !== (token2022 ? 1 : 0) || poolState.tokenBFlag !== 0 || poolState.poolStatus !== 0 ||
       !poolState.tokenAVault.equals(deriveTokenVaultAddress(mint, pool)) ||
       !poolState.tokenBVault.equals(deriveTokenVaultAddress(NATIVE_MINT, pool))) {
     throw Error('Canonical DAMM pool is not tradable')
@@ -72,10 +74,12 @@ export function messageFingerprint(message) {
 // The referral slot holds exactly the server-resolved referral account, or the program ID when there is none.
 // keepWsol: the wallet's WSOL ATA existed before the trade, so exactly one idempotent re-create of it follows the close.
 // Compute budget: at most one unit limit and one unit price, both first and within the configured maximums.
-export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral = null, keepWsol = false }) {
+// tokenProgram: the market token's program (Token-2022 for an early access market), for its account and the swap's token A.
+export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral = null, keepWsol = false,
+  tokenProgram = TOKEN_PROGRAM_ID }) {
   readTradeComputeBudget(tx.instructions)
   const mint = poolState.tokenAMint
-  const tokenAta = getAssociatedTokenAddressSync(mint, wallet), wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, wallet)
+  const tokenAta = getAssociatedTokenAddressSync(mint, wallet, false, tokenProgram), wsolAta = getAssociatedTokenAddressSync(NATIVE_MINT, wallet)
   const [input, output] = direction === 'buy' ? [wsolAta, tokenAta] : [tokenAta, wsolAta]
   let swaps = 0, wraps = 0, closes = 0, recreates = 0
   for (const [position, ix] of tx.instructions.entries()) {
@@ -87,7 +91,8 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
       continue
     } else if (ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
       if (ix.data.length !== 1 || ix.data[0] !== 1 || !k[0]?.equals(wallet) || !k[2]?.equals(wallet) ||
-          !(k[1]?.equals(tokenAta) && k[3]?.equals(mint) || k[1]?.equals(wsolAta) && k[3]?.equals(NATIVE_MINT))) throw Error('Trade transaction contains an unexpected account setup')
+          !(k[1]?.equals(tokenAta) && k[3]?.equals(mint) && k[5]?.equals(tokenProgram) ||
+            k[1]?.equals(wsolAta) && k[3]?.equals(NATIVE_MINT) && k[5]?.equals(TOKEN_PROGRAM_ID))) throw Error('Trade transaction contains an unexpected account setup')
     } else if (ix.programId.equals(SystemProgram.programId)) {
       if (direction !== 'buy' || ix.data.length !== 12 || ix.data.readUInt32LE(0) !== 2 || ix.data.readBigUInt64LE(4) !== amountIn ||
           !k[0]?.equals(wallet) || !k[1]?.equals(wsolAta)) throw Error('Trade transaction contains an unexpected SOL transfer')
@@ -102,7 +107,8 @@ export function assertPreparedSwap(tx, { wallet, pool, poolState, direction, amo
       if (d.length !== 25 || d.subarray(0, 8).toString('hex') !== SWAP || d.readBigUInt64LE(8) !== amountIn ||
           d.readBigUInt64LE(16) !== minimumAmountOut || d[24] !== SwapMode.ExactIn || !k[1]?.equals(pool) ||
           !k[2]?.equals(input) || !k[3]?.equals(output) || !k[4]?.equals(poolState.tokenAVault) || !k[5]?.equals(poolState.tokenBVault) ||
-          !k[6]?.equals(mint) || !k[7]?.equals(NATIVE_MINT) || !k[8]?.equals(wallet) || !k[11]?.equals(referral ?? CP_AMM_PROGRAM_ID)) throw Error('Trade transaction swap does not match the quote')
+          !k[6]?.equals(mint) || !k[7]?.equals(NATIVE_MINT) || !k[8]?.equals(wallet) || !k[9]?.equals(tokenProgram) ||
+          !k[10]?.equals(TOKEN_PROGRAM_ID) || !k[11]?.equals(referral ?? CP_AMM_PROGRAM_ID)) throw Error('Trade transaction swap does not match the quote')
       swaps++
     } else throw Error('Trade transaction contains an unexpected program')
   }
@@ -174,13 +180,14 @@ export function verifyDammSwapReceipt(tx, expected, coder) {
 }
 
 // earlyAccess (EARLY_ACCESS_DBC_CONFIG): routing reads a contributor early access market's curve with it, so its curve trades go to
-// the curve trader; its graduated pool (DAMM v2 with a Token-2022 token) is refused by name until step 7 (docs/EARLY_ACCESS.md).
+// the curve trader and, once the curve has migrated, its DAMM v2 pool (a Token-2022 token A) trades here (docs/EARLY_ACCESS.md, step 7b).
+// Without it such a market is refused by name.
 export function createDammTrader({ pool: databasePool, connection, config, graduatedFees = null, loadTransaction = loadTransactionAt, loadMarket: marketLoader = null,
   stockGraduation = null, earlyAccess = tradingEarlyAccessConfig(), hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
   const resolveConfig = createMarketConfigResolver(config)
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed')
   const amm = new CpAmm(connection)
-  const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool })
+  const proofs = graduatedFees ?? createGraduatedFees({ connection, config, db: databasePool, earlyAccess, earlyAccessGraduated: true })
   // A stock-paired market's graduated pool, quote, swap and receipt (src/stock-damm-trade.mjs); every SOL line below is unchanged.
   const stock = createStockDammTrading({ connection, amm, loadTransaction, graduation: stockGraduation ?? createStockGraduation({ connection, config, db: databasePool }) })
   const destinations = new Map()
@@ -191,10 +198,10 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     }
     return market
   })
-  // A transfer-hook pool (docs/EARLY_ACCESS.md) trades on its curve only (the curve trader); its graduated pool waits for step 7.
+  // A transfer-hook pool (docs/EARLY_ACCESS.md) trades here only where the setting is set.
   const loadMarket = async repoId => {
     const market = await loadIndexedMarket(repoId)
-    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
+    if (isEarlyAccessMarket(market) && !earlyAccess) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     return market
   }
   // A curve migrates once, so a migrated answer is permanent; an active answer is always re-read.
@@ -203,10 +210,9 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
   const resolveCurveConfig = createQuoteAwareConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
   const migrated = new Set()
   const isMigrated = async repoId => {
-    const market = await loadIndexedMarket(repoId)
-    if (isEarlyAccessMarket(market) && !earlyAccess) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
+    const market = await loadMarket(repoId)
     const key = `${market.id}:${market.pool}`
-    if (migrated.has(key)) return graduatedTradable(market)
+    if (migrated.has(key)) return true
     const configKey = resolveCurveConfig(market), mint = new PublicKey(market.mint), curve = new PublicKey(market.pool)
     const quote = quoteOfMarket(market), quoteMint = quote.type === 'SOL' ? NATIVE_MINT : new PublicKey(quote.mint)
     if (!deriveDbcPoolAddress(quoteMint, mint, configKey).equals(curve)) throw Error('Canonical pool does not match fixed DBC config')
@@ -215,10 +221,6 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     if (!state.poolState.isMigrated) return false
     if (migrated.size >= 1000) migrated.delete(migrated.values().next().value)
     migrated.add(key)
-    return graduatedTradable(market)
-  }
-  const graduatedTradable = market => {
-    if (isEarlyAccessMarket(market)) throw new Error(EARLY_ACCESS_NOT_TRADABLE)
     return true
   }
   // The pool address is immutable once proven by the finalized migrate instruction; pool state is re-read every time.
@@ -238,7 +240,7 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     const info = await connection.getAccountInfo(pool, 'confirmed')
     if (!info?.owner.equals(CP_AMM_PROGRAM_ID)) throw Error('Canonical DAMM pool is missing')
     const poolState = amm._program.coder.accounts.decode('pool', info.data)
-    assertTradablePool(poolState, pool, mint)
+    assertTradablePool(poolState, pool, mint, { token2022: isEarlyAccessMarket(market) })
     return { pool, mint, poolState }
   }
   const quote = async (request, direction) => {
@@ -259,13 +261,15 @@ export function createDammTrader({ pool: databasePool, connection, config, gradu
     if (isStockMarket(market)) return stock.prepare({ wallet, market, pool, poolState, direction, amountIn, minimumAmountOut, slippageBps })
     const [referral, wsolRent] = await Promise.all([resolveReferral(connection, request.referrer, wallet), keptWsolRent(connection, wallet)])
     const keepWsol = wsolRent !== null
+    // An early access market's token (and the wallet's account for it) is Token-2022; its referral is paid in SOL like any other.
+    const tokenProgram = isEarlyAccessMarket(market) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
     const swapTx = await amm.swap2({ payer: wallet, pool, poolState, swapMode: SwapMode.ExactIn,
       inputTokenMint: direction === 'buy' ? NATIVE_MINT : mint, outputTokenMint: direction === 'buy' ? mint : NATIVE_MINT,
       tokenAMint: mint, tokenBMint: NATIVE_MINT, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
-      tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: referral,
+      tokenAProgram: tokenProgram, tokenBProgram: TOKEN_PROGRAM_ID, referralTokenAccount: referral,
       amountIn: new BN(amountIn.toString()), minimumAmountOut: new BN(minimumAmountOut.toString()) })
     if (keepWsol) swapTx.add(createWsolAtaInstruction(wallet))
-    const expected = { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral, keepWsol }
+    const expected = { wallet, pool, poolState, direction, amountIn, minimumAmountOut, referral, keepWsol, tokenProgram }
     assertPreparedSwap(swapTx, expected)
     const latest = await connection.getLatestBlockhash('confirmed')
     const landing = await withPriorityFee(connection, swapTx, { feePayer: wallet, blockhash: latest.blockhash,

@@ -186,9 +186,10 @@ export async function handleBuyPost(request, rawMint, { loadMarket, prepareBuy, 
     const referrer = parseActionReferrer(query.get('ref'))
     const account = await readAccount(request)
     const market = await resolveMarket(mint, loadMarket, earlyAccessTrades)
-    // An early access market's trade never pays a referral (the trader leaves it out), so none is passed.
+    // An early access market's curve trade pays no referral (the curve trader leaves it out); its graduated trade pays it in SOL
+    // like any other (src/canonical-damm-trade.mjs).
     const prepared = await prepareBuy({ githubRepoId: market.repoId, wallet: account.toBase58(), amountLamports: lamports.toString(),
-      ...referrerArgs(isEarlyAccessMarket(market) ? null : referrer) })
+      ...referrerArgs(referrer) })
     if (prepared.mint !== market.mint || prepared.direction !== 'buy' || prepared.amountIn !== lamports ||
         !prepared.transaction.feePayer?.equals(account)) throw new Error('Prepared action trade does not match the request')
     const sol = formatUnits(lamports)
@@ -217,7 +218,7 @@ export async function handleSellPost(request, rawMint, { loadMarket, tokenBalanc
     const amount = balance * BigInt(percent) / 100n
     if (amount <= 0n) throw new ActionError(`Your $${market.symbol} balance is too small to sell ${percent}%. Try selling all of it.`)
     const prepared = await prepareSell({ githubRepoId: market.repoId, wallet: account.toBase58(), amountBaseUnits: amount.toString(),
-      ...referrerArgs(isEarlyAccessMarket(market) ? null : referrer) })
+      ...referrerArgs(referrer) })
     if (prepared.mint !== market.mint || prepared.direction !== 'sell' || prepared.amountIn !== amount ||
         !prepared.transaction.feePayer?.equals(account)) throw new Error('Prepared action trade does not match the request')
     const tokens = formatUnits(amount, 6)
@@ -231,7 +232,8 @@ export async function handleSellPost(request, rawMint, { loadMarket, tokenBalanc
 export async function loadActionMarket(pool, mint) {
   if (!pool) throw new ActionError('Market lookup is temporarily unavailable', 503)
   const { rows: [row] } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_symbol as symbol,
-      m.quote_mint as "quoteMint", m.early_access_end as "earlyAccessEnd", m.transfer_hook_program as "transferHookProgram", r.full_name as "fullName", r.description
+      m.quote_mint as "quoteMint", m.early_access_end as "earlyAccessEnd", m.transfer_hook_program as "transferHookProgram", r.full_name as "fullName", r.description,
+      exists(select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) as graduated
     from markets m left join repositories r on r.github_repo_id = m.github_repo_id
     where m.mint = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [mint])
   return row ?? null

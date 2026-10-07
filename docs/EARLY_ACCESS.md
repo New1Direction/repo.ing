@@ -232,7 +232,7 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | Path | Now |
 | --- | --- |
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
-| Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it, and for the graduated trader: refused, "Contributor early access markets are not tradable on the site yet." |
+| Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e and the graduated pool's trades from step 7b (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it: refused, "Contributor early access markets are not tradable on the site yet." |
 | Builder allocation (`allocationRecord`) and graduated platform fees (`platformFeeRecord`) | skipped or refused before any chain call (step 7) |
 | Platform fee listing, sweep and DBC partner fee collection | listed and collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 6f); skipped otherwise |
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
@@ -262,7 +262,7 @@ Left for the next steps (each fails closed or is harmless until then):
 
 - `/api/trade` (the trade panel) trades an early access market's curve once `EARLY_ACCESS_DBC_CONFIG` is set; without it the
   market is refused by name. The router reads the curve with that config, so the market goes to the curve trader
-  (`src/canonical-trade.mjs`); its graduated pool is refused until step 7.
+  (`src/canonical-trade.mjs`); once the curve has migrated, to the graduated trader (step 7b).
 - The trader builds `swap2_with_transfer_hook` with the SDK (exact input; no referral, which needs a second hook slice) and
   checks it before the wallet signs (`assertPreparedDbcHookSwap`, `src/early-access-trade.mjs`): the amounts and the swap
   mode; one `TransferHookBase` slice with the hook's five accounts (config, allow list, base vault, hook program, its account
@@ -310,8 +310,25 @@ Left for the next steps (each fails closed or is harmless until then):
   the hook refuses), unless it graduated.
 - The external fee indexer records their DAMM v2 position fees (builder and platform ledgers) and live trades watch their DAMM v2
   pool. The indexer also reads their curves for graduated fees before they graduate; the SDK reads each hook pool account twice
-  (the plain kind first), a small RPC cost. Trades on it (7b), builder claims of it (7c), the platform's collection (7d) and
-  the builder allocation (7e) follow.
+  (the plain kind first), a small RPC cost. Builder claims of it (7c), the platform's collection (7d) and the builder allocation
+  (7e) follow.
+
+## Graduated trades on the site and through Blinks (step 7b)
+
+- Once the curve has migrated, the router sends an early access market to the graduated trader (`src/canonical-damm-trade.mjs`)
+  where `EARLY_ACCESS_DBC_CONFIG` is set; without it the market is refused by name, before any read. The pool is the one the
+  finalized migration names (`createGraduatedFees` with `earlyAccessGraduated`), as for every graduated market.
+- The pool must have its token A on Token-2022 (`tokenAFlag` 1) and wrapped SOL on SPL Token (`assertTradablePool` with
+  `token2022`). The trader builds the SDK's `swap2` with token A on Token-2022, and the check before the wallet signs
+  (`assertPreparedSwap` with `tokenProgram`) now also checks both token programs of the swap and of each account setup (the
+  wallet's Token-2022 account for the token, its SPL WSOL account). The swap needs no hook accounts: the curve's filling swap
+  revoked the hook. The receipt check is unchanged; it reads the Token-2022 balances the same way.
+- Anyone can buy and sell the graduated pool, also when the curve filled inside the window. The token page and the Blink card
+  no longer show the window note once the market is graduated (`earlyAccessNotice`; the page's `graduated`, and for Blinks a
+  recorded `graduation_events` row). A referral is paid in SOL as on any graduated market; Blinks pass it (the curve trader still
+  leaves it out). The trade costs count the wallet's new Token-2022 account at its size (`estimateTradeCosts`, from step 5d).
+- Known limit: if the curve fills inside the window, the oracle keeps the allow list up to date until the window ends (only
+  network fees; the list's growth rent comes back when it closes).
 
 ## Builder claims (steps 6b and 6c)
 
@@ -389,8 +406,9 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-blinks.test.mjs     # Blinks: offered where the trader takes them, the window, Token-2022 sells (quick)
     node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
     node --test tests/early-access-graduation.test.mjs # graduated reads with and without the setting; the monitor's lists (quick)
+    node --test tests/early-access-graduated-trade.test.mjs # the graduated pool's Token-2022 checks and the trader's gate (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, sizes and the launch API (PostgreSQL + validator)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

@@ -162,9 +162,9 @@ test('while EARLY_ACCESS_DBC_CONFIG is unset an early access market is refused b
   await assert.rejects(curve.buyDepth('7'), { message: EARLY_ACCESS_NOT_TRADABLE })
   const graduated = createDammTrader({ pool: {}, connection: offline, config: config.toBase58(), loadMarket, earlyAccess: null, graduatedFees: {}, stockGraduation: {} })
   await assert.rejects(graduated.isMigrated('7'), { message: EARLY_ACCESS_NOT_TRADABLE }, 'the router refuses it')
-  // With the setting the graduated trader still refuses its pool (step 7); routing reads the curve (tests/early-access-launch-chain.test.mjs).
-  const opted = createDammTrader({ pool: {}, connection: offline, config: config.toBase58(), loadMarket, earlyAccess: key().toBase58(), graduatedFees: {}, stockGraduation: {} })
-  await assert.rejects(opted.quoteBuy(request), { message: EARLY_ACCESS_NOT_TRADABLE })
+  await assert.rejects(graduated.quoteBuy(request), { message: EARLY_ACCESS_NOT_TRADABLE })
+  // With the setting routing reads the curve (tests/early-access-launch-chain.test.mjs) and a graduated pool trades (step 7b,
+  // tests/early-access-graduated-trade.test.mjs).
 })
 
 test('a malformed EARLY_ACCESS_DBC_CONFIG refuses early access markets only: the traders still build', () => {
