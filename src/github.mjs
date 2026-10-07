@@ -46,7 +46,8 @@ export async function readLaunchedRepositoryById(id, fetchImpl = fetch) {
 }
 
 // Star unlocks (src/early-access-oracle.mjs): a launched repository's GitHub star count now, read by its immutable id. null when
-// GitHub no longer serves it publicly or gives no usable count (the oracle then reports nothing); any other failure throws.
+// GitHub no longer serves it publicly or gives no usable count (the oracle then reports nothing); GitHub's rate limit throws
+// GITHUB_RATE_LIMITED (403 or 429 with no requests left or a retry-after), any other failure GITHUB_REPOSITORY_HTTP_<status>.
 export async function readRepositoryStars(id, fetchImpl = fetch) {
   if (!/^[1-9]\d{0,18}$/.test(String(id))) throw new RepositoryResolutionError('Invalid repository')
   assertGithubRepoId(id)
@@ -55,6 +56,9 @@ export async function readRepositoryStars(id, fetchImpl = fetch) {
     redirect: 'follow', cache: 'no-store', signal: AbortSignal.timeout(10000),
   })
   if (response.status === 404) return null
+  if ((response.status === 403 || response.status === 429) && (response.headers?.get('x-ratelimit-remaining') === '0' || response.headers?.get('retry-after'))) {
+    throw Error('GITHUB_RATE_LIMITED')
+  }
   if (!response.ok) throw Error(`GITHUB_REPOSITORY_HTTP_${response.status}`)
   const json = await response.json()
   if (String(json?.id) !== String(id)) throw new RepositoryResolutionError('Repository identity mismatch')

@@ -72,8 +72,10 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
   const program = new PublicKey(hookProgram)
   // Per mint, the wallets the previous run found unlinked (kept in memory: a restart only delays a removal by one run).
   const pendingRemovals = new Map()
-  // Per star-unlock mint, when its repository's stars were last read (in memory: a restart reads them once more).
+  // Per star-unlock mint, when its repository's stars were last read (in memory: a restart reads them once more); and after
+  // GitHub's rate limit, when reads may start again.
   const starsReadAt = new Map()
+  let starsPausedUntil = 0
 
   // Simulated first (a refusal costs nothing), then sent and confirmed against the blockhash it was built with; the oracle pays.
   async function send(instruction) {
@@ -156,26 +158,31 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
   // The star-unlock markets whose repository is due a read, least recently read first.
   function starsDue(markets) {
     const at = clock()
+    if (at < starsPausedUntil) return []
     return markets.filter(market => at - (starsReadAt.get(market.mint) ?? -Infinity) >= STAR_READ_MS)
       .sort((a, b) => (starsReadAt.get(a.mint) ?? -Infinity) - (starsReadAt.get(b.mint) ?? -Infinity)).slice(0, STAR_READS_PER_RUN)
   }
 
-  // due: the markets starsDue picked. A GitHub refusal for the rate limit ends the run's reads (the rest wait for the next run).
+  // due: the markets starsDue picked. GitHub's rate limit ends the run's reads and pauses them for 15 minutes; a 429 without its
+  // headers ends the run's reads.
   async function starReports(due, deadline) {
     const results = []
     if (!due.length) return results
-    const configs = await connection.getMultipleAccountsInfo(due.map(market => earlyAccessAddresses(market.mint, program).config), 'confirmed')
+    let configs
+    try { configs = await connection.getMultipleAccountsInfo(due.map(market => earlyAccessAddresses(market.mint, program).config), 'confirmed') }
+    catch { const result = { error: 'STAR_CONFIGS_UNAVAILABLE' }; log({ stars: result }); return [result] }
     for (const [index, market] of due.entries()) {
       if (clock() > deadline) break
       // Marked before the read, so a failing repository waits its turn like the others.
       starsReadAt.set(market.mint, clock())
       let result
       try { result = await reportStars(market, configs[index]) } catch (error) {
-        result = { mint: market.mint, error: /^GITHUB_REPOSITORY_HTTP_\d{3}$/.test(error?.message) ? error.message : error?.name ?? 'Error' }
+        result = { mint: market.mint, error: /^(GITHUB_REPOSITORY_HTTP_\d{3}|GITHUB_RATE_LIMITED)$/.test(error?.message) ? error.message : error?.name ?? 'Error' }
       }
       if (result.reported || result.error) log({ stars: result })
       results.push(result)
-      if (/^GITHUB_REPOSITORY_HTTP_(403|429)$/.test(result.error)) break
+      if (result.error === 'GITHUB_RATE_LIMITED') starsPausedUntil = clock() + STAR_READ_MS
+      if (result.error === 'GITHUB_RATE_LIMITED' || result.error === 'GITHUB_REPOSITORY_HTTP_429') break
     }
     return results
   }

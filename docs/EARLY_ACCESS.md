@@ -468,7 +468,9 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
   100 stars per step, +0.5% each, at most +5%, and `stars_at_launch` the repository's star count as GitHub gives it at prepare (refused without one). The settings add 32 bytes. To keep room for them, an early access launch links its metadata by repository id
   (`/m/<id>`, `app/m/[id]/route.js`, about 50 bytes shorter than `/api/token-metadata/<mint>`): every name and ticker the form
   allows fits with a first buy and both options (`rampLaunchSizes` in the chain test). The link is on chain for ever: keep the
-  route.
+  route. It serves early access markets only, once their launch was sent (a repository id is guessable, an unsent mint is not),
+  and is cached only once the market is confirmed. It names the right token because an attempt released as failed can never
+  land (the server holds the mint key).
 - **Stamp and evidence.** `markets.hook_rules` (migration 0061) holds 1, 3 or 7, only with the window, immutable once the launch was
   sent (the same trigger as the window); a window without it is early access alone. The launch evidence reads the mint config and
   accepts the market only when its rules and settings are exactly what the stamp and the config give (`rulesMatch`).
@@ -481,8 +483,9 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
   every 15 minutes until its curve migrates, and reports it (`report_stars`) when the bonus it gives changes, down as well as up.
   A repository GitHub no longer serves publicly, or a count GitHub does not give, keeps the last report; a mint config for another
   repository is refused. Reports are simulated first, like list changes, and come after the lists in the same run (lock, 45-second
-  budget, at most 20 repositories per run; a failure there never stops the lists). GitHub's rate limit (HTTP 403 or 429) ends the
-  run's reads; below 0.005 SOL the oracle reads and reports nothing. The star count at launch is read again by repository id at
+  budget, at most 20 repositories per run; a failure there never stops the lists). GitHub's rate limit (a 403 or 429 with no requests
+  left or a retry-after) ends the run's reads and pauses them for 15 minutes; below 0.005 SOL the oracle reads and reports
+  nothing. The star count at launch is read again by repository id at
   prepare; a launch GitHub gives no count for is refused.
 
 ## Readiness, the keeper and the overdue alert (step 8)
