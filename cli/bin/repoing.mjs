@@ -12,7 +12,7 @@ import {
   safeBrowserUrl,
 } from '../src/core.mjs'
 import { CLAIM_HELP, parseClaimArgs, runClaim } from '../src/claim.mjs'
-import { CREDITS_HELP, parseCreditsArgs, runCreditsKey } from '../src/credits.mjs'
+import { CREDITS_HELP, parseCreditsArgs, runCredits } from '../src/credits.mjs'
 
 function currentGitRemote() {
   try {
@@ -86,7 +86,7 @@ async function claim(argv) {
 async function credits(argv) {
   const options = parseCreditsArgs(argv)
   if (options.command === 'credits-help') { console.log(CREDITS_HELP); return }
-  await interactive(options, runCreditsKey)
+  await interactive(options, runCredits)
 }
 
 async function main() {
