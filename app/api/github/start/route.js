@@ -5,6 +5,7 @@ import { database, marketByRepo, repositoryById } from '../../../lib/server.mjs'
 import { IDENTITY_SIGN_IN_PAGES, seal, cookieOptions } from '../../../lib/auth.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { contributorWalletAvailable } from '../../../lib/contributor-wallet.mjs'
+import { handoffAvailable } from '../../../lib/handoff.mjs'
 export const runtime = 'nodejs'
 export async function GET(request) {
   const origin = publicOrigin(request.url)
@@ -13,6 +14,7 @@ export async function GET(request) {
   // 'opt-out' is the builder dashboard's identity-only sign-in, returning to /opt-out instead of /builders; 'contributor'
   // returns to the contributor wallet page and exists only while it does (src/early-access.mjs).
   if (mode === 'contributor' && !contributorWalletAvailable()) return NextResponse.redirect(new URL('/explore', origin))
+  if (mode === 'handoff' && !handoffAvailable()) return NextResponse.redirect(new URL('/explore', origin))
   if (Object.hasOwn(IDENTITY_SIGN_IN_PAGES, mode)) {
     try {
       const verifier = createGitHubAppVerifier({ pool: database(), clientId: process.env.GITHUB_APP_CLIENT_ID,
