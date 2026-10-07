@@ -242,10 +242,10 @@ Order: deploy the program, init the platform, create the config, create the tabl
 
 Left for the next steps (each fails closed or is harmless until then):
 
-- Step 5, left: the oracle's upkeep that adds linked contributors' wallets to a list during its window (5f: nothing adds them
-  yet), the verification bonus accrual (drop its `early_access_end is null` in `candidates` and `marketFacts`), market lists and
-  the launch alert copy (they list these markets as SOL markets). Done: their trades and fees indexed (5b), the holder count and
-  the window note (5c), curve trades on the site (5d) and through Blinks (5e), below.
+- Step 5, left: the verification bonus accrual (drop its `early_access_end is null` in `candidates` and `marketFacts`), market
+  lists and the launch alert copy (they list these markets as SOL markets). Done: their trades and fees indexed (5b), the holder
+  count and the window note (5c), curve trades on the site (5d) and through Blinks (5e), and the oracle's upkeep of the lists
+  (5f), below.
 - Step 6: claims with `claim_creator_trading_fee2` / `claim_trading_fee2` and the builder dashboard, the builder allocation (Token-2022 leftover),
   discovery and platform fees, then remove the step 4 skips. Early access markets are stamped with the discovery version, the
   builder allocation (when `BUILDER_ALLOCATION_CONFIGS` lists the early access config) and the verification bonus like SOL
@@ -277,6 +277,29 @@ Left for the next steps (each fails closed or is harmless until then):
   trader and checks; a sell is a share of the wallet's Token-2022 account; the trader's early access refusals are shown and
   never retried without the referral.
 
+## The oracle's upkeep of the lists (step 5f)
+
+The launch puts only the launcher on the list (for its first buy) and takes it off again unless it is a linked contributor. The
+worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_ACCESS_ENABLED` is "true" and
+`EARLY_ACCESS_ORACLE_SECRET_KEY` is set) does the rest (owner decision, 2026-10-07):
+
+- While a window is open, the mint's list is kept equal to the linked wallets of the repository's contributors: the snapshot taken
+  when the launch was prepared (`early_access_contributors`, so nobody becomes a contributor during the window) joined with
+  `github_wallet_links`. A contributor who links a wallet during the window is added at the next run (about a minute; the token
+  page's note links to `/contributors/link`). Linking in the window's last two minutes may come too late.
+- A wallet that is no longer linked (its account unlinked it or linked another) is removed when two runs in a row find it unlinked,
+  so a bad read of the links never empties a list at once. A run that would remove more than half of a list of more than four
+  wallets removes nothing and logs `held`. A market without a snapshot never loses its list.
+- Adds go first, then removals; at most 24 wallets per transaction; nothing is added in the window's last 30 seconds; a list stops
+  at 1,024 wallets (the rest is logged as `overflow`).
+- After the window (and one more minute) the list is closed: the launch's payer gets its deposit back, the oracle what it paid for
+  the list to grow.
+- Each change is simulated first, sent only if it passes, and confirmed against the blockhash it was built with. Nothing is sent
+  when the platform names another oracle. One run at a time (advisory lock), and a run stops sending after 45 seconds (the next
+  run goes on). The oracle signs and pays: keep its key funded (fees, and about 0.00022 SOL per wallet of list growth, returned
+  when the list is closed). Below 0.005 SOL it adds nothing and logs `ORACLE_LOW_BALANCE`; removals and closes go on.
+- Star counts (`report_stars`) wait for the star unlock launch option.
+
 ## Build and test
 
     scripts/build-early-access-hook.sh                 # writes tests/fixtures/validator/early_access_hook.so
@@ -287,7 +310,8 @@ Left for the next steps (each fails closed or is harmless until then):
     node --test tests/early-access-launch.test.mjs     # guard, window end, contributors, v0 review, config transaction, form (quick)
     node --test tests/early-access-trade.test.mjs      # the hook swap check, the window's allow list, the hook's refusals (quick)
     node --test tests/early-access-blinks.test.mjs     # Blinks: offered where the trader takes them, the window, Token-2022 sells (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, sizes and the launch API (PostgreSQL + validator)
+    node --test tests/early-access-oracle.test.mjs     # the oracle's plan, batches, refusals and the close after the window (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

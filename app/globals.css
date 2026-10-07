@@ -437,6 +437,8 @@
 .official-market-note a { color:var(--green); }
 .early-access-note { margin-bottom:20px; padding:12px 16px; border:1px solid var(--border); border-radius:6px; color:var(--muted); font-size:13px; }
 .early-access-note strong, .early-access-note time { color:var(--text); }
+.early-access-note a { color:var(--text); text-decoration:underline; text-underline-offset:2px; }
+.early-access-note a:hover, .early-access-note a:focus-visible { color:var(--green); }
 .early-access-note+.market-hero{margin-top:0}
 .graduation-caption { display:flex; align-items:start; justify-content:space-between; gap:12px; margin-top:8px; font-size:13px; color:var(--muted); }
 .graduation-caption details { text-align:right; max-width:65%; overflow-wrap:anywhere; }
