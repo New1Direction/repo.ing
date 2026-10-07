@@ -259,7 +259,7 @@ async function observeStockReconcile(){
 }
 let reminderTask=null,nextReminderCheck=0
 const reminders=remindersConfigured()?createBuilderReminders({pool,send:createReminderSender(),secret:process.env.BUILDER_REMINDER_SECRET,
-  origin:new URL(process.env.APP_ORIGIN).origin,reconcile:createReconciler({pool,connection:graduationRPC(rpc),config,earlyAccess:earlyAccessConfigured}).reconcile,earlyAccess:earlyAccessConfigured!==null}):null
+  origin:new URL(process.env.APP_ORIGIN).origin,reconcile:createReconciler({pool,connection:graduationRPC(rpc),config,earlyAccess:earlyAccessConfigured,earlyAccessGraduated:true}).reconcile,earlyAccess:earlyAccessConfigured!==null}):null
 async function deliverBuilderReminders(){
   try{console.log(JSON.stringify({builderReminders:await reminders.runOnce()}))}
   catch{console.log(JSON.stringify({builderReminderError:'REMINDERS_UNAVAILABLE'}))}

@@ -1,5 +1,4 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { EARLY_ACCESS_GRADUATION_PENDING } from './early-access.mjs'
 
 const DAY = 86400000, MINIMUM = 50000000n
 const fail = message => { throw Error(message) }
@@ -162,11 +161,7 @@ export function createBuilderReminders({ pool, send, reconcile, secret, origin, 
           where b.github_user_id=$1 and (m.early_access_end is null or $2::boolean) and m.status='confirmed' and m.launch_finality='finalized' and m.indexed_at is not null and m.quote_asset_id is null limit 100`, [row.github_user_id, earlyAccess])
         const repos = []
         for (const market of markets) {
-          let fees
-          // A graduated early access market waits for step 7 (docs/EARLY_ACCESS.md): it is reported as unavailable, so the
-          // builder's other markets are still reminded of. Any other failure retries the builder as before.
-          try { fees = await reconcile(market.repoId) }
-          catch (error) { if (error?.message !== EARLY_ACCESS_GRADUATION_PENDING) throw error; fees = { status: 'UNAVAILABLE', onchainCreatorFee: null, recordedEarned: 0n } }
+          const fees = await reconcile(market.repoId)
           repos.push({ ...market, status: fees.status, available: String(fees.onchainCreatorFee ?? 0), earned: String(fees.recordedEarned) })
         }
         const plan = reminderPlan(repos, JSON.parse(row.baseline))

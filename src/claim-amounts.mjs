@@ -21,6 +21,13 @@ export function claimAmounts({ dbcFee, dammFee, outstanding, review }) {
   return { payoutAmount, dbcPayout: graduated ? outstanding - dammFee : payoutAmount, dammFee, surplus: onchain - outstanding }
 }
 
+// A contributor early access payout (docs/EARLY_ACCESS.md, step 7c) cannot carry its curve claim (claim_creator_trading_fee2) and its
+// DAMM v2 claim together: they need more than a transaction's 1,232 bytes. When both are owed, this payout claims the curve part
+// alone; the DAMM v2 fees stay in the ledger for the next claim, which then claims them alone.
+export function earlyAccessClaimAmounts(amounts) {
+  return amounts.dbcPayout > 0n && amounts.dammFee > 0n ? { ...amounts, payoutAmount: amounts.dbcPayout, dammFee: 0n } : amounts
+}
+
 // The receiver must get at least the proven payout plus refunded rent. More is tolerated: a third
 // party can only add lamports (e.g. front-running a temporary account), never take them.
 export function receiverPaid(receiverDelta, provenAmount, rentRefund) {

@@ -310,8 +310,7 @@ Left for the next steps (each fails closed or is harmless until then):
   the hook refuses), unless it graduated.
 - The external fee indexer records their DAMM v2 position fees (builder and platform ledgers) and live trades watch their DAMM v2
   pool. The indexer also reads their curves for graduated fees before they graduate; the SDK reads each hook pool account twice
-  (the plain kind first), a small RPC cost. Builder claims of it (7c), the platform's collection (7d) and the builder allocation
-  (7e) follow.
+  (the plain kind first), a small RPC cost. The platform's collection (7d) and the builder allocation (7e) follow.
 
 ## Graduated trades on the site and through Blinks (step 7b)
 
@@ -352,6 +351,20 @@ Left for the next steps (each fails closed or is harmless until then):
   invites and the MCP earnings tool read (`feeStatus` in `app/lib/server.mjs`, the worker's reminder reconciler) takes these
   markets where `EARLY_ACCESS_DBC_CONFIG` is set, so their earnings and claim show like any other's; the dashboard and the
   reminders list them only then. Without the setting they read as unavailable and are left out, as before.
+
+## Builder claims after graduation (step 7c)
+
+- Where `EARLY_ACCESS_DBC_CONFIG` is set, the builder claim, the fee status (the token page, the claim page and its preview, the
+  dashboard), the worker's reminder reconciler and `scripts/reconcile-repo.mjs` read a graduated early access market's DAMM v2
+  position fees too (`earlyAccessGraduated`).
+- Its DAMM v2 fees are claimed with `claim_position_fee`, token A on Token-2022, through a one-time WSOL account as for every
+  graduated market. For an early access market `assertGraduatedClaimInstructions` (`src/claim.mjs`) checks exactly its four
+  instructions before signing and again after the network fee is added: the receiver's Token-2022 account for the token, the
+  one-time WSOL account, the claim with every account in its IDL place and its flags, and the WSOL account's close.
+- The curve claim and the DAMM v2 claim do not fit one transaction together (1,270 bytes, measured; the limit is 1,232). So an
+  early access payout claims one of them (`earlyAccessClaimAmounts`): when both are owed, the curve part first; the DAMM v2 fees
+  stay in the ledger for the next claim. The builder's first claim after graduation therefore takes two claims. The receipt
+  check is unchanged.
 
 ## Discovery rewards (step 6e)
 
@@ -413,7 +426,8 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-graduation.test.mjs # graduated reads with and without the setting; the monitor's lists (quick)
     node --test tests/early-access-graduated-trade.test.mjs # the graduated pool's Token-2022 checks and the trader's gate (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, sizes and the launch API (PostgreSQL + validator)
+    node --test tests/early-access-graduated-claims.test.mjs # the DAMM v2 claim check; one claim per payout (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, the builder's claims after it, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

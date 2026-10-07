@@ -74,11 +74,3 @@ test('without a verified read in the last 15 minutes the read is shown as is', a
   fees.tick(15 * 60_000 + 1)
   assert.equal(await displayFeeStatus('808', fees.options), lag)
 })
-
-test('a graduated early access market is never held on screen: it waits for step 7', async () => {
-  const fees = reconciler(match(5n), { status: 'UNAVAILABLE', onchainCreatorFee: null, reason: 'EARLY_ACCESS_GRADUATION_PENDING' })
-  assert.equal((await displayFeeStatus('909', fees.options)).status, 'MATCH')
-  fees.tick(31_000)
-  const shown = await displayFeeStatus('909', fees.options)
-  assert.deepEqual([shown.status, shown.onchainCreatorFee, shown.lastVerifiedAt], ['UNAVAILABLE', null, undefined])
-})

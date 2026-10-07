@@ -4,7 +4,7 @@ import { createDatabasePool } from '../../src/database-pool.mjs'
 import { Connection, Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { chainAheadOfLedger, createReconciler } from '../../src/reconcile.mjs'
-import { EARLY_ACCESS_GRADUATION_PENDING, tradingEarlyAccessConfig } from '../../src/early-access.mjs'
+import { tradingEarlyAccessConfig } from '../../src/early-access.mjs'
 import { createRpcMeter, registerRpcEndpoint } from '../../src/rpc-usage.mjs'
 import { githubApiHeaders } from '../../src/github-app-auth.mjs'
 import { ttlMemo } from './ttl-memo.mjs'
@@ -264,18 +264,15 @@ export async function repositoryById(repoId) {
   } catch { return row }
 }
 
-// A contributor early access market's fees are read where EARLY_ACCESS_DBC_CONFIG is set: its builder claims them like any other
-// (docs/EARLY_ACCESS.md, step 6c). Without it the reconciler refuses it, which reads as UNAVAILABLE.
+// A contributor early access market's fees are read where EARLY_ACCESS_DBC_CONFIG is set, on its curve and after its graduation: its
+// builder claims them like any other (docs/EARLY_ACCESS.md, steps 6c and 7c). Without it the reconciler refuses it, which reads as
+// UNAVAILABLE.
 export async function feeStatus(repoId) {
   const pool = database()
   const config = configAddress()
   if (!pool || !config) return { status: 'UNAVAILABLE', onchainCreatorFee: null }
-  try { return await createReconciler({ pool, connection: chain(), config, earlyAccess: tradingEarlyAccessConfig() }).reconcile(repoId) }
-  catch (error) {
-    // A graduated early access market (step 7) says so: its last verified figures are not held on screen (displayFeeStatus).
-    return error?.message === EARLY_ACCESS_GRADUATION_PENDING ? { status: 'UNAVAILABLE', onchainCreatorFee: null, reason: EARLY_ACCESS_GRADUATION_PENDING }
-      : { status: 'UNAVAILABLE', onchainCreatorFee: null }
-  }
+  try { return await createReconciler({ pool, connection: chain(), config, earlyAccess: tradingEarlyAccessConfig(), earlyAccessGraduated: true }).reconcile(repoId) }
+  catch { return { status: 'UNAVAILABLE', onchainCreatorFee: null } }
 }
 
 // Token pages display fee status on every view; one chain reconciliation per repository per 30 s (10 s while it is not
@@ -296,7 +293,7 @@ export function displayFeeStatus(repoId, { now = Date.now, read = feeStatus } = 
   const pending = read(key).then(fresh => {
     const at = now(), verified = fresh?.status === 'MATCH', last = lastVerified.get(key)
     if (verified) keep(lastVerified, key, { value: fresh, at })
-    const held = !verified && last && at - last.at <= LAST_VERIFIED_MAX_AGE_MS && fresh?.reason !== EARLY_ACCESS_GRADUATION_PENDING &&
+    const held = !verified && last && at - last.at <= LAST_VERIFIED_MAX_AGE_MS &&
       (fresh?.status === 'UNAVAILABLE' || chainAheadOfLedger(fresh))
     const value = held ? { ...last.value, lastVerifiedAt: new Date(last.at).toISOString() } : fresh
     keep(displayFeeStatuses, key, { value, expiresAt: at + (verified ? DISPLAY_FEE_STATUS_MS : DISPLAY_FEE_UNAVAILABLE_MS) })
