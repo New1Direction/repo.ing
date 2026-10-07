@@ -300,10 +300,18 @@ Left for the next steps (each fails closed or is harmless until then):
   pool (token A is the Token-2022 market token, `tokenAFlag` 1; the hook was revoked by the filling swap) and positions, and the
   fee ledger alerts. Meteora's keeper migrates them as it does every other curve (owner decision, 2026-10-07; step 8 checks on
   mainnet that it does for Token-2022 pools).
-- They are never eligible for liquidity deployment or builder reinvest (owner decision, 2026-10-07), and their graduated partner
-  fees are not offered for collection until step 7d.
+- They are never eligible for liquidity deployment or builder reinvest (owner decision, 2026-10-07): the monitor shows them as not
+  eligible, and `src/liquidity-deployment.mjs` and `src/builder-reinvest.mjs` refuse them by name from their stamp
+  (`EARLY_ACCESS_NO_P3`, `EARLY_ACCESS_NO_REINVEST`). Their graduated partner fees are not offered for collection until step 7d.
+- The monitor checks their fee ledgers only after it read their graduation state. A market whose state read keeps failing shows
+  as a graduation review and a market pass alert, not as a fee ledger alert (the same as for SOL markets); claims check their own
+  amounts either way.
+- Milestone posts (`src/milestone-alerts.mjs`) hold an early access market while its window is open (a post would invite buys
+  the hook refuses), unless it graduated.
 - The external fee indexer records their DAMM v2 position fees (builder and platform ledgers) and live trades watch their DAMM v2
-  pool. Trades on it (7b), builder claims of it (7c), the platform's collection (7d) and the builder allocation (7e) follow.
+  pool. The indexer also reads their curves for graduated fees before they graduate; the SDK reads each hook pool account twice
+  (the plain kind first), a small RPC cost. Trades on it (7b), builder claims of it (7c), the platform's collection (7d) and
+  the builder allocation (7e) follow.
 
 ## Builder claims (steps 6b and 6c)
 

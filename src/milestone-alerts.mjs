@@ -60,7 +60,8 @@ export function createMilestoneAlertStore(pool) {
       return n
     },
     // Raw graduation rows for every public GitHub market (and model market, with models: true, plus its registry path) with
-    // a VERIFIED observation; freshness is checked per row in JS.
+    // a VERIFIED observation; freshness is checked per row in JS. A contributor early access market is held while its window is open
+    // (a post would invite buys its transfer hook refuses), unless it has graduated (the hook is revoked; docs/EARLY_ACCESS.md).
     async progressRows({ models = false } = {}) {
       const { rows } = await pool.query(`select m.github_repo_id::text as "githubRepoId", m.mint, m.token_symbol as "tokenSymbol",
           r.full_name as "fullName", h.repo_path as "modelPath", o.status, o.observation, o.error_code, e.evidence_hash as migration_evidence_hash
@@ -69,6 +70,7 @@ export function createMilestoneAlertStore(pool) {
         join graduation_observations o on o.github_repo_id=m.github_repo_id
         left join graduation_events e on e.github_repo_id=m.github_repo_id
         where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and m.mint is not null and o.status='VERIFIED'
+          and (m.early_access_end is null or m.early_access_end <= now() or e.evidence_hash is not null)
         order by m.github_repo_id`, [alertSources(models)])
       return rows
     },

@@ -2,7 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createGraduatedFees } from '../src/graduated-fees.mjs'
 import { createReconciler } from '../src/reconcile.mjs'
-import { EARLY_ACCESS_GRADUATION_PENDING } from '../src/early-access.mjs'
+import { EARLY_ACCESS_GRADUATION_PENDING, EARLY_ACCESS_NO_P3, EARLY_ACCESS_NO_REINVEST } from '../src/early-access.mjs'
+import { createLiquidityDeployment } from '../src/liquidity-deployment.mjs'
+import { createBuilderReinvest } from '../src/builder-reinvest.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK } from '../src/early-access-hook.mjs'
 import { earlyAccessMarketSQL, publicMarketSQL } from '../src/graduation-readiness.mjs'
 import { Connection, Keypair, PublicKey } from '@solana/web3.js'
@@ -37,4 +39,32 @@ test('the monitor\'s market lists: SOL markets unchanged; early access markets i
   assert.match(earlyAccessMarketSQL, /m\.early_access_end as "earlyAccessEnd",m\.transfer_hook_program as "transferHookProgram"/)
   const columns = sql => sql.slice(sql.indexOf('select') + 6, sql.indexOf('from markets')).split(',').map(column => column.trim().split(' as ').at(-1)).slice(0, 6)
   assert.deepEqual(columns(earlyAccessMarketSQL), columns(publicMarketSQL), 'the same columns first')
+})
+
+// Owner decision (step 7): liquidity deployment and builder reinvest refuse an early access market by name, from its own stamp, before
+// any chain read (not only because their config resolver has no approved config for it).
+test('liquidity deployment and builder reinvest refuse an early access market by name', async () => {
+  const asked = []
+  const row = { githubRepoId: '7', mint: market.mint, pool: market.pool, creatorWallet: market.creatorWallet, earlyAccessEnd: market.earlyAccessEnd,
+    transferHookProgram: market.transferHookProgram }
+  const wallet = Keypair.generate().publicKey.toBase58()
+  const answer = sql => {
+    asked.push(sql.replace(/\s+/g, ' ').trim())
+    if (/pg_advisory|platform_revenue_allocations/.test(sql)) return { rows: [] }
+    if (/from repo_beneficiaries/.test(sql)) return { rows: [{ wallet, bound_at: new Date() }] }
+    if (/from markets/.test(sql)) {
+      assert.match(sql, /early_access_end as "earlyAccessEnd",transfer_hook_program as "transferHookProgram"/)
+      return { rows: [row] }
+    }
+    throw Error(`unexpected query: ${sql}`)
+  }
+  const db = { query: async sql => answer(sql), release: () => {} }
+  const liquidity = createLiquidityDeployment({ pool: db, connection: offline, config: config.toBase58(), partner: Keypair.generate() })
+  assert.deepEqual(await liquidity.qualification(db, '7', {}), { eligible: false, reason: EARLY_ACCESS_NO_P3 })
+  const local = port => ({ rpcEndpoint: `http://127.0.0.1:${port}`, getGenesisHash: async () => 'local' })
+  const reinvest = createBuilderReinvest({ pool: { connect: async () => db }, connection: local(1), verification: local(2), config: config.toBase58(),
+    githubVerifier: { verifyCurrentAuthority: async ({ githubRepoId }) => ({ verified: true, permission: 'admin', githubRepoId, githubUserId: '9', verifiedAt: new Date() }) },
+    env: { BUILDER_REINVEST_ENABLED: 'true', BUILDER_REINVEST_LOCAL_REHEARSAL: 'true', NODE_ENV: 'test' } })
+  await assert.rejects(reinvest.status({ repoId: '7', wallet, githubUserId: '9', claimSignature: '1' }), { message: EARLY_ACCESS_NO_REINVEST })
+  assert.equal(asked.filter(sql => /from markets/.test(sql)).length, 2)
 })
