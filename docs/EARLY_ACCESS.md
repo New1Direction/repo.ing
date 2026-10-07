@@ -233,7 +233,7 @@ Order: deploy the program, init the platform, create the config, create the tabl
 | --- | --- |
 | `createMarketConfigResolver` (every SOL path) | refuses a market with the stamp, by name; the pool is not on an approved config anyway |
 | Trades: `/api/trade`, the trade panel and Blinks | the curve trades from steps 5d and 5e and the graduated pool's trades from step 7b (below) once `EARLY_ACCESS_DBC_CONFIG` is set; without it: refused, "Contributor early access markets are not tradable on the site yet." |
-| Builder allocation (`allocationRecord`) | skipped or refused before any chain call (step 7e) |
+| Builder allocation (`allocationRecord`) | claimable after graduation where `EARLY_ACCESS_DBC_CONFIG` is set and the config is in `BUILDER_ALLOCATION_CONFIGS` (step 7e); not enrolled otherwise |
 | Graduated platform fees (`platformFeeRecord`, the sweep's DAMM phase) | collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 7d); not enrolled otherwise |
 | Platform fee listing, sweep and DBC partner fee collection | listed and collected where `EARLY_ACCESS_DBC_CONFIG` is set (step 6f); skipped otherwise |
 | Builder reminders | included where `EARLY_ACCESS_DBC_CONFIG` is set (step 6d); skipped otherwise |
@@ -311,7 +311,21 @@ Left for the next steps (each fails closed or is harmless until then):
   the hook refuses), unless it graduated.
 - The external fee indexer records their DAMM v2 position fees (builder and platform ledgers) and live trades watch their DAMM v2
   pool. The indexer also reads their curves for graduated fees before they graduate; the SDK reads each hook pool account twice
-  (the plain kind first), a small RPC cost. The builder allocation (7e) follows.
+  (the plain kind first), a small RPC cost.
+
+## The builder allocation (step 7e)
+
+- Early access markets are stamped for the 1% builder allocation like any market (`builder_allocation_version` 1). Where
+  `EARLY_ACCESS_DBC_CONFIG` is set, the allocation (`src/builder-allocation.mjs`: the claim page, the dashboard and their routes)
+  enrolls them; the early access config must be listed in `BUILDER_ALLOCATION_CONFIGS` like any approved config.
+- After graduation the grant is the same as for SOL markets: `withdraw_leftover` pays the curve's leftover tokens to the
+  protected creator (the SDK picks Token-2022 from the config's `tokenType`), which transfers exactly 1% of the supply with
+  `transferChecked` under Token-2022 to the bound wallet's Token-2022 account. Before building it, the token must be as the
+  trader requires (`assertRevokedHookMint`: hook program and authority revoked, no mint or freeze authority, only DBC's
+  extensions), so the transfer needs no hook accounts. The reserve check takes `tokenType` 1 for these markets and 0 for every
+  other.
+- The settlement (`settleAllocation`, every market) finds the one grant transfer under SPL Token or Token-2022, to the
+  recipient's account under that same program, and reads the balance under it.
 
 ## The platform's graduated fees (step 7d)
 
@@ -451,7 +465,8 @@ worker's oracle job (`src/early-access-oracle.mjs`, once a minute while `EARLY_A
     node --test tests/early-access-graduated-trade.test.mjs # the graduated pool's Token-2022 checks and the trader's gate (quick)
     node --test tests/dbc-hook-claims.test.mjs         # the hook claim check, creator and partner (quick)
     node --test tests/early-access-graduated-claims.test.mjs # the DAMM v2 claim check; one claim per payout (quick)
-    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, the builder's claims after it, the platform's graduated fees, sizes and the launch API (PostgreSQL + validator)
+    node --test tests/early-access-allocation.test.mjs # the allocation settlement under Token-2022 (quick)
+    node scripts/ci/run-tests.mjs early-access-launch-chain # config, platform, table, launches, trades through /api/trade and Blinks, the oracle's upkeep, the fee ledgers reconciled, the builder claim, the fee status the pages read, the discovery reward, the platform's partner fees, the graduation, trades on the graduated pool, the builder's claims after it, the platform's graduated fees, the builder allocation, sizes and the launch API (PostgreSQL + validator)
 
 The build uses `cargo build-sbf` when present, otherwise the platform-tools toolchain it installs (v1.53). Rebuild the fixture
 after any change to `programs/early-access-hook`. The chain tests start `scripts/ci/start-early-access-validator.sh` on port

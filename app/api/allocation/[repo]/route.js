@@ -9,6 +9,7 @@ import { sessionVerifier } from '../../../lib/github-session.mjs'
 import { hfSessionCookie, readHfAllocationReview, readHfSession } from '../../../lib/hf-auth.mjs'
 import { hfSessionAuthority } from '../../../lib/hf-session.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
+import { tradingEarlyAccessConfig } from '../../../../src/early-access.mjs'
 export const runtime = 'nodejs'
 const headers = { 'Cache-Control': 'private, no-store' }
 export async function GET(request, { params }) {
@@ -39,7 +40,7 @@ export async function POST(request, { params }) {
     return Response.json(result, { headers })
   } catch (error) {
     if (review?.repoId === repo && review?.purpose === 'builder-allocation-review') {
-      const record = await allocationRecord(database(), repo).catch(() => null)
+      const record = await allocationRecord(database(), repo, { earlyAccess: Boolean(tradingEarlyAccessConfig()) }).catch(() => null)
       if (['pending','settled'].includes(record?.latest?.status)) return Response.json(record.latest, { headers })
     }
     const message = /authority|GitHub|wallet/.test(error.message) ? 'Reconnect GitHub and confirm your saved payout wallet before claiming.' :

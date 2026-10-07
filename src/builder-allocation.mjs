@@ -1,6 +1,7 @@
 import bs58 from 'bs58'
 import { PublicKey, Transaction } from '@solana/web3.js'
-import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync, getAccount, getMint, NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync, getAccount, getMint, NATIVE_MINT,
+  TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { createGraduatedFees } from './graduated-fees.mjs'
@@ -10,6 +11,9 @@ import { MarketIdentityError, assertAuthoritySource, isMarketId, marketSource } 
 import { assertBindingAuthority } from './claim.mjs'
 import { activateDuePayoutAddress } from './payout-address.mjs'
 import { modelBeneficiary } from './wallet-binding.mjs'
+import { isEarlyAccessMarket, tradingEarlyAccessConfig } from './early-access.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
+import { assertRevokedHookMint } from './canonical-damm-trade.mjs'
 
 export const BUILDER_ALLOCATION = 10_000_000_000_000n
 export const FIXED_SUPPLY = 1_000_000_000_000_000n
@@ -18,21 +22,25 @@ export function allocationConfigs(value = process.env.BUILDER_ALLOCATION_CONFIGS
 }
 export function allocationEnabled(config) { return Boolean(config && allocationConfigs().includes(String(config))) }
 
-export async function allocationRecord(pool, repoId) {
+// earlyAccess: whether a contributor early access market is taken (EARLY_ACCESS_DBC_CONFIG set; docs/EARLY_ACCESS.md, step 7e).
+export async function allocationRecord(pool, repoId, { earlyAccess = false } = {}) {
   const { rows: [market] } = await pool.query(`select github_repo_id::text as "githubRepoId", mint, pool,
-    creator_wallet as "creatorWallet", builder_allocation_version as version from markets
+    creator_wallet as "creatorWallet", builder_allocation_version as version, early_access_end as "earlyAccessEnd",
+    transfer_hook_program as "transferHookProgram" from markets
     where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'
-    and early_access_end is null`, [String(repoId)])
+    and (early_access_end is null or $2::boolean)`, [String(repoId), Boolean(earlyAccess)])
   if (!market || market.version !== 1) return null
   const { rows: [latest] } = await pool.query(`select status, signature, wallet, amount::text from builder_allocation_claims
     where github_repo_id=$1 order by id desc limit 1`, [String(repoId)])
   return { ...market, latest: latest ?? null }
 }
 // Fixed supply is proven by the immutable 1B launch config plus no mint authority. Current supply
-// may be lower: any holder can burn, and that must not block the builder allocation forever.
+// may be lower: any holder can burn, and that must not block the builder allocation forever. A contributor early access
+// market's token is Token-2022 (tokenType 1); every other market's is SPL Token.
 export function allocationReserveValid({ market, configKey, state, fixed, mint }) {
   return Boolean(state && fixed && fixed.leftoverReceiver.equals(new PublicKey(market.creatorWallet)) &&
-    state.poolState.creator.equals(fixed.leftoverReceiver) && fixed.quoteMint.equals(NATIVE_MINT) && fixed.tokenType === 0 &&
+    state.poolState.creator.equals(fixed.leftoverReceiver) && fixed.quoteMint.equals(NATIVE_MINT) &&
+    fixed.tokenType === (isEarlyAccessMarket(market) ? 1 : 0) &&
     state.poolState.config.equals(configKey) && state.poolState.baseMint.toBase58() === market.mint &&
     BigInt(fixed.preMigrationTokenSupply.toString()) === FIXED_SUPPLY && mint.supply <= FIXED_SUPPLY &&
     mint.decimals === 6 && !mint.mintAuthority && !mint.freezeAuthority)
@@ -72,15 +80,21 @@ export function assertModelAllocationBinding(binding, { review, authority, creat
       binding.wallet === creatorWallet) throw Error('Payout wallet or authority changed; bind your wallet and review again')
 }
 
-export function createBuilderAllocation({ pool, connection, config, creator, githubVerifier }) {
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a graduated contributor early access market's grant is the same 1% of its Token-2022 token
+// (docs/EARLY_ACCESS.md, step 7e), its config approved in BUILDER_ALLOCATION_CONFIGS like any other; unset, it is not enrolled.
+export function createBuilderAllocation({ pool, connection, config, creator, githubVerifier, earlyAccess = tradingEarlyAccessConfig(),
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
-  const resolve = createMarketConfigResolver(config)
-  const graduation = createGraduatedFees({ connection, config, db: pool })
+  const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
+  const graduation = createGraduatedFees({ connection, config, db: pool, earlyAccess, hookProgram, earlyAccessGraduated: true })
+  const recordOf = (db, repoId) => allocationRecord(db, repoId, { earlyAccess: Boolean(earlyAccess) })
+  const tokenProgram = market => isEarlyAccessMarket(market) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID
   async function inspect(market) {
     const configKey = resolve(market)
     if (!allocationEnabled(configKey.toBase58())) throw Error('Allocation configuration is not approved')
     const [state, fixed, mint] = await Promise.all([
-      dbc.state.getPool(market.pool), dbc.state.getPoolConfig(configKey), getMint(connection, new PublicKey(market.mint), 'finalized'),
+      dbc.state.getPool(market.pool), dbc.state.getPoolConfig(configKey),
+      getMint(connection, new PublicKey(market.mint), 'finalized', tokenProgram(market)),
     ])
     if (!allocationReserveValid({ market, configKey, state, fixed, mint })) throw Error('Allocation reserve configuration needs review')
     const graduated = await graduation.read(market, state, fixed)
@@ -89,7 +103,7 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
   // knownGraduated: the caller already saw this market graduate (graduation never reverses), so display status skips the
   // chain reads. A claim never takes this shortcut: claim() inspects the chain itself.
   async function status(repoId, { knownGraduated = false } = {}) {
-    const market = await allocationRecord(pool, repoId)
+    const market = await recordOf(pool, repoId)
     if (!market) return { enrolled: false }
     if (market.latest?.status === 'settled' || market.latest?.status === 'pending') {
       return { enrolled: true, amount: String(BUILDER_ALLOCATION), state: market.latest.status, receipt: market.latest }
@@ -106,7 +120,7 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
     try {
       await client.query('select pg_advisory_lock($1::bigint)', [repoId])
       try {
-        const market = await allocationRecord(client, repoId)
+        const market = await recordOf(client, repoId)
         if (!market) throw Error('Market is not enrolled for an allocation')
         if (market.latest && ['pending','settled'].includes(market.latest.status)) throw Error('Allocation already submitted or paid')
         if (market.creatorWallet !== creator.publicKey.toBase58()) throw Error('Wrong allocation authority')
@@ -120,20 +134,25 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
             beneficiary.user !== String(github.githubUserId) || beneficiary.wallet === creator.publicKey.toBase58()) throw Error('Payout wallet or authority changed; bind your wallet and review again')
         const { state, graduated } = await inspect(market)
         if (!graduated) throw Error('Builder allocation stays locked until verified graduation')
-        const mint = new PublicKey(market.mint), recipient = new PublicKey(beneficiary.wallet)
-        const source = getAssociatedTokenAddressSync(mint, creator.publicKey)
-        const destination = getAssociatedTokenAddressSync(mint, recipient)
+        const mint = new PublicKey(market.mint), recipient = new PublicKey(beneficiary.wallet), program = tokenProgram(market)
+        // An early access token moves with no hook accounts: the curve's filling swap revoked its hook (checked here, as the trader does).
+        if (isEarlyAccessMarket(market)) {
+          try { assertRevokedHookMint(await connection.getAccountInfo(mint, 'finalized'), mint) }
+          catch { throw Error('Allocation reserve configuration needs review') }
+        }
+        const source = getAssociatedTokenAddressSync(mint, creator.publicKey, false, program)
+        const destination = getAssociatedTokenAddressSync(mint, recipient, false, program)
         const grant = new Transaction()
         if (!state.poolState.isWithdrawLeftover) {
           grant.add(await dbc.migration.withdrawLeftover({ pool: new PublicKey(market.pool), payer: creator.publicKey }))
         } else {
           // Withdrawal is permissionless but always pays the immutable protected receiver.
           // A third party performing it cannot change the grant's recipient or create a second grant.
-          const reserve = await getAccount(connection, source, 'finalized')
+          const reserve = await getAccount(connection, source, 'finalized', program)
           if (reserve.amount < BUILDER_ALLOCATION || reserve.delegate || !reserve.owner.equals(creator.publicKey)) throw Error('Builder token reserve needs review')
         }
-        grant.add(createAssociatedTokenAccountIdempotentInstruction(creator.publicKey, destination, recipient, mint),
-          createTransferCheckedInstruction(source, mint, destination, creator.publicKey, BUILDER_ALLOCATION, 6))
+        grant.add(createAssociatedTokenAccountIdempotentInstruction(creator.publicKey, destination, recipient, mint, program),
+          createTransferCheckedInstruction(source, mint, destination, creator.publicKey, BUILDER_ALLOCATION, 6, [], program))
         const latest = await connection.getLatestBlockhash('confirmed')
         const { transaction: tx } = await signedWithPriorityFee(connection, grant, { feePayer: creator.publicKey,
           blockhash: latest.blockhash, signers: [creator] })
@@ -166,7 +185,7 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
     try {
       await client.query('select pg_advisory_lock($1::bigint)', [repoId])
       try {
-        const market = await allocationRecord(client, repoId)
+        const market = await recordOf(client, repoId)
         if (!market) throw Error('Market is not enrolled for an allocation')
         if (market.latest && ['pending','settled'].includes(market.latest.status)) throw Error('Allocation already submitted or paid')
         if (market.creatorWallet !== creator.publicKey.toBase58()) throw Error('Wrong allocation authority')
