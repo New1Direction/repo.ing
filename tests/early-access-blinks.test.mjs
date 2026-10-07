@@ -82,17 +82,17 @@ test('a Blink buy refused by early access is final: never retried without the re
   await assert.rejects(prepareActionTrade('buy', { githubRepoId: '7', wallet: wallet.toBase58(), amountLamports: '1000', referrer: Keypair.generate().publicKey.toBase58() },
     { router: async () => engine, connection: {} }), { message: contributorsOnly(END) })
   assert.equal(requests.length, 1)
-  // An early access Blink passes its referral to the trader like a SOL market's: the curve trader leaves it out, the graduated
-  // trader pays it in SOL (step 7b).
+  // An early access Blink passes no referral while its curve trades (the curve trader would never pay one); once its migration is
+  // recorded it passes it like a SOL market's, and the graduated trader pays it in SOL (step 7b).
   const asked = []
   const prepareBuy = async request => { asked.push(request); return { transaction: new Transaction({ feePayer: wallet, recentBlockhash: Keypair.generate().publicKey.toBase58() })
     .add(SystemProgram.transfer({ fromPubkey: wallet, toPubkey: wallet, lamports: 1 })), direction: 'buy', mint: MINT, amountIn: 100_000_000n, minimumAmountOut: 1n } }
   const ref = Keypair.generate().publicKey.toBase58()
-  for (const forMarket of [market, { ...market, earlyAccessEnd: null, transferHookProgram: null }]) {
+  for (const forMarket of [market, { ...market, migrated: true }, { ...market, earlyAccessEnd: null, transferHookProgram: null }]) {
     const answer = await handleBuyPost(post(`/api/actions/buy/${MINT}?amount=0.1&ref=${ref}`), MINT, { loadMarket: async () => forMarket, prepareBuy, earlyAccessTrades: () => true })
     assert.equal(answer.status, 200)
   }
-  assert.deepEqual(asked.map(request => request.referrer ?? null), [ref, ref])
+  assert.deepEqual(asked.map(request => request.referrer ?? null), [null, ref, ref])
   // The Blink shows the refusal (an app-authored message).
   const response = await handleBuyPost(post(`/api/actions/buy/${MINT}?amount=0.1`), MINT, { loadMarket, earlyAccessTrades: () => true,
     prepareBuy: async () => { throw Error(contributorsOnly(END)) } })

@@ -7,8 +7,9 @@ import { STOCK_PAIR_ACTIONS_UNAVAILABLE } from './solana-actions.mjs'
 
 // Solana Actions (Blink) trades: the site's canonical curve/graduated trader, the same balance + simulation preflight as
 // /api/trade's prepare, and the trader's default 1% slippage. As on the site, a referral must never cost the trader a
-// trade: anything that fails with one is retried once without it. A contributor early access market's trade (docs/EARLY_ACCESS.md)
-// never carries a referral, so its refusals ("Contributor early access: …") are final too.
+// trade: anything that fails with one is retried once without it. A contributor early access market's curve trade
+// (docs/EARLY_ACCESS.md) never carries a referral (the Blink leaves it out until the curve migrated), and its refusals
+// ("Contributor early access: …") are final too.
 export async function prepareActionTrade(direction, request, { router = tradeRouter(), connection = chain() } = {}) {
   const engine = await router(request.githubRepoId)
   const build = async referrer => {

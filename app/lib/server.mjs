@@ -73,10 +73,12 @@ export const listMarkets = ttlMemo(() => timed('listMarkets', loadMarkets), MARK
 
 // Repository quality (repo-quality.mjs) and the Official mark from a market row's own columns. A recorded migration counts
 // as graduated for promotion even while the fresh progress read is stale. newRepo: the market shows the "New repo" label
-// (a new repository that has not earned promotion yet).
+// (a new repository that has not earned promotion yet). migrated: that migration is recorded (an early access window note then
+// stays hidden, app/lib/early-access-display.mjs).
 function withSignals(market, migrated, now) {
   const facts = { ...market, graduated: market.graduated || migrated }
-  return { ...market, newRepo: showsNewRepoLabel(facts, now), promoted: hasEarnedPromotion(facts, now), officialLaunch: isOfficialLaunch(market) }
+  return { ...market, migrated: Boolean(migrated), newRepo: showsNewRepoLabel(facts, now), promoted: hasEarnedPromotion(facts, now),
+    officialLaunch: isOfficialLaunch(market) }
 }
 
 // 24h volume: bonding-curve swaps, plus swaps in the DAMM v2 pool a graduated market's verified migration names (the

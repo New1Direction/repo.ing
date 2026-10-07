@@ -7,6 +7,7 @@ import { CpAmm, CP_AMM_PROGRAM_ID, getUnClaimLpFee } from '@meteora-ag/cp-amm-sd
 import { createMarketConfigResolver, readPoolConfig } from './market-config.mjs'
 import { loadFinalizedTransaction } from './finalized-transaction.mjs'
 import { EARLY_ACCESS_GRADUATION_PENDING, isEarlyAccessMarket } from './early-access.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
 
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
 const verifiedMigrations = new Map()
@@ -74,10 +75,10 @@ async function proofQuery(db, text, params) {
 // only by a path that also handles its graduated phase (earlyAccessGraduated; docs/EARLY_ACCESS.md, step 7); every other path is
 // refused by name. Without earlyAccess such a market is refused by name.
 export function createGraduatedFees({ connection, config, db = null, loadTransaction = loadFinalizedTransaction, earlyAccess = null,
-  earlyAccessGraduated = false }) {
+  hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, earlyAccessGraduated = false }) {
   const dbc = new DynamicBondingCurveClient(connection, 'finalized')
   const amm = new CpAmm(connection)
-  const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess })
+  const resolve = createMarketConfigResolver(config, undefined, undefined, { earlyAccess, hookProgram })
   const proven = verifiedMigrations
   const repoId = market => market.githubRepoId ?? market.repoId
   // A stored proof is only a pointer: its signature is reloaded from finalized chain state and must
