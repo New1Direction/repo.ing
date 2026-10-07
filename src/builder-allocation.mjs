@@ -1,5 +1,5 @@
 import bs58 from 'bs58'
-import { PublicKey, Transaction } from '@solana/web3.js'
+import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js'
 import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync, getAccount, getMint, NATIVE_MINT,
   TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
@@ -16,6 +16,10 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
 import { assertRevokedHookMint } from './canonical-damm-trade.mjs'
 
 export const BUILDER_ALLOCATION = 10_000_000_000_000n
+// A Token-2022 account's owner can require a memo on incoming transfers (MemoTransfer); the early access grant carries one right
+// before its transfer, so such an account still receives it. The settlement ignores it.
+const MEMO_PROGRAM = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
+const grantMemo = () => new TransactionInstruction({ programId: MEMO_PROGRAM, keys: [], data: Buffer.from('repo.ing builder allocation') })
 export const FIXED_SUPPLY = 1_000_000_000_000_000n
 export function allocationConfigs(value = process.env.BUILDER_ALLOCATION_CONFIGS ?? '') {
   return value.split(',').map(s => s.trim()).filter(Boolean).map(s => new PublicKey(s).toBase58())
@@ -138,7 +142,10 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
         // An early access token moves with no hook accounts: the curve's filling swap revoked its hook (checked here, as the trader does).
         if (isEarlyAccessMarket(market)) {
           try { assertRevokedHookMint(await connection.getAccountInfo(mint, 'finalized'), mint) }
-          catch { throw Error('Allocation reserve configuration needs review') }
+          catch (error) {
+            console.error('allocation mint check failed', { repo: repoId, error: error?.message })
+            throw Error('Allocation reserve configuration needs review')
+          }
         }
         const source = getAssociatedTokenAddressSync(mint, creator.publicKey, false, program)
         const destination = getAssociatedTokenAddressSync(mint, recipient, false, program)
@@ -152,6 +159,7 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
           if (reserve.amount < BUILDER_ALLOCATION || reserve.delegate || !reserve.owner.equals(creator.publicKey)) throw Error('Builder token reserve needs review')
         }
         grant.add(createAssociatedTokenAccountIdempotentInstruction(creator.publicKey, destination, recipient, mint, program),
+          ...isEarlyAccessMarket(market) ? [grantMemo()] : [],
           createTransferCheckedInstruction(source, mint, destination, creator.publicKey, BUILDER_ALLOCATION, 6, [], program))
         const latest = await connection.getLatestBlockhash('confirmed')
         const { transaction: tx } = await signedWithPriorityFee(connection, grant, { feePayer: creator.publicKey,
@@ -201,7 +209,8 @@ export function createBuilderAllocation({ pool, connection, config, creator, git
     } finally { client.release() }
   }
   // The grant steps of claim() above, from inspect() on; only the durable intent names the Hugging Face authority. Keep the
-  // two in step.
+  // two in step. A model market is never a contributor early access market (markets_early_access_check, migration 0059), so its
+  // grant stays on SPL Token without claim()'s Token-2022 branch.
   async function grantModelAllocation(client, market, { repoId, wallet, authority, checkedAt, review }) {
     const { state, graduated } = await inspect(market)
     if (!graduated) throw Error('Builder allocation stays locked until verified graduation')

@@ -19,7 +19,8 @@ export async function settleAllocation(client, connection, intent) {
   // The grant's one transferChecked, under SPL Token or, for a contributor early access market's token, Token-2022
   // (docs/EARLY_ACCESS.md, step 7e), to the recipient's associated account under that same program.
   const transfers = [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID].flatMap(program => {
-    const recipientIndex = keys.findIndex(key => key.equals(getAssociatedTokenAddressSync(mint, wallet, false, program)))
+    const destination = getAssociatedTokenAddressSync(mint, wallet, false, program)
+    const recipientIndex = keys.findIndex(key => key.equals(destination))
     return tx.transaction.message.instructions.filter(ix => {
       const data = Buffer.from(bs58.decode(ix.data))
       return recipientIndex >= 0 && keys[ix.programIdIndex]?.equals(program) && data.length === 10 && data[0] === 12 &&
