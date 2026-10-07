@@ -84,9 +84,12 @@ test('the evidence check: the stamped rules and the settings the config gives, n
   assert.equal(rulesMatch(onChain(1, { ...zero, startBps: 200 }), 1, config), false, 'a ramp field without the ramp')
 })
 
-test('migration 0061 is journaled last, re-appliable, and its constraint name matches the schema', () => {
+test('migration 0061 is journaled after 0060, re-appliable, and its constraint name matches the schema', () => {
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
-  assert.deepEqual(entries.at(-1), { idx: 61, version: '7', when: 1790910021000, tag: '0061_hook_rules', breakpoints: true })
+  const at = entries.findIndex(entry => entry.tag === '0061_hook_rules')
+  assert.deepEqual(entries[at], { idx: 61, version: '7', when: 1790910021000, tag: '0061_hook_rules', breakpoints: true })
+  assert.equal(entries[at - 1].tag, '0060_bundles')
+  assert.ok(entries.slice(at + 1).every(entry => entry.when > 1790910021000), 'later migrations come after it')
   const sql = readFileSync('drizzle/0061_hook_rules.sql', 'utf8')
   for (const statement of sql.split('--> statement-breakpoint').map(part => part.replace(/^\s*--.*$/gm, '').trim()).filter(Boolean)) {
     assert.match(statement, /^(SET LOCAL|ALTER TABLE "markets" ADD COLUMN IF NOT EXISTS|DO \$\$ BEGIN\s+IF NOT EXISTS|CREATE OR REPLACE FUNCTION)/, statement.slice(0, 80))
