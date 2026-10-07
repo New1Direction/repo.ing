@@ -539,7 +539,8 @@ test('existing bundles while dark: read, refund, claim and their relay work; a d
   const { BundleRaise } = await appModule('app/components/bundle-raise.jsx')
   const state = (await call(dark.api.read(get('/api/bundles/7'), '7'))).body
   raising(dark)
-  const live = (await call(dark.api.read(get('/api/bundles/7'), '7'))).body
+  // The page counts down from the read's time; pinned to the test's clock, so the fixture's deadline (NOW plus a day) never passes.
+  const live = { ...(await call(dark.api.read(get('/api/bundles/7'), '7'))).body, checkedAt: new Date(NOW).toISOString() }
   assert.match(html(h(BundleRaise, { initial: live }), { wallet: true }), /Back this bundle/)
   assert.doesNotMatch(html(h(BundleRaise, { initial: live, depositsOpen: false }), { wallet: true }), /Back this bundle/)
   assert.match(html(h(BundleRaise, { initial: live, depositsOpen: false }), { wallet: true }), /New deposits are paused/)
