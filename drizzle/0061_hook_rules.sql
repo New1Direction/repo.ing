@@ -1,7 +1,8 @@
 -- Contributor early access options (docs/EARLY_ACCESS.md): the hook rules a launch was made with, as the program's bit set: 1
 -- early access, 3 with the fair ramp, 7 with star unlocks too. The ramp and star unlocks are options of an early access launch
--- only (owner decision, 2026-10-07), so the rules are set exactly when the window is. Expand-only and idempotent: re-applying this
--- file changes nothing; a market stamped before it (early access alone) gets 1, every other market keeps NULL.
+-- only (owner decision, 2026-10-07), so the rules are set only with the window; a window without them is early access alone, as
+-- before this migration (src/early-access-rules.mjs, marketHookRules; launch evidence compares them with the hook's mint config).
+-- Expand-only and idempotent: re-applying this file changes nothing; a market stamped before it gets 1, every other market keeps NULL.
 -- All pending migrations run in one transaction, so the locks taken below are held until it commits: give up after 5s
 -- (the deploy fails and can simply be retried) rather than queue every page query behind a long-running read.
 SET LOCAL lock_timeout = '5s';
@@ -10,13 +11,12 @@ ALTER TABLE "markets" ADD COLUMN IF NOT EXISTS "hook_rules" smallint;
 --> statement-breakpoint
 UPDATE "markets" SET "hook_rules" = 1 WHERE "early_access_end" IS NOT NULL AND "hook_rules" IS NULL;
 --> statement-breakpoint
--- With the window and only then; one of the three sets the launch form offers. The IS NOT NULL terms matter (a CHECK that
--- evaluates to NULL passes).
+-- Only with the window; one of the three sets the launch form offers. The IS NOT NULL term matters (a CHECK that evaluates to
+-- NULL passes).
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'markets_hook_rules_check' AND conrelid = '"markets"'::regclass) THEN
     ALTER TABLE "markets" ADD CONSTRAINT "markets_hook_rules_check" CHECK (
-      ("hook_rules" IS NULL AND "early_access_end" IS NULL) OR
-      ("hook_rules" IS NOT NULL AND "early_access_end" IS NOT NULL AND "hook_rules" IN (1, 3, 7)));
+      "hook_rules" IS NULL OR ("early_access_end" IS NOT NULL AND "hook_rules" IN (1, 3, 7)));
   END IF;
 END $$;
 --> statement-breakpoint

@@ -34,7 +34,7 @@ import { estimateLaunchCosts } from '../src/launch-costs.mjs'
 import { assertEarlyAccessConfig, buildEarlyAccessConfigTransaction, earlyAccessLookupAddresses, reviewEarlyAccessConfig,
   verifyCreatedEarlyAccessConfig } from '../src/early-access-config.mjs'
 import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWalletsInstruction, dbcBaseVault, decodeAllowList, decodeMintConfig,
-  earlyAccessAddresses, initPlatformInstruction, reportStarsInstruction, walletCapBps } from '../src/early-access-hook.mjs'
+  earlyAccessAddresses, initPlatformInstruction, walletCapBps } from '../src/early-access-hook.mjs'
 import { rampSettings } from '../src/early-access-rules.mjs'
 import { launchBuyQuote } from '../src/launch-buy.mjs'
 import { EARLY_ACCESS_NOT_CLAIMABLE, EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
@@ -79,7 +79,7 @@ const repository = (id, fullName, ownerId) => ({ id, name: fullName.split('/')[1
   type: 'User', avatar_url: null }, description: null, stargazers_count: 5, forks_count: 1, archived: false, private: false, visibility: 'public',
   updated_at: '2026-10-01T00:00:00Z' })
 const REPOS = { first: repository(700001, 'octo/first', 91), second: repository(700002, 'octo/second', 91), third: repository(700003, 'octo/third', 91),
-  legacy: repository(700004, 'octo/legacy', 91), ramp: repository(700007, 'octo/ramp', 91) }
+  legacy: repository(700004, 'octo/legacy', 91), ramp: repository(700009, 'octo/ramp', 91) }
 const github = repo => async () => ({ ok: true, status: 200, json: async () => repo })
 const connections = []
 const local = () => { const connection = new Connection(RPC, 'confirmed'); connections.push(connection); return connection }
@@ -1073,11 +1073,20 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       const ask = lamports => trader.prepareBuy({ githubRepoId: String(market.githubRepoId), wallet: contributor.publicKey.toBase58(), amountLamports: String(lamports) })
       await assert.rejects(ask(low), /^Error: Contributor early access: with the fair ramp one wallet can hold at most 2(\.\d+)?% of the supply right now/)
       assert.ok((await ask(10_000_000)).transaction, 'within the limit')
-      // 100 stars more than at launch: +0.5% (50 basis points) on the limit.
+      // The oracle reads the repository's stars: 99 more than at launch is no step yet; 100 more is reported and adds +0.5% (50 basis
+      // points) to the limit. The market is found by its stamped rules in the database; reads are 15 minutes apart.
       const funding = await connection.requestAirdrop(oracle.publicKey, 1_000_000_000)
       await connection.confirmTransaction({ signature: funding, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
-      await sendAndConfirmTransaction(connection, new Transaction().add(reportStarsInstruction({ oracle: oracle.publicKey, mint,
-        stars: REPOS.ramp.stargazers_count + 100 })), [oracle], { commitment: 'confirmed' })
+      let stars = REPOS.ramp.stargazers_count + 99, at = Date.now()
+      const reads = []
+      const stargazer = createEarlyAccessOracle({ pool, connection, oracle, clock: () => at, log: () => {},
+        readStars: async id => { reads.push(id); return stars } })
+      assert.deepEqual((await stargazer.runOnce()).stars, [{ mint: market.mint, stars }])
+      stars += 1
+      at += 15 * 60_000
+      const [reported] = (await stargazer.runOnce()).stars
+      assert.deepEqual([reported.mint, reported.stars, reported.reported, reported.error], [market.mint, stars, true, undefined])
+      assert.deepEqual(reads, [String(REPOS.ramp.id), String(REPOS.ramp.id)], 'only the star unlock market is read')
       assert.equal((await mintConfig()).starsNow, REPOS.ramp.stargazers_count + 100)
       assert.equal(await capBps(), before + 50)
     })
@@ -1136,6 +1145,18 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
       assert.equal(await matchesReviewedVersionedLaunch(Buffer.from(noBuy.transaction.message.serialize()), asserted(noBuy, MAX_VERSIONED_LAUNCH_ASSERTIONS), load), true)
       // A name of multi-byte characters can pass the length check and still not fit: refused with a message, never sent.
       await assert.rejects(shape('名'.repeat(32), 'S'.repeat(10)), /does not fit in one Solana transaction/)
+      // With the fair ramp (and star unlocks) init_mint carries the ramp's settings: 32 bytes more. Every name fits without a buy; with
+      // a first buy the longest names do not, and are refused with the same message.
+      const ramped = (tokenName, tokenSymbol, initialBuyLamports = '100000000') => sized.prepare({ launcherWallet: launcher.publicKey.toBase58(), tokenName,
+        tokenSymbol, initialBuyLamports, earlyAccess: { windowSeconds: MAX_EARLY_ACCESS_SECONDS, repoId: '4503599627370495', keepLauncher: false, rules: 7, starsAtLaunch: 5 } })
+      const rampSmall = await ramped('First', 'FIRST'), rampNoBuy = await ramped('N'.repeat(32), 'S'.repeat(10), '0')
+      let longest = 32
+      for (; longest > 0; longest--) { try { await ramped('N'.repeat(longest), 'S'.repeat(10)); break } catch (error) { assert.match(error.message, /does not fit/) } }
+      const rampSizes = { shortNameFirstBuy: rampSmall.transaction.serialize().length, noBuy: rampNoBuy.transaction.serialize().length,
+        longestNameWithTickerOf10FirstBuy: longest, extra: rampSmall.transaction.serialize().length - sizes.shortNameFirstBuy }
+      console.log(JSON.stringify({ rampLaunchSizes: rampSizes }))
+      assert.equal(rampSizes.extra, 32)
+      assert.ok(longest >= 20, `a first buy with the ramp fits names up to ${longest} characters`)
     })
 
     await t.test('a wallet that changes the v0 transaction is refused and nothing is sent', async () => {

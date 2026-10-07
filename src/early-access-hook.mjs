@@ -152,16 +152,20 @@ export function decodeMintConfig(data) {
 // can show it and size a buy as the limit minus what the wallet holds.
 export function walletCapBps(config, vaultBalance, held = 0n) {
   if (!(config.rules & RULES.FAIR_RAMP)) return null
-  const { startBps, endCapBps, vaultStart, vaultEnd, starsAtLaunch, starStep, starBonusBps, starMaxBonusBps } = config.ramp
+  const { startBps, endCapBps, vaultStart, vaultEnd } = config.ramp
   const left = BigInt(vaultBalance), own = BigInt(held), span = vaultStart - vaultEnd
   const raw = vaultStart > left ? vaultStart - left : 0n, sold = raw > own ? raw - own : 0n
   if (sold >= span) return null
   let cap = BigInt(startBps) + BigInt(endCapBps - startBps) * sold / span
-  if (config.rules & RULES.STAR_UNLOCKS) {
-    const bonus = BigInt(Math.max(0, config.starsNow - starsAtLaunch)) / BigInt(starStep) * BigInt(starBonusBps)
-    cap += bonus < BigInt(starMaxBonusBps) ? bonus : BigInt(starMaxBonusBps)
-  }
+  if (config.rules & RULES.STAR_UNLOCKS) cap += BigInt(starBonusBps(config.ramp, config.starsNow))
   return cap >= BigInt(BPS) ? null : Number(cap)
+}
+
+// Star unlocks' addition to every wallet's limit for a star count, in basis points (the hook's rule): starBonusBps per starStep
+// stars gained since the launch, at most starMaxBonusBps; 0 without star unlocks.
+export function starBonusBps(ramp, stars) {
+  if (!ramp.starStep) return 0
+  return Math.min(Math.floor(Math.max(0, stars - ramp.starsAtLaunch) / ramp.starStep) * ramp.starBonusBps, ramp.starMaxBonusBps)
 }
 
 export function decodePlatform(data) {

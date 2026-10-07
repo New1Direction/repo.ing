@@ -1,6 +1,8 @@
 import { ComputeBudgetProgram, PublicKey, Transaction } from '@solana/web3.js'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID, MAX_ALLOW_LIST, MAX_WALLETS_PER_CALL, addWalletsInstruction, closeAllowListInstruction, decodeAllowList,
-  decodeMintConfig, decodePlatform, earlyAccessAddresses, hookErrorName, platformAddress, removeWalletsInstruction } from './early-access-hook.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID, MAX_ALLOW_LIST, MAX_WALLETS_PER_CALL, RULES, addWalletsInstruction, closeAllowListInstruction, decodeAllowList,
+  decodeMintConfig, decodePlatform, earlyAccessAddresses, hookErrorName, platformAddress, removeWalletsInstruction, reportStarsInstruction,
+  starBonusBps } from './early-access-hook.mjs'
+import { readRepositoryStars } from './github.mjs'
 
 // The oracle's upkeep of contributor early access allow lists (docs/EARLY_ACCESS.md, step 5f; owner decision 2026-10-07). While a
 // market's window is open, its list is kept equal to the linked wallets of the repository's contributors: the snapshot taken when the
@@ -10,6 +12,9 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID, MAX_ALLOW_LIST, MAX_WALLETS_PER_CALL, add
 // window the list is closed: the launch's payer gets its deposit back and the oracle what it paid for the list to grow.
 // Removals are guarded against a bad read of the links: a wallet leaves only when two runs in a row find it unlinked, and a run that
 // would take more than half of a list of more than four wallets holds them all and logs it.
+// Star unlocks (docs/EARLY_ACCESS.md): until a star-unlock market's curve migrates (the fair ramp's limits apply only on the curve), the
+// oracle reads the repository's GitHub star count every 15 minutes and reports it when the bonus it gives changes (it may go down
+// as well as up: stars taken back are not gained). A repository GitHub no longer serves publicly keeps its last report.
 // Each change is simulated first and sent only if it passes; the oracle signs and pays. One run at a time (advisory lock).
 
 const ADD_MARGIN_MS = 30_000
@@ -24,6 +29,8 @@ const RUN_BUDGET_MS = 45_000
 // Below this the oracle adds nothing (removals and closes, which cost a fee and may refund it, go on).
 export const MIN_ORACLE_LAMPORTS = 5_000_000
 const HOLD_ABOVE = 4
+const STAR_READ_MS = 15 * 60_000
+const STAR_READS_PER_RUN = 20
 
 const chunks = (items, size) => Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, index * size + size))
 // A wallet as base58, or null for anything that is not a public key (one bad row never stops a market's upkeep).
@@ -55,11 +62,16 @@ export function plannedChange({ list, desired, snapshot, end, now, pending = new
   return {}
 }
 
+// Whether a star count read now changes a mint config's bonus (the report the oracle would send).
+export const starReportNeeded = (config, stars) => starBonusBps(config.ramp, stars) !== starBonusBps(config.ramp, config.starsNow)
+
 export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID, now = () => Date.now(),
-  clock = () => Date.now(), log = record => console.log(JSON.stringify({ earlyAccessOracle: record })) }) {
+  clock = () => Date.now(), readStars = readRepositoryStars, log = record => console.log(JSON.stringify({ earlyAccessOracle: record })) }) {
   const program = new PublicKey(hookProgram)
   // Per mint, the wallets the previous run found unlinked (kept in memory: a restart only delays a removal by one run).
   const pendingRemovals = new Map()
+  // Per star-unlock mint, when its repository's stars were last read (in memory: a restart reads them once more).
+  const starsReadAt = new Map()
 
   // Simulated first (a refusal costs nothing), then sent and confirmed against the blockhash it was built with; the oracle pays.
   async function send(instruction) {
@@ -125,6 +137,41 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
     return done()
   }
 
+  async function reportStars(market, info) {
+    const mint = new PublicKey(market.mint)
+    if (!info?.owner.equals(program)) return { mint: market.mint, error: 'NO_MINT_CONFIG' }
+    const config = decodeMintConfig(info.data)
+    if (!config.mint.equals(mint) || !(config.rules & RULES.STAR_UNLOCKS)) return { mint: market.mint, error: 'MINT_CONFIG_MISMATCH' }
+    const stars = await readStars(market.repoId)
+    if (stars === null) return { mint: market.mint, error: 'STARS_UNREADABLE' }
+    if (!starReportNeeded(config, stars)) return { mint: market.mint, stars }
+    const sent = await send(reportStarsInstruction({ oracle: oracle.publicKey, mint, stars, programId: program }))
+    return { mint: market.mint, stars, ...sent.sent ? { reported: true } : { error: sent.reason }, ...sent.signature ? { signature: sent.signature } : {} }
+  }
+
+  // The star-unlock markets whose repository is due a read, least recently read first.
+  function starsDue(markets) {
+    const at = clock()
+    return markets.filter(market => at - (starsReadAt.get(market.mint) ?? -Infinity) >= STAR_READ_MS)
+      .sort((a, b) => (starsReadAt.get(a.mint) ?? -Infinity) - (starsReadAt.get(b.mint) ?? -Infinity)).slice(0, STAR_READS_PER_RUN)
+  }
+
+  async function starReports(markets, deadline) {
+    const due = starsDue(markets), results = []
+    if (!due.length) return results
+    const configs = await connection.getMultipleAccountsInfo(due.map(market => earlyAccessAddresses(market.mint, program).config), 'confirmed')
+    for (const [index, market] of due.entries()) {
+      if (clock() > deadline) break
+      // Marked before the read, so a failing repository waits its turn like the others.
+      starsReadAt.set(market.mint, clock())
+      let result
+      try { result = await reportStars(market, configs[index]) } catch (error) { result = { mint: market.mint, error: error?.name ?? 'Error' } }
+      if (result.reported || result.error) log({ stars: result })
+      results.push(result)
+    }
+    return results
+  }
+
   async function runOnce() {
     const client = await pool.connect()
     try {
@@ -134,7 +181,11 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
         const { rows: markets } = await client.query(`select m.github_repo_id::text as "repoId", m.mint, m.early_access_end as "earlyAccessEnd"
           from markets m where m.early_access_end is not null and m.transfer_hook_program = $1 and m.status = 'confirmed' and m.mint is not null
             and m.early_access_end > $2 order by m.early_access_end`, [program.toBase58(), new Date(now() - CLOSE_WITHIN_MS)])
-        if (!markets.length) {
+        const { rows: starMarkets } = await client.query(`select m.github_repo_id::text as "repoId", m.mint from markets m
+          where (m.hook_rules & $2) <> 0 and m.transfer_hook_program = $1 and m.status = 'confirmed' and m.mint is not null
+            and not exists (select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) order by m.github_repo_id`,
+        [program.toBase58(), RULES.STAR_UNLOCKS])
+        if (!markets.length && !starMarkets.length) {
           if (!platformChecked) { platformChecked = true; if (!await oracleMatches()) log({ error: 'ORACLE_NOT_PLATFORM_ORACLE' }) }
           return { status: 'IDLE' }
         }
@@ -143,18 +194,18 @@ export function createEarlyAccessOracle({ pool, connection, oracle, hookProgram 
         const balance = await connection.getBalance(oracle.publicKey, 'confirmed')
         const lowBalance = balance < MIN_ORACLE_LAMPORTS
         if (lowBalance) log({ error: 'ORACLE_LOW_BALANCE', lamports: balance })
-        const lists = []
+        const lists = [], deadline = clock() + RUN_BUDGET_MS, results = []
         for (const batch of chunks(markets, READ_BATCH)) {
           lists.push(...await connection.getMultipleAccountsInfo(batch.map(market => earlyAccessAddresses(market.mint, program).allowList), 'confirmed'))
         }
-        const deadline = clock() + RUN_BUDGET_MS, results = []
         for (const [index, market] of markets.entries()) {
           let result
           try { result = await upkeep(market, lists[index], { lowBalance, deadline }) } catch (error) { result = { mint: market.mint, error: error?.name ?? 'Error' } }
           if (result.added || result.removed || result.closed || result.error || result.overflow || result.held || result.waiting) log(result)
           results.push(result)
         }
-        return { status: 'OK', results }
+        const stars = await starReports(starMarkets, deadline)
+        return { status: 'OK', results, ...stars.length ? { stars } : {} }
       } finally { await client.query('select pg_advisory_unlock(hashtextextended($1, 0))', [LOCK_KEY]) }
     } finally { client.release() }
   }

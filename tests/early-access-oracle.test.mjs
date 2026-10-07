@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, Transaction } from '@solana/web3.js'
-import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_ALLOW_LIST, earlyAccessAddresses, platformAddress } from '../src/early-access-hook.mjs'
-import { MIN_ORACLE_LAMPORTS, createEarlyAccessOracle, plannedChange } from '../src/early-access-oracle.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_ALLOW_LIST, decodeMintConfig, earlyAccessAddresses, platformAddress, starBonusBps } from '../src/early-access-hook.mjs'
+import { MIN_ORACLE_LAMPORTS, createEarlyAccessOracle, plannedChange, starReportNeeded } from '../src/early-access-oracle.mjs'
 
 // Step 5f (docs/EARLY_ACCESS.md): the oracle keeps each open window's allow list equal to the contributors' linked wallets and closes
 // the list after the window. Here with a scripted database and chain; on chain: tests/early-access-launch-chain.test.mjs.
@@ -38,14 +38,16 @@ test('the plan: add the missing linked wallets; remove an unlinked one only when
 
 // A scripted database and chain: markets, the contributor snapshot and links, the on-chain lists (state.lists, changeable between runs);
 // every sent transaction is recorded with what it was confirmed against.
-function setup({ markets, links = {}, snapshot = {}, lists = {}, platformOracle = null, refuse = null, balance = 1_000_000_000 } = {}) {
-  const oracle = Keypair.generate(), sent = [], confirms = [], queries = [], state = { lists }
+function setup({ markets, starMarkets = [], configs = {}, links = {}, snapshot = {}, lists = {}, platformOracle = null, refuse = null,
+  balance = 1_000_000_000 } = {}) {
+  const oracle = Keypair.generate(), sent = [], confirms = [], queries = [], state = { lists, configs }
   const allowListData = (mint, wallets) => Buffer.concat([Buffer.from('ea-allow'), new PublicKey(mint).toBuffer(),
     Buffer.from(Uint32Array.of(wallets.length).buffer), ...wallets.map(w => new PublicKey(w).toBuffer())])
   const db = { query: async (sql, params) => {
     queries.push(sql.trim().split(/\s+/).slice(0, 3).join(' '))
     if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ locked: true }] }
     if (/pg_advisory_unlock/.test(sql)) return { rows: [] }
+    if (/hook_rules/.test(sql)) return { rows: starMarkets }
     if (/from markets m/.test(sql)) return { rows: markets }
     if (/join github_wallet_links/.test(sql)) return { rows: (links[params[0]] ?? []).map(wallet => ({ wallet })) }
     if (/count\(\*\)::int as snapshot/.test(sql)) return { rows: [{ snapshot: snapshot[params[0]] ?? 0 }] }
@@ -63,6 +65,8 @@ function setup({ markets, links = {}, snapshot = {}, lists = {}, platformOracle 
     },
     getBalance: async () => balance,
     getMultipleAccountsInfo: async addresses => addresses.map(address => {
+      const starMarket = starMarkets.find(m => earlyAccessAddresses(m.mint).config.equals(address))
+      if (starMarket) return state.configs[starMarket.mint] ?? null
       const market = markets.find(m => earlyAccessAddresses(m.mint).allowList.equals(address))
       return state.lists[market.mint] ? { owner: HOOK, data: allowListData(market.mint, state.lists[market.mint]) } : null
     }),
@@ -170,4 +174,77 @@ test('after the window the list is closed: rent back to the mint config\'s recei
   assert.deepEqual(close.keys.map(meta => meta.pubkey.toBase58()), [config.toBase58(), platformAddress().toBase58(), allowList.toBase58(),
     '11111111111111111111111111111111', run.oracle.publicKey.toBase58()], 'the receiver is the mint config\'s rent receiver (zeroed here)')
   assert.ok(!run.queries.some(sql => /join/.test(sql)), 'no contributor read after the window')
+})
+
+// Star unlocks: a mint config in its real layout, with the launch's settings (+0.5% per 100 stars, at most +5%).
+function starConfig(mint, { rules = 7, starsAtLaunch = 10, starsNow = starsAtLaunch } = {}) {
+  const data = Buffer.alloc(175)
+  discriminator('account:MintConfig').copy(data); new PublicKey(mint).toBuffer().copy(data, 8)
+  data[48] = rules
+  data.writeUInt32LE(rules & 4 ? starsAtLaunch : 0, 151); data.writeUInt32LE(rules & 4 ? 100 : 0, 155)
+  data.writeUInt16LE(rules & 4 ? 50 : 0, 159); data.writeUInt16LE(rules & 4 ? 500 : 0, 161); data.writeUInt32LE(starsNow, 163)
+  return { owner: HOOK, data }
+}
+
+test('star unlocks: a report is needed only when the bonus changes, down as well as up, never past the cap', () => {
+  const config = starsNow => decodeMintConfig(starConfig(key(), { starsNow }).data)
+  assert.deepEqual([9, 10, 109, 110, 1009, 1010, 5000].map(stars => starBonusBps(config(10).ramp, stars)), [0, 0, 0, 50, 450, 500, 500])
+  assert.equal(starReportNeeded(config(10), 109), false)
+  assert.equal(starReportNeeded(config(10), 110), true)
+  assert.equal(starReportNeeded(config(150), 60), true, 'stars taken back')
+  assert.equal(starReportNeeded(config(150), 205), false, 'the same step')
+  assert.equal(starReportNeeded(config(1010), 9000), false, 'at the cap')
+  assert.equal(starReportNeeded(config(1010), 1009), true)
+  assert.equal(starBonusBps(decodeMintConfig(starConfig(key(), { rules: 3 }).data).ramp, 9000), 0, 'no star unlocks: no bonus')
+})
+
+test('star unlocks: the oracle reads each repository every 15 minutes and reports its stars when the bonus changes', async () => {
+  const [mint, other, ramp, gone] = [key(), key(), key(), key()]
+  const starMarkets = [{ repoId: '700010', mint }, { repoId: '700011', mint: other }, { repoId: '700012', mint: ramp }, { repoId: '700013', mint: gone }]
+  const stars = { 700010: 260, 700011: 50, 700012: 900, 700013: null }, reads = []
+  const run = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint), [other]: starConfig(other), [ramp]: starConfig(ramp, { rules: 3 }),
+    [gone]: starConfig(gone) } })
+  let t = 0
+  const logged = []
+  const oracle = create(run, { clock: () => t, log: record => logged.push(record), readStars: async id => { reads.push(id); return stars[id] } })
+  const first = await oracle.runOnce()
+  assert.deepEqual(first, { status: 'OK', results: [], stars: [{ mint, stars: 260, reported: true, signature: 'sig1' }, { mint: other, stars: 50 },
+    { mint: ramp, error: 'MINT_CONFIG_MISMATCH' }, { mint: gone, error: 'STARS_UNREADABLE' }] })
+  const [[report]] = run.sent.map(instructionsOf)
+  assert.ok(report.data.subarray(0, 8).equals(discriminator('global:report_stars')))
+  assert.equal(report.data.readUInt32LE(8), 260)
+  // The oracle signs (and pays, so the message marks it writable); only the mint config changes.
+  assert.deepEqual(report.keys.map(meta => [meta.pubkey.toBase58(), meta.isSigner, meta.isWritable]), [[run.oracle.publicKey.toBase58(), true, true],
+    [platformAddress().toBase58(), false, false], [earlyAccessAddresses(mint).config.toBase58(), false, true]])
+  assert.deepEqual(logged.map(record => record.stars.mint), [mint, ramp, gone], 'reports and problems are logged')
+  assert.deepEqual(reads, ['700010', '700011', '700013'], 'a config that is not star unlocks is never read from GitHub')
+  // Within 15 minutes nothing is read again; after, the chain holds the report and a count in the same step sends nothing.
+  t += 14 * 60_000
+  assert.deepEqual(await oracle.runOnce(), { status: 'OK', results: [] })
+  run.state.configs[mint] = starConfig(mint, { starsNow: 260 })
+  stars[700010] = 299
+  t += 60_000
+  assert.deepEqual((await oracle.runOnce()).stars[0], { mint, stars: 299 })
+  // Stars taken back lower the bonus: reported too.
+  stars[700010] = 100
+  t += 15 * 60_000
+  assert.deepEqual((await oracle.runOnce()).stars[0], { mint, stars: 100, reported: true, signature: 'sig2' })
+  assert.equal(run.sent.length, 2)
+})
+
+test('star unlocks: a refused report and a failed read are logged; the platform must name the oracle; the run budget holds', async () => {
+  const mint = key(), starMarkets = [{ repoId: '700020', mint }]
+  const refused = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint) }, refuse: () => true })
+  assert.deepEqual((await create(refused, { readStars: async () => 500 }).runOnce()).stars, [{ mint, stars: 500, error: 'WindowClosed' }])
+  assert.equal(refused.sent.length, 0)
+  const failing = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint) } })
+  assert.deepEqual((await create(failing, { readStars: async () => { throw new TypeError('fetch failed') } }).runOnce()).stars, [{ mint, error: 'TypeError' }])
+  const mismatch = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint) }, platformOracle: Keypair.generate().publicKey })
+  assert.deepEqual(await create(mismatch, { readStars: async () => 500 }).runOnce(), { status: 'ORACLE_MISMATCH' })
+  const missing = setup({ markets: [], starMarkets })
+  assert.deepEqual((await create(missing, { readStars: async () => 500 }).runOnce()).stars, [{ mint, error: 'NO_MINT_CONFIG' }])
+  let t = 0
+  const slow = setup({ markets: [], starMarkets, configs: { [mint]: starConfig(mint) } })
+  assert.deepEqual(await create(slow, { clock: () => (t += 50_000), readStars: async () => 500 }).runOnce(), { status: 'OK', results: [] },
+    'past the budget: left for the next run')
 })

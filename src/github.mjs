@@ -45,6 +45,24 @@ export async function readLaunchedRepositoryById(id, fetchImpl = fetch) {
   return repo
 }
 
+// Star unlocks (src/early-access-oracle.mjs): a launched repository's GitHub star count now, read by its immutable id. null when
+// GitHub no longer serves it publicly or gives no usable count (the oracle then reports nothing); any other failure throws.
+export async function readRepositoryStars(id, fetchImpl = fetch) {
+  if (!/^[1-9]\d{0,18}$/.test(String(id))) throw new RepositoryResolutionError('Invalid repository')
+  assertGithubRepoId(id)
+  const response = await fetchImpl(`https://api.github.com/repositories/${id}`, {
+    headers: await githubApiHeaders('repo.ing-early-access-oracle', fetchImpl),
+    redirect: 'follow', cache: 'no-store', signal: AbortSignal.timeout(10000),
+  })
+  if (response.status === 404) return null
+  if (!response.ok) throw Error(`GITHUB_REPOSITORY_HTTP_${response.status}`)
+  const json = await response.json()
+  if (String(json?.id) !== String(id)) throw new RepositoryResolutionError('Repository identity mismatch')
+  if (json.private || json.visibility && json.visibility !== 'public') return null
+  const stars = json.stargazers_count
+  return Number.isSafeInteger(stars) && stars >= 0 && stars <= 0xffffffff ? stars : null
+}
+
 // The owner GitHub reports right now for a repository id: { ownerId, ownerType }, the identity a stock pair is offered by
 // (src/quote-assets.mjs). Always a live read by immutable id; a missing or malformed owner id is refused, never guessed.
 export async function resolveRepositoryOwner(id, fetchImpl = fetch) {

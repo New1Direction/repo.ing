@@ -84,16 +84,21 @@ test('migration 0059 and contributor wallet links on PostgreSQL', { timeout: 180
     await pool.query(SEED)
     const before = await marketsCanonical(pool)
 
-    await t.test('upgrading keeps every market row with no early access, and re-applying 0059 is a no-op', async () => {
+    await t.test('upgrading keeps every market row with no early access, and re-applying 0059 and 0061 is a no-op', async () => {
       await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
-      for (const statement of (await readFile('drizzle/0059_early_access.sql', 'utf8')).split('--> statement-breakpoint')) await pool.query(statement)
+      for (const file of ['0059_early_access', '0061_hook_rules']) {
+        for (const statement of (await readFile(`drizzle/${file}.sql`, 'utf8')).split('--> statement-breakpoint')) await pool.query(statement)
+      }
       assert.equal(await marketsCanonical(pool), before)
-      const { rows: [row] } = await pool.query('select count(*)::int as n from markets where early_access_end is not null or transfer_hook_program is not null')
+      const { rows: [row] } = await pool.query(`select count(*)::int as n from markets where early_access_end is not null or transfer_hook_program is not null
+        or hook_rules is not null`)
       assert.equal(row.n, 0)
     })
 
     await t.test('the stamp is both-or-none, a real program key, GitHub-only and never a stock pair', async () => {
-      const insert = values => `insert into markets(github_repo_id,status,launcher_wallet,creator_wallet,token_name,token_symbol,early_access_end,transfer_hook_program) values ${values}`
+      // A stamped row also carries its hook rules (migration 0061): 1 is early access alone.
+      const insert = (values, rules = 1) => `insert into markets(github_repo_id,status,launcher_wallet,creator_wallet,token_name,token_symbol,early_access_end,
+        transfer_hook_program,hook_rules) values ${values.replace(/\)$/, `,${rules})`)}`
       await pool.query(insert(`(94911145,'reserved','L','C','Docusaurus','DOCUSAURUS',now() + interval '1 hour','${HOOK}')`))
       await pool.query('delete from markets where github_repo_id = 94911145')
       await refused(pool, insert(`(94911145,'reserved','L','C','Docusaurus','DOCUSAURUS',now() + interval '1 hour',null)`), 'markets_early_access_check')
@@ -111,30 +116,44 @@ test('migration 0059 and contributor wallet links on PostgreSQL', { timeout: 180
       await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at,source,hf_model_ref)
         values ($1,'org','model','org/model',0,0,false,now(),'huggingface',$1)`, [model.id])
       await refused(pool, insert(`(${model.id},'reserved','L','C','Model','MODEL',now(),'${HOOK}')`), 'markets_early_access_check')
+      // Migration 0061: the rules are one of the three sets the launch form offers, and only with the window; a window without them
+      // is early access alone (as stamped before 0061).
+      const stamped = `(94911145,'reserved','L','C','Docusaurus','DOCUSAURUS',now() + interval '1 hour','${HOOK}')`
+      for (const rules of [3, 7, 'null']) {
+        await pool.query(insert(stamped, rules))
+        await pool.query('delete from markets where github_repo_id = 94911145')
+      }
+      for (const rules of [0, 2, 4, 5, 6, 8, -1]) await refused(pool, insert(stamped, rules), 'markets_hook_rules_check')
+      await refused(pool, `insert into markets(github_repo_id,status,launcher_wallet,creator_wallet,token_name,token_symbol,hook_rules)
+        values (94911145,'reserved','L','C','Docusaurus','DOCUSAURUS',1)`, 'markets_hook_rules_check')
     })
 
     await t.test('an unsent reservation may change or drop early access; a sent or indexed launch never can', async () => {
-      const set = (id, end = `now() + interval '1 hour'`) => `update markets set early_access_end = ${end}, transfer_hook_program = '${HOOK}' where github_repo_id = ${id}`
+      const set = (id, end = `now() + interval '1 hour'`) => `update markets set early_access_end = ${end}, transfer_hook_program = '${HOOK}', hook_rules = 1
+        where github_repo_id = ${id}`
       // failed → a new attempt with early access, a new window, then without, before anything was sent
       await pool.query(`update markets set status = 'reserved' where github_repo_id = 10270250`)
       await pool.query(set(10270250))
       await pool.query(`update markets set status = 'prepared' where github_repo_id = 10270250`)
       await pool.query(set(10270250, `now() + interval '6 hours'`))
-      await pool.query(`update markets set early_access_end = null, transfer_hook_program = null where github_repo_id = 10270250`)
+      await pool.query(`update markets set hook_rules = 7 where github_repo_id = 10270250`)
+      await pool.query(`update markets set early_access_end = null, transfer_hook_program = null, hook_rules = null where github_repo_id = 10270250`)
       await pool.query(`update markets set status = 'failed' where github_repo_id = 10270250`)
       await pool.query(set(10270250))
       for (const id of [1296269, 7, 8, 9]) await refused(pool, set(id), 'Market early access is immutable once its launch was sent')
       // Nor in the statement that sends the launch.
-      await pool.query(`update markets set status = 'reserved', early_access_end = null, transfer_hook_program = null where github_repo_id = 10270250`)
+      await pool.query(`update markets set status = 'reserved', early_access_end = null, transfer_hook_program = null, hook_rules = null where github_repo_id = 10270250`)
       await refused(pool, `update markets set status = 'submitted', mint = 'MintReact', pool = 'PoolReact', launch_signature = 'LaunchReact',
-        early_access_end = now() + interval '1 hour', transfer_hook_program = '${HOOK}' where github_repo_id = 10270250`, 'immutable once its launch was sent')
+        early_access_end = now() + interval '1 hour', transfer_hook_program = '${HOOK}', hook_rules = 1 where github_repo_id = 10270250`, 'immutable once its launch was sent')
       // Stamped, then sent: the stamp stays; other columns still update.
       await pool.query(set(10270250))
       const { rows: [{ end }] } = await pool.query('select early_access_end as end from markets where github_repo_id = 10270250')
       await pool.query(`update markets set status = 'submitted', mint = 'MintReact', pool = 'PoolReact', launch_signature = 'LaunchReact' where github_repo_id = 10270250`)
-      await refused(pool, `update markets set early_access_end = null, transfer_hook_program = null where github_repo_id = 10270250`, 'immutable once its launch was sent')
+      await refused(pool, `update markets set early_access_end = null, transfer_hook_program = null, hook_rules = null where github_repo_id = 10270250`, 'immutable once its launch was sent')
       await refused(pool, `update markets set early_access_end = early_access_end + interval '1 minute' where github_repo_id = 10270250`, 'immutable once its launch was sent')
       await refused(pool, `update markets set transfer_hook_program = '${PublicKey.default.toBase58().replace(/^1/, '2')}' where github_repo_id = 10270250`, 'immutable')
+      await refused(pool, `update markets set hook_rules = 3 where github_repo_id = 10270250`, 'immutable once its launch was sent')
+      await refused(pool, `update markets set hook_rules = null where github_repo_id = 10270250`, 'immutable once its launch was sent')
       await pool.query(`update markets set status = 'confirmed' where github_repo_id = 10270250`)
       const { rows: [row] } = await pool.query('select status, early_access_end as end, transfer_hook_program as program from markets where github_repo_id = 10270250')
       assert.deepEqual(row, { status: 'confirmed', end, program: HOOK })
