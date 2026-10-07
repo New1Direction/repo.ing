@@ -31,6 +31,7 @@ import { EARLY_ACCESS_HOOK_PROGRAM_ID as HOOK, MAX_EARLY_ACCESS_SECONDS, addWall
   initPlatformInstruction } from '../src/early-access-hook.mjs'
 import { EARLY_ACCESS_NOT_TRADABLE } from '../src/early-access.mjs'
 import { contributorsOnly, hookRefusal } from '../src/early-access-trade.mjs'
+import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
 import { associatedAccountLength } from '../src/trade-costs.mjs'
 import { POST as tradeRoute } from '../app/api/trade/route.js'
 import { GET as balanceRoute } from '../app/api/market/[mint]/balance/route.js'
@@ -88,7 +89,7 @@ async function stopValidator(work) {
   await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 }
 
-test('contributor early access launches end to end on mainnet\'s programs; SOL launches are unchanged', { timeout: 600_000 }, async t => {
+test('contributor early access launches end to end on mainnet\'s programs; SOL launches are unchanged', { timeout: 900_000 }, async t => {
   assert.match(RPC, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/, 'a local validator only')
   let work = process.env.EARLY_ACCESS_CHAIN_WORK_DIR, started = false
   const admin = new pg.Pool({ connectionString: URL_.replace(new RegExp(`${DATABASE}$`), 'postgres') })
@@ -454,6 +455,43 @@ test('contributor early access launches end to end on mainnet\'s programs; SOL l
         for (const name of GLOBALS) delete globalThis[name]
         Object.assign(globalThis, Object.fromEntries(Object.entries(saved.globals).filter(([, value]) => value !== undefined)))
       }
+    })
+
+    // Step 5f: the oracle's upkeep. While a window is open each list holds the linked wallets of the repository's contributors:
+    // alice's wallet joins the first market's empty list at once, and the wallet the oracle added by hand above leaves the second's on the
+    // next run (a removal waits for two runs in a row to agree). When alice links another wallet, the new one joins and the old one
+    // leaves a run later. A key that is not the platform's oracle sends nothing.
+    await t.test('the oracle keeps open windows\' lists equal to the contributors\' linked wallets', async () => {
+      const funding = await connection.requestAirdrop(oracle.publicKey, 1_000_000_000)
+      await connection.confirmTransaction({ signature: funding, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
+      const upkeep = createEarlyAccessOracle({ pool, connection, oracle, log: () => {} })
+      assert.deepEqual(await createEarlyAccessOracle({ pool, connection, oracle: Keypair.generate(), log: () => {} }).runOnce(), { status: 'ORACLE_MISMATCH' })
+      const alice = contributor.publicKey.toBase58()
+      assert.deepEqual(await allowList(firstMarket.mint), [])
+      const second = await allowList(secondMarket.mint)
+      assert.ok(second.length === 2 && second.includes(alice), 'the contributor launcher and the wallet the oracle added by hand')
+      const counts = async () => Object.fromEntries((await upkeep.runOnce()).results.map(entry => {
+        assert.equal(entry.error, undefined, JSON.stringify(entry))
+        return [entry.mint === firstMarket.mint ? 'first' : 'second', [entry.added, entry.removed]]
+      }))
+      const lists = async () => [await allowList(firstMarket.mint), await allowList(secondMarket.mint)]
+      assert.deepEqual(await counts(), { first: [1, 0], second: [0, 0] })
+      assert.deepEqual(await counts(), { first: [0, 0], second: [0, 1] })
+      assert.deepEqual(await lists(), [[alice], [alice]])
+      assert.deepEqual(await counts(), { first: [0, 0], second: [0, 0] })
+      // alice links another wallet: it joins both lists, and the old one leaves a run later.
+      const relinked = Keypair.generate().publicKey.toBase58()
+      await pool.query('update github_wallet_links set wallet = $1 where github_user_id = 501', [relinked])
+      try {
+        assert.deepEqual(await counts(), { first: [1, 0], second: [1, 0] })
+        assert.deepEqual(await counts(), { first: [0, 1], second: [0, 1] })
+        assert.deepEqual(await lists(), [[relinked], [relinked]])
+      } finally {
+        await pool.query('update github_wallet_links set wallet = $1 where github_user_id = 501', [alice])
+        await upkeep.runOnce()
+        await upkeep.runOnce()
+      }
+      assert.deepEqual(await lists(), [[alice], [alice]])
     })
 
     await t.test('without a first buy nobody is listed and nothing is removed', async () => {

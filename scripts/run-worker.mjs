@@ -40,6 +40,8 @@ import { createActivitySchedule, createConfigActivityFeed } from '../src/indexer
 import { approvedConfigs } from '../src/market-config.mjs'
 import { bundleCurveConfig } from '../src/bundles.mjs'
 import { bundleJobSettings, createBundleJobs } from '../src/bundle-jobs.mjs'
+import { createEarlyAccessOracle } from '../src/early-access-oracle.mjs'
+import { earlyAccessEnabled, earlyAccessOracle } from '../src/early-access.mjs'
 import { allocationEnabled } from '../src/builder-allocation.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { createDevPulseCollector } from '../src/dev-pulse.mjs'
@@ -136,6 +138,19 @@ async function observeBundles(){
   if(!bundleJobs){ if(bundleSettings)console.log(JSON.stringify({bundlesUnavailable:bundleSettings.missing??bundleSettings.error})); return }
   try{await bundleJobs.runOnce()}
   catch(error){console.log(JSON.stringify({bundleError:error?.code==='42P01'||error?.code==='42703'?'BUNDLES_NOT_MIGRATED':'BUNDLE_JOBS_UNAVAILABLE'}))}
+}
+// Contributor early access (docs/EARLY_ACCESS.md, step 5f): the oracle keeps each open window's allow list equal to the
+// contributors' linked wallets, and closes the list after the window. Dark unless EARLY_ACCESS_ENABLED is "true" and the oracle key
+// is set; a missing or malformed key is reported by name (once) and nothing runs.
+const earlyAccessKey = (() => { try { return earlyAccessEnabled() ? earlyAccessOracle() ?? { error: 'EARLY_ACCESS_ORACLE_SECRET_KEY is not set' } : null }
+  catch (error) { return { error: error.message } } })()
+const earlyAccessUpkeep = earlyAccessKey && !earlyAccessKey.error
+  ? createEarlyAccessOracle({ pool, connection: rpcConnection(rpc, 'confirmed'), oracle: earlyAccessKey }) : null
+let earlyAccessTask=null,nextEarlyAccessCheck=0,earlyAccessReported=false
+async function observeEarlyAccess(){
+  if(!earlyAccessUpkeep){ if(earlyAccessKey?.error&&!earlyAccessReported){earlyAccessReported=true;console.log(JSON.stringify({earlyAccessOracleUnavailable:earlyAccessKey.error}))} return }
+  try{await earlyAccessUpkeep.runOnce()}
+  catch(error){console.log(JSON.stringify({earlyAccessOracleError:error?.code==='42P01'||error?.code==='42703'?'EARLY_ACCESS_NOT_MIGRATED':'EARLY_ACCESS_ORACLE_UNAVAILABLE'}))}
 }
 const allocations = createAllocationRecovery({ pool, connection })
 const discovery = createDiscoveryClaims({ pool, connection, config })
@@ -415,6 +430,12 @@ try {
       if(once)await observeBundles()
       else if(!bundleTask&&Date.now()>=nextBundleCheck)
         bundleTask=observeBundles().finally(()=>{nextBundleCheck=Date.now()+30000;bundleTask=null})
+    }
+    // Once a minute: a contributor who links a wallet during a window can buy within about a minute.
+    if(earlyAccessKey){
+      if(once)await observeEarlyAccess()
+      else if(!earlyAccessTask&&Date.now()>=nextEarlyAccessCheck)
+        earlyAccessTask=observeEarlyAccess().finally(()=>{nextEarlyAccessCheck=Date.now()+60000;earlyAccessTask=null})
     }
     if(once)await observeTipWallet()
     else if(!tipMonitorTask&&Date.now()>=nextTipMonitorCheck)

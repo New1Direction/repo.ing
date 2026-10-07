@@ -23,6 +23,7 @@ test('the token page note: contributors who linked a wallet can buy until the en
   assert.match(out, /class="early-access-note"/)
   assert.match(out, /<time dateTime="2026-10-07T12:15:00.000Z">Oct 7, 12:15 UTC<\/time>/)
   assert.match(out, /only this repository(&#x27;|&apos;|')s contributors who linked a wallet can buy\. Anyone can sell\./)
+  assert.match(out, /Contributor\? <a href="\/contributors\/link">Link your\s+wallet<\/a>\./)
   assert.equal(html(h(EarlyAccessNote, { market: market('2026-10-07T11:00:00Z'), now: NOW })), '')
   assert.equal(html(h(EarlyAccessNote, { market: { mint: 'x' }, now: NOW })), '')
 })
