@@ -12,11 +12,12 @@ export const PLATFORM_FEE_PHASES = Object.freeze(['DBC', 'DAMM'])
 
 // `verification` overrides the DBC verification connection otherwise made from GRADUATION_VERIFICATION_RPC_URL
 // (the sweep passes one that goes through its RPC meter).
-// Contributor early access markets' curve fees (docs/EARLY_ACCESS.md, step 6f) are collected where EARLY_ACCESS_DBC_CONFIG is set.
+// Contributor early access markets' curve fees (docs/EARLY_ACCESS.md, step 6f) and, after their graduation, their DAMM v2 partner
+// fees (step 7d) are collected where EARLY_ACCESS_DBC_CONFIG is set.
 export function platformFeeService(phase = 'DBC', { pool, connection, config, partner, env = process.env, verification }) {
   if (phase === 'DBC') return createDbcPlatformFees({ pool, connection, config, partner, earlyAccess: tradingEarlyAccessConfig(env),
     verification: verification ?? (env.GRADUATION_VERIFICATION_RPC_URL ? new Connection(env.GRADUATION_VERIFICATION_RPC_URL, 'finalized') : null) })
-  if (phase === 'DAMM') return createPlatformFees({ pool, connection, config, partner })
+  if (phase === 'DAMM') return createPlatformFees({ pool, connection, config, partner, earlyAccess: tradingEarlyAccessConfig(env) })
   throw Error('Invalid fee phase')
 }
 

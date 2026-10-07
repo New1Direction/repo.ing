@@ -1,16 +1,20 @@
 import bs58 from 'bs58'
 import { broadcastUntilSettled, isDustPayout, maxPayoutNetworkFee, signedWithPriorityFee } from './trade-landing.mjs'
-import { PublicKey, Transaction } from '@solana/web3.js'
-import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { ComputeBudgetProgram, Keypair, PublicKey, Transaction } from '@solana/web3.js'
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { createGraduatedFees, recordPlatformFees } from './graduated-fees.mjs'
+import { assertGraduatedClaimInstructions, graduatedClaimInstructions } from './claim.mjs'
+import { isEarlyAccessMarket } from './early-access.mjs'
+import { EARLY_ACCESS_HOOK_PROGRAM_ID } from './early-access-hook.mjs'
 import { recoverDbcPlatformClaim } from './platform-dbc-fees.mjs'
 
-export async function platformFeeRecord(pool, repoId) {
+// earlyAccess: whether a contributor early access market is taken (EARLY_ACCESS_DBC_CONFIG set; docs/EARLY_ACCESS.md, step 7d).
+export async function platformFeeRecord(pool, repoId, { earlyAccess = false } = {}) {
   const id = String(repoId)
   const { rows: [market] } = await pool.query(`select github_repo_id::text as "githubRepoId", mint, pool,
-    creator_wallet as "creatorWallet" from markets
+    creator_wallet as "creatorWallet", early_access_end as "earlyAccessEnd", transfer_hook_program as "transferHookProgram" from markets
     where github_repo_id=$1 and status='confirmed' and indexed_at is not null and launch_finality='finalized'
-    and early_access_end is null and bundle_id is null`, [id])
+    and (early_access_end is null or $2::boolean) and bundle_id is null`, [id, Boolean(earlyAccess)])
   if (!market) return null
   const { rows: [state] } = await pool.query(`select coalesce((select sum(amount_base_units) from platform_fee_events
     where github_repo_id=$1),0)::text as earned`, [id])
@@ -40,11 +44,14 @@ export async function checkSettledCheckpoint({ connection, signature, read, befo
   }
 }
 
-export function createPlatformFees({ pool, connection, config, partner }) {
-  const graduatedFees = createGraduatedFees({ connection, config, db: pool })
+// earlyAccess (EARLY_ACCESS_DBC_CONFIG): a graduated contributor early access market's partner position is read and claimed too
+// (docs/EARLY_ACCESS.md, step 7d); without it such a market is not enrolled.
+export function createPlatformFees({ pool, connection, config, partner, earlyAccess = null, hookProgram = EARLY_ACCESS_HOOK_PROGRAM_ID }) {
+  const graduatedFees = createGraduatedFees({ connection, config, db: pool, earlyAccess, hookProgram, earlyAccessGraduated: true })
+  const recordOf = (db, repoId) => platformFeeRecord(db, repoId, { earlyAccess: Boolean(earlyAccess) })
 
   async function status(repoId) {
-    const record = await platformFeeRecord(pool, repoId)
+    const record = await recordOf(pool, repoId)
     if (!record) return { enrolled: false }
     const snapshot = await graduatedFees.read(record)
     if (!snapshot?.partner) return { enrolled: false }
@@ -63,7 +70,7 @@ export function createPlatformFees({ pool, connection, config, partner }) {
     try {
       await client.query('select pg_advisory_lock($1::bigint)', [repoId])
       try {
-        const record = await platformFeeRecord(client, repoId)
+        const record = await recordOf(client, repoId)
         if (!record) throw Error('Market is not indexed for platform fees')
         const outstanding = record.earned - record.paid
         const pending = (await client.query("select 1 from platform_fee_claims where github_repo_id=$1 and status='pending'", [repoId])).rows[0]
@@ -77,18 +84,34 @@ export function createPlatformFees({ pool, connection, config, partner }) {
         if (!receiver.equals(partner.publicKey)) throw Error('Platform fees pay the protected partner wallet')
         const p = snapshot.partner.poolState
         const claimTx = new Transaction()
-        claimTx.add(await retryRead(() => snapshot.amm.claimPositionFee2({ owner: partner.publicKey, feePayer: partner.publicKey,
-          receiver, pool: snapshot.partner.pool, position: snapshot.partner.position,
-          positionNftAccount: snapshot.partner.nftAccount,
-          tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint,
-          tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault,
-          tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID })))
+        // An early access market's claim (docs/EARLY_ACCESS.md, step 7d): token A on Token-2022, through a one-time WSOL account,
+        // exactly the builder claim's four instructions (src/claim.mjs), checked before signing and again after the network fee.
+        const temporary = isEarlyAccessMarket(record) ? Keypair.generate() : null
+        const hookClaim = temporary && { owner: partner.publicKey, receiver, temporary: temporary.publicKey, graduated: snapshot.partner,
+          tokenAProgram: TOKEN_2022_PROGRAM_ID }
+        if (hookClaim) {
+          const instructions = await graduatedClaimInstructions(snapshot.partner, hookClaim)
+          assertGraduatedClaimInstructions(instructions, hookClaim)
+          claimTx.add(...instructions)
+        } else {
+          claimTx.add(await retryRead(() => snapshot.amm.claimPositionFee2({ owner: partner.publicKey, feePayer: partner.publicKey,
+            receiver, pool: snapshot.partner.pool, position: snapshot.partner.position,
+            positionNftAccount: snapshot.partner.nftAccount,
+            tokenAMint: p.tokenAMint, tokenBMint: p.tokenBMint,
+            tokenAVault: p.tokenAVault, tokenBVault: p.tokenBVault,
+            tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID })))
+        }
         const latest = await retryRead(() => connection.getLatestBlockhash('confirmed'))
         // The partner pays the network fee (base + priority) out of the claim it receives.
         const { transaction: tx } = await signedWithPriorityFee(connection, claimTx, { feePayer: partner.publicKey,
-          blockhash: latest.blockhash, signers: [partner] })
+          blockhash: latest.blockhash, signers: [partner, ...temporary ? [temporary] : []] })
+        if (hookClaim) {
+          const budget = tx.instructions.filter(ix => ix.programId.equals(ComputeBudgetProgram.programId))
+          if (budget.length > 2) throw Error('Claim transaction does not match the expected claim')
+          assertGraduatedClaimInstructions(tx.instructions.filter(ix => !budget.includes(ix)), hookClaim)
+        }
         const fee = (await connection.getFeeForMessage(tx.compileMessage(), 'confirmed')).value
-        if (fee == null || BigInt(fee) > maxPayoutNetworkFee(1)) throw Error('Platform fee network cost is unavailable or above its ceiling')
+        if (fee == null || BigInt(fee) > maxPayoutNetworkFee(temporary ? 2 : 1)) throw Error('Platform fee network cost is unavailable or above its ceiling')
         if (isDustPayout(outstanding, fee)) return { status: 'skipped-dust', broadcast: false, amount: outstanding.toString(), networkFee: String(fee) }
         const simulation = await connection.simulateTransaction(tx)
         if (simulation.value.err) throw Error('Platform fee preflight failed')
@@ -121,9 +144,12 @@ export async function settlePlatformClaim(db, connection, intent) {
   const delta = BigInt(receipt.meta.postBalances[index] ?? 0) - BigInt(receipt.meta.preBalances[index] ?? 0)
   // claimPositionFee takes everything accrued at execution, so an active pool settles a little MORE than was
   // reviewed. The receiver is the fee payer (it pays the network fee; wrapped-SOL rent nets to zero), so the
-  // claimed amount is delta + fee. Record what actually settled, within sane bounds; the caller checks it
-  // against the position claim checkpoint.
-  const reviewed = BigInt(intent.amount), claimed = delta + BigInt(receipt.meta.fee)
+  // claimed amount is delta + fee, plus the rent it put into an account this transaction opened and left open (its
+  // first claim's account for the market token: a Token-2022 one for an early access market). Record what actually
+  // settled, within sane bounds; the caller checks it against the position claim checkpoint.
+  const opened = receipt.transaction.message.accountKeys.reduce((sum, _key, i) => i !== index &&
+    BigInt(receipt.meta.preBalances[i] ?? 0) === 0n && BigInt(receipt.meta.postBalances[i] ?? 0) > 0n ? sum + BigInt(receipt.meta.postBalances[i]) : sum, 0n)
+  const reviewed = BigInt(intent.amount), claimed = delta + BigInt(receipt.meta.fee) + opened
   if (claimed + 5_000_000n < reviewed || claimed > reviewed * 3n + 1_000_000_000n)
     throw Error('Settled platform fee delta differs from the reviewed amount')
   const settledAmount = claimed > reviewed ? claimed : reviewed

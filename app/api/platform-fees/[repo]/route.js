@@ -15,7 +15,7 @@ function service(phase = 'DAMM') {
   if (phase === 'DBC') return createDbcPlatformFees({ pool: database(), connection: chain(), config: configAddress(), partner, earlyAccess: tradingEarlyAccessConfig(),
     verification: process.env.GRADUATION_VERIFICATION_RPC_URL ? new Connection(process.env.GRADUATION_VERIFICATION_RPC_URL, 'finalized') : null })
   if (phase !== 'DAMM') throw Error('Invalid fee phase')
-  return createPlatformFees({ pool: database(), connection: chain(), config: configAddress(), partner })
+  return createPlatformFees({ pool: database(), connection: chain(), config: configAddress(), partner, earlyAccess: tradingEarlyAccessConfig() })
 }
 
 export async function GET(request, { params }) {
