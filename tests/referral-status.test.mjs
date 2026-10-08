@@ -38,7 +38,7 @@ test('payout status is read once per wallet per minute and shared; setup complet
   let clock = 1_000
   const fetcher = async url => { calls.push(url); return { ok: true, json: async () => ({ enabled: false, earningsLamports: '0', setupLamports: '2039280' }) } }
   const [first, second] = await Promise.all([loadReferralStatus(owner, { fetcher, now: () => clock }), loadReferralStatus(owner, { fetcher, now: () => clock })])
-  assert.deepEqual(first, { enabled: false, earningsLamports: '0', setupLamports: '2039280' })
+  assert.deepEqual(first, { enabled: false, earningsLamports: '0', setupLamports: '2039280', free: false })
   assert.equal(second, first)
   await loadReferralStatus(owner, { fetcher, now: () => clock + REFERRAL_STATUS_TTL_MS - 1 })
   assert.deepEqual(calls, [`/api/referral?wallet=${owner}`], 'concurrent and fresh reads share one request')

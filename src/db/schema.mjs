@@ -30,6 +30,28 @@ export const authHandoffs = pgTable('auth_handoffs', {
   index('auth_handoffs_expires_idx').on(table.expiresAt),
 ])
 
+// Migration 0063 (src/referral-sponsorship.mjs): free referral payout setups paid by the partner wallet; one per wallet.
+export const referralSponsorships = pgTable('referral_sponsorships', {
+  id: uuid('id').primaryKey(),
+  wallet: varchar('wallet', { length: 44 }).notNull(),
+  status: varchar('status', { length: 16 }).notNull(),
+  authMessage: text('auth_message').notNull(),
+  authExpiresAt: timestamp('auth_expires_at', { withTimezone: true }).notNull(),
+  transaction: text('transaction').notNull(),
+  signature: varchar('signature', { length: 88 }).notNull().unique(),
+  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }).notNull(),
+  rentLamports: bigint('rent_lamports', { mode: 'bigint' }),
+  feeLamports: bigint('fee_lamports', { mode: 'bigint' }),
+  resolutionReason: text('resolution_reason'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  settledAt: timestamp('settled_at', { withTimezone: true }),
+}, table => [
+  check('referral_sponsorships_status_check', sql`${table.status} in ('pending', 'settled', 'aborted')`),
+  check('referral_sponsorships_wallet_check', sql`${table.wallet} ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'`),
+  uniqueIndex('referral_sponsorships_one_per_wallet').on(table.wallet).where(sql`${table.status} in ('pending', 'settled')`),
+  index('referral_sponsorships_created_idx').on(table.createdAt),
+])
+
 export const builderReminders = pgTable('builder_reminders', {
   githubUserId: bigint('github_user_id', {mode:'bigint'}).primaryKey(),
   email: text('email').notNull(), revision: varchar('revision',{length:32}).notNull(),
@@ -371,9 +393,9 @@ export const discoveryClaims = pgTable('discovery_claims', {
   amount: bigint('amount', { mode: 'bigint' }).notNull(),
   status: varchar('status', { length: 16 }).notNull(),
   // Null while a message-authorized claim is 'prepared'; the server-signed payout once 'pending' (0035).
-  transaction: text('transaction'),
-  signature: varchar('signature', { length: 88 }),
-  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }),
+  transaction: text('transaction').notNull(),
+  signature: varchar('signature', { length: 88 }).notNull().unique(),
+  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   settledAt: timestamp('settled_at', { withTimezone: true }),
   resolutionReason: text('resolution_reason'),

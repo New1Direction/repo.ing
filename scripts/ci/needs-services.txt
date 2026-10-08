@@ -53,6 +53,7 @@ protocol-analytics
 reconcile
 referral
 referral-leaderboard-db
+referral-sponsorship-chain
 replica-state
 repo-streams-db
 reserve-alerts-integration

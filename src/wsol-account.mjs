@@ -7,18 +7,19 @@ export const ATA_PROGRAM = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsL
 
 export const wsolAta = owner => PublicKey.findProgramAddressSync([owner.toBuffer(), TOKEN_PROGRAM.toBuffer(), NATIVE_MINT.toBuffer()], ATA_PROGRAM)[0]
 
-// createAssociatedTokenAccountIdempotent(payer = owner = wallet, mint = WSOL): never touches funds beyond its rent.
-export function createWsolAtaInstruction(wallet) {
+// createAssociatedTokenAccountIdempotent(owner = wallet, mint = WSOL): never touches funds beyond its rent. The payer is the
+// wallet itself, or repo.ing's partner wallet for a free setup (src/referral-sponsorship.mjs); the wallet never signs then.
+export function createWsolAtaInstruction(wallet, payer = wallet) {
   return new TransactionInstruction({ programId: ATA_PROGRAM, data: Buffer.from([1]), keys: [
-    { pubkey: wallet, isSigner: true, isWritable: true }, { pubkey: wsolAta(wallet), isSigner: false, isWritable: true },
+    { pubkey: payer, isSigner: true, isWritable: true }, { pubkey: wsolAta(wallet), isSigner: false, isWritable: true },
     { pubkey: wallet, isSigner: false, isWritable: false }, { pubkey: NATIVE_MINT, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, { pubkey: TOKEN_PROGRAM, isSigner: false, isWritable: false }] })
 }
 
-export function isCreateWsolAta(ix, wallet) {
+export function isCreateWsolAta(ix, wallet, payer = wallet) {
   const k = ix.keys.map(key => key.pubkey)
   return ix.programId.equals(ATA_PROGRAM) && ix.data.length === 1 && ix.data[0] === 1 && k.length === 6 &&
-    k[0].equals(wallet) && k[1].equals(wsolAta(wallet)) && k[2].equals(wallet) && k[3].equals(NATIVE_MINT) &&
+    k[0].equals(payer) && k[1].equals(wsolAta(wallet)) && k[2].equals(wallet) && k[3].equals(NATIVE_MINT) &&
     k[4].equals(SystemProgram.programId) && k[5].equals(TOKEN_PROGRAM)
 }
 

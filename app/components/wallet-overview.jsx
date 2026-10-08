@@ -102,7 +102,7 @@ function ReferralEarnings({ wallet, provider }) {
   return <section className="inner-card wallet-referral" aria-label="Referral earnings" aria-busy={status === null}>
     <div><span>Referral earnings</span><strong>{status ? `${formatSolDisplay(status.earningsLamports)} SOL` : '—'}</strong></div>
     <p><em className={status?.enabled ? 'is-on' : ''}>{state}</em><small role="status">{note}</small></p>
-    {status && !status.enabled && <button className="button outline" type="button" onClick={enable} disabled={setup === 'busy'}>{setup === 'busy' ? 'Enabling…' : `Enable payouts (~${formatUnits(status.setupLamports, 9, 5)} SOL, refundable)`}</button>}
+    {status && !status.enabled && <button className="button outline" type="button" onClick={enable} disabled={setup === 'busy'}>{setup === 'busy' ? 'Enabling…' : status.free ? 'Enable payouts (free)' : `Enable payouts (~${formatUnits(status.setupLamports, 9, 5)} SOL, refundable)`}</button>}
   </section>
 }
 

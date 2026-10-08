@@ -16,7 +16,8 @@ function Payouts({ status, setup, enable }) {
     <p><strong>One step left: enable payouts.</strong> Referral fees are paid into your wallet’s wrapped-SOL account. Until it exists,
       trades from your link still go through, but no fee can reach you.</p>
     <button className="button primary" type="button" onClick={enable} disabled={setup === 'busy'}><Wallet size={16} aria-hidden="true"/>
-      {setup === 'busy' ? 'Enabling…' : `Enable payouts (≈${formatUnits(status.setupLamports, 9, 5)} SOL once, refundable)`}</button>
+      {setup === 'busy' ? 'Enabling…' : status.free ? 'Enable payouts (free)' : `Enable payouts (≈${formatUnits(status.setupLamports, 9, 5)} SOL once, refundable)`}</button>
+    {status.free && <small className="referral-payout-free">Free for now: repo.ing pays the setup. You only sign a message, with no SOL.</small>}
     {error}
   </div>
   return <div className="referral-payout-on">
