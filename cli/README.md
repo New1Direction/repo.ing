@@ -54,8 +54,11 @@ this computer (PKCE; the credit service never gets your GitHub token). Then the 
 SOL you chose, at the SOL/USD price of the moment, and the command prints a Solana Pay link. You pay it from your own
 wallet; credits come only after the payment is finalized on chain, and a payment that does not match goes to a review.
 
-The AI credits service is a devnet sandbox until repo.ing switches it on: by default the command uses one running on this
-computer (`--credits-origin`, or `REPOING_CREDITS_ORIGIN`).
+The AI credits service is `credits.repo.ing`, and the AI gateway for your coding tool is `inference.repo.ing`.
+Real conversion and pack sales stay off until repo.ing turns them on. To try the devnet staging services, pass
+`--credits-origin https://staging-credits.repo.ing` (and `--inference-origin https://staging-inference.repo.ing` for
+`repoing credits key`), or set `REPOING_CREDITS_ORIGIN` and `REPOING_INFERENCE_ORIGIN`. A devnet quote says so: set
+your wallet to Devnet before you pay.
 
 ## A key for your coding tool: `repoing credits key`
 
@@ -69,8 +72,7 @@ repoing credits revoke <key-id>             # stops a key at once
 The command signs you in through repo.ing in the same way and makes one key that can only run inference, valid 30 days,
 with a spending limit of at most your credits (at most 5 live keys). It prints `OPENAI_BASE_URL` and `OPENAI_API_KEY` for
 an OpenAI-compatible tool, once, and the key's ID; the key cannot buy credits or make other keys. If a key leaks, revoke
-it. The AI gateway is a sandbox on this computer for now (`--inference-origin`, or `REPOING_INFERENCE_ORIGIN`), and must
-be running for the tool to work.
+it. The AI gateway is `inference.repo.ing` (`--inference-origin`, or `REPOING_INFERENCE_ORIGIN`).
 
 ## A pack of credits: `repoing credits buy`
 

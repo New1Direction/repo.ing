@@ -1,12 +1,12 @@
 import { randomBytes } from 'node:crypto'
 import { DEFAULT_ORIGIN, validateOrigin } from './core.mjs'
-import { DEFAULT_CREDITS_ORIGIN, lamportsToSol, payLines, requestJson, signInForCredits, usd, validateCreditsOrigin, waitForOutcome } from './claim.mjs'
+import { DEFAULT_CREDITS_ORIGIN, lamportsToSol, networkNote, payLines, requestJson, signInForCredits, usd, validateCreditsOrigin, waitForOutcome } from './claim.mjs'
 
 // `repoing credits key`: one key for a coding tool, paid from the builder's AI credits (repo.ing AI credits, repo-inference's
 // docs/FEE-CONVERSION.md). It signs in through repo.ing like `repoing claim`, then asks the credit service for one
 // inference-only key with a spending limit the builder chooses (at most the account's credits), valid 30 days. The key
 // can only run inference: it cannot buy credits or make keys. The token is printed once and kept nowhere.
-export const DEFAULT_INFERENCE_ORIGIN = 'http://127.0.0.1:8788'
+export const DEFAULT_INFERENCE_ORIGIN = 'https://inference.repo.ing'
 const MIN_LIMIT_MICRO = 10_000
 
 /** "20" or "$20.50" → micro-USD, exactly; at most 2 decimals. */
@@ -89,7 +89,7 @@ credits: it shows the odds, asks you to confirm, and each paid pack spins once f
 Options:
   --limit <USD>           Spending limit (default: all your credits)
   --label <name>          A name for the key, like the tool or the computer (default coding-tool)
-  --inference-origin <u>  The AI gateway (default ${DEFAULT_INFERENCE_ORIGIN}; a sandbox for now)
+  --inference-origin <u>  The AI gateway (default ${DEFAULT_INFERENCE_ORIGIN})
   --credits-origin <u>    The AI credits service (default ${DEFAULT_CREDITS_ORIGIN})
   --no-open               Print links instead of opening the browser
   --origin <url>          Override repo.ing origin (dev/testing)
@@ -199,7 +199,7 @@ export async function runCreditsBuy(options, { repository, io, fetchImpl = fetch
   if (!signedIn) return { outcome: 'no_market' }
   const { base, authorization } = signedIn
   const offer = await requestJson(fetchImpl, `${base}/packs`, { headers: { authorization } })
-  if (offer.sales !== 'sandbox') { io.print('• Credit packs are not on sale yet.'); return { outcome: 'off' } }
+  if (!['sandbox', 'live'].includes(offer.sales)) { io.print('• Credit packs are not on sale yet.'); return { outcome: 'off' } }
   const odds = oddsLines(offer.policy)
   if (!odds) throw new Error('The credit service returned invalid odds.')
   io.print('\nCredit packs: $10, $25, $50 or $100, paid in SOL. Odds for each paid pack:')
@@ -217,7 +217,7 @@ export async function runCreditsBuy(options, { repository, io, fetchImpl = fetch
   }
   const pay = payLines(quote.solana_pay_url)
   io.print(`\nPay exactly ${lamportsToSol(BigInt(quote.lamports))} SOL from your wallet: scan the code with your phone wallet, or open the Solana Pay link:`)
-  for (const line of pay) io.print(line)
+  for (const line of [...networkNote(quote), ...pay]) io.print(line)
   const expires = new Date(quote.expires_at)
   io.print(`The quote expires ${Number.isNaN(expires.getTime()) ? 'in 15 minutes' : expires.toLocaleTimeString()}. Waiting for the payment to finalize on chain…`)
   const final = await wait({ creditsOrigin: options.creditsOrigin, token: authorization.slice('Bearer '.length), id: quote.id, fetchImpl })
