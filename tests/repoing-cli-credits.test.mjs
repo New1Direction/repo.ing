@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { DEFAULT_INFERENCE_ORIGIN, parseCreditsArgs, runCredits, runCreditsKey, usdToMicro } from '../cli/src/credits.mjs'
+import { DEFAULT_INFERENCE_ORIGIN, parseCreditsArgs, runCredits, runCreditsBuy, runCreditsKey, usdToMicro } from '../cli/src/credits.mjs'
 
 // `repoing credits key` (cli/src/credits.mjs): arguments, amounts, and the whole flow with repo.ing and the credit service
 // scripted (the sign-in listener is real, on 127.0.0.1).
@@ -8,7 +8,7 @@ const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, stat
 const TOKEN = `rik_${'ab'.repeat(32)}`
 
 test('arguments: a USD limit in cents, a label, safe origins', () => {
-  assert.deepEqual(parseCreditsArgs(['key', 'octo/widget'], {}), { command: 'credits-key', repository: 'octo/widget', keyId: null, limitMicro: null, label: 'coding-tool',
+  assert.deepEqual(parseCreditsArgs(['key', 'octo/widget'], {}), { command: 'credits-key', repository: 'octo/widget', keyId: null, limitMicro: null, packMicro: null, label: 'coding-tool',
     open: true, origin: 'https://repo.ing', creditsOrigin: 'http://127.0.0.1:8794', inferenceOrigin: DEFAULT_INFERENCE_ORIGIN })
   const custom = parseCreditsArgs(['key', '--limit', '20.5', '--label', 'cursor laptop', '--inference-origin', 'https://ai.example/x'], {})
   assert.deepEqual([custom.limitMicro, custom.label, custom.inferenceOrigin], [20_500_000, 'cursor laptop', 'https://ai.example'])
@@ -23,13 +23,23 @@ test('arguments: a USD limit in cents, a label, safe origins', () => {
     [['key', '--label', 'x'.repeat(65)], /label/], [['key', '--inference-origin', 'http://ai.example'], /HTTPS/], [['key', '--bogus'], /Unknown/]]) {
     assert.throws(() => parseCreditsArgs(args, {}), message, args.join(' '))
   }
+  assert.deepEqual([parseCreditsArgs(['buy'], {}).command, parseCreditsArgs(['buy'], {}).packMicro], ['credits-buy', null])
+  assert.deepEqual([parseCreditsArgs(['buy', '25'], {}).packMicro, parseCreditsArgs(['buy', '$50', 'octo/widget'], {}).repository], [25_000_000, 'octo/widget'])
+  assert.deepEqual([parseCreditsArgs(['buy', 'octo/widget', '100'], {}).packMicro, parseCreditsArgs(['buy', 'octo/widget'], {}).repository], [100_000_000, 'octo/widget'])
+  for (const args of [['buy', '30'], ['buy', '$5'], ['buy', '25', '50']]) assert.throws(() => parseCreditsArgs(args, {}), /\$10, \$25, \$50 or \$100/, args.join(' '))
+  assert.throws(() => parseCreditsArgs(['buy', '--limit', '5'], {}), /is for repoing credits key/)
   assert.equal(parseCreditsArgs(['--help'], {}).command, 'credits-help')
   assert.equal(parseCreditsArgs(['key', '--help'], {}).command, 'credits-help')
 })
 
 // repo.ing and the credit service, scripted; every request recorded.
 const KEY_ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
-function services({ mint = 'MintWidget', paid = 75_000_000, refuse = null, token = `rik_${'cd'.repeat(32)}` } = {}) {
+const QUOTE_ID = '2f8fad5b-d9cb-469f-a165-70867728950e'
+const PAY_URL = `solana:7WZRJ4to98TLKhiWqoNfqWwYcxrqN8KsBJWXdTxq2KUY?amount=0.166666667&reference=Ref1111111111111111111111111111111111111111&label=repo.ing%20AI%20credits&message=Credit%20pack%20${QUOTE_ID}`
+const OFFER = { sales: 'sandbox', account_room_micro: 250_000_000, quote_seconds: 900, policy: { odds_version: 'sol-pack-v1', probability_denominator: 10_000,
+  outcomes: [{ multiplier_bps: 10_000, probability_bps: 9_715 }, { multiplier_bps: 12_000, probability_bps: 250 }, { multiplier_bps: 20_000, probability_bps: 30 },
+    { multiplier_bps: 50_000, probability_bps: 5 }], expected_multiplier_bps: 10_100 } }
+function services({ mint = 'MintWidget', paid = 75_000_000, refuse = null, token = `rik_${'cd'.repeat(32)}`, offer = OFFER, payUrl = PAY_URL } = {}) {
   const requests = []
   const fetchImpl = async (url, init = {}) => {
     const target = new URL(url), body = init.body ? JSON.parse(init.body) : null
@@ -45,6 +55,9 @@ function services({ mint = 'MintWidget', paid = 75_000_000, refuse = null, token
       { id: '1f8fad5b-d9cb-469f-a165-70867728950e', label: 'evil\u001b[2Jlabel', budget_micro: 1, spent_micro: 0, revoked: true, expires_at: '2099-01-01T00:00:00Z' },
       { id: 'not-an-id', label: 'x' }] })
     if (target.pathname === `/keys/${KEY_ID}/revoke`) return json({ id: KEY_ID, revoked: true })
+    if (target.pathname === '/packs' && init.method === 'POST') return json({ id: QUOTE_ID, kind: 'pack', status: 'awaiting_payment', pack_micro: body.pack_micro,
+      lamports: 166_666_667, credit_micro: body.pack_micro, price_micro_per_sol: 150_000_000, expires_at: '2026-10-08T12:15:00Z', spin: null, solana_pay_url: payUrl })
+    if (target.pathname === '/packs') return json(offer)
     return json({ error: 'not found' }, 404)
   }
   return { fetchImpl, requests }
@@ -115,4 +128,52 @@ test('no market: no sign-in; a refusal from the ledger is shown as it is', async
   assert.deepEqual(opened, [])
   await assert.rejects(runCreditsKey(options({ limitMicro: 1_000_000 }), { repository: 'r', io: browser([]), fetchImpl: services({ refuse: 'too many live keys' }).fetchImpl }),
     /too many live keys/)
+})
+
+// `repoing credits buy`: a SOL credit pack (repo-inference docs/PACKS.md), with the payment's wait scripted.
+const spun = (multiplier, extra = {}) => async () => ({ id: QUOTE_ID, status: 'credited', review_pending: false, pack_micro: 25_000_000,
+  spin: { multiplier_bps: multiplier, paid_micro: 25_000_000, bonus_micro: 25_000_000 * (multiplier - 10_000) / 10_000, odds_version: 'sol-pack-v1', plush: false, ...extra } })
+
+test('buy: the odds before the price, a confirmed pack, the Solana Pay link, then the spin', async () => {
+  const { fetchImpl, requests } = services()
+  const printed = []
+  const result = await runCreditsBuy(options({ command: 'credits-buy', packMicro: null }), { repository: 'r', io: browser(printed, ['25', 'y']), fetchImpl, wait: spun(12_000) })
+  assert.deepEqual(result, { outcome: 'credited', quote: QUOTE_ID, multiplierBps: 12_000, paidMicro: 25_000_000, bonusMicro: 5_000_000 })
+  const text = printed.join('\n')
+  for (const line of [/97\.15% +1x/, /2\.50% +1\.2x/, /0\.30% +2x/, /0\.05% +5x/, /never less than you pay/i, /never turn into cash/i]) assert.match(text, line)
+  const pack = requests.find(r => r.url.endsWith('/packs') && r.method === 'POST')
+  assert.deepEqual([pack.body, pack.headers.authorization], [{ pack_micro: 25_000_000 }, `Bearer ${TOKEN}`])
+  assert.match(pack.headers['idempotency-key'], /^[A-Za-z0-9_-]{22}$/)
+  assert.ok(printed.includes(PAY_URL), 'the link on its own line')
+  assert.match(text, /Pay exactly 0\.166666667 SOL/)
+  assert.match(text, /1\.2x.*\$25\.00 of AI credits \+ \$5\.00 bonus/)
+})
+
+test('buy: nothing is asked for when the buyer says no, sales are off, or the day has no room', async () => {
+  const no = services()
+  assert.equal((await runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser([], ['n']), fetchImpl: no.fetchImpl, wait: spun(10_000) })).outcome, 'cancelled')
+  assert.equal(no.requests.some(r => r.url.endsWith('/packs') && r.method === 'POST'), false)
+  const off = services({ offer: { sales: 'off', account_room_micro: 0, policy: OFFER.policy } }), offPrinted = []
+  assert.equal((await runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(offPrinted, ['y']), fetchImpl: off.fetchImpl, wait: spun(10_000) })).outcome, 'off')
+  assert.ok(offPrinted.some(line => /not on sale yet/.test(line)))
+  const full = services({ offer: { ...OFFER, account_room_micro: 10_000_000 } }), fullPrinted = []
+  assert.equal((await runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(fullPrinted, ['y']), fetchImpl: full.fetchImpl, wait: spun(10_000) })).outcome, 'no_room')
+  assert.ok(fullPrinted.some(line => /\$10\.00 left today/.test(line)))
+  for (const s of [off, full]) assert.equal(s.requests.some(r => r.url.endsWith('/packs') && r.method === 'POST'), false)
+})
+
+test('buy: review, expiry and a malformed link or spin are reported without foreign text', async () => {
+  const review = []
+  const waitReview = async () => ({ id: QUOTE_ID, status: 'awaiting_payment', review_pending: true, spin: null })
+  assert.equal((await runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(review, ['y']), fetchImpl: services().fetchImpl, wait: waitReview })).outcome, 'review')
+  assert.ok(review.some(line => /review/.test(line) && /no spin/.test(line)))
+  const expired = []
+  assert.equal((await runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(expired, ['y']), fetchImpl: services().fetchImpl,
+    wait: async () => ({ id: QUOTE_ID, status: 'expired', review_pending: false, spin: null }) })).outcome, 'expired')
+  const evil = []
+  await assert.rejects(runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(evil, ['y']),
+    fetchImpl: services({ payUrl: 'solana:x?amount=1\n\u001b[2Jpay https://evil.example' }).fetchImpl, wait: spun(10_000) }), /invalid quote/)
+  assert.equal(evil.some(line => /evil|\u001b/.test(line)), false)
+  await assert.rejects(runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser([], ['y']), fetchImpl: services().fetchImpl,
+    wait: spun(12_000, { bonus_micro: 999 }) }), /invalid spin/)
 })
