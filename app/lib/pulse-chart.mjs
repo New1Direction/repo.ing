@@ -48,10 +48,12 @@ function pinOf(time, events) {
 // important event; zooming in separates them again. gap: the smallest distance between pin centres, in pixels.
 export function pulseClusters(placed, gap) {
   const clusters = []
+  // A group is measured from its first pin, never from its last: pins spaced just under the gap (an event every hour
+  // on a long chart) would otherwise chain into one group drawn at the start of the run.
   for (const pin of placed) {
     const previous = clusters.at(-1)
-    if (previous && pin.x - previous.last < gap) { previous.members.push(pin); previous.last = pin.x }
-    else clusters.push({ members: [pin], last: pin.x })
+    if (previous && pin.x - previous.first < gap) previous.members.push(pin)
+    else clusters.push({ members: [pin], first: pin.x })
   }
   return clusters.map(({ members }) => {
     if (members.length === 1) return members[0]
