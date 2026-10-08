@@ -76,7 +76,7 @@ function services({ available = '600000000', mint = 'MintWidget', outcome = { st
     if (target.pathname === '/api/claim/77/preview') return json({ available })
     if (target.pathname === '/sessions') return json({ account_id: 'a', login: 'octocat', repo_id: '77', token: `rik_${'ab'.repeat(32)}` })
     if (target.pathname === '/quotes') return json({ id: 'q1', lamports: Number(body.lamports), credit_micro: 75_000_000, price_micro_per_sol: 150_000_000,
-      expires_at: new Date(Date.now() + 900_000).toISOString(), solana_pay_url: payUrl ?? `solana:${TREASURY}?amount=${body.lamports}`, status: 'awaiting_payment' })
+      expires_at: new Date(Date.now() + 900_000).toISOString(), solana_pay_url: payUrl ?? `solana:${TREASURY}?amount=${body.lamports}`, status: 'awaiting_payment', network: 'devnet' })
     if (target.pathname === '/quotes/q1') return json({ id: 'q1', ...outcome })
     return json({ error: 'not found' }, 404)
   }
@@ -107,6 +107,7 @@ test('convert: sign in through repo.ing with PKCE, a quote for the chosen SOL, i
   assert.deepEqual([quote.body, quote.headers.authorization], [{ lamports: '500000000' }, `Bearer rik_${'ab'.repeat(32)}`])
   assert.match(quote.headers['idempotency-key'], /^[A-Za-z0-9_-]{22}$/)
   assert.ok(printed.some(line => /Pay exactly 0\.5 SOL/.test(line)))
+  assert.ok(printed.some(line => /devnet test quote: set your wallet to Devnet/.test(line)), 'a devnet quote says so')
   const link = printed.indexOf(`solana:${TREASURY}?amount=500000000`)
   const rows = printed.slice(0, link).reverse().findIndex(line => !/^[█▀▄ ]+$/.test(line))
   assert.ok(rows >= 12, `the link on its own line, after its QR code (${rows} rows)`)
@@ -143,4 +144,9 @@ test('claim to wallet opens the claim page; no market or a stock pair says so; r
     await runClaim(options({ mode: 'convert', lamports: 100_000_000n }), { repository: 'r', io: browser, fetchImpl: services().fetchImpl, wait: async () => outcome })
     assert.ok(printed.some(line => expected.test(line)), printed.join('\n'))
   }
+})
+
+test('the credit service is credits.repo.ing unless another is given', () => {
+  assert.equal(DEFAULT_CREDITS_ORIGIN, 'https://credits.repo.ing')
+  assert.equal(parseClaimArgs([], { REPOING_CREDITS_ORIGIN: 'https://staging-credits.repo.ing' }).creditsOrigin, 'https://staging-credits.repo.ing')
 })

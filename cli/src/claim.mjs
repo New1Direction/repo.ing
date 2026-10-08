@@ -6,8 +6,9 @@ import { DEFAULT_ORIGIN, VERSION, validateOrigin } from './core.mjs'
 // `repoing claim`: a builder's fees, either claimed to the bound wallet on repo.ing (unchanged) or converted into AI credits
 // (repo.ing AI credits, repo-inference's docs/FEE-CONVERSION.md). Converting signs in through repo.ing with PKCE (the browser
 // approves; repo.ing sends a single-use code to a one-time listener on 127.0.0.1), then asks the credit service for a quote
-// and shows its Solana Pay link. The credit service is a devnet sandbox until repo.ing switches it on.
-export const DEFAULT_CREDITS_ORIGIN = 'http://127.0.0.1:8794'
+// and shows its Solana Pay link. The credit service is credits.repo.ing (staging: --credits-origin
+// https://staging-credits.repo.ing, on Solana devnet); real conversion stays off until repo.ing turns it on.
+export const DEFAULT_CREDITS_ORIGIN = 'https://credits.repo.ing'
 export const HANDOFF_AUDIENCE = 'repo-inference'
 export const SIGN_IN_TIMEOUT_MS = 5 * 60_000
 const LAMPORTS_PER_SOL = 1_000_000_000n
@@ -35,6 +36,10 @@ export function lamportsToSol(lamports) {
 export const usd = micro => `$${(Number(BigInt(micro) / 10_000n) / 100).toFixed(2)}`
 // A Solana Pay link from the credit service: shown only when it has nothing but URL characters.
 const PAY_URL = /^solana:[1-9A-HJ-NP-Za-km-z]{32,44}\?[A-Za-z0-9%=&._-]{1,600}$/
+/** A Solana Pay link cannot name its network: a devnet quote (staging) says so before anything is paid. */
+export function networkNote(quote) {
+  return quote?.network === 'devnet' ? ['This is a devnet test quote: set your wallet to Devnet before you pay. SOL sent on mainnet to this link is not seen.'] : []
+}
 /** The lines that show a Solana Pay link: a QR code for a phone wallet (light on a dark terminal), then the link. */
 export function payLines(url) {
   if (typeof url !== 'string' || !PAY_URL.test(url)) throw new Error('The credit service returned an invalid payment link. Nothing was paid; run the command again.')
@@ -168,7 +173,7 @@ If no repository is supplied, repoing reads the current git origin.
 Options:
   --to-wallet           Claim to your bound wallet on repo.ing (opens the claim page)
   --convert <SOL>       Convert: sign in through repo.ing, then pay this much SOL for AI credits
-  --credits-origin <u>  The AI credits service (default ${DEFAULT_CREDITS_ORIGIN}; a devnet sandbox for now)
+  --credits-origin <u>  The AI credits service (default ${DEFAULT_CREDITS_ORIGIN})
   --no-open             Print links instead of opening the browser
   --origin <url>        Override repo.ing origin (dev/testing)
 
@@ -225,7 +230,7 @@ export async function runClaim(options, { repository, io, fetchImpl = fetch, lis
   const quote = await requestQuote({ creditsOrigin: options.creditsOrigin, token: session.token, lamports, fetchImpl })
   const pay = payLines(quote.solana_pay_url)
   io.print(`\nPay exactly ${lamportsToSol(quote.lamports)} SOL from your wallet: scan the code with your phone wallet, or open the Solana Pay link:`)
-  for (const line of pay) io.print(line)
+  for (const line of [...networkNote(quote), ...pay]) io.print(line)
   io.print(`You get ${usd(quote.credit_micro)} of AI credits (SOL at ${usd(quote.price_micro_per_sol)}). The quote expires ${new Date(quote.expires_at).toLocaleTimeString()}.`)
   io.print('Waiting for the payment to finalize on chain…')
   const final = await wait({ creditsOrigin: options.creditsOrigin, token: session.token, id: quote.id, fetchImpl })

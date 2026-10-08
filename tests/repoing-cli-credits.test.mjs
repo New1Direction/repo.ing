@@ -9,7 +9,8 @@ const TOKEN = `rik_${'ab'.repeat(32)}`
 
 test('arguments: a USD limit in cents, a label, safe origins', () => {
   assert.deepEqual(parseCreditsArgs(['key', 'octo/widget'], {}), { command: 'credits-key', repository: 'octo/widget', keyId: null, limitMicro: null, packMicro: null, label: 'coding-tool',
-    open: true, origin: 'https://repo.ing', creditsOrigin: 'http://127.0.0.1:8794', inferenceOrigin: DEFAULT_INFERENCE_ORIGIN })
+    open: true, origin: 'https://repo.ing', creditsOrigin: 'https://credits.repo.ing', inferenceOrigin: DEFAULT_INFERENCE_ORIGIN })
+  assert.equal(DEFAULT_INFERENCE_ORIGIN, 'https://inference.repo.ing')
   const custom = parseCreditsArgs(['key', '--limit', '20.5', '--label', 'cursor laptop', '--inference-origin', 'https://ai.example/x'], {})
   assert.deepEqual([custom.limitMicro, custom.label, custom.inferenceOrigin], [20_500_000, 'cursor laptop', 'https://ai.example'])
   assert.equal(parseCreditsArgs(['key'], { REPOING_INFERENCE_ORIGIN: 'https://ai.example' }).inferenceOrigin, 'https://ai.example')
@@ -39,7 +40,7 @@ const PAY_URL = `solana:7WZRJ4to98TLKhiWqoNfqWwYcxrqN8KsBJWXdTxq2KUY?amount=0.16
 const OFFER = { sales: 'sandbox', account_room_micro: 250_000_000, quote_seconds: 900, policy: { odds_version: 'sol-pack-v1', probability_denominator: 10_000,
   outcomes: [{ multiplier_bps: 10_000, probability_bps: 9_715 }, { multiplier_bps: 12_000, probability_bps: 250 }, { multiplier_bps: 20_000, probability_bps: 30 },
     { multiplier_bps: 50_000, probability_bps: 5 }], expected_multiplier_bps: 10_100 } }
-function services({ mint = 'MintWidget', paid = 75_000_000, refuse = null, token = `rik_${'cd'.repeat(32)}`, offer = OFFER, payUrl = PAY_URL } = {}) {
+function services({ mint = 'MintWidget', paid = 75_000_000, refuse = null, token = `rik_${'cd'.repeat(32)}`, offer = OFFER, payUrl = PAY_URL, network = 'devnet' } = {}) {
   const requests = []
   const fetchImpl = async (url, init = {}) => {
     const target = new URL(url), body = init.body ? JSON.parse(init.body) : null
@@ -56,7 +57,7 @@ function services({ mint = 'MintWidget', paid = 75_000_000, refuse = null, token
       { id: 'not-an-id', label: 'x' }] })
     if (target.pathname === `/keys/${KEY_ID}/revoke`) return json({ id: KEY_ID, revoked: true })
     if (target.pathname === '/packs' && init.method === 'POST') return json({ id: QUOTE_ID, kind: 'pack', status: 'awaiting_payment', pack_micro: body.pack_micro,
-      lamports: 166_666_667, credit_micro: body.pack_micro, price_micro_per_sol: 150_000_000, expires_at: '2026-10-08T12:15:00Z', spin: null, solana_pay_url: payUrl })
+      lamports: 166_666_667, credit_micro: body.pack_micro, price_micro_per_sol: 150_000_000, expires_at: '2026-10-08T12:15:00Z', spin: null, solana_pay_url: payUrl, network })
     if (target.pathname === '/packs') return json(offer)
     return json({ error: 'not found' }, 404)
   }
@@ -177,4 +178,14 @@ test('buy: review, expiry and a malformed link or spin are reported without fore
   assert.equal(evil.some(line => /evil|\u001b/.test(line)), false)
   await assert.rejects(runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser([], ['y']), fetchImpl: services().fetchImpl,
     wait: spun(12_000, { bonus_micro: 999 }) }), /invalid spin/)
+})
+
+test('buy: live sales are on sale too; a devnet quote says to set the wallet to devnet, a mainnet one does not', async () => {
+  const live = services({ offer: { ...OFFER, sales: 'live' }, network: 'mainnet' }), printed = []
+  const result = await runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(printed, ['y']), fetchImpl: live.fetchImpl, wait: spun(10_000) })
+  assert.equal(result.outcome, 'credited')
+  assert.equal(printed.some(line => /devnet/i.test(line)), false, 'mainnet: no devnet note')
+  const test = services(), testPrinted = []
+  await runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(testPrinted, ['y']), fetchImpl: test.fetchImpl, wait: spun(10_000) })
+  assert.ok(testPrinted.some(line => /devnet test quote: set your wallet to Devnet/.test(line)), testPrinted.join('\n'))
 })
