@@ -4,7 +4,7 @@
 .launch-pair-options{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.7fr);gap:10px}
 .launch-pair-option{position:relative;display:flex;flex-direction:column;gap:2px;min-width:0;padding:12px 14px 12px 40px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);cursor:pointer;transition:border-color .15s,background-color .15s}
 .launch-pair-option input{position:absolute;top:15px;left:14px;width:16px;height:16px;margin:0;accent-color:var(--green)}
-.launch-pair-option:hover{border-color:var(--green)}
+@media(hover:hover){.launch-pair-option:hover{border-color:var(--green)}}
 .launch-pair-option:has(input:focus-visible){outline:2px solid var(--green);outline-offset:2px}
 .launch-pair-option.is-selected{border-color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface))}
 .launch-pair-symbol{color:var(--text);font-size:15px;font-weight:700;letter-spacing:.01em}
@@ -25,7 +25,7 @@
 /* The early access options (fair ramp, star unlocks): checkbox cards in the pair chooser's style. */
 .launch-early-access-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
 .launch-early-access-option:has(input:disabled){cursor:default;opacity:.6}
-.launch-early-access-option:has(input:disabled):hover{border-color:var(--border-strong)}
+@media(hover:hover){.launch-early-access-option:has(input:disabled):hover{border-color:var(--border-strong)}}
 @media(max-width:700px){.launch-early-access-options{grid-template-columns:1fr}}
 /* With the fair ramp the first buy has three presets (No buy, 1%, Max 2%): three equal columns. */
 .launch-buy-presets.launch-buy-presets-ramp{grid-template-columns:repeat(3,minmax(0,1fr))}

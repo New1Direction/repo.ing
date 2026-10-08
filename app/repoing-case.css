@@ -10,7 +10,9 @@
 .repoing-case h2{margin:0;color:var(--text);font-size:24px;line-height:1.2;letter-spacing:-.02em;text-wrap:balance}
 .repoing-case-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px 18px;margin-top:auto;padding-top:8px}
 .repoing-case-link{display:inline-flex;align-items:center;gap:5px;color:var(--green);font-size:13px;font-weight:650}
-.repoing-case-link:hover,.repoing-case-link:focus-visible{text-decoration:underline}
+.repoing-case-link:focus-visible{text-decoration:underline}
+@media (hover:hover) {
+.repoing-case-link:hover{text-decoration:underline}}
 .repoing-case-facts{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);margin:0}
 .repoing-case-fact{display:flex;flex-direction:column;gap:7px;min-width:0;min-height:142px;padding:2px 0 2px 20px;margin-left:20px;border-left:1px solid var(--border)}
 .repoing-case-fact:first-child{margin-left:0}

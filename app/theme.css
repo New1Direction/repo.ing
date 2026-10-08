@@ -3,7 +3,7 @@
 .brand-mark{display:inline-block;position:relative;overflow:hidden;flex:none;border-radius:50%}
 .brand-mark img{display:block;width:100%;height:100%}
 .brand-accent{color:#81e6ad}
-.theme-toggle:hover{background:#222629;color:var(--text)}
+@media(hover:hover){.theme-toggle:hover{background:#222629;color:var(--text)}}
 .theme-toggle .moon-icon{display:none}
 [data-theme=light] .theme-toggle .sun-icon{display:none}
 [data-theme=light] .theme-toggle .moon-icon{display:block}
@@ -17,15 +17,15 @@
 [data-theme=light] .app-header nav a.active{color:var(--text)}
 [data-theme=light] .app-header nav a.active:after{background:var(--text)}
 [data-theme=light] .theme-toggle{color:#384a3f}
-[data-theme=light] .theme-toggle:hover{background:#e7eee9}
+@media(hover:hover){[data-theme=light] .theme-toggle:hover{background:#e7eee9}}
 [data-theme=light] .button{color:var(--text)}
-[data-theme=light] .button:hover:not(:disabled){border-color:#8da99a;background:#eaf2ec}
+@media(hover:hover){[data-theme=light] .button:hover:not(:disabled){border-color:#8da99a;background:#eaf2ec}}
 [data-theme=light] .button.primary{color:#10291b}
-[data-theme=light] .button.primary:hover:not(:disabled){background:#46d58f;border-color:#46d58f}
+@media(hover:hover){[data-theme=light] .button.primary:hover:not(:disabled){background:#46d58f;border-color:#46d58f}}
 [data-theme=light] .button.white{background:#193e2a;border-color:#193e2a;color:#fff}
-[data-theme=light] .button.white:hover{background:#28563b}
+@media(hover:hover){[data-theme=light] .button.white:hover{background:#28563b}}
 [data-theme=light] .wallet-error{background:#fff1f1;border-color:#dfafb3;color:#8a242d}
-[data-theme=light] .wallet-options button:hover:not(:disabled),[data-theme=light] .wallet-options a:hover{background:#e1f1e6}
+@media(hover:hover){[data-theme=light] .wallet-options button:hover:not(:disabled),[data-theme=light] .wallet-options a:hover{background:#e1f1e6}}
 [data-theme=light] .wallet-option-icon{background:#dcebe0;color:#168b59}
 
 [data-theme=light] .section-heading p,[data-theme=light] .search-helper,[data-theme=light] .page-intro p,[data-theme=light] .launch-subtitle,[data-theme=light] .info-intro p{color:#53645a}
@@ -33,15 +33,15 @@
 [data-theme=light] .repo-search input,[data-theme=light] .explore-search input{color:var(--text)}
 [data-theme=light] .repo-search input::placeholder,[data-theme=light] .explore-search input::placeholder{color:#738277}
 [data-theme=light] .repo-search button{background:#ecf2ed;border-color:#c5d1c8;color:#203529}
-[data-theme=light] .repo-search button:hover{background:#dcebe0}
+@media(hover:hover){[data-theme=light] .repo-search button:hover{background:#dcebe0}}
 [data-theme=light] .view-all,[data-theme=light] .back-link{color:#30493a}
-[data-theme=light] .back-link:hover{color:#142a1b}
+@media(hover:hover){[data-theme=light] .back-link:hover{color:#142a1b}}
 [data-theme=light] .subtle-notice{color:#92592a}
 [data-theme=light] .inline-error{color:#a5333e}
 
 [data-theme=light] .market-table{background:#fff}
 [data-theme=light] .market-head,[data-theme=light] .table-count,[data-theme=light] .unavailable-metric{color:#647269}
-[data-theme=light] .market-row:hover{background:#f1f6f2}
+@media(hover:hover){[data-theme=light] .market-row:hover{background:#f1f6f2}}
 [data-theme=light] .table-repo small,[data-theme=light] .table-token small,[data-theme=light] .table-earnings small,[data-theme=light] .table-empty{color:#5f6e63}
 [data-theme=light] .repo-avatar,[data-theme=light] .preview-avatar,[data-theme=light] .step-icon{background:#edf3ee;border-color:#cbd7ce;color:#244531}
 [data-theme=light] .badge{background:#eaf0eb;color:#506456}
@@ -100,14 +100,14 @@
 [data-theme=light] .claim-receipt p{color:#20362a}
 [data-theme=light] .claim-step-hint,[data-theme=light] .claim-wallet-details{color:#5a6d60}
 [data-theme=light] .claim-pause{background:#fff7ea;border-color:#e2bc7b;color:#715021}
-[data-theme=light] .trade-quick-actions button[aria-pressed=true],[data-theme=light] .trade-quick-actions button:hover:not(:disabled){color:#0f6b40;border-color:var(--green-dark)}
+[data-theme=light] .trade-quick-actions button[aria-pressed=true]{color:#0f6b40;border-color:var(--green-dark)}@media(hover:hover){[data-theme=light] .trade-quick-actions button:hover:not(:disabled){color:#0f6b40;border-color:var(--green-dark)}}
 [data-theme=light] .mobile-nav-panel{box-shadow:0 18px 32px rgba(25,34,28,.12)}
 [data-theme=light] .app-header .mobile-nav-panel a.active:after{background:var(--green-dark)}
 :root[data-theme=light] .return-share h1 .gain{color:var(--green-dark)}
 [data-theme=light] .market-row .table-repo-ticker{color:#16834c}
 [data-theme=light] .wallet-market-values>.wallet-launcher-claimable strong,[data-theme=light] .discovery-note .claim-text-button{color:#16834c}
 [data-theme=light] .table-earnings.has-earnings strong,[data-theme=light] .market-hero-ticker strong{color:var(--green-dark)}
-[data-theme=light] .earnings-headline-action.verify{border-color:var(--green-dark);color:#0f6b40}[data-theme=light] .earnings-headline-action.verify:hover{background:#e6f5ec}
+[data-theme=light] .earnings-headline-action.verify{border-color:var(--green-dark);color:#0f6b40}@media(hover:hover){[data-theme=light] .earnings-headline-action.verify:hover{background:#e6f5ec}}
 [data-theme=light] .market-bonding>span{background:var(--green-dark)}
 [data-theme=light] .app-header nav a.nav-token{color:var(--green-dark)}
 [data-theme=light] .pulse-kind-release,[data-theme=light] .pulse-kind-paid{--pulse:var(--green-dark)}[data-theme=light] .pulse-kind-merge{--pulse:#6d4fd6}[data-theme=light] .pulse-kind-commits{--pulse:#3d6f9e}[data-theme=light] .pulse-kind-stars{--pulse:#a86b12}[data-theme=light] .pulse-kind-hn{--pulse:#cf5419}
@@ -119,10 +119,11 @@
 [data-theme=light] :is(.pulse-pin,.pulse-guide,.pulse-tip-row).is-stars{--pulse:#a86b12}
 [data-theme=light] :is(.pulse-pin,.pulse-guide,.pulse-tip-row).is-hn{--pulse:#cf5419}
 [data-theme=light] .pulse-pin{box-shadow:0 0 0 2px var(--surface),0 2px 8px rgba(25,34,28,.16)}
-[data-theme=light] .pulse-pin:hover,[data-theme=light] .pulse-pin:focus-visible,[data-theme=light] .pulse-pin.is-open{box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--pulse) 30%,transparent),0 4px 12px rgba(25,34,28,.2)}
+[data-theme=light] .pulse-pin:focus-visible,[data-theme=light] .pulse-pin.is-open{box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--pulse) 30%,transparent),0 4px 12px rgba(25,34,28,.2)}@media(hover:hover){[data-theme=light] .pulse-pin:hover{box-shadow:0 0 0 2px var(--surface),0 0 0 4px color-mix(in srgb,var(--pulse) 30%,transparent),0 4px 12px rgba(25,34,28,.2)}}
 [data-theme=light] .pulse-pin-count{color:#fff}
 [data-theme=light] .pulse-tip{box-shadow:0 14px 32px rgba(25,34,28,.16)}
 [data-theme=light] .pulse-tip-meta a,[data-theme=light] .chart-pulse-toggle[aria-pressed=true] svg{color:var(--green-dark)}
 [data-theme=light] .pulse-kind-devs{--pulse:#0f766e}
 [data-theme=light] .pulse-badge.is-shipping,[data-theme=light] .shipping-name small,[data-theme=light] .shipping-rank{color:var(--green-dark)}
 [data-theme=light] .shipping-card{background:var(--surface)}
+[data-theme=light] .field-input:focus,[data-theme=light] .asset-input:focus-within,[data-theme=light] .input-suffix:focus-within,[data-theme=light] .explore-search:focus-within,[data-theme=light] .repo-search:not(.home-hero .repo-search):focus-within{border-color:var(--green-dark)}

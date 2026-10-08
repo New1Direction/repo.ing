@@ -31,12 +31,14 @@
 .waiting-repo-copy{min-width:0;display:flex;flex-direction:column;gap:5px}
 .waiting-name{color:var(--text);min-width:0}
 .waiting-name strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px}
-.waiting-name:hover strong{text-decoration:underline;text-underline-offset:3px}
+@media (hover:hover) {
+.waiting-name:hover strong{text-decoration:underline;text-underline-offset:3px}}
 .waiting-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;font-size:13px;color:var(--muted)}
 .waiting-symbol{font-family:var(--waiting-mono);color:var(--text);font-weight:600}
 .waiting-stars,.waiting-github{display:inline-flex;align-items:center;gap:4px}
 .waiting-github{color:var(--muted)}
-.waiting-github:hover{color:var(--text)}
+@media (hover:hover) {
+.waiting-github:hover{color:var(--text)}}
 
 .waiting-amount{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right}
 .waiting-amount strong{color:var(--green);font-size:24px;line-height:1.1;letter-spacing:-.02em;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -56,7 +58,8 @@
 .waiting-claimed h2{margin:0 0 12px;font-size:17px}
 .waiting-claimed ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
 .waiting-claimed-repo{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;color:var(--text);min-width:0}
-.waiting-claimed-repo:hover{border-color:var(--border-strong);background:var(--surface2)}
+@media (hover:hover) {
+.waiting-claimed-repo:hover{border-color:var(--border-strong);background:var(--surface2)}}
 .waiting-claimed-repo .repo-avatar{width:36px;height:36px;border-radius:7px}
 .waiting-claimed-repo>span{display:flex;flex-direction:column;gap:2px;min-width:0}
 .waiting-claimed-repo strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}

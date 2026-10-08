@@ -10,3 +10,6 @@ export const siteMetadata = {
   openGraph: { type: 'website', siteName: 'repo.ing', locale: 'en_US', images: [siteImage] },
   twitter: { card: 'summary_large_image', images: [siteImage] },
 }
+// viewport-fit=cover lets env(safe-area-inset-*) report the iPhone home bar and notch, so fixed bars (the mobile trade bar)
+// and the page gutters stay clear of them.
+export const siteViewport = { viewportFit: 'cover' }

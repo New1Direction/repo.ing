@@ -7,7 +7,8 @@
 .repo-tips-icon{flex:none;width:40px;height:40px;border-radius:10px;display:grid;place-items:center;color:var(--green);background:color-mix(in srgb,var(--green) 12%,transparent);border:1px solid color-mix(in srgb,var(--green) 30%,transparent)}
 .repo-tips-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap;justify-content:flex-end}
 .repo-tips-actions>a{font-size:13px;color:var(--muted);text-decoration:underline;text-underline-offset:3px}
-.repo-tips-actions>a:hover{color:var(--text)}
+@media (hover:hover) {
+.repo-tips-actions>a:hover{color:var(--text)}}
 .repo-tips .button{display:inline-flex;align-items:center;gap:8px}
 .tip-breakdown{grid-column:1/-1;list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
 .tip-breakdown li{display:flex;flex-direction:column;gap:3px;padding:9px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);min-width:0}
@@ -34,7 +35,8 @@
 .tip-tokens button{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;padding:9px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface2);color:var(--text);cursor:pointer;text-align:left;transition:border-color .15s,background-color .15s,transform .15s}
 .tip-tokens button strong{font-size:14px}
 .tip-tokens button small{font-size:10px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.tip-tokens button:hover:not(:disabled){border-color:var(--border-strong)}
+@media (hover:hover) {
+.tip-tokens button:hover:not(:disabled){border-color:var(--border-strong)}}
 .tip-tokens button:active:not(:disabled){transform:scale(.97)}
 .tip-tokens button:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .tip-tokens button.selected{border-color:var(--green);background:color-mix(in srgb,var(--green) 12%,var(--surface2))}
@@ -105,7 +107,8 @@
 .market-hero-actions .tip-jar-pill span{display:inline;color:var(--muted);font-size:13px}
 .market-hero-actions .tip-jar-pill b{color:var(--dim);font-weight:400}
 .market-hero-actions .tip-jar-pill strong{display:inline;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
-.tip-jar-pill:hover{background:color-mix(in srgb,var(--green) 18%,transparent);border-color:var(--green)}
+@media (hover:hover) {
+.tip-jar-pill:hover{background:color-mix(in srgb,var(--green) 18%,transparent);border-color:var(--green)}}
 .tip-jar-pill:focus-visible{outline:2px solid var(--green);outline-offset:2px}
 .tip-jar-pill.is-loading{cursor:default;opacity:.7}
 .tip-jar-card{margin-top:0;display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:18px 20px;min-height:236px}
@@ -123,6 +126,7 @@
 .tip-jar-card .tip-jar-cta{width:100%;justify-content:center;margin-top:auto}
 .tip-jar-links{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 16px;font-size:13px}
 .tip-jar-links a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
-.tip-jar-links a:hover{color:var(--text)}
+@media (hover:hover) {
+.tip-jar-links a:hover{color:var(--text)}}
 @media(max-width:700px){.tip-jar-card{padding:16px;min-height:220px}.tip-jar-total{font-size:26px}}
 @media(prefers-reduced-motion:reduce){.tip-jar-pill{transition:none}}

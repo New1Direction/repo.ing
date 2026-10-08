@@ -3,7 +3,8 @@
 .x-handle>svg{flex:none;color:var(--muted)}
 .x-handle>img{flex:none;width:18px;height:18px;border-radius:50%;object-fit:cover;background:var(--surface2)}
 .x-handle>span:not(.x-handle-check){overflow:hidden;text-overflow:ellipsis}
-.x-handle:hover>span:not(.x-handle-check){text-decoration:underline;text-underline-offset:2px}
+@media (hover:hover) {
+.x-handle:hover>span:not(.x-handle-check){text-decoration:underline;text-underline-offset:2px}}
 .x-handle:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:3px}
 .x-handle-check{flex:none;display:inline-grid;place-items:center;width:14px;height:14px;border-radius:50%;background:color-mix(in srgb,var(--green) 22%,transparent);color:var(--green);font-size:9px;font-weight:800}
 
@@ -14,19 +15,22 @@
 .wallet-identity.has-x .x-handle{font-size:13px}
 .wallet-identity.has-x .x-handle>img{width:20px;height:20px}
 .wallet-identity .copy-address{position:relative;gap:6px;padding:3px 4px 3px 7px;border-color:var(--border);border-radius:6px;background:var(--surface2);color:var(--muted)}
-.wallet-identity .copy-address:hover{border-color:var(--border-strong);background:var(--surface2);color:var(--text)}
+@media (hover:hover) {
+.wallet-identity .copy-address:hover{border-color:var(--border-strong);background:var(--surface2);color:var(--text)}}
 .wallet-identity .copy-address code{font-size:11.5px}
 .wallet-identity .copy-address-action{padding:3px;background:none;color:inherit}
 .wallet-identity .copy-address-action svg{width:13px;height:13px}
 .wallet-identity .copy-address-action span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 .wallet-identity-solscan{flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:6px;color:var(--dim)}
-.wallet-identity-solscan:hover{color:var(--text);background:var(--surface2)}
+@media (hover:hover) {
+.wallet-identity-solscan:hover{color:var(--text);background:var(--surface2)}}
 .wallet-identity-solscan:focus-visible{outline:2px solid var(--green);outline-offset:1px}
 
 .holder-note-who{display:inline-flex;align-items:baseline;gap:7px;min-width:0}
 .holder-note-who .x-handle{font-size:12px;align-self:center}
 .holder-note-x{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
-.holder-note-x:hover{color:var(--text)}
+@media (hover:hover) {
+.holder-note-x:hover{color:var(--text)}}
 .earnings-status{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
 .maintainer-x{padding:3px 9px 3px 7px;border:1px solid var(--border);border-radius:15px;font-size:12px}
 .tip-stats-from{color:var(--muted);font-size:13px}
