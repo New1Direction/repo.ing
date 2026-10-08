@@ -39,7 +39,9 @@ test('recent trade age and Solscan link', () => {
 })
 
 test('referral status accepts only well-formed payloads', () => {
-  assert.deepEqual(referralStatus({ enabled: true, earningsLamports: '42', setupLamports: '2039280', extra: 1 }), { enabled: true, earningsLamports: '42', setupLamports: '2039280' })
+  assert.deepEqual(referralStatus({ enabled: true, earningsLamports: '42', setupLamports: '2039280', extra: 1 }), { enabled: true, earningsLamports: '42', setupLamports: '2039280', free: false })
+  assert.equal(referralStatus({ enabled: false, earningsLamports: '0', setupLamports: '2039280', free: true }).free, true, 'repo.ing pays the setup')
+  assert.equal(referralStatus({ enabled: false, earningsLamports: '0', setupLamports: '2039280', free: 'yes' }).free, false)
   assert.equal(referralStatus({ enabled: 'yes', earningsLamports: '42', setupLamports: '1' }), null)
   assert.equal(referralStatus({ enabled: false, earningsLamports: '-1', setupLamports: '1' }), null)
   assert.equal(referralStatus(null), null)

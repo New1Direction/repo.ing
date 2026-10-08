@@ -38,5 +38,6 @@ export function siteReferralLink(origin, wallet) {
 // GET /api/referral payload, or null when malformed.
 export function referralStatus(result) {
   if (!result || typeof result.enabled !== 'boolean' || !/^\d+$/.test(result.earningsLamports) || !/^\d+$/.test(result.setupLamports)) return null
-  return { enabled: result.enabled, earningsLamports: result.earningsLamports, setupLamports: result.setupLamports }
+  // free: repo.ing pays the setup right now (src/referral-sponsorship.mjs); absent in older answers.
+  return { enabled: result.enabled, earningsLamports: result.earningsLamports, setupLamports: result.setupLamports, free: result.free === true }
 }

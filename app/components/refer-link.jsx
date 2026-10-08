@@ -6,6 +6,7 @@ import { useWallet } from './wallet'
 import { ShareReferralNote } from './share-referral'
 import { loadReferralStatus, peekReferralStatus, setReferralStatus, subscribeReferralStatus } from '../lib/referral-status.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
+import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import '../refer-link.css'
 
 async function post(body) {
@@ -31,6 +32,7 @@ export function useReferralPayouts(wallet, provider) {
   async function enable() {
     if (setup === 'busy' || !wallet) return
     setSetup('busy')
+    if (status?.free) return enableFree()
     try {
       const [{ PublicKey, Transaction }, { assertWsolSetupTransaction }] = await Promise.all([import('@solana/web3.js'), import('../../src/wsol-account.mjs')])
       const owner = new PublicKey(wallet)
@@ -46,6 +48,22 @@ export function useReferralPayouts(wallet, provider) {
       setSetup('')
     } catch (error) { setSetup(error?.message || 'Setup failed. Try again.') }
   }
+  // Free setup: the wallet signs a plain-text message (no transaction, no SOL); repo.ing creates the account and pays.
+  async function enableFree() {
+    try {
+      const prepared = await post({ action: 'free-prepare', wallet })
+      const signature = walletSignatureBytes(await provider().signMessage(new TextEncoder().encode(prepared.message)))
+      const { default: bs58 } = await import('bs58')
+      const result = await post({ action: 'free-submit', wallet, message: prepared.message, seal: prepared.seal, signature: bs58.encode(signature) })
+      if (result.status !== 'settled') { setSetup('Your payout account is on its way. Check again in a minute.'); return }
+      setReferralStatus(wallet, { ...(peekReferralStatus(wallet) || status || { earningsLamports: '0', setupLamports: '0' }), enabled: true, free: false })
+      setSetup('')
+    } catch (error) {
+      // The next click uses the paid setup: free places can run out, and some wallets cannot sign messages.
+      setReferralStatus(wallet, { ...(peekReferralStatus(wallet) || status || { enabled: false, earningsLamports: '0', setupLamports: '0' }), free: false })
+      setSetup(`${error?.message || 'The free setup failed.'} You can still enable payouts yourself.`)
+    }
+  }
   return { status, setup, enable }
 }
 
@@ -59,7 +77,9 @@ export function ReferLink({ referral }) {
   if (!status) return <div className="refer-link"><small role="status">{status === false ? 'Referral status is unavailable right now, so these links are shared without it.' : 'Checking your referral setup…'} {more}</small></div>
   if (!status.enabled) return <div className="refer-link">
     <div className="refer-link-actions"><button className="button outline" type="button" onClick={enable} disabled={setup === 'busy'}><Wallet size={15}/>{setup === 'busy' ? 'Enabling…' : 'Enable payouts'}</button></div>
-    <small role="status">{setup && setup !== 'busy' ? setup : `Enable referral payouts (≈${(Number(status.setupLamports) / 1e9).toFixed(4)} SOL once, refundable) and your shared links can earn 4% of the trading fee on trades they bring.`} {more}</small>
+    <small role="status">{setup && setup !== 'busy' ? setup : status.free
+      ? 'Enable referral payouts (free: repo.ing pays the setup) and your shared links can earn 4% of the trading fee on trades they bring.'
+      : `Enable referral payouts (≈${(Number(status.setupLamports) / 1e9).toFixed(4)} SOL once, refundable) and your shared links can earn 4% of the trading fee on trades they bring.`} {more}</small>
   </div>
   return <div className="refer-link">
     <ShareReferralNote referral={referral}/>
