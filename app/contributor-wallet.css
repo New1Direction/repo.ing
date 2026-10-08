@@ -17,7 +17,7 @@
 .contributor-wallet-account{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;align-self:stretch;color:var(--muted);font-size:13px}
 .contributor-wallet-account>span{display:inline-flex;align-items:center;gap:8px;color:var(--text);font-weight:600}
 .contributor-wallet-account a{text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px}
-.contributor-wallet-account a:hover{color:var(--text);text-decoration-color:currentColor}
+@media(hover:hover){.contributor-wallet-account a:hover{color:var(--text);text-decoration-color:currentColor}}
 .contributor-wallet-linked{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;min-width:0;max-width:100%}
 .contributor-wallet-linked .copy-address{min-width:0;max-width:100%}
 .contributor-wallet-linked .copy-address code{overflow-wrap:anywhere}

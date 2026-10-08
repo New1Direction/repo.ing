@@ -6,7 +6,8 @@
 .launch-mode-options{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:10px}
 .launch-mode-option{position:relative;display:flex;flex-direction:column;gap:3px;min-width:0;padding:12px 14px 12px 40px;border:1px solid var(--border-strong);border-radius:10px;background:var(--surface);cursor:pointer;transition:border-color .15s,background-color .15s}
 .launch-mode-option input{position:absolute;top:15px;left:14px;width:16px;height:16px;margin:0;accent-color:var(--green)}
-.launch-mode-option:hover{border-color:var(--green)}
+@media (hover:hover) {
+.launch-mode-option:hover{border-color:var(--green)}}
 .launch-mode-option:has(input:focus-visible){outline:2px solid var(--green);outline-offset:2px}
 .launch-mode-option.is-selected{border-color:var(--green);background:color-mix(in srgb,var(--green) 10%,var(--surface))}
 .launch-mode-name{color:var(--text);font-size:15px;font-weight:700}

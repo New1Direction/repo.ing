@@ -26,11 +26,14 @@
 .decision-state q{color:var(--muted);overflow-wrap:anywhere}
 .decision-hint{margin:0;color:var(--muted);font-size:13px}
 .decision-trigger{padding:0;border:0;background:none;color:var(--muted);font-size:13px;font-weight:550;text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px}
-.decision-trigger:hover{color:var(--text);text-decoration-color:currentColor}
-.decision-trigger.is-decline:hover{color:var(--declined)}
+@media (hover:hover) {
+.decision-trigger:hover{color:var(--text);text-decoration-color:currentColor}}
+@media (hover:hover) {
+.decision-trigger.is-decline:hover{color:var(--declined)}}
 .maintainer-decision.inner-card .decision-trigger{min-height:40px;padding:0 16px;border:1px solid var(--border-strong);border-radius:8px;color:var(--text);font-size:14px;text-decoration:none}
 .maintainer-decision.inner-card .decision-trigger.is-decline{border-color:color-mix(in srgb,var(--declined) 55%,var(--border));color:var(--declined)}
-.maintainer-decision.inner-card .decision-trigger:hover{background:color-mix(in srgb,var(--declined) 10%,transparent)}
+@media (hover:hover) {
+.maintainer-decision.inner-card .decision-trigger:hover{background:color-mix(in srgb,var(--declined) 10%,transparent)}}
 .decision-trigger:focus-visible{outline:2px solid var(--green);outline-offset:3px}
 
 .decision-confirm{margin-top:14px;padding:16px 18px;border:1px solid var(--border);border-radius:10px;background:var(--surface2)}
@@ -49,7 +52,8 @@
 .decision-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
 .decision-actions .button{min-height:38px;padding:0 16px;font-size:14px}
 .button.decline,[data-theme=light] .button.decline{border-color:color-mix(in srgb,var(--declined) 60%,var(--border));color:var(--declined);font-weight:650}
-.button.decline:hover:not(:disabled),[data-theme=light] .button.decline:hover:not(:disabled){border-color:var(--declined);background:color-mix(in srgb,var(--declined) 12%,transparent)}
+@media (hover:hover) {
+.button.decline:hover:not(:disabled),[data-theme=light] .button.decline:hover:not(:disabled){border-color:var(--declined);background:color-mix(in srgb,var(--declined) 12%,transparent)}}
 .decision-done{display:flex;align-items:center;gap:7px;margin:12px 0 0;color:var(--green);font-size:13px}
 [data-theme=light] .decision-done{color:#11774b}
 
@@ -75,7 +79,8 @@
 .opt-out-signin p{max-width:640px;margin:0;color:var(--muted);line-height:1.6}
 .opt-out-signin small{color:var(--dim);font-size:12.5px;line-height:1.5}
 .opt-out-signin small a,.opt-out-empty a,.opt-out-market-note a,.opt-out-repo-name small a,.launch-trust-note a{color:var(--text);text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px}
-.opt-out-signin small a:hover,.opt-out-empty a:hover,.opt-out-market-note a:hover,.opt-out-repo-name small a:hover,.launch-trust-note a:hover{text-decoration-color:currentColor}
+@media (hover:hover) {
+.opt-out-signin small a:hover,.opt-out-empty a:hover,.opt-out-market-note a:hover,.opt-out-repo-name small a:hover,.launch-trust-note a:hover{text-decoration-color:currentColor}}
 .opt-out-account{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;color:var(--muted);font-size:13px}
 .opt-out-account>span{display:inline-flex;align-items:center;gap:8px;color:var(--text);font-weight:600}
 .opt-out-account>div{display:flex;flex-wrap:wrap;align-items:center;gap:16px}
@@ -90,7 +95,8 @@
 .opt-out-repo+.opt-out-repo{border-top:1px solid var(--border)}
 .opt-out-repo-name{min-width:0}
 .opt-out-repo-name>a,.opt-out-repo-name>span{display:block;font-size:15px;font-weight:650;overflow-wrap:anywhere}
-.opt-out-repo-name>a:hover{text-decoration:underline}
+@media (hover:hover) {
+.opt-out-repo-name>a:hover{text-decoration:underline}}
 .opt-out-repo-name small{display:block;margin-top:4px;color:var(--muted);font-size:12px}
 .opt-out-repo .maintainer-decision.compact{justify-content:flex-end;text-align:left}
 .opt-out-empty{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:22px;border:1px dashed var(--border);border-radius:10px;color:var(--muted)}
@@ -107,7 +113,8 @@
 .launch-blocked .declined-meta{margin:0}
 .launch-blocked-actions{display:flex;flex-wrap:wrap;align-items:center;gap:16px;margin-top:8px}
 .launch-blocked-manage{color:var(--muted);font-size:14px;text-decoration:underline;text-decoration-color:var(--border-strong);text-underline-offset:3px}
-.launch-blocked-manage:hover{color:var(--text)}
+@media (hover:hover) {
+.launch-blocked-manage:hover{color:var(--text)}}
 
 @media(max-width:700px){
   .declined-banner{gap:12px;padding:14px 16px}
@@ -119,3 +126,6 @@
   .opt-out-repo .maintainer-decision.compact{justify-content:flex-start}
   .launch-blocked h1{font-size:28px}
 }
+.opt-out-search:focus-within{border-color:var(--green)}
+/* iOS zooms into a focused field whose text is under 16px: on touch screens it is 16px. */
+@media(pointer:coarse){.opt-out-search input,.decision-confirm textarea{font-size:16px}}

@@ -10,7 +10,8 @@
 .trend-launch-terms{margin:0;padding:12px 16px;border:1px solid var(--border);border-left:3px solid var(--tl-accent);border-radius:4px 10px 10px 4px;background:var(--surface);color:var(--muted);font-size:13px;line-height:1.6}
 .trend-launch-terms strong{color:var(--text)}
 .trend-launch-terms a,.trend-launch-strip-head a{color:var(--tl-accent);font-weight:600}
-.trend-launch-terms a:hover,.trend-launch-strip-head a:hover{text-decoration:underline;text-underline-offset:3px}
+@media (hover:hover) {
+.trend-launch-terms a:hover,.trend-launch-strip-head a:hover{text-decoration:underline;text-underline-offset:3px}}
 
 .trend-launch-board{border:1px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden}
 .trend-launch-list{list-style:none;margin:0;padding:0}
@@ -27,7 +28,8 @@
 .trend-launch-owner{color:var(--muted)}
 .trend-launch-name strong{font-weight:680}
 .trend-launch-name svg{display:inline-block;margin-left:4px;vertical-align:-1px;color:var(--dim)}
-.trend-launch-name:hover strong{text-decoration:underline;text-underline-offset:3px}
+@media (hover:hover) {
+.trend-launch-name:hover strong{text-decoration:underline;text-underline-offset:3px}}
 .trend-launch-description{margin:0;color:var(--muted);font-size:13.5px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
 .trend-launch-signals{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:12px;color:var(--muted)}
 .trend-launch-signals ul{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
@@ -45,13 +47,15 @@
 .trend-launch-action{grid-area:action;display:flex;flex-direction:column;align-items:stretch;gap:7px;min-width:0}
 .trend-launch-action .button{min-height:40px;padding:0 18px;font-size:14px}
 .trend-launch-action .button svg{transition:transform .15s}
-.trend-launch-action .button:hover svg{transform:translateX(2px)}
+@media (hover:hover) {
+.trend-launch-action .button:hover svg{transform:translateX(2px)}}
 .trend-launch-reward{color:var(--muted);font-size:12px;line-height:1.4;text-align:center}
 
 .trend-launch-more{border-top:1px solid var(--border)}
 .trend-launch-more>summary{display:flex;align-items:center;justify-content:center;gap:8px;min-height:50px;padding:0 20px;list-style:none;cursor:pointer;color:var(--text);font-size:14px;font-weight:600}
 .trend-launch-more>summary::-webkit-details-marker{display:none}
-.trend-launch-more>summary:hover{background:var(--surface2)}
+@media (hover:hover) {
+.trend-launch-more>summary:hover{background:var(--surface2)}}
 .trend-launch-more>summary:focus-visible{outline:2px solid var(--tl-accent);outline-offset:-4px}
 .trend-launch-more>summary svg{transition:transform .2s}
 .trend-launch-more[open]>summary svg{transform:rotate(180deg)}

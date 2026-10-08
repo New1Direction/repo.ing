@@ -2,13 +2,13 @@
 .slippage-toggle{display:inline-flex;align-items:center;gap:6px;min-height:30px;padding:0 10px;border:1px solid var(--border);border-radius:999px;background:var(--surface2);color:var(--muted);font-size:12px;transition:border-color .15s,color .15s}
 .slippage-toggle strong{color:var(--text);font-weight:700;font-variant-numeric:tabular-nums}
 .slippage-toggle strong.is-high{color:#eabb75}
-.slippage-toggle:hover:not(:disabled){border-color:var(--border-strong);color:var(--text)}
+@media(hover:hover){.slippage-toggle:hover:not(:disabled){border-color:var(--border-strong);color:var(--text)}}
 .slippage-caret{transition:transform .15s}
 .slippage-toggle[aria-expanded=true] .slippage-caret{transform:rotate(180deg)}
 .slippage-panel{margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface2)}
 .slippage-options{display:flex;flex-wrap:wrap;gap:6px}
 .slippage-options button{min-width:46px;height:30px;padding:0 9px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px;font-weight:650;font-variant-numeric:tabular-nums}
-.slippage-options button:hover:not(:disabled){border-color:var(--green);color:var(--green)}
+@media(hover:hover){.slippage-options button:hover:not(:disabled){border-color:var(--green);color:var(--green)}}
 .slippage-options button[aria-pressed=true]{border-color:var(--green);background:color-mix(in srgb,var(--green) 14%,var(--surface));color:var(--green)}
 .slippage-custom{display:inline-flex;align-items:center;gap:3px;height:30px;padding:0 9px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--muted);font-size:12px}
 .slippage-custom input{width:52px;min-width:0;border:0;outline:0;background:none;color:var(--text);font-size:12px;font-weight:650;font-variant-numeric:tabular-nums}
@@ -17,7 +17,9 @@
 .slippage-panel small{display:block;margin-top:8px;color:var(--muted);font-size:12px;line-height:1.45}
 .slippage-panel small.is-warning{color:#eabb75}
 .trade-result-actions .trade-result-retry{padding:6px 11px;border:1px solid currentColor;border-radius:6px}
-.trade-result-actions .trade-result-retry:hover:not(:disabled){background:color-mix(in srgb,currentColor 14%,transparent)}
+@media(hover:hover){.trade-result-actions .trade-result-retry:hover:not(:disabled){background:color-mix(in srgb,currentColor 14%,transparent)}}
 [data-theme=light] .slippage-toggle strong.is-high,[data-theme=light] .slippage-panel small.is-warning{color:#92592a}
-[data-theme=light] .slippage-options button[aria-pressed=true],[data-theme=light] .slippage-options button:hover:not(:disabled){color:#0f6b40;border-color:var(--green-dark)}
+[data-theme=light] .slippage-options button[aria-pressed=true]{color:#0f6b40;border-color:var(--green-dark)}@media(hover:hover){[data-theme=light] .slippage-options button:hover:not(:disabled){color:#0f6b40;border-color:var(--green-dark)}}
 @media(prefers-reduced-motion:reduce){.slippage-toggle,.slippage-caret{transition:none}}
+/* iOS zooms into a focused field whose text is under 16px: on touch screens it is 16px. */
+@media(pointer:coarse){.slippage-custom input{font-size:16px}}

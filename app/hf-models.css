@@ -16,8 +16,11 @@
 /* Market tables: a model's likes cell links to its Hugging Face page. */
 .table-likes{color:var(--muted)}
 a.table-likes{transition:color .15s}
-a.table-likes:hover,a.table-likes:focus-visible{color:var(--text)}
-a.table-likes:hover svg{color:var(--red)}
+a.table-likes:focus-visible{color:var(--text)}
+@media (hover:hover) {
+a.table-likes:hover{color:var(--text)}}
+@media (hover:hover) {
+a.table-likes:hover svg{color:var(--red)}}
 .table-disclaimer{margin-top:10px}
 .table-repo-name .source-chip{height:20px;font-size:11px}
 @media(max-width:700px){.market-row.is-model .table-earnings:before{content:'Owner earned'}}
@@ -31,7 +34,9 @@ a.table-likes:hover svg{color:var(--red)}
 .badge.model-derivative{max-width:100%;min-width:0}
 .badge.model-derivative span{overflow:hidden;text-overflow:ellipsis}
 a.badge.model-derivative{border:1px solid transparent;transition:border-color .15s,color .15s}
-a.badge.model-derivative:hover,a.badge.model-derivative:focus-visible{border-color:var(--model-border);color:var(--text)}
+a.badge.model-derivative:focus-visible{border-color:var(--model-border);color:var(--text)}
+@media (hover:hover) {
+a.badge.model-derivative:hover{border-color:var(--model-border);color:var(--text)}}
 .model-link{gap:7px}
 
 /* Details → Model card. */
@@ -42,7 +47,8 @@ a.badge.model-derivative:hover,a.badge.model-derivative:focus-visible{border-col
 .model-card dd{min-width:0;margin:0;text-align:right;overflow-wrap:anywhere}
 .model-card dd small{margin-left:6px;color:var(--muted)}
 .model-card dd a{color:var(--model-text)}
-.model-card dd a:hover{text-decoration:underline}
+@media (hover:hover) {
+.model-card dd a:hover{text-decoration:underline}}
 .model-card-note{margin:12px 0 0;color:var(--muted);font-size:12.5px;line-height:1.5}
 
 /* Model Pulse (display only; filled by app/lib/model-pulse.mjs once it ships). */

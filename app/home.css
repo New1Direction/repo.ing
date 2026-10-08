@@ -36,9 +36,13 @@
 .home-hero .search-helper{margin:10px 0 0;color:var(--dim);font-size:13px;text-align:left}
 .home-hero-links{display:flex;flex-wrap:wrap;gap:8px 24px;margin:18px 0 0}
 .home-hero-links a{display:inline-flex;align-items:center;gap:6px;color:var(--home-accent);font-size:14px;font-weight:650}
+@media (hover:hover) {
 .home-hero-links a:hover{text-decoration:underline;text-underline-offset:3px}
+}
 .home-hero-links svg,.home-board-more svg{transition:transform .2s var(--home-ease)}
+@media (hover:hover) {
 .home-hero-links a:hover svg,.home-board-more:hover svg{transform:translateX(3px)}
+}
 
 /* The platform's figures (components/home-highlights.jsx): number over label, in mono, between hairlines. */
 .home-proof{display:flex;flex-wrap:wrap;gap:14px 0;min-height:76px;margin:32px 0 0;padding-top:18px;border-top:1px solid var(--border)}
@@ -46,7 +50,10 @@
 .home-proof>span{padding-right:26px;margin-right:26px;border-right:1px solid var(--border)}
 .home-proof>span:last-child{margin-right:0;padding-right:0;border-right:0}
 .home-proof strong{color:var(--text);font-size:clamp(19px,1.55vw,24px);font-weight:650;letter-spacing:-.02em;text-transform:none;font-variant-numeric:tabular-nums}
-.home-proof a:hover strong,.home-proof a:focus-visible strong{color:var(--home-accent)}
+.home-proof a:focus-visible strong{color:var(--home-accent)}
+@media (hover:hover) {
+.home-proof a:hover strong{color:var(--home-accent)}
+}
 .home-proof.is-loading .skeleton-line{width:min(440px,90%);height:42px}
 
 /* The live market card (components/home/live-market.jsx). Its frame is fixed, so streaming it in never moves the hero. */
@@ -88,7 +95,9 @@
 .live-trade time{color:var(--dim);font-family:var(--home-mono);font-size:12px;text-align:right;white-space:nowrap}
 .live-market-cta{min-height:48px;margin-top:auto;font-size:15px}
 .live-market-cta svg{transition:transform .2s var(--home-ease)}
+@media (hover:hover) {
 .live-market-cta:hover svg{transform:translateX(3px)}
+}
 /* The placeholder (LiveMarketFallback) has the card's blocks at the card's sizes, so streaming the card in moves nothing. */
 .live-market.is-loading .live-market-name .skeleton-line{width:120px;height:18px}
 .live-market.is-loading .live-market-name .skeleton-line.short{width:170px;height:12px}
@@ -111,14 +120,18 @@
 .home-board-tabs{display:flex;gap:4px;max-width:100%;padding:4px;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface);scrollbar-width:none}
 .home-board-tabs::-webkit-scrollbar{display:none}
 .home-board-tabs button{height:36px;padding:0 16px;border:0;border-radius:8px;background:transparent;color:var(--muted);font-family:var(--home-mono);font-size:13px;font-weight:650;letter-spacing:.03em;white-space:nowrap;transition:background .15s,color .15s}
+@media (hover:hover) {
 .home-board-tabs button:hover{background:var(--surface2);color:var(--text)}
+}
 .home-board-tabs button[aria-selected=true]{background:var(--text);color:var(--bg)}
 .home-board-tabs button:focus-visible{outline:2px solid var(--home-accent);outline-offset:-2px}
 .home-board-head .view-all{margin-left:auto}
 .home-board-panel{min-height:280px}
 .home-board-note{margin:0 0 12px;color:var(--muted);font-size:14px}
 .home-board-more{display:inline-flex;align-items:center;gap:6px;margin-top:14px;color:var(--home-accent);font-size:14px;font-weight:650}
+@media (hover:hover) {
 .home-board-more:hover{text-decoration:underline;text-underline-offset:3px}
+}
 .home-board-empty{margin:0;padding:34px 20px;border:1px dashed var(--border);border-radius:10px;color:var(--muted);text-align:center}
 .home-board .shipping-leaders-list{grid-template-columns:repeat(auto-fill,minmax(280px,1fr))}
 .home-board .models-strip{padding-top:0}
