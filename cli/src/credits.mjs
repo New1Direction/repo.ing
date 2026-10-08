@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { DEFAULT_ORIGIN, validateOrigin } from './core.mjs'
-import { DEFAULT_CREDITS_ORIGIN, requestJson, signInForCredits, usd, validateCreditsOrigin } from './claim.mjs'
+import { DEFAULT_CREDITS_ORIGIN, lamportsToSol, requestJson, signInForCredits, usd, validateCreditsOrigin, waitForOutcome } from './claim.mjs'
 
 // `repoing credits key`: one key for a coding tool, paid from the builder's AI credits (repo.ing AI credits, repo-inference's
 // docs/FEE-CONVERSION.md). It signs in through repo.ing like `repoing claim`, then asks the credit service for one
@@ -20,15 +20,28 @@ export function usdToMicro(text) {
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/
 const KEY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const TOKEN = /^rik_[0-9a-f]{64}$/
-const USAGE = 'Usage: repoing credits key|list|revoke <key-id> [owner/repo] [options] (repoing credits --help)'
+const USAGE = 'Usage: repoing credits key|list|revoke <key-id>|buy [10|25|50|100] [owner/repo] [options] (repoing credits --help)'
+// SOL credit packs (repo-inference docs/PACKS.md): $10, $25, $50 or $100.
+const PACKS_MICRO = [10_000_000, 25_000_000, 50_000_000, 100_000_000]
+const MULTIPLIERS = [10_000, 12_000, 20_000, 50_000]
+const UUID = KEY_ID
+// A Solana Pay link from the credit service: printed only when it has nothing but URL characters.
+const PAY_URL = /^solana:[1-9A-HJ-NP-Za-km-z]{32,44}\?[A-Za-z0-9%=&._-]{1,600}$/
+/** "25" or "$25" → micro-USD of a pack; anything else is refused. */
+function packMicro(text) {
+  const match = /^\$?(\d{1,4})$/.exec(text)
+  const micro = match ? Number(match[1]) * 1_000_000 : null
+  if (!PACKS_MICRO.includes(micro)) throw new Error('A pack is $10, $25, $50 or $100.')
+  return micro
+}
 
 /** `repoing credits …` arguments (after `credits`): key, list, or revoke <key-id>. */
 export function parseCreditsArgs(argv, env = process.env) {
   const args = [...argv]
   if (args[0] === '--help' || args[0] === '-h') return { command: 'credits-help' }
   const action = args.shift()
-  if (!['key', 'list', 'revoke'].includes(action)) throw new Error(USAGE)
-  const out = { command: `credits-${action}`, repository: null, keyId: null, limitMicro: null, label: 'coding-tool', open: true,
+  if (!['key', 'list', 'revoke', 'buy'].includes(action)) throw new Error(USAGE)
+  const out = { command: `credits-${action}`, repository: null, keyId: null, limitMicro: null, packMicro: null, label: 'coding-tool', open: true,
     origin: env.REPOING_ORIGIN || DEFAULT_ORIGIN, creditsOrigin: env.REPOING_CREDITS_ORIGIN || DEFAULT_CREDITS_ORIGIN,
     inferenceOrigin: env.REPOING_INFERENCE_ORIGIN || DEFAULT_INFERENCE_ORIGIN }
   if (action === 'revoke') {
@@ -40,6 +53,11 @@ export function parseCreditsArgs(argv, env = process.env) {
   const onlyForKey = option => { if (action !== 'key') throw new Error(`${option} is for repoing credits key.`) }
   while (args.length) {
     const arg = args.shift()
+    if (action === 'buy' && /^\$?\d+$/.test(arg)) {
+      if (out.packMicro !== null) throw new Error('Choose one pack: $10, $25, $50 or $100.')
+      out.packMicro = packMicro(arg)
+      continue
+    }
     if (!arg.startsWith('-') && !out.repository) { out.repository = arg; continue }
     if (arg === '--limit') { onlyForKey(arg); out.limitMicro = usdToMicro(value(arg)) }
     else if (arg === '--label') { onlyForKey(arg); out.label = value(arg) }
@@ -63,10 +81,12 @@ Usage:
   repoing credits key [owner/repo|github-url] [options]
   repoing credits list [owner/repo|github-url]
   repoing credits revoke <key-id> [owner/repo|github-url]
+  repoing credits buy [10|25|50|100] [owner/repo|github-url]
 
 Each command signs in through repo.ing (as an admin of a repository with a market; the current git origin if none is
 supplied). key makes one key that can only run inference, valid 30 days, with a spending limit of at most your
-credits (at most 5 live). list shows your keys; revoke stops one at once.
+credits (at most 5 live). list shows your keys; revoke stops one at once. buy pays SOL for a $10, $25, $50 or $100 pack of
+credits: it shows the odds, asks you to confirm, and each paid pack spins once for a bonus (never less than you pay).
 
 Options:
   --limit <USD>           Spending limit (default: all your credits)
@@ -89,8 +109,9 @@ async function creditsSignIn(options, { repository, io, fetchImpl, listen, signI
 }
 const day = value => { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'unknown' : date.toISOString().slice(0, 10) }
 
-/** `repoing credits key|list|revoke`. Returns what happened, never a token. */
+/** `repoing credits key|list|revoke|buy`. Returns what happened, never a token. */
 export async function runCredits(options, deps) {
+  if (options.command === 'credits-buy') return runCreditsBuy(options, deps)
   if (options.command === 'credits-list') return runCreditsList(options, deps)
   if (options.command === 'credits-revoke') return runCreditsRevoke(options, deps)
   return runCreditsKey(options, deps)
@@ -154,4 +175,62 @@ export async function runCreditsRevoke(options, { repository, io, fetchImpl = fe
   await requestJson(fetchImpl, `${signedIn.base}/keys/${options.keyId}/revoke`, { method: 'POST', body: {}, headers: { authorization: signedIn.authorization } })
   io.print(`✓ revoked ${options.keyId}`)
   return { outcome: 'revoked', keyId: options.keyId }
+}
+
+const percent = bps => `${(bps / 100).toFixed(2)}%`
+const times = bps => `${bps / 10_000}x`
+/** The pack's odds, from the offer's numbers only (never text from the service); null when they are not well-formed. */
+function oddsLines(policy) {
+  const outcomes = Array.isArray(policy?.outcomes) ? policy.outcomes : []
+  const ok = outcomes.length > 0 && outcomes.every(o => MULTIPLIERS.includes(o?.multiplier_bps) && Number.isInteger(o?.probability_bps) && o.probability_bps > 0)
+    && outcomes.reduce((sum, o) => sum + o.probability_bps, 0) === 10_000
+  return ok ? outcomes.map(o => `  ${percent(o.probability_bps).padStart(7)}  ${times(o.multiplier_bps)}`) : null
+}
+const PACK_TERMS = [
+  'Each paid pack spins once, on the server, when the payment is final. You get at least the pack in paid credits, never less than you pay;',
+  'a win adds bonus credits, spent after paid credits. Credits never turn into cash and do not expire.',
+  'A payment that does not match the quote waits for a review by repo.ing: a refund, or credits with no spin.',
+]
+
+/**
+ * `repoing credits buy [10|25|50|100]`: a SOL credit pack. Signs in, shows the odds, asks to confirm, asks the credit
+ * service for the pack's quote, shows the Solana Pay link, waits for the payment and shows the spin.
+ */
+export async function runCreditsBuy(options, { repository, io, fetchImpl = fetch, listen, signIn, wait = waitForOutcome }) {
+  const signedIn = await creditsSignIn(options, { repository, io, fetchImpl, listen, signIn })
+  if (!signedIn) return { outcome: 'no_market' }
+  const { base, authorization } = signedIn
+  const offer = await requestJson(fetchImpl, `${base}/packs`, { headers: { authorization } })
+  if (offer.sales !== 'sandbox') { io.print('• Credit packs are not on sale yet.'); return { outcome: 'off' } }
+  const odds = oddsLines(offer.policy)
+  if (!odds) throw new Error('The credit service returned invalid odds.')
+  io.print('\nCredit packs: $10, $25, $50 or $100, paid in SOL. Odds for each paid pack:')
+  for (const line of odds) io.print(line)
+  for (const line of PACK_TERMS) io.print(line)
+  const pack = options.packMicro ?? packMicro((await io.ask('Pack: $10, $25, $50 or $100 [25]: ')).trim() || '25')
+  const room = Number.isSafeInteger(offer.account_room_micro) ? offer.account_room_micro : 0
+  if (pack > room) { io.print(`• You have ${usd(room)} left today for packs ($250 a day). Try a smaller pack or tomorrow.`); return { outcome: 'no_room' } }
+  const yes = (await io.ask(`Buy a ${usd(pack)} pack, paid in SOL at the price of the moment? [y/N]: `)).trim().toLowerCase()
+  if (!['y', 'yes'].includes(yes)) { io.print('• Nothing was bought.'); return { outcome: 'cancelled' } }
+  const quote = await requestJson(fetchImpl, `${base}/packs`, { method: 'POST', body: { pack_micro: pack },
+    headers: { authorization, 'idempotency-key': randomBytes(16).toString('base64url') } })
+  if (!UUID.test(quote.id ?? '') || !Number.isSafeInteger(quote.lamports) || quote.lamports < 1 || quote.pack_micro !== pack || !PAY_URL.test(quote.solana_pay_url ?? '')) {
+    throw new Error('The credit service returned an invalid quote. Nothing was paid; run the command again.')
+  }
+  io.print(`\nPay exactly ${lamportsToSol(BigInt(quote.lamports))} SOL from your wallet with this Solana Pay link:`)
+  io.print(quote.solana_pay_url)
+  const expires = new Date(quote.expires_at)
+  io.print(`The quote expires ${Number.isNaN(expires.getTime()) ? 'in 15 minutes' : expires.toLocaleTimeString()}. Waiting for the payment to finalize on chain…`)
+  const final = await wait({ creditsOrigin: options.creditsOrigin, token: authorization.slice('Bearer '.length), id: quote.id, fetchImpl })
+  if (final?.status === 'credited' && final.spin) {
+    const { multiplier_bps: m, paid_micro: paid, bonus_micro: bonus } = final.spin
+    if (!MULTIPLIERS.includes(m) || paid !== pack || bonus !== pack * (m - 10_000) / 10_000) throw new Error(`The credit service returned an invalid spin for quote ${quote.id}.`)
+    io.print('Spinning…')
+    io.print(m === 10_000 ? `✓ 1x: ${usd(paid)} of AI credits.` : `✓ ${times(m)}! ${usd(paid)} of AI credits + ${usd(bonus)} bonus = ${usd(paid + bonus)}.`)
+    return { outcome: 'credited', quote: quote.id, multiplierBps: m, paidMicro: paid, bonusMicro: bonus }
+  }
+  if (final?.review_pending) io.print('• a payment for this pack needs a review by repo.ing (wrong amount, late, or shared): a refund, or credits with no spin.')
+  else if (final?.status === 'expired') io.print('• the quote expired without a payment. Nothing was charged.')
+  else io.print(`• still waiting; check later with the quote ID ${quote.id}.`)
+  return { outcome: final?.review_pending ? 'review' : final?.status ?? 'waiting', quote: quote.id }
 }
