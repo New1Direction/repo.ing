@@ -80,7 +80,8 @@ repoing credits buy 25     # a $25 pack
 ```
 
 Pays SOL for a $10, $25, $50 or $100 pack of AI credits, at the SOL price of the moment, through a Solana Pay link like
-`repoing claim --convert`. Each paid pack spins once, on the server, when the payment is final: you always get the pack
+`repoing claim --convert`. Both commands show the link as a QR code too: scan it with your phone wallet (Phantom,
+Solflare), or open the link. Each paid pack spins once, on the server, when the payment is final: you always get the pack
 in paid credits, and a win adds bonus credits (current odds: 97.15% 1x, 2.50% 1.2x, 0.30% 2x, 0.05% 5x). Credits never
 turn into cash. At most $250 of packs a day per account. Packs are not on sale yet: the command says so until repo.ing
 turns them on.
