@@ -27,7 +27,7 @@ export default function ReferralsPage() {
       <h2 id="referral-how-title">How it works</h2>
       <ol className="referral-steps">{STEPS.map(({ icon: Icon, title, body }, index) => <li key={title} className="inner-card">
         <span className="referral-step-number" aria-hidden="true">{index + 1}</span><Icon size={20} aria-hidden="true"/><h3>{title}</h3><p>{body}</p></li>)}</ol>
-      <p className="referral-fineprint">Payouts need the one-time setup above: without your wrapped-SOL account, trades from your link go through but pay no referral. You cannot refer your own wallet. Meteora’s programs pay the fee straight into your wallet’s wrapped-SOL account during each swap; repo.ing never holds it.</p>
+      <p className="referral-fineprint">Payouts need the one-time setup above: without your wrapped-SOL account, trades from your link go through but pay no referral. For now the setup is free: you sign a message (no transaction, no SOL) and repo.ing pays for the account, once per wallet while the day’s free setups last. Otherwise you pay its small refundable deposit yourself. You cannot refer your own wallet. Meteora’s programs pay the fee straight into your wallet’s wrapped-SOL account during each swap; repo.ing never holds it.</p>
     </section>
     <section className="referral-leaderboard" aria-labelledby="referral-leaderboard-title">
       <div className="referral-leaderboard-heading"><h2 id="referral-leaderboard-title">Top referrers</h2>
