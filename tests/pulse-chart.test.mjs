@@ -117,6 +117,22 @@ test('pins closer than the gap merge into one at their most important event', ()
   assert.equal(clusters[1], placed[3])
 })
 
+test('a long run of close pins does not chain into one: each group is less than the gap wide', () => {
+  // Arrange: a star spike every hour for 40 hours, 20px apart on the chart (a viral repository on a 1.5-day chart)
+  const hours = Array.from({ length: 40 }, (_, index) => bars[0] + index * HOUR)
+  const placed = pulsePins(hours.map(time => event('stars', time)), hours, { interval: HOUR })
+    .map((pin, index) => ({ ...pin, x: index * 20 }))
+
+  // Act
+  const clusters = pulseClusters(placed, 26)
+
+  // Assert: 20 pins of two spikes each, spread along the whole run, never one pin at its start
+  assert.equal(clusters.length, 20)
+  assert.deepEqual(clusters.map(pin => pin.x), Array.from({ length: 20 }, (_, index) => index * 40))
+  assert.ok(clusters.every(pin => pin.count === 2))
+  for (let index = 1; index < clusters.length; index++) assert.ok(clusters[index].x - clusters[index - 1].x >= 26)
+})
+
 test('pins at least the gap apart stay separate', () => {
   const placed = pulsePins([event('release', bars[0]), event('merge', bars[1])], bars, { interval: HOUR })
     .map((pin, index) => ({ ...pin, x: [100, 126][index] }))
