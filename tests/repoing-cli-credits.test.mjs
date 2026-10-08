@@ -144,7 +144,8 @@ test('buy: the odds before the price, a confirmed pack, the Solana Pay link, the
   const pack = requests.find(r => r.url.endsWith('/packs') && r.method === 'POST')
   assert.deepEqual([pack.body, pack.headers.authorization], [{ pack_micro: 25_000_000 }, `Bearer ${TOKEN}`])
   assert.match(pack.headers['idempotency-key'], /^[A-Za-z0-9_-]{22}$/)
-  assert.ok(printed.includes(PAY_URL), 'the link on its own line')
+  const link = printed.indexOf(PAY_URL)
+  assert.ok(link > 20 && printed.slice(link - 20, link).every(line => /^[█▀▄ ]+$/.test(line)), 'the link on its own line, after its QR code')
   assert.match(text, /Pay exactly 0\.166666667 SOL/)
   assert.match(text, /1\.2x.*\$25\.00 of AI credits \+ \$5\.00 bonus/)
 })
@@ -172,7 +173,7 @@ test('buy: review, expiry and a malformed link or spin are reported without fore
     wait: async () => ({ id: QUOTE_ID, status: 'expired', review_pending: false, spin: null }) })).outcome, 'expired')
   const evil = []
   await assert.rejects(runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser(evil, ['y']),
-    fetchImpl: services({ payUrl: 'solana:x?amount=1\n\u001b[2Jpay https://evil.example' }).fetchImpl, wait: spun(10_000) }), /invalid quote/)
+    fetchImpl: services({ payUrl: 'solana:x?amount=1\n\u001b[2Jpay https://evil.example' }).fetchImpl, wait: spun(10_000) }), /invalid (quote|payment link)/)
   assert.equal(evil.some(line => /evil|\u001b/.test(line)), false)
   await assert.rejects(runCreditsBuy(options({ packMicro: 25_000_000 }), { repository: 'r', io: browser([], ['y']), fetchImpl: services().fetchImpl,
     wait: spun(12_000, { bonus_micro: 999 }) }), /invalid spin/)

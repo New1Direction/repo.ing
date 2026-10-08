@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
+import { renderUnicodeCompact } from 'uqr'
 import { DEFAULT_ORIGIN, VERSION, validateOrigin } from './core.mjs'
 
 // `repoing claim`: a builder's fees, either claimed to the bound wallet on repo.ing (unchanged) or converted into AI credits
@@ -32,6 +33,13 @@ export function lamportsToSol(lamports) {
   return part ? `${whole}.${part}` : `${whole}`
 }
 export const usd = micro => `$${(Number(BigInt(micro) / 10_000n) / 100).toFixed(2)}`
+// A Solana Pay link from the credit service: shown only when it has nothing but URL characters.
+const PAY_URL = /^solana:[1-9A-HJ-NP-Za-km-z]{32,44}\?[A-Za-z0-9%=&._-]{1,600}$/
+/** The lines that show a Solana Pay link: a QR code for a phone wallet (light on a dark terminal), then the link. */
+export function payLines(url) {
+  if (typeof url !== 'string' || !PAY_URL.test(url)) throw new Error('The credit service returned an invalid payment link. Nothing was paid; run the command again.')
+  return [...renderUnicodeCompact(url, { ecc: 'L', border: 2 }).split('\n').filter(Boolean), url]
+}
 
 /** A PKCE pair (S256) and a state for one sign-in. */
 export function newSignIn() {
@@ -215,7 +223,9 @@ export async function runClaim(options, { repository, io, fetchImpl = fetch, lis
   }
   const session = await signInForCredits(options, { repoId: status.repoId, io, fetchImpl, listen, signIn })
   const quote = await requestQuote({ creditsOrigin: options.creditsOrigin, token: session.token, lamports, fetchImpl })
-  io.print(`\nPay exactly ${lamportsToSol(quote.lamports)} SOL from your wallet with this Solana Pay link:\n${quote.solana_pay_url}`)
+  const pay = payLines(quote.solana_pay_url)
+  io.print(`\nPay exactly ${lamportsToSol(quote.lamports)} SOL from your wallet: scan the code with your phone wallet, or open the Solana Pay link:`)
+  for (const line of pay) io.print(line)
   io.print(`You get ${usd(quote.credit_micro)} of AI credits (SOL at ${usd(quote.price_micro_per_sol)}). The quote expires ${new Date(quote.expires_at).toLocaleTimeString()}.`)
   io.print('Waiting for the payment to finalize on chain…')
   const final = await wait({ creditsOrigin: options.creditsOrigin, token: session.token, id: quote.id, fetchImpl })

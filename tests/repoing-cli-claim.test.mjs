@@ -1,12 +1,38 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { DEFAULT_CREDITS_ORIGIN, claimStatus, handoffUrl, lamportsToSol, listenForCode, parseClaimArgs, runClaim, solToLamports, usd,
+import { DEFAULT_CREDITS_ORIGIN, claimStatus, handoffUrl, lamportsToSol, listenForCode, parseClaimArgs, payLines, runClaim, solToLamports, usd,
   validateCreditsOrigin } from '../cli/src/claim.mjs'
 
 // `repoing claim` (cli/src/claim.mjs): arguments, amounts, the one-time loopback listener, and the whole flow with repo.ing and
 // the credit service scripted (the listener is real, on 127.0.0.1).
 const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value })
+const TREASURY = '7WZRJ4to98TLKhiWqoNfqWwYcxrqN8KsBJWXdTxq2KUY'
+
+test('a Solana Pay link: its QR code, then the link; anything that is not a plain link is refused', () => {
+  const url = `solana:${TREASURY}?amount=0.166666667&reference=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin&label=repo.ing%20AI%20credits&message=Credit%20pack%202f8fad5b-d9cb-469f-a165-70867728950e`
+  const lines = payLines(url)
+  assert.equal(lines.at(-1), url)
+  const qr = lines.slice(0, -1)
+  assert.ok(qr.length >= 20 && qr.length <= 40, `${qr.length} rows`)
+  assert.ok(qr.every(line => /^[█▀▄ ]+$/.test(line) && [...line].length === [...qr[0]].length), 'square, block characters only')
+  assert.ok([...qr[0]].length <= 70, 'fits a terminal')
+  for (const bad of ['solana:x?amount=1', `solana:${TREASURY}?amount=1\n\u001b[2J`, `https://evil.example/?${TREASURY}`, `solana:${TREASURY}`, null]) {
+    assert.throws(() => payLines(bad), /invalid payment link/, String(bad))
+  }
+})
+
+test('convert: a malformed payment link from the credit service is never printed', async () => {
+  const printed = []
+  const io = { print: line => printed.push(line), ask: async () => '', open: async url => {
+    const start = new URL(url)
+    setTimeout(() => fetch(`http://127.0.0.1:${start.searchParams.get('port')}/callback?code=${'k'.repeat(43)}&state=${start.searchParams.get('state')}`), 10)
+    return true
+  } }
+  await assert.rejects(runClaim(options({ mode: 'convert', lamports: 500_000_000n }), { repository: 'r', io,
+    fetchImpl: services({ payUrl: 'solana:x?amount=1\n\u001b[2Jpay https://evil.example' }).fetchImpl, wait: async () => null }), /invalid payment link/)
+  assert.equal(printed.some(line => /evil|\u001b/.test(line)), false)
+})
 
 test('arguments: wallet or convert (not both), exact SOL amounts, safe origins', () => {
   assert.deepEqual(parseClaimArgs(['octo/widget'], {}), { command: 'claim', repository: 'octo/widget', mode: null, lamports: null, open: true,
@@ -41,7 +67,7 @@ test('the listener answers only its own state on /callback, then closes; a refus
 })
 
 // repo.ing and the credit service, scripted; every request recorded.
-function services({ available = '600000000', mint = 'MintWidget', outcome = { status: 'credited', credit_micro: 75_000_000 } } = {}) {
+function services({ available = '600000000', mint = 'MintWidget', outcome = { status: 'credited', credit_micro: 75_000_000 }, payUrl = null } = {}) {
   const requests = []
   const fetchImpl = async (url, init = {}) => {
     const target = new URL(url), body = init.body ? JSON.parse(init.body) : null
@@ -50,7 +76,7 @@ function services({ available = '600000000', mint = 'MintWidget', outcome = { st
     if (target.pathname === '/api/claim/77/preview') return json({ available })
     if (target.pathname === '/sessions') return json({ account_id: 'a', login: 'octocat', repo_id: '77', token: `rik_${'ab'.repeat(32)}` })
     if (target.pathname === '/quotes') return json({ id: 'q1', lamports: Number(body.lamports), credit_micro: 75_000_000, price_micro_per_sol: 150_000_000,
-      expires_at: new Date(Date.now() + 900_000).toISOString(), solana_pay_url: `solana:Treasury?amount=${body.lamports}`, status: 'awaiting_payment' })
+      expires_at: new Date(Date.now() + 900_000).toISOString(), solana_pay_url: payUrl ?? `solana:${TREASURY}?amount=${body.lamports}`, status: 'awaiting_payment' })
     if (target.pathname === '/quotes/q1') return json({ id: 'q1', ...outcome })
     return json({ error: 'not found' }, 404)
   }
@@ -80,7 +106,10 @@ test('convert: sign in through repo.ing with PKCE, a quote for the chosen SOL, i
   const quote = requests.find(r => r.url.endsWith('/quotes'))
   assert.deepEqual([quote.body, quote.headers.authorization], [{ lamports: '500000000' }, `Bearer rik_${'ab'.repeat(32)}`])
   assert.match(quote.headers['idempotency-key'], /^[A-Za-z0-9_-]{22}$/)
-  assert.ok(printed.some(line => /Pay exactly 0\.5 SOL/.test(line) && /solana:Treasury\?amount=500000000/.test(line)))
+  assert.ok(printed.some(line => /Pay exactly 0\.5 SOL/.test(line)))
+  const link = printed.indexOf(`solana:${TREASURY}?amount=500000000`)
+  const rows = printed.slice(0, link).reverse().findIndex(line => !/^[█▀▄ ]+$/.test(line))
+  assert.ok(rows >= 12, `the link on its own line, after its QR code (${rows} rows)`)
   assert.ok(printed.some(line => /You get \$75\.00 of AI credits \(SOL at \$150\.00\)/.test(line)))
   assert.ok(printed.includes('✓ credited: $75.00 of AI credits'))
 })

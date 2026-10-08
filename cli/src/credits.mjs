@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { DEFAULT_ORIGIN, validateOrigin } from './core.mjs'
-import { DEFAULT_CREDITS_ORIGIN, lamportsToSol, requestJson, signInForCredits, usd, validateCreditsOrigin, waitForOutcome } from './claim.mjs'
+import { DEFAULT_CREDITS_ORIGIN, lamportsToSol, payLines, requestJson, signInForCredits, usd, validateCreditsOrigin, waitForOutcome } from './claim.mjs'
 
 // `repoing credits key`: one key for a coding tool, paid from the builder's AI credits (repo.ing AI credits, repo-inference's
 // docs/FEE-CONVERSION.md). It signs in through repo.ing like `repoing claim`, then asks the credit service for one
@@ -25,8 +25,6 @@ const USAGE = 'Usage: repoing credits key|list|revoke <key-id>|buy [10|25|50|100
 const PACKS_MICRO = [10_000_000, 25_000_000, 50_000_000, 100_000_000]
 const MULTIPLIERS = [10_000, 12_000, 20_000, 50_000]
 const UUID = KEY_ID
-// A Solana Pay link from the credit service: printed only when it has nothing but URL characters.
-const PAY_URL = /^solana:[1-9A-HJ-NP-Za-km-z]{32,44}\?[A-Za-z0-9%=&._-]{1,600}$/
 /** "25" or "$25" → micro-USD of a pack; anything else is refused. */
 function packMicro(text) {
   const match = /^\$?(\d{1,4})$/.exec(text)
@@ -214,11 +212,12 @@ export async function runCreditsBuy(options, { repository, io, fetchImpl = fetch
   if (!['y', 'yes'].includes(yes)) { io.print('• Nothing was bought.'); return { outcome: 'cancelled' } }
   const quote = await requestJson(fetchImpl, `${base}/packs`, { method: 'POST', body: { pack_micro: pack },
     headers: { authorization, 'idempotency-key': randomBytes(16).toString('base64url') } })
-  if (!UUID.test(quote.id ?? '') || !Number.isSafeInteger(quote.lamports) || quote.lamports < 1 || quote.pack_micro !== pack || !PAY_URL.test(quote.solana_pay_url ?? '')) {
+  if (!UUID.test(quote.id ?? '') || !Number.isSafeInteger(quote.lamports) || quote.lamports < 1 || quote.pack_micro !== pack) {
     throw new Error('The credit service returned an invalid quote. Nothing was paid; run the command again.')
   }
-  io.print(`\nPay exactly ${lamportsToSol(BigInt(quote.lamports))} SOL from your wallet with this Solana Pay link:`)
-  io.print(quote.solana_pay_url)
+  const pay = payLines(quote.solana_pay_url)
+  io.print(`\nPay exactly ${lamportsToSol(BigInt(quote.lamports))} SOL from your wallet: scan the code with your phone wallet, or open the Solana Pay link:`)
+  for (const line of pay) io.print(line)
   const expires = new Date(quote.expires_at)
   io.print(`The quote expires ${Number.isNaN(expires.getTime()) ? 'in 15 minutes' : expires.toLocaleTimeString()}. Waiting for the payment to finalize on chain…`)
   const final = await wait({ creditsOrigin: options.creditsOrigin, token: authorization.slice('Bearer '.length), id: quote.id, fetchImpl })
