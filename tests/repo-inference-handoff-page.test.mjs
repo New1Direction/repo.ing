@@ -24,10 +24,10 @@ export async function load(url, context, next) {
 }`)}`)
 const { appModule, html } = await import('./fixtures/render-jsx.mjs')
 
-const KEYS = ['DATABASE_URL', 'GITHUB_APP_CLIENT_SECRET', 'REPO_INFERENCE_HANDOFF_SECRET', 'HANDOFF_ASSERTION_SECRET', 'APP_ORIGIN']
+const KEYS = ['DATABASE_URL', 'GITHUB_APP_CLIENT_SECRET', 'REPO_INFERENCE_HANDOFF_ENABLED', 'REPO_INFERENCE_HANDOFF_SECRET', 'HANDOFF_ASSERTION_SECRET', 'APP_ORIGIN']
 const saved = Object.fromEntries(KEYS.map(key => [key, process.env[key]]))
 Object.assign(process.env, { DATABASE_URL: 'postgres://unused@127.0.0.1:1/unused', GITHUB_APP_CLIENT_SECRET: randomBytes(32).toString('hex'),
-  REPO_INFERENCE_HANDOFF_SECRET: 'a'.repeat(32), HANDOFF_ASSERTION_SECRET: 'b'.repeat(32), APP_ORIGIN: 'https://repo.ing' })
+  REPO_INFERENCE_HANDOFF_ENABLED: 'true', REPO_INFERENCE_HANDOFF_SECRET: 'a'.repeat(32), HANDOFF_ASSERTION_SECRET: 'b'.repeat(32), APP_ORIGIN: 'https://repo.ing' })
 globalThis.__gitfunPool = { query: async sql => /from repositories/.test(sql)
   ? { rows: [{ repoId: '77', owner: 'octo', name: 'widget', fullName: 'octo/widget', description: null, avatarUrl: null, stars: 5, forks: 0, updatedAt: new Date() }] } : { rows: [] } }
 test.after(() => {
@@ -68,8 +68,21 @@ test('the consent page: expired, sign in, not an admin, and the approval that na
   assert.match(consent, /returns to the CLI on this computer \(127\.0\.0\.1:(<!-- -->)?54321(<!-- -->)?\)/)
 })
 
+const notFound = error => /NEXT_HTTP_ERROR_FALLBACK;404|NEXT_NOT_FOUND/.test(error.digest ?? error.message)
+
 test('dark: not found without the handoff secrets', async () => {
   delete process.env.HANDOFF_ASSERTION_SECRET
-  await assert.rejects(render({ [HANDOFF_COOKIE]: request }), error => /NEXT_HTTP_ERROR_FALLBACK;404|NEXT_NOT_FOUND/.test(error.digest ?? error.message))
+  await assert.rejects(render({ [HANDOFF_COOKIE]: request }), notFound)
   process.env.HANDOFF_ASSERTION_SECRET = 'b'.repeat(32)
+})
+
+test('dark: not found with every secret set while the switch is off (hidden until AI credits start)', async () => {
+  for (const enabled of [undefined, 'false', 'TRUE', '1']) {
+    if (enabled === undefined) delete process.env.REPO_INFERENCE_HANDOFF_ENABLED
+    else process.env.REPO_INFERENCE_HANDOFF_ENABLED = enabled
+    await assert.rejects(render({}), notFound, String(enabled))
+    await assert.rejects(render({ [HANDOFF_COOKIE]: request, [githubSessionCookie]: session }, true), notFound, String(enabled))
+  }
+  process.env.REPO_INFERENCE_HANDOFF_ENABLED = 'true'
+  assert.match(await render({}), /Run <code>repoing claim<\/code> again/)
 })

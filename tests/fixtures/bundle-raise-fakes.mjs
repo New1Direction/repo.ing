@@ -67,12 +67,19 @@ export function fakeChain() {
 
 // The raise flow's queries against a bundles table and a markets table held in memory. Every query is recorded with whether it
 // ran on a connection taken with connect() (`client`), so tests can see what ran under a lock.
-export function fakePool({ bundles = new Map(), hasMarket = false } = {}) {
+// takenSymbols: other repositories' market tickers (src/launch-symbols.mjs), beside the bundles' own.
+export function fakePool({ bundles = new Map(), hasMarket = false, takenSymbols = [] } = {}) {
   const queries = []
   let nextId = 7n
   async function query(sql, params = [], client = false) {
     queries.push({ sql, params, client })
     if (/pg_advisory|^(begin|commit|rollback)$/.test(sql.trim())) return { rows: [], rowCount: 0 }
+    if (/as "takenSymbol" from markets/.test(sql)) {
+      const [symbol, repoId, , liveStatuses] = params, same = value => String(value).toLowerCase() === symbol.toLowerCase()
+      const live = [...bundles.values()].find(row => row.githubRepoId !== repoId && liveStatuses.includes(row.status) && same(row.tokenSymbol))
+      const taken = takenSymbols.find(same) ?? live?.tokenSymbol
+      return { rows: taken === undefined ? [] : [{ takenSymbol: taken }] }
+    }
     if (/nextval\('bundle_id_seq'\)/.test(sql)) return { rows: [{ id: String(nextId++) }] }
     if (/select exists\(select 1 from bundles\)/.test(sql)) return { rows: [{ any: bundles.size > 0 }] }
     if (/exists\(select 1 from markets/.test(sql)) {

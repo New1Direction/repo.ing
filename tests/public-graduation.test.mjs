@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { graduationError, publicGraduation, recordGraduationReview, TRANSIENT_REVIEW_CODES } from '../src/graduation-readiness.mjs'
 import { PUBLIC_GRADUATION_MAX_AGE_MS } from '../src/graduation-state.mjs'
 import { graduationColumns } from './fixtures/graduation-rows.mjs'
+import { REPOING_POOL, liquidityTotals } from '../app/lib/liquidity-receipts.mjs'
 
 const now = Date.parse('2026-10-05T05:00:00.000Z')
 const review = (code, options = {}) => ({ ...graduationColumns({ now, rowStatus: 'REVIEW', ...options }), error_code: code })
@@ -77,4 +78,15 @@ test('real PostgreSQL: a failed read never replaces a finding on record, and a f
     await recordGraduationReview(db, '8', 'RPC_UNAVAILABLE')
     assert.equal((await db.query('select error_code from graduation_observations where github_repo_id = 8')).rows[0].error_code, 'RPC_UNAVAILABLE')
   } finally { await db.query('rollback'); await db.end() }
+})
+
+test('$REPOING\'s graduation panel shows the protocol liquidity the team added by hand; other pools only their own', () => {
+  const manual = liquidityTotals().solLamports
+  const repoing = publicGraduation(graduationColumns({ now, graduated: true, pool: REPOING_POOL }), now)
+  assert.equal(repoing.protocolLiquidityAdded, manual.toString())
+  assert.equal(publicGraduation(graduationColumns({ now, graduated: true, pool: REPOING_POOL, protocolLiquidityAdded: '5' }), now).protocolLiquidityAdded,
+    (manual + 5n).toString(), 'with verified protocol intents too')
+  assert.equal(publicGraduation(graduationColumns({ now, graduated: true, protocolLiquidityAdded: null }), now).protocolLiquidityAdded, null)
+  assert.equal(publicGraduation(graduationColumns({ now, graduated: true, protocolLiquidityAdded: '5' }), now).protocolLiquidityAdded, '5')
+  assert.equal('protocolLiquidityAdded' in publicGraduation(graduationColumns({ now, reserveSol: 40n }), now), false, 'a curve market shows none')
 })

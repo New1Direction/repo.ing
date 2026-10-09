@@ -4,7 +4,8 @@ import { database } from './server.mjs'
 
 // Web side of the repo.ing AI credits sign-in handoff (src/repo-inference-handoff.mjs): the CLI's request rides in a sealed
 // cookie through the GitHub sign-in to the consent page and its approval. Dark: every handoff route and the page answer 404
-// unless both handoff secrets, the database and the GitHub App secret (which seals the cookie) are configured.
+// unless REPO_INFERENCE_HANDOFF_ENABLED is 'true' and both handoff secrets, the database and the GitHub App secret (which seals
+// the cookie) are configured.
 // __Host- in production: only this host, over HTTPS, path / (a sibling subdomain cannot plant one).
 export const HANDOFF_COOKIE = process.env.NODE_ENV === 'production' ? '__Host-repoing_handoff' : 'repoing_handoff'
 export const handoffAvailable = () => handoffEnabled() && Boolean(database()) && Boolean(process.env.GITHUB_APP_CLIENT_SECRET)

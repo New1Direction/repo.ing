@@ -21,6 +21,16 @@ test('proof line: all-time volume floored to whole SOL, builder payouts and buyb
   assert.deepEqual(proofFacts(), [])
 })
 
+test('builder payouts say how much went to builders outside repo.ing (the /stats split), only while that part is known', () => {
+  const [paid] = proofFacts({ totals: { volume: '0', paid: '42160000000', paidOutside: '257000000' } })
+  assert.deepEqual(paid, { id: 'paid', value: '42.16 SOL', label: 'paid to builders', detail: '0.257 SOL to builders outside repo.ing' })
+  assert.equal(proofFacts({ totals: { volume: '0', paid: '42160000000', paidOutside: '0' } })[0].detail, '0 SOL to builders outside repo.ing',
+    'none yet is said plainly')
+  for (const paidOutside of [undefined, null, '', 'n/a']) {
+    assert.equal('detail' in proofFacts({ totals: { volume: '0', paid: '42160000000', paidOutside } })[0], false, String(paidOutside))
+  }
+})
+
 test('trending lists only markets that traded in the last 24 hours; New still lists every market', () => {
   const tabs = homeMarketTabs([market(1, 0), market(2, 4e9), market(3, 0), market(4, 1e9)])
   assert.deepEqual(tabs.Trending.map(m => m.repoId), ['2', '4'])
@@ -33,4 +43,6 @@ test('the proof line links the buyback figure to its receipts; the placeholder r
   const markup = html(h(HomeProofLine, { facts: [{ id: 'traded', value: '6,962 SOL', label: 'traded' }, { id: 'bought', value: '51.56 SOL', label: 'bought back', href: '/stats#repo-title' }] }))
   assert.equal(markup, '<p class="home-proof"><span><strong>6,962 SOL</strong> traded</span><span><a href="/stats#repo-title"><strong>51.56 SOL</strong> bought back</a></span></p>')
   assert.match(html(h(HomeProofFallback)), /class="home-proof is-loading" aria-hidden="true"/)
+  assert.equal(html(h(HomeProofLine, { facts: [{ id: 'paid', value: '42.16 SOL', label: 'paid to builders', detail: '0.257 SOL to builders outside repo.ing' }] })),
+    '<p class="home-proof"><span><strong>42.16 SOL</strong> paid to builders<small>0.257 SOL to builders outside repo.ing</small></span></p>')
 })

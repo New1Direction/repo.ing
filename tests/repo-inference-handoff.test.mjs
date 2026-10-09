@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { HANDOFF_AUDIENCE, HandoffError, assertionMessage, callbackUrl, clientAuthorized, handoffCheckCode, handoffSettings, readHandoffRequest,
+import { HANDOFF_AUDIENCE, HandoffError, assertionMessage, callbackUrl, clientAuthorized, handoffCheckCode, handoffEnabled, handoffSettings, readHandoffRequest,
   signAssertion } from '../src/repo-inference-handoff.mjs'
 import { checkCode } from '../cli/src/claim.mjs'
 
@@ -35,9 +35,16 @@ test('the check code the page shows is the one the CLI prints for the same chall
   assert.notEqual(handoffCheckCode('c'.repeat(43)), handoffCheckCode('d'.repeat(43)))
 })
 
-test('settings: both secrets, 32 to 256 characters, different from each other and from the GitHub App secret', () => {
-  const env = { REPO_INFERENCE_HANDOFF_SECRET: 'a'.repeat(32), HANDOFF_ASSERTION_SECRET: 'b'.repeat(32), GITHUB_APP_CLIENT_SECRET: 'c'.repeat(40) }
+test('settings: the switch on, both secrets, 32 to 256 characters, different from each other and from the GitHub App secret', () => {
+  const env = { REPO_INFERENCE_HANDOFF_ENABLED: 'true', REPO_INFERENCE_HANDOFF_SECRET: 'a'.repeat(32), HANDOFF_ASSERTION_SECRET: 'b'.repeat(32),
+    GITHUB_APP_CLIENT_SECRET: 'c'.repeat(40) }
   assert.deepEqual(handoffSettings(env), { clientSecret: 'a'.repeat(32), assertionSecret: 'b'.repeat(32) })
+  // Off by default (hidden until AI credits start): valid secrets alone never turn it on; only exactly 'true' does.
+  for (const enabled of [undefined, '', 'false', 'TRUE', '1', 'yes', ' true']) {
+    assert.equal(handoffSettings({ ...env, REPO_INFERENCE_HANDOFF_ENABLED: enabled }), null, JSON.stringify(enabled))
+    assert.equal(handoffEnabled({ ...env, REPO_INFERENCE_HANDOFF_ENABLED: enabled }), false, JSON.stringify(enabled))
+  }
+  assert.equal(handoffEnabled(env), true)
   for (const bad of [{ REPO_INFERENCE_HANDOFF_SECRET: undefined }, { HANDOFF_ASSERTION_SECRET: 'short' }, { HANDOFF_ASSERTION_SECRET: 'a'.repeat(32) },
     { GITHUB_APP_CLIENT_SECRET: 'a'.repeat(32) }, { REPO_INFERENCE_HANDOFF_SECRET: 'a'.repeat(257) }]) {
     assert.equal(handoffSettings({ ...env, ...bad }), null, JSON.stringify(bad))

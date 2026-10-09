@@ -65,7 +65,7 @@ test('the repo.ing AI credits handoff on PostgreSQL: migration 0062, single-use 
 
     // The routes, with the configured secrets and GitHub scripted.
     Object.assign(process.env, { DATABASE_URL: URL_, GITHUB_APP_CLIENT_ID: 'Iv1.test-only', GITHUB_APP_CLIENT_SECRET: randomBytes(32).toString('hex'),
-      APP_ORIGIN: 'https://repo.ing', REPO_INFERENCE_HANDOFF_SECRET: CLIENT, HANDOFF_ASSERTION_SECRET: ASSERT })
+      APP_ORIGIN: 'https://repo.ing', REPO_INFERENCE_HANDOFF_ENABLED: 'true', REPO_INFERENCE_HANDOFF_SECRET: CLIENT, HANDOFF_ASSERTION_SECRET: ASSERT })
     globalThis.__gitfunPool = pool
     let permission = 'admin'
     const calls = []
@@ -161,6 +161,20 @@ test('the repo.ing AI credits handoff on PostgreSQL: migration 0062, single-use 
       process.env.HANDOFF_ASSERTION_SECRET = CLIENT
       assert.equal((await redeem({})).status, 404, 'the same secret twice is refused')
       process.env.HANDOFF_ASSERTION_SECRET = ASSERT
+    })
+
+    await t.test('dark: every route answers 404 with the secrets set while the switch is off', async () => {
+      const query = new URLSearchParams({ audience: 'repo-inference', repo: '77', challenge: challengeOf('v'.repeat(43)), port: '54321', state: 's'.repeat(22) })
+      const startNow = () => start(new NextRequest(`https://repo.ing/api/handoff/start?${query}`))
+      for (const enabled of [undefined, 'false', 'TRUE']) {
+        if (enabled === undefined) delete process.env.REPO_INFERENCE_HANDOFF_ENABLED
+        else process.env.REPO_INFERENCE_HANDOFF_ENABLED = enabled
+        assert.equal((await redeem({})).status, 404, String(enabled))
+        assert.equal((await startNow()).status, 404, String(enabled))
+        assert.equal((await approve(new NextRequest('https://repo.ing/api/handoff/approve', { method: 'POST' }))).status, 404, String(enabled))
+      }
+      process.env.REPO_INFERENCE_HANDOFF_ENABLED = 'true'
+      assert.equal((await startNow()).status, 307, 'the same request starts the sign-in once the switch is on')
     })
   } finally {
     for (const key of Object.keys(process.env)) if (!(key in saved.env)) delete process.env[key]

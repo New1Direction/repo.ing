@@ -37,3 +37,12 @@ export function liquidityTotals(receipts = LIQUIDITY_RECEIPTS) {
       allLocked: total.allLocked && receipt.locked === true }
   }, { solLamports: 0n, tokenBaseUnits: 0n, allLocked: true })
 }
+
+// What a graduated market's panel shows as protocol liquidity added: its settled protocol deployments (settled, verified by the
+// graduation monitor, src/graduation-readiness.mjs), plus the manual deposits above for the canonical $REPOING pool. Any other
+// pool's figure is returned as it is; for $REPOING's, lamports as text, or null when there is none.
+export function protocolLiquidityAdded(pool, settled, receipts = LIQUIDITY_RECEIPTS) {
+  if (pool !== REPOING_POOL) return settled
+  const total = BigInt(settled ?? 0) + liquidityTotals(receipts).solLamports
+  return total > 0n ? total.toString() : null
+}

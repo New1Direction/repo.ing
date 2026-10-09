@@ -301,17 +301,34 @@ test('opening: under the repository lock, a stale unsigned opening is replaced, 
   const replaced = await call(h.api.open(post('/api/bundles', openBody({ launcherWallet: backer.publicKey.toBase58() }))))
   assert.equal(replaced.status, 200)
   assert.deepEqual([h.pool.bundles.get('7').status, replaced.body.bundleId, h.pool.bundles.get(replaced.body.bundleId).status], ['expired', '8', 'opening'])
-  // Checks, replacement and insert all ran on the locked connection, between lock and unlock on the repository id.
+  // Checks, replacement and insert all ran on the locked connection, between lock and unlock on the repository id; the ticker check,
+  // the id and the insert also under the ticker's own lock (src/launch-symbols.mjs).
   const onClient = h.pool.queries.filter(query => query.client).map(query => query.sql.trim())
   const lock = onClient.lastIndexOf('select pg_advisory_lock($1::bigint)'), unlock = onClient.lastIndexOf('select pg_advisory_unlock($1::bigint)')
   assert.ok(lock >= 0 && unlock > lock)
   assert.deepEqual(onClient.slice(lock + 1, unlock).map(sql => sql.split(/\s+/).slice(0, 2).join(' ')),
-    ['select exists(select', 'update bundles', 'select count(*)::int', "select nextval('bundle_id_seq')::text", 'insert into'])
+    ['select exists(select', 'update bundles', 'select count(*)::int', 'select pg_advisory_lock(hashtextextended($1,0))', 'select token_symbol',
+      "select nextval('bundle_id_seq')::text", 'insert into', 'select pg_advisory_unlock(hashtextextended($1,0))'])
+  assert.deepEqual(h.pool.queries.find(query => query.sql.includes('hashtextextended')).params, ['launch-symbol:wdgt'])
   assert.deepEqual(h.pool.queries.find(query => query.sql.includes('pg_advisory_lock')).params, [REPO])
   // Two waiting bundles for one wallet (other repositories): a third is refused.
   const capped = harness()
   for (const id of ['1', '2']) capped.pool.bundles.set(id, { bundleId: id, githubRepoId: `1${id}`, creatorWallet: creator.publicKey.toBase58(), status: 'opening' })
   assert.deepEqual(await call(capped.api.open(post('/api/bundles', openBody()))), { status: 429, body: { error: RAISE_REFUSALS.wallets } })
+})
+
+test('opening: a ticker another market or live bundle uses is refused, compared without case; a failed bundle frees it', async () => {
+  const taken = harness()
+  const withMarket = fakePool({ takenSymbols: ['Wdgt'] })
+  const api = harness({ overrides: { pool: () => withMarket } }).api
+  const refused = await call(api.open(post('/api/bundles', openBody({ tokenSymbol: 'WDGT' }))))
+  assert.deepEqual(refused, { status: 409, body: { error: 'The ticker $Wdgt is already used by another market on repo.ing. Choose a different ticker.' } })
+  assert.equal(withMarket.queries.filter(query => /nextval|insert into bundles/.test(query.sql)).length, 0, 'no id or row')
+  // Another repository's live bundle holds its ticker; once that raise failed, the ticker is free again.
+  taken.pool.bundles.set('3', { bundleId: '3', githubRepoId: '1', creatorWallet: backer.publicKey.toBase58(), tokenSymbol: 'wdgt', status: 'raising' })
+  assert.equal((await call(taken.api.open(post('/api/bundles', openBody())))).status, 409)
+  taken.pool.bundles.set('3', { ...taken.pool.bundles.get('3'), status: 'failed' })
+  assert.equal((await call(taken.api.open(post('/api/bundles', openBody())))).status, 200)
 })
 
 test('limits: opening counts as a launch review, its submit and every relay have their own allowance', async () => {

@@ -13,6 +13,9 @@ export function evaluateReserveCoverage(platform, observations) {
   if (!wallets.length && required === 0n) return { status: 'NO_RESERVES' }
   // Multiple receiving wallets require a per-allocation custody review; never
   // use another wallet's funds to hide a shortfall in the recorded receiver.
+  // No balance is read or compared for them: the page says the reserves are held
+  // in that many wallets and shows the recorded allocations (MULTIPLE_WALLETS).
+  if (wallets.length > 1) return { status: 'MULTIPLE_WALLETS', walletCount: wallets.length }
   if (wallets.length !== 1 || observations.length !== 2) return { status: 'UNVERIFIED' }
   const [a, b] = observations
   if ([a, b].some(x => x.wallet !== wallets[0] || x.genesis !== MAINNET_GENESIS ||

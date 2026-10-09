@@ -54,6 +54,8 @@ A Git push saves source; it does not by itself establish a successful production
 
 Optional [agent launch reviews](AGENT_LAUNCH.md) require migration `0022`, a dedicated web-only `AGENT_LAUNCH_SECRET`, and `AGENT_LAUNCH_ENABLED=true`. Default is disabled. The new tools prepare review links and read indexed status; they never sign or submit a launch. Verify the endpoint and browser handoff before activation. Shared request quotas fail closed when the database is unavailable.
 
+The repo.ing AI credits sign-in handoff (`/handoff` and `/api/handoff/start`, `/approve`, `/token`; `src/repo-inference-handoff.mjs`) is off by default: every one of those answers 404 unless `REPO_INFERENCE_HANDOFF_ENABLED=true` on web, even when `REPO_INFERENCE_HANDOFF_SECRET` and `HANDOFF_ASSERTION_SECRET` are set. Owner decision 2026-10-08: keep it off until AI credits start (the credit service and a CLI with `repoing claim` are live). To turn it on, set both secrets, then the switch, and check that `/api/handoff/start` no longer answers 404.
+
 ## Financial execution gates
 
 Keep these settings explicitly disabled until their separate activation requirements are met:

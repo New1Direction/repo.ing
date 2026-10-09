@@ -9,9 +9,11 @@ export async function HomeProof() {
   return <HomeProofLine facts={proofFacts({ totals, receipts })}/>
 }
 
+// detail: a second, smaller line under a figure's label (the builder payouts' outside-builders part).
 export function HomeProofLine({ facts }) {
   return <p className="home-proof">{facts.map(fact => <span key={fact.id}>
-    {fact.href ? <Link href={fact.href}><strong>{fact.value}</strong> {fact.label}</Link> : <><strong>{fact.value}</strong> {fact.label}</>}</span>)}</p>
+    {fact.href ? <Link href={fact.href}><strong>{fact.value}</strong> {fact.label}</Link> : <><strong>{fact.value}</strong> {fact.label}</>}
+    {fact.detail && <small>{fact.detail}</small>}</span>)}</p>
 }
 
 // Same box as the resolved line, so the figures stream in without moving anything below.

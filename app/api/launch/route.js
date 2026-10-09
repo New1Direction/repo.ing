@@ -76,7 +76,7 @@ async function prepareModelLaunch(request, body) {
   const hf = hfClient(), launcher = createMeteoraLauncher({ connection, config, creator, metadataOrigin })
   // The shared reward settings go in unchanged: rewardStamps() stamps a model market's allocation but never the bonus.
   const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
-    pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(),
+    pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), refuseTakenSymbols: true,
     source: hfLaunchSource({ pool, hf, expected: { hfId: registered.hfId, marketRef } }) })
   const id = randomUUID(), initialBuyLamports = body.initialBuyLamports ?? '0'
   let costs, transaction
@@ -170,7 +170,7 @@ export async function POST(request) {
       const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(),
         // The early access config reserves the builder allocation when it is listed like any other config (src/builder-allocation.mjs).
         builderAllocationEnabled: earlyAccess ? allocationEnabled(config) : builderAllocationEnabled(),
-        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), quote: pair.quote,
+        pendingReview: market => store.pending(market.id), verificationBonusLamports: verificationBonusLamports(), quote: pair.quote, refuseTakenSymbols: true,
         earlyAccess: earlyAccess ? { windowSeconds: earlyAccess.windowSeconds, rules: earlyAccess.rules, snapshot: contributorSnapshotStep({ pool }) } : null })
       if (body.trendRevision !== undefined && (!Number.isSafeInteger(body.trendRevision) || body.trendRevision < 1)) throw Error('Invalid trend approval')
       const launchGuard = earlyAccess ? earlyAccessGuard(config, { versioned: true })
@@ -209,7 +209,9 @@ export async function POST(request) {
       let prepared
       try { prepared = launcher.restore(session) }
       catch (error) { await store.release(session); throw error }
-      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled() })
+      // The ticker is checked again just before sending (refuseTakenSymbols, src/launch-symbols.mjs).
+      const coordinator = createLaunchCoordinator({ pool, launcher, discoveryEnabled: discoveryRewardsEnabled(), builderAllocationEnabled: builderAllocationEnabled(),
+        refuseTakenSymbols: true })
       // A model market is checked again after the wallet signed, before anything is sent (src/hf-launch.mjs).
       // A GitHub launch is decided again by its stamp (a stock pair as at prepare; nothing more for SOL; early access while it can
       // launch on the same config), then by its trend approval.
