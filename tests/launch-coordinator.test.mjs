@@ -282,3 +282,61 @@ test('split launch failures release the market exactly like the one-call launch'
   await assert.rejects(ambiguous.coordinator.submitPrepared(submitArgs(await ambiguous.store.consume(next.id))), /RPC timeout/)
   assert.equal((await drizzle(pool).select().from(markets))[0].status, 'ambiguous')
 })
+
+// ---------- One ticker per market (src/launch-symbols.mjs; the launch API sets refuseTakenSymbols) ----------
+const repoAt = (id, fullName) => async () => ({ ok: true, status: 200, json: async () => ({ ...repo(fullName), id }) })
+const OTHER = 'https://github.com/other/omarchy'
+const taken = symbol => error => error.code === 'SYMBOL_TAKEN' && error.message === `The ticker $${symbol} is already used by another market on repo.ing. Choose a different ticker.`
+const marketsOf = async id => (await pool.query('select status, token_symbol from markets where github_repo_id=$1 order by id', [id])).rows
+
+test('a ticker another market uses is refused at review, compared without case; nothing is reserved or prepared', async () => {
+  const first = await createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: fakeFetch, refuseTakenSymbols: true }).launch(request())
+  const other = createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: repoAt(456, 'other/omarchy'), refuseTakenSymbols: true })
+  for (const symbol of ['REPO', 'repo', 'RePo']) await assert.rejects(other.launch({ ...request(OTHER), tokenSymbol: symbol }), taken('REPO'), symbol)
+  await assert.rejects(other.prepareLaunch({ ...request(OTHER), tokenSymbol: 'repo' }), taken('REPO'))
+  assert.equal(serial, 1, 'refused before the launcher prepared anything')
+  assert.deepEqual(await marketsOf(456), [], 'no reservation')
+  // The repository that has the ticker gets its own market back; another ticker launches.
+  assert.equal((await createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: fakeFetch, refuseTakenSymbols: true }).launch(request())).id, first.id)
+  assert.equal((await other.launch({ ...request(OTHER), tokenSymbol: 'OMARCHY' })).status, 'confirmed')
+  // Callers that do not ask for it (internal tools, tests) are unchanged.
+  const unchecked = createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: repoAt(789, 'third/repo') })
+  assert.equal((await unchecked.launch({ ...request('https://github.com/third/repo'), tokenSymbol: 'omarchy' })).status, 'confirmed')
+})
+
+test('a review in progress, a launch sent and a live bundle hold a ticker; a failed attempt or a failed bundle frees it', async () => {
+  const launcher = splitLauncher(), a = replica(pool, launcher, { refuseTakenSymbols: true })
+  const b = replica(replicaPool, launcher, { refuseTakenSymbols: true, fetchImpl: repoAt(456, 'other/omarchy') })
+  const review = await prepareReview(a)
+  await assert.rejects(prepareReview(b, { repositoryUrl: OTHER, tokenSymbol: 'repo' }), taken('REPO'), 'a review in progress holds it')
+  await a.store.cancel(review.id)
+  assert.equal((await prepareReview(b, { repositoryUrl: OTHER, tokenSymbol: 'repo' })).market.status, 'prepared', 'the cancelled review freed it')
+  // A repository's live bundle holds the ticker its market will launch with.
+  await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at) values (777,'b','bundle','b/bundle',0,0,false,now())`)
+  await pool.query(`insert into bundles(bundle_id,github_repo_id,address,creator_wallet,token_name,token_symbol,target_lamports,min_deposit_lamports,deadline,status)
+    values (9,777,'BundleAddress','Creator','Bundle','BNDL',5000000000,50000000,now()+interval '3 days','raising')`)
+  await assert.rejects(a.coordinator.prepareLaunch({ ...request(), tokenSymbol: 'bndl' }), taken('BNDL'))
+  await pool.query(`update bundles set status='failed' where bundle_id=9`)
+  assert.equal((await prepareReview(a, { tokenSymbol: 'bndl' })).market.status, 'prepared')
+})
+
+test('of two reviews racing for one ticker, the first one sent keeps it; the second is refused before sending', async () => {
+  let submits = 0
+  const launcher = splitLauncher({ submit: async () => { submits++ } }), a = replica(pool, launcher, { refuseTakenSymbols: true })
+  // B's review ran its check before A's review existed (here: a replica without it), so both hold a prepared review.
+  const early = replica(replicaPool, launcher, { fetchImpl: repoAt(456, 'other/omarchy') })
+  const b = replica(replicaPool, launcher, { refuseTakenSymbols: true, fetchImpl: repoAt(456, 'other/omarchy') })
+  const reviewA = await prepareReview(a), reviewB = await prepareReview(early, { repositoryUrl: OTHER, tokenSymbol: 'Repo' })
+  assert.equal((await a.coordinator.submitPrepared(submitArgs(await a.store.consume(reviewA.id)))).status, 'confirmed')
+  await assert.rejects(b.coordinator.submitPrepared(submitArgs(await b.store.consume(reviewB.id))), taken('REPO'))
+  assert.equal(submits, 1, 'only the first launch was sent')
+  assert.deepEqual(await marketsOf(456), [{ status: 'failed', token_symbol: 'Repo' }], 'released, never marked submitted')
+})
+
+test('a Bundle launch keeps the ticker its raise opened with', async () => {
+  await createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: repoAt(456, 'other/omarchy') }).launch(request(OTHER))
+  const launcher = fakeLauncher(), prepare = launcher.prepare
+  launcher.prepare = async input => ({ ...await prepare(input), bundle: input.bundle })
+  const market = await createLaunchCoordinator({ pool, launcher, fetchImpl: fakeFetch, refuseTakenSymbols: true, bundle: { id: '5' } }).launch(request())
+  assert.deepEqual([market.status, market.bundleId], ['confirmed', 5n])
+})

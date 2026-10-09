@@ -7,6 +7,7 @@ import { createBackerCounter, hasWrappedSolAccount, readBacker, readBundle, send
 import { claimCreate, expireOpening, insertOpeningBundle, loadBundle, markRaising, nextBundleId, openingCount, repositoryBlockers, withBundleLock,
   withRepositoryLock } from '../../src/bundle-raise-store.mjs'
 import { resolvePublicRepositoryById } from '../../src/github.mjs'
+import { symbolHolder, symbolTakenMessage, withSymbolLock } from '../../src/launch-symbols.mjs'
 import { RepositoryResolutionError } from '../../src/github-url.mjs'
 import { isGithubRepoId } from '../../src/market-identity.mjs'
 import { DecisionError, assertLaunchAllowed } from '../../src/maintainer-opt-outs.mjs'
@@ -67,6 +68,8 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
   // Repository checks exactly as a standard launch review makes them (app/api/launch/route.js): a public GitHub repository read
   // by its id, the maintainer's opt-out, the fork guard; then, under the repository's lock (the launch coordinator's, so a standard
   // launch cannot slip in between), no market or launch in progress, no live bundle, and the wallet's waiting bundles under the cap.
+  // Then, under the ticker's lock as well, a ticker no other market or live bundle uses (src/launch-symbols.mjs): the bundle's
+  // own launch is not refused for its ticker later, so it is checked here, when the raise opens.
   async function prepareOpen(request, body) {
     const refused = limit(request, 'launch:prepare', { canRetry: true })
     if (refused) return refused
@@ -87,15 +90,19 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
         throw new BundleRaiseError(RAISE_REFUSALS[blockers.liveBundle === 'opening' ? 'opening' : 'live'], 409)
       }
       if (await openingCount(client, creator.toBase58()) >= MAX_OPENING_PER_WALLET) throw new BundleRaiseError(RAISE_REFUSALS.wallets, 429)
-      const bundleId = await nextBundleId(client)
-      const row = { bundleId, githubRepoId: repoId, creatorWallet: creator.toBase58(), targetLamports: terms.targetLamports,
-        minDepositLamports: terms.minDepositLamports, deadline: new Date(terms.deadline * 1000) }
-      // Simulated before the row exists: a raise Solana would refuse is never recorded or offered for signing.
-      const { budget, ...prepared } = await walletTransaction(rpc, [createInstructionFor(row, signer.publicKey)], { feePayer: creator,
-        fallback: 'Solana refused to open this bundle. Try again shortly.' })
-      const address = bundleAddress(bundleId).toBase58()
-      if (!await insertOpeningBundle(client, { ...row, address, ...token, tokenImage, deadline: terms.deadline })) throw new BundleRaiseError(RAISE_REFUSALS.live, 409)
-      return reply({ bundleId: bundleId.toString(), address, ...prepared, review: sealBundleReview(reviewKey, { bundleId, ...budget }) })
+      return withSymbolLock(client, token.tokenSymbol, async () => {
+        const taken = await symbolHolder(client, { symbol: token.tokenSymbol, githubRepoId: repoId })
+        if (taken !== null) throw new BundleRaiseError(symbolTakenMessage(taken), 409)
+        const bundleId = await nextBundleId(client)
+        const row = { bundleId, githubRepoId: repoId, creatorWallet: creator.toBase58(), targetLamports: terms.targetLamports,
+          minDepositLamports: terms.minDepositLamports, deadline: new Date(terms.deadline * 1000) }
+        // Simulated before the row exists: a raise Solana would refuse is never recorded or offered for signing.
+        const { budget, ...prepared } = await walletTransaction(rpc, [createInstructionFor(row, signer.publicKey)], { feePayer: creator,
+          fallback: 'Solana refused to open this bundle. Try again shortly.' })
+        const address = bundleAddress(bundleId).toBase58()
+        if (!await insertOpeningBundle(client, { ...row, address, ...token, tokenImage, deadline: terms.deadline })) throw new BundleRaiseError(RAISE_REFUSALS.live, 409)
+        return reply({ bundleId: bundleId.toString(), address, ...prepared, review: sealBundleReview(reviewKey, { bundleId, ...budget }) })
+      })
     })
   }
 

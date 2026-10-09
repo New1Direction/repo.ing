@@ -9,6 +9,8 @@ import { createReconciler } from './reconcile.mjs'
 import { EARLY_ACCESS_NO_P3, isEarlyAccessMarket } from './early-access.mjs'
 import { activePolicy, assertPlatformReserveCustody } from './platform-revenue.mjs'
 import { settleLiquidityIntent } from './liquidity-settlement.mjs'
+import { LIQUIDITY_RECEIPTS, REPOING_POOL, liquidityTotals } from '../app/lib/liquidity-receipts.mjs'
+import { OFFICIAL_TOKEN } from '../app/lib/official-token.mjs'
 export { settleLiquidityIntent, createLiquidityRecovery } from './liquidity-settlement.mjs'
 
 const LOCK_MODE = 'platform-authority'
@@ -30,14 +32,32 @@ export function liquidityConfig(env = process.env) {
   if (rules.maxSlippageBps >= 10000 || rules.maxPriceImpactBps > 10000 || BigInt(rules.maxDeployLamports) < BigInt(rules.minDeployLamports)) throw Error('Invalid liquidity bounds')
   return rules
 }
-export async function liquidityReserveSummary(db) {
+// The SOL the team added by hand to the canonical $REPOING pool from the team wallet (app/lib/liquidity-receipts.mjs). Owner
+// decision (2026-10-08): those deposits spend the policy's liquidity share like a settled intent, so they come off what remains.
+// They are mainnet deposits into $REPOING's graduated pool, so they count only against a ledger that records that graduation
+// (production), never against a test or devnet ledger, the way buyback receipts count only for this ledger's own wallets.
+export async function manualLiquidityLamports(db, receipts = LIQUIDITY_RECEIPTS) {
+  const { solLamports } = liquidityTotals(receipts)
+  if (solLamports === 0n) return 0n
+  const { rows } = await db.query('select 1 from graduation_events where github_repo_id=$1 and pool=$2 limit 1', [OFFICIAL_TOKEN.repoId, REPOING_POOL])
+  return rows.length ? solLamports : 0n
+}
+// remaining: what the liquidity share still holds after protocol intents (committed) and the manual deposits (manual); never
+// below 0, and the only budget the executor may spend. ahead: deposits and commitments beyond the allocation (allowed for
+// manual deposits, like buybackAhead; an intent is refused while it is above 0). intentReserve: the allocation after protocol
+// intents alone, the figure reconciliation bounds, since only protocol-executed intents must stay inside the allocation.
+// receipts: the manual deposits to count (tests pass their own).
+export async function liquidityReserveSummary(db, { receipts = LIQUIDITY_RECEIPTS } = {}) {
   const { rows:[allocated] } = await db.query('select coalesce(sum(liquidity_amount),0)::text as amount from platform_revenue_allocations')
   const { rows:[intents] } = await db.query(`select
     coalesce(sum(case when status='settled' then settled_debit when status<>'aborted' then source_amount else 0 end),0)::text as committed,
     coalesce(sum(case when status='settled' then settled_debit else 0 end),0)::text as settled,
     coalesce(sum(case when status='aborted' then source_amount else 0 end),0)::text as failed,
     count(*) filter(where status in ('prepared','reviewed','simulated','submitted'))::int as open from liquidity_intents`)
-  return { allocated:allocated.amount, ...intents, remaining:String(BigInt(allocated.amount)-BigInt(intents.committed)), lockMode:LOCK_MODE }
+  const manual = await manualLiquidityLamports(db, receipts), intentReserve = BigInt(allocated.amount) - BigInt(intents.committed)
+  const left = intentReserve - manual
+  return { allocated:allocated.amount, ...intents, manual:manual.toString(), intentReserve:intentReserve.toString(),
+    remaining:(left > 0n ? left : 0n).toString(), ahead:(left < 0n ? -left : 0n).toString(), lockMode:LOCK_MODE }
 }
 export function liquidityTerms(intent) {
   const keys = ['id','github_repo_id','pool','network','source_amount','swap_amount','min_swap_output','source_wallet',
@@ -120,6 +140,7 @@ export function createLiquidityDeployment({ pool, connection, config, partner })
       if((await db.query("select 1 from liquidity_intents where github_repo_id=$1 and status in ('prepared','reviewed','simulated','submitted')",[String(repoId)])).rowCount)throw Error('An open liquidity intent already exists for this market')
       const check=await qualification(db,repoId,rules);if(!check.eligible)throw Error(`Market is not eligible: ${check.reason}`)
       const policy=await activePolicy(db);if(!policy)throw Error('No active platform revenue policy')
+      // remaining is net of the team's manual deposits too: SOL they already spent is never deployed a second time.
       if(amount>BigInt((await liquidityReserveSummary(db)).remaining))throw Error('Deployment exceeds the remaining liquidity reserve')
       const b=await quoteBudget(db,repoId,amount,rules)
       const {rows:[intent]}=await db.query(`insert into liquidity_intents
@@ -156,7 +177,8 @@ export function createLiquidityDeployment({ pool, connection, config, partner })
     const policy=await activePolicy(db)
     if(!policy||policy.version!==intent.policy_version)throw Error('Policy version drift; re-review')
     if(JSON.stringify(rules)!==intent.rules_json)throw Error('Qualification rules drift; re-prepare')
-    if(BigInt((await liquidityReserveSummary(db)).remaining)<0n)throw Error('Liquidity reserve is overcommitted')
+    // This intent is already in committed: anything ahead means the intents and the manual deposits outgrew the allocation.
+    if(BigInt((await liquidityReserveSummary(db)).ahead)>0n)throw Error('Liquidity reserve is overcommitted')
     const check=await qualification(db,intent.github_repo_id,rules)
     if(!check.eligible)throw Error(`Market no longer eligible: ${check.reason}`)
     return rules
@@ -242,7 +264,8 @@ function publicIntent(i) {
 }
 export async function reconcileLiquidity(db) {
   const summary=await liquidityReserveSummary(db),problems=[]
-  if(BigInt(summary.remaining)<0n)problems.push('Liquidity reserve is negative')
+  // Protocol intents only: manual deposits beyond the policy are allowed and reported as ahead, as buybacks are.
+  if(BigInt(summary.intentReserve)<0n)problems.push('Liquidity reserve is negative')
   const {rows:[invalid]}=await db.query(`select count(*)::int as n from liquidity_intents where status='settled' and
     (position is null or settled_liquidity is null or settled_debit is null or settled_debit<=0 or settled_debit>source_amount or settled_network_cost is null or settled_network_cost<0 or settled_network_cost>max_network_cost or settled_token_a is null or settled_token_b is null)`)
   if(invalid.n)problems.push('Settled intent is missing bounded position evidence')

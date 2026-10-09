@@ -6,6 +6,7 @@ import { liquidityConfig, liquidityReserveSummary, reconcileLiquidity } from './
 import { createGraduatedFees } from './graduated-fees.mjs'
 import { reinvestQuote } from './builder-reinvest-chain.mjs'
 import { verifyLiquidityReceipt } from './liquidity-settlement.mjs'
+import { protocolLiquidityAdded as poolLiquidityAdded } from '../app/lib/liquidity-receipts.mjs'
 import { indexDammTradesLocked } from './damm-trades.mjs'
 import { createCurveReads, readGraduationState, assertFreshGraduation, PUBLIC_GRADUATION_MAX_AGE_MS, agreeGraduation, evidenceJSON, evidenceHash } from './graduation-state.mjs'
 import { clearLedgerAlerts, pendingDelivery, persistGraduationObservation } from './reserve-alerts.mjs'
@@ -264,8 +265,9 @@ export function publicGraduation(row,now=Date.now(),{transientReview=false}={}) 
   const state=assertFreshGraduation(JSON.parse(row.observation),now,PUBLIC_GRADUATION_MAX_AGE_MS)
   assertDurableGraduation(row,state)
   const {phase,status,reserveLamports,thresholdLamports,remainingLamports,progressPercent,checkedAt,chainTime,destination,dammSolLamports,dammVolume24hLamports,protocolLiquidityAdded}=state
+  // The stored figure is the monitor's verified protocol intents; $REPOING's pool adds the team's published manual deposits.
   return {phase,status,reserveLamports,thresholdLamports,remainingLamports,progressPercent,checkedAt,chainTime,destination,
-    ...(phase==='GRADUATED'?{dammSolLamports,dammVolume24hLamports,protocolLiquidityAdded}:{}),validUntil:new Date(Math.min(Date.parse(checkedAt),Date.parse(chainTime))+PUBLIC_GRADUATION_MAX_AGE_MS).toISOString()}
+    ...(phase==='GRADUATED'?{dammSolLamports,dammVolume24hLamports,protocolLiquidityAdded:poolLiquidityAdded(destination?.pool,protocolLiquidityAdded)}:{}),validUntil:new Date(Math.min(Date.parse(checkedAt),Date.parse(chainTime))+PUBLIC_GRADUATION_MAX_AGE_MS).toISOString()}
 }
 function assertDurableGraduation(row,state){
   if(state.phase!=='GRADUATED')return

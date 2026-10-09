@@ -50,6 +50,7 @@
 .home-proof>span{padding-right:26px;margin-right:26px;border-right:1px solid var(--border)}
 .home-proof>span:last-child{margin-right:0;padding-right:0;border-right:0}
 .home-proof strong{color:var(--text);font-size:clamp(19px,1.55vw,24px);font-weight:650;letter-spacing:-.02em;text-transform:none;font-variant-numeric:tabular-nums}
+.home-proof small{font-size:10px;letter-spacing:.06em;font-variant-numeric:tabular-nums}
 .home-proof a:focus-visible strong{color:var(--home-accent)}
 @media (hover:hover) {
 .home-proof a:hover strong{color:var(--home-accent)}

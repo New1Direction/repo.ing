@@ -6,11 +6,15 @@ const AMOUNT = /^\d+(\.\d+)?$/
 const lamports = value => AMOUNT.test(String(value ?? '')) ? BigInt(String(value).split('.')[0]) : 0n
 
 // The hero's proof line, each figure only while it is known: all-time trading (whole SOL, floored), builder payouts,
-// and buybacks (every published receipt, linking to them).
+// and buybacks (every published receipt, linking to them). Builder payouts also say how much of them went to builders outside
+// repo.ing's own repositories (totals.paidOutside, the /stats split; owner decision 2026-10-08: show both numbers).
 export function proofFacts({ totals = null, receipts = null } = {}) {
   const facts = [], traded = totals ? formatWholeSol(totals.volume) : null
   if (traded && traded !== '0') facts.push({ id: 'traded', value: `${traded} SOL`, label: 'traded' })
-  if (totals && lamports(totals.paid) > 0n) facts.push({ id: 'paid', value: `${formatSolDisplay(lamports(totals.paid))} SOL`, label: 'paid to builders' })
+  if (totals && lamports(totals.paid) > 0n) {
+    const outside = AMOUNT.test(String(totals.paidOutside ?? '')) ? `${formatSolDisplay(lamports(totals.paidOutside))} SOL to builders outside repo.ing` : null
+    facts.push({ id: 'paid', value: `${formatSolDisplay(lamports(totals.paid))} SOL`, label: 'paid to builders', ...outside ? { detail: outside } : {} })
+  }
   const bought = buybackSummary(receipts, null)
   if (bought) facts.push({ id: 'bought', value: `${bought.sol} SOL`, label: 'bought back', href: '/stats#repo-title' })
   return facts

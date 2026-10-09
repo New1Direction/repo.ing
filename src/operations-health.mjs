@@ -46,14 +46,17 @@ export function buybackTotals(receipts) {
   return { custody: totals.custody.toString(), team: totals.team.toString(), total: (totals.custody + totals.team).toString(), count: receipts.length }
 }
 
+// Liquidity added: settled protocol intents plus the team's manual deposits into the $REPOING pool, which spend the same share
+// (liquidityReserveSummary, src/liquidity-deployment.mjs).
 export function revenueComparison(revenue, liquidity, buybacks) {
-  const liquidityAllocated = BigInt(revenue.allocated.liquidity), liquidityAdded = BigInt(liquidity.settled)
+  const liquidityAllocated = BigInt(revenue.allocated.liquidity), protocolAdded = BigInt(liquidity.settled), manualAdded = BigInt(liquidity.manual ?? '0')
+  const liquidityAdded = protocolAdded + manualAdded
   const buybackAllocated = BigInt(revenue.allocated.buyback), custodyDisclosed = BigInt(buybacks.custody)
   return {
     claimed: revenue.claimed.total, available: revenue.available, allocated: revenue.allocated, spent: revenue.spent,
     buybackReserve: revenue.buybackReserve, policy: revenue.activePolicy,
-    buybacks, liquidity: { allocated: liquidityAllocated.toString(), added: liquidityAdded.toString(), open: liquidity.open,
-      owed: (liquidityAllocated > liquidityAdded ? liquidityAllocated - liquidityAdded : 0n).toString() },
+    buybacks, liquidity: { allocated: liquidityAllocated.toString(), added: liquidityAdded.toString(), protocol: protocolAdded.toString(),
+      manual: manualAdded.toString(), open: liquidity.open, owed: (liquidityAllocated > liquidityAdded ? liquidityAllocated - liquidityAdded : 0n).toString() },
     buybackAllocatedNotDisclosed: (buybackAllocated > custodyDisclosed ? buybackAllocated - custodyDisclosed : 0n).toString(),
   }
 }

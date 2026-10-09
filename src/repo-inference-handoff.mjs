@@ -10,8 +10,9 @@ import { isGithubRepoId } from './market-identity.mjs'
 //   3. The credit service redeems the code with the CLI's code verifier and its client secret (/api/handoff/token). The
 //      answer is signed with HANDOFF_ASSERTION_SECRET, which only repo.ing and the credit ledger hold, so the credit
 //      service can relay an assertion but never make one.
-// Dark unless REPO_INFERENCE_HANDOFF_SECRET and HANDOFF_ASSERTION_SECRET are set (32 to 256 characters, different from each
-// other and from the GitHub App secret).
+// Dark unless REPO_INFERENCE_HANDOFF_ENABLED is exactly 'true' (off by default: owner decision 2026-10-08, hidden until AI credits
+// start) and REPO_INFERENCE_HANDOFF_SECRET and HANDOFF_ASSERTION_SECRET are set (32 to 256 characters, different from each other
+// and from the GitHub App secret). Secrets alone never turn it on.
 export const HANDOFF_AUDIENCE = 'repo-inference'
 export const HANDOFF_AUDIENCE_LABEL = 'repo.ing AI credits'
 export const HANDOFF_CODE_SECONDS = 180
@@ -24,6 +25,7 @@ export class HandoffError extends Error {
 }
 
 export function handoffSettings(env = process.env) {
+  if (env.REPO_INFERENCE_HANDOFF_ENABLED !== 'true') return null
   const clientSecret = env.REPO_INFERENCE_HANDOFF_SECRET, assertionSecret = env.HANDOFF_ASSERTION_SECRET
   const ok = value => typeof value === 'string' && value.length >= 32 && value.length <= 256
   if (!ok(clientSecret) || !ok(assertionSecret) || clientSecret === assertionSecret || [clientSecret, assertionSecret].includes(env.GITHUB_APP_CLIENT_SECRET)) return null

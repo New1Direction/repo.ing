@@ -55,7 +55,7 @@ function Revenue({ result }) {
     <div className="inner-card"><span>Allocated buyback / liquidity / treasury</span><strong>{sol(r.allocated.buyback)} / {sol(r.allocated.liquidity)} / {sol(r.allocated.treasury)}</strong></div>
     <div className="inner-card"><span>Buyback intents settled</span><strong>{sol(r.spent)}</strong></div>
     <div className="inner-card"><span>Buybacks disclosed (custody / team)</span><strong>{sol(r.buybacks.custody)} / {sol(r.buybacks.team)}</strong></div>
-    <div className="inner-card"><span>Liquidity added</span><strong>{sol(r.liquidity.added)}</strong></div>
+    <div className="inner-card"><span>Liquidity added (protocol / team wallet)</span><strong>{sol(r.liquidity.protocol)} / {sol(r.liquidity.manual)}</strong></div>
     <div className={`inner-card${BigInt(r.liquidity.owed) > 0n ? ' health-warn' : ''}`}><span>Liquidity owed, not added</span><strong>{sol(r.liquidity.owed)}</strong></div>
     <div className="inner-card"><span>Buyback allocated, not disclosed from custody</span><strong>{sol(r.buybackAllocatedNotDisclosed)}</strong></div>
   </div><p className="muted">Policy {r.policy ? `v${r.policy.version}: ${r.policy.buybackPermille / 10}% buyback, ${r.policy.liquidityPermille / 10}% liquidity` : 'not active'}. {r.buybacks.count} disclosed buyback receipts; team buybacks are funded outside the platform ledger. {r.liquidity.open ? `${r.liquidity.open} liquidity intent(s) open.` : ''}</p></>}</Section>

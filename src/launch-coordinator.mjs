@@ -11,6 +11,7 @@ import { RULES } from './early-access-hook.mjs'
 import { EarlyAccessError } from './early-access.mjs'
 import { hasStarUnlocks } from './early-access-rules.mjs'
 import { validateTokenImage } from './token-image.mjs'
+import { SYMBOL_SENT_STATUSES, assertSymbolFree, withSymbolLock } from './launch-symbols.mjs'
 
 // Named explicitly, like DefinitiveLaunchError: the production build renames classes.
 export class IncompleteLaunchError extends Error {
@@ -60,9 +61,13 @@ export const STARS_UNREADABLE = 'GitHub did not give this repository\'s star cou
 // bundle: null (default), or a Bundle launch (docs/BUNDLE_LAUNCH.md) as { id }: the launcher must be the bundle launcher
 // (src/bundle-launcher.mjs), the reservation is stamped with the bundle id, and it carries no discovery reward and no verification
 // bonus (the partner fees go to the bundle's backers; owner decision 2026-10-06).
+// refuseTakenSymbols: refuse a ticker another market already uses (src/launch-symbols.mjs), at review time and again just before
+// the launch is sent. The launch API (app/api/launch/route.js) turns it on for every launch it reviews and submits. A bundle's
+// own launch is never refused for it: its ticker was checked when the raise opened (app/lib/bundle-api.mjs) and held since, and
+// refusing it now would strand a filled raise.
 export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   evidenceAttempts = 120, evidenceRetryMs = 250, discoveryEnabled = false, builderAllocationEnabled = false, pendingReview = null,
-  verificationBonusLamports = null, source = null, quote = SOL_QUOTE, earlyAccess = null, bundle = null }) {
+  verificationBonusLamports = null, source = null, quote = SOL_QUOTE, earlyAccess = null, bundle = null, refuseTakenSymbols = false }) {
   if (verificationBonusLamports !== null && (typeof verificationBonusLamports !== 'bigint' || verificationBonusLamports <= 0n)) {
     throw new Error('Verification bonus stamp must be positive bigint lamports')
   }
@@ -87,6 +92,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
       set: { ...repo, syncedAt: new Date() },
     })
   }
+  const symbolsChecked = refuseTakenSymbols && !bundle
   const kind = source?.kind ?? 'github'
   const persist = source?.persist ?? saveRepo
   const resolve = async input => {
@@ -130,6 +136,8 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     if (market?.status === 'prepared' && pendingReview && await pendingReview(market)) {
       throw new Error('This repository already has a launch awaiting wallet approval. Try again in a couple of minutes.')
     }
+    // Before anything is reserved or prepared, so the builder sees it before signing. db.$client: this lock's connection.
+    if (symbolsChecked) await assertSymbolFree(db.$client, { symbol: tokenSymbol, githubRepoId: repo.githubRepoId })
     const values = {
       githubRepoId: repo.githubRepoId, status: 'reserved', mint: null, pool: null,
       launcherWallet: wallet, creatorWallet: launcher.creatorWallet,
@@ -187,8 +195,14 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     try {
       const signed = await prepared.sign(signTransaction)
       if (launchGuard) await launchGuard({ repo, market, stage: 'submit' })
-      ;[market] = await db.update(markets).set({ status: 'submitted', launchSignature: signed.signature })
-        .where(eq(markets.id, market.id)).returning()
+      const markSubmitted = async () => (await db.update(markets).set({ status: 'submitted', launchSignature: signed.signature })
+        .where(eq(markets.id, market.id)).returning())[0]
+      // The ticker is checked again under its own lock until this launch counts as sent: of two reviews racing for one ticker
+      // (different repositories, different repository locks), only the first one sent goes out.
+      market = symbolsChecked ? await withSymbolLock(db.$client, market.tokenSymbol, async () => {
+        await assertSymbolFree(db.$client, { symbol: market.tokenSymbol, githubRepoId: market.githubRepoId, statuses: SYMBOL_SENT_STATUSES })
+        return markSubmitted()
+      }) : await markSubmitted()
       try {
         await launcher.submit({ ...signed, blockhash: prepared.blockhash, lastValidBlockHeight: prepared.lastValidBlockHeight })
       } catch (error) {
