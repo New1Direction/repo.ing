@@ -161,7 +161,7 @@ test('real PostgreSQL: a GitHub market and a model market through the token page
       const readMetadata = async () => (await metadata(new Request(`https://repo.ing/api/token-metadata/${modelMint}`), { params: Promise.resolve({ mint: modelMint }) })).json()
       const page = `https://repo.ing/token/${modelMint}`, links = { website: page }
       const expected = { name: 'gpt2', symbol: 'GPT2', description: '$GPT2 is the repo.ing market for the Hugging Face model huggingface.co/openai-community/gpt2. ' +
-        `Trading fees pay the model's owner in SOL. ${HF_DISCLAIMER}`, image: `https://repo.ing/api/repo-logo/${MODEL_ID}?v=3`, external_url: page, ...links, extensions: links }
+        `Trading fees pay the model's owner in SOL. ${HF_DISCLAIMER}`, image: `https://repo.ing/api/repo-logo/${MODEL_ID}?v=4`, external_url: page, ...links, extensions: links }
       assert.deepEqual(await readMetadata(), expected)
       await pool.query(`update markets set status = 'prepared' where mint = $1`, [modelMint])
       try {

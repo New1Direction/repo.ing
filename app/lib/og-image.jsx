@@ -91,7 +91,7 @@ export function Frame({ children, tagline = 'Open source markets', footer = 'Eve
 
 // A short warning in the card's header (Frame's notice), e.g. that the market's maintainer declined it.
 export function FrameNotice({ children }) {
-  return <span style={{ display: 'flex', alignItems: 'center', padding: '8px 22px', fontSize: 30, color: colors.red,
+  return <span style={{ display: 'flex', alignItems: 'center', padding: '4px 18px', fontSize: 26, color: colors.red,
     background: 'rgba(242, 132, 133, 0.12)', border: `2px solid ${colors.red}`, borderRadius: 999 }}>{children}</span>
 }
 

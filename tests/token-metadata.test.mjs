@@ -21,7 +21,7 @@ test('metadata without a synced repository keeps the numeric-id description and 
   const json = tokenMetadataJson({ mint: 'E859MeM9CYWAoQGcNLQYgg8qHPim1EQN4LYqveubrJ6A', origin, market: { repoId: '42', name: 'x', symbol: 'X', hasImage: false, fullName: null } })
   assert.equal(json.description, 'Token for public GitHub repository 42 on repo.ing.')
   assert.equal(json.github, undefined)
-  assert.equal(json.image, `${origin}/api/repo-logo/42?v=3`)
+  assert.equal(json.image, `${origin}/api/repo-logo/42?v=4`)
 })
 
 test('community tokens for other repositories never carry repo.ing\'s X account', () => {
