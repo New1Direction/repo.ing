@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Code2, RefreshCw } from 'lucide-react'
 import { RecentTrades } from './recent-trades'
 import { formatUsdMarketCap } from '../lib/market-display.mjs'
+import { percentChange } from '../lib/format.mjs'
 import { CHART_PERIODS, chartPriceLabel, chartTradeAge } from '../lib/chart-display.mjs'
 import { marketMetricsUrl, marketTradesUrl } from '../lib/market-chart-urls.mjs'
 import { earlyChartScript, takeEarlyChart } from '../lib/early-chart.mjs'
@@ -19,6 +20,11 @@ if (typeof window !== 'undefined') for (const load of [loadChartCanvas, () => im
 const ChartCanvas = dynamic(loadChartCanvas, { ssr: false,
   loading: () => <div className="chart-skeleton" role="status"><span className="claim-spinner" aria-hidden="true"/>Preparing chart…</div> })
 
+// Staleness is measured from when each response arrived, on this device's clock only: a device clock ahead of the server's
+// once made every response look old ("Update delayed", market cap and holders blank). Trades: one missed 60 s fallback poll
+// (SSE brings trades sooner); metrics: two and a half missed 30 s polls.
+const TRADES_POLL_MS = 60000, TRADES_STALE_MS = 75000, METRICS_POLL_MS = 30000, METRICS_STALE_MS = 75000
+
 // pulse: the server-rendered GitHub events for this market; the Dev Pulse card's live refreshes replace them through
 // the 'repoing:pulse-updated' window event ({ mint, events }).
 // quote: the market's pair (src/quote-assets.mjs marketQuoteView), null for SOL. A stock pair's chart reads the stock
@@ -26,6 +32,7 @@ const ChartCanvas = dynamic(loadChartCanvas, { ssr: false,
 export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, pulse = null, quote = null }) {
   const [range, setRange] = useState('all'), [style, setStyle] = useState(null), [metric, setMetric] = useState('cap')
   const [data, setData] = useState(null), [metrics, setMetrics] = useState(null)
+  const [dataAt, setDataAt] = useState(0), [metricsAt, setMetricsAt] = useState(0)
   const [error, setError] = useState(false), [metricsError, setMetricsError] = useState(false), [refreshing, setRefreshing] = useState(true)
   const [retry, setRetry] = useState(0), [pendingSignature, setPendingSignature] = useState(null)
   const [now, setNow] = useState(Date.now())
@@ -53,7 +60,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
     let active = true, running = false, queued = false, queuedFresh = false
     const controller = new AbortController()
     const warmed = range === 'all' ? marketPrefetch.take(mint) : null
-    if (warmed) { setData(warmed); setRefreshing(false) }
+    if (warmed) { setData(warmed); setDataAt(Date.now()); setRefreshing(false) }
     // fresh: prompted by a trade (live hint or the viewer's own), so the API skips any shared edge copy.
     async function refresh(fresh = false) {
       if (running) { queued = true; queuedFresh ||= fresh === true; return }
@@ -68,7 +75,8 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
         }
         if (result.range !== range) throw Error('Chart period mismatch')
         if (active) {
-          setData(result); setError(false); setNow(Date.now())
+          const at = Date.now()
+          setData(result); setDataAt(at); setError(false); setNow(at)
           setStyle(value => value ?? (result.candles.filter(bar => !bar.orderingPending).length < 12 ? 'line' : 'candles'))
         }
       } catch { if (active) setError(true) }
@@ -82,7 +90,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
     const onIndexed = event => { if (event.detail?.mint === mint && event.detail.kind !== 'curve') void refresh(true) }
     window.addEventListener('repoing:market-updated', onIndexed)
     // Indexed trades arrive over SSE (repoing:market-updated); polling is only the fallback.
-    const stopPolling = visiblePolling(refresh, 60000)
+    const stopPolling = visiblePolling(refresh, TRADES_POLL_MS)
     window.addEventListener('repoing:trade-confirmed', onTradeConfirmed)
     return () => { active = false; controller.abort(); stopPolling(); window.removeEventListener('repoing:trade-confirmed', onTradeConfirmed); window.removeEventListener('repoing:market-updated', onIndexed) }
   }, [mint, range, retry])
@@ -106,15 +114,15 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
           if (!response.ok) throw Error()
           result = await response.json()
         }
-        if (active) { setMetrics(result); setMetricsError(false); onSolUsd?.(result.solUsd ?? null); onQuoteUnits?.(result.quote ?? null) }
+        if (active) { setMetrics(result); setMetricsAt(Date.now()); setMetricsError(false); onSolUsd?.(result.solUsd ?? null); onQuoteUnits?.(result.quote ?? null) }
       } catch { if (active) { setMetricsError(true); onSolUsd?.(null); onQuoteUnits?.(null) } }
-    }, 30000)
+    }, METRICS_POLL_MS)
     return () => { active = false; controller.abort(); stop() }
   }, [mint, onSolUsd, onQuoteUnits, retry])
 
   const graduated = Boolean(data?.graduation) || curveStatus === 'graduated'
   const ended = graduated || curveStatus === 'migrating'
-  const freshMetrics = metrics && now - Date.parse(metrics.fetchedAt) < 75000 ? metrics : null
+  const freshMetrics = metrics && now - metricsAt < METRICS_STALE_MS ? metrics : null
   // SOL, or the stock a stock pair is shown in (its units come with the metrics; until then its prices wait).
   const units = useMemo(() => chartQuote(quote, freshMetrics), [quote, freshMetrics])
   const hasDammPrices = data?.trades.some(trade => trade.venue === 'DAMM' && units.price(trade))
@@ -122,7 +130,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
   // Keep the canvas mounted across requests, including empty periods. The
   // displayed period remains explicit until its replacement actually arrives.
   const current = data
-  const stale = error || (data && now - Date.parse(data.fetchedAt) > 45000)
+  const stale = error || (data && now - dataAt > TRADES_STALE_MS)
   const supply = freshMetrics?.supplyBaseUnits && freshMetrics?.supplyDecimals !== null && freshMetrics?.supplyDecimals !== undefined
     ? Number(freshMetrics.supplyBaseUnits) / 10 ** freshMetrics.supplyDecimals : null
   const capMultiplier = supply && units.usdPerUnit ? supply * units.usdPerUnit : null
@@ -134,7 +142,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
   const latest = data?.latest
   const latestValue = units.price(latest)
   const validBars = current?.candles.filter(bar => !bar.orderingPending) ?? []
-  const change = validBars.length > 1 ? (validBars.at(-1).close / validBars[0].open - 1) * 100 : null
+  const change = validBars.length > 1 ? percentChange((validBars.at(-1).close / validBars[0].open - 1) * 100) : null
   const awaitingRange = !current || current.range !== range
   const periodLabel = value => CHART_PERIODS.find(([key]) => key === value)?.[1] ?? value
   const tradeAge = chartTradeAge(latest?.tradedAt, now)
@@ -144,7 +152,7 @@ export function PriceChart({ mint, symbol, curveStatus, onSolUsd, onQuoteUnits, 
   const emptyMessage = <><strong>{error && !current ? 'Trade history is unavailable' : data?.totalTrades ? 'No trades in this period' : 'Waiting for the first trade'}</strong><span>{error && !current ? 'Your trade form is still available. Retry the chart below.' : data?.totalTrades ? 'Choose All to see the market’s full history.' : 'The first trade appears here as soon as it is confirmed.'}</span>{range !== 'all' && !error && <button className="button outline" onClick={() => { setRange('all'); setRefreshing(true) }}>View all history</button>}</>
   return <><script dangerouslySetInnerHTML={{ __html: earlyChartScript(mint) }}/><section className="chart-card market-chart-card" aria-label={`${symbol} market chart`}>
     <div className="chart-summary"><div className="chart-heading"><span className="chart-symbol">${symbol} <span className="chart-unit">{capMode ? 'Market cap · USD estimate' : `Price · ${units.symbol}`}</span></span>
-      <div className="chart-headline"><strong>{latestValue && valueMultiplier ? capMode ? formatUsdMarketCap(latestValue * valueMultiplier) : chartPriceLabel(latestValue * valueMultiplier) : '—'}</strong>{change !== null && <span className={change >= 0 ? 'chart-up' : 'chart-down'} title="Change from the first to last recorded price in the displayed period">{change > 0 ? '+' : ''}{change.toFixed(2)}% <small>{periodLabel(current.range)}</small></span>}</div>
+      <div className="chart-headline"><strong>{latestValue && valueMultiplier ? capMode ? formatUsdMarketCap(latestValue * valueMultiplier) : chartPriceLabel(latestValue * valueMultiplier) : '—'}</strong>{change !== null && <span className={change.sign >= 0 ? 'chart-up' : 'chart-down'} title="Change from the first to last recorded price in the displayed period">{change.label} <small>{periodLabel(current.range)}</small></span>}</div>
     </div><div className="chart-metrics"><span>{data?.graduation ? '24h total volume' : ended ? '24h curve volume' : '24h volume'}<strong>{data ? units.amountLabel(units.volume24h(data)) : <span className="skeleton-text"/>}</strong></span><span>{historyOnly ? 'Last curve cap' : 'Market cap'}<strong>{latestValue && capMultiplier ? formatUsdMarketCap(latestValue * capMultiplier) : '—'}</strong></span><span>Holders<strong>{historyOnly || freshMetrics?.holders == null ? '—' : freshMetrics.holders.toLocaleString('en-US')}</strong></span></div></div>
     <div className="chart-toolbar"><div className="chart-control-group" aria-label="Chart period">{CHART_PERIODS.map(([value, label]) => <button key={value} aria-pressed={range === value} onClick={() => { if (value !== range) { setRange(value); setRefreshing(true); setError(false) } }}>{label}</button>)}</div>
       <div className="chart-options"><div className="chart-control-group" aria-label="Chart value"><button aria-pressed={!capMode} onClick={() => setMetric('price')}>Price</button><button aria-pressed={capMode} disabled={!capMultiplier && !capMode} onClick={() => setMetric('cap')}>MCap</button></div><div className="chart-control-group" aria-label="Chart style"><button aria-pressed={style === 'line'} onClick={() => chooseStyle('line')}>Line</button><button aria-pressed={style === 'candles'} onClick={() => chooseStyle('candles')}>Candles</button></div>

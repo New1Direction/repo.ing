@@ -65,6 +65,20 @@ export const blockPosition = t => `coalesce(p.transaction_index,array_position(b
 export const blockJoins = t => `left join finalized_chart_positions p on p.slot=${t}.slot and p.signature=${t}.signature
   left join finalized_chart_blocks b on b.slot=${t}.slot and p.slot is null`
 
+// One row (slot, signature, event_index, next_sqrt_price): a market's newest trade in `table`, ordered as the chart orders
+// trades (newest slot, then place in its finalized block). Several transactions in one slot share event_index 0, so the slot
+// and event index alone pick an arbitrary one. Its price is null while that slot holds several transactions whose block order
+// is unproven, as the chart then withholds `latest` (app/lib/portfolio.mjs latestSlotTrade reads prices the same way).
+// scope(alias): the condition selecting the market's rows; it may name columns of the outer query (a lateral join).
+export const latestTradeSql = (table, scope) => `select l.slot, l.signature, l.event_index,
+    case when l.unordered then null else l.next_sqrt_price end as next_sqrt_price
+  from (select t.slot, t.signature, t.event_index, t.next_sqrt_price,
+      bool_or(${blockPosition('t')} is null) over () and min(t.signature) over () <> max(t.signature) over () as unordered,
+      row_number() over (order by ${blockPosition('t')} desc, t.signature desc, t.event_index desc) as n
+    from ${table} t ${blockJoins('t')}
+    where ${scope('t')} and t.slot = (select max(s.slot) from ${table} s where ${scope('s')})) l
+  where l.n = 1`
+
 // Live trades (drizzle/0057_live_trade_events.sql, src/live-trades.mjs): confirmed swaps the finalized ledgers do not hold
 // yet. Only the canonical curve pool's and the verified DAMM destination's, from the newest finalized slot on, at most
 // LIVE_TRADE_MAX_AGE_SECONDS old (a swap that never finalizes drops out by itself), and never one a finalized ledger already

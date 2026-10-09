@@ -7,8 +7,8 @@ import { NATIVE_MINT, TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { BUNDLE_VAULT_PROGRAM_ID, STATUS, backerAddress, bundleAddress, claimBackerFeesInstruction, createBundleInstruction, decodeBundle,
   depositInstruction, refundInstruction, tokenAccountOf } from '../src/bundle-vault.mjs'
 import { BUNDLE_DEFAULTS, BUNDLE_RAISE, bundleFormSettings } from '../src/bundle-launch.mjs'
-import { RAISE_REFUSALS, acceptSignedAction, acceptSignedCreate, bundleIdFrom, bundleReviewKey, openBundleReview, raiseTerms, simulationFailure,
-  tokenFields } from '../src/bundle-raise.mjs'
+import { RAISE_REFUSALS, acceptSignedAction, acceptSignedCreate, bundleIdFrom, bundleReviewKey, depositRefusal, openBundleReview, raiseTerms,
+  simulationFailure, tokenFields } from '../src/bundle-raise.mjs'
 import { createBackerCounter } from '../src/bundle-raise-chain.mjs'
 import { DecisionError, OPT_OUT_ERROR } from '../src/maintainer-opt-outs.mjs'
 import { LineageError } from '../src/repo-lineage.mjs'
@@ -388,6 +388,13 @@ function raising(h, fields = {}) {
     deadline: NOW / 1000 + 86_400, raised: 4n * SOL, ...fields }))
 }
 const act = (h, body) => call(h.api.act(post('/api/bundles/7', { wallet: backer.publicKey.toBase58(), ...body }), '7'))
+
+test('refusals give SOL in plain decimals, never exponent notation', () => {
+  // 500 lamports left once read "This raise needs only 5e-7 SOL more."
+  const bundle = { status: STATUS.RAISING, deadline: 2_000_000_000, target: 5n * SOL, raised: 5n * SOL - 500n, minDeposit: 50_000_000n }
+  assert.equal(depositRefusal(bundle, SOL, 0), 'This raise needs only 0.0000005 SOL more.')
+  assert.equal(RAISE_REFUSALS.target, 'Choose a target from 1 SOL to 10 SOL.')
+})
 
 test('deposit: checked against the chain (raising, before the deadline, within the target, from the minimum unless it fills it)', async () => {
   const h = harness()

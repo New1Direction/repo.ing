@@ -63,7 +63,7 @@ test('a falling market reads down, in the chart\'s label too; without a SOL pric
   const markup = html(h(LiveMarket, { market, initial: liveChart(payload(9e-7)), usdPerSol: null, renderedAt: NOW }))
   assert.match(markup, /<span class="live-change is-down"><span aria-hidden="true">▼<\/span> −14\.29%<\/span>/)
   assert.match(markup, /aria-label="\$REPOING price over the last 24 hours, down 14\.29%"/)
-  assert.match(markup, /<strong>9\.000e-7 SOL<\/strong>/)
+  assert.match(markup, /<strong>0\.0000009 SOL<\/strong>/, 'plain decimals, never exponent notation')
 })
 
 test('the card\'s placeholder has the card\'s blocks (so nothing moves when it streams in); an unreadable market keeps the way to trade', () => {

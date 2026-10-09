@@ -20,8 +20,14 @@ test('spot price honors 6 token decimals and 9 SOL decimals without rounding tin
   assert.equal(chartSpotPrice(sqrt.toString()), 0.001)
   assert.equal(chartSpotPrice((sqrt * 2n).toString()), 0.004)
   assert.throws(() => chartSpotPrice('0'), /Invalid/)
-  assert.equal(chartPriceLabel(0.00000000101), '1.010e-9')
   assert.equal(chartPriceLabel(NaN), '—')
+})
+test('chart prices are plain decimals at every size, never exponent notation', () => {
+  // Below 0.000001: 4 significant digits, as many as the old exponent labels ("1.010e-9") showed; 5 from there up.
+  assert.deepEqual([0.00000000101, 4.338e-7, 4.3381234e-7, 1e-15, 0.0000012345678, 0.5, 12345.678, 0].map(chartPriceLabel),
+    ['0.00000000101', '0.0000004338', '0.0000004338', '0.000000000000001', '0.0000012346', '0.5', '12,346', '0'])
+  for (let exponent = -18; exponent <= 3; exponent++) assert.doesNotMatch(chartPriceLabel(1.2345 * 10 ** exponent), /e/i)
+  assert.deepEqual([-1, Infinity, null].map(chartPriceLabel), ['—', '—', '—'])
 })
 test('ambiguous slot ordering keeps exact volume but withholds invented open/close', () => {
   const bar = chartBar({ time: '600', volume: '9007199254740993', count: '2', ambiguous: true })

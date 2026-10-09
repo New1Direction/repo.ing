@@ -1,4 +1,5 @@
 import { database } from '../../lib/server.mjs'
+import { latestTradeSql } from '../../../src/market-chart.mjs'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export async function GET(request) {
@@ -8,12 +9,10 @@ export async function GET(request) {
   try {
     const pool = database()
     if (!pool) throw Error('Database unavailable')
+    // The newest curve trade as the chart picks it; no price (skipped by the alert) while its slot's order is unproven.
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint,
         t.next_sqrt_price as "sqrtPrice", t.signature || ':' || t.event_index as event
-      from markets m join lateral (
-        select next_sqrt_price, signature, event_index from trade_events where pool = m.pool
-        order by slot desc, event_index desc, id desc limit 1
-      ) t on true
+      from markets m join lateral (${latestTradeSql('trade_events', t => `${t}.pool = m.pool`)}) t on true
       where m.github_repo_id = any($1::bigint[]) and m.status = 'confirmed'
         and m.launch_finality = 'finalized' and m.indexed_at is not null`, [ids])
     return json({ quotes: rows })

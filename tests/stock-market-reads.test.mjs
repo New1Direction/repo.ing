@@ -98,8 +98,12 @@ test('stock amounts read like SOL amounts: two places from one up, about four si
   assert.equal(formatQuoteAmount('0', 8), '0')
   assert.equal(formatQuoteAmount(null, 8), '—')
   // With SOL's 9 decimals the rule is formatSolDisplay's.
-  for (const raw of ['999', '1000', '123456789', '2000000000', '987654321012']) assert.equal(formatQuoteAmount(raw, 9), formatSolDisplay(raw))
+  for (const raw of ['999', '1000', '123456789', '2000000000', '987654321012', '-99', '-999']) assert.equal(formatQuoteAmount(raw, 9), formatSolDisplay(raw))
+  // A loss too small to show keeps its minus.
+  assert.equal(formatQuoteAmount('-99', 8), '-<0.000001')
   assert.equal(formatStockCompact(40_114_061.7, 'METAx'), '40.1m METAx')
+  // The suffix is chosen after rounding: never "1000k".
+  assert.deepEqual([999.96, 999_960, 994_999, 999_960_000].map(value => formatStockCompact(value, 'METAx')), ['1k METAx', '1m METAx', '995k METAx', '1b METAx'])
   assert.equal(formatStockCompact(0.004, 'METAx'), '<0.01 METAx')
   assert.equal(formatStockCompact(NaN, 'METAx'), '—')
 })

@@ -17,6 +17,12 @@ function slippageCopy(result, action) {
     message: `The price moved more than ${limit} before your ${action.toLowerCase()} could land, so it was stopped. ${spent}${next ? '' : ' Try a smaller amount.'}` }
 }
 
+// A confirmed SOL sell's net change. A sale smaller than its transaction costs leaves the wallet with less SOL than before.
+function solChangeCopy(delta) {
+  if (delta != null && BigInt(delta) < 0n) return `This sale returned less SOL than its transaction costs, so your wallet has ${formatSolDisplay(-BigInt(delta))} SOL less.`
+  return `Your wallet gained ${formatSolDisplay(delta)} SOL after transaction costs.`
+}
+
 // xLink: the trading wallet's linked X account (its confirmed trade shows as that @handle in the market's trades).
 // xNudge: Connect X is on and the wallet has not linked an account, so a confirmed trade suggests it.
 // quoteUnits: a stock pair's units (app/lib/trade-units.mjs); a confirmed sell then reports the stock received, as wallets show it.
@@ -38,7 +44,7 @@ export function TradeResultCard({ result, symbol, mint, fullName, source, onClos
       ? `Received ${formatUnits(result.tokenDelta, 6, 4)} ${symbol}.`
       : quoteUnits && result.quoteDelta !== undefined
         ? `Received ${formatUnits(shownUnits(result.quoteDelta, quoteUnits), quoteUnits.decimals, 4)} ${quoteUnits.symbol}.`
-        : `Your wallet gained ${formatSolDisplay(result.solDelta)} SOL after transaction costs.`
+        : solChangeCopy(result.solDelta)
     : state === 'chainConfirmed' ? 'The transaction succeeded on Solana. Market details and balances may take a moment to update.'
       : state === 'pending' ? 'The signed transaction has no final result yet. Please wait before trying the same trade again.'
         : state === 'expired' ? 'The transaction was not confirmed before its blockhash expired. No swap was recorded.'

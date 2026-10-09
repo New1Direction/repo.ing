@@ -197,7 +197,9 @@ test('a confirmed stock sell reports the stock received as wallets show it; a SO
     quoteDelta: '10000000', quoteMint: METAX, feeIndexing: 'recorded' }
   const card = props => html(h(TradeResultCard, { result, symbol: 'DOCUSAURUS', mint: 'MintStockPanel', fullName: 'facebook/docusaurus', onClose() {}, onCheck() {}, ...props }))
   assert.match(card({ quoteUnits: units }), /Received 0\.1002 METAx\./)
-  assert.match(card({}), /Your wallet gained -0\.000005 SOL after transaction costs\./)
+  // A SOL sell smaller than its transaction costs: the wallet lost SOL, so the card says so instead of "gained -0.000005".
+  assert.match(card({}), /This sale returned less SOL than its transaction costs, so your wallet has 0\.000005 SOL less\./)
+  assert.doesNotMatch(card({}), /gained -/)
 })
 
 test('a launch draft keeps its pair, restored only while the repository is still offered it', () => {

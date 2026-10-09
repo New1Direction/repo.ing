@@ -27,6 +27,13 @@ export async function solUsdPrice(fetchImpl = fetch, now = Date.now()) {
   return refresh(fetchImpl, now)
 }
 
+// The cached price without waiting (null when there is none): for markup that must not hold up the page on the price sources.
+// A missing or ending price starts its refresh, so later requests find it.
+export function cachedSolUsdPrice(fetchImpl = fetch, now = Date.now()) {
+  solUsdPrice(fetchImpl, now).catch(() => {})
+  return cachedPrice !== null && now < expiresAt ? cachedPrice : null
+}
+
 function refresh(fetchImpl, now) {
   pending = timed('solUsdPrice', () => loadPrice(fetchImpl, now)).finally(() => { pending = null })
   return pending

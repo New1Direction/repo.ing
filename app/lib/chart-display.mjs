@@ -1,10 +1,11 @@
 export const CHART_PERIODS = [['1h', '1H'], ['24h', '24H'], ['7d', '7D'], ['all', 'All']]
 
+// Plain decimals, never exponent notation ("0.0000004338", not "4.338e-7"). Below 0.000001, 4 significant digits (as many as
+// the old exponent form showed) keep the price axis, which uses this too, as narrow as it can be.
 export function chartPriceLabel(value) {
   if (!Number.isFinite(value) || value < 0) return '—'
   if (value === 0) return '0'
-  if (value < 0.000001) return value.toExponential(3)
-  return value.toLocaleString('en-US', { maximumSignificantDigits: 5 })
+  return value.toLocaleString('en-US', { maximumSignificantDigits: value < 0.000001 ? 4 : 5 })
 }
 
 export function chartScaleRange(original) {
