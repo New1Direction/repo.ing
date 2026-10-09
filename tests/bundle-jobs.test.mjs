@@ -62,7 +62,9 @@ test('the vault agent sells above its target and buys after a fall, within every
 
 test('settings: dark returns null; missing pieces are named, never their values; keys read as base58 or a JSON array', () => {
   assert.equal(bundleJobSettings({}), null)
-  assert.equal(bundleJobSettings({ BUNDLE_LAUNCHES_ENABLED: 'true' }), null, 'the code gate is closed')
+  assert.equal(bundleJobSettings({ BUNDLE_LAUNCHES_ENABLED: 'false' }), null, 'the switch is off')
+  assert.deepEqual(bundleJobSettings({ BUNDLE_LAUNCHES_ENABLED: 'true', BUNDLE_DBC_CONFIG: ' ', BUNDLE_LAUNCH_SIGNER_SECRET_KEY: 'x' }),
+    { missing: ['BUNDLE_DBC_CONFIG', 'BUNDLE_LOOKUP_TABLE', 'PLATFORM_CREATOR_SECRET_KEY'] })
   const pair = Keypair.generate()
   assert.ok(readSecretKey(bs58.encode(pair.secretKey)).publicKey.equals(pair.publicKey))
   assert.ok(readSecretKey(JSON.stringify([...pair.secretKey])).publicKey.equals(pair.publicKey))
