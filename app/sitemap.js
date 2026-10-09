@@ -1,5 +1,6 @@
 import { database } from './lib/server.mjs'
 import { shownMarkets } from './lib/hf-markets.mjs'
+import { promotionExcluded } from './lib/maintainer-opt-outs.mjs'
 
 const SITE = 'https://repo.ing'
 // Public, indexable pages. /builders and /wallet are noindex; operator and claim pages are private.
@@ -12,15 +13,19 @@ const PAGES = [
 // Rendered per request: token pages come from the database, which is unavailable at build time.
 export const dynamic = 'force-dynamic'
 
+// Token pages repo.ing may promote: never a do-not-promote or maintainer-declined market (whose page is noindex too), and none
+// at all while that list cannot be read, as every other promotion surface does (app/lib/maintainer-opt-outs.mjs).
 async function tokenPages() {
   const pool = database()
   if (!pool) return []
   try {
-    const { rows } = await pool.query(`select github_repo_id::text as "repoId", mint, indexed_at as "indexedAt" from markets
+    const [{ rows }, excluded] = await Promise.all([pool.query(`select github_repo_id::text as "repoId", mint, indexed_at as "indexedAt" from markets
       where status = 'confirmed' and indexed_at is not null and launch_finality = 'finalized'
-      order by indexed_at desc limit 5000`)
+      order by indexed_at desc limit 5000`), promotionExcluded()])
+    if (!excluded) return []
     // Model token pages exist only with HF_MARKETS_ENABLED.
-    return shownMarkets(rows).map(row => ({ url: `${SITE}/token/${row.mint}`, lastModified: row.indexedAt, changeFrequency: 'hourly', priority: 0.8 }))
+    return shownMarkets(rows).filter(row => !excluded.has(row.repoId))
+      .map(row => ({ url: `${SITE}/token/${row.mint}`, lastModified: row.indexedAt, changeFrequency: 'hourly', priority: 0.8 }))
   } catch (error) {
     console.error('sitemap token query failed', { error: error.message })
     return []

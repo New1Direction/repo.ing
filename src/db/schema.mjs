@@ -275,6 +275,8 @@ export const repositories = pgTable('repositories', {
   // Migration 0058 (src/repo-lineage.mjs): first commit, the repository GitHub says it was forked from, and when they were read.
   rootCommit: varchar('root_commit', { length: 40 }), forkParentId: bigint('fork_parent_id', { mode: 'bigint' }),
   forkParentFullName: text('fork_parent_full_name'), lineageCheckedAt: timestamp('lineage_checked_at', { withTimezone: true }),
+  // Migration 0064 (app/api/repo-logo/[repo]/route.js): the README logo kept for the market's token, and when it was stored.
+  logoUrl: text('logo_url'), logoPinnedAt: timestamp('logo_pinned_at', { withTimezone: true }),
 }, t => [index('repositories_root_commit').on(t.rootCommit).where(sql`${t.rootCommit} is not null`), check('repositories_source_range', sql`(${t.source} = 'github' and ${t.githubRepoId} < 4503599627370496 and ${t.hfModelRef} is null) or (${t.source} = 'huggingface' and ${t.githubRepoId} between 4503599627370497 and 7000000000000000 and ${t.hfModelRef} is not distinct from ${t.githubRepoId})`)])
 
 export const markets = pgTable('markets', {

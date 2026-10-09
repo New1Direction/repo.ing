@@ -428,6 +428,13 @@
       "when": 1790910023000,
       "tag": "0063_referral_sponsorships",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1790910024000,
+      "tag": "0064_repository_logos",
+      "breakpoints": true
     }
   ]
 }

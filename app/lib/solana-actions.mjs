@@ -9,6 +9,7 @@ import { parseReferrer } from '../../src/referral.mjs'
 import { EARLY_ACCESS_NOT_TRADABLE, isEarlyAccessMarket, tradingEarlyAccessConfig } from '../../src/early-access.mjs'
 import { earlyAccessNotice } from './early-access-display.mjs'
 import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
+import { DECLINED_TRADING, declinedLabel, declinedSummary } from './declined-display.mjs'
 
 // Solana Actions spec v2.4 (github.com/solana-developers/solana-actions). Hand-rolled: the @solana/actions
 // helpers add an identity memo we do not want next to a canonically-proven swap, and the rest is plain JSON.
@@ -117,6 +118,11 @@ const disabledUnless = tradingEnabled => tradingEnabled ? {} : { disabled: true,
 const sellLinks = (market, ref) => SELL_PERCENTS.map(percent => ({ type: 'transaction', label: percent === 100 ? 'Sell all' : `Sell ${percent}%`,
   href: withRef(`${sellApiPath(market.mint)}?percent=${percent}`, ref) }))
 
+// A declined market's Blink (market.declined, loadActionMarket) leads its title and description with the decline, in the token page
+// banner's words, and no longer says that trades pay the builders; its buttons stay, as on the token page, so holders can exit.
+const declinedTitle = (market, title) => market.declined ? `${declinedLabel(market)} · ${title}` : title
+const declinedLead = market => `${declinedSummary(market)} ${DECLINED_TRADING}`
+
 // The market Blink (actions.json maps /token/* here): buy presets, a custom amount and, for holders, sell buttons. While a contributor
 // early access window is open the description leads with it, as the token page's note does (app/lib/early-access-display.mjs).
 export function buyAction(market, { tradingEnabled = true, ref = null, now = Date.now() } = {}) {
@@ -124,14 +130,17 @@ export function buyAction(market, { tradingEnabled = true, ref = null, now = Dat
   const repo = repoName(market)
   const notice = earlyAccessNotice(market, now)
   const windowNote = notice && `Contributor early access until ${notice.endsLabel}: only this repository's linked contributors can buy. Anyone can sell.`
+  const pool = 'Trades use the canonical repo.ing pool with 1% max slippage.'
   return {
     type: 'action',
     icon: tokenIcon(market),
-    title: `$${market.symbol} · ${repo}`,
+    title: declinedTitle(market, `$${market.symbol} · ${repo}`),
     // A Hugging Face model market's Blink leads with the disclaimer and names who its fees pay.
-    description: `${windowNote ? `${windowNote} ` : ''}${isModelMarket(market)
-      ? `${HF_DISCLAIMER_SHORT}. Market for the Hugging Face model ${repo}. Every trade pays the model's owner. Trades use the canonical repo.ing pool with 1% max slippage.`
-      : `${(market.description || `Open source market for ${repo}.`).slice(0, 180)} Every trade pays the builders. Trades use the canonical repo.ing pool with 1% max slippage.`}`,
+    description: market.declined
+      ? `${declinedLead(market)} ${windowNote ? `${windowNote} ` : ''}${isModelMarket(market) ? `${HF_DISCLAIMER_SHORT}. ` : ''}${pool}`
+      : `${windowNote ? `${windowNote} ` : ''}${isModelMarket(market)
+        ? `${HF_DISCLAIMER_SHORT}. Market for the Hugging Face model ${repo}. Every trade pays the model's owner. ${pool}`
+        : `${(market.description || `Open source market for ${repo}.`).slice(0, 180)} Every trade pays the builders. ${pool}`}`,
     label: 'Buy',
     ...disabledUnless(tradingEnabled),
     links: { actions: [
@@ -148,10 +157,12 @@ export function sellAction(market, { tradingEnabled = true, ref = null } = {}) {
   return {
     type: 'action',
     icon: tokenIcon(market),
-    title: `Sell $${market.symbol} · ${repoName(market)}`,
-    description: isModelMarket(market)
-      ? `Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage. Every trade pays the model's owner. ${HF_DISCLAIMER_SHORT}.`
-      : `Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage. Every trade pays the builders.`,
+    title: declinedTitle(market, `Sell $${market.symbol} · ${repoName(market)}`),
+    description: market.declined
+      ? `${declinedLead(market)} Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage.${isModelMarket(market) ? ` ${HF_DISCLAIMER_SHORT}.` : ''}`
+      : isModelMarket(market)
+        ? `Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage. Every trade pays the model's owner. ${HF_DISCLAIMER_SHORT}.`
+        : `Sell part or all of your $${market.symbol} to the canonical repo.ing pool with 1% max slippage. Every trade pays the builders.`,
     label: 'Sell',
     ...disabledUnless(tradingEnabled),
     links: { actions: sellLinks(market, ref) },
@@ -229,12 +240,14 @@ export async function handleSellPost(request, rawMint, { loadMarket, tokenBalanc
   } catch (error) { return respondError(error, 'action post') }
 }
 
-// Canonical, finalized markets only: the same gate the traders apply before quoting.
+// Canonical, finalized markets only: the same gate the traders apply before quoting. declined: a maintainer's (or a model owner's)
+// decline is active (maintainer_opt_outs, src/maintainer-opt-outs.mjs), read in the same query.
 export async function loadActionMarket(pool, mint) {
   if (!pool) throw new ActionError('Market lookup is temporarily unavailable', 503)
   const { rows: [row] } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, m.token_symbol as symbol,
       m.quote_mint as "quoteMint", m.early_access_end as "earlyAccessEnd", m.transfer_hook_program as "transferHookProgram", r.full_name as "fullName", r.description,
-      exists(select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) as migrated
+      exists(select 1 from graduation_events g where g.github_repo_id = m.github_repo_id) as migrated,
+      exists(select 1 from maintainer_opt_outs o where o.github_repo_id = m.github_repo_id and o.withdrawn_at is null) as declined
     from markets m left join repositories r on r.github_repo_id = m.github_repo_id
     where m.mint = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [mint])
   return row ?? null

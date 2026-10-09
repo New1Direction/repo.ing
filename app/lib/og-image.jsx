@@ -80,12 +80,19 @@ function Wordmark() {
 }
 
 // tagline and footer: a model market's card names models and who they pay (app/(site)/token/[mint]/opengraph-image).
-export function Frame({ children, tagline = 'Open source markets', footer = 'Every trade pays the repo’s builders in SOL.' }) {
+// notice: a <FrameNotice> shown in the tagline's place, top right, where X's title chip (bottom left) never covers it.
+export function Frame({ children, tagline = 'Open source markets', footer = 'Every trade pays the repo’s builders in SOL.', notice = null }) {
   return <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', background: colors.bg, color: colors.text, padding: '48px 64px', fontFamily: 'sans-serif' }}>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 26, borderBottom: `1px solid ${colors.border}` }}><Wordmark/><span style={{ fontSize: 22, color: colors.muted }}>{tagline}</span></div>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 26, borderBottom: `1px solid ${colors.border}` }}><Wordmark/>{notice ?? <span style={{ fontSize: 22, color: colors.muted }}>{tagline}</span>}</div>
     {children}
     <div style={{ display: 'flex', marginTop: 'auto', paddingTop: 22, borderTop: `1px solid ${colors.border}`, fontSize: 24, color: colors.green }}>{footer}</div>
   </div>
+}
+
+// A short warning in the card's header (Frame's notice), e.g. that the market's maintainer declined it.
+export function FrameNotice({ children }) {
+  return <span style={{ display: 'flex', alignItems: 'center', padding: '8px 22px', fontSize: 30, color: colors.red,
+    background: 'rgba(242, 132, 133, 0.12)', border: `2px solid ${colors.red}`, borderRadius: 999 }}>{children}</span>
 }
 
 export function MarketLogo({ logo, symbol, size: side = LOGO }) {
