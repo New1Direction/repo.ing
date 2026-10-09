@@ -68,10 +68,10 @@ test('the site\'s raise terms: 1 to 10 SOL (5 by default), deposits from 0.05 SO
     { tokenName: 'W', tokenSymbol: 7 }, { tokenName: ['W'], tokenSymbol: 'W' }]) assert.throws(() => tokenFields(fields), { message: RAISE_REFUSALS.token })
 })
 
-test('dark: the routes that start or fund a raise answer 404 while Bundle launches are off', async () => {
+test('dark: the routes that start or fund a raise answer 404 while the Bundle switch is off', async () => {
   const saved = process.env.BUNDLE_LAUNCHES_ENABLED
   try {
-    for (const flag of [undefined, 'false', 'true']) {
+    for (const flag of [undefined, 'false', 'TRUE']) {
       if (flag === undefined) delete process.env.BUNDLE_LAUNCHES_ENABLED; else process.env.BUNDLE_LAUNCHES_ENABLED = flag
       const { POST: open } = await import('../app/api/bundles/route.js')
       const item = await import('../app/api/bundles/[id]/route.js')

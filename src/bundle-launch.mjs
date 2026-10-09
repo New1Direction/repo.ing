@@ -1,16 +1,18 @@
 import { MAX_RAISE_SECS, MAX_TARGET, MIN_DEPOSIT_FLOOR, MIN_TARGET, bundleLaunchInstructions, policyValid } from './bundle-vault.mjs'
 
-// Bundle launches (docs/BUNDLE_LAUNCH.md): the switch, the code gate and the settings the owner chose. Dark: no page, route
-// or job builds a Bundle launch unless BUNDLE_LAUNCHES_ENABLED is exactly "true" and the code gate below is open as well.
-// The program (programs/bundle-vault) is not deployed on mainnet and no platform account exists there.
+// Bundle launches (docs/BUNDLE_LAUNCH.md): the switch, the code gate and the settings the owner chose. No page, route or job
+// builds a Bundle launch unless BUNDLE_LAUNCHES_ENABLED is exactly "true" and the code gate below is open as well.
+// The program (programs/bundle-vault) is deployed on mainnet with its platform account, bundle config and lookup table
+// (docs/BUNDLE_LAUNCH.md, "Mainnet setup", done 2026-10-09).
 
 // Off unless exactly "true".
 export const bundleLaunchesEnabled = (env = process.env) => env.BUNDLE_LAUNCHES_ENABLED === 'true'
 
-// The code's own readiness, independent of the switch. Closed: the vault agents and the fee-routing crank are not built yet,
-// and the program has had no external audit or mainnet setup. It gates what starts or funds a raise; reads, refunds and claims
-// of bundles that already exist never wait for it (app/lib/bundle-api.mjs).
-export const BUNDLE_LAUNCHES_READY = false
+// The code's own readiness, independent of the switch. Open since the mainnet setup (owner's decision, 2026-10-09). Not built
+// yet: an external audit, indexing of vault trades and fee routings, Bundle + early access. It gates what starts or funds a
+// raise; reads, refunds and claims of bundles that already exist never wait for it (app/lib/bundle-api.mjs). Set it back to
+// false to stop new raises and deposits without touching the switch.
+export const BUNDLE_LAUNCHES_READY = true
 export const bundleLaunchable = (env = process.env) => BUNDLE_LAUNCHES_READY && bundleLaunchesEnabled(env)
 export const BUNDLE_LAUNCHES_DISABLED = 'Bundle launches are not available.'
 

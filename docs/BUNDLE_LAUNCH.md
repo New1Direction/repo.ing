@@ -1,10 +1,11 @@
 # Bundle launches
 
-**Status: dark (v1 program, client and the site's raise flow).** Nothing on the site offers or opens a Bundle launch, or takes a
-deposit, while it is dark: those routes answer 404 (see "The site" below). The program
-(`programs/bundle-vault`, id `5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw`) is **not deployed on mainnet**, no platform
-account or bundle config exists there, and `BUNDLE_LAUNCHES_ENABLED` plus the code gate `BUNDLE_LAUNCHES_READY`
-(`src/bundle-launch.mjs`) keep it off. The program key is in the main checkout's git-ignored `secrets/`.
+**Status: set up on mainnet (2026-10-09); the code gate `BUNDLE_LAUNCHES_READY` (`src/bundle-launch.mjs`) is open.** The site
+offers Bundle launches and takes deposits only while `BUNDLE_LAUNCHES_ENABLED` is exactly "true" as well; otherwise those routes
+answer 404 (see "The site" below). On mainnet: the program `5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw` (upgrade authority
+`DtnBr18o2FWj6ak5SCHwT2NsUVqQB8eRANAo2v9yB8tb`, the owner's deployer key), the platform `3k6oDeconrAagqSCKNbQj4WP6MBRsRGAjRRNcKTRcJfR`,
+the bundle config `8LzSeFKHkmqqAmSYKCDW9oNkmLFzP3CncaFXnTc9wR5Y` and the lookup table `5azDqQHFf933H5Z2J2H19SM1jev6KMxyUSfnjBGQjFja`.
+The program key is in the main checkout's git-ignored `secrets/`. Not built yet: see the last section.
 
 A Bundle launch is a second launch mode beside the standard one, which does not change. Backers fund a raise for a
 repository's market. At launch the raise (less 5% for operations) buys the market's first tokens into a permanent vault.
@@ -151,7 +152,8 @@ checks, error codes and log lines. A bundle account and a backer account cost th
 
 ## Mainnet setup (the owner runs it)
 
-Nothing here switches Bundle launches on: `BUNDLE_LAUNCHES_READY` stays false and no code reads the config or the table yet.
+Done on 2026-10-09 (addresses in the status above). Nothing here switches Bundle launches on: that takes the settings below and
+the code gate.
 Run every command from the main checkout (its git-ignored `secrets/` holds the program keypair, and the config keypair is
 written there), with `SOLANA_RPC_URL` set to an https mainnet RPC. The scripts check mainnet by genesis hash and read no other
 setting (unlike the early access scripts, they do not fall back to reading the RPC from Railway). Each script is a dry run
@@ -260,6 +262,11 @@ The vault operator only signs: it needs no SOL.
 (`PLATFORM_CREATOR_SECRET_KEY`): it co-signs new bundles and the pool creation, and signs `record_graduation`. So step 3 runs with
 `--admin` set to that signer's address (FeZX…).
 
+The worker runs the bundle jobs, so it also needs `PLATFORM_CREATOR_SECRET_KEY` (the admin), `APP_ORIGIN` (each bundle token's
+metadata URI; without it the token has none) and `BUILDER_ALLOCATION_CONFIGS` listing the bundle config (the 1% builder allocation
+on bundle markets); add the bundle config to web's list too. On Railway the worker's three are references to web's values
+(`${{web.NAME}}`), so no key is copied by hand.
+
 ## The site
 
 The switch gates only what starts or funds a raise: the launch form's Bundle option, `POST /api/bundles` (prepare, submit) and
@@ -284,5 +291,5 @@ The worker moves rows on from `raising` (and activates or expires an `opening` r
 
 ## Not built yet
 
-The bundle tables' separate ledgers (as for stock pairs), indexing of raises, vault trades and routings, Bundle + early
-access/fair ramp, and an external audit. The mainnet setup (above) is ready for the owner to run; none of it has run on mainnet.
+The bundle tables' separate ledgers (as for stock pairs), indexing of raises, vault trades and routings (the site shows no
+history of them), Bundle + early access/fair ramp, and an external audit. The mainnet setup (above) is done.

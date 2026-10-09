@@ -150,13 +150,17 @@ test('vault policies: the program\'s checks; the defaults are within the limits'
   assert.deepEqual([BUNDLE_DEFAULTS.opsBps, BUNDLE_DEFAULTS.backerBps, BUNDLE_DEFAULTS.launchCooldownSecs], [500, 8_000, MIN_LAUNCH_COOLDOWN_SECS])
 })
 
-test('bundle launches are dark: off unless exactly "true", and closed by the code gate even then', () => {
-  assert.equal(BUNDLE_LAUNCHES_READY, false)
+test('bundle launches: the code gate is open; the switch is off unless exactly "true"', () => {
+  assert.equal(BUNDLE_LAUNCHES_READY, true)
   assert.equal(bundleLaunchesEnabled({}), false)
-  for (const value of ['TRUE', '1', 'yes', ' true']) assert.equal(bundleLaunchesEnabled({ BUNDLE_LAUNCHES_ENABLED: value }), false, value)
+  for (const value of ['TRUE', '1', 'yes', ' true']) {
+    assert.equal(bundleLaunchesEnabled({ BUNDLE_LAUNCHES_ENABLED: value }), false, value)
+    assert.equal(bundleLaunchable({ BUNDLE_LAUNCHES_ENABLED: value }), false, value)
+  }
   assert.equal(bundleLaunchesEnabled({ BUNDLE_LAUNCHES_ENABLED: 'true' }), true)
-  assert.equal(bundleLaunchable({ BUNDLE_LAUNCHES_ENABLED: 'true' }), false)
-  assert.throws(() => prepareBundleLaunch({}, { BUNDLE_LAUNCHES_ENABLED: 'true' }), error => error.code === 'BUNDLE_LAUNCHES_DISABLED')
+  assert.equal(bundleLaunchable({ BUNDLE_LAUNCHES_ENABLED: 'true' }), true)
+  assert.equal(bundleLaunchable({}), false)
+  assert.throws(() => prepareBundleLaunch({}, { BUNDLE_LAUNCHES_ENABLED: 'false' }), error => error.code === 'BUNDLE_LAUNCHES_DISABLED')
 })
 
 test('errors: only a failure that starts in this program is named as its error', () => {
