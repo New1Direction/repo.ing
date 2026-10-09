@@ -57,22 +57,28 @@ import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 import { BundleVault, BundleVaultFallback } from '../../../components/bundle-vault'
 import { isBundleMarket } from '../../../../src/bundles.mjs'
 import { ogCardImageUrl } from '../../../lib/og-card.mjs'
+import { DECLINED_TRADING, declinedSummary } from '../../../lib/declined-display.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
 
 export const dynamic = 'force-dynamic'
 
+// A market its maintainer (or a model's owner) declined is kept out of search (noindex, and out of app/sitemap.js), and its link
+// previews' descriptions lead with the decline, in the banner's words. The decision read is the page's own (memoized per
+// request); an unreadable one changes nothing here, as it shows no banner.
 export async function generateMetadata({ params }) {
   const { mint } = await params
   const { market } = await marketByMint(mint)
   if (!market) return { title: 'Market not found — repo.ing' }
-  if (isModelMarket(market)) return modelTokenMetadata(market)
+  const declined = Boolean(await maintainerDecision(market.repoId))
+  if (isModelMarket(market)) return modelTokenMetadata(market, { declined })
   const title = `$${market.symbol} · ${market.fullName} — repo.ing`
-  const description = (market.description || 'Explore this open source repository market on repo.ing.').slice(0, 180)
+  const description = declined ? `${declinedSummary(market)} ${DECLINED_TRADING}`
+    : (market.description || 'Explore this open source repository market on repo.ing.').slice(0, 180)
   const url = `https://repo.ing/token/${market.mint}`
   const image = { url: ogCardImageUrl(url), width: 1200, height: 630, alt: `$${market.symbol} · ${market.fullName} repository market on repo.ing` }
-  return { title, description, alternates: { canonical: url },
+  return { title, description, alternates: { canonical: url }, ...(declined ? { robots: { index: false } } : {}),
     openGraph: { title, description, url, type: 'website', siteName: 'repo.ing', images: [image] },
     twitter: { card: 'summary_large_image', title, description, images: [image] } }
 }

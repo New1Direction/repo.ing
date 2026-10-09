@@ -3,13 +3,16 @@ import test from 'node:test'
 import { repositoryAssetDirectory, repositoryLogoFromAssets, repositoryLogoFromReadme, safeGithubImageUrl } from '../src/repo-logo.mjs'
 import { claimProgressStream } from '../src/claim-progress.mjs'
 
-test('repository mascot wins over README screenshots and badges', () => {
-  const readme = `[![build](https://img.shields.io/build.svg)](https://github.com)
+test('a mascot named for its repository wins over README screenshots and badges', () => {
+  const readme = alt => `[![build](https://img.shields.io/build.svg)](https://github.com)
 <img src="./brand/preview-dark.png" alt="App screenshot" />
-<img src="./brand/kikka-chinchilla.svg" alt="Kikka, the coral chinchilla mascot" />`
-  assert.equal(repositoryLogoFromReadme(readme,
-    'https://raw.githubusercontent.com/New1Direction/ohiyo/main/README.md', 'ohiyo'),
+<img src="./brand/kikka-chinchilla.svg" alt="${alt}" />`
+  assert.equal(repositoryLogoFromReadme(readme('Kikka, the Ohiyo mascot'),
+    'https://raw.githubusercontent.com/New1Direction/ohiyo/main/README.md', 'ohiyo', 'New1Direction'),
   'https://raw.githubusercontent.com/New1Direction/ohiyo/main/brand/kikka-chinchilla.svg')
+  // The project-logo rule: neither the file name nor the alt text names ohiyo or New1Direction, so the owner avatar stays.
+  assert.equal(repositoryLogoFromReadme(readme('Kikka, the coral chinchilla mascot'),
+    'https://raw.githubusercontent.com/New1Direction/ohiyo/main/README.md', 'ohiyo', 'New1Direction'), null)
   assert.equal(repositoryLogoFromReadme('![build](https://img.shields.io/build.svg)',
     'https://raw.githubusercontent.com/owner/repo/main/README.md', 'repo'), null)
   assert.equal(repositoryLogoFromReadme('![logo](https://tracker.example/logo.png)',

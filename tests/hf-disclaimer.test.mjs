@@ -215,6 +215,7 @@ const EXEMPT = {
   'app/api/hf/start/route.js': 'Hugging Face sign-in redirect; renders nothing',
   'app/api/opt-out/hf/route.js': 'JSON for the model opt-out section; renders nothing',
   'app/lib/hf-session.mjs': 'sign-in and model authority wiring; renders nothing',
+  'app/lib/declined-display.mjs': 'decline wording only; the Blink, card and metadata that use it carry the disclaimer (tests/declined-markets.test.mjs)',
 }
 
 const sources = dir => readdirSync(dir, { withFileTypes: true }).flatMap(entry => entry.isDirectory()

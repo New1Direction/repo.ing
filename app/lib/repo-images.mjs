@@ -20,12 +20,13 @@ export async function repositoryImageSuggestions(repoId, record) {
       if (response.ok) {
         const readme = JSON.parse((await readLimitedBody(response, 1_000_000)).toString('utf8'))
         if (readme.encoding === 'base64' && readme.size <= 256_000) {
-          candidates = repositoryImagesFromReadme(Buffer.from(readme.content, 'base64').toString('utf8'), readme.download_url, record.name)
-          const directory = repositoryAssetDirectory(candidates[0]?.url, readme)
+          candidates = repositoryImagesFromReadme(Buffer.from(readme.content, 'base64').toString('utf8'), readme.download_url, record.name, record.owner)
+          // Logo files are looked for only beside the project's own logo, never in a directory of other projects' logos.
+          const directory = repositoryAssetDirectory(candidates.find(item => item.logo)?.url, readme)
           if (directory) {
             const assets = await fetch(`${base}/contents/${directory.split('/').map(encodeURIComponent).join('/')}`, {
               headers, cache: 'no-store', signal: AbortSignal.timeout(5000) })
-            if (assets.ok) candidates = [...repositoryImagesFromAssets(JSON.parse((await readLimitedBody(assets, 1_000_000)).toString('utf8'))), ...candidates]
+            if (assets.ok) candidates = [...repositoryImagesFromAssets(JSON.parse((await readLimitedBody(assets, 1_000_000)).toString('utf8')), record), ...candidates]
           }
         }
       }
@@ -36,7 +37,10 @@ export async function repositoryImageSuggestions(repoId, record) {
       const key = item.url.replace(/\.(?:png|jpe?g|webp|gif|svg|avif)(?:\?.*)?$/i, '')
       if (!unique.has(key)) unique.set(key, item)
     }
-    candidates = [...unique.values()].slice(0, 3)
+    // The form preselects the first suggestion, so only the project's own logo (src/repo-logo.mjs) can come before the owner
+    // avatar; other README images (another project's logo in an integrations table, a diagram) stay on offer after it.
+    candidates = [...unique.values()].sort((a, b) => Number(b.logo) - Number(a.logo)).slice(0, 3)
+      .map(item => item.logo ? item : { ...item, score: item.score - 100 })
     const avatar = safeGithubImageUrl(record.avatar_url)
     if (avatar && !candidates.some(item => item.url === avatar)) candidates.push({ url: avatar, label: 'Owner avatar', score: -10 })
     const images = await Promise.all(candidates.map(async candidate => {

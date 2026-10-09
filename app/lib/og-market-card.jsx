@@ -1,17 +1,20 @@
 import { ogStatsTime, ogText } from './og-card.mjs'
-import { Frame, MarketLogo, colors } from './og-image'
+import { Frame, FrameNotice, MarketLogo, colors } from './og-image'
 import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
+import { declinedFooter, declinedLabel } from './declined-display.mjs'
 import { stockPairFeeLine } from '../../src/stock-owner-claims.mjs'
 
 // The token page's link-preview card (app/(site)/token/[mint]/opengraph-image). A Hugging Face model market's card says
 // so, names who its fees pay, and carries the disclaimer. A stock pair's footer says what its trades pay, in its stock.
 const MODEL_FRAME = { tagline: 'Hugging Face model market', footer: 'Every trade pays the model’s owner in SOL.' }
 
-// at: when stats were read; printed beside them, because apps show a saved copy of the card long after.
-export function MarketCard({ market, logo, stats, at = null }) {
+// at: when stats were read; printed beside them, because apps show a saved copy of the card long after. declined: the market's
+// maintainer (or model owner) declined it: the header says so in red and the footer no longer says that trades pay the builders.
+export function MarketCard({ market, logo, stats, at = null, declined = false }) {
   const symbol = ogText(market.symbol, 14), name = ogText(market.fullName, 48), model = isModelMarket(market), stockLine = stockPairFeeLine(market)
   const time = ogStatsTime(at)
-  return <Frame {...(model ? MODEL_FRAME : stockLine ? { footer: stockLine } : {})}>
+  return <Frame {...(model ? MODEL_FRAME : stockLine ? { footer: stockLine } : {})}
+    {...(declined ? { notice: <FrameNotice>{declinedLabel(market)}</FrameNotice>, footer: <span style={{ color: colors.muted }}>{declinedFooter(market)}</span> } : {})}>
     <div style={{ display: 'flex', alignItems: 'center', gap: 36, marginTop: 44 }}>
       <MarketLogo logo={logo} symbol={symbol}/>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, width: 860 }}>

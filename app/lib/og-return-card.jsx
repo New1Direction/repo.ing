@@ -4,10 +4,12 @@ import { Frame, MarketLogo, colors } from './og-image'
 import { HF_DISCLAIMER_SHORT, isModelMarket } from './hf-model-display.mjs'
 import { stockPairFeeLine } from '../../src/stock-owner-claims.mjs'
 
-// Link-preview card for a shared return. It is labelled as the sharer's own figure: the URL is editable. A Hugging Face
+// Link-preview card for a shared return. It is labelled as the sharer's own figure: the URL is editable, so the image itself
+// says so beside the figure (REPORTED), on the right where X's title chip (bottom left) never covers it. A Hugging Face
 // model market's card names who its fees pay and carries the disclaimer in its footer; a stock pair's footer says what its
 // trades pay, in its stock.
 const LOGO = 112
+export const REPORTED = ['Reported by the sharer.', 'Not verified by repo.ing.']
 const MODEL_FRAME = { tagline: 'Hugging Face model market', footer: HF_DISCLAIMER_SHORT }
 
 export function ReturnCard({ market, logo, pct }) {
@@ -24,7 +26,12 @@ export function ReturnCard({ market, logo, pct }) {
     </div>
     <div style={{ display: 'flex', flexDirection: 'column', marginTop: 30 }}>
       <span style={{ fontSize: 24, color: colors.muted, textTransform: 'uppercase', letterSpacing: '3px' }}>My return on ${symbol}</span>
-      <strong style={{ fontSize: value.length > 9 ? 124 : 150, lineHeight: 1.05, letterSpacing: '-5px', color }}>{value}</strong>
+      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24 }}>
+        <strong style={{ fontSize: value.length > 10 ? 116 : value.length > 9 ? 124 : 150, lineHeight: 1.05, letterSpacing: '-5px', color }}>{value}</strong>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', flexShrink: 0, paddingBottom: 20, fontSize: 30, lineHeight: 1.3, color: colors.text }}>
+          {REPORTED.map(line => <span key={line}>{line}</span>)}
+        </div>
+      </div>
     </div>
   </Frame>
 }

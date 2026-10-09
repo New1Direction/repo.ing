@@ -21,7 +21,7 @@ import { ModelAllocation } from './model-allocation'
 import { CommunityLaunchBadge, HuggingFaceLink, ModelBadges, ModelDisclaimer, ModelStats } from './model-ui'
 import { displayFeeStatus, listMarkets, tradeAvailable } from '../../lib/server.mjs'
 import { hfMarketsEnabled, modelCard, modelRegistry, shownMarkets } from '../../lib/hf-markets.mjs'
-import { derivativeLabel, exactCount, modelEarningsHeadline, modelMetaDescription, modelShareText, modelView } from '../../lib/hf-model-display.mjs'
+import { HF_DISCLAIMER_SHORT, derivativeLabel, exactCount, modelEarningsHeadline, modelMetaDescription, modelShareText, modelView } from '../../lib/hf-model-display.mjs'
 import { tokenJsonLd } from '../../lib/json-ld.mjs'
 import { signedPayoutWallet } from '../../lib/official-launch.mjs'
 import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
@@ -33,6 +33,7 @@ import { maintainerDecision, promotionExcluded } from '../../lib/maintainer-opt-
 import { timed } from '../../lib/server-timing.mjs'
 import '../../maintainer-opt-out.css'
 import { ogCardImageUrl } from '../../lib/og-card.mjs'
+import { DECLINED_TRADING, declinedSummary } from '../../lib/declined-display.mjs'
 
 // The token page of a Hugging Face model market (app/(site)/token/[mint]/page.jsx returns here for a model id). It keeps
 // the trading panel, chart, trust panel, recent trades and sharing, shows the model card, the Model Pulse slot and the
@@ -43,13 +44,14 @@ const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), 
 const claimHref = market => `/claim/${market.repoId}`
 const CLAIM_LABEL = 'Claim as the model’s owner'
 
-export function modelTokenMetadata(market) {
+// declined: the model's owner declined this market (the page's own decision read): noindex, and the description leads with it.
+export function modelTokenMetadata(market, { declined = false } = {}) {
   if (!hfMarketsEnabled()) return { title: 'Market not found — repo.ing' }
   const title = `$${market.symbol} · ${market.fullName} — repo.ing`
-  const description = modelMetaDescription(market)
+  const description = declined ? `${declinedSummary(market)} ${DECLINED_TRADING} ${HF_DISCLAIMER_SHORT}.` : modelMetaDescription(market)
   const url = `https://repo.ing/token/${market.mint}`
   const image = { url: ogCardImageUrl(url), width: 1200, height: 630, alt: `$${market.symbol} · ${market.fullName} Hugging Face model market on repo.ing` }
-  return { title, description, alternates: { canonical: url },
+  return { title, description, alternates: { canonical: url }, ...(declined ? { robots: { index: false } } : {}),
     openGraph: { title, description, url, type: 'website', siteName: 'repo.ing', images: [image] },
     twitter: { card: 'summary_large_image', title, description, images: [image] } }
 }
