@@ -153,7 +153,7 @@ export default async function Token({ params, searchParams }) {
       <div className="market-hero-actions">
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
         <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
-          {...(stockPair ? { readme: false } : {})} more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
+          {...(stockPair ? { readme: false, quote } : {})} more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
             <a href={`https://solscan.io/token/${market.mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
             {stockPair ? <a href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}>Fee routing</a> : <Link href={`/claim/${market.repoId}`}>Claim builder fees</Link>}</>}/></div>
     </header>
