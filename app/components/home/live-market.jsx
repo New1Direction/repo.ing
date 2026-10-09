@@ -9,7 +9,7 @@ import { marketTradesUrl } from '../../lib/market-chart-urls.mjs'
 import { LIVE_MARKET_POLL_MS, LIVE_MARKET_RANGE, LIVE_TRADE_ROWS, lastPoint, liveChart } from '../../lib/live-market.mjs'
 import { phoneMarketSummary, sparklinePath } from '../../lib/phone-market-summary.mjs'
 import { recentTradeAge, recentTradeSol, tradeKey } from '../../lib/recent-trades.mjs'
-import { formatSolDisplay } from '../../lib/format.mjs'
+import { formatSolDisplay, percentChange } from '../../lib/format.mjs'
 import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
 
 const W = 320, H = 112, PAD = 4
@@ -54,8 +54,9 @@ export function LiveMarket({ market, initial, usdPerSol = null, renderedAt }) {
     metrics: usdPerSol ? { solUsd: usdPerSol } : null, now })
   const line = sparklinePath(summary.spark, W, H, PAD)
   const dot = lastPoint(line, W, H)
-  const change = Number.isFinite(summary.change) ? summary.change : null, up = change === null || change >= 0
-  const changeText = change === null ? null : `${Math.abs(change).toFixed(2)}%`
+  // Up or down as shown: a fall too small to show (0.00%) is not drawn as a fall.
+  const change = percentChange(summary.change), up = change === null || change.sign >= 0
+  const changeText = change?.value ?? null
   return <article className="live-market" aria-labelledby="live-market-title">
     <header className="live-market-head">
       <RepoAvatar repo={market}/>

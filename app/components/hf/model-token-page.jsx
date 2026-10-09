@@ -27,7 +27,7 @@ import { signedPayoutWallet } from '../../lib/official-launch.mjs'
 import { OFFICIAL_TOKEN } from '../../lib/official-token.mjs'
 import { selectMoreMarkets } from '../../lib/more-markets.mjs'
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../lib/format.mjs'
-import { solUsdPrice } from '../../lib/sol-usd.mjs'
+import { cachedSolUsdPrice, solUsdPrice } from '../../lib/sol-usd.mjs'
 import { marketLaunchFeeTerms } from '../../lib/launch-fee.mjs'
 import { maintainerDecision, promotionExcluded } from '../../lib/maintainer-opt-outs.mjs'
 import { timed } from '../../lib/server-timing.mjs'
@@ -74,7 +74,7 @@ export async function ModelTokenPage({ market, activity = false }) {
   ]
   return <><AppHeader/><main className="section-wrap market-page model-market"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <ModelDeclinedBanner fullName={market.fullName} decision={decision}/>}
-    <PhoneMarketSummary mint={mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}/>
+    <PhoneMarketSummary mint={mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports} usdPerSol={cachedSolUsdPrice()}/>
     <ModelDisclaimer className="is-banner"/>
     <header className="market-hero">
       <div className="market-hero-earnings"><Suspense fallback={<EarningsHeadlineFallback/>}><ModelEarningsHeadline market={market}/></Suspense></div>

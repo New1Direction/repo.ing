@@ -16,10 +16,10 @@ import { marketQuoteView } from '../../../../src/quote-assets.mjs'
 import { signedPayoutWallet } from '../../../lib/official-launch.mjs'
 import { MoreMarkets, MoreMarketsFallback } from '../../../components/more-markets'
 import { selectMoreMarkets } from '../../../lib/more-markets.mjs'
-import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../../../lib/format.mjs'
+import { formatSolDisplay, formatSolRounded, formatUsdEstimate, formatUtcDay } from '../../../lib/format.mjs'
 import { displayRepository, refreshDisplayRepository } from '../../../lib/repository-display.mjs'
 import { InviteOwner } from '../../../components/invite-owner'
-import { solUsdPrice } from '../../../lib/sol-usd.mjs'
+import { cachedSolUsdPrice, solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { OFFICIAL_TOKEN } from '../../../lib/official-token.mjs'
 import { TeamTokenLocks } from '../../../components/team-token-locks'
 import { RepoingCase, RepoingCaseFallback } from '../../../components/repoing-case'
@@ -131,7 +131,7 @@ export default async function Token({ params, searchParams }) {
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
     {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
     <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}
-      {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
+      usdPerSol={cachedSolUsdPrice()} {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
     {official && <div className="official-market-note"><span><strong>Official $REPOING</strong> · repo.ing tokenized itself.</span><div className="official-market-links"><Link href={`${OFFICIAL_TOKEN.marketPath}#team-locks`}>Token locks</Link><Link href="/stats#repo-title">Revenue policy & buyback status →</Link></div></div>}
     <EarlyAccessNote market={market}/>
     <header className="market-hero">
@@ -257,7 +257,7 @@ async function FreshRepositoryDetails({ repo }) {
 function RepositoryDetails({ repo, release }) {
   return (<div id="repository" className="inner-card repository-card"><div className="card-heading"><h3>Repository</h3><GitHubLink repo={repo}/></div>
           <RepoIdentity repo={repo} compact/><RepoStats repo={repo}/>
-          {release && <a className="repo-release" href={release.url} target="_blank" rel="noreferrer"><span>Latest release</span><strong>{release.tag} ↗</strong><small>{new Date(release.publishedAt).toLocaleDateString()}</small></a>}
-          <div className="repo-meta-grid"><div>Language<strong>{repo.language || '—'}</strong></div><div>License<strong>{repo.license || '—'}</strong></div><div>Updated<strong>{repo.updatedAt ? new Date(repo.updatedAt).toLocaleDateString() : '—'}</strong></div></div>
+          {release && <a className="repo-release" href={release.url} target="_blank" rel="noreferrer"><span>Latest release</span><strong>{release.tag} ↗</strong><small>{formatUtcDay(release.publishedAt)}</small></a>}
+          <div className="repo-meta-grid"><div>Language<strong>{repo.language || '—'}</strong></div><div>License<strong>{repo.license || '—'}</strong></div><div>Updated<strong>{repo.updatedAt ? formatUtcDay(repo.updatedAt) : '—'}</strong></div></div>
         </div>)
 }

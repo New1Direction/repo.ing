@@ -8,6 +8,7 @@ import { BUNDLE_DEFAULTS, BUNDLE_RAISE } from './bundle-launch.mjs'
 import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import { readTradeComputeBudget } from './trade-landing.mjs'
 import { createWsolAtaInstruction } from './wsol-account.mjs'
+import { formatUnits } from '../app/lib/format.mjs'
 
 // The site's raise flow for Bundle launches (docs/BUNDLE_LAUNCH.md): what a request may ask for, the exact transactions the
 // site builds (open a raise, deposit, refund, claim), and the checks a wallet-signed transaction passes before the site co-signs
@@ -18,7 +19,8 @@ export class BundleRaiseError extends Error {
   constructor(message, status = 400) { super(message); this.name = 'BundleRaiseError'; this.status = status }
 }
 
-const sol = lamports => `${Number(lamports) / 1e9} SOL`
+// Exact SOL in plain decimals: Number(lamports) / 1e9 printed 500 lamports as "5e-7 SOL".
+const sol = lamports => `${formatUnits(lamports, 9)} SOL`
 export const RAISE_REFUSALS = Object.freeze({
   target: `Choose a target from ${sol(BUNDLE_RAISE.minTargetLamports)} to ${sol(BUNDLE_RAISE.maxTargetLamports)}.`,
   deadline: `Choose a deadline of ${BUNDLE_RAISE.deadlineDays.join(', ')} days.`,

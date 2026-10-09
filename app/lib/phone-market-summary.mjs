@@ -46,9 +46,10 @@ export function formatUsdPrice(value) {
   return `$${value.toLocaleString('en-US', { maximumSignificantDigits: 4 })}`
 }
 
-export function phoneMarketSummary({ priceSol = null, volume24hLamports = null, chart = null, metrics = null, now = Date.now() }) {
+// usdPerSol: the SOL/USD price until a metrics read arrives (the server render has none), so it shows USD, not SOL.
+export function phoneMarketSummary({ priceSol = null, volume24hLamports = null, usdPerSol = null, chart = null, metrics = null, now = Date.now() }) {
   const price = positive(chart?.latest?.priceSol) ? chart.latest.priceSol : positive(priceSol) ? priceSol : null
-  const solUsd = positive(metrics?.solUsd) ? metrics.solUsd : null
+  const usd = metrics ? metrics.solUsd : usdPerSol, solUsd = positive(usd) ? usd : null
   const supply = /^\d+$/.test(metrics?.supplyBaseUnits ?? '') && Number.isInteger(metrics.supplyDecimals)
     ? Number(metrics.supplyBaseUnits) / 10 ** metrics.supplyDecimals : MARKET_TOKEN_SUPPLY
   const volume = /^\d+$/.test(String(chart?.volume24hLamports ?? '')) ? chart.volume24hLamports

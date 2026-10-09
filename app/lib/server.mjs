@@ -16,6 +16,7 @@ import { isOfficialLaunch } from './official-launch.mjs'
 import { forkOf, githubTime } from '../../src/github.mjs'
 import { assertGithubRepoId, isMarketId } from '../../src/market-identity.mjs'
 import { isStockMarket } from '../../src/stock-market-chart.mjs'
+import { latestTradeSql } from '../../src/market-chart.mjs'
 import { withStockStats } from './stock-market-stats.mjs'
 
 export function database() {
@@ -64,6 +65,13 @@ export function discoveryRewardsEnabled() {
 
 export function builderAllocationEnabled() { return allocationEnabled(configAddress()) }
 
+// A market row's last price (list and single reads): the newest curve and DAMM trades as the chart picks them
+// (src/market-chart.mjs latestTradeSql). A DAMM trade in the same slot as the last curve trade came after it: the curve
+// takes no swaps once complete, and its DAMM pool opens only at migration.
+const LATEST_TRADES = `left join lateral (${latestTradeSql('trade_events', t => `${t}.pool = m.pool`)}) cp on true
+      left join lateral (${latestTradeSql('damm_trade_events', t => `${t}.github_repo_id = m.github_repo_id and ${t}.next_sqrt_price is not null`)}) dp on true`
+const LAST_SQRT_PRICE = `case when coalesce(dp.slot, -1) >= coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice"`
+
 export function launchAvailable() { return Boolean(database() && configAddress() && creatorSigner()) }
 export function tradeAvailable() { return Boolean(database() && configAddress()) }
 
@@ -99,13 +107,10 @@ async function loadMarkets() {
         b.wallet as "beneficiaryWallet", b.method as "beneficiaryMethod", exists (
           select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin'
         ) as "wasVerified",
-        case when coalesce(dp.slot, -1) > coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice",
+        ${LAST_SQRT_PRICE},
         o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"
       from markets m join repositories r on r.github_repo_id = m.github_repo_id
-      left join (select distinct on (pool) pool, slot, next_sqrt_price from trade_events
-        order by pool, slot desc, event_index desc) cp on cp.pool = m.pool
-      left join (select distinct on (github_repo_id) github_repo_id, slot, next_sqrt_price from damm_trade_events
-        where next_sqrt_price is not null order by github_repo_id, slot desc, event_index desc) dp on dp.github_repo_id = m.github_repo_id
+      ${LATEST_TRADES}
       left join graduation_observations o on o.github_repo_id = m.github_repo_id
       left join graduation_events e on e.github_repo_id = m.github_repo_id
       left join (select github_repo_id, sum(amount_base_units) earned from builder_fee_credits group by github_repo_id) f on f.github_repo_id = m.github_repo_id
@@ -202,14 +207,11 @@ async function singleMarket(column, value) {
       + (select coalesce(sum(d.quote_amount), 0) from damm_trade_events d join graduation_events g on g.github_repo_id = d.github_repo_id and g.pool = d.pool
         where d.github_repo_id = m.github_repo_id and d.traded_at >= now() - interval '24 hours'))::text as "volume24hLamports",
       exists(select 1 from repo_verifications where github_repo_id = m.github_repo_id and permission = 'admin') as "wasVerified",
-      case when coalesce(dp.slot, -1) > coalesce(cp.slot, -1) then dp.next_sqrt_price else cp.next_sqrt_price end as "lastSqrtPrice",
+      ${LAST_SQRT_PRICE},
       o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash"
       from markets m join repositories r on r.github_repo_id = m.github_repo_id
       left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
-      left join lateral (select slot, next_sqrt_price from trade_events where pool = m.pool
-        order by slot desc, event_index desc limit 1) cp on true
-      left join lateral (select slot, next_sqrt_price from damm_trade_events where github_repo_id = m.github_repo_id
-        and next_sqrt_price is not null order by slot desc, event_index desc limit 1) dp on true
+      ${LATEST_TRADES}
       left join graduation_observations o on o.github_repo_id = m.github_repo_id
       left join graduation_events e on e.github_repo_id = m.github_repo_id
       where m.${column} = $1 and m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized'`, [value])

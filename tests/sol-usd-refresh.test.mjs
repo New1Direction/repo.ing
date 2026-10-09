@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { solUsdPrice } from '../app/lib/sol-usd.mjs'
+import { cachedSolUsdPrice, solUsdPrice } from '../app/lib/sol-usd.mjs'
 
 // Own file: sol-usd keeps one process-wide price, so this sequence of clock values must not share state with other tests.
 const answer = usd => async () => ({ ok: true, json: async () => ({ solana: { usd } }) })
@@ -31,4 +31,18 @@ test('a failed background refresh keeps the valid price until it expires, then s
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.equal(await solUsdPrice(down, 520_000), 152, 'still valid; the failed refresh backs off')
   assert.equal(await solUsdPrice(down, 550_000), null, 'expired and sources still failing: no stale price')
+})
+
+test('the cached read never waits: null until a price arrives, then that price until it expires', async () => {
+  // Continues the clock above: nothing valid is cached and the failure backoff has passed.
+  let release, calls = 0
+  const slow = async () => { calls++; await new Promise(resolve => { release = resolve }); return answer(160)() }
+  assert.equal(cachedSolUsdPrice(slow, 600_000), null, 'no price yet: the page renders without one instead of waiting')
+  assert.equal(calls, 1, 'and the refresh has started')
+  release()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(cachedSolUsdPrice(slow, 610_000), 160)
+  assert.equal(calls, 1)
+  assert.equal(cachedSolUsdPrice(slow, 900_000), null, 'expired: never served')
+  release()
 })

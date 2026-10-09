@@ -13,7 +13,8 @@ export function formatUnits(raw, decimals = 9, maxFraction = decimals) {
 export function formatSolDisplay(raw) {
   if (raw === null || raw === undefined) return '—'
   const amount = BigInt(raw)
-  if (amount !== 0n && amount > -1000n && amount < 1000n) return '<0.000001'
+  // A loss too small to show keeps its minus: "-<0.000001".
+  if (amount !== 0n && amount > -1000n && amount < 1000n) return amount < 0n ? '-<0.000001' : '<0.000001'
   const sol = Number(amount) / 1e9, size = Math.abs(sol)
   const decimals = size >= 1 || size === 0 ? 2 : Math.min(6, 3 - Math.floor(Math.log10(size)))
   return sol.toLocaleString('en-US', { maximumFractionDigits: decimals })
@@ -23,6 +24,14 @@ export function formatSolRounded(raw) {
   const amount = Number(BigInt(raw)) / 1e9
   if (amount !== 0 && Math.abs(amount) < 0.00005) return amount < 0 ? '>-0.0001' : '<0.0001'
   return amount.toLocaleString('en-US', { maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4 })
+}
+// A percent change, rounded first and signed after: a change too small to show reads "0.00%", never "-0.00%". sign (-1, 0
+// or 1) is the shown value's, for up/down colors; value is the unsigned figure ("1.25%"); null for no change figure.
+export function percentChange(change, digits = 2) {
+  if (typeof change !== 'number' || !Number.isFinite(change)) return null
+  const shown = Number(change.toFixed(digits)), sign = Math.sign(shown) || 0
+  const value = `${Math.abs(shown).toFixed(digits)}%`
+  return { sign, value, label: `${sign > 0 ? '+' : sign < 0 ? '−' : ''}${value}` }
 }
 export function formatUsdEstimate(lamports, usdPerSol) {
   if (lamports === null || lamports === undefined || !Number.isFinite(usdPerSol) || usdPerSol <= 0) return null
@@ -52,6 +61,10 @@ export function formatTokenAmount(raw, decimals) {
   if (value > 0n && value < 10n ** BigInt(Math.max(0, decimals - 4))) return '<0.0001'
   return formatUnits(value, decimals, Math.min(decimals, 4))
 }
+// Dates a server renders, in UTC as the site's other dates are: never the server's own time zone or numeric US format.
+// "Oct 9, 2026" and "Oct 9, 2026, 3:47 AM UTC".
+export const formatUtcDay = value => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+export const formatUtcDateTime = value => `${new Date(value).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })} UTC`
 // Whole USD cents (parts-fund goals and pledges): "$120", "$12.50".
 export function formatCents(cents) {
   const value = Number(cents)

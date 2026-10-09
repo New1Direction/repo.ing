@@ -8,10 +8,12 @@ import { createPulseStore } from '../src/dev-pulse.mjs'
 import { persistLaunchRepository } from '../src/repository-store.mjs'
 import { createLaunchAlertStore, launchAlertEarned } from '../src/launch-alerts.mjs'
 import { graduationColumns } from './fixtures/graduation-rows.mjs'
+import { recordChartBlock } from '../src/chart-ordering.mjs'
+import { chartSpotPrice } from '../src/market-chart.mjs'
 
 // Real PostgreSQL with every committed migration (0045 included): 24h volume of graduated markets counts swaps in the
 // verified DAMM v2 pool only, market rows carry the repository quality and Official signals (list and single reads
-// agree), and the worker paths that fill repositories.github_created_at never erase it.
+// agree), the worker paths that fill repositories.github_created_at never erase it, and a row's last price is the chart's.
 const url = process.env.MARKET_QUALITY_TEST_DATABASE_URL
 const SOL = 1_000_000_000n
 const DAY = 86_400_000
@@ -24,7 +26,7 @@ test('real PostgreSQL: graduated 24h volume, quality signals and creation-time b
   try {
     await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
     await pool.query(`truncate repo_pulse_state, launch_alerts, repo_verifications, repo_beneficiaries, graduation_observations, graduation_events,
-      trade_events, damm_trade_events, markets, repositories restart identity cascade`)
+      trade_events, damm_trade_events, finalized_chart_positions, finalized_chart_blocks, markets, repositories restart identity cascade`)
     const ago = ms => new Date(Date.now() - ms)
     const market = async (id, { stars, created, hoursAgo = 1, launcher = `Launcher${id}` }) => {
       await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at,github_created_at)
@@ -111,5 +113,32 @@ test('real PostgreSQL: graduated 24h volume, quality signals and creation-time b
     await persistLaunchRepository(pool, { githubRepoId: 7001n, owner: 'octo', name: 'repo-7001', fullName: 'octo/repo-7001', description: null,
       avatarUrl: null, stars: 501, forks: 1, archived: false, githubUpdatedAt: new Date() })
     assert.ok((await pool.query('select github_created_at from repositories where github_repo_id = 7001')).rows[0].github_created_at instanceof Date)
+
+    // The last price, list and token page alike, is the newest trade as the chart orders it (src/market-chart.mjs latestTradeSql).
+    // Separate transactions in one slot all have event_index 0: no price until their block order is recorded, then the later one's.
+    // Curve trades (7001) and DAMM trades (7002) alike.
+    const sqrtOf = n => String((1n << 64n) * BigInt(n))
+    const sameSlot = async (table, id, slot, prices) => {
+      for (const [signature, n] of prices) await pool.query(table === 'trade_events'
+        ? `insert into trade_events(pool,signature,event_index,slot,traded_at,direction,input_base_units,output_base_units,next_sqrt_price)
+          values($1,$2,0,$3,now(),'buy','1000','1000',$4)`
+        : `insert into damm_trade_events(github_repo_id,pool,signature,event_index,slot,traded_at,quote_amount,direction,evidence,next_sqrt_price)
+          values($1,$2,$3,0,$4,now(),1000,'buy','{}',$5)`,
+      table === 'trade_events' ? [`Curve${id}`, signature, slot, sqrtOf(n)] : [id, `DammPool${id}`, signature, slot, sqrtOf(n)])
+    }
+    await sameSlot('trade_events', 7001, 900, [['curve-a', 2], ['curve-b', 3]])
+    await sameSlot('damm_trade_events', 7002, 901, [['damm-a', 2], ['damm-b', 3]])
+    // A fresh server module each time: the list is memoized for 15 s.
+    const prices = async tag => {
+      const server = await import(`../app/lib/server.mjs?${tag}`)
+      const { markets: listed } = await server.listMarkets()
+      const rows = await Promise.all(['7001', '7002'].map(async id => [listed.find(m => m.repoId === id), (await server.marketByMint(`Mint${id}`)).market]))
+      return rows.map(([row, single]) => { assert.equal(single.priceSol, row.priceSol, 'list and token page agree'); return row.priceSol })
+    }
+    assert.deepEqual(await prices('unordered'), [null, null], 'order unproven: no price, as the chart withholds it')
+    for (const [slot, signatures] of [[900, ['curve-b', 'curve-a']], [901, ['damm-b', 'damm-a']]]) {
+      await recordChartBlock(pool, { slot, blockhash: `hash${slot}`, previousBlockhash: `prev${slot}`, parentSlot: slot - 1, signatures })
+    }
+    assert.deepEqual(await prices('ordered'), [chartSpotPrice(sqrtOf(2)), chartSpotPrice(sqrtOf(2))], 'the later transaction in each block')
   } finally { await pool.end() }
 })

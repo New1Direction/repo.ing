@@ -1,4 +1,4 @@
-import { formatUsdMarketCap, MARKET_TOKEN_SUPPLY } from './market-display.mjs'
+import { compactFigure, formatUsdMarketCap, MARKET_TOKEN_SUPPLY } from './market-display.mjs'
 import { shownUnits, stockUnits } from './trade-units.mjs'
 
 // A stock pair's figures as pages show them (docs/STOCK_QUOTES.md). Ledgers, charts and market stats keep raw units of the
@@ -22,7 +22,7 @@ export function stockDisplayUnits(info) {
 export function formatQuoteAmount(raw, decimals) {
   if (raw === null || raw === undefined || !DIGITS.test(String(raw).replace(/^-/, ''))) return '—'
   const amount = BigInt(raw), floor = 10n ** BigInt(Math.max(0, decimals - 6))
-  if (amount !== 0n && amount > -floor && amount < floor) return '<0.000001'
+  if (amount !== 0n && amount > -floor && amount < floor) return amount < 0n ? '-<0.000001' : '<0.000001'
   const value = Number(amount) / 10 ** decimals, size = Math.abs(value)
   const places = size >= 1 || size === 0 ? 2 : Math.min(6, 3 - Math.floor(Math.log10(size)))
   return value.toLocaleString('en-US', { maximumFractionDigits: places })
@@ -44,11 +44,7 @@ export function stockRawUsd(raw, units) {
 export function formatStockCompact(value, symbol) {
   if (!Number.isFinite(value) || value < 0) return '—'
   if (value > 0 && value < 0.01) return `<0.01 ${symbol}`
-  if (value < 1000) return `${value.toLocaleString('en-US', { maximumFractionDigits: value < 10 ? 2 : 1 })} ${symbol}`
-  for (const [threshold, suffix] of [[1e9, 'b'], [1e6, 'm'], [1e3, 'k']]) {
-    if (value >= threshold) return `${(value / threshold).toFixed(1).replace(/\.0$/, '')}${suffix} ${symbol}`
-  }
-  return '—'
+  return `${compactFigure(value, value < 10 ? 2 : 1, 'b')} ${symbol}`
 }
 
 // A market row's stock figures (row.stock, app/lib/stock-market-stats.mjs) as the market table shows them, like SOL rows:

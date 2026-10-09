@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from '../app/lib/format.mjs'
+import { formatSolDisplay, formatSolRounded, formatUsdEstimate, formatUtcDateTime, formatUtcDay, percentChange } from '../app/lib/format.mjs'
 import { solUsdPrice } from '../app/lib/sol-usd.mjs'
 import { resolvePublicRepository } from '../src/github.mjs'
 
@@ -23,8 +23,31 @@ test('summary SOL amounts use 2 decimals from 1 SOL and ~4 significant digits be
   assert.equal(formatSolDisplay('342812345'), '0.3428')
   assert.equal(formatSolDisplay('41838730'), '0.04184')
   assert.equal(formatSolDisplay('-320732496000'), '-320.73')
+  // A loss too small to show keeps its minus (it read "<0.000001", a gain).
+  assert.deepEqual(['-500', '-1', '500', '-1000'].map(formatSolDisplay), ['-<0.000001', '-<0.000001', '<0.000001', '-0.000001'])
   assert.equal(formatSolRounded('14106900000'), '14.11')
   assert.equal(formatSolRounded('342829000'), '0.3428')
+})
+
+test('percent changes are rounded before they are signed: a tiny fall reads 0.00%, never -0.00%', () => {
+  assert.deepEqual(percentChange(-0.001), { sign: 0, value: '0.00%', label: '0.00%' })
+  assert.deepEqual(percentChange(0.004), { sign: 0, value: '0.00%', label: '0.00%' })
+  assert.deepEqual(percentChange(-0.006), { sign: -1, value: '0.01%', label: '−0.01%' })
+  assert.deepEqual(percentChange(12.3456), { sign: 1, value: '12.35%', label: '+12.35%' })
+  assert.deepEqual(percentChange(-14.2857), { sign: -1, value: '14.29%', label: '−14.29%' })
+  assert.equal(percentChange(-0.04, 1).label, '0.0%')
+  assert.deepEqual([null, undefined, NaN, Infinity, '5'].map(value => percentChange(value)), [null, null, null, null, null])
+})
+
+test('server-rendered dates are UTC, labeled, whatever the server\'s own time zone', () => {
+  const zone = process.env.TZ
+  process.env.TZ = 'America/Los_Angeles'
+  try {
+    // 03:47 UTC on Oct 9 is still Oct 8 in Los Angeles; the pages once showed "10/8/2026" or "10/9/2026, 3:47:13 AM" by server zone.
+    assert.equal(formatUtcDay('2026-10-09T03:47:13Z'), 'Oct 9, 2026')
+    assert.equal(formatUtcDateTime('2026-10-09T03:47:13Z'), 'Oct 9, 2026, 3:47 AM UTC')
+    assert.equal(formatUtcDay(new Date('2026-01-31T23:59:00Z')), 'Jan 31, 2026')
+  } finally { if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone }
 })
 
 test('SOL price is cached briefly and unavailable prices are omitted', async () => {

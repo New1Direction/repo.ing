@@ -2,6 +2,7 @@ import { PUBLIC_GRADUATION_MAX_AGE_MS } from '../../src/graduation-state.mjs'
 import { quoteAssetById } from '../../src/quote-assets.mjs'
 import { stockUnits } from './stock-units.mjs'
 import { MARKET_TOKEN_DECIMALS, isStockMarket, stockChartMigration, stockQuoteOf, stockSpotPrice } from '../../src/stock-market-chart.mjs'
+import { latestTradeSql } from '../../src/market-chart.mjs'
 
 // Server-only: the market-list and token-page numbers of stock-paired markets (docs/STOCK_QUOTES.md), from the stock
 // ledger, laid over the rows server.mjs builds. A stamped row keeps every field it had, claims no SOL value (priceSol and
@@ -16,13 +17,13 @@ import { MARKET_TOKEN_DECIMALS, isStockMarket, stockChartMigration, stockQuoteOf
 const FUTURE_SKEW_MS = 5_000
 
 // Per stamped market (parallel arrays): its stamp, curve and recorded DAMM pool. The trade reads use the
-// (github_repo_id, slot) index; $7 is "now".
-const SCOPE = `t.github_repo_id=m.repo_id and t.asset_id=m.asset_id and t.quote_mint=m.quote_mint
-    and ((t.venue='dbc' and t.pool=m.pool) or (t.venue='damm' and t.pool=m.damm_pool and t.slot>=m.damm_slot))`
+// (github_repo_id, slot) index; $7 is "now". The last price is the newest priced trade as the stock chart picks it (none while
+// its slot's transaction order is unproven; src/market-chart.mjs latestTradeSql).
+const scope = t => `${t}.github_repo_id=m.repo_id and ${t}.asset_id=m.asset_id and ${t}.quote_mint=m.quote_mint
+    and ((${t}.venue='dbc' and ${t}.pool=m.pool) or (${t}.venue='damm' and ${t}.pool=m.damm_pool and ${t}.slot>=m.damm_slot))`
 const FACTS = `select m.repo_id::text as "repoId",
-  (select t.next_sqrt_price from stock_trade_events t where ${SCOPE} and t.next_sqrt_price is not null
-    order by t.slot desc, t.event_index desc, t.signature desc limit 1) as "lastSqrtPrice",
-  (select coalesce(sum(t.quote_amount),0)::text from stock_trade_events t where ${SCOPE}
+  (select next_sqrt_price from (${latestTradeSql('stock_trade_events', t => `${scope(t)} and ${t}.next_sqrt_price is not null`)}) latest) as "lastSqrtPrice",
+  (select coalesce(sum(t.quote_amount),0)::text from stock_trade_events t where ${scope('t')}
     and t.traded_at >= $7::timestamptz - interval '24 hours' and t.traded_at <= $7::timestamptz) as "volume24h",
   o.pool as "observedPool", o.quote_reserve::text as "quoteReserve", o.migration_threshold::text as "migrationThreshold",
   o.is_migrated as "isMigrated", o.observed_at as "observedAt"

@@ -320,10 +320,14 @@ test('stock-paired markets: SOL reads unchanged, partitioned totals, and the sto
       await stockTrade(db, S3, { signature: second, slot: 5000, time: at(10 * MINUTE), quote: '2000', base: '1', price: sqrt(2) })
       const pending = await readStockMarketChart(db, s3, '1h', now)
       assert.equal(pending.latest, null); assert.equal(pending.latestOrderingPending, true)
+      // The market row's last price follows the chart: none while the order is unproven (both trades have event_index 0).
+      const rowPrice = async () => (await withStockStats([s3], { db, now }))[0].stock.price
+      assert.equal(await rowPrice(), null)
       assert.equal(pending.candles.at(-1).orderingPending, true); assert.equal(pending.candles.at(-1).volumeQuote, '3000')
       await recordChartBlock(db, { slot: 5000, blockhash: 'verified', previousBlockhash: 'previous', parentSlot: 4999, signatures: [second, first] })
       const resolved = await readStockMarketChart(db, s3, '1h', now)
       assert.equal(resolved.latestOrderingPending, false); assert.equal(resolved.latest.signature, first); assert.equal(resolved.latest.priceQuote, 0.01)
+      assert.equal(await rowPrice(), 0.01, 'the later transaction in the block, as the chart reads it')
       assert.deepEqual([resolved.candles.at(-1).open, resolved.candles.at(-1).close], [0.04, 0.01])
       // A graduation record naming another curve stops the chart instead of splicing in another pool.
       await db.query(`insert into stock_graduation_events(github_repo_id,asset_id,quote_mint,dbc_pool,damm_pool,migration_signature,slot,evidence)
