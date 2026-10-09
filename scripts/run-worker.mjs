@@ -131,7 +131,8 @@ async function observePartsFunds(){
 // Bundle launches (docs/BUNDLE_LAUNCH.md): dark unless BUNDLE_LAUNCHES_ENABLED and the code gate are both open. The jobs sign with the
 // bundle launch signer (and the creator signer as the bundle program's admin, for record_graduation only).
 const bundleSettings = (() => { try { return bundleJobSettings() } catch { return { error: 'BUNDLE_SETTINGS_INVALID' } } })()
-const bundleJobs = bundleSettings?.config ? createBundleJobs({ pool, connection, settings: bundleSettings,
+// A confirmed connection: the jobs sign with a confirmed blockhash, which a finalized preflight refuses ("Blockhash not found").
+const bundleJobs = bundleSettings?.config ? createBundleJobs({ pool, connection: rpcConnection(rpc, 'confirmed'), settings: bundleSettings,
   builderAllocationEnabled: allocationEnabled(bundleSettings.config.toBase58()) }) : null
 let bundleTask=null,nextBundleCheck=0
 async function observeBundles(){

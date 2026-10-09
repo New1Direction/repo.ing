@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import bs58 from 'bs58'
-import { Keypair, PublicKey } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey } from '@solana/web3.js'
 import { STATUS } from '../src/bundle-vault.mjs'
-import { AGENT, BUNDLE_STALE_OPENING_MS, bundleAction, bundleJobSettings, readSecretKey, vaultAgentDecision } from '../src/bundle-jobs.mjs'
+import { AGENT, BUNDLE_STALE_OPENING_MS, bundleAction, bundleJobSettings, createBundleJobs, readSecretKey, vaultAgentDecision } from '../src/bundle-jobs.mjs'
 
 const NOW = 1_800_000_000
 const key = () => Keypair.generate().publicKey
@@ -32,6 +33,31 @@ test('a full raise launches until its grace period ends; a raise past its deadli
   assert.deepEqual(bundleAction({ row: row('raising'), chain: chain({ raised: 1n }), market: null, now: NOW }), { action: 'wait' }, 'still raising')
   assert.deepEqual(bundleAction({ row: row('raising'), chain: chain({ raised: 1n, deadline: NOW - 1 }), market: null, now: NOW }), { action: 'fail_raise' })
   assert.deepEqual(bundleAction({ row: row('raising'), chain: chain({ released: 1n }), market: null, now: NOW }), { action: 'wait' }, 'never a second release')
+})
+
+test('a launch that cannot land fails its raise once the grace period ends, so backers get refunds', () => {
+  const stale = chain({ deadline: NOW - 86_401 })
+  // Whatever the attempt was left in (a repeating refusal, or a crash between reserve and send), the program refuses release now.
+  for (const market of [null, { status: 'failed' }, { status: 'reserved' }, { status: 'prepared' }, { status: 'ambiguous' }]) {
+    assert.deepEqual(bundleAction({ row: row('launching'), chain: stale, market, now: NOW }), { action: 'fail_raise' }, JSON.stringify(market))
+  }
+  // Within the grace period it keeps retrying, or waits for an attempt that may have landed.
+  assert.deepEqual(bundleAction({ row: row('launching'), chain: chain({ deadline: NOW - 86_399 }), market: null, now: NOW }), { action: 'retry_launch' })
+  assert.deepEqual(bundleAction({ row: row('launching'), chain: chain({ deadline: NOW - 86_399 }), market: { status: 'prepared' }, now: NOW }), { action: 'wait' })
+  // Released (it landed) or already failed: never a fail_raise.
+  assert.notDeepEqual(bundleAction({ row: row('launching'), chain: chain({ deadline: NOW - 86_401, released: 1n }), market: null, now: NOW }), { action: 'fail_raise' })
+  assert.deepEqual(bundleAction({ row: row('launching'), chain: chain({ deadline: NOW - 86_401, status: STATUS.FAILED }), market: null, now: NOW }), { action: 'mark_failed' })
+})
+
+test('the bundle jobs send only through a confirmed connection, and the worker gives them one', () => {
+  const settings = { config: key(), lookupTable: key().toBase58(), launchSigner: Keypair.generate(), creator: Keypair.generate(), operator: null,
+    agentsLive: false, metadataOrigin: 'https://repo.ing' }
+  // A finalized connection preflights a fresh confirmed blockhash at finalized and refuses it ("Blockhash not found").
+  assert.throws(() => createBundleJobs({ pool: {}, connection: new Connection('http://127.0.0.1:1', 'finalized'), settings }), /confirmed commitment/)
+  assert.doesNotThrow(() => createBundleJobs({ pool: {}, connection: new Connection('http://127.0.0.1:1', 'confirmed'), settings }))
+  const worker = readFileSync(new URL('../scripts/run-worker.mjs', import.meta.url), 'utf8')
+  assert.match(worker, /createBundleJobs\(\{ pool, connection: rpcConnection\(rpc, 'confirmed'\), settings: bundleSettings,/)
+  assert.match(readFileSync(new URL('../src/bundle-jobs.mjs', import.meta.url), 'utf8'), /sendRawTransaction\(tx\.serialize\(\), \{ preflightCommitment: 'confirmed' \}\)/)
 })
 
 const launched = (overrides = {}) => ({ status: STATUS.LAUNCHED, paused: false, tradingOpensAt: NOW - 1, vaultSol: key(), day: Math.floor(NOW / 86_400),
@@ -64,7 +90,13 @@ test('settings: dark returns null; missing pieces are named, never their values;
   assert.equal(bundleJobSettings({}), null)
   assert.equal(bundleJobSettings({ BUNDLE_LAUNCHES_ENABLED: 'false' }), null, 'the switch is off')
   assert.deepEqual(bundleJobSettings({ BUNDLE_LAUNCHES_ENABLED: 'true', BUNDLE_DBC_CONFIG: ' ', BUNDLE_LAUNCH_SIGNER_SECRET_KEY: 'x' }),
-    { missing: ['BUNDLE_DBC_CONFIG', 'BUNDLE_LOOKUP_TABLE', 'PLATFORM_CREATOR_SECRET_KEY'] })
+    { missing: ['BUNDLE_DBC_CONFIG', 'BUNDLE_LOOKUP_TABLE', 'PLATFORM_CREATOR_SECRET_KEY', 'APP_ORIGIN'] })
+  // APP_ORIGIN is each bundle token's metadata URI base: required, and reduced to an origin.
+  const keys = { BUNDLE_LAUNCHES_ENABLED: 'true', BUNDLE_DBC_CONFIG: key().toBase58(), BUNDLE_LOOKUP_TABLE: key().toBase58(),
+    BUNDLE_LAUNCH_SIGNER_SECRET_KEY: bs58.encode(Keypair.generate().secretKey), PLATFORM_CREATOR_SECRET_KEY: bs58.encode(Keypair.generate().secretKey) }
+  assert.equal(bundleJobSettings({ ...keys, APP_ORIGIN: 'https://repo.ing/' }).metadataOrigin, 'https://repo.ing')
+  assert.equal(bundleJobSettings({ ...keys, APP_ORIGIN: ' https://repo.ing/some/path ' }).metadataOrigin, 'https://repo.ing')
+  assert.throws(() => bundleJobSettings({ ...keys, APP_ORIGIN: 'repo.ing' }))
   const pair = Keypair.generate()
   assert.ok(readSecretKey(bs58.encode(pair.secretKey)).publicKey.equals(pair.publicKey))
   assert.ok(readSecretKey(JSON.stringify([...pair.secretKey])).publicKey.equals(pair.publicKey))
