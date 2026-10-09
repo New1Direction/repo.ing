@@ -48,7 +48,11 @@ async function logoTarget(repo) {
   const record = rows[0]
   if (!record) return null
   const kept = safeGithubImageUrl(record.logo_url)
-  if (kept) return remember(repo, kept, PINNED_TTL_MS)
+  if (kept && !await keptLogoGone(kept)) return remember(repo, kept, PINNED_TTL_MS)
+  if (kept) {
+    console.warn('repo-logo kept image is gone; reading the logo again', { repo })
+    await unpinLogo(pool, repo, kept)
+  }
   const { url, complete } = await readmeLogo(record)
   const image = safeGithubImageUrl(url)
   if (image && complete && record.launched) {
@@ -89,6 +93,23 @@ async function readmeLogo(record) {
     if (!assets.ok) return { url: image, complete: assets.status === 404 }
     return { url: repositoryLogoFromAssets(await assets.json(), project) || image, complete: true }
   } catch { return { url: null } }
+}
+
+// A kept logo is a branch URL (README images resolve against the README's download_url), so it breaks when the file moves or is
+// deleted, the branch is renamed, or the repository goes private. Checked once per PINNED_TTL_MS: only a 404 or 410 from GitHub
+// lets it go (the logo is then read again, and the owner avatar shows until a passing logo is found); any other answer, a
+// redirect or a network error keeps it, so an outage never unpins a logo.
+async function keptLogoGone(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD', redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(5000) })
+    return response.status === 404 || response.status === 410
+  } catch { return false }
+}
+
+// Clears the kept logo only if it is still the one found gone, so a logo another request just stored stays.
+async function unpinLogo(pool, repo, url) {
+  try { await pool.query('update repositories set logo_url = null, logo_pinned_at = null where github_repo_id = $1 and logo_url = $2', [repo, url]) }
+  catch (error) { console.error('repo-logo unpin failed', { repo, error: error.message }) }
 }
 
 // Stores the logo unless one is already stored, and returns the stored one: the first resolution wins, so two requests that

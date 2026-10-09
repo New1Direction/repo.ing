@@ -27,6 +27,12 @@ const genericWord = word => GENERIC_WORDS.has(word) || /^\d+(?:x\d*)?$/.test(wor
 const distinctive = text => words(text).filter(word => !genericWord(word)).join('')
 // A name of one or two characters must be a whole word ("ui-logo.png" for a repository named ui, never "guide.png").
 const names = (text, name) => name.length >= 3 ? compact(text).includes(name) : words(text).includes(name)
+// The brand in shorter form than the slug: a distinctive word of four letters or more that is a whole word of the repository or
+// owner name ("Polkadot" for polkadot-sdk, "Reanimated" for react-native-reanimated, "Acme" for acme-inc), or, for a one-word
+// repository name, the start of it with five letters or more ("turbo" for turborepo). Another product's name is still no
+// match ("Claude" for rynfar/meridian, "opencode" for paperclip).
+const shortForm = (text, repoWords, ownerWords) => words(text).filter(word => word.length >= 4 && !genericWord(word)).some(word =>
+  repoWords.includes(word) || ownerWords.includes(word) || (repoWords.length === 1 && word.length >= 5 && repoWords[0].startsWith(word)))
 const fileStem = fileName => {
   let name = String(fileName ?? '')
   try { name = decodeURIComponent(name) } catch { /* A malformed escape is compared as written. */ }
@@ -37,7 +43,8 @@ const fileStem = fileName => {
 export function projectImage({ fileName, alt = '', owner, repo }) {
   const projectNames = [repo, owner].map(compact).filter(Boolean)
   const stem = fileStem(fileName)
-  const mentioned = text => projectNames.some(name => names(text, name))
+  const repoWords = words(repo), ownerWords = words(owner)
+  const mentioned = text => projectNames.some(name => names(text, name)) || shortForm(text, repoWords, ownerWords)
   const own = mentioned(stem) || mentioned(alt) || (!distinctive(stem) && !distinctive(alt))
   const named = projectNames.some(name => name === compact(stem) || name === distinctive(stem))
   return { own, logo: own && (named || LOGO_HINT.test(stem) || ALT_LOGO_HINT.test(alt)) }

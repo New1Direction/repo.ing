@@ -45,6 +45,18 @@ test('project-logo rule: other projects\' logos are refused, the repository\'s o
   assert.equal(own('ui-logo.png', '', 'o', 'ui'), true)
 })
 
+test('a logo that names the brand in shorter form than the slug passes; another product\'s name still does not', () => {
+  const pass = (repo, owner, fileName, alt) => assert.deepEqual(projectImage({ repo, owner, fileName, alt }), { own: true, logo: true }, `${repo} ${fileName}`)
+  pass('polkadot-sdk', 'paritytech', 'Polkadot_Logo_Pink.png', 'Polkadot')
+  pass('turborepo', 'vercel', 'turbo-logo.svg', 'Turbo')
+  pass('react-native-reanimated', 'software-mansion', 'logo.svg', 'Reanimated')
+  pass('widgets', 'acme-inc', 'acme-logo.png', 'Acme')
+  for (const [repo, owner, fileName, alt] of [['meridian', 'rynfar', 'claude.png', 'Claude logo'], ['paperclip', 'paperclipai', 'opencode-logo-light-square.svg', ''],
+    ['openai-tools', 'someone', 'open-source-logo.png', ''], ['turborepo', 'vercel', 'turf-logo.svg', 'Turf']]) {
+    assert.deepEqual(projectImage({ repo, owner, fileName, alt }), { own: false, logo: false }, `${repo} ${fileName}`)
+  }
+})
+
 test('an image that names the project but is not a logo is never picked automatically', () => {
   const image = projectImage({ fileName: 'four-pillars-light.png', alt: 'The four pillars of Paperclip', owner: 'paperclipai', repo: 'paperclip' })
   assert.deepEqual(image, { own: true, logo: false })
@@ -124,6 +136,10 @@ function fakeRepositories(rows) {
     queries.push(sql)
     const row = rows.get(String(params[0]))
     if (/^select r\.owner/.test(sql.trim())) return { rows: row ? [{ owner: OWNER, name: NAME, avatar_url: AVATAR, ...row }] : [] }
+    if (/^update repositories set logo_url = null/.test(sql.trim())) {
+      if (row && row.logo_url === params[1]) { row.logo_url = null; return { rows: [], rowCount: 1 } }
+      return { rows: [], rowCount: 0 }
+    }
     if (/^update repositories set logo_url/.test(sql.trim())) {
       if (!row || row.logo_url) return { rows: [] }
       row.logo_url = params[1]
@@ -155,12 +171,37 @@ test('a launched market keeps the first logo that passes the rule; a README edit
     assert.equal(await logo('900001'), raw(OWNER, NAME, 'assets/meridian-logo.png'))
     assert.equal(rows.get('900001').logo_url, raw(OWNER, NAME, 'assets/meridian-logo.png'), 'pinned')
     assert.ok(pool.queries.some(sql => /logo_pinned_at = now\(\)/.test(sql)))
-    // Already pinned: served as stored, without reading the README, even after the README now shows another logo.
+    // Already pinned: served as stored, without reading the README, even after the README now shows another logo. (The only
+    // request is the check that the kept file still exists; offline it fails, and a failed check keeps the logo.)
     markdown = '![Meridian](assets/meridian-2.png)'
     const before = net.requested.length
     assert.equal(await logo('900002'), raw(OWNER, NAME, 'assets/meridian-logo.png'))
-    assert.equal(net.requested.length, before, 'no GitHub read for a pinned logo')
+    assert.deepEqual(net.requested.slice(before), [raw(OWNER, NAME, 'assets/meridian-logo.png')], 'no README read for a pinned logo')
   })
+})
+
+test('a kept logo that GitHub answers 404 for is let go and read again; an error or another answer keeps it', async () => {
+  const gone = raw(OWNER, NAME, 'assets/old-logo.png'), now = raw(OWNER, NAME, 'assets/meridian-logo.png')
+  const rows = new Map([['900011', { launched: true, logo_url: gone }], ['900012', { launched: true, logo_url: gone }],
+    ['900013', { launched: true, logo_url: gone }]])
+  const status = new Map([['900011', 404], ['900013', 503]])
+  let asking = null
+  await withLogoRoute(rows, () => readmeResponse('![Meridian logo](assets/meridian-logo.png)'), async ({ logo }) => {
+    // 404: unpinned, the README is read again, and its logo is kept instead.
+    asking = '900011'
+    assert.equal(await logo('900011'), now)
+    assert.equal(rows.get('900011').logo_url, now)
+    // A network error (offline here) and a 503 keep the stored logo: an outage never unpins.
+    asking = '900012'
+    assert.equal(await logo('900012'), gone)
+    asking = '900013'
+    assert.equal(await logo('900013'), gone)
+    assert.equal(rows.get('900013').logo_url, gone)
+  }, [[/assets\/old-logo\.png$/, (url, init) => {
+    assert.equal(init?.method, 'HEAD')
+    if (asking === '900012') throw new TypeError('offline')
+    return new Response(null, { status: status.get(asking) })
+  }]])
 })
 
 test('a concurrent resolution that pinned first wins', async () => {
