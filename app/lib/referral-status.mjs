@@ -34,10 +34,11 @@ export function subscribeReferralStatus(wallet, listener) {
 }
 
 // Share links carry ?ref only for a wallet whose payouts are set up (no referral could be paid otherwise) and only while
-// the sharer leaves it on. The link then holds the wallet address, which the share UI always says.
+// the sharer leaves it on. The link then holds the wallet address, which the share UI always says. offered: false for a market
+// whose trades pay no referral (a stock pair: its swaps carry no referral account, src/stock-damm-trade.mjs), never a ?ref.
 export const SHARE_REFERRAL_KEY = 'repoing:share-referral'
 
-export const shareReferral = ({ wallet, status, include }) => wallet && status?.enabled === true && include ? wallet : null
+export const shareReferral = ({ wallet, status, include, offered = true }) => offered && wallet && status?.enabled === true && include ? wallet : null
 
 export function readShareReferralChoice(storage) {
   try { return storage?.getItem(SHARE_REFERRAL_KEY) !== 'off' } catch { return true }

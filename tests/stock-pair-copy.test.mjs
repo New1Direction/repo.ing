@@ -152,3 +152,85 @@ test('a declined stock pair\'s trust-panel tip names its fee routing, not builde
   const sol = decoded(html(h(TrustPanel, { market: { ...STOCK, quoteAssetId: null, quoteMint: null }, declined })))
   assert.ok(sol.includes('Trading stays open so holders can exit, and builder fees stay claimable by the maintainer.'))
 })
+
+test('the launch form states the pair it launches: a chosen stock pair\'s fee in the stock with no owner share, SOL terms as before', async () => {
+  const { LaunchFeeBreakdown, LaunchForm, launchSubtitle } = await appModule('app/components/launch-form.jsx')
+  const launchFee = { durationLabel: '10 minutes', startPercent: '50.00%', endPercent: '1.75%', launcherBuyPercent: '1.75%' }
+  const card = props => decoded(html(h(LaunchFeeBreakdown, props)))
+  const lines = markup => [...markup.matchAll(/<div class="fee-line[^"]*"><span>(.*?)<\/span><strong>(.*?)<\/strong><\/div>/g)].map(([, label, share]) => [label.replace('<small>', ' ').replace(/<[^>]+>/g, ''), share])
+  // SOL: the shares as before; after graduation, the pool's 1% fee in SOL instead of "not yet verified".
+  const sol = card({})
+  assert.deepEqual(lines(sol), [['Total DBC trading fee', '1.75%'], ['Repository creator share Accrues for the verified repository owner', '0.994%'],
+    ['repo.ing share', '0.406%'], ['Meteora protocol', '0.35%']])
+  assert.ok(sol.includes('After graduation, trades pay the Meteora DAMM v2 pool’s 1% fee in SOL; the builders’ share comes from its locked creator position.'))
+  assert.doesNotMatch(sol, /not yet verified/)
+  assert.ok(card({ model: true }).includes('Model owner share') && card({ model: true }).includes('the model owner’s share comes from its locked creator position.'))
+  // A stock pair: the launcher's 0.30% and the 1.10% to permanent liquidity, in the stock; no owner share, no SOL.
+  const stock = card({ stock: { symbol: 'METAx' } })
+  assert.deepEqual(lines(stock), [['Total DBC trading fee Paid in METAx', '1.75%'],
+    ['Launcher share Paid in METAx to the launch wallet, for as long as the market trades', '0.30%'],
+    ['Permanent $REPOING / METAx liquidity The builder share and repo.ing’s share. No owner claim', '1.10%'], ['Meteora protocol', '0.35%']])
+  assert.ok(stock.includes('After graduation, trades pay the Meteora DAMM v2 pool’s 1% fee in METAx; the launcher keeps a share of its locked creator position’s fees, ' +
+    'and the rest of both locked positions’ fees becomes permanent $REPOING / METAx liquidity.'))
+  assert.doesNotMatch(stock, /0\.994%|0\.406%|verified repository owner|in SOL|not yet verified/)
+  // A launch-fee window: SOL keeps its sentences; a stock pair (no initial buy) says every share scales alike.
+  assert.ok(card({ launchFee }).includes('It is split like the regular fee: shares to the repo’s builders and repo.ing, and Meteora’s 20% protocol share. The launcher’s initial buy'))
+  const window = card({ stock: { symbol: 'METAx' }, launchFee })
+  assert.ok(window.includes('falls every second to 1.75%. A launch-fee window scales every share alike. Measured on'))
+  assert.doesNotMatch(window, /repo’s builders|initial buy/)
+  // The subtitle: who every trade pays.
+  assert.equal(launchSubtitle({}), 'Create a market for this repository. Every trade pays the builders.')
+  assert.equal(launchSubtitle({ stock: { symbol: 'METAx' } }), `Create a market for this repository. ${LINE}`)
+  assert.equal(launchSubtitle({ model: true, stock: null }), "Create a community market for this model. Every trade pays the model's owner.")
+  // The form: SOL by default (the pair chooser offered beside it), and both use the chosen pair's terms, never a Bundle raise's.
+  const form = decoded(html(h(LaunchForm, { repo: { repoId: STOCK.repoId, owner: 'facebook', name: 'docusaurus', fullName: STOCK.fullName, ownerId: '69631',
+    ownerType: 'Organization' }, available: true, quoteOptions: [{ type: 'SOL', assetId: 'sol', symbol: 'SOL', eligible: true }, { type: 'TOKENIZED_EQUITY',
+    assetId: 'meta-xstock', symbol: 'METAx', ticker: 'META', company: 'Meta Platforms', githubOrg: 'facebook', provider: 'backed-xstocks', eligible: true }] }), { wallet: true }))
+  assert.ok(form.includes('<p class="launch-subtitle">Create a market for this repository. Every trade pays the builders.</p>') && form.includes(sol))
+  const source = readFileSync(new URL('../app/components/launch-form.jsx', import.meta.url), 'utf8')
+  assert.match(source, /const stockTerms = stockChosen && !bundleMode \? \{ symbol: stockPair\?\.symbol \?\? null \} : null/)
+  assert.match(source, /launchSubtitle\(\{ model, stock: stockTerms \}\)/)
+  assert.match(source, /<LaunchFeeBreakdown model=\{model\} stock=\{stockTerms\} launchFee=\{launchFee\}\/>/)
+})
+
+test('launch alerts: a stock pair\'s post says what its trades pay in the stock, never "the repo\'s builders"; SOL posts are unchanged', async () => {
+  const { buildLaunchMessage, X_MAX_WEIGHT, xWeight } = await import('../src/launch-alerts-message.mjs')
+  const origin = 'https://repo.ing', sol = { githubRepoId: STOCK.repoId, fullName: STOCK.fullName, tokenSymbol: 'DOCUSAURUS', stars: 60_123,
+    description: STOCK.description, mint: MINT, quoteAssetId: null, quoteMint: null }
+  const stock = { ...sol, quoteAssetId: 'meta-xstock', quoteMint: METAX }
+  assert.equal(buildLaunchMessage(sol, { channel: 'x', origin }), `🚀 New on repo.ing: facebook/docusaurus — $DOCUSAURUS\n⭐ 60.1k · ${STOCK.description}\n` +
+    `Every trade pays the repo's builders.\nhttps://repo.ing/token/${MINT}`)
+  for (const channel of ['x', 'telegram']) {
+    const post = buildLaunchMessage(stock, { channel, origin })
+    assert.equal(post, `🚀 New on repo.ing: facebook/docusaurus — $DOCUSAURUS\n⭐ 60.1k · ${STOCK.description}\n${LINE}\nhttps://repo.ing/token/${MINT}`)
+    assert.doesNotMatch(post, /builders/)
+  }
+  // A name so long the fee line cannot fit beside it: the post drops the line rather than cutting it, and never says builders.
+  const long = buildLaunchMessage({ ...stock, fullName: `${'o'.repeat(39)}/${'r'.repeat(100)}`, tokenSymbol: 'S'.repeat(16) }, { channel: 'x', origin })
+  assert.ok(xWeight(long) <= X_MAX_WEIGHT)
+  assert.doesNotMatch(long, /builders|Every trade/)
+  // The candidate read selects the stamp the post decides by.
+  assert.match(readFileSync(new URL('../src/launch-alerts.mjs', import.meta.url), 'utf8'), /m\.quote_asset_id as "quoteAssetId", m\.quote_mint as "quoteMint"/)
+})
+
+test('stock pairs carry no referral: their share links get no ?ref, and the share menu offers no referral, Blink or share card', async () => {
+  const { shareReferral } = await import('../app/lib/referral-status.mjs')
+  const wallet = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU', enabled = { enabled: true }
+  assert.equal(shareReferral({ wallet, status: enabled, include: true }), wallet)
+  assert.equal(shareReferral({ wallet, status: enabled, include: true, offered: false }), null)
+  const source = path => readFileSync(new URL(`../app/components/${path}`, import.meta.url), 'utf8')
+  // Every share control of a market passes whether its trades pay a referral (a stock pair's never do).
+  assert.match(source('share-referral.jsx'), /ref: shareReferral\(\{ wallet, status, include, offered \}\), available: Boolean\(offered && wallet && status\?\.enabled\)/)
+  assert.match(source('share-market.jsx'), /useShareReferral\(open \|\| card, !quote\)/)
+  assert.match(source('share-market.jsx'), /\{!quote && <ReferLink referral=\{referral\}\/>\}/)
+  assert.match(source('share-market.jsx'), /\{!quote && <button type="button" onClick=\{act\(copyBlink\)\}/)
+  assert.match(source('share-market.jsx'), /\{!quote && <button type="button" onClick=\{\(\) => \{ setOpen\(false\); setCard\(true\) \}\}>/)
+  assert.match(source('market-share-card.jsx'), /useShareReferral\(open, !quote\)/)
+  assert.match(source('share-on-x.jsx'), /useShareReferral\(Boolean\(mint\), !quote\)/)
+  assert.match(source('launch-kit.jsx'), /useShareReferral\(true, !quote\)/)
+  assert.match(source('launch-success.jsx'), /shareText=\{model \? modelShareText\(repo\) : null\} quote=\{quote\}\/>/)
+  // A SOL market's share menu renders exactly as with no pair.
+  const { ShareMarket } = await appModule('app/components/share-market.jsx')
+  const props = { mint: MINT, symbol: 'WTR', fullName: 'New1Direction/Waternot', repoId: '1384142609' }
+  assert.equal(html(h(ShareMarket, { ...props, quote: null })), html(h(ShareMarket, props)))
+})

@@ -1,11 +1,19 @@
 import { activeLaunchFeeTerms } from '../lib/launch-fee.mjs'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
+import { QUOTE_REGISTRY } from '../../src/quote-assets.mjs'
+import { STOCK_FEE_SPLIT } from '../../src/stock-pair-copy.mjs'
 
 // llmstxt.org index for LLMs and agents. Keep figures in sync with README.md and /how-it-works.
 export const dynamic = 'force-static'
 // Hourly, so the launch-fee line follows the config new launches use (DBC_CONFIG).
 export const revalidate = 3600
 const FEE_LINE = "- Trading fee before graduation: 1.75% of each fee-paying trade. 0.994% goes to the repository's builders, 0.406% to repo.ing, and 0.35% to the Meteora protocol."
+// The exception to "builders claim the fees in SOL": stock-paired markets (docs/STOCK_QUOTES.md, "Fee policy"). The mapped
+// organizations come from the registry, so a newly listed company is named here too.
+const STOCK_PAIRS = QUOTE_REGISTRY.companies.filter(company => company.enabled).flatMap(company => QUOTE_REGISTRY.assets
+  .filter(asset => asset.enabled && asset.companyId === company.companyId).map(asset => `${company.githubOrg}: ${asset.symbol}`)).join(', ')
+const { total, launcher, accumulator, meteora } = STOCK_FEE_SPLIT
+const STOCK_LINE = `- Stock pairs are the exception. A repository of a GitHub organization mapped to a listed company (${STOCK_PAIRS}) can be launched paired with that company's tokenized stock instead of SOL. Its trades pay the same ${total} fee in the stock: ${launcher} to the wallet that launched the market and ${accumulator} (the builder share and repo.ing's share) to permanent $REPOING / <stock> liquidity, plus ${meteora} to the Meteora protocol. A stock pair has no owner claim (verifying the repository does not change this), and its graduation target is in the stock.`
 
 const LLMS_TXT = `# repo.ing
 
@@ -17,10 +25,11 @@ A community launch does not imply maintainer endorsement. A repository token giv
 
 ## How it works
 
-- Markets start on a Meteora Dynamic Bonding Curve (DBC) and graduate to Meteora DAMM v2 once the curve holds 85 SOL of real quote reserve. Volume is turnover, not reserve.
+- Markets start on a Meteora Dynamic Bonding Curve (DBC) and graduate to Meteora DAMM v2 once the curve holds its target of real quote reserve: 85 SOL for new markets, about 30 SOL for older ones. Each market page shows its own target. Volume is turnover, not reserve.
 - Every token has a fixed supply of 1 billion.
 - Trading fee before graduation: 1.75% of each fee-paying trade. 0.994% goes to the repository's builders, 0.406% to repo.ing, and 0.35% to the Meteora protocol.
 - Builder fees accrue even before the maintainers connect. A current GitHub admin of the repository verifies with GitHub, binds a payout wallet, and claims the fees in SOL. Launching a market does not give the launcher the builders' fees.
+${STOCK_LINE}
 - Discovery reward: the launch wallet earns 50% of repo.ing's partner fee share until graduation, 30 days, or 2.5 SOL earned, whichever comes first. It comes out of repo.ing's share; builder fees are unchanged.
 - Platform revenue policy for claimed platform revenue: 60% $REPOING buyback reserve, 20% protocol liquidity, 20% treasury.
 - Parts funds: a verified maintainer can add a hardware parts list to their market page. Anyone backs it in USDC or SOL, all or nothing: a funded list is paid to the maintainer's verified payout wallet, and a missed or cancelled one refunds every backer automatically.

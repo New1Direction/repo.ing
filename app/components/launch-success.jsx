@@ -10,7 +10,8 @@ import { modelShareText } from '../lib/hf-model-display.mjs'
 
 // Mounted only after the launch API verifies the canonical on-chain pool. A Hugging Face model market (repo.source
 // 'huggingface') names the model and carries the community-launch disclaimer, in its share sheet text too. quote: the stock
-// pair launched ({ symbol }), null for SOL; its kit and share menu offer no README badge (it shows builder fees in SOL).
+// pair launched ({ symbol }), null for SOL; its kit and share menu offer no README badge (it shows builder fees in SOL) and no
+// referral (its trades pay none).
 export function LaunchSuccess({ repo, launched, symbol, image, quote = null }) {
   const heading = useRef(null)
   const model = repo.source === 'huggingface'
@@ -30,6 +31,6 @@ export function LaunchSuccess({ repo, launched, symbol, image, quote = null }) {
     <CopyAddress address={launched.mint}/>
     {launched.signature && <a className="launch-receipt" href={`https://solscan.io/tx/${launched.signature}`} target="_blank" rel="noreferrer">View launch transaction ↗</a>}
     <ShareMarket mint={launched.mint} symbol={symbol} fullName={repo.fullName} repoId={repo.repoId} readme={!model && !quote}
-      shareText={model ? modelShareText(repo) : null}/>
+      shareText={model ? modelShareText(repo) : null} quote={quote}/>
   </section>
 }

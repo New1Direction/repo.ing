@@ -92,8 +92,10 @@ export function createLaunchAlertSenders(config, { fetchImpl = fetch } = {}) {
 
 // ---------- PostgreSQL store (migration 0034_launch_alerts) ----------
 // A model market also carries its registry _id and last confirmed path (hf_models, migration 0049): the post names the
-// model by that path, and its live facts count only when the Hub answers for that _id.
+// model by that path, and its live facts count only when the Hub answers for that _id. A stock pair's stamp (migration 0053)
+// makes its post say what its trades pay in the stock (src/launch-alerts-message.mjs).
 const MARKET_FIELDS = `m.github_repo_id::text as "githubRepoId", m.mint, m.token_symbol as "tokenSymbol", m.indexed_at as "indexedAt",
+  m.quote_asset_id as "quoteAssetId", m.quote_mint as "quoteMint",
   r.full_name as "fullName", r.description, r.stars, r.github_created_at as "githubCreatedAt",
   o.status as "graduationStatus", o.observation, o.error_code as "graduationError", e.evidence_hash as "migrationEvidenceHash",
   h.hf_id as "hfId", h.repo_path as "modelPath", m.early_access_end as "earlyAccessEnd"`

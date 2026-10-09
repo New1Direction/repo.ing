@@ -1,4 +1,6 @@
-import { formatTokenAmount, formatUnits } from '../lib/format.mjs'
+import { formatTokenAmount, formatUnits, formatUsdValue } from '../lib/format.mjs'
+import { chartPriceLabel } from '../lib/chart-display.mjs'
+import { stockAmountLabel, stockDisplayUnits, stockRawUsd } from '../lib/stock-display.mjs'
 import styles from './stock-pair.module.css'
 
 // /wallet: launcher earnings on stock-paired markets, in the stock (src/stock-launcher-earnings.mjs). The launcher earns 0.30%
@@ -30,4 +32,21 @@ export function StockLauncherValue({ earnings }) {
   return <span className={shown && BigInt(shown.payable) > 0n ? 'wallet-launcher-claimable' : ''}>You earn 0.30% as launcher
     <strong title={exact(shown?.earned, asset)}>{amount(shown?.earned, asset)} earned</strong>
     <small>{shown ? `${amount(shown.payable, asset)} awaiting payout · ${amount(shown.paid, asset)} paid${BigInt(shown.pending) > 0n ? ` · ${amount(shown.pending, asset)} being sent` : ''}` : 'Display units unavailable'}</small></span>
+}
+
+// A held stock pair's value (the wallet API's row.stockValue, app/lib/portfolio.mjs stockHoldingValue), in the slot where a SOL
+// market's row shows its SOL value: in the stock as wallets show it, with USD at the stock's own price, never in SOL. Without
+// the stock's display units the amount is withheld ('—') rather than shown in raw units, as on every stock surface.
+export function StockHoldingValue({ value }) {
+  const units = value && !value.unavailable ? stockDisplayUnits(value) : null
+  return <span className="wallet-market-value">Value<strong>{units && value.valueRaw !== null ? stockAmountLabel(value.valueRaw, units) : '—'}</strong>
+    <small>{stockValueNote(value, units)}</small></span>
+}
+
+function stockValueNote(value, units) {
+  if (!value || value.unavailable) return `Not valued here: ${value?.symbol ?? 'stock'} prices are unavailable right now`
+  if (value.valueRaw === null) return `Not valued yet: no ${value.symbol} trade price`
+  if (!units) return `${value.symbol} display units are unavailable right now`
+  const usd = formatUsdValue(stockRawUsd(value.valueRaw, units))
+  return `${usd ? `≈ ${usd} · ` : ''}${chartPriceLabel(value.price * units.multiplier)} ${value.symbol} each`
 }

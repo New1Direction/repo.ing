@@ -14,15 +14,18 @@ import { useShareReferral } from './share-referral'
 // returns to "Share"). `more` holds secondary links for the "⋯" menu. readme: offer the README badge (false for a Hugging
 // Face model market, whose badge copy would describe a repository, and for a stock pair, whose trades pay no builder fees in
 // SOL for the badge to show). shareText replaces the system share sheet's text (a
-// model market's carries its disclaimer).
-export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true, shareText = null }) {
+// model market's carries its disclaimer). quote: a stock pair's pair (marketQuoteView), null for SOL: its trades pay no
+// referral (src/stock-damm-trade.mjs), so the menu has no referral control and none of its links carries a ?ref. It also has no
+// Blink link (Blinks trade SOL markets only: the action routes answer 404 for a stock pair) and no share card (both cards are
+// SOL figures: src/market-share.mjs shareCardKinds offers a stock pair none).
+export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true, shareText = null, quote = null }) {
   const [state, setState] = useState('')
   const [open, setOpen] = useState(false), [badge, setBadge] = useState(false), [card, setCard] = useState(false)
   const root = useRef(null), trigger = useRef(null), panel = useRef(null), refocus = useRef(false)
   const id = useId(), panelId = `${id}-share`, badgeId = `${id}-badge`
   // The plain market URL is the Blink on X once actions.json is registered; dial.to works in any app. The links carry
   // the wallet's ?ref only when its referral payouts are set up and it has not chosen to share without it.
-  const referral = useShareReferral(open || card)
+  const referral = useShareReferral(open || card, !quote)
   const url = () => tokenPageUrl(mint, window.location.origin, referral.ref)
   const copied = what => `${what} copied${referral.ref ? ' · includes your referral (your wallet address)' : ''}`
 
@@ -68,16 +71,16 @@ export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = tru
         {open && <div id={panelId} ref={panel} className="share-menu-panel" aria-label="Share this market" role="group">
           <button type="button" onClick={act(share)}><Share2 size={15} aria-hidden="true"/>Share…</button>
           <button type="button" onClick={act(copy)}><Link2 size={15} aria-hidden="true"/>Copy link</button>
-          <button type="button" onClick={act(copyBlink)} title="Buy from any app via dial.to"><Zap size={15} aria-hidden="true"/>Copy Blink link</button>
-          <button type="button" onClick={() => { setOpen(false); setCard(true) }}><ImageIcon size={15} aria-hidden="true"/>Share card</button>
+          {!quote && <button type="button" onClick={act(copyBlink)} title="Buy from any app via dial.to"><Zap size={15} aria-hidden="true"/>Copy Blink link</button>}
+          {!quote && <button type="button" onClick={() => { setOpen(false); setCard(true) }}><ImageIcon size={15} aria-hidden="true"/>Share card</button>}
           {repoId && readme && <button type="button" aria-expanded={badge} aria-controls={badgeId} onClick={() => setBadge(value => !value)}><Code2 size={15} aria-hidden="true"/>README badge<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>}
           {repoId && readme && badge && <ReadmeBadgePanel id={badgeId} repoId={repoId} mint={mint}/>}
-          <ReferLink referral={referral}/>
+          {!quote && <ReferLink referral={referral}/>}
         </div>}
       </div>
       {more && <MenuDetails className="share-more" label="More actions" summary={<Ellipsis size={16} aria-hidden="true"/>}><div className="menu-panel share-more-panel">{more}</div></MenuDetails>}
     </div>
     {state && <small role="status">{state}</small>}
-    <MarketShareCard mint={mint} open={card} onOpenChange={value => { setCard(value); if (!value) trigger.current?.focus() }}/>
+    <MarketShareCard mint={mint} quote={quote} open={card} onOpenChange={value => { setCard(value); if (!value) trigger.current?.focus() }}/>
   </div>
 }
