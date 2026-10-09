@@ -158,11 +158,11 @@ test('the launch form states the pair it launches: a chosen stock pair\'s fee in
   const launchFee = { durationLabel: '10 minutes', startPercent: '50.00%', endPercent: '1.75%', launcherBuyPercent: '1.75%' }
   const card = props => decoded(html(h(LaunchFeeBreakdown, props)))
   const lines = markup => [...markup.matchAll(/<div class="fee-line[^"]*"><span>(.*?)<\/span><strong>(.*?)<\/strong><\/div>/g)].map(([, label, share]) => [label.replace('<small>', ' ').replace(/<[^>]+>/g, ''), share])
-  // SOL: the shares as before; after graduation, the pool's 1% fee in SOL instead of "not yet verified".
+  // SOL: the shares as before; after graduation, the pool's 1% base fee (plus Meteora's dynamic fee) instead of "not yet verified".
   const sol = card({})
   assert.deepEqual(lines(sol), [['Total DBC trading fee', '1.75%'], ['Repository creator share Accrues for the verified repository owner', '0.994%'],
     ['repo.ing share', '0.406%'], ['Meteora protocol', '0.35%']])
-  assert.ok(sol.includes('After graduation, trades pay the Meteora DAMM v2 pool’s 1% fee in SOL; the builders’ share comes from its locked creator position.'))
+  assert.ok(sol.includes('After graduation, trades pay the Meteora DAMM v2 pool’s 1% base fee in SOL (Meteora’s dynamic fee can add more when trading is volatile); the builders’ share comes from its locked creator position.'))
   assert.doesNotMatch(sol, /not yet verified/)
   assert.ok(card({ model: true }).includes('Model owner share') && card({ model: true }).includes('the model owner’s share comes from its locked creator position.'))
   // A stock pair: the launcher's 0.30% and the 1.10% to permanent liquidity, in the stock; no owner share, no SOL.
@@ -170,7 +170,7 @@ test('the launch form states the pair it launches: a chosen stock pair\'s fee in
   assert.deepEqual(lines(stock), [['Total DBC trading fee Paid in METAx', '1.75%'],
     ['Launcher share Paid in METAx to the launch wallet, for as long as the market trades', '0.30%'],
     ['Permanent $REPOING / METAx liquidity The builder share and repo.ing’s share. No owner claim', '1.10%'], ['Meteora protocol', '0.35%']])
-  assert.ok(stock.includes('After graduation, trades pay the Meteora DAMM v2 pool’s 1% fee in METAx; the launcher keeps a share of its locked creator position’s fees, ' +
+  assert.ok(stock.includes('After graduation, trades pay the Meteora DAMM v2 pool’s 1% base fee in METAx (Meteora’s dynamic fee can add more when trading is volatile); the launcher keeps a share of its locked creator position’s fees, ' +
     'and the rest of both locked positions’ fees becomes permanent $REPOING / METAx liquidity.'))
   assert.doesNotMatch(stock, /0\.994%|0\.406%|verified repository owner|in SOL|not yet verified/)
   // A launch-fee window: SOL keeps its sentences; a stock pair (no initial buy) says every share scales alike.

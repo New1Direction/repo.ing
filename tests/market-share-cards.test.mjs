@@ -123,7 +123,9 @@ test('dialog: tabs only for the cards the route names, the latest payout labelle
   assert.match(source, /const LABELS = \{ graduation: 'Graduation progress', payout: 'Latest builder payout' \}/)
   assert.match(source, /useState\(signature \? 'payout' : 'auto'\)/)
   assert.match(source, /\{!signature && kinds\?\.length > 1 && <div className="share-card-tabs"/)
-  assert.match(source, /if \(!signature && Array\.isArray\(body\.kinds\)\) setKinds\(body\.kinds\)/)
+  assert.match(source, /if \(!signature && Array\.isArray\(body\.kinds\)\) \{\s*setKinds\(body\.kinds\)/)
+  // A tab picked before the market graduated falls back to the card it offers now instead of a final refusal with no tabs.
+  assert.match(source, /if \(kind !== 'auto' && !body\.kinds\.includes\(kind\)\) \{ setKind\('auto'\); return \}/)
   assert.match(source, /throw Object\.assign\(Error\(body\.error \|\| 'Card unavailable'\), \{ final: Boolean\(body\.code\) \}\)/)
   assert.match(source, /\{!error\.final && <button type="button" className="button outline" onClick=\{\(\) => setRetry\(v => v \+ 1\)\}>Retry<\/button>\}/)
 })
