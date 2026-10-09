@@ -34,7 +34,11 @@ export function MarketShareCard({ mint, signature = null, quote = null, open: co
         const response = await fetch(`/api/market/${encodeURIComponent(mint)}/share-card?${query}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]) })
         if (!response.ok) {
           const body = await response.json().catch(() => ({}))
-          if (!signature && Array.isArray(body.kinds)) setKinds(body.kinds)
+          if (!signature && Array.isArray(body.kinds)) {
+            setKinds(body.kinds)
+            // A tab picked before the market changed (it graduated since): load the card it offers now, not a dead end.
+            if (kind !== 'auto' && !body.kinds.includes(kind)) { setKind('auto'); return }
+          }
           throw Object.assign(Error(body.error || 'Card unavailable'), { final: Boolean(body.code) })
         }
         const offered = response.headers.get('X-Repoing-Share-Kinds')
