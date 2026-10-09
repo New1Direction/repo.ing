@@ -5,7 +5,7 @@ import { buybackSummary, formatTokenCompact } from '../app/lib/buyback-summary.m
 import { BUYBACK_RECEIPTS, BUYBACK_WALLETS, totalBuybackLamports } from '../app/lib/buyback-receipts.mjs'
 import { mergeBuybackReceipts } from '../app/lib/buyback-receipts-db.mjs'
 import { OFFICIAL_TOKEN } from '../app/lib/official-token.mjs'
-import { ogMarketStats, ogText, settleWithin } from '../app/lib/og-card.mjs'
+import { CARD_VERSION_MS, ogCardImageUrl, ogMarketStats, ogStatsTime, ogText, settleWithin } from '../app/lib/og-card.mjs'
 
 const MINT = '59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be'
 
@@ -65,13 +65,46 @@ test('compact token amounts truncate and never overstate', () => {
 
 test('link preview stats need every input for a USD cap and drop what is missing', () => {
   assert.deepEqual(ogMarketStats({ priceSol: 0.00002, supplyBaseUnits: '1000000000000000', supplyDecimals: 6, usdPerSol: 150 }),
-    [{ label: 'Market cap', value: '$3m' }, { label: 'Price', value: '0.00002 SOL' }])
+    [{ label: 'Market cap', value: '$3m' }, { label: 'Price', value: '$0.003' }])
   assert.deepEqual(ogMarketStats({ priceSol: 0.00002, supplyBaseUnits: '1000000000000000', supplyDecimals: 6, usdPerSol: null }),
     [{ label: 'Price', value: '0.00002 SOL' }])
-  assert.deepEqual(ogMarketStats({ priceSol: 0.00002, usdPerSol: 150 }), [{ label: 'Price', value: '0.00002 SOL' }])
+  assert.deepEqual(ogMarketStats({ priceSol: 0.00002, usdPerSol: 150 }), [{ label: 'Price', value: '$0.003' }])
   assert.deepEqual(ogMarketStats({ priceSol: null }), [])
   assert.deepEqual(ogMarketStats({ priceSol: Number.NaN }), [])
   assert.deepEqual(ogMarketStats(), [])
+})
+
+test('link preview prices are plain decimals, never exponents', () => {
+  // The $JUMPER card that X showed with "5.159e-8 SOL".
+  assert.deepEqual(ogMarketStats({ priceSol: 5.159e-8, supplyBaseUnits: '1000000000000000', supplyDecimals: 6, usdPerSol: 120 }),
+    [{ label: 'Market cap', value: '$6.2k' }, { label: 'Price', value: '$0.000006191' }])
+  assert.deepEqual(ogMarketStats({ priceSol: 5.159e-8 }), [{ label: 'Price', value: '0.00000005159 SOL' }])
+  for (const stat of ogMarketStats({ priceSol: 3.9e-10, usdPerSol: 100 })) assert.doesNotMatch(stat.value, /e-/)
+})
+
+test('the link preview card prints when its figures were read, only beside figures', async () => {
+  const { appModule, h, html } = await import('./fixtures/render-jsx.mjs')
+  const { MarketCard } = await appModule('app/lib/og-market-card.jsx')
+  const market = { symbol: 'JUMPER', fullName: 'KingKongRobotics/jumper', repoId: '1', source: 'github', description: 'A robot crab.' }
+  const stats = [{ label: 'Market cap', value: '$42.9k' }, { label: 'Price', value: '$0.00004294' }]
+  const card = html(h(MarketCard, { market, logo: null, stats, at: Date.UTC(2026, 9, 9, 1, 12) }))
+  assert.ok(card.includes('As of 9 Oct 2026, 01:12 UTC') && card.includes('$0.00004294'))
+  assert.ok(!html(h(MarketCard, { market, logo: null, stats })).includes('As of'))
+  const empty = html(h(MarketCard, { market, logo: null, stats: [], at: Date.UTC(2026, 9, 9) }))
+  assert.ok(!empty.includes('As of') && empty.includes('A robot crab.'))
+})
+
+test('link preview cards say when their figures were read and use a card URL that changes over time', () => {
+  assert.equal(ogStatsTime(Date.UTC(2026, 9, 8, 23, 4, 59)), '8 Oct 2026, 23:04 UTC')
+  assert.equal(ogStatsTime(Date.UTC(2026, 0, 31, 0, 0)), '31 Jan 2026, 00:00 UTC')
+  assert.equal(ogStatsTime(Number.NaN), '')
+  assert.equal(ogStatsTime(null), '')
+  assert.equal(ogStatsTime(undefined), '')
+  const page = 'https://repo.ing/token/MintA'
+  const at = Date.UTC(2026, 9, 8, 23, 0)
+  assert.match(ogCardImageUrl(page, at), /^https:\/\/repo\.ing\/token\/MintA\/opengraph-image\?v=[0-9a-z]+$/)
+  assert.equal(ogCardImageUrl(page, at), ogCardImageUrl(page, at + CARD_VERSION_MS - 1))
+  assert.notEqual(ogCardImageUrl(page, at), ogCardImageUrl(page, at + CARD_VERSION_MS))
 })
 
 test('preview text is collapsed and clipped; slow or failing sources settle to the fallback', async () => {

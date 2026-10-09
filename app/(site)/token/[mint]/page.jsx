@@ -56,6 +56,7 @@ import { StockFeeHeadline, StockFeeHeadlineFallback, StockFeeRouting } from '../
 import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 import { BundleVault, BundleVaultFallback } from '../../../components/bundle-vault'
 import { isBundleMarket } from '../../../../src/bundles.mjs'
+import { ogCardImageUrl } from '../../../lib/og-card.mjs'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -70,7 +71,7 @@ export async function generateMetadata({ params }) {
   const title = `$${market.symbol} · ${market.fullName} — repo.ing`
   const description = (market.description || 'Explore this open source repository market on repo.ing.').slice(0, 180)
   const url = `https://repo.ing/token/${market.mint}`
-  const image = { url: `${url}/opengraph-image`, width: 1200, height: 630, alt: `$${market.symbol} · ${market.fullName} repository market on repo.ing` }
+  const image = { url: ogCardImageUrl(url), width: 1200, height: 630, alt: `$${market.symbol} · ${market.fullName} repository market on repo.ing` }
   return { title, description, alternates: { canonical: url },
     openGraph: { title, description, url, type: 'website', siteName: 'repo.ing', images: [image] },
     twitter: { card: 'summary_large_image', title, description, images: [image] } }

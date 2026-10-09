@@ -331,7 +331,7 @@ test('model metadata leads with the disclaimer', () => withFlag('true', () => {
   assert.ok(metadata.description.startsWith(`${HF_DISCLAIMER_SHORT}.`))
   assert.equal(metadata.openGraph.description, metadata.description)
   assert.equal(metadata.twitter.description, metadata.description)
-  assert.equal(metadata.openGraph.images[0].url, 'https://repo.ing/token/MintModelGpt2/opengraph-image')
+  assert.match(metadata.openGraph.images[0].url, /^https:\/\/repo\.ing\/token\/MintModelGpt2\/opengraph-image\?v=[0-9a-z]+$/)
 }))
 
 test('logo route: a model’s avatar only from the Hub avatar hosts, resized through the image proxy, never another host', () => withFlag('true', async () => {
