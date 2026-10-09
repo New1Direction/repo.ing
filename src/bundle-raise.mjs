@@ -5,6 +5,7 @@ import { NATIVE_MINT, createCloseAccountInstruction } from '@solana/spl-token'
 import { STATUS, bundleErrorName, claimBackerFeesInstruction, createBundleInstruction, depositInstruction, refundInstruction,
   tokenAccountOf } from './bundle-vault.mjs'
 import { BUNDLE_DEFAULTS, BUNDLE_RAISE } from './bundle-launch.mjs'
+import { TICKER_MESSAGE, validTicker } from './launch-symbols.mjs'
 import { matchesReviewedTransaction } from './launch-wallet-assertions.mjs'
 import { readTradeComputeBudget } from './trade-landing.mjs'
 import { createWsolAtaInstruction } from './wsol-account.mjs'
@@ -25,6 +26,7 @@ export const RAISE_REFUSALS = Object.freeze({
   token: 'Token name (1–32) and symbol (1–10) are required',
   tokenBytes: 'Token name must fit 32 bytes and symbol 10 bytes on Solana. Use fewer special characters.',
   tokenCharacters: 'Token name and symbol cannot contain control or invisible characters.',
+  tokenSymbol: TICKER_MESSAGE,
   wallet: 'Invalid wallet address',
   amount: 'Enter a deposit amount in SOL.',
   repository: 'Bundle launches are for public GitHub repositories only.',
@@ -61,6 +63,8 @@ export function tokenFields({ tokenName, tokenSymbol }) {
     tokenSymbol.length > 10) throw refuse('token')
   if (HIDDEN_CHARACTERS.test(tokenName) || HIDDEN_CHARACTERS.test(tokenSymbol)) throw refuse('tokenCharacters')
   if (Buffer.byteLength(tokenName, 'utf8') > 32 || Buffer.byteLength(tokenSymbol, 'utf8') > 10) throw refuse('tokenBytes')
+  // The same ticker rule as every launch (src/launch-symbols.mjs): one ticker per market cannot be dodged with lookalikes.
+  if (!validTicker(tokenSymbol)) throw refuse('tokenSymbol')
   return { tokenName, tokenSymbol }
 }
 

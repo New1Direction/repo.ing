@@ -13,6 +13,13 @@ export const SYMBOL_REVIEW_STATUSES = Object.freeze(['prepared', 'submitted', 'a
 export const SYMBOL_SENT_STATUSES = Object.freeze(['submitted', 'ambiguous', 'confirmed'])
 export const SYMBOL_TAKEN = 'SYMBOL_TAKEN'
 
+// Tickers are ASCII letters and digits only, as the launch form, the CLI and agent drafts already enforce. On the server it
+// closes lookalikes the case-insensitive comparison would miss (a trailing space, a zero-width character, a Cyrillic І) and
+// keeps the lock key's toLowerCase() equal to PostgreSQL's lower().
+export const TICKER = /^[A-Za-z0-9]{1,10}$/
+export const TICKER_MESSAGE = 'Ticker must be 1–10 letters or numbers (A–Z, 0–9).'
+export const validTicker = symbol => typeof symbol === 'string' && TICKER.test(symbol)
+
 export const symbolTakenMessage = symbol => `The ticker $${symbol} is already used by another market on repo.ing. Choose a different ticker.`
 
 // error.code SYMBOL_TAKEN: the launch API answers it as a refusal the builder can fix and review again (src/launch-failure.mjs).
@@ -20,11 +27,14 @@ export class SymbolTakenError extends Error {
   constructor(symbol) { super(symbolTakenMessage(symbol)); this.name = 'SymbolTakenError'; this.code = SYMBOL_TAKEN }
 }
 
-// The ticker as another repository's market (in `statuses`) or live bundle spells it, or null when it is free.
+// The ticker as another repository's market (in `statuses`) or live bundle spells it, or null when it is free. A market its
+// maintainer has declined (an active maintainer_opt_outs row) does not hold its ticker, so a declined repository can be
+// relaunched from a new repository under the same ticker (owner decision 2026-10-09; docs: repo relaunch procedure).
 // db: a pg Pool or client (only query is called).
 export async function symbolHolder(db, { symbol, githubRepoId, statuses = SYMBOL_REVIEW_STATUSES }) {
-  const { rows: [row] } = await db.query(`select token_symbol as "takenSymbol" from markets
-      where lower(token_symbol) = lower($1) and github_repo_id <> $2::bigint and status = any($3::text[])
+  const { rows: [row] } = await db.query(`select token_symbol as "takenSymbol" from markets m
+      where lower(m.token_symbol) = lower($1) and m.github_repo_id <> $2::bigint and m.status = any($3::text[])
+        and not exists (select 1 from maintainer_opt_outs o where o.github_repo_id = m.github_repo_id and o.withdrawn_at is null)
     union all select token_symbol from bundles
       where lower(token_symbol) = lower($1) and github_repo_id <> $2::bigint and status = any($4::text[])
     limit 1`, [String(symbol), String(githubRepoId), [...statuses], [...LIVE_BUNDLE_STATUSES]])

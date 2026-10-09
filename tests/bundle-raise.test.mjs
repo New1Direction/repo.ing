@@ -353,7 +353,9 @@ test('token fields fit Metaplex\'s byte caps and carry no hidden characters; bun
     assert.throws(() => tokenFields({ tokenName: `Wid${hidden}get`, tokenSymbol: 'W' }), { message: RAISE_REFUSALS.tokenCharacters }, JSON.stringify(hidden))
     assert.throws(() => tokenFields({ tokenName: 'Widget', tokenSymbol: `W${hidden}` }), { message: RAISE_REFUSALS.tokenCharacters }, JSON.stringify(hidden))
   }
-  assert.deepEqual(tokenFields({ tokenName: 'Ünïcødé ✓', tokenSymbol: 'ÜÑ' }), { tokenName: 'Ünïcødé ✓', tokenSymbol: 'ÜÑ' })
+  // A name may use any visible characters; a ticker is letters and digits only, as for every launch (src/launch-symbols.mjs).
+  assert.deepEqual(tokenFields({ tokenName: 'Ünïcødé ✓', tokenSymbol: 'UN' }), { tokenName: 'Ünïcødé ✓', tokenSymbol: 'UN' })
+  assert.throws(() => tokenFields({ tokenName: 'Widget', tokenSymbol: 'ÜÑ' }), { message: RAISE_REFUSALS.tokenSymbol })
   assert.deepEqual([bundleIdFrom('9223372036854775807'), bundleIdFrom('9223372036854775808'), bundleIdFrom('9999999999999999999'), bundleIdFrom('0'),
     bundleIdFrom('07'), bundleIdFrom(7)], [9223372036854775807n, null, null, null, null, 7n])
   const h = harness()
