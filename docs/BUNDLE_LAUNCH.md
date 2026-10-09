@@ -275,7 +275,9 @@ deposits (and relaying one) answer 404 unless `bundleLaunchable()`. Everything f
 switch says, so a backer is never locked out: reading it, its page (without the deposit form while the switch is off), refunds,
 claims and their relay, the token page's vault tab and `/wallet`'s list. The worker's jobs follow the same rule: with launches off
 (the switch or the code gate) a full raise is not launched, and the vault agent only logs, but everything else keeps running
-(`fail_raise` past a deadline or grace, so refunds open; open_vault, fee routing, `record_graduation`). All of it is rate limited per address (`bundle:read`,
+(`fail_raise` past a deadline or grace, so refunds open; open_vault, fee routing, `record_graduation`). To stop every worker
+Bundle transaction in an emergency, unset `BUNDLE_LAUNCH_SIGNER_SECRET_KEY` on the worker: the jobs then name it missing and send
+nothing (refunds of failed raises still work on the site). All of it is rate limited per address (`bundle:read`,
 `bundle:prepare`, `bundle:submit`, `bundle:send`; opening one counts as `launch:prepare`), and the backer count is read once per
 bundle per 30 s.
 
