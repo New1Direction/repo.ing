@@ -41,11 +41,14 @@ export function readSecretKey(value) {
 // What the worker needs, or null while Bundle launches are dark or not configured (each missing piece named, never a value).
 export function bundleJobSettings(env = process.env) {
   if (!bundleLaunchable(env)) return null
-  const missing = ['BUNDLE_DBC_CONFIG', 'BUNDLE_LOOKUP_TABLE', 'BUNDLE_LAUNCH_SIGNER_SECRET_KEY', 'PLATFORM_CREATOR_SECRET_KEY'].filter(name => !String(env[name] ?? '').trim())
+  const missing = ['BUNDLE_DBC_CONFIG', 'BUNDLE_LOOKUP_TABLE', 'BUNDLE_LAUNCH_SIGNER_SECRET_KEY', 'PLATFORM_CREATOR_SECRET_KEY', 'APP_ORIGIN']
+    .filter(name => !String(env[name] ?? '').trim())
   if (missing.length) return { missing }
   return { config: new PublicKey(env.BUNDLE_DBC_CONFIG.trim()), lookupTable: env.BUNDLE_LOOKUP_TABLE.trim(),
     launchSigner: readSecretKey(env.BUNDLE_LAUNCH_SIGNER_SECRET_KEY), creator: readSecretKey(env.PLATFORM_CREATOR_SECRET_KEY),
-    operator: readSecretKey(env.BUNDLE_OPERATOR_SECRET_KEY), agentsLive: env.BUNDLE_AGENTS_LIVE === 'true', metadataOrigin: env.APP_ORIGIN || null }
+    operator: readSecretKey(env.BUNDLE_OPERATOR_SECRET_KEY), agentsLive: env.BUNDLE_AGENTS_LIVE === 'true',
+    // Each bundle token's metadata URI is built on it: an origin only (a trailing slash or path would break the URI).
+    metadataOrigin: new URL(env.APP_ORIGIN.trim()).origin }
 }
 
 // The one action a bundle needs this pass. row: the bundles row; chain: the decoded Bundle account or null; market: the markets row
@@ -66,6 +69,9 @@ export function bundleAction({ row, chain, market, now }) {
   }
   if (row.status === 'launching') {
     if (market?.status === 'confirmed' && chain.status === STATUS.LAUNCHED) return { action: 'mark_launched' }
+    // Past the grace period the program refuses release, so no launch can land any more: fail the raise so refunds open,
+    // whatever state a launch attempt was left in (a repeating refusal, a crash between reserve and send).
+    if (chain.status === STATUS.RAISING && chain.released === 0n && now > chain.deadline + chain.launchGraceSecs) return { action: 'fail_raise' }
     if (chain.status === STATUS.RAISING && (!market || market.status === 'failed')) return { action: 'retry_launch' }
     if (chain.status === STATUS.FAILED) return { action: 'mark_failed' }
     return { action: 'wait' }
@@ -104,6 +110,9 @@ const sqrtPrice = value => { const s = Number(value.toString()) / 2 ** 64; retur
 
 export function createBundleJobs({ pool, connection, settings, programId = BUNDLE_VAULT_PROGRAM_ID, now = () => Math.floor(Date.now() / 1000),
   coordinatorFor = null, builderAllocationEnabled = false, log = record => console.log(JSON.stringify({ bundles: record })) }) {
+  // Every send signs with a confirmed blockhash; a connection at another commitment preflights (and simulates) at that one, and a
+  // finalized one refuses a fresh confirmed blockhash, so nothing would ever send.
+  if (connection.commitment !== 'confirmed') throw Error('Bundle jobs need a connection at confirmed commitment')
   const program = new PublicKey(programId)
   const { config, lookupTable, launchSigner, creator, operator, agentsLive, metadataOrigin } = settings
   const dbc = new DynamicBondingCurveClient(connection, 'confirmed'), amm = new CpAmm(connection)
@@ -124,7 +133,7 @@ export function createBundleJobs({ pool, connection, settings, programId = BUNDL
       const reason = bundleErrorName((simulated.value.logs ?? []).join('\n')) ?? JSON.stringify(simulated.value.err)
       return { sent: false, reason }
     }
-    const signature = await connection.sendRawTransaction(tx.serialize())
+    const signature = await connection.sendRawTransaction(tx.serialize(), { preflightCommitment: 'confirmed' })
     await connection.confirmTransaction({ signature, ...await connection.getLatestBlockhash('confirmed') }, 'confirmed')
     return { sent: true, signature }
   }
