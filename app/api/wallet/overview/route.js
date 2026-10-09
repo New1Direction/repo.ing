@@ -9,6 +9,7 @@ import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { readWalletVerificationBonuses } from '../../../../src/verification-bonus.mjs'
 import { shownMarkets } from '../../../lib/hf-markets.mjs'
 import { walletStockPairs } from '../../../lib/stock-wallet.mjs'
+import { isStockMarket } from '../../../../src/stock-market-chart.mjs'
 import { walletBundleFields } from '../../../lib/bundle-wallet.mjs'
 import { refuseOverLimit } from '../../../lib/request-limits.mjs'
 export const dynamic = 'force-dynamic'
@@ -49,10 +50,14 @@ export async function GET(request) {
     // Bundle launches (app/lib/bundle-wallet.mjs): the bundles this wallet backs, so its refunds and claims are always reachable.
     const bundleFields = await walletBundleFields(db, chain, wallet, { allowed: () => !refuseOverLimit(request, 'bundle:read') })
     const held = markets.filter(m => (balances?.get(m.mint) ?? 0n) > 0n)
+    // A stock pair is valued in its stock from its market row (app/lib/stock-market-stats.mjs), never in SOL; it has no SOL price
+    // or SOL trades for prices and P&L to read.
+    const stocks = new Map(markets.filter(isStockMarket).map(m => [m.repoId, m.stock ?? null]))
+    const solHeld = held.filter(m => !isStockMarket(m))
     // Prices and P&L are best-effort: balances, launches and rewards still render if either fails.
-    const [prices, trades] = await Promise.all([latestMarketPrices(db, held).catch(() => null),
-      walletTrades(db, wallet, held).catch(() => null)])
-    const valued = withHoldingValues(rows, prices ?? new Map())
+    const [prices, trades] = await Promise.all([latestMarketPrices(db, solHeld).catch(() => null),
+      walletTrades(db, wallet, solHeld).catch(() => null)])
+    const valued = withHoldingValues(rows, prices ?? new Map(), stocks)
     const priced = trades ? withHoldingPnl(valued, trades) : valued
     return Response.json({ wallet, solBalance: Number.isSafeInteger(sol) && sol >= 0 ? String(sol) : null,
       holdingsAvailable: Boolean(balances), pricesAvailable: Boolean(prices), usdPerSol,

@@ -1,4 +1,5 @@
 import { blockJoins, blockPosition, chartMigration, chartSpotPrice } from '../../src/market-chart.mjs'
+import { isStockMarket } from '../../src/stock-market-chart.mjs'
 import { latestSlotTrade } from './portfolio.mjs'
 
 const PRICE_TTL_MS = 10_000
@@ -7,10 +8,13 @@ const cache = new Map()
 
 // Latest finalized spot price per market, from the same canonical events as the market chart:
 // DBC curve trades plus, once graduation is proven, DAMM trades from the migration slot on.
-// Two batched queries for all requested markets; results are cached briefly per market.
+// Two batched queries for all requested markets; results are cached briefly per market. A stock-paired market has no SOL price
+// (its trades are in stock_trade_events, in its stock): it is left out, and the wallet values it in its stock
+// (app/lib/portfolio.mjs stockHoldingValue, from the market row's own stock figures).
 export async function latestMarketPrices(db, markets, now = Date.now()) {
   const prices = new Map(), missing = []
   for (const market of markets) {
+    if (isStockMarket(market)) continue
     const hit = cache.get(market.repoId)
     if (hit && now < hit.expiresAt) prices.set(market.repoId, hit.price)
     else missing.push(market)

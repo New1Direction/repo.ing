@@ -16,10 +16,11 @@ import styles from './builder-kit.module.css'
 // for the maintainer while nobody has verified the repository on repo.ing. The X post and the copied link carry the
 // wallet's ?ref under the same rules (and note) as every other share; the README badge never does. quote: a stock pair's
 // pair ({ symbol }), null for SOL. A stock pair pays no builder fees for the badge to show or the maintainer to claim
-// (docs/STOCK_QUOTES.md, "Fee policy"), so its kit has neither and says what its trades pay instead.
+// (docs/STOCK_QUOTES.md, "Fee policy"), so its kit has neither and says what its trades pay instead; its trades pay no
+// referral either, so its links carry no ?ref.
 export function LaunchKit({ repoId, fullName, mint, symbol, verified = false, quote = null }) {
   const [copied, setCopied] = useState(''), [fallback, setFallback] = useState(null)
-  const referral = useShareReferral()
+  const referral = useShareReferral(true, !quote)
   const post = launchPostUrl({ mint, symbol, fullName, ref: referral.ref, quote })
   let badge = null
   if (!quote) try { badge = badgeMarkdown(repoId, mint) } catch { /* no badge for a malformed market */ }

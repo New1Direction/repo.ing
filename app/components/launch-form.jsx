@@ -11,6 +11,7 @@ import { launchDraftKey, readLaunchDraft, restoredPair, saveLaunchDraft } from '
 import { formatUnits, parseUnits } from '../lib/format.mjs'
 import { defaultTokenName, defaultTokenSymbol, tokenDetailsComplete } from '../lib/launch-defaults.mjs'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
+import { STOCK_FEE_SPLIT, stockFeeLine } from '../../src/stock-pair-copy.mjs'
 import { verificationBonusTerms } from '../lib/verification-bonus-copy.mjs'
 import { HF_DISCLAIMER } from '../../src/hf-copy.mjs'
 import { decodeLaunchTransaction } from '../lib/launch-transaction.mjs'
@@ -95,6 +96,9 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
   const bundleOffered = Boolean(bundle) && !model && !draft && trendRevision === undefined
   const [bundleChosen, setBundleChosen] = useState(false)
   const bundleMode = bundleOffered && bundleChosen
+  // Whose fee terms the form states: the chosen stock pair's ({ symbol }, symbol null when unknown), or null for SOL. A Bundle
+  // raise is always SOL, whatever pair was picked before choosing it.
+  const stockTerms = stockChosen && !bundleMode ? { symbol: stockPair?.symbol ?? null } : null
   const [raise, setRaise] = useState(() => bundle ? { target: formatUnits(bundle.defaultTargetLamports, 9, 2), days: bundle.defaultDeadlineDays } : null)
   const opening = useOpenBundle({ repo, settings: bundle, token: { name, symbol, image: tokenImage?.image }, raise,
     ready: !imageBusy && Boolean(tokenImage) && Boolean(name) && Boolean(symbol) })
@@ -230,7 +234,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     {draft && <p className="agent-review-note" role="status">Prepared with an agent. Review these details, choose an image, and approve the final costs in your wallet. Your signing wallet receives discovery attribution.</p>}
     <div className="launch-columns">
       <fieldset className="launch-fields launch-fieldset" disabled={busy || !!review || opening.busy}>
-        <h2>Launch token</h2><p className="launch-subtitle">{model ? "Create a community market for this model. Every trade pays the model's owner." : 'Create a market for this repository. Every trade pays the builders.'}</p>
+        <h2>Launch token</h2><p className="launch-subtitle">{launchSubtitle({ model, stock: stockTerms })}</p>
         <div className="launch-token-summary" role="group" aria-label="Token preview">
           <div className="preview-avatar">{tokenImage ? <img src={tokenImage.image} alt="Token artwork preview"/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
           <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Token name'}</span>{imageBusy && !tokenImage ? <small>{model ? "Finding the owner's avatar…" : 'Finding a repository image…'}</small> : isDefault && <small>{model ? 'Suggested from this model' : 'Suggested from this repository'}</small>}</div>
@@ -278,7 +282,7 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
           : <div className="inner-card discovery-launch"><h3>1% for the builders</h3><strong>10 million tokens reserved</strong><p>The verified repository admin can claim this one-time allocation after graduation, in addition to trading fees. It comes from the fixed 1 billion supply.</p></div>)}
         {discoveryEnabled && !stockChosen && <div className="inner-card discovery-launch"><h3>Discovery rewards</h3><strong>Earn 50% of repo.ing’s trading fees</strong><p>Your launch wallet earns rewards on this market’s bonding-curve trades until graduation, 30 days, or 2.5 SOL earned—whichever comes first.</p><p>Rewards come from repo.ing’s existing share. Builder fees and the total trading fee stay the same. Claim in SOL from the market page by signing a message; repo.ing sends the reward and pays the network fee.</p></div>}
         {verificationBonus && !stockChosen && <div className="inner-card discovery-launch"><p style={{ margin: 0 }}><strong>Verification bonus:</strong> {verificationBonusTerms(verificationBonus)}</p></div>}
-        <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3><div className="fee-line"><span>Total DBC trading fee</span><strong>1.75%</strong></div><div className="fee-line">{model ? <span>Model owner share<small>Accrues for the model&apos;s verified owner</small></span> : <span>Repository creator share<small>Accrues for the verified repository owner</small></span>}<strong>0.994%</strong></div><div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div><div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>{launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}<div className="fee-note"><Info size={18}/><span>{launchFee ? `${launchFeeSentence(launchFee)} ${LAUNCH_FEE_SPLIT} ${launcherBuySentence(launchFee) ?? ''} ` : ''}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade; rates after pool migration are not yet verified.</span></div></div>
+        <LaunchFeeBreakdown model={model} stock={stockTerms} launchFee={launchFee}/>
       </>}</div>
     </div>
     {bundleMode ? <BundleOpenButton opening={opening} disabled={imageBusy || !tokenImage || !name || !symbol}/> : review ? <section className="launch-review inner-card" aria-labelledby="launch-review-heading" aria-live="polite">
@@ -300,6 +304,37 @@ export function LaunchForm({ repo, available, discoveryEnabled = false, allocati
     {!bundleMode && <TransactionStatus stage={stage} error={error}/>}
     {failure && !bundleMode && <div className="launch-recovery"><p className="form-fineprint">{failure.code===COPY_REFUSED?'This repository cannot have its own market on repo.ing.':failure.canRetry?'Your launch details are saved. Refresh the review to try again.':'Your launch details are saved. Check the existing attempt before trying again.'}</p><div className="launch-review-actions"><code>{failure.supportCode}</code><button type="button" className="button outline" onClick={copySupport}>{copied?'Copied':'Copy support details'}</button></div></div>}
   </form>
+}
+
+// Who every trade pays, under "Launch token". stock: as LaunchFeeBreakdown's.
+export function launchSubtitle({ model = false, stock = null }) {
+  if (model) return "Create a community market for this model. Every trade pays the model's owner."
+  return `Create a market for this repository. ${stock ? stockFeeLine(stock.symbol) : 'Every trade pays the builders.'}`
+}
+
+// The launch form's fee card. stock: the chosen stock pair's terms ({ symbol }, symbol null when unknown), null for SOL. A stock
+// pair pays the same 1.75%, in its stock: 0.30% to the launcher and 1.10% to permanent $REPOING / <stock> liquidity, with no
+// owner share (docs/STOCK_QUOTES.md, "Fee policy"), and it starts without an initial buy. After graduation, trades pay the
+// Meteora DAMM v2 pool's 1% fee in the pair's quote (docs/GRADUATED_FEES.md): its two locked positions earn it.
+export function LaunchFeeBreakdown({ model = false, stock = null, launchFee = null }) {
+  const unit = stock ? stock.symbol ?? 'its stock' : 'SOL', pair = `$REPOING / ${stock?.symbol ?? 'stock'}`
+  const windowNote = !launchFee ? '' : stock ? `${launchFeeSentence(launchFee)} A launch-fee window scales every share alike. `
+    : `${launchFeeSentence(launchFee)} ${LAUNCH_FEE_SPLIT} ${launcherBuySentence(launchFee) ?? ''} `
+  const graduated = stock ? `the launcher keeps a share of its locked creator position’s fees, and the rest of both locked positions’ fees becomes permanent ${pair} liquidity.`
+    : `the ${model ? 'model owner’s' : 'builders’'} share comes from its locked creator position.`
+  return <div className="inner-card fee-breakdown"><h3>Fee breakdown</h3>
+    <div className="fee-line"><span>Total DBC trading fee{stock && <small>Paid in {unit}</small>}</span><strong>1.75%</strong></div>
+    {stock ? <>
+      <div className="fee-line"><span>Launcher share<small>Paid in {unit} to the launch wallet, for as long as the market trades</small></span><strong>{STOCK_FEE_SPLIT.launcher}</strong></div>
+      <div className="fee-line"><span>Permanent {pair} liquidity<small>The builder share and repo.ing’s share. No owner claim</small></span><strong>{STOCK_FEE_SPLIT.accumulator}</strong></div>
+    </> : <>
+      <div className="fee-line">{model ? <span>Model owner share<small>Accrues for the model&apos;s verified owner</small></span> : <span>Repository creator share<small>Accrues for the verified repository owner</small></span>}<strong>0.994%</strong></div>
+      <div className="fee-line"><span>repo.ing share</span><strong>0.406%</strong></div>
+    </>}
+    <div className="fee-line"><span>Meteora protocol</span><strong>0.35%</strong></div>
+    {launchFee && <div className="fee-line launch-fee-line"><span>Launch fee<small>First {launchFee.durationLabel} after launch, falling every second</small></span><strong>{launchFee.startPercent} → {launchFee.endPercent}</strong></div>}
+    <div className="fee-note"><Info size={18}/><span>{windowNote}Measured on the fixed Meteora bonding curve. Fee amounts round to whole token units per trade. After graduation, trades pay the Meteora DAMM v2 pool’s 1% fee in {unit}; {graduated}</span></div>
+  </div>
 }
 
 // Choose pair: SOL (the default) or the stock of the company that owns this repository. The note names the instrument and

@@ -10,8 +10,9 @@ function storage() { try { return window.localStorage } catch { return null } }
 
 // What a share control may add as ?ref: the connected wallet, only once its referral payouts are set up and only while
 // the sharer keeps it on (remembered per browser). The payout status is read only while `active` (a menu, card or
-// result is showing), through the shared per-wallet cache.
-export function useShareReferral(active = true) {
+// result is showing), through the shared per-wallet cache. offered: false for a market whose trades pay no referral (a stock
+// pair: its swaps carry no referral account, src/stock-damm-trade.mjs), so nothing is read, no ?ref is added and no note shows.
+export function useShareReferral(active = true, offered = true) {
   const { wallet } = useWallet() ?? {}
   const [status, setStatus] = useState(null)
   const [include, setInclude] = useState(true)
@@ -22,18 +23,18 @@ export function useShareReferral(active = true) {
     return () => window.removeEventListener(CHOICE_EVENT, sync)
   }, [])
   useEffect(() => {
-    setStatus(wallet ? peekReferralStatus(wallet) : null)
-    if (!wallet || !active) return
+    setStatus(wallet && offered ? peekReferralStatus(wallet) : null)
+    if (!wallet || !active || !offered) return
     let live = true
     loadReferralStatus(wallet).then(value => { if (live) setStatus(value) })
     const stop = subscribeReferralStatus(wallet, value => { if (live) setStatus(value) })
     return () => { live = false; stop() }
-  }, [wallet, active])
+  }, [wallet, active, offered])
   function choose(next) {
     writeShareReferralChoice(storage(), next)
     window.dispatchEvent(new Event(CHOICE_EVENT))
   }
-  return { wallet, status, include, choose, ref: shareReferral({ wallet, status, include }), available: Boolean(wallet && status?.enabled) }
+  return { wallet, status, include, choose, ref: shareReferral({ wallet, status, include, offered }), available: Boolean(offered && wallet && status?.enabled) }
 }
 
 // The visible one-line disclosure beside every share control that can carry a referral, with the switch to share

@@ -1,10 +1,12 @@
 // Text of a "new market launched" alert (see src/launch-alerts.mjs). Short and factual: repository, ticker, stars,
 // a one-line description and the token page link. Repository text is untrusted: descriptions lose control and bidi
 // characters, links, and @/#/$ prefixes (no tagging people, hashtag or cashtag spam), and are truncated to fit.
-// Hugging Face model markets get their own copy (bottom of this file), cleaned the same way.
+// Hugging Face model markets get their own copy (bottom of this file), cleaned the same way. A stock pair's post says what its
+// trades pay in its stock instead of the repo's builders (src/stock-owner-claims.mjs).
 import { HF_DISCLAIMER_SHORT } from './hf-copy.mjs'
 import { isMarketId, marketSource } from './market-identity.mjs'
 import { earlyAccessEndUtc } from './early-access.mjs'
+import { stockPairFeeLine } from './stock-owner-claims.mjs'
 
 export const X_MAX_WEIGHT = 280
 // X counts every link as 23 characters, whatever its length.
@@ -64,9 +66,9 @@ export function truncate(text, fits) {
 
 export const tokenUrl = (origin, mint) => `${origin}/token/${encodeURIComponent(mint)}`
 
-function lines({ repo, symbol, stars, description, window, url }) {
+function lines({ repo, symbol, stars, description, window, tagline, url }) {
   return [`🚀 New on repo.ing: ${repo}${symbol ? ` — $${symbol}` : ''}`, `⭐ ${stars}${description ? ` · ${description}` : ''}`,
-    ...window ? [window] : [], TAGLINE, url]
+    ...window ? [window] : [], ...tagline ? [tagline] : [], url]
 }
 
 // A contributor early access market (docs/EARLY_ACCESS.md) still in its window: only the repository's contributors can buy, so
@@ -76,19 +78,23 @@ export function earlyAccessWindowLine(market, now = Date.now()) {
   return now < end ? `🔒 Contributor early access: only its contributors can buy until ${earlyAccessEndUtc(end)}.` : null
 }
 
-// market: { fullName, tokenSymbol, stars, description, mint, earlyAccessEnd }. channel: 'telegram' (HTML) or 'x' (plain, ≤ 280 weighted).
+// market: { fullName, tokenSymbol, stars, description, mint, earlyAccessEnd, quoteAssetId, quoteMint }. channel: 'telegram' (HTML)
+// or 'x' (plain, ≤ 280 weighted).
 export function buildLaunchMessage(market, { channel, origin, now = Date.now() }) {
   if (isModelAlert(market)) return buildModelLaunchMessage(market, { channel, origin })
+  const stockLine = stockPairFeeLine(market)
   const base = { repo: cleanRepoName(market.fullName), symbol: cleanSymbol(market.tokenSymbol), stars: formatStars(market.stars), url: tokenUrl(origin, market.mint),
-    window: earlyAccessWindowLine(market, now) }
+    window: earlyAccessWindowLine(market, now), tagline: stockLine ?? TAGLINE }
   const description = cleanDescription(market.description)
   if (channel === 'telegram') {
     const short = truncate(description, text => [...text].length <= TELEGRAM_DESCRIPTION_CHARS)
-    return lines({ ...base, repo: escapeHtml(base.repo), description: escapeHtml(short), url: escapeHtml(base.url) }).join('\n')
+    return lines({ ...base, repo: escapeHtml(base.repo), description: escapeHtml(short), tagline: escapeHtml(base.tagline), url: escapeHtml(base.url) }).join('\n')
   }
   if (channel !== 'x') throw Error(`Unknown launch alert channel ${channel}`)
-  const fits = text => [...text].length <= X_DESCRIPTION_CHARS && xWeight(lines({ ...base, description: text }).join('\n')) <= X_MAX_WEIGHT
-  const text = lines({ ...base, description: truncate(description, fits) }).join('\n')
+  // A stock pair's fee line is longer: when even no description leaves room for it, the post goes without it (never cut).
+  const post = stockLine && xWeight(lines({ ...base, description: '' }).join('\n')) > X_MAX_WEIGHT ? { ...base, tagline: null } : base
+  const fits = text => [...text].length <= X_DESCRIPTION_CHARS && xWeight(lines({ ...post, description: text }).join('\n')) <= X_MAX_WEIGHT
+  const text = lines({ ...post, description: truncate(description, fits) }).join('\n')
   if (xWeight(text) > X_MAX_WEIGHT) throw Error('Launch alert exceeds the X length limit')
   return text
 }

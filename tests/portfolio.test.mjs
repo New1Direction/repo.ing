@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { holdingValueLamports, latestSlotTrade, portfolioSummary, sortHoldingsByValue, withHoldingValues } from '../app/lib/portfolio.mjs'
+import { readFileSync } from 'node:fs'
+import { holdingValueLamports, latestSlotTrade, portfolioSummary, sortHoldingsByValue, stockHoldingValue, withHoldingValues } from '../app/lib/portfolio.mjs'
 import { clearPriceCache, latestMarketPrices } from '../app/lib/portfolio-prices.mjs'
 import { chartSpotPrice } from '../src/market-chart.mjs'
 import { evidenceHash } from '../src/graduation-state.mjs'
@@ -103,6 +104,53 @@ test('no held markets means no price queries', async () => {
   const db = stubDb({})
   assert.equal((await latestMarketPrices(db, [])).size, 0)
   assert.equal(db.calls.length, 0)
+})
+
+// A stock pair (docs/STOCK_QUOTES.md) is valued in its stock from its market row's own figures, never in SOL: the SOL price reads
+// leave it out, and /wallet shows its value in the stock and in USD at the stock's price, or says it is not valued.
+const METAX = { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, price: 0.002, volume24h: '0', uiMultiplier: '1.0028515433272898', usdPrice: 712.5 }
+
+test('a stock pair is valued in its stock, never in SOL; SOL rows are exactly as before', () => {
+  const rows = [{ repoId: '1', balanceBaseUnits: '2000000' }, { repoId: '9', balanceBaseUnits: '5000000' }]
+  // Even with a SOL price on hand for it, a stock pair gets none: 5 tokens × 0.002 METAx = 0.01 METAx = 1,000,000 raw units (8 decimals).
+  const [sol, stock] = withHoldingValues(rows, new Map([['1', 0.001], ['9', 0.5]]), new Map([['9', METAX]]))
+  assert.deepEqual(sol, { repoId: '1', balanceBaseUnits: '2000000', priceSol: 0.001, valueLamports: '2000000' })
+  assert.deepEqual(stock, { repoId: '9', balanceBaseUnits: '5000000', priceSol: null, valueLamports: null,
+    stockValue: { assetId: 'meta-xstock', symbol: 'METAx', decimals: 8, price: 0.002, valueRaw: '1000000', uiMultiplier: '1.0028515433272898', usdPrice: 712.5 } })
+  assert.deepEqual(withHoldingValues(rows, new Map([['1', 0.001]])), withHoldingValues(rows, new Map([['1', 0.001]]), new Map()))
+  assert.deepEqual(portfolioSummary([sol, stock]), { valueLamports: '2000000', holdings: 2, unpriced: 1 }, 'never added to the SOL total')
+  // Before its first trade there is no value; figures that could not be read are unavailable, never zero.
+  assert.equal(stockHoldingValue('5000000', { ...METAX, price: null }).valueRaw, null)
+  assert.equal(stockHoldingValue('0', METAX).valueRaw, '0')
+  assert.deepEqual(stockHoldingValue('5000000', { assetId: 'meta-xstock', symbol: 'METAx', unavailable: true }), { assetId: 'meta-xstock', symbol: 'METAx', unavailable: true })
+  assert.deepEqual(stockHoldingValue('5000000', null), { assetId: null, symbol: null, unavailable: true })
+})
+
+test('stock-paired markets get no SOL price and no SOL price query', async () => {
+  clearPriceCache()
+  const db = stubDb({ trades: [{ repoId: '9', signature: 's9', eventIndex: 0, transactionIndex: null, nextSqrtPrice: sqrt.toString() }] })
+  const prices = await latestMarketPrices(db, [{ repoId: '9', pool: 'curve-s', mint: 'mint-s', quoteAssetId: 'meta-xstock', quoteMint: 'MintMetax' }], 0)
+  assert.equal(prices.size, 0)
+  assert.equal(db.calls.length, 0)
+})
+
+test('/wallet: a held stock pair\'s value in the stock and USD, or why it is not valued; the route reads no SOL price for it', async () => {
+  const { appModule, h, html } = await import('./fixtures/render-jsx.mjs')
+  const { StockHoldingValue } = await appModule('app/components/stock-launcher-wallet.jsx')
+  const [, value] = withHoldingValues([{ repoId: '1', balanceBaseUnits: '1' }, { repoId: '9', balanceBaseUnits: '5000000' }], new Map(), new Map([['9', METAX]]))
+  const shown = props => html(h(StockHoldingValue, props))
+  // 1,000,000 raw × 1.00285… = 0.01002851 METAx as wallets show it; $7.13 at $712.50 per whole raw METAx.
+  assert.equal(shown({ value: value.stockValue }), '<span class="wallet-market-value">Value<strong>0.01003 METAx</strong><small>≈ $7.13 · 0.0020057 METAx each</small></span>')
+  assert.match(shown({ value: { ...value.stockValue, usdPrice: null } }), /<small>0\.0020057 METAx each<\/small>/)
+  assert.match(shown({ value: { ...value.stockValue, uiMultiplier: null } }), /<strong>—<\/strong><small>METAx display units are unavailable right now<\/small>/)
+  assert.match(shown({ value: stockHoldingValue('5000000', { ...METAX, price: null }) }), /<strong>—<\/strong><small>Not valued yet: no METAx trade price<\/small>/)
+  assert.match(shown({ value: stockHoldingValue('5000000', { assetId: 'meta-xstock', symbol: 'METAx', unavailable: true }) }),
+    /<strong>—<\/strong><small>Not valued here: METAx prices are unavailable right now<\/small>/)
+  assert.doesNotMatch(shown({ value: value.stockValue }), /SOL|pending/)
+  const route = readFileSync(new URL('../app/api/wallet/overview/route.js', import.meta.url), 'utf8')
+  assert.match(route, /const solHeld = held\.filter\(m => !isStockMarket\(m\)\)/)
+  assert.match(route, /latestMarketPrices\(db, solHeld\)[^\n]*\n\s*walletTrades\(db, wallet, solHeld\)/)
+  assert.match(route, /withHoldingValues\(rows, prices \?\? new Map\(\), stocks\)/)
 })
 
 test('real PostgreSQL: wallet prices and P&L order use stored positions, so a cleared block list changes nothing', { skip: !process.env.CHART_TEST_DATABASE_URL }, async () => {
