@@ -128,7 +128,8 @@ async function observePartsFunds(){
     if(r.pledges.some(p=>p.state==='review')||r.decided.some(d=>d.status==='review')||r.transfers?.some(t=>t.status==='failed'))process.exitCode=1
   }catch(error){console.log(JSON.stringify({partsFundError:error?.code==='42P01'?'PARTS_NOT_MIGRATED':'PARTS_FUND_UNAVAILABLE'}))}
 }
-// Bundle launches (docs/BUNDLE_LAUNCH.md): dark unless BUNDLE_LAUNCHES_ENABLED and the code gate are both open. The jobs sign with the
+// Bundle launches (docs/BUNDLE_LAUNCH.md): the jobs run whenever Bundle is configured; new launches (and the vault agent's trades) wait
+// unless BUNDLE_LAUNCHES_ENABLED and the code gate are both open, but existing raises still fail and refund. The jobs sign with the
 // bundle launch signer (and the creator signer as the bundle program's admin, for record_graduation only).
 const bundleSettings = (() => { try { return bundleJobSettings() } catch { return { error: 'BUNDLE_SETTINGS_INVALID' } } })()
 // A confirmed connection: the jobs sign with a confirmed blockhash, which a finalized preflight refuses ("Blockhash not found").

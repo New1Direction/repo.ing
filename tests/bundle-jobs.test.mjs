@@ -1,10 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import BN from 'bn.js'
 import bs58 from 'bs58'
-import { Connection, Keypair, PublicKey } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey, SYSVAR_CLOCK_PUBKEY } from '@solana/web3.js'
+import { NATIVE_MINT } from '@solana/spl-token'
 import { STATUS } from '../src/bundle-vault.mjs'
-import { AGENT, BUNDLE_STALE_OPENING_MS, bundleAction, bundleJobSettings, createBundleJobs, readSecretKey, vaultAgentDecision } from '../src/bundle-jobs.mjs'
+import { AGENT, BUNDLE_STALE_OPENING_MS, bundleAction, bundleJobSettings, createBundleJobs, readSecretKey, vaultAgentDecision,
+  vaultTradeMinimumOut } from '../src/bundle-jobs.mjs'
 
 const NOW = 1_800_000_000
 const key = () => Keypair.generate().publicKey
@@ -60,6 +64,20 @@ test('the bundle jobs send only through a confirmed connection, and the worker g
   assert.match(readFileSync(new URL('../src/bundle-jobs.mjs', import.meta.url), 'utf8'), /sendRawTransaction\(tx\.serialize\(\), \{ preflightCommitment: 'confirmed' \}\)/)
 })
 
+test('with launches off, a full raise waits and fails after its grace period (refunds open); everything else still moves', () => {
+  const off = args => bundleAction({ ...args, launchesOn: false })
+  assert.deepEqual(off({ row: row('raising'), chain: chain(), market: null, now: NOW }), { action: 'wait', reason: 'Bundle launches are off' })
+  assert.deepEqual(off({ row: row('launching'), chain: chain({ deadline: NOW - 10 }), market: { status: 'failed' }, now: NOW }),
+    { action: 'wait', reason: 'Bundle launches are off' })
+  assert.deepEqual(off({ row: row('raising'), chain: chain({ deadline: NOW - 86_401 }), market: null, now: NOW }), { action: 'fail_raise' })
+  assert.deepEqual(off({ row: row('launching'), chain: chain({ deadline: NOW - 86_401 }), market: { status: 'failed' }, now: NOW }), { action: 'fail_raise' })
+  assert.deepEqual(off({ row: row('raising'), chain: chain({ raised: 1n, deadline: NOW - 1 }), market: null, now: NOW }), { action: 'fail_raise' })
+  assert.deepEqual(off({ row: row('raising'), chain: chain({ status: STATUS.FAILED }), market: null, now: NOW }), { action: 'mark_failed' })
+  assert.deepEqual(off({ row: row('opening'), chain: chain(), market: null, now: NOW }), { action: 'activate' })
+  assert.deepEqual(off({ row: row('launched'), chain: chain({ status: STATUS.LAUNCHED }), market: { status: 'confirmed' }, now: NOW }), { action: 'open_vault' })
+  assert.deepEqual(off({ row: row('launched'), chain: chain({ status: STATUS.LAUNCHED, vaultSol: key() }), market: { status: 'confirmed' }, now: NOW }), { action: 'tend' })
+})
+
 const launched = (overrides = {}) => ({ status: STATUS.LAUNCHED, paused: false, tradingOpensAt: NOW - 1, vaultSol: key(), day: Math.floor(NOW / 86_400),
   dayBought: 0n, daySold: 0n, lastBuyAt: 0, lastSellAt: 0, costLamports: 19_000_000_000n, costTokens: 400_000_000_000_000n,
   policy: { maxTradeBps: 200, maxDailyBuyBps: 1_000, maxDailySellBps: 100, floorBps: 10_000, gapSecs: 600 }, ...overrides })
@@ -97,9 +115,61 @@ test('settings: dark returns null; missing pieces are named, never their values;
   assert.equal(bundleJobSettings({ ...keys, APP_ORIGIN: 'https://repo.ing/' }).metadataOrigin, 'https://repo.ing')
   assert.equal(bundleJobSettings({ ...keys, APP_ORIGIN: ' https://repo.ing/some/path ' }).metadataOrigin, 'https://repo.ing')
   assert.throws(() => bundleJobSettings({ ...keys, APP_ORIGIN: 'repo.ing' }))
+  // Configured but switched off: the jobs still run for existing bundles, with launches off.
+  assert.equal(bundleJobSettings({ ...keys, APP_ORIGIN: 'https://repo.ing' }).launchesOn, true)
+  const off = bundleJobSettings({ ...keys, BUNDLE_LAUNCHES_ENABLED: 'false', APP_ORIGIN: 'https://repo.ing' })
+  assert.deepEqual([off.launchesOn, off.config.toBase58()], [false, keys.BUNDLE_DBC_CONFIG])
+  assert.deepEqual(bundleJobSettings({ BUNDLE_DBC_CONFIG: keys.BUNDLE_DBC_CONFIG }).missing,
+    ['BUNDLE_LOOKUP_TABLE', 'BUNDLE_LAUNCH_SIGNER_SECRET_KEY', 'PLATFORM_CREATOR_SECRET_KEY', 'APP_ORIGIN'], 'configured halfway: named, even when off')
   const pair = Keypair.generate()
   assert.ok(readSecretKey(bs58.encode(pair.secretKey)).publicKey.equals(pair.publicKey))
   assert.ok(readSecretKey(JSON.stringify([...pair.secretKey])).publicKey.equals(pair.publicKey))
   assert.equal(readSecretKey(''), null)
   assert.throws(() => readSecretKey('not a key'))
+})
+
+// The confirmed clock sysvar the quotes read (src/chain-clock.mjs): slot at 0, unix time at 32.
+function clockConnection({ slot = 400_000_000n, time = 1_800_000_000n } = {}) {
+  const data = Buffer.alloc(40); data.writeBigUInt64LE(slot, 0); data.writeBigInt64LE(time, 32)
+  return { async getAccountInfo(address) { return address.equals(SYSVAR_CLOCK_PUBKEY) ? { owner: new PublicKey('Sysvar1111111111111111111111111111111111111'), data } : null } }
+}
+
+test('a vault trade\'s minimum is the exact curve quote less 1%, quoted at the chain clock (never before activation)', async () => {
+  const calls = [], curveConfig = key(), curve = { poolState: { activationPoint: new BN(400_000_100) } }
+  const dbc = { connection: { rpcEndpoint: `fake-${randomUUID()}` }, commitment: 'confirmed',
+    state: { async getPoolConfig(address) { assert.ok(new PublicKey(address).equals(curveConfig)); return { activationType: 0 } } },
+    pool: { swapQuote(params) { calls.push(params); return { outputAmount: new BN(1_000_000), minimumAmountOut: new BN(990_000) } } } }
+  const sell = await vaultTradeMinimumOut({ connection: clockConnection(), dbc, curveConfig, curve, damm: null, buy: false, amountIn: 5_000n })
+  assert.equal(sell, 990_000n)
+  assert.equal(AGENT.slippageBps, 100)
+  const [params] = calls
+  assert.deepEqual([params.swapBaseForQuote, params.amountIn.toString(), params.slippageBps, params.hasReferral, params.eligibleForFirstSwapWithMinFee],
+    [true, '5000', 100, false, false])
+  assert.equal(params.virtualPool, curve, 'the SDK gets getPool\'s own answer')
+  assert.equal(params.currentPoint.toString(), '400000100', 'a clock behind the pool\'s activation is clamped to it')
+  await vaultTradeMinimumOut({ connection: clockConnection({ slot: 400_000_500n }), dbc, curveConfig, curve, damm: null, buy: true, amountIn: 7n })
+  assert.deepEqual([calls[1].swapBaseForQuote, calls[1].currentPoint.toString()], [false, '400000500'])
+  // An SDK minimum that disagrees with the independent floor is no quote.
+  dbc.pool.swapQuote = () => ({ outputAmount: new BN(1_000_000), minimumAmountOut: new BN(1) })
+  await assert.rejects(vaultTradeMinimumOut({ connection: clockConnection(), dbc, curveConfig, curve, damm: null, buy: false, amountIn: 5n }), /No executable output/)
+})
+
+test('after graduation the minimum is the exact DAMM v2 quote less 1%', async () => {
+  const calls = [], tokenAMint = key()
+  const amm = { getQuote2(params) { calls.push(params); const out = params.inputTokenMint.equals(NATIVE_MINT) ? 2_000_000n : 3_000_000n
+    return { outputAmount: new BN(String(out)), minimumAmountOut: new BN(String(out * 9_900n / 10_000n)), amountLeft: new BN(0),
+      claimingFee: new BN(0), compoundingFee: new BN(0), protocolFee: new BN(0), referralFee: new BN(0) } } }
+  const damm = { activationType: 1, tokenAMint }
+  assert.equal(await vaultTradeMinimumOut({ connection: clockConnection(), amm, damm, buy: true, amountIn: 1_000n }), 1_980_000n)
+  assert.equal(await vaultTradeMinimumOut({ connection: clockConnection(), amm, damm, buy: false, amountIn: 1_000n }), 2_970_000n)
+  assert.ok(calls[0].inputTokenMint.equals(NATIVE_MINT) && calls[1].inputTokenMint.equals(tokenAMint))
+  assert.deepEqual([calls[0].slippage, calls[0].currentPoint.toString(), calls[0].amountIn.toString()], [100, '1800000000', '1000'], 'timestamp pools quote at unix time')
+})
+
+test('the agent never sends a trade without the quoted minimum, and only while launches are on', () => {
+  const source = readFileSync(new URL('../src/bundle-jobs.mjs', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /minimumOut: 1\b/)
+  assert.equal(source.match(/buy: decision\.buy, amountIn: decision\.amountIn, minimumOut, programId: program/g)?.length, 2, 'curve and pool swaps')
+  assert.match(source, /if \(!agentsLive \|\| !operator \|\| !launchesOn\) return \{ agent: 'dry run', \.\.\.planned \}/)
+  assert.match(source, /catch \(error\) \{ return \{ agent: 'hold', reason: `No quote: /)
 })

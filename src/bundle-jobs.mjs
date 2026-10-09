@@ -10,14 +10,22 @@ import { BPS, BUNDLE_VAULT_PROGRAM_ID, STATUS, bundleAccounts, bundleAddress, de
 import { bundleLaunchable } from './bundle-launch.mjs'
 import { createBundleLauncher } from './bundle-launcher.mjs'
 import { createLaunchCoordinator } from './launch-coordinator.mjs'
+import { dbcSwapQuote } from './canonical-trade.mjs'
+import { dammQuote } from './canonical-damm-trade.mjs'
+import { readChainPoint } from './chain-clock.mjs'
+import { quotePoint } from './launch-fee.mjs'
+import { readPoolConfig } from './market-config.mjs'
 
-// The worker's Bundle jobs (docs/BUNDLE_LAUNCH.md), one pass every ~30 s, dark unless bundleLaunchable(env):
+// The worker's Bundle jobs (docs/BUNDLE_LAUNCH.md), one pass every ~30 s whenever Bundle is configured. With launches off (the
+// switch or the code gate) existing bundles still move: raises fail and refund, fees route, graduation is recorded; only new
+// launches wait, and the vault agent only logs:
 // - the bundles table follows the chain: opening → raising once the Bundle account exists (expired if it never appears);
 //   raising → failed when the raise failed; launching → launched once the market is confirmed;
 // - cranks anyone may run, paid by the bundle launch signer: fail_raise for a raise past its deadline or grace period, the launch of
 //   a full raise (through the launch coordinator, server-signed), open_vault after it, fee routing from the curve and after
 //   graduation from the router's LP position, and record_graduation (the admin co-signs);
-// - the vault agent: its decision is logged every pass; it trades only with BUNDLE_AGENTS_LIVE=true and an operator key.
+// - the vault agent: its decision is logged every pass; it trades only with BUNDLE_AGENTS_LIVE=true, an operator key and launches
+//   on, and never below an exact quote less AGENT.slippageBps (the program's own floor checks sells only).
 // One action per bundle per pass, so a failure on one never blocks the others and nothing is retried in a tight loop.
 
 // A create transaction is co-signed only within 2 minutes of its review (the raise routes), so an opening row older than this never
@@ -29,7 +37,8 @@ export const ROUTE_MIN_LAMPORTS = 10_000_000n
 export const POOL_ROUTE_INTERVAL_MS = 6 * 60 * 60 * 1000
 // The vault agent (docs/BUNDLE_SIMULATION.md): sell above this multiple of the vault's average cost, buy after this fall from
 // the day's high. The program enforces the policy whatever the agent decides.
-export const AGENT = Object.freeze({ sellAtCost: 1.5, buyAfterFall: 0.15 })
+// slippageBps: each trade's minimum output is the exact Meteora quote less this, so a sandwich can take at most 1% of a trade.
+export const AGENT = Object.freeze({ sellAtCost: 1.5, buyAfterFall: 0.15, slippageBps: 100 })
 const DAY = 86_400
 
 export function readSecretKey(value) {
@@ -38,22 +47,26 @@ export function readSecretKey(value) {
   return Keypair.fromSecretKey(text.startsWith('[') ? Uint8Array.from(JSON.parse(text)) : bs58.decode(text))
 }
 
-// What the worker needs, or null while Bundle launches are dark or not configured (each missing piece named, never a value).
+// What the worker needs (each missing piece named, never a value), or null where Bundle was never configured and launches are off.
+// launchesOn: new launches (and the agent's trades) follow the switch and the code gate; everything for existing bundles does not,
+// so turning launches off never freezes a raise's refunds.
 export function bundleJobSettings(env = process.env) {
-  if (!bundleLaunchable(env)) return null
+  const launchesOn = bundleLaunchable(env)
+  if (!launchesOn && !String(env.BUNDLE_DBC_CONFIG ?? '').trim()) return null
   const missing = ['BUNDLE_DBC_CONFIG', 'BUNDLE_LOOKUP_TABLE', 'BUNDLE_LAUNCH_SIGNER_SECRET_KEY', 'PLATFORM_CREATOR_SECRET_KEY', 'APP_ORIGIN']
     .filter(name => !String(env[name] ?? '').trim())
   if (missing.length) return { missing }
   return { config: new PublicKey(env.BUNDLE_DBC_CONFIG.trim()), lookupTable: env.BUNDLE_LOOKUP_TABLE.trim(),
     launchSigner: readSecretKey(env.BUNDLE_LAUNCH_SIGNER_SECRET_KEY), creator: readSecretKey(env.PLATFORM_CREATOR_SECRET_KEY),
-    operator: readSecretKey(env.BUNDLE_OPERATOR_SECRET_KEY), agentsLive: env.BUNDLE_AGENTS_LIVE === 'true',
+    operator: readSecretKey(env.BUNDLE_OPERATOR_SECRET_KEY), agentsLive: env.BUNDLE_AGENTS_LIVE === 'true', launchesOn,
     // Each bundle token's metadata URI is built on it: an origin only (a trailing slash or path would break the URI).
     metadataOrigin: new URL(env.APP_ORIGIN.trim()).origin }
 }
 
 // The one action a bundle needs this pass. row: the bundles row; chain: the decoded Bundle account or null; market: the markets row
 // launched from it, or null; now: unix seconds.
-export function bundleAction({ row, chain, market, now }) {
+export function bundleAction({ row, chain, market, now, launchesOn = true }) {
+  const launchOr = action => launchesOn ? { action } : { action: 'wait', reason: 'Bundle launches are off' }
   if (row.status === 'opening') {
     if (chain) return { action: 'activate' }
     return now * 1000 - new Date(row.createdAt).getTime() > BUNDLE_STALE_OPENING_MS ? { action: 'expire' } : { action: 'wait' }
@@ -63,7 +76,7 @@ export function bundleAction({ row, chain, market, now }) {
     if (chain.status === STATUS.FAILED) return { action: 'mark_failed' }
     if (chain.status === STATUS.LAUNCHED) return market?.status === 'confirmed' ? { action: 'mark_launched' } : { action: 'wait' }
     const graceEnd = chain.deadline + chain.launchGraceSecs
-    if (chain.raised === chain.target && chain.released === 0n && now <= graceEnd) return { action: 'launch' }
+    if (chain.raised === chain.target && chain.released === 0n && now <= graceEnd) return launchOr('launch')
     if ((now > chain.deadline && chain.raised < chain.target) || now > graceEnd) return { action: 'fail_raise' }
     return { action: 'wait' }
   }
@@ -72,7 +85,7 @@ export function bundleAction({ row, chain, market, now }) {
     // Past the grace period the program refuses release, so no launch can land any more: fail the raise so refunds open,
     // whatever state a launch attempt was left in (a repeating refusal, a crash between reserve and send).
     if (chain.status === STATUS.RAISING && chain.released === 0n && now > chain.deadline + chain.launchGraceSecs) return { action: 'fail_raise' }
-    if (chain.status === STATUS.RAISING && (!market || market.status === 'failed')) return { action: 'retry_launch' }
+    if (chain.status === STATUS.RAISING && (!market || market.status === 'failed')) return launchOr('retry_launch')
     if (chain.status === STATUS.FAILED) return { action: 'mark_failed' }
     return { action: 'wait' }
   }
@@ -81,6 +94,23 @@ export function bundleAction({ row, chain, market, now }) {
     return { action: 'tend' }
   }
   return { action: 'wait' }
+}
+
+// The vault trade's minimum output: the exact Meteora quote at the chain's confirmed clock, less AGENT.slippageBps. Before
+// graduation the curve (curve: dbc.state.getPool's answer, curveConfig its DBC config); after it the DAMM v2 pool (damm: its
+// state). Both quote helpers check the SDK's minimum against an independent floor and throw when there is no executable output.
+export async function vaultTradeMinimumOut({ connection, dbc, amm, curveConfig, curve, damm, buy, amountIn, slippageBps = AGENT.slippageBps }) {
+  const direction = buy ? 'buy' : 'sell'
+  if (damm) {
+    const currentPoint = await readChainPoint(connection, damm.activationType)
+    return dammQuote({ amm, poolState: damm, direction, amountIn, currentPoint, slippageBps }).minimumAmountOut
+  }
+  const config = await readPoolConfig(dbc, curveConfig)
+  if (!config) throw Error('Bundle curve config is missing')
+  const state = curve.poolState ?? curve
+  const currentPoint = quotePoint(await readChainPoint(connection, config.activationType), state.activationPoint)
+  const result = dbcSwapQuote({ dbc, virtualPool: curve, config, direction, amountIn: new BN(String(amountIn)), currentPoint, slippageBps })
+  return BigInt(result.minimumAmountOut.toString())
 }
 
 const bps = (amount, value) => BigInt(amount) * BigInt(value) / BigInt(BPS)
@@ -109,13 +139,14 @@ export function vaultAgentDecision({ bundle, price, high, vaultSol, vaultTokens,
 const sqrtPrice = value => { const s = Number(value.toString()) / 2 ** 64; return s * s }
 
 export function createBundleJobs({ pool, connection, settings, programId = BUNDLE_VAULT_PROGRAM_ID, now = () => Math.floor(Date.now() / 1000),
-  coordinatorFor = null, builderAllocationEnabled = false, log = record => console.log(JSON.stringify({ bundles: record })) }) {
+  coordinatorFor = null, builderAllocationEnabled = false, log = record => console.log(JSON.stringify({ bundles: record })), dbc: dbcClient = null,
+  amm: ammClient = null }) {
   // Every send signs with a confirmed blockhash; a connection at another commitment preflights (and simulates) at that one, and a
   // finalized one refuses a fresh confirmed blockhash, so nothing would ever send.
   if (connection.commitment !== 'confirmed') throw Error('Bundle jobs need a connection at confirmed commitment')
   const program = new PublicKey(programId)
-  const { config, lookupTable, launchSigner, creator, operator, agentsLive, metadataOrigin } = settings
-  const dbc = new DynamicBondingCurveClient(connection, 'confirmed'), amm = new CpAmm(connection)
+  const { config, lookupTable, launchSigner, creator, operator, agentsLive, metadataOrigin, launchesOn = true } = settings
+  const dbc = dbcClient ?? new DynamicBondingCurveClient(connection, 'confirmed'), amm = ammClient ?? new CpAmm(connection)
   const launcher = createBundleLauncher({ connection, config, creator, launchSigner, lookupTable, metadataOrigin, programId: program })
   const coordinator = id => coordinatorFor ? coordinatorFor(id, launcher)
     : createLaunchCoordinator({ pool, launcher, discoveryEnabled: false, builderAllocationEnabled, bundle: { id: String(id) } })
@@ -186,10 +217,11 @@ export function createBundleJobs({ pool, connection, settings, programId = BUNDL
         position: chain.routerPosition, positionNftAccount: chain.routerPositionNft, tokenAVault: damm.tokenAVault, tokenBVault: damm.tokenBVault,
         treasury: platform.treasury, programId: program })]) }
     }
-    return agent(row, chain, state, accounts)
+    return agent(row, chain, curve, accounts)
   }
 
-  async function agent(row, chain, curveState, accounts) {
+  async function agent(row, chain, curve, accounts) {
+    const curveState = curve.poolState ?? curve
     const [sol, tokens] = await Promise.all([accounts.vaultSol, accounts.vaultTokens].map(account =>
       connection.getTokenAccountBalance(account, 'confirmed').then(result => BigInt(result.value.amount)).catch(() => 0n)))
     const damm = chain.graduated ? await amm.fetchPoolState(chain.dammPool) : null
@@ -201,13 +233,20 @@ export function createBundleJobs({ pool, connection, settings, programId = BUNDL
     const high = Math.max(price, day?.high ? sqrtPrice(day.high) : 0)
     const decision = vaultAgentDecision({ bundle: chain, price, high, vaultSol: sol, vaultTokens: tokens, now: now() })
     if (!decision) return { agent: 'hold' }
-    if (!agentsLive || !operator) return { agent: 'dry run', ...decision, amountIn: decision.amountIn.toString() }
+    // Every trade carries the exact quote's output less AGENT.slippageBps as its minimum; no quote, no trade.
+    let minimumOut
+    try {
+      minimumOut = await vaultTradeMinimumOut({ connection, dbc, amm, curveConfig: chain.curveConfig, curve, damm, buy: decision.buy,
+        amountIn: decision.amountIn })
+    } catch (error) { return { agent: 'hold', reason: `No quote: ${String(error?.message ?? error).slice(0, 120)}` } }
+    const planned = { ...decision, amountIn: decision.amountIn.toString(), minimumOut: minimumOut.toString() }
+    if (!agentsLive || !operator || !launchesOn) return { agent: 'dry run', ...planned }
     const swap = chain.graduated
       ? vaultSwapPoolInstruction({ operator: operator.publicKey, id: chain.id, mint: chain.mint, dammPool: chain.dammPool, tokenAVault: damm.tokenAVault,
-        tokenBVault: damm.tokenBVault, position: chain.routerPosition, buy: decision.buy, amountIn: decision.amountIn, minimumOut: 1, programId: program })
+        tokenBVault: damm.tokenBVault, position: chain.routerPosition, buy: decision.buy, amountIn: decision.amountIn, minimumOut, programId: program })
       : vaultSwapCurveInstruction({ operator: operator.publicKey, id: chain.id, mint: chain.mint, pool: chain.pool, config: chain.curveConfig,
-        baseVault: curveState.baseVault, quoteVault: curveState.quoteVault, buy: decision.buy, amountIn: decision.amountIn, minimumOut: 1, programId: program })
-    return { agent: decision.reason, trade: await send([swap], [operator]) }
+        baseVault: curveState.baseVault, quoteVault: curveState.quoteVault, buy: decision.buy, amountIn: decision.amountIn, minimumOut, programId: program })
+    return { agent: decision.reason, minimumOut: planned.minimumOut, trade: await send([swap], [operator]) }
   }
 
   return {
@@ -225,7 +264,7 @@ export function createBundleJobs({ pool, connection, settings, programId = BUNDL
         let chain = null
         try { chain = infos[i]?.owner.equals(program) ? decodeBundle(infos[i].data) : null } catch {}
         const market = row.marketStatus ? { status: row.marketStatus, mint: row.marketMint, launchSignature: row.marketSignature } : null
-        const { action, reason } = bundleAction({ row, chain, market, now: now() })
+        const { action, reason } = bundleAction({ row, chain, market, now: now(), launchesOn })
         const result = { bundleId: row.bundleId, action }
         try {
           if (action === 'activate') await setStatus(row.bundleId, 'raising')
