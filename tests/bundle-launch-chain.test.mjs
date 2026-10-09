@@ -168,7 +168,7 @@ test('bundle launches through the worker: launch, evidence, vault, routing, fail
       assert.equal((await chainBundle(2)).status, STATUS.FAILED)
     })
 
-    await t.test('the live vault agent sells above its target with the quoted minimum, which the curve honours', async () => {
+    await t.test('the live vault agent sells above its target with a quoted minimum within 1% of what the vault receives', async () => {
       // After the launch fee window, a large buy lifts the price well above 1.5x the vault's average cost.
       while ((await chainTime()) < Number((await chainBundle(1)).tradingOpensAt) + 2) await sleep(1_000)
       const before = await chainBundle(1)
