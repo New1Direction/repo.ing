@@ -26,7 +26,7 @@ Builders keep their 0.994%.
 | Operations wallet | The bundle launch signer itself: the 5% funds its launches and cranks. |
 | Treasury | Buyback custody FgzeY…: repo.ing's 20% arrives there as wrapped SOL, for $REPOING buys. |
 | Builder allocation | Yes, as on standard markets: the bundle config is added to `BUILDER_ALLOCATION_CONFIGS`. |
-| Vault agent | Trades from the first day a vault may trade (after the launch fee): `BUNDLE_AGENTS_LIVE=true` with an operator key. |
+| Vault agent | Trades from the first day a vault may trade (after the launch fee): `BUNDLE_AGENTS_LIVE=true` with an operator key. Each trade's minimum output is the exact Meteora quote less 1% (`AGENT.slippageBps`, `vaultTradeMinimumOut` in `src/bundle-jobs.mjs`); no quote, no trade. Off (dry run, decisions logged) while launches are off. |
 | Site raises | 1–10 SOL (default 5), from the simulation (docs/BUNDLE_SIMULATION.md). |
 
 ## The flow
@@ -67,6 +67,7 @@ Checked before every vault trade, on the vault's balances before and after it:
 | --- | --- |
 | Who | A platform operator key (up to 4); the vault PDA signs the swap, agents never hold funds. |
 | Alone | Top level only, and no other DBC or DAMM v2 instruction in the transaction (no same-transaction sandwich). |
+| Price | The swap's `minimum_out` (Meteora checks it). The program's floor checks sells only, so the worker always passes the quoted minimum. |
 | When | Not before `trading_opens_at` (the launch fee), not while paused. |
 | Size | One trade at most `max_trade_bps` of the vault's SOL (buy) or tokens (sell). |
 | Daily | Per UTC day, buys at most `max_daily_buy_bps` of the SOL before them, sells at most `max_daily_sell_bps` of the tokens before them. |
@@ -272,7 +273,9 @@ on bundle markets); add the bundle config to web's list too. On Railway the work
 The switch gates only what starts or funds a raise: the launch form's Bundle option, `POST /api/bundles` (prepare, submit) and
 deposits (and relaying one) answer 404 unless `bundleLaunchable()`. Everything for a bundle that already exists works whatever the
 switch says, so a backer is never locked out: reading it, its page (without the deposit form while the switch is off), refunds,
-claims and their relay, the token page's vault tab and `/wallet`'s list. All of it is rate limited per address (`bundle:read`,
+claims and their relay, the token page's vault tab and `/wallet`'s list. The worker's jobs follow the same rule: with launches off
+(the switch or the code gate) a full raise is not launched, and the vault agent only logs, but everything else keeps running
+(`fail_raise` past a deadline or grace, so refunds open; open_vault, fee routing, `record_graduation`). All of it is rate limited per address (`bundle:read`,
 `bundle:prepare`, `bundle:submit`, `bundle:send`; opening one counts as `launch:prepare`), and the backer count is read once per
 bundle per 30 s.
 

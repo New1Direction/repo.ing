@@ -168,6 +168,27 @@ test('bundle launches through the worker: launch, evidence, vault, routing, fail
       assert.equal((await chainBundle(2)).status, STATUS.FAILED)
     })
 
+    await t.test('the live vault agent sells above its target with the quoted minimum, which the curve honours', async () => {
+      // After the launch fee window, a large buy lifts the price well above 1.5x the vault's average cost.
+      while ((await chainTime()) < Number((await chainBundle(1)).tradingOpensAt) + 2) await sleep(1_000)
+      const before = await chainBundle(1)
+      await send(await dbc.pool.swap2({ owner: whale.publicKey, payer: whale.publicKey, pool: before.pool, amountIn: new BN(String(30n * SOL)),
+        minimumAmountOut: new BN(0), swapBaseForQuote: false, swapMode: SwapMode.ExactIn, referralTokenAccount: null }), [whale])
+      const vaultSol = async () => BigInt((await connection.getTokenAccountBalance(before.vaultSol, 'confirmed')).value.amount)
+      const solBefore = await vaultSol()
+      const live = createBundleJobs({ pool, connection, settings: { ...settings, agentsLive: true }, log: () => {} })
+      let traded
+      // One action per bundle per pass: the buy's partner fee is routed first, then the agent trades.
+      for (let i = 0; i < 4 && !traded; i++) { const [result] = (await live.runOnce()).filter(r => r.bundleId === '1'); if (result?.trade) traded = result }
+      assert.ok(traded?.trade?.sent, JSON.stringify(traded))
+      assert.equal(traded.agent, 'price above the sell target')
+      const after = await chainBundle(1), received = await vaultSol() - solBefore
+      assert.ok(after.daySold > 0n, 'the program recorded the sell')
+      const minimum = BigInt(traded.minimumOut)
+      // A real bound: within 1% (the agent's tolerance) plus rounding of what the vault actually received, never 1.
+      assert.ok(received >= minimum && minimum * 10_000n >= received * 9_890n, JSON.stringify({ minimum: String(minimum), received: String(received) }))
+    })
+
     await t.test('the curve graduates and the worker binds the bundle to its DAMM v2 pool and the router\'s position', async () => {
       const chain = await chainBundle(1)
       await send(await dbc.pool.swap2({ owner: whale.publicKey, payer: whale.publicKey, pool: chain.pool, amountIn: new BN(String(300n * SOL)),
