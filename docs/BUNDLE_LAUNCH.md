@@ -289,6 +289,20 @@ bundle per 30 s.
 The worker moves rows on from `raising` (and activates or expires an `opening` row by the chain); these routes only insert
 `opening` and set `raising` on a confirmed create.
 
+## Cancel a raise
+
+Anyone can open a raise on a public repository, and while it raises the repository's standard launches and its ticker are held
+(`LIVE_BUNDLE_STATUSES`). For a raise that should not hold its repository (opened only to block it, or the maintainer opted out),
+the admin cancels it with `scripts/cancel-bundle.mjs` (`src/bundle-cancel.mjs`) on the web service, where the admin key (the creator
+signer) is set. It is a dry run unless `--execute`: it reads the bundle and its repository, checks that this server's creator signer
+is the platform's admin, and simulates the signed `cancel_bundle`. A raise that launched (or already failed) is refused before
+anything is signed. After the cancel the backers refund, and the worker's next pass (`mark_failed`) frees the repository.
+
+```sh
+railway ssh --project … --environment production --service web -- node scripts/cancel-bundle.mjs <bundle id>            # dry run
+railway ssh --project … --environment production --service web -- node scripts/cancel-bundle.mjs <bundle id> --execute
+```
+
 ## Not built yet
 
 The bundle tables' separate ledgers (as for stock pairs), indexing of raises, vault trades and routings (the site shows no

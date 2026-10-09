@@ -30,6 +30,15 @@ export function bundleData(fields) {
     u64(f.backerIncome ?? 0), u64(f.backerPaid ?? 0), u64(f.treasuryIncome ?? 0), u128(f.accPerShare ?? 0), Buffer.alloc(64)])
 }
 
+// The Platform account's data in decodePlatform's order; anything not given is the default key or zero.
+export function platformData(fields = {}) {
+  const f = { operators: [], backerBps: 8_000, opsBps: 500, launchCooldownSecs: 180, launchGraceSecs: 86_400, limits: POLICY, ...fields }
+  const operators = [0, 1, 2, 3].map(i => key(f.operators[i])), p = f.limits
+  return Buffer.concat([discriminator('account:Platform'), key(f.admin), key(f.launchSigner), ...operators, key(f.opsWallet), key(f.treasury),
+    key(f.routerSol), key(f.curveConfig), key(f.dammConfig), u16(f.backerBps), u16(f.opsBps), u32(f.launchCooldownSecs), u32(f.launchGraceSecs),
+    u16(p.maxTradeBps), u16(p.maxDailyBuyBps), u16(p.maxDailySellBps), u16(p.floorBps), u32(p.gapSecs), u8(f.bump ?? 255)])
+}
+
 export const backerData = ({ bundle, wallet, shares, paid = 0n, bump = 253 }) =>
   Buffer.concat([discriminator('account:Backer'), key(bundle), key(wallet), u64(shares), u64(paid), u8(bump)])
 
