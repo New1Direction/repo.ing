@@ -29,7 +29,7 @@ export async function GET(_request, { params }) {
       settleWithin(solUsdPrice(), SOURCE_MS),
     ])
     const stats = ogMarketStats({ priceSol, supplyBaseUnits: supply?.amount, supplyDecimals: supply?.decimals, usdPerSol })
-    const body = await renderPng(<MarketCard market={market} logo={logo} stats={stats}/>)
+    const body = await renderPng(<MarketCard market={market} logo={logo} stats={stats} at={Date.now()}/>)
     return cards.put(mint, body, stats.length > 0)
   } catch {
     return fallback()

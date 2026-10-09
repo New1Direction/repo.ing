@@ -32,6 +32,7 @@ import { marketLaunchFeeTerms } from '../../lib/launch-fee.mjs'
 import { maintainerDecision, promotionExcluded } from '../../lib/maintainer-opt-outs.mjs'
 import { timed } from '../../lib/server-timing.mjs'
 import '../../maintainer-opt-out.css'
+import { ogCardImageUrl } from '../../lib/og-card.mjs'
 
 // The token page of a Hugging Face model market (app/(site)/token/[mint]/page.jsx returns here for a model id). It keeps
 // the trading panel, chart, trust panel, recent trades and sharing, shows the model card, the Model Pulse slot and the
@@ -47,7 +48,7 @@ export function modelTokenMetadata(market) {
   const title = `$${market.symbol} · ${market.fullName} — repo.ing`
   const description = modelMetaDescription(market)
   const url = `https://repo.ing/token/${market.mint}`
-  const image = { url: `${url}/opengraph-image`, width: 1200, height: 630, alt: `$${market.symbol} · ${market.fullName} Hugging Face model market on repo.ing` }
+  const image = { url: ogCardImageUrl(url), width: 1200, height: 630, alt: `$${market.symbol} · ${market.fullName} Hugging Face model market on repo.ing` }
   return { title, description, alternates: { canonical: url },
     openGraph: { title, description, url, type: 'website', siteName: 'repo.ing', images: [image] },
     twitter: { card: 'summary_large_image', title, description, images: [image] } }
