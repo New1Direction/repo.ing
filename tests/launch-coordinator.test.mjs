@@ -304,6 +304,19 @@ test('a ticker another market uses is refused at review, compared without case; 
   assert.equal((await unchecked.launch({ ...request('https://github.com/third/repo'), tokenSymbol: 'omarchy' })).status, 'confirmed')
 })
 
+test('a ticker with lookalike characters is refused before review; a declined market does not hold its ticker', async () => {
+  await createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: fakeFetch, refuseTakenSymbols: true }).launch(request())
+  const other = createLaunchCoordinator({ pool, launcher: fakeLauncher(), fetchImpl: repoAt(456, 'other/omarchy'), refuseTakenSymbols: true })
+  for (const symbol of ['REPO ', 'RE\u200bPO', 'REP\u041e']) {
+    await assert.rejects(other.launch({ ...request(OTHER), tokenSymbol: symbol }), /^Error: Ticker must be 1–10 letters or numbers \(A–Z, 0–9\)\.$/, JSON.stringify(symbol))
+  }
+  assert.deepEqual(await marketsOf(456), [], 'refused before anything was reserved')
+  // The maintainer of old/repo declines its market (the relaunch procedure's first step): another repository may now use REPO.
+  await pool.query(`insert into maintainer_opt_outs(github_repo_id, kind, github_user_id) values (123, 'decline', 1)`)
+  try { assert.equal((await other.launch({ ...request(OTHER), tokenSymbol: 'REPO' })).status, 'confirmed') }
+  finally { await pool.query('delete from maintainer_opt_outs where github_repo_id = 123') }
+})
+
 test('a review in progress, a launch sent and a live bundle hold a ticker; a failed attempt or a failed bundle frees it', async () => {
   const launcher = splitLauncher(), a = replica(pool, launcher, { refuseTakenSymbols: true })
   const b = replica(replicaPool, launcher, { refuseTakenSymbols: true, fetchImpl: repoAt(456, 'other/omarchy') })

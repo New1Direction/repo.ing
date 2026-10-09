@@ -11,7 +11,7 @@ import { RULES } from './early-access-hook.mjs'
 import { EarlyAccessError } from './early-access.mjs'
 import { hasStarUnlocks } from './early-access-rules.mjs'
 import { validateTokenImage } from './token-image.mjs'
-import { SYMBOL_SENT_STATUSES, assertSymbolFree, withSymbolLock } from './launch-symbols.mjs'
+import { SYMBOL_SENT_STATUSES, TICKER_MESSAGE, assertSymbolFree, validTicker, withSymbolLock } from './launch-symbols.mjs'
 
 // Named explicitly, like DefinitiveLaunchError: the production build renames classes.
 export class IncompleteLaunchError extends Error {
@@ -106,6 +106,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     if (!tokenName || tokenName.length > 32 || !tokenSymbol || tokenSymbol.length > 10) {
       throw new Error('Token name (1–32) and symbol (1–10) are required')
     }
+    if (!validTicker(tokenSymbol)) throw new Error(TICKER_MESSAGE)
     const image = tokenImage === null ? null : await validateTokenImage(tokenImage)
     if (requireSigner && typeof signTransaction !== 'function') throw new Error('Launcher signTransaction callback required')
     const wallet = new PublicKey(launcherWallet).toBase58()
