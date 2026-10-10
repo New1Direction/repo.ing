@@ -174,13 +174,15 @@ export async function creditsCall(fetchImpl, origin, path, { method = 'GET', bod
 }
 
 /**
- * Signs in to the credit service for a GitHub account that was just checked live as an admin of the repository: repo.ing
- * approves its own handoff (PKCE S256, the verifier never leaves this server) and the credit service redeems the code.
+ * Signs in to the credit service for a GitHub account that was just checked live (as an admin of the repository, or for an
+ * identity handoff with no repository, as itself): repo.ing approves its own handoff (PKCE S256, the verifier never leaves
+ * this server) and the credit service redeems the code.
  */
-export async function signInToCredits({ pool, settings, repoId, githubUserId, login, fetchImpl = fetch, now = Date.now() }) {
+export async function signInToCredits({ pool, settings, repoId, githubUserId, login, permission = 'admin', fetchImpl = fetch, now = Date.now() }) {
   const verifier = randomBytes(32).toString('base64url')
   const challenge = createHash('sha256').update(verifier).digest('base64url')
-  const { code } = await createHandoff(pool, { request: { audience: HANDOFF_AUDIENCE, repoId: String(repoId), challenge }, githubUserId, login })
+  const { code } = await createHandoff(pool, { request: { audience: HANDOFF_AUDIENCE, repoId: permission === 'identity' ? null : String(repoId), challenge },
+    githubUserId, login, permission })
   const session = await creditsCall(fetchImpl, settings.origin, '/sessions', { method: 'POST', body: { code, code_verifier: verifier } })
   if (!TOKEN.test(session.token ?? '')) throw new CreditsWebError(plain(session.note) ?? 'The AI credits sign-in failed. Try again.', 502)
   const until = Date.parse(session.expires_at)

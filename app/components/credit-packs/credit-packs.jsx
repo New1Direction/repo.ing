@@ -188,7 +188,7 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts }) {
       <div className="packs-panel">
         {!signedIn ? <>
           <h2>Sign in to open packs</h2>
-          <p>AI credit packs are for builders on repo.ing: you must be an admin of a repository with a market. You pay in SOL from your own wallet, at the price of the moment.</p>
+          <p>Anyone with a GitHub account can open packs: your credits belong to your GitHub account. You pay in SOL from your own wallet, at the price of the moment.</p>
           <a className="button primary" href="/api/github/start?mode=credits">Sign in with GitHub</a>
           <p className="packs-note">Read-only. It only tells repo.ing who you are.</p>
         </> : !loaded ? <p role="status">Checking your packs…</p> : open ? <>
