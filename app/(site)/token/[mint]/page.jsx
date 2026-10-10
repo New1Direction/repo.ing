@@ -126,8 +126,8 @@ export default async function Token({ params, searchParams }) {
       <RepositoryEarnings market={market} declined={decision !== null}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
     // A market launched from a Bundle (docs/BUNDLE_LAUNCH.md): its vault, its routed fees and the backers' claim, whatever Bundle
-    // launches' switch says. #bundle-vault (linked from /wallet) opens it.
-    ...isBundleMarket(market) ? [{ id: 'bundle', anchor: 'bundle-vault', label: 'Bundle vault',
+    // launches' switch says. #group-vault (linked from /wallet) opens it.
+    ...isBundleMarket(market) ? [{ id: 'bundle', anchor: 'group-vault', label: 'Group vault',
       content: <Suspense fallback={<BundleVaultFallback/>}><BundleVault market={market}/></Suspense> }] : [],
     // #rewards (linked from /wallet) opens this tab so a launcher lands on the claim button.
     ...rewards ? [{ id: 'rewards', anchor: 'rewards', label: 'Rewards', content: <div id="rewards" className="details-rewards">

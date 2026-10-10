@@ -101,7 +101,7 @@ function DepositForm({ state, figures, onDone }) {
     action.run(state.id, 'deposit', { lamports: lamports.toString() })
   }
   return <form className="inner-card bundle-deposit" onSubmit={submit} aria-labelledby="bundle-deposit-title">
-    <h3 id="bundle-deposit-title">Back this bundle</h3>
+    <h3 id="bundle-deposit-title">Back this launch</h3>
     <div className="launch-buy-presets" role="group" aria-label="Deposit presets">
       {presets.map(value => <button key={value.toString()} type="button" aria-pressed={lamports === value} onClick={() => setAmount(formatUnits(value, 9))}>{sol(value)} SOL</button>)}
       <button type="button" aria-pressed={lamports === remaining} onClick={() => setAmount(formatUnits(remaining, 9))}>Fill ({sol(remaining)})</button>
@@ -124,7 +124,7 @@ export function BackerShare({ state, wallet, phase, onDone }) {
     <button type="button" className="button outline" onClick={() => connect().catch(() => {})}>Connect wallet</button></div>
   const backer = state.wallet?.address === wallet ? state.wallet.backer : undefined
   if (backer === undefined) return <div className="inner-card bundle-share" aria-busy="true"><h3>Your share</h3><p role="status">Reading your deposit…</p></div>
-  if (!backer) return <div className="inner-card bundle-share"><h3>Your share</h3><p>This wallet has not backed this bundle.</p></div>
+  if (!backer) return <div className="inner-card bundle-share"><h3>Your share</h3><p>This wallet has not backed this launch.</p></div>
   const pending = BigInt(backer.pending), share = BigInt(backer.shares) > 0n && backer.shareBps === 0 ? '<0.01%' : sharePercent(backer.shareBps)
   return <div className="inner-card bundle-share"><h3>Your share</h3>
     <dl className="bundle-facts">

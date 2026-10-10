@@ -13,7 +13,7 @@ import '../bundles.css'
 const sol = lamports => lamports === null || lamports === undefined ? '—' : `${formatSolDisplay(lamports)} SOL`
 
 export function BundleVaultFallback() {
-  return <div className="inner-card bundle-vault" aria-busy="true"><h3>Bundle vault</h3><p role="status" className="loading-placeholder">Reading the vault…</p></div>
+  return <div className="inner-card bundle-vault" aria-busy="true"><h3>Group vault</h3><p role="status" className="loading-placeholder">Reading the vault…</p></div>
 }
 
 async function readVault(market) {
@@ -26,13 +26,13 @@ async function readVault(market) {
   return { state, holdings: await vaultHoldings(connection, { id, mint: market.mint }) }
 }
 
-// Details → "Bundle vault" tab.
+// Details → "Group vault" tab.
 export async function BundleVault({ market }) {
   const read = await readVault(market).catch(error => { console.warn('bundle_vault_unavailable', { code: error?.code ?? error?.name ?? 'error' }); return null })
-  if (!read) return <div id="bundle-vault" className="inner-card bundle-vault"><h3>Bundle vault</h3><p>The vault cannot be read right now. Try again shortly.</p></div>
+  if (!read) return <div id="group-vault" className="inner-card bundle-vault"><h3>Group vault</h3><p>The vault cannot be read right now. Try again shortly.</p></div>
   const { state, holdings } = read, chain = state.chain
-  return <section id="bundle-vault" className="inner-card bundle-vault" aria-labelledby="bundle-vault-title">
-    <div className="bundle-vault-heading"><h3 id="bundle-vault-title">Bundle vault</h3><Link href={`/bundle/${state.id}`}>Raise page →</Link></div>
+  return <section id="group-vault" className="inner-card bundle-vault" aria-labelledby="bundle-vault-title">
+    <div className="bundle-vault-heading"><h3 id="bundle-vault-title">Group vault</h3><Link href={`/group/${state.id}`}>Raise page →</Link></div>
     <p className="bundle-vault-lede">{state.backers ?? 'Its'} {state.backers === 1 ? 'backer' : 'backers'} raised {sol(chain.raised)} for this market. The raise bought its first
       tokens into this vault, which keeps its SOL for good; its trades stay within fixed on-chain limits.</p>
     <dl className="bundle-facts bundle-vault-facts">
