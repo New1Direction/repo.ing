@@ -7,8 +7,8 @@ import { AI_CREDITS_OFF, DEFAULT_ORIGIN, VERSION, aiCreditsOn, validateOrigin } 
 // (repo.ing AI credits, repo-inference's docs/FEE-CONVERSION.md). Converting signs in through repo.ing with PKCE (the browser
 // approves; repo.ing sends a single-use code to a one-time listener on 127.0.0.1), then asks the credit service for a quote
 // and shows its Solana Pay link. The credit service is credits.repo.ing (staging: --credits-origin
-// https://staging-credits.repo.ing, on Solana devnet); real conversion stays off until repo.ing turns it on. Converting is offered
-// only with REPOING_AI_CREDITS=1 (core.mjs, aiCreditsOn); otherwise `repoing claim` claims to the wallet without asking.
+// https://staging-credits.repo.ing, on Solana devnet). Converting is offered unless REPOING_AI_CREDITS=0 (core.mjs,
+// aiCreditsOn); then `repoing claim` claims to the wallet without asking.
 export const DEFAULT_CREDITS_ORIGIN = 'https://credits.repo.ing'
 export const HANDOFF_AUDIENCE = 'repo-inference'
 export const SIGN_IN_TIMEOUT_MS = 5 * 60_000

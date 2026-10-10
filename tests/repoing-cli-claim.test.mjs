@@ -10,7 +10,7 @@ import { DEFAULT_CREDITS_ORIGIN, claimHelp, claimStatus, handoffUrl, lamportsToS
 // the credit service scripted (the listener is real, on 127.0.0.1).
 const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value })
 const TREASURY = '7WZRJ4to98TLKhiWqoNfqWwYcxrqN8KsBJWXdTxq2KUY'
-const ON = { REPOING_AI_CREDITS: '1' } // AI credits are off unless this is set
+const ON = { REPOING_AI_CREDITS: '1' } // AI credits on (the default since 0.3.0), set explicitly
 
 test('a Solana Pay link: its QR code, then the link; anything that is not a plain link is refused', () => {
   const url = `solana:${TREASURY}?amount=0.166666667&reference=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin&label=repo.ing%20AI%20credits&message=Credit%20pack%202f8fad5b-d9cb-469f-a165-70867728950e`
@@ -154,13 +154,14 @@ test('the credit service is credits.repo.ing unless another is given', () => {
   assert.equal(parseClaimArgs([], { REPOING_CREDITS_ORIGIN: 'https://staging-credits.repo.ing' }).creditsOrigin, 'https://staging-credits.repo.ing')
 })
 
-test('AI credits off (the default): claim goes to the wallet without asking, and convert or credits say they are not open', async () => {
-  const off = parseClaimArgs(['octo/widget'], {})
+test('AI credits on by default since 0.3.0; REPOING_AI_CREDITS=0 hides them: claim goes to the wallet without asking', async () => {
+  assert.equal(parseClaimArgs(['octo/widget'], {}).aiCredits, true, 'on with no setting')
+  assert.equal(parseClaimArgs(['--convert', '0.5'], { REPOING_AI_CREDITS: '1' }).mode, 'convert')
+  const off = parseClaimArgs(['octo/widget'], { REPOING_AI_CREDITS: '0' })
   assert.equal(off.aiCredits, false)
   for (const args of [['--convert', '0.5'], ['--credits-origin', 'https://staging-credits.repo.ing']]) {
-    assert.throws(() => parseClaimArgs(args, {}), /AI credits are not open yet/, args.join(' '))
+    assert.throws(() => parseClaimArgs(args, { REPOING_AI_CREDITS: '0' }), /AI credits are turned off here/, args.join(' '))
   }
-  assert.throws(() => parseClaimArgs(['--convert', '0.5'], { REPOING_AI_CREDITS: 'true' }), /not open yet/, 'only exactly 1 turns them on')
   const opened = [], asked = []
   const io = { print: () => {}, ask: async question => { asked.push(question); return '2' }, open: async url => { opened.push(url); return true } }
   const result = await runClaim(off, { repository: 'https://github.com/octo/widget', io, fetchImpl: services().fetchImpl })
@@ -168,12 +169,14 @@ test('AI credits off (the default): claim goes to the wallet without asking, and
   assert.doesNotMatch(claimHelp(false), /convert|credits/i)
   assert.match(claimHelp(true), /--convert <SOL>/)
   const bin = new URL('../cli/bin/repoing.mjs', import.meta.url).pathname
-  const env = { ...process.env, REPOING_AI_CREDITS: '' }
+  const env = { ...process.env, REPOING_AI_CREDITS: '0' }
   const credits = await promisify(execFile)(process.execPath, [bin, 'credits', 'list'], { env }).catch(error => error)
   assert.equal(credits.code, 1)
-  assert.match(credits.stderr, /^repoing: AI credits are not open yet\. repoing claim --to-wallet claims your fees to your wallet\.\n$/)
+  assert.match(credits.stderr, /^repoing: AI credits are turned off here \(REPOING_AI_CREDITS=0\)\. repoing claim --to-wallet claims your fees to your wallet\.\n$/)
   const help = await promisify(execFile)(process.execPath, [bin, '--help'], { env })
   assert.doesNotMatch(help.stdout, /credits/)
+  const shown = await promisify(execFile)(process.execPath, [bin, '--help'], { env: { ...process.env, REPOING_AI_CREDITS: '' } })
+  assert.match(shown.stdout, /credits/, 'the help lists AI credits by default')
 })
 
 test('a credit service that cannot be reached is named, not "fetch failed"', async () => {
