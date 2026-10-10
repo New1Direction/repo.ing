@@ -1,13 +1,14 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
 import { renderUnicodeCompact } from 'uqr'
-import { DEFAULT_ORIGIN, VERSION, validateOrigin } from './core.mjs'
+import { AI_CREDITS_OFF, DEFAULT_ORIGIN, VERSION, aiCreditsOn, validateOrigin } from './core.mjs'
 
 // `repoing claim`: a builder's fees, either claimed to the bound wallet on repo.ing (unchanged) or converted into AI credits
 // (repo.ing AI credits, repo-inference's docs/FEE-CONVERSION.md). Converting signs in through repo.ing with PKCE (the browser
 // approves; repo.ing sends a single-use code to a one-time listener on 127.0.0.1), then asks the credit service for a quote
 // and shows its Solana Pay link. The credit service is credits.repo.ing (staging: --credits-origin
-// https://staging-credits.repo.ing, on Solana devnet); real conversion stays off until repo.ing turns it on.
+// https://staging-credits.repo.ing, on Solana devnet); real conversion stays off until repo.ing turns it on. Converting is offered
+// only with REPOING_AI_CREDITS=1 (core.mjs, aiCreditsOn); otherwise `repoing claim` claims to the wallet without asking.
 export const DEFAULT_CREDITS_ORIGIN = 'https://credits.repo.ing'
 export const HANDOFF_AUDIENCE = 'repo-inference'
 export const SIGN_IN_TIMEOUT_MS = 5 * 60_000
@@ -102,6 +103,7 @@ async function call(fetchImpl, url, { method = 'GET', body, headers = {}, timeou
     return value
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error(`${new URL(url).host} did not respond in time.`)
+    if (error?.name === 'TypeError' && error.message === 'fetch failed') throw new Error(`${new URL(url).host} could not be reached.`)
     throw error
   } finally { clearTimeout(timer) }
 }
@@ -123,18 +125,19 @@ export const claimPageUrl = (origin, repoId) => `${validateOrigin(origin)}/claim
 /** `repoing claim` arguments (after the command). */
 export function parseClaimArgs(argv, env = process.env) {
   const args = [...argv]
-  const out = { command: 'claim', repository: null, mode: null, lamports: null, open: true,
+  const out = { command: 'claim', repository: null, mode: null, lamports: null, open: true, aiCredits: aiCreditsOn(env),
     origin: env.REPOING_ORIGIN || DEFAULT_ORIGIN, creditsOrigin: env.REPOING_CREDITS_ORIGIN || DEFAULT_CREDITS_ORIGIN }
+  const creditsOnly = () => { if (!out.aiCredits) throw new Error(AI_CREDITS_OFF) }
   const value = option => { const next = args.shift(); if (!next || next.startsWith('-')) throw new Error(`${option} requires a value.`); return next }
   while (args.length) {
     const arg = args.shift()
     if (!arg.startsWith('-') && !out.repository) { out.repository = arg; continue }
     if (arg === '--to-wallet') out.mode = out.mode && out.mode !== 'wallet' ? fail() : 'wallet'
-    else if (arg === '--convert') { out.mode = out.mode && out.mode !== 'convert' ? fail() : 'convert'; out.lamports = solToLamports(value(arg)) }
-    else if (arg === '--credits-origin') out.creditsOrigin = value(arg)
+    else if (arg === '--convert') { creditsOnly(); out.mode = out.mode && out.mode !== 'convert' ? fail() : 'convert'; out.lamports = solToLamports(value(arg)) }
+    else if (arg === '--credits-origin') { creditsOnly(); out.creditsOrigin = value(arg) }
     else if (arg === '--origin') out.origin = value(arg)
     else if (arg === '--no-open') out.open = false
-    else if (arg === '--help' || arg === '-h') return { command: 'claim-help' }
+    else if (arg === '--help' || arg === '-h') return { command: 'claim-help', aiCredits: out.aiCredits }
     else throw new Error(`Unknown option: ${arg}`)
   }
   if (out.lamports !== null && (out.lamports < 10_000_000n || out.lamports > 100n * LAMPORTS_PER_SOL)) throw new Error('A conversion is 0.01 to 100 SOL.')
@@ -163,7 +166,7 @@ export async function waitForOutcome({ creditsOrigin, token, id, fetchImpl = fet
   return null
 }
 
-export const CLAIM_HELP = `repoing claim — your fees as SOL, or as AI credits
+export const claimHelp = (aiCredits = false) => `repoing claim — your fees${aiCredits ? ' as SOL, or as AI credits' : ' to your wallet'}
 
 Usage:
   repoing claim [owner/repo|github-url] [options]
@@ -171,14 +174,15 @@ Usage:
 If no repository is supplied, repoing reads the current git origin.
 
 Options:
-  --to-wallet           Claim to your bound wallet on repo.ing (opens the claim page)
+  --to-wallet           Claim to your bound wallet on repo.ing (opens the claim page)${aiCredits ? `
   --convert <SOL>       Convert: sign in through repo.ing, then pay this much SOL for AI credits
-  --credits-origin <u>  The AI credits service (default ${DEFAULT_CREDITS_ORIGIN})
+  --credits-origin <u>  The AI credits service (default ${DEFAULT_CREDITS_ORIGIN})` : ''}
   --no-open             Print links instead of opening the browser
   --origin <url>        Override repo.ing origin (dev/testing)
-
+${aiCredits ? `
 Converting never moves your claimed fees by itself: you pay the quote from your own wallet, and credits come only after
-the payment is finalized on chain.`
+the payment is finalized on chain.` : `
+The claim page shows what the claim pays, and your wallet approves it.`}`
 
 /**
  * Signs in to the credit service through repo.ing: the browser approves; the code comes back to this computer only and is
@@ -207,7 +211,7 @@ export async function runClaim(options, { repository, io, fetchImpl = fetch, lis
   io.print(`\nrepo.ing  ${repository.replace('https://github.com/', '')}`)
   if (!status.mint) { io.print('• No market on repo.ing for this repository yet.'); return { outcome: 'no_market', ...status } }
   io.print(status.available === null ? `• ${status.note ?? 'Nothing to claim for this market.'}` : `✓ claimable now: ${lamportsToSol(status.available)} SOL`)
-  let mode = options.mode
+  let mode = options.mode ?? (options.aiCredits ? null : 'wallet')
   if (!mode) {
     const answer = (await io.ask('\n  1  Claim to your wallet on repo.ing\n  2  Convert to AI credits (pay from your wallet)\nChoose 1 or 2: ')).trim()
     mode = answer === '1' ? 'wallet' : answer === '2' ? 'convert' : null

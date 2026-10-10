@@ -4,14 +4,16 @@ import { execFileSync, spawn } from 'node:child_process'
 import process from 'node:process'
 import { createInterface } from 'node:readline/promises'
 import {
+  AI_CREDITS_OFF,
   HELP,
   VERSION,
+  aiCreditsOn,
   normalizeGithubRepository,
   parseArgs,
   requestLaunchDraft,
   safeBrowserUrl,
 } from '../src/core.mjs'
-import { CLAIM_HELP, parseClaimArgs, runClaim } from '../src/claim.mjs'
+import { claimHelp, parseClaimArgs, runClaim } from '../src/claim.mjs'
 import { CREDITS_HELP, parseCreditsArgs, runCredits } from '../src/credits.mjs'
 
 function currentGitRemote() {
@@ -79,11 +81,12 @@ async function interactive(options, run) {
 
 async function claim(argv) {
   const options = parseClaimArgs(argv)
-  if (options.command === 'claim-help') { console.log(CLAIM_HELP); return }
+  if (options.command === 'claim-help') { console.log(claimHelp(options.aiCredits)); return }
   await interactive(options, runClaim)
 }
 
 async function credits(argv) {
+  if (!aiCreditsOn()) throw new Error(AI_CREDITS_OFF)
   const options = parseCreditsArgs(argv)
   if (options.command === 'credits-help') { console.log(CREDITS_HELP); return }
   await interactive(options, runCredits)
