@@ -12,12 +12,13 @@ import { MarketShareCard } from './market-share-card'
 import { SharePayout, ShareRow } from './payout-share'
 import { LoadingSignal } from './loading-signal'
 import { BuilderReinvest } from './builder-reinvest'
+import { CreditsConvert } from './credits-convert'
 import { ClaimChecklist, WalletExplainer } from './claim-checklist'
 import { claimPageStep } from '../lib/claim-checklist.mjs'
 import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout-address'
 import { bindingLabel, formatUtcDateTime } from '../../src/payout-address-policy.mjs'
 
-export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
+export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -38,6 +39,7 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
   const [busy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState('')
   const [reinvestChosen, setReinvestChosen] = useState(reinvestAfterClaim)
+  const [creditsChosen, setCreditsChosen] = useState(creditsAfterClaim)
   const githubReady = Boolean(verifiedUser && !expired && errorCode !== 'verification-failed')
   const walletMatches = Boolean(wallet && bound && wallet === bound)
   const walletDiffers = Boolean(wallet && bound && wallet !== bound)
@@ -122,9 +124,12 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
       <CopyAddress address={settledClaim.wallet} label="payout wallet"/>
       <a href={`https://explorer.solana.com/tx/${settledClaim.signature}`} target="_blank" rel="noopener noreferrer">View transaction ↗</a>
       <ShareRow>{justClaimed && <SharePayout amount={settledClaim.amount} fullName={repoName} mint={mint} className="button primary"/>}<MarketShareCard mint={mint} signature={settledClaim.signature}/></ShareRow>
-      {justClaimed && !reinvestChosen && <div className="claim-badge-next"><p>Show your repository’s earnings in its README.</p><ReadmeBadge repoId={repoId} mint={mint}/></div>}
-      {reinvestEnabled && graduated && !reinvestChosen && <button className="button outline" type="button" onClick={() => setReinvestChosen(true)}>Reinvest this payout</button>}
+      {justClaimed && !reinvestChosen && !creditsChosen && <div className="claim-badge-next"><p>Show your repository’s earnings in its README.</p><ReadmeBadge repoId={repoId} mint={mint}/></div>}
+      {reinvestEnabled && graduated && !reinvestChosen && !creditsChosen && <button className="button outline" type="button" onClick={() => setReinvestChosen(true)}>Reinvest this payout</button>}
+      {creditsEnabled && githubReady && !creditsChosen && !reinvestChosen && <button className="button outline" type="button" onClick={() => setCreditsChosen(true)}>Convert to AI credits</button>}
     </div></div>}
+    {creditsEnabled && creditsChosen && githubReady && <CreditsConvert key={`${repoId}:${settledClaim?.signature ?? 'wallet'}`} repoId={repoId}
+      claim={settledClaim && justClaimed ? settledClaim : null} network={creditsNetwork} onClose={() => setCreditsChosen(false)}/>}
     {(reinvestEnabled || reinvestAfterClaim) && reinvestChosen && githubReady && settledClaim && settledClaim.wallet === bound && <BuilderReinvest key={`${repoId}:${settledClaim.signature}`} repoId={repoId} claim={settledClaim} onClose={() => setReinvestChosen(false)}/>}
     <div className={`claim-step ${currentStep === 1 ? 'current' : ''}`}>
       <div className={`step-number ${githubReady && appReady ? 'done' : ''}`}>{githubReady && appReady ? <Check size={18}/> : 1}</div>
@@ -169,11 +174,14 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
           {pendingAddress && <p className="claim-next">A pasted address replaces this one from {formatUtcDateTime(pendingAddress.activeAt)} unless an admin cancels it. Claims before then still pay the address above.</p>}
           {canClaim ? <form action="/api/claim" method="post" onSubmit={event => startNavigation('claim', event)}><input type="hidden" name="repoId" value={repoId}/><input type="hidden" name="review" value={review}/>
             {reinvestEnabled && <p>Claim pays your wallet. Reinvest claims first, then lets you choose an amount and approve a separate liquidity transaction.</p>}
-            <div className="reinvest-actions"><button className="button primary" type="submit" disabled={Boolean(pendingAction) || busy}>{pendingAction === 'claim' ? 'Processing claim…' : reinvestEnabled ? 'Claim' : `Claim ${claimAmount}`}</button>
-            {reinvestEnabled && <button className="button outline" type="submit" name="next" value="reinvest" disabled={!graduated || Boolean(pendingAction) || busy}>Reinvest</button>}</div>
+            {creditsEnabled && <p>Claim as AI credits pays your wallet first, then asks your wallet to approve one payment for repo.ing AI credits.</p>}
+            <div className="reinvest-actions"><button className="button primary" type="submit" disabled={Boolean(pendingAction) || busy}>{pendingAction === 'claim' ? 'Processing claim…' : reinvestEnabled || creditsEnabled ? 'Claim' : `Claim ${claimAmount}`}</button>
+            {reinvestEnabled && <button className="button outline" type="submit" name="next" value="reinvest" disabled={!graduated || Boolean(pendingAction) || busy}>Reinvest</button>}
+            {creditsEnabled && <button className="button outline" type="submit" name="next" value="credits" disabled={Boolean(pendingAction) || busy}>Claim as AI credits</button>}</div>
             {reinvestEnabled && !graduated && <p className="muted">Reinvest is available after graduation.</p>}</form> :
             <p className="claim-next" role="status">{claimable === '0' ? 'All available fees are claimed. New trades can add more.' : feeStatus === 'PENDING_REVIEW' ? 'A previous payout needs settlement review before another claim.' : feeStatus !== 'MATCH' ? 'Current fees could not be verified. Refresh to check again.' : !payoutReady ? 'Payouts are paused while the network-cost wallet is replenished. Your fees remain in the pool.' : 'Refreshing your claim review…'}</p>}
           <button className="claim-text-button" type="button" disabled={Boolean(pendingAction)} onClick={() => router.refresh()}>Refresh available fees</button>
+          {creditsEnabled && githubReady && !creditsChosen && <button className="claim-text-button" type="button" onClick={() => setCreditsChosen(true)}>Convert SOL from your wallet to AI credits</button>}
         </div>}
       </div>
     </div>

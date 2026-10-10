@@ -26,6 +26,7 @@ import { StockPairClaimPage } from '../../../components/stock-pair-claim'
 import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 import { nextClaimAmount } from '../../../../src/claim-amounts.mjs'
 import { isEarlyAccessMarket } from '../../../../src/early-access.mjs'
+import { creditsWebSettings } from '../../../../src/credits-web.mjs'
 export const dynamic = 'force-dynamic'
 
 export default async function ClaimPage({ params, searchParams }) {
@@ -101,6 +102,8 @@ async function ClaimContent({ market, repo, query }) {
       reinvestEnabled = true
     } catch { /* Production remains closed until the pinned P3 proof and both RPCs verify. */ }
   }
+  // "Claim as AI credits" (src/credits-web.mjs): dark unless switched on; only for the verified admin.
+  const credits = verifiedUser && database() ? creditsWebSettings() : null
   const summary = <div className="claim-amount-summary inner-card">
     <div><span>Available to claim</span><strong title={claimable === null ? undefined : `${formatUnits(claimable)} SOL`}>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong>{usdEstimate && <small>≈ {usdEstimate}</small>}</div>
     {followsLater > 0n && <p className="muted claim-follows">Then {formatSolDisplay(followsLater.toString())} SOL of graduated pool fees in a second claim: an early
@@ -112,5 +115,6 @@ async function ClaimContent({ market, repo, query }) {
     beneficiaryBoundAt={beneficiary?.boundAt ?? null} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate}
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}
     reinvestEnabled={reinvestEnabled} reinvestAfterClaim={query.reinvest === '1'}
+    creditsEnabled={Boolean(credits)} creditsAfterClaim={Boolean(credits) && query.credits === '1'} creditsNetwork={credits?.network ?? 'mainnet'}
     graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}/>
 }
