@@ -5,7 +5,7 @@ import process from 'node:process'
 import { createInterface } from 'node:readline/promises'
 import {
   AI_CREDITS_OFF,
-  HELP,
+  help,
   VERSION,
   aiCreditsOn,
   normalizeGithubRepository,
@@ -97,7 +97,7 @@ async function main() {
   if (process.argv[2] === 'credits') return credits(process.argv.slice(3))
   const options = parseArgs(process.argv.slice(2))
   if (options.command === 'help') {
-    console.log(HELP)
+    console.log(help())
     return
   }
   if (options.command === 'version') {
