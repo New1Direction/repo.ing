@@ -14,7 +14,7 @@ export const bundleLaunchesEnabled = (env = process.env) => env.BUNDLE_LAUNCHES_
 // false to stop new raises and deposits without touching the switch.
 export const BUNDLE_LAUNCHES_READY = true
 export const bundleLaunchable = (env = process.env) => BUNDLE_LAUNCHES_READY && bundleLaunchesEnabled(env)
-export const BUNDLE_LAUNCHES_DISABLED = 'Bundle launches are not available.'
+export const BUNDLE_LAUNCHES_DISABLED = 'Group launches are not available.'
 
 // The owner's decisions (2026-10-06): 5% of a raise for operations, 80% of the partner fees (after the vault's rebate) to
 // the backers, no vault trade before the 180 s launch fee ends. The vault policy values are starting points, not decisions.

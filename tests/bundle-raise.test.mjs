@@ -87,7 +87,7 @@ test('dark: the routes that start or fund a raise answer 404 while the Bundle sw
 
 test('dark: the launch form\'s option follows the switch; existing bundles are shown whatever it says', () => {
   const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
-  const launchPage = source('app/(site)/launch/[repo]/page.jsx'), raisePage = source('app/(site)/bundle/[id]/page.jsx')
+  const launchPage = source('app/(site)/launch/[repo]/page.jsx'), raisePage = source('app/(site)/group/[id]/page.jsx')
   assert.match(launchPage, /const bundle = bundleLaunchable\(\) \? bundleFormSettings\(\) : null/)
   assert.match(launchPage, /const liveBundleId = pool \?/, 'a live bundle is shown whatever the switch says')
   // A standard launch beside a live bundle is refused by the launch coordinator, under the repository lock, whatever the switch.
@@ -104,7 +104,7 @@ test('the launch form offers a Bundle only when the page passes its terms', asyn
   assert.doesNotMatch(html(h(LaunchForm, { repo, available: true }), { wallet: true }), /community-funded|How to launch/)
   const offered = html(h(LaunchForm, { repo, available: true, bundle: bundleFormSettings() }), { wallet: true })
   assert.match(offered, /How to launch/)
-  assert.match(offered, /Bundle <span class="muted">\(community-funded\)<\/span>/)
+  assert.match(offered, /Group launch <span class="muted">\(community-funded\)<\/span>/)
   // Not for an agent draft or a trend launch, like early access.
   assert.doesNotMatch(html(h(LaunchForm, { repo, available: true, bundle: bundleFormSettings(), trendRevision: 3 }), { wallet: true }), /community-funded/)
   const { BundleNotes, BundleRaiseFields } = await appModule('app/components/launch-bundle.jsx')
@@ -139,7 +139,7 @@ test('opening: refused for bad terms, token fields, a model, an opt-out, a copy,
   assert.deepEqual(await refused(openBody(), {}, true), { status: 409, body: { error: RAISE_REFUSALS.market } })
   // A transport failure never reaches the page.
   const broken = await refused(openBody(), { resolveRepository: async () => { throw Error('connect ECONNREFUSED 10.0.0.3:5432') } })
-  assert.deepEqual(broken, { status: 503, body: { error: 'Bundles are temporarily unavailable. Try again shortly.' } })
+  assert.deepEqual(broken, { status: 503, body: { error: 'Group launches are temporarily unavailable. Try again shortly.' } })
 
   const { api, pool } = harness()
   pool.bundles.set('3', { bundleId: '3', githubRepoId: REPO, status: 'raising' })
@@ -153,7 +153,7 @@ test('opening: a simulated failure is refused in plain words before any row exis
   const { api, chain, pool } = harness()
   chain.simulation = { err: { InstructionError: [2, { Custom: 6009 }] }, unitsConsumed: 0,
     logs: [`Program ${BUNDLE_VAULT_PROGRAM_ID.toBase58()} failed: custom program error: 0x1779`] }
-  assert.deepEqual(await call(api.open(post('/api/bundles', openBody()))), { status: 400, body: { error: 'Solana refused these raise terms. Open the bundle again.' } })
+  assert.deepEqual(await call(api.open(post('/api/bundles', openBody()))), { status: 400, body: { error: 'Solana refused these raise terms. Open the group launch again.' } })
   assert.equal(pool.queries.filter(query => /insert into bundles/.test(query.sql)).length, 0)
   assert.equal(simulationFailure(['Transfer: insufficient lamports 1, need 2']), 'Your wallet does not have enough SOL for this and its network fee.')
 })
@@ -423,7 +423,7 @@ test('refund: only after a raise failed, only for a backer, and exactly the prog
   raising(h)
   assert.deepEqual(await act(h, { action: 'refund' }), { status: 400, body: { error: 'Refunds open only after a raise fails.' } })
   raising(h, { status: STATUS.FAILED })
-  assert.deepEqual(await act(h, { action: 'refund' }), { status: 400, body: { error: 'This wallet has no deposit in this bundle.' } })
+  assert.deepEqual(await act(h, { action: 'refund' }), { status: 400, body: { error: 'This wallet has no deposit in this group launch.' } })
   h.chain.setProgramAccount(backerAddress(bundleAddress(7n), backer.publicKey), backerData({ bundle: bundleAddress(7n), wallet: backer.publicKey, shares: SOL }))
   const ok = await act(h, { action: 'refund' })
   assert.equal(ok.status, 200)
@@ -567,8 +567,8 @@ test('existing bundles while dark: read, refund, claim and their relay work; a d
   raising(dark)
   // The page counts down from the read's time; pinned to the test's clock, so the fixture's deadline (NOW plus a day) never passes.
   const live = { ...(await call(dark.api.read(get('/api/bundles/7'), '7'))).body, checkedAt: new Date(NOW).toISOString() }
-  assert.match(html(h(BundleRaise, { initial: live }), { wallet: true }), /Back this bundle/)
-  assert.doesNotMatch(html(h(BundleRaise, { initial: live, depositsOpen: false }), { wallet: true }), /Back this bundle/)
+  assert.match(html(h(BundleRaise, { initial: live }), { wallet: true }), /Back this launch/)
+  assert.doesNotMatch(html(h(BundleRaise, { initial: live, depositsOpen: false }), { wallet: true }), /Back this launch/)
   assert.match(html(h(BundleRaise, { initial: live, depositsOpen: false }), { wallet: true }), /New deposits are paused/)
   assert.equal(state.chain.status, 'launched')
 })

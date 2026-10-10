@@ -19,8 +19,8 @@ export const PHASE_LABELS = Object.freeze({
 })
 
 export const PHASE_NOTES = Object.freeze({
-  opening: 'This bundle is waiting for its creator\'s wallet. It opens once that transaction lands.',
-  expired: 'This bundle was never opened on Solana. Nothing was deposited.',
+  opening: 'This group launch is waiting for its creator\'s wallet. It opens once that transaction lands.',
+  expired: 'This group launch was never opened on Solana. Nothing was deposited.',
   raising: 'Deposits are open until the deadline. If the target is not reached by then, every backer gets a full refund.',
   closing: 'The deadline passed before the target was reached. The raise is being closed; then every backer can take a full refund here.',
   full: 'The target is reached. repo.ing launches the market next; if it does not launch within a day, the raise fails and refunds open.',

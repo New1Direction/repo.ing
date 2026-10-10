@@ -23,7 +23,7 @@ export function LaunchModeChoice({ value, onChange }) {
       </label>
       <label className={`launch-mode-option${value ? ' is-selected' : ''}`}>
         <input type="radio" name="launch-mode" value="bundle" checked={value} onChange={() => onChange(true)}/>
-        <span className="launch-mode-name">Bundle <span className="muted">(community-funded)</span></span>
+        <span className="launch-mode-name">Group launch <span className="muted">(community-funded)</span></span>
         <small>Backers fund a raise. When it is full, the raise buys the first tokens into a vault and backers share its fees.</small>
       </label>
     </div>
@@ -57,12 +57,12 @@ export function BundleRaiseFields({ settings, value, onChange }) {
 // simulation's (docs/BUNDLE_SIMULATION.md): the median bundle, and the best of 52 markets, over their first days.
 export function BundleNotes({ settings }) {
   return <div className="inner-card bundle-notes">
-    <h3>How a Bundle works</h3>
+    <h3>How a group launch works</h3>
     <ul>
       <li><strong>Backers earn fees, not tokens.</strong> They get {settings.backerPercent} of this market&apos;s partner trading fees, after the vault&apos;s own
         trading fees are paid back to it. Builders keep their 0.994% as on every market.</li>
       <li><strong>The vault keeps its SOL.</strong> The vault&apos;s SOL and tokens are never paid out to anyone; agents trade it within fixed on-chain limits.</li>
-      <li><strong>Most bundles earn little.</strong> At today&apos;s volume the median bundle in our simulation earned about 0.017 SOL of fees over its first days;
+      <li><strong>Most group launches earn little.</strong> At today&apos;s volume the median one in our simulation earned about 0.017 SOL of fees over its first days;
         one market in 52 earned 3.8 SOL.</li>
       <li><strong>Refunds if it fails.</strong> A raise that misses its target by the deadline returns every deposit in full.</li>
     </ul>
@@ -90,7 +90,7 @@ export function useOpenBundle({ repo, settings, token, raise, ready }) {
         tokenImage: token.image, targetLamports: target.toString(), deadlineDays: raise.days }, { provider, onStage: setStage })
       setStage('Opened')
       window.location.assign(`/bundle/${opened.bundleId}`)
-    } catch (cause) { setError(cause.message || 'Could not open the bundle.'); setStage('') }
+    } catch (cause) { setError(cause.message || 'Could not open the group launch.'); setStage('') }
     finally { working.current = false; setBusy(false) }
   }
   return { open, stage, error, busy }
@@ -98,8 +98,8 @@ export function useOpenBundle({ repo, settings, token, raise, ready }) {
 
 export function BundleOpenButton({ opening, disabled }) {
   return <>
-    <button type="submit" className="button primary launch-submit" disabled={disabled || opening.busy}>{opening.busy ? opening.stage || 'Opening…' : 'Open bundle'}</button>
-    <p className="form-fineprint">Opening costs the bundle account&apos;s rent and the network fee. You approve it in your wallet.</p>
+    <button type="submit" className="button primary launch-submit" disabled={disabled || opening.busy}>{opening.busy ? opening.stage || 'Opening…' : 'Open group launch'}</button>
+    <p className="form-fineprint">Opening costs the launch account&apos;s rent and the network fee. You approve it in your wallet.</p>
     <TransactionStatus stage={opening.busy ? opening.stage : ''} error={opening.error}/>
   </>
 }

@@ -1,5 +1,9 @@
 # Bundle launches
 
+**Shown to people as "Group launch"** (since 2026-10-10). On Solana, "bundled" means insiders bought supply inside the
+launch transaction, a red flag for traders. The code, the program, the API (`/api/bundles`) and the database keep the Bundle
+name. The raise page is `/group/<id>`; `/bundle/<id>` redirects there permanently.
+
 **Status: set up on mainnet (2026-10-09); the code gate `BUNDLE_LAUNCHES_READY` (`src/bundle-launch.mjs`) is open.** The site
 offers Bundle launches and takes deposits only while `BUNDLE_LAUNCHES_ENABLED` is exactly "true" as well; otherwise those routes
 answer 404 (see "The site" below). On mainnet: the program `5feqSRaVwGcAdR6Fzf73K8sxunV8cTC9pjEBhfbRxHCw` (upgrade authority

@@ -39,14 +39,14 @@ export const MAX_OPENING_PER_WALLET = 2
 const MAX_OPEN_BODY = 600_000
 const MAX_ACTION_BODY = 16_000
 const IMAGE_MESSAGE = /^(Token image|Invalid token image|Choose a token image|Image is)/
-const unconfigured = () => new BundleRaiseError('Bundle launches are not configured.', 503)
+const unconfigured = () => new BundleRaiseError('Group launches are not configured.', 503)
 
 // Only this flow's own refusals, the repository checks' and the token image's reach the page (app/lib/public-error.mjs).
 function failure(error) {
   const safe = error instanceof BundleRaiseError || error instanceof RepositoryResolutionError || error instanceof DecisionError ||
     error instanceof LineageError || IMAGE_MESSAGE.test(error?.message ?? '')
   const status = safe ? (Number.isInteger(error.status) ? error.status : 400) : 503
-  return reply({ error: publicError(error, () => safe, 'Bundles are temporarily unavailable. Try again shortly.', 'bundle request'),
+  return reply({ error: publicError(error, () => safe, 'Group launches are temporarily unavailable. Try again shortly.', 'bundle request'),
     ...safe && typeof error.code === 'string' ? { code: error.code } : {} }, status)
 }
 
@@ -98,7 +98,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
           minDepositLamports: terms.minDepositLamports, deadline: new Date(terms.deadline * 1000) }
         // Simulated before the row exists: a raise Solana would refuse is never recorded or offered for signing.
         const { budget, ...prepared } = await walletTransaction(rpc, [createInstructionFor(row, signer.publicKey)], { feePayer: creator,
-          fallback: 'Solana refused to open this bundle. Try again shortly.' })
+          fallback: 'Solana refused to open this group launch. Try again shortly.' })
         const address = bundleAddress(bundleId).toBase58()
         if (!await insertOpeningBundle(client, { ...row, address, ...token, tokenImage, deadline: terms.deadline })) throw new BundleRaiseError(RAISE_REFUSALS.live, 409)
         return reply({ bundleId: bundleId.toString(), address, ...prepared, review: sealBundleReview(reviewKey, { bundleId, ...budget }) })
@@ -145,7 +145,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
   }
 
   async function opened(db, row, bundle, signature) {
-    if (!bundleMatchesRow(bundle, row)) throw new BundleRaiseError('This bundle on Solana does not match the one prepared. Contact repo.ing.', 409)
+    if (!bundleMatchesRow(bundle, row)) throw new BundleRaiseError('This group launch on Solana does not match the one prepared. Contact repo.ing.', 409)
     await markRaising(db, row.bundleId, signature)
     return reply({ bundleId: row.bundleId, signature, status: 'raising' })
   }
@@ -159,7 +159,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
     }
     if (action === 'refund' && bundle.status !== STATUS.FAILED) throw new BundleRaiseError('Refunds open only after a raise fails.')
     const backer = await readBacker(rpc, id, wallet)
-    if (!backer) throw new BundleRaiseError('This wallet has no deposit in this bundle.')
+    if (!backer) throw new BundleRaiseError('This wallet has no deposit in this group launch.')
     if (action === 'refund') return {}
     if (pendingBackerFees(bundle, backer) <= 0n) throw new BundleRaiseError('There is nothing to claim yet.')
     return { keepWrapped: await hasWrappedSolAccount(rpc, wallet) }
@@ -216,7 +216,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
           return reply({ action: accepted.action, ...sent }, sent.confirmed ? 200 : 202)
         }
         const wallet = walletKey(body.wallet), bundle = await readBundle(rpc, bundleId)
-        if (!bundle) throw new BundleRaiseError('This bundle is not open on Solana yet.')
+        if (!bundle) throw new BundleRaiseError('This group launch is not open on Solana yet.')
         const options = await actionOptions(body.action, { rpc, id: bundleId, bundle, wallet, body })
         const prepared = await walletTransaction(rpc, actionInstructions(body.action, { wallet, id: bundleId, ...options }), { feePayer: wallet })
         return reply({ action: body.action, ...prepared })

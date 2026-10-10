@@ -9,7 +9,7 @@ export async function bundleRequest(path, body = null) {
   const response = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
     : { cache: 'no-store' })
   const result = await response.json().catch(() => ({}))
-  if (!response.ok) throw Object.assign(new Error(result.error || 'Bundle request failed'), { status: response.status, code: result.code ?? null })
+  if (!response.ok) throw Object.assign(new Error(result.error || 'Group launch request failed'), { status: response.status, code: result.code ?? null })
   return Object.assign(result, { pending: response.status === 202 || result.pending === true })
 }
 
@@ -27,7 +27,7 @@ export async function openBundle(details, { provider, onStage = () => {} }) {
   const prepared = await bundleRequest('/api/bundles', { action: 'prepare', ...details })
   onStage('Waiting for wallet')
   const transaction = await signPrepared(prepared, provider)
-  onStage('Opening the bundle')
+  onStage('Opening the group launch')
   return bundleRequest('/api/bundles', { action: 'submit', bundleId: prepared.bundleId, review: prepared.review, transaction })
 }
 
