@@ -1,7 +1,7 @@
 {
   "name": "@repoing/cli",
   "version": "0.2.0",
-  "description": "Launch canonical open-source markets on repo.ing, claim or convert your fees, and make AI keys for coding tools from your terminal.",
+  "description": "Launch canonical open-source markets on repo.ing and claim your fees from your terminal.",
   "type": "module",
   "license": "AGPL-3.0-only",
   "bin": {

@@ -1,13 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { DEFAULT_CREDITS_ORIGIN, claimStatus, handoffUrl, lamportsToSol, listenForCode, parseClaimArgs, payLines, runClaim, solToLamports, usd,
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { DEFAULT_CREDITS_ORIGIN, claimHelp, claimStatus, handoffUrl, lamportsToSol, listenForCode, parseClaimArgs, payLines, runClaim, solToLamports, usd,
   validateCreditsOrigin } from '../cli/src/claim.mjs'
 
 // `repoing claim` (cli/src/claim.mjs): arguments, amounts, the one-time loopback listener, and the whole flow with repo.ing and
 // the credit service scripted (the listener is real, on 127.0.0.1).
 const json = (value, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => value })
 const TREASURY = '7WZRJ4to98TLKhiWqoNfqWwYcxrqN8KsBJWXdTxq2KUY'
+const ON = { REPOING_AI_CREDITS: '1' } // AI credits are off unless this is set
 
 test('a Solana Pay link: its QR code, then the link; anything that is not a plain link is refused', () => {
   const url = `solana:${TREASURY}?amount=0.166666667&reference=9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin&label=repo.ing%20AI%20credits&message=Credit%20pack%202f8fad5b-d9cb-469f-a165-70867728950e`
@@ -35,14 +38,14 @@ test('convert: a malformed payment link from the credit service is never printed
 })
 
 test('arguments: wallet or convert (not both), exact SOL amounts, safe origins', () => {
-  assert.deepEqual(parseClaimArgs(['octo/widget'], {}), { command: 'claim', repository: 'octo/widget', mode: null, lamports: null, open: true,
-    origin: 'https://repo.ing', creditsOrigin: DEFAULT_CREDITS_ORIGIN })
-  assert.equal(parseClaimArgs(['--to-wallet'], {}).mode, 'wallet')
-  assert.deepEqual([parseClaimArgs(['--convert', '0.5'], {}).mode, parseClaimArgs(['--convert', '0.5'], {}).lamports], ['convert', 500_000_000n])
-  assert.equal(parseClaimArgs([], { REPOING_CREDITS_ORIGIN: 'https://credits.example' }).creditsOrigin, 'https://credits.example')
+  assert.deepEqual(parseClaimArgs(['octo/widget'], ON), { command: 'claim', repository: 'octo/widget', mode: null, lamports: null, open: true,
+    aiCredits: true, origin: 'https://repo.ing', creditsOrigin: DEFAULT_CREDITS_ORIGIN })
+  assert.equal(parseClaimArgs(['--to-wallet'], ON).mode, 'wallet')
+  assert.deepEqual([parseClaimArgs(['--convert', '0.5'], ON).mode, parseClaimArgs(['--convert', '0.5'], ON).lamports], ['convert', 500_000_000n])
+  assert.equal(parseClaimArgs([], { ...ON, REPOING_CREDITS_ORIGIN: 'https://credits.example' }).creditsOrigin, 'https://credits.example')
   for (const [args, message] of [[['--to-wallet', '--convert', '1'], /either/], [['--convert', '0.001'], /0\.01 to 100/], [['--convert', '101'], /0\.01 to 100/],
     [['--convert', '1.0000000001'], /9 decimals/], [['--convert'], /requires a value/], [['--credits-origin', 'http://credits.example'], /HTTPS/], [['--bogus'], /Unknown/]]) {
-    assert.throws(() => parseClaimArgs(args, {}), message, args.join(' '))
+    assert.throws(() => parseClaimArgs(args, ON), message, args.join(' '))
   }
   assert.equal(parseClaimArgs(['--help'], {}).command, 'claim-help')
   assert.deepEqual([solToLamports('1'), solToLamports('0.000000001'), lamportsToSol(1_500_000_000n), lamportsToSol(10_000_000n), usd(75_000_000), usd(150_123_457)],
@@ -82,7 +85,7 @@ function services({ available = '600000000', mint = 'MintWidget', outcome = { st
   }
   return { fetchImpl, requests }
 }
-const options = extra => ({ origin: 'https://repo.ing', creditsOrigin: 'http://127.0.0.1:8794', open: true, mode: null, lamports: null, ...extra })
+const options = extra => ({ origin: 'https://repo.ing', creditsOrigin: 'http://127.0.0.1:8794', open: true, mode: null, lamports: null, aiCredits: true, ...extra })
 
 test('convert: sign in through repo.ing with PKCE, a quote for the chosen SOL, its Solana Pay link, then the credit', async () => {
   const { fetchImpl, requests } = services()
@@ -149,4 +152,31 @@ test('claim to wallet opens the claim page; no market or a stock pair says so; r
 test('the credit service is credits.repo.ing unless another is given', () => {
   assert.equal(DEFAULT_CREDITS_ORIGIN, 'https://credits.repo.ing')
   assert.equal(parseClaimArgs([], { REPOING_CREDITS_ORIGIN: 'https://staging-credits.repo.ing' }).creditsOrigin, 'https://staging-credits.repo.ing')
+})
+
+test('AI credits off (the default): claim goes to the wallet without asking, and convert or credits say they are not open', async () => {
+  const off = parseClaimArgs(['octo/widget'], {})
+  assert.equal(off.aiCredits, false)
+  for (const args of [['--convert', '0.5'], ['--credits-origin', 'https://staging-credits.repo.ing']]) {
+    assert.throws(() => parseClaimArgs(args, {}), /AI credits are not open yet/, args.join(' '))
+  }
+  assert.throws(() => parseClaimArgs(['--convert', '0.5'], { REPOING_AI_CREDITS: 'true' }), /not open yet/, 'only exactly 1 turns them on')
+  const opened = [], asked = []
+  const io = { print: () => {}, ask: async question => { asked.push(question); return '2' }, open: async url => { opened.push(url); return true } }
+  const result = await runClaim(off, { repository: 'https://github.com/octo/widget', io, fetchImpl: services().fetchImpl })
+  assert.deepEqual([result.outcome, opened, asked], ['claim_page', ['https://repo.ing/claim/77'], []])
+  assert.doesNotMatch(claimHelp(false), /convert|credits/i)
+  assert.match(claimHelp(true), /--convert <SOL>/)
+  const bin = new URL('../cli/bin/repoing.mjs', import.meta.url).pathname
+  const env = { ...process.env, REPOING_AI_CREDITS: '' }
+  const credits = await promisify(execFile)(process.execPath, [bin, 'credits', 'list'], { env }).catch(error => error)
+  assert.equal(credits.code, 1)
+  assert.match(credits.stderr, /^repoing: AI credits are not open yet\. repoing claim --to-wallet claims your fees to your wallet\.\n$/)
+  const help = await promisify(execFile)(process.execPath, [bin, '--help'], { env })
+  assert.doesNotMatch(help.stdout, /credits/)
+})
+
+test('a credit service that cannot be reached is named, not "fetch failed"', async () => {
+  const unreachable = async () => { throw new TypeError('fetch failed') }
+  await assert.rejects(claimStatus({ origin: 'https://repo.ing', repository: 'r', fetchImpl: unreachable }), /^Error: repo\.ing could not be reached\.$/)
 })
