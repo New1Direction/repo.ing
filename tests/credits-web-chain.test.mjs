@@ -39,38 +39,51 @@ function creditService({ pool, connection, treasury }) {
     }
     const quote = quotes.get(pathname.split('/')[2])
     if (!quote || quote.user !== user) return json({ error: 'Unknown quote.' }, 404)
-    if (quote.status === 'awaiting_payment') {
+    if (quote.review) return json({ id: quote.id, status: 'awaiting_payment', credit_micro: quote.credit_micro, review_pending: true })
+    if (quote.status === 'awaiting_payment' && !quote.blind) {
       for (const { signature } of await connection.getSignaturesForAddress(new PublicKey(quote.reference), {}, 'finalized')) {
         const tx = await connection.getTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 })
         const keys = tx.transaction.message.staticAccountKeys.map(k => k.toBase58()), at = keys.indexOf(treasury)
         if (!tx.meta.err && at >= 0 && tx.meta.postBalances[at] - tx.meta.preBalances[at] === quote.lamports) { quote.status = 'credited'; quote.signature = signature }
       }
-      if (quote.status === 'awaiting_payment' && quote.expires <= Date.now()) quote.status = 'expired'
     }
+    if (quote.status === 'awaiting_payment' && quote.expires <= Date.now()) quote.status = 'expired'
     return json({ id: quote.id, status: quote.status, credit_micro: quote.credit_micro, review_pending: false })
   }
   return { fetchImpl, quotes }
 }
 
-test('real PostgreSQL + validator: quote, one approved transfer, credited; the refusals around it', { skip: !url, timeout: 240_000 }, async () => {
+// A fresh table, a treasury, a funded payer and a wallet with 0.05 SOL; `steps` with a given connection (to script the chain).
+async function world(pool, connection) {
+  await pool.query('truncate credit_conversions, auth_handoffs, agent_request_limits')
+  const treasury = Keypair.generate().publicKey.toBase58(), payer = Keypair.generate(), poor = Keypair.generate()
+  const airdrop = async (key, sol) => {
+    const signature = await connection.requestAirdrop(key, sol * LAMPORTS_PER_SOL)
+    await connection.confirmTransaction({ signature, ...await connection.getLatestBlockhash() }, 'finalized')
+  }
+  await airdrop(payer.publicKey, 2); await airdrop(poor.publicKey, 0.05)
+  const service = creditService({ pool, connection, treasury })
+  const settings = { origin: 'https://credits.test', treasury, network: 'devnet' }
+  const state = { admin: true }
+  const githubVerifier = { verifyCurrentAuthority: async () => { if (!state.admin) throw Error('not admin'); return { githubLogin: 'octo' } } }
+  const stepsWith = chain => createCreditsConvert({ pool, connection: chain, settings, githubVerifier, fetchImpl: service.fetchImpl })
+  const signed = (prepared, keypair) => { const tx = Transaction.from(Buffer.from(prepared.transaction, 'base64')); tx.sign(keypair); return tx.serialize().toString('base64') }
+  const handoffs = async () => (await pool.query('select count(*)::int as n from auth_handoffs')).rows[0].n
+  return { treasury, payer, poor, service, state, steps: stepsWith(connection), stepsWith, signed, handoffs }
+}
+const services = () => {
   assert.match(url, /^postgres:\/\/[^@]+@127\.0\.0\.1:\d+\/repoing_credits_web_test$/, 'the disposable test database only')
   assert.match(rpc, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/)
-  const pool = new pg.Pool({ connectionString: url })
-  const connection = new Connection(rpc, 'confirmed')
+  return { pool: new pg.Pool({ connectionString: url }), connection: new Connection(rpc, 'confirmed') }
+}
+const who = { repoId: '77', githubUserId: '42', login: 'octo' }
+
+test('real PostgreSQL + validator: quote, one approved transfer, credited; the refusals around it', { skip: !url, timeout: 240_000 }, async () => {
+  const { pool, connection } = services()
   try {
-    await pool.query('truncate credit_conversions, auth_handoffs')
-    const treasury = Keypair.generate().publicKey.toBase58(), payer = Keypair.generate(), poor = Keypair.generate()
-    const airdrop = async (key, sol) => {
-      const signature = await connection.requestAirdrop(key, sol * LAMPORTS_PER_SOL)
-      await connection.confirmTransaction({ signature, ...await connection.getLatestBlockhash() }, 'finalized')
-    }
-    await airdrop(payer.publicKey, 2); await airdrop(poor.publicKey, 0.05)
-    const service = creditService({ pool, connection, treasury })
-    const settings = { origin: 'https://credits.test', treasury, network: 'devnet' }
+    const { treasury, payer, poor, service, state, steps } = await world(pool, connection)
     let admin = true
-    const githubVerifier = { verifyCurrentAuthority: async () => { if (!admin) throw Error('not admin'); return { githubLogin: 'octo' } } }
-    const steps = createCreditsConvert({ pool, connection, settings, githubVerifier, fetchImpl: service.fetchImpl })
-    const who = { repoId: '77', githubUserId: '42', login: 'octo' }
+    Object.defineProperty(state, 'admin', { get: () => admin })
 
     // A quote: a live admin check, the handoff approved by repo.ing itself and redeemed once, the quote checked and stored.
     const quoted = await steps.quote({ ...who, lamports: '250000000', current: null })
@@ -117,11 +130,15 @@ test('real PostgreSQL + validator: quote, one approved transfer, credited; the r
     await assert.rejects(steps.quote({ ...who, lamports: '1000000000', current: second.session }), /open quote exists/)
     service.quotes.get((await pool.query('select quote_id from credit_conversions where id=$1', [second.conversion.id])).rows[0].quote_id).expires = Date.now() - 1
 
-    // A wallet without the SOL: the preflight fails, nothing is sent, and the conversion waits for another approval.
+    // A wallet without the SOL: refused before any quote when the card names it; otherwise its payment fails the
+    // simulation, nothing is stored or sent, and the conversion waits for another approval.
+    const quotesBefore = service.quotes.size
+    await assert.rejects(steps.quote({ ...who, lamports: '1000000000', payer: poor.publicKey.toBase58(), current: second.session }), /holds 0\.05 SOL\. Choose at most 0\.04910412 SOL/)
+    assert.equal(service.quotes.size, quotesBefore, 'no quote was asked for')
     const third = await steps.quote({ ...who, lamports: '1000000000', current: second.session })
     const unpaid = await steps.prepare({ id: third.conversion.id, githubUserId: '42', payer: poor.publicKey.toBase58() })
     const poorTx = Transaction.from(Buffer.from(unpaid.transaction, 'base64')); poorTx.sign(poor)
-    await assert.rejects(steps.submit({ id: third.conversion.id, githubUserId: '42', signedTransaction: poorTx.serialize().toString('base64') }), /enough SOL/)
+    await assert.rejects(steps.submit({ id: third.conversion.id, githubUserId: '42', signedTransaction: poorTx.serialize().toString('base64') }), /enough SOL.*Nothing was sent/)
     const row = (await pool.query('select status, payment_signature from credit_conversions where id=$1', [third.conversion.id])).rows[0]
     assert.deepEqual([row.status, row.payment_signature], ['prepared', null])
 
@@ -139,5 +156,75 @@ test('real PostgreSQL + validator: quote, one approved transfer, credited; the r
     await assert.rejects(insert('submitted', 'sig'), /credit_conversions_payment_check/)
     await insert('quoted')
     await assert.rejects(insert('quoted'), /credit_conversions_one_open/)
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL + validator: failed, lost and late payments, review, another repository, no sign-in on a page load', { skip: !url, timeout: 240_000 }, async () => {
+  const { pool, connection } = services()
+  try {
+    const { payer, service, steps, stepsWith, signed, handoffs } = await world(pool, connection)
+    const quoteRow = async id => service.quotes.get((await pool.query('select quote_id from credit_conversions where id=$1', [id])).rows[0].quote_id)
+    const row = async id => (await pool.query('select status, payment_signature, earlier_signatures from credit_conversions where id=$1', [id])).rows[0]
+    // A chain where the payment is never broadcast, and its status is scripted.
+    const scripted = (status, height = null) => Object.assign(Object.create(connection), {
+      sendRawTransaction: async () => 'not-sent', getSignatureStatuses: async () => ({ value: [status] }),
+      ...height === null ? {} : { getBlockHeight: async () => height } })
+
+    // A page load never signs in: an open conversion without a session says so, and nothing is approved.
+    const first = await steps.quote({ ...who, lamports: '100000000', current: null })
+    const signIns = await handoffs()
+    const look = await steps.status({ ...who, current: null })
+    assert.deepEqual([look.conversion.status, look.needsSignIn, await handoffs()], ['quoted', true, signIns])
+    // A click on Refresh status signs in again (a live admin check) and keeps the new session.
+    const checked = await steps.check({ ...who, id: first.conversion.id, current: null })
+    assert.equal(await handoffs(), signIns + 1)
+    assert.match(checked.session.token, /^ses_/)
+    // The open conversion shows on another repository too, and blocks a second quote there.
+    const elsewhere = await steps.status({ ...who, repoId: '78', current: checked.session })
+    assert.deepEqual([elsewhere.conversion.id, elsewhere.conversion.repoId], [first.conversion.id, '77'])
+    await assert.rejects(steps.quote({ ...who, repoId: '78', lamports: '100000000', current: checked.session }), /open conversion/)
+
+    // A payment that landed with an error (the fee spent, nothing paid): its signature is kept and the quote reopens.
+    const failing = stepsWith(scripted({ slot: 1, confirmations: null, err: { InstructionError: [0, { Custom: 1 }] }, confirmationStatus: 'finalized' }))
+    const prepared = await failing.prepare({ id: first.conversion.id, githubUserId: '42', payer: payer.publicKey.toBase58() })
+    const submitted = await failing.submit({ id: first.conversion.id, githubUserId: '42', signedTransaction: signed(prepared, payer) })
+    assert.equal(submitted.conversion.status, 'submitted')
+    const reopened = await failing.status({ ...who, current: checked.session })
+    assert.equal(reopened.conversion.status, 'prepared')
+    assert.deepEqual((await row(first.conversion.id)).earlier_signatures, [submitted.conversion.signature])
+
+    // A payment never found whose blockhash has expired: it can be approved again, or cancelled; one still pending cannot.
+    const pending = stepsWith(scripted(null))
+    const again = await pending.prepare({ id: first.conversion.id, githubUserId: '42', payer: payer.publicKey.toBase58() })
+    await pending.submit({ id: first.conversion.id, githubUserId: '42', signedTransaction: signed(again, payer) })
+    await assert.rejects(pending.prepare({ id: first.conversion.id, githubUserId: '42', payer: payer.publicKey.toBase58() }), /on its way/)
+    await assert.rejects(pending.cancel({ id: first.conversion.id, githubUserId: '42' }), /on its way/)
+    const lost = stepsWith(scripted(null, Number.MAX_SAFE_INTEGER))
+    assert.equal((await lost.cancel({ id: first.conversion.id, githubUserId: '42' })).conversion.status, 'cancelled')
+    assert.equal((await row(first.conversion.id)).earlier_signatures.length, 2)
+    ;(await quoteRow(first.conversion.id)).expires = Date.now() - 1
+
+    // The credit ledger sends a payment to review: the row follows.
+    const second = await steps.quote({ ...who, lamports: '100000000', current: checked.session })
+    ;(await quoteRow(second.conversion.id)).review = true
+    assert.equal((await steps.status({ ...who, current: checked.session })).conversion.status, 'review')
+    ;(await quoteRow(second.conversion.id)).expires = Date.now() - 1
+
+    // A payment that lands for a quote the ledger has already closed goes to review, never to "expired".
+    const third = await steps.quote({ ...who, lamports: '100000000', current: checked.session })
+    const late = await quoteRow(third.conversion.id)
+    late.blind = true
+    const paid = await steps.prepare({ id: third.conversion.id, githubUserId: '42', payer: payer.publicKey.toBase58() })
+    const sent = await steps.submit({ id: third.conversion.id, githubUserId: '42', signedTransaction: signed(paid, payer) })
+    for (let i = 0; i < 60 && !(await connection.getSignatureStatuses([sent.conversion.signature])).value[0]; i++) await new Promise(r => setTimeout(r, 500))
+    late.expires = Date.now() - 1
+    assert.equal((await steps.status({ ...who, current: checked.session })).conversion.status, 'review')
+
+    // Too close to the end: a signed payment is refused, nothing stored.
+    const fourth = await steps.quote({ ...who, lamports: '100000000', current: checked.session })
+    const close = await steps.prepare({ id: fourth.conversion.id, githubUserId: '42', payer: payer.publicKey.toBase58() })
+    await pool.query(`update credit_conversions set expires_at=now()+interval '10 seconds' where id=$1`, [fourth.conversion.id])
+    await assert.rejects(steps.submit({ id: fourth.conversion.id, githubUserId: '42', signedTransaction: signed(close, payer) }), /about to expire/)
+    assert.deepEqual([(await row(fourth.conversion.id)).status, (await row(fourth.conversion.id)).payment_signature], ['prepared', null])
   } finally { await pool.end() }
 })
