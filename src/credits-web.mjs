@@ -13,8 +13,9 @@ import { takeQuota } from './request-quota.mjs'
 //      treasury, the exact amount, one reference key, the expected network.
 //   2. Prepare. A plain SOL transfer to the treasury with the quote's reference key (read-only, not a signer); the wallet
 //      pays the fee. Its message is stored.
-//   3. Submit. The signed bytes must be the stored message, signed by its payer. The signature is stored before the
-//      broadcast. The credit ledger checks the payment on chain and credits it; this page asks for the quote's status.
+//   3. Submit. The signed bytes must be the stored message, signed by its payer, and pass a simulation. The signature is
+//      stored before the broadcast; from then on only the chain reopens the quote (a payment that failed, or that can no
+//      longer land). The credit ledger checks the payment on chain and credits it; this page asks for the quote's status.
 // Dark unless CREDITS_WEB_CONVERT_ENABLED is exactly 'true', the sign-in handoff is on (src/repo-inference-handoff.mjs),
 // REPO_INFERENCE_CREDITS_ORIGIN is the credit service and CREDITS_TREASURY_ADDRESS is its treasury.
 export const MIN_LAMPORTS = 10_000_000n
@@ -184,18 +185,32 @@ export async function signInToCredits({ pool, settings, repoId, githubUserId, lo
 
 const publicConversion = row => row && ({ id: Number(row.id), status: row.status, lamports: String(row.lamports), creditMicro: String(row.credit_micro),
   priceMicroPerSol: String(row.price_micro_per_sol), expiresAt: new Date(row.expires_at).toISOString(), payer: row.payer_wallet ?? null,
-  signature: row.payment_signature ?? null, creditedMicro: row.credited_micro == null ? null : String(row.credited_micro), network: row.network })
+  signature: row.payment_signature ?? null, creditedMicro: row.credited_micro == null ? null : String(row.credited_micro), network: row.network,
+  repoId: String(row.github_repo_id) })
 // The credit service's answer for a quote → this row's status. Unknown answers change nothing.
 export function outcomeOf(quote) {
-  if (quote?.status === 'credited' && Number.isSafeInteger(quote.credit_micro)) return { status: 'credited', creditedMicro: quote.credit_micro }
+  if (quote?.status === 'credited' && Number.isSafeInteger(quote.credit_micro) && quote.credit_micro > 0) return { status: 'credited', creditedMicro: quote.credit_micro }
   if (quote?.review_pending === true) return { status: 'review' }
   if (quote?.status === 'expired') return { status: 'expired' }
   return null
 }
+// A system transfer leaves the payer empty, or with at least the rent-exempt minimum; the fee is one signature.
+const FEE_LAMPORTS = 5_000n, RENT_EXEMPT_LAMPORTS = 890_880n
+export function affordable(balance, lamports) {
+  const left = BigInt(balance) - BigInt(lamports) - FEE_LAMPORTS
+  return left === 0n || left >= RENT_EXEMPT_LAMPORTS
+}
+const sol = lamports => {
+  const value = BigInt(lamports), part = (value % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '')
+  return `${value / 1_000_000_000n}${part ? `.${part}` : ''}`
+}
+// A simulation that failed for want of SOL: the transfer's own error, or the fee or rent checks.
+const lacksSol = value => /Insufficient|AccountNotFound|"Custom":1\b/.test(JSON.stringify(value?.err ?? null))
+  || (value?.logs ?? []).some(line => /insufficient lamports/i.test(line))
 
 /**
  * The conversion steps for one signed-in builder. githubVerifier checks admin authority live (app/lib/github-session.mjs);
- * session is the credit service's session from the cookie, or null.
+ * current is the credit service's session from the cookie, or null.
  */
 export function createCreditsConvert({ pool, connection, settings, githubVerifier, fetchImpl = fetch, now = () => Date.now() }) {
   const owned = async (id, githubUserId) => {
@@ -203,7 +218,7 @@ export function createCreditsConvert({ pool, connection, settings, githubVerifie
     if (!row) throw new CreditsWebError('Unknown conversion.', 404)
     return row
   }
-  // A live admin check, then a new credit service session (the cookie's is missing, expired or refused).
+  // A live admin check, then a new credit service session. Only from a click (POST): a page load never signs in.
   const signIn = async ({ repoId, githubUserId, login }) => {
     const admin = await githubVerifier.verifyCurrentAuthority({ githubRepoId: repoId }).catch(() => {
       throw new CreditsWebError('GitHub no longer lists you as an admin of this repository. Verify again.', 403)
@@ -211,49 +226,74 @@ export function createCreditsConvert({ pool, connection, settings, githubVerifie
     const githubLogin = admin.githubLogin ?? login
     return { login: githubLogin, session: await signInToCredits({ pool, settings, repoId, githubUserId, login: githubLogin, fetchImpl, now: now() }) }
   }
-  const expire = async (row, statuses) => (await pool.query(`update credit_conversions set status='expired',updated_at=now()
-    where id=$1 and status = any($2::text[]) returning *`, [row.id, statuses])).rows[0] ?? row
+  const set = async (row, status, from, creditedMicro = null) => (await pool.query(`update credit_conversions set status=$2,credited_micro=$3,updated_at=now()
+    where id=$1 and status = any($4::text[]) returning *`, [row.id, status, creditedMicro, from])).rows[0] ?? row
+  // Where the signed payment is: 'landed', 'failed' (landed with an error: the fee was spent, nothing was paid), 'lost' (not
+  // found, and its blockhash has expired, so it can never land) or 'pending'.
+  const chainStatus = async row => {
+    const [status, height] = await Promise.all([connection.getSignatureStatuses([row.payment_signature], { searchTransactionHistory: true }).then(r => r.value[0]),
+      connection.getBlockHeight('confirmed')])
+    if (status?.err) return 'failed'
+    if (status) return 'landed'
+    return height > Number(row.last_valid_block_height) ? 'lost' : 'pending'
+  }
+  // A failed or lost payment: its signature is kept, and the quote can be paid again while it lasts.
+  const retry = async row => (await pool.query(`update credit_conversions set status=$2,payment_signature=null,earlier_signatures=earlier_signatures||$3::text[],
+    updated_at=now() where id=$1 and status='submitted' and payment_signature=$4 returning *`,
+  [row.id, new Date(row.expires_at).getTime() > now() ? 'prepared' : 'expired', [row.payment_signature], row.payment_signature])).rows[0] ?? row
   const refresh = async (row, token) => {
     if (!OPEN_STATUSES.includes(row.status)) return row
     const outcome = token ? outcomeOf(await creditsCall(fetchImpl, settings.origin, `/quotes/${row.quote_id}`, { token }).catch(() => null)) : null
-    if (outcome && outcome.status !== 'expired') {
-      const { rows: [next] } = await pool.query(`update credit_conversions set status=$2,credited_micro=$3,updated_at=now()
-        where id=$1 and status in ('quoted','prepared','submitted') returning *`, [row.id, outcome.status, outcome.creditedMicro ?? null])
-      return next ?? row
+    if (outcome && outcome.status !== 'expired') return set(row, outcome.status, OPEN_STATUSES, outcome.creditedMicro ?? null)
+    if (row.status === 'submitted') {
+      const chain = await chainStatus(row).catch(() => 'pending')
+      if (chain === 'failed' || chain === 'lost') return retry(row)
+      // A payment that landed for a quote the credit service has closed: a person reviews it (a refund, or credits).
+      if (chain === 'landed' && outcome?.status === 'expired') return set(row, 'review', ['submitted'])
+      return row
     }
-    if (new Date(row.expires_at).getTime() > now()) return row
-    if (row.status !== 'submitted') return expire(row, ['quoted', 'prepared'])
-    // A signed payment is written off only when the chain shows it can no longer land; otherwise the ledger credits it
-    // late or sends it to review, and this row follows.
-    const [status, height] = await Promise.all([connection.getSignatureStatuses([row.payment_signature], { searchTransactionHistory: true })
-      .then(r => r.value[0]).catch(() => undefined), connection.getBlockHeight('confirmed').catch(() => null)])
-    return status === null && height > Number(row.last_valid_block_height) ? expire(row, ['submitted']) : row
+    return outcome?.status === 'expired' || new Date(row.expires_at).getTime() <= now() ? set(row, 'expired', ['quoted', 'prepared']) : row
   }
   return {
     /**
-     * The builder's latest conversion on this repository, its status asked again while it is open. Without a session, an open
-     * conversion signs in again (a live admin check) at most once a minute; `session` is then the one to keep.
+     * The account's open conversion (whichever repository it started on), else its latest on this repository, asked again
+     * while it is open. Never signs in: needsSignIn says a click (check) must sign in to ask the credit service.
      */
-    async status({ repoId, githubUserId, login, current }) {
-      const { rows: [row] } = await pool.query(`select * from credit_conversions where github_user_id=$1 and github_repo_id=$2
-        order by id desc limit 1`, [githubUserId, repoId])
-      let kept = current
-      if (row && OPEN_STATUSES.includes(row.status) && !kept && await takeQuota(pool, [[`credits:status-sign-in:${githubUserId}`, 1, 60]])) {
-        kept = await signIn({ repoId, githubUserId, login }).then(result => result.session).catch(() => null)
-      }
-      return { conversion: publicConversion(row ? await refresh(row, kept?.token) : null), session: kept !== current ? kept : null }
+    async status({ repoId, githubUserId, current }) {
+      const { rows: [row] } = await pool.query(`select * from credit_conversions where github_user_id=$1 and (github_repo_id=$2 or status = any($3::text[]))
+        order by (status = any($3::text[])) desc, id desc limit 1`, [githubUserId, repoId, OPEN_STATUSES])
+      if (!row) return { conversion: null, needsSignIn: false }
+      const fresh = await refresh(row, current?.token)
+      return { conversion: publicConversion(fresh), needsSignIn: OPEN_STATUSES.includes(fresh.status) && !current }
     },
-    /** A quote for `lamports`, after a live admin check. Returns the conversion and the session to keep. */
-    async quote({ repoId, githubUserId, login, lamports, current }) {
+    /** A click on "Refresh status": signs in again if the session is gone (a live admin check), then asks again. */
+    async check({ id, repoId, githubUserId, login, current }) {
+      const row = await owned(id, githubUserId)
+      let session = null
+      if (OPEN_STATUSES.includes(row.status) && !current) {
+        if (!await takeQuota(pool, [[`credits:check:${githubUserId}`, 10, 600]])) throw new CreditsWebError('Too many checks. Wait a few minutes.', 429)
+        session = (await signIn({ repoId, githubUserId, login })).session
+      }
+      return { conversion: publicConversion(await refresh(row, (current ?? session)?.token)), session }
+    },
+    /** A quote for `lamports`, after a live admin check; with `payer`, only an amount that wallet can pay. */
+    async quote({ repoId, githubUserId, login, lamports, payer = null, current }) {
       const amount = readLamports(lamports)
+      if (payer !== null && (typeof payer !== 'string' || !BASE58.test(payer))) throw new CreditsWebError('Invalid wallet.', 400)
       if (!await takeQuota(pool, [[`credits:quote:${githubUserId}`, 6, 600], ['credits:quote', 300, 60]])) throw new CreditsWebError('Too many quotes. Wait a few minutes.', 429)
       const open = (await pool.query(`select * from credit_conversions where github_user_id=$1 and status = any($2::text[])`, [githubUserId, OPEN_STATUSES])).rows[0]
       if (open && OPEN_STATUSES.includes((await refresh(open, current?.token)).status)) throw new CreditsWebError('You have an open conversion. Finish or cancel it first.')
+      if (payer !== null) {
+        const balance = BigInt(await connection.getBalance(new PublicKey(payer), 'confirmed'))
+        if (!affordable(balance, amount)) {
+          const most = balance - FEE_LAMPORTS - RENT_EXEMPT_LAMPORTS
+          throw new CreditsWebError(`Your wallet holds ${sol(balance)} SOL. Choose ${most >= MIN_LAMPORTS ? `at most ${sol(most)} SOL` : 'a wallet with more SOL'}, so the network fee is covered.`, 400)
+        }
+      }
       // Every quote checks admin authority live, even with a session in the cookie.
       const fresh = await signIn({ repoId, githubUserId, login })
-      const ask = session => creditsCall(fetchImpl, settings.origin, '/quotes', { method: 'POST', body: { lamports: amount.toString() },
-        token: session.token, idempotencyKey: randomBytes(16).toString('base64url') })
-      const quote = parseQuote(await ask(fresh.session), { settings, lamports: amount, now: now() })
+      const quote = parseQuote(await creditsCall(fetchImpl, settings.origin, '/quotes', { method: 'POST', body: { lamports: amount.toString() },
+        token: fresh.session.token, idempotencyKey: randomBytes(16).toString('base64url') }), { settings, lamports: amount, now: now() })
       let row
       try {
         row = (await pool.query(`insert into credit_conversions(github_repo_id,github_user_id,github_login,quote_id,lamports,credit_micro,
@@ -265,53 +305,53 @@ export function createCreditsConvert({ pool, connection, settings, githubVerifie
       }
       return { conversion: publicConversion(row), session: fresh.session }
     },
-    /** The unsigned transfer for this quote, from `payer`. Again after a broadcast that expired without landing. */
+    /** The unsigned transfer for this quote, from `payer`. Again after a payment that failed on chain or can no longer land. */
     async prepare({ id, githubUserId, payer }) {
       if (typeof payer !== 'string' || !BASE58.test(payer)) throw new CreditsWebError('Connect a Solana wallet.', 400)
       let row = await owned(id, githubUserId)
-      if (new Date(row.expires_at).getTime() <= now() + 30_000) throw new CreditsWebError('This quote expired. Get a new one.')
       if (row.status === 'submitted') {
-        // A signed payment that never landed and whose blockhash has expired can be replaced; anything else waits.
-        const [status, height] = await Promise.all([connection.getSignatureStatuses([row.payment_signature], { searchTransactionHistory: true }).then(r => r.value[0]),
-          connection.getBlockHeight('confirmed')])
-        if (status || !(height > Number(row.last_valid_block_height))) throw new CreditsWebError('Your payment is on its way. Wait for it before approving again.')
-        row = (await pool.query(`update credit_conversions set status='prepared',payment_signature=null,earlier_signatures=earlier_signatures||$2::text[],
-          updated_at=now() where id=$1 and status='submitted' returning *`, [row.id, [row.payment_signature]])).rows[0]
-        if (!row) throw new CreditsWebError('This conversion changed. Refresh and try again.')
+        if (['landed', 'pending'].includes(await chainStatus(row))) throw new CreditsWebError('Your payment is on its way. Wait for it before approving again.')
+        row = await retry(row)
       }
-      if (!['quoted', 'prepared'].includes(row.status)) throw new CreditsWebError('This conversion is closed.')
+      if (!['quoted', 'prepared'].includes(row.status)) throw new CreditsWebError(row.status === 'expired' ? 'This quote expired. Get a new one.' : 'This conversion is closed.')
+      if (new Date(row.expires_at).getTime() <= now() + 30_000) throw new CreditsWebError('This quote is about to expire. Get a new one.')
       const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
-      const payment = buildPayment({ payer: new PublicKey(payer).toBase58(), treasury: settings.treasury, lamports: row.lamports,
-        reference: row.reference, blockhash, lastValidBlockHeight })
+      const wallet = new PublicKey(payer).toBase58()
+      const payment = buildPayment({ payer: wallet, treasury: settings.treasury, lamports: row.lamports, reference: row.reference, blockhash, lastValidBlockHeight })
       const { rows: [prepared] } = await pool.query(`update credit_conversions set status='prepared',payer_wallet=$2,prepared_message=$3,
-        last_valid_block_height=$4,updated_at=now() where id=$1 and status in ('quoted','prepared') returning *`, [row.id, new PublicKey(payer).toBase58(), payment.message, lastValidBlockHeight])
+        last_valid_block_height=$4,updated_at=now() where id=$1 and status in ('quoted','prepared') returning *`, [row.id, wallet, payment.message, lastValidBlockHeight])
       if (!prepared) throw new CreditsWebError('This conversion changed. Refresh and try again.')
       return { conversion: publicConversion(prepared), transaction: payment.transaction }
     },
-    /** The wallet's signature over the prepared transfer: stored, then broadcast once (with preflight). */
+    /**
+     * The wallet's signature over the prepared transfer. It is simulated first: a payment that cannot succeed is refused
+     * before anything is stored or sent. Then the signature is stored and the payment broadcast. From the broadcast on, any
+     * error may mean it was sent: the row stays submitted, and only the chain (failed, or lost after its blockhash) reopens it.
+     */
     async submit({ id, githubUserId, signedTransaction }) {
       const row = await owned(id, githubUserId)
       if (row.status !== 'prepared' || !row.prepared_message) throw new CreditsWebError('This conversion is not waiting for a payment.')
-      if (new Date(row.expires_at).getTime() <= now()) throw new CreditsWebError('This quote expired. Get a new one.')
+      if (new Date(row.expires_at).getTime() <= now() + 15_000) throw new CreditsWebError('This quote is about to expire. Nothing was sent; get a new one.')
       const payment = assertPayment(signedTransaction, { message: row.prepared_message, payer: row.payer_wallet })
+      const simulation = await connection.simulateTransaction(Transaction.from(payment.raw)).catch(() => null)
+      if (!simulation?.value) throw new CreditsWebError('The payment could not be checked. Nothing was sent; try again.', 503)
+      if (simulation.value.err) {
+        throw new CreditsWebError(lacksSol(simulation.value) ? 'Your wallet does not hold enough SOL for this amount and the network fee. Nothing was sent.'
+          : 'The payment failed its check. Nothing was sent.')
+      }
       const { rows: [submitted] } = await pool.query(`update credit_conversions set status='submitted',payment_signature=$2,submitted_at=now(),
         updated_at=now() where id=$1 and status='prepared' and prepared_message=$3 returning *`, [row.id, payment.signature, row.prepared_message])
       if (!submitted) throw new CreditsWebError('This conversion changed. Refresh and try again.')
-      try { await connection.sendRawTransaction(payment.raw, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 }) } catch (error) {
-        // A failed preflight sends nothing: the conversion waits for a new approval. Any other error may have sent it.
-        if (!/simulation failed|insufficient|Attempt to debit/i.test(String(error?.message))) return { conversion: publicConversion(submitted) }
-        await pool.query(`update credit_conversions set status='prepared',payment_signature=null,updated_at=now() where id=$1 and status='submitted'`, [row.id])
-        throw new CreditsWebError(/insufficient|Attempt to debit/i.test(String(error?.message))
-          ? 'Your wallet does not hold enough SOL for this amount and the network fee. Choose a smaller amount.' : 'The payment failed its check. Nothing was sent.')
-      }
+      await connection.sendRawTransaction(payment.raw, { skipPreflight: true, maxRetries: 5 }).catch(() => {})
       return { conversion: publicConversion(submitted) }
     },
-    /** A quote or an unsigned transfer can be dropped; a signed payment cannot. */
+    /** A quote, an unsigned transfer, or a payment that failed or can no longer land can be dropped; a pending one cannot. */
     async cancel({ id, githubUserId }) {
-      await owned(id, githubUserId)
-      const { rows: [row] } = await pool.query(`update credit_conversions set status='cancelled',updated_at=now() where id=$1 and status in ('quoted','prepared') returning *`, [id])
-      if (!row) throw new CreditsWebError('A signed payment cannot be cancelled. Wait for its status.')
-      return { conversion: publicConversion(row) }
+      let row = await owned(id, githubUserId)
+      if (row.status === 'submitted') row = await refresh(row, null)
+      const { rows: [cancelled] } = await pool.query(`update credit_conversions set status='cancelled',updated_at=now() where id=$1 and status in ('quoted','prepared') returning *`, [row.id])
+      if (!cancelled) throw new CreditsWebError(row.status === 'submitted' ? 'A payment on its way cannot be cancelled. Wait for its status.' : 'This conversion is closed.')
+      return { conversion: publicConversion(cancelled) }
     },
   }
 }

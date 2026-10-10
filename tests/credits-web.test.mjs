@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { register } from 'node:module'
 import { Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from '@solana/web3.js'
 import { encryptGithubSession } from '../app/lib/auth.mjs'
-import { CREDITS_SESSION_SECONDS, assertPayment, buildPayment, creditsCall, creditsWebSettings, openCreditsSession, outcomeOf,
+import { CREDITS_SESSION_SECONDS, affordable, assertPayment, buildPayment, creditsCall, creditsWebSettings, openCreditsSession, outcomeOf,
   parseQuote, parseSolanaPay, readLamports, sealCreditsSession, signInToCredits } from '../src/credits-web.mjs'
 
 // The route imports next/server the way Next resolves it (tests/fixtures/jsx-hooks.mjs).
@@ -13,7 +13,7 @@ register(new URL('./fixtures/jsx-hooks.mjs', import.meta.url))
 const route = await import('../app/api/credits/convert/[repo]/route.js')
 
 // "Claim as AI credits" (src/credits-web.mjs) without services: settings, the quote and payment checks, the session cookie,
-// the server-to-server sign-in and the route's refusals. tests/credits-web-db.test.mjs runs the steps on PostgreSQL.
+// the server-to-server sign-in and the route's refusals. tests/credits-web-chain.test.mjs runs the steps on PostgreSQL and a validator.
 const TREASURY = Keypair.generate().publicKey.toBase58()
 const REFERENCE = Keypair.generate().publicKey.toBase58()
 const HANDOFF = { REPO_INFERENCE_HANDOFF_ENABLED: 'true', REPO_INFERENCE_HANDOFF_SECRET: 'c'.repeat(40), HANDOFF_ASSERTION_SECRET: 'a'.repeat(40) }
@@ -143,6 +143,12 @@ test('credit service errors: its own words in one line, a 401 kept as 401, an ou
   assert.deepEqual(outcomeOf({ status: 'expired' }), { status: 'expired' })
   assert.equal(outcomeOf({ status: 'awaiting_payment' }), null)
   assert.equal(outcomeOf({ status: 'credited' }), null, 'credited without an amount is not believed')
+  assert.equal(outcomeOf({ status: 'credited', credit_micro: 0 }), null, 'nor credited with nothing')
+  // A transfer leaves the payer empty, or with the rent-exempt minimum (890,880 lamports) after the 5,000-lamport fee.
+  assert.equal(affordable(1_000_005_000n, 1_000_000_000n), true, 'empties the wallet exactly')
+  assert.equal(affordable(1_000_895_880n, 1_000_000_000n), true)
+  assert.equal(affordable(1_000_895_879n, 1_000_000_000n), false, 'would leave less than the rent')
+  assert.equal(affordable(999_999_999n, 1_000_000_000n), false)
 })
 
 test('the route: 404 while dark; then a session for this repository and the same origin', async t => {

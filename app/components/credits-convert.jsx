@@ -18,12 +18,16 @@ const left = (expiresAt, now) => {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 const OPEN = ['quoted', 'prepared', 'submitted']
+// Kept in the wallet by "All of this payout": the network fee and the rent a wallet that is not emptied must keep.
+const RESERVE = 1_000_000n
+const allOf = amount => { const lamports = BigInt(amount) - RESERVE; return lamports >= 10_000_000n ? sol(lamports) : '' }
 
 export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onClose }) {
   const { wallet, provider, connect } = useWallet()
   const walletRef = useRef(wallet); walletRef.current = wallet
   const [conversion, setConversion] = useState(null), [loaded, setLoaded] = useState(false)
-  const [value, setValue] = useState(claim ? sol(claim.amount) : ''), [busy, setBusy] = useState(''), [error, setError] = useState('')
+  const [value, setValue] = useState(claim ? allOf(claim.amount) : ''), [busy, setBusy] = useState(''), [error, setError] = useState('')
+  const [needsSignIn, setNeedsSignIn] = useState(false)
   const [now, setNow] = useState(Date.now())
   const selected = creditsLamports(value)
   const open = conversion && OPEN.includes(conversion.status)
@@ -38,8 +42,15 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
   }
   async function refresh() {
     const result = await call('GET')
-    setConversion(result.conversion); setLoaded(true)
+    setConversion(result.conversion); setNeedsSignIn(Boolean(result.needsSignIn)); setLoaded(true)
     return result.conversion
+  }
+  // "Refresh status" is a click: when the credit service session is gone, it signs in again (a live GitHub admin check).
+  async function check() {
+    if (!(needsSignIn && conversion && OPEN.includes(conversion.status))) return refresh()
+    setBusy('Checking your payment…'); setError('')
+    try { setConversion((await call('POST', { action: 'check', id: conversion.id })).conversion); setNeedsSignIn(false) }
+    catch (e) { setError(e.message) } finally { setBusy('') }
   }
   useEffect(() => { let active = true; refresh().catch(e => { if (active) { setError(e.message); setLoaded(true) } }); return () => { active = false } }, [repoId])
   useEffect(() => {
@@ -53,7 +64,7 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
   async function quote() {
     if (!selected) return
     setBusy('Signing you in to AI credits and getting a quote…'); setError('')
-    try { setConversion((await call('POST', { action: 'quote', lamports: String(selected) })).conversion) }
+    try { setConversion((await call('POST', { action: 'quote', lamports: String(selected), ...walletRef.current ? { payer: walletRef.current } : {} })).conversion) }
     catch (e) { setError(e.message); await refresh().catch(() => {}) }
     finally { setBusy('') }
   }
@@ -104,6 +115,7 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
         <button type="button" className="claim-text-button" onClick={() => setConversion(null)}>Convert more SOL</button></div></div></div> :
     conversion?.status === 'review' ? <p role="status">Your payment needs a review by repo.ing (wrong amount, late, or paid twice). Nothing is lost: you get a refund, or credits.</p> :
     open ? <>
+      {conversion.repoId && conversion.repoId !== String(repoId) && <p className="muted">This conversion was started on another of your repositories.</p>}
       <dl className="reinvest-review">
         <div><dt>You pay</dt><dd>{sol(conversion.lamports)} SOL</dd></div>
         <div><dt>You get</dt><dd>{usd(conversion.creditMicro)} of AI credits</dd></div>
@@ -126,16 +138,16 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
       <p>Turn SOL into repo.ing AI credits for your coding tools, at the SOL price of the moment. Getting a quote signs you in to repo.ing AI credits with your GitHub account.</p>
       <label className="reinvest-amount-label" htmlFor={`credits-${repoId}`}>SOL to convert (0.01 to 100)</label>
       <input id={`credits-${repoId}`} inputMode="decimal" autoComplete="off" value={value} onChange={e => setValue(e.target.value)} disabled={Boolean(busy)} placeholder="0.00"/>
-      {claim && <div className="reinvest-presets"><button type="button" className="button outline" disabled={Boolean(busy)} onClick={() => setValue(sol(claim.amount))}>All of this payout</button>
+      {claim && <div className="reinvest-presets"><button type="button" className="button outline" disabled={Boolean(busy) || !allOf(claim.amount)} onClick={() => setValue(allOf(claim.amount))}>All of this payout</button>
         <button type="button" className="button outline" disabled={Boolean(busy)} onClick={() => setValue(sol(BigInt(claim.amount) / 2n))}>Half</button></div>}
       {value && !selected && <p className="inline-error">Enter 0.01 to 100 SOL, with at most 9 decimals.</p>}
       {devnet}
       <div className="reinvest-actions"><button type="button" className="button primary" disabled={!selected || Boolean(busy)} onClick={quote}>Get quote</button>
         <button type="button" className="button outline" disabled={Boolean(busy)} onClick={cancel}>{claim ? 'Keep SOL in wallet' : 'Close'}</button></div>
-      <p className="muted">Leave a little SOL for the network fee.</p>
+      <p className="muted">{claim ? '“All of this payout” keeps 0.001 SOL in your wallet for the network fee.' : 'Leave a little SOL for the network fee.'}</p>
     </>}
     {busy && <p className="claim-progress" role="status"><span className="claim-spinner" aria-hidden="true"/>{busy}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
-    {loaded && !busy && <div className="credits-links"><button type="button" className="claim-text-button" onClick={() => refresh().catch(e => setError(e.message))}>Refresh status</button></div>}
+    {loaded && !busy && <div className="credits-links"><button type="button" className="claim-text-button" onClick={() => check().catch(e => setError(e.message))}>Refresh status</button></div>}
   </section>
 }

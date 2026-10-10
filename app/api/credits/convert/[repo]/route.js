@@ -6,10 +6,12 @@ import { publicOrigin } from '../../../../lib/origin.mjs'
 import { chain, database } from '../../../../lib/server.mjs'
 export const runtime = 'nodejs'
 
-// "Claim as AI credits" (src/credits-web.mjs): GET the builder's latest conversion on this repository; POST quote, prepare,
-// submit or cancel. A GitHub session for this repository (or the builder dashboard's) and the same origin. 404 while dark.
+// "Claim as AI credits" (src/credits-web.mjs): GET the builder's conversion (never signs in); POST quote, prepare, submit,
+// cancel or check (a click that may sign in again). A GitHub session for this repository (or the builder dashboard's)
+// and, for POST, the same origin. 404 while dark.
 const headers = { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' }
 const FIELDS = ['action', 'lamports', 'id', 'payer', 'signedTransaction']
+const ACTIONS = ['quote', 'prepare', 'submit', 'cancel', 'check']
 const reply = (body, status = 200, session = null) => {
   const response = NextResponse.json(body, { status, headers })
   // The credit service's session, encrypted and HttpOnly; it never reaches the page's scripts.
@@ -38,8 +40,8 @@ export async function GET(request, { params }) {
   if (!session) return reply({ error: 'Verify GitHub for this repository first.' }, 403)
   try {
     const current = openCreditsSession(request.cookies.get(CREDITS_SESSION_COOKIE)?.value, session.githubUserId)
-    const result = await service(session, request, settings).status({ repoId: repo, githubUserId: session.githubUserId, login: session.githubLogin, current })
-    return reply({ enabled: true, network: settings.network, conversion: result.conversion }, 200, result.session)
+    const result = await service(session, request, settings).status({ repoId: repo, githubUserId: session.githubUserId, current })
+    return reply({ enabled: true, network: settings.network, conversion: result.conversion, needsSignIn: result.needsSignIn })
   } catch (error) { return failure(error) }
 }
 
@@ -57,13 +59,17 @@ export async function POST(request, { params }) {
     if (!body || typeof body !== 'object' || Object.keys(body).some(key => !FIELDS.includes(key))) throw Error('fields')
   } catch { return reply({ error: 'Invalid or expired request. Refresh the page and verify GitHub again.' }, 403) }
   const id = Number(body.id), who = { githubUserId: session.githubUserId }
-  if (!['quote', 'prepare', 'submit', 'cancel'].includes(body.action)) return reply({ error: 'Unknown action.' }, 400)
+  if (!ACTIONS.includes(body.action)) return reply({ error: 'Unknown action.' }, 400)
   if (body.action !== 'quote' && (!Number.isSafeInteger(id) || id <= 0)) return reply({ error: 'Unknown conversion.' }, 400)
   try {
     const steps = service(session, request, settings)
+    const current = openCreditsSession(request.cookies.get(CREDITS_SESSION_COOKIE)?.value, session.githubUserId)
     if (body.action === 'quote') {
-      const current = openCreditsSession(request.cookies.get(CREDITS_SESSION_COOKIE)?.value, session.githubUserId)
-      const result = await steps.quote({ ...who, repoId: repo, login: session.githubLogin, lamports: body.lamports, current })
+      const result = await steps.quote({ ...who, repoId: repo, login: session.githubLogin, lamports: body.lamports, payer: body.payer ?? null, current })
+      return reply({ conversion: result.conversion }, 200, result.session)
+    }
+    if (body.action === 'check') {
+      const result = await steps.check({ ...who, id, repoId: repo, login: session.githubLogin, current })
       return reply({ conversion: result.conversion }, 200, result.session)
     }
     if (body.action === 'prepare') return reply(await steps.prepare({ ...who, id, payer: body.payer }))
