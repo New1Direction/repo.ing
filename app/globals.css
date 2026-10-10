@@ -361,6 +361,7 @@
 /* Builder earnings: one optional, separately approved reinvestment. */
 .reinvest-actions,.reinvest-presets{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
 .reinvest-card{margin:20px 0;min-width:0}
+.credits-links{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;margin-top:8px}
 .reinvest-card h2{margin-bottom:12px}
 .reinvest-amount-label{display:block;font-weight:600;margin:16px 0 8px}
 .reinvest-card input{width:100%;max-width:360px;min-height:44px;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font:inherit;font-size:16px}

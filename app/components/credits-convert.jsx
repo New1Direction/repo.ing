@@ -100,8 +100,8 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
     conversion?.status === 'credited' ? <div className="claim-receipt" role="status"><div>
       <p>{usd(conversion.creditedMicro)} of AI credits added to your repo.ing account for {sol(conversion.lamports)} SOL.</p>
       <p>Use them in your coding tool: run <code>npx @repoing/cli credits key</code> to make a key.</p>
-      {conversion.signature && <a href={`https://explorer.solana.com/tx/${conversion.signature}${network === 'devnet' ? '?cluster=devnet' : ''}`} target="_blank" rel="noopener noreferrer">View payment ↗</a>}
-      <button type="button" className="claim-text-button" onClick={() => setConversion(null)}>Convert more SOL</button></div></div> :
+      <div className="credits-links">{conversion.signature && <a href={`https://explorer.solana.com/tx/${conversion.signature}${network === 'devnet' ? '?cluster=devnet' : ''}`} target="_blank" rel="noopener noreferrer">View payment ↗</a>}
+        <button type="button" className="claim-text-button" onClick={() => setConversion(null)}>Convert more SOL</button></div></div></div> :
     conversion?.status === 'review' ? <p role="status">Your payment needs a review by repo.ing (wrong amount, late, or paid twice). Nothing is lost: you get a refund, or credits.</p> :
     open ? <>
       <dl className="reinvest-review">
@@ -113,8 +113,8 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
       {devnet}
       {conversion.status === 'submitted' ? <>
         <p role="status">Payment sent. Waiting for it to finalize on chain; credits come right after.</p>
-        {conversion.signature && <a href={`https://explorer.solana.com/tx/${conversion.signature}${network === 'devnet' ? '?cluster=devnet' : ''}`} target="_blank" rel="noopener noreferrer">View payment ↗</a>}
-        {!expired && <button type="button" className="claim-text-button" disabled={Boolean(busy)} onClick={approve}>Payment stuck? Approve again</button>}
+        <div className="credits-links">{conversion.signature && <a href={`https://explorer.solana.com/tx/${conversion.signature}${network === 'devnet' ? '?cluster=devnet' : ''}`} target="_blank" rel="noopener noreferrer">View payment ↗</a>}
+          {!expired && <button type="button" className="claim-text-button" disabled={Boolean(busy)} onClick={approve}>Payment stuck? Approve again</button>}</div>
       </> : expired ? <p role="status">This quote expired. Nothing was charged.</p> : <>
         <p className="muted">Your wallet approves one payment to the repo.ing AI credits treasury. Credits buy AI model use in your coding tools; they never turn back into SOL.</p>
         <div className="reinvest-actions"><button type="button" className="button primary" disabled={Boolean(busy)} onClick={approve}>{wallet ? 'Approve in wallet' : 'Connect wallet and approve'}</button>
@@ -136,6 +136,6 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
     </>}
     {busy && <p className="claim-progress" role="status"><span className="claim-spinner" aria-hidden="true"/>{busy}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
-    {loaded && !busy && <button type="button" className="claim-text-button" onClick={() => refresh().catch(e => setError(e.message))}>Refresh status</button>}
+    {loaded && !busy && <div className="credits-links"><button type="button" className="claim-text-button" onClick={() => refresh().catch(e => setError(e.message))}>Refresh status</button></div>}
   </section>
 }
