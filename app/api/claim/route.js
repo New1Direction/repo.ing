@@ -6,6 +6,7 @@ import { githubSessionCookie, readGithubSession, readClaimReview, assertSameOrig
 import { sessionVerifier } from '../../lib/github-session.mjs'
 import { publicOrigin } from '../../lib/origin.mjs'
 import { STOCK_PAIR_NO_OWNER_CLAIM, stockPairOf } from '../../../src/stock-owner-claims.mjs'
+import { creditsWebEnabled } from '../../../src/credits-web.mjs'
 export const runtime = 'nodejs'
 
 // A stock pair has no owner claim (src/stock-owner-claims.mjs), and so never a claim review: it is refused before the review
@@ -23,7 +24,7 @@ export async function POST(request) {
   const origin = publicOrigin(request.url)
   const refusal = await stockPairRefusal(request, origin)
   if (refusal) return refusal
-  let session, review, repoId, reinvest = false
+  let session, review, repoId, reinvest = false, credits = false
   try {
     assertSameOrigin(request, origin)
     session = readGithubSession(request.cookies.get(githubSessionCookie)?.value)
@@ -31,6 +32,8 @@ export async function POST(request) {
     repoId = form.get('repoId')
     review = readClaimReview(form.get('review'), session)
     reinvest = form.get('next') === 'reinvest' && process.env.BUILDER_REINVEST_ENABLED === 'true'
+    // "Claim as AI credits": the same claim, then the page opens the conversion (src/credits-web.mjs).
+    credits = form.get('next') === 'credits' && creditsWebEnabled()
   } catch {
     if (typeof repoId === 'string' && /^\d+$/.test(repoId)) return NextResponse.redirect(new URL(`/claim/${repoId}?error=${session ? 'review-changed' : 'verification-failed'}`, origin), 303)
     return new Response('This claim review expired or is invalid. Return to the claim page, refresh, and review again.',
@@ -46,6 +49,7 @@ export async function POST(request) {
         githubAuthorization: { session: true }, review, onProgress: report })
       back.searchParams.set('claimed', result.signature)
       if (reinvest) back.searchParams.set('reinvest', '1')
+      if (credits) back.searchParams.set('credits', '1')
     } catch (error) {
       back.searchParams.set('error', error.message === 'Payout signer needs SOL for network costs' ? 'payout-unavailable' :
         /48-hour hold/.test(error.message) ? 'payout-address-pending' :

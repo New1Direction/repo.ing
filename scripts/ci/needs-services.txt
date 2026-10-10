@@ -12,6 +12,7 @@ bundle-vault-chain
 bundles-db
 claim
 config-rotation
+credits-web-chain
 discovery-claims
 external-fee-indexer
 fee-accrual

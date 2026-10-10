@@ -261,13 +261,14 @@ test('a README lockup is stored as the mark beside it, and never in its place wh
   }, [[directory, () => Response.json([entry('meridian-lockup.png'), entry('claude-icon.png'), entry('meridian-mark.png')])]])
 })
 
-test('migration 0064 adds the two nullable logo columns, appended last with the largest journal time', () => {
+test('migration 0064 adds the two nullable logo columns, in journal order (a larger time than every earlier entry)', () => {
   const sql = readFileSync('drizzle/0064_repository_logos.sql', 'utf8')
   assert.match(sql, /ALTER TABLE "repositories" ADD COLUMN IF NOT EXISTS "logo_url" text;/)
   assert.match(sql, /ALTER TABLE "repositories" ADD COLUMN IF NOT EXISTS "logo_pinned_at" timestamptz;/)
   assert.doesNotMatch(sql, /UPDATE|DELETE|DROP/i)
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
-  const last = entries.at(-1)
-  assert.equal(last.tag, '0064_repository_logos')
-  assert.ok(entries.slice(0, -1).every(entry => entry.when < last.when))
+  const at = entries.findIndex(entry => entry.tag === '0064_repository_logos')
+  assert.ok(at > 0)
+  assert.ok(entries.slice(0, at).every(entry => entry.when < entries[at].when))
+  assert.ok(entries.slice(at + 1).every(entry => entry.when > entries[at].when))
 })

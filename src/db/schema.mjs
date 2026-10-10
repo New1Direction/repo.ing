@@ -30,6 +30,41 @@ export const authHandoffs = pgTable('auth_handoffs', {
   index('auth_handoffs_expires_idx').on(table.expiresAt),
 ])
 
+// Migration 0065 (src/credits-web.mjs): "Claim as AI credits" quotes, the transfer prepared for each and its outcome.
+export const creditConversions = pgTable('credit_conversions', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  githubLogin: varchar('github_login', { length: 39 }).notNull(),
+  quoteId: uuid('quote_id').notNull().unique(),
+  lamports: bigint('lamports', { mode: 'bigint' }).notNull(),
+  creditMicro: bigint('credit_micro', { mode: 'bigint' }).notNull(),
+  priceMicroPerSol: bigint('price_micro_per_sol', { mode: 'bigint' }).notNull(),
+  reference: varchar('reference', { length: 44 }).notNull(),
+  network: varchar('network', { length: 16 }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  status: varchar('status', { length: 16 }).notNull(),
+  payerWallet: varchar('payer_wallet', { length: 44 }),
+  preparedMessage: text('prepared_message'),
+  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }),
+  paymentSignature: varchar('payment_signature', { length: 88 }).unique(),
+  earlierSignatures: text('earlier_signatures').array().notNull().default(sql`'{}'`),
+  creditedMicro: bigint('credited_micro', { mode: 'bigint' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, table => [
+  check('credit_conversions_ids_check', sql`${table.githubRepoId} > 0 and ${table.githubRepoId} < 4503599627370496 and ${table.githubUserId} > 0`),
+  check('credit_conversions_amount_check', sql`${table.lamports} between 10000000 and 100000000000 and ${table.creditMicro} > 0 and ${table.priceMicroPerSol} > 0`),
+  check('credit_conversions_network_check', sql`${table.network} in ('mainnet', 'devnet')`),
+  check('credit_conversions_status_check', sql`${table.status} in ('quoted', 'prepared', 'submitted', 'credited', 'review', 'expired', 'cancelled')`),
+  check('credit_conversions_payment_check', sql`(${table.status} <> 'submitted' or ${table.paymentSignature} is not null)
+    and (${table.status} not in ('prepared', 'submitted') or (${table.payerWallet} is not null and ${table.preparedMessage} is not null and ${table.lastValidBlockHeight} is not null))`),
+  check('credit_conversions_credited_check', sql`(${table.status} = 'credited') = (${table.creditedMicro} is not null) and (${table.creditedMicro} is null or ${table.creditedMicro} > 0)`),
+  uniqueIndex('credit_conversions_one_open').on(table.githubUserId).where(sql`${table.status} in ('quoted', 'prepared', 'submitted')`),
+  index('credit_conversions_by_repo').on(table.githubUserId, table.githubRepoId, table.id),
+])
+
 // Migration 0063 (src/referral-sponsorship.mjs): free referral payout setups paid by the partner wallet; one per wallet.
 export const referralSponsorships = pgTable('referral_sponsorships', {
   id: uuid('id').primaryKey(),

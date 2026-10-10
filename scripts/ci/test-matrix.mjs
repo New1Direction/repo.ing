@@ -41,6 +41,8 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_hf_claims_test'), launchtest('repoing_hf_chain_test'),
   // The 1% builder allocation for model markets: its rules and routes on PostgreSQL, and two grants on the validator.
   launchtest('repoing_hf_allocation_test'), launchtest('repoing_hf_allocation_chain_test'),
+  // "Claim as AI credits" (migration 0065): quotes, one approved transfer and its outcome, on the validator.
+  launchtest('repoing_credits_web_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -54,6 +56,7 @@ export const DEFAULT_ENV = {
   TRADE_SESSIONS_TEST_DATABASE_URL: launchtest('repoing_trade_sessions_test'),
   REFERRALS_TEST_DATABASE_URL: launchtest('repoing_referrals_test'),
   REFERRAL_SPONSOR_TEST_DATABASE_URL: launchtest('repoing_referral_sponsor_test'),
+  CREDITS_WEB_TEST_DATABASE_URL: launchtest('repoing_credits_web_test'),
   X_LINKS_TEST_DATABASE_URL: launchtest('repoing_x_links_test'),
   BACKERS_TEST_DATABASE_URL: launchtest('repoing_backers_test'),
   LAUNCH_ALERTS_TEST_DATABASE_URL: launchtest('repoing_launch_alerts_test'),
