@@ -49,11 +49,12 @@ repoing claim owner/repository
 The command shows what the next claim of the repository pays, then opens repo.ing's claim page, where your fees go to
 your bound wallet. Your wallet approves the claim.
 
-## AI credits (not open yet)
+## AI credits
 
-The commands below are in this release but stay off until repo.ing opens AI credits; until then they say so. To try them
-against the devnet staging services, set `REPOING_AI_CREDITS=1` with
-`REPOING_CREDITS_ORIGIN=https://staging-credits.repo.ing` and `REPOING_INFERENCE_ORIGIN=https://staging-inference.repo.ing`.
+Turn your fees, or SOL from your wallet, into repo.ing AI credits for your coding tools. To try the commands against the
+devnet staging services instead, set `REPOING_CREDITS_ORIGIN=https://staging-credits.repo.ing` and
+`REPOING_INFERENCE_ORIGIN=https://staging-inference.repo.ing`. `REPOING_AI_CREDITS=0` hides them: `repoing claim` then
+goes to the claim page without asking.
 
 ### Convert fees: `repoing claim --convert`
 
@@ -97,8 +98,7 @@ Pays SOL for a $10, $25, $50 or $100 pack of AI credits, at the SOL price of the
 `repoing claim --convert`. Both commands show the link as a QR code too: scan it with your phone wallet (Phantom,
 Solflare), or open the link. Each paid pack spins once, on the server, when the payment is final: you always get the pack
 in paid credits, and a win adds bonus credits (current odds: 97.15% 1x, 2.50% 1.2x, 0.30% 2x, 0.05% 5x). Credits never
-turn into cash. At most $250 of packs a day per account. Packs are not on sale yet: the command says so until repo.ing
-turns them on.
+turn into cash. At most $250 of packs a day per account. When packs are not on sale, the command says so.
 
 ## Development
 

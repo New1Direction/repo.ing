@@ -1,10 +1,10 @@
 const GITHUB_HOST = 'github.com'
 export const DEFAULT_ORIGIN = 'https://repo.ing'
-export const VERSION = '0.2.0'
-// AI credits (repoing claim --convert, repoing credits) are in this release but stay off until repo.ing opens them:
-// REPOING_AI_CREDITS=1 turns them on, for tests against the staging services.
-export const aiCreditsOn = (env = process.env) => env.REPOING_AI_CREDITS === '1'
-export const AI_CREDITS_OFF = 'AI credits are not open yet. repoing claim --to-wallet claims your fees to your wallet.'
+export const VERSION = '0.3.0'
+// AI credits (repoing claim --convert, repoing credits) are on since 0.3.0; REPOING_AI_CREDITS=0 hides them (claim then
+// goes to the wallet without asking).
+export const aiCreditsOn = (env = process.env) => env.REPOING_AI_CREDITS !== '0'
+export const AI_CREDITS_OFF = 'AI credits are turned off here (REPOING_AI_CREDITS=0). repoing claim --to-wallet claims your fees to your wallet.'
 
 function cleanRepoPath(pathname) {
   const parts = pathname.replace(/^\/+|\/+$/g, '').split('/')
@@ -147,11 +147,13 @@ export async function requestLaunchDraft({ origin, repository, tokenName, tokenS
   }
 }
 
-export const HELP = `repoing — launch an open-source market from your terminal
+/** The main help: with AI credits on, claim also converts and the credits commands are listed. */
+export const help = (aiCredits = aiCreditsOn()) => `repoing — launch an open-source market from your terminal
 
 Usage:
   repoing launch [owner/repo|github-url] [options]
-  repoing claim [owner/repo|github-url] [options]   (your fees to your wallet; repoing claim --help)
+  repoing claim [owner/repo|github-url] [options]   (${aiCredits ? 'your fees as SOL or AI credits' : 'your fees to your wallet'}; repoing claim --help)${aiCredits ? `
+  repoing credits key|list|revoke|buy [options]   (AI credits for your coding tool; repoing credits --help)` : ''}
 
 If no repository is supplied, repoing reads the current git origin.
 
