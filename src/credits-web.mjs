@@ -29,7 +29,9 @@ const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 const TOKEN = /^[\x21-\x7e]{16,1024}$/
 
 export class CreditsWebError extends Error {
-  constructor(message, status = 409) { super(message); this.name = 'CreditsWebError'; this.status = status }
+  // refused: the credit service refused the request (a 4xx answer), so it did not act on it. A 5xx answer, or none, may
+  // come after it acted (a restart, a gateway): not a refusal.
+  constructor(message, status = 409, { refused = false } = {}) { super(message); this.name = 'CreditsWebError'; this.status = status; this.refused = refused }
 }
 
 /** The credit service: HTTPS; plain HTTP only on this computer outside production (tests). */
@@ -42,8 +44,9 @@ export function creditsOrigin(value, env = process.env) {
   return url.origin
 }
 
-export function creditsWebSettings(env = process.env) {
-  if (env.CREDITS_WEB_CONVERT_ENABLED !== 'true' || !handoffEnabled(env)) return null
+/** The credit service this deployment talks to (shared with the credit packs, src/credits-packs.mjs), or null. */
+export function creditsServiceSettings(env = process.env) {
+  if (!handoffEnabled(env)) return null
   try {
     const network = env.CREDITS_WEB_NETWORK ?? 'mainnet'
     // devnet is for a local test against a staging credit service only: production always expects mainnet quotes.
@@ -51,6 +54,7 @@ export function creditsWebSettings(env = process.env) {
     return { origin: creditsOrigin(env.REPO_INFERENCE_CREDITS_ORIGIN, env), treasury: new PublicKey(env.CREDITS_TREASURY_ADDRESS).toBase58(), network }
   } catch { return null }
 }
+export const creditsWebSettings = (env = process.env) => env.CREDITS_WEB_CONVERT_ENABLED === 'true' ? creditsServiceSettings(env) : null
 export const creditsWebEnabled = (env = process.env) => creditsWebSettings(env) !== null
 
 /** "0.5" → 500000000n; at most 9 decimals. null for anything else. */
@@ -159,7 +163,8 @@ export async function creditsCall(fetchImpl, origin, path, { method = 'GET', bod
         ...token ? { authorization: `Bearer ${token}` } : {}, ...idempotencyKey ? { 'idempotency-key': idempotencyKey } : {} },
       body: body === undefined ? undefined : JSON.stringify(body) })
     const value = await response.json().catch(() => null)
-    if (!response.ok) throw new CreditsWebError(plain(value?.error) ?? `The AI credits service answered HTTP ${response.status}.`, response.status === 401 ? 401 : 502)
+    if (!response.ok) throw new CreditsWebError(plain(value?.error) ?? `The AI credits service answered HTTP ${response.status}.`, response.status === 401 ? 401 : 502,
+      { refused: response.status >= 400 && response.status < 500 })
     if (!value || typeof value !== 'object') throw new CreditsWebError('The AI credits service returned an invalid answer.', 502)
     return value
   } catch (error) {
@@ -200,13 +205,40 @@ export function affordable(balance, lamports) {
   const left = BigInt(balance) - BigInt(lamports) - FEE_LAMPORTS
   return left === 0n || left >= RENT_EXEMPT_LAMPORTS
 }
-const sol = lamports => {
+export { FEE_LAMPORTS, RENT_EXEMPT_LAMPORTS }
+/** 250000000 → "0.25". */
+export const sol = lamports => {
   const value = BigInt(lamports), part = (value % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '')
   return `${value / 1_000_000_000n}${part ? `.${part}` : ''}`
 }
 // A simulation that failed for want of SOL: the transfer's own error, or the fee or rent checks.
 const lacksSol = value => /Insufficient|AccountNotFound|"Custom":1\b/.test(JSON.stringify(value?.err ?? null))
   || (value?.logs ?? []).some(line => /insufficient lamports/i.test(line))
+
+// The chain steps both payment flows share (the conversion here, the credit packs in src/credits-packs.mjs). A row has
+// payment_signature and last_valid_block_height.
+/**
+ * Where the signed payment is: 'landed', 'failed' (landed with an error: the fee was spent, nothing was paid), 'lost' (not
+ * found, and its blockhash has expired, so it can never land) or 'pending'.
+ */
+export async function chainStatus(connection, row) {
+  const [status, height] = await Promise.all([connection.getSignatureStatuses([row.payment_signature], { searchTransactionHistory: true }).then(r => r.value[0]),
+    connection.getBlockHeight('confirmed')])
+  if (status?.err) return 'failed'
+  if (status) return 'landed'
+  return height > Number(row.last_valid_block_height) ? 'lost' : 'pending'
+}
+/** A signed payment that cannot succeed is refused before anything is stored or sent. */
+export async function simulatePayment(connection, raw) {
+  const simulation = await connection.simulateTransaction(Transaction.from(raw)).catch(() => null)
+  if (!simulation?.value) throw new CreditsWebError('The payment could not be checked. Nothing was sent; try again.', 503)
+  if (simulation.value.err) {
+    throw new CreditsWebError(lacksSol(simulation.value) ? 'Your wallet does not hold enough SOL for this amount and the network fee. Nothing was sent.'
+      : 'The payment failed its check. Nothing was sent.')
+  }
+}
+/** The broadcast, after the signature is stored: any error may mean it was sent, so errors are left to the chain checks. */
+export const broadcast = (connection, raw) => connection.sendRawTransaction(raw, { skipPreflight: true, maxRetries: 5 }).catch(() => {})
 
 /**
  * The conversion steps for one signed-in builder. githubVerifier checks admin authority live (app/lib/github-session.mjs);
@@ -228,15 +260,7 @@ export function createCreditsConvert({ pool, connection, settings, githubVerifie
   }
   const set = async (row, status, from, creditedMicro = null) => (await pool.query(`update credit_conversions set status=$2,credited_micro=$3,updated_at=now()
     where id=$1 and status = any($4::text[]) returning *`, [row.id, status, creditedMicro, from])).rows[0] ?? row
-  // Where the signed payment is: 'landed', 'failed' (landed with an error: the fee was spent, nothing was paid), 'lost' (not
-  // found, and its blockhash has expired, so it can never land) or 'pending'.
-  const chainStatus = async row => {
-    const [status, height] = await Promise.all([connection.getSignatureStatuses([row.payment_signature], { searchTransactionHistory: true }).then(r => r.value[0]),
-      connection.getBlockHeight('confirmed')])
-    if (status?.err) return 'failed'
-    if (status) return 'landed'
-    return height > Number(row.last_valid_block_height) ? 'lost' : 'pending'
-  }
+  const onChain = row => chainStatus(connection, row)
   // A failed or lost payment: its signature is kept, and the quote can be paid again while it lasts.
   const retry = async row => (await pool.query(`update credit_conversions set status=$2,payment_signature=null,earlier_signatures=earlier_signatures||$3::text[],
     updated_at=now() where id=$1 and status='submitted' and payment_signature=$4 returning *`,
@@ -246,7 +270,7 @@ export function createCreditsConvert({ pool, connection, settings, githubVerifie
     const outcome = token ? outcomeOf(await creditsCall(fetchImpl, settings.origin, `/quotes/${row.quote_id}`, { token }).catch(() => null)) : null
     if (outcome && outcome.status !== 'expired') return set(row, outcome.status, OPEN_STATUSES, outcome.creditedMicro ?? null)
     if (row.status === 'submitted') {
-      const chain = await chainStatus(row).catch(() => 'pending')
+      const chain = await onChain(row).catch(() => 'pending')
       if (chain === 'failed' || chain === 'lost') return retry(row)
       // A payment that landed for a quote the credit service has closed: a person reviews it (a refund, or credits).
       if (chain === 'landed' && outcome?.status === 'expired') return set(row, 'review', ['submitted'])
@@ -310,7 +334,7 @@ export function createCreditsConvert({ pool, connection, settings, githubVerifie
       if (typeof payer !== 'string' || !BASE58.test(payer)) throw new CreditsWebError('Connect a Solana wallet.', 400)
       let row = await owned(id, githubUserId)
       if (row.status === 'submitted') {
-        if (['landed', 'pending'].includes(await chainStatus(row))) throw new CreditsWebError('Your payment is on its way. Wait for it before approving again.')
+        if (['landed', 'pending'].includes(await onChain(row))) throw new CreditsWebError('Your payment is on its way. Wait for it before approving again.')
         row = await retry(row)
       }
       if (!['quoted', 'prepared'].includes(row.status)) throw new CreditsWebError(row.status === 'expired' ? 'This quote expired. Get a new one.' : 'This conversion is closed.')
@@ -333,16 +357,11 @@ export function createCreditsConvert({ pool, connection, settings, githubVerifie
       if (row.status !== 'prepared' || !row.prepared_message) throw new CreditsWebError('This conversion is not waiting for a payment.')
       if (new Date(row.expires_at).getTime() <= now() + 15_000) throw new CreditsWebError('This quote is about to expire. Nothing was sent; get a new one.')
       const payment = assertPayment(signedTransaction, { message: row.prepared_message, payer: row.payer_wallet })
-      const simulation = await connection.simulateTransaction(Transaction.from(payment.raw)).catch(() => null)
-      if (!simulation?.value) throw new CreditsWebError('The payment could not be checked. Nothing was sent; try again.', 503)
-      if (simulation.value.err) {
-        throw new CreditsWebError(lacksSol(simulation.value) ? 'Your wallet does not hold enough SOL for this amount and the network fee. Nothing was sent.'
-          : 'The payment failed its check. Nothing was sent.')
-      }
+      await simulatePayment(connection, payment.raw)
       const { rows: [submitted] } = await pool.query(`update credit_conversions set status='submitted',payment_signature=$2,submitted_at=now(),
         updated_at=now() where id=$1 and status='prepared' and prepared_message=$3 returning *`, [row.id, payment.signature, row.prepared_message])
       if (!submitted) throw new CreditsWebError('This conversion changed. Refresh and try again.')
-      await connection.sendRawTransaction(payment.raw, { skipPreflight: true, maxRetries: 5 }).catch(() => {})
+      await broadcast(connection, payment.raw)
       return { conversion: publicConversion(submitted) }
     },
     /** A quote, an unsigned transfer, or a payment that failed or can no longer land can be dropped; a pending one cannot. */

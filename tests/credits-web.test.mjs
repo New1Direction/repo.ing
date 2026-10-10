@@ -179,15 +179,15 @@ test('the route: 404 while dark; then a session for this repository and the same
   assert.ok(new PublicKey(TREASURY))
 })
 
-test('migration 0065 is expand-only, appended last with the largest journal time, and declared in the schema', () => {
+test('migration 0065 is expand-only, after every earlier migration in the journal, and declared in the schema', () => {
   const sql = readFileSync('drizzle/0065_credit_conversions.sql', 'utf8')
   assert.match(sql, /CREATE TABLE IF NOT EXISTS "credit_conversions"/)
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS "credit_conversions_one_open" ON "credit_conversions" \("github_user_id"\) WHERE "status" IN \('quoted', 'prepared', 'submitted'\)/)
   assert.doesNotMatch(sql, /\b(UPDATE|DELETE|DROP)\b|ALTER TABLE/i)
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
-  const last = entries.at(-1)
-  assert.equal(last.tag, '0065_credit_conversions')
-  assert.ok(entries.slice(0, -1).every(entry => entry.when < last.when))
+  const at = entries.findIndex(entry => entry.tag === '0065_credit_conversions')
+  assert.ok(at > 0)
+  assert.ok(entries.slice(0, at).every(entry => entry.when < entries[at].when))
   const schema = readFileSync('src/db/schema.mjs', 'utf8')
   for (const name of ['credit_conversions', 'credit_conversions_status_check', 'credit_conversions_payment_check', 'credit_conversions_one_open']) assert.ok(schema.includes(`'${name}'`), name)
 })

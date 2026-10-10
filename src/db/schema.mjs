@@ -65,6 +65,51 @@ export const creditConversions = pgTable('credit_conversions', {
   index('credit_conversions_by_repo').on(table.githubUserId, table.githubRepoId, table.id),
 ])
 
+// Migration 0066 (src/credits-packs.mjs): AI credit packs bought on repo.ing/credits, from the retry key to the spin.
+export const creditPackPurchases = pgTable('credit_pack_purchases', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  githubLogin: varchar('github_login', { length: 39 }).notNull(),
+  packMicro: bigint('pack_micro', { mode: 'bigint' }).notNull(),
+  idempotencyKey: varchar('idempotency_key', { length: 32 }).notNull().unique(),
+  sessionHash: char('session_hash', { length: 64 }).notNull(),
+  network: varchar('network', { length: 16 }).notNull(),
+  status: varchar('status', { length: 16 }).notNull(),
+  quoteId: uuid('quote_id').unique(),
+  lamports: bigint('lamports', { mode: 'bigint' }),
+  priceMicroPerSol: bigint('price_micro_per_sol', { mode: 'bigint' }),
+  reference: varchar('reference', { length: 44 }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  payerWallet: varchar('payer_wallet', { length: 44 }),
+  preparedMessage: text('prepared_message'),
+  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }),
+  paymentSignature: varchar('payment_signature', { length: 88 }).unique(),
+  earlierSignatures: text('earlier_signatures').array().notNull().default(sql`'{}'`),
+  spinId: uuid('spin_id').unique(),
+  multiplierBps: integer('multiplier_bps'),
+  bonusMicro: bigint('bonus_micro', { mode: 'bigint' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, table => [
+  check('credit_pack_purchases_ids_check', sql`${table.githubRepoId} > 0 and ${table.githubRepoId} < 4503599627370496 and ${table.githubUserId} > 0`),
+  check('credit_pack_purchases_pack_check', sql`${table.packMicro} in (10000000, 25000000, 50000000, 100000000)`),
+  check('credit_pack_purchases_network_check', sql`${table.network} in ('mainnet', 'devnet')`),
+  check('credit_pack_purchases_status_check', sql`${table.status} in ('requested', 'quoted', 'prepared', 'submitted', 'credited', 'review', 'expired', 'cancelled', 'failed')`),
+  check('credit_pack_purchases_quote_check', sql`(${table.quoteId} is null and ${table.lamports} is null and ${table.priceMicroPerSol} is null and ${table.reference} is null
+      and ${table.expiresAt} is null and ${table.status} in ('requested', 'failed', 'cancelled'))
+    or (${table.quoteId} is not null and ${table.lamports} between 10000000 and 100000000000 and ${table.priceMicroPerSol} > 0 and ${table.reference} is not null
+      and ${table.expiresAt} is not null and ${table.status} <> 'requested')`),
+  check('credit_pack_purchases_payment_check', sql`(${table.status} <> 'submitted' or ${table.paymentSignature} is not null)
+    and (${table.status} not in ('prepared', 'submitted') or (${table.payerWallet} is not null and ${table.preparedMessage} is not null and ${table.lastValidBlockHeight} is not null))`),
+  check('credit_pack_purchases_spin_check', sql`(${table.status} = 'credited') = (${table.spinId} is not null)
+    and (${table.spinId} is null) = (${table.multiplierBps} is null) and (${table.spinId} is null) = (${table.bonusMicro} is null)
+    and (${table.multiplierBps} is null or (${table.multiplierBps} in (10000, 12000, 20000, 50000) and ${table.bonusMicro} = ${table.packMicro} * (${table.multiplierBps} - 10000) / 10000))`),
+  uniqueIndex('credit_pack_purchases_one_open').on(table.githubUserId).where(sql`${table.status} in ('requested', 'quoted', 'prepared', 'submitted')`),
+  index('credit_pack_purchases_by_user').on(table.githubUserId, table.id),
+])
+
 // Migration 0063 (src/referral-sponsorship.mjs): free referral payout setups paid by the partner wallet; one per wallet.
 export const referralSponsorships = pgTable('referral_sponsorships', {
   id: uuid('id').primaryKey(),

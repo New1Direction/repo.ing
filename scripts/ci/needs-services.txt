@@ -13,6 +13,7 @@ bundles-db
 claim
 config-rotation
 credits-web-chain
+credits-packs-chain
 discovery-claims
 external-fee-indexer
 fee-accrual
