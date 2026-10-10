@@ -10,6 +10,9 @@ import { isGithubRepoId } from './market-identity.mjs'
 //   3. The credit service redeems the code with the CLI's code verifier and its client secret (/api/handoff/token). The
 //      answer is signed with HANDOFF_ASSERTION_SECRET, which only repo.ing and the credit ledger hold, so the credit
 //      service can relay an assertion but never make one.
+// repo.ing's own pages make handoffs server to server too (src/credits-web.mjs): an admin handoff for "Claim as AI credits",
+// and an identity handoff (permission 'identity', no repository; migration 0067) for AI credit packs, which anyone with a
+// GitHub account can buy. The credit ledger accepts identity handoffs for packs only.
 // Dark unless REPO_INFERENCE_HANDOFF_ENABLED is exactly 'true' (off by default: owner decision 2026-10-08, hidden until AI credits
 // start) and REPO_INFERENCE_HANDOFF_SECRET and HANDOFF_ASSERTION_SECRET are set (32 to 256 characters, different from each other
 // and from the GitHub App secret). Secrets alone never turn it on.
@@ -76,14 +79,18 @@ const sameText = (a, b) => typeof a === 'string' && typeof b === 'string' && a.l
 /** Whether the presented client secret is the configured one (constant time). */
 export const clientAuthorized = (authorization, settings) => sameText(authorization, `Bearer ${settings.clientSecret}`)
 
-/** An approved handoff: a single-use code for the CLI (only its hash is stored). Rows older than a day are deleted. */
-export async function createHandoff(pool, { request, githubUserId, login, verifiedAt = new Date() }) {
+/**
+ * An approved handoff: a single-use code (only its hash is stored). Rows older than a day are deleted. 'admin' confirms an
+ * admin of request.repoId; 'identity' confirms only the GitHub account (request.repoId null).
+ */
+export async function createHandoff(pool, { request, githubUserId, login, permission = 'admin', verifiedAt = new Date() }) {
   await pool.query(`delete from auth_handoffs where expires_at < now() - interval '1 day'`)
   if (!/^[1-9]\d{0,18}$/.test(String(githubUserId)) || !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(login ?? '')) throw new HandoffError('Invalid GitHub account.')
+  if (permission === 'identity' ? request.repoId != null : permission !== 'admin' || !/^[1-9]\d{0,18}$/.test(String(request.repoId))) throw new HandoffError('Invalid handoff.')
   const code = randomBytes(32).toString('base64url'), handoffId = randomBytes(18).toString('base64url')
-  await pool.query(`insert into auth_handoffs(handoff_id,code_hash,audience,github_repo_id,github_user_id,github_login,code_challenge,verified_at,expires_at)
-    values($1,$2,$3,$4,$5,$6,$7,$8,now()+make_interval(secs=>$9))`,
-  [handoffId, sha256(code), request.audience, request.repoId, String(githubUserId), login, request.challenge, verifiedAt, HANDOFF_CODE_SECONDS])
+  await pool.query(`insert into auth_handoffs(handoff_id,code_hash,audience,github_repo_id,github_user_id,github_login,code_challenge,verified_at,expires_at,permission)
+    values($1,$2,$3,$4,$5,$6,$7,$8,now()+make_interval(secs=>$9),$10)`,
+  [handoffId, sha256(code), request.audience, request.repoId, String(githubUserId), login, request.challenge, verifiedAt, HANDOFF_CODE_SECONDS, permission])
   return { code, handoffId }
 }
 /**
@@ -97,9 +104,10 @@ export async function redeemHandoff(pool, { audience, code, codeVerifier }, sett
   if (!redemptionWellFormed({ audience, code, codeVerifier })) return null
   const { rows: [row] } = await pool.query(`update auth_handoffs set consumed_at=now() where code_hash=$1 and audience=$2 and consumed_at is null
     and expires_at>now() returning handoff_id as "handoffId",github_repo_id::text as "repoId",github_user_id::text as "githubUserId",
-    github_login as login,code_challenge as challenge,verified_at as "verifiedAt"`, [sha256(code), audience])
+    github_login as login,code_challenge as challenge,verified_at as "verifiedAt",permission`, [sha256(code), audience])
   if (!row || !sameText(s256(codeVerifier), row.challenge)) return null
-  const facts = { handoffId: row.handoffId, githubUserId: row.githubUserId, login: row.login, repoId: row.repoId, permission: 'admin',
+  // An identity handoff names no repository: its repo_id is empty, in the answer and in the signed message.
+  const facts = { handoffId: row.handoffId, githubUserId: row.githubUserId, login: row.login, repoId: row.repoId ?? '', permission: row.permission,
     verifiedAt: new Date(row.verifiedAt).toISOString() }
   return { audience, handoff_id: facts.handoffId, github_user_id: facts.githubUserId, login: facts.login, repo_id: facts.repoId,
     permission: facts.permission, verified_at: facts.verifiedAt, signature: signAssertion(settings.assertionSecret, facts) }

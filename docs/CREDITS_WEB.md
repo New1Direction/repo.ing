@@ -56,13 +56,13 @@ their status at the credit service.
 
 # Credit packs
 
-A builder buys a pack of repo.ing AI credits on **repo.ing/credits**: $10, $25, $50 or $100, paid in SOL from their
-own wallet with one approval. Each paid pack spins once at the credit service (repo-inference `docs/PACKS.md`): at least
+Anyone with a GitHub account buys a pack of repo.ing AI credits on **repo.ing/credits**: $10, $25, $50 or $100, paid in
+SOL from their own wallet with one approval. Each paid pack spins once at the credit service (repo-inference `docs/PACKS.md`): at least
 the pack in paid credits, sometimes a bonus. The code is `src/credits-packs.mjs`, the route
 `app/api/credits/packs/route.js`, the page `app/(site)/credits/page.jsx` and its components in
 `app/components/credit-packs/` (the WebGL packs, the tear and the holographic card, from repo-inference's pack page).
 
-## What the builder does
+## What the buyer does
 
 1. **Sign in with GitHub** on /credits (an identity sign-in, `mode=credits`, that returns to /credits).
 2. Choose a pack on the shelf. The page shows the odds, the terms and how much the account can still buy today.
@@ -70,15 +70,16 @@ the pack in paid credits, sometimes a bonus. The code is `src/credits-packs.mjs`
 4. The pack waits until the payment is final on Solana (about half a minute), then tears open and the card shows the
    spin: Common 1×, Rare 1.2×, Epic 2× or Legendary 5×.
 
-If the builder declines in the wallet, nothing is sent; the quote stays open (pay it or cancel it) until it ends.
+If the buyer declines in the wallet, nothing is sent; the quote stays open (pay it or cancel it) until it ends.
 
 ## How it works
 
 The same steps and checks as "Claim as AI credits" above, with these differences:
 
-- **Who.** The account must be an admin of a repository with a market on repo.ing, like every other way into the
-  credit service. repo.ing lists the account's admin repositories (GitHub, live), picks one with a market and checks it
-  live before each sign-in.
+- **Who.** Anyone with a GitHub account (owner decision 2026-10-10). Before each sign-in repo.ing checks the account live
+  (its GitHub token still works, for the same user) and makes an **identity handoff**: permission `identity`, no
+  repository (migration 0067; the assertion's `repo_id` is empty). The credit ledger accepts identity handoffs for packs
+  only; fee conversion still needs an admin handoff. Credits belong to the GitHub account.
 - **Quote.** The credit service prices the pack. repo.ing refuses a quote that is not for this pack, that does not pay
   `CREDITS_TREASURY_ADDRESS`, or that asks for more or fewer lamports than the fewest worth the pack at the quoted price
   (the credit ledger's own rule).
@@ -91,7 +92,8 @@ The same steps and checks as "Claim as AI credits" above, with these differences
 
 ## Switch on (owner)
 
-Only after pack sales are live on the credit ledger (`PACK_SALES=on`, `SURPLUS_RESALE_APPROVAL_REF` and
+The credit ledger and service must accept identity handoffs first (repo-inference: identity sign-ins for packs). Only
+after pack sales are live on the credit ledger (`PACK_SALES=on`, `SURPLUS_RESALE_APPROVAL_REF` and
 `PACK_PROMOTION_APPROVAL_REF` set there). On the `web` service:
 
 - `CREDITS_WEB_PACKS_ENABLED=true`

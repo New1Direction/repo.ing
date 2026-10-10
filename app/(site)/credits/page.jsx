@@ -11,7 +11,7 @@ import '../../credits.css'
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'AI credit packs · repo.ing', description: 'Open a pack of repo.ing AI credits, paid in SOL. Every pack pays at least its price in credits.' }
 
-// AI credit packs (src/credits-packs.mjs): the shelf, the odds and one-click buying for signed-in builders. Dark: not
+// AI credit packs (src/credits-packs.mjs): the shelf, the odds and one-click buying for anyone signed in with GitHub. Dark: not
 // found unless the packs are switched on.
 export default async function CreditsPage({ searchParams }) {
   if (!creditPacksAvailable()) notFound()

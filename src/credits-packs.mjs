@@ -4,11 +4,12 @@ import { CreditsWebError, FEE_LAMPORTS, MAX_LAMPORTS, MIN_LAMPORTS, RENT_EXEMPT_
   creditsCall, creditsServiceSettings, parseSolanaPay, signInToCredits, simulatePayment, sol } from './credits-web.mjs'
 import { takeQuota } from './request-quota.mjs'
 
-// AI credit packs on repo.ing/credits (docs/CREDITS_WEB.md, "Credit packs"): a builder buys a $10, $25, $50 or $100 pack of
+// AI credit packs on repo.ing/credits (docs/CREDITS_WEB.md, "Credit packs"): anyone with a GitHub account buys a $10, $25, $50 or $100 pack of
 // repo.ing AI credits with SOL from their own wallet, and the pack's one spin (repo-inference docs/PACKS.md) is shown on
 // the page. The same steps and checks as "Claim as AI credits" (src/credits-web.mjs), with these differences:
-//   - Who: a GitHub account that is an admin of a repository with a market on repo.ing (like every other way into the
-//     credit service). repo.ing picks such a repository, checks the admin permission live and signs in for the account.
+//   - Who: anyone with a GitHub account (owner decision 2026-10-10). repo.ing checks the account live (its GitHub token still
+//     works, for the same user) and signs in for it with an identity handoff: no repository, no admin permission
+//     (src/repo-inference-handoff.mjs). The credit ledger accepts identity handoffs for packs only.
 //   - The quote: the credit service prices the pack. It must be this pack, pay the pinned treasury, and ask for the fewest
 //     lamports worth the pack at its own price (the credit ledger's rule): never more.
 //   - The retry key is stored before the quote is asked for ('requested'), with a hash of the credit service session that
@@ -91,9 +92,8 @@ const publicPurchase = row => row && ({ id: Number(row.id), status: row.status, 
 const OPEN_ERROR = 'You have an open pack. Pay for it or cancel it first.'
 
 /**
- * The pack steps for one signed-in GitHub account. githubVerifier lists the account's admin repositories and checks admin
- * authority live (app/lib/github-session.mjs); repoId, when given, is the one repository its session is for. current is
- * the credit service's session from the cookie, or null.
+ * The pack steps for one signed-in GitHub account. githubVerifier checks the account live (app/lib/github-session.mjs,
+ * currentIdentity). current is the credit service's session from the cookie, or null.
  */
 export function createCreditsPacks({ pool, connection, settings, githubVerifier, fetchImpl = fetch, now = () => Date.now() }) {
   const owned = async (id, githubUserId) => {
@@ -101,23 +101,17 @@ export function createCreditsPacks({ pool, connection, settings, githubVerifier,
     if (!row) throw new CreditsWebError('Unknown pack.', 404)
     return row
   }
-  // A repository with a market that the account administers, checked live. Only from a click.
-  const builder = async ({ login, repoId = null }) => {
-    const listed = repoId ? [String(repoId)] : (await githubVerifier.listAdminRepositories().catch(() => {
-      throw new CreditsWebError('GitHub did not list your repositories. Sign in with GitHub again.', 403)
-    })).map(repo => repo.repoId)
-    const { rows } = await pool.query(`select github_repo_id::text as id from markets where github_repo_id = any($1::bigint[]) and status='confirmed'
-      and indexed_at is not null and launch_finality='finalized' order by github_repo_id limit 1`, [listed.filter(id => /^[1-9]\d{0,18}$/.test(id))])
-    if (!rows[0]) throw new CreditsWebError('AI credit packs are for builders: you must be an admin of a repository with a market on repo.ing.', 403)
-    const admin = await githubVerifier.verifyCurrentAuthority({ githubRepoId: rows[0].id }).catch(() => {
-      throw new CreditsWebError('GitHub no longer lists you as an admin of your repository. Sign in with GitHub again.', 403)
+  // The signed-in GitHub account, checked live (its token still works, for the same user). Only from a click.
+  const buyer = async ({ login }) => {
+    const identity = await githubVerifier.currentIdentity().catch(() => {
+      throw new CreditsWebError('Your GitHub sign-in expired. Sign in with GitHub again.', 403)
     })
-    return { repoId: rows[0].id, login: admin.githubLogin ?? login }
+    return { login: identity.githubLogin ?? login }
   }
-  // Then a new credit service session for the account.
-  const signIn = async ({ githubUserId, login, repoId = null }) => {
-    const who = await builder({ login, repoId })
-    return { ...who, session: await signInToCredits({ pool, settings, repoId: who.repoId, githubUserId, login: who.login, fetchImpl, now: now() }) }
+  // Then a new credit service session for the account: an identity handoff, with no repository.
+  const signIn = async ({ githubUserId, login }) => {
+    const who = await buyer({ login })
+    return { ...who, session: await signInToCredits({ pool, settings, repoId: null, permission: 'identity', githubUserId, login: who.login, fetchImpl, now: now() }) }
   }
   const set = async (row, status, from, spin = null) => (await pool.query(`update credit_pack_purchases set status=$2,spin_id=$3,multiplier_bps=$4,
     bonus_micro=$5,updated_at=now() where id=$1 and status = any($6::text[]) returning *`, [row.id, status, spin?.id ?? null, spin?.multiplierBps ?? null,
@@ -179,35 +173,35 @@ export function createCreditsPacks({ pool, connection, settings, githubVerifier,
       if (!current) return null
       return offerOf(await creditsCall(fetchImpl, settings.origin, '/packs', { token: current.token }).catch(() => null))
     },
-    /** A click on "Refresh status": signs in again if the session is gone (a live admin check), then asks again. */
-    async check({ id, githubUserId, login, repoId = null, current }) {
+    /** A click on "Refresh status": signs in again if the session is gone (a live GitHub check), then asks again. */
+    async check({ id, githubUserId, login, current }) {
       const row = await owned(id, githubUserId)
       let session = null
       if (['quoted', 'prepared', 'submitted'].includes(row.status) && !current) {
         if (!await takeQuota(pool, [[`credits:check:${githubUserId}`, 10, 600]])) throw new CreditsWebError('Too many checks. Wait a few minutes.', 429)
-        session = (await signIn({ githubUserId, login, repoId })).session
+        session = (await signIn({ githubUserId, login })).session
       }
       return { purchase: publicPurchase(await refresh(row, (current ?? session)?.token)), session }
     },
     /**
-     * A quote for a pack, after a live admin check. An open pack blocks a new one, except a request whose quote never
+     * A quote for a pack, after a live check of the GitHub account. An open pack blocks a new one, except a request whose quote never
      * answered: it is asked for again first, under its own key and pack, with the session that asked if the cookie still
      * holds it. The session is returned (also on the error) for the cookie.
      */
-    async quote({ githubUserId, login, packMicro, repoId = null, current }) {
+    async quote({ githubUserId, login, packMicro, current }) {
       const pack = readPack(packMicro)
       if (!await takeQuota(pool, [[`credits:pack:${githubUserId}`, 6, 600], ['credits:pack', 300, 60]])) throw new CreditsWebError('Too many quotes. Wait a few minutes.', 429)
       const open = (await pool.query(`select * from credit_pack_purchases where github_user_id=$1 and status = any($2::text[])`, [githubUserId, OPEN_PACK_STATUSES])).rows[0]
       if (open && open.status !== 'requested' && OPEN_PACK_STATUSES.includes((await refresh(open, current?.token)).status)) throw new CreditsWebError(OPEN_ERROR)
       let row = open?.status === 'requested' ? open : null
-      // Every quote checks admin authority live, even with a session in the cookie; only a retry keeps its session.
+      // Every quote checks the GitHub account live, even with a session in the cookie; only a retry keeps its session.
       const reuse = Boolean(row && current && row.session_hash === sessionHash(current.token))
-      const fresh = reuse ? { ...await builder({ login, repoId }), session: null } : await signIn({ githubUserId, login, repoId })
+      const fresh = reuse ? { ...await buyer({ login }), session: null } : await signIn({ githubUserId, login })
       const token = reuse ? current.token : fresh.session.token
       try {
         if (!row) {
-          row = (await pool.query(`insert into credit_pack_purchases(github_repo_id,github_user_id,github_login,pack_micro,idempotency_key,session_hash,network,status)
-            values($1,$2,$3,$4,$5,$6,$7,'requested') returning *`, [fresh.repoId, githubUserId, fresh.login, pack, randomBytes(16).toString('base64url'),
+          row = (await pool.query(`insert into credit_pack_purchases(github_user_id,github_login,pack_micro,idempotency_key,session_hash,network,status)
+            values($1,$2,$3,$4,$5,$6,'requested') returning *`, [githubUserId, fresh.login, pack, randomBytes(16).toString('base64url'),
             sessionHash(token), settings.network])).rows[0]
         } else if (!reuse) {
           row = (await pool.query(`update credit_pack_purchases set session_hash=$2,updated_at=now() where id=$1 and status='requested' returning *`,

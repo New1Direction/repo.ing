@@ -6,7 +6,6 @@ SET LOCAL lock_timeout = '5s';
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "credit_pack_purchases" (
   "id" bigserial PRIMARY KEY,
-  "github_repo_id" bigint NOT NULL,
   "github_user_id" bigint NOT NULL,
   "github_login" varchar(39) NOT NULL,
   "pack_micro" bigint NOT NULL,
@@ -30,7 +29,7 @@ CREATE TABLE IF NOT EXISTS "credit_pack_purchases" (
   "created_at" timestamp with time zone NOT NULL DEFAULT now(),
   "submitted_at" timestamp with time zone,
   "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT "credit_pack_purchases_ids_check" CHECK ("github_repo_id" > 0 AND "github_repo_id" < 4503599627370496 AND "github_user_id" > 0),
+  CONSTRAINT "credit_pack_purchases_ids_check" CHECK ("github_user_id" > 0),
   CONSTRAINT "credit_pack_purchases_pack_check" CHECK ("pack_micro" IN (10000000, 25000000, 50000000, 100000000)),
   CONSTRAINT "credit_pack_purchases_network_check" CHECK ("network" IN ('mainnet', 'devnet')),
   CONSTRAINT "credit_pack_purchases_status_check" CHECK ("status" IN ('requested', 'quoted', 'prepared', 'submitted', 'credited', 'review', 'expired', 'cancelled', 'failed')),

@@ -449,6 +449,13 @@
       "when": 1790910026000,
       "tag": "0066_credit_pack_purchases",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1790910027000,
+      "tag": "0067_identity_handoffs",
+      "breakpoints": true
     }
   ]
 }

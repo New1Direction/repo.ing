@@ -14,7 +14,7 @@ export const authHandoffs = pgTable('auth_handoffs', {
   handoffId: varchar('handoff_id', { length: 32 }).primaryKey(),
   codeHash: char('code_hash', { length: 64 }).notNull().unique(),
   audience: varchar('audience', { length: 32 }).notNull(),
-  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }),
   githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
   githubLogin: varchar('github_login', { length: 39 }).notNull(),
   codeChallenge: varchar('code_challenge', { length: 43 }).notNull(),
@@ -22,11 +22,14 @@ export const authHandoffs = pgTable('auth_handoffs', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   consumedAt: timestamp('consumed_at', { withTimezone: true }),
+  // Migration 0067: 'admin' of github_repo_id, or 'identity' (no repository) for AI credit packs.
+  permission: varchar('permission', { length: 16 }).notNull().default('admin'),
 }, table => [
   check('auth_handoffs_audience_check', sql`${table.audience} in ('repo-inference')`),
   check('auth_handoffs_code_check', sql`${table.codeHash} ~ '^[0-9a-f]{64}$' and ${table.codeChallenge} ~ '^[A-Za-z0-9_-]{43}$'`),
   check('auth_handoffs_ids_check', sql`${table.githubRepoId} > 0 and ${table.githubUserId} > 0 and ${table.handoffId} ~ '^[A-Za-z0-9_-]{16,32}$'`),
   check('auth_handoffs_expiry_check', sql`${table.expiresAt} > ${table.createdAt} and ${table.expiresAt} <= ${table.createdAt} + interval '10 minutes'`),
+  check('auth_handoffs_permission_check', sql`${table.permission} in ('admin', 'identity') and (${table.permission} = 'admin') = (${table.githubRepoId} is not null)`),
   index('auth_handoffs_expires_idx').on(table.expiresAt),
 ])
 
@@ -68,7 +71,6 @@ export const creditConversions = pgTable('credit_conversions', {
 // Migration 0066 (src/credits-packs.mjs): AI credit packs bought on repo.ing/credits, from the retry key to the spin.
 export const creditPackPurchases = pgTable('credit_pack_purchases', {
   id: bigserial('id', { mode: 'bigint' }).primaryKey(),
-  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
   githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
   githubLogin: varchar('github_login', { length: 39 }).notNull(),
   packMicro: bigint('pack_micro', { mode: 'bigint' }).notNull(),
@@ -93,7 +95,7 @@ export const creditPackPurchases = pgTable('credit_pack_purchases', {
   submittedAt: timestamp('submitted_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, table => [
-  check('credit_pack_purchases_ids_check', sql`${table.githubRepoId} > 0 and ${table.githubRepoId} < 4503599627370496 and ${table.githubUserId} > 0`),
+  check('credit_pack_purchases_ids_check', sql`${table.githubUserId} > 0`),
   check('credit_pack_purchases_pack_check', sql`${table.packMicro} in (10000000, 25000000, 50000000, 100000000)`),
   check('credit_pack_purchases_network_check', sql`${table.network} in ('mainnet', 'devnet')`),
   check('credit_pack_purchases_status_check', sql`${table.status} in ('requested', 'quoted', 'prepared', 'submitted', 'credited', 'review', 'expired', 'cancelled', 'failed')`),

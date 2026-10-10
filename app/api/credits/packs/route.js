@@ -21,8 +21,6 @@ const reply = (body, status = 200, session = null) => {
   return response
 }
 const githubSession = request => readGithubSession(request.cookies.get(githubSessionCookie)?.value)
-// A session from a repository's own sign-in can only speak for that repository.
-const ownRepository = session => session.scope === 'builders' ? null : session.repoId
 function service(session, request, settings) {
   return createCreditsPacks({ pool: database(), connection: chain(), settings,
     githubVerifier: sessionVerifier(session, request.url, { dashboard: session.scope === 'builders' }) })
@@ -65,7 +63,7 @@ export async function POST(request) {
   try {
     const steps = service(session, request, settings)
     const current = openCreditsSession(request.cookies.get(CREDITS_SESSION_COOKIE)?.value, session.githubUserId)
-    const sign = { ...who, login: session.githubLogin, repoId: ownRepository(session), current }
+    const sign = { ...who, login: session.githubLogin, current }
     if (body.action === 'quote') {
       const result = await steps.quote({ ...sign, packMicro: body.packMicro })
       return reply({ purchase: result.purchase }, 200, result.session)
