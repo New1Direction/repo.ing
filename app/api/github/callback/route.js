@@ -5,14 +5,16 @@ import { IDENTITY_SIGN_IN_PAGES, githubSessionCookie, unseal, cookieOptions, enc
 import { publicOrigin } from '../../../lib/origin.mjs'
 import { contributorWalletAvailable } from '../../../lib/contributor-wallet.mjs'
 import { handoffAvailable } from '../../../lib/handoff.mjs'
+import { creditPacksAvailable } from '../../../lib/credit-packs.mjs'
 export const runtime = 'nodejs'
 export async function GET(request) {
   const origin = publicOrigin(request.url)
   const stateSession = unseal(request.cookies.get('gitfun_oauth')?.value)
   // A sealed value made for another purpose (a handoff request, a review) is never an OAuth state.
   if (!stateSession || stateSession.purpose !== undefined) return NextResponse.redirect(new URL('/explore', origin))
-  // A contributor or handoff sign-in started before its feature was turned off does not finish.
-  if ((stateSession.mode === 'contributor' && !contributorWalletAvailable()) || (stateSession.mode === 'handoff' && !handoffAvailable())) {
+  // A contributor, handoff or credit pack sign-in started before its feature was turned off does not finish.
+  if ((stateSession.mode === 'contributor' && !contributorWalletAvailable()) || (stateSession.mode === 'handoff' && !handoffAvailable())
+    || (stateSession.mode === 'credits' && !creditPacksAvailable())) {
     const closed = NextResponse.redirect(new URL('/explore', origin))
     closed.cookies.delete('gitfun_oauth')
     return closed
