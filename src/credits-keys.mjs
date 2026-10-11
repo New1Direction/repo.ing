@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { CreditsWebError, creditsCall, creditsOrigin, signInToCredits } from './credits-web.mjs'
+import { CreditsWebError, INVALID_ANSWER, creditsCall, creditsOrigin, signInToCredits } from './credits-web.mjs'
 import { creditsPacksSettings } from './credits-packs.mjs'
 import { takeQuota } from './request-quota.mjs'
 
@@ -57,11 +57,12 @@ export function parseKeys(value, now = Date.now()) {
   })
 }
 
+const invalidKey = () => new CreditsWebError('The AI credits service returned an invalid key. If a key was made, revoke it below.', 502)
 /** A new key: the token and the key's id and limit, all well-formed, or an error that says to revoke it (it may have been made). */
 export function parseMadeKey(answer) {
   const key = answer?.key
   if (!TOKEN.test(text(answer?.token)) || !KEY_ID.test(text(key?.id)) || !Number.isSafeInteger(key.budget_micro) || key.budget_micro < 0) {
-    throw new CreditsWebError('The AI credits service returned an invalid key. If a key was made, revoke it below.', 502)
+    throw invalidKey()
   }
   return { token: answer.token, key: { id: key.id.toLowerCase(), label: labelOf(key.label), budgetMicro: key.budget_micro, expiresAt: dateOf(key.expires_at) } }
 }
@@ -107,12 +108,15 @@ export function createCreditsKeys({ pool, settings, githubVerifier, fetchImpl = 
     return signInToCredits({ pool, settings, repoId: null, permission: 'identity', githubUserId, login: identity.githubLogin ?? login, fetchImpl, now: now() })
   }
   // step(token) with the cookie's session; with none, or one the credit service no longer knows (a 401, once), with a new one.
-  const withSession = async ({ githubUserId, login, current }, step) => {
-    let session = current ? null : await signIn({ githubUserId, login })
+  // beforeSignIn runs before every sign-in this makes (the first and the one after a 401), so a step that is not counted up front
+  // can count there: nothing signs in without being counted.
+  const withSession = async ({ githubUserId, login, current }, step, beforeSignIn = async () => {}) => {
+    const signInAgain = async () => { await beforeSignIn(); return signIn({ githubUserId, login }) }
+    let session = current ? null : await signInAgain()
     try {
       try { return { value: await step((session ?? current).token), session } } catch (error) {
         if (error?.status !== 401 || session) throw error
-        session = await signIn({ githubUserId, login })
+        session = await signInAgain()
         return { value: await step(session.token), session }
       }
     } catch (error) {
@@ -133,10 +137,12 @@ export function createCreditsKeys({ pool, settings, githubVerifier, fetchImpl = 
         throw error
       }
     },
-    /** A click on "Show my AI credits": signs in if the cookie has no session (a live GitHub check), then the overview. */
+    /**
+     * A click on "Show my AI credits": signs in if the cookie has no session or the credit service dropped it (a live GitHub check),
+     * then the overview. Counted before each sign-in, and not at all when the session works.
+     */
     async check({ githubUserId, login, current }) {
-      if (!current) await quota(githubUserId)
-      const { value, session } = await withSession({ githubUserId, login, current }, read)
+      const { value, session } = await withSession({ githubUserId, login, current }, read, () => quota(githubUserId))
       return { overview: value, session }
     },
     /**
@@ -152,7 +158,8 @@ export function createCreditsKeys({ pool, settings, githubVerifier, fetchImpl = 
         const limit = wanted ?? available
         if (limit > available) throw new CreditsWebError(`The limit is at most ${usd(available)}, the credits you have.`, 400)
         const answer = await call('/keys', { method: 'POST', body: { label: name, budget_micro: limit }, token, idempotencyKey: randomBytes(16).toString('base64url') })
-          .catch(error => { throw mayHaveMade(error) })
+          // A 200 answer that is not an object is as bad as a malformed key: the key may have been made.
+          .catch(error => { throw error?.message === INVALID_ANSWER ? invalidKey() : mayHaveMade(error) })
         return parseMadeKey(answer)
       })
       return { ...value, session }
