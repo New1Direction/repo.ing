@@ -29,6 +29,7 @@ import { isStockPairMarket } from '../../../../src/stock-owner-claims.mjs'
 import { nextClaimAmount } from '../../../../src/claim-amounts.mjs'
 import { isEarlyAccessMarket } from '../../../../src/early-access.mjs'
 import { creditsWebSettings } from '../../../../src/credits-web.mjs'
+import { creditKeysAvailable } from '../../../lib/credit-packs.mjs'
 export const dynamic = 'force-dynamic'
 
 export default async function ClaimPage({ params, searchParams }) {
@@ -123,6 +124,6 @@ async function ClaimContent({ market, repo, query }) {
     beneficiaryBoundAt={beneficiary?.boundAt ?? null} pendingAddress={pendingAddress || null} claimable={claimable} usdEstimate={usdEstimate}
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}
     reinvestEnabled={reinvestEnabled} reinvestAfterClaim={query.reinvest === '1'}
-    creditsEnabled={Boolean(credits)} creditsAfterClaim={Boolean(credits) && query.credits === '1'} creditsNetwork={credits?.network ?? 'mainnet'}
+    creditsEnabled={Boolean(credits)} creditsAfterClaim={Boolean(credits) && query.credits === '1'} creditsNetwork={credits?.network ?? 'mainnet'} creditsKeysLink={Boolean(credits) && creditKeysAvailable()}
     graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}/>
 }
