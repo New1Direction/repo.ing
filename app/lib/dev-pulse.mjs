@@ -40,9 +40,11 @@ function starDayPins(snapshots, now, fullName) {
     const base = snapshots.findLast(item => item.time < day)
     const gained = base && base.time >= day - DAY ? last.total - base.total : 0
     if (gained < STAR_DAY_MIN) return []
-    const label = day === dayStart(now) ? 'today so far' : `on ${new Date(day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
+    // Today's pin says since midnight UTC: the stars card's "today" is the last 24 hours.
+    const detail = day === dayStart(now) ? 'Stars since 00:00 UTC'
+      : `Stars on ${new Date(day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })} (UTC)`
     return [{ id: `stars:day:${iso(day).slice(0, 10)}`, kind: 'stars', at: iso(last.time), title: `+${gained.toLocaleString('en-US')} stars`,
-      detail: `Stars ${label} (UTC)`, url, amount: gained }]
+      detail, url, amount: gained }]
   })
 }
 

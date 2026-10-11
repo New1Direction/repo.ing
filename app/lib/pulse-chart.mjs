@@ -44,10 +44,13 @@ export function pulsePins(events, barTimes, { interval = 0, from = -Infinity, to
 export const PULSE_TAIL_POINTS = 48
 export function pulseTail(events, lastBar, interval, points = PULSE_TAIL_POINTS) {
   if (!events?.length || !Number.isFinite(lastBar) || !(interval > 0)) return []
-  const newest = events.reduce((latest, event) => PULSE_KIND[event?.kind] && Number.isFinite(event.time) ? Math.max(latest, event.time) : latest, -Infinity)
-  const end = lastBar + Math.floor((newest - lastBar) / interval) * interval
-  if (!(end > lastBar)) return []
+  const later = events.flatMap(event => PULSE_KIND[event?.kind] && Number.isFinite(event.time) && event.time >= lastBar + interval ? [event.time] : [])
+  if (!later.length) return []
+  const bar = time => lastBar + Math.floor((time - lastBar) / interval) * interval
+  const first = bar(Math.min(...later)), end = bar(Math.max(...later))
   const step = interval * Math.ceil((end - lastBar) / interval / points), times = []
+  // On a coarse step, an event inside the first step would snap back onto the last trade's candle: it gets its own point.
+  if (first < lastBar + step) times.push(first)
   for (let time = lastBar + step; time < end; time += step) times.push(time)
   return [...times, end]
 }

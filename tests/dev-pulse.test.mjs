@@ -205,7 +205,7 @@ test('each UTC day that gained stars gets one chart pin, from the day before; pa
     { id: 'stars:day:2026-09-30', at: '2026-09-30T23:00:00.000Z', time: Date.parse('2026-09-30T23:00:00Z') / 1000, title: '+100 stars',
       detail: 'Stars on Sep 30 (UTC)', url: 'https://github.com/owner/repo', amount: 100 },
     { id: 'stars:day:2026-10-01', at: '2026-10-01T20:00:00.000Z', time: Date.parse('2026-10-01T20:00:00Z') / 1000, title: '+103 stars',
-      detail: 'Stars today so far (UTC)', url: 'https://github.com/owner/repo', amount: 103 }])
+      detail: 'Stars since 00:00 UTC', url: 'https://github.com/owner/repo', amount: 103 }])
   assert.ok(days.every(event => event.kind === 'stars'))
   assert.ok(!pulse.feed.some(item => item.id.startsWith('stars:day:')), 'the stars card already says today; the feed keeps code')
 })
