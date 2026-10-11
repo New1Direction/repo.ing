@@ -13,7 +13,7 @@ A builder turns SOL into repo.ing AI credits on the claim page, with one wallet 
    and shows the SOL, the credits in dollars, the SOL price and the time left.
 3. **Approve in wallet** asks the wallet to approve one plain SOL transfer to the credit treasury.
 4. The credit ledger checks the payment on chain and credits it. The card shows the credits and how to make a key
-   (`npx @repoing/cli credits key`).
+   (the credits page, `/credits#keys`; the CLI `npx @repoing/cli credits key` works too).
 
 If the builder declines in the wallet, nothing is sent and the SOL stays in the wallet.
 
@@ -109,6 +109,56 @@ packs keep their status at the credit service.
   sign-in mode and migration 0066.
 - `tests/credits-packs-chain.test.mjs` (PostgreSQL + validator): a $25 pack, one approved transfer, credited with its
   spin; a lost answer asked again under the same key; failed, lost and late payments; review; a refusal.
+
+# Keys for your coding tool
+
+Anyone signed in with GitHub on **repo.ing/credits** sees their repo.ing AI credits, makes an inference-only key for a coding
+tool, sees their keys and revokes one, without the CLI (`repoing credits key|list|revoke`, which stays). The code is
+`src/credits-keys.mjs`, the route `app/api/credits/keys/route.js` and the section `app/components/credit-keys.jsx` (its
+browser-side rules are in `app/components/credit-keys-model.mjs`), under the packs on the page, with the anchor `#keys`. The
+"Claim as AI credits" card links to `/credits#keys` after a conversion.
+
+## What the visitor does
+
+1. Under the packs, **Your AI credits** shows the credits and the keys (name, spending limit, how much is spent, valid until, live,
+   expired or revoked). If this browser has no credit service session, **Show my AI credits** signs in again with a click.
+2. **Make a key**: a name (default `coding-tool`) and a spending limit in USD (default: all the credits, at least $0.01).
+3. The new key shows once, as two lines with **Copy** buttons: `OPENAI_BASE_URL=<AI gateway>/v1` and `OPENAI_API_KEY=<token>`.
+   **I saved it. Hide the key.** drops it from the page.
+4. **Revoke** (then **Yes, revoke**) stops a key at once. Requests already running finish and are charged.
+
+## How it works
+
+- **The credit service.** The steps call its endpoints `GET /account`, `GET /keys`, `POST /keys` (an Idempotency-Key, a
+  fresh one each time, and the body `{ label, budget_micro }`) and `POST /keys/<id>/revoke`, all through `creditsCall` with the
+  visitor's credit session from the encrypted cookie. With no session (or one the service no longer knows: a 401, retried
+  once), a click signs in again as the packs do: a live GitHub check, then an identity handoff. A page load (`GET`) never
+  signs in; it says `needsSignIn`.
+- **Checks.** Every answer is checked before it is shown, with the CLI's rules: a key token is `rik_` and 64 lowercase hex
+  digits, a key id is a UUID, a name is the service's own rule (1 to 64 letters, digits, spaces, dots, dashes or
+  underscores, starting with a letter or digit), a limit is whole micro-USD from 10 000 ($0.01) up to the credits (read again
+  just before the key is made). The credits are `credits_available`, else `paid_available`. A key list shows only
+  well-formed ids and fields, at most 50, never a token. A key answer that is not well-formed shows nothing from it and
+  says "If a key was made, revoke it below."
+- **The token.** It is in the one answer to the click that made the key, with `Cache-Control: private, no-store`. repo.ing
+  does not store, log or cache it: nothing runs after the key is made, so nothing can fail the answer. The page keeps it only
+  in component state (no `localStorage`, no address). A list never carries a token.
+- **The route.** `GET` gives the overview (404 while dark; `{ "signedIn": false }` without a GitHub session). `POST` takes
+  `{ action: "check" }`, `{ action: "make", label?, limitMicro? }` or `{ action: "revoke", keyId }` (exact fields for each,
+  at most 8000 bytes, the same origin, a GitHub session). `make` and `revoke` count 20 a user in 10 minutes and 300 a minute in
+  all (`credits:keys:<user>`, `credits:keys`); `check` counts only when it signs in. Other errors are not echoed.
+
+## Switch on (owner)
+
+On with the credit packs (`CREDITS_WEB_PACKS_ENABLED=true`): there is no switch of its own. Optional on the `web` service:
+`CREDITS_INFERENCE_ORIGIN` (default `https://inference.repo.ing`; https, or http on this computer outside production). An odd
+value turns the keys off rather than pointing a key anywhere else.
+
+## Tests
+
+- `tests/credits-keys.test.mjs` (quick): the settings, every check above, the steps against a scripted credit service (with
+  and without a session, the identity sign-in, a dropped session, a malformed key answer, the quota, revoke) and the route
+  end to end (refusals, no token in a list, the token in one answer, the cookie).
 
 # Builder shares
 
