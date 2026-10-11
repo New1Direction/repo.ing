@@ -67,20 +67,25 @@ test('the card says what the packs do, links to the pack shelf for this reposito
   assert.match(none, /Open a pack for owner\/repo-9108/)
 })
 
-test('when the totals cannot be read, the card shows without its "Paid so far" line', async t => {
+test('when the totals cannot be read, the card shows without its "Paid so far" line (and the server logs it)', async t => {
   t.after(restore)
   on()
+  const warned = t.mock.method(console, 'warn', () => {})
+  globalThis.__repoingShareTotals.logged.clear()
   for (const [repoId, handler] of [['9109', async () => new Response('{}', { status: 502 })], ['9110', async () => { throw new TypeError('down') }],
     ['9111', async () => Response.json({ repo_id: '9111', packs: 2, paid_micro: 1, claimed_micro: 5 })]]) {
     const { markup } = await card(market(repoId), [[new RegExp(`/builder-shares/${repoId}$`), handler]])
     assert.match(markup, /Open a pack for owner\/repo-/)
     assert.doesNotMatch(markup, /Paid so far/)
   }
+  assert.equal(warned.mock.callCount(), 1, 'once a minute')
+  assert.equal(warned.mock.calls[0].arguments[0], 'builder_share_totals_unavailable')
 })
 
 test('totals are read within the shared upstream budget: past it the card shows without its line and the credit service is not asked', async t => {
   t.after(restore)
   on()
+  t.mock.method(console, 'warn', () => {})
   globalThis.__gitfunPool = { query: async () => ({ rows: [] }) }
   const refused = await card(market('9115'), [totals('9115', 3, 3_000_000)])
   assert.match(refused.markup, /Open a pack for owner\/repo-9115/)
