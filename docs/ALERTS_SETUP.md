@@ -94,7 +94,7 @@ Start with **5 launch posts and 5 graduation posts per channel per day**, and ra
 
 - **Launch posts:** markets indexed after `LAUNCH_ALERTS_SINCE`, within 24 hours of launch. A new repository (under 30 days old or under 10 stars) is posted only once its market reaches 10% of its graduation target within those 24 hours. Every Hugging Face model market follows the same rule: likes and downloads never count.
 - **Graduation posts:** only crossings that happen after `GRADUATION_ALERTS_SINCE`. A jump from 20% to 80% posts 75% only, and falling back and crossing again posts nothing.
-- **First to launch posts:** repositories from the trend feed (the same list as "Launch a trending repo" on /find-repos) that gained at least 200 stars a day (`TREND_ALERTS_MIN_STARS_PER_DAY` changes it; at least 25 stars measured), observed after `TREND_ALERTS_SINCE`. Each repository is posted at most once per channel, ever. Never posted: repositories that already have a market, forks, archived repositories, and ones whose maintainer opted out or asked not to be contacted. The post links the launch page, where a person reviews and signs; nothing is launched by the post.
+- **First to launch posts:** repositories from the trend feed (the same list as "Launch a trending repo" on /find-repos) that gained at least 200 stars a day (`TREND_ALERTS_MIN_STARS_PER_DAY` changes it; at least 25 stars measured) and were first detected after `TREND_ALERTS_SINCE`. Each repository is posted at most once per channel, ever. Never posted: repositories that already have a market or a Group launch raise in progress, forks, archived repositories, and ones whose maintainer opted out or asked not to be contacted. The post links the launch page, where a person reviews and signs; nothing is launched by the post.
 - **Never posted:** repositories and models on the do-not-promote list (`PROMOTION_EXCLUDED_REPO_IDS`, including `hf:` entries) and those whose maintainer or model owner opted out.
 - **Turning model posts on later:** if `HF_MARKETS_ENABLED=true` is added to the worker after go-live, model markets from the previous 24 hours that qualify are announced on the next runs, like any market still in its window. To skip them, move `LAUNCH_ALERTS_SINCE` to that moment at the same time.
 
@@ -118,12 +118,12 @@ Community launch · Not endorsed by the creators · Not affiliated with Hugging 
 https://repo.ing/token/<mint>
 
 🔥 acme/rocket: +800 GitHub stars in 4h, no market yet.
-Launch it first: the launch wallet earns 50% of repo.ing's trading fees until graduation, 30 days or 2.5 SOL.
+Launch it first: its launch wallet earns 50% of repo.ing's trading fees until graduation, 30 days or 2.5 SOL.
 Community launch, not endorsed by the maintainers.
 https://repo.ing/launch/<repository id>
 ```
 
-On Telegram the first to launch post also carries the repository's description. Without `DISCOVERY_REWARDS_ENABLED=true` on the worker, its second line reads "Launch it first. Every trade pays the repo's builders." instead.
+On Telegram the first to launch post also carries the repository's description, with every link and domain name taken out. On X the reward line says "our trading fees" (a domain name costs 23 of the 280 characters), and a long repository name is shortened with … so the reward's limits always stay. Without `DISCOVERY_REWARDS_ENABLED=true` on the worker, its second line reads "Launch it first. Every trade pays the repo's builders." instead.
 
 ## 4. Stopping and fixing
 

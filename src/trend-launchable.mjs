@@ -1,6 +1,7 @@
 import { assertFreshTrend, trendScore, DAY, TREND_FRESH_MS } from './trend-rules.mjs'
 import { DISCOVERY_VERSION, DISCOVERY_WINDOW_MS, discoveryCap, discoveryEarned } from './discovery-rewards.mjs'
 import { safeGithubImageUrl } from './repo-logo.mjs'
+import { LIVE_BUNDLE_STATUSES } from './bundle-raise-store.mjs'
 
 // "Launch a trending repo": trend candidates nobody has launched yet. The trend pipeline decides what is
 // trending (its review states, 6h freshness rule and versioned score); this module only removes repos that
@@ -16,8 +17,11 @@ const CLOCK_SKEW_MS = 60_000
 // One read. It is bounded by the pipeline's own state and freshness rules and returns the facts the exclusion
 // policy needs; selectLaunchableTrends applies that policy, so it lives (and is tested) in one place.
 // Manual signals are operator evidence and never leave the server.
+// detected_at is set once, when the pipeline first detects the repository; observed_at moves with every refresh.
+// bundleLive: a Group launch raise holds the repository's one market (src/launch-coordinator.mjs refuses other launches).
 export const LAUNCHABLE_TRENDS_SQL = `select c.github_repo_id::text as "repoId", c.full_name as "fullName", c.description,
-    c.state, c.observed_at as "observedAt", c.error, c.approved_config as "approvedConfig",
+    c.state, c.observed_at as "observedAt", c.detected_at as "detectedAt", c.error, c.approved_config as "approvedConfig",
+    exists(select 1 from bundles b where b.github_repo_id = c.github_repo_id and b.status = any($5::text[])) as "bundleLive",
     r.avatar_url as "storedAvatarUrl", r.archived, m.status as "marketStatus",
     p.enabled as "participationEnabled", i.dismissed_at as "invitesDismissedAt",
     array(select o.evidence from trend_observations o where o.github_repo_id = c.github_repo_id
@@ -46,6 +50,7 @@ export function launchExclusion(row, now = Date.now(), { promotionExcluded = new
   try { assertFreshTrend({ observedAt: isoTime(row.observedAt), error: row.error }, now) } catch { return 'STALE_OR_UNVERIFIED' }
   // A failed launch released the repository; any other market row is live or in progress.
   if (row.marketStatus && row.marketStatus !== 'failed') return 'MARKET_EXISTS'
+  if (row.bundleLive === true) return 'BUNDLE_IN_PROGRESS'
   if (row.archived === true) return 'ARCHIVED'
   if (row.participationEnabled === false) return 'MAINTAINER_OPTED_OUT'
   if (row.invitesDismissedAt) return 'MAINTAINER_DECLINED_CONTACT'
@@ -85,7 +90,7 @@ function launchable(row, { now, config, discoveryEnabled }) {
     starsGained: stars && stars.delta > 0 ? { delta: stars.delta, hours: stars.hours, perDay: stars.perDay } : null,
     onGithubTrending: score.inputs.trending, hnStories: score.inputs.mentions,
     releasedAt: score.parts.release > 0 ? score.inputs.releaseAt : null,
-    observedAt: isoTime(row.observedAt), score: score.total, reviewed,
+    observedAt: isoTime(row.observedAt), detectedAt: isoTime(row.detectedAt) ?? null, score: score.total, reviewed,
     launchHref: `/launch/${row.repoId}${reviewed ? '?from=trend' : ''}`,
     // A fork: the repository it was forked from, as observed (src/repo-lineage.mjs decides at launch whether it may launch).
     ...typeof latest.repo?.forkOf === 'string' && /^[\w.-]+\/[\w.-]+$/.test(latest.repo.forkOf) ? { forkOf: latest.repo.forkOf } : {},
@@ -127,7 +132,7 @@ export function freshLaunchable(items, now = Date.now()) {
 
 export async function readLaunchableTrends(pool, { now = Date.now(), timeoutMs = 5000, ...options } = {}) {
   const { rows } = await pool.query({ text: LAUNCHABLE_TRENDS_SQL, query_timeout: timeoutMs,
-    values: [new Date(now), new Date(now - TREND_FRESH_MS), OBSERVATION_LOOKBACK, [...LAUNCHABLE_STATES]] })
+    values: [new Date(now), new Date(now - TREND_FRESH_MS), OBSERVATION_LOOKBACK, [...LAUNCHABLE_STATES], [...LIVE_BUNDLE_STATUSES]] })
   return selectLaunchableTrends(rows, { now, ...options })
 }
 

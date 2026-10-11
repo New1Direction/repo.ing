@@ -25,7 +25,8 @@ test('lists a fresh, unlaunched trend with its measured evidence and a direct la
   assert.deepEqual(selectLaunchableTrends([row()], { now }), [{ repoId: '101', fullName: 'acme/rocket', owner: 'acme', name: 'rocket',
     description: 'A fast rocket', avatarUrl: 'https://avatars.githubusercontent.com/u/9?v=4', language: 'Rust', stars: 1120,
     starsGained: { delta: 120, hours: 4, perDay: 720 }, onGithubTrending: false, hnStories: 0, releasedAt: null,
-    observedAt: iso(now - HOUR), score: 25, reviewed: false, launchHref: '/launch/101' }])
+    observedAt: iso(now - HOUR), detectedAt: null, score: 25, reviewed: false, launchHref: '/launch/101' }])
+  assert.equal(selectLaunchableTrends([row({ detectedAt: new Date(now - DAY) })], { now })[0].detectedAt, iso(now - DAY), 'the first detection time, unchanged by refreshes')
 })
 
 test('never suggests a repo with a market, an archived or opted-out repo, or one the pipeline set aside', () => {
@@ -35,6 +36,8 @@ test('never suggests a repo with a market, an archived or opted-out repo, or one
     [{ marketStatus: 'confirmed' }, 'MARKET_EXISTS'], [{ marketStatus: 'reserved' }, 'MARKET_EXISTS'],
     [{ marketStatus: 'prepared' }, 'MARKET_EXISTS'], [{ marketStatus: 'submitted' }, 'MARKET_EXISTS'], [{ marketStatus: 'ambiguous' }, 'MARKET_EXISTS'],
     [{ archived: true }, 'ARCHIVED'],
+    // A Group launch raise holds the repository's one market: a launch from the list would be refused.
+    [{ bundleLive: true }, 'BUNDLE_IN_PROGRESS'],
     [{ participationEnabled: false }, 'MAINTAINER_OPTED_OUT'],
     [{ invitesDismissedAt: new Date(now - DAY) }, 'MAINTAINER_DECLINED_CONTACT'],
     // The latest refresh failed identity checks (archived, private, renamed) or the evidence is old or from the future.
@@ -143,13 +146,14 @@ test('a cached list drops entries that pass the freshness window', () => {
   assert.deepEqual(freshLaunchable(items, now), [items[0]])
 })
 
-test('one bounded read: freshness window, observation lookback and launchable states are parameters', async () => {
+test('one bounded read: freshness window, observation lookback, launchable states and live bundle states are parameters', async () => {
   const calls = []
   const pool = { query: async config => { calls.push(config); return { rows: [row(), row({ repoId: '102', marketStatus: 'confirmed' })] } } }
   const items = await readLaunchableTrends(pool, { now })
   assert.equal(calls.length, 1)
   assert.equal(calls[0].text, LAUNCHABLE_TRENDS_SQL)
-  assert.deepEqual(calls[0].values, [new Date(now), new Date(now - 6 * HOUR), 24, ['detected', 'reviewed', 'approved']])
+  assert.deepEqual(calls[0].values, [new Date(now), new Date(now - 6 * HOUR), 24, ['detected', 'reviewed', 'approved'],
+    ['opening', 'raising', 'launching', 'launched']])
   assert.equal(calls[0].query_timeout, 5000)
   assert.deepEqual(ids(items), ['101'])
   // Public output never carries operator notes or manual evidence.

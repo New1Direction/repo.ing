@@ -30,6 +30,14 @@ async function seed(pool, now) {
   await trend(2004, 'forked', 900, { forkOf: 'other/upstream' })
   await trend(2005, 'hidden', 900)
   await trend(2006, 'second', 400)
+  // Detected two days ago, before the cutoff; every refresh since has moved observed_at past it. Never announced.
+  await trend(2007, 'before', 900)
+  await pool.query(`update trend_candidates set detected_at=$2 where github_repo_id=$1`, [2007, at(48)])
+  // A Group launch raise holds the repository's one market: a launch from the post would be refused.
+  await trend(2008, 'raising', 900)
+  await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at) values(2008,'acme','raising','acme/raising',1,1,false,now())`)
+  await pool.query(`insert into bundles(bundle_id,github_repo_id,address,creator_wallet,token_name,token_symbol,target_lamports,min_deposit_lamports,deadline,status)
+    values(2008,2008,'bundle2008','creator','T','T',1000000000,50000000,now() + interval '1 day','raising')`)
 }
 
 const sender = () => {
@@ -68,7 +76,7 @@ test('real PostgreSQL: posts each strong, launchable trend once per channel; cla
     assert.equal(x.sent[0].url, `https://repo.ing/launch/2001`)
     const second = await job.runOnce()
     assert.deepEqual(second.posts.map(post => post.repo), ['acme/second', 'acme/second'])
-    assert.deepEqual((await job.runOnce()).posts, [], 'slow growth, a market, a fork and the do-not-promote set are never posted')
+    assert.deepEqual((await job.runOnce()).posts, [], 'slow growth, a market, a fork, a raise, the do-not-promote set and a repo detected before the cutoff are never posted')
     const { rows } = await pool.query(`select github_repo_id::text as repo, channel, status, stars_gained, message_id, sent_at is not null as sent
       from trend_alerts order by github_repo_id, channel`)
     assert.deepEqual(rows.map(row => [row.repo, row.channel, row.status, row.stars_gained, row.sent]),

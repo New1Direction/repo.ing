@@ -53,7 +53,8 @@ export async function previewTrendAlerts({ pool, env = process.env, options = {}
     await client.query('begin read only')
     const promotionExcluded = await createPromotionExclusions({ pool: client, env })()
     const store = createTrendAlertStore(client)
-    const candidates = trendAlertCandidates(await store.trends({ now, promotionExcluded }), settings)
+    const trends = await store.trends({ now, promotionExcluded, config: env.DBC_CONFIG?.trim() || null, discoveryEnabled: settings.reward })
+    const candidates = trendAlertCandidates(trends, settings)
     const channels = {}
     for (const channel of LAUNCH_ALERT_CHANNELS) {
       const sent = await store.sentRecently(channel)

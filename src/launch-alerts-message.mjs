@@ -21,7 +21,7 @@ const LINKS = /\b(?:https?:\/\/|www\.)\S*/giu
 // @mention, #hashtag and $cashtag prefixes (ASCII and full-width), wherever they start a word.
 const TAG_PREFIXES = /[@#$＠＃＄]+(?=[\p{L}\p{N}_])/gu
 // Anything X may auto-link, counted conservatively (e.g. "next.js" is treated as a link too).
-const LINKABLE = /(?:https?:\/\/)?(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:\/\S*)?/gu
+export const LINKABLE = /(?:https?:\/\/)?(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:\/\S*)?/gu
 
 export function cleanDescription(value) {
   if (typeof value !== 'string') return ''
