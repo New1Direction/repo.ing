@@ -46,6 +46,8 @@ test('a view at the end follows a growing or shrinking tail and never turns insi
   assert.deepEqual(chartFollowRange({ from: -3, to: 982 }, 979, 735), { from: -3, to: 738 })
   // Shrinks past a narrow view: moves whole instead of putting from after to
   assert.deepEqual(chartFollowRange({ from: 960, to: 982 }, 979, 735), { from: 716, to: 738 })
+  // Shrinks a wide view to a sliver: moves whole instead of a sudden zoom-in
+  assert.deepEqual(chartFollowRange({ from: 730, to: 982 }, 979, 735), { from: 486, to: 738 })
   // Not at the end, or nothing changed: leave it
   assert.equal(chartFollowRange({ from: 100, to: 400 }, 979, 735), null)
   assert.equal(chartFollowRange({ from: -3, to: 982 }, 979, 979), null)
