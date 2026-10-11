@@ -67,7 +67,7 @@ Set `DATABASE_URL` explicitly. Drizzle's fallback database is an older test defa
 | `GRADUATION_ALERTS_MAX_PER_DAY` | Worker | Optional per-channel cap on milestone posts over 24 hours (default 10), separate from the launch-alert cap |
 | `STOCK_COLLECTIONS_EXECUTION_ENABLED`, `STOCK_LAUNCHER_PAYOUTS_ENABLED` | Worker, owner's machine | `true` lets `scripts/stock-execute.mjs --execute` collect stock-pair fees and pay launchers (keys from the macOS Keychain), and lets the worker finish what it left pending, without a key. Off by default; see [stock execution](STOCK_QUOTES.md#execution-off-by-default) |
 | `TREND_ALERTS_ENABLED` | Worker | `true` turns on public [first to launch alerts](PRODUCTION.md#first-to-launch-alerts) (a trending repository with no market yet) on the launch-alert channels; also needs the cutoff. Off by default |
-| `TREND_ALERTS_SINCE` | Worker | ISO timestamp; trend evidence observed before it is never announced, and nothing runs before it |
+| `TREND_ALERTS_SINCE` | Worker | ISO timestamp; a repository first detected before it is never announced, and nothing runs before it |
 | `TREND_ALERTS_MAX_PER_DAY` | Worker | Optional per-channel cap on first to launch posts over 24 hours (default 4), separate from the other alert caps |
 | `TREND_ALERTS_MIN_STARS_PER_DAY` | Worker | Optional star growth a repository needs to be posted (default 200, 25 to 1000000) |
 | `HF_MARKETS_ENABLED` | Web, worker | `true` turns on Hugging Face model markets on web; on the worker it adds them to launch and milestone alerts. Keep the two the same ([alerts setup](ALERTS_SETUP.md)) |

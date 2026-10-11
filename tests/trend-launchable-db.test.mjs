@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { LAUNCHABLE_STATES, LAUNCHABLE_TRENDS_SQL, OBSERVATION_LOOKBACK, readLaunchableTrends } from '../src/trend-launchable.mjs'
 import { TREND_FRESH_MS } from '../src/trend-rules.mjs'
+import { LIVE_BUNDLE_STATUSES } from '../src/bundle-raise-store.mjs'
 import { promotionExcludedRepoIds } from '../app/lib/promotion-exclusions.mjs'
 
 // Real PostgreSQL with every committed migration: the one read behind "Launch a trending repo".
@@ -56,13 +57,21 @@ test('real PostgreSQL: one read lists fresh unlaunched trends and leaves out mar
     await signal(1013, 'manual', 'https://x.com/someone/status/2', 24)
     await flat(1014, 'expired'); await signal(1014, 'github_trending', 'https://github.com/trending', -1)
     await growing(1015, 'optin'); await repository(1015, 'optin'); await market(1015, 'failed')
+    // A Group launch raise in progress holds the one market; a failed raise released it.
+    const bundle = (id, status) => pool.query(`insert into bundles(bundle_id,github_repo_id,address,creator_wallet,token_name,token_symbol,
+      target_lamports,min_deposit_lamports,deadline,status) values($1,$1,$2,'creator','T','T',1000000000,50000000,now() + interval '1 day',$3)`,
+    [id, `bundle${id}`, status])
+    await growing(1016, 'raising'); await repository(1016, 'raising'); await bundle(1016, 'raising')
+    await growing(1017, 'refunded'); await repository(1017, 'refunded'); await bundle(1017, 'failed')
     await pool.query(`insert into repository_participation(github_repo_id,github_user_id,github_login,enabled,opted_in_at) values(1015,1,'maintainer',true,now())`)
 
     // The read itself: bounded by state, refresh errors and freshness; facts for the rest; no manual evidence.
     const { rows } = await pool.query({ text: LAUNCHABLE_TRENDS_SQL,
-      values: [new Date(now), new Date(now - TREND_FRESH_MS), OBSERVATION_LOOKBACK, [...LAUNCHABLE_STATES]] })
+      values: [new Date(now), new Date(now - TREND_FRESH_MS), OBSERVATION_LOOKBACK, [...LAUNCHABLE_STATES], [...LIVE_BUNDLE_STATUSES]] })
     const byId = Object.fromEntries(rows.map(row => [row.repoId, row]))
-    assert.deepEqual(Object.keys(byId).sort(), ['1001', '1002', '1003', '1006', '1007', '1008', '1011', '1012', '1013', '1014', '1015'])
+    assert.deepEqual(Object.keys(byId).sort(), ['1001', '1002', '1003', '1006', '1007', '1008', '1011', '1012', '1013', '1014', '1015', '1016', '1017'])
+    assert.deepEqual([byId['1016'].bundleLive, byId['1017'].bundleLive, byId['1001'].bundleLive], [true, false, false])
+    assert.ok(byId['1001'].detectedAt instanceof Date)
     assert.equal(byId['1002'].marketStatus, 'confirmed')
     assert.equal(byId['1003'].marketStatus, 'failed')
     assert.equal(byId['1006'].archived, true)
@@ -78,7 +87,7 @@ test('real PostgreSQL: one read lists fresh unlaunched trends and leaves out mar
     const counted = { query: (...args) => { queries++; return pool.query(...args) } }
     const items = await readLaunchableTrends(counted, { now, config: CONFIG, discoveryEnabled: true })
     assert.equal(queries, 1, 'one query for the whole list')
-    assert.deepEqual(items.map(item => item.repoId), ['1011', '1001', '1003', '1015', '1013'])
+    assert.deepEqual(items.map(item => item.repoId), ['1011', '1001', '1003', '1015', '1017', '1013'])
     const [approved, rocket] = items
     assert.equal(approved.launchHref, '/launch/1011?from=trend')
     assert.equal(rocket.launchHref, '/launch/1001')
@@ -90,7 +99,7 @@ test('real PostgreSQL: one read lists fresh unlaunched trends and leaves out mar
     // The operator's do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS) removes a repo the policy would otherwise list.
     const promoted = await readLaunchableTrends(pool, { now, config: CONFIG, discoveryEnabled: true,
       promotionExcluded: promotionExcludedRepoIds({ PROMOTION_EXCLUDED_REPO_IDS: '1001,1011' }) })
-    assert.deepEqual(promoted.map(item => item.repoId), ['1003', '1015', '1013'])
+    assert.deepEqual(promoted.map(item => item.repoId), ['1003', '1015', '1017', '1013'])
   } finally {
     await pool.end()
   }

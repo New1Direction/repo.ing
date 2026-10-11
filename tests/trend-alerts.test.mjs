@@ -16,7 +16,7 @@ const ON = { TREND_ALERTS_ENABLED: 'true', TREND_ALERTS_SINCE: SINCE.toISOString
 // A launchable trend as selectLaunchableTrends returns it.
 const trend = (repoId, overrides = {}) => ({ repoId: String(repoId), fullName: `acme/repo-${repoId}`, owner: 'acme', name: `repo-${repoId}`,
   description: 'A fast thing', stars: 4200, starsGained: { delta: 340, hours: 5, perDay: 1632 }, observedAt: new Date(NOW - 600_000).toISOString(),
-  score: 40, reviewed: false, launchHref: `/launch/${repoId}`, ...overrides })
+  detectedAt: new Date(NOW - 3_600_000).toISOString(), score: 40, reviewed: false, launchHref: `/launch/${repoId}`, ...overrides })
 
 // ---------- config ----------
 test('trend alerts are off unless switched on with a channel, and need a cutoff', () => {
@@ -50,42 +50,57 @@ test('only strong measured star growth, observed after the cutoff, and never a f
   assert.equal(trendAlertExclusion(trend(4, { starsGained: { delta: TREND_ALERT_MIN_STARS_GAINED - 1, hours: 1, perDay: 576 } }), options), 'BELOW_THRESHOLD',
     'a short window never turns a handful of stars into an alert')
   assert.equal(trendAlertExclusion(trend(5, { forkOf: 'acme/upstream' }), options), 'FORK')
-  assert.equal(trendAlertExclusion(trend(6, { observedAt: '2026-10-10T23:59:59Z' }), options), 'BEFORE_SINCE')
+  assert.equal(trendAlertExclusion(trend(6, { detectedAt: '2026-10-10T23:59:59Z' }), options), 'BEFORE_SINCE',
+    'detected before the cutoff, even though every refresh moves its observation time past it')
+  assert.equal(trendAlertExclusion(trend(6, { detectedAt: null }), options), 'BEFORE_SINCE', 'no detection time: never')
   assert.deepEqual(trendAlertCandidates([trend(7), trend(8, { forkOf: 'a/b' }), trend(9)], options).map(item => item.repoId), ['7', '9'], 'pipeline order kept')
 })
 
 // ---------- text ----------
-test('the X post states measured stars, the launcher reward from the policy, the disclaimer and the launch link', () => {
+test('the X post states measured stars, the launcher reward with its limits, the disclaimer and the launch link', () => {
   const text = buildTrendMessage(trend(1001, { fullName: 'acme/rocket' }), { channel: 'x', origin: ORIGIN, reward: true })
   assert.equal(text, ['🔥 acme/rocket: +340 GitHub stars in 5h, no market yet.',
-    "Launch it first: the launch wallet earns 50% of repo.ing's trading fees until graduation, 30 days or 2.5 SOL.",
+    'Launch it first: its launch wallet earns 50% of our trading fees until graduation, 30 days or 2.5 SOL.',
     'Community launch, not endorsed by the maintainers.', 'https://repo.ing/launch/1001'].join('\n'))
   assert.ok(xWeight(text) <= X_MAX_WEIGHT)
   const off = buildTrendMessage(trend(1001, { fullName: 'acme/rocket' }), { channel: 'x', origin: ORIGIN })
   assert.match(off, /^Launch it first\. Every trade pays the repo's builders\.$/m, 'no reward named while discovery rewards are off')
   assert.doesNotMatch(off, /launch wallet earns/)
-  assert.equal(launchUrl(ORIGIN, '1001'), 'https://repo.ing/launch/1001')
+  const telegram = buildTrendMessage(trend(1001, { fullName: 'acme/rocket' }), { channel: 'telegram', origin: ORIGIN, reward: true })
+  assert.match(telegram, /\nLaunch it first: its launch wallet earns 50% of repo\.ing's trading fees until graduation, 30 days or 2\.5 SOL\.\n/)
 })
 
-test('a long repository name drops the reward limits first, then is shortened visibly; X never exceeds 280', () => {
+test('an operator-approved trend keeps its attributed link; any other path falls back to the plain launch page', () => {
+  assert.equal(launchUrl(ORIGIN, trend(1001)), 'https://repo.ing/launch/1001')
+  assert.equal(launchUrl(ORIGIN, trend(1001, { launchHref: '/launch/1001?from=trend', reviewed: true })), 'https://repo.ing/launch/1001?from=trend')
+  assert.equal(launchUrl(ORIGIN, trend(1001, { launchHref: '//evil.example/x' })), 'https://repo.ing/launch/1001')
+  assert.match(buildTrendMessage(trend(5, { launchHref: '/launch/5?from=trend' }), { channel: 'x', origin: ORIGIN }), /\nhttps:\/\/repo\.ing\/launch\/5\?from=trend$/)
+})
+
+test('a long repository name is shortened visibly and keeps the reward limits; X never exceeds 280', () => {
   const long = `${'o'.repeat(39)}/${'n'.repeat(100)}`
   for (const reward of [true, false]) {
     const text = buildTrendMessage(trend(7, { fullName: long, starsGained: { delta: 123456, hours: 47.6, perDay: 62000 } }), { channel: 'x', origin: ORIGIN, reward })
     assert.ok(xWeight(text) <= X_MAX_WEIGHT, `weight ${xWeight(text)}`)
     assert.ok(text.endsWith('\nhttps://repo.ing/launch/7'))
+    assert.match(text, /^🔥 o+\/?n*…: \+123,456 GitHub stars in 48h, no market yet\.\n/)
     assert.match(text, /Community launch, not endorsed by the maintainers\./)
+    if (reward) assert.match(text, /until graduation, 30 days or 2\.5 SOL\.\n/, 'the limits always go with the share')
   }
-  const medium = buildTrendMessage(trend(8, { fullName: `acme/${'x'.repeat(60)}` }), { channel: 'x', origin: ORIGIN, reward: true })
-  assert.match(medium, /trading fees\.\n/, 'the short reward line, the name kept whole')
-  assert.ok(medium.includes(`acme/${'x'.repeat(60)}:`))
+  for (const length of [20, 33, 37, 45, 52]) {
+    const name = `acme/${'x'.repeat(length - 5)}`
+    const text = buildTrendMessage(trend(8, { fullName: name }), { channel: 'x', origin: ORIGIN, reward: true })
+    assert.ok(text.includes(`${name}:`), `a ${length}-character name is kept whole`)
+    assert.match(text, /until graduation, 30 days or 2\.5 SOL\./)
+  }
 })
 
 test('repository text is untrusted: cleaned, escaped for Telegram, never tagging anyone', () => {
-  const post = trend(9, { fullName: 'acme/<b>bad</b>', description: 'Use @someone #tag $COIN see https://evil.example now <script>' })
+  const post = trend(9, { fullName: 'acme/<b>bad</b>', description: 'Use @someone #tag $COIN see https://evil.example now <script> or free-sol.xyz/claim' })
   const telegram = buildTrendMessage(post, { channel: 'telegram', origin: ORIGIN, reward: true })
   assert.match(telegram, /^🔥 acme\/bbad\/b: \+340 GitHub stars in 5h, no market yet\.\n/)
-  assert.match(telegram, /\nUse someone tag COIN see now &lt;script&gt;\n/)
-  assert.doesNotMatch(telegram, /<script>|evil\.example|@someone/)
+  assert.match(telegram, /\nUse someone tag COIN see now &lt;script&gt; or\n/)
+  assert.doesNotMatch(telegram, /<script>|evil\.example|free-sol|@someone/, 'no link of any kind, bare domains included')
   assert.match(telegram, /\nhttps:\/\/repo\.ing\/launch\/9$/)
   assert.throws(() => buildTrendMessage(post, { channel: 'email', origin: ORIGIN }), /Unknown trend alert channel/)
 })

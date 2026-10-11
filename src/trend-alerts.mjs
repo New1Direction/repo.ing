@@ -6,7 +6,8 @@
 // - Candidates come only from the trend pipeline's launchable list (src/trend-launchable.mjs): fresh, verified evidence,
 //   no market (a failed launch released the repository), not archived, maintainer not opted out or declined contact, not
 //   on the do-not-promote list. On top of that, star growth must reach TREND_ALERTS_MIN_STARS_PER_DAY and forks are left
-//   out (src/trend-alerts-message.mjs). Evidence observed before the cutoff is never announced.
+//   out (src/trend-alerts-message.mjs). A repository first detected before the cutoff is never announced, and neither
+//   is one with a Group launch raise in progress (its one market is taken).
 // - Each (repository, channel) is posted at most once, ever: claimed in trend_alerts BEFORE sending, under an advisory lock.
 //   Outcomes, retries, per-run/per-day caps and spacing work exactly like launch alerts. A failed post is retried only
 //   while the repository is still a candidate.
@@ -42,7 +43,7 @@ export function trendAlertsConfig(env = process.env) {
   const origin = alertOrigin(env)
   const maxPerDay = alertMaxPerDay(env, 'TREND_ALERTS_MAX_PER_DAY', TREND_ALERT_DEFAULTS.maxPerDay)
   return { ...TREND_ALERT_DEFAULTS, channels, since, origin, maxPerDay, minStarsPerDay: trendAlertMinStars(env), telegram, x,
-    excluded: promotionExcludedRepoIds(env), reward: env.DISCOVERY_REWARDS_ENABLED === 'true' }
+    excluded: promotionExcludedRepoIds(env), reward: env.DISCOVERY_REWARDS_ENABLED === 'true', dbcConfig: env.DBC_CONFIG?.trim() || null }
 }
 
 // ---------- PostgreSQL store (migration 0068_trend_alerts) ----------
@@ -68,9 +69,10 @@ export function createTrendAlertStore(pool) {
         and status in ('sending','sent','unknown') and updated_at > now() - interval '24 hours'`, [channel])
       return n
     },
-    // The launchable trends (one bounded read, the same one /find-repos lists), minus the do-not-promote set.
-    trends({ now, promotionExcluded }) {
-      return readLaunchableTrends(pool, { now, promotionExcluded })
+    // The launchable trends (one bounded read, the same one /find-repos lists), minus the do-not-promote set. config and
+    // discoveryEnabled as web passes them: operator-approved trends come first and keep their attributed launch link.
+    trends({ now, promotionExcluded, config = null, discoveryEnabled = false }) {
+      return readLaunchableTrends(pool, { now, promotionExcluded, config, discoveryEnabled })
     },
     // This channel's alert rows, keyed by repository id.
     async channelState(channel) {
@@ -116,7 +118,7 @@ export function createTrendAlerts({ store, config, senders, sleep = wait, now = 
     const plan = planTrendAlerts({ candidates, alerted: await store.channelState(channel), now: now(), maxAttempts: config.maxAttempts })
     return postInTurn({ items: plan.slice(0, budget), config, sleep, now,
       claim: post => store.claim({ channel, post, maxAttempts: config.maxAttempts }),
-      deliver: post => deliverAlert({ sender: senders[channel], url: launchUrl(config.origin, post.repoId),
+      deliver: post => deliverAlert({ sender: senders[channel], url: launchUrl(config.origin, post),
         build: () => buildTrendMessage(post, { channel, origin: config.origin, reward: config.reward === true }) }),
       finish: (id, outcome) => store.finish(id, outcome),
       describe: post => ({ channel, repo: post.fullName, starsGained: post.starsGained.delta }) })
@@ -127,7 +129,8 @@ export function createTrendAlerts({ store, config, senders, sleep = wait, now = 
     return runAlertsLocked({ store, config, notMigrated: 'TREND_ALERTS_NOT_MIGRATED' }, async () => {
       const promotionExcluded = await readExcluded()
       const at = now()
-      const candidates = trendAlertCandidates(await store.trends({ now: at, promotionExcluded }), { since: config.since, minStarsPerDay: config.minStarsPerDay })
+      const trends = await store.trends({ now: at, promotionExcluded, config: config.dbcConfig ?? null, discoveryEnabled: config.reward === true })
+      const candidates = trendAlertCandidates(trends, { since: config.since, minStarsPerDay: config.minStarsPerDay })
       const posts = []
       for (const channel of config.channels) if (senders[channel]) posts.push(...await runChannel(channel, candidates))
       return posts
