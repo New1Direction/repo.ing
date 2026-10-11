@@ -12,7 +12,8 @@ import { isGithubRepoId } from './market-identity.mjs'
 //      service can relay an assertion but never make one.
 // repo.ing's own pages make handoffs server to server too (src/credits-web.mjs): an admin handoff for "Claim as AI credits",
 // and an identity handoff (permission 'identity', no repository; migration 0067) for AI credit packs, which anyone with a
-// GitHub account can buy. The credit ledger accepts identity handoffs for packs only.
+// GitHub account can buy, and for coding-tool keys (src/credits-keys.mjs). The key an identity handoff gets buys packs and makes
+// coding-tool keys; fee conversion still needs an admin handoff.
 // Dark unless REPO_INFERENCE_HANDOFF_ENABLED is exactly 'true' (off by default: owner decision 2026-10-08, hidden until AI credits
 // start) and REPO_INFERENCE_HANDOFF_SECRET and HANDOFF_ASSERTION_SECRET are set (32 to 256 characters, different from each other
 // and from the GitHub App secret). Secrets alone never turn it on.
