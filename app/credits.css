@@ -193,3 +193,79 @@
 @keyframes pk-sheen{from{background-position:130% 130%}to{background-position:var(--mx,50%) var(--my,50%)}}
 @keyframes pk-legend{0%,100%{box-shadow:inset 0 0 0 4px rgba(0,0,0,.35),inset 0 0 40px rgba(255,201,77,.25)}50%{box-shadow:inset 0 0 0 4px rgba(0,0,0,.35),inset 0 0 70px rgba(255,201,77,.45)}}
 
+/* Keys for a coding tool (src/credits-keys.mjs, app/components/credit-keys.jsx): under the packs, on the same tokens. The lines of a
+   new key are always dark, like a terminal, in both themes. */
+.credit-keys{display:grid;gap:18px;margin-top:clamp(44px,6vw,84px);padding-top:clamp(26px,4vw,44px);border-top:1px solid var(--border);scroll-margin-top:24px}
+.keys-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:18px 40px}
+.keys-head>div:first-child{max-width:640px}
+.keys-head h2{margin:10px 0;font:400 clamp(28px,4.2vw,46px)/1.04 var(--font-display),"Arial Black",sans-serif;letter-spacing:-.02em;text-wrap:balance}
+.keys-head p{margin:0;color:var(--muted);font-size:17px;line-height:1.6;max-width:60ch}
+.keys-balance{display:grid;gap:6px;text-align:right}
+.keys-balance span{font-size:13px;color:var(--dim)}
+.keys-balance b{font:400 clamp(36px,5vw,58px)/1 var(--font-display),"Arial Black",sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.keys-quiet{display:grid;justify-items:start;gap:12px;margin:0;color:var(--muted)}
+.keys-grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:18px;align-items:start}
+.keys-panel{display:grid;gap:12px;align-content:start;min-width:0;padding:20px;border:1px solid var(--border);border-radius:14px;background:var(--surface)}
+.keys-panel h3{margin:0;font-size:18px;letter-spacing:-.01em}
+.keys-panel p{margin:0;color:var(--muted);line-height:1.55}
+.keys-panel strong{color:var(--text)}
+.keys-panel .button{justify-self:start}
+.keys-note{font-size:14px}
+.credit-keys .claim-progress,.credit-keys .inline-error{margin:0}
+.keys-panel p.claim-progress{color:var(--green)}
+.keys-panel p.inline-error{color:#f2a1a3}
+[data-theme=light] .keys-panel p.inline-error{color:#a5333e}
+.keys-note.is-error,.keys-make small.is-error{color:var(--red)}
+.keys-make,.keys-signin{border-color:color-mix(in oklab,var(--green) 34%,var(--border))}
+.keys-make label{margin-top:4px;font-size:14px;font-weight:600}
+.keys-make input{width:100%;min-height:46px;padding:10px 12px;border:1px solid var(--border-strong);border-radius:8px;background:var(--bg);color:var(--text);font:500 16px/1.2 var(--font-mono),ui-monospace,monospace}
+.keys-make input:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.keys-make input[aria-invalid=true]{border-color:var(--red)}
+.keys-make input:disabled{opacity:.6}
+.keys-make small{color:var(--dim);font-size:13px;line-height:1.45}
+.keys-money{position:relative}
+.keys-money span{position:absolute;left:13px;top:50%;translate:0 -50%;color:var(--dim);font:500 16px/1 var(--font-mono),ui-monospace,monospace}
+.keys-money input{padding-left:28px}
+.keys-make .button{margin-top:6px}
+.keys-steps ol{margin:0;padding:0;list-style:none;counter-reset:step;display:grid;gap:14px}
+.keys-steps li{counter-increment:step;display:grid;grid-template-columns:30px minmax(0,1fr);gap:12px;color:var(--muted);line-height:1.5}
+.keys-steps li::before{content:counter(step);display:grid;place-items:center;width:30px;height:30px;border-radius:50%;border:1px solid var(--border-strong);color:var(--text);font:600 13px/1 var(--font-mono),ui-monospace,monospace}
+/* the new key: shown once, so it is the loudest thing on the page */
+.keys-fresh{border-color:var(--green);background:color-mix(in oklab,var(--green) 7%,var(--surface));box-shadow:0 18px 44px -26px color-mix(in oklab,var(--green) 70%,transparent)}
+.keys-fresh:focus{outline:none}
+.keys-line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center}
+.keys-line code{min-width:0;padding:12px 14px;border-radius:10px;border:1px solid #243029;background:#0a0e0c;color:#d7f6e4;font:500 13.5px/1.55 var(--font-mono),ui-monospace,monospace;overflow-wrap:anywhere;user-select:all}
+.keys-line code span{color:#7fe3ab}
+.keys-line .button{min-width:80px}
+/* the keys: one row each, with how much of its limit it has spent */
+.keys-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.key-row{display:grid;grid-template-columns:minmax(0,1.3fr) 96px minmax(0,1.5fr) minmax(0,1fr) 168px;gap:8px 18px;align-items:center;padding:14px 16px;border-radius:10px;background:var(--surface2)}
+.key-name{display:grid;gap:3px;min-width:0}
+.key-name strong{overflow-wrap:anywhere}
+.key-name span{font:500 12px/1.2 var(--font-mono),ui-monospace,monospace;color:var(--dim)}
+.key-state{justify-self:start;display:inline-flex;align-items:center;gap:7px;font:600 12px/1 var(--font-mono),ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.key-state::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.key-row.is-live .key-state{color:var(--green)}
+.key-row:not(.is-live) .key-name,.key-row:not(.is-live) .key-spend,.key-row:not(.is-live) .key-until{opacity:.62}
+.key-spend{display:grid;gap:6px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.key-meter{display:block;height:5px;border-radius:3px;background:var(--border);overflow:hidden}
+.key-meter i{display:block;height:100%;transform-origin:left;background:var(--green);transition:transform .5s cubic-bezier(.16,1,.3,1)}
+.key-row:not(.is-live) .key-meter i{background:var(--dim)}
+.key-until{font-size:13px;color:var(--muted)}
+.key-until time{white-space:nowrap}
+.key-actions{display:flex;align-items:center;justify-content:flex-end;gap:12px}
+.key-actions .button{min-height:38px;padding:0 16px}
+.key-actions .claim-text-button{margin:0;padding:10px 6px;font-size:14px}
+.key-actions .button.danger{border-color:var(--red);color:var(--red)}
+@media(hover:hover){.key-actions .button.danger:hover:not(:disabled){background:color-mix(in oklab,var(--red) 14%,transparent);border-color:var(--red)}}
+[data-theme=light] .key-row.is-live .key-state{color:#0f6b40}
+@media(max-width:900px){.keys-grid{grid-template-columns:1fr}.keys-fresh{order:-1}.keys-balance{text-align:left}}
+@media(max-width:700px){
+  .keys-head p{font-size:16px}
+  .keys-panel{padding:16px}
+  .keys-make .button,.keys-signin .button,.keys-fresh>.button{justify-self:stretch}
+  .keys-line{grid-template-columns:1fr}.keys-line .button{justify-self:stretch}
+  .key-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"name state" "spend spend" "until until" "actions actions"}
+  .key-name{grid-area:name}.key-state{grid-area:state}.key-spend{grid-area:spend}.key-until{grid-area:until}.key-actions{grid-area:actions;justify-content:flex-start}
+}
+@media(prefers-reduced-motion:reduce){.key-meter i{transition:none}}

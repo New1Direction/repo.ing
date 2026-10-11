@@ -2,9 +2,11 @@ import { cookies } from 'next/headers'
 import { notFound } from 'next/navigation'
 import { AppHeader, Footer } from '../../components/ui'
 import { BackedRepoCapture } from '../../components/backed-repo-capture'
+import { CreditKeys } from '../../components/credit-keys'
 import { CreditPacks } from '../../components/credit-packs/credit-packs'
 import { builderSharesSettings } from '../../../src/builder-pack-shares.mjs'
 import { creditsPacksSettings } from '../../../src/credits-packs.mjs'
+import { creditsKeysSettings } from '../../../src/credits-keys.mjs'
 import { displayFont, monoFont } from '../../home-fonts'
 import { githubSessionCookie, readGithubSession } from '../../lib/auth.mjs'
 import { creditPacksAvailable } from '../../lib/credit-packs.mjs'
@@ -14,7 +16,8 @@ export const dynamic = 'force-dynamic'
 export const metadata = { title: 'AI credit packs · repo.ing', description: 'Open a pack of repo.ing AI credits, paid in SOL. Every pack pays at least its price in credits.' }
 
 // AI credit packs (src/credits-packs.mjs): the shelf, the odds and one-click buying for anyone signed in with GitHub. Dark: not
-// found unless the packs are switched on.
+// found unless the packs are switched on. Under them, for a visitor signed in with GitHub: their AI credits and keys for a coding tool
+// (src/credits-keys.mjs; on with the packs). Signed out, the packs' own sign-in covers it.
 export default async function CreditsPage({ searchParams }) {
   if (!creditPacksAvailable()) notFound()
   const [cookieStore, query] = await Promise.all([cookies(), searchParams])
@@ -32,5 +35,6 @@ export default async function CreditsPage({ searchParams }) {
     <CreditPacks signedIn={Boolean(session)} login={session?.githubLogin ?? null} network={creditsPacksSettings().network}
       builderShares={shares ? { shareBps: shares.shareBps } : null}
       fonts={{ display: displayFont.style.fontFamily, mono: monoFont.style.fontFamily }}/>
+    {session && creditsKeysSettings() && <CreditKeys/>}
   </main><Footer/></>
 }

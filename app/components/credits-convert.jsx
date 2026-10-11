@@ -110,7 +110,7 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
     {!loaded ? <p role="status">Checking your AI credits…</p> :
     conversion?.status === 'credited' ? <div className="claim-receipt" role="status"><div>
       <p>{usd(conversion.creditedMicro)} of AI credits added to your repo.ing account for {sol(conversion.lamports)} SOL.</p>
-      <p>Use them in your coding tool: run <code>npx @repoing/cli credits key</code> to make a key.</p>
+      <p>Use them in your coding tool: <a href="/credits#keys">make a key on the credits page</a>. Or run <code>npx @repoing/cli credits key</code>.</p>
       <div className="credits-links">{conversion.signature && <a href={`https://explorer.solana.com/tx/${conversion.signature}${network === 'devnet' ? '?cluster=devnet' : ''}`} target="_blank" rel="noopener noreferrer">View payment ↗</a>}
         <button type="button" className="claim-text-button" onClick={() => setConversion(null)}>Convert more SOL</button></div></div></div> :
     conversion?.status === 'review' ? <p role="status">Your payment needs a review by repo.ing (wrong amount, late, or paid twice). Nothing is lost: you get a refund, or credits.</p> :
