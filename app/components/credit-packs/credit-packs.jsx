@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useWallet } from '../wallet'
 import { formatUnits } from '../../lib/format.mjs'
+import { clearBackedRepo, storedBackedRepo } from '../../lib/backed-repo.mjs'
 import { PACK_NAMES, TIERS, money, percent, rarityOf, times } from './packs-model.mjs'
 
 // AI credit packs on /credits (src/credits-packs.mjs, app/api/credits/packs/route.js). The shelf and the stage are drawn
@@ -19,7 +20,11 @@ const left = (expiresAt, now) => {
 const packOf = purchase => Number(purchase.packMicro) / 1_000_000
 const explorer = (signature, network) => `https://explorer.solana.com/tx/${signature}${network === 'devnet' ? '?cluster=devnet' : ''}`
 
-export function CreditPacks({ signedIn, login, network = 'mainnet', fonts }) {
+// A pack's builder share in micro-USD (src/builder-pack-shares.mjs, shareMicro): rounded down.
+const shareOf = (pack, shareBps) => BigInt(pack) * 1_000_000n * BigInt(shareBps) / 10_000n
+
+// builderShares: { shareBps } while packs may back a repository (src/builder-pack-shares.mjs), else null.
+export function CreditPacks({ signedIn, login, network = 'mainnet', fonts, builderShares = null }) {
   const { wallet, provider, connect } = useWallet()
   const walletRef = useRef(wallet); walletRef.current = wallet
   const shelfRef = useRef(null), stageRef = useRef(null), openRef = useRef(null), lastStatus = useRef(null)
@@ -27,6 +32,8 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts }) {
   const [selected, setSelected] = useState(25)
   const [data, setData] = useState({ odds: null, offer: null, purchase: null, needsSignIn: false }), [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [now, setNow] = useState(Date.now())
+  // The repository this buyer picked on a token page (app/lib/backed-repo.mjs): { repoId, fullName, eligible, reason }, or null.
+  const [backed, setBacked] = useState(null)
   const purchase = data.purchase, open = purchase && OPEN.includes(purchase.status)
   const sales = data.offer?.sales, room = data.offer ? BigInt(data.offer.roomMicro) : null
   // Nothing is sold while sales are off or paused, or while the credit service's odds cannot be read.
@@ -68,6 +75,23 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts }) {
     refresh().catch(e => { if (active) { setError(e.message); setLoaded(true) } })
     return () => { active = false }
   }, [])
+  // Any answer but a good one (rate limited, switched off, unreachable) shows nothing: no chip, and the pack backs no repository.
+  const backing = Boolean(builderShares) && signedIn
+  useEffect(() => {
+    if (!backing) return
+    let live = true, repo = null
+    try { repo = storedBackedRepo(window.localStorage) } catch { /* Storage is optional. */ }
+    if (!repo) return
+    fetch(`/api/credits/shares/${repo}`, { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : null)
+      .then(value => { if (live && value?.repoId === repo && typeof value.eligible === 'boolean') setBacked(value) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [backing])
+  function removeBacked() {
+    try { clearBackedRepo(window.localStorage) } catch { /* Storage is optional. */ }
+    setBacked(null)
+  }
   // While a payment finalizes: ask every 4 seconds (not without a credit service session: that needs a click to sign in
   // again); once credited, the stage (if open) tears the pack and shows the spin.
   const polling = waiting && !data.needsSignIn
@@ -100,7 +124,7 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts }) {
     stage?.open(pack, `Opening your ${PACK_NAMES[pack]} pack. Getting a quote…`)
     setBusy('Signing you in to AI credits and getting a quote…')
     let quoted
-    try { quoted = (await call('POST', { action: 'quote', packMicro: String(pack * 1_000_000) })).purchase; setPurchase(quoted) }
+    try { quoted = (await call('POST', { action: 'quote', packMicro: String(pack * 1_000_000), ...(backed?.eligible ? { builderRepoId: backed.repoId } : {}) })).purchase; setPurchase(quoted) }
     catch (e) { stage?.close(); setError(e.message); setBusy(''); await refresh().catch(() => {}); return }
     // A request that never got its answer is asked again for its own pack: show that pack.
     if (packOf(quoted) !== pack && stage) { stage.close(); stage.open(packOf(quoted), `Your ${PACK_NAMES[packOf(quoted)]} pack, asked for earlier.`) }
@@ -166,6 +190,7 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts }) {
     <span>Last pack: <strong>{rarityOf(purchase.spin.multiplierBps).name} {times(purchase.spin.multiplierBps)}</strong> · {money(BigInt(purchase.spin.paidMicro) + BigInt(purchase.spin.bonusMicro))} of AI credits</span>
     <button type="button" className="claim-text-button" onClick={show}>Open it again</button>
   </div>
+  const share = purchase?.status === 'credited' && purchase.spin && purchase.builder && <p className="packs-note">You backed {backed?.repoId === purchase.builder.repoId ? backed.fullName : 'a repository'}: {money(purchase.builder.shareMicro)} in AI credits to its builders.</p>
 
   return <section className={`credit-packs${webgl ? '' : ' no-webgl'}`} aria-busy={Boolean(busy)}>
     <div className="packs-shelf" ref={shelfRef} role="group" aria-label="Choose a pack">
@@ -217,11 +242,13 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts }) {
           {purchase?.status === 'review' && <p role="status">Your last payment needs a review by repo.ing (wrong amount, late, or paid twice). Nothing is lost: you get a refund, or credits.</p>}
           {purchase?.status === 'expired' && <p role="status">The last quote expired. Nothing was charged.</p>}
           {purchase?.status === 'cancelled' && <p role="status">Cancelled. Nothing was charged. A new pack is possible when the old quote ends (at most 20 minutes).</p>}
-          {last}
+          {last}{share}
           <p>Signed in as <strong>@{login}</strong>. One approval in your wallet pays the ${selected} pack in SOL; the pack opens when the payment is final.</p>
           {room !== null && <p className="packs-note">You can open {money(room)} more in packs today ($250 a day).</p>}
           {devnet}
-          <div className="packs-actions"><button type="button" className="button primary" disabled={Boolean(busy) || closed || tooBig} onClick={openPack}>
+          {backed?.eligible ? <p className="packs-backing">Backing <strong>{backed.fullName}</strong> · {money(shareOf(selected, builderShares.shareBps))} of this pack goes to its builders as AI credits. <button type="button" className="claim-text-button" onClick={removeBacked}>Remove</button></p>
+            : backed && <p className="packs-note">{backed.reason ?? 'This repository cannot be backed.'} This pack backs no repository. <button type="button" className="claim-text-button" onClick={removeBacked}>Remove</button></p>}
+          <div className="packs-actions"><button type="button" className="button primary" disabled={Boolean(busy) || closed || tooBig} onClick={() => openPack()}>
             {closed ? 'Pack sales are paused' : `Open the ${PACK_NAMES[selected]} pack · $${selected}`}</button></div>
           {signedIn && loaded && !data.odds && <p className="packs-note">The odds from the AI credits service could not be read, so packs are not sold right now.</p>}
           {tooBig && <p className="packs-note">That is more than you can open today. Choose a smaller pack.</p>}

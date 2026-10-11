@@ -26,6 +26,7 @@ import { RepoingCase, RepoingCaseFallback } from '../../../components/repoing-ca
 import { RepoTips, RepoTipsFallback, TipJarPill, TipJarPillFallback } from '../../../components/repo-tips'
 import { tipsEnabled } from '../../../lib/tips.mjs'
 import { PartsFundBadge, PartsFundCard } from '../../../components/parts-fund'
+import { PackSharesCard } from '../../../components/pack-shares'
 import { DetailsTabs } from '../../../components/details-tabs'
 import { HolderNotes, HolderNotesFallback } from '../../../components/holder-notes'
 import { JsonLd } from '../../../components/json-ld'
@@ -167,7 +168,8 @@ export default async function Token({ params, searchParams }) {
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol} {...(quote ? { quote } : {})}/> : <>
       <MarketTrading key={market.mint} market={market} quote={quote} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
         aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<BuildingLive stream={stream}/><TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
-          <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}</>}
+          <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}
+          {!stockPair && !decision && <Suspense fallback={null}><PackSharesCard market={market}/></Suspense>}</>}
         below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}
           <Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense></div>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>

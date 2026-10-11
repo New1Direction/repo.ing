@@ -109,3 +109,88 @@ packs keep their status at the credit service.
   sign-in mode and migration 0066.
 - `tests/credits-packs-chain.test.mjs` (PostgreSQL + validator): a $25 pack, one approved transfer, credited with its
   spin; a lost answer asked again under the same key; failed, lost and late payments; review; a refusal.
+
+# Builder shares
+
+Every pack can pay a builder. A buyer opens a pack for a GitHub repository, and 10% of the pack's price (the spin's
+bonus does not count) goes to that repository's builders as AI credits. The buyer's pack does not change. The code is
+`src/builder-pack-shares.mjs` (settings, eligibility, totals, the claim), `src/credits-tickets.mjs` (the signed tickets),
+the route `app/api/credits/shares/[repo]/route.js`, and the pages: `app/lib/backed-repo.mjs` and
+`app/components/backed-repo-capture.jsx` (the pick), the chip in `app/components/credit-packs/credit-packs.jsx`, the token
+page card `app/components/pack-shares.jsx` and the claim page section `app/components/pack-shares-claim.jsx`. The ledger
+side is in the repo-inference project (migration 0016, `src/builder_shares.rs`).
+
+## What the buyer does
+
+1. On a token page, the card **AI credit packs back this repo** has **Open a pack for owner/name**. It opens
+   `/credits?repo=<id>`. This browser keeps the pick for 30 days; the last pick wins.
+2. On /credits, a line above the buy button says "Backing owner/name · $2.50 of this pack goes to its builders as AI
+   credits." with **Remove**. If the repository cannot be backed, a note gives the reason and says the pack backs no
+   repository. If the line cannot be loaded (switched off, rate limited, unreachable), nothing shows and the pack backs
+   no repository.
+3. The buyer pays as for any pack. When the pack opens, the page adds "You backed owner/name: $2.50 in AI credits to
+   its builders."
+
+## What the builder does
+
+On the claim page of the repository, a section **Pack shares: $X in AI credits** shows for the person who set the
+repository's payout wallet. **Claim as AI credits** adds the amount to their repo.ing AI credits (bonus credits). The
+section shows nothing for anyone else, when nothing is waiting, or when the totals cannot be read. The token page card
+also shows **Paid so far: $X from N packs** (amounts only, never buyers), and shows without that line when the totals
+cannot be read.
+
+## How it works
+
+- **Which repositories.** A GitHub repository with a confirmed, finalized, indexed market in SOL, no active maintainer
+  opt-out, and a buyer who is not the holder of its payout wallet (no self rebate). Not eligible: stock pairs (their
+  builder share already goes to liquidity), Hugging Face models, repositories with no market. No repository chosen: no
+  share. After an opt-out, new packs cannot pick the repository; shares that exist stay claimable. repo.ing checks
+  eligibility at each quote (after the quote rate limit) and stores the repository with the pack request.
+- **Tickets.** The credit ledger refuses a builder repository without repo.ing's signed word, so a command line user
+  cannot point shares at any repository. Two tickets, HMAC-SHA256 (hex) with `HANDOFF_ASSERTION_SECRET` (the ledger holds
+  it too; the credit service never does), each text starting with its own version line so none can pass for a handoff
+  assertion: the **pack ticket** (`repoing-pack-builder-v1`: the quote's Idempotency-Key, buyer GitHub id, repository id,
+  rate) and the **claim ticket** (`repoing-builder-claim-v1`: Idempotency-Key, claimer GitHub id, repository id). Valid
+  300 seconds, at most 30 seconds in the future. Both repositories pin the same test vectors.
+- **Ledger record.** The rate is frozen on the quote (`builder_share_bps`), like the odds. The ledger writes a
+  `builder_shares` row in the same transaction as the spin. A share exists only when the pack is credited with its spin: a
+  payment in review, an operator credit or a refund gives none. repo.ing refuses a quote whose repository or rate is not
+  the one it asked for.
+- **Claim checks.** Only a click claims. repo.ing needs the repository's GitHub admin session, checks live that GitHub
+  still lists the person as an admin, checks that they are the person who set the current payout wallet, and allows 5
+  claims per 10 minutes. It then signs in to the credit service with an admin handoff and sends the claim ticket. The
+  ledger leaves out shares whose buyer account is the claimer's own, grants the sum as bonus credits, and links each share
+  to one claim, in one transaction.
+- **A claim that answers 0.** The page says "Nothing new to claim." It never says the repository was never paid: a retry
+  after a lost answer, or after a new sign-in, answers 0 too.
+- **Totals.** `GET /api/credits/shares/<repo>` gives the repository's full name, whether packs may back it (for the
+  signed-in buyer, with the reason if not), and amounts from the credit service only for a confirmed SOL market, otherwise
+  null amounts. It is public, so it is counted first: 60 a minute for each visitor and 240 a minute in all, 429 beyond. The
+  credit service's answer is kept 60 seconds for each repository (at most 500 repositories), and a claim drops the entry.
+  The pages treat any answer but a good one (404, 429, 503) as "unavailable" and show nothing.
+- **Migration.** `drizzle/0069_pack_builder_shares.sql` adds the pack's repository and rate to `credit_pack_purchases`.
+
+## Switch on (owner)
+
+Deploy the credit ledger and service first (repo-inference migration 0016, switches off), then repo.ing web (migration
+0069). Packs must be on in both places. On the credit ledger: `BUILDER_SHARES=on`, and optionally `BUILDER_SHARE_BPS`
+(default 1000, allowed 1 to 2000; repo.ing signs 1000, so change `BUILDER_SHARE_BPS` in `src/builder-pack-shares.mjs` in
+the same release), plus its kill switch `builder_shares`. On the `web` service:
+
+- `CREDITS_WEB_BUILDER_SHARES_ENABLED=true`
+- `CREDITS_WEB_PACKS_ENABLED=true`, the handoff and the credit service settings, as for packs.
+
+Off: set `CREDITS_WEB_BUILDER_SHARES_ENABLED=false`. The chip, the token card and the claim section go away and the
+route answers 404; open packs keep their repository. Shares already recorded stay at the ledger and can be claimed again
+when the switch is back on.
+
+## Tests
+
+- `tests/builder-pack-shares.test.mjs` (quick): settings, the 10% rule, eligibility, totals and their cache, the claim
+  checks, the route's refusals, migration 0069 and the browser's pick (`app/lib/backed-repo.mjs`).
+- `tests/pack-shares-ui.test.mjs` (quick): the token card (dark, market kinds, totals, no totals) and the claim section's
+  first render.
+- `tests/credits-tickets.test.mjs` (quick): the ticket texts and the shared test vectors.
+- `tests/credits-packs.test.mjs` (quick): the pack quote with a repository.
+- `tests/builder-pack-shares-db.test.mjs` (PostgreSQL): the quote with a repository, the claim and the route against a
+  stand-in credit service. Set `BUILDER_PACK_SHARES_TEST_DATABASE_URL` to a throwaway database.

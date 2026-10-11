@@ -9,6 +9,7 @@ import { AppHeader, Footer, RepoIdentity, RepoStats, GitHubLink } from '../../..
 import { ClaimSteps } from '../../../components/claim-steps'
 import { IconArt } from '../../../components/icon-art'
 import { ClaimPageTips } from '../../../components/repo-tips'
+import { PackSharesClaim } from '../../../components/pack-shares-claim'
 import { ClaimPageDecision } from '../../../components/maintainer-declined'
 import { ClaimBuilderTools } from '../../../components/builder-tools'
 import { githubAppConfigurationUrl, githubInstallationForRepository } from '../../../../src/github-app-auth.mjs'
@@ -19,6 +20,7 @@ import { solUsdPrice } from '../../../lib/sol-usd.mjs'
 import { githubSessionCookie, readGithubSession, seal } from '../../../lib/auth.mjs'
 import { Connection } from '@solana/web3.js'
 import { assertBuilderReinvestEnabled } from '../../../../src/builder-reinvest.mjs'
+import { builderSharesSettings } from '../../../../src/builder-pack-shares.mjs'
 import { configAddress } from '../../../lib/server.mjs'
 import { currentPayoutDestinations } from '../../../lib/payout-destination.mjs'
 import { ModelClaimPage } from '../../../components/hf/claim-page'
@@ -48,10 +50,16 @@ export default async function ClaimPage({ params, searchParams }) {
     </Suspense>
     <Suspense fallback={null}><ClaimBuilderTools market={market}/></Suspense>
     <Suspense fallback={null}><ClaimTipsSection market={market}/></Suspense>
+    <PackSharesSection market={market}/>
     <Participation repoId={repoId}/>
     <Suspense fallback={null}><ClaimPageDecision market={market}/></Suspense>
     {market.allocationVersion === 1 && <BuilderAllocation repoId={repoId}/>}
   </main><Footer/></>
+}
+
+// Every pack pays a builder (src/builder-pack-shares.mjs): the payout wallet holder's unclaimed pack shares. Dark unless switched on.
+function PackSharesSection({ market }) {
+  return builderSharesSettings() ? <PackSharesClaim repoId={market.repoId}/> : null
 }
 
 async function ClaimTipsSection({ market }) {

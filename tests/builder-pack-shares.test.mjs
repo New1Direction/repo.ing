@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { register } from 'node:module'
 import { encryptGithubSession } from '../app/lib/auth.mjs'
+import { BACKED_REPO_TTL_MS, captureBackedRepo, clearBackedRepo, storedBackedRepo } from '../app/lib/backed-repo.mjs'
 import { BUILDER_SHARE_BPS, builderShareTarget, builderSharesSettings, cachedShareTotals, claimPackShares, confirmedSolMarket, readShareTotals, shareMicro, shareRepository } from '../src/builder-pack-shares.mjs'
 
 // The route imports next/server the way Next resolves it (tests/fixtures/jsx-hooks.mjs).
@@ -265,4 +266,17 @@ test('the route: 404 while dark or for a bad repository; POST needs the reposito
   // A GET is counted before anything is read: with no database to count in, it is not answered.
   const unavailable = await route.GET(make(session), params('1296269'))
   assert.deepEqual([unavailable.status, await unavailable.json()], [503, { error: 'Share totals are not available right now. Try again in a minute.' }])
+})
+
+// The repository a buyer picked from a token page is kept 30 days in this browser (app/lib/backed-repo.mjs).
+const memory = () => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), removeItem: k => m.delete(k) } }
+test('the repository picked from ?repo= is kept 30 days in this browser; the last pick wins', () => {
+  const s = memory(), t = Date.parse('2026-10-11T00:00:00Z')
+  captureBackedRepo('?repo=1296269', s, t)
+  assert.equal(storedBackedRepo(s, t + BACKED_REPO_TTL_MS - 1), '1296269')
+  assert.equal(storedBackedRepo(s, t + BACKED_REPO_TTL_MS), null)
+  captureBackedRepo('?repo=42', s, t); assert.equal(storedBackedRepo(s, t), '42')
+  captureBackedRepo('?repo=abc', s, t); assert.equal(storedBackedRepo(s, t), '42', 'ignored')
+  s.setItem('repoing:backed-repo', '{bad'); assert.equal(storedBackedRepo(s, t), null)
+  captureBackedRepo('?repo=7', s, t); clearBackedRepo(s); assert.equal(storedBackedRepo(s, t), null)
 })

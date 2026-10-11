@@ -56,6 +56,9 @@
 .packs-panel .button{justify-self:start}
 .packs-actions{display:flex;flex-wrap:wrap;gap:10px}
 .packs-note{color:var(--dim)!important;font-size:13px}
+/* the repository this pack backs (builder shares): the note's tokens; the words run on, so a phone wraps them like any sentence */
+.packs-backing{color:var(--dim)!important;font-size:13px}
+.packs-backing strong{overflow-wrap:anywhere}
 .packs-quote{margin:0;display:grid;gap:6px}
 .packs-quote div{display:flex;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:10px;background:var(--surface2)}
 .packs-quote dt{color:var(--muted)}.packs-quote dd{margin:0;font:600 14px/1.3 var(--font-mono),ui-monospace,monospace;font-variant-numeric:tabular-nums;text-align:right}
