@@ -31,8 +31,9 @@ export function LaunchTools({ enabled }) {
       <details><summary>What the agent can do</summary><ul><li>Find repos and show the source evidence.</li><li>Check for an existing market.</li><li>Prepare a review link, valid for one hour.</li><li>Check finalized market and discoverer details.</li></ul><p>The agent cannot sign, buy, claim fees, or move funds. Your signing wallet is the discoverer. Standard discovery rules apply.</p></details>
     </section>
     <section className="inner-card" aria-labelledby="cli-launch-title"><h2 id="cli-launch-title">Launch from your terminal</h2>
-      <p>In the repository you are working in, <code>repoing launch</code> opens its repo.ing review, and <code>repoing claim</code> shows what its next claim pays and opens the claim page.</p>
-      <CopyBlock label="install command" value="npm install --global @repoing/cli"/>
+      <p>In the repository you are working in, <code>launch</code> opens its repo.ing review, and <code>claim</code> shows what its next claim pays and opens the claim page. Nothing to install.</p>
+      <CopyBlock label="Bun command" value="bunx @repoing/cli launch"/>
+      <CopyBlock label="npm command" value="npx @repoing/cli launch"/>
       <p className="muted">The CLI never receives wallet keys. Costs and the transaction are approved in your browser and wallet.</p>
     </section>
     <section className="inner-card" aria-labelledby="readonly-mcp-title"><h2 id="readonly-mcp-title">Look up markets from your coding assistant</h2>

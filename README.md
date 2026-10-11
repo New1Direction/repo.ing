@@ -50,13 +50,14 @@ flowchart LR
 
 Paste an eligible public GitHub URL, review its identity, name, ticker, and project image, then approve in your wallet. The launch defaults to **No buy**. An optional initial purchase is capped at **3% of token supply**, with 1%, 2%, and Max 3% presets. This cap applies to the launch transaction, not all future purchases by that wallet.
 
-Or start from the repository you are already working in:
+Or start from the repository you are already working in, with nothing to install:
 
 ```bash
-npm install --global @repoing/cli
 cd your-project
-repoing launch
+bunx @repoing/cli launch      # or: npx @repoing/cli launch
 ```
+
+To keep the `repoing` command, install it once with `bun add --global @repoing/cli` or `npm install --global @repoing/cli`.
 
 The CLI detects the GitHub `origin`, resolves the canonical repository, and opens a signed repo.ing launch review. It never receives wallet keys or signing authority; current costs and the final transaction still require explicit browser + wallet approval.
 

@@ -3,11 +3,12 @@
 Turn the GitHub repository you are already working in into a repo.ing launch review.
 
 ```bash
-npm install --global @repoing/cli
-
 cd your-project
-repoing launch
+bunx @repoing/cli launch      # Bun, nothing to install
+npx @repoing/cli launch       # or Node.js 20+
 ```
+
+To keep the `repoing` command, install it once: `bun add --global @repoing/cli` or `npm install --global @repoing/cli`. Bun runs it without Node.js. The examples below use the installed command; with `bunx` or `npx`, put `bunx @repoing/cli` or `npx @repoing/cli` in front instead of `repoing`.
 
 `repoing launch` reads `origin`, resolves the canonical public GitHub repository through repo.ing, creates the same signed one-hour launch review used by the agent/MCP flow, and opens it in your browser.
 
