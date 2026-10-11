@@ -206,13 +206,11 @@ export function createCreditsPacks({ pool, connection, settings, githubVerifier,
      */
     async quote({ githubUserId, login, packMicro, builderRepoId = null, current }) {
       const pack = readPack(packMicro)
-      // The repository a new pack backs; a request being asked for again keeps the repository stored with it.
-      let target = null
-      if (builderRepoId !== null) {
-        if (!builderShares) throw new CreditsWebError('Backing a repository is not open right now.', 400)
-        target = await builderShareTarget(pool, { repoId: builderRepoId, buyerGithubUserId: githubUserId })
-      }
+      if (builderRepoId !== null && !builderShares) throw new CreditsWebError('Backing a repository is not open right now.', 400)
       if (!await takeQuota(pool, [[`credits:pack:${githubUserId}`, 6, 600], ['credits:pack', 300, 60]])) throw new CreditsWebError('Too many quotes. Wait a few minutes.', 429)
+      // The repository a new pack backs, read only after the quota (a refused repository counts as a quote); a request being asked
+      // for again keeps the repository stored with it.
+      const target = builderRepoId === null ? null : await builderShareTarget(pool, { repoId: builderRepoId, buyerGithubUserId: githubUserId })
       const open = (await pool.query(`select * from credit_pack_purchases where github_user_id=$1 and status = any($2::text[])`, [githubUserId, OPEN_PACK_STATUSES])).rows[0]
       if (open && open.status !== 'requested' && OPEN_PACK_STATUSES.includes((await refresh(open, current?.token)).status)) throw new CreditsWebError(OPEN_ERROR)
       let row = open?.status === 'requested' ? open : null

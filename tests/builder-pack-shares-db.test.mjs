@@ -220,6 +220,24 @@ test('real PostgreSQL: a lost answer is asked for again for the stored repositor
   } finally { await pool.end() }
 })
 
+test('real PostgreSQL: the repository read comes after the quote quota; a refused repository counts as a quote', { skip: !url }, async () => {
+  const pool = await connect()
+  try {
+    const { service, steps, handoffs } = await world(pool)
+    const hits = async () => (await pool.query(`select hits from agent_request_limits where scope = 'credits:pack:42'`)).rows[0]?.hits ?? 0
+    // 1002 is declined by its maintainer: with quota left it is a 400 that uses one quote; with none left it is a 429 and the repository is not read.
+    await assert.rejects(steps.quote({ ...who, packMicro: '25000000', builderRepoId: '1002', current: null }), error => error.status === 400 && /opted out/.test(error.message))
+    assert.equal(await hits(), 1)
+    await pool.query(`update agent_request_limits set hits = 6 where scope = 'credits:pack:42'`)
+    await assert.rejects(steps.quote({ ...who, packMicro: '25000000', builderRepoId: '1002', current: null }), error => error.status === 429 && /Too many quotes/.test(error.message))
+    await assert.rejects(steps.quote({ ...who, packMicro: '25000000', builderRepoId: '9999', current: null }), error => error.status === 429)
+    assert.equal(await hits(), 6, 'a refused quote does not count again')
+    assert.deepEqual([service.requests.length, await handoffs()], [0, 0])
+    // Another account has its own quota.
+    await assert.rejects(steps.quote({ ...who, githubUserId: '43', packMicro: '25000000', builderRepoId: '1002', current: null }), error => error.status === 400)
+  } finally { await pool.end() }
+})
+
 test('real PostgreSQL: a quote that names another repository or rate ends the request and nothing is paid', { skip: !url }, async () => {
   const pool = await connect()
   try {
