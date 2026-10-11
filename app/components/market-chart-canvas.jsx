@@ -31,7 +31,7 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
   // Every series time, whitespace included, so an event in a quiet hour keeps its place instead of joining the last trade.
   const pins = useMemo(() => showPulse && pulse?.length ? pulsePins(pulse, series.prices.map(bar => bar.time), { interval: data.interval }) : [],
     [pulse, showPulse, series, data.interval])
-  latest.current = { data, series, style }
+  latest.current = { data, series, style, tradeBars: trades.prices.length }
 
   function resetView() {
     const current = latest.current
@@ -99,13 +99,17 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
     }
     if (volumes.reset) volume.setData(series.volumes)
     else for (const bar of volumes.bars) volume.update(bar)
+    const before = (state.series?.prices.length ?? 0) - 1, after = series.prices.length - 1, tailMoved = state.tailed || tailed
     state.series = series
+    state.tailed = tailed
     // Full historical corrections keep the user's viewport. Only a deliberately
-    // selected period (or the first point arriving) chooses a new initial view.
-    const fitKey = `${data.range}:${data.interval}:${Boolean(series.prices.length)}:${tailed}`
+    // selected period (or the first point arriving, or the Dev toggle) chooses a new initial view.
+    const fitKey = `${data.range}:${data.interval}:${Boolean(series.prices.length)}:${showPulse}`
     if (state.fitKey !== fitKey) { resetView(); state.fitKey = fitKey; setHoverTime(null) }
+    // A view that reached the last point keeps reaching it while the GitHub tail after the last trade grows or shrinks.
+    else if (tailMoved && range && range.to >= before && after !== before) chart.timeScale().setVisibleLogicalRange({ from: range.from, to: range.to + after - before })
     else if ((prices.reset || volumes.reset) && range) chart.timeScale().setVisibleLogicalRange(range)
-  }, [ready, series, tailed, data.range, data.interval])
+  }, [ready, series, tailed, showPulse, data.range, data.interval])
 
   useEffect(() => {
     if (!ready || !api.current) return
@@ -127,8 +131,11 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
   function zoom(factor) {
     const scale = api.current?.chart.timeScale(), range = scale?.getVisibleLogicalRange()
     if (!range) return
-    // Keep the newest visible trades in view, especially for sparse histories.
-    scale.setVisibleLogicalRange({ from: range.to - (range.to - range.from) * factor, to: range.to })
+    // Keep the newest visible trades in view, especially for sparse histories. Zooming in on a view that runs on into the
+    // GitHub tail after the last trade gives up tail before trades, so the price never leaves the screen.
+    const width = (range.to - range.from) * factor, lastTrade = latest.current.tradeBars - 1
+    const right = factor < 1 && range.from <= lastTrade && range.to > lastTrade + 2 ? Math.min(range.to, Math.max(lastTrade + 2, range.from + width)) : range.to
+    scale.setVisibleLogicalRange({ from: right - width, to: right })
   }
   function keyboard(event) {
     if (event.target !== event.currentTarget) return
