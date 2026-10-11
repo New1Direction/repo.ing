@@ -63,10 +63,10 @@ Use **$REPOING** and the verified mint in announcements. A matching name or tick
 
 ## Token locks
 
-**129,000,000 REPOING (12.9% of the fixed 1 billion supply)** sits in seven Jupiter Lock escrows. All are existing-supply tokens, separate from the normal 1% builder allocation after graduation. This disclosure covers these escrows, not every token the team or buyback wallets may hold.
+**150,111,111 REPOING (15.01% of the fixed 1 billion supply)** sits in nine Jupiter Lock escrows. All are existing-supply tokens, separate from the normal 1% builder allocation after graduation. This disclosure covers these escrows, not every token the team or buyback wallets may hold.
 
 - **Team deposits (45,000,000, 4.5%):** two escrows whose creator and recipient is the team wallet `4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce`. Terms verified September 28, 2026.
-- **Bought-back REPOING (84,000,000, 8.4%):** five escrows of $REPOING bought back on-chain. Three (45,000,000) were funded by the custody buyback wallet `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`, which is also their creator and recipient; terms verified September 30, 2026. Two (39,000,000) were funded by the team wallet from its own buybacks, with the team wallet as creator and recipient; terms verified October 2, 2026.
+- **Bought-back REPOING (105,111,111, 10.51%):** seven escrows of $REPOING bought back on-chain. Four (55,000,000) were funded by the custody buyback wallet `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`, which is also their creator and recipient; terms verified September 30, 2026 and (the fourth) October 11, 2026. Three (50,111,111) were funded by the team wallet from its own buybacks, with the team wallet as creator and recipient; terms verified October 2, 2026 and (the third) October 11, 2026.
 
 Every finalized escrow account names the canonical REPOING mint, and every escrow has **cancellation disabled and recipient changes disabled** (`cancel_mode=0`, `update_recipient_mode=0`). They are scheduled vesting locks, not permanent burns or permanently locked liquidity.
 
@@ -77,8 +77,10 @@ Every finalized escrow account names the canonical REPOING mint, and every escro
 | [Bought-back REPOING](https://lock.jup.ag/escrow/4LKFWNwfiKTjMEfEPvq2rD5ZVKkBjmnmJXvNuADjHyJt) | buyback wallet | 23,000,000 | Oct 5, 2026, 15:00:00 | Dec 5, 2026, 11:00:00 |
 | [Bought-back REPOING 2](https://lock.jup.ag/escrow/DySLi6B9AUSeSx1gDrEAyovetF6AktaxcxAMJNLMUj5Q) | buyback wallet | 12,000,000 | Oct 2, 2026, 02:54:46 | Nov 1, 2026, 12:54:46 |
 | [Bought-back REPOING 3](https://lock.jup.ag/escrow/9SFbDcqyhRQc6WX2sR1mSQcrzFETDLV3XpT7rEs8To9x) | buyback wallet | 10,000,000 | Oct 16, 2026, 06:40:02 | Nov 15, 2026, 16:40:02 |
+| [Bought-back REPOING 4](https://lock.jup.ag/escrow/BvjrV6JdzUo6MiAmkXNVSqFA8oyjVczcw9ZmyYYzVFS1) | buyback wallet | 10,000,000 | Nov 5, 2026, 05:43:08 | Dec 5, 2026, 15:43:08 |
 | [Team bought-back REPOING](https://lock.jup.ag/escrow/A2gXXqDX6H1wKCLj7tuKNpgay5jifUz2E3qQWWMEkffN) | team wallet | 21,000,000 | Oct 31, 2026, 18:07:44 | Jan 31, 2027, 00:07:44 |
 | [Team bought-back REPOING 2](https://lock.jup.ag/escrow/mjeZ4brBnmUiu7M5o7mG8TH8j2H6yGuEvDCFgx1Lnyz) | team wallet | 18,000,000 | Oct 31, 2026, 19:00:00 | Dec 1, 2026, 05:00:00 |
+| [Team bought-back REPOING 3](https://lock.jup.ag/escrow/778SLbkLxkgziHhMcaapiWErEavQQi8MNdXRCyvixmKF) | team wallet | 11,111,111 | Oct 8, 2026, 21:06:33 | Nov 8, 2026, 07:06:33 |
 
 Exact release amounts:
 
@@ -87,8 +89,10 @@ Exact release amounts:
 - **23 million bought-back escrow:** 3,000,000 on Oct 5, 2026 at 15:00:00 UTC; 10,000,000 each on Nov 5, 2026 at 01:00:00 UTC and Dec 5, 2026 at 11:00:00 UTC.
 - **12 million bought-back escrow:** 200,000 on Oct 2, 2026 at 02:54:46 UTC; 11,800,000 on Nov 1, 2026 at 12:54:46 UTC.
 - **10 million bought-back escrow:** 1,000,000 on Oct 16, 2026 at 06:40:02 UTC; 9,000,000 on Nov 15, 2026 at 16:40:02 UTC.
+- **Fourth bought-back escrow (10 million):** 1,500,000 on Nov 5, 2026 at 05:43:08 UTC; 8,500,000 on Dec 5, 2026 at 15:43:08 UTC.
 - **21 million team bought-back escrow:** 5,000,000.000001 on Oct 31, 2026 at 18:07:44 UTC; 5,333,333.333333 each on Dec 1, 2026 at 04:07:44 UTC, Dec 31, 2026 at 14:07:44 UTC, and Jan 31, 2027 at 00:07:44 UTC.
 - **18 million team bought-back escrow:** 3,500,000 on Oct 31, 2026 at 19:00:00 UTC; 14,500,000 on Dec 1, 2026 at 05:00:00 UTC.
+- **11,111,111 team bought-back escrow:** 1,000,000 on Oct 8, 2026 at 21:06:33 UTC (its start, so released at creation); 10,111,111 on Nov 8, 2026 at 07:06:33 UTC.
 
 The program's period is exactly **2,628,000 seconds**, so releases are not assumed to fall on the same calendar day each month. Jupiter may display dates in the viewer's local time; repo.ing uses UTC explicitly.
 
@@ -115,5 +119,12 @@ Team bought-back escrows (October 2, 2026):
 - Escrow-owned token accounts held the full deposits with no delegates or close authorities: `HZJngeeVg9RkAX2TE9cN6G7mdgZKR3q99Ygdj6tx3siD` (21,000,000) and `Et7HpNTC5ZDZRJ4msDaV4PkErUzphFaFySbh3HcqGg8v` (18,000,000).
 - Creation transactions: `4pSnyZgj3whvnjuyTqeVRumVRj5u7Qkn3YKbPrCmt7Vn53uwTgG6vvvukDmnjS6gp8Bjp3nVsbiLLVuhC5ZbmD4m` (21M, 2026-09-29T18:08:36Z) and `4BL99V4UAUzaNgMaMyfBSkmQLZuGJUiqZFJ2T9V87vqPj5xsCf2L5fp9iZWUJHSG2rr7sBwoR1fwfhzjybz5ngmi` (18M, 2026-10-02T00:59:40Z).
 - Funding: the team wallet's original deposits are the two team escrows above. Just before the 21M deposit it held 41,747,842.333 REPOING with 48.78M bought back by team-wallet buybacks (7 published receipts) since that lock; just before the 18M deposit it held 28,259,365.561 REPOING after 59.77M of team-wallet buybacks (25 receipts).
+
+Escrows of October 5 and 8, 2026 (verified October 11, 2026):
+
+- A finalized `getProgramAccounts` read of `LocpQgucEQHbqNABEYvBvwoxCPsSbG91A1QaQhQQqjn` filtered on the canonical mint returned nine escrows: the seven above and these two. Each names the canonical mint, has `cancel_mode=0` and `update_recipient_mode=0`, zero `cancelled_at` and `total_claimed_amount`, and the published cliff, 2,628,000-second period, amount per period and period count (1 each).
+- `BvjrV6JdzUo6MiAmkXNVSqFA8oyjVczcw9ZmyYYzVFS1` (10,000,000) names the custody buyback wallet as creator and recipient. Creation transaction `4DX294EeqLeUbCuEETrNr1WBbqMkVNUJW6yEVdj8GjTU6Xhv9DRSMDBzG1HV5SDMjWkjpeBLeMRKv1ewSRiKedgT` (2026-10-05T04:48:04Z); the wallet held 32,208,008.701 REPOING before it.
+- `778SLbkLxkgziHhMcaapiWErEavQQi8MNdXRCyvixmKF` (11,111,111) names the team wallet as creator and recipient. Creation transaction `52Q8LUZNWGYuh3bT72YsgQziHr3cqfKZCurt2zxoNpeuNSkjM8uadYPdjeAuPQfq3PH7wMqo8ravhTdc57ZLW941` (2026-10-08T21:06:47Z); the team wallet held 29,367,535.670 REPOING before it, its original deposit being the two team escrows above.
+- Escrow-owned token accounts held the full deposits with no delegates or close authorities at slots **455478659 / 455478664** (checked **2026-10-11T02:01:36Z**): `H3WUnaTeE4kYuDKgVRNCRCKiZRQsViHUmYnDG6GGJivw` (10,000,000) and `26miscuSeBWCNSN1hQTtQmdmizTkViKkX6oVRpZytUpn` (11,111,111).
 
 The public cards disclose original deposits and verified release terms, not a live remaining-locked or claimable balance. Follow each Jupiter link for current claim status. Token locks do not increase the curve's SOL reserve or enable buybacks, P3, or P4.
