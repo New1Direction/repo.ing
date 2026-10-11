@@ -3,6 +3,8 @@ import { PublicKey } from '@solana/web3.js'
 import { CreditsWebError, FEE_LAMPORTS, MAX_LAMPORTS, MIN_LAMPORTS, RENT_EXEMPT_LAMPORTS, affordable, assertPayment, broadcast, buildPayment, chainStatus,
   creditsCall, creditsServiceSettings, parseSolanaPay, signInToCredits, simulatePayment, sol } from './credits-web.mjs'
 import { takeQuota } from './request-quota.mjs'
+import { builderShareTarget, shareMicro } from './builder-pack-shares.mjs'
+import { packBuilderTicket } from './credits-tickets.mjs'
 
 // AI credit packs on repo.ing/credits (docs/CREDITS_WEB.md, "Credit packs"): anyone with a GitHub account buys a $10, $25, $50 or $100 pack of
 // repo.ing AI credits with SOL from their own wallet, and the pack's one spin (repo-inference docs/PACKS.md) is shown on
@@ -17,6 +19,9 @@ import { takeQuota } from './request-quota.mjs'
 //     A quote whose answer was lost is asked for again under the same key and session and comes back unchanged, instead
 //     of a second open quote. Without that session (its cookie gone), the key is asked under a new one.
 //   - The outcome carries the spin. It is checked against the pack; a credited pack without a valid spin goes to a review.
+//   - A pack may be opened for a repository (src/builder-pack-shares.mjs, dark by its own switch): repo.ing checks the repository,
+//     stores it with the request, and signs a ticket for it with every ask of the quote; the credit ledger freezes the builder share
+//     on the quote. The quote must name the same repository and rate, or nothing is paid.
 // Dark unless CREDITS_WEB_PACKS_ENABLED is exactly 'true', with the credit service settings of src/credits-web.mjs.
 export const PACKS_MICRO = Object.freeze([10_000_000, 25_000_000, 50_000_000, 100_000_000])
 export const MULTIPLIERS_BPS = Object.freeze([10_000, 12_000, 20_000, 50_000])
@@ -37,10 +42,11 @@ export function readPack(value) {
 }
 
 const invalid = () => new CreditsWebError('The credit service returned an invalid pack quote. Nothing was paid.', 502)
-/** A pack quote from the credit service, checked against the pack asked for and this deployment's settings. */
-export function parsePackQuote(quote, { settings, packMicro, now = Date.now() }) {
+/** A pack quote from the credit service, checked against the pack asked for, the repository it backs (if any) and this deployment's settings. */
+export function parsePackQuote(quote, { settings, packMicro, builder = null, now = Date.now() }) {
   const expires = Date.parse(quote?.expires_at), lamports = quote?.lamports, price = quote?.price_micro_per_sol
   if (!UUID.test(quote?.id ?? '') || quote.kind !== 'pack' || quote.pack_micro !== packMicro || quote.credit_micro !== packMicro
+    || (quote.builder_repo_id ?? null) !== (builder ? String(builder.repoId) : null) || (quote.builder_share_bps ?? null) !== (builder ? builder.shareBps : null)
     || !Number.isSafeInteger(lamports) || BigInt(lamports) < MIN_LAMPORTS || BigInt(lamports) > MAX_LAMPORTS || !Number.isSafeInteger(price) || price <= 0
     || !Number.isFinite(expires) || expires <= now || expires > now + 60 * 60_000) throw invalid()
   // The fewest lamports worth the pack at the quoted price: ceil(pack x 10^9 / price), the credit ledger's own rule.
@@ -88,14 +94,17 @@ export function offerOf(value) {
 const publicPurchase = row => row && ({ id: Number(row.id), status: row.status, packMicro: String(row.pack_micro), network: row.network,
   lamports: row.lamports == null ? null : String(row.lamports), priceMicroPerSol: row.price_micro_per_sol == null ? null : String(row.price_micro_per_sol),
   expiresAt: row.expires_at ? new Date(row.expires_at).toISOString() : null, payer: row.payer_wallet ?? null, signature: row.payment_signature ?? null,
-  spin: row.spin_id ? { id: row.spin_id, multiplierBps: Number(row.multiplier_bps), paidMicro: String(row.pack_micro), bonusMicro: String(row.bonus_micro) } : null })
+  spin: row.spin_id ? { id: row.spin_id, multiplierBps: Number(row.multiplier_bps), paidMicro: String(row.pack_micro), bonusMicro: String(row.bonus_micro) } : null,
+  // The page knows the repository's name from its own read of the shares route.
+  builder: row.builder_repo_id ? { repoId: String(row.builder_repo_id), shareBps: row.builder_share_bps, shareMicro: String(shareMicro(row.pack_micro, row.builder_share_bps)) } : null })
 const OPEN_ERROR = 'You have an open pack. Pay for it or cancel it first.'
 
 /**
  * The pack steps for one signed-in GitHub account. githubVerifier checks the account live (app/lib/github-session.mjs,
- * currentIdentity). current is the credit service's session from the cookie, or null.
+ * currentIdentity). current is the credit service's session from the cookie, or null. builderShares is
+ * builderSharesSettings() (src/builder-pack-shares.mjs): null while packs for a repository are off.
  */
-export function createCreditsPacks({ pool, connection, settings, githubVerifier, fetchImpl = fetch, now = () => Date.now() }) {
+export function createCreditsPacks({ pool, connection, settings, githubVerifier, builderShares = null, fetchImpl = fetch, now = () => Date.now() }) {
   const owned = async (id, githubUserId) => {
     const { rows: [row] } = await pool.query('select * from credit_pack_purchases where id=$1 and github_user_id=$2', [id, githubUserId])
     if (!row) throw new CreditsWebError('Unknown pack.', 404)
@@ -138,14 +147,21 @@ export function createCreditsPacks({ pool, connection, settings, githubVerifier,
   const fail = row => pool.query(`update credit_pack_purchases set status='failed',updated_at=now() where id=$1 and status='requested'`, [row.id])
   const ask = async (row, token) => {
     let answer, quote
+    const body = { pack_micro: Number(row.pack_micro) }
+    const builder = row.builder_repo_id ? { repoId: String(row.builder_repo_id), shareBps: row.builder_share_bps } : null
+    // A repository's ticket is signed anew with every ask (the ledger allows 5 minutes); a retry under the same key gets the same quote.
+    if (builder) {
+      if (!builderShares) throw new CreditsWebError('Backing a repository is not open right now. Cancel this pack and open it again.', 400)
+      body.builder = packBuilderTicket(builderShares.secret, { idempotencyKey: row.idempotency_key, githubUserId: String(row.github_user_id),
+        repoId: builder.repoId, shareBps: builder.shareBps, issuedAt: new Date(now()).toISOString() })
+    }
     try {
-      answer = await creditsCall(fetchImpl, settings.origin, '/packs', { method: 'POST', body: { pack_micro: Number(row.pack_micro) }, token,
-        idempotencyKey: row.idempotency_key })
+      answer = await creditsCall(fetchImpl, settings.origin, '/packs', { method: 'POST', body, token, idempotencyKey: row.idempotency_key })
     } catch (error) {
       if (error?.refused) await fail(row)
       throw error
     }
-    try { quote = parsePackQuote(answer, { settings, packMicro: Number(row.pack_micro), now: now() }) } catch (error) { await fail(row); throw error }
+    try { quote = parsePackQuote(answer, { settings, packMicro: Number(row.pack_micro), builder, now: now() }) } catch (error) { await fail(row); throw error }
     // 'failed' too: a request made at the same time under this key (another tab) may have been refused while this one got it.
     let quoted
     try {
@@ -188,8 +204,14 @@ export function createCreditsPacks({ pool, connection, settings, githubVerifier,
      * answered: it is asked for again first, under its own key and pack, with the session that asked if the cookie still
      * holds it. The session is returned (also on the error) for the cookie.
      */
-    async quote({ githubUserId, login, packMicro, current }) {
+    async quote({ githubUserId, login, packMicro, builderRepoId = null, current }) {
       const pack = readPack(packMicro)
+      // The repository a new pack backs; a request being asked for again keeps the repository stored with it.
+      let target = null
+      if (builderRepoId !== null) {
+        if (!builderShares) throw new CreditsWebError('Backing a repository is not open right now.', 400)
+        target = await builderShareTarget(pool, { repoId: builderRepoId, buyerGithubUserId: githubUserId })
+      }
       if (!await takeQuota(pool, [[`credits:pack:${githubUserId}`, 6, 600], ['credits:pack', 300, 60]])) throw new CreditsWebError('Too many quotes. Wait a few minutes.', 429)
       const open = (await pool.query(`select * from credit_pack_purchases where github_user_id=$1 and status = any($2::text[])`, [githubUserId, OPEN_PACK_STATUSES])).rows[0]
       if (open && open.status !== 'requested' && OPEN_PACK_STATUSES.includes((await refresh(open, current?.token)).status)) throw new CreditsWebError(OPEN_ERROR)
@@ -200,9 +222,9 @@ export function createCreditsPacks({ pool, connection, settings, githubVerifier,
       const token = reuse ? current.token : fresh.session.token
       try {
         if (!row) {
-          row = (await pool.query(`insert into credit_pack_purchases(github_user_id,github_login,pack_micro,idempotency_key,session_hash,network,status)
-            values($1,$2,$3,$4,$5,$6,'requested') returning *`, [githubUserId, fresh.login, pack, randomBytes(16).toString('base64url'),
-            sessionHash(token), settings.network])).rows[0]
+          row = (await pool.query(`insert into credit_pack_purchases(github_user_id,github_login,pack_micro,idempotency_key,session_hash,network,status,
+            builder_repo_id,builder_share_bps) values($1,$2,$3,$4,$5,$6,'requested',$7,$8) returning *`, [githubUserId, fresh.login, pack,
+            randomBytes(16).toString('base64url'), sessionHash(token), settings.network, target ? target.repoId : null, target ? builderShares.shareBps : null])).rows[0]
         } else if (!reuse) {
           row = (await pool.query(`update credit_pack_purchases set session_hash=$2,updated_at=now() where id=$1 and status='requested' returning *`,
             [row.id, sessionHash(token)])).rows[0] ?? row

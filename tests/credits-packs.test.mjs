@@ -67,6 +67,16 @@ test('a pack quote: this pack, the pinned treasury, the fewest lamports worth th
     { settings: SETTINGS, packMicro: 25_000_000 }), /unexpected payment request/)
 })
 
+test('a pack quote for a repository must carry the same repository and rate', () => {
+  const builder = { repoId: '1296269', shareBps: 1000 }
+  assert.doesNotThrow(() => parsePackQuote(quoteFor({ builder_repo_id: '1296269', builder_share_bps: 1000 }), { settings: SETTINGS, packMicro: 25_000_000, builder }))
+  for (const extra of [{}, { builder_repo_id: '42', builder_share_bps: 1000 }, { builder_repo_id: '1296269', builder_share_bps: 2000 }]) {
+    assert.throws(() => parsePackQuote(quoteFor(extra), { settings: SETTINGS, packMicro: 25_000_000, builder }), /Nothing was paid/)
+  }
+  assert.throws(() => parsePackQuote(quoteFor({ builder_repo_id: '1296269', builder_share_bps: 1000 }), { settings: SETTINGS, packMicro: 25_000_000 }), /Nothing was paid/,
+    'a quote for a repository nobody chose')
+})
+
 test('the outcome: credited only with a spin that matches the pack; anything else credited goes to a review', () => {
   const spin = (multiplier_bps, extra = {}) => ({ id: '6f1a1c86-9a52-4d1e-8f26-2b1b0a8e1c11', funding_receipt_id: 'x', paid_micro: 25_000_000,
     bonus_micro: 25_000_000 * (multiplier_bps - 10_000) / 10_000, multiplier_bps, plush: false, ...extra })
@@ -127,6 +137,11 @@ test('the route: 404 while dark; a GitHub session for the steps, and the same or
   assert.equal((await route.POST(make(session, 'https://evil.invalid'))).status, 403)
   assert.equal((await route.POST(make(session, 'https://repo.ing', { action: 'quote', packMicro: '25000000', treasury: TREASURY }))).status, 403)
   assert.equal((await route.POST(make(session, 'https://repo.ing', { action: 'submit', id: 'x' }))).status, 400)
+  // The repository a pack backs is a digits string (tests/builder-pack-shares-db.test.mjs runs the quote itself).
+  for (const bad of [1296269, '0', '012', 'abc', '1'.repeat(20), null]) {
+    const refused = await route.POST(make(session, 'https://repo.ing', { action: 'quote', packMicro: '25000000', builderRepoId: bad }))
+    assert.deepEqual([refused.status, (await refused.json()).error], [400, 'Unknown repository.'], String(bad))
+  }
   assert.equal((await route.POST(make(session, 'https://repo.ing', { action: 'drain', id: 1 }))).status, 400)
 })
 

@@ -91,6 +91,8 @@ export const creditPackPurchases = pgTable('credit_pack_purchases', {
   spinId: uuid('spin_id').unique(),
   multiplierBps: integer('multiplier_bps'),
   bonusMicro: bigint('bonus_micro', { mode: 'bigint' }),
+  // Migration 0069 (src/builder-pack-shares.mjs): the repository this pack is opened for and the share rate, both null for a pack with none.
+  builderRepoId: bigint('builder_repo_id', { mode: 'bigint' }), builderShareBps: integer('builder_share_bps'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   submittedAt: timestamp('submitted_at', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -108,6 +110,8 @@ export const creditPackPurchases = pgTable('credit_pack_purchases', {
   check('credit_pack_purchases_spin_check', sql`(${table.status} = 'credited') = (${table.spinId} is not null)
     and (${table.spinId} is null) = (${table.multiplierBps} is null) and (${table.spinId} is null) = (${table.bonusMicro} is null)
     and (${table.multiplierBps} is null or (${table.multiplierBps} in (10000, 12000, 20000, 50000) and ${table.bonusMicro} = ${table.packMicro} * (${table.multiplierBps} - 10000) / 10000))`),
+  check('credit_pack_purchases_builder_check', sql`(${table.builderRepoId} is null) = (${table.builderShareBps} is null)
+    and (${table.builderRepoId} is null or (${table.builderRepoId} between 1 and 4503599627370495 and ${table.builderShareBps} between 1 and 2000))`),
   uniqueIndex('credit_pack_purchases_one_open').on(table.githubUserId).where(sql`${table.status} in ('requested', 'quoted', 'prepared', 'submitted')`),
   index('credit_pack_purchases_by_user').on(table.githubUserId, table.id),
 ])

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { CREDITS_SESSION_COOKIE, CreditsWebError, openCreditsSession, sealCreditsSession } from '../../../../src/credits-web.mjs'
 import { PACK_ODDS, createCreditsPacks, creditsPacksSettings } from '../../../../src/credits-packs.mjs'
+import { builderSharesSettings } from '../../../../src/builder-pack-shares.mjs'
 import { assertSameOrigin, cookieOptions, githubSessionCookie, readGithubSession } from '../../../lib/auth.mjs'
 import { sessionVerifier } from '../../../lib/github-session.mjs'
 import { publicOrigin } from '../../../lib/origin.mjs'
@@ -11,7 +12,7 @@ export const runtime = 'nodejs'
 // odds only); POST quote, prepare, submit, cancel or check (a click that may sign in again). A GitHub session (the /credits
 // sign-in, or a repository's) and, for POST, the same origin. 404 while dark.
 const headers = { 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer' }
-const FIELDS = ['action', 'packMicro', 'id', 'payer', 'signedTransaction']
+const FIELDS = ['action', 'packMicro', 'builderRepoId', 'id', 'payer', 'signedTransaction']
 const ACTIONS = ['quote', 'prepare', 'submit', 'cancel', 'check']
 const reply = (body, status = 200, session = null) => {
   const response = NextResponse.json(body, { status, headers })
@@ -22,7 +23,7 @@ const reply = (body, status = 200, session = null) => {
 }
 const githubSession = request => readGithubSession(request.cookies.get(githubSessionCookie)?.value)
 function service(session, request, settings) {
-  return createCreditsPacks({ pool: database(), connection: chain(), settings,
+  return createCreditsPacks({ pool: database(), connection: chain(), settings, builderShares: builderSharesSettings(),
     githubVerifier: sessionVerifier(session, request.url, { dashboard: session.scope === 'builders' }) })
 }
 // A quote that got no answer still keeps its new credit service session (error.session): a retry asks again with it.
@@ -60,12 +61,16 @@ export async function POST(request) {
   const id = Number(body.id), who = { githubUserId: session.githubUserId }
   if (!ACTIONS.includes(body.action)) return reply({ error: 'Unknown action.' }, 400)
   if (body.action !== 'quote' && (!Number.isSafeInteger(id) || id <= 0)) return reply({ error: 'Unknown pack.' }, 400)
+  // The repository a new pack backs, when one is: a GitHub repository id as digits.
+  if (body.action === 'quote' && body.builderRepoId !== undefined && !(typeof body.builderRepoId === 'string' && /^[1-9]\d{0,18}$/.test(body.builderRepoId))) {
+    return reply({ error: 'Unknown repository.' }, 400)
+  }
   try {
     const steps = service(session, request, settings)
     const current = openCreditsSession(request.cookies.get(CREDITS_SESSION_COOKIE)?.value, session.githubUserId)
     const sign = { ...who, login: session.githubLogin, current }
     if (body.action === 'quote') {
-      const result = await steps.quote({ ...sign, packMicro: body.packMicro })
+      const result = await steps.quote({ ...sign, packMicro: body.packMicro, builderRepoId: body.builderRepoId ?? null })
       return reply({ purchase: result.purchase }, 200, result.session)
     }
     if (body.action === 'check') {

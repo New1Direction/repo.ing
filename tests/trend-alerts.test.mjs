@@ -184,15 +184,15 @@ test('a post that may have gone out is recorded unknown and not retried; a provi
 })
 
 // ---------- migration ----------
-test('migration 0068 adds only the trend_alerts table, appended last, and matches the schema', () => {
+test('migration 0068 adds only the trend_alerts table, after every earlier migration, and matches the schema', () => {
   const sql = readFileSync('drizzle/0068_trend_alerts.sql', 'utf8')
   assert.match(sql, /CREATE TABLE "trend_alerts"/)
   assert.match(sql, /CREATE UNIQUE INDEX trend_alerts_repo_channel_unique ON trend_alerts\(github_repo_id, channel\)/)
   assert.doesNotMatch(sql, /\b(UPDATE|DELETE|DROP|ALTER)\b/i)
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
-  const last = entries.at(-1)
-  assert.equal(last.tag, '0068_trend_alerts')
-  assert.ok(entries.slice(0, -1).every(entry => entry.when < last.when))
+  const index = entries.findIndex(entry => entry.tag === '0068_trend_alerts')
+  assert.ok(index > 0)
+  assert.ok(entries.slice(0, index).every(entry => entry.when < entries[index].when))
   const schema = readFileSync('src/db/schema.mjs', 'utf8')
   for (const name of ['trend_alerts_repo_channel_unique', 'trend_alerts_channel_recent', 'trend_alerts_sent_check', 'trend_alerts_stars_gained_check']) {
     assert.ok(schema.includes(`'${name}'`), name)
