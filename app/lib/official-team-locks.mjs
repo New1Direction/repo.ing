@@ -85,6 +85,21 @@ export const OFFICIAL_TEAM_LOCKS = [
     ],
   },
   {
+    // Fourth bought-back REPOING lock from the custody buyback wallet (creator and recipient FgzeY…), 2026-10-05: 10M of
+    // the 32,208,008.701 it held. Tx 4DX294EeqLeUbCuEETrNr1WBbqMkVNUJW6yEVdj8GjTU6Xhv9DRSMDBzG1HV5SDMjWkjpeBLeMRKv1ewSRiKedgT;
+    // cancel_mode=0, update_recipient_mode=0.
+    name: 'Bought-back REPOING 4',
+    ...buyback,
+    verifiedAt: '2026-10-11',
+    escrow: 'BvjrV6JdzUo6MiAmkXNVSqFA8oyjVczcw9ZmyYYzVFS1',
+    deposited: '10,000,000',
+    supplyPercent: '1%',
+    releases: [
+      { at: '2026-11-05T05:43:08Z', amount: '1,500,000' },
+      { at: '2026-12-05T15:43:08Z', amount: '8,500,000' },
+    ],
+  },
+  {
     // Bought-back REPOING locked from the team wallet (creator and recipient 4euC…), 2026-09-29. Before this deposit the
     // team wallet held 41,747,842.333 REPOING after its original 45M was locked above and 48.78M of team-wallet
     // buybacks. Tx 4pSnyZgj3whvnjuyTqeVRumVRj5u7Qkn3YKbPrCmt7Vn53uwTgG6vvvukDmnjS6gp8Bjp3nVsbiLLVuhC5ZbmD4m.
@@ -115,6 +130,22 @@ export const OFFICIAL_TEAM_LOCKS = [
     releases: [
       { at: '2026-10-31T19:00:00Z', amount: '3,500,000' },
       { at: '2026-12-01T05:00:00Z', amount: '14,500,000' },
+    ],
+  },
+  {
+    // Third team-wallet lock of bought-back REPOING, 2026-10-08: 11,111,111 of the 29,367,535.670 held; the team wallet's
+    // original deposit is the first two escrows above. The first 1,000,000 released at creation (cliff = start).
+    // Tx 52Q8LUZNWGYuh3bT72YsgQziHr3cqfKZCurt2zxoNpeuNSkjM8uadYPdjeAuPQfq3PH7wMqo8ravhTdc57ZLW941.
+    name: 'Team bought-back REPOING 3',
+    ...team,
+    boughtBack: true,
+    verifiedAt: '2026-10-11',
+    escrow: '778SLbkLxkgziHhMcaapiWErEavQQi8MNdXRCyvixmKF',
+    deposited: '11,111,111',
+    supplyPercent: '1.11%',
+    releases: [
+      { at: '2026-10-08T21:06:33Z', amount: '1,000,000' },
+      { at: '2026-11-08T07:06:33Z', amount: '10,111,111' },
     ],
   },
 ]
