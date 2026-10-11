@@ -46,8 +46,9 @@ repoing claim                  # opens the claim page of the current repository
 repoing claim owner/repository
 ```
 
-The command shows what the next claim of the repository pays, then opens repo.ing's claim page, where your fees go to
-your bound wallet. Your wallet approves the claim.
+The command shows what the next claim of the repository pays, then opens repo.ing's claim page. Signed in with GitHub as
+a repository admin, you select **Claim** and repo.ing pays the fees to your payout wallet. The claim itself needs no wallet
+signature; only binding a payout wallet the first time asks your wallet to sign a message.
 
 ## AI credits
 
