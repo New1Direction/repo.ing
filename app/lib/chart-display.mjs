@@ -54,11 +54,12 @@ export function chartInitialRange(count, style) {
 
 // A view that reached the last point keeps reaching it when points are added or removed at the end (the GitHub tail after
 // the last trade, app/lib/pulse-chart.mjs pulseTail). It widens as the end grows; as the end shrinks it keeps its left edge
-// while at least two points stay in view, else it moves whole, so `from` never passes `to`. null: leave the view alone.
+// while at least half its width (and two points) stay in view, else it moves whole, so `from` never passes `to` and a wide
+// view never collapses to a sliver. null: leave the view alone.
 export function chartFollowRange(range, before, after) {
   if (!range || !(range.to >= before) || after === before) return null
-  const to = range.to + after - before
-  return { from: to - range.from >= 2 ? range.from : to - (range.to - range.from), to }
+  const to = range.to + after - before, width = range.to - range.from
+  return { from: to - range.from >= Math.max(2, width / 2) ? range.from : to - width, to }
 }
 
 // Zooming keeps the right edge. lastTrade: the last trade's index when a GitHub tail runs on after it (else null); zooming
