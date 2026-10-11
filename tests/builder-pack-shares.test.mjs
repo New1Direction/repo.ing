@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { register } from 'node:module'
 import { encryptGithubSession } from '../app/lib/auth.mjs'
 import { BACKED_REPO_TTL_MS, captureBackedRepo, clearBackedRepo, storedBackedRepo } from '../app/lib/backed-repo.mjs'
-import { BUILDER_SHARE_BPS, builderShareTarget, builderSharesSettings, cachedShareTotals, claimPackShares, confirmedSolMarket, readShareTotals, shareMicro, shareRepository } from '../src/builder-pack-shares.mjs'
+import { BUILDER_SHARE_BPS, UPSTREAM_BUDGET, builderShareTarget, builderSharesSettings, cachedShareTotals, claimPackShares, confirmedSolMarket, forgetShareTotals, logShareProblem, readShareTotals, shareMicro, shareRepository } from '../src/builder-pack-shares.mjs'
 
 // The route imports next/server the way Next resolves it (tests/fixtures/jsx-hooks.mjs).
 register(new URL('./fixtures/jsx-hooks.mjs', import.meta.url))
@@ -53,6 +53,19 @@ test('only a GitHub repository with a live SOL market, no opt-out, and a buyer w
   await refused(market({ holder: '583231' }), /your own packs/)
   await refused(market(), /GitHub repositories/, '4503599627370497')
   await refused(market(), /GitHub repositories/, 'abc')
+})
+
+test('a repository on the do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS) cannot be backed; a maintainer\'s opt-out keeps its own message', async () => {
+  const old = process.env.PROMOTION_EXCLUDED_REPO_IDS
+  try {
+    process.env.PROMOTION_EXCLUDED_REPO_IDS = '42, 1296269'
+    const buyer = { repoId: '1296269', buyerGithubUserId: '583231' }
+    await assert.rejects(builderShareTarget(pool(market()), buyer), error => error.status === 400 && error.message === 'repo.ing does not promote this repository.')
+    await assert.rejects(builderShareTarget(pool(market({ declined: true })), buyer), error => /opted out/.test(error.message), 'the maintainer\'s own word first')
+    assert.deepEqual(await builderShareTarget(pool(market({ repoId: '77' })), { repoId: '77', buyerGithubUserId: '583231' }), { repoId: '77', fullName: 'octo/hello' }, 'others are not affected')
+    process.env.PROMOTION_EXCLUDED_REPO_IDS = ''
+    assert.deepEqual(await builderShareTarget(pool(market()), buyer), { repoId: '1296269', fullName: 'octo/hello' })
+  } finally { old === undefined ? delete process.env.PROMOTION_EXCLUDED_REPO_IDS : process.env.PROMOTION_EXCLUDED_REPO_IDS = old }
 })
 
 test('a bad repository id is refused before any read', async () => {
@@ -120,7 +133,20 @@ test('totals that claim more than was paid, or are not whole numbers, are refuse
   }
 })
 
-// A cached read asks the credit service once a minute per repository. The cache is shared by the whole process, so each case uses its own repository ids.
+// A cached read asks the credit service once a minute per repository, within a budget for all repositories (agent_request_limits;
+// the real table is in tests/builder-pack-shares-db.test.mjs). The cache is shared by the whole process, so each case uses its own
+// repository ids. openPool allows every read; countingPool counts hits per scope and refuses past the scope's limit, like takeQuota.
+const openPool = { query: async () => ({ rows: [{ hits: 1 }] }) }
+const countingPool = () => {
+  const pool = { hits: new Map(), queries: 0, query: async (_sql, [scope, limit]) => {
+    pool.queries++
+    const hits = (pool.hits.get(scope) ?? 0) + 1
+    if (hits > limit) return { rows: [] }
+    pool.hits.set(scope, hits)
+    return { rows: [{ hits }] }
+  } }
+  return pool
+}
 const totalsAnswer = id => ({ repo_id: String(id), packs: 1, paid_micro: 1_000_000, claimed_micro: 0 })
 const counting = () => {
   const calls = []
@@ -131,7 +157,7 @@ const ONE_PACK = { packs: 1, paidMicro: '1000000', claimedMicro: '0', unclaimedM
 test('cached totals: one read per repository within 60 seconds, another after', async () => {
   const { calls, fetchImpl } = counting()
   let at = 5_000_000
-  const read = repoId => cachedShareTotals(SETTINGS, repoId, { fetchImpl, now: () => at })
+  const read = repoId => cachedShareTotals(SETTINGS, repoId, { pool: openPool, fetchImpl, now: () => at })
   assert.deepEqual(await read('7001'), ONE_PACK)
   at += 59_999
   assert.deepEqual(await read('7001'), ONE_PACK)
@@ -145,39 +171,117 @@ test('cached totals: one read per repository within 60 seconds, another after', 
   assert.equal(calls.length, 3, 'and kept for another minute')
 })
 
-test('cached totals: a failed read is not kept, and callers waiting on the same read share it', async () => {
-  let fail = true
+test('cached totals: a failed read is kept 30 seconds, and callers waiting on the same read share it', async () => {
+  let fail = true, at = 9_000_000
   const calls = []
   const fetchImpl = async address => { calls.push(address); if (fail) throw new TypeError('fetch failed'); return { ok: true, status: 200, json: async () => totalsAnswer(7003) } }
-  const read = () => cachedShareTotals(SETTINGS, '7003', { fetchImpl, now: () => 9_000_000 })
+  const read = () => cachedShareTotals(SETTINGS, '7003', { pool: openPool, fetchImpl, now: () => at, log: () => {} })
   await assert.rejects(read(), error => error.status === 503)
+  at += 29_999
   await assert.rejects(read(), error => error.status === 503)
-  assert.equal(calls.length, 2, 'every failure is asked for again')
+  assert.equal(calls.length, 1, 'a failure is not asked for again on every render')
+  at += 1
   fail = false
   assert.deepEqual(await read(), ONE_PACK)
-  assert.equal(calls.length, 3)
+  assert.equal(calls.length, 2, 'asked again once 30 seconds have passed')
+  assert.deepEqual(await read(), ONE_PACK)
+  assert.equal(calls.length, 2, 'and a good answer is kept the full minute')
 
   let release
   const gate = new Promise(resolve => { release = resolve })
   const slow = []
   const slowFetch = async address => { slow.push(address); await gate; return { ok: true, status: 200, json: async () => totalsAnswer(7004) } }
-  const pending = [cachedShareTotals(SETTINGS, '7004', { fetchImpl: slowFetch }), cachedShareTotals(SETTINGS, '7004', { fetchImpl: slowFetch })]
+  const pending = [cachedShareTotals(SETTINGS, '7004', { pool: openPool, fetchImpl: slowFetch }), cachedShareTotals(SETTINGS, '7004', { pool: openPool, fetchImpl: slowFetch })]
   release()
   assert.deepEqual(await Promise.all(pending), [ONE_PACK, ONE_PACK])
   assert.equal(slow.length, 1, 'concurrent callers share one request')
 
   const lost = []
   const refusing = async address => { lost.push(address); await Promise.resolve(); throw new TypeError('fetch failed') }
-  const both = await Promise.allSettled([cachedShareTotals(SETTINGS, '7005', { fetchImpl: refusing }), cachedShareTotals(SETTINGS, '7005', { fetchImpl: refusing })])
+  const options = { pool: openPool, fetchImpl: refusing, log: () => {} }
+  const both = await Promise.allSettled([cachedShareTotals(SETTINGS, '7005', options), cachedShareTotals(SETTINGS, '7005', options)])
   assert.deepEqual(both.map(result => result.status), ['rejected', 'rejected'])
   assert.equal(lost.length, 1)
-  await assert.rejects(cachedShareTotals(SETTINGS, '7005', { fetchImpl: refusing }))
-  assert.equal(lost.length, 2, 'a shared failure is not kept either')
+  await assert.rejects(cachedShareTotals(SETTINGS, '7005', options))
+  assert.equal(lost.length, 1, 'a shared failure is kept like any other')
+  forgetShareTotals('7005')
+  await assert.rejects(cachedShareTotals(SETTINGS, '7005', options))
+  assert.equal(lost.length, 2, 'until it is dropped')
+})
+
+test('cached totals: only a miss may read, within one budget for all repositories; a refusal answers null and is kept 30 seconds', async () => {
+  const [scope, limit, seconds] = UPSTREAM_BUDGET
+  assert.deepEqual([scope, limit, seconds], ['credits:shares:upstream', 120, 60])
+  const { calls, fetchImpl } = counting()
+  const pool = countingPool(), logged = []
+  let at = 30_000_000
+  const read = repoId => cachedShareTotals(SETTINGS, String(repoId), { pool, fetchImpl, now: () => at, log: (...line) => logged.push(line) })
+  globalThis.__repoingShareTotals.logged.clear()
+  const answers = []
+  for (let id = 300_000; id < 300_000 + limit + 10; id++) answers.push(await read(id))
+  assert.equal(calls.length, limit, 'no more upstream calls than the budget')
+  assert.deepEqual(answers.slice(0, limit).filter(Boolean).length, limit)
+  assert.deepEqual(answers.slice(limit), Array(10).fill(null), 'the repositories past the budget answer null')
+  // A cached read (a hit) never asks for budget, and a refused repository is not asked about again within 30 seconds.
+  assert.equal(pool.hits.get(scope), limit, 'the budget is used up, no more')
+  const asked = pool.queries
+  await read(300_000); await read(300_000 + limit)
+  assert.equal(pool.queries, asked, 'a hit and a kept refusal ask for no budget')
+  at += 29_999
+  assert.equal(await read(300_000 + limit), null)
+  assert.equal(pool.queries, asked)
+  at += 1
+  assert.equal(await read(300_000 + limit), null, 'still refused while the minute is used up')
+  assert.equal(pool.queries, asked + 1, 'asked again once 30 seconds have passed')
+  assert.equal(calls.length, limit, 'and still no extra upstream call')
+  assert.equal(logged.length, 1, 'one log line a minute, however many were refused')
+  assert.deepEqual(logged[0], ['builder_share_totals_unavailable', { reason: 'budget' }])
+})
+
+test('cached totals: with no way to count the budget there is no read; the failure is logged once a minute, never with the credit service\'s text', async () => {
+  const { calls, fetchImpl } = counting()
+  const broken = { query: async () => { throw Object.assign(new Error('connection refused to db'), { code: 'ECONNREFUSED' }) } }
+  const logged = []
+  let at = 40_000_000
+  const options = { pool: broken, fetchImpl, now: () => at, log: (...line) => logged.push(line) }
+  globalThis.__repoingShareTotals.logged.clear()
+  assert.equal(await cachedShareTotals(SETTINGS, '310001', options), null)
+  assert.equal(await cachedShareTotals(SETTINGS, '310002', options), null)
+  assert.equal(calls.length, 0, 'no count, no read')
+  assert.deepEqual(logged, [['builder_share_totals_unavailable', { reason: 'budget', code: 'ECONNREFUSED' }]])
+  at += 60_000
+  assert.equal(await cachedShareTotals(SETTINGS, '310003', options), null)
+  assert.equal(logged.length, 2, 'another line a minute later')
+  // A clock that went backwards does not silence the log for ever.
+  at = 1
+  assert.equal(await cachedShareTotals(SETTINGS, '310004', options), null)
+  assert.equal(logged.length, 3)
+
+  const fails = []
+  globalThis.__repoingShareTotals.logged.clear()
+  const failing = async () => ({ ok: false, status: 500, json: async () => ({ error: 'secret internals' }) })
+  await assert.rejects(cachedShareTotals(SETTINGS, '310005', { pool: openPool, fetchImpl: failing, now: () => 50_000_000, log: (...line) => fails.push(line) }))
+  assert.equal(fails.length, 1)
+  assert.equal(fails[0][0], 'builder_share_totals_unavailable')
+  assert.equal(fails[0][1].reason, 'read')
+  assert.ok(!JSON.stringify(fails).includes('secret internals'))
+  assert.equal(logShareProblem('builder_share_totals_unavailable', {}, { log: () => fails.push('again'), now: () => 50_000_001 }), false, 'rate limited')
+  assert.throws(() => cachedShareTotals(SETTINGS, '310006', { fetchImpl }), TypeError, 'the budget needs the database')
+})
+
+test('cached totals live on globalThis, so the route and the pages (separate module copies) share them', async () => {
+  const { calls, fetchImpl } = counting()
+  await cachedShareTotals(SETTINGS, '320001', { pool: openPool, fetchImpl })
+  assert.ok(globalThis.__repoingShareTotals.cache.has('320001'))
+  const copy = await import(`../src/builder-pack-shares.mjs?copy=${Date.now()}`)
+  assert.notEqual(copy.cachedShareTotals, cachedShareTotals, 'a second copy of the module')
+  assert.deepEqual(await copy.cachedShareTotals(SETTINGS, '320001', { pool: openPool, fetchImpl }), ONE_PACK)
+  assert.equal(calls.length, 1, 'the second copy found the first copy\'s entry')
 })
 
 test('cached totals: at most 500 repositories; the oldest entry goes first', async () => {
   const { calls, fetchImpl } = counting()
-  const read = repoId => cachedShareTotals(SETTINGS, String(repoId), { fetchImpl, now: () => 20_000_000 })
+  const read = repoId => cachedShareTotals(SETTINGS, String(repoId), { pool: openPool, fetchImpl, now: () => 20_000_000 })
   for (let id = 100_000; id < 100_500; id++) await read(id)
   assert.equal(calls.length, 500)
   await read(100_499)
@@ -216,8 +320,8 @@ test('the route: 404 while dark or for a bad repository; POST needs the reposito
   const session = encryptGithubSession({ repoId: '1296269', permission: 'admin', githubUserId: '900', githubLogin: 'holder', accessToken: 'ghu_test_only',
     sessionId: randomBytes(24).toString('hex'), expiresAt: Date.now() + 60_000 })
   const params = repo => ({ params: Promise.resolve({ repo }) })
-  const make = (cookie, { origin = 'https://repo.ing', body = { action: 'claim' } } = {}) => ({ url: 'https://repo.ing/api/credits/shares/1296269',
-    headers: new Headers({ origin }), cookies: { get: name => cookie && name.includes('github') ? { value: cookie } : undefined }, json: async () => body })
+  const make = (cookie, { origin = 'https://repo.ing', body = { action: 'claim' }, length } = {}) => ({ url: 'https://repo.ing/api/credits/shares/1296269',
+    headers: new Headers({ origin, ...length === undefined ? {} : { 'content-length': length } }), cookies: { get: name => cookie && name.includes('github') ? { value: cookie } : undefined }, json: async () => body })
   const refused = async (request, repo, status, error) => {
     for (const method of ['GET', 'POST']) {
       if (method === 'GET' && status !== 404) continue
@@ -254,6 +358,14 @@ test('the route: 404 while dark or for a bad repository; POST needs the reposito
     assert.deepEqual([response.status, (await response.json()).error], [403, invalid])
   }
 
+  // The session is checked first, then the size (the same order as the packs route), both before the body is read.
+  for (const [cookie, length] of [[session, '8001'], [session, '1000000'], [undefined, '8001']]) {
+    let read = false
+    const big = { ...make(cookie, { length }), json: async () => { read = true; return { action: 'claim' } } }
+    const response = await post(big)
+    assert.deepEqual([response.status, (await response.json()).error, read], [403, invalid, false], `${cookie ? 'session' : 'no session'} ${length}`)
+  }
+
   // A session for another repository is a 403 that says so; any other failure never shows its text.
   process.env.GITHUB_APP_CLIENT_ID = 'Iv1.test'
   const other = await route.POST(make(session), params('42'))
@@ -263,9 +375,15 @@ test('the route: 404 while dark or for a bad repository; POST needs the reposito
   const broken = await post(make(session))
   assert.deepEqual([broken.status, await broken.json()], [409, { error: 'The claim could not be completed. Try again.' }])
 
-  // A GET is counted before anything is read: with no database to count in, it is not answered.
-  const unavailable = await route.GET(make(session), params('1296269'))
-  assert.deepEqual([unavailable.status, await unavailable.json()], [503, { error: 'Share totals are not available right now. Try again in a minute.' }])
+  // A GET is counted before anything is read: with no database to count in, it is not answered, and the server says so once a minute.
+  const warned = t.mock.method(console, 'warn', () => {})
+  globalThis.__repoingShareTotals.logged.clear()
+  for (let i = 0; i < 3; i++) {
+    const unavailable = await route.GET(make(session), params('1296269'))
+    assert.deepEqual([unavailable.status, await unavailable.json()], [503, { error: 'Share totals are not available right now. Try again in a minute.' }])
+  }
+  assert.equal(warned.mock.callCount(), 1)
+  assert.equal(warned.mock.calls[0].arguments[0], 'builder_share_quota_unavailable')
 })
 
 // The repository a buyer picked from a token page is kept 30 days in this browser (app/lib/backed-repo.mjs).

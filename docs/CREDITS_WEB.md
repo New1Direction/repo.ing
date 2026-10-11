@@ -126,10 +126,11 @@ side is in the repo-inference project (migration 0016, `src/builder_shares.rs`).
    `/credits?repo=<id>`. This browser keeps the pick for 30 days; the last pick wins.
 2. On /credits, a line above the buy button says "Backing owner/name · $2.50 of this pack goes to its builders as AI
    credits." with **Remove**. If the repository cannot be backed, a note gives the reason and says the pack backs no
-   repository. If the line cannot be loaded (switched off, rate limited, unreachable), nothing shows and the pack backs
-   no repository.
-3. The buyer pays as for any pack. When the pack opens, the page adds "You backed owner/name: $2.50 in AI credits to
-   its builders."
+   repository. If the check does not answer (switched off, rate limited, unreachable), a note says so ("We could not
+   check the repository you picked. This pack backs no repository. Reload to try again.") with **Remove**, and the pack
+   backs no repository. There is no "Change" control: to pick another repository, use another token page's link.
+3. The quote shows a row **Backs** with the repository and the share. The buyer pays as for any pack. When the pack
+   opens, the page adds "You backed owner/name: $2.50 in AI credits to its builders."
 
 ## What the builder does
 
@@ -143,7 +144,9 @@ cannot be read.
 
 - **Which repositories.** A GitHub repository with a confirmed, finalized, indexed market in SOL, no active maintainer
   opt-out, and a buyer who is not the holder of its payout wallet (no self rebate). Not eligible: stock pairs (their
-  builder share already goes to liquidity), Hugging Face models, repositories with no market. No repository chosen: no
+  builder share already goes to liquidity), Hugging Face models, repositories with no market, and repositories on the
+  operator's do-not-promote list (`PROMOTION_EXCLUDED_REPO_IDS`: "repo.ing does not promote this repository."; no token
+  card either). No repository chosen: no
   share. After an opt-out, new packs cannot pick the repository; shares that exist stay claimable. repo.ing checks
   eligibility at each quote (after the quote rate limit) and stores the repository with the pack request.
 - **Tickets.** The credit ledger refuses a builder repository without repo.ing's signed word, so a command line user
@@ -166,8 +169,14 @@ cannot be read.
 - **Totals.** `GET /api/credits/shares/<repo>` gives the repository's full name, whether packs may back it (for the
   signed-in buyer, with the reason if not), and amounts from the credit service only for a confirmed SOL market, otherwise
   null amounts. It is public, so it is counted first: 60 a minute for each visitor and 240 a minute in all, 429 beyond. The
-  credit service's answer is kept 60 seconds for each repository (at most 500 repositories), and a claim drops the entry.
-  The pages treat any answer but a good one (404, 429, 503) as "unavailable" and show nothing.
+  credit service allows repo.ing's one address 300 calls a minute, shared with pack quotes and claims, and token pages
+  are rendered on demand, so a crawl would use it up. The credit service's answer is kept 60 seconds for each repository
+  (at most 500, in memory on `globalThis`), and only a cache miss may read, within one budget for all repositories of 120
+  a minute (`credits:shares:upstream` in `agent_request_limits`, shared by every replica). Past the budget, or when it
+  cannot be counted, the answer is null; a refusal or a failed read is kept 30 seconds, so it is not asked again by every
+  render. The server logs `builder_share_totals_unavailable` for that at most once a minute, and
+  `builder_share_quota_unavailable` when the GET's own count cannot be taken. A claim drops the repository's entry. The
+  claim section treats any answer but a good one (404, 429, 503) as "unavailable" and shows nothing.
 - **Migration.** `drizzle/0069_pack_builder_shares.sql` adds the pack's repository and rate to `credit_pack_purchases`.
 
 ## Switch on (owner)
@@ -186,8 +195,8 @@ when the switch is back on.
 
 ## Tests
 
-- `tests/builder-pack-shares.test.mjs` (quick): settings, the 10% rule, eligibility, totals and their cache, the claim
-  checks, the route's refusals, migration 0069 and the browser's pick (`app/lib/backed-repo.mjs`).
+- `tests/builder-pack-shares.test.mjs` (quick): settings, the 10% rule, eligibility, totals with their cache and upstream budget, the claim
+  checks, the route's refusals, the do-not-promote list, migration 0069 and the browser's pick (`app/lib/backed-repo.mjs`).
 - `tests/pack-shares-ui.test.mjs` (quick): the token card (dark, market kinds, totals, no totals) and the claim section's
   first render.
 - `tests/credits-tickets.test.mjs` (quick): the ticket texts and the shared test vectors.

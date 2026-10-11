@@ -32,8 +32,9 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts, build
   const [selected, setSelected] = useState(25)
   const [data, setData] = useState({ odds: null, offer: null, purchase: null, needsSignIn: false }), [loaded, setLoaded] = useState(false)
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [now, setNow] = useState(Date.now())
-  // The repository this buyer picked on a token page (app/lib/backed-repo.mjs): { repoId, fullName, eligible, reason }, or null.
-  const [backed, setBacked] = useState(null)
+  // The repository this buyer picked on a token page (app/lib/backed-repo.mjs): { repoId, fullName, eligible, reason }, or null;
+  // unchecked: a pick is stored but its check did not answer.
+  const [backed, setBacked] = useState(null), [unchecked, setUnchecked] = useState(false)
   const purchase = data.purchase, open = purchase && OPEN.includes(purchase.status)
   const sales = data.offer?.sales, room = data.offer ? BigInt(data.offer.roomMicro) : null
   // Nothing is sold while sales are off or paused, or while the credit service's odds cannot be read.
@@ -75,7 +76,8 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts, build
     refresh().catch(e => { if (active) { setError(e.message); setLoaded(true) } })
     return () => { active = false }
   }, [])
-  // Any answer but a good one (rate limited, switched off, unreachable) shows nothing: no chip, and the pack backs no repository.
+  // Any answer but a good one (rate limited, switched off, unreachable) leaves the pick unchecked: a note says so, and the pack
+  // backs no repository.
   const backing = Boolean(builderShares) && signedIn
   useEffect(() => {
     if (!backing) return
@@ -84,13 +86,17 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts, build
     if (!repo) return
     fetch(`/api/credits/shares/${repo}`, { cache: 'no-store' })
       .then(response => response.ok ? response.json() : null)
-      .then(value => { if (live && value?.repoId === repo && typeof value.eligible === 'boolean') setBacked(value) })
-      .catch(() => {})
+      .then(value => {
+        if (!live) return
+        if (value?.repoId === repo && typeof value.eligible === 'boolean') setBacked(value)
+        else setUnchecked(true)
+      })
+      .catch(() => { if (live) setUnchecked(true) })
     return () => { live = false }
   }, [backing])
   function removeBacked() {
     try { clearBackedRepo(window.localStorage) } catch { /* Storage is optional. */ }
-    setBacked(null)
+    setBacked(null); setUnchecked(false)
   }
   // While a payment finalizes: ask every 4 seconds (not without a credit service session: that needs a click to sign in
   // again); once credited, the stage (if open) tears the pack and shows the spin.
@@ -231,6 +237,7 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts, build
             <dl className="packs-quote">
               <div><dt>You pay</dt><dd>{sol(purchase.lamports)} SOL</dd></div>
               <div><dt>You get</dt><dd>at least {money(purchase.packMicro)} of AI credits</dd></div>
+              {purchase.builder && <div><dt>Backs</dt><dd>{backed?.repoId === purchase.builder.repoId ? backed.fullName : 'a repository'} · {money(purchase.builder.shareMicro)} in AI credits to its builders</dd></div>}
               <div><dt>Quote expires in</dt><dd>{left(purchase.expiresAt, now)}</dd></div>
             </dl>
             {devnet}
@@ -247,7 +254,8 @@ export function CreditPacks({ signedIn, login, network = 'mainnet', fonts, build
           {room !== null && <p className="packs-note">You can open {money(room)} more in packs today ($250 a day).</p>}
           {devnet}
           {backed?.eligible ? <p className="packs-backing">Backing <strong>{backed.fullName}</strong> · {money(shareOf(selected, builderShares.shareBps))} of this pack goes to its builders as AI credits. <button type="button" className="claim-text-button" onClick={removeBacked}>Remove</button></p>
-            : backed && <p className="packs-note">{backed.reason ?? 'This repository cannot be backed.'} This pack backs no repository. <button type="button" className="claim-text-button" onClick={removeBacked}>Remove</button></p>}
+            : backed ? <p className="packs-note">{backed.reason ?? 'This repository cannot be backed.'} This pack backs no repository. <button type="button" className="claim-text-button" onClick={removeBacked}>Remove</button></p>
+              : unchecked && <p className="packs-note">We could not check the repository you picked. This pack backs no repository. Reload to try again. <button type="button" className="claim-text-button" onClick={removeBacked}>Remove</button></p>}
           <div className="packs-actions"><button type="button" className="button primary" disabled={Boolean(busy) || closed || tooBig} onClick={() => openPack()}>
             {closed ? 'Pack sales are paused' : `Open the ${PACK_NAMES[selected]} pack · $${selected}`}</button></div>
           {signedIn && loaded && !data.odds && <p className="packs-note">The odds from the AI credits service could not be read, so packs are not sold right now.</p>}

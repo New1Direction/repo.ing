@@ -169,7 +169,7 @@ export default async function Token({ params, searchParams }) {
       <MarketTrading key={market.mint} market={market} quote={quote} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
         aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<BuildingLive stream={stream}/><TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}
-          {!stockPair && !decision && <Suspense fallback={null}><PackSharesCard market={market}/></Suspense>}</>}
+          {!stockPair && decision === null && <Suspense fallback={null}><PackSharesCard market={market}/></Suspense>}</>}
         below={<div className="market-below">{pulse && <DevPulse mint={market.mint} initial={pulse} repoUrl={repo.htmlUrl || `https://github.com/${market.fullName}`}/>}
           <Suspense fallback={<HolderNotesFallback/>}><HolderNotes market={market}/></Suspense></div>}/>
       <section className="market-details" aria-labelledby="market-details-title"><h2 id="market-details-title">Details</h2>
