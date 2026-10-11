@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
-import { chartPriceLabel, chartSeries, chartScaleRange, chartUpdatePlan, chartInitialRange } from '../lib/chart-display.mjs'
+import { chartFollowRange, chartPriceLabel, chartSeries, chartScaleRange, chartUpdatePlan, chartInitialRange, chartZoomRange } from '../lib/chart-display.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
 import { PULSE_TAIL_POINTS, pulsePins, pulseTail } from '../lib/pulse-chart.mjs'
 import { ChartPulsePins } from './chart-pulse-pins'
@@ -105,9 +105,10 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
     // Full historical corrections keep the user's viewport. Only a deliberately
     // selected period (or the first point arriving, or the Dev toggle) chooses a new initial view.
     const fitKey = `${data.range}:${data.interval}:${Boolean(series.prices.length)}:${showPulse}`
-    if (state.fitKey !== fitKey) { resetView(); state.fitKey = fitKey; setHoverTime(null) }
     // A view that reached the last point keeps reaching it while the GitHub tail after the last trade grows or shrinks.
-    else if (tailMoved && range && range.to >= before && after !== before) chart.timeScale().setVisibleLogicalRange({ from: range.from, to: range.to + after - before })
+    const follow = tailMoved ? chartFollowRange(range, before, after) : null
+    if (state.fitKey !== fitKey) { resetView(); state.fitKey = fitKey; setHoverTime(null) }
+    else if (follow) chart.timeScale().setVisibleLogicalRange(follow)
     else if ((prices.reset || volumes.reset) && range) chart.timeScale().setVisibleLogicalRange(range)
   }, [ready, series, tailed, showPulse, data.range, data.interval])
 
@@ -131,11 +132,10 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
   function zoom(factor) {
     const scale = api.current?.chart.timeScale(), range = scale?.getVisibleLogicalRange()
     if (!range) return
-    // Keep the newest visible trades in view, especially for sparse histories. Zooming in on a view that runs on into the
-    // GitHub tail after the last trade gives up tail before trades, so the price never leaves the screen.
-    const width = (range.to - range.from) * factor, lastTrade = latest.current.tradeBars - 1
-    const right = factor < 1 && range.from <= lastTrade && range.to > lastTrade + 2 ? Math.min(range.to, Math.max(lastTrade + 2, range.from + width)) : range.to
-    scale.setVisibleLogicalRange({ from: right - width, to: right })
+    // Keep the newest visible trades in view, especially for sparse histories, and the last trade in view when a GitHub
+    // tail runs on after it.
+    const { series: shown, tradeBars } = latest.current
+    scale.setVisibleLogicalRange(chartZoomRange(range, factor, shown.prices.length > tradeBars ? tradeBars - 1 : null))
   }
   function keyboard(event) {
     if (event.target !== event.currentTarget) return
