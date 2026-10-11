@@ -456,6 +456,13 @@
       "when": 1790910027000,
       "tag": "0067_identity_handoffs",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1790910028000,
+      "tag": "0068_trend_alerts",
+      "breakpoints": true
     }
   ]
 }

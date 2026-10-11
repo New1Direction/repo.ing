@@ -31,6 +31,7 @@ import { createBuybackReceiptsJob } from '../src/buyback-receipts-job.mjs'
 import { createStockExecutionJob, STOCK_EXECUTION_INTERVAL_MS, stockExecutionLoud } from '../src/stock-execution-job.mjs'
 import { createLaunchAlerts, createLaunchAlertSenders, createLaunchAlertStore, createModelAlertFacts, LaunchAlertConfigError, launchAlertsConfig } from '../src/launch-alerts.mjs'
 import { createMilestoneAlerts, createMilestoneAlertStore, milestoneAlertsConfig } from '../src/milestone-alerts.mjs'
+import { createTrendAlerts, createTrendAlertStore, trendAlertsConfig } from '../src/trend-alerts.mjs'
 import { CANARY_INTERVAL_MS, createTradeCanary } from '../src/trade-canary.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createDammTrader, createTradeRouter } from '../src/canonical-damm-trade.mjs'
@@ -322,6 +323,22 @@ async function deliverMilestoneAlerts(){
     if(r.posts?.length||r.interrupted?.length||r.skipped==='MILESTONE_ALERTS_NOT_MIGRATED')console.log(JSON.stringify({milestoneAlerts:r}))
   }catch{console.log(JSON.stringify({milestoneAlertError:'GRADUATION_ALERTS_UNAVAILABLE'}))}
 }
+// Public "first to launch" posts: a trending GitHub repository with no market yet, to the same channels. Off unless
+// TREND_ALERTS_ENABLED=true and TREND_ALERTS_SINCE are set; claimed in trend_alerts before sending (once per repository).
+let trendAlerts=null,trendAlertTask=null,nextTrendAlertCheck=0
+try{
+  const trendAlertConfig=trendAlertsConfig()
+  if(trendAlertConfig){
+    trendAlerts=createTrendAlerts({store:createTrendAlertStore(pool),config:trendAlertConfig,senders:createLaunchAlertSenders(trendAlertConfig),excluded:promotionExcluded})
+    console.log(JSON.stringify({trendAlertsOn:{...alertsOn(trendAlertConfig),minStarsPerDay:trendAlertConfig.minStarsPerDay,reward:trendAlertConfig.reward}}))
+  }
+}catch(error){console.log(JSON.stringify({trendAlertError:error instanceof LaunchAlertConfigError?error.message:'TREND_ALERTS_CONFIG_INVALID'}))}
+async function deliverTrendAlerts(){
+  try{
+    const r=await trendAlerts.runOnce()
+    if(r.posts?.length||r.interrupted?.length||r.skipped==='TREND_ALERTS_NOT_MIGRATED')console.log(JSON.stringify({trendAlerts:r}))
+  }catch{console.log(JSON.stringify({trendAlertError:'TREND_ALERTS_UNAVAILABLE'}))}
+}
 // Operator-only trade canary: real prepare path, simulation only. Never signs or sends; the payer is unsigned.
 const canaryConnection=rpcConnection(rpc,'confirmed')
 const tradeCanary=process.env.TRADE_CANARY_ENABLED==='false'?null:createTradeCanary({db:pool,connection:canaryConnection,
@@ -363,10 +380,10 @@ async function observeTrends(){
   try{console.log(JSON.stringify({trends:await trends.runOnce()}))}
   catch{console.log(JSON.stringify({trendError:'Trend intake unavailable'}))}
 }
-// Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch and
-// milestone alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
+// Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch,
+// milestone and trend alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
 for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
-  tipMonitor,partsFunds,chartOrdering,graduation,graduatedTrades,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts})){
+  tipMonitor,partsFunds,chartOrdering,graduation,graduatedTrades,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts,trendAlerts})){
   if(!worker)continue
   const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
 }
@@ -504,6 +521,12 @@ try {
       else if(!milestoneAlertTask&&Date.now()>=nextMilestoneAlertCheck)
         milestoneAlertTask=deliverMilestoneAlerts().finally(()=>{nextMilestoneAlertCheck=Date.now()+60000;milestoneAlertTask=null})
     }
+    // The trend list changes at most every 30 minutes (trend intake), so every five minutes is enough.
+    if(trendAlerts){
+      if(once)await deliverTrendAlerts()
+      else if(!trendAlertTask&&Date.now()>=nextTrendAlertCheck)
+        trendAlertTask=deliverTrendAlerts().finally(()=>{nextTrendAlertCheck=Date.now()+300000;trendAlertTask=null})
+    }
     if(reminders){
       if(once)await deliverBuilderReminders()
       else if(!reminderTask&&Date.now()>=nextReminderCheck)
@@ -522,5 +545,5 @@ try {
     if (result.stockFeeError || result.stockFees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;if(stockExecutionTask)await stockExecutionTask;await pool.end()
+} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(trendAlertTask)await trendAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;if(stockExecutionTask)await stockExecutionTask;await pool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }

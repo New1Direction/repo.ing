@@ -210,6 +210,29 @@ Setup (worker variables only; the channel credentials are the launch-alert ones 
 
 Verify: at startup an enabled worker logs one `{"milestoneAlertsOn":{…}}` line. The first run posts nothing and fills `milestone_alert_marks` (`select channel, milestone, count(*) from milestone_alert_marks group by 1, 2 order by 1, 2`). The worker logs `{"milestoneAlerts":{"posts":[…]}}` when it posts, the same line when it marks an interrupted claim `unknown` or its migration is missing, and `{"milestoneAlertError":"GRADUATION_ALERTS_UNAVAILABLE"}` when a run fails; it is silent otherwise. Check rows with `select channel, milestone, status, attempts, message_url, error, created_at from milestone_alerts order by id desc limit 20`. For an `unknown` row, look at the channel: if the post is missing and should go out, delete the row to allow one new attempt; if it posted, leave the row. Setting `GRADUATION_ALERTS_ENABLED=false` stops new posts on the next worker restart.
 
+## First to launch alerts
+
+The worker can also post a public GitHub repository that is gaining stars fast and has no market yet, with a link to its launch page, to the same Telegram/X channels as launch alerts (`src/trend-alerts.mjs`, migration `0068_trend_alerts`). Posts read like:
+
+```text
+🔥 acme/rocket: +800 GitHub stars in 4h, no market yet.
+Launch it first: the launch wallet earns 50% of repo.ing's trading fees until graduation, 30 days or 2.5 SOL.
+Community launch, not endorsed by the maintainers.
+https://repo.ing/launch/<repository id>
+```
+
+Candidates are the trend pipeline's launchable list, the one behind "Launch a trending repo" ([trend discovery](TREND_DISCOVERY.md), `src/trend-launchable.mjs`): fresh, verified evidence; no market (a failed launch released the repository); not archived; the maintainer has not opted out or declined contact; not on the [do-not-promote list](#do-not-promote-list). On top of that the measured star growth must reach `TREND_ALERTS_MIN_STARS_PER_DAY` (default 200) with at least 25 stars gained, forks are left out (whether a fork may launch is decided at launch), and evidence observed before `TREND_ALERTS_SINCE` is never announced. The stars in the post are the measured gain over the measured window, never an extrapolation. The reward line comes from the discovery policy itself and appears only with `DISCOVERY_REWARDS_ENABLED=true` on the worker (keep it the same as on web); without it the post says every trade pays the repo's builders.
+
+Each repository is claimed in `trend_alerts` (unique per repository and channel) before it is sent, under its own advisory lock, with the same outcome handling as launch alerts: `failed` retries at least five minutes apart while the repository is still a candidate, up to 3 attempts; `unknown` is never retried. A repository is posted at most once per channel, ever. Each run (every five minutes) posts at most one per channel; `TREND_ALERTS_MAX_PER_DAY` (default 4) caps a channel over 24 hours. Nothing here launches, trades or spends: the link opens the launch review, where a person signs.
+
+Setup (worker variables only; the channel credentials are the launch-alert ones above, and the switch is independent of the other two):
+
+1. Apply migration `0068_trend_alerts`.
+2. Read the posts that would go out now: `node scripts/trend-alerts-preview.mjs` (reads only, in a rolled-back read-only transaction).
+3. Set `TREND_ALERTS_SINCE` to the current UTC time, then `TREND_ALERTS_ENABLED=true`. A channel with only some of its variables, or a missing/invalid cutoff or threshold, logs `trendAlertError` once at startup and posts nothing.
+
+Verify: at startup an enabled worker logs one `{"trendAlertsOn":{…}}` line with the channels, cutoff, cap, threshold and whether the reward line is on. It logs `{"trendAlerts":{"posts":[…]}}` when it posts, and `{"trendAlertError":…}` when a run fails (for example when the do-not-promote list cannot be read; nothing is posted then). `select github_repo_id, channel, stars_gained, status, message_url, error from trend_alerts order by id desc limit 20`. Stop with `TREND_ALERTS_ENABLED=false`.
+
 ## Repository quality signals and Official markets
 
 Repositories made only to launch a coin are labeled and not featured until their market earns it (`app/lib/repo-quality.mjs`):
