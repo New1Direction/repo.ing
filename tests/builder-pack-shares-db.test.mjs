@@ -36,10 +36,11 @@ async function connect() {
 }
 
 // 1001 qualifies (its payout wallet belongs to user 900); 1002 is declined by its maintainer; 1003 qualifies with no maintainer yet;
-// 1004 never launched; 1005 is a stock pair; 1006 was declined and the decision withdrawn; 1007 has a market that is not indexed.
+// 1004 never launched; 1005 is a stock pair; 1006 was declined and the decision withdrawn; 1007 has a market that is not indexed;
+// 1008 is a known repository with no market row at all.
 async function seed(pool) {
   await pool.query('truncate maintainer_opt_outs, repo_beneficiaries, markets, repositories restart identity cascade')
-  for (const id of [1001, 1002, 1003, 1004, 1005, 1006, 1007]) {
+  for (const id of [1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008]) {
     await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at) values($1,'octo',$2,$3,1,0,false,now())`,
       [id, `repo${id}`, `octo/repo${id}`])
   }
@@ -306,7 +307,8 @@ test('real PostgreSQL: the payout wallet holder claims through an admin sign-in 
     const { service, claim, handoffs, hits } = await claimWorld(pool)
     // The totals read before are kept for a minute; a claim drops them so the page shows what is left.
     service.state.totals = id => ({ repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 0 })
-    const readTotals = () => cachedShareTotals(CREDITS, '1001', { fetchImpl: service.fetchImpl, now: () => AT })
+    // A clock of its own (0): the entry is long stale for the routes below, which read the real clock.
+    const readTotals = () => cachedShareTotals(CREDITS, '1001', { fetchImpl: service.fetchImpl, now: () => 0 })
     assert.equal((await readTotals()).unclaimedMicro, '3000000')
     service.state.totals = id => ({ repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 1_000_000 })
     assert.equal((await readTotals()).unclaimedMicro, '3000000', 'kept')
@@ -407,39 +409,53 @@ async function routeWorld(t, pool) {
   const route = await import('../app/api/credits/shares/[repo]/route.js')
   const session = extra => encryptGithubSession({ githubUserId: HOLDER, githubLogin: 'holder', accessToken: 'ghu_test_only', sessionId: randomBytes(24).toString('hex'),
     expiresAt: Date.now() + 60_000, ...extra })
-  const call = async (method, repo, cookie) => {
-    const response = await route[method]({ url: `https://repo.ing/api/credits/shares/${repo}`, headers: new Headers({ origin: 'https://repo.ing' }),
+  const call = async (method, repo, cookie, address) => {
+    const response = await route[method]({ url: `https://repo.ing/api/credits/shares/${repo}`,
+      headers: new Headers({ origin: 'https://repo.ing', ...address ? { 'cf-connecting-ip': address } : {} }),
       cookies: { get: name => cookie && name.includes('github') ? { value: cookie } : undefined }, json: async () => ({ action: 'claim' }) }, { params: Promise.resolve({ repo }) })
     return { status: response.status, body: await response.json(), response }
   }
   return { service, handoffs, github, session, call }
 }
 
-test('real PostgreSQL route: GET says whether packs may back a repository, its totals once a minute, and whether the viewer holds the payout wallet', { skip: !url }, async t => {
+test('real PostgreSQL route: GET says whether packs may back a repository, its totals once a minute for a confirmed SOL market only, and whether the viewer holds the payout wallet', { skip: !url }, async t => {
   const pool = await connect()
   try {
     const { service, session, call } = await routeWorld(t, pool)
     service.state.totals = id => id === '1003' ? { repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 1_000_000 } : { repo_id: id, packs: 0, paid_micro: 0, claimed_micro: 0 }
     const none = { packs: 0, paidMicro: '0', claimedMicro: '0', unclaimedMicro: '0' }
+    const unknown = { packs: null, paidMicro: null, claimedMicro: null, unclaimedMicro: null }
     const base = { shareBps: 1000, reason: null, eligible: true, holder: false }
+    const asked = id => service.requests.filter(request => request.pathname === `/builder-shares/${id}`).length
     const anonymous = await call('GET', '1003')
     assert.deepEqual([anonymous.status, anonymous.response.headers.get('cache-control')], [200, 'private, no-store'])
     assert.deepEqual(anonymous.body, { repoId: '1003', fullName: 'octo/repo1003', ...base, packs: 3, paidMicro: '3000000', claimedMicro: '1000000', unclaimedMicro: '2000000' })
     // A second look within the minute does not ask the credit service again.
-    const asked = () => service.requests.filter(request => request.pathname === '/builder-shares/1003').length
-    assert.equal(asked(), 1)
+    assert.equal(asked('1003'), 1)
     assert.equal((await call('GET', '1003', session({ scope: 'builders', repoId: null, permission: 'identity', githubUserId: '42' }))).body.eligible, true)
-    assert.equal(asked(), 1)
+    assert.equal(asked('1003'), 1)
 
     assert.deepEqual((await call('GET', '1001')).body, { repoId: '1001', fullName: 'octo/hello', ...base, ...none })
-    // The payout wallet holder sees their own repository as one their packs cannot back, and that they hold it.
+    // The payout wallet holder cannot back their own repository with a pack, but sees its totals and that they hold it.
     const holder = await call('GET', '1001', session({ scope: 'builders', repoId: null, permission: 'identity' }))
     assert.deepEqual(holder.body, { repoId: '1001', fullName: 'octo/hello', shareBps: 1000, eligible: false, reason: holder.body.reason, holder: true, ...none })
     assert.match(holder.body.reason, /your own packs/)
+    // A declined repository with a confirmed market still has shares to show.
     const declined = await call('GET', '1002')
     assert.deepEqual([declined.body.eligible, declined.body.fullName, declined.body.holder, declined.body.reason], [false, 'octo/repo1002', false, 'This repository’s maintainer opted out of repo.ing.'])
-    assert.match((await call('GET', '1004')).body.reason, /no market on repo\.ing/)
-    assert.deepEqual((await call('GET', '9999')).body, { repoId: '9999', fullName: null, shareBps: 1000, eligible: false, reason: 'This repository has no market on repo.ing yet.', holder: false, ...none })
+    assert.deepEqual([declined.body.packs, declined.body.unclaimedMicro, asked('1002')], [0, '0', 1])
+
+    // No confirmed SOL market: the same answer with no amounts, and the credit service is not asked. 1004 never launched, 1005 is a
+    // stock pair, 1007 is not indexed, 1008 has no market row, 9999 is unknown, the last two are not GitHub repository ids (Hugging Face).
+    for (const [id, fullName, reason] of [['1004', 'octo/repo1004', /no market on repo\.ing/], ['1005', 'octo/repo1005', /stock pair/i], ['1007', 'octo/repo1007', /no market on repo\.ing/],
+      ['1008', 'octo/repo1008', /no market on repo\.ing/], ['9999', null, /no market on repo\.ing/], ['4503599627370497', null, /GitHub repositories/], ['7000000000000000', null, /GitHub repositories/]]) {
+      const answer = await call('GET', id)
+      assert.deepEqual([answer.status, answer.body.repoId, answer.body.fullName, answer.body.eligible, answer.body.holder], [200, id, fullName, false, false], id)
+      assert.match(answer.body.reason, reason, id)
+      assert.deepEqual({ ...answer.body, repoId: undefined, fullName: undefined, reason: undefined, shareBps: undefined, eligible: undefined, holder: undefined },
+        { ...unknown, repoId: undefined, fullName: undefined, reason: undefined, shareBps: undefined, eligible: undefined, holder: undefined }, id)
+      assert.equal(asked(id), 0, `${id}: nothing asked`)
+    }
 
     // The credit service cannot be reached: no amounts, the rest still answers, and the failure is not kept.
     service.state.down = true
@@ -447,6 +463,30 @@ test('real PostgreSQL route: GET says whether packs may back a repository, its t
     assert.deepEqual([down.status, down.body.eligible, down.body.packs, down.body.paidMicro, down.body.claimedMicro, down.body.unclaimedMicro], [200, true, null, null, null, null])
     service.state.down = false
     assert.equal((await call('GET', '1006')).body.packs, 0)
+    assert.deepEqual([...new Set(service.requests.map(request => request.pathname))].sort(),
+      ['/builder-shares/1001', '/builder-shares/1002', '/builder-shares/1003', '/builder-shares/1006'], 'the credit service was asked about confirmed SOL markets only')
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL route: GET is limited per address and in all, before any read', { skip: !url }, async t => {
+  const pool = await connect()
+  try {
+    const { service, call } = await routeWorld(t, pool)
+    const hits = async scope => (await pool.query('select hits from agent_request_limits where scope = $1', [scope])).rows[0]?.hits ?? 0
+    const tooMany = { error: 'Too many requests. Try again in a minute.' }
+    for (const address of ['203.0.113.7', undefined]) {
+      for (let i = 0; i < 60; i++) assert.equal((await call('GET', '1003', undefined, address)).status, 200, `${address} ${i}`)
+      const refused = await call('GET', '1003', undefined, address)
+      assert.deepEqual([refused.status, refused.body, refused.response.headers.get('retry-after'), refused.response.headers.get('cache-control')], [429, tooMany, '60', 'private, no-store'])
+    }
+    // Once at most (an earlier test in this process may have left them cached), and not again for a refused request.
+    assert.ok(service.requests.length <= 1, 'the totals were asked at most once')
+    assert.equal(await hits('credits:shares:get:global'), 120, 'a refused request does not count in all')
+    // Another address has its own allowance, until the allowance for all addresses is used.
+    assert.equal((await call('GET', '1003', undefined, '203.0.113.8')).status, 200)
+    await pool.query(`update agent_request_limits set hits = 240 where scope = 'credits:shares:get:global'`)
+    const all = await call('GET', '1003', undefined, '203.0.113.9')
+    assert.deepEqual([all.status, all.body], [429, tooMany])
   } finally { await pool.end() }
 })
 

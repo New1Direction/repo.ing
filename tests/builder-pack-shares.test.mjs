@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { register } from 'node:module'
 import { encryptGithubSession } from '../app/lib/auth.mjs'
-import { BUILDER_SHARE_BPS, builderShareTarget, builderSharesSettings, cachedShareTotals, claimPackShares, readShareTotals, shareMicro } from '../src/builder-pack-shares.mjs'
+import { BUILDER_SHARE_BPS, builderShareTarget, builderSharesSettings, cachedShareTotals, claimPackShares, confirmedSolMarket, readShareTotals, shareMicro, shareRepository } from '../src/builder-pack-shares.mjs'
 
 // The route imports next/server the way Next resolves it (tests/fixtures/jsx-hooks.mjs).
 register(new URL('./fixtures/jsx-hooks.mjs', import.meta.url))
@@ -64,6 +64,28 @@ test('a bad repository id is refused before any read', async () => {
   await builderShareTarget(counted, { repoId: 1296269, buyerGithubUserId: 1 })
   assert.equal(reads.length, 1, 'one read for a good id')
   assert.deepEqual(reads[0][1], ['1296269'])
+})
+
+test('totals are asked of the credit service only for a confirmed, finalized, indexed GitHub market in SOL; the holder\'s and a declined repository count', () => {
+  assert.equal(confirmedSolMarket(market()), true)
+  assert.equal(confirmedSolMarket(market({ holder: '583231', declined: true })), true)
+  assert.equal(confirmedSolMarket(market({ holder: null })), true)
+  for (const extra of [{ status: 'submitted' }, { status: 'reserved' }, { indexed: false }, { launchFinality: 'confirmed' }, { launchFinality: null }, { quoteAssetId: 'METAx' },
+    { quoteMint: 'Mint111' }, { source: 'huggingface' }]) assert.equal(confirmedSolMarket(market(extra)), false, JSON.stringify(extra))
+  assert.equal(confirmedSolMarket(null), false)
+  assert.equal(confirmedSolMarket(undefined), false)
+})
+
+test('one read gives the repository\'s row, or null; an id that is not a GitHub repository id is refused before any read', async () => {
+  const reads = []
+  const counted = row => ({ query: async (...args) => { reads.push(args); return { rows: row ? [row] : [] } } })
+  assert.deepEqual(await shareRepository(counted(market()), '1296269'), market())
+  assert.equal(await shareRepository(counted(null), '1296269'), null)
+  assert.equal(reads.length, 2)
+  for (const repoId of [undefined, '', '0', '012', 'abc', '4503599627370497', '1'.repeat(20)]) {
+    await assert.rejects(shareRepository(counted(market()), repoId), error => error.status === 400 && /GitHub repositories/.test(error.message), String(repoId))
+  }
+  assert.equal(reads.length, 2)
 })
 
 test('migration 0069 only adds the pack builder columns and their check, comes after every earlier migration, and is declared in the schema', () => {
@@ -239,4 +261,8 @@ test('the route: 404 while dark or for a bad repository; POST needs the reposito
   delete process.env.GITHUB_APP_CLIENT_ID
   const broken = await post(make(session))
   assert.deepEqual([broken.status, await broken.json()], [409, { error: 'The claim could not be completed. Try again.' }])
+
+  // A GET is counted before anything is read: with no database to count in, it is not answered.
+  const unavailable = await route.GET(make(session), params('1296269'))
+  assert.deepEqual([unavailable.status, await unavailable.json()], [503, { error: 'Share totals are not available right now. Try again in a minute.' }])
 })
