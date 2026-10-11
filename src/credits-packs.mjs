@@ -11,7 +11,8 @@ import { packBuilderTicket } from './credits-tickets.mjs'
 // the page. The same steps and checks as "Claim as AI credits" (src/credits-web.mjs), with these differences:
 //   - Who: anyone with a GitHub account (owner decision 2026-10-10). repo.ing checks the account live (its GitHub token still
 //     works, for the same user) and signs in for it with an identity handoff: no repository, no admin permission
-//     (src/repo-inference-handoff.mjs). The credit ledger accepts identity handoffs for packs only.
+//     (src/repo-inference-handoff.mjs). The key an identity handoff gets buys packs and makes coding-tool keys (src/credits-keys.mjs);
+//     fee conversion still needs an admin handoff.
 //   - The quote: the credit service prices the pack. It must be this pack, pay the pinned treasury, and ask for the fewest
 //     lamports worth the pack at its own price (the credit ledger's rule): never more.
 //   - The retry key is stored before the quote is asked for ('requested'), with a hash of the credit service session that

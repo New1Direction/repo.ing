@@ -13,7 +13,7 @@ A builder turns SOL into repo.ing AI credits on the claim page, with one wallet 
    and shows the SOL, the credits in dollars, the SOL price and the time left.
 3. **Approve in wallet** asks the wallet to approve one plain SOL transfer to the credit treasury.
 4. The credit ledger checks the payment on chain and credits it. The card shows the credits and how to make a key
-   (the credits page, `/credits#keys`; the CLI `npx @repoing/cli credits key` works too).
+   (the credits page, `/credits#keys`, while the credit packs are on; the CLI `npx @repoing/cli credits key` works too).
 
 If the builder declines in the wallet, nothing is sent and the SOL stays in the wallet.
 
@@ -78,8 +78,8 @@ The same steps and checks as "Claim as AI credits" above, with these differences
 
 - **Who.** Anyone with a GitHub account (owner decision 2026-10-10). Before each sign-in repo.ing checks the account live
   (its GitHub token still works, for the same user) and makes an **identity handoff**: permission `identity`, no
-  repository (migration 0067; the assertion's `repo_id` is empty). The credit ledger accepts identity handoffs for packs
-  only; fee conversion still needs an admin handoff. Credits belong to the GitHub account.
+  repository (migration 0067; the assertion's `repo_id` is empty). The key an identity handoff gets buys packs and makes
+  coding-tool keys; fee conversion still needs an admin handoff. Credits belong to the GitHub account.
 - **Quote.** The credit service prices the pack. repo.ing refuses a quote that is not for this pack, that does not pay
   `CREDITS_TREASURY_ADDRESS`, or that asks for more or fewer lamports than the fewest worth the pack at the quoted price
   (the credit ledger's own rule).
@@ -116,7 +116,8 @@ Anyone signed in with GitHub on **repo.ing/credits** sees their repo.ing AI cred
 tool, sees their keys and revokes one, without the CLI (`repoing credits key|list|revoke`, which stays). The code is
 `src/credits-keys.mjs`, the route `app/api/credits/keys/route.js` and the section `app/components/credit-keys.jsx` (its
 browser-side rules are in `app/components/credit-keys-model.mjs`), under the packs on the page, with the anchor `#keys`. The
-"Claim as AI credits" card links to `/credits#keys` after a conversion.
+"Claim as AI credits" card links to `/credits#keys` after a conversion, only while that page and section exist (the
+credit packs on, `creditKeysAvailable()` in `app/lib/credit-packs.mjs`); otherwise it names the CLI, as before.
 
 ## What the visitor does
 
@@ -139,20 +140,27 @@ browser-side rules are in `app/components/credit-keys-model.mjs`), under the pac
   underscores, starting with a letter or digit), a limit is whole micro-USD from 10 000 ($0.01) up to the credits (read again
   just before the key is made). The credits are `credits_available`, else `paid_available`. A key list shows only
   well-formed ids and fields, at most 50, never a token. A key answer that is not well-formed shows nothing from it and
-  says "If a key was made, revoke it below."
+  says "If a key was made, revoke it below." So does a 200 answer to the key request that is not an object. An answer
+  that may have come after the key was made (a 5xx, or none) says to check the keys below first.
 - **The token.** It is in the one answer to the click that made the key, with `Cache-Control: private, no-store`. repo.ing
   does not store, log or cache it: nothing runs after the key is made, so nothing can fail the answer. The page keeps it only
   in component state (no `localStorage`, no address). A list never carries a token.
 - **The route.** `GET` gives the overview (404 while dark; `{ "signedIn": false }` without a GitHub session). `POST` takes
   `{ action: "check" }`, `{ action: "make", label?, limitMicro? }` or `{ action: "revoke", keyId }` (exact fields for each,
   at most 8000 bytes, the same origin, a GitHub session). `make` and `revoke` count 20 a user in 10 minutes and 300 a minute in
-  all (`credits:keys:<user>`, `credits:keys`); `check` counts only when it signs in. Other errors are not echoed.
+  all (`credits:keys:<user>`, `credits:keys`). `check` counts before every sign-in it makes, the one after a session the credit service dropped
+  too, and not at all when the session works. Other errors are not echoed.
 
 ## Switch on (owner)
 
 On with the credit packs (`CREDITS_WEB_PACKS_ENABLED=true`): there is no switch of its own. Optional on the `web` service:
 `CREDITS_INFERENCE_ORIGIN` (default `https://inference.repo.ing`; https, or http on this computer outside production). An odd
-value turns the keys off rather than pointing a key anywhere else.
+value turns the keys off rather than pointing a key anywhere else. **Staging web must set
+`CREDITS_INFERENCE_ORIGIN=https://staging-inference.repo.ing`**, or a staging key would be shown with the production gateway.
+
+Before switching packs on, once on staging with an identity session: run `GET /account`, `GET /keys`, `POST /keys` and
+`POST /keys/<id>/revoke`, and confirm the key-list fields the page reads (`id`, `label`, `budget_micro`, `spent_micro`,
+`expires_at`, `revoked` or `revoked_at`). They come from the CLI, not from the credit service's own source.
 
 ## Tests
 
