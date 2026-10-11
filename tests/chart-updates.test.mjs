@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { chartUpdatePlan, chartInitialRange, chartTradeAge, chartSeries } from '../app/lib/chart-display.mjs'
+import { chartFollowRange, chartUpdatePlan, chartInitialRange, chartTradeAge, chartSeries, chartZoomRange } from '../app/lib/chart-display.mjs'
 
 const bar = (time, value) => ({ time, value })
 test('unchanged polling does no chart writes; new trades only update the tail', () => {
@@ -38,4 +38,27 @@ test('last trade age communicates a quiet market independently of poll freshness
   assert.equal(chartTradeAge('2026-09-27T09:45:00Z', now), '15m ago')
   assert.equal(chartTradeAge('2026-09-26T10:00:00Z', now), '1d ago')
   assert.equal(chartTradeAge(undefined, now), null)
+})
+test('a view at the end follows a growing or shrinking tail and never turns inside out', () => {
+  // Grows: the right edge moves out, the left edge stays
+  assert.deepEqual(chartFollowRange({ from: -3, to: 492 }, 489, 493), { from: -3, to: 496 })
+  // Shrinks a little: still wide, keeps its left edge
+  assert.deepEqual(chartFollowRange({ from: -3, to: 982 }, 979, 735), { from: -3, to: 738 })
+  // Shrinks past a narrow view: moves whole instead of putting from after to
+  assert.deepEqual(chartFollowRange({ from: 960, to: 982 }, 979, 735), { from: 716, to: 738 })
+  // Not at the end, or nothing changed: leave it
+  assert.equal(chartFollowRange({ from: 100, to: 400 }, 979, 735), null)
+  assert.equal(chartFollowRange({ from: -3, to: 982 }, 979, 979), null)
+  assert.equal(chartFollowRange(null, 979, 990), null)
+})
+test('zooming in keeps the right edge but never loses the last trade into the GitHub tail', () => {
+  // No tail: unchanged behaviour, anchored on the right edge
+  assert.deepEqual(chartZoomRange({ from: 0, to: 100 }, 0.7, null), { from: 30, to: 100 })
+  // A tail of 500 after 500 trades: the newest pins stay while the last trade still fits
+  assert.deepEqual(chartZoomRange({ from: -3, to: 1003 }, 0.7, 499), { from: 1003 - 1006 * 0.7, to: 1003 })
+  // A short history in a long tail: the right edge comes in just enough to keep the last trade on screen
+  const zoomed = chartZoomRange({ from: -2.5, to: 64.5 }, 0.7, 14)
+  assert.ok(zoomed.from <= 14 - 2 + 1e-9 && zoomed.to <= 64.5 && Math.abs(zoomed.to - zoomed.from - 67 * 0.7) < 1e-9)
+  // Zooming out always keeps the right edge
+  assert.deepEqual(chartZoomRange({ from: 12, to: 40 }, 1.4, 14), { from: 40 - 28 * 1.4, to: 40 })
 })
