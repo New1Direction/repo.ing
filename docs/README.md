@@ -11,9 +11,15 @@ Launch open source markets. Every trade pays the builders.
 | Configure optional builder email reminders | [Reminders and consent](BUILDER_REMINDERS.md) — delivery disabled until configured |
 | Choose a token image | [Token artwork](TOKEN_IMAGES.md) |
 | Prepare a launch with an agent or add a README launch button | [Agent launch reviews](AGENT_LAUNCH.md) |
+| Launch or claim from a terminal | [CLI](../cli/README.md) |
+| Look up markets from a coding assistant | [Editor plugin and read-only MCP](../plugins/repo-ing/README.md) |
+| Fund a market with a community raise | [Group launch](BUNDLE_LAUNCH.md) (the docs use the internal name "Bundle") |
+| Launch a company repository paired with its stock | [Stock pairs](STOCK_QUOTES.md) |
+| Know why a fork or copy cannot launch | [Fork guard](FORK_GUARD.md) |
+| Earn from sharing markets | [Referrals](USER_GUIDE.md#referrals) |
 | Find repositories by topic or activity | [Repository search](REPOSITORY_SEARCH.md) |
 | Understand discoverer earnings | [Discovery rewards](DISCOVERY_REWARDS.md) |
-| Understand the launcher's verification bonus | [Verification bonus](VERIFICATION_BONUS.md) |
+| Understand the launcher's verification bonus (not active yet) | [Verification bonus](VERIFICATION_BONUS.md) |
 | Understand liquidity and graduation | [Liquidity guide](LIQUIDITY.md) |
 | Understand the 1% builder allocation | [Builder allocation](BUILDER_ALLOCATION_PLAN.md) |
 | Read protocol metrics | [Analytics definitions and sources](ANALYTICS.md) |

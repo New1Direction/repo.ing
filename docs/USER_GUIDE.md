@@ -4,7 +4,7 @@
 
 ## Find a market or repository
 
-[Explore](https://repo.ing/explore) opens with the **Graduation race**, then **All markets**, followed by new markets, markets closest to graduation, builder earners, and discoverers. The separate **Find repos** tab shows public repositories gaining attention, with source evidence. Selecting a candidate opens the existing repository review and launch flow; nothing launches automatically.
+[Explore](https://repo.ing/explore) opens with the **Graduation race**, then **All markets** (Trending, Market cap, Shipping, New and Watchlist views), followed by new markets, markets closest to graduation, builder earners, and discoverers. The separate **Find repos** tab shows public repositories gaining attention, with source evidence. Selecting a candidate opens the existing repository review and launch flow; nothing launches automatically.
 
 On **Find repos**, search names/descriptions, choose **No market yet** or **Live markets**, and narrow by **Gaining stars** or **Recent releases**. Searches cover fresh tracked candidates, not all of GitHub. Pasting a GitHub repository URL uses the ordinary repository resolver and opens its market or launch form. An approved trend candidate keeps its **Review & launch** action. Scores still expand into the original source evidence. Optional natural-language matching requires the server-side TypeSafe integration; ordinary search and filters remain available without it.
 
@@ -34,7 +34,7 @@ The official $REPOING market and Stats also show every $REPOING Jupiter Lock esc
 
 ### Launch steps
 
-1. Paste a public GitHub repository URL into [repo.ing](https://repo.ing). Private and archived repositories are not eligible.
+1. Paste a public GitHub repository URL into [repo.ing](https://repo.ing). Private and archived repositories are not eligible, and neither is a fork or copy of a repository that already has a market ([fork guard](FORK_GUARD.md)) or a repository whose maintainers opted out.
 2. If the repository already has a canonical market, open that market. A rename does not create a new repository identity.
 3. Review the repository, token name, ticker, and suggested image. Use **Change image** to choose another project logo or owner avatar, or **Upload image** for your own PNG, JPEG, WebP, or GIF up to 2 MB. The preview fits the full image without cropping; the selected artwork is saved at launch. [Image details](TOKEN_IMAGES.md).
 4. Choose **No buy**, a 1% or 2% preset, or **Max 3%** for the optional first purchase. The percentage refers to total token supply.
@@ -42,7 +42,7 @@ The official $REPOING market and Stats also show every $REPOING Jupiter Lock esc
 6. Wait for confirmation and open the market from the success card. If the transaction is pending, check its receipt before submitting another launch.
 7. Use the **Launch kit** on the success card: **Post on X** (prefilled with the ticker, repository and market link), **Copy README badge**, **Copy link**, and, while no maintainer has verified the repository, **Invite the maintainer**.
 
-The launcher does not need to own the repository. Launching creates a market; it does not prove endorsement by its maintainers or grant rights to the code or builder fees. New launches use the [85 SOL liquidity profile](LIQUIDITY.md). The first-buy cap applies only to the purchase bundled into launch.
+The launcher does not need to own the repository. Launching creates a market; it does not prove endorsement by its maintainers or grant rights to the code or builder fees. New launches use the [85 SOL liquidity profile](LIQUIDITY.md). The first-buy cap applies only to the purchase made in the launch transaction. A community can also fund a market together with a [Group launch](BUNDLE_LAUNCH.md), and a repository of a mapped company can be launched as a [stock pair](STOCK_QUOTES.md).
 
 ## Buy and sell
 

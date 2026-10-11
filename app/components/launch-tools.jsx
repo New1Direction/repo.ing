@@ -30,6 +30,16 @@ export function LaunchTools({ enabled }) {
       <CopyBlock label="prompt" value="Find a public GitHub repo gaining attention. Check if it already has a repo.ing market. If it does not, prepare a launch review with no initial buy and give me the link. I will review and approve in my wallet."/>
       <details><summary>What the agent can do</summary><ul><li>Find repos and show the source evidence.</li><li>Check for an existing market.</li><li>Prepare a review link, valid for one hour.</li><li>Check finalized market and discoverer details.</li></ul><p>The agent cannot sign, buy, claim fees, or move funds. Your signing wallet is the discoverer. Standard discovery rules apply.</p></details>
     </section>
+    <section className="inner-card" aria-labelledby="cli-launch-title"><h2 id="cli-launch-title">Launch from your terminal</h2>
+      <p>In the repository you are working in, <code>repoing launch</code> opens its repo.ing review, and <code>repoing claim</code> shows what its next claim pays and opens the claim page.</p>
+      <CopyBlock label="install command" value="npm install --global @repoing/cli"/>
+      <p className="muted">The CLI never receives wallet keys. Costs and the transaction are approved in your browser and wallet.</p>
+    </section>
+    <section className="inner-card" aria-labelledby="readonly-mcp-title"><h2 id="readonly-mcp-title">Look up markets from your coding assistant</h2>
+      <p>A read-only MCP server answers whether a repository or model has a market, what it has earned its builders, and what is trending. It never launches, trades or claims.</p>
+      <CopyBlock label="read-only endpoint" value="https://repo.ing/api/mcp/readonly"/>
+      <p className="muted"><a href="https://github.com/New1Direction/repo.ing/tree/main/plugins/repo-ing" target="_blank" rel="noopener noreferrer">Claude Code and Cursor plugin ↗</a></p>
+    </section>
     <section className="inner-card" aria-labelledby="readme-launch-title"><h2 id="readme-launch-title">Add a README button</h2><p>Give your GitHub visitors a direct path to review a launch. If a market already exists, repo.ing opens it.</p>
       <img src="/launch-on-repoing.svg" width="180" height="32" alt="Launch on repo.ing"/>
       <label className="field-label" htmlFor="launch-badge-repo">GitHub repository</label>
