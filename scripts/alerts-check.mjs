@@ -10,6 +10,7 @@ import { ALERT_CHANNEL_KEYS, alertChannels, alertMaxPerDay, alertOrigin, alertSi
   launchAlertsConfig } from '../src/launch-alerts.mjs'
 import { oauthHeader, TELEGRAM_API } from '../src/launch-alerts-senders.mjs'
 import { MILESTONE_ALERT_DEFAULTS, milestoneAlertsConfig } from '../src/milestone-alerts.mjs'
+import { TREND_ALERT_DEFAULTS, trendAlertsConfig } from '../src/trend-alerts.mjs'
 
 export const X_ME_URL = 'https://api.x.com/2/users/me'
 const TIMEOUT_MS = 15_000
@@ -26,6 +27,8 @@ const JOBS = [
     fallback: LAUNCH_ALERT_DEFAULTS.maxPerDay, config: launchAlertsConfig },
   { name: 'Graduation alerts', enabled: 'GRADUATION_ALERTS_ENABLED', since: 'GRADUATION_ALERTS_SINCE', max: 'GRADUATION_ALERTS_MAX_PER_DAY',
     fallback: MILESTONE_ALERT_DEFAULTS.maxPerDay, config: milestoneAlertsConfig },
+  { name: 'Trend alerts', enabled: 'TREND_ALERTS_ENABLED', since: 'TREND_ALERTS_SINCE', max: 'TREND_ALERTS_MAX_PER_DAY',
+    fallback: TREND_ALERT_DEFAULTS.maxPerDay, config: trendAlertsConfig },
 ]
 
 const redact = (text, secrets) => secrets.reduce((out, secret) => out.split(secret).join('[redacted]'), String(text))
@@ -169,11 +172,11 @@ export async function checkAlerts({ env = process.env, fetchImpl = fetch, now = 
   const caps = checkSettings(env, now, add)
   const channels = configuredChannels(env, add)
   if (channels.x) {
-    const [launch, graduation] = JOBS.map(job => caps[job.name])
-    // Every post links its token page, and X bills a post with a link from prepaid credits (docs/ALERTS_SETUP.md), so the
+    const [launch, graduation, trend] = JOBS.map(job => caps[job.name])
+    // Every post links a repo.ing page, and X bills a post with a link from prepaid credits (docs/ALERTS_SETUP.md), so the
     // caps set the spend.
-    if (launch && graduation) add('info', 'X', `up to ${launch + graduation} posts per 24 hours with both on (${launch} launch + ${graduation} `
-      + 'graduation). Each carries a link, which X bills from your prepaid API credits at its "with URL" post price: the caps set the spend')
+    if (launch && graduation && trend) add('info', 'X', `up to ${launch + graduation + trend} posts per 24 hours with all three on (${launch} launch + `
+      + `${graduation} graduation + ${trend} trend). Each carries a link, which X bills from your prepaid API credits at its "with URL" post price: the caps set the spend`)
     await checkX({ credentials: channels.x, fetchImpl, add })
   }
   if (channels.telegram) await checkTelegram({ ...channels.telegram, fetchImpl, add })

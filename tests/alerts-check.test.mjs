@@ -50,7 +50,7 @@ test('a read-write X account and a Telegram channel admin allowed to post pass, 
   assert.match(text, /✓ X: access level read-write: @repoing can post/)
   assert.match(text, /✓ Telegram: @repoing_alerts_bot can post in the channel "repo\.ing launches" \(administrator\)/)
   assert.match(text, /✓ Telegram: each post's link is recorded \(https:\/\/t\.me\/repoing_launches\/<message id>\)/)
-  assert.match(text, /· X: up to 10 posts per 24 hours with both on \(5 launch \+ 5 graduation\)\. Each carries a link, which X bills from your prepaid API credits/)
+  assert.match(text, /· X: up to 14 posts per 24 hours with all three on \(5 launch \+ 5 graduation \+ 4 trend\)\. Each carries a link, which X bills from your prepaid API credits/)
   assert.match(text, /All checks passed\. Nothing was posted\.\n$/)
   assert.deepEqual(calls.map(call => [call.method, call.url.split('?')[0]]), READ_ENDPOINTS.map(url => ['GET', url]))
   assert.deepEqual(Object.fromEntries(new URL(calls[3].url).searchParams), { chat_id: '@repoing_launches', user_id: '7012345678' })

@@ -29,6 +29,8 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_parts_test'), launchtest('repoing_backers_test'), launchtest('repoing_launch_alerts_test'),
   launchtest('repoing_trust_test'), launchtest('repoing_trending_test'), launchtest('repoing_market_quality_test'),
   launchtest('repoing_graduation_race_test'), launchtest('repoing_milestone_alerts_test'), launchtest('repoing_server_speed_test'),
+  // "First to launch" trend alerts (migration 0068).
+  launchtest('repoing_trend_alerts_test'),
   launchtest('repoing_opt_outs_test'), launchtest('repoing_buyback_import_test'),
   // Launch and milestone alerts for Hugging Face model markets, and the read-only alerts preview.
   launchtest('repoing_alerts_models_test'),
@@ -68,6 +70,7 @@ export const DEFAULT_ENV = {
   MARKET_QUALITY_TEST_DATABASE_URL: launchtest('repoing_market_quality_test'),
   GRADUATION_RACE_TEST_DATABASE_URL: launchtest('repoing_graduation_race_test'),
   MILESTONE_ALERTS_TEST_DATABASE_URL: launchtest('repoing_milestone_alerts_test'),
+  TREND_ALERTS_TEST_DATABASE_URL: launchtest('repoing_trend_alerts_test'),
   SERVER_SPEED_TEST_DATABASE_URL: launchtest('repoing_server_speed_test'),
   MAINTAINER_OPT_OUTS_TEST_DATABASE_URL: launchtest('repoing_opt_outs_test'),
   BUYBACK_IMPORT_TEST_DATABASE_URL: launchtest('repoing_buyback_import_test'),

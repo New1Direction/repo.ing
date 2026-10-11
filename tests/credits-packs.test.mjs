@@ -150,15 +150,15 @@ test('migration 0066 is expand-only, after every earlier migration in the journa
     'credit_pack_purchases_spin_check', 'credit_pack_purchases_one_open']) assert.ok(schema.includes(`'${name}'`), name)
 })
 
-test('migration 0067 lets a handoff confirm only the GitHub account; appended last; old rows stay admin handoffs', () => {
+test('migration 0067 lets a handoff confirm only the GitHub account; appended after every earlier migration; old rows stay admin handoffs', () => {
   const sql = readFileSync('drizzle/0067_identity_handoffs.sql', 'utf8')
   assert.match(sql, /ADD COLUMN IF NOT EXISTS "permission" varchar\(16\) NOT NULL DEFAULT 'admin'/)
   assert.match(sql, /ALTER COLUMN "github_repo_id" DROP NOT NULL/)
   assert.match(sql, /CHECK \("permission" IN \('admin', 'identity'\) AND \("permission" = 'admin'\) = \("github_repo_id" IS NOT NULL\)\)/)
   assert.doesNotMatch(sql, /\b(UPDATE|DELETE|DROP TABLE|DROP COLUMN)\b/i)
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
-  const last = entries.at(-1)
-  assert.equal(last.tag, '0067_identity_handoffs')
-  assert.ok(entries.slice(0, -1).every(entry => entry.when < last.when))
+  const index = entries.findIndex(entry => entry.tag === '0067_identity_handoffs')
+  assert.ok(index > 0)
+  assert.ok(entries.slice(0, index).every(entry => entry.when < entries[index].when))
   assert.ok(readFileSync('src/db/schema.mjs', 'utf8').includes("'auth_handoffs_permission_check'"))
 })

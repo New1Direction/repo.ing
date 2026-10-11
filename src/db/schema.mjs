@@ -1278,6 +1278,19 @@ export const milestoneAlertMarks = pgTable('milestone_alert_marks', {
   channel: varchar('channel',{length:16}).notNull(), milestone: smallint('milestone').notNull(), markedAt: tz('marked_at').defaultNow().notNull(),
 },t=>[primaryKey({name:'milestone_alert_marks_pkey',columns:[t.githubRepoId,t.channel]}),
   check('milestone_alert_marks_channel_check',sql`${t.channel} in ('telegram','x')`),check('milestone_alert_marks_milestone_check',sql`${t.milestone} in (0,25,50,75,90,100)`)])
+// Public "first to launch" posts: a trending repository with no market yet, once per channel, claimed before sending
+// (see drizzle/0068_trend_alerts.sql, src/trend-alerts.mjs). No foreign key: a trending repository usually has no repositories row.
+export const trendAlerts = pgTable('trend_alerts', {
+  id: bigserial('id',{mode:'bigint'}).primaryKey(),
+  githubRepoId: bigint('github_repo_id',{mode:'bigint'}).notNull(),
+  channel: varchar('channel',{length:16}).notNull(), starsGained: integer('stars_gained').notNull(),
+  status: varchar('status',{length:16}).notNull(), attempts: smallint('attempts').default(1).notNull(),
+  messageId: varchar('message_id',{length:64}), messageUrl: varchar('message_url',{length:300}), error: varchar('error',{length:300}), nextAttemptAt: tz('next_attempt_at'),
+  createdAt: tz('created_at').defaultNow().notNull(), updatedAt: tz('updated_at').defaultNow().notNull(), sentAt: tz('sent_at'),
+},t=>[uniqueIndex('trend_alerts_repo_channel_unique').on(t.githubRepoId,t.channel),index('trend_alerts_channel_recent').on(t.channel,t.updatedAt.desc()),
+  check('trend_alerts_channel_check',sql`${t.channel} in ('telegram','x')`),check('trend_alerts_stars_gained_check',sql`${t.starsGained} > 0`),
+  check('trend_alerts_status_check',sql`${t.status} in ('sending','sent','failed','unknown')`),check('trend_alerts_attempts_check',sql`${t.attempts} between 1 and 100`),
+  check('trend_alerts_sent_check',sql`(${t.status} = 'sent' and ${t.sentAt} is not null and ${t.messageId} is not null) or (${t.status} <> 'sent' and ${t.sentAt} is null)`)])
 
 // Real-user Core Web Vitals samples (POST /api/vitals); route patterns only, deleted after 14 days.
 export const webVitals = pgTable('web_vitals', {

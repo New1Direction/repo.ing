@@ -1,9 +1,10 @@
 # Turning on the X and Telegram posts
 
-repo.ing can post two kinds of messages by itself, from the worker service:
+repo.ing can post three kinds of messages by itself, from the worker service:
 
 - **Launch posts:** one post per new market.
 - **Graduation posts:** when a market passes 25, 50, 75 or 90% of its graduation target, and when it graduates.
+- **First to launch posts:** a public GitHub repository that is gaining stars fast and has no market yet, with a link to launch it.
 
 They go to an X account, a Telegram channel, or both. Nothing is posted until the keys below are in place and the switches are turned on. Every post is recorded in the database before it is sent, so nothing is ever posted twice, even if the worker restarts.
 
@@ -51,6 +52,14 @@ Every variable below goes on the **worker** service in Railway.
    ```
 
    With the switches still off it shows what would go out if they were on now: the exact Telegram and X texts for the markets of the last 24 hours that qualify, and why any market is held back. It only reads: nothing is claimed, locked or sent. `--launch-max` and `--graduation-max` preview other caps, and `--models` or `--no-models` previews with or without model markets. (`--since` previews another cutoff; one still to come shows nothing until then, which is what the worker will do.) Read each text once. Graduation posts appear only after the first run has recorded where each market stands, so before go-live the preview shows none.
+
+   First to launch posts have their own preview, which also only reads:
+
+   ```sh
+   railway ssh --service worker -- node scripts/trend-alerts-preview.mjs
+   ```
+
+   It lists the trending repositories that qualify now, in order, with their exact texts. `--min-stars` previews another threshold and `--since` another cutoff.
 4. **Turn it on:** set these on the worker. Railway redeploys it.
 
    ```sh
@@ -60,24 +69,32 @@ Every variable below goes on the **worker** service in Railway.
    GRADUATION_ALERTS_SINCE=2026-10-05T16:00:00Z  # the same go-live time
    GRADUATION_ALERTS_MAX_PER_DAY=5
    GRADUATION_ALERTS_ENABLED=true
+   TREND_ALERTS_SINCE=2026-10-05T16:00:00Z       # the same go-live time
+   TREND_ALERTS_MAX_PER_DAY=2
+   TREND_ALERTS_ENABLED=true
+   DISCOVERY_REWARDS_ENABLED=true                # the same as on web: the post then names the launcher's reward
    ```
 
-5. **Confirm the worker picked it up.** Its log should show one `{"launchAlertsOn":…}` and one `{"milestoneAlertsOn":…}` line with the channels, cutoff, cap and whether models are included, and no `launchAlertError` or `milestoneAlertError` line. Run the check from step 2 once more.
-6. **Watch the first posts.** The worker logs `{"launchAlerts":{"posts":[…]}}` and `{"milestoneAlerts":{"posts":[…]}}` when it posts, and a `launchAlertError` or `milestoneAlertError` line when a run fails. Open the X profile and the channel and read the first few. The first graduation run posts nothing: it only records where each market stands, and later crossings are posted. In the database:
+   The three switches are independent: turn on only the ones you want.
+
+5. **Confirm the worker picked it up.** Its log should show one `{"launchAlertsOn":…}`, one `{"milestoneAlertsOn":…}` and one `{"trendAlertsOn":…}` line with the channels, cutoff, cap and whether models are included, and no `launchAlertError`, `milestoneAlertError` or `trendAlertError` line. Run the check from step 2 once more.
+6. **Watch the first posts.** The worker logs `{"launchAlerts":{"posts":[…]}}`, `{"milestoneAlerts":{"posts":[…]}}` and `{"trendAlerts":{"posts":[…]}}` when it posts, and a `launchAlertError`, `milestoneAlertError` or `trendAlertError` line when a run fails. Open the X profile and the channel and read the first few. The first graduation run posts nothing: it only records where each market stands, and later crossings are posted. In the database:
 
    ```sql
    select channel, status, attempts, message_url, error, created_at from launch_alerts order by id desc limit 20;
    select channel, milestone, status, attempts, message_url, error, created_at from milestone_alerts order by id desc limit 20;
+   select github_repo_id, channel, stars_gained, status, attempts, message_url, error, created_at from trend_alerts order by id desc limit 20;
    ```
 
 ### Safe caps
 
-Start with **5 launch posts and 5 graduation posts per channel per day**, and raise them after a few calm days. However high the caps, each run (about once a minute) posts at most 2 per channel, 10 seconds apart. On X the caps also set the spend: at about $0.20 a post, 5 + 5 is at most about $2 a day (about $60 a month), and the defaults (15 + 10) at most about $5 a day (about $150 a month). Quiet days cost less: only real launches and crossings are posted. Telegram is free and its limits are far higher.
+Start with **5 launch posts and 5 graduation posts per channel per day**, and raise them after a few calm days. However high the caps, each run (about once a minute) posts at most 2 per channel, 10 seconds apart. On X the caps also set the spend: at about $0.20 a post, 5 + 5 is at most about $2 a day (about $60 a month), and the defaults (15 + 10) at most about $5 a day (about $150 a month). Quiet days cost less: only real launches and crossings are posted. First to launch posts default to at most 4 per channel per day, one per run (every 5 minutes); start with 2 (about $0.40 a day on X). Telegram is free and its limits are far higher.
 
 ## 3. What gets posted
 
 - **Launch posts:** markets indexed after `LAUNCH_ALERTS_SINCE`, within 24 hours of launch. A new repository (under 30 days old or under 10 stars) is posted only once its market reaches 10% of its graduation target within those 24 hours. Every Hugging Face model market follows the same rule: likes and downloads never count.
 - **Graduation posts:** only crossings that happen after `GRADUATION_ALERTS_SINCE`. A jump from 20% to 80% posts 75% only, and falling back and crossing again posts nothing.
+- **First to launch posts:** repositories from the trend feed (the same list as "Launch a trending repo" on /find-repos) that gained at least 200 stars a day (`TREND_ALERTS_MIN_STARS_PER_DAY` changes it; at least 25 stars measured), observed after `TREND_ALERTS_SINCE`. Each repository is posted at most once per channel, ever. Never posted: repositories that already have a market, forks, archived repositories, and ones whose maintainer opted out or asked not to be contacted. The post links the launch page, where a person reviews and signs; nothing is launched by the post.
 - **Never posted:** repositories and models on the do-not-promote list (`PROMOTION_EXCLUDED_REPO_IDS`, including `hf:` entries) and those whose maintainer or model owner opted out.
 - **Turning model posts on later:** if `HF_MARKETS_ENABLED=true` is added to the worker after go-live, model markets from the previous 24 hours that qualify are announced on the next runs, like any market still in its window. To skip them, move `LAUNCH_ALERTS_SINCE` to that moment at the same time.
 
@@ -99,13 +116,20 @@ https://repo.ing/token/<mint>
 Hugging Face model openai-community/gpt2
 Community launch · Not endorsed by the creators · Not affiliated with Hugging Face
 https://repo.ing/token/<mint>
+
+🔥 acme/rocket: +800 GitHub stars in 4h, no market yet.
+Launch it first: the launch wallet earns 50% of repo.ing's trading fees until graduation, 30 days or 2.5 SOL.
+Community launch, not endorsed by the maintainers.
+https://repo.ing/launch/<repository id>
 ```
+
+On Telegram the first to launch post also carries the repository's description. Without `DISCOVERY_REWARDS_ENABLED=true` on the worker, its second line reads "Launch it first. Every trade pays the repo's builders." instead.
 
 ## 4. Stopping and fixing
 
-- **Stop:** set `LAUNCH_ALERTS_ENABLED=false` or `GRADUATION_ALERTS_ENABLED=false` on the worker. Posting stops when the worker restarts with the new value.
+- **Stop:** set `LAUNCH_ALERTS_ENABLED=false`, `GRADUATION_ALERTS_ENABLED=false` or `TREND_ALERTS_ENABLED=false` on the worker. Posting stops when the worker restarts with the new value.
 - **A post marked `failed`:** X or Telegram refused it, so nothing was posted. It is retried automatically after at least 5 minutes, up to 3 tries in all.
 - **A post marked `unknown`:** it may have gone out (a timeout, for example), so it is never retried. Look at the channel. If it is missing and should go out, delete that row to allow one new attempt. If it posted, leave the row.
 - **Changed keys:** update the variables, run the check from step 2, and watch the next posts.
 
-More detail: [Launch alerts](PRODUCTION.md#launch-alerts) and [Graduation milestone alerts](PRODUCTION.md#graduation-milestone-alerts).
+More detail: [Launch alerts](PRODUCTION.md#launch-alerts), [Graduation milestone alerts](PRODUCTION.md#graduation-milestone-alerts) and [First to launch alerts](PRODUCTION.md#first-to-launch-alerts).
