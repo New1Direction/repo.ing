@@ -127,7 +127,7 @@ test('the browser form and the server agree on names and the smallest limit', ()
 })
 
 // The credit service, scripted; every request is recorded.
-function creditService({ available = 75_000_000, keys, refuseMake = null, failMake = 0, token = TOKEN, expired = [], afterRevoke = null, breakList = false } = {}) {
+function creditService({ available = 75_000_000, keys, refuseMake = null, failMake = 0, rawMake = null, token = TOKEN, expired = [], afterRevoke = null, breakList = false } = {}) {
   const requests = []
   const list = keys ?? [{ id: KEY_ID, label: 'cursor', budget_micro: 20_000_000, spent_micro: 1_500_000, revoked: false, expires_at: FUTURE }]
   const fetchImpl = async (url, init = {}) => {
@@ -139,6 +139,7 @@ function creditService({ available = 75_000_000, keys, refuseMake = null, failMa
     if (expired.includes(bearer)) return json({ error: 'Sign in again.' }, 401)
     if (target.pathname === '/account') return json({ account_id: 'a', paid_available: available, credits_available: available })
     if (target.pathname === '/keys' && init.method === 'POST' && failMake) return json({ error: 'upstream down' }, failMake)
+    if (target.pathname === '/keys' && init.method === 'POST' && rawMake !== null) return new Response(rawMake, { status: 200 })
     if (target.pathname === '/keys' && init.method === 'POST') return refuseMake ? json({ error: refuseMake }, 400)
       : json({ key: { id: KEY_ID, scope: 'inference', label: body.label, budget_micro: body.budget_micro, expires_at: '2026-11-06T19:00:00Z' }, token, replayed: false })
     if (target.pathname === '/keys') return breakList && requests.some(r => r.path.endsWith('/revoke')) ? json({ error: 'down' }, 503) : json({ keys: afterRevoke && requests.some(r => r.path.endsWith('/revoke')) ? afterRevoke : list })
@@ -271,6 +272,13 @@ test('an answer that may have come after the key was made says to look at the ke
   }
 })
 
+test('a 200 answer to the key request that is not an object is as bad as a malformed key: say to revoke below', async () => {
+  for (const raw of ['"ok"', 'null', '', 'not json']) {
+    await assert.rejects(steps({ credit: { rawMake: raw } }).service.make({ githubUserId: '123', login: 'octo', current: current() }),
+      error => error.status === 502 && error.message === 'The AI credits service returned an invalid key. If a key was made, revoke it below.', JSON.stringify(raw))
+  }
+})
+
 test('too many key requests: the quota stops the step before any sign-in or request', async () => {
   const limited = steps({ pool: fakePool({ limited: true }) })
   await assert.rejects(limited.service.make({ githubUserId: '123', login: 'octo', current: null }), error => error.status === 429 && /Too many/.test(error.message))
@@ -302,6 +310,29 @@ test('revoke: one POST for that key, then the refreshed overview; a refresh that
   await assert.rejects(bad.service.revoke({ githubUserId: '123', login: 'octo', current: current(), keyId: `${KEY_ID}/../x` }), error => error.status === 400)
   assert.equal(bad.requests.length, 0)
   assert.equal(bad.pool.queries.length, 0)
+})
+
+test('check counts before every sign-in, also the one after a session the credit service dropped; a working session is not counted', async () => {
+  // Quota refusing every time, a cookie session the credit service answers 401: five clicks make no sign-in at all.
+  const refusing = steps({ pool: fakePool({ limited: true }), credit: { expired: [SESSION_TOKEN] } })
+  for (let click = 0; click < 5; click++) {
+    await assert.rejects(refusing.service.check({ githubUserId: '123', login: 'octo', current: current() }), error => error.status === 429 && /Too many/.test(error.message))
+  }
+  assert.equal(refusing.requests.some(r => r.path === '/sessions'), false, 'no POST /sessions')
+  assert.equal(refusing.pool.queries.some(([text]) => /auth_handoffs/.test(text)), false, 'no handoff row')
+  assert.equal(refusing.pool.queries.filter(([text]) => /agent_request_limits/.test(text)).length, 5, 'each click was counted (a refused scope stops the rest)')
+  // With room: the dropped session is counted (both scopes) and then replaced once.
+  const allowed = steps({ credit: { expired: [SESSION_TOKEN] } })
+  const shown = await allowed.service.check({ githubUserId: '123', login: 'octo', current: current() })
+  assert.equal(shown.session.token, NEW_SESSION_TOKEN)
+  assert.deepEqual(allowed.pool.queries.filter(([text]) => /agent_request_limits/.test(text)).map(([, params]) => params[0]), ['credits:keys:123', 'credits:keys'])
+  const counted = allowed.pool.queries.findIndex(([text]) => /agent_request_limits/.test(text)), signedIn = allowed.pool.queries.findIndex(([text]) => /auth_handoffs/.test(text))
+  assert.ok(counted >= 0 && counted < signedIn, 'counted before the handoff row')
+  assert.equal(allowed.requests.filter(r => r.path === '/sessions').length, 1)
+  // A session that works signs in nowhere and counts nowhere.
+  const working = steps()
+  await working.service.check({ githubUserId: '123', login: 'octo', current: current() })
+  assert.equal(working.pool.queries.length, 0)
 })
 
 test('check: a click that shows the credits and keys, signing in only when the cookie has no session', async () => {

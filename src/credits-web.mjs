@@ -152,6 +152,7 @@ export function openCreditsSession(value, githubUserId, secret = process.env.GIT
   } catch { return null }
 }
 
+export const INVALID_ANSWER = 'The AI credits service returned an invalid answer.'
 // One line of the credit service's own error text, for the builder; never more than 200 characters.
 const plain = text => typeof text === 'string' && text.trim() ? text.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 200) : null
 /** A JSON call to the credit service, server to server (no Origin header, no redirects, 15 s). */
@@ -165,7 +166,7 @@ export async function creditsCall(fetchImpl, origin, path, { method = 'GET', bod
     const value = await response.json().catch(() => null)
     if (!response.ok) throw new CreditsWebError(plain(value?.error) ?? `The AI credits service answered HTTP ${response.status}.`, response.status === 401 ? 401 : 502,
       { refused: response.status >= 400 && response.status < 500 })
-    if (!value || typeof value !== 'object') throw new CreditsWebError('The AI credits service returned an invalid answer.', 502)
+    if (!value || typeof value !== 'object') throw new CreditsWebError(INVALID_ANSWER, 502)
     return value
   } catch (error) {
     if (error instanceof CreditsWebError) throw error
