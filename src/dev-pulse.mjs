@@ -144,10 +144,11 @@ export function createPulseStore(pool) {
         on conflict (github_repo_id) do update set error = excluded.error, checked_at = excluded.checked_at, next_check_at = excluded.next_check_at`,
         [repoId, String(error).slice(0, 200), nextCheckAt])
     },
-    // Commits are only shown for 14 days and star hours for 7; keep a margin, drop the rest.
+    // Commits are only shown for 14 days, and star hours feed 30 days of daily star pins on the chart; keep a margin,
+    // drop the rest.
     async prune() {
       await pool.query(`delete from repo_pulse_events where kind = 'commit' and occurred_at < now() - interval '60 days'`)
-      await pool.query(`delete from repo_pulse_star_hours where hour < now() - interval '14 days'`)
+      await pool.query(`delete from repo_pulse_star_hours where hour < now() - interval '35 days'`)
     },
   }
 }

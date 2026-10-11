@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
 import { chartPriceLabel, chartSeries, chartScaleRange, chartUpdatePlan, chartInitialRange } from '../lib/chart-display.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
-import { pulsePins } from '../lib/pulse-chart.mjs'
+import { PULSE_TAIL_POINTS, pulsePins, pulseTail } from '../lib/pulse-chart.mjs'
 import { ChartPulsePins } from './chart-pulse-pins'
 
 // price-chart already starts this download while the page hydrates; this reuses the same module request.
@@ -18,7 +18,15 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
   const [ready, setReady] = useState(false), [failed, setFailed] = useState(false)
   const [retry, setRetry] = useState(0), [hoverTime, setHoverTime] = useState(null)
   const [chartApi, setChartApi] = useState(null)
-  const series = useMemo(() => chartSeries(data, multiplier, volumeOf), [data, multiplier, volumeOf])
+  const trades = useMemo(() => chartSeries(data, multiplier, volumeOf), [data, multiplier, volumeOf])
+  // With GitHub events shown, the time line runs on past the last trade to the newest event, as empty space: at most as
+  // many points as the trades have (or PULSE_TAIL_POINTS), so neither part takes over the chart.
+  const tail = useMemo(() => showPulse && trades.prices.length
+    ? pulseTail(pulse, trades.prices.at(-1).time, data.interval, Math.max(PULSE_TAIL_POINTS, trades.prices.length)) : [],
+    [pulse, showPulse, trades, data.interval])
+  const series = useMemo(() => tail.length ? { prices: [...trades.prices, ...tail.map(time => ({ time }))], volumes: [...trades.volumes, ...tail.map(time => ({ time }))] } : trades,
+    [trades, tail])
+  const tailed = tail.length > 0
   const byTime = useMemo(() => new Map(data.candles.map(bar => [bar.time, bar])), [data.candles])
   // Every series time, whitespace included, so an event in a quiet hour keeps its place instead of joining the last trade.
   const pins = useMemo(() => showPulse && pulse?.length ? pulsePins(pulse, series.prices.map(bar => bar.time), { interval: data.interval }) : [],
@@ -94,10 +102,10 @@ export default function MarketChartCanvas({ data, multiplier, unit, style, symbo
     state.series = series
     // Full historical corrections keep the user's viewport. Only a deliberately
     // selected period (or the first point arriving) chooses a new initial view.
-    const fitKey = `${data.range}:${data.interval}:${Boolean(series.prices.length)}`
+    const fitKey = `${data.range}:${data.interval}:${Boolean(series.prices.length)}:${tailed}`
     if (state.fitKey !== fitKey) { resetView(); state.fitKey = fitKey; setHoverTime(null) }
     else if ((prices.reset || volumes.reset) && range) chart.timeScale().setVisibleLogicalRange(range)
-  }, [ready, series, data.range, data.interval])
+  }, [ready, series, tailed, data.range, data.interval])
 
   useEffect(() => {
     if (!ready || !api.current) return
