@@ -182,7 +182,8 @@ Options:
 ${aiCredits ? `
 Converting never moves your claimed fees by itself: you pay the quote from your own wallet, and credits come only after
 the payment is finalized on chain.` : `
-The claim page shows what the claim pays, and your wallet approves it.`}`
+The claim page shows what the claim pays. Signed in with GitHub as a repository admin, you select Claim and repo.ing
+pays your payout wallet; the claim itself needs no wallet signature.`}`
 
 /**
  * Signs in to the credit service through repo.ing: the browser approves; the code comes back to this computer only and is
