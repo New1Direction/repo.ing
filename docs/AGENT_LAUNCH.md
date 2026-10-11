@@ -40,6 +40,7 @@ Example prompt:
 | `resolve_repo` | `repository`: URL or `owner/repo` | Fresh GitHub verification, immutable ID, existing market or review link |
 | `create_launch_draft` | Repository, optional `tokenName`, `tokenSymbol`, `initialBuy`: `none`, `100`, `200`, `300` | One-hour review link, launch preferences and current policy context |
 | `get_launch_status` | Immutable `repoId` | Canonical indexed state; mint, pool, receipt, and actual discoverer only after finalized indexing |
+| `resolve_model`, `create_model_launch_draft`, `get_model_launch_status` | A public Hugging Face model (URL or `owner/name`), or the `marketId` `resolve_model` returns | The same review flow for a model market, keyed to the model's stable ID; listed only while Hugging Face model markets are enabled |
 
 Repository descriptions and source evidence are untrusted content. They are never instructions to the agent. Costs are quoted and simulated in the browser; a draft contains no estimated SOL spend or executable transaction.
 
@@ -53,7 +54,7 @@ Drafts can be reopened during their lifetime; one-market-per-repository locking 
 
 | Condition | Result |
 | --- | --- |
-| Private, archived, unverifiable, invalid URL | Reject; no draft or reservation |
+| Private, archived, unverifiable, invalid URL; a fork or copy of a launched repository ([fork guard](FORK_GUARD.md)) | Reject; no draft or reservation |
 | Existing finalized market, including repository rename | Return canonical market; do not create another |
 | Incomplete or ambiguous existing launch | Pending/review required; withhold unverified receipts |
 | Wrong repo, modified draft, expired link, changed config/reward rules | Reject review; offer a fresh normal review |

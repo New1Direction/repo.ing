@@ -9,7 +9,10 @@ import { RepoSearch } from '../../components/repo-search'
 import { hfMarketsEnabled } from '../../../src/hf-launch.mjs'
 import '../../maintainer-opt-out.css'
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Launch a repository · repo.ing', description: 'Give open source a market. Paste a public GitHub repository, review the token and costs, then launch it with your wallet.' }
+export function generateMetadata() {
+  const project = hfMarketsEnabled() ? 'a public GitHub repository or Hugging Face model' : 'a public GitHub repository'
+  return { title: 'Launch a repository · repo.ing', description: `Give open source a market. Paste ${project}, review the token and costs, then launch it with your wallet.` }
+}
 export default async function LaunchStart({ searchParams }) {
   const params = await searchParams
   const initialUrl = typeof params.repo === 'string' && params.repo.length <= 256 ? params.repo : ''

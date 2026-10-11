@@ -89,7 +89,7 @@ export function useOpenBundle({ repo, settings, token, raise, ready }) {
       const opened = await openBundle({ repoId: repo.repoId, launcherWallet: address, tokenName: token.name, tokenSymbol: token.symbol,
         tokenImage: token.image, targetLamports: target.toString(), deadlineDays: raise.days }, { provider, onStage: setStage })
       setStage('Opened')
-      window.location.assign(`/bundle/${opened.bundleId}`)
+      window.location.assign(`/group/${opened.bundleId}`)
     } catch (cause) { setError(cause.message || 'Could not open the group launch.'); setStage('') }
     finally { working.current = false; setBusy(false) }
   }

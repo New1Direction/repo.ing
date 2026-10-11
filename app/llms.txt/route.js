@@ -2,6 +2,8 @@ import { activeLaunchFeeTerms } from '../lib/launch-fee.mjs'
 import { LAUNCH_FEE_SPLIT, launcherBuySentence, launchFeeSentence } from '../../src/launch-fee-copy.mjs'
 import { QUOTE_REGISTRY } from '../../src/quote-assets.mjs'
 import { STOCK_FEE_SPLIT } from '../../src/stock-pair-copy.mjs'
+import { bundleLaunchable } from '../../src/bundle-launch.mjs'
+import { hfMarketsEnabled } from '../../src/hf-launch.mjs'
 
 // llmstxt.org index for LLMs and agents. Keep figures in sync with README.md and /how-it-works.
 export const dynamic = 'force-static'
@@ -30,7 +32,9 @@ A community launch does not imply maintainer endorsement. A repository token giv
 - Trading fee before graduation: 1.75% of each fee-paying trade. 0.994% goes to the repository's builders, 0.406% to repo.ing, and 0.35% to the Meteora protocol.
 - Builder fees accrue even before the maintainers connect. A current GitHub admin of the repository verifies with GitHub, binds a payout wallet, and claims the fees in SOL. Launching a market does not give the launcher the builders' fees.
 ${STOCK_LINE}
-- Discovery reward: the launch wallet earns 50% of repo.ing's partner fee share until graduation, 30 days, or 2.5 SOL earned, whichever comes first. It comes out of repo.ing's share; builder fees are unchanged.
+- Discovery reward: the launch wallet earns 50% of repo.ing's partner fee share until graduation, 30 days, or 2.5 SOL earned, whichever comes first. It comes out of repo.ing's share; builder fees are unchanged. Stock pairs carry no discovery reward.
+- One market per project: a GitHub fork whose parent or source already has a market is refused, and so is a repository that copies the first commit of an older launched repository owned by another account. Other forks launch labeled "Fork of <parent>".
+- Referrals: for 30 days after someone opens a repo.ing link you shared, their trades on SOL-paired markets pay you 4% of the trading fee in SOL, from Meteora's protocol share. Traders pay the same fee and builders keep their full share.
 - Platform revenue policy for claimed platform revenue: 60% $REPOING buyback reserve, 20% protocol liquidity, 20% treasury.
 - Parts funds: a verified maintainer can add a hardware parts list to their market page. Anyone backs it in USDC or SOL, all or nothing: a funded list is paid to the maintainer's verified payout wallet, and a missed or cancelled one refunds every backer automatically.
 
@@ -46,7 +50,8 @@ ${STOCK_LINE}
 - [Protocol analytics](https://repo.ing/stats): Trading activity, verified builder payouts, and platform revenue allocation.
 - [Top discoverers](https://repo.ing/discoverers): Verified launches, discovery fees, and market volume.
 - [Builders](https://repo.ing/builders): For repository admins to verify GitHub access and claim fees.
-- [Launch tools for agents](https://repo.ing/agents): MCP setup, README launch button, and bookmarklet.
+- [Referrals](https://repo.ing/referrals): Share a market and earn 4% of the trading fee on SOL-pair trades from your link.
+- [Launch tools for agents](https://repo.ing/agents): MCP setup, CLI, README launch button, and bookmarklet.
 - [$REPOING market](https://repo.ing/token/59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be): repo.ing's own repository market.
 - [日本語](https://repo.ing/ja): Japanese introduction and FAQ.
 
@@ -63,6 +68,8 @@ The tools prepare launch reviews only. They cannot trade, claim, sign, or submit
 - create_launch_draft: Create an expiring browser review link for a repository. Optional tokenName, tokenSymbol, and initialBuy (none, 100, 200, 300 = none, 1%, 2%, or max 3% of supply; default none). No transaction, reservation, purchase, or wallet authority.
 - get_launch_status: Read canonical indexed launch evidence for an immutable GitHub repoId, including the actual discoverer.
 
+A read-only server for coding assistants is at https://repo.ing/api/mcp/readonly (Streamable HTTP, no API key): find_market, builder_earnings, trending_markets and platform_stats. It never launches, trades or claims.
+
 ## Optional
 
 - [X](https://x.com/repodoting): Official repo.ing announcements.
@@ -70,14 +77,32 @@ The tools prepare launch reviews only. They cannot trade, claim, sign, or submit
 - [Agent launch documentation](https://github.com/New1Direction/repo.ing/blob/main/docs/AGENT_LAUNCH.md): MCP setup, tool inputs, and the signing boundary.
 `
 
-// The index text, with a launch-fee line under the fee line when new launches use a launch-fee config.
-function llmsText(launchFee) {
-  if (!launchFee) return LLMS_TXT
+// Lines for features behind a switch, added only while it is on (the page is regenerated hourly).
+const MODEL_SUMMARY = ['repo.ing turns public GitHub repositories into Solana token markets.',
+  'repo.ing turns public GitHub repositories and Hugging Face models into Solana token markets.']
+const MODEL_LINE = "- Hugging Face models: a public model can have one market too, keyed to its stable ID. Its owner on Hugging Face claims the builder fees in SOL. Model markets are not affiliated with or endorsed by Hugging Face."
+const GROUP_LINE = "- Group launch: a community funds a market together. A raise of 1 to 10 SOL runs 1, 3 or 7 days. When it fills, the raise less 5% buys the first tokens into a permanent vault that trades within on-chain limits, and backers share 80% of the market's partner fees. A missed target refunds every deposit."
+const MODEL_TOOLS = `- resolve_model, create_model_launch_draft, get_model_launch_status: the same review flow for a public Hugging Face model, keyed to its stable ID.
+`
+
+// The index text: a launch-fee line under the fee line when new launches use a launch-fee config, and the lines of switched-on
+// features.
+export function llmsText(launchFee, { models = false, groups = false } = {}) {
+  let text = LLMS_TXT
+  if (models) {
+    text = text.replace(MODEL_SUMMARY[0], MODEL_SUMMARY[1])
+      .replace("- get_launch_status:", `${MODEL_TOOLS}- get_launch_status:`)
+  }
+  if (groups) text = text.replace('Stock pairs carry no discovery reward.', 'Group launches and stock pairs carry no discovery reward.')
+  const extra = [models && MODEL_LINE, groups && GROUP_LINE].filter(Boolean)
+  if (extra.length) text = text.replace(STOCK_LINE, `${STOCK_LINE}\n${extra.join('\n')}`)
+  if (!launchFee) return text
   const line = [`- Launch fee on new markets: ${launchFeeSentence(launchFee)}`, LAUNCH_FEE_SPLIT, launcherBuySentence(launchFee),
     'Markets launched earlier keep a flat 1.75%.'].filter(Boolean).join(' ')
-  return LLMS_TXT.replace(FEE_LINE, `${FEE_LINE}\n${line}`)
+  return text.replace(FEE_LINE, `${FEE_LINE}\n${line}`)
 }
 
 export async function GET() {
-  return new Response(llmsText(await activeLaunchFeeTerms()), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+  const text = llmsText(await activeLaunchFeeTerms(), { models: hfMarketsEnabled(), groups: bundleLaunchable() })
+  return new Response(text, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
 }

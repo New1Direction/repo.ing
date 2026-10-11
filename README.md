@@ -13,19 +13,20 @@
 
 [![Builder fees earned on repo.ing](https://repo.ing/api/badge/1388219884)](https://repo.ing/token/59PXVfJ28HLYpdYLz8rt8ziE9EWbK4mS8xvq38NUQ1Be)
 
-**repo.ing connects public GitHub repositories to canonical token markets on Solana.** Anyone can discover an eligible repository and launch its market. Trading earns fees for its builders, even before they connect. A current repository administrator can verify with GitHub, bind a payout wallet, and claim those earnings.
+**repo.ing connects public GitHub repositories and Hugging Face models to canonical token markets on Solana.** Anyone can discover an eligible repository and launch its market. Trading earns fees for its builders, even before they connect. A current repository administrator can verify with GitHub, bind a payout wallet, and claim those earnings.
 
 One repository. One market. Identity follows GitHub's permanent numeric repository ID, so a rename or transfer does not create a duplicate.
 
 > A community launch does not imply maintainer endorsement. A repository token gives no ownership of the code, repository, brand, or business.
 
-## Three ways to participate
+## Four ways to participate
 
 | You are a… | Start here | What happens |
 | --- | --- | --- |
 | **Discoverer** | [Find repos](https://repo.ing/find-repos) → review → launch | Find a project getting attention, create its market, and earn a limited share of eligible partner fees. |
 | **Trader** | [Explore](https://repo.ing/explore) → choose a market | Review balances, quotes, price impact, and minimum received before signing. Track graduation and transaction receipts. |
 | **Builder** | [Builders](https://repo.ing/builders) → verify GitHub | Prove current admin access, set a payout wallet, and claim fees across your repositories. |
+| **Backer** | A [Group launch](#group-launch) raise page | Fund a community raise for a market; backers share 80% of its partner fees. |
 
 These can be different people. Launching a market does not give its launcher the builder's entitlement.
 
@@ -63,6 +64,22 @@ Phantom, Backpack, MetaMask's Solana connection, and compatible Solana Wallet St
 
 [Agent launch reviews and README shortcuts](https://repo.ing/agents) use the same launcher: an agent can find a repo and produce a review link, while the user reviews artwork and costs and approves with their wallet. Agents receive no signing authority. [MCP setup and tools →](docs/AGENT_LAUNCH.md)
 
+### Group launch
+
+A community can fund a market together. Open a raise of 1 to 10 SOL that runs for 1, 3 or 7 days; anyone deposits from 0.05 SOL. When the raise fills, it less 5% for operations buys the first tokens into a permanent vault that trades only within on-chain limits, and the backers share 80% of the market's partner fees in proportion to their deposits. A raise that misses its target refunds every deposit. Builders keep their full 0.994%; Group launches carry no discovery reward. [Group launch rules →](docs/BUNDLE_LAUNCH.md)
+
+### Stock pairs
+
+A repository of a GitHub organization mapped to a listed company (facebook, microsoft, nvidia) can be launched paired with that company's tokenized stock (METAx, MSFTx, NVDAx) instead of SOL. Its trades pay the same 1.75% fee in the stock: 0.30% to the wallet that launched the market, 1.10% (the builder and repo.ing shares) to permanent $REPOING / stock liquidity, and 0.35% to Meteora. A stock pair has no owner claim, discovery reward, builder allocation or referral. [Stock pairs →](docs/STOCK_QUOTES.md)
+
+### One market per project
+
+A GitHub fork whose parent or source already has a market is refused, and so is a repository that copies the first commit of an older launched repository owned by another account. Other forks can launch and are labeled **Fork of &lt;parent&gt;**. [Fork guard →](docs/FORK_GUARD.md)
+
+### Hugging Face models
+
+A public Hugging Face model gets one market, keyed to its stable ID. Its owner on Hugging Face (the user, or an admin of the owning organization) claims its builder fees in SOL, as a GitHub admin does for a repository. Model markets are not affiliated with or endorsed by Hugging Face.
+
 ### Trade and graduate
 
 New markets use an **85 SOL real quote-reserve threshold** and begin on Meteora Dynamic Bonding Curve. Buys build reserve; sells can reduce it. **Volume is turnover, not reserve.** Virtual pricing reserves are not deposited SOL.
@@ -81,11 +98,11 @@ Before graduation, the **1.75% total DBC trading fee** has these nominal shares 
 | repo.ing partner | **0.406%** |
 | Meteora protocol | **0.350%** |
 
-Settlement uses exact integer fee events, including rounding. After graduation, fees follow the DAMM pool and position rules; the fixed DBC percentages do not carry over unchanged.
+Settlement uses exact integer fee events, including rounding. After graduation, fees follow the DAMM pool and position rules; the fixed DBC percentages do not carry over unchanged. [Stock pairs](#stock-pairs) are the exception: their builder share goes to $REPOING / stock liquidity.
 
 **New enrolled markets also reserve 1% of their fixed 1 billion supply — 10 million tokens — for the verified builder.** This is a one-time allocation from existing supply, claimable only after verified graduation. It is active for the current launch config; historical markets are not retroactively enrolled. Builder trading fees continue separately.
 
-GitHub verification requires current **admin** access. The App requests **Metadata: read**, not code-write permission. A wallet-binding message proves control of the payout wallet. The Builders dashboard supports setting a wallet across repositories and claiming all ready fees with individual results and receipts. [Builder guide →](docs/USER_GUIDE.md#claim-builder-fees)
+GitHub verification requires current **admin** access. The App requests **Metadata: read**, not code-write permission. A wallet-binding message proves control of the payout wallet. The Builders dashboard supports setting a wallet across repositories and claiming all ready fees with individual results and receipts. From a terminal, `repoing claim` shows what a repository's next claim pays and opens its claim page. [Builder guide →](docs/USER_GUIDE.md#claim-builder-fees)
 
 ### Discoverers earn a limited reward
 
@@ -97,7 +114,11 @@ Accrual ends at the earliest of:
 - 30 days from on-chain activation;
 - the market's stored lifetime cap: **2.5 SOL for new v2 launches**, **1 SOL for earlier v1 launches**.
 
-Already-earned rewards remain claimable afterward. Paid rewards count toward the cap. [Reward rules and settlement proof →](docs/DISCOVERY_REWARDS.md)
+Already-earned rewards remain claimable afterward. Paid rewards count toward the cap. Group launches and stock pairs carry no discovery reward. [Reward rules and settlement proof →](docs/DISCOVERY_REWARDS.md)
+
+### Referrals earn 4%
+
+Share any market from [repo.ing/referrals](https://repo.ing/referrals). For 30 days after someone opens your link, their trades on SOL-paired markets pay you 4% of the trading fee in SOL, carved from Meteora's protocol share: traders pay the same fee and builders keep their full share. The one-time payout setup is free for now. [Referrals →](docs/USER_GUIDE.md#referrals)
 
 ## $REPOING and platform revenue
 
@@ -135,6 +156,10 @@ USD figures use the current SOL price; they are estimates, not historical dollar
 | $REPOING protocol liquidity | **Manual, published**: the team wallet adds liquidity to the canonical $REPOING DAMM v2 pool; deposits on [Stats](https://repo.ing/stats), positions not yet locked |
 | In-app protocol liquidity executor (P3) | **Built, execution off**; first bounded run capped at 0.05 SOL investment + 0.012 SOL overhead |
 | Builder Reinvest | **Prepared, execution off** until the P3 executor has one verified non-zero mainnet deployment and reconciliation `MATCH` |
+| Group launch | **Live** on mainnet since 2026-10-09 |
+| Stock pairs (METAx, MSFTx, NVDAx) | **Live** since 2026-10-04; the launcher's 0.30% accrues in the stock and shows as awaiting payout until repo.ing runs stock payouts |
+| Hugging Face model markets, fork guard, referrals | **Live** |
+| AI credits and contributor early access | **Built, not open yet** |
 
 No automated market launches, trading, wash-volume incentives, or spending are introduced by the discovery and analytics features.
 
@@ -175,7 +200,7 @@ Open `http://localhost:3001`. Configure the ignored `.env.local` from [.env.exam
 
 Start with the [documentation index](docs/README.md), then choose:
 
-- **Use the product:** [User guide](docs/USER_GUIDE.md) · [Builders](docs/BUILDERS.md) · [Discovery rewards](docs/DISCOVERY_REWARDS.md)
+- **Use the product:** [User guide](docs/USER_GUIDE.md) · [Builders](docs/BUILDERS.md) · [Discovery rewards](docs/DISCOVERY_REWARDS.md) · [Group launch](docs/BUNDLE_LAUNCH.md) · [Stock pairs](docs/STOCK_QUOTES.md) · [Fork guard](docs/FORK_GUARD.md) · [CLI](cli/README.md) · [Editor plugin](plugins/repo-ing/README.md)
 - **Understand the economics:** [Liquidity](docs/LIQUIDITY.md) · [Builder allocation](docs/BUILDER_ALLOCATION_PLAN.md) · [$REPOING](docs/REPO_TOKEN.md) · [Analytics](docs/ANALYTICS.md)
 - **Verify $REPOING:** [Official identity](docs/REPO_IDENTITY.md) · [Ordinary launch economics](docs/REPO_SELF_LAUNCH_REVIEW.md)
 - **Review or develop:** [Architecture](docs/ARCHITECTURE.md) · [Development](docs/DEVELOPMENT.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
