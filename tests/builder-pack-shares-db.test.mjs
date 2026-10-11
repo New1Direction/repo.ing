@@ -1,18 +1,25 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
+import { register } from 'node:module'
 import pg from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Keypair } from '@solana/web3.js'
-import { BUILDER_SHARE_BPS, builderShareTarget } from '../src/builder-pack-shares.mjs'
+import { encryptGithubSession } from '../app/lib/auth.mjs'
+import { BUILDER_SHARE_BPS, builderShareTarget, cachedShareTotals, claimPackShares } from '../src/builder-pack-shares.mjs'
 import { createCreditsPacks } from '../src/credits-packs.mjs'
-import { packBuilderTicket } from '../src/credits-tickets.mjs'
+import { CREDITS_SESSION_COOKIE, openCreditsSession } from '../src/credits-web.mjs'
+import { builderClaimTicket, packBuilderTicket } from '../src/credits-tickets.mjs'
 import { redeemHandoff } from '../src/repo-inference-handoff.mjs'
+
+// The routes import next/server the way Next resolves it (tests/fixtures/jsx-hooks.mjs); they are loaded when a test needs them.
+register(new URL('./fixtures/jsx-hooks.mjs', import.meta.url))
 
 // Real PostgreSQL with every committed migration (0069_pack_builder_shares): which repositories a pack may be opened for (one
 // read), the table's own rule for the repository and rate, and the pack quote for a repository against a stand-in credit service
-// that checks the signed ticket like the credit ledger and replays a quote under the same Idempotency-Key.
+// that checks the signed ticket like the credit ledger and replays a quote under the same Idempotency-Key. Then the builder's
+// side: the payout wallet holder's claim (an admin sign-in through the real handoff row, a signed ticket) and the share route.
 const url = process.env.BUILDER_PACK_SHARES_TEST_DATABASE_URL
 const SECRETS = { clientSecret: 'c'.repeat(40), assertionSecret: 'a'.repeat(40) }
 const SHARES = { secret: SECRETS.assertionSecret, shareBps: BUILDER_SHARE_BPS }
@@ -249,5 +256,228 @@ test('real PostgreSQL: a quote that names another repository or rate ends the re
     const [request] = (await pool.query(`select id, status from credit_pack_purchases`)).rows
     assert.equal(request.status, 'failed')
     assert.equal((await row(request.id)).repo, '1001')
+  } finally { await pool.end() }
+})
+
+// The credit service for builder shares: signs a builder in through the real handoff row, answers a repository's totals, and
+// answers a claim as the test scripts it (only for a session it signed in).
+function sharesService({ pool }) {
+  const requests = [], sessions = new Map()
+  const state = { claim: { claimed_micro: 1_000_000, shares: 1 }, claimStatus: 200, totals: id => ({ repo_id: id, packs: 0, paid_micro: 0, claimed_micro: 0 }), down: false }
+  const json = (body, status = 200) => new Response(JSON.stringify(body), { status })
+  const fetchImpl = async (address, init = {}) => {
+    const { pathname } = new URL(address), body = init.body ? JSON.parse(init.body) : null
+    requests.push({ pathname, method: init.method ?? 'GET', headers: init.headers ?? {}, body })
+    if (state.down) throw new TypeError('fetch failed')
+    if (pathname === '/sessions') {
+      const assertion = await redeemHandoff(pool, { audience: 'repo-inference', code: body.code, codeVerifier: body.code_verifier }, SECRETS)
+      const token = `ses_${randomBytes(24).toString('hex')}`
+      sessions.set(token, assertion)
+      return json({ token, login: assertion.login, expires_at: new Date(Date.now() + 3600_000).toISOString() })
+    }
+    if (pathname === '/builder-shares/claim') {
+      if (!sessions.has(String(init.headers?.authorization ?? '').replace('Bearer ', ''))) return json({ error: 'Sign in again.' }, 401)
+      return json(state.claim, state.claimStatus)
+    }
+    const total = (init.method ?? 'GET') === 'GET' && pathname.match(/^\/builder-shares\/(\d+)$/)
+    return total ? json(state.totals(total[1])) : json({ error: 'Not found' }, 404)
+  }
+  return { fetchImpl, requests, sessions, state }
+}
+
+const AT = Date.parse('2026-10-11T12:00:00Z')
+const CREDITS = { origin: 'https://credits.test', treasury: Keypair.generate().publicKey.toBase58(), network: 'devnet' }
+const HOLDER_SESSION = { repoId: '1001', githubUserId: HOLDER, githubLogin: 'holder', permission: 'admin' }
+async function claimWorld(pool) {
+  await seed(pool)
+  await pool.query('truncate auth_handoffs, agent_request_limits')
+  const service = sharesService({ pool })
+  const githubVerifier = { verifyCurrentAuthority: async () => ({ githubLogin: 'holder' }) }
+  const claim = (extra = {}) => claimPackShares({ pool, settings: CREDITS, shares: SHARES, githubVerifier, session: HOLDER_SESSION, repoId: '1001',
+    fetchImpl: service.fetchImpl, now: () => AT, ...extra })
+  const handoffs = async () => (await pool.query('select count(*)::int as n from auth_handoffs')).rows[0].n
+  const hits = async user => (await pool.query(`select hits from agent_request_limits where scope = $1`, [`credits:shares:${user}`])).rows[0]?.hits ?? 0
+  return { service, claim, handoffs, hits }
+}
+
+test('real PostgreSQL: the payout wallet holder claims through an admin sign-in and a ticket the credit ledger can check', { skip: !url }, async () => {
+  const pool = await connect()
+  try {
+    const { service, claim, handoffs, hits } = await claimWorld(pool)
+    // The totals read before are kept for a minute; a claim drops them so the page shows what is left.
+    service.state.totals = id => ({ repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 0 })
+    const readTotals = () => cachedShareTotals(CREDITS, '1001', { fetchImpl: service.fetchImpl, now: () => AT })
+    assert.equal((await readTotals()).unclaimedMicro, '3000000')
+    service.state.totals = id => ({ repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 1_000_000 })
+    assert.equal((await readTotals()).unclaimedMicro, '3000000', 'kept')
+    service.requests.length = 0
+
+    const result = await claim()
+    assert.deepEqual([result.claimedMicro, result.shares], ['1000000', 1])
+    assert.deepEqual(service.requests.map(request => request.pathname), ['/sessions', '/builder-shares/claim'])
+    const [token] = service.sessions.keys()
+    assert.deepEqual(result.session, { token, githubUserId: HOLDER, expiresAt: AT + 55 * 60_000 })
+    const [, sent] = service.requests
+    assert.equal(sent.method, 'POST')
+    assert.equal(sent.headers.authorization, `Bearer ${token}`)
+    const key = sent.headers['idempotency-key']
+    assert.match(key, /^[A-Za-z0-9_-]{22}$/)
+    assert.deepEqual(Object.keys(sent.body).sort(), ['repo_id', 'ticket'])
+    assert.equal(sent.body.repo_id, '1001')
+    assert.deepEqual(Object.keys(sent.body.ticket).sort(), ['issued_at', 'signature'])
+    assert.equal(sent.body.ticket.issued_at, '2026-10-11T12:00:00.000Z')
+    assert.equal(sent.body.ticket.signature, builderClaimTicket(SHARES.secret, { idempotencyKey: key, githubUserId: HOLDER, repoId: '1001', issuedAt: sent.body.ticket.issued_at }).signature)
+    // The sign-in was an admin handoff for this repository and this account, redeemed by the credit service.
+    const { rows } = await pool.query(`select permission, github_repo_id::text as repo, github_user_id::text as "user", github_login as login, consumed_at is not null as consumed from auth_handoffs`)
+    assert.deepEqual(rows, [{ permission: 'admin', repo: '1001', user: HOLDER, login: 'holder', consumed: true }])
+    assert.deepEqual([service.sessions.get(token).permission, service.sessions.get(token).repo_id], ['admin', '1001'])
+    assert.equal(await hits(HOLDER), 1)
+    assert.equal((await readTotals()).unclaimedMicro, '2000000', 'the totals are read again after a claim')
+
+    // A replay after a new sign-in answers 0: nothing new to claim, under a new key.
+    service.state.claim = { claimed_micro: 0, shares: 0 }
+    const replay = await claim()
+    assert.deepEqual([replay.claimedMicro, replay.shares, replay.session.token === token], ['0', 0, false])
+    const keys = service.requests.filter(request => request.pathname === '/builder-shares/claim').map(request => request.headers['idempotency-key'])
+    assert.equal(new Set(keys).size, 2)
+    assert.deepEqual([await hits(HOLDER), await handoffs()], [2, 2])
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL: a claim by anyone but the payout wallet holder, or past the limit, signs in nowhere; the credit service\'s answers are checked', { skip: !url }, async () => {
+  const pool = await connect()
+  try {
+    const { service, claim, handoffs, hits } = await claimWorld(pool)
+    const nothing = async () => assert.deepEqual([service.requests.length, await handoffs(), await hits(HOLDER), await hits('901')], [0, 0, 0, 0])
+    const forbidden = (extra, pattern) => assert.rejects(claim(extra), error => error.status === 403 && pattern.test(error.message))
+    // Another account, a repository with no payout wallet bound, a failed live admin check: all before any quota or sign-in.
+    await forbidden({ session: { ...HOLDER_SESSION, githubUserId: '901' } }, /payout wallet/)
+    await forbidden({ session: { ...HOLDER_SESSION, repoId: '1003' }, repoId: '1003' }, /payout wallet/)
+    await forbidden({ githubVerifier: { verifyCurrentAuthority: async () => { throw Error('no') } } }, /no longer lists you as an admin/)
+    await forbidden({ session: { ...HOLDER_SESSION, permission: 'identity' } }, /admin of this repository/)
+    await nothing()
+
+    // Five claims in ten minutes.
+    await pool.query(`insert into agent_request_limits(scope,hits,expires_at) values('credits:shares:900',5,now()+interval '10 minutes')`)
+    await assert.rejects(claim(), error => error.status === 429 && /Too many claims/.test(error.message))
+    assert.deepEqual([service.requests.length, await handoffs()], [0, 0])
+    await pool.query('truncate agent_request_limits')
+
+    // The credit service refuses, fails, or answers with something that is not a claim.
+    const outcome = async (claimAnswer, status = 200) => {
+      await pool.query('truncate agent_request_limits')
+      service.state.claim = claimAnswer
+      service.state.claimStatus = status
+      return claim().then(() => null, error => [error.status, error.message])
+    }
+    assert.deepEqual(await outcome({ error: 'Not an admin session' }, 403), [502, 'Not an admin session'])
+    assert.deepEqual(await outcome(null, 503), [502, 'The AI credits service answered HTTP 503.'])
+    for (const odd of [{ claimed_micro: -1, shares: 1 }, { claimed_micro: 1.5, shares: 1 }, { claimed_micro: '1', shares: 1 }, { claimed_micro: 1, shares: null }, {}]) {
+      assert.deepEqual(await outcome(odd), [502, 'The AI credits service returned an invalid claim.'], JSON.stringify(odd))
+    }
+    service.state.down = true
+    assert.deepEqual(await outcome({ claimed_micro: 1, shares: 1 }), [503, 'The AI credits service could not be reached. Try again in a minute.'])
+  } finally { await pool.end() }
+})
+
+// The share route against this database, GitHub and the credit service stood in for at the network (globalThis.fetch).
+const ROUTE_ENV = { REPO_INFERENCE_HANDOFF_ENABLED: 'true', REPO_INFERENCE_HANDOFF_SECRET: 'c'.repeat(40), HANDOFF_ASSERTION_SECRET: SECRETS.assertionSecret,
+  CREDITS_WEB_PACKS_ENABLED: 'true', CREDITS_WEB_BUILDER_SHARES_ENABLED: 'true', REPO_INFERENCE_CREDITS_ORIGIN: 'https://credits.repo.ing',
+  CREDITS_TREASURY_ADDRESS: Keypair.generate().publicKey.toBase58(), GITHUB_APP_CLIENT_ID: 'Iv1.test-only', APP_ORIGIN: 'https://repo.ing' }
+async function routeWorld(t, pool) {
+  const keys = [...Object.keys(ROUTE_ENV), 'DATABASE_URL', 'GITHUB_APP_CLIENT_SECRET']
+  const saved = { env: Object.fromEntries(keys.map(key => [key, process.env[key]])), pool: globalThis.__gitfunPool, fetch: globalThis.fetch }
+  t.after(() => {
+    for (const key of keys) saved.env[key] === undefined ? delete process.env[key] : process.env[key] = saved.env[key]
+    globalThis.__gitfunPool = saved.pool; globalThis.fetch = saved.fetch
+  })
+  Object.assign(process.env, ROUTE_ENV, { DATABASE_URL: url, GITHUB_APP_CLIENT_SECRET: randomBytes(32).toString('hex') })
+  globalThis.__gitfunPool = pool
+  const { service, handoffs } = await claimWorld(pool)
+  // GitHub, as the verifier calls it: the user, the repository (twice) and the user's permission on it.
+  const github = { user: { id: 900, login: 'holder' } }
+  globalThis.fetch = async (input, init) => {
+    const address = new URL(String(input))
+    if (address.origin === 'https://credits.repo.ing') return service.fetchImpl(String(input), init)
+    assert.equal(address.origin, 'https://api.github.com')
+    const body = address.pathname === '/user' ? github.user : address.pathname === '/repositories/1001' ? { id: 1001, owner: { login: 'octo' }, name: 'hello', private: false, archived: false }
+      : address.pathname === `/repos/octo/hello/collaborators/${github.user.login}/permission` ? { permission: 'admin', user: { id: github.user.id } } : null
+    return body ? Response.json(body) : new Response('not found', { status: 404 })
+  }
+  const route = await import('../app/api/credits/shares/[repo]/route.js')
+  const session = extra => encryptGithubSession({ githubUserId: HOLDER, githubLogin: 'holder', accessToken: 'ghu_test_only', sessionId: randomBytes(24).toString('hex'),
+    expiresAt: Date.now() + 60_000, ...extra })
+  const call = async (method, repo, cookie) => {
+    const response = await route[method]({ url: `https://repo.ing/api/credits/shares/${repo}`, headers: new Headers({ origin: 'https://repo.ing' }),
+      cookies: { get: name => cookie && name.includes('github') ? { value: cookie } : undefined }, json: async () => ({ action: 'claim' }) }, { params: Promise.resolve({ repo }) })
+    return { status: response.status, body: await response.json(), response }
+  }
+  return { service, handoffs, github, session, call }
+}
+
+test('real PostgreSQL route: GET says whether packs may back a repository, its totals once a minute, and whether the viewer holds the payout wallet', { skip: !url }, async t => {
+  const pool = await connect()
+  try {
+    const { service, session, call } = await routeWorld(t, pool)
+    service.state.totals = id => id === '1003' ? { repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 1_000_000 } : { repo_id: id, packs: 0, paid_micro: 0, claimed_micro: 0 }
+    const none = { packs: 0, paidMicro: '0', claimedMicro: '0', unclaimedMicro: '0' }
+    const base = { shareBps: 1000, reason: null, eligible: true, holder: false }
+    const anonymous = await call('GET', '1003')
+    assert.deepEqual([anonymous.status, anonymous.response.headers.get('cache-control')], [200, 'private, no-store'])
+    assert.deepEqual(anonymous.body, { repoId: '1003', fullName: 'octo/repo1003', ...base, packs: 3, paidMicro: '3000000', claimedMicro: '1000000', unclaimedMicro: '2000000' })
+    // A second look within the minute does not ask the credit service again.
+    const asked = () => service.requests.filter(request => request.pathname === '/builder-shares/1003').length
+    assert.equal(asked(), 1)
+    assert.equal((await call('GET', '1003', session({ scope: 'builders', repoId: null, permission: 'identity', githubUserId: '42' }))).body.eligible, true)
+    assert.equal(asked(), 1)
+
+    assert.deepEqual((await call('GET', '1001')).body, { repoId: '1001', fullName: 'octo/hello', ...base, ...none })
+    // The payout wallet holder sees their own repository as one their packs cannot back, and that they hold it.
+    const holder = await call('GET', '1001', session({ scope: 'builders', repoId: null, permission: 'identity' }))
+    assert.deepEqual(holder.body, { repoId: '1001', fullName: 'octo/hello', shareBps: 1000, eligible: false, reason: holder.body.reason, holder: true, ...none })
+    assert.match(holder.body.reason, /your own packs/)
+    const declined = await call('GET', '1002')
+    assert.deepEqual([declined.body.eligible, declined.body.fullName, declined.body.holder, declined.body.reason], [false, 'octo/repo1002', false, 'This repository’s maintainer opted out of repo.ing.'])
+    assert.match((await call('GET', '1004')).body.reason, /no market on repo\.ing/)
+    assert.deepEqual((await call('GET', '9999')).body, { repoId: '9999', fullName: null, shareBps: 1000, eligible: false, reason: 'This repository has no market on repo.ing yet.', holder: false, ...none })
+
+    // The credit service cannot be reached: no amounts, the rest still answers, and the failure is not kept.
+    service.state.down = true
+    const down = await call('GET', '1006')
+    assert.deepEqual([down.status, down.body.eligible, down.body.packs, down.body.paidMicro, down.body.claimedMicro, down.body.unclaimedMicro], [200, true, null, null, null, null])
+    service.state.down = false
+    assert.equal((await call('GET', '1006')).body.packs, 0)
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL route: POST claims for the holder, sets the credit session cookie, and refuses anyone else', { skip: !url }, async t => {
+  const pool = await connect()
+  try {
+    const { service, handoffs, github, session, call } = await routeWorld(t, pool)
+    // Not the payout wallet's holder: GitHub says they are an admin, but nothing is signed in or asked.
+    github.user = { id: 901, login: 'other' }
+    const other = await call('POST', '1001', session({ repoId: '1001', permission: 'admin', githubUserId: '901', githubLogin: 'other' }))
+    assert.deepEqual([other.status, other.body], [403, { error: 'Only the person who set this repository’s payout wallet can claim its pack shares.' }])
+    assert.equal(other.response.headers.get('set-cookie'), null)
+    assert.deepEqual([service.requests.length, await handoffs()], [0, 0])
+
+    // The holder: a live admin check with GitHub, the claim, and the credit service's session in an encrypted cookie.
+    github.user = { id: 900, login: 'holder' }
+    const claimed = await call('POST', '1001', session({ repoId: '1001', permission: 'admin' }))
+    assert.deepEqual([claimed.status, claimed.body], [200, { claimedMicro: '1000000', shares: 1 }])
+    assert.equal(claimed.response.headers.get('cache-control'), 'private, no-store')
+    const [token] = service.sessions.keys()
+    const cookie = claimed.response.cookies.get(CREDITS_SESSION_COOKIE)
+    assert.equal(openCreditsSession(cookie.value, HOLDER).token, token)
+    assert.match(claimed.response.headers.get('set-cookie'), /HttpOnly/i)
+    assert.match(claimed.response.headers.get('set-cookie'), /SameSite=strict/i)
+    assert.ok(!JSON.stringify(claimed.body).includes(token), 'the session token never reaches the page')
+    assert.equal(service.requests.at(-1).headers.authorization, `Bearer ${token}`)
+
+    // The credit service refuses: its plain message and status come through, with no cookie.
+    service.state.claim = { error: 'Not an admin session' }
+    service.state.claimStatus = 403
+    const refused = await call('POST', '1001', session({ repoId: '1001', permission: 'admin' }))
+    assert.deepEqual([refused.status, refused.body, refused.response.headers.get('set-cookie')], [502, { error: 'Not an admin session' }, null])
   } finally { await pool.end() }
 })
