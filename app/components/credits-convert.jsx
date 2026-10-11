@@ -22,7 +22,8 @@ const OPEN = ['quoted', 'prepared', 'submitted']
 const RESERVE = 1_000_000n
 const allOf = amount => { const lamports = BigInt(amount) - RESERVE; return lamports >= 10_000_000n ? sol(lamports) : '' }
 
-export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onClose }) {
+// keysLink: /credits#keys exists (the credit packs are on, src/credits-keys.mjs); without it the receipt names the CLI only.
+export function CreditsConvert({ repoId, claim = null, network = 'mainnet', keysLink = false, onClose }) {
   const { wallet, provider, connect } = useWallet()
   const walletRef = useRef(wallet); walletRef.current = wallet
   const [conversion, setConversion] = useState(null), [loaded, setLoaded] = useState(false)
@@ -110,7 +111,7 @@ export function CreditsConvert({ repoId, claim = null, network = 'mainnet', onCl
     {!loaded ? <p role="status">Checking your AI credits…</p> :
     conversion?.status === 'credited' ? <div className="claim-receipt" role="status"><div>
       <p>{usd(conversion.creditedMicro)} of AI credits added to your repo.ing account for {sol(conversion.lamports)} SOL.</p>
-      <p>Use them in your coding tool: <a href="/credits#keys">make a key on the credits page</a>. Or run <code>npx @repoing/cli credits key</code>.</p>
+      <p>Use them in your coding tool: {keysLink ? <><a href="/credits#keys" style={{ display: 'inline', margin: 0 }}>make a key on the credits page</a>. Or run <code>npx @repoing/cli credits key</code>.</> : <>run <code>npx @repoing/cli credits key</code> to make a key.</>}</p>
       <div className="credits-links">{conversion.signature && <a href={`https://explorer.solana.com/tx/${conversion.signature}${network === 'devnet' ? '?cluster=devnet' : ''}`} target="_blank" rel="noopener noreferrer">View payment ↗</a>}
         <button type="button" className="claim-text-button" onClick={() => setConversion(null)}>Convert more SOL</button></div></div></div> :
     conversion?.status === 'review' ? <p role="status">Your payment needs a review by repo.ing (wrong amount, late, or paid twice). Nothing is lost: you get a refund, or credits.</p> :

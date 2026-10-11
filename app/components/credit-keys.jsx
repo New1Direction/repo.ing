@@ -1,5 +1,6 @@
 'use client'
 import { Fragment, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { money } from './credit-packs/packs-model.mjs'
 import { DEFAULT_LABEL, LABEL_PATTERN, MIN_LIMIT_MICRO, STATE_NAMES, dayOf, settingLines, usdText, usdToMicro } from './credit-keys-model.mjs'
 
@@ -44,6 +45,12 @@ export function CreditKeys() {
     return load().catch(e => { setError({ where: 'top', text: e.message }); setData(current => ({ ...current, state: 'failed' })) })
   }
   useEffect(() => { open(); return () => clearTimeout(timer.current) }, [])
+  // Leaving the page drops the key at once (flushed, so the browser's back-forward cache cannot freeze the page with it on screen).
+  useEffect(() => {
+    const drop = () => flushSync(() => { setFresh(null); setCopied(''); setCopyFailed(false) })
+    window.addEventListener('pagehide', drop)
+    return () => window.removeEventListener('pagehide', drop)
+  }, [])
   // The new key is the thing to read next: bring it into view and move focus to it.
   useEffect(() => {
     if (!fresh || !freshRef.current) return
@@ -80,12 +87,14 @@ export function CreditKeys() {
       timer.current = setTimeout(() => setCopied(''), 2000)
     } catch { setCopyFailed(true) }
   }
+  const ready = data.state === 'ready'
+  // An error belongs where the click was; with no form or list on the page (the reload after a failed click found no session), at the top.
   const status = where => <>
     {busy?.where === where && <p className="claim-progress" role="status"><span className="claim-spinner" aria-hidden="true"/>{busy.text}</p>}
-    {error?.where === where && <p className="inline-error" role="alert">{error.text}</p>}
+    {error && (error.where === where || (where === 'top' && !ready)) && <p className="inline-error" role="alert">{error.text}</p>}
   </>
 
-  const ready = data.state === 'ready', available = data.availableMicro, hasCredits = available >= MIN_LIMIT_MICRO, working = Boolean(busy)
+  const available = data.availableMicro, hasCredits = available >= MIN_LIMIT_MICRO, working = Boolean(busy)
   const limitMicro = limit === null ? available : usdToMicro(limit)
   const nameError = LABEL_PATTERN.test(name) ? '' : NAME_HELP
   const limitError = limit === null ? '' : limitMicro === null ? 'Enter $0.01 or more, like 20 or 20.50.'

@@ -18,7 +18,7 @@ import { claimPageStep } from '../lib/claim-checklist.mjs'
 import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout-address'
 import { bindingLabel, formatUtcDateTime } from '../../src/payout-address-policy.mjs'
 
-export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
+export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', creditsKeysLink = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -129,7 +129,7 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
       {creditsEnabled && githubReady && !creditsChosen && !reinvestChosen && <button className="button outline" type="button" onClick={() => setCreditsChosen(true)}>Convert to AI credits</button>}
     </div></div>}
     {creditsEnabled && creditsChosen && githubReady && <CreditsConvert key={`${repoId}:${settledClaim?.signature ?? 'wallet'}`} repoId={repoId}
-      claim={settledClaim && justClaimed ? settledClaim : null} network={creditsNetwork} onClose={() => setCreditsChosen(false)}/>}
+      claim={settledClaim && justClaimed ? settledClaim : null} network={creditsNetwork} keysLink={creditsKeysLink} onClose={() => setCreditsChosen(false)}/>}
     {(reinvestEnabled || reinvestAfterClaim) && reinvestChosen && githubReady && settledClaim && settledClaim.wallet === bound && <BuilderReinvest key={`${repoId}:${settledClaim.signature}`} repoId={repoId} claim={settledClaim} onClose={() => setReinvestChosen(false)}/>}
     <div className={`claim-step ${currentStep === 1 ? 'current' : ''}`}>
       <div className={`step-number ${githubReady && appReady ? 'done' : ''}`}>{githubReady && appReady ? <Check size={18}/> : 1}</div>
