@@ -463,6 +463,13 @@
       "when": 1790910028000,
       "tag": "0068_trend_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1790910029000,
+      "tag": "0069_pack_builder_shares",
+      "breakpoints": true
     }
   ]
 }

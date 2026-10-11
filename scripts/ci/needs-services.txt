@@ -4,6 +4,7 @@ alerts-models-db
 backers-db
 builder-allocation
 builder-binding
+builder-pack-shares-db
 builder-payouts
 builder-reinvest
 bundle-launch-chain

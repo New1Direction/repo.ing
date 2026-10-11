@@ -47,6 +47,8 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_credits_web_test'),
   // AI credit packs (migration 0066): a pack's quote, one approved transfer and its spin, on the validator.
   launchtest('repoing_credits_packs_test'),
+  // Every pack pays a builder (migration 0069): which repositories a pack may back, and the pack quote for one, on PostgreSQL.
+  launchtest('repoing_builder_pack_shares_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -62,6 +64,7 @@ export const DEFAULT_ENV = {
   REFERRAL_SPONSOR_TEST_DATABASE_URL: launchtest('repoing_referral_sponsor_test'),
   CREDITS_WEB_TEST_DATABASE_URL: launchtest('repoing_credits_web_test'),
   CREDITS_PACKS_TEST_DATABASE_URL: launchtest('repoing_credits_packs_test'),
+  BUILDER_PACK_SHARES_TEST_DATABASE_URL: launchtest('repoing_builder_pack_shares_test'),
   X_LINKS_TEST_DATABASE_URL: launchtest('repoing_x_links_test'),
   BACKERS_TEST_DATABASE_URL: launchtest('repoing_backers_test'),
   LAUNCH_ALERTS_TEST_DATABASE_URL: launchtest('repoing_launch_alerts_test'),
