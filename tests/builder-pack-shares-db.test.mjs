@@ -7,7 +7,7 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Keypair } from '@solana/web3.js'
 import { encryptGithubSession } from '../app/lib/auth.mjs'
-import { BUILDER_SHARE_BPS, builderShareTarget, cachedShareTotals, claimPackShares } from '../src/builder-pack-shares.mjs'
+import { BUILDER_SHARE_BPS, UPSTREAM_BUDGET, builderShareTarget, cachedShareTotals, claimPackShares, forgetShareTotals } from '../src/builder-pack-shares.mjs'
 import { createCreditsPacks } from '../src/credits-packs.mjs'
 import { CREDITS_SESSION_COOKIE, openCreditsSession } from '../src/credits-web.mjs'
 import { builderClaimTicket, packBuilderTicket } from '../src/credits-tickets.mjs'
@@ -75,6 +75,13 @@ test('real PostgreSQL: one read decides which repositories a pack may back', { s
     await refused('1007', /no market on repo\.ing/)
     await refused('1008', /no market on repo\.ing/)
     await refused('4503599627370497', /GitHub repositories/)
+    // The operator's do-not-promote list.
+    const listed = process.env.PROMOTION_EXCLUDED_REPO_IDS
+    process.env.PROMOTION_EXCLUDED_REPO_IDS = '1003'
+    try {
+      await refused('1003', /does not promote this repository/)
+      assert.deepEqual(await target('1001', '42'), { repoId: '1001', fullName: 'octo/hello' }, 'only the listed repository')
+    } finally { listed === undefined ? delete process.env.PROMOTION_EXCLUDED_REPO_IDS : process.env.PROMOTION_EXCLUDED_REPO_IDS = listed }
     let reads = 0
     const counted = { query: (...args) => { reads++; return pool.query(...args) } }
     await builderShareTarget(counted, { repoId: '1001', buyerGithubUserId: '42' })
@@ -308,7 +315,7 @@ test('real PostgreSQL: the payout wallet holder claims through an admin sign-in 
     // The totals read before are kept for a minute; a claim drops them so the page shows what is left.
     service.state.totals = id => ({ repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 0 })
     // A clock of its own (0): the entry is long stale for the routes below, which read the real clock.
-    const readTotals = () => cachedShareTotals(CREDITS, '1001', { fetchImpl: service.fetchImpl, now: () => 0 })
+    const readTotals = () => cachedShareTotals(CREDITS, '1001', { pool, fetchImpl: service.fetchImpl, now: () => 0 })
     assert.equal((await readTotals()).unclaimedMicro, '3000000')
     service.state.totals = id => ({ repo_id: id, packs: 3, paid_micro: 3_000_000, claimed_micro: 1_000_000 })
     assert.equal((await readTotals()).unclaimedMicro, '3000000', 'kept')
@@ -457,14 +464,41 @@ test('real PostgreSQL route: GET says whether packs may back a repository, its t
       assert.equal(asked(id), 0, `${id}: nothing asked`)
     }
 
-    // The credit service cannot be reached: no amounts, the rest still answers, and the failure is not kept.
+    // The credit service cannot be reached: no amounts, the rest still answers, and the failure is kept 30 seconds, so the next look
+    // does not ask again; once it is dropped, the credit service is asked again.
     service.state.down = true
+    const warned = t.mock.method(console, 'warn', () => {})
+    globalThis.__repoingShareTotals.logged.clear()
     const down = await call('GET', '1006')
     assert.deepEqual([down.status, down.body.eligible, down.body.packs, down.body.paidMicro, down.body.claimedMicro, down.body.unclaimedMicro], [200, true, null, null, null, null])
     service.state.down = false
+    assert.equal((await call('GET', '1006')).body.packs, null, 'kept')
+    assert.equal(asked('1006'), 1)
+    forgetShareTotals('1006')
     assert.equal((await call('GET', '1006')).body.packs, 0)
+    assert.equal(asked('1006'), 2)
+    assert.deepEqual([warned.mock.callCount(), warned.mock.calls[0].arguments[0]], [1, 'builder_share_totals_unavailable'])
     assert.deepEqual([...new Set(service.requests.map(request => request.pathname))].sort(),
       ['/builder-shares/1001', '/builder-shares/1002', '/builder-shares/1003', '/builder-shares/1006'], 'the credit service was asked about confirmed SOL markets only')
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL: totals are read only on a cache miss and within one budget for all repositories, shared through agent_request_limits', { skip: !url }, async () => {
+  const pool = await connect()
+  try {
+    await pool.query('truncate agent_request_limits')
+    const [scope, limit] = UPSTREAM_BUDGET
+    const asked = []
+    const fetchImpl = async address => { asked.push(address); const repo = address.split('/').pop(); return { ok: true, status: 200, json: async () => ({ repo_id: repo, packs: 1, paid_micro: 1, claimed_micro: 0 }) } }
+    const read = id => cachedShareTotals(CREDITS, String(id), { pool, fetchImpl, log: () => {} })
+    const answers = await Promise.all(Array.from({ length: limit + 15 }, (_, i) => read(400_000 + i)))
+    assert.equal(asked.length, limit, 'no more credit service calls than the budget, whatever the crawl')
+    assert.equal(answers.filter(answer => answer === null).length, 15)
+    assert.equal((await pool.query('select hits from agent_request_limits where scope = $1', [scope])).rows[0].hits, limit)
+    // Hits and kept refusals use none of it.
+    await read(400_000); await read(400_000 + limit)
+    assert.equal(asked.length, limit)
+    assert.equal((await pool.query('select hits from agent_request_limits where scope = $1', [scope])).rows[0].hits, limit)
   } finally { await pool.end() }
 })
 

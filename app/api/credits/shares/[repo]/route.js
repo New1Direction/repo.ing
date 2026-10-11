@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { CREDITS_SESSION_COOKIE, CreditsWebError, sealCreditsSession } from '../../../../../src/credits-web.mjs'
 import { creditsPacksSettings } from '../../../../../src/credits-packs.mjs'
-import { builderShareTargetOf, builderSharesSettings, cachedShareTotals, claimPackShares, confirmedSolMarket, shareRepository } from '../../../../../src/builder-pack-shares.mjs'
+import { builderShareTargetOf, builderSharesSettings, cachedShareTotals, claimPackShares, confirmedSolMarket, logShareProblem, shareRepository } from '../../../../../src/builder-pack-shares.mjs'
 import { takeQuota } from '../../../../../src/request-quota.mjs'
 import { assertSameOrigin, cookieOptions, githubSessionCookie, readGithubSession } from '../../../../lib/auth.mjs'
 import { sessionVerifier } from '../../../../lib/github-session.mjs'
@@ -23,8 +23,8 @@ const reply = (body, status = 200, session = null) => {
 // A GET is public and can name any repository, so it is counted before anything is read (agent_request_limits, shared by every
 // replica; the key is a keyed hash of the visitor's address, and requests with no address share one allowance): 60 a minute
 // each, 240 in all. The visitor's own allowance is taken first, so one visitor's refused requests never use up the one for all.
-// The credit service allows repo.ing's one server address 300 calls a minute, pack purchases included; a GET makes at most one
-// (totals are kept for a minute per repository).
+// The credit service allows repo.ing's one server address 300 calls a minute, pack purchases and claims included; a GET makes at most
+// one, and only on a cache miss within a shared budget of 120 a minute (cachedShareTotals, src/builder-pack-shares.mjs).
 const GET_QUOTA = { global: [240, 60], client: [60, 60] }
 const repoOf = async params => { const { repo } = await params; return /^[1-9]\d{0,18}$/.test(repo ?? '') ? repo : null }
 
@@ -33,7 +33,8 @@ export async function GET(request, { params }) {
   const repoId = await repoOf(params)
   if (!shares || !settings || !pool || !repoId) return reply({ error: 'Not found' }, 404)
   let allowed
-  try { allowed = await takeQuota(pool, [[`credits:shares:get:client:${clientKey(request)}`, ...GET_QUOTA.client], ['credits:shares:get:global', ...GET_QUOTA.global]]) } catch {
+  try { allowed = await takeQuota(pool, [[`credits:shares:get:client:${clientKey(request)}`, ...GET_QUOTA.client], ['credits:shares:get:global', ...GET_QUOTA.global]]) } catch (error) {
+    logShareProblem('builder_share_quota_unavailable', { code: error?.code ?? error?.name ?? 'error' })
     return reply({ error: 'Share totals are not available right now. Try again in a minute.' }, 503)
   }
   if (!allowed) {
@@ -49,7 +50,7 @@ export async function GET(request, { params }) {
   } catch (error) { reason = error instanceof CreditsWebError ? error.message : 'This repository cannot be checked right now.' }
   // Amounts are asked of the credit service for a confirmed SOL market only, not for an eligible one alone: the payout wallet
   // holder's own repository and a declined one have shares to show too.
-  const totals = confirmedSolMarket(row) ? await cachedShareTotals(settings, repoId).catch(() => null) : null
+  const totals = confirmedSolMarket(row) ? await cachedShareTotals(settings, repoId, { pool }).catch(() => null) : null
   const { rows: [known] } = row ? { rows: [] } : await pool.query('select full_name as "fullName" from repositories where github_repo_id=$1::bigint', [repoId]).catch(() => ({ rows: [] }))
   return reply({ repoId, fullName: target?.fullName ?? row?.fullName ?? known?.fullName ?? null, shareBps: shares.shareBps, eligible: Boolean(target), reason,
     ...totals ?? { packs: null, paidMicro: null, claimedMicro: null, unclaimedMicro: null },
@@ -64,8 +65,10 @@ export async function POST(request, { params }) {
   try {
     assertSameOrigin(request, publicOrigin(request.url))
     session = readGithubSession(request.cookies.get(githubSessionCookie)?.value)
+    if (!session) throw Error('no session')
+    if (Number(request.headers.get('content-length') ?? 0) > 8000) throw Error('too large')
     const body = await request.json()
-    if (!session || body?.action !== 'claim' || Object.keys(body).length !== 1) throw Error('invalid')
+    if (body?.action !== 'claim' || Object.keys(body).length !== 1) throw Error('invalid')
   } catch { return reply({ error: 'Invalid or expired request. Refresh the page and sign in with GitHub again.' }, 403) }
   try {
     const result = await claimPackShares({ pool, settings, shares, session, repoId, githubVerifier: sessionVerifier(session, request.url) })

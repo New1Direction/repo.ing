@@ -4,6 +4,7 @@ import { builderClaimTicket } from './credits-tickets.mjs'
 import { handoffSettings } from './repo-inference-handoff.mjs'
 import { isGithubRepoId } from './market-identity.mjs'
 import { takeQuota } from './request-quota.mjs'
+import { isPromotionExcluded } from '../app/lib/promotion-exclusions.mjs'
 // Never import src/credits-packs.mjs here: it imports this module (no cycle). The packs switch is read directly.
 
 // Every pack pays a builder (docs/CREDITS_WEB.md, "Builder shares"; owner decision 2026-10-11): a pack opened for a repository
@@ -47,6 +48,8 @@ export function builderShareTargetOf(row, { buyerGithubUserId }) {
   if (row.source !== 'github') refuse('Packs can back GitHub repositories only.')
   if (row.quoteAssetId || row.quoteMint) refuse('This is a stock pair: its builder share already goes to liquidity, so packs cannot back it.')
   if (row.declined) refuse('This repository’s maintainer opted out of repo.ing.')
+  // The operator's do-not-promote list (PROMOTION_EXCLUDED_REPO_IDS). A maintainer's opt-out is the declined check above.
+  if (isPromotionExcluded(row.repoId)) refuse('repo.ing does not promote this repository.')
   if (row.holder && row.holder === String(buyerGithubUserId)) refuse('You hold this repository’s payout wallet, so your own packs cannot pay it.')
   return { repoId: row.repoId, fullName: row.fullName }
 }
@@ -66,19 +69,51 @@ export async function readShareTotals({ fetchImpl = fetch, settings, repoId }) {
   return { packs: value.packs, paidMicro: String(value.paid_micro), claimedMicro: String(value.claimed_micro), unclaimedMicro: String(value.paid_micro - value.claimed_micro) }
 }
 
-// Totals are public and anyone can ask for any repository: one credit service read per repository a minute, for at most 500
-// repositories (the oldest entry goes first). An entry is the read itself, so callers waiting at the same time share it, and
-// a failed read is dropped. Kept per process; a claim drops its repository's entry so the page shows what is left.
-const TOTALS_SECONDS = 60, TOTALS_ENTRIES = 500
-const totalsCache = new Map()
-export function cachedShareTotals(settings, repoId, { fetchImpl = fetch, now = () => Date.now() } = {}) {
-  const key = String(repoId), kept = totalsCache.get(key)
-  if (kept && now() - kept.at < TOTALS_SECONDS * 1000) return kept.read
-  const entry = { at: now(), read: readShareTotals({ fetchImpl, settings, repoId }) }
-  totalsCache.delete(key)
-  if (totalsCache.size >= TOTALS_ENTRIES) totalsCache.delete(totalsCache.keys().next().value)
-  totalsCache.set(key, entry)
-  entry.read.catch(() => { if (totalsCache.get(key) === entry) totalsCache.delete(key) })
+// Totals are public and anyone can ask for any repository, and token pages are rendered on demand, so a crawl asks for thousands.
+// Three limits keep that off the credit service, whose 300 calls a minute for repo.ing's one address are shared with pack
+// quotes and claims. (1) One read per repository a minute, for at most 500 repositories (the oldest entry goes first); an entry is
+// the read itself, so callers waiting at the same time share it. (2) Only a miss may read, and misses share a budget of 120 a
+// minute in agent_request_limits (every replica); a refused miss answers null and, like a failed read, is kept 30 seconds, so a
+// bad minute is not asked again by every render. (3) The entries live on globalThis, so the route and the pages (separate module
+// copies) share them. A claim drops its repository's entry so the page shows what is left.
+const TOTALS_SECONDS = 60, FAILED_SECONDS = 30, TOTALS_ENTRIES = 500, LOG_SECONDS = 60
+export const UPSTREAM_BUDGET = ['credits:shares:upstream', 120, 60]
+const state = globalThis.__repoingShareTotals ??= { cache: new Map(), logged: new Map() }
+export const forgetShareTotals = repoId => { state.cache.delete(String(repoId)) }
+
+/** One server log line per event a minute for this process (a down credit service would otherwise log on every render). */
+export function logShareProblem(event, details, { log = console.warn, now = () => Date.now() } = {}) {
+  const at = now(), last = state.logged.get(event)
+  if (last !== undefined && at >= last && at - last < LOG_SECONDS * 1000) return false
+  state.logged.set(event, at)
+  log(event, details)
+  return true
+}
+
+/**
+ * A repository's builder shares: the cached totals, or one read of the credit service within the upstream budget. Resolves null
+ * when the budget refuses (or cannot be counted: no count, no read) and rejects when the read fails; callers show the page without
+ * amounts either way. pool is required: it holds the budget.
+ */
+export function cachedShareTotals(settings, repoId, { pool, fetchImpl = fetch, now = () => Date.now(), log } = {}) {
+  if (!pool) throw new TypeError('cachedShareTotals needs the database for its upstream budget')
+  const key = String(repoId), kept = state.cache.get(key)
+  if (kept && now() - kept.at < kept.seconds * 1000) return kept.read
+  const entry = { at: now(), seconds: TOTALS_SECONDS, read: null }
+  const fail = (reason, details) => {
+    entry.at = now(); entry.seconds = FAILED_SECONDS
+    logShareProblem('builder_share_totals_unavailable', { reason, ...details }, { log, now })
+  }
+  entry.read = (async () => {
+    let allowed = false
+    try { allowed = await takeQuota(pool, [UPSTREAM_BUDGET]) } catch (error) { fail('budget', { code: error?.code ?? error?.name ?? 'error' }); return null }
+    if (!allowed) { fail('budget'); return null }
+    try { return await readShareTotals({ fetchImpl, settings, repoId }) } catch (error) { fail('read', { status: error?.status }); throw error }
+  })()
+  state.cache.delete(key)
+  if (state.cache.size >= TOTALS_ENTRIES) state.cache.delete(state.cache.keys().next().value)
+  state.cache.set(key, entry)
+  entry.read.catch(() => {})
   return entry.read
 }
 
@@ -102,6 +137,6 @@ export async function claimPackShares({ pool, settings, shares, githubVerifier, 
   const result = await creditsCall(fetchImpl, settings.origin, '/builder-shares/claim', { method: 'POST', token: credits.token, idempotencyKey,
     body: { repo_id: String(repoId), ticket } })
   if (!whole(result.claimed_micro) || !whole(result.shares)) throw new CreditsWebError('The AI credits service returned an invalid claim.', 502)
-  totalsCache.delete(String(repoId))
+  forgetShareTotals(repoId)
   return { claimedMicro: String(result.claimed_micro), shares: result.shares, session: credits }
 }
