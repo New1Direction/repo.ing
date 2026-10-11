@@ -27,16 +27,33 @@ const TARGET_SQL = `select r.github_repo_id::text as "repoId", r.full_name as "f
   where r.github_repo_id = $1::bigint`
 const refuse = message => { throw new CreditsWebError(message, 400) }
 
-/** The repository a pack may be opened for, or a CreditsWebError (400) saying why not. One read. */
-export async function builderShareTarget(pool, { repoId, buyerGithubUserId }) {
+/** The one read behind every question about a repository's market here: its row, or null when it has none. A CreditsWebError (400) for an id that is not a GitHub repository id. */
+export async function shareRepository(pool, repoId) {
   if (!/^[1-9]\d{0,18}$/.test(String(repoId ?? '')) || !isGithubRepoId(String(repoId))) refuse('Packs can back GitHub repositories only.')
   const { rows: [row] } = await pool.query(TARGET_SQL, [String(repoId)])
-  if (!row || row.status !== 'confirmed' || !row.indexed || row.launchFinality !== 'finalized') refuse('This repository has no market on repo.ing yet.')
+  return row ?? null
+}
+const hasLiveMarket = row => Boolean(row) && row.status === 'confirmed' && row.indexed && row.launchFinality === 'finalized'
+/**
+ * Whether a row from shareRepository is a confirmed, finalized GitHub market in SOL: the only kind with builder shares to ask the
+ * credit service about. Not "may a pack back it" (builderShareTargetOf): the payout wallet holder's own repository and a declined one
+ * have shares to show too.
+ */
+export const confirmedSolMarket = row => hasLiveMarket(row) && row.source === 'github' && !row.quoteAssetId && !row.quoteMint
+
+/** The repository a pack may be opened for, from its row (shareRepository), or a CreditsWebError (400) saying why not. */
+export function builderShareTargetOf(row, { buyerGithubUserId }) {
+  if (!hasLiveMarket(row)) refuse('This repository has no market on repo.ing yet.')
   if (row.source !== 'github') refuse('Packs can back GitHub repositories only.')
   if (row.quoteAssetId || row.quoteMint) refuse('This is a stock pair: its builder share already goes to liquidity, so packs cannot back it.')
   if (row.declined) refuse('This repository’s maintainer opted out of repo.ing.')
   if (row.holder && row.holder === String(buyerGithubUserId)) refuse('You hold this repository’s payout wallet, so your own packs cannot pay it.')
   return { repoId: row.repoId, fullName: row.fullName }
+}
+
+/** The repository a pack may be opened for, or a CreditsWebError (400) saying why not. One read. */
+export async function builderShareTarget(pool, { repoId, buyerGithubUserId }) {
+  return builderShareTargetOf(await shareRepository(pool, repoId), { buyerGithubUserId })
 }
 
 const whole = value => Number.isSafeInteger(value) && value >= 0

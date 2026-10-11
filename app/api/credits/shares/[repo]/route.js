@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
 import { CREDITS_SESSION_COOKIE, CreditsWebError, sealCreditsSession } from '../../../../../src/credits-web.mjs'
 import { creditsPacksSettings } from '../../../../../src/credits-packs.mjs'
-import { builderShareTarget, builderSharesSettings, cachedShareTotals, claimPackShares } from '../../../../../src/builder-pack-shares.mjs'
+import { builderShareTargetOf, builderSharesSettings, cachedShareTotals, claimPackShares, confirmedSolMarket, shareRepository } from '../../../../../src/builder-pack-shares.mjs'
+import { takeQuota } from '../../../../../src/request-quota.mjs'
 import { assertSameOrigin, cookieOptions, githubSessionCookie, readGithubSession } from '../../../../lib/auth.mjs'
 import { sessionVerifier } from '../../../../lib/github-session.mjs'
+import { clientKey } from '../../../../lib/holder-notes.mjs'
 import { publicOrigin } from '../../../../lib/origin.mjs'
 import { database } from '../../../../lib/server.mjs'
 export const runtime = 'nodejs'
@@ -18,21 +20,40 @@ const reply = (body, status = 200, session = null) => {
     { ...cookieOptions, sameSite: 'strict', maxAge: Math.max(1, Math.floor((session.expiresAt - Date.now()) / 1000)) })
   return response
 }
+// A GET is public and can name any repository, so it is counted before anything is read (agent_request_limits, shared by every
+// replica; the key is a keyed hash of the visitor's address, and requests with no address share one allowance): 60 a minute
+// each, 240 in all. The visitor's own allowance is taken first, so one visitor's refused requests never use up the one for all.
+// The credit service allows repo.ing's one server address 300 calls a minute, pack purchases included; a GET makes at most one
+// (totals are kept for a minute per repository).
+const GET_QUOTA = { global: [240, 60], client: [60, 60] }
 const repoOf = async params => { const { repo } = await params; return /^[1-9]\d{0,18}$/.test(repo ?? '') ? repo : null }
 
 export async function GET(request, { params }) {
   const shares = builderSharesSettings(), settings = creditsPacksSettings(), pool = database()
   const repoId = await repoOf(params)
   if (!shares || !settings || !pool || !repoId) return reply({ error: 'Not found' }, 404)
+  let allowed
+  try { allowed = await takeQuota(pool, [[`credits:shares:get:client:${clientKey(request)}`, ...GET_QUOTA.client], ['credits:shares:get:global', ...GET_QUOTA.global]]) } catch {
+    return reply({ error: 'Share totals are not available right now. Try again in a minute.' }, 503)
+  }
+  if (!allowed) {
+    const limited = reply({ error: 'Too many requests. Try again in a minute.' }, 429)
+    limited.headers.set('Retry-After', '60')
+    return limited
+  }
   const session = readGithubSession(request.cookies.get(githubSessionCookie)?.value)
-  let target = null, reason = null
-  try { target = await builderShareTarget(pool, { repoId, buyerGithubUserId: session?.githubUserId ?? '0' }) } catch (error) { reason = error instanceof CreditsWebError ? error.message : 'This repository cannot be checked right now.' }
-  const totals = await cachedShareTotals(settings, repoId).catch(() => null)
-  const { rows: [binding] } = await pool.query('select github_user_id::text as holder from repo_beneficiaries where github_repo_id=$1::bigint', [repoId]).catch(() => ({ rows: [] }))
-  const { rows: [repo] } = await pool.query('select full_name as "fullName" from repositories where github_repo_id=$1::bigint', [repoId]).catch(() => ({ rows: [] }))
-  return reply({ repoId, fullName: target?.fullName ?? repo?.fullName ?? null, shareBps: shares.shareBps, eligible: Boolean(target), reason,
+  let row = null, target = null, reason = null
+  try {
+    row = await shareRepository(pool, repoId)
+    target = builderShareTargetOf(row, { buyerGithubUserId: session?.githubUserId ?? '0' })
+  } catch (error) { reason = error instanceof CreditsWebError ? error.message : 'This repository cannot be checked right now.' }
+  // Amounts are asked of the credit service for a confirmed SOL market only, not for an eligible one alone: the payout wallet
+  // holder's own repository and a declined one have shares to show too.
+  const totals = confirmedSolMarket(row) ? await cachedShareTotals(settings, repoId).catch(() => null) : null
+  const { rows: [known] } = row ? { rows: [] } : await pool.query('select full_name as "fullName" from repositories where github_repo_id=$1::bigint', [repoId]).catch(() => ({ rows: [] }))
+  return reply({ repoId, fullName: target?.fullName ?? row?.fullName ?? known?.fullName ?? null, shareBps: shares.shareBps, eligible: Boolean(target), reason,
     ...totals ?? { packs: null, paidMicro: null, claimedMicro: null, unclaimedMicro: null },
-    holder: Boolean(session && binding?.holder && binding.holder === String(session.githubUserId)) })
+    holder: Boolean(session && row?.holder && row.holder === String(session.githubUserId)) })
 }
 
 export async function POST(request, { params }) {
