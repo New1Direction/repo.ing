@@ -38,6 +38,20 @@ export function pulsePins(events, barTimes, { interval = 0, from = -Infinity, to
   return [...pins].sort(([a], [b]) => a - b).map(([time, grouped]) => pinOf(time, grouped))
 }
 
+// The bars end at the last trade, so events after it need somewhere to stand: whitespace times from the last bar to the
+// newest event's bar. They use the chart's own interval while that takes at most `points` points, else a coarser whole
+// multiple of it, so a market quiet for weeks gets a short tail, not thousands of empty bars. No prices are made up.
+export const PULSE_TAIL_POINTS = 48
+export function pulseTail(events, lastBar, interval, points = PULSE_TAIL_POINTS) {
+  if (!events?.length || !Number.isFinite(lastBar) || !(interval > 0)) return []
+  const newest = events.reduce((latest, event) => PULSE_KIND[event?.kind] && Number.isFinite(event.time) ? Math.max(latest, event.time) : latest, -Infinity)
+  const end = lastBar + Math.floor((newest - lastBar) / interval) * interval
+  if (!(end > lastBar)) return []
+  const step = interval * Math.ceil((end - lastBar) / interval / points), times = []
+  for (let time = lastBar + step; time < end; time += step) times.push(time)
+  return [...times, end]
+}
+
 const leadKind = events => events.reduce((best, event) => PULSE_KIND[event.kind].priority > PULSE_KIND[best].priority ? event.kind : best, events[0].kind)
 function pinOf(time, events) {
   const newest = events.toSorted((a, b) => b.time - a.time)

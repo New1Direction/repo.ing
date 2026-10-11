@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { PULSE_KIND, pulseAge, pulseClusters, pulseDescribe, pulseHref, pulseLead, pulseLinkLabel, pulsePinLabel, pulsePins, pulseUtc } from '../app/lib/pulse-chart.mjs'
+import { PULSE_KIND, PULSE_TAIL_POINTS, pulseAge, pulseClusters, pulseDescribe, pulseHref, pulseLead, pulseLinkLabel, pulsePinLabel, pulsePins, pulseTail, pulseUtc } from '../app/lib/pulse-chart.mjs'
 
 const HOUR = 3600
 const bars = [0, 1, 2, 3, 4].map(i => 1_790_000_000 + i * HOUR)
@@ -50,6 +50,50 @@ test('an event after the last bar joins it only within one interval', () => {
   assert.equal(pins.length, 1)
   assert.equal(pins[0].time, bars.at(-1))
   assert.equal(pins[0].kind, 'release')
+})
+
+test('a market quiet since its last trade gets a tail to its newest event, so later events keep their place', () => {
+  // Arrange: the last trade bar is bars[4]; a release five and a half hours later, a merge two hours later
+  const events = [event('merge', bars[4] + 2 * HOUR + 60), event('release', bars[4] + 5 * HOUR + 1800)]
+
+  // Act
+  const tail = pulseTail(events, bars.at(-1), HOUR)
+  const pins = pulsePins(events, [...bars, ...tail], { interval: HOUR })
+
+  // Assert: the chart's own interval while it fits, ending at the newest event's bar
+  assert.deepEqual(tail, [1, 2, 3, 4, 5].map(i => bars[4] + i * HOUR))
+  assert.deepEqual(pins.map(pin => [pin.time, pin.kind]), [[bars[4] + 2 * HOUR, 'merge'], [bars[4] + 5 * HOUR, 'release']])
+})
+
+test('a long quiet stretch gets a short tail on a coarser whole multiple of the interval', () => {
+  const minute = 60, last = 1_790_000_040, newest = last + 13 * 24 * HOUR + 17
+  const events = [event('stars', last + 3 * 24 * HOUR), event('commits', newest)]
+
+  const tail = pulseTail(events, last, minute)
+  const pins = pulsePins(events, [last, ...tail], { interval: minute })
+
+  assert.ok(tail.length <= PULSE_TAIL_POINTS)
+  assert.equal(tail.at(-1), Math.floor(newest / minute) * minute)
+  assert.ok(tail.every((time, i) => time > (tail[i - 1] ?? last) && (time - last) % minute === 0))
+  assert.deepEqual(pins.map(pin => pin.kind), ['stars', 'commits'])
+  assert.equal(pins.at(-1).time, tail.at(-1))
+})
+
+test('a chart with many trade bars may give its tail as many points', () => {
+  const last = 1_790_000_040, events = [event('release', last + 1000 * 60)]
+
+  assert.equal(pulseTail(events, last, 60).length, PULSE_TAIL_POINTS)
+  assert.deepEqual(pulseTail(events, last, 60, 1000), Array.from({ length: 1000 }, (_, i) => last + (i + 1) * 60))
+})
+
+test('no tail without a later event, a last bar or a valid interval', () => {
+  assert.deepEqual(pulseTail([event('release', bars[4] + HOUR - 1)], bars[4], HOUR), [])
+  assert.deepEqual(pulseTail([event('release', bars[1])], bars[4], HOUR), [])
+  assert.deepEqual(pulseTail([event('deploy', bars[4] + 9 * HOUR), event('merge', Number.NaN)], bars[4], HOUR), [])
+  assert.deepEqual(pulseTail([], bars[4], HOUR), [])
+  assert.deepEqual(pulseTail(null, bars[4], HOUR), [])
+  assert.deepEqual(pulseTail([event('release', bars[4] + 9 * HOUR)], undefined, HOUR), [])
+  assert.deepEqual(pulseTail([event('release', bars[4] + 9 * HOUR)], bars[4], 0), [])
 })
 
 test('unknown kinds, invalid times and events outside from/to are ignored', () => {

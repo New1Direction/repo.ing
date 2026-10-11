@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { commitEvents, createDevPulseCollector, hnEvents, mergeEvents, milestoneEvents, nextCheckDelay, releaseEvents, starSpikeEvent } from '../src/dev-pulse.mjs'
-import { selectTicker, summarizePulse } from '../app/lib/dev-pulse.mjs'
+import { readRepoPulse, selectTicker, summarizePulse } from '../app/lib/dev-pulse.mjs'
 import { pulseAgo, pulseStatusLabel, starsToday } from '../app/lib/pulse-format.mjs'
 
 const HOUR = 3_600_000, DAY = 86_400_000
@@ -184,7 +184,40 @@ test('status falls back to active, quiet, none and pending', () => {
   assert.equal(starsToday({ total: 5, today: 4, partial: true }), '+4+')
   assert.equal(starsToday({ total: 5, today: 0, partial: true }), null)
   assert.deepEqual(summarizePulse({ now: NOW, state, starHours: [{ hour: iso(currentHour - 3 * HOUR), starsTotal: 1190 }] }).stars, { total: 1200, today: 10, partial: true })
+  // Older snapshots (read for the chart's daily pins) never stretch "stars today" past the two days it has always used.
+  assert.deepEqual(summarizePulse({ now: NOW, state, starHours: [{ hour: iso(currentHour - 9 * DAY), starsTotal: 500 }, { hour: iso(currentHour - 3 * HOUR), starsTotal: 1190 }] }).stars,
+    { total: 1200, today: 10, partial: true })
   assert.equal(pulseAgo(iso(NOW - 90 * 60_000), NOW), '1h ago')
+})
+
+test('each UTC day that gained stars gets one chart pin, from the day before; partial days and gaps get none', () => {
+  // Arrange: hourly snapshots (the latest reading of each hour) across six UTC days, NOW being Oct 1 20:30
+  const snap = (hour, starsTotal) => ({ hour: `${hour}:00:00.000Z`, starsTotal })
+  const starHours = [snap('2026-09-25T12', 900), snap('2026-09-27T23', 990), snap('2026-09-28T23', 994), snap('2026-09-29T23', 1000),
+    snap('2026-09-30T10', 1040), snap('2026-09-30T23', 1100), snap('2026-10-01T19', 1190), snap('2026-10-01T20', 1203)]
+
+  // Act
+  const pulse = summarizePulse({ now: NOW, state: { ...state, stars: 1203 }, starHours })
+  const days = pulse.events.filter(event => event.id.startsWith('stars:day:'))
+
+  // Assert: Sep 27 has no snapshot from the day before (no guess over the gap); Sep 28 (+4) and Sep 29 (+6) are under 10
+  assert.deepEqual(days.map(({ id, at, time, title, detail, url, amount }) => ({ id, at, time, title, detail, url, amount })), [
+    { id: 'stars:day:2026-09-30', at: '2026-09-30T23:00:00.000Z', time: Date.parse('2026-09-30T23:00:00Z') / 1000, title: '+100 stars',
+      detail: 'Stars on Sep 30 (UTC)', url: 'https://github.com/owner/repo', amount: 100 },
+    { id: 'stars:day:2026-10-01', at: '2026-10-01T20:00:00.000Z', time: Date.parse('2026-10-01T20:00:00Z') / 1000, title: '+103 stars',
+      detail: 'Stars today so far (UTC)', url: 'https://github.com/owner/repo', amount: 103 }])
+  assert.ok(days.every(event => event.kind === 'stars'))
+  assert.ok(!pulse.feed.some(item => item.id.startsWith('stars:day:')), 'the stars card already says today; the feed keeps code')
+})
+
+test('the pulse reads star snapshots far enough back for a month of daily star pins', async () => {
+  const queries = []
+  const pool = { async query(sql, params) { queries.push({ sql, params }); return { rows: sql.includes('repo_pulse_state') ? [{ ...state }] : [] } } }
+
+  await readRepoPulse(pool, '42', NOW)
+
+  const hours = queries.find(query => query.sql.includes('repo_pulse_star_hours'))
+  assert.ok(Date.parse(hours.params[1]) <= NOW - 31 * DAY)
 })
 
 test('the ticker shows the newest items, at most two per repository, never a do-not-promote repository', () => {

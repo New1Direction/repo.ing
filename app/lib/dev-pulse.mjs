@@ -9,6 +9,8 @@ const CHART_DAYS = 30, FEED_LIMIT = 10
 const iso = ms => new Date(ms).toISOString()
 const at = value => value instanceof Date ? value.toISOString() : value
 const hourStart = ms => Math.floor(ms / HOUR) * HOUR
+const dayStart = ms => Math.floor(ms / DAY) * DAY
+const STAR_DAY_MIN = 10
 const sol = lamports => {
   const value = BigInt(lamports)
   return `${value / 1_000_000_000n}.${String(value % 1_000_000_000n).padStart(9, '0').slice(0, 4)}`.replace(/\.?0+$/, '')
@@ -26,6 +28,22 @@ export function commitHours(commits) {
   }
   return [...hours].map(([hour, { count, latest }]) => ({ id: `commits:${iso(hour)}`, kind: 'commits', at: latest.at,
     title: `${count} commit${count === 1 ? '' : 's'}`, detail: latest.title, url: latest.url, amount: count }))
+}
+
+// One chart pin per UTC day that gained at least 10 stars: the day's last snapshot minus the last one from the day before,
+// so steady growth shows even when no single hour is a spike. A day with no snapshot from the day before (the first day
+// watched, or a gap in readings) gets none, never a total that spans several days. snapshots: ascending { time, total }.
+function starDayPins(snapshots, now, fullName) {
+  const url = typeof fullName === 'string' && /^[\w.-]+\/[\w.-]+$/.test(fullName) ? `https://github.com/${fullName}` : null
+  const lastOfDay = new Map(snapshots.map(item => [dayStart(item.time), item]))
+  return [...lastOfDay].flatMap(([day, last]) => {
+    const base = snapshots.findLast(item => item.time < day)
+    const gained = base && base.time >= day - DAY ? last.total - base.total : 0
+    if (gained < STAR_DAY_MIN) return []
+    const label = day === dayStart(now) ? 'today so far' : `on ${new Date(day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
+    return [{ id: `stars:day:${iso(day).slice(0, 10)}`, kind: 'stars', at: iso(last.time), title: `+${gained.toLocaleString('en-US')} stars`,
+      detail: `Stars ${label} (UTC)`, url, amount: gained }]
+  })
 }
 
 export function summarizePulse({ now = Date.now(), state, events = [], release = null, starHours = [], boundAt = null, payouts = [], repoId = null }) {
@@ -50,8 +68,8 @@ export function summarizePulse({ now = Date.now(), state, events = [], release =
   // watched for less than a day, which makes the figure a lower bound).
   const snapshots = starHours.map(item => ({ time: Date.parse(at(item.hour)), total: item.starsTotal }))
     .filter(item => Number.isFinite(item.time) && Number.isSafeInteger(item.total)).sort((a, b) => a.time - b.time)
-  const dayAgo = hourStart(now - DAY)
-  const base = snapshots.findLast(item => item.time <= dayAgo) ?? snapshots[0] ?? null
+  const dayAgo = hourStart(now - DAY), recent = snapshots.filter(item => item.time >= now - 2 * DAY)
+  const base = recent.findLast(item => item.time <= dayAgo) ?? recent[0] ?? null
   const stars = Number.isSafeInteger(state.stars) ? { total: state.stars, today: base ? Math.max(0, state.stars - base.total) : null,
     partial: !base || base.time > dayAgo } : null
   const hn = after(rows.filter(event => event.kind === 'hn'), since(CHART_DAYS)).sort((a, b) => b.amount - a.amount)[0] ?? null
@@ -79,9 +97,11 @@ export function summarizePulse({ now = Date.now(), state, events = [], release =
     merged7d: after(merges, since(7)).length, release: latestRelease, stars,
     hn: hn ? { title: hn.title, points: hn.amount, url: hn.url, at: hn.at } : null,
     maintainer: { verified: Boolean(boundAt), since: boundAt ? at(boundAt) : null, claimHref: repoId ? `/claim/${repoId}` : null },
+    // Daily star pins are for the chart; the stars card already says today's figure, and the feed keeps what shipped.
     feed: items.slice(0, FEED_LIMIT),
-    events: items.filter(item => Date.parse(item.at) >= since(CHART_DAYS)).map(item => ({ ...item, time: Math.floor(Date.parse(item.at) / 1000) }))
-      .sort((a, b) => a.time - b.time),
+    events: [...items, ...starDayPins(snapshots, now, state.fullName)]
+      .filter(item => Date.parse(item.at) >= since(CHART_DAYS) && Date.parse(item.at) <= now + 5 * 60_000)
+      .map(item => ({ ...item, time: Math.floor(Date.parse(item.at) / 1000) })).sort((a, b) => a.time - b.time),
     checkedAt: at(state.checkedAt) ?? null,
   }
 }
@@ -97,7 +117,8 @@ export async function readRepoPulse(pool, repoId, now = Date.now()) {
         where github_repo_id = $1 and occurred_at >= $2 order by occurred_at desc limit 500`, [id, since]),
       pool.query(`select title, detail, url, occurred_at as at from repo_pulse_events where github_repo_id = $1 and kind = 'release'
         order by occurred_at desc limit 1`, [id]),
-      pool.query(`select hour, stars_total as "starsTotal" from repo_pulse_star_hours where github_repo_id = $1 and hour >= $2`, [id, iso(now - 2 * DAY)]),
+      // A month of hourly snapshots and the day before it: stars today, and the chart's daily star pins.
+      pool.query(`select hour, stars_total as "starsTotal" from repo_pulse_star_hours where github_repo_id = $1 and hour >= $2`, [id, iso(now - (CHART_DAYS + 2) * DAY)]),
       pool.query(`select bound_at as "boundAt" from repo_beneficiaries where github_repo_id = $1`, [id]),
       pool.query(`select amount_base_units::text as amount, settled_at as "settledAt", claim_signature as signature from repo_claims
         where github_repo_id = $1 and status = 'settled' and settled_at >= $2 order by settled_at desc limit 20`, [id, since]),
