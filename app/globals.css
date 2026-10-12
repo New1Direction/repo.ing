@@ -879,3 +879,7 @@ body{overflow-x:clip}
 /* iOS zooms into a focused field whose text is under 16px: on touch screens these fields are 16px. */
 @media(pointer:coarse) and (max-width:700px){.repo-search input{font-size:16px}}
 @media(pointer:coarse){.explore-search input,.finder-input input,.builder-search input,.discovery-filters select,.watchlist-settings select,.finder-activity select,.invite-panel textarea,.invite-candidate textarea,.badge-panel textarea,.launch-copy-block textarea{font-size:16px}}
+/* Phones: tab rows (Explore sort tabs, token page tabs) scroll inside their row instead of widening the page; focus rings sit inside the row and the
+   token tabs' rule is an inset shadow, so the overflow box clips neither. At 320 px the header row keeps Menu on screen. */
+@media(max-width:700px){.discovery-tabs{overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.discovery-tabs::-webkit-scrollbar,.market-nav::-webkit-scrollbar{display:none}.discovery-tabs button{flex:1 0 auto}.discovery-tabs button:focus-visible{outline-offset:-3px}.market-nav{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;border-bottom:0;box-shadow:inset 0 -1px var(--border)}.market-nav>*{flex:none}.market-nav>:focus-visible{outline-offset:-3px}}
+@media(max-width:360px){.app-header nav{gap:8px}}
