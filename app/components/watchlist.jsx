@@ -1,11 +1,11 @@
 'use client'
 import Link from 'next/link'
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Bell, Eye, Check, X } from 'lucide-react'
 import { WATCHLIST_KEY, emptyWatchlist, parseWatchlist, toggleWatched, applyPriceUpdates } from '../lib/watchlist.mjs'
 import { MenuDetails } from './menu-details'
 
-const WatchlistContext = createContext(null)
+export const WatchlistContext = createContext(null)
 export function WatchlistProvider({ children }) {
   const [state, setState] = useState(emptyWatchlist)
   const current = useRef(state)
@@ -51,7 +51,16 @@ export function WatchlistProvider({ children }) {
   }, [ready, ids, state.alertPercent, update])
   return <WatchlistContext.Provider value={{ state, ready, update, storageError, priceError }}>{children}</WatchlistContext.Provider>
 }
-export function useWatchlist() { return useContext(WatchlistContext) }
+const hydrating = { state: emptyWatchlist(), ready: false, storageError: '', priceError: '' }
+const neverChanges = () => () => {}, inBrowser = () => true, onServer = () => false
+// While React hydrates a part of the page, it sees what the server rendered (an empty, not-ready watchlist). A streamed
+// section (Explore's market list) can hydrate after the provider's effect has read this browser's watchlist; without this
+// its first render would differ from the server's HTML (React error #418) and React would re-render the whole section.
+export function useWatchlist() {
+  const value = useContext(WatchlistContext)
+  const hydrated = useSyncExternalStore(neverChanges, inBrowser, onServer)
+  return hydrated || !value ? value : { ...value, ...hydrating }
+}
 
 export function WatchButton({ market, compact = false }) {
   const { state, ready, update } = useWatchlist()
