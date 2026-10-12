@@ -186,8 +186,10 @@ test('a post that may have gone out is recorded unknown and not retried; a provi
 // ---------- migration ----------
 test('migration 0068 adds only the trend_alerts table, after every earlier migration, and matches the schema', () => {
   const sql = readFileSync('drizzle/0068_trend_alerts.sql', 'utf8')
-  assert.match(sql, /CREATE TABLE "trend_alerts"/)
-  assert.match(sql, /CREATE UNIQUE INDEX trend_alerts_repo_channel_unique ON trend_alerts\(github_repo_id, channel\)/)
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS "trend_alerts"/)
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS trend_alerts_repo_channel_unique ON trend_alerts\(github_repo_id, channel\)/)
+  // Idempotent: tests/market-source-db.test.mjs runs every migration from 0049 a second time.
+  assert.doesNotMatch(sql, /\bCREATE\b(?! (TABLE|UNIQUE INDEX|INDEX) IF NOT EXISTS)/i)
   assert.doesNotMatch(sql, /\b(UPDATE|DELETE|DROP|ALTER)\b/i)
   const { entries } = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8'))
   const index = entries.findIndex(entry => entry.tag === '0068_trend_alerts')
