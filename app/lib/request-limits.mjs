@@ -28,6 +28,9 @@ export const REQUEST_LIMITS = Object.freeze({
   'bundle:prepare': { burst: 20, perMinute: 20 },
   'bundle:submit': { burst: 10, perMinute: 10 },
   'bundle:send': { burst: 20, perMinute: 20 },
+  // The live market-maker feed (/api/v1/markets/[mint]/liquidity): two chain reads and many local quotes per uncached answer;
+  // the same mint is answered from a 10 s cache, so this only bounds one address walking many markets.
+  'market-data:liquidity': { burst: 30, perMinute: 30 },
 })
 
 export { clientAddress }

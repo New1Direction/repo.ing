@@ -477,6 +477,13 @@
       "when": 1790910030000,
       "tag": "0070_funnel_events",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1790910031000,
+      "tag": "0071_launch_transparency",
+      "breakpoints": true
     }
   ]
 }

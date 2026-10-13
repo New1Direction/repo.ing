@@ -77,7 +77,7 @@ export function fakeChain() {
 // The raise flow's queries against a bundles table and a markets table held in memory. Every query is recorded with whether it
 // ran on a connection taken with connect() (`client`), so tests can see what ran under a lock.
 // takenSymbols: other repositories' market tickers (src/launch-symbols.mjs), beside the bundles' own.
-export function fakePool({ bundles = new Map(), hasMarket = false, takenSymbols = [] } = {}) {
+export function fakePool({ bundles = new Map(), hasMarket = false, takenSymbols = [], schedule = null } = {}) {
   const queries = []
   let nextId = 7n
   async function query(sql, params = [], client = false) {
@@ -90,6 +90,8 @@ export function fakePool({ bundles = new Map(), hasMarket = false, takenSymbols 
       return { rows: taken === undefined ? [] : [{ takenSymbol: taken }] }
     }
     if (/nextval\('bundle_id_seq'\)/.test(sql)) return { rows: [{ id: String(nextId++) }] }
+    // A scheduled launch (src/launch-schedules.mjs) for the repository, when the test sets one.
+    if (/from launch_schedules s/.test(sql)) return { rows: schedule && String(schedule.githubRepoId) === String(params[0]) ? [schedule] : [] }
     if (/select exists\(select 1 from bundles\)/.test(sql)) return { rows: [{ any: bundles.size > 0 }] }
     if (/exists\(select 1 from markets/.test(sql)) {
       const live = [...bundles.values()].find(row => row.githubRepoId === params[0] && params[1].includes(row.status))

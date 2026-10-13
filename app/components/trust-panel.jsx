@@ -157,5 +157,6 @@ export function TrustPanel({ market, launchFee = null, declined = null, repoFact
       <Suspense fallback={<HoldersFallback/>}><HoldersRows market={market}/></Suspense>
     </ul>
     <p className="trust-foot">Facts, not advice. Launcher figures count trades on repo.ing only.</p>
+    {!model && !isStockPairMarket(market) && <a className="trust-quality-link" href="#transparency">Launch quality report: evidence, liquidity and lock states</a>}
   </section>
 }

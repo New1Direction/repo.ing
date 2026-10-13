@@ -45,6 +45,7 @@ ${STOCK_LINE}
 - [Launch a repository](https://repo.ing/launch): Review a repository's token and costs, then launch with your wallet.
 - [Waiting for maintainers](https://repo.ing/waiting): Repositories with builder fees accrued but not yet claimed, ranked by amount.
 - [Find repos](https://repo.ing/find-repos): Repositories gaining attention, from an evidence-backed trend feed.
+- [Launch calendar](https://repo.ing/launches): Launches scheduled in public (time, launching wallet, maximum initial buy) and new markets with their Launch quality reports.
 - [How it works](https://repo.ing/how-it-works): Launching, trading, graduation, and discovery rewards.
 - [About](https://repo.ing/about): One repo, one token; fees for the repo; a launch is not an endorsement.
 - [Protocol analytics](https://repo.ing/stats): Trading activity, verified builder payouts, and platform revenue allocation.
@@ -70,11 +71,14 @@ The tools prepare launch reviews only. They cannot trade, claim, sign, or submit
 
 A read-only server for coding assistants is at https://repo.ing/api/mcp/readonly (Streamable HTTP, no API key): find_market, builder_earnings, trending_markets and platform_stats. It never launches, trades or claims.
 
+Public market data (read-only JSON, no key, any origin): https://repo.ing/api/v1/launches (calendar), /api/v1/launches/events (feed, poll with ?after=), /api/v1/markets/{mint}/transparency (Launch quality with evidence and unknowns, trading integrity, seeded liquidity and lock states), /api/v1/markets/{mint}/liquidity (live depth and spread) and /api/v1/liquidity (hourly board). Also /launches.atom and /launches.ics. Reports are facts, never pay-to-rank, and not advice.
+
 ## Optional
 
 - [X](https://x.com/repodoting): Official repo.ing announcements.
 - [Source code](https://github.com/New1Direction/repo.ing): Open source under AGPL-3.0-only.
 - [Agent launch documentation](https://github.com/New1Direction/repo.ing/blob/main/docs/AGENT_LAUNCH.md): MCP setup, tool inputs, and the signing boundary.
+- [Market data API](https://github.com/New1Direction/repo.ing/blob/main/docs/MARKET_DATA_API.md): launch feed, transparency reports, liquidity and webhooks.
 `
 
 // Lines for features behind a switch, added only while it is on (the page is regenerated hourly).

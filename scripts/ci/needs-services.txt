@@ -37,6 +37,8 @@ launch-curve
 launch-fee-chain
 launch-first-buy
 launch-indexer
+launch-transparency-db
+launch-transparency-chain
 liquidity-deployment
 maintainer-opt-outs-db
 market-lookup

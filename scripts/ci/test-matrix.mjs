@@ -51,6 +51,8 @@ export const DEFAULT_GROUP_DATABASES = [
   launchtest('repoing_credits_packs_test'),
   // Every pack pays a builder (migration 0069): which repositories a pack may back, and the pack quote for one, on PostgreSQL.
   launchtest('repoing_builder_pack_shares_test'),
+  // Launch transparency (migration 0071): scheduled launches, the launch feed and webhooks, and the stored transparency report.
+  launchtest('repoing_launch_transparency_test'),
 ]
 
 const scratchDb = trusted(55441, 'postgres')
@@ -67,6 +69,7 @@ export const DEFAULT_ENV = {
   CREDITS_WEB_TEST_DATABASE_URL: launchtest('repoing_credits_web_test'),
   CREDITS_PACKS_TEST_DATABASE_URL: launchtest('repoing_credits_packs_test'),
   BUILDER_PACK_SHARES_TEST_DATABASE_URL: launchtest('repoing_builder_pack_shares_test'),
+  LAUNCH_TRANSPARENCY_TEST_DATABASE_URL: launchtest('repoing_launch_transparency_test'),
   X_LINKS_TEST_DATABASE_URL: launchtest('repoing_x_links_test'),
   BACKERS_TEST_DATABASE_URL: launchtest('repoing_backers_test'),
   LAUNCH_ALERTS_TEST_DATABASE_URL: launchtest('repoing_launch_alerts_test'),
@@ -150,6 +153,9 @@ export const PINNED_GROUPS = [
   { files: ['trend-integration'], databaseUrl: launchtest('repoing_p6_test'), selfManaged: true },
   { files: ['config-rotation'], databaseUrl: launchtest('repoing_config_rotation_test') },
   { files: ['launch-fee-chain'], databaseUrl: launchtest('repoing_launch_fee_test') },
+  // Launch transparency on the validator: a scheduled launch through the coordinator, live depth and spread checked against real
+  // swaps, the stored report, and a graduated pool's LP positions.
+  { files: ['launch-transparency-chain'], databaseUrl: launchtest('repoing_launch_transparency_chain_test') },
   // Hugging Face model launches: the registry and routes on PostgreSQL, then end to end on the validator.
   { files: ['hf-launch-db', 'hf-launch-chain'], databaseUrl: launchtest('repoing_hf_launch_test') },
   { files: ['discovery-claims'], databaseUrl: trusted(55439, 'discovery_test', 'discoverytest') },
