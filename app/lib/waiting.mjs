@@ -1,6 +1,7 @@
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from './format.mjs'
 import { SITE_ORIGIN } from './share-links.mjs'
 import { isGithubRepoId } from '../../src/market-identity.mjs'
+import { withFunnelSource } from './claim-funnel.mjs'
 
 // Public "Waiting for maintainers" board. Amounts are the market list's indexed builder fee credits
 // minus settled claims (`remaining`): the same figure Explore shows as "Builders earned". They are not
@@ -36,7 +37,7 @@ export function amountDisplay(raw, usdPerSol) {
 }
 
 export const waitingAnchor = repoId => `repo-${repoId}`
-export const claimPageUrl = (repoId, origin = SITE_ORIGIN) => `${origin}/claim/${encodeURIComponent(String(repoId))}`
+export const claimPageUrl = (repoId, origin = SITE_ORIGIN, source = null) => withFunnelSource(`${origin}/claim/${encodeURIComponent(String(repoId))}`, source)
 export const waitingRowUrl = (repoId, origin = SITE_ORIGIN) => `${origin}/waiting#${waitingAnchor(repoId)}`
 
 // X weighs most CJK and emoji as two characters; count anything outside Latin/Greek/Cyrillic-ish ranges as 2.
@@ -56,7 +57,7 @@ export function tagText({ owner, fullName, amount }) {
 }
 
 export function tagIntentUrl({ repoId, owner, fullName, amount, origin = SITE_ORIGIN }) {
-  const query = new URLSearchParams({ text: tagText({ owner, fullName, amount }), url: claimPageUrl(repoId, origin) })
+  const query = new URLSearchParams({ text: tagText({ owner, fullName, amount }), url: claimPageUrl(repoId, origin, 'x') })
   return `https://x.com/intent/post?${query}`
 }
 

@@ -1,4 +1,5 @@
 import { formatSolDisplay, formatSolRounded, formatUsdEstimate } from './format.mjs'
+import { claimHref } from './claim-funnel.mjs'
 
 // Token-page hero headline. Same gate as the Details → Earnings tab: nothing is shown as earned or
 // claimable unless the reconciler MATCHes recorded fees against chain state. Amounts stay lamport strings.
@@ -9,7 +10,7 @@ export function builderEarningsHeadline(market, fees, usdPerSol) {
   const usd = formatUsdEstimate(earned, usdPerSol)
   const value = usd ?? `${formatSolDisplay(earned)} SOL`
   const detail = [usd && `≈ ${formatSolRounded(earned)} SOL`, `${formatSolDisplay(claimed)} SOL paid out`].filter(Boolean).join(' · ')
-  const href = `/claim/${market.repoId}`
+  const href = claimHref(market.repoId, 'token')
   let action
   if (claimable > 0n && market.beneficiaryWallet) action = { kind: 'claim', href, label: `Claim ${formatSolDisplay(claimable)} SOL` }
   else if (claimable > 0n) action = { kind: 'verify', href, label: `Maintainer? Verify to claim ${formatUsdEstimate(claimable, usdPerSol) ?? `${formatSolDisplay(claimable)} SOL`}` }

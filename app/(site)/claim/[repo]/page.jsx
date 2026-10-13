@@ -30,6 +30,9 @@ import { nextClaimAmount } from '../../../../src/claim-amounts.mjs'
 import { isEarlyAccessMarket } from '../../../../src/early-access.mjs'
 import { creditsWebSettings } from '../../../../src/credits-web.mjs'
 import { creditKeysAvailable } from '../../../lib/credit-packs.mjs'
+import { FunnelBeacon } from '../../../components/funnel-beacon'
+import { funnelSource, notAdminDetail } from '../../../lib/claim-funnel.mjs'
+import '../../../claim-funnel.css'
 export const dynamic = 'force-dynamic'
 
 export default async function ClaimPage({ params, searchParams }) {
@@ -43,6 +46,7 @@ export default async function ClaimPage({ params, searchParams }) {
   if (isStockPairMarket(market)) return <StockPairClaimPage market={market} query={query}/>
   const repo = displayRepository(market)
   return <><AppHeader/><main className="section-wrap claim-page">
+    <FunnelBeacon event="claim_view" repoId={market.repoId}/>
     <Link href={`/token/${market.mint}`} className="back-link"><ArrowLeft size={18}/>Back to repository</Link>
     <div className="claim-intro has-art"><div><h1>Claim builder fees</h1><Link href="/builders" className="claim-text-button">Claim across all your repositories →</Link><p>Verify your GitHub access, set a payout wallet, and receive your repository’s earnings.</p><small>Part of each trade fee is set aside for this repository, whether or not you’ve signed up.</small></div><IconArt name="earnings-wallet" size={132}/></div>
     <div className="claim-repo-card"><div><RepoIdentity repo={repo}/><RepoStats repo={repo}/></div><GitHubLink repo={repo}/></div>
@@ -125,5 +129,6 @@ async function ClaimContent({ market, repo, query }) {
     feeStatus={fees.status} payoutReady={funded} settledClaim={receipt} review={review}
     reinvestEnabled={reinvestEnabled} reinvestAfterClaim={query.reinvest === '1'}
     creditsEnabled={Boolean(credits)} creditsAfterClaim={Boolean(credits) && query.credits === '1'} creditsNetwork={credits?.network ?? 'mainnet'} creditsKeysLink={Boolean(credits) && creditKeysAvailable()}
-    graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}/>
+    graduated={fees.graduated === true} justClaimed={typeof query.claimed === 'string' && receipt?.signature === query.claimed} errorCode={query.error || null}
+    source={funnelSource(query.src)} notAdmin={query.error === 'not-admin' ? notAdminDetail(query) : null}/>
 }

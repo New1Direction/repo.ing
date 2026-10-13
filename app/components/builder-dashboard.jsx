@@ -19,11 +19,12 @@ import { BuilderRowTools } from './builder-row-tools'
 import { formatTokenAmount, formatUsdValue } from '../lib/format.mjs'
 import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout-address'
 import payoutStyles from './payout-address.module.css'
+import { verificationMessage } from '../lib/claim-funnel.mjs'
 
 export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
   const { wallet, connect, provider } = useWallet()
   const [data,setData] = useState(null), [loading,setLoading] = useState(signedIn)
-  const [error,setError] = useState(errorCode ? 'GitHub connection could not finish. Please try again.' : '')
+  const [error,setError] = useState(errorCode === 'github-cancelled' ? verificationMessage(errorCode) : errorCode ? 'GitHub connection could not finish. Please try again.' : '')
   const [results,setResults] = useState({}), [busy,setBusy] = useState(false), [stage,setStage] = useState('')
   const [search,setSearch] = useState(''), [now,setNow] = useState(Date.now())
   const [needsLogin,setNeedsLogin] = useState(!signedIn)
@@ -124,7 +125,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
         <div className="builder-claim-bar"><div><strong title={`${formatUnits(sum(ready,'available'))} SOL`}>{formatSolDisplay(sum(ready,'available'))} SOL ready</strong><p>Sent to each repository’s saved wallet shown below.</p></div><button className={`button ${step===2?'outline':'primary'}`} disabled={busy||loading||!ready.length} onClick={()=>claim(ready)}>{busy?'Processing…':`Claim all ready fees${ready.length?` (${ready.length})`:''}`}</button></div>
         {stage && <div className="builder-run-status" role="status" aria-live="polite">{busy?<span className="claim-spinner" aria-hidden="true"/>:<Check size={18}/>}<div><strong>{stage}</strong>{busy&&<small>Keep this page open while queued claims are submitted. Each payout has its own receipt.</small>}{!busy&&Object.keys(results).length>0&&<small>{settled.length} {settled.length===1?'repository paid':'repositories paid'} · {formatUnits(sum(settled,'amount'))} SOL.{incomplete>0?' Some repositories need attention; see their rows and refresh to review again.':''}</small>}</div></div>}
         <section className="builder-repositories" aria-labelledby="builder-repos-title"><div className="builder-list-heading"><h2 id="builder-repos-title">Your repositories <span>{repos.length}</span></h2>{repos.length>5&&<label className="builder-search"><Search size={16}/><input type="search" placeholder="Find a repository…" aria-label="Find a repository" value={search} onChange={event=>setSearch(event.target.value)}/></label>}</div>
-          {!repos.length?<div className="builder-empty"><h3>No tokenized repositories found</h3><p>Add your repositories to repo.ing’s read-only GitHub App access, then refresh. You must have admin access to claim.</p><Link href="/launch" className="button outline">Launch a repository</Link></div>:!visible.length?<p className="builder-empty">No repositories match your search.</p>:<div className="builder-repo-list">{visible.map(repo=>{
+          {!repos.length?<div className="builder-empty"><h3>No tokenized repositories found</h3><p>Add your repositories to repo.ing’s read-only GitHub App access, then refresh. You must have admin access to claim. Fees can be waiting before you share access: look them up by owner.</p><div className="builder-empty-actions"><Link href={`/builders?owner=${encodeURIComponent(data.githubLogin || githubLogin || '')}#owner-lookup-title`} className="button primary">Find fees for {data.githubLogin || githubLogin}</Link><a className="button outline" href="https://github.com/apps/repo-ing/installations/new" target="_blank" rel="noreferrer">Share repositories with the app ↗</a><Link href="/launch" className="button outline">Launch a repository</Link></div></div>:!visible.length?<p className="builder-empty">No repositories match your search.</p>:<div className="builder-repo-list">{visible.map(repo=>{
             const result=results[repo.repoId]
             const receipt=result?.signature||repo.pendingSignature
             // A stock pair (repo.ownerClaim, code STOCK_PAIR_NO_OWNER_CLAIM) has nothing to claim: its row says where its fees go.
@@ -138,7 +139,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
                   <small>{repo.wallet ? 'A tip payout is confirming.' : 'Set a payout wallet to claim tips.'}</small>}</div>}
               <div className="builder-repo-wallet"><span>Payout wallet</span>{repo.wallet||repo.pending?<PayoutDestination compact repoId={repo.repoId} active={repo.wallet?{wallet:repo.wallet,method:repo.method,boundAt:repo.boundAt}:null} pending={repo.pending} canManage onChanged={destinationChanged}/>:<span>Not set</span>}
                 <button type="button" className={`claim-text-button ${payoutStyles.rowToggle}`} aria-expanded={pasteFor===repo.repoId} disabled={busy} onClick={()=>setPasteFor(pasteFor===repo.repoId?null:repo.repoId)}>{pasteFor===repo.repoId?'Close':repo.wallet||repo.pending?'Paste a different address':'Paste an address'}</button></div>
-              <div className="builder-repo-actions">{receipt?<a className="button outline" target="_blank" rel="noreferrer" href={`https://solscan.io/tx/${receipt}`}>Receipt ↗</a>:repo.ownerClaim?null:<button className="button outline" disabled={busy||loading||!actionable(repo)} onClick={()=>claim([repo])}>Claim</button>}<Link href={`/claim/${repo.repoId}`}>Manage</Link></div>
+              <div className="builder-repo-actions">{receipt?<a className="button outline" target="_blank" rel="noreferrer" href={`https://solscan.io/tx/${receipt}`}>Receipt ↗</a>:repo.ownerClaim?null:<button className="button outline" disabled={busy||loading||!actionable(repo)} onClick={()=>claim([repo])}>Claim</button>}<Link href={`/claim/${repo.repoId}?src=builders`}>Manage</Link></div>
               {pasteFor===repo.repoId&&<div className={payoutStyles.rowPanel}><PasteAddressForm repoIds={[repo.repoId]} replacing={Boolean(repo.wallet)} onSaved={pasteSaved} onClose={()=>setPasteFor(null)}/></div>}
               {repo.decision!==undefined&&<div className="builder-repo-decision"><MaintainerDecision key={`${repo.repoId}:${repo.decision?.createdAt??'none'}`} repoId={repo.repoId} fullName={repo.fullName} live decision={repo.decision} compact/></div>}
               <BuilderRowTools repo={repo} result={result}/>
@@ -146,7 +147,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
           })}</div>}
         </section>
         <BuilderReminders/>
-        <p className="builder-footnote">Only repositories you administer and have shared with the GitHub App appear here. For graduated pools, the payout includes SOL fees accrued before confirmation. Other new earnings stay available for your next claim.</p>
+        <p className="builder-footnote">Only repositories you administer and have shared with the GitHub App appear here; use the owner lookup above to find the others. For graduated pools, the payout includes SOL fees accrued before confirmation. Other new earnings stay available for your next claim.</p>
       </>}
     </>}
   </div>

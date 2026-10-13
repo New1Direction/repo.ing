@@ -30,7 +30,7 @@ export function selectInviteCandidates(rows, { threshold = DEFAULT_THRESHOLD, no
 export const inviteTitle = fullName => `Builder fees are available for ${fullName} on repo.ing`
 
 export function inviteText({ repoId, fullName, available, origin = 'https://repo.ing' }) {
-  const claim = `${origin}/claim/${encodeURIComponent(repoId)}`
+  const claim = `${origin}/claim/${encodeURIComponent(repoId)}?src=invite`
   return [`Hi! Someone in the community created a market for ${fullName} on repo.ing. Part of each trade fee is set aside for the repository's builders, and ${formatUnits(available)} SOL in builder fees is currently unclaimed (verified on-chain at the time of writing; the amount can change).`,
     `Current repository admins can verify with GitHub (read-only access), set a payout wallet, and claim the SOL here:\n${claim}`,
     'Participation is entirely optional. The market was created by the community, and it is not an endorsement by you or by this project. Nothing is required from you if you prefer not to take part.',

@@ -32,6 +32,8 @@ export const DEFAULT_GROUP_DATABASES = [
   // "First to launch" trend alerts (migration 0068).
   launchtest('repoing_trend_alerts_test'),
   launchtest('repoing_opt_outs_test'), launchtest('repoing_buyback_import_test'),
+  // The maintainer claim funnel (migration 0070): funnel_events and the ledger funnel (tests/claim-funnel.test.mjs).
+  launchtest('repoing_funnel_test'),
   // Launch and milestone alerts for Hugging Face model markets, and the read-only alerts preview.
   launchtest('repoing_alerts_models_test'),
   // Required (not opt-in) by replica-state, which is listed in needs-services.txt.
@@ -76,6 +78,7 @@ export const DEFAULT_ENV = {
   TREND_ALERTS_TEST_DATABASE_URL: launchtest('repoing_trend_alerts_test'),
   SERVER_SPEED_TEST_DATABASE_URL: launchtest('repoing_server_speed_test'),
   MAINTAINER_OPT_OUTS_TEST_DATABASE_URL: launchtest('repoing_opt_outs_test'),
+  FUNNEL_TEST_DATABASE_URL: launchtest('repoing_funnel_test'),
   BUYBACK_IMPORT_TEST_DATABASE_URL: launchtest('repoing_buyback_import_test'),
   ALERTS_MODELS_TEST_DATABASE_URL: launchtest('repoing_alerts_models_test'),
   LAUNCH_SESSIONS_TEST_DATABASE_URL: launchtest('repoing_launch_sessions_test'),

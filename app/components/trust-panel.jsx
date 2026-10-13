@@ -58,7 +58,7 @@ function MaintainerRow({ market }) {
     ? <Row id="trust-maintainer" icon={BadgeCheck} tone="verified" title="Verified maintainer ✓"
       lines={[market.beneficiaryWallet ? 'GitHub admin verified · payout wallet set' : 'GitHub admin verified']} tip={TIPS.maintainer}/>
     : <Row id="trust-maintainer" icon={CircleDashed} title="Maintainer hasn't verified yet"
-      lines={[<>Maintainer? <Link href={`/claim/${market.repoId}`}>Verify here →</Link></>]} tip={TIPS.maintainer}/>
+      lines={[<>Maintainer? <Link href={`/claim/${market.repoId}?src=token`}>Verify here →</Link></>]} tip={TIPS.maintainer}/>
 }
 
 // A stock pair (src/stock-owner-claims.mjs): no owner claim, so no "verify to claim" here; the row says where fees go.

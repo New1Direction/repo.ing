@@ -146,7 +146,7 @@ test('list facts: lists show models’ likes from earlier live cards without a r
 test('model earnings headline: the builder evidence gate, in model-owner words', () => {
   assert.equal(modelEarningsHeadline(MODEL, { status: 'UNAVAILABLE' }, 150), null)
   const verify = modelEarningsHeadline(MODEL, { status: 'MATCH', onchainCreatorFee: '9000000' }, null)
-  assert.deepEqual(verify.action, { kind: 'verify', href: `/claim/${MODEL_ID}`, label: 'Model owner? Verify to claim 0.009 SOL' })
+  assert.deepEqual(verify.action, { kind: 'verify', href: `/claim/${MODEL_ID}?src=token`, label: 'Model owner? Verify to claim 0.009 SOL' })
   assert.equal(modelEarningsHeadline(MODEL, { status: 'MATCH', onchainCreatorFee: '0' }, null).action.label, 'The model’s owner earns from every trade')
   const paid = modelEarningsHeadline({ ...MODEL, claimed: '5', beneficiaryWallet: 'Wallet' }, { status: 'MATCH', onchainCreatorFee: '0' }, null)
   assert.equal(paid.action.label, 'Paid to the model’s verified owner')

@@ -24,11 +24,11 @@ test('falls back to SOL when no USD price is known', () => {
 
 test('verified payout wallet with claimable fees gets the claim action', () => {
   const view = builderEarningsHeadline({ ...market, beneficiaryWallet: 'W' }, match(1500000000n), 150)
-  assert.deepEqual(view.action, { kind: 'claim', href: '/claim/42', label: 'Claim 1.5 SOL' })
+  assert.deepEqual(view.action, { kind: 'claim', href: '/claim/42?src=token', label: 'Claim 1.5 SOL' })
 })
 
 test('claimable fees without a payout wallet invite the maintainer to verify', () => {
-  assert.deepEqual(builderEarningsHeadline(market, match('1500000000'), 150).action, { kind: 'verify', href: '/claim/42', label: 'Maintainer? Verify to claim $225.00' })
+  assert.deepEqual(builderEarningsHeadline(market, match('1500000000'), 150).action, { kind: 'verify', href: '/claim/42?src=token', label: 'Maintainer? Verify to claim $225.00' })
   assert.equal(builderEarningsHeadline(market, match(1500000000n), null).action.label, 'Maintainer? Verify to claim 1.5 SOL')
 })
 
