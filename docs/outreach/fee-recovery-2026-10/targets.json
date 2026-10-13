@@ -1,0 +1,35 @@
+{
+  "campaign": "fee-recovery-2026-10",
+  "snapshotAt": "2026-10-13T16:16:30Z",
+  "threshold": "MAINTAINER_INVITE_MIN_SOL (default 0.5 SOL, src/maintainer-invites.mjs); never lowered for this campaign",
+  "targets": [
+    {
+      "repoId": "1391948723",
+      "fullName": "KingKongRobotics/jumper",
+      "launcher": "repo.ing team wallet 4euCWuZo1Ud3PfhFQr9ShmJVzqmARGqY2LR23YECDYce: do not use the /operations/invites text, which says the community created it",
+      "messages": [
+        { "channel": "github-issue", "source": "invite", "when": "first contact", "template": "drafts/jumper-issue.md" },
+        { "channel": "email", "source": "share", "when": "once, 7+ days after the issue with no reply", "template": "drafts/jumper-email.md",
+          "route": "https://kingkong.tech/contact (general company address published there and on the GitHub organization profile)" }
+      ]
+    },
+    {
+      "repoId": "1332056763",
+      "fullName": "dhh/omarchy-giants-theme",
+      "launcher": "243mUJSidaDFvKa1gnf2Zvb3mRBT9Q85wGrtXZcTaS7e (not a published repo.ing wallet)",
+      "messages": [
+        { "channel": "github-issue", "source": "invite", "when": "first contact", "template": "drafts/omarchy-giants-theme-issue.md" },
+        { "channel": "email", "source": "share", "when": "once, 7+ days after the issue with no reply", "template": "drafts/omarchy-giants-theme-email.md",
+          "route": "https://github.com/dhh (public email on the GitHub profile)" }
+      ]
+    },
+    {
+      "repoId": "1250276806",
+      "fullName": "michael-denyer/pstack-claude",
+      "launcher": "FGKNuBLUqMVVknsx9jqGmMvzuHYCMfrSd4UoJdPGDGRH (not a published repo.ing wallet)",
+      "messages": [
+        { "channel": "github-issue", "source": "invite", "when": "first contact (the only public route)", "template": "drafts/pstack-claude-issue.md" }
+      ]
+    }
+  ]
+}
