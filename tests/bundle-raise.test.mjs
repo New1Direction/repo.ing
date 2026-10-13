@@ -12,6 +12,7 @@ import { RAISE_REFUSALS, acceptSignedAction, acceptSignedCreate, bundleIdFrom, b
 import { createBackerCounter } from '../src/bundle-raise-chain.mjs'
 import { DecisionError, OPT_OUT_ERROR } from '../src/maintainer-opt-outs.mjs'
 import { LineageError } from '../src/repo-lineage.mjs'
+import { BLOCKED_WALLET_MESSAGE, WALLET_BLOCKED } from '../src/blocked-wallets.mjs'
 import { createBundleApi } from '../app/lib/bundle-api.mjs'
 import { walletBundleFields } from '../app/lib/bundle-wallet.mjs'
 import { PHASE_LABELS, raisePhase, raisedPercent, timeLeft } from '../app/lib/bundle-view.mjs'
@@ -416,6 +417,21 @@ test('deposit: checked against the chain (raising, before the deadline, within t
   raising(h, { status: STATUS.FAILED })
   assert.deepEqual(await act(h, { action: 'deposit', lamports: String(SOL) }), { status: 400, body: { error: 'This raise is not taking deposits.' } })
   assert.equal((await call(h.api.act(post('/api/bundles/8', { action: 'deposit', wallet: backer.publicKey.toBase58(), lamports: String(SOL) }), '8'))).status, 404)
+})
+
+test('a blocked wallet (BLOCKED_WALLETS) cannot open or fund a raise; its refund still works, since it only returns its own money', async t => {
+  const before = process.env.BLOCKED_WALLETS
+  process.env.BLOCKED_WALLETS = `${creator.publicKey.toBase58()},${backer.publicKey.toBase58()}`
+  t.after(() => { if (before === undefined) delete process.env.BLOCKED_WALLETS; else process.env.BLOCKED_WALLETS = before })
+  const refusal = { status: 403, body: { error: BLOCKED_WALLET_MESSAGE, code: WALLET_BLOCKED } }
+  const h = harness()
+  assert.deepEqual(await call(h.api.open(post('/api/bundles', openBody()))), refusal)
+  assert.equal(h.pool.bundles.size, 0, 'nothing reserved')
+  raising(h)
+  assert.deepEqual(await act(h, { action: 'deposit', lamports: String(SOL) }), refusal)
+  raising(h, { status: STATUS.FAILED })
+  h.chain.setProgramAccount(backerAddress(bundleAddress(7n), backer.publicKey), backerData({ bundle: bundleAddress(7n), wallet: backer.publicKey, shares: SOL }))
+  assert.equal((await act(h, { action: 'refund' })).status, 200)
 })
 
 test('refund: only after a raise failed, only for a backer, and exactly the program\'s refund', async () => {

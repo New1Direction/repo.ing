@@ -1,11 +1,14 @@
 import { QUOTE_ERRORS } from './quote-assets.mjs'
 import { SYMBOL_TAKEN } from './launch-symbols.mjs'
+import { WALLET_BLOCKED } from './blocked-wallets.mjs'
 const QUOTE_CODES=new Set(Object.values(QUOTE_ERRORS))
 // A refused quote pair keeps its own code (src/quote-assets.mjs), so the client can tell it from a failed review.
 export function launchFailure(error,action){
  const message=error.message||'Launch failed'
  // The fork guard (src/repo-lineage.mjs): retrying cannot change it.
  if(error.code==='COPY_OF_LAUNCHED_REPOSITORY')return {error:message,canRetry:false,code:error.code}
+ // A blocked wallet (src/blocked-wallets.mjs): retrying cannot change it either.
+ if(error.code===WALLET_BLOCKED)return {error:message,canRetry:false,code:WALLET_BLOCKED}
  // A ticker another market uses (src/launch-symbols.mjs), at review or just before sending: nothing was sent, and a new review
  // with another ticker can go ahead.
  if(error.code===SYMBOL_TAKEN)return {error:message,canRetry:true,code:SYMBOL_TAKEN}

@@ -7,6 +7,7 @@ import { createBackerCounter, hasWrappedSolAccount, readBacker, readBundle, send
 import { claimCreate, expireOpening, insertOpeningBundle, loadBundle, markRaising, nextBundleId, openingCount, repositoryBlockers, withBundleLock,
   withRepositoryLock } from '../../src/bundle-raise-store.mjs'
 import { resolvePublicRepositoryById } from '../../src/github.mjs'
+import { BLOCKED_WALLET_MESSAGE, WALLET_BLOCKED, isBlockedWallet } from '../../src/blocked-wallets.mjs'
 import { symbolHolder, symbolTakenMessage, withSymbolLock } from '../../src/launch-symbols.mjs'
 import { RepositoryResolutionError } from '../../src/github-url.mjs'
 import { isGithubRepoId } from '../../src/market-identity.mjs'
@@ -42,6 +43,8 @@ const IMAGE_MESSAGE = /^(Token image|Invalid token image|Choose a token image|Im
 const unconfigured = () => new BundleRaiseError('Group launches are not configured.', 503)
 
 // Only this flow's own refusals, the repository checks' and the token image's reach the page (app/lib/public-error.mjs).
+const blockedWallet = () => Object.assign(new BundleRaiseError(BLOCKED_WALLET_MESSAGE, 403), { code: WALLET_BLOCKED })
+
 function failure(error) {
   const safe = error instanceof BundleRaiseError || error instanceof RepositoryResolutionError || error instanceof DecisionError ||
     error instanceof LineageError || IMAGE_MESSAGE.test(error?.message ?? '')
@@ -78,6 +81,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
     if (!isGithubRepoId(repoId)) throw new BundleRaiseError(RAISE_REFUSALS.repository)
     const terms = raiseTerms(body, now()), token = tokenFields(body), creator = walletKey(body.launcherWallet)
     if (creator.equals(signer.publicKey)) throw new BundleRaiseError(RAISE_REFUSALS.creator)
+    if (isBlockedWallet(creator)) throw blockedWallet()
     const tokenImage = await validateImage(body.tokenImage)
     const repo = await resolveRepository(repoId)
     await launchAllowed(db, repoId)
@@ -215,7 +219,10 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
             broadcast)
           return reply({ action: accepted.action, ...sent }, sent.confirmed ? 200 : 202)
         }
-        const wallet = walletKey(body.wallet), bundle = await readBundle(rpc, bundleId)
+        const wallet = walletKey(body.wallet)
+        // A blocked wallet (src/blocked-wallets.mjs) cannot fund a raise; its refund or claim only returns its own money.
+        if (body.action === 'deposit' && isBlockedWallet(wallet)) throw blockedWallet()
+        const bundle = await readBundle(rpc, bundleId)
         if (!bundle) throw new BundleRaiseError('This group launch is not open on Solana yet.')
         const options = await actionOptions(body.action, { rpc, id: bundleId, bundle, wallet, body })
         const prepared = await walletTransaction(rpc, actionInstructions(body.action, { wallet, id: bundleId, ...options }), { feePayer: wallet })

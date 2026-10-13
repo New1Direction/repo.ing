@@ -181,6 +181,12 @@ Verify: at startup an enabled worker logs one `{"launchAlertsOn":{…}}` line (c
 
 Maintainers can also do this themselves (`src/maintainer-opt-outs.mjs`, migration `0041_maintainer_opt_outs`). A current GitHub admin can decline a repository's market from its claim page or the Builder dashboard, or opt a repository without a market out at `/opt-out`. While that decision is active the repository is treated exactly like a listed ID everywhere above (plus the home market lists, "More repo markets", Explore highlights, `/find-repos`, trending launch suggestions, Dev Pulse and both alert jobs), its token page shows "The maintainer of … has declined this market" with their optional note, and `/api/resolve`, `/api/launch` and agent drafts refuse to launch it. The market keeps trading and its builder fees stay claimable. Every change re-checks the admin's GitHub permission; withdrawing restores normal behavior and keeps the old row as history. Active decisions: `select github_repo_id, kind, note, created_at from maintainer_opt_outs where withdrawn_at is null`.
 
+## Blocked wallets
+
+`BLOCKED_WALLETS` (web) lists wallet addresses repo.ing will not trade or launch for, separated by commas, spaces or new lines (`src/blocked-wallets.mjs`). Keep it as a private Railway variable: this repository is public, so the addresses never go in code. A listed wallet gets "This wallet cannot trade or launch on repo.ing." when it prepares a buy or sell on the site or through a Blink, a launch review (repositories and models, the initial buy included) or a Group launch raise or deposit. Nothing is built for it to sign. A Group launch refund or claim still works, because it only returns the wallet's own money; trades it signed before the change are not affected. An entry that is not a valid address is ignored and logged once as `blocked_wallets_invalid_entries`. Setting the variable redeploys web; removing an address unblocks it.
+
+This covers repo.ing only. The markets are public Meteora pools and the tokens have no freeze authority, so a listed wallet can still trade them through other apps (Jupiter, wallets, the pool program).
+
 ## Graduation milestone alerts
 
 The worker can also post when a market first passes 25, 50, 75 or 90% of its graduation target, and when it graduates, to the same Telegram/X channels as launch alerts (`src/milestone-alerts.mjs`, migration `0037_milestone_alerts`). Posts read like:
