@@ -22,7 +22,7 @@ export const MAX_BUY_LAMPORTS = 50_000_000_000n
 const MAX_BODY_BYTES = 4096
 const LAMPORTS_PER_SOL = 1_000_000_000n
 // Only app-authored trader/preflight messages reach Blink clients; RPC and DB errors are logged and replaced.
-const SAFE = /^(Contributor early access|Trading is not configured|Repository has no indexed|Canonical|Input amount|No executable output|You need approximately|Trade simulation|Trade transaction|Network cost estimate|Account setup estimate|Fixed DBC)/
+const SAFE = /^(This wallet cannot trade|Contributor early access|Trading is not configured|Repository has no indexed|Canonical|Input amount|No executable output|You need approximately|Trade simulation|Trade transaction|Network cost estimate|Account setup estimate|Fixed DBC)/
 
 // Allow-origin * is scoped to actions.json and /api/actions only (spec requirement for cross-origin Blink clients).
 export const ACTION_HEADERS = Object.freeze({

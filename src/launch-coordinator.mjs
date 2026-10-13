@@ -1,4 +1,5 @@
 import { drizzle } from 'drizzle-orm/node-postgres'
+import { assertWalletAllowed } from './blocked-wallets.mjs'
 import { and, eq, inArray } from 'drizzle-orm'
 import { PublicKey } from '@solana/web3.js'
 import { bundles, markets, repositories } from './db/schema.mjs'
@@ -111,6 +112,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     if (requireSigner && typeof signTransaction !== 'function') throw new Error('Launcher signTransaction callback required')
     const wallet = new PublicKey(launcherWallet).toBase58()
     if (wallet === launcher.creatorWallet) throw new Error('Launcher wallet cannot be the platform creator authority')
+    assertWalletAllowed(wallet)
     const repo = await resolve(repositoryUrl)
     return { image, wallet, repo }
   }
