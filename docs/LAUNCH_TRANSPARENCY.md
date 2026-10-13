@@ -14,7 +14,7 @@ Ground rules this release follows:
 
 | # | Capability | Live in this release | Later |
 | --- | --- | --- | --- |
-| 1 | [Launch Quality report](#launch-quality-score) | Yes: worker-computed, evidence and unknowns, token page, API | Funding-source wallet links (phase 2) |
+| 1 | [Launch Quality report](#launch-quality-score) | Yes: worker-computed, evidence and unknowns, token page, API, read-only MCP (`launch_quality`) | — |
 | 2 | [Calendar, watchlists, notifications, feeds](#scheduled-launches-and-the-launch-calendar) | Scheduled launches, `/launches`, JSON, Atom, iCalendar (all, or chosen repositories), webhooks filtered by kind and repository (off until a signing key is set) | Cross-device watchlist and browser push (phase 2) |
 | 3 | [Transparent price discovery](#transparent-price-discovery) | Documented staged mechanism with each market's facts | On-chain batch auction (phase 3, new program) |
 | 4 | [Seeded liquidity disclosure](#seeded-liquidity-disclosure) | Yes: labels, amounts, lock states, evidence | — |
@@ -68,8 +68,13 @@ A controller is a wallet or a cluster of wallets with public evidence of one con
 - **Same transaction:** two different swap owners in one transaction signed together.
 - **Operator record:** a `wallet_links` row with written evidence, for example a shared funding transaction. Records are added and removed with `scripts/wallet-links.mjs`; removal keeps history.
 - **Platform:** all labeled repo.ing wallets are one controller.
+- **Funding source** (`src/wallet-funding.mjs`, migration 0072): the worker reads where each active trading wallet's first SOL came from. It checks wallets that traded at least 0.1 SOL in 30 days, 20 per run, reading the first system transfer into the wallet in its oldest transactions. Two links follow:
+  - **shared funder:** wallets funded by the same wallet, unless that funder looks like an exchange or another service (it funded 25 or more checked wallets, or has 1,000 or more transactions itself) or is a repo.ing wallet;
+  - **direct funding:** a trading wallet funded by another trader of the same market.
 
-Wallets with no evidence stay separate. Linked activity is therefore undercounted, never invented. Funding-source analysis is phase 2.
+  Wallets with 1,000 or more transactions are not traced (`long-history`): fresh wallets are what wash-trading setups create. `WALLET_FUNDING_LINKS=false` on the worker turns this off.
+
+Wallets with no evidence stay separate. Linked activity is therefore undercounted, never invented. A link is evidence of a relationship, not proof of one controller: it only excludes activity from metrics and incentive previews, never blocks anyone, and the report shows how many links of each kind were found.
 
 ## Scheduled launches and the launch calendar
 
@@ -187,7 +192,6 @@ Limits: holdings come from indexed swaps, so tokens moved by plain transfer are 
 
 | Phase | Work | Why it is not in this release |
 | --- | --- | --- |
-| 2 | Funding-source wallet links (first funder of each trading wallet) | Many RPC reads per wallet; needs its own budget and review of false links |
 | 2 | Cross-device watchlist and browser push notifications | Needs accounts or signed wallet storage, a service worker, VAPID keys and consent UI |
 | 2 | Per-wallet caps at launch via the early access hook | Gated by the early access activation plan |
 | 3 | On-chain batch auction (uniform clearing price, pro-rata tokens) | New Solana program: design, audit, deployment and migration |
@@ -207,11 +211,12 @@ Before the worker runs, the calendar shows scheduled launches but no reports or 
 | Variable | Service | Default | Effect |
 | --- | --- | --- | --- |
 | `LAUNCH_SCHEDULES_ENABLED` | web | on | `false` pauses new schedules; cancelling and the gate still work |
-| `MARKET_TRANSPARENCY_SAMPLING` | worker | on | `false` stops liquidity and LP sampling and reports; the feed, schedules and webhooks still run |
+| `MARKET_TRANSPARENCY_SAMPLING` | worker | on | `false` stops liquidity and LP sampling, funding-source checks and reports; the feed, schedules and webhooks still run |
+| `WALLET_FUNDING_LINKS` | worker | on | `false` stops only the funding-source checks |
 | `LAUNCH_WEBHOOKS_ENABLED` | web, worker | off | `true` (with a key) turns on webhook management and delivery |
 | `LAUNCH_WEBHOOK_SIGNING_KEY` | web, worker | none | Base64 32-byte Ed25519 seed (or a PKCS#8 PEM). The public key is served at `/api/v1/webhooks/signing-key` |
 
-**Worker cost:** each 2-minute run samples up to 20 markets' liquidity (two RPC reads each) and up to 5 graduated pools' LP positions (one program scan plus a read per position, at most 200). It also writes up to 10 reports; each reads the holder snapshot (three RPC reads) and the market's swaps. Every market is refreshed about hourly. Samples older than 120 days are deleted.
+**Worker cost:** each 2-minute run samples up to 20 markets' liquidity (two RPC reads each) and up to 5 graduated pools' LP positions (one program scan plus a read per position, at most 200). It also traces up to 20 trading wallets' funding (two to four reads each) and writes up to 10 reports; each report reads the holder snapshot (three RPC reads) and the market's swaps. Every market is refreshed about hourly. Samples older than 120 days are deleted.
 
 **Operator wallet links:** run `node --env-file=.env.local scripts/wallet-links.mjs add <walletA> <walletB> "<evidence>"`, plus `list` and `remove`.
 

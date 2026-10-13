@@ -23,6 +23,8 @@ import { EARLY_ACCESS_WINDOWS, earlyAccessLaunchable } from '../../../../src/ear
 import { earlyAccessOptionTerms } from '../../../../src/early-access-rules.mjs'
 import { bundleFormSettings, bundleLaunchable } from '../../../../src/bundle-launch.mjs'
 import { repositoryBlockers } from '../../../../src/bundle-raise-store.mjs'
+import { activeSchedule, publicSchedule } from '../../../../src/launch-schedules.mjs'
+import { ScheduledLaunchBlocked, ScheduledWindowNote } from '../../../components/scheduled-launch'
 export const dynamic = 'force-dynamic'
 export const metadata = { referrer: 'no-referrer', robots: { index: false, follow: false } }
 export default async function Launch({ params, searchParams }) {
@@ -46,6 +48,11 @@ export default async function Launch({ params, searchParams }) {
       console.warn('launch_lineage_unavailable', { code: error?.code ?? error?.name ?? 'error' })
     }
   }
+  // A scheduled launch (src/launch-schedules.mjs): before its time no form; during its window the form says who may launch. Advisory
+  // like the checks above: the coordinator enforces it at reservation, so an unreadable schedule here only skips the notice.
+  const schedule = pool ? await activeSchedule(pool, repoId).then(row => publicSchedule(row), () => null) : null
+  if (schedule?.state === 'upcoming') return <><AppHeader active="launch"/><main className="section-wrap launch-page"><ScheduledLaunchBlocked repo={repo} schedule={schedule}/></main><Footer/></>
+  const windowOpen = schedule?.state === 'open'
   const query = await searchParams
   let draft
   if (query.draft !== undefined) {
@@ -63,12 +70,12 @@ export default async function Launch({ params, searchParams }) {
   // SOL, plus the owner's company stock when stock pairs can be launched; from the owner GitHub reported in the read above.
   const pairs = quoteOptions(repo, { enabled: stockPairsLaunchable() })
   // Contributor early access (docs/EARLY_ACCESS.md): offered only while it can launch; the form shows it for SOL launches from here.
-  const earlyAccess = earlyAccessLaunchable() ? { windows: EARLY_ACCESS_WINDOWS.map(window => ({ ...window })), ...earlyAccessOptionTerms() } : null
+  const earlyAccess = earlyAccessLaunchable() && !windowOpen ? { windows: EARLY_ACCESS_WINDOWS.map(window => ({ ...window })), ...earlyAccessOptionTerms() } : null
   // Bundle launches (docs/BUNDLE_LAUNCH.md): offered only while a raise can be opened; the form shows it beside the standard launch.
-  const bundle = bundleLaunchable() ? bundleFormSettings() : null
+  const bundle = bundleLaunchable() && !windowOpen ? bundleFormSettings() : null
   // A repository with a live bundle launches from its raise, whatever the switch says (the launch coordinator refuses a standard
   // launch beside it).
   const liveBundleId = pool ? (await repositoryBlockers(pool, repoId).catch(() => null))?.liveBundleId : null
   if (liveBundleId) return <><AppHeader active="launch"/><main className="section-wrap launch-page"><h1>This repository has a group launch</h1><p>Backers are funding its launch. Its market launches from the raise when it is full.</p><Link href={`/group/${liveBundleId}`} className="button primary">See the raise</Link></main><Footer/></>
-  return <><AppHeader active="launch"/><main className="section-wrap launch-page"><LaunchTokenImageProvider><Link href="/explore" className="back-link"><ArrowLeft size={18}/>Back to explore</Link><div className="repo-hero-card"><div><RepoIdentity repo={repo} avatar={<LaunchTokenAvatar><RepoAvatar repo={repo} size="large"/></LaunchTokenAvatar>}><ForkOfLabel parent={repo.fork?.parent?.fullName}/></RepoIdentity><RepoStats repo={repo} detailed/></div><div className="repo-hero-right"><GitHubLink repo={repo}/><div className="repo-details"><span>{repo.language || 'Language unavailable'}</span><span>{repo.license || 'License unavailable'}</span><span>{repo.updatedAt ? `Updated ${formatUtcDay(repo.updatedAt)}` : 'Update date unavailable'}</span></div></div></div><LaunchRepoFacts repo={repo}/><LaunchForm key={`${repoId}:${query.draft || "manual"}`} repo={repo} draft={draft ? { token: query.draft, tokenName: draft.tokenName, tokenSymbol: draft.tokenSymbol, initialBuy: draft.initialBuy } : undefined} trendRevision={trendRevision} available={launchAvailable()} discoveryEnabled={discoveryRewardsEnabled()} allocationEnabled={builderAllocationEnabled()} launchFee={launchFee} verificationBonus={verificationBonusLamports()?.toString() ?? null} quoteOptions={pairs} earlyAccess={earlyAccess} bundle={bundle}/></LaunchTokenImageProvider></main><Footer/></>
+  return <><AppHeader active="launch"/><main className="section-wrap launch-page"><LaunchTokenImageProvider><Link href="/explore" className="back-link"><ArrowLeft size={18}/>Back to explore</Link><div className="repo-hero-card"><div><RepoIdentity repo={repo} avatar={<LaunchTokenAvatar><RepoAvatar repo={repo} size="large"/></LaunchTokenAvatar>}><ForkOfLabel parent={repo.fork?.parent?.fullName}/></RepoIdentity><RepoStats repo={repo} detailed/></div><div className="repo-hero-right"><GitHubLink repo={repo}/><div className="repo-details"><span>{repo.language || 'Language unavailable'}</span><span>{repo.license || 'License unavailable'}</span><span>{repo.updatedAt ? `Updated ${formatUtcDay(repo.updatedAt)}` : 'Update date unavailable'}</span></div></div></div><LaunchRepoFacts repo={repo}/>{windowOpen && <ScheduledWindowNote schedule={schedule}/>}<LaunchForm key={`${repoId}:${query.draft || "manual"}`} repo={repo} draft={draft ? { token: query.draft, tokenName: draft.tokenName, tokenSymbol: draft.tokenSymbol, initialBuy: draft.initialBuy } : undefined} trendRevision={trendRevision} available={launchAvailable()} discoveryEnabled={discoveryRewardsEnabled()} allocationEnabled={builderAllocationEnabled()} launchFee={launchFee} verificationBonus={verificationBonusLamports()?.toString() ?? null} quoteOptions={pairs} earlyAccess={earlyAccess} bundle={bundle}/></LaunchTokenImageProvider></main><Footer/></>
 }

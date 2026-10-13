@@ -134,3 +134,6 @@
   .launches-actions{flex-direction:row;align-items:center;justify-content:flex-start}
 }
 .launch-manage>.button{justify-self:start}
+.scheduled-window-note{max-width:none;margin:18px 0}
+.launch-blocked .transparency-facts{width:100%}
+.scheduled-window-note h2{margin:0;font-size:20px}

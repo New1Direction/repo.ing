@@ -10,6 +10,7 @@ import { createWebhookStore, deliverDue, fanOutDeliveries, WEBHOOK_LIMITS } from
 import { buildMarketReport, createMarketTransparency, dueMarkets, readStoredReport, storeReport } from '../src/market-transparency.mjs'
 import { readWalletLinks } from '../src/wallet-clusters.mjs'
 import { readSeedFacts, seededLiquidity } from '../src/seeded-liquidity.mjs'
+import { checkWalletFunding, dueFundingWallets, FUNDING_LIMITS, readFundingLinks } from '../src/wallet-funding.mjs'
 
 // Real PostgreSQL with every committed migration (0071_launch_transparency): scheduled launches and their constraints, the launch feed
 // and calendar, webhook subscriptions and deliveries, and the stored transparency report built from indexed swaps.
@@ -24,7 +25,7 @@ async function open() {
   const pool = new pg.Pool({ connectionString: url })
   await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
   await pool.query(`truncate launch_webhook_deliveries, launch_webhooks, launch_feed_events, launch_schedules, launch_quality_reports, market_liquidity_samples,
-    lp_position_samples, wallet_links, trade_events, bundles, maintainer_opt_outs, markets, repositories restart identity cascade`)
+    lp_position_samples, wallet_links, wallet_funding, trade_events, bundles, maintainer_opt_outs, markets, repositories restart identity cascade`)
   return pool
 }
 const repo = (pool, id, name = `octo/r${id}`, extra = {}) => pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at,github_created_at)
@@ -216,5 +217,55 @@ test('real PostgreSQL: the stored report is built from indexed swaps, links and 
     const result = await job.runOnce()
     assert.deepEqual(Object.keys(result).sort(), ['feed', 'schedules'])
     assert.ok(!('error' in result.feed) && !('error' in result.schedules))
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL: funding sources link fresh sibling wallets and direct funding, never through a service or a repo.ing wallet', { skip: !url }, async () => {
+  const pool = await open()
+  try {
+    const now = Date.now()
+    const [x, y, z, funder, exchange, big, small] = Array.from({ length: 7 }, wallet)
+    // A fake RPC: x and y were funded by `funder` in their first transaction; z by x itself; `big` has a long history; `small` was
+    // never funded by a transfer (its oldest transaction moves SOL out).
+    const firstTx = { [x]: funder, [y]: funder, [z]: x }
+    const busy = new Set([big]), historyReads = []
+    const connection = {
+      getSignaturesForAddress: async key => (historyReads.push(key.toBase58()), busy.has(key.toBase58())) ? Array.from({ length: FUNDING_LIMITS.historyLimit }, (_, i) => ({ signature: `b${i}` }))
+        : [{ signature: `new-${key.toBase58()}`, blockTime: 1760000000 }, { signature: `first-${key.toBase58()}`, blockTime: 1750000000 }],
+      getParsedTransaction: async signature => {
+        const owner = signature.split('-')[1], source = signature.startsWith('first-') ? firstTx[owner] : null
+        const transfer = source ? { source, destination: owner, lamports: 50_000_000 } : { source: owner, destination: exchange, lamports: 1 }
+        return { meta: { err: null, innerInstructions: [] }, transaction: { message: { instructions: [{ programId: '11111111111111111111111111111111', parsed: { type: 'transfer', info: transfer } }] } } }
+      },
+    }
+    for (const w of [x, y, z, big, small]) await checkWalletFunding(pool, connection, w)
+    assert.equal(historyReads.filter(key => key === funder).length, 1, 'a funder\'s own history is read once')
+    const { rows } = await pool.query('select wallet, status, funder from wallet_funding order by wallet')
+    const byWallet = Object.fromEntries(rows.map(row => [row.wallet, [row.status, row.funder]]))
+    assert.deepEqual([byWallet[x], byWallet[y], byWallet[z], byWallet[big], byWallet[small]],
+      [['found', funder], ['found', funder], ['found', x], ['long-history', null], ['none', null]])
+    const links = await readFundingLinks(pool, [x, y, z, small])
+    const pairs = links.map(link => [link.a, link.b].sort().join(':')).sort()
+    assert.deepEqual(pairs, [[x, y].sort().join(':'), [x, z].sort().join(':')].sort(), 'siblings of one funder, and a trader funding another')
+    // A funder that funded many checked wallets is a service: its customers are not linked. A repo.ing wallet's funding is ignored.
+    for (let i = 0; i < FUNDING_LIMITS.serviceMinWallets; i++) {
+      await pool.query(`insert into wallet_funding (wallet, status, funder, funding_signature) values ($1, 'found', $2, $3)`, [wallet(), funder, `svc${i}`])
+    }
+    assert.deepEqual((await readFundingLinks(pool, [x, y, z])).map(link => link.kind + ':' + [link.a, link.b].sort().join(':')),
+      [`funding:${[x, z].sort().join(':')}`])
+    assert.deepEqual(await readFundingLinks(pool, [x, z], { ignoreFunders: new Set([x]) }), [])
+    // A funder with a busy history of its own (an exchange hot wallet) never links its customers, however few were checked.
+    const [p, q, hot] = [wallet(), wallet(), wallet()]
+    busy.add(hot); Object.assign(firstTx, { [p]: hot, [q]: hot })
+    for (const w of [p, q]) await checkWalletFunding(pool, connection, w)
+    assert.deepEqual(await readFundingLinks(pool, [p, q]), [])
+    // Due wallets: active traders above the volume floor, never checked yet.
+    await repo(pool, 51); await market(pool, 51)
+    for (const [trader, lamports] of [[wallet(), 200_000_000n], [x, 900_000_000n], [wallet(), 50_000_000n]]) {
+      await pool.query(`insert into trade_events (pool, signature, event_index, slot, traded_at, direction, input_base_units, output_base_units, next_sqrt_price, trader)
+        values ('Pool51', $1, 0, 1, now(), 'buy', $2, '1', '1', $3)`, [`t-${trader}`, lamports.toString(), trader])
+    }
+    const due = await dueFundingWallets(pool, { now })
+    assert.equal(due.length, 1, 'x was checked already and the small trader is under the floor')
   } finally { await pool.end() }
 })

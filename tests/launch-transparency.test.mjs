@@ -383,3 +383,16 @@ test('webhooks: a delivery ends when the status line arrives, so a receiver that
     await Promise.all([new Promise(resolve => server.close(resolve)), new Promise(resolve => silent.close(resolve))])
   }
 })
+
+test('funding source: the first SOL transfer into the wallet, top-level or inner, names its funder; outgoing transfers do not', async () => {
+  const { firstFunding } = await import('../src/wallet-funding.mjs')
+  const SYSTEM = '11111111111111111111111111111111'
+  const ix = (type, info) => ({ programId: SYSTEM, program: 'system', parsed: { type, info } })
+  const tx = (top, inner = []) => ({ meta: { err: null, innerInstructions: inner.length ? [{ index: 0, instructions: inner }] : [] }, transaction: { message: { instructions: top } } })
+  assert.deepEqual(firstFunding(tx([ix('transfer', { source: 'W', destination: 'X', lamports: 5 }), ix('transfer', { source: 'F', destination: 'W', lamports: 2_000_000 })]), 'W'),
+    { funder: 'F', lamports: 2_000_000n })
+  assert.deepEqual(firstFunding(tx([{ programId: 'Other', parsed: null }], [ix('transfer', { source: 'Exchange', destination: 'W', lamports: 7 })]), 'W'), { funder: 'Exchange', lamports: 7n })
+  assert.deepEqual(firstFunding(tx([ix('createAccount', { source: 'Parent', newAccount: 'W', lamports: 890880 })]), 'W'), { funder: 'Parent', lamports: 890880n })
+  assert.equal(firstFunding(tx([ix('transfer', { source: 'W', destination: 'F', lamports: 1 })]), 'W'), null)
+  assert.equal(firstFunding({ ...tx([ix('transfer', { source: 'F', destination: 'W', lamports: 1 })]), meta: { err: { InstructionError: [0, 'x'] } } }, 'W'), null, 'a failed transaction funds nothing')
+})

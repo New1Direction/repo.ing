@@ -9,6 +9,7 @@ import { launcherPosition, readLauncherTrades, sharePercent } from './trust-sign
 import { launchedSchedule, reconcileSchedules } from './launch-schedules.mjs'
 import { produceFeedEvents } from './launch-feed.mjs'
 import { deliverDue, fanOutDeliveries } from './launch-webhooks.mjs'
+import { checkWalletFunding, dueFundingWallets, linkKinds, readFundingLinks } from './wallet-funding.mjs'
 
 // The worker's transparency job (docs/LAUNCH_TRANSPARENCY.md): keeps the public launch feed and scheduled launches current, samples
 // every market's executable liquidity and every graduated pool's LP positions about hourly, and stores one transparency report
@@ -116,7 +117,8 @@ export async function buildMarketReport(db, market, { labels: given = new Map(),
     holderSnapshot(market).catch(() => null), launchFeeFor(market).catch(() => null),
   ])
   const traders = [...new Set(trades.map(row => row.trader).filter(Boolean))]
-  const links = [...sameTransactionLinks(trades), ...platformLinks(labels), ...await readWalletLinks(db, traders)]
+  const links = [...sameTransactionLinks(trades), ...platformLinks(labels), ...await readWalletLinks(db, traders),
+    ...await readFundingLinks(db, traders, { ignoreFunders: new Set(labels.keys()) })]
   const { clusterOf } = clusterWallets(traders, links)
   const integrity = tradeIntegrity(trades, { labels, clusterOf })
   const position = launcherRow ? launcherPosition(launcherRow) : null
@@ -153,7 +155,7 @@ export async function buildMarketReport(db, market, { labels: given = new Map(),
     incentives = lpIncentives(lpSamples, { labels, clusterOf, integrity,
       migratedPositions: new Set(proof ? [proof.creatorPosition, proof.partnerPosition] : []) })
   }
-  return { ...quality, integrity: integrityView(integrity), health, incentives }
+  return { ...quality, integrity: { ...integrityView(integrity), linkEvidence: linkKinds(links.filter(link => link.kind !== 'platform')) }, health, incentives }
 }
 
 export async function storeReport(db, repoId, report) {
@@ -171,7 +173,7 @@ export async function readStoredReport(db, repoId) {
 }
 
 export function createMarketTransparency({ pool, connection, resolveConfig, labelsFor = () => new Map(), holderSnapshot, pulseFor, launchFeeFor, feeClaimerFor,
-  excluded = async () => new Set(), sampling = true, webhooks = null, now = Date.now, limits = TRANSPARENCY_LIMITS, log = () => {} }) {
+  excluded = async () => new Set(), sampling = true, funding = false, webhooks = null, now = Date.now, limits = TRANSPARENCY_LIMITS, log = () => {} }) {
   // A market whose sample or report keeps failing backs off (15 minutes, doubling to 6 hours) so it never takes the whole per-run
   // budget from the markets behind it. Held per process; a restart simply retries.
   const failures = new Map()
@@ -212,6 +214,16 @@ export function createMarketTransparency({ pool, connection, resolveConfig, labe
         }
         return counts
       })
+      // Funding sources before reports, so a report sees the links found this run.
+      if (funding) {
+        await step('funding', result, async () => {
+          const counts = { checked: 0, failed: 0 }
+          for (const wallet of await dueFundingWallets(pool, { now: now() })) {
+            try { await checkWalletFunding(pool, connection, wallet, { now }); counts.checked++ } catch { counts.failed++ }
+          }
+          return counts
+        })
+      }
       await step('reports', result, async () => {
         const counts = { stored: 0, failed: 0 }
         for (const market of await due('reports', limits.reportsPerRun, limits.reportEveryMs)) {
