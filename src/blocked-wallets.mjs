@@ -38,11 +38,16 @@ export function blockedWallets(env = process.env) {
   return parsed
 }
 
-// wallet: a base58 string or a PublicKey.
+// The canonical base58 address of anything PublicKey accepts (a string, a PublicKey, 32 bytes), or null. Callers check and
+// pass on this form, so a wallet cannot slip past the list by sending its address in another shape.
+export function walletAddress(wallet) {
+  if (wallet === null || wallet === undefined) return null
+  try { return new PublicKey(wallet).toBase58() } catch { return null }
+}
+
 export function isBlockedWallet(wallet, env = process.env) {
   const { wallets } = blockedWallets(env)
-  if (wallets.size === 0 || wallet === null || wallet === undefined) return false
-  return wallets.has(typeof wallet === 'string' ? wallet : wallet.toBase58?.() ?? String(wallet))
+  return wallets.size > 0 && wallets.has(walletAddress(wallet))
 }
 
 export function assertWalletAllowed(wallet, env = process.env) {

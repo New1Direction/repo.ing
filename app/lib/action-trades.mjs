@@ -1,6 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
 import { getAssociatedTokenAddressSync, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, unpackAccount } from '@solana/spl-token'
-import { BLOCKED_WALLET_MESSAGE } from '../../src/blocked-wallets.mjs'
 import { prepareCheckedTrade } from '../../src/trade-prepare.mjs'
 import { chain } from './server.mjs'
 import { tradeRouter } from './trader.mjs'
@@ -20,7 +19,7 @@ export async function prepareActionTrade(direction, request, { router = tradeRou
     if (prepared.quoteMint) throw Error(STOCK_PAIR_ACTIONS_UNAVAILABLE)
     return prepared
   }
-  const final = message => message === STOCK_PAIR_ACTIONS_UNAVAILABLE || message.startsWith('Contributor early access') || message === BLOCKED_WALLET_MESSAGE
+  const final = message => message === STOCK_PAIR_ACTIONS_UNAVAILABLE || message.startsWith('Contributor early access')
   try { return await build(request.referrer ?? null) }
   catch (error) { if (!request.referrer || final(String(error?.message))) throw error; return build(null) }
 }

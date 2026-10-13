@@ -429,6 +429,15 @@ test('a blocked wallet (BLOCKED_WALLETS) cannot open or fund a raise; its refund
   assert.equal(h.pool.bundles.size, 0, 'nothing reserved')
   raising(h)
   assert.deepEqual(await act(h, { action: 'deposit', lamports: String(SOL) }), refusal)
+  // A deposit the wallet signed before it was listed is not relayed either.
+  const earlier = harness()
+  raising(earlier)
+  process.env.BLOCKED_WALLETS = ''
+  const deposit = transactionOf((await act(earlier, { action: 'deposit', lamports: String(SOL) })).body.transaction)
+  process.env.BLOCKED_WALLETS = `${creator.publicKey.toBase58()},${backer.publicKey.toBase58()}`
+  deposit.sign(backer)
+  assert.deepEqual(await act(earlier, { action: 'send', transaction: deposit.serialize().toString('base64'), lastValidBlockHeight: 1_000 }), refusal)
+  assert.equal(earlier.chain.sent.length, 0)
   raising(h, { status: STATUS.FAILED })
   h.chain.setProgramAccount(backerAddress(bundleAddress(7n), backer.publicKey), backerData({ bundle: bundleAddress(7n), wallet: backer.publicKey, shares: SOL }))
   assert.equal((await act(h, { action: 'refund' })).status, 200)

@@ -215,6 +215,7 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
         if (body.action === 'send') {
           const accepted = acceptSignedAction({ id: bundleId, wallet: body.wallet, transactionBase64: body.transaction })
           if (accepted.action === 'deposit' && !launchable()) return notFound()
+          if (accepted.action === 'deposit' && isBlockedWallet(body.wallet)) throw blockedWallet()
           const sent = await sendSigned(rpc, { raw: accepted.raw, signature: accepted.signature, lastValidBlockHeight: Number(body.lastValidBlockHeight) },
             broadcast)
           return reply({ action: accepted.action, ...sent }, sent.confirmed ? 200 : 202)
