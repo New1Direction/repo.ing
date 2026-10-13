@@ -53,6 +53,8 @@ Add `--scope user` to make it available in every project.
 | `find_market` | `project`: GitHub URL, git remote or `owner/name`; Hugging Face model URL; or a repo.ing market link | The market's ticker, link, mint, 24h volume, recorded builder fees, graduation status and claim link. Without a market, the launch link. |
 | `builder_earnings` | `project` | Earned, paid out and claimable now, shown only once verified against on-chain fees, plus the claim link and how claiming works. |
 | `trending_markets` | `sort`: `volume`, `newest` or `graduation`; `limit`: 1 to 20 | The markets repo.ing features, with their links. |
+| `launch_calendar` | `limit`: 1 to 20 | Scheduled launches (time, window, the only wallet that may launch, maximum initial buy), Group launch raises, and the last week's launches with their Launch quality summary. |
+| `launch_quality` | `project` | The market's Launch quality report: criteria with evidence and explicit unknowns, organic versus round-trip trading, liquidity within 2% of spot, seeded positions and lock states. |
 | `platform_stats` | none | All-time markets, graduations, trades, volume, and builder fees earned and paid out. |
 
 Every tool is annotated `readOnlyHint: true`. Hugging Face model markets always carry their disclaimer: *Community launch — not endorsed by the model's creators. Not affiliated with Hugging Face.*

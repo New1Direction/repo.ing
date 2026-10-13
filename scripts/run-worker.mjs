@@ -362,6 +362,8 @@ const transparencyConfig = createMarketConfigResolver(config, undefined, undefin
 const transparencyDbc = new DynamicBondingCurveClient(transparencyConnection, 'confirmed')
 const transparency = createMarketTransparency({ pool, connection: transparencyConnection, resolveConfig: transparencyConfig,
   labelsFor: transparencyLabels, excluded: promotionExcluded, sampling: process.env.MARKET_TRANSPARENCY_SAMPLING !== 'false',
+  // Funding-source links: up to 20 wallets a run, two to four RPC reads each; WALLET_FUNDING_LINKS=false turns it off.
+  funding: process.env.MARKET_TRANSPARENCY_SAMPLING !== 'false' && process.env.WALLET_FUNDING_LINKS !== 'false',
   holderSnapshot: async market => ({ ...await loadHolderSnapshot(transparencyConnection, market.mint, market.pool, { labels: transparencyLabels(market) }),
     observedAt: new Date().toISOString() }),
   pulseFor: repoId => readRepoPulse(pool, repoId),

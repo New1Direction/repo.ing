@@ -9,6 +9,8 @@ import { publicOrigin } from '../../../lib/origin.mjs'
 import { clientKey } from '../../../lib/holder-notes.mjs'
 import { createRateLimiter } from '../../../lib/csp-report.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
+import { calendar } from '../../../lib/launch-calendar.mjs'
+import { marketTransparency } from '../../../lib/market-transparency.mjs'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -23,7 +25,8 @@ const shown = read => async () => { const result = await read(); return { ...res
 // earnings are still being verified, and a late read still fills the cache token pages share.
 const fees = boundedRead(displayFeeStatus, { max: 2, waitMs: 8000, busy: { status: 'UNAVAILABLE' } })
 const sources = { origin: siteOrigin, markets: shown(listMarkets), race: shown(graduationRace), excluded: promotionExcluded,
-  decision: maintainerDecision, fees, usdPerSol: () => solUsdPrice(), totals: platformTotals, modelsEnabled: () => hfMarketsEnabled() }
+  decision: maintainerDecision, fees, usdPerSol: () => solUsdPrice(), totals: platformTotals, modelsEnabled: () => hfMarketsEnabled(),
+  calendar, transparency: marketTransparency }
 
 // Rate limits, counting every POST that passes the origin rule. First in this process (the CSP report limiter): callers
 // choose their forwarded address, so this bounds what reaches the database however they rotate it. Then in

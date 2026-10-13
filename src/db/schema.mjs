@@ -1573,3 +1573,19 @@ export const launchWebhookDeliveries = pgTable('launch_webhook_deliveries', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => [primaryKey({ name: 'launch_webhook_deliveries_pkey', columns: [t.webhookId, t.eventId] }),
   index('launch_webhook_deliveries_due').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'sending')`)])
+
+// Where each trading wallet's first SOL came from (migration 0072, src/wallet-funding.mjs). Public chain facts only.
+export const walletFunding = pgTable('wallet_funding', {
+  wallet: varchar('wallet', { length: 44 }).primaryKey(),
+  status: varchar('status', { length: 16 }).notNull(),
+  funder: varchar('funder', { length: 44 }),
+  fundingSignature: varchar('funding_signature', { length: 88 }),
+  fundedLamports: numeric('funded_lamports', { precision: 20, scale: 0 }),
+  fundedAt: timestamp('funded_at', { withTimezone: true }),
+  // The funder has 1,000 or more transactions itself: an exchange or other service, never a sibling link.
+  funderBusy: boolean('funder_busy'),
+  checkedAt: timestamp('checked_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('wallet_funding_funder').on(t.funder).where(sql`${t.status} = 'found'`),
+  check('wallet_funding_status_check', sql`${t.status} in ('found', 'none', 'long-history', 'error')`),
+  check('wallet_funding_found_check', sql`(${t.status} = 'found') = (${t.funder} is not null and ${t.fundingSignature} is not null)`),
+  check('wallet_funding_not_self', sql`${t.funder} is null or ${t.funder} <> ${t.wallet}`)])

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import pg from 'pg'
 import BN from 'bn.js'
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from '@solana/web3.js'
-import { NATIVE_MINT, TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import { NATIVE_MINT, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { DAMM_V2_MIGRATION_FEE_ADDRESS, DynamicBondingCurveClient, MigrationFeeOption, SwapMode, deriveDbcPoolAuthority } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { CpAmm } from '@meteora-ag/cp-amm-sdk'
 import { buildLaunchFeeConfigTransaction } from '../src/launch-fee-config.mjs'
@@ -21,6 +21,7 @@ import { curveSnapshot, dammSnapshot } from '../src/market-liquidity.mjs'
 import { quoteDisplay } from '../src/trade-quote-display.mjs'
 import { produceFeedEvents, readFeedEvents } from '../src/launch-feed.mjs'
 import { loadHolderSnapshot } from '../app/lib/trust-panel.mjs'
+import { checkWalletFunding } from '../src/wallet-funding.mjs'
 
 // Launch transparency on a local validator and a disposable database: a scheduled launch through the production coordinator
 // and launcher, published depth checked by executing swaps of exactly the published size, trading integrity from indexed
@@ -195,6 +196,33 @@ test('launch transparency: scheduled launch gate, executable depth, integrity, r
     assert.ok(report.unknowns.includes('repo_activity'), 'no Dev Pulse reading: unknown, not zero')
     assert.equal(stored.score, report.score)
     assert.ok(report.coveragePercent >= 60 && report.score !== null)
+  })
+
+  await t.test('funding sources: two fresh wallets funded by one wallet are one controller, so a buy and a sell across them is a round trip', async () => {
+    const funder = Keypair.generate(), buyer = Keypair.generate(), seller = Keypair.generate()
+    await fund(funder.publicKey, 3)
+    for (const target of [buyer, seller]) {
+      await send(new Transaction().add(SystemProgram.transfer({ fromPubkey: funder.publicKey, toPubkey: target.publicKey, lamports: 1e9 })), [funder], 'finalized')
+    }
+    const bought = await send(await curveSwap(buyer.publicKey, market.pool, 'buy', 300_000_000n), [buyer])
+    const tokens = await tokenBalance(buyer.publicKey, market.mint), mint = new PublicKey(market.mint)
+    await send(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(buyer.publicKey, getAssociatedTokenAddressSync(mint, seller.publicKey), seller.publicKey, mint),
+      createTransferInstruction(getAssociatedTokenAddressSync(mint, buyer.publicKey), getAssociatedTokenAddressSync(mint, seller.publicKey), buyer.publicKey, tokens / 2n)), [buyer])
+    const sold = await send(await curveSwap(seller.publicKey, market.pool, 'sell', tokens / 2n), [seller])
+    await finalized([bought, sold])
+    assert.ok((await createExternalFeeIndexer({ pool, connection, config }).runOnce()).every(item => item.status === 'OK'))
+    const subject = { githubRepoId: String(SCHEDULED), mint: market.mint, pool: market.pool, launchSignature: market.launchSignature, launcherWallet: launcher.publicKey.toBase58(),
+      creatorWallet: market.creatorWallet, launchedAt: new Date(), bundleId: null, graduatedPool: null }
+    const before = await buildMarketReport(pool, subject, { labels })
+    const finalizedConnection = new Connection(rpc, 'finalized')
+    for (const wallet of [buyer, seller]) assert.equal(await checkWalletFunding(pool, finalizedConnection, wallet.publicKey.toBase58()), 'found')
+    const after = await buildMarketReport(pool, subject, { labels })
+    const { rows } = await pool.query(`select direction, (case when direction = 'buy' then input_base_units else output_base_units end) as lamports from trade_events
+      where signature = any($1::text[])`, [[bought, sold]])
+    const buyLamports = BigInt(rows.find(row => row.direction === 'buy').lamports), sellLamports = BigInt(rows.find(row => row.direction === 'sell').lamports)
+    const matched = buyLamports < sellLamports ? buyLamports : sellLamports
+    assert.equal(BigInt(after.integrity.totals.roundTrip) - BigInt(before.integrity.totals.roundTrip), 2n * matched, 'the cross-wallet pair is now a round trip')
+    assert.equal(after.integrity.linkEvidence.funding, 1)
   })
 
   await t.test('graduated: the DAMM pool depth is executable and LP positions are attributed to their NFT holders', async () => {

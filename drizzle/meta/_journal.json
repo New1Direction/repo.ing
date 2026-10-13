@@ -484,6 +484,13 @@
       "when": 1790910031000,
       "tag": "0071_launch_transparency",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1790910032000,
+      "tag": "0072_wallet_funding",
+      "breakpoints": true
     }
   ]
 }

@@ -74,6 +74,7 @@ Set `DATABASE_URL` explicitly. Drizzle's fallback database is an older test defa
 | `PROMOTION_EXCLUDED_REPO_IDS` | Web, worker | [Do-not-promote list](PRODUCTION.md#do-not-promote-list): comma-separated GitHub repository IDs left out of `/waiting`, the graduation race, "Repo markets to watch" and milestone alerts |
 | `LAUNCH_SCHEDULES_ENABLED` | Web | [Scheduled launches](LAUNCH_TRANSPARENCY.md#scheduled-launches-and-the-launch-calendar) are on unless `false`; cancelling and the launch gate always work |
 | `MARKET_TRANSPARENCY_SAMPLING` | Worker | `false` stops the hourly [liquidity and LP samples and transparency reports](LAUNCH_TRANSPARENCY.md#operating); the launch feed and schedules keep running |
+| `WALLET_FUNDING_LINKS` | Worker | `false` stops only the [funding-source wallet links](LAUNCH_TRANSPARENCY.md#linked-wallets) |
 | `LAUNCH_WEBHOOKS_ENABLED`, `LAUNCH_WEBHOOK_SIGNING_KEY` | Web, worker | [Launch feed webhooks](MARKET_DATA_API.md#webhooks): off unless `true` and a base64 Ed25519 seed is set |
 | `SERVER_TIMING_SLOW_MS` | Web | Optional: log `slowLoader` lines for data loaders slower than this many milliseconds (default 150; see [response speed](PRODUCTION.md#response-speed-indexes-caches-edge-caching-and-real-user-vitals)) |
 

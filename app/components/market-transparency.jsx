@@ -6,6 +6,7 @@ import '../transparency.css'
 // and the reward and incentive previews. Facts and disclosures only: no buy or sell call to action lives here.
 const STATUS_LABEL = { pass: 'Pass', warn: 'Caution', fail: 'Fail', unknown: 'Unknown', info: 'Info' }
 const STAGE_LABEL = { done: 'Done', active: 'Now', upcoming: 'Next', skipped: 'Not used' }
+const LINK_KINDS = { 'same-transaction': 'same transaction', operator: 'operator record', funding: 'funding source' }
 const EXCLUSIONS = { 'migrated-locked': "repo.ing's locked migration liquidity", labeled: 'labeled repo.ing or builder wallet',
   'circular-volume': 'circular volume in this market', 'owner-unknown': 'owner unknown' }
 const short = value => (value ? `${value.slice(0, 4)}…${value.slice(-4)}` : '—')
@@ -110,11 +111,13 @@ function IntegrityCard({ integrity }) {
     <h3 id="integrity-title">Trading integrity <small>all finalized swaps</small></h3>
     <dl className="transparency-facts">{rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{pct(value)}</dd></div>)}
       <div><dt>Not yet attributed to a wallet</dt><dd>{pct(integrity.unattributedPercent)} of volume</dd></div>
-      <div><dt>Controllers</dt><dd>{integrity.traders.controllers} ({integrity.traders.linkedControllers} with linked wallets)</dd></div></dl>
+      <div><dt>Controllers</dt><dd>{integrity.traders.controllers} ({integrity.traders.linkedControllers} with linked wallets)</dd></div>
+      {integrity.linkEvidence && Object.keys(integrity.linkEvidence).length > 0 && <div><dt>Wallet links found</dt><dd>{Object.entries(integrity.linkEvidence)
+        .map(([kind, count]) => `${count} ${LINK_KINDS[kind] ?? kind}`).join(' · ')}</dd></div>}</dl>
     {integrity.flagged.length > 0 && <details><summary>Largest round-trip and same-transaction controllers</summary><ul className="transparency-flagged">
       {integrity.flagged.map(row => <li key={row.cluster}>{row.wallets.map(wallet => <a key={wallet} href={explorer('account', wallet)} target="_blank" rel="noreferrer" title={wallet}>{short(wallet)}</a>)}
         <span>{sol(row.roundTripLamports)} round trips · {sol(row.sameTransactionLamports)} same transaction</span></li>)}</ul></details>}
-    <p className="transparency-note">Shares are of volume attributed to a wallet. Wallets are linked only on public evidence (two owners in one transaction, or an operator record with evidence), so linked activity is undercounted, never invented.</p>
+    <p className="transparency-note">Shares are of volume attributed to a wallet. Wallets are linked only on public evidence: two owners in one transaction, a shared first funder that is not an exchange-like service, funding by another trader of this market, or an operator record. Linked activity is undercounted, never invented.</p>
   </section>
 }
 

@@ -89,7 +89,8 @@ test('dark: the routes that start or fund a raise answer 404 while the Bundle sw
 test('dark: the launch form\'s option follows the switch; existing bundles are shown whatever it says', () => {
   const source = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
   const launchPage = source('app/(site)/launch/[repo]/page.jsx'), raisePage = source('app/(site)/group/[id]/page.jsx')
-  assert.match(launchPage, /const bundle = bundleLaunchable\(\) \? bundleFormSettings\(\) : null/)
+  // Also withheld while a scheduled launch's window is open (only the announced wallet may launch then, src/launch-schedules.mjs).
+  assert.match(launchPage, /const bundle = bundleLaunchable\(\) && !windowOpen \? bundleFormSettings\(\) : null/)
   assert.match(launchPage, /const liveBundleId = pool \?/, 'a live bundle is shown whatever the switch says')
   // A standard launch beside a live bundle is refused by the launch coordinator, under the repository lock, whatever the switch.
   assert.doesNotMatch(source('app/api/launch/route.js'), /bundle/i)
