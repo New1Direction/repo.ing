@@ -8,6 +8,8 @@ import { WaitingCopyLink } from './waiting-copy-link'
 import { IconArt } from './icon-art'
 import { amountDisplay, tagIntentUrl, waitingAnchor } from '../lib/waiting.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
+import { claimHref } from '../lib/claim-funnel.mjs'
+import { MaintainerLookupForm } from './owner-lookup'
 
 const AMOUNT_NOTE = 'Builders earned from trades and not yet claimed — the same indexed figure as “Builders earned” on Explore. USD is an estimate at the current SOL price. The claim page checks the on-chain balance before any payout.'
 
@@ -23,6 +25,7 @@ export function WaitingHeader({ total, count, usdPerSol }) {
       <strong>How to help</strong>
       <span>Know a maintainer below? <b>Tag them on X</b> — the post links straight to their claim page.</span>
     </aside>}
+    <MaintainerLookupForm/>
   </div><IconArt name="maintainer-card" size={176} eager/></header>
 }
 
@@ -50,7 +53,7 @@ function WaitingRow({ market, rank, usdPerSol }) {
     </div>
     <div className="waiting-actions">
       <a className="button primary waiting-tag" href={intent} target="_blank" rel="noopener noreferrer"><XMark size={14}/>Tag them on X<span className="sr-only"> — {market.fullName} maintainer, opens in a new tab</span></a>
-      <Link className="button outline" href={`/claim/${market.repoId}`}>I’m the maintainer<span className="sr-only"> of {market.fullName}</span> → Claim</Link>
+      <Link className="button outline" href={claimHref(market.repoId, 'waiting')}>I’m the maintainer<span className="sr-only"> of {market.fullName}</span> → Claim</Link>
       <WaitingCopyLink anchor={anchor} fullName={market.fullName}/>
     </div>
   </li>

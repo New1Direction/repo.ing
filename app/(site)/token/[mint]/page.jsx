@@ -156,7 +156,7 @@ export default async function Token({ params, searchParams }) {
         <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
           {...(stockPair ? { readme: false, quote } : {})} more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
             <a href={`https://solscan.io/token/${market.mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
-            {stockPair ? <a href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}>Fee routing</a> : <Link href={`/claim/${market.repoId}`}>Claim builder fees</Link>}</>}/></div>
+            {stockPair ? <a href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}>Fee routing</a> : <Link href={`/claim/${market.repoId}?src=token`}>Claim builder fees</Link>}</>}/></div>
     </header>
     {/* "Why hold $REPOING": live buyback, volume and shipping figures, on the market view only. */}
     {official && !activity && <Suspense fallback={<RepoingCaseFallback/>}><RepoingCase pulse={pulse}/></Suspense>}
@@ -252,7 +252,7 @@ async function RepositoryEarnings({ market, declined = false }) {
           {usdEstimate && <span className="earnings-sol" title={`${market.earned} lamports earned in total`}>≈ {formatSolRounded(market.earned)} SOL earned</span>}
           <div className="earnings-breakdown"><span>Already paid<strong>{verifiedEarned===null?'—':`${formatSolDisplay(market.claimed)} SOL`}</strong></span><span>Available to claim<strong>{claimable === null ? '—' : `${formatSolDisplay(claimable)} SOL`}</strong></span></div>
           <div className="earnings-status"><Badge tone={market.beneficiaryWallet ? 'verified' : 'muted'}>{market.beneficiaryWallet ? 'Payout wallet set' : 'Payout wallet needed'}</Badge>{signedPayoutWallet(market) && <XHandle wallet={signedPayoutWallet(market)} trust avatar className="maintainer-x"/>}</div>
-          <p>{earningsNote}</p><Link className="button white earnings-claim" href={`/claim/${market.repoId}`}>Claim builder fees<ArrowUpRight size={16}/></Link>
+          <p>{earningsNote}</p><Link className="button white earnings-claim" href={`/claim/${market.repoId}?src=token`}>{!market.beneficiaryWallet && claimable !== null && BigInt(claimable) > 0n ? `Maintainer? Claim ${formatSolDisplay(claimable)} SOL` : 'Claim builder fees'}<ArrowUpRight size={16}/></Link>
           {!market.beneficiaryWallet && !declined && <InviteOwner repoId={market.repoId} fullName={market.fullName} available={claimable?.toString() ?? null}/> }
         </div>)
 }

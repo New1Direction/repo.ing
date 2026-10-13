@@ -6,6 +6,8 @@ import { RecentlyClaimed, WaitingHeader, WaitingList } from '../../components/wa
 import { waitingBoard } from '../../lib/waiting-board.mjs'
 import { solUsdPrice } from '../../lib/sol-usd.mjs'
 import '../../waiting.css'
+import '../../claim-funnel.css'
+import { FunnelBeacon } from '../../components/funnel-beacon'
 
 export const dynamic = 'force-dynamic'
 export const metadata = {
@@ -17,6 +19,7 @@ export const metadata = {
 export default function WaitingPage() {
   return <><AppHeader active="explore"/><main className="section-wrap waiting-page">
     <ExploreNavigation active="waiting"/>
+    <FunnelBeacon event="waiting_view"/>
     <Suspense fallback={<ContentSkeleton label="Loading builder fees waiting for maintainers"/>}><Board/></Suspense>
   </main><Footer/></>
 }

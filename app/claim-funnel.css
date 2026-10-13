@@ -1,0 +1,20 @@
+/* Maintainer claim funnel: next step, verification outcomes, trust notes (claim page) and the owner lookup (/builders, /waiting). */
+.claim-next-action{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:14px;padding:14px 16px;border:1px solid #41574b;border-radius:10px;background:#16241b}
+.claim-next-action p{margin:0;color:#cfe9d8;font-size:15px;line-height:1.45}.claim-next-action strong{color:var(--green)}
+.claim-trust{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 0;padding:0;list-style:none;color:var(--muted);font-size:13px}
+.claim-trust li{display:inline-flex;align-items:center;gap:6px}.claim-trust svg{flex:none;color:var(--green)}
+.claim-not-admin{margin-top:12px;padding:14px 16px;border:1px solid #8f7042;border-radius:8px;background:#2a2318;color:#f0d3a8;font-size:14px;line-height:1.5}
+.claim-not-admin p{margin:0 0 10px}.claim-not-admin ul{margin:0;padding:0;list-style:none;display:grid;gap:12px}
+.claim-not-admin li>span:first-child{display:block;font-weight:650;color:#ffe4bd}.claim-not-admin .button{margin-top:8px}
+.claim-not-admin-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.claim-verify-note{margin:11px 0 0;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--muted);font-size:13px;line-height:1.5}
+.owner-lookup{margin:18px 0 24px}.owner-lookup h2{font-size:21px;margin:0 0 4px}.owner-lookup>p{color:var(--muted);margin:0 0 12px;font-size:14px}
+.owner-lookup form{display:flex;gap:10px;flex-wrap:wrap;max-width:560px}.owner-lookup input{flex:1;min-width:200px;height:42px;border:1px solid var(--border-strong);border-radius:8px;background:none;color:var(--text);padding:0 14px}
+.owner-lookup-results{margin:16px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.owner-lookup-results li{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--border);border-radius:8px}
+.owner-lookup-results li>div{display:flex;flex-direction:column;gap:2px;min-width:0}.owner-lookup-results small{color:var(--muted)}
+.owner-lookup-results strong{overflow-wrap:anywhere}.owner-lookup-total{margin:14px 0 0;font-size:15px}.owner-lookup-total strong{color:var(--green)}
+.waiting-maintainer-lookup{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.waiting-maintainer-lookup input{min-width:190px;height:40px;border:1px solid var(--border-strong);border-radius:8px;background:none;color:var(--text);padding:0 12px}
+[data-theme=light] .claim-next-action{background:#eef8f1;border-color:#b8d8c3}[data-theme=light] .claim-next-action p{color:#2b4535}[data-theme=light] .claim-next-action strong{color:#17663a}
+[data-theme=light] .claim-not-admin{background:#fbf3e6;border-color:#e0c59a;color:#5c4320}[data-theme=light] .claim-not-admin li>span:first-child{color:#4a3415}
+.builder-empty-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:center}

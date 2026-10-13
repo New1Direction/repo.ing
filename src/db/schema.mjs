@@ -1311,6 +1311,20 @@ export const webVitals = pgTable('web_vitals', {
   check('web_vitals_rating_check', sql`${t.rating} in ('good', 'needs-improvement', 'poor')`),
   check('web_vitals_device_check', sql`${t.device} in ('mobile', 'desktop')`)])
 
+// Maintainer claim funnel events (migration 0070, src/funnel-store.mjs); nothing identifying, deleted after 180 days.
+export const funnelEvents = pgTable('funnel_events', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  event: varchar('event', { length: 24 }).notNull(),
+  source: varchar('source', { length: 16 }),
+  repoId: bigint('repo_id', { mode: 'bigint' }),
+  outcome: varchar('outcome', { length: 16 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('funnel_events_created_at').on(t.createdAt),
+  check('funnel_events_event_check', sql`${t.event} in ('claim_view', 'builders_view', 'waiting_view', 'verify_start', 'app_access_required', 'verify_result', 'builders_connect', 'builders_result', 'owner_lookup')`),
+  check('funnel_events_source_check', sql`${t.source} in ('waiting', 'x', 'invite', 'share', 'token', 'builders', 'lookup', 'admin')`),
+  check('funnel_events_repo_id_check', sql`${t.repoId} between 1 and 4503599627370495`),
+  check('funnel_events_outcome_check', sql`${t.outcome} in ('verified', 'not-admin', 'cancelled', 'failed', 'found', 'none')`)])
+
 // Stock-pair ledgers (migration 0054, docs/STOCK_QUOTES.md): a stock-paired market's trades, curve fees, graduation, DAMM fee
 // checkpoints, collections and launcher payouts, and each stock's canonical pools and settlement receipts. Separate from every
 // SOL table; amounts are raw units of each token. A row naming a market and its stock must match the market's stamp and can

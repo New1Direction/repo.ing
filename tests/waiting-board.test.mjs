@@ -46,6 +46,8 @@ test('shows USD first with an approximate SOL line, and falls back to SOL withou
 test('builds claim and anchor links', () => {
   assert.equal(waitingAnchor('42'), 'repo-42')
   assert.equal(claimPageUrl('42'), 'https://repo.ing/claim/42')
+  assert.equal(claimPageUrl('42', 'https://repo.ing', 'waiting'), 'https://repo.ing/claim/42?src=waiting')
+  assert.equal(claimPageUrl('42', 'https://repo.ing', 'bogus'), 'https://repo.ing/claim/42')
   assert.equal(waitingRowUrl('42', 'http://localhost:3001'), 'http://localhost:3001/waiting#repo-42')
 })
 
@@ -58,7 +60,7 @@ test('tag text names the GitHub owner without @, the amount and the repository',
 test('X intent posts to the claim page in a new post and fits in 280 characters', () => {
   const url = new URL(tagIntentUrl({ repoId: '42', owner: 'octocat', fullName: 'octocat/hello', amount: '12.5 SOL' }))
   assert.equal(url.origin + url.pathname, 'https://x.com/intent/post')
-  assert.equal(url.searchParams.get('url'), 'https://repo.ing/claim/42')
+  assert.equal(url.searchParams.get('url'), 'https://repo.ing/claim/42?src=x')
   assert.ok(url.searchParams.get('text').includes('12.5 SOL'))
   assert.ok(xWeightedLength(url.searchParams.get('text')) + 24 <= X_POST_LIMIT)
 })

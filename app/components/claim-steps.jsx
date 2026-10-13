@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, Info } from 'lucide-react'
+import { Check, Info, ShieldCheck } from 'lucide-react'
 import { CopyAddress } from './copy-address'
 import { ReadmeBadge } from './readme-badge'
 import { useWallet } from './wallet'
-import { formatUnits } from '../lib/format.mjs'
+import { formatSolDisplay, formatUnits } from '../lib/format.mjs'
+import { VERIFICATION_ERRORS, verificationMessage } from '../lib/claim-funnel.mjs'
+import { ClaimNotAdmin } from './claim-not-admin'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { MarketShareCard } from './market-share-card'
 import { SharePayout, ShareRow } from './payout-share'
@@ -18,7 +20,7 @@ import { claimPageStep } from '../lib/claim-checklist.mjs'
 import { PasteAddressForm, PayoutDestination, pasteSavedMessage } from './payout-address'
 import { bindingLabel, formatUtcDateTime } from '../../src/payout-address-policy.mjs'
 
-export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', creditsKeysLink = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review }) {
+export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClaim = false, creditsEnabled = false, creditsAfterClaim = false, creditsNetwork = 'mainnet', creditsKeysLink = false, graduated = false, repoId, mint, repoName, appAccess, appSettingsUrl, verifiedUser, beneficiaryWallet, beneficiaryMethod = 'signature', beneficiaryBoundAt = null, pendingAddress = null, claimable, usdEstimate, feeStatus, payoutReady, settledClaim, justClaimed, errorCode, review, source = null, notAdmin = null }) {
   const router = useRouter()
   const { wallet, connect, changeWallet, provider } = useWallet()
   const [bound, setBound] = useState(beneficiaryWallet)
@@ -33,14 +35,14 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
     errorCode === 'payout-address-pending' ? 'Your pasted payout address is still in its 48-hour hold. Claims open when it becomes active.' :
     errorCode === 'review-changed' ? 'The amount or payout details changed. Review the updated fees below, then claim again.' :
     errorCode === 'claim-failed' ? 'The payout could not be confirmed. Check the receipt and available balance before trying again.' :
-    errorCode === 'verification-failed' ? 'GitHub access could not be verified. Verify again to continue.' :
+    VERIFICATION_ERRORS.includes(errorCode) ? '' :
     errorCode === 'app-access-required' ? 'Add this repository to repo.ing’s read-only GitHub App access, then return here.' :
     errorCode ? 'This step could not finish. Refresh and try again.' : '')
   const [busy, setBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState('')
   const [reinvestChosen, setReinvestChosen] = useState(reinvestAfterClaim)
   const [creditsChosen, setCreditsChosen] = useState(creditsAfterClaim)
-  const githubReady = Boolean(verifiedUser && !expired && errorCode !== 'verification-failed')
+  const githubReady = Boolean(verifiedUser && !expired && !VERIFICATION_ERRORS.includes(errorCode))
   const walletMatches = Boolean(wallet && bound && wallet === bound)
   const walletDiffers = Boolean(wallet && bound && wallet !== bound)
   // A pasted address past its hold has no wallet to connect; a signature-bound one still asks for its wallet, as before.
@@ -52,6 +54,10 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
   const canClaim = Boolean(currentStep === 3 && claimable && claimable !== '0' && feeStatus === 'MATCH' && payoutReady && review && !awaitingReview)
   const claimAmount = claimable === null ? '—' : `${formatUnits(claimable)} SOL`
   const open = step => currentStep === step || expanded === step
+  // ?src= (app/lib/claim-funnel.mjs) travels through GitHub sign-in so the result is attributed to where the visit came from.
+  const verifyHref = `/api/github/start?repo=${repoId}&mode=verify${source ? `&src=${source}` : ''}`
+  const waiting = claimable !== null && claimable !== '0' && currentStep < 3 && !justClaimed
+  const verifyNote = errorCode === 'github-cancelled' || errorCode === 'verification-failed' ? verificationMessage(errorCode) : null
   const short = address => `${address.slice(0, 6)}…${address.slice(-4)}`
 
   useEffect(() => { setBound(beneficiaryWallet); setBoundMethod(beneficiaryMethod); setAwaitingReview(false); setStage('') }, [beneficiaryWallet, beneficiaryMethod, review])
@@ -117,7 +123,16 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
       {done && currentStep !== step && <button type="button" className="claim-text-button" aria-expanded={expanded === step} aria-controls={`claim-step-${step}`} onClick={() => setExpanded(expanded === step ? null : step)}>{expanded === step ? 'Done' : 'Review'}</button>}</div>
   }
 
-  return <><ClaimChecklist current={currentStep}/>{summary}<div className="claim-steps">
+  return <><ClaimChecklist current={currentStep}/>{summary}
+    {waiting && <div className="claim-next-action"><p><strong>{formatSolDisplay(claimable)} SOL</strong> is waiting for {repoName}{usdEstimate ? ` (≈ ${usdEstimate})` : ''}. {currentStep === 1
+      ? appMissing ? 'Next: give repo.ing read-only access to this repository, then verify with GitHub.' : 'Next: verify that you’re a current admin with GitHub. It takes about a minute.'
+      : 'Next: choose the Solana wallet that receives it.'}</p>
+      {currentStep === 1 && appReady && !githubReady && <a className={`button primary ${pendingAction ? 'disabled-link' : ''}`} aria-disabled={Boolean(pendingAction)} onClick={event => startNavigation('verify', event)} href={verifyHref}>Verify with GitHub</a>}</div>}
+    {currentStep === 1 && <ul className="claim-trust" aria-label="Before you verify">
+      <li><ShieldCheck size={15} aria-hidden="true"/>Read-only GitHub metadata access; repo.ing cannot change your code</li>
+      <li><ShieldCheck size={15} aria-hidden="true"/>No seed phrase or private key, ever; setting a wallet is a signed message, not a payment</li>
+      <li><ShieldCheck size={15} aria-hidden="true"/>Optional: a community-created market does not imply your endorsement</li></ul>}
+    <div className="claim-steps">
     {(pendingAction || busy) && <div className="claim-progress" role="status" aria-live="polite"><LoadingSignal/><span><strong>{pendingAction === 'claim' ? 'Processing your claim…' : pendingAction === 'verify' ? 'Opening GitHub…' : stage}</strong><small>{pendingAction === 'claim' ? 'Checking current admin access and settling the payout on Solana. Keep this page open.' : pendingAction === 'verify' ? 'You’ll return here after GitHub verification.' : 'Wait for confirmation here.'}</small></span></div>}
     {settledClaim && <div className="claim-receipt" role="status"><Check size={24} aria-hidden="true"/><div>
       <h2>{justClaimed ? 'Claim complete' : 'Latest payout'}</h2><p>{formatUnits(settledClaim.amount)} SOL paid to your verified payout wallet.</p>
@@ -139,7 +154,9 @@ export function ClaimSteps({ summary, reinvestEnabled = false, reinvestAfterClai
           {appMissing ? <div className="claim-app-access"><p>Allow repo.ing to read <strong>{repoName}</strong> in GitHub’s Repository access settings, then return here. This page checks again automatically.</p><a className="button primary" href={appSettingsUrl} target="_blank" rel="noopener noreferrer">Set up read-only access ↗</a><button className="claim-text-button" type="button" onClick={() => router.refresh()}>Check again</button></div> :
             !appReady ? <><p>GitHub access is temporarily unavailable.</p><button className="button primary" type="button" onClick={() => router.refresh()}>Retry access check</button></> :
               githubReady ? <p className="positive"><Check size={17}/>Verified as {verifiedUser.githubLogin}</p> :
-                <a className={`button primary ${pendingAction ? 'disabled-link' : ''}`} aria-disabled={Boolean(pendingAction)} onClick={event => startNavigation('verify', event)} href={`/api/github/start?repo=${repoId}&mode=verify`}>{pendingAction === 'verify' ? 'Opening GitHub…' : 'Verify with GitHub'}</a>}
+                errorCode === 'not-admin' ? <ClaimNotAdmin repoId={repoId} repoName={repoName} github={notAdmin?.github ?? null} permission={notAdmin?.permission ?? 'none'} verifyHref={verifyHref}/> :
+                <a className={`button primary ${pendingAction ? 'disabled-link' : ''}`} aria-disabled={Boolean(pendingAction)} onClick={event => startNavigation('verify', event)} href={verifyHref}>{pendingAction === 'verify' ? 'Opening GitHub…' : verifyNote ? 'Verify with GitHub again' : 'Verify with GitHub'}</a>}
+          {verifyNote && appReady && !githubReady && <p className="claim-verify-note" role="status">{verifyNote}</p>}
           {githubReady && <p className="claim-step-hint">Your session lasts up to one hour. Current admin access is checked again before every payout.</p>}
         </div>
       </div>
