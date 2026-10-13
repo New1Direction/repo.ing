@@ -12,6 +12,7 @@ import { symbolHolder, symbolTakenMessage, withSymbolLock } from '../../src/laun
 import { RepositoryResolutionError } from '../../src/github-url.mjs'
 import { isGithubRepoId } from '../../src/market-identity.mjs'
 import { DecisionError, assertLaunchAllowed } from '../../src/maintainer-opt-outs.mjs'
+import { activeSchedule, scheduleState } from '../../src/launch-schedules.mjs'
 import { LineageError, checkLaunchLineage } from '../../src/repo-lineage.mjs'
 import { persistLaunchRepository } from '../../src/repository-store.mjs'
 import { readLimitedBody, validateTokenImage } from '../../src/token-image.mjs'
@@ -29,6 +30,7 @@ import { chain, creatorSigner, database } from './server.mjs'
 const headers = { 'Cache-Control': 'private, no-store' }
 const reply = (body, status = 200) => Response.json(body, { status, headers })
 export const notFound = () => reply({ error: 'Not found' }, 404)
+const SCHEDULED_REFUSAL = 'This repository has a scheduled launch. A Group launch can open once its window has passed without a launch.'
 // A prepared opening is co-signed and sent only this long after it was prepared (as a launch review, src/launch-sessions.mjs):
 // its blockhash lasts about a minute, and an 'opening' row older than this can no longer become a raise through this route.
 export const OPENING_SUBMIT_MS = 120_000
@@ -90,6 +92,9 @@ export function createBundleApi({ launchable = () => bundleLaunchable(), pool = 
     return withRepositoryLock(db, repoId, async client => {
       const blockers = await repositoryBlockers(client, repoId)
       if (blockers.hasMarket) throw new BundleRaiseError(RAISE_REFUSALS.market, 409)
+      // A scheduled launch (src/launch-schedules.mjs) keeps the repository for its announced launcher until its window ends.
+      const schedule = await activeSchedule(client, repoId)
+      if (['upcoming', 'open'].includes(scheduleState(schedule, now()))) throw new BundleRaiseError(SCHEDULED_REFUSAL, 409)
       if (blockers.liveBundle && !await replaceableOpening(client, rpc, blockers)) {
         throw new BundleRaiseError(RAISE_REFUSALS[blockers.liveBundle === 'opening' ? 'opening' : 'live'], 409)
       }

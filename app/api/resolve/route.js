@@ -7,6 +7,7 @@ import { checkLaunchLineage, LineageError } from '../../../src/repo-lineage.mjs'
 import { namesHuggingFace } from '../../../src/hf-launch.mjs'
 import { resolveModelRequest } from '../../lib/hf-launch.mjs'
 import { refuseOverLimit } from '../../lib/request-limits.mjs'
+import { activeSchedule, publicSchedule, scheduleState } from '../../../src/launch-schedules.mjs'
 export const runtime = 'nodejs'
 export async function POST(request) {
   try {
@@ -43,7 +44,10 @@ export async function POST(request) {
         return Response.json({ error: error.message, code: error.code, original: error.original }, { status: 409 })
       }
     }
-    return Response.json({ repoId: repo.githubRepoId.toString(), mint: rows[0]?.mint ?? null })
+    // A scheduled launch (src/launch-schedules.mjs): said here so a launcher knows the time and the announced wallet before a review.
+    const schedule = rows[0]?.mint ? null : await activeSchedule(pool, repo.githubRepoId.toString())
+    const announced = ['upcoming', 'open'].includes(scheduleState(schedule)) ? publicSchedule(schedule) : null
+    return Response.json({ repoId: repo.githubRepoId.toString(), mint: rows[0]?.mint ?? null, ...announced ? { schedule: announced } : {} })
   } catch (error) {
     const known = error instanceof RepositoryResolutionError
     return Response.json({ error: publicError(error, () => known, 'Repository lookup is temporarily unavailable. Try again shortly.', 'resolve') },

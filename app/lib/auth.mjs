@@ -19,7 +19,7 @@ export const cookieOptions = { httpOnly: true, sameSite: 'lax', secure: process.
 // GitHub sign-ins that only identify the account (no repository authority; scope 'builders'), by mode, and the page each
 // returns to: the builder dashboard, maintainer opt-outs, the contributor wallet link (dark; docs/EARLY_ACCESS.md), the
 // repo.ing AI credits handoff (dark; src/repo-inference-handoff.mjs) and AI credit packs (dark; src/credits-packs.mjs).
-export const IDENTITY_SIGN_IN_PAGES = Object.freeze({ builders: '/builders', 'opt-out': '/opt-out', contributor: '/contributors/link', handoff: '/handoff', credits: '/credits' })
+export const IDENTITY_SIGN_IN_PAGES = Object.freeze({ builders: '/builders', 'opt-out': '/opt-out', contributor: '/contributors/link', handoff: '/handoff', credits: '/credits', launches: '/launches/manage' })
 
 // Unlike the signed UI/state cookies, this credential cookie must be confidential.
 const sessionKey = () => {

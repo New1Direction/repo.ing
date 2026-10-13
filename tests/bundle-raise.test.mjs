@@ -29,8 +29,8 @@ const admin = Keypair.generate(), creator = Keypair.generate(), backer = Keypair
 const NOW = Date.parse('2026-10-06T12:00:00Z')
 const quiet = t => { t.mock.method(console, 'error', () => {}); t.mock.method(console, 'warn', () => {}) }
 
-function harness({ hasMarket = false, overrides = {} } = {}) {
-  const pool = fakePool({ hasMarket }), chain = fakeChain()
+function harness({ hasMarket = false, schedule = null, overrides = {} } = {}) {
+  const pool = fakePool({ hasMarket, schedule }), chain = fakeChain()
   const api = createBundleApi({ launchable: () => true, pool: () => pool, connection: () => chain, admin: () => admin,
     resolveRepository: async id => ({ githubRepoId: BigInt(id), fullName: 'octo/widget' }), launchAllowed: async () => {}, persistRepository: async () => {},
     lineage: async () => {}, validateImage: async value => { if (!value) throw Error('Choose a token image before reviewing the launch.'); return value },
@@ -308,7 +308,7 @@ test('opening: under the repository lock, a stale unsigned opening is replaced, 
   const lock = onClient.lastIndexOf('select pg_advisory_lock($1::bigint)'), unlock = onClient.lastIndexOf('select pg_advisory_unlock($1::bigint)')
   assert.ok(lock >= 0 && unlock > lock)
   assert.deepEqual(onClient.slice(lock + 1, unlock).map(sql => sql.split(/\s+/).slice(0, 2).join(' ')),
-    ['select exists(select', 'update bundles', 'select count(*)::int', 'select pg_advisory_lock(hashtextextended($1,0))', 'select token_symbol',
+    ['select exists(select', 'select s.id,', 'update bundles', 'select count(*)::int', 'select pg_advisory_lock(hashtextextended($1,0))', 'select token_symbol',
       "select nextval('bundle_id_seq')::text", 'insert into', 'select pg_advisory_unlock(hashtextextended($1,0))'])
   assert.deepEqual(h.pool.queries.find(query => query.sql.includes('hashtextextended')).params, ['launch-symbol:wdgt'])
   assert.deepEqual(h.pool.queries.find(query => query.sql.includes('pg_advisory_lock')).params, [REPO])
@@ -316,6 +316,19 @@ test('opening: under the repository lock, a stale unsigned opening is replaced, 
   const capped = harness()
   for (const id of ['1', '2']) capped.pool.bundles.set(id, { bundleId: id, githubRepoId: `1${id}`, creatorWallet: creator.publicKey.toBase58(), status: 'opening' })
   assert.deepEqual(await call(capped.api.open(post('/api/bundles', openBody()))), { status: 429, body: { error: RAISE_REFUSALS.wallets } })
+})
+
+test('opening: refused while a scheduled launch is upcoming or open; allowed once its window has passed', async () => {
+  const schedule = minutes => ({ id: '4', githubRepoId: REPO, status: 'scheduled', scheduledAt: new Date(NOW + minutes * 60_000), windowMinutes: 30,
+    launcherWallet: creator.publicKey.toBase58(), maxInitialBuyLamports: '0', githubLogin: 'octo', createdAt: new Date(NOW - 7_200_000) })
+  for (const minutes of [60, -10]) {
+    const { api, pool } = harness({ schedule: schedule(minutes) })
+    const result = await call(api.open(post('/api/bundles', openBody())))
+    assert.equal(result.status, 409, `${minutes} minutes`)
+    assert.match(result.body.error, /scheduled launch/)
+    assert.equal(pool.queries.filter(query => /nextval|insert into bundles/.test(query.sql)).length, 0, 'no id or row')
+  }
+  assert.equal((await call(harness({ schedule: schedule(-31) }).api.open(post('/api/bundles', openBody())))).status, 200, 'a lapsed window no longer holds it')
 })
 
 test('opening: a ticker another market or live bundle uses is refused, compared without case; a failed bundle frees it', async () => {

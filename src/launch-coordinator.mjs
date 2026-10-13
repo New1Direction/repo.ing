@@ -13,6 +13,7 @@ import { EarlyAccessError } from './early-access.mjs'
 import { hasStarUnlocks } from './early-access-rules.mjs'
 import { validateTokenImage } from './token-image.mjs'
 import { SYMBOL_SENT_STATUSES, TICKER_MESSAGE, assertSymbolFree, validTicker, withSymbolLock } from './launch-symbols.mjs'
+import { assertScheduleAllows } from './launch-schedules.mjs'
 
 // Named explicitly, like DefinitiveLaunchError: the production build renames classes.
 export class IncompleteLaunchError extends Error {
@@ -118,7 +119,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
   }
 
   // Under the repository lock: { existing } for a launched (or recovered) market, otherwise the freshly reserved row.
-  async function reserve(db, repo, { wallet, tokenName, tokenSymbol, image }) {
+  async function reserve(db, repo, { wallet, tokenName, tokenSymbol, image, initialBuyLamports = '0' }) {
     await persist(db, repo)
     let market = await findMarket(db, repo.githubRepoId)
     if (market?.status === 'confirmed') return { existing: market }
@@ -136,6 +137,9 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
         .where(and(eq(bundles.githubRepoId, repo.githubRepoId), inArray(bundles.status, LIVE_BUNDLE_STATUSES))).limit(1)
       if (live) throw new Error(BUNDLE_IN_PROGRESS)
     }
+    // A scheduled launch (src/launch-schedules.mjs): nobody launches before the announced time, and during its window only the
+    // announced wallet, with at most the announced initial buy, and never as a Group launch.
+    await assertScheduleAllows(db.$client, repo.githubRepoId, { wallet, initialBuyLamports, bundle: Boolean(bundle), earlyAccess: Boolean(earlyAccess) })
     if (market?.status === 'prepared' && pendingReview && await pendingReview(market)) {
       throw new Error('This repository already has a launch awaiting wallet approval. Try again in a couple of minutes.')
     }
@@ -242,7 +246,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     async launch({ repositoryUrl, tokenName, tokenSymbol, tokenImage = null, launcherWallet, initialBuyLamports = '0', signTransaction, launchGuard }) {
       const { image, wallet, repo } = await checkRequest({ repositoryUrl, tokenName, tokenSymbol, tokenImage, launcherWallet, signTransaction, requireSigner: true })
       return withRepoLock(repo.githubRepoId, async db => {
-        const reserved = await reserve(db, repo, { wallet, tokenName, tokenSymbol, image })
+        const reserved = await reserve(db, repo, { wallet, tokenName, tokenSymbol, image, initialBuyLamports })
         if (reserved.existing) return reserved.existing
         const { market, prepared } = await prepareReserved(db, reserved.market, { repo, wallet, tokenName, tokenSymbol, initialBuyLamports, launchGuard })
         return finish(db, market, prepared, { repo, signTransaction, launchGuard })
@@ -253,7 +257,7 @@ export function createLaunchCoordinator({ pool, launcher, fetchImpl = fetch,
     async prepareLaunch({ repositoryUrl, tokenName, tokenSymbol, tokenImage = null, launcherWallet, initialBuyLamports = '0', launchGuard, onPrepared }) {
       const { image, wallet, repo } = await checkRequest({ repositoryUrl, tokenName, tokenSymbol, tokenImage, launcherWallet, requireSigner: false })
       return withRepoLock(repo.githubRepoId, async db => {
-        const reserved = await reserve(db, repo, { wallet, tokenName, tokenSymbol, image })
+        const reserved = await reserve(db, repo, { wallet, tokenName, tokenSymbol, image, initialBuyLamports })
         if (reserved.existing) return { market: reserved.existing, repo }
         const { market, prepared } = await prepareReserved(db, reserved.market, { repo, wallet, tokenName, tokenSymbol, initialBuyLamports, launchGuard })
         try { if (onPrepared) await onPrepared({ market, prepared, repo }) }

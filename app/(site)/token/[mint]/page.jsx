@@ -28,6 +28,7 @@ import { tipsEnabled } from '../../../lib/tips.mjs'
 import { PartsFundBadge, PartsFundCard } from '../../../components/parts-fund'
 import { PackSharesCard } from '../../../components/pack-shares'
 import { DetailsTabs } from '../../../components/details-tabs'
+import { MarketTransparency, MarketTransparencyFallback } from '../../../components/market-transparency'
 import { HolderNotes, HolderNotesFallback } from '../../../components/holder-notes'
 import { JsonLd } from '../../../components/json-ld'
 import { XHandle } from '../../../components/x-handle'
@@ -126,6 +127,9 @@ export default async function Token({ params, searchParams }) {
     { id: 'earnings', label: 'Earnings', content: <Suspense fallback={<div className="inner-card earnings-card" aria-busy="true"><h3>Total repository earnings</h3><strong className="earnings-amount">Checking…</strong><p role="status" className="loading-placeholder">Verifying builder fees…</p></div>}>
       <RepositoryEarnings market={market} declined={decision !== null}/></Suspense> },
     { id: 'backers', anchor: 'backers', label: 'Backers', content: <Suspense fallback={<BackersFallback/>}><Backers market={market}/></Suspense> },
+    // Launch quality and transparency (docs/LAUNCH_TRANSPARENCY.md): SOL markets; #transparency opens it.
+    ...stockPair ? [] : [{ id: 'transparency', anchor: 'transparency', label: 'Launch quality',
+      content: <Suspense fallback={<MarketTransparencyFallback/>}><MarketTransparency market={market}/></Suspense> }],
     // A market launched from a Bundle (docs/BUNDLE_LAUNCH.md): its vault, its routed fees and the backers' claim, whatever Bundle
     // launches' switch says. #group-vault (linked from /wallet) opens it.
     ...isBundleMarket(market) ? [{ id: 'bundle', anchor: 'group-vault', label: 'Group vault',

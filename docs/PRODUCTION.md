@@ -175,6 +175,18 @@ Setup (worker variables only; nothing posts until every step is done):
 
 Verify: at startup an enabled worker logs one `{"launchAlertsOn":{…}}` line (channels, cutoff, daily cap, models); it logs `{"launchAlerts":{"posts":[…]}}` when it posts (status `sent` with the post URL, `failed` with the provider error, or `unknown`), the same line when it marks an interrupted claim `unknown` or its migration is missing, and `{"launchAlertError":"LAUNCH_ALERTS_UNAVAILABLE"}` when a run fails; it is silent otherwise. Check rows with `select channel, status, attempts, message_url, error, created_at from launch_alerts order by id desc limit 20`. For an `unknown` row, look at the channel: if the post is missing and should go out, delete the row to allow one new attempt; if it posted, leave the row. Setting `LAUNCH_ALERTS_ENABLED=false` stops new posts immediately on the next worker restart.
 
+## Launch transparency
+
+Migration `0071_launch_transparency` is additive and runs in web's pre-deploy. Deploy web, then the worker: until the worker runs, `/launches` lists scheduled launches but reports and liquidity samples are "Not assessed yet". The worker's transparency job runs every two minutes and refreshes each market about hourly; its RPC use and switches are in [Launch transparency](LAUNCH_TRANSPARENCY.md#operating). Scheduled launches are on by default (`LAUNCH_SCHEDULES_ENABLED=false` pauses new ones); webhooks stay off until `LAUNCH_WEBHOOKS_ENABLED=true` and `LAUNCH_WEBHOOK_SIGNING_KEY` are set on web and worker. After deploy:
+
+```sh
+curl -s https://repo.ing/api/v1/launches | jq '{scheduled: (.scheduled | length), recent: (.recentLaunches | length)}'
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://repo.ing/launches.ics          # 200 text/calendar
+curl -s https://repo.ing/api/v1/markets/<mint>/liquidity | jq '.liquidity.summary'
+```
+
+The `/api/v1` JSON may be added to the public JSON Cache Rule below; the origin headers are already set (`/api/v1/markets/<mint>/liquidity` 10 s, `/api/v1/launches` 30 s, the rest 60 s).
+
 ## Do-not-promote list
 
 `PROMOTION_EXCLUDED_REPO_IDS` (web and worker) is a comma-separated list of GitHub repository IDs that repo.ing must never promote: they are hidden from `/waiting` (no "Tag them on X" prompt) and must be skipped by any feature that features or announces markets. The graduation race (home and `/explore`) and the $REPOING page's "Repo markets to watch" leave them out, and graduation milestone alerts never post them. Their markets and builder fees are unaffected. Use it when a maintainer asks not to be contacted or promoted, or when promoting a repository would be inappropriate.

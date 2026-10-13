@@ -1449,3 +1449,127 @@ export const stockSettlementReceipts = pgTable('stock_settlement_receipts', {
 }, t => [uniqueIndex('stock_settlement_receipts_signature_unique').on(t.signature),
   check('stock_settlement_receipts_kind_check', sql`${t.kind} in ('swap', 'add_liquidity', 'seed')`),
   check('stock_settlement_receipts_amounts_check', sql`${t.quoteSpent} >= 0 and ${t.repoingSpent} >= 0 and ${t.repoingReceived} >= 0`)])
+
+// Launch transparency (migration 0071, docs/LAUNCH_TRANSPARENCY.md). Nothing here moves money.
+// A scheduled launch announced by the repository's current GitHub admin (src/launch-schedules.mjs): until scheduled_at no one may
+// launch the repository; during the window only the announced wallet may, with at most the announced initial buy.
+export const launchSchedules = pgTable('launch_schedules', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  status: varchar('status', { length: 16 }).notNull().default('scheduled'),
+  scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+  windowMinutes: integer('window_minutes').notNull(),
+  launcherWallet: varchar('launcher_wallet', { length: 44 }).notNull(),
+  maxInitialBuyLamports: numeric('max_initial_buy_lamports', { precision: 20, scale: 0 }).notNull().default('0'),
+  note: varchar('note', { length: 280 }),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  githubLogin: text('github_login').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  cancelledByGithubUserId: bigint('cancelled_by_github_user_id', { mode: 'bigint' }),
+  launchedMint: varchar('launched_mint', { length: 44 }),
+}, t => [uniqueIndex('launch_schedules_one_scheduled').on(t.githubRepoId).where(sql`${t.status} = 'scheduled'`),
+  index('launch_schedules_upcoming').on(t.scheduledAt).where(sql`${t.status} = 'scheduled'`),
+  index('launch_schedules_repo').on(t.githubRepoId, t.createdAt.desc()),
+  check('launch_schedules_status_check', sql`${t.status} in ('scheduled', 'cancelled', 'launched', 'lapsed')`),
+  githubOnly('launch_schedules', t),
+  check('launch_schedules_notice_check', sql`${t.scheduledAt} >= ${t.createdAt} + interval '1 hour' and ${t.scheduledAt} <= ${t.createdAt} + interval '30 days'`),
+  check('launch_schedules_cancel_check', sql`(${t.status} = 'cancelled') = (${t.cancelledAt} is not null)`),
+  check('launch_schedules_launched_check', sql`(${t.status} = 'launched') = (${t.launchedMint} is not null)`)])
+
+// The worker's samples of a market's executable liquidity (src/market-liquidity.mjs): spot, fee, depth within the impact band
+// on each side and the quoted spread at the reference size, all from one pool snapshot.
+export const marketLiquiditySamples = pgTable('market_liquidity_samples', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => markets.githubRepoId),
+  sampledAt: timestamp('sampled_at', { withTimezone: true }).defaultNow().notNull(),
+  venue: varchar('venue', { length: 8 }).notNull(),
+  pool: varchar('pool', { length: 44 }).notNull(),
+  sqrtPrice: numeric('sqrt_price', { precision: 39, scale: 0 }).notNull(),
+  feeBps: integer('fee_bps').notNull(),
+  quoteReserveLamports: numeric('quote_reserve_lamports', { precision: 20, scale: 0 }),
+  buyDepthLamports: numeric('buy_depth_lamports', { precision: 20, scale: 0 }).notNull(),
+  sellDepthLamports: numeric('sell_depth_lamports', { precision: 20, scale: 0 }).notNull(),
+  spreadBps: integer('spread_bps'),
+  twoSided: boolean('two_sided').notNull(),
+  profile: jsonb('profile').notNull(),
+}, t => [index('market_liquidity_samples_repo_time').on(t.githubRepoId, t.sampledAt.desc()), index('market_liquidity_samples_time').on(t.sampledAt),
+  check('market_liquidity_samples_venue_check', sql`${t.venue} in ('curve', 'damm')`)])
+
+// Graduated pools' LP positions per sample (src/lp-positions.mjs): owner is the position NFT's holder (null when unreadable).
+export const lpPositionSamples = pgTable('lp_position_samples', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => markets.githubRepoId),
+  sampledAt: timestamp('sampled_at', { withTimezone: true }).notNull(),
+  pool: varchar('pool', { length: 44 }).notNull(),
+  position: varchar('position', { length: 44 }).notNull(),
+  owner: varchar('owner', { length: 44 }),
+  liquidity: numeric('liquidity', { precision: 40, scale: 0 }).notNull(),
+  permanentLockedLiquidity: numeric('permanent_locked_liquidity', { precision: 40, scale: 0 }).notNull(),
+  poolLiquidity: numeric('pool_liquidity', { precision: 40, scale: 0 }).notNull(),
+}, t => [uniqueIndex('lp_position_samples_unique').on(t.position, t.sampledAt), index('lp_position_samples_repo_time').on(t.githubRepoId, t.sampledAt.desc())])
+
+// The latest Launch Quality report per market (src/launch-quality.mjs), written by the worker.
+export const launchQualityReports = pgTable('launch_quality_reports', {
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).primaryKey().references(() => markets.githubRepoId),
+  version: smallint('version').notNull(),
+  assessedAt: timestamp('assessed_at', { withTimezone: true }).notNull(),
+  score: smallint('score'),
+  coveragePercent: smallint('coverage_percent').notNull(),
+  report: jsonb('report').notNull(),
+}, t => [check('launch_quality_reports_score_check', sql`${t.score} between 0 and 100`)])
+
+// Wallets an operator recorded as one controller, with public evidence (src/wallet-clusters.mjs); wallet_a < wallet_b.
+export const walletLinks = pgTable('wallet_links', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  walletA: varchar('wallet_a', { length: 44 }).notNull(),
+  walletB: varchar('wallet_b', { length: 44 }).notNull(),
+  evidence: varchar('evidence', { length: 500 }).notNull(),
+  recordedBy: varchar('recorded_by', { length: 100 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  removedAt: timestamp('removed_at', { withTimezone: true }),
+}, t => [uniqueIndex('wallet_links_pair_active').on(t.walletA, t.walletB).where(sql`${t.removedAt} is null`),
+  check('wallet_links_order_check', sql`${t.walletA} < ${t.walletB}`)])
+
+// The public launch feed (src/launch-feed.mjs): one row per fact, deduplicated, read by /api/v1/launches/events, the Atom
+// feed and webhook delivery.
+export const launchFeedEvents = pgTable('launch_feed_events', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  kind: varchar('kind', { length: 40 }).notNull(),
+  dedupeKey: varchar('dedupe_key', { length: 120 }).notNull(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  payload: jsonb('payload').notNull(),
+}, t => [uniqueIndex('launch_feed_events_dedupe').on(t.dedupeKey), index('launch_feed_events_recent').on(t.id.desc())])
+
+// Webhook subscriptions to the launch feed (src/launch-webhooks.mjs), made by a signed-in GitHub user; deliveries are signed.
+export const launchWebhooks = pgTable('launch_webhooks', {
+  id: uuid('id').primaryKey(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  githubLogin: text('github_login').notNull(),
+  url: varchar('url', { length: 500 }).notNull(),
+  kinds: text('kinds').array().notNull(),
+  repoIds: bigint('repo_ids', { mode: 'bigint' }).array(),
+  status: varchar('status', { length: 16 }).notNull().default('active'),
+  consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+  lastEventId: bigint('last_event_id', { mode: 'bigint' }).notNull().default(0n),
+  lastDeliveryAt: timestamp('last_delivery_at', { withTimezone: true }),
+  disabledReason: varchar('disabled_reason', { length: 64 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('launch_webhooks_user').on(t.githubUserId).where(sql`${t.status} <> 'deleted'`),
+  check('launch_webhooks_status_check', sql`${t.status} in ('active', 'disabled', 'deleted')`)])
+export const launchWebhookDeliveries = pgTable('launch_webhook_deliveries', {
+  webhookId: uuid('webhook_id').notNull().references(() => launchWebhooks.id),
+  eventId: bigint('event_id', { mode: 'bigint' }).notNull().references(() => launchFeedEvents.id),
+  status: varchar('status', { length: 16 }).notNull().default('pending'),
+  attempts: smallint('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).defaultNow().notNull(),
+  lastStatus: integer('last_status'),
+  lastError: varchar('last_error', { length: 120 }),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [primaryKey({ name: 'launch_webhook_deliveries_pkey', columns: [t.webhookId, t.eventId] }),
+  index('launch_webhook_deliveries_due').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'sending')`)])

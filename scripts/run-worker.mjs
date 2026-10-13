@@ -50,6 +50,15 @@ import { createPromotionExclusions } from '../app/lib/promotion-exclusions.mjs'
 import { createStockFeeIndexer } from '../src/stock-fee-indexer.mjs'
 import { stockQuoteConfigs } from '../src/quote-configs.mjs'
 import { createStockReconcileRunner, STOCK_RECONCILE_INTERVAL_MS } from '../src/stock-reconcile.mjs'
+import { createMarketTransparency } from '../src/market-transparency.mjs'
+import { signingKey, webhooksEnabled } from '../src/launch-webhooks.mjs'
+import { createMarketConfigResolver, readPoolConfig } from '../src/market-config.mjs'
+import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
+import { launchFeeTerms } from '../src/launch-fee.mjs'
+import { transparencyLabels } from '../app/lib/transparency-labels.mjs'
+import { loadHolderSnapshot } from '../app/lib/trust-panel.mjs'
+import { readRepoPulse } from '../app/lib/dev-pulse.mjs'
+import { configFeeSchedule } from '../app/lib/launch-fee.mjs'
 
 const { DATABASE_URL: databaseUrl, SOLANA_RPC_URL: rpc, DBC_CONFIG: config } = process.env
 if (!databaseUrl || !rpc || !config) throw new Error('DATABASE_URL, SOLANA_RPC_URL, and DBC_CONFIG are required')
@@ -344,6 +353,28 @@ const canaryConnection=rpcConnection(rpc,'confirmed')
 const tradeCanary=process.env.TRADE_CANARY_ENABLED==='false'?null:createTradeCanary({db:pool,connection:canaryConnection,
   router:createTradeRouter({curve:createCanonicalTrader({pool,connection:canaryConnection,config}),graduated:createDammTrader({pool,connection:canaryConnection,config})})})
 let tradeCanaryTask=null,nextTradeCanaryCheck=0
+// Launch transparency (docs/LAUNCH_TRANSPARENCY.md): the public launch feed and its webhooks, scheduled launches, hourly liquidity
+// and LP position samples, and one transparency report per market. Read-only toward Solana. MARKET_TRANSPARENCY_SAMPLING=false
+// keeps the feed, schedules and webhooks but stops the RPC sampling and reports.
+const transparencyConnection = rpcConnection(rpc, 'confirmed')
+// Early access markets (Token-2022 curves) resolve to their own config wherever trading them is configured.
+const transparencyConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess: tradingEarlyAccessConfig() })
+const transparencyDbc = new DynamicBondingCurveClient(transparencyConnection, 'confirmed')
+const transparency = createMarketTransparency({ pool, connection: transparencyConnection, resolveConfig: transparencyConfig,
+  labelsFor: transparencyLabels, excluded: promotionExcluded, sampling: process.env.MARKET_TRANSPARENCY_SAMPLING !== 'false',
+  holderSnapshot: async market => ({ ...await loadHolderSnapshot(transparencyConnection, market.mint, market.pool, { labels: transparencyLabels(market) }),
+    observedAt: new Date().toISOString() }),
+  pulseFor: repoId => readRepoPulse(pool, repoId),
+  launchFeeFor: async market => launchFeeTerms(await configFeeSchedule(transparencyConfig(market), { connection: transparencyConnection })) !== null,
+  // The partner wallet from the market's config (its fee claimer): the worker holds no partner key to label it by.
+  feeClaimerFor: async market => (await readPoolConfig(transparencyDbc, transparencyConfig(market)))?.feeClaimer?.toBase58() ?? null,
+  webhooks: webhooksEnabled() ? { enabled: true, key: signingKey() } : null,
+  log: line => console.log(JSON.stringify(line)) })
+let transparencyTask=null,nextTransparencyCheck=0
+async function observeTransparency(){
+  try{console.log(JSON.stringify({transparency:await transparency.runOnce()}))}
+  catch(error){console.log(JSON.stringify({transparencyError:String(error?.code??error?.name??'TRANSPARENCY_UNAVAILABLE').slice(0,60)}))}
+}
 async function observeTradeCanary(){
   try{console.log(JSON.stringify({tradeCanary:await tradeCanary.runOnce()}))}
   catch(error){console.log(JSON.stringify({tradeCanaryError:error?.code==='42P01'?'TRADE_CANARY_NOT_MIGRATED':'TRADE_CANARY_UNAVAILABLE'}))}
@@ -383,7 +414,7 @@ async function observeTrends(){
 // Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch,
 // milestone and trend alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
 for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
-  tipMonitor,partsFunds,chartOrdering,graduation,graduatedTrades,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts,trendAlerts})){
+  tipMonitor,partsFunds,chartOrdering,graduation,graduatedTrades,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts,trendAlerts,transparency})){
   if(!worker)continue
   const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
 }
@@ -527,6 +558,10 @@ try {
       else if(!trendAlertTask&&Date.now()>=nextTrendAlertCheck)
         trendAlertTask=deliverTrendAlerts().finally(()=>{nextTrendAlertCheck=Date.now()+300000;trendAlertTask=null})
     }
+    // Feed, schedules and webhooks every two minutes; each run samples and reports a bounded batch of due markets.
+    if(once)await observeTransparency()
+    else if(!transparencyTask&&Date.now()>=nextTransparencyCheck)
+      transparencyTask=observeTransparency().finally(()=>{nextTransparencyCheck=Date.now()+120000;transparencyTask=null})
     if(reminders){
       if(once)await deliverBuilderReminders()
       else if(!reminderTask&&Date.now()>=nextReminderCheck)
@@ -545,5 +580,5 @@ try {
     if (result.stockFeeError || result.stockFees?.some(item => item.status === 'ERROR')) process.exitCode = 1
     if (!once) await delay(5000)
   } while (!once)
-} finally { if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(trendAlertTask)await trendAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;if(stockExecutionTask)await stockExecutionTask;await pool.end()
+} finally { if(transparencyTask)await transparencyTask;if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(trendAlertTask)await trendAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;if(stockExecutionTask)await stockExecutionTask;await pool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }
