@@ -1572,7 +1572,8 @@ export const launchWebhookDeliveries = pgTable('launch_webhook_deliveries', {
   sentAt: timestamp('sent_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => [primaryKey({ name: 'launch_webhook_deliveries_pkey', columns: [t.webhookId, t.eventId] }),
-  index('launch_webhook_deliveries_due').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'sending')`)])
+  index('launch_webhook_deliveries_due').on(t.nextAttemptAt).where(sql`${t.status} in ('pending', 'sending')`),
+  index('launch_webhook_deliveries_failed_time').on(t.createdAt.desc()).where(sql`${t.status} = 'failed'`)])
 
 // Where each trading wallet's first SOL came from (migration 0072, src/wallet-funding.mjs). Public chain facts only.
 export const walletFunding = pgTable('wallet_funding', {
@@ -1625,3 +1626,9 @@ export const launchGuideEvents = pgTable('launch_guide_events', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, t => [index('launch_guide_events_created_at').on(t.createdAt),
   check('launch_guide_events_repo_id_check', sql`${t.repoId} between 1 and 4503599627370495`)])
+
+// Latest fixed-stage worker observation (migration 0074); no per-run history.
+export const operatorWorkerSnapshot = pgTable('operator_worker_snapshot', {
+  id: smallint('id').primaryKey(),
+  snapshot: jsonb('snapshot').notNull(),
+}, t => [check('operator_worker_snapshot_id_check', sql`${t.id} = 1`)])
