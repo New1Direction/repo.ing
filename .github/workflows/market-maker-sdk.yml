@@ -1,0 +1,54 @@
+name: market-maker SDK
+
+on:
+  pull_request:
+    paths: ['sdk/market-maker/**', 'app/api/v1/**', 'app/lib/**', 'src/**', '.github/workflows/market-maker-sdk.yml']
+  push:
+    branches: [main]
+    paths: ['sdk/market-maker/**', 'app/api/v1/**', 'app/lib/**', 'src/**', '.github/workflows/market-maker-sdk.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            sdk/market-maker/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm ci --ignore-scripts
+        working-directory: sdk/market-maker
+      - run: npm test
+        working-directory: sdk/market-maker
+      - run: node --experimental-vm-modules --test sdk/market-maker/conformance/*.test.mjs
+      - name: Pack release candidate (does not publish)
+        run: npm pack --pack-destination "$RUNNER_TEMP"
+        working-directory: sdk/market-maker
+      - name: Check the installed package, exports and declarations
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk-consumer"
+          npm install --prefix "$RUNNER_TEMP/sdk-consumer" "$RUNNER_TEMP"/repoing-market-maker-*.tgz --ignore-scripts
+          cp sdk/market-maker/test/consumer.mts "$RUNNER_TEMP/sdk-consumer/consumer.mts"
+          sdk/market-maker/node_modules/.bin/tsc --noEmit --strict --target ES2022 --module NodeNext --moduleResolution NodeNext "$RUNNER_TEMP/sdk-consumer/consumer.mts"
+      - name: Run the installed simulation without network
+        working-directory: ${{ runner.temp }}/sdk-consumer
+        run: |
+          node --input-type=module -e "import { MarketDataClient } from '@repoing/market-maker'; try { new MarketDataClient(); process.exit(1) } catch (e) { if (!e.message.includes('Network disabled')) throw e }"
+          node node_modules/@repoing/market-maker/examples/two-sided.mjs
+      - uses: actions/upload-artifact@v4
+        if: matrix.node == '22'
+        with:
+          name: market-maker-sdk-candidate
+          path: ${{ runner.temp }}/repoing-market-maker-*.tgz
+          if-no-files-found: error

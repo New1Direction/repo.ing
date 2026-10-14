@@ -1,0 +1,19 @@
+{
+  "name": "@repoing/market-maker",
+  "version": "0.1.0",
+  "description": "Public repo.ing market data and deterministic, non-custodial paper market making",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "engines": { "node": ">=22" },
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "files": ["dist", "examples", "README.md", "API_AUDIT.md", "LICENSE"],
+  "repository": { "type": "git", "url": "git+https://github.com/new1direction/repo.ing.git", "directory": "sdk/market-maker" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "example": "npm run build && node examples/two-sided.mjs",
+    "prepack": "npm test"
+  },
+  "dependencies": { "zod": "4.6.7" },
+  "devDependencies": { "typescript": "5.9.3" }
+}
