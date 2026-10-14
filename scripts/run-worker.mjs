@@ -2,6 +2,7 @@ import {createOperatingWalletMonitor} from '../src/operating-wallet-alerts.mjs'
 import {createBuilderReminders,createReminderSender,remindersConfigured} from '../src/builder-reminders.mjs'
 import {createReconciler} from '../src/reconcile.mjs'
 import { createDatabasePool } from '../src/database-pool.mjs'
+import { createWorkerReliability, WRITE_WORKER_SNAPSHOT } from '../src/worker-reliability.mjs'
 import { createChartOrdering } from '../src/chart-ordering.mjs'
 import { createTrendIntake } from '../src/trend-intake.mjs'
 import { createLiquidityRecovery } from '../src/liquidity-settlement.mjs'
@@ -416,11 +417,18 @@ async function observeTrends(){
 }
 // Attribute every job's RPC calls in the usage line (byJob); calls outside a job count as "other". Launch,
 // milestone and trend alerts read only PostgreSQL and post to Telegram/X; they are listed so any future chain read shows up.
+// Telemetry has its own single connection and deadlines; writes never sit in the execution path or grow a queue.
+const reliabilityPool = createDatabasePool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 1000,
+  statement_timeout: 1500, query_timeout: 2000 }, { log: () => {} })
+const reliability = createWorkerReliability({ write: payload => reliabilityPool.query(WRITE_WORKER_SNAPSHOT, [payload]) })
 for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
   tipMonitor,partsFunds,chartOrdering,graduation,graduatedTrades,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts,trendAlerts,transparency})){
   if(!worker)continue
-  const run=worker.runOnce;worker.runOnce=(...args)=>meter.track(job,()=>run.apply(worker,args))
+  const run=worker.runOnce;worker.runOnce=(...args)=>reliability.track(job,()=>meter.track(job,()=>run.apply(worker,args)))
 }
+const reliabilityTimer = once ? null : setInterval(() => { void reliability.flush() }, 60_000)
+reliabilityTimer?.unref()
+if (!once) void reliability.flush()
 const stopUsageReport=once?null:meter.report(60_000)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
 if(!once)for(const observe of [observeLiveTrades,observeGraduatedTrades]){
@@ -584,4 +592,5 @@ try {
     if (!once) await delay(5000)
   } while (!once)
 } finally { if(transparencyTask)await transparencyTask;if(stockReconcileTask)await stockReconcileTask;if(bonusAccrualTask)await bonusAccrualTask;if(devPulseTask)await devPulseTask;if(launchAlertTask)await launchAlertTask;if(milestoneAlertTask)await milestoneAlertTask;if(trendAlertTask)await trendAlertTask;if(partsTask)await partsTask;if(tipMonitorTask)await tipMonitorTask;if(tradeCanaryTask)await tradeCanaryTask;if(buybackReceiptTask)await buybackReceiptTask;if(operatingWalletTask)await operatingWalletTask;if(reminderTask)await reminderTask;if(graduationTask)await graduationTask;if(stockGraduationTask)await stockGraduationTask;if(chartOrderingTask)await chartOrderingTask;if(trendTask)await trendTask;if(reserveDeliveryTask)await reserveDeliveryTask;if(stockExecutionTask)await stockExecutionTask;await pool.end()
+  clearInterval(reliabilityTimer);await reliability.flush();await reliabilityPool.end()
   stopUsageReport?.();const usage=meter.flush();if(usage)console.log(JSON.stringify(usage)) }

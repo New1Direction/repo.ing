@@ -11,6 +11,8 @@ import { buildMarketReport, createMarketTransparency, dueMarkets, readStoredRepo
 import { readWalletLinks } from '../src/wallet-clusters.mjs'
 import { readSeedFacts, seededLiquidity } from '../src/seeded-liquidity.mjs'
 import { checkWalletFunding, dueFundingWallets, FUNDING_LIMITS, readFundingLinks } from '../src/wallet-funding.mjs'
+import { loadOperatorReliability } from '../src/operator-reliability.mjs'
+import { createWorkerReliability, WRITE_WORKER_SNAPSHOT } from '../src/worker-reliability.mjs'
 
 // Real PostgreSQL with every committed migration (0071_launch_transparency): scheduled launches and their constraints, the launch feed
 // and calendar, webhook subscriptions and deliveries, and the stored transparency report built from indexed swaps.
@@ -291,5 +293,48 @@ test('real PostgreSQL: a chain read that never answers costs one item timeout, a
     assert.ok(logged.every(line => line.liquiditySampleFailed && /TRANSPARENCY_ITEM_TIMEOUT|DAMM pool unavailable/.test(line.code)))
     // Both markets back off: the next run does not spend its budget on them again.
     assert.deepEqual((await job.runOnce()).liquidity, { done: 0, failed: 0 })
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL: reliability reads bounded evidence without payloads or writes', { skip: !url }, async () => {
+  const pool = await open(), now = Date.now(), ago = ms => new Date(now - ms)
+  try {
+    for (const id of [71, 72, 73]) { await repo(pool, id); await market(pool, id, { at: ago(10_000_000) }) }
+    await repo(pool, 74)
+    await pool.query(`insert into markets (github_repo_id,status,launcher_wallet,creator_wallet,token_name,token_symbol,created_at)
+      values (74,'submitted','launcher','creator','Pending','PND',$1)`, [ago(900_001)])
+    await pool.query(`insert into launch_quality_reports (github_repo_id, version, assessed_at, score, coverage_percent, report)
+      values (71, 1, $1, 10, 20, '{"private":"report-payload"}'), (72, 1, $2, 10, 20, '{}')`, [ago(7_200_000), ago(7_200_001)])
+    await pool.query(`insert into market_liquidity_samples (github_repo_id, sampled_at, venue, pool, sqrt_price, fee_bps, buy_depth_lamports, sell_depth_lamports, two_sided, profile)
+      values (71,$1,'curve','Pool71',1,100,1,1,true,'{}'), (71,$2,'curve','Pool71',1,100,1,1,true,'{}'), (72,$1,'curve','Pool72',1,100,1,1,true,'{}')`, [ago(7_200_001), ago(0)])
+    await pool.query(`insert into launch_webhooks (id, github_user_id, github_login, url, kinds)
+      values ('00000000-0000-0000-0000-000000000071', 7, 'private-user', 'https://private.example/token', '{}')`)
+    await pool.query(`insert into launch_feed_events (id, kind, dedupe_key, github_repo_id, occurred_at, payload)
+      select n, 'market.launched', 'reliability-' || n, 71, now(), '{}' from generate_series(1,4) n`)
+    await pool.query(`insert into launch_webhook_deliveries (webhook_id, event_id, status, attempts, next_attempt_at, created_at)
+      values ('00000000-0000-0000-0000-000000000071',1,'pending',1,$1,$2),
+      ('00000000-0000-0000-0000-000000000071',2,'sending',1,$3,$2),
+      ('00000000-0000-0000-0000-000000000071',3,'failed',6,$2,$2),
+      ('00000000-0000-0000-0000-000000000071',4,'failed',6,$2,$4)`, [ago(-60_000), ago(0), ago(900_001), ago(86_400_001)])
+    const recorder = createWorkerReliability({ now: () => now, write: value => pool.query(WRITE_WORKER_SNAPSHOT, [value]) })
+    await recorder.track('transparency', async () => ({ reports: { done: 1, failed: 1 } }))
+    await recorder.flush()
+    const readOnly = new pg.Pool({ connectionString: url, options: '-c default_transaction_read_only=on', statement_timeout: 2000 })
+    try {
+      const data = await loadOperatorReliability({ query: (sql, values) => readOnly.query(sql, values), probeRpc: async () => 123, now: () => now, env: {} })
+      assert.equal(data.markets.sampled, 3)
+      assert.deepEqual([data.markets.reportsStale, data.markets.reportsMissing, data.markets.samplesStale, data.markets.samplesMissing], [1, 1, 1, 1])
+      assert.deepEqual([data.pending.count, data.pending.overdue, data.webhooks.overdue, data.webhooks.retrying, data.webhooks.failed24h], [1, 1, 1, 1, 1])
+      assert.equal(data.worker.stages[0].state, 'degraded')
+      assert.equal(data.database.status, 'ok'); assert.equal(data.rpc.slot, 123)
+      assert.doesNotMatch(JSON.stringify(data), /private|report-payload|Pool71/)
+      // Enough rows to exceed coverage, without extending the API's response or claiming a fleet total.
+      await pool.query(`insert into repositories (github_repo_id, owner, name, full_name, stars, forks, archived, github_updated_at)
+        select n, 'fixture', 'r' || n, 'fixture/r' || n, 0, 0, false, now() from generate_series(1000,2001) n`)
+      await pool.query(`insert into markets (github_repo_id,status,mint,pool,launcher_wallet,creator_wallet,token_name,token_symbol,launch_signature,launch_slot,launch_finality,indexed_at,last_verified_at)
+        select n,'confirmed','Mint' || n,'Pool' || n,'launcher','creator','Token','TKN','Sig' || n,1,'finalized',now(),now() from generate_series(1000,2001) n`)
+      const capped = await loadOperatorReliability({ query: (sql, values) => readOnly.query(sql, values), now: () => now, env: {} })
+      assert.equal(capped.markets.sampled, 1000); assert.equal(capped.markets.truncated, true)
+    } finally { await readOnly.end() }
   } finally { await pool.end() }
 })
