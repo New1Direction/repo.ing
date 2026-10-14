@@ -366,7 +366,11 @@ test('migration 0073 matches the event and step lists and stays expand-only and 
   assert.equal((sql.match(/CREATE (UNIQUE )?(TABLE|INDEX) IF NOT EXISTS/g) ?? []).length, (sql.match(/CREATE (UNIQUE )?(TABLE|INDEX)/g) ?? []).length)
   for (const step of GUIDE_STEPS) assert.ok(sql.includes(`'${step}'`), step)
   const journal = JSON.parse(readFileSync(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8'))
-  assert.equal(journal.entries.at(-1).tag, '0073_launch_guide')
+  // Registered at its own index, wherever later migrations follow it.
+  const entry = journal.entries.find(item => item.tag === '0073_launch_guide')
+  assert.ok(entry, '0073_launch_guide is in the journal')
+  assert.equal(entry.idx, 73)
+  assert.equal(journal.entries.filter(item => item.tag.startsWith('0073_')).length, 1, 'one migration numbered 0073')
 })
 
 test('read-only MCP launch_preflight: verdict, pre-launch score, what to do, and the guide link; failures say so', async () => {
