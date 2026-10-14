@@ -9,13 +9,16 @@ import { handoffAvailable } from '../../../lib/handoff.mjs'
 import { creditPacksAvailable } from '../../../lib/credit-packs.mjs'
 import { funnelSource, withFunnelSource } from '../../../lib/claim-funnel.mjs'
 import { recordFunnelEvent } from '../../../../src/funnel-store.mjs'
+import { guideSource } from '../../../lib/launch-guide-funnel.mjs'
+import { recordGuide } from '../../../lib/launch-guide-events.mjs'
 export const runtime = 'nodejs'
 export async function GET(request) {
   const origin = publicOrigin(request.url)
   const repoId = request.nextUrl.searchParams.get('repo')
   const mode = request.nextUrl.searchParams.get('mode')
   // Claim funnel attribution (app/lib/claim-funnel.mjs): kept in the sealed OAuth state so the callback can count the result.
-  const src = funnelSource(request.nextUrl.searchParams.get('src'))
+  // The guided launch has its own sources (app/lib/launch-guide-funnel.mjs).
+  const src = mode === 'launch-guide' ? guideSource(request.nextUrl.searchParams.get('src')) : funnelSource(request.nextUrl.searchParams.get('src'))
   // 'opt-out' is the builder dashboard's identity-only sign-in, returning to /opt-out instead of /builders; 'contributor'
   // returns to the contributor wallet page and exists only while it does (src/early-access.mjs); 'credits' likewise
   // returns to /credits (src/credits-packs.mjs).
@@ -29,6 +32,7 @@ export async function GET(request) {
       const authorization = verifier.authorizationUrl()
       const response = NextResponse.redirect(authorization.url)
       if (mode === 'builders') await recordFunnelEvent(database(), { event: 'builders_connect', source: src })
+      if (mode === 'launch-guide') await recordGuide(request, { event: 'github_connect', step: 'github', source: src })
       response.cookies.set('gitfun_oauth', seal({ mode, src, state: authorization.state, expiresAt: Date.now() + 10 * 60_000 }),
         { ...cookieOptions, maxAge: 600 })
       return response

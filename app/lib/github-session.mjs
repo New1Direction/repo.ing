@@ -18,6 +18,12 @@ export function sessionVerifier(session, requestUrl, { dashboard = false } = {})
     if (!result.admin) throw new Error('Current GitHub admin permission required')
     return result
   },
+  // The same fresh check, answered rather than thrown: { admin, githubLogin, permission } (the guided launch tells a non-admin
+  // which access GitHub reports). Throws only when GitHub cannot tell.
+  async repositoryPermission({ githubRepoId }) {
+    if (!session || session.expiresAt <= Date.now()) throw new Error('GitHub session expired. Verify again.')
+    return verifier.verifyRepositoryAdmin({ githubRepoId, accessToken: session.accessToken, expectedGithubUserId: session.githubUserId })
+  },
   // The signed-in account as GitHub reports it now (contributor wallet links): the token still works, for the same user id.
   async currentIdentity() {
     if (!session || session.expiresAt <= Date.now()) throw new Error('GitHub session expired. Verify again.')

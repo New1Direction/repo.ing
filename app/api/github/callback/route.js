@@ -8,6 +8,8 @@ import { handoffAvailable } from '../../../lib/handoff.mjs'
 import { creditPacksAvailable } from '../../../lib/credit-packs.mjs'
 import { funnelSource, verificationOutcome } from '../../../lib/claim-funnel.mjs'
 import { recordFunnelEvent } from '../../../../src/funnel-store.mjs'
+import { guideSource } from '../../../lib/launch-guide-funnel.mjs'
+import { recordGuide } from '../../../lib/launch-guide-events.mjs'
 export const runtime = 'nodejs'
 export async function GET(request) {
   const origin = publicOrigin(request.url)
@@ -45,14 +47,15 @@ export async function GET(request) {
     session = newGithubSession(result)
     back.searchParams.set('verified', '1')
   } else {
-    back.searchParams.set('error', !isDashboard || stateSession.mode === 'builders' ? outcome.error : 'verification-failed')
+    back.searchParams.set('error', !isDashboard || stateSession.mode === 'builders' || stateSession.mode === 'launch-guide' ? outcome.error : 'verification-failed')
     if (outcome.detail?.github) back.searchParams.set('github', outcome.detail.github)
     if (outcome.detail) back.searchParams.set('permission', outcome.detail.permission)
   }
-  const src = funnelSource(stateSession.src)
+  const src = stateSession.mode === 'launch-guide' ? guideSource(stateSession.src) : funnelSource(stateSession.src)
   if (src && !isDashboard) back.searchParams.set('src', src)
   if (!isDashboard) await recordFunnelEvent(database(), { event: 'verify_result', source: src, repoId: stateSession.repoId, outcome: outcome.outcome })
   else if (stateSession.mode === 'builders') await recordFunnelEvent(database(), { event: 'builders_result', source: src, outcome: outcome.outcome })
+  else if (stateSession.mode === 'launch-guide') await recordGuide(request, { event: 'github_result', step: 'github', source: src, outcome: outcome.outcome })
   const response = NextResponse.redirect(back)
   response.headers.set('Cache-Control', 'no-store')
   response.headers.set('Referrer-Policy', 'no-referrer')

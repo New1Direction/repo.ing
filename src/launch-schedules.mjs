@@ -95,7 +95,8 @@ export function parseScheduleRequest(body, now = Date.now()) {
 
 const SELECT = `select s.id, s.github_repo_id as "githubRepoId", s.status, s.scheduled_at as "scheduledAt", s.window_minutes as "windowMinutes",
   s.launcher_wallet as "launcherWallet", s.max_initial_buy_lamports::text as "maxInitialBuyLamports", s.note, s.github_login as "githubLogin",
-  s.created_at as "createdAt", s.cancelled_at as "cancelledAt", s.launched_mint as "launchedMint", r.full_name as "fullName"
+  s.created_at as "createdAt", s.cancelled_at as "cancelledAt", s.launched_mint as "launchedMint", r.full_name as "fullName",
+  s.github_user_id::text as "githubUserId"
   from launch_schedules s left join repositories r on r.github_repo_id = s.github_repo_id`
 
 // A database the migration has not reached has no schedules (42P01): every launch proceeds as before.
@@ -106,6 +107,12 @@ async function readSchedules(db, sql, params = []) {
 
 export async function activeSchedule(db, repoId) {
   const [row] = await readSchedules(db, `${SELECT} where s.github_repo_id = $1 and s.status = 'scheduled' limit 1`, [String(repoId)])
+  return row ?? null
+}
+
+export async function scheduleById(db, id) {
+  if (!/^[1-9]\d{0,18}$/.test(String(id ?? ''))) return null
+  const [row] = await readSchedules(db, `${SELECT} where s.id = $1`, [String(id)])
   return row ?? null
 }
 

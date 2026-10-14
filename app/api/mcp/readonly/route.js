@@ -11,6 +11,7 @@ import { createRateLimiter } from '../../../lib/csp-report.mjs'
 import { takeQuota } from '../../../../src/request-quota.mjs'
 import { calendar } from '../../../lib/launch-calendar.mjs'
 import { marketTransparency } from '../../../lib/market-transparency.mjs'
+import { publicPreflight } from '../../../lib/launch-guide.mjs'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +27,7 @@ const shown = read => async () => { const result = await read(); return { ...res
 const fees = boundedRead(displayFeeStatus, { max: 2, waitMs: 8000, busy: { status: 'UNAVAILABLE' } })
 const sources = { origin: siteOrigin, markets: shown(listMarkets), race: shown(graduationRace), excluded: promotionExcluded,
   decision: maintainerDecision, fees, usdPerSol: () => solUsdPrice(), totals: platformTotals, modelsEnabled: () => hfMarketsEnabled(),
-  calendar, transparency: marketTransparency }
+  calendar, transparency: marketTransparency, preflight: async input => { const run = await publicPreflight(input); return run?.busy ? null : run } }
 
 // Rate limits, counting every POST that passes the origin rule. First in this process (the CSP report limiter): callers
 // choose their forwarded address, so this bounds what reaches the database however they rotate it. Then in

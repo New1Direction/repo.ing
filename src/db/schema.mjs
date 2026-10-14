@@ -1589,3 +1589,39 @@ export const walletFunding = pgTable('wallet_funding', {
   check('wallet_funding_status_check', sql`${t.status} in ('found', 'none', 'long-history', 'error')`),
   check('wallet_funding_found_check', sql`(${t.status} = 'found') = (${t.funder} is not null and ${t.fundingSignature} is not null)`),
   check('wallet_funding_not_self', sql`${t.funder} is null or ${t.funder} <> ${t.wallet}`)])
+
+// Guided launch (migration 0073, src/launch-guide.mjs, docs/LAUNCH_GUIDE.md). A maintainer's saved launch plan, owned by their GitHub
+// account id, one open draft per account and repository; publishing it writes the launch_schedules row.
+export const launchGuideDrafts = pgTable('launch_guide_drafts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull(),
+  status: varchar('status', { length: 12 }).notNull().default('draft'),
+  step: varchar('step', { length: 16 }).notNull().default('preflight'),
+  plan: jsonb('plan').notNull().default({}),
+  preflight: jsonb('preflight'),
+  preflightAt: timestamp('preflight_at', { withTimezone: true }),
+  adminLogin: text('admin_login'),
+  adminCheckedAt: timestamp('admin_checked_at', { withTimezone: true }),
+  scheduleId: bigint('schedule_id', { mode: 'bigint' }).references(() => launchSchedules.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+}, t => [uniqueIndex('launch_guide_drafts_open').on(t.githubUserId, t.githubRepoId).where(sql`${t.status} = 'draft'`),
+  index('launch_guide_drafts_user').on(t.githubUserId, t.updatedAt.desc()), index('launch_guide_drafts_updated').on(t.updatedAt),
+  check('launch_guide_drafts_status_check', sql`${t.status} in ('draft', 'published')`),
+  check('launch_guide_drafts_step_check', sql`${t.step} in ('github', 'repository', 'preflight', 'plan', 'disclose', 'preview', 'publish')`),
+  githubOnly('launch_guide_drafts', t),
+  check('launch_guide_drafts_published_check', sql`(${t.status} = 'published') = (${t.scheduleId} is not null and ${t.publishedAt} is not null)`)])
+
+// Guided launch conversion events: fixed-list values and a public repository id only; nothing identifies a person.
+export const launchGuideEvents = pgTable('launch_guide_events', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  event: varchar('event', { length: 24 }).notNull(),
+  step: varchar('step', { length: 16 }),
+  source: varchar('source', { length: 16 }),
+  outcome: varchar('outcome', { length: 16 }),
+  repoId: bigint('repo_id', { mode: 'bigint' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('launch_guide_events_created_at').on(t.createdAt),
+  check('launch_guide_events_repo_id_check', sql`${t.repoId} between 1 and 4503599627370495`)])

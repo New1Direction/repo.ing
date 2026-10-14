@@ -16,6 +16,7 @@ repo.ing turns public GitHub repositories and Hugging Face models into Solana to
 | What is trending, new, or about to graduate on repo.ing? | `trending_markets` with `sort` `volume`, `newest` or `graduation` |
 | Which launches are coming up? What launched this week? | `launch_calendar` |
 | Is this market's launch fair? Who seeded it, is liquidity locked, how deep is it, is volume wash traded? | `launch_quality` |
+| Could my repository launch? What would it need, and what do the quality facts say before launch? | `launch_preflight` (GitHub repositories) |
 | How big is repo.ing? | `platform_stats` |
 
 `project` accepts a GitHub URL, a git remote, `owner/name`, a Hugging Face model URL, or a repo.ing market link. For "my repo" or "this repo", read the workspace's remote (`git remote get-url origin`) and pass only its `owner/name`, rather than guessing. Never send a remote URL that embeds a username, password or token.

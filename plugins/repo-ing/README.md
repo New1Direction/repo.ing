@@ -55,6 +55,7 @@ Add `--scope user` to make it available in every project.
 | `trending_markets` | `sort`: `volume`, `newest` or `graduation`; `limit`: 1 to 20 | The markets repo.ing features, with their links. |
 | `launch_calendar` | `limit`: 1 to 20 | Scheduled launches (time, window, the only wallet that may launch, maximum initial buy), Group launch raises, and the last week's launches with their Launch quality summary. |
 | `launch_quality` | `project` | The market's Launch quality report: criteria with evidence and explicit unknowns, organic versus round-trip trading, liquidity within 2% of spot, seeded positions and lock states. |
+| `launch_preflight` | `project`: a public GitHub repository | Before launch: whether it can launch, each missing requirement with what to do, and the Launch Quality facts known before launch with explicit unknowns, plus the guided launch link for its maintainer. |
 | `platform_stats` | none | All-time markets, graduations, trades, volume, and builder fees earned and paid out. |
 
 Every tool is annotated `readOnlyHint: true`. Hugging Face model markets always carry their disclaimer: *Community launch — not endorsed by the model's creators. Not affiliated with Hugging Face.*

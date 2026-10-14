@@ -7,23 +7,30 @@ import { chain, configAddress } from './server.mjs'
 // DBC config accounts cannot change after creation, so each approved config's fee schedule is read once per
 // process. Copy about a launch fee is shown only when the market's (or the active) config really has one.
 const READ_TIMEOUT_MS = 2_500
-const schedules = new Map()
+const states = new Map()
 
 const withTimeout = promise => Promise.race([promise,
   new Promise((_, reject) => setTimeout(() => reject(Error('DBC config read timed out')), READ_TIMEOUT_MS).unref?.())])
 
-export async function configFeeSchedule(config, { connection = null } = {}) {
+// The config account itself (one RPC read per config per process; a failed read is tried again next time). onRead: called when
+// this call reads the chain, for callers that count their RPC requests (src/launch-guide.mjs).
+export async function configState(config, { connection = null, onRead = () => {} } = {}) {
   const key = new PublicKey(config).toBase58()
-  if (!schedules.has(key)) {
+  if (!states.has(key)) {
+    onRead()
     const read = (async () => {
       const fixed = await new DynamicBondingCurveClient(connection ?? chain(), 'confirmed').state.getPoolConfig(key)
       if (!fixed) throw Error('DBC config is missing')
-      return readFeeSchedule(fixed)
+      return fixed
     })()
-    schedules.set(key, read)
-    read.catch(() => schedules.delete(key))
+    states.set(key, read)
+    read.catch(() => states.delete(key))
   }
-  return withTimeout(schedules.get(key))
+  return withTimeout(states.get(key))
+}
+
+export async function configFeeSchedule(config, options = {}) {
+  return readFeeSchedule(await configState(config, options))
 }
 
 // Launch-fee copy terms for the config new launches use; null when flat, unconfigured or unreadable.
