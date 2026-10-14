@@ -226,6 +226,11 @@ Before the worker runs, the calendar shows scheduled launches but no reports or 
 
 ## Verification
 
+- Public token pages link directly to quality evidence, sampled depth, allocations and developer history. The decision aid uses the market and worker pulse already loaded by the page; depth bars use the existing stored sample, with one scale for both sides and explicit unknowns. No additional RPC, GitHub or database reads are introduced.
+- Scheduled launch clocks run locally while visible. Crossing a timestamp changes the displayed window, not authorization or a claim that a market launched. “Check launch availability” reloads server state; it does not poll or discard an in-progress form automatically.
+- `POST /api/market-events` emits structured `public_market_funnel` web logs containing only `event` and `page` (`token` or `schedule`). Events: `view`, `watch`, `unwatch`, `evidence`, `history`, `risks`, `trade_intent`, `availability`. Page/action events deduplicate per mount; watch/unwatch count successful local toggles. These are anonymous action counts, not unique visitors, public watchlist interest, or confirmed trades. They cannot attribute a person's conversion or compare individual markets.
+- Measurement uses credential-free, referrer-free requests, no persistent identifier, and honors GPC/DNT in both client and server. The endpoint accepts only same-origin, strictly allowlisted payloads of at most 128 bytes. A global per-process token bucket allows a burst of 120 and refills at 120/minute; excess counts are dropped. No event database or dashboard changes; log retention follows the deployment's log policy. Aggregate `public_market_funnel` logs by `page` and `event` to compare views with evidence/history clicks, watch toggles and trade intent. Counts can be blocked, duplicated, rate-limited or spoofed; do not use them as trading outcomes.
+- `tests/public-market-conversion.test.mjs`: countdown boundaries, truthful unknown/verification states, asymmetric depth rendering and privacy/event validation.
 - `tests/launch-transparency.test.mjs` (quick suite):
   - clustering, round-trip windows, integrity totals;
   - depth tightness and spread on a constant-product pool;

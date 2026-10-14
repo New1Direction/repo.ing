@@ -62,12 +62,12 @@ export function useWatchlist() {
   return hydrated || !value ? value : { ...value, ...hydrating }
 }
 
-export function WatchButton({ market, compact = false }) {
+export function WatchButton({ market, compact = false, onToggle }) {
   const { state, ready, update } = useWatchlist()
   const [error, setError] = useState('')
   const watched = state.items.some(item => item.repoId === String(market.repoId))
   function toggle() {
-    try { update(value => toggleWatched(value, market)); setError('') }
+    try { update(value => toggleWatched(value, market)); setError(''); onToggle?.(!watched) }
     catch (error) { setError(error.message) }
   }
   const label = `${watched ? 'Unwatch' : 'Watch'} ${market.fullName}`

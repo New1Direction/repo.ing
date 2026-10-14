@@ -60,6 +60,8 @@ import { BundleVault, BundleVaultFallback } from '../../../components/bundle-vau
 import { isBundleMarket } from '../../../../src/bundles.mjs'
 import { ogCardImageUrl } from '../../../lib/og-card.mjs'
 import { DECLINED_TRADING, declinedSummary } from '../../../lib/declined-display.mjs'
+import { MarketDecision } from '../../../components/market-decision'
+import { MarketFunnel } from '../../../components/market-funnel'
 
 // Hero headline and Earnings tab render in the same request: reconcile fees and price SOL once.
 const earningsEvidence = cache(repoId => Promise.all([displayFeeStatus(repoId), solUsdPrice()]))
@@ -140,6 +142,7 @@ export default async function Token({ params, searchParams }) {
       {launcherRewards && <DiscoveryRewards repoId={market.repoId}/>}</div> }] : [],
   ]
   return <><AppHeader active={official ? 'repoing' : ''}/><main className="section-wrap market-page"><JsonLd data={tokenJsonLd(market)}/>
+    {!activity && <MarketFunnel key={mint} page="token"/>}
     {decision && <DeclinedBanner fullName={market.fullName} decision={decision}/>}
     <PhoneMarketSummary mint={market.mint} symbol={market.symbol} priceSol={market.priceSol} volume24hLamports={market.volume24hLamports}
       usdPerSol={cachedSolUsdPrice()} {...(quote ? { quote, stock: market.stock ?? null } : {})}/>
@@ -157,7 +160,7 @@ export default async function Token({ params, searchParams }) {
         {!activity && <DevPulseStrip pulse={pulse}/>}</div>
       <div className="market-hero-actions">
         {tips && <div className="tip-jar-slot"><Suspense fallback={<TipJarPillFallback/>}><TipJarPill market={market}/></Suspense></div>}
-        <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId}
+        <CopyAddress address={market.mint} compact/><ShareMarket key={market.mint} mint={market.mint} symbol={market.symbol} fullName={market.fullName} repoId={market.repoId} measureInterest={!activity}
           {...(stockPair ? { readme: false, quote } : {})} more={<><a href={repo.htmlUrl || `https://github.com/${market.fullName}`} target="_blank" rel="noreferrer">View on GitHub ↗</a>
             <a href={`https://solscan.io/token/${market.mint}`} target="_blank" rel="noreferrer">View token on Solscan ↗</a>
             {stockPair ? <a href={activity ? `/token/${mint}#fee-routing` : '#fee-routing'}>Fee routing</a> : <Link href={`/claim/${market.repoId}?src=token`}>Claim builder fees</Link>}</>}/></div>
@@ -170,6 +173,7 @@ export default async function Token({ params, searchParams }) {
       <Link className={activity ? 'active' : ''} href={`/token/${mint}?view=activity`}>Activity</Link>
     </div>
     {activity ? <ActivityFeed mint={mint} symbol={market.symbol} {...(quote ? { quote } : {})}/> : <>
+      <MarketDecision market={market} pulse={pulse} declined={decision} stockPair={stockPair}/>
       <MarketTrading key={market.mint} market={market} quote={quote} available={tradeAvailable()} usdPerSol={null} pulse={pulse?.events ?? null}
         aside={<>{official && <MarketsToWatch><Suspense fallback={<MarketsToWatchFallback/>}><MarketsToWatchContent/></Suspense></MarketsToWatch>}<BuildingLive stream={stream}/><TrustPanel market={market} launchFee={launchFee} declined={decision || null} repoFacts={repoFacts}/>{tips && <><Suspense fallback={<RepoTipsFallback/>}><RepoTips market={market}/></Suspense>
           <Suspense fallback={null}><PartsFundCard market={market}/></Suspense></>}

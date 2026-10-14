@@ -1,0 +1,21 @@
+/* Public market decision aid and scheduled-window clock; reuses the site's theme. */
+.market-decision{border:1px solid var(--border);border-radius:12px;background:var(--surface);padding:16px 20px;margin:16px 0 20px;font-size:13px;line-height:1.55}
+.market-decision-heading{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px 16px}
+.market-decision h2{font-size:16px;margin:0}
+.market-decision-status{font-size:12px;border:1px solid var(--border-strong);border-radius:6px;padding:3px 8px}
+.market-decision p{margin:8px 0;color:var(--muted);max-width:1000px}
+.market-decision strong{color:var(--text)}
+.market-decision-links{display:flex;flex-wrap:wrap;gap:4px 24px}
+.market-decision a{display:inline-flex;align-items:center;min-height:36px;text-decoration:underline;text-underline-offset:3px}
+.market-decision .market-decision-note{font-size:12px;color:var(--dim)}
+.market-decision summary{cursor:pointer;min-height:36px;align-content:center;color:var(--text)}
+.market-decision details p{max-width:850px}
+.launch-clock{margin:16px 0;padding:12px 16px;border-left:3px solid var(--green);background:var(--surface2);border-radius:4px 8px 8px 4px;text-align:left}
+.launch-clock strong{display:block;font-size:24px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.launch-clock p{font-size:13px;color:var(--muted);margin:4px 0}
+.depth-table{table-layout:fixed}
+.depth-value{display:block;white-space:nowrap}
+.depth-track{display:block;height:6px;background:var(--surface2);border-radius:3px;overflow:hidden;margin-top:6px;min-width:55px}
+.depth-track i{display:block;height:100%;background:var(--green)}
+.depth-track.is-sell i{background:var(--text)}
+@media(max-width:600px){.market-decision{padding:14px}.market-decision-links{display:grid;gap:0}.market-decision a,.market-decision summary{min-height:44px}.launch-clock strong{font-size:21px}}

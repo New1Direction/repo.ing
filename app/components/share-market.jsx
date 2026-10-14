@@ -9,6 +9,7 @@ import { MarketShareCard } from './market-share-card'
 import { WatchButton } from './watchlist'
 import { MenuDetails } from './menu-details'
 import { useShareReferral } from './share-referral'
+import { sendMarketEvent } from '../lib/market-funnel.mjs'
 
 // Watch stays a button; every share action (referral status included) lives in one disclosure menu (Escape closes, focus
 // returns to "Share"). `more` holds secondary links for the "⋯" menu. readme: offer the README badge (false for a Hugging
@@ -18,7 +19,7 @@ import { useShareReferral } from './share-referral'
 // referral (src/stock-damm-trade.mjs), so the menu has no referral control and none of its links carries a ?ref. It also has no
 // Blink link (Blinks trade SOL markets only: the action routes answer 404 for a stock pair) and no share card (both cards are
 // SOL figures: src/market-share.mjs shareCardKinds offers a stock pair none).
-export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true, shareText = null, quote = null }) {
+export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = true, shareText = null, quote = null, measureInterest = false }) {
   const [state, setState] = useState('')
   const [open, setOpen] = useState(false), [badge, setBadge] = useState(false), [card, setCard] = useState(false)
   const root = useRef(null), trigger = useRef(null), panel = useRef(null), refocus = useRef(false)
@@ -65,7 +66,8 @@ export function ShareMarket({ mint, symbol, fullName, repoId, more, readme = tru
   }
 
   return <div className="share-market" ref={root} onKeyDown={onKeyDown}>
-    <div className="share-market-actions">{repoId && <WatchButton market={{ mint, fullName, repoId }}/>}
+    <div className="share-market-actions">{repoId && <WatchButton market={{ mint, fullName, repoId }}
+      onToggle={measureInterest ? watched => sendMarketEvent(watched ? 'watch' : 'unwatch', 'token') : undefined}/>}
       <div className="share-menu"><button ref={trigger} className="button outline" type="button" aria-expanded={open} aria-controls={panelId} onClick={() => open ? close() : setOpen(true)}>
         <Share2 size={15} aria-hidden="true"/>Share<ChevronDown size={14} aria-hidden="true" className="share-menu-caret"/></button>
         {open && <div id={panelId} ref={panel} className="share-menu-panel" aria-label="Share this market" role="group">

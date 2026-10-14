@@ -1,5 +1,7 @@
 import { marketTransparency } from '../lib/market-transparency.mjs'
+import { depthScale } from '../lib/public-launch.mjs'
 import '../transparency.css'
+import '../public-launch.css'
 
 // Token page "Launch quality" tab (docs/LAUNCH_TRANSPARENCY.md): the worker's stored report with every criterion's evidence and
 // unknowns, the staged launch mechanism, seeded liquidity with labels and lock states, executable liquidity, trading integrity,
@@ -83,24 +85,30 @@ function QualityCard({ report }) {
   </section>
 }
 
-function LiquidityCard({ liquidity, sustained }) {
-  if (!liquidity) return <section className="inner-card transparency-card" aria-labelledby="liquidity-title"><h3 id="liquidity-title">Liquidity now</h3>
-    <p className="transparency-lede">No liquidity sample yet. The worker samples each market about hourly.</p></section>
+export function LiquidityCard({ liquidity, sustained }) {
+  if (!liquidity) return <section className="inner-card transparency-card" aria-labelledby="liquidity-title"><h3 id="liquidity-title">Sampled liquidity</h3>
+    <p className="transparency-lede">Liquidity evidence unavailable. This does not mean zero liquidity. The worker samples each market about hourly.</p></section>
   const profile = liquidity.profile ?? {}
+  const scale = depthScale(profile.depth)
   return <section className="inner-card transparency-card" aria-labelledby="liquidity-title">
-    <h3 id="liquidity-title">Liquidity now <small>{liquidity.venue === 'damm' ? 'graduated pool' : 'bonding curve'} · sampled {utc(liquidity.sampledAt)}</small></h3>
-    <div className="transparency-table-wrap"><table className="transparency-table numeric">
+    <h3 id="liquidity-title">Sampled liquidity <small>{liquidity.venue === 'damm' ? 'graduated pool' : 'bonding curve'} · sampled {utc(liquidity.sampledAt)}</small></h3>
+    <p className="transparency-lede">Historical depth, not a live quote. Bars share one SOL scale across buys and sells; short or missing sell depth can make an exit costly or impossible.</p>
+    <div className="transparency-table-wrap"><table className="transparency-table numeric depth-table">
+      <caption className="sr-only">Sampled buy and sell depth in SOL, within each price-impact threshold</caption>
       <thead><tr><th scope="col">Within</th><th scope="col">Buy up to</th><th scope="col">Sell up to</th></tr></thead>
-      <tbody>{(profile.depth ?? []).map(row => <tr key={row.impactPercent}><th scope="row">{row.impactPercent}% of spot</th><td>{sol(row.buyLamports)}</td><td>{sol(row.sellLamports)}</td></tr>)}</tbody>
+      <tbody>{(profile.depth ?? []).map(row => <tr key={row.impactPercent}><th scope="row">{row.impactPercent}% of spot</th>
+        {[['buy', row.buyLamports], ['sell', row.sellLamports]].map(([side, value]) => <td key={side}><span className="depth-value">{scale(value) === null ? 'Unknown' : sol(value)}</span>
+          {scale(value) !== null && <span className={`depth-track is-${side}`} aria-hidden="true"><i style={{ width: `${scale(value)}%` }}/></span>}</td>)}</tr>)}</tbody>
     </table></div>
+    {!profile.depth?.length && <p className="transparency-note">Depth measurements unavailable in this sample.</p>}
     <dl className="transparency-facts">
-      <div><dt>Fee now</dt><dd>{bps(liquidity.feeBps)}</dd></div>
+      <div><dt>Fee at sample</dt><dd>{bps(liquidity.feeBps)}</dd></div>
       {(profile.spreads ?? []).map(row => <div key={row.sizeLamports}><dt>Round trip at {sol(row.sizeLamports)}</dt><dd>{row.spreadBps === null ? 'One-sided' : bps(row.spreadBps)}</dd></div>)}
       <div><dt>SOL in {liquidity.venue === 'damm' ? 'pool' : 'curve'}</dt><dd>{sol(liquidity.quoteReserveLamports)}</dd></div>
       {sustained && <><div><dt>Two-sided, 30 days</dt><dd>{pct(sustained.uptimePercent)} of {sustained.samples} sample{sustained.samples === 1 ? '' : 's'}</dd></div>
         <div><dt>Median depth (2%)</dt><dd>{sol(sustained.medianDepthLamports)}</dd></div></>}
     </dl>
-    <p className="transparency-note">Depth: the largest trade whose average price, before fees, stays within that distance of spot. Round trip: buying that much and selling it back right now, fees included. Snapshots from Meteora SDK quotes; other trades change execution.</p>
+    <p className="transparency-note">Depth: the largest trade whose average price, before fees, stays within that distance of spot. Round trip: buying that much and selling it back at the sample time, fees included. Snapshots from Meteora SDK quotes; other trades change execution.</p>
   </section>
 }
 
