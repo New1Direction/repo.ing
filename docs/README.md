@@ -23,6 +23,7 @@ Launch open source markets. Every trade pays the builders.
 | Understand liquidity and graduation | [Liquidity guide](LIQUIDITY.md) |
 | Understand the 1% builder allocation | [Builder allocation](BUILDER_ALLOCATION_PLAN.md) |
 | Read protocol metrics | [Analytics definitions and sources](ANALYTICS.md) |
+| Run a free launch preflight, then plan, preview and schedule your repository's launch | [Guided launch](LAUNCH_GUIDE.md) · [repo.ing/launches/new](https://repo.ing/launches/new) |
 | See scheduled launches, a market's Launch quality report, liquidity and lock states | [Launch transparency](LAUNCH_TRANSPARENCY.md) · [launch calendar](https://repo.ing/launches) |
 | Build on launch feeds, liquidity data or webhooks | [Market data API](MARKET_DATA_API.md) |
 
@@ -50,7 +51,7 @@ Start with [Architecture](ARCHITECTURE.md), [Development](DEVELOPMENT.md), [Cont
 | Revenue and liquidity | [Revenue accounting](PLATFORM_REVENUE.md), [protocol liquidity](PROTOCOL_LIQUIDITY.md), [first bounded deployment](P3_FIRST_LIVE_RUNBOOK.md) — in-app executors off; manual operations published on [Stats](https://repo.ing/stats) |
 | Builder Reinvest | [Claim-first design](BUILDER_REINVEST_PLAN.md), [local verification](BUILDER_REINVEST_VERIFICATION.md) — production disabled |
 | Discovery | [Trend sources, scoring, and review](TREND_DISCOVERY.md), [Dev Pulse](DEV_PULSE.md) (GitHub activity on token pages, chart and home ticker) |
-| Launch transparency | [Quality reports, scheduled launches, integrity, liquidity sampling and previews](LAUNCH_TRANSPARENCY.md), [public market data API](MARKET_DATA_API.md) |
+| Launch transparency | [Quality reports, scheduled launches, integrity, liquidity sampling and previews](LAUNCH_TRANSPARENCY.md), [guided launch and preflight](LAUNCH_GUIDE.md), [public market data API](MARKET_DATA_API.md) |
 | Interface | [Charts](CHARTS_AND_RESPONSIVENESS.md), [market usability](MARKET_USABILITY.md), [watchlists and badges](DISCOVERY_UX.md), [claim sessions](PERFORMANCE_AND_CLAIMS.md) |
 | Local chain fixtures | [Meteora setup](METEORA_SPIKE.md#reproduce), [curve comparison](LIQUIDITY_REVIEW.md) |
 

@@ -185,6 +185,8 @@ curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://repo.ing/launch
 curl -s https://repo.ing/api/v1/markets/<mint>/liquidity | jq '.liquidity.summary'
 ```
 
+Migration `0073_launch_guide` (the [guided launch](LAUNCH_GUIDE.md#deploying)) is additive too: drafts and conversion events, read and written only by web. It needs no new settings and no worker deploy. Check with `curl -s 'https://repo.ing/api/launch-preflight?repo=new1direction/repo.ing' | jq .preflight.verdict` and `/operations/funnel` (Guided launch section).
+
 The `/api/v1` JSON may be added to the public JSON Cache Rule below; the origin headers are already set (`/api/v1/markets/<mint>/liquidity` 10 s, `/api/v1/launches` 30 s, the rest 60 s).
 
 ## Do-not-promote list

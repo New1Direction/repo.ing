@@ -491,6 +491,13 @@
       "when": 1790910032000,
       "tag": "0072_wallet_funding",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1790910033000,
+      "tag": "0073_launch_guide",
+      "breakpoints": true
     }
   ]
 }

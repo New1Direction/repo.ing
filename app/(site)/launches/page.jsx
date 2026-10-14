@@ -8,6 +8,7 @@ import { webhooksEnabled } from '../../../src/launch-webhooks.mjs'
 import { NOT_LIVE } from '../../../src/launch-mechanism.mjs'
 import { RISK_DISCLOSURES } from '../../../src/launch-quality.mjs'
 import { activeLaunchFeeTerms } from '../../lib/launch-fee.mjs'
+import { guideHref } from '../../lib/launch-guide-funnel.mjs'
 import '../../transparency.css'
 
 export const dynamic = 'force-dynamic'
@@ -42,8 +43,9 @@ export default async function LaunchesPage() {
       </nav>
     </header>
     <Suspense fallback={<ContentSkeleton label="Loading the launch calendar"/>}><Calendar/></Suspense>
-    <section className="launches-cta"><p><strong>Maintain a public repository?</strong> Schedule its launch from a wallet you choose, or cancel a schedule. Your GitHub admin access is checked again before anything changes.</p>
-      <Link className="button primary" href="/launches/manage">Schedule a launch</Link></section>
+    <section className="launches-cta"><p><strong>Maintain a public repository?</strong> Run a free preflight, then schedule its launch from a wallet you choose, with a preview before anything is public. Your GitHub admin access is checked again before anything changes.</p>
+      <span className="launches-cta-actions"><Link className="button primary" href={guideHref('calendar')}>Guided launch with preflight</Link>
+        <Link className="button outline" href="/launches/manage">Manage schedules</Link></span></section>
     <section className="launches-section" aria-labelledby="launches-how-title"><h2 id="launches-how-title">How a launch works</h2>
       <div className="launches-how">
         <div className="inner-card"><h3>One transaction opens the market</h3><p>The pool is created with, at most, the launcher&apos;s own initial buy, capped at 3% of supply and paying the regular fee. No one else can be in that transaction.</p></div>

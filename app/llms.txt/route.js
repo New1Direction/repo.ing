@@ -46,6 +46,7 @@ ${STOCK_LINE}
 - [Waiting for maintainers](https://repo.ing/waiting): Repositories with builder fees accrued but not yet claimed, ranked by amount.
 - [Find repos](https://repo.ing/find-repos): Repositories gaining attention, from an evidence-backed trend feed.
 - [Launch calendar](https://repo.ing/launches): Launches scheduled in public (time, launching wallet, maximum initial buy) and new markets with their Launch quality reports.
+- [Guided launch](https://repo.ing/launches/new): A free launch preflight for any public GitHub repository (requirements with remediation, pre-launch Launch Quality facts and unknowns; also GET /api/launch-preflight?repo=owner/name), then a maintainer's plan, disclosures, preview and public schedule.
 - [How it works](https://repo.ing/how-it-works): Launching, trading, graduation, and discovery rewards.
 - [About](https://repo.ing/about): One repo, one token; fees for the repo; a launch is not an endorsement.
 - [Protocol analytics](https://repo.ing/stats): Trading activity, verified builder payouts, and platform revenue allocation.
@@ -69,7 +70,7 @@ The tools prepare launch reviews only. They cannot trade, claim, sign, or submit
 - create_launch_draft: Create an expiring browser review link for a repository. Optional tokenName, tokenSymbol, and initialBuy (none, 100, 200, 300 = none, 1%, 2%, or max 3% of supply; default none). No transaction, reservation, purchase, or wallet authority.
 - get_launch_status: Read canonical indexed launch evidence for an immutable GitHub repoId, including the actual discoverer.
 
-A read-only server for coding assistants is at https://repo.ing/api/mcp/readonly (Streamable HTTP, no API key): find_market, builder_earnings, trending_markets and platform_stats. It never launches, trades or claims.
+A read-only server for coding assistants is at https://repo.ing/api/mcp/readonly (Streamable HTTP, no API key): find_market, builder_earnings, trending_markets, launch_calendar, launch_quality, launch_preflight and platform_stats. It never launches, trades or claims.
 
 Public market data (read-only JSON, no key, any origin): https://repo.ing/api/v1/launches (calendar), /api/v1/launches/events (feed, poll with ?after=), /api/v1/markets/{mint}/transparency (Launch quality with evidence and unknowns, trading integrity, seeded liquidity and lock states), /api/v1/markets/{mint}/liquidity (live depth and spread) and /api/v1/liquidity (hourly board). Also /launches.atom and /launches.ics. Reports are facts, never pay-to-rank, and not advice.
 

@@ -67,7 +67,8 @@ test('a clock that steps back cannot wedge an allowance', () => {
 })
 
 test('every action the routes count has an allowance, and each fits several heavy visitors behind one address', () => {
-  const counted = ['api/trade/route.js', 'api/launch/route.js', 'api/resolve/route.js', 'lib/bundle-api.mjs', 'api/v1/markets/[mint]/liquidity/route.js']
+  const counted = ['api/trade/route.js', 'api/launch/route.js', 'api/resolve/route.js', 'lib/bundle-api.mjs', 'api/v1/markets/[mint]/liquidity/route.js',
+    'api/launch-preflight/route.js']
     .flatMap(file => [...readFileSync(new URL(`../app/${file}`, import.meta.url), 'utf8').matchAll(/(?:refuseOverLimit|limit)\(request, '([^']+)'/g)].map(match => match[1]))
   // A name without an allowance would never be limited, silently.
   assert.deepEqual([...new Set(counted)].sort(), Object.keys(REQUEST_LIMITS).sort())
@@ -77,7 +78,9 @@ test('every action the routes count has an allowance, and each fits several heav
     // The raise page reads its bundle every 15 s; a backer prepares a deposit, a refund or a claim now and then.
     'bundle:read': 6, 'bundle:prepare': 2, 'bundle:submit': 2, 'bundle:send': 2,
     // A market maker polling one market's live liquidity every 10 s (the answer is cached that long anyway).
-    'market-data:liquidity': 6 }
+    'market-data:liquidity': 6,
+    // A maintainer re-running the public preflight after each fix.
+    'launch:preflight': 3 }
   assert.deepEqual(Object.keys(REQUEST_LIMITS).sort(), Object.keys(heavy).sort())
   for (const [action, { burst, perMinute }] of Object.entries(REQUEST_LIMITS)) {
     assert.ok(burst >= heavy[action] * 4, `${action}: four heavy visitors at once`)

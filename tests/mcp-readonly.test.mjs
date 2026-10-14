@@ -261,7 +261,7 @@ test('official MCP client: handshake, tool list and calls', async () => {
     assert.equal(client.getNegotiatedProtocolVersion(), '2025-06-18')
     assert.equal(client.getInstructions(), READ_ONLY_SERVER.instructions)
     const { tools } = await client.listTools()
-    assert.deepEqual(tools.map(tool => tool.name), ['find_market', 'builder_earnings', 'trending_markets', 'launch_calendar', 'launch_quality', 'platform_stats'])
+    assert.deepEqual(tools.map(tool => tool.name), ['find_market', 'builder_earnings', 'trending_markets', 'launch_calendar', 'launch_quality', 'launch_preflight', 'platform_stats'])
     assert.ok(tools.every(tool => tool.annotations.readOnlyHint === true && tool.annotations.destructiveHint === false))
     const found = await client.callTool({ name: 'find_market', arguments: { project: 'New1Direction/OntologyEX' } })
     assert.equal(found.structuredContent.markets[0].ticker, '$ONTO')

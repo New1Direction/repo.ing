@@ -4,6 +4,8 @@
 
 Release 2026-10-13 (migration `0071_launch_transparency`). repo.ing launches open-source repository markets on Meteora's bonding curve. This release makes how a market opened, who seeded it, how liquid it is, and how much of its trading is organic visible to everyone. It shows the evidence for each figure, says plainly what is unknown, and keeps money and placement out of it.
 
+Before a market exists, the [guided launch](LAUNCH_GUIDE.md) (`/launches/new`) runs a free preflight with the same criteria over what can be known before launch, then lets a maintainer plan, preview and publish a scheduled launch.
+
 Ground rules this release follows:
 
 - **Facts, not ratings to buy.** Every figure names its source and the time it was read. Unknown means unknown; it is never scored as zero or as a pass.

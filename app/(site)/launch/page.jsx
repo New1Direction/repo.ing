@@ -7,6 +7,7 @@ import { trendingLaunches } from '../../lib/trending-launches.mjs'
 import { AppHeader, Footer } from '../../components/ui'
 import { RepoSearch } from '../../components/repo-search'
 import { hfMarketsEnabled } from '../../../src/hf-launch.mjs'
+import { guideHref } from '../../lib/launch-guide-funnel.mjs'
 import '../../maintainer-opt-out.css'
 export const dynamic = 'force-dynamic'
 export function generateMetadata() {
@@ -27,6 +28,7 @@ export default async function LaunchStart({ searchParams }) {
       : <Link href="/find-repos" className="launch-find-link">Find a repo gaining attention <ArrowRight size={15} aria-hidden="true"/></Link>}
     <LaunchBenefits discoveryEnabled={discoveryEnabled}/>
     <p className="launch-trust-note">One market per repository. Already launched? We’ll open its existing market. A community launch does not imply the maintainer’s endorsement. Maintainers can <Link href="/opt-out">opt their repository out</Link>.</p>
+    <Link href={guideHref('launch')} className="launch-find-link">Maintainer? Run a free preflight and schedule your launch in public <ArrowRight size={15} aria-hidden="true"/></Link>
     <Link href="/agents" className="launch-find-link">Use an agent, README button, or browser shortcut <ArrowRight size={15} aria-hidden="true"/></Link>
   </main><Footer/></>
 }

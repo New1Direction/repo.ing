@@ -39,6 +39,8 @@ launch-first-buy
 launch-indexer
 launch-transparency-db
 launch-transparency-chain
+launch-guide-db
+launch-guide-chain
 liquidity-deployment
 maintainer-opt-outs-db
 market-lookup

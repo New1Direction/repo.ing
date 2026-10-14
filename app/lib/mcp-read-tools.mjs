@@ -19,6 +19,7 @@ import { isStockMarket } from '../../src/stock-market-chart.mjs'
 //   modelsEnabled()   whether Hugging Face model markets are open
 //   calendar()        the launch calendar (app/lib/launch-calendar.mjs), or { unavailable }
 //   transparency(m)   one market's transparency view (app/lib/market-transparency.mjs), or null
+//   preflight(input)  the public launch preflight ({ repoId } or { owner, name }; src/launch-guide.mjs), or null when unavailable
 // Nothing here launches, trades, claims or touches a wallet: those happen on repo.ing in the user's own wallet, so every
 // answer carries the page to do it on.
 export const READ_ONLY_SERVER = Object.freeze({ name: 'repo.ing', title: 'repo.ing (read-only)', version: '1.0.0',
@@ -356,6 +357,36 @@ async function launchQuality({ project: input }, request, sources) {
   return result(views.map(view => view.text).join('\n\n'), { found: true, markets: views.map(view => view.data) })
 }
 
+// The public launch preflight (/launches/new): what a repository's launch would need, and the Launch Quality facts known before
+// launch with explicit unknowns. Free, no wallet or sign-in; scheduling is done by a current GitHub admin on repo.ing.
+async function launchPreflight({ project: input }, request, sources) {
+  const origin = sources.origin(request)
+  const text = input.trim()
+  const ssh = SSH_REMOTE.exec(text)
+  const named = ssh ? { owner: ssh[1], name: ssh[2] } : /^[1-9]\d{0,15}$/.test(text) ? { repoId: text }
+    : (() => { try { const { owner, name } = parseRepositoryUrl(/^https?:\/\//i.test(text) ? text.replace(/^http:/i, 'https:').replace(/^(https:\/\/[^/]+\/[^/?#]+\/[^/?#]+).*$/, '$1')
+      : /^[\w.-]+\/[\w.-]+$/.test(text) ? `https://github.com/${text}` : `https://${text}`); return { owner, name } } catch { return null } })()
+  if (!named) return failure('Use a public GitHub repository: https://github.com/owner/name or owner/name.')
+  const run = await Promise.resolve().then(() => sources.preflight(named)).catch(() => null)
+  if (!run) return failure('The launch preflight is temporarily unavailable. Try again shortly.')
+  const { preflight, repository } = run
+  if (!repository) return failure(preflight.requirements[0]?.status === 'blocked' ? 'GitHub does not serve that repository publicly. Only public repositories can launch.'
+    : 'GitHub could not be read just now. Try again shortly.')
+  const quality = preflight.quality
+  const guideUrl = `${origin}/launches/new?repo=${repository.repoId}&src=agents`
+  const open = preflight.requirements.filter(item => !['met', 'info'].includes(item.status) && item.id !== 'github_admin' && item.id !== 'plan')
+  const lines = [`Launch preflight for ${words(repository.fullName)} (facts, not advice): ${preflight.verdict === 'blocked' ? 'cannot launch right now' : 'can launch'}.`,
+    `Pre-launch Launch Quality: ${quality.score === null ? 'not enough evidence for a score' : `${quality.score}/100`} on ${quality.coveragePercent}% of the pre-launch criteria known. Never pay-to-rank.`,
+    ...open.map(item => `${item.status === 'blocked' ? 'Blocked' : item.status === 'unknown' ? 'Unknown' : 'Check'}: ${item.label}${item.detail ? `: ${words(item.detail, 240)}` : ''}${item.remediation?.text ? ` What to do: ${words(item.remediation.text, 240)}` : ''}`),
+    ...quality.unknowns.length ? [`Unknown now: ${quality.unknowns.map(item => item.label).join('; ')}`] : [],
+    `Measured only after launch: ${quality.afterLaunch.map(item => item.label).join('; ')}.`,
+    `A current GitHub admin can plan, preview and schedule the launch in public: ${guideUrl}`]
+  return result(lines.join('\n'), { repoId: repository.repoId, project: words(repository.fullName), verdict: preflight.verdict, guideUrl,
+    quality: { score: quality.score, coveragePercent: quality.coveragePercent, unknowns: quality.unknowns.map(item => item.id), afterLaunch: quality.afterLaunch.map(item => item.id),
+      criteria: quality.criteria.map(({ id, label, status, basis, value }) => ({ id, label, status, basis, value: value === null ? null : words(value, 200) })) },
+    requirements: preflight.requirements.map(({ id, label, status, remediation }) => ({ id, label, status, remediation: remediation?.text ? words(remediation.text, 240) : null })) })
+}
+
 const projectInput = z.string().trim().min(1).max(2048)
   .describe('A GitHub repository (https://github.com/owner/name, git@github.com:owner/name.git or owner/name), a Hugging Face model (https://huggingface.co/owner/name), or a repo.ing market link (https://repo.ing/token/<mint>).')
 const TOOLS = [
@@ -370,6 +401,8 @@ const TOOLS = [
     z.object({ limit: z.number().int().min(1).max(20).default(10).describe('How many of each list, 1 to 20.') }).strict(), launchCalendar],
   ['launch_quality', 'Launch quality report', 'A repo.ing market’s Launch quality report: factual criteria with evidence and explicit unknowns, organic versus round-trip trading, executable liquidity within 2% of spot, and seeded positions with their lock states. Never pay-to-rank, not advice. Read-only.',
     z.object({ project: projectInput }).strict(), launchQuality],
+  ['launch_preflight', 'Launch preflight', 'Before a GitHub repository launches on repo.ing: whether it can launch, exactly what is missing and what to do, and the Launch Quality facts known before launch with explicit unknowns. Free. Read-only: a current GitHub admin schedules the launch on repo.ing.',
+    z.object({ project: z.string().trim().min(1).max(2048).describe('A public GitHub repository: https://github.com/owner/name, git@github.com:owner/name.git or owner/name.') }).strict(), launchPreflight],
   ['platform_stats', 'Platform totals', 'repo.ing’s all-time totals: markets, graduations, trades, trading volume, and builder fees earned and paid out. Read-only.',
     z.object({}).strict(), platformStats],
 ]

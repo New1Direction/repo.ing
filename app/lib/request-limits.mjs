@@ -31,6 +31,9 @@ export const REQUEST_LIMITS = Object.freeze({
   // The live market-maker feed (/api/v1/markets/[mint]/liquidity): two chain reads and many local quotes per uncached answer;
   // the same mint is answered from a 10 s cache, so this only bounds one address walking many markets.
   'market-data:liquidity': { burst: 30, perMinute: 30 },
+  // The public launch preflight (/api/launch-preflight): an uncached repository costs two or three GitHub reads, then it is answered
+  // from a 10-minute cache. A maintainer re-runs it after each fix.
+  'launch:preflight': { burst: 20, perMinute: 6 },
 })
 
 export { clientAddress }

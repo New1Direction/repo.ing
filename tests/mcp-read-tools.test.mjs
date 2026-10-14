@@ -33,18 +33,18 @@ async function call(name, args = {}, overrides) {
   return { ...answer, text: answer.content[0].text, data: answer.structuredContent }
 }
 
-test('six read-only tools with strict input schemas', () => {
+test('seven read-only tools with strict input schemas', () => {
   const tools = readOnlyTools(sources())
-  assert.deepEqual(tools.map(tool => tool.definition.name), ['find_market', 'builder_earnings', 'trending_markets', 'launch_calendar', 'launch_quality', 'platform_stats'])
+  assert.deepEqual(tools.map(tool => tool.definition.name), ['find_market', 'builder_earnings', 'trending_markets', 'launch_calendar', 'launch_quality', 'launch_preflight', 'platform_stats'])
   for (const { definition } of tools) {
     // openWorldHint: answers carry third-party text (descriptions, token names) and on-chain state.
     assert.deepEqual(definition.annotations, { title: definition.title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true })
     assert.equal(definition.inputSchema.type, 'object'); assert.equal(definition.inputSchema.additionalProperties, false)
     assert.match(definition.description, /Read-only/)
   }
-  const [find, earnings, trending, calendar, quality, stats] = tools.map(tool => tool.definition.inputSchema)
+  const [find, earnings, trending, calendar, quality, preflight, stats] = tools.map(tool => tool.definition.inputSchema)
   assert.deepEqual([calendar.properties.limit.minimum, calendar.properties.limit.maximum], [1, 20])
-  for (const schema of [find, earnings, quality]) { assert.deepEqual(schema.required, ['project']); assert.equal(schema.properties.project.maxLength, 2048) }
+  for (const schema of [find, earnings, quality, preflight]) { assert.deepEqual(schema.required, ['project']); assert.equal(schema.properties.project.maxLength, 2048) }
   assert.deepEqual(trending.properties.sort.enum, ['volume', 'newest', 'graduation']); assert.equal(trending.properties.sort.default, 'volume')
   assert.deepEqual([trending.properties.limit.minimum, trending.properties.limit.maximum, trending.properties.limit.default], [1, 20, 10])
   assert.equal(trending.required, undefined); assert.deepEqual(stats.properties, {})

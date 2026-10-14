@@ -203,7 +203,9 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
         // 0059: contributor early access snapshots (GitHub accounts of a GitHub repository).
         'early_access_contributors',
         // 0071: scheduled launches are announced by a repository's GitHub admin.
-        'launch_schedules']
+        'launch_schedules',
+        // 0073: guided launch drafts are a GitHub admin's plan for a GitHub repository.
+        'launch_guide_drafts']
       const { rows } = await pool.query(`select conrelid::regclass::text as name, convalidated as valid, pg_get_constraintdef(oid) as def
         from pg_constraint where contype = 'c' and conname = conrelid::regclass::text || '_github_only' order by 1`)
       assert.deepEqual(rows, [...tables].sort().map(name => ({ name, valid: true, def: 'CHECK ((github_repo_id < \'4503599627370496\'::bigint))' })))
@@ -217,6 +219,7 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
         ['repo_pulse_state', `insert into repo_pulse_state(github_repo_id) values (${hf})`],
         ['launch_schedules', `insert into launch_schedules(github_repo_id,scheduled_at,window_minutes,launcher_wallet,github_user_id,github_login)
           values (${hf},now() + interval '2 hours',60,'${'1'.repeat(32)}',7,'o')`],
+        ['launch_guide_drafts', `insert into launch_guide_drafts(github_user_id,github_repo_id) values (7,${hf})`],
         ['repo_pulse_star_hours', `insert into repo_pulse_star_hours(github_repo_id,hour,stars_total) values (${hf},now(),1)`],
         ['trend_candidates', `insert into trend_candidates(github_repo_id,full_name,observed_at) values (${hf},'octocat/Hello-World',now())`],
         ['repo_tips', `insert into repo_tips(id,github_repo_id,donor_wallet,tip_wallet,mint,token_program,decimals,symbol,requested_amount,status,message,transaction,last_valid_block_height,refund_after)

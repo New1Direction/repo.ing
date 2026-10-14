@@ -137,3 +137,6 @@
 .scheduled-window-note{max-width:none;margin:18px 0}
 .launch-blocked .transparency-facts{width:100%}
 .scheduled-window-note h2{margin:0;font-size:20px}
+.launches-cta-actions{display:flex;flex-wrap:wrap;gap:8px}
+.launch-guide-link{margin:14px 0 0;color:var(--muted);font-size:13.5px;line-height:1.5}
+.launch-guide-link a{color:var(--text);text-decoration:underline;text-underline-offset:2px}
