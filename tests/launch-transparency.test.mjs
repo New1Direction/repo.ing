@@ -396,3 +396,15 @@ test('funding source: the first SOL transfer into the wallet, top-level or inner
   assert.equal(firstFunding(tx([ix('transfer', { source: 'W', destination: 'F', lamports: 1 })]), 'W'), null)
   assert.equal(firstFunding({ ...tx([ix('transfer', { source: 'F', destination: 'W', lamports: 1 })]), meta: { err: { InstructionError: [0, 'x'] } } }, 'W'), null, 'a failed transaction funds nothing')
 })
+
+test('launch quality: a burned supply is no risk; only supply above one billion or a live authority fails', () => {
+  const facts = fullFacts()
+  facts.holders = { ...facts.holders, mint: { fixedSupply: false, supplyBaseUnits: '985000000000000', burnedBaseUnits: '15000000000000', mintAuthorityRevoked: true, freezeAuthorityRevoked: true } }
+  const burned = launchQualityReport(facts, { now: NOW }).criteria.find(item => item.id === 'mint_authorities')
+  assert.equal(burned.status, 'pass')
+  assert.equal(burned.value, 'Nobody can mint or freeze; 15,000,000 tokens burned so far')
+  facts.holders.mint = { ...facts.holders.mint, supplyBaseUnits: '1000000000000001', burnedBaseUnits: '0' }
+  assert.equal(launchQualityReport(facts, { now: NOW }).criteria.find(item => item.id === 'mint_authorities').value, 'supply above one billion')
+  facts.holders.mint = { ...facts.holders.mint, supplyBaseUnits: '1000000000000000', mintAuthorityRevoked: false }
+  assert.equal(launchQualityReport(facts, { now: NOW }).criteria.find(item => item.id === 'mint_authorities').value, 'mint authority set')
+})

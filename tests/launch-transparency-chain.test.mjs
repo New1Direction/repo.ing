@@ -148,8 +148,8 @@ test('launch transparency: scheduled launch gate, executable depth, integrity, r
       holderSnapshot: async m => ({ ...await loadHolderSnapshot(connection, m.mint, m.pool, { labels }), observedAt: new Date().toISOString() }),
       launchFeeFor: async () => launchFeeTerms(readFeeSchedule(fixed)) !== null })
     const result = await job.runOnce()
-    assert.deepEqual(result.liquidity, { sampled: 1, failed: 0 })
-    assert.deepEqual(result.reports, { stored: 1, failed: 0 })
+    assert.deepEqual(result.liquidity, { done: 1, failed: 0 })
+    assert.deepEqual(result.reports, { done: 1, failed: 0 })
     sample = await latestLiquiditySample(pool, String(SCHEDULED))
     assert.equal(sample.venue, 'curve')
     const band = sample.profile.depth.find(row => row.impactPercent === 2)

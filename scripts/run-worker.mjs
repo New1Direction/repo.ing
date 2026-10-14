@@ -356,7 +356,8 @@ let tradeCanaryTask=null,nextTradeCanaryCheck=0
 // Launch transparency (docs/LAUNCH_TRANSPARENCY.md): the public launch feed and its webhooks, scheduled launches, hourly liquidity
 // and LP position samples, and one transparency report per market. Read-only toward Solana. MARKET_TRANSPARENCY_SAMPLING=false
 // keeps the feed, schedules and webhooks but stops the RPC sampling and reports.
-const transparencyConnection = rpcConnection(rpc, 'confirmed')
+// Every read times out after 15 s (timedFetch, after any rate-limit backoff), so one RPC call that never answers cannot hold the job.
+const transparencyConnection = new Connection(rpc, { commitment: 'confirmed', disableRetryOnRateLimit: true, fetch: meter.fetchFor('primary', timedFetch) })
 // Early access markets (Token-2022 curves) resolve to their own config wherever trading them is configured.
 const transparencyConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess: tradingEarlyAccessConfig() })
 const transparencyDbc = new DynamicBondingCurveClient(transparencyConnection, 'confirmed')

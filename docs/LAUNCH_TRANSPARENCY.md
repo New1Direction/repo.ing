@@ -37,7 +37,7 @@ Ground rules this release follows:
 | Launch | Initial buy at launch | 10 | ≤ 1% of supply | ≤ 3% (6); Group launch vault (5) | > 3% |
 | Launch | Launch fee window against first-block bots | 5 | launch-fee config | flat fee (2) | — |
 | Launch | Announced launch time | info | — | — | — |
-| Token | Fixed supply, mint and freeze authority revoked (chain) | 10 | all true | — | any false |
+| Token | Fixed supply, mint and freeze authority revoked (chain) | 10 | supply at or below one billion (burns are fine and shown) and both authorities revoked | — | supply above one billion, or an authority set |
 | Token | Top 10 holders excluding curve, pool and lock escrows (chain) | 10 | ≤ 30% | ≤ 50% (5) | > 50% |
 | Token | Launcher's indexed holding | 5 | ≤ 3% | ≤ 10% (2) | > 10% |
 | Trading | Organic share of attributed volume | 10 | ≥ 80% | ≥ 50% (5) | < 50% |
@@ -215,6 +215,8 @@ Before the worker runs, the calendar shows scheduled launches but no reports or 
 | `WALLET_FUNDING_LINKS` | worker | on | `false` stops only the funding-source checks |
 | `LAUNCH_WEBHOOKS_ENABLED` | web, worker | off | `true` (with a key) turns on webhook management and delivery |
 | `LAUNCH_WEBHOOK_SIGNING_KEY` | web, worker | none | Base64 32-byte Ed25519 seed (or a PKCS#8 PEM). The public key is served at `/api/v1/webhooks/signing-key` |
+
+**Run bounds:** each run spends at most 100 seconds on sampling and reports, then leaves the rest for the next run. Each market or wallet gets at most 45 seconds, and every chain read times out after 15 seconds, so an RPC call that never answers cannot stall the job (a stall like this held the first production runs for 19 minutes on 2026-10-14). Order: liquidity samples, reports, LP scans, then funding traces.
 
 **Worker cost:** each 2-minute run samples up to 20 markets' liquidity (two RPC reads each) and up to 5 graduated pools' LP positions (one program scan plus a read per position, at most 200). It also traces up to 20 trading wallets' funding (two to four reads each) and writes up to 10 reports; each report reads the holder snapshot (three RPC reads) and the market's swaps. Every market is refreshed about hourly. Samples older than 120 days are deleted.
 
