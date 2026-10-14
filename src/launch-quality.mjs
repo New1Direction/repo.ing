@@ -23,6 +23,8 @@ export const RISK_DISCLOSURES = Object.freeze([
   'Liquidity figures are snapshots. Other trades change the price before yours executes.',
 ])
 
+const FIXED_SUPPLY = 1_000_000_000_000_000n
+const tokens = baseUnits => (Number(baseUnits / 1_000n) / 1_000).toLocaleString('en-US', { maximumFractionDigits: 0 })
 const GITHUB = 'GitHub API'
 const CHAIN = 'Solana (finalized/confirmed RPC reads)'
 const LEDGER = 'repo.ing ledger of finalized swaps'
@@ -112,10 +114,15 @@ function holderCriteria({ holders, launcher, launch }) {
   const observedAt = iso(holders?.observedAt)
   const mintRef = launch?.mint ? `https://solscan.io/token/${launch.mint}` : null
   const mint = holders?.mint
+  // A burn lowers the supply and is no risk; only supply above the fixed one billion, or an authority that can still mint or freeze, is.
+  const supply = mint?.supplyBaseUnits === null || mint?.supplyBaseUnits === undefined ? null : BigInt(mint.supplyBaseUnits)
+  const burned = mint?.burnedBaseUnits ? BigInt(mint.burnedBaseUnits) : 0n
+  const capped = mint?.fixedSupply === true || (supply !== null && supply <= FIXED_SUPPLY)
   const items = [criterion('mint_authorities', 'Token', 'Fixed supply, mint and freeze authority revoked', 10, !mint ? { status: 'unknown' }
-    : mint.fixedSupply && mint.mintAuthorityRevoked && mint.freezeAuthorityRevoked
-      ? { status: 'pass', points: 10, value: 'Fixed supply; nobody can mint or freeze', evidence: [{ source: CHAIN, ref: mintRef, observedAt }] }
-      : { status: 'fail', points: 0, value: [!mint.fixedSupply && 'supply differs', !mint.mintAuthorityRevoked && 'mint authority set',
+    : capped && mint.mintAuthorityRevoked && mint.freezeAuthorityRevoked
+      ? { status: 'pass', points: 10, value: burned > 0n ? `Nobody can mint or freeze; ${tokens(burned)} tokens burned so far` : 'Fixed supply; nobody can mint or freeze',
+        evidence: [{ source: CHAIN, ref: mintRef, observedAt }] }
+      : { status: 'fail', points: 0, value: [!capped && 'supply above one billion', !mint.mintAuthorityRevoked && 'mint authority set',
         !mint.freezeAuthorityRevoked && 'freeze authority set'].filter(Boolean).join(', '), evidence: [{ source: CHAIN, ref: mintRef, observedAt }] })]
   const top = num(holders?.holders?.topPercent)
   items.push(criterion('holder_concentration', 'Token', 'Top 10 holders (excluding curve, pool and lock escrows)', 10, top === null ? { status: 'unknown' }

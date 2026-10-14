@@ -7,7 +7,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { activeSchedule, assertScheduleAllows, createLaunchSchedules, reconcileSchedules, SCHEDULE_CODES, upcomingSchedules } from '../src/launch-schedules.mjs'
 import { launchCalendar, produceFeedEvents, readFeedEvents } from '../src/launch-feed.mjs'
 import { createWebhookStore, deliverDue, fanOutDeliveries, WEBHOOK_LIMITS } from '../src/launch-webhooks.mjs'
-import { buildMarketReport, createMarketTransparency, dueMarkets, readStoredReport, storeReport } from '../src/market-transparency.mjs'
+import { buildMarketReport, createMarketTransparency, dueMarkets, readStoredReport, storeReport, TRANSPARENCY_LIMITS } from '../src/market-transparency.mjs'
 import { readWalletLinks } from '../src/wallet-clusters.mjs'
 import { readSeedFacts, seededLiquidity } from '../src/seeded-liquidity.mjs'
 import { checkWalletFunding, dueFundingWallets, FUNDING_LIMITS, readFundingLinks } from '../src/wallet-funding.mjs'
@@ -267,5 +267,29 @@ test('real PostgreSQL: funding sources link fresh sibling wallets and direct fun
     }
     const due = await dueFundingWallets(pool, { now })
     assert.equal(due.length, 1, 'x was checked already and the small trader is under the floor')
+  } finally { await pool.end() }
+})
+
+test('real PostgreSQL: a chain read that never answers costs one item timeout, and a spent run budget skips the rest', { skip: !url }, async () => {
+  const pool = await open()
+  try {
+    for (const id of [61, 62]) {
+      await repo(pool, id); await market(pool, id)
+      await pool.query(`insert into graduation_events (github_repo_id, signature, pool, slot, evidence_hash, evidence, reconciliation)
+        values ($1, $2, $3, 1, repeat('0', 64), '{}', '{}')`, [String(id), `Mig${id}`, Keypair.generate().publicKey.toBase58()])
+    }
+    const hang = () => new Promise(() => {})
+    const connection = { getAccountInfo: hang, getSlot: hang, getBlockTime: hang, getMultipleAccountsInfo: hang, rpcEndpoint: 'http://127.0.0.1:9' }
+    const logged = []
+    const job = createMarketTransparency({ pool, connection, resolveConfig: () => null, log: line => logged.push(line),
+      limits: { ...TRANSPARENCY_LIMITS, itemTimeoutMs: 150, runBudgetMs: 200 } })
+    const started = Date.now()
+    const result = await job.runOnce()
+    assert.ok(Date.now() - started < 2000, 'the run returns instead of waiting on the chain')
+    assert.deepEqual(result.liquidity, { done: 0, failed: 2 })
+    assert.deepEqual(result.reports, { skipped: 'RUN_BUDGET' })
+    assert.ok(logged.every(line => line.liquiditySampleFailed && /TRANSPARENCY_ITEM_TIMEOUT|DAMM pool unavailable/.test(line.code)))
+    // Both markets back off: the next run does not spend its budget on them again.
+    assert.deepEqual((await job.runOnce()).liquidity, { done: 0, failed: 0 })
   } finally { await pool.end() }
 })

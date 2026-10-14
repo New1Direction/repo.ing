@@ -16,10 +16,20 @@ import { checkWalletFunding, dueFundingWallets, linkKinds, readFundingLinks } fr
 // per market (Launch Quality, trading integrity, sustained health, LP incentive preview). Read-only toward Solana: it never
 // signs or sends anything. Each part is bounded per run, so a large backlog spreads over several runs instead of one burst of
 // RPC reads. Every database step tolerates a database the 0071 migration has not reached (it reports NOT_MIGRATED).
+// runBudgetMs bounds one run: once it is spent, the run stops taking new items and the rest wait for the next run. itemTimeoutMs
+// bounds one market or wallet: a chain read that never answers is given up on (and backed off) instead of holding the job.
 export const TRANSPARENCY_LIMITS = Object.freeze({
   liquidityPerRun: 20, lpPoolsPerRun: 5, reportsPerRun: 10,
   sampleEveryMs: 60 * 60_000, reportEveryMs: 60 * 60_000, retentionDays: 120,
+  runBudgetMs: 100_000, itemTimeoutMs: 45_000,
 })
+
+// Rejects after ms (the work itself is not cancelled; its own reads time out separately).
+export function withDeadline(promise, ms, code = 'TRANSPARENCY_ITEM_TIMEOUT') {
+  let timer
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(code), { code })), ms); timer.unref?.() })])
+    .finally(() => clearTimeout(timer))
+}
 const DAY = 86_400_000
 
 const MARKETS = `select m.id, m.github_repo_id::text as "githubRepoId", m.mint, m.pool, m.launcher_wallet as "launcherWallet", m.creator_wallet as "creatorWallet",
@@ -198,45 +208,33 @@ export function createMarketTransparency({ pool, connection, resolveConfig, labe
         await step('webhooks', result, async () => ({ ...await fanOutDeliveries(pool), ...await deliverDue(pool, { send: webhooks.send, key: webhooks.key, now }) }))
       }
       if (!sampling) return result
-      await step('liquidity', result, async () => {
-        const counts = { sampled: 0, failed: 0 }
-        for (const market of await due('liquidity', limits.liquidityPerRun, limits.sampleEveryMs)) {
-          try { await sampleMarketLiquidity(pool, market, { connection, resolveConfig, now: now() }); counts.sampled++; failures.delete(`liquidity:${market.githubRepoId}`) }
-          catch (error) { counts.failed++; failed('liquidity', market); log({ liquiditySampleFailed: market.githubRepoId, code: String(error?.message ?? '').slice(0, 60) }) }
+      // Reports come before the slower LP scans and funding traces, so they always get their turn; a report sees the funding links
+      // earlier runs found.
+      const startedAt = now()
+      const spent = () => now() - startedAt > limits.runBudgetMs
+      const each = async (items, work, onFail) => {
+        const counts = { done: 0, failed: 0 }
+        for (const [index, item] of items.entries()) {
+          if (spent()) { counts.deferred = items.length - index; break }
+          try { await withDeadline(work(item), limits.itemTimeoutMs); counts.done++ }
+          catch (error) { counts.failed++; onFail?.(item, error) }
         }
         return counts
-      })
-      await step('lpPositions', result, async () => {
-        const counts = { pools: 0, failed: 0 }
-        for (const market of await due('lp', limits.lpPoolsPerRun, limits.sampleEveryMs)) {
-          try { await sampleLpPositions(pool, market, { connection, now: now() }); counts.pools++; failures.delete(`lp:${market.githubRepoId}`) }
-          catch { counts.failed++; failed('lp', market) }
-        }
-        return counts
-      })
-      // Funding sources before reports, so a report sees the links found this run.
-      if (funding) {
-        await step('funding', result, async () => {
-          const counts = { checked: 0, failed: 0 }
-          for (const wallet of await dueFundingWallets(pool, { now: now() })) {
-            try { await checkWalletFunding(pool, connection, wallet, { now }); counts.checked++ } catch { counts.failed++ }
-          }
-          return counts
-        })
       }
-      await step('reports', result, async () => {
-        const counts = { stored: 0, failed: 0 }
-        for (const market of await due('reports', limits.reportsPerRun, limits.reportEveryMs)) {
-          try {
-            const report = await buildMarketReport(pool, market, { labels: labelsFor(market), holderSnapshot, pulseFor, launchFeeFor, feeClaimerFor,
-              configFor: m => { try { return resolveConfig(m) } catch { return null } }, now: now() })
-            await storeReport(pool, market.githubRepoId, report)
-            counts.stored++
-            failures.delete(`reports:${market.githubRepoId}`)
-          } catch (error) { counts.failed++; failed('reports', market); log({ transparencyReportFailed: market.githubRepoId, code: String(error?.message ?? '').slice(0, 80) }) }
-        }
-        return counts
-      })
+      const budgeted = (name, work) => (spent() ? (result[name] = { skipped: 'RUN_BUDGET' }) : step(name, result, work))
+      await budgeted('liquidity', async () => each(await due('liquidity', limits.liquidityPerRun, limits.sampleEveryMs),
+        async market => { await sampleMarketLiquidity(pool, market, { connection, resolveConfig, now: now() }); failures.delete(`liquidity:${market.githubRepoId}`) },
+        (market, error) => { failed('liquidity', market); log({ liquiditySampleFailed: market.githubRepoId, code: String(error?.message ?? '').slice(0, 60) }) }))
+      await budgeted('reports', async () => each(await due('reports', limits.reportsPerRun, limits.reportEveryMs), async market => {
+        const report = await buildMarketReport(pool, market, { labels: labelsFor(market), holderSnapshot, pulseFor, launchFeeFor, feeClaimerFor,
+          configFor: m => { try { return resolveConfig(m) } catch { return null } }, now: now() })
+        await storeReport(pool, market.githubRepoId, report)
+        failures.delete(`reports:${market.githubRepoId}`)
+      }, (market, error) => { failed('reports', market); log({ transparencyReportFailed: market.githubRepoId, code: String(error?.message ?? '').slice(0, 80) }) }))
+      await budgeted('lpPositions', async () => each(await due('lp', limits.lpPoolsPerRun, limits.sampleEveryMs),
+        async market => { await sampleLpPositions(pool, market, { connection, now: now() }); failures.delete(`lp:${market.githubRepoId}`) },
+        market => failed('lp', market)))
+      if (funding) await budgeted('funding', async () => each(await dueFundingWallets(pool, { now: now() }), wallet => checkWalletFunding(pool, connection, wallet, { now })))
       await step('pruned', result, async () => {
         const cutoff = new Date(now() - limits.retentionDays * DAY)
         const a = await pool.query('delete from market_liquidity_samples where id in (select id from market_liquidity_samples where sampled_at < $1 limit 5000)', [cutoff])
