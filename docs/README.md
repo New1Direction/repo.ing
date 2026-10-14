@@ -44,6 +44,7 @@ Start with [Architecture](ARCHITECTURE.md), [Development](DEVELOPMENT.md), [Cont
 | Area | Reference |
 | --- | --- |
 | Deployment and recovery | [Production setup](PRODUCTION.md), [encrypted backups](BACKUPS.md) |
+| Backend performance | [RPC limits, latency budgets, alerts and reproducible benchmarks](BACKEND_PERFORMANCE.md) |
 | Canonical launch | [Launch coordinator](LAUNCH_COORDINATOR.md), [indexing](LAUNCH_INDEXER.md), [first-buy review](LAUNCH_REVIEW.md) |
 | Trading and fees | [Trading](TRADE.md), [DBC fees](FEE_CONFIG.md), [launch fee](LAUNCH_FEE.md), [accrual](FEE_ACCRUAL.md), [external swaps](EXTERNAL_FEE_INDEXER.md), [graduated fees](GRADUATED_FEES.md) |
 | Identity and claims | [GitHub authority](GITHUB_VERIFICATION.md), [wallet binding](WALLET_BINDING.md), [claims](CLAIM.md), [maintainer claim funnel](CLAIM_FUNNEL.md) and its [fee-recovery campaign](outreach/fee-recovery-2026-10/README.md), [reconciliation](RECONCILE.md) |

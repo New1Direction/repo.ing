@@ -54,7 +54,7 @@ test('real PostgreSQL: 0038 indexes, block positions, batched trend view and web
   const pool = new pg.Pool({ connectionString: url })
   try {
     await migrate(drizzle(pool), { migrationsFolder: new URL('../drizzle', import.meta.url).pathname })
-    await pool.query(`truncate web_vitals, finalized_chart_positions, finalized_chart_blocks, trade_events, damm_trade_events, fee_events, damm_fee_events,
+    await pool.query(`truncate trade_sessions, web_vitals, finalized_chart_positions, finalized_chart_blocks, trade_events, damm_trade_events, fee_events, damm_fee_events,
       platform_fee_events, graduation_alerts, graduation_events, trend_signals, trend_observations, trend_candidates, markets, repositories restart identity cascade`)
 
     await t.test('the planner uses the 0038 indexes for the per-market reads that used to scan whole tables', async () => {
@@ -74,9 +74,21 @@ test('real PostgreSQL: 0038 indexes, block positions, batched trend view and web
       await pool.query(`insert into graduation_alerts(event_key,github_repo_id,kind,detail,acknowledged_at)
         select 'alert-'||g, ($1::bigint[])[1 + g % 40], case when g % 50 = 0 then 'RESERVE_MOVED' when g % 3 = 0 then 'TRADE_QUARANTINED' else 'TRADE_CANARY' end, '{}',
           case when g % 5 = 0 then null else now() end from generate_series(1, 1200) g`, [markets.map(m => m.repoId)])
+      await pool.query(`insert into trade_sessions(id,wallet,phase,direction,github_repo_id,transaction,message,amount_in,
+        minimum_amount_out,blockhash,last_valid_block_height,record,submitted_at)
+        select gen_random_uuid(),'w','curve','buy',m.repo::bigint,'tx','msg',1,1,'hash',1,'{}',
+          case when g % 3 = 0 or m.repo = $2 then null else '2026-10-01'::timestamptz + g * interval '1 second' end
+        from unnest($1::text[]) as m(repo), generate_series(1,200) g`, [markets.slice(0, -1).map(m => m.repoId), markets[0].repoId])
       await pool.query('vacuum analyze')
+      const activity = (await pool.query(`select github_repo_id::text as id,
+        (select max(s.submitted_at) from trade_sessions s where s.github_repo_id = markets.github_repo_id) as latest
+        from markets order by markets.github_repo_id`)).rows
+      assert.equal(activity[0].latest, null, 'only unsubmitted sessions: no activity')
+      assert.equal(activity.at(-1).latest, null, 'no sessions: no activity')
+      assert.ok(activity.slice(1, -1).every(row => row.latest.toISOString() === '2026-10-01T00:03:20.000Z'))
       const [m] = markets
       const checks = [
+        ['trade_sessions_repo_submitted', `select max(submitted_at) from trade_sessions where github_repo_id = ${markets[1].repoId}`],
         ['trade_events_pool_slot', `select slot, next_sqrt_price from trade_events where pool = '${m.pool}' order by slot desc, event_index desc limit 1`],
         ['trade_events_pool_slot', `select signature from trade_events where pool = '${m.pool}' order by slot desc, event_index desc limit 30`],
         ['trade_events_pool_time', `select sum(input_base_units::numeric) from trade_events where pool = '${m.pool}' and traded_at >= now() - interval '30 minutes'`],
@@ -94,7 +106,7 @@ test('real PostgreSQL: 0038 indexes, block positions, batched trend view and web
         const nodes = await planNodes(pool, sql)
         assert.ok(usesIndex(nodes, index), `${index} not used: ${nodes.join(' / ')} for ${sql}`)
       }
-      await pool.query(`truncate trade_events, fee_events, damm_fee_events, platform_fee_events, damm_trade_events, graduation_alerts, markets, repositories restart identity cascade`)
+      await pool.query(`truncate trade_sessions, trade_events, fee_events, damm_fee_events, platform_fee_events, damm_trade_events, graduation_alerts, markets, repositories restart identity cascade`)
     })
 
     await t.test('block positions match the full signature lists and the chart reads them instead', async () => {
