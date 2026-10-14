@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { Connection } from '@solana/web3.js'
+import http from 'node:http'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { Connection, PublicKey } from '@solana/web3.js'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { backoffDelay, createRetryCircuit, createRpcMeter, creditsFor, readGenesisHash, retryAfterMs, retryRpcRead, rpcFetch,
   registerRpcEndpoint, rpcMethods, RpcLimitedError, transientRpcReason } from '../src/rpc-usage.mjs'
@@ -158,6 +160,7 @@ test('transient RPC errors: 429 and 5xx (also inside a method message), meter li
   assert.equal((await rawRead(404)).message, 'Solana RPC transaction read returned HTTP 404', 'the message is unchanged')
   assert.equal(transientRpcReason(await rawRead(404)), null)
   for (const error of [Error('400 Bad Request: {"error":"429 later"}'), Error('Market is not finalized and indexed'),
+    Error('400 Bad Request: TimeoutError: The operation was aborted due to timeout'),
     Error('Invalid canonical DBC account'), Object.assign(Error('failed to get genesis hash: Invalid params'), { code: -32602 }),
     Error('Signature X has expired: block height exceeded.'), new TypeError("Cannot read properties of undefined (reading 'data')"), null]) {
     assert.equal(transientRpcReason(error), null, String(error?.message))
@@ -267,4 +270,101 @@ test('Retry-After on a real 429 is honoured: the read is not sent again until it
   assert.equal(await retryRpcRead(() => long.connection.getGenesisHash(), { random: () => 0.5, sleep: long.sleep }), 'genesis-hash')
   assert.deepEqual(long.sentAt, [0, 25_000])
   assert.deepEqual(long.waits, [['retry', 1500], ['retry', 10_000], ['retry', 10_000], ['meter', 3500]])
+})
+
+async function localRpc(t, handle) {
+  const server = http.createServer(handle)
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)) })
+  return `http://127.0.0.1:${server.address().port}`
+}
+const until = async check => {
+  for (let i = 0; i < 200; i++) { if (check()) return; await sleep(5) }
+  assert.fail('local RPC did not reach expected state')
+}
+
+test('real HTTP: provider concurrency includes response bodies, queue overflow fails closed, queued cancellation frees capacity', async t => {
+  const received = [], held = []
+  const url = await localRpc(t, (req, res) => {
+    received.push(req.url)
+    if (req.url === '/hold') { res.writeHead(200); res.write('partial'); held.push(res) }
+    else res.end('ok')
+  })
+  const meter = createRpcMeter({ maxConcurrent: 1, maxQueued: 1, timeoutMs: 5000, log: () => {} })
+  const firstFetch = meter.fetchFor('primary'), secondFetch = meter.fetchFor('primary')
+  const first = firstFetch(`${url}/hold`)
+  await until(() => held.length === 1)
+  const controller = new AbortController()
+  const queued = secondFetch(`${url}/cancelled`, { signal: controller.signal })
+  await assert.rejects(firstFetch(`${url}/overflow`), RpcLimitedError)
+  assert.equal(await (await meter.fetchFor('verification')(`${url}/independent`)).text(), 'ok')
+  assert.deepEqual(received, ['/hold', '/independent'], 'headers did not release the primary permit; other providers remain independent')
+  controller.abort()
+  await assert.rejects(queued, { name: 'AbortError' })
+  const next = secondFetch(`${url}/next`)
+  held[0].end('-complete')
+  assert.equal(await (await first).text(), 'partial-complete')
+  assert.equal(await (await next).text(), 'ok')
+  assert.deepEqual(received, ['/hold', '/independent', '/next'])
+})
+
+test('real HTTP: deadlines cancel stalled headers and bodies, report private-safe alerts, and recover', async t => {
+  const received = []
+  const url = await localRpc(t, (req, res) => {
+    received.push(req.url)
+    if (req.url.startsWith('/body')) { res.writeHead(200); res.write('{') }
+    else if (req.url === '/ok') res.end('recovered')
+  })
+  const meter = createRpcMeter({ maxConcurrent: 1, timeoutMs: 200, slowMs: 50, log: () => {} })
+  const fetch = meter.fetchFor('primary')
+  for (const path of ['/headers?api-key=private', '/body?api-key=private']) {
+    const start = performance.now()
+    await assert.rejects(fetch(`${url}${path}`, { body: call('getSlot'), method: 'POST' }), { name: 'TimeoutError' })
+    assert.ok(performance.now() - start < 2000, 'real fetch is cancelled, not left holding a permit')
+  }
+  assert.equal(await (await fetch(`${url}/ok`)).text(), 'recovered')
+  const usage = meter.flush().rpcUsage
+  assert.equal(usage.latency.primary.completed, 3)
+  assert.equal(usage.latency.primary.timeouts, 2)
+  assert.equal(usage.latency.primary.errors, 2)
+  assert.ok(usage.alerts.some(alert => alert.code === 'RPC_ERRORS' && alert.count === 2))
+  assert.ok(usage.alerts.some(alert => alert.code === 'RPC_SLOW' && alert.count >= 2))
+  assert.doesNotMatch(JSON.stringify(usage), /private|api-key|127\.0\.0\.1/)
+  assert.equal(received.length, 3, 'timeouts never replay requests')
+  assert.equal(meter.flush(), null)
+})
+
+test('a queued request observes the backoff opened by the preceding request instead of sending', async () => {
+  let finish, sent = 0
+  const meter = createRpcMeter({ maxConcurrent: 1, log: () => {}, baseFetch: async () => {
+    sent++
+    return new Promise(resolve => { finish = () => resolve(reply(429, { 'retry-after': '60' })) })
+  } })
+  const fetch = meter.fetchFor('primary')
+  const first = fetch('url'), queued = fetch('url')
+  await until(() => finish)
+  finish()
+  assert.equal((await first).status, 429)
+  await assert.rejects(queued, RpcLimitedError)
+  assert.equal(sent, 1)
+})
+
+test('real web3.js: a wrapped balance timeout stays retryable and the bounded read recovers', async t => {
+  let calls = 0
+  const url = await localRpc(t, async (req, res) => {
+    calls++
+    if (calls === 1) return
+    const chunks = []
+    for await (const chunk of req) chunks.push(chunk)
+    const { id } = JSON.parse(Buffer.concat(chunks))
+    res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { context: { slot: 7 }, value: 1234 } }))
+  })
+  const meter = createRpcMeter({ timeoutMs: 200, log: () => {} })
+  const connection = new Connection(url, { disableRetryOnRateLimit: true, fetch: meter.fetchFor('primary') })
+  const reasons = []
+  const balance = await retryRpcRead(() => connection.getBalance(new PublicKey('11111111111111111111111111111111')),
+    { attempts: 2, baseMs: 1, maxMs: 1, onRetry: retry => reasons.push(retry.reason) })
+  assert.equal(balance, 1234)
+  assert.deepEqual(reasons, ['timeout'])
+  assert.equal(calls, 2)
 })

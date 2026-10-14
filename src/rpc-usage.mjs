@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { setTimeout as delay } from 'node:timers/promises'
 
 // Solana JSON-RPC usage metering and provider-level rate-limit backoff, shared by every Connection and raw fetch() a
 // process makes to one provider. Counts are logged as one compact JSON line per period so usage is visible in logs.
@@ -53,7 +54,8 @@ export function transientRpcReason(error) {
   const status = Number(error?.status) || Number(HTTP_FAILURE.exec(message)?.[1])
   if (TRANSIENT_HTTP_STATUSES.has(status)) return `HTTP ${status}`
   if (error?.code === NODE_UNHEALTHY || NODE_UNHEALTHY_MESSAGE.test(message)) return 'node unhealthy'
-  if (error?.name === 'TimeoutError') return 'timeout'
+  // web3.js getBalance/getAccountInfo replace the error object, retaining only this native timeout in their message.
+  if (error?.name === 'TimeoutError' || (!status && /: TimeoutError: The operation was aborted due to timeout$/.test(message))) return 'timeout'
   if (NETWORK_FAILURE.test(message) || NETWORK_FAILURE.test(String(error?.cause?.code ?? ''))) return 'network'
   return null
 }
@@ -108,18 +110,48 @@ export function rpcMethods(body) {
   } catch { return ['unknown'] }
 }
 
-const emptyPeriod = startedAt => ({ startedAt, calls: {}, jobs: {}, limited: {}, rejected: {} })
+const emptyPeriod = startedAt => ({ startedAt, calls: {}, jobs: {}, limited: {}, rejected: {}, latency: {} })
 const bump = (table, a, b, n = 1) => { (table[a] ??= {})[b] = (table[a][b] ?? 0) + n }
 
-export function createRpcMeter({ now = Date.now, random = Math.random, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+// Per provider/process, including queueing, backoff and the complete response body. No automatic retries here:
+// callers retain their read-only retry policy and broadcasts are never replayed by the transport.
+export const RPC_BUDGETS = Object.freeze({ timeoutMs: 15_000, slowMs: 3000, maxConcurrent: 8, maxQueued: 64 })
+
+export function createRpcMeter({ now = Date.now, random = Math.random, sleep = (ms, signal) => delay(ms, undefined, { signal }),
   log = line => console.log(line), baseFetch = globalThis.fetch, maxWaitMs = 10_000, baseBackoffMs = 1000, maxBackoffMs = 300_000,
-  limitLogEveryMs = 60_000 } = {}) {
+  limitLogEveryMs = 60_000, timeoutMs = RPC_BUDGETS.timeoutMs, slowMs = RPC_BUDGETS.slowMs,
+  maxConcurrent = RPC_BUDGETS.maxConcurrent, maxQueued = RPC_BUDGETS.maxQueued } = {}) {
   const jobs = new AsyncLocalStorage()
   const providers = new Map()
   let period = emptyPeriod(now())
   const stateOf = provider => {
-    if (!providers.has(provider)) providers.set(provider, { failures: 0, until: 0, loggedAt: -Infinity, suppressed: 0 })
+    if (!providers.has(provider)) providers.set(provider, { failures: 0, until: 0, loggedAt: -Infinity, suppressed: 0, active: 0, queue: [] })
     return providers.get(provider)
+  }
+
+  async function acquire(state, provider, signal) {
+    signal.throwIfAborted()
+    if (state.active < maxConcurrent) state.active++
+    else {
+      if (state.queue.length >= maxQueued) {
+        bump(period, 'rejected', provider)
+        throw new RpcLimitedError(provider, 1000)
+      }
+      await new Promise((resolve, reject) => {
+        const entry = { grant: () => { signal.removeEventListener('abort', abort); resolve() } }
+        const abort = () => {
+          state.queue.splice(state.queue.indexOf(entry), 1)
+          reject(signal.reason)
+        }
+        state.queue.push(entry)
+        signal.addEventListener('abort', abort, { once: true })
+      })
+    }
+    return () => {
+      const next = state.queue.shift()
+      if (next) next.grant()
+      else state.active--
+    }
   }
 
   function limited(provider, status, retryAfter) {
@@ -141,22 +173,48 @@ export function createRpcMeter({ now = Date.now, random = Math.random, sleep = m
   // the provider's backoff; the response is still returned so callers keep their own handling.
   function fetchFor(provider, fetchImpl = baseFetch) {
     return async function meteredFetch(input, init = {}) {
-      const state = stateOf(provider)
-      const wait = state.until - now()
-      if (wait > maxWaitMs) {
-        bump(period, 'rejected', provider)
-        throw new RpcLimitedError(provider, wait)
+      const state = stateOf(provider), startedAt = now()
+      const deadline = AbortSignal.timeout(timeoutMs)
+      const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline
+      let release, failed = false
+      try {
+        release = await acquire(state, provider, signal)
+        // Recheck after queueing: an earlier request may have opened a provider backoff.
+        for (;;) {
+          signal.throwIfAborted()
+          const wait = state.until - now()
+          if (wait <= 0) break
+          if (wait > maxWaitMs) {
+            bump(period, 'rejected', provider)
+            throw new RpcLimitedError(provider, wait)
+          }
+          await sleep(wait, signal)
+        }
+        const job = jobs.getStore() ?? 'other'
+        for (const method of rpcMethods(init.body)) {
+          bump(period.calls, provider, method)
+          bump(period.jobs, job, provider)
+        }
+        const response = await fetchImpl(input, { ...init, signal })
+        failed = !response.ok
+        if (response.status === 429) limited(provider, 429, retryAfterMs(response.headers?.get?.('retry-after'), now()))
+        else if (response.ok) state.failures = 0
+        // Fetch resolves at headers. Keep the permit and abort signal through body consumption so stalled bodies
+        // cannot escape the concurrency/deadline budget. Solana JSON-RPC consumers already buffer their JSON.
+        if (!response.arrayBuffer) return response
+        const body = await response.arrayBuffer()
+        return new Response(response.body === null ? null : body, { status: response.status, statusText: response.statusText, headers: response.headers })
+      } catch (error) {
+        failed = true
+        // timers/promises reports AbortError even when our deadline fired; preserve TimeoutError for read retries.
+        throw signal.aborted ? signal.reason : error
+      } finally {
+        release?.()
+        const ms = Math.max(0, now() - startedAt)
+        const stats = period.latency[provider] ??= { completed: 0, errors: 0, timeouts: 0, overBudget: 0, totalMs: 0, maxMs: 0 }
+        stats.completed++; stats.errors += Number(failed); stats.timeouts += Number(signal.aborted && signal.reason?.name === 'TimeoutError')
+        stats.overBudget += Number(ms > slowMs); stats.totalMs += ms; stats.maxMs = Math.max(stats.maxMs, ms)
       }
-      if (wait > 0) await sleep(wait)
-      const job = jobs.getStore() ?? 'other'
-      for (const method of rpcMethods(init.body)) {
-        bump(period.calls, provider, method)
-        bump(period.jobs, job, provider)
-      }
-      const response = await fetchImpl(input, init)
-      if (response.status === 429) limited(provider, 429, retryAfterMs(response.headers?.get?.('retry-after'), now()))
-      else if (response.ok) state.failures = 0
-      return response
     }
   }
 
@@ -165,13 +223,18 @@ export function createRpcMeter({ now = Date.now, random = Math.random, sleep = m
     const current = period, at = now()
     period = emptyPeriod(at)
     const total = Object.values(current.calls).reduce((sum, methods) => sum + Object.values(methods).reduce((a, b) => a + b, 0), 0)
-    const idle = !total && !Object.keys(current.limited).length && !Object.keys(current.rejected).length
+    const idle = !total && !Object.keys(current.limited).length && !Object.keys(current.rejected).length && !Object.keys(current.latency).length
     if (idle) return null
     const credits = Object.fromEntries(Object.entries(current.calls).map(([provider, methods]) =>
       [provider, Object.entries(methods).reduce((sum, [method, n]) => sum + creditsFor(method) * n, 0)]))
+    const alerts = Object.entries(current.latency).flatMap(([provider, stats]) => [
+      ...(stats.errors ? [{ provider, code: 'RPC_ERRORS', count: stats.errors }] : []),
+      ...(stats.overBudget ? [{ provider, code: 'RPC_SLOW', count: stats.overBudget, budgetMs: slowMs }] : []),
+    ])
     return { rpcUsage: { seconds: Math.round((at - current.startedAt) / 1000), calls: total, credits, byMethod: current.calls,
       byJob: current.jobs, ...(Object.keys(current.limited).length ? { limited: current.limited } : {}),
-      ...(Object.keys(current.rejected).length ? { rejected: current.rejected } : {}) } }
+      ...(Object.keys(current.rejected).length ? { rejected: current.rejected } : {}), latency: current.latency,
+      ...(alerts.length ? { alerts } : {}) } }
   }
 
   // One compact line per period while there is traffic. The timer never keeps the process alive.

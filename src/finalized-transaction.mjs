@@ -35,24 +35,37 @@ const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
 // (found, with a block time) read through the default (metered) fetch are kept; an injected fetch always reads.
 const FINALIZED_CACHE_MAX = 500
 const finalizedCache = new Map()
+const pendingFinalized = new Map()
 const cacheKey = (connection, signature) => `${connection.rpcEndpoint}\n${signature}`
-export function clearFinalizedTransactionCache() { finalizedCache.clear() }
+export function clearFinalizedTransactionCache() { finalizedCache.clear(); pendingFinalized.clear() }
 // Drops one provider's kept answer, e.g. after two providers disagreed about it.
-export function forgetFinalizedTransaction(connection, signature) { finalizedCache.delete(cacheKey(connection, signature)) }
+export function forgetFinalizedTransaction(connection, signature) {
+  const key = cacheKey(connection, signature)
+  finalizedCache.delete(key); pendingFinalized.delete(key)
+}
 
 export async function loadTransactionAt(connection, signature, commitment, fetchImpl, delays = RATE_LIMIT_DELAYS_MS) {
   if (!['confirmed', 'finalized'].includes(commitment)) throw new Error('Unsupported transaction commitment')
   const cacheable = commitment === 'finalized' && fetchImpl === undefined
+  const key = cacheKey(connection, signature)
   if (cacheable) {
-    const cached = finalizedCache.get(cacheKey(connection, signature))
+    const cached = finalizedCache.get(key)
     if (cached) return cached
+    if (pendingFinalized.has(key)) return pendingFinalized.get(key)
   }
-  const transaction = await readTransactionAt(connection, signature, commitment, fetchImpl ?? rpcFetch(connection.rpcEndpoint), delays)
-  if (cacheable && transaction && transaction.blockTime != null) {
-    if (finalizedCache.size >= FINALIZED_CACHE_MAX) finalizedCache.delete(finalizedCache.keys().next().value)
-    finalizedCache.set(cacheKey(connection, signature), transaction)
-  }
-  return transaction
+  // Never share confirmed reads, providers, or injected transports. Bound bookkeeping under distinct-signature bursts.
+  const shared = cacheable && pendingFinalized.size < FINALIZED_CACHE_MAX
+  const pending = readTransactionAt(connection, signature, commitment, fetchImpl ?? rpcFetch(connection.rpcEndpoint), delays)
+    .then(transaction => {
+      // An invalidation during the read must not be undone by its late answer.
+      if (shared && pendingFinalized.get(key) === pending && transaction && transaction.blockTime != null) {
+        if (finalizedCache.size >= FINALIZED_CACHE_MAX) finalizedCache.delete(finalizedCache.keys().next().value)
+        finalizedCache.set(key, transaction)
+      }
+      return transaction
+    }).finally(() => { if (pendingFinalized.get(key) === pending) pendingFinalized.delete(key) })
+  if (shared) pendingFinalized.set(key, pending)
+  return pending
 }
 
 async function readTransactionAt(connection, signature, commitment, fetchImpl, delays) {
@@ -66,6 +79,7 @@ async function readTransactionAt(connection, signature, commitment, fetchImpl, d
     })
     if (response.status !== 429 || attempt >= delays.length) break
     const retryAfter = Number(response.headers?.get?.('retry-after')) * 1000
+    await response.body?.cancel()
     await wait(Math.min(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : delays[attempt], 10_000))
   }
   // The status rides along so callers can tell a rate limit or outage (worth retrying) from other failures.

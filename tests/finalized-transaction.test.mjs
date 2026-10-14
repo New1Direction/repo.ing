@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair } from '@solana/web3.js'
-import { clearFinalizedTransactionCache, loadFinalizedTransaction, loadTransactionAt, normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
+import { clearFinalizedTransactionCache, forgetFinalizedTransaction, loadFinalizedTransaction, loadTransactionAt, normalizeFinalizedTransaction } from '../src/finalized-transaction.mjs'
 import { registerRpcEndpoint } from '../src/rpc-usage.mjs'
 import { agreedFinalizedTransaction } from '../src/graduation-state.mjs'
 
@@ -74,6 +74,49 @@ test('finalized transactions are kept per endpoint; misses, confirmed reads and 
   assert.equal(calls.a, 3, 'confirmed reads are never served from the cache')
   await loadFinalizedTransaction(a, signature, rpc('injected'))
   assert.equal(calls.injected, 1, 'an injected fetch always reads')
+  clearFinalizedTransactionCache()
+})
+
+test('concurrent finalized reads share only the same provider; errors and null answers can be retried', async () => {
+  clearFinalizedTransactionCache()
+  const raw = { ...transaction(0, [key(), key()]), blockTime: 1700000000 }
+  const calls = { a: 0, b: 0 }
+  let outcome = new Error('unavailable')
+  for (const name of ['a', 'b']) registerRpcEndpoint(`https://concurrent-${name}.invalid`, async () => {
+    calls[name]++
+    await new Promise(resolve => setImmediate(resolve))
+    if (outcome instanceof Error) throw outcome
+    return { ok: true, json: async () => ({ result: outcome }) }
+  })
+  const a = { rpcEndpoint: 'https://concurrent-a.invalid' }, b = { rpcEndpoint: 'https://concurrent-b.invalid' }
+  const burst = () => Promise.allSettled(Array.from({ length: 12 }, () => loadFinalizedTransaction(a, signature)))
+  assert.ok((await burst()).every(value => value.status === 'rejected'))
+  assert.equal(calls.a, 1)
+  outcome = null
+  assert.ok((await burst()).every(value => value.value === null))
+  outcome = raw
+  const [values, other] = await Promise.all([burst(), loadFinalizedTransaction(b, signature)])
+  assert.ok(values.every(value => value.value.blockTime === raw.blockTime))
+  assert.equal(other.slot, 42)
+  assert.deepEqual(calls, { a: 3, b: 1 })
+  await Promise.all([loadTransactionAt(a, signature, 'confirmed'), loadTransactionAt(a, signature, 'confirmed')])
+  assert.equal(calls.a, 5, 'confirmed reads are not coalesced')
+  clearFinalizedTransactionCache()
+})
+
+test('invalidation during a finalized read prevents its late answer from refilling the cache', async () => {
+  clearFinalizedTransactionCache()
+  const connection = { rpcEndpoint: 'https://invalidation.invalid' }, releases = []
+  const raw = { ...transaction(0, [key(), key()]), blockTime: 1700000000 }
+  registerRpcEndpoint(connection.rpcEndpoint, () => new Promise(resolve => releases.push(blockTime =>
+    resolve({ ok: true, json: async () => ({ result: { ...raw, blockTime } }) }))))
+  const old = loadFinalizedTransaction(connection, signature)
+  forgetFinalizedTransaction(connection, signature)
+  const current = loadFinalizedTransaction(connection, signature)
+  assert.equal(releases.length, 2, 'the new reader does not join the invalidated request')
+  releases[1](1700000002); await current
+  releases[0](1700000001); await old
+  assert.equal((await loadFinalizedTransaction(connection, signature)).blockTime, 1700000002)
   clearFinalizedTransactionCache()
 })
 

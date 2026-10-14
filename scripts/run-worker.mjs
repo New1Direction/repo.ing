@@ -91,11 +91,10 @@ const verify = createLaunchEvidenceVerifier({ connection, config })
 // expired (src/launch-expiry.mjs): the primary, and the verification side on another host. Each read times out after 15 s
 // so a stalled provider never holds up the loop. Without an independent provider, it waits for an operator.
 const hostOf = url => { try { return new URL(url).host } catch { return null } }
-const proofFetch = (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(15000) })
 const proofConnection = (url, fetch) => new Connection(url, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch })
 const expiredLaunch = hostOf(verificationUrls[0]) && hostOf(verificationUrls[0]) !== hostOf(rpc)
-  ? createExpiredLaunchCheck({ connections: [proofConnection(rpc, meter.fetchFor('primary', proofFetch)),
-    proofConnection(verificationUrls[0], verificationFetch(proofFetch))] }) : null
+  ? createExpiredLaunchCheck({ connections: [proofConnection(rpc, meter.fetchFor('primary')),
+    proofConnection(verificationUrls[0], verificationFetch())] }) : null
 // A launch still settling is verified every cycle; an indexed finalized launch is re-checked hourly.
 const launches = createLaunchIndexer({ pool, verify, expiredLaunch, reverifyAfterMs: 3_600_000 })
 // Idle markets are checked less often; new config-account signatures and repo.ing trades wake them early.
@@ -178,9 +177,8 @@ async function observeVerificationBonuses(){
   catch(error){console.log(JSON.stringify({verificationBonusError:['42P01','42703'].includes(error?.code)?'VERIFICATION_BONUS_NOT_MIGRATED'
     :{code:error?.code??null,message:String(error?.message??'VERIFICATION_BONUS_ACCRUAL_UNAVAILABLE').slice(0,120)}}))}
 }
-// The 15 s timeout starts after any backoff wait, so a short rate-limit pause never eats the request's own budget.
-const timedFetch=(url,options)=>fetch(url,{...options,signal:AbortSignal.timeout(15000)})
-const graduationFetches={primary:meter.fetchFor('primary',timedFetch),verification:verificationUrls.length?verificationFetch(timedFetch):null}
+// The shared meter bounds queueing, backoff and response consumption together, preserving caller cancellation.
+const graduationFetches={primary:meter.fetchFor('primary'),verification:verificationUrls.length?verificationFetch():null}
 const graduationRPC=url=>new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true,
   fetch:async(url,options)=>{
     const response=await graduationFetches[url===rpc?'primary':'verification'](url,options)
@@ -357,8 +355,8 @@ let tradeCanaryTask=null,nextTradeCanaryCheck=0
 // Launch transparency (docs/LAUNCH_TRANSPARENCY.md): the public launch feed and its webhooks, scheduled launches, hourly liquidity
 // and LP position samples, and one transparency report per market. Read-only toward Solana. MARKET_TRANSPARENCY_SAMPLING=false
 // keeps the feed, schedules and webhooks but stops the RPC sampling and reports.
-// Every read times out after 15 s (timedFetch, after any rate-limit backoff), so one RPC call that never answers cannot hold the job.
-const transparencyConnection = new Connection(rpc, { commitment: 'confirmed', disableRetryOnRateLimit: true, fetch: meter.fetchFor('primary', timedFetch) })
+// Every read shares the meter's 15 s deadline, including queueing, backoff and response consumption.
+const transparencyConnection = new Connection(rpc, { commitment: 'confirmed', disableRetryOnRateLimit: true, fetch: meter.fetchFor('primary') })
 // Early access markets (Token-2022 curves) resolve to their own config wherever trading them is configured.
 const transparencyConfig = createMarketConfigResolver(config, undefined, undefined, { earlyAccess: tradingEarlyAccessConfig() })
 const transparencyDbc = new DynamicBondingCurveClient(transparencyConnection, 'confirmed')

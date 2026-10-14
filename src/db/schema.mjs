@@ -1092,6 +1092,7 @@ export const tradeSessions = pgTable('trade_sessions', {
   submittedAt: timestamp('submitted_at',{withTimezone:true}), result: jsonb('result'),
   createdAt: timestamp('created_at',{withTimezone:true}).defaultNow().notNull(),
 },t=>[index('trade_sessions_created_at').on(t.createdAt),
+  index('trade_sessions_repo_submitted').on(t.githubRepoId,t.submittedAt).where(sql`${t.submittedAt} is not null`),
   check('trade_sessions_phase_check',sql`${t.phase} in ('curve','graduated')`),
   check('trade_sessions_direction_check',sql`${t.direction} in ('buy','sell')`)])
 

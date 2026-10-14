@@ -11,12 +11,16 @@ import { createLaunchEvidenceVerifier } from '../src/launch-evidence.mjs'
 import { createLaunchIndexer } from '../src/launch-indexer.mjs'
 import { createCanonicalTrader } from '../src/canonical-trade.mjs'
 import { createExternalFeeIndexer } from '../src/external-fee-indexer.mjs'
+import { createRpcMeter, registerRpcEndpoint } from '../src/rpc-usage.mjs'
 
 test('external swaps are indexed once across worker restarts and cursor replay', async () => {
   const rpc = process.env.SOLANA_RPC_URL ?? 'http://127.0.0.1:8899'
   assert.match(rpc, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/)
   const databaseUrl = process.env.DATABASE_URL ?? 'postgres://postgres:launchtest@127.0.0.1:55432/gitfun_external_fees'
-  const connection = new Connection(rpc, 'confirmed')
+  // The same bounded transport as the worker, including raw finalized-transaction reads.
+  const fetch = createRpcMeter({ log: () => {} }).fetchFor('primary')
+  registerRpcEndpoint(rpc, fetch)
+  const connection = new Connection(rpc, { commitment: 'confirmed', disableRetryOnRateLimit: true, fetch })
   const pool = new pg.Pool({ connectionString: databaseUrl })
   const repoId = 1296269n
   async function waitForFinalized(signature) {
