@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { defaultDirectPlan, directPlanSchema, DIRECT_VENUES, DEVNET_GENESIS, HOOK_LAB_COMMIT, HOOK_LAB_INTEGRATION_COMMIT, HOOK_LAB_MANIFEST_SHA256, previewDirectCoin } from '../../src/direct-coins.mjs'
 import { useWallet } from './wallet'
 import { loadDirectDraft, saveDirectDraft } from '../lib/direct-coin-draft.mjs'
+import { HookLabRecipePlanner } from './hook-lab-recipe-planner'
 
 const docs = 'https://github.com/new1direction/repo.ing/blob/main/docs/DIRECT_COINS.md'
 async function api(body) {
@@ -93,6 +94,7 @@ export function DirectCoinPlanner({ initialLane }) {
       <label className={plan.lane === 'programmable' ? 'selected' : ''}><input type="radio" name="lane" checked={plan.lane === 'programmable'} onChange={() => lane('programmable')}/>
         <span><strong>Programmable Coin</strong><small>Hook Lab DEX · experimental devnet beta</small><p>Native hooks for custom behavior. Not SPL or Token-2022; ordinary wallets and DEXs do not automatically support it.</p><em>For supervised experimentation</em></span></label>
     </fieldset>
+    {plan.lane === 'programmable' ? <HookLabRecipePlanner legacyPlan={plan} legacyDrafts={listing.drafts.filter(d => d.plan.lane === 'programmable')}/> : <>
     <div className="coin-workspace"><section aria-labelledby="coin-plan-title">
       <h2 id="coin-plan-title">Configure your {plan.lane === 'programmable' ? 'Programmable' : 'Standard'} Coin draft</h2>
       <p className="muted">A draft is not a token. No mint, pool or market is created.</p>
@@ -187,6 +189,7 @@ export function DirectCoinPlanner({ initialLane }) {
       {listing.drafts.map(draft => <button className="button" key={draft.id} disabled={busy} onClick={() => resume(draft)}>{draft.plan.name || 'Untitled'} · revision {draft.revision}</button>)}
       <ol>{listing.events.map(event => <li key={event.id}>{event.action} · {event.adapter} · {event.outcome} · {event.created_at}{event.revision ? ` · revision ${event.revision}` : ''}<code>Plan SHA-256 {event.plan_hash}</code></li>)}</ol>
     </details>}
+    </>}
   </>
 }
 
