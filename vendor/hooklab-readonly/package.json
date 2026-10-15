@@ -1,0 +1,11 @@
+{
+  "name": "@repo-ing/hooklab-readonly",
+  "version": "1.0.0-9b3473e",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": "./dist/index.mjs",
+  "engines": { "node": ">=22" },
+  "peerDependencies": { "@solana/web3.js": "1.98.4" },
+  "files": ["dist", "idl", "integration", "LICENSE", "NOTICE", "FORK.md", "THIRD_PARTY_NOTICES.md", "provenance.json"]
+}

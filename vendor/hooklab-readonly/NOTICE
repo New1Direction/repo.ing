@@ -1,0 +1,10 @@
+Hook Lab
+Copyright 2026 Connor Dochuk (Dusk)
+
+This product includes software developed by Bordrless
+(https://github.com/BordrlessDex/bordrless-programs and
+https://github.com/BordrlessDex/bordrless-sdk), licensed under the Apache License 2.0.
+The original copyright notices in those files are kept.
+
+Changes from upstream are listed in FORK.md and in this repository's git history after
+commit a71b167 (upstream "Phase 3a is live on mainnet").

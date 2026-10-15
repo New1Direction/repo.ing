@@ -1,0 +1,170 @@
+{
+  "schemaVersion": "hooklab-integration/1",
+  "sourceCommit": "ee7234cb7a32781fecba5470f24f43233cf94167",
+  "productVersion": "0.1.0-beta.2",
+  "sdkVersion": "0.8.0",
+  "cluster": "devnet",
+  "genesisHash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+  "binaryHashAlgorithm": "sha256-elf-without-trailing-zero-padding",
+  "evidenceSlot": 511147829,
+  "programs": [
+    {
+      "role": "bordrless_token",
+      "programId": "554tgVzsJ6NvQFpKc39HV73EDdarx3PMyDJTohcvHMLJ",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "3AWwgBXJfCT2D4jMYjYpbrGgxhLhcgVkreYzeQeF9mpM",
+      "binaryHash": "b559142de8173e3dd887a0ceec298121a025366dcfa935aecbd104dcb7354c93",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510303723,
+      "idlPath": "sdk/packages/sdk/idl/bordrless_token.json",
+      "idlSha256": "93aaa54d2e0c22e444793ac84387c357d73b745d482becada32d7d6e23d2c506"
+    },
+    {
+      "role": "bordrless_swap",
+      "programId": "3yJKNHzDC7JA979RJNqxKSyo1jt6kLcJNk9bjUuebLN2",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "BeLjVRJZ1PdnAJ6nZZCZkSMKuBQqaGTaT3Uvdwf7rTCo",
+      "binaryHash": "6690f837b8939d54ca9bd323e98a3b18a94ed9dafa0ad172b10e32ad16cb2d9a",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510303814,
+      "idlPath": "sdk/packages/sdk/idl/bordrless_swap.json",
+      "idlSha256": "000c0df40e27b8c44e5134c3c6aeea6e9bddb762a186f4ce3070534b3993f5e0"
+    },
+    {
+      "role": "bordrless_bridge",
+      "programId": "GXeSHtaGgb68LPsDzrYRfmup3afPsZUHefG2usnu7sgs",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "7W7FYtaUbVR7TBXWsS84FNPizVY2Lc55oKGy3r5XGb3j",
+      "binaryHash": "f7a738c36094990123937e19143d7bf1764d0b8860d187c8f7f61f4cffb2e375",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510303885,
+      "idlPath": "sdk/packages/sdk/idl/bordrless_bridge.json",
+      "idlSha256": "3cd2c95a14bfc0c2decd3bd0a6429044cbc7ca149f18e4c5c7c1d7d173b7732d"
+    },
+    {
+      "role": "bordrless_launch",
+      "programId": "4CxedXkUfo6JLXSnzuxr2XA9xeXPsxQeR1xeTedhKMyd",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "AzVmDDotFscrtzShyAeUn2hddgt1Rw3RrEwEG6AEQNmH",
+      "binaryHash": "e5f7f959fb9bba177ff38f5f2517c992502e8616067ff4f7e5e58b78e5d9e813",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510303960,
+      "idlPath": "sdk/packages/sdk/idl/bordrless_launch.json",
+      "idlSha256": "b2bcc916dd7cdddcb24a7b3206957fe883975db18b3636f4dfb73aacb0d1b74a"
+    },
+    {
+      "role": "bordrless_kit",
+      "programId": "AZDzvrC6733F6orekbzyF5B6Vpd9DxnV9RGfRrDgzHhm",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "6HJXANTfs8b6SLCEZ4efvtWGd3DcJroovPHQVvjZwKHC",
+      "binaryHash": "4c8d7ec1cb3b8ef30ae358ce2c04873c98e537e8743e386af3799a9fbdf326fe",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510304065,
+      "idlPath": "sdk/packages/sdk/idl/bordrless_kit.json",
+      "idlSha256": "e6cd0ddb797e1b935e3f37b0b11d951cc7411d9c84345b2292357d910abcb810"
+    },
+    {
+      "role": "tax_hook",
+      "programId": "8KoeKiwydKzdH65uD4Z6uJgR9uKnj2w22HXRSdCXGhF2",
+      "status": "not-deployed",
+      "loader": null,
+      "programData": null,
+      "binaryHash": null,
+      "upgradeAuthority": null,
+      "deploySlot": null,
+      "idlPath": "sdk/packages/sdk/idl/tax_hook.json",
+      "idlSha256": "6e471544b434a80e5637ede5a04b1008c244a80137e76697bc06a9eabf88f3c6"
+    },
+    {
+      "role": "half_life",
+      "programId": "3TCbABpXPA7ifs2Fge5j1XCbXNSHMdLHEXNMxuMAC6Ub",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "5pSv4u3R7j5pohCHQLGHeE9Qo9fxJ7s2EdJFmjBpq5Hx",
+      "binaryHash": "7ff7fa9856bd28c777e5d265069d6e5ecef4371a7894a0d59ba81b184b7e0756",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510452023,
+      "idlPath": "sdk/packages/sdk/idl/half_life.json",
+      "idlSha256": "1cb8d9f96acd9d9f9144f2cd230efdf8af90344ccf04dc98b91f9d9a31b49c93"
+    },
+    {
+      "role": "lottery_hook",
+      "programId": "AGueGATrMsXJdrwocv1ktN5CZac8VSh6pinpcZNGPsmE",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "63cU9mmuQBbBqp1CCfb3aZJtS7gJRVZMTsddsY4p4pg5",
+      "binaryHash": "4ee1ebc03b17ace2d04cbebb6efda4a571ee1233228587db5cbf5a77996a73ad",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510452098,
+      "idlPath": "sdk/packages/sdk/idl/lottery_hook.json",
+      "idlSha256": "05002f5e6f124af6344cf5b1290fcb5b48fe35b775199b45e4a0f4c3ec21a48f"
+    },
+    {
+      "role": "bordrless_companion",
+      "programId": "C2Xn1VnKs43XH97KAb41Q5ns57XgT4Gj8vSz3J52DS7X",
+      "status": "deployed",
+      "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+      "programData": "FGHsAwFv5yHp3U6nxiuTaHhMvd9cPb5vptaKfWwYY4Cs",
+      "binaryHash": "82d09103495d03961df922141c1a63cbe230e2abe85fcf7d751004f163fe8e50",
+      "upgradeAuthority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+      "deploySlot": 510451953,
+      "idlPath": "sdk/packages/sdk/idl/bordrless_companion.json",
+      "idlSha256": "a0cbbcbf6955d333fe39b343f11278b3c667eaa31c3199ca7d117210d657e193"
+    },
+    {
+      "role": "hook_timelock",
+      "programId": "EacWdkbLjXqMzoFXaZ8pLSoL1sy6yKvbVduNKLcE4H3F",
+      "status": "not-deployed",
+      "loader": null,
+      "programData": null,
+      "binaryHash": null,
+      "upgradeAuthority": null,
+      "deploySlot": null,
+      "idlPath": "sdk/packages/sdk/idl/hook_timelock.json",
+      "idlSha256": "9da4225587504d1f7a36cc736bd9f03d075419410beb82dcbb6b0c1c258397c6"
+    },
+    {
+      "role": "hook_vault",
+      "programId": "4fuUfnezxUTbme1xnv7jTCV1DeSK3iWF6ZqkyoTes9iK",
+      "status": "not-deployed",
+      "loader": null,
+      "programData": null,
+      "binaryHash": null,
+      "upgradeAuthority": null,
+      "deploySlot": null,
+      "idlPath": "sdk/packages/sdk/idl/hook_vault.json",
+      "idlSha256": "6518dc77db8cfe163a0bca461bb52bef57ab24ea07acacd969acbc579bfd98f4"
+    },
+    {
+      "role": "hook_tester",
+      "programId": "FbAuVaTqVPzs43KdsQE8ByfbMJdRFABanya3fuEVjdRM",
+      "status": "not-deployed",
+      "loader": null,
+      "programData": null,
+      "binaryHash": null,
+      "upgradeAuthority": null,
+      "deploySlot": null,
+      "idlPath": null,
+      "idlSha256": null
+    }
+  ],
+  "quoteMint": "9815kDrx6sNiXCnD2CvB8LKNJjbdKWmQYXzH5gYKABSq",
+  "admin": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+  "treasury": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG",
+  "configs": {
+    "launch": "9zgdTbrkxPjUrHXts51X5tZmMqcNzLpit1WaXmkeRnMU",
+    "swap": "DwreHPxauoKagHpAfTn7Fhgv4oF3HXZR9jkc95WJA1Sq",
+    "bridge": "8EpYMnpU5Gjpne4SEaqjDVwxUidyp8SpYZ7tb42t9eTy"
+  },
+  "lookupTable": {
+    "address": "CTDTrr1BGubB17SveVw9nvTJPkbL4GBcW7bkY9LNy8U6",
+    "authority": "HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG"
+  },
+  "solWrapper": "H8zfmwGp3MMBdEhu2ctVeqzzsb7utZq5WhZwpKS1gxQC",
+  "solVault": "AegRC8wSVAZLmn7Z6zCza2wkyU2u42YMqsNXrm6tDcjk"
+}

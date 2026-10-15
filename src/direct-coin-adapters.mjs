@@ -2,7 +2,7 @@ import { Connection, PublicKey } from '@solana/web3.js'
 import { DEVNET_PROGRAM_ID } from '@raydium-io/raydium-sdk-v2'
 import { DYNAMIC_BONDING_CURVE_PROGRAM_ID } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { CP_AMM_PROGRAM_ID } from '@meteora-ag/cp-amm-sdk'
-import { DEVNET_GENESIS, DIRECT_VENUES, HOOK_AUTHORITY, previewDirectCoin } from './direct-coins.mjs'
+import { DEVNET_GENESIS, DIRECT_VENUES, HOOK_LAB_INTEGRATION_COMMIT, HOOK_LAB_MANIFEST_SHA256, previewDirectCoin } from './direct-coins.mjs'
 
 const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
 export class DirectCoinError extends Error {
@@ -33,8 +33,27 @@ export function directCoinAdapter(id) {
       const preview = this.preview(input)
       if (confirmedNetwork !== 'devnet') throw new DirectCoinError('Explicit devnet confirmation is required.')
       if (!preview.compatible) throw new DirectCoinError(preview.refusals.join(' '))
+      if (id === 'hooklab') {
+        // Lazy Node-only boundary: a broken native artifact must not disable Standard Coin.
+        const sdk = await import('@repo-ing/hooklab-readonly')
+        const manifest = sdk.integrationManifest()
+        const inspection = await sdk.inspectDevnetIntegration(connection, { confirmedNetwork, manifest })
+        const plan = preview.plan, intentRefusals = []
+        if (plan.creatorFeeBps === null) intentRefusals.push('Enter an explicit creator fee in basis points (0 is allowed); no fee is inferred.')
+        if (plan.recipe === 'kit' && plan.kitMaxWalletBps === null) intentRefusals.push('Enter an explicit Kit max-wallet limit; other Kit rules are not configured here.')
+        const blocks = [{ type: 'creator_fee', fee_bps: plan.creatorFeeBps }]
+        if (plan.recipe === 'kit') blocks.push({ type: 'max_wallet', pct_bps: plan.kitMaxWalletBps })
+        if (plan.recipe === 'halfLife') blocks.push({ type: 'exit_halflife', start_bps: 2000, half_secs: 21600, zero_secs: 172800 })
+        const intent = intentRefusals.length ? null : sdk.previewHookLabIntegration({ format: 'hook-lab/1', coin: { name: plan.name, ticker: plan.symbol }, blocks }, inspection)
+        return { network: 'devnet', slot: inspection.observedSlot, checkedAt: new Date().toISOString(),
+          status: inspection.refusals.some(r => r.code === 'INSPECTION_UNAVAILABLE') ? 'unavailable' : inspection.refusals.length ? 'refused' : 'programs-present',
+          warnings: inspection.warnings, programs: inspection.programs.map(p => ({ ...p, expectedStatus: manifest.programs.find(m => m.role === p.role).status })),
+          native: { deliveryCommit: HOOK_LAB_INTEGRATION_COMMIT, manifestSha256: HOOK_LAB_MANIFEST_SHA256,
+            capabilities: sdk.integrationCapabilities, inspection, intent, intentRefusals },
+          canSubmit: false, simulation: preview.simulation }
+      }
       if (await connection.getGenesisHash() !== DEVNET_GENESIS) throw new DirectCoinError('RPC genesis is not Solana devnet. Refusing inspection.')
-      const entries = Object.entries(venue.programs).filter(([name]) => id !== 'hooklab' || !['kit', 'halfLife'].includes(name) || name === input.recipe)
+      const entries = Object.entries(venue.programs)
       const { context, value } = await connection.getMultipleAccountsInfoAndContext(entries.map(([, address]) => new PublicKey(address)))
       const programs = await Promise.all(entries.map(async ([name, address], index) => {
         const account = value[index]
@@ -55,7 +74,6 @@ export function directCoinAdapter(id) {
       const warnings = ['Account reads only: no binary hash verification, config approval, transaction simulation or launch readiness.']
       if (programs.some(p => !p.executable)) warnings.push('One or more required executable programs are missing.')
       if (programs.some(p => p.authorityStatus === 'unknown')) warnings.push('One or more upgrade authorities could not be determined.')
-      if (id === 'hooklab' && programs.some(p => p.upgradeAuthority !== HOOK_AUTHORITY)) warnings.push('Current authority differs from, or could not be matched to, the pinned Hook Lab manifest.')
       return { network: 'devnet', genesis: DEVNET_GENESIS, slot: context.slot, checkedAt: new Date().toISOString(), programs, warnings,
         status: programs.every(p => p.executable) ? 'programs-present' : 'missing-programs', canSubmit: false, simulation: preview.simulation }
     },
