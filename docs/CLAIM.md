@@ -88,3 +88,35 @@ A verified GitHub admin can set the payout address by pasting it instead of conn
 New suites: `tests/payout-address.test.mjs` (no services: every validation rejection, the account check, the hold, recipient resolution, claim steps, identity marks, the notice) and `tests/payout-address-db.test.mjs` (PostgreSQL: authorization for paste, replace, cancel and batch; the rate limit before any GitHub call; the hold and every database guard, including stamped inserts; activation and its audit row; exact superseding by a binding stamped by a lagging clock; a busy lock refusing promptly; wallet signatures superseding a waiting address; the claim path refusing a waiting recipient and rejecting a review of the replaced recipient before any chain read; the HTTP route with stubbed GitHub and RPC). `tests/verification-bonus-db.test.mjs` checks the reviewer flag for a pasted launcher wallet.
 
 The local validator claim suite adds a pasted-address payout: while a pasted address waited, a reviewed claim paid **24,850 lamports** to the signature-bound wallet and nothing to the pasted address. After the hold, the old review was refused with no balance change; a new review paid **24,850 lamports** to the pasted address (slot 373, receiver delta equal to the fee plus the SDK's wrapped-SOL rent refund), and reconciliation returned MATCH with zero remaining. Local signatures (not mainnet): `4Q9LE6beDicdHucTsWUhhEuAv1RY78bdux16f4PzQnLMcfbY3nxCTXQi3UifYwVUwSc1qpbbL2zjYLqz1iq5zYrr` (during the hold), `SotmQC5Ln1Z1crBMgTxxZiGRmjWtAY5ynxgjNhWDGh4mCCKAa1sWhqSXHa34vUxu8Xz6FZJTLKGYi8UddJv3HRL` (after it). The temporary ledger was removed after verification.
+
+## Manual collection of unclaimed builder SOL fees
+
+Migration `0078_builder_fee_collections` adds a distinct platform collection ledger. Production already applied the same SQL hash and timestamp under the local name `0077_builder_fee_collections`; the integrated journal preserves that identity without changing the applied database record. Owner entitlement is `builder_fee_credits - settled repo_claims - settled builder_fee_collections`; reconciliation, owner claims, signed owner reviews and public available balances include this debit. A pending collection blocks owner claims under the same repository advisory lock. A collection is never an owner payout or a partner-revenue allocation.
+
+Collections are manual and repository-specific, including already-accrued fees. Each approval collects floor(current unclaimed lamports / 2); the odd lamport stays for the owner. Repeated fresh approvals can take half the remaining balance again, with no lifetime 50% limit. This path supports SOL-only ordinary, unmigrated DBC markets and refuses graduated, stock-paired and transfer-hook pools.
+
+Use the protected web runtime, not an HTTP endpoint. Keep `BUILDER_FEE_COLLECTION_ENABLED=false` by default:
+
+```sh
+node scripts/collect-builder-fees.mjs review REPO_ID RECEIVER
+BUILDER_FEE_COLLECTION_ENABLED=true node scripts/collect-builder-fees.mjs simulate REVIEW_ID TERMS_HASH
+BUILDER_FEE_COLLECTION_ENABLED=true node scripts/collect-builder-fees.mjs claim REVIEW_ID TERMS_HASH --approve
+node scripts/collect-builder-fees.mjs receipt REVIEW_ID
+```
+
+Simulation also requires the gate for that one command but does not broadcast. Review the exact SOL amount, receiver, retained owner balance and full terms before granting execution. Default receiver is buyback custody `FgzeYRRJLwd3aZQFBgn3a5KnN4mZixSRB9keYzoBm5Jy`; a custody transfer does not trade. Reviews expire after ten minutes, bind the exact state, and cannot be replayed after execution.
+
+The creator signer pays network fees, receives only refunded temporary-account rent, and never receives the collected principal. Signed bytes and signature are persisted before broadcast. Primary and independent RPCs must agree on canonical finalized pool/config bytes and finalized transaction receipts, including exact destination credit, pool vault debit, source fee, closed temporary accounts and creator-fee event. Uncertain receipts remain pending; the worker recovers only already-signed intents without a creator key. Expiry proof reads finalized height and slot from the same epoch-info bank and requires signature history at least that fresh before abandoning an expired transaction.
+
+Public policy: `/how-it-works#builder-collections`. `tests/builder-fee-collections.test.mjs` exercises real validator transfers, owner remainder, replay/staleness guards and keyless recovery with a disposable PostgreSQL ledger.
+
+### Mainnet verification, 2026-10-15
+
+One explicitly approved collection for repository `1332056763` (`dhh/omarchy-giants-theme`), mint `C1HJq5FFY9o63Evhz6V5nPkBQwFpaDvyykBFS32Lkt8C`, finalized in slot `457277173`: [transaction](https://solscan.io/tx/35iRQRLiUkhGCX2Tpfh4xnY8EcgdvywvwVXEt5yBNS8JuwcvhnN1b7Xqii3FoGUPwCmocK4cEKR3dKmtw7r9bvS1). Custody received exactly `1,358,933,298` lamports; `1,358,933,299` remained as the owner's unclaimed entitlement. Both finalized RPCs agreed, reconciliation returned MATCH, owner-paid total remained zero and partner fees remained `555,057,272` lamports. One collection settled, none remained pending, and the execution gate stayed off globally. No buyback trade was executed.
+
+The providers returned identical receipt values with different JSON property order. Comparing serialized objects incorrectly kept the landed transaction pending. Recovery now uses `isDeepStrictEqual` for receipt fields: property order is irrelevant, but every balance, event/instruction value, fee, slot and signed message must still agree. The fixed service settled the existing signature without signing or submitting another payout. The recovery regression supplies reordered independent receipt keys and still rejects changed balances.
+
+### Explicit exact-amount approvals
+
+The default `review` still selects half the current balance. When an operator separately authorizes an exact amount and receiver, use `node scripts/collect-builder-fees.mjs review-exact REPO_ID RECEIVER LAMPORTS`, then the same simulation and explicit approval commands. Exact amounts must be positive integer lamports no greater than the reconciled unclaimed balance; they may include the entire remainder. The persisted `selection: "exact"` distinguishes this approval from the half-only default. Both balance and destination remain review-bound, and no automatic collection mode is enabled.
+

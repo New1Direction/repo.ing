@@ -189,6 +189,7 @@ test('Dev Pulse is hidden for a declined market and unavailable, never cached, w
   const market = { repoId: '700', mint, pool: 'Pool700', tokenName: 'Declined', symbol: 'NOPE', indexedAt: new Date(), allocationVersion: null,
     discoveryVersion: null, launcherWallet: 'w', owner: 'octo', name: 'declined', fullName: 'octo/declined', description: null, avatarUrl: null,
     stars: 1, forks: 0, updatedAt: new Date(), beneficiaryWallet: null, beneficiaryBoundAt: null, earned: '0', claimed: '0',
+    platformCollected: '0',
     volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null }
   // decisions: what reading maintainer_opt_outs does; the market row and empty Dev Pulse tables answer everything else.
   const poolWith = decisions => ({ async query(sql, params) {

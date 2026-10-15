@@ -1,3 +1,4 @@
+import { builderCollectionState } from './builder-collection-state.mjs'
 import BN from 'bn.js'
 import { createMarketConfigResolver } from './market-config.mjs'
 import { assertClaimSnapshot } from './claim-review.mjs'
@@ -114,6 +115,8 @@ export function createClaim({ pool, connection, config, creator, githubVerifier,
         }
         const [pending] = await db.select().from(repoClaims).where(sql`${repoClaims.githubRepoId} = ${repoId} and ${repoClaims.status} = 'pending'`).limit(1)
         if (pending) throw new Error(`Pending claim ${pending.claimSignature} requires settlement review before another claim`)
+        const collection = await builderCollectionState(client, repoId)
+        if (collection.pending) throw Error('Pending platform collection requires settlement review before an owner claim')
         if (await connection.getBalance(creator.publicKey, 'confirmed') === 0) {
           throw new Error('Payout signer needs SOL for network costs')
         }
@@ -140,7 +143,7 @@ export function createClaim({ pool, connection, config, creator, githubVerifier,
         // before any chain read.
         const [settled] = await db.select({ paid: sql`coalesce(sum(${repoClaims.amountBaseUnits}), 0)::text` })
           .from(repoClaims).where(sql`${repoClaims.githubRepoId} = ${repoId} and ${repoClaims.status} = 'settled'`)
-        if (request.review) assertClaimSnapshot(request.review, { repoId, beneficiary, paid: settled.paid })
+        if (request.review) assertClaimSnapshot(request.review, { repoId, beneficiary, paid: settled.paid, platformCollected: collection.collected })
         const receiverKey = new PublicKey(beneficiary.wallet)
         const state = await dbc.state.getPool(poolKey)
         const fixed = await dbc.state.getPoolConfig(configKey)
@@ -153,7 +156,7 @@ export function createClaim({ pool, connection, config, creator, githubVerifier,
         await recordGraduatedFees(client, market, graduated)
         const { rows: [ledger] } = await client.query(`select coalesce(sum(amount_base_units),0)::text as earned
           from builder_fee_credits where github_repo_id=$1`, [String(repoId)])
-        const outstanding = BigInt(ledger.earned) - BigInt(settled.paid)
+        const outstanding = BigInt(ledger.earned) - BigInt(settled.paid) - collection.collected
         const dbcFee = BigInt(state.poolState.creatorQuoteFee.toString())
         const amounts = claimAmounts({ dbcFee, dammFee: graduated?.available ?? 0n, outstanding, review: request.review })
         const { payoutAmount, dbcPayout, dammFee, surplus } = hook ? earlyAccessClaimAmounts(amounts) : amounts

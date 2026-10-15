@@ -103,6 +103,7 @@ async function loadMarkets() {
         r.full_name as "fullName", r.description, r.avatar_url as "avatarUrl", r.stars, r.forks, r.github_created_at as "githubCreatedAt", r.source,
         r.fork_parent_full_name as "forkParent",
         coalesce(f.earned, 0)::text as "earned", coalesce(c.claimed, 0)::text as "claimed",
+        coalesce(w.collected, 0)::text as "platformCollected",
         (coalesce(t.volume, 0) + coalesce(dv.volume, 0))::text as "volume24hLamports",
         b.wallet as "beneficiaryWallet", b.method as "beneficiaryMethod", exists (
           select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin'
@@ -115,6 +116,7 @@ async function loadMarkets() {
       left join graduation_events e on e.github_repo_id = m.github_repo_id
       left join (select github_repo_id, sum(amount_base_units) earned from builder_fee_credits group by github_repo_id) f on f.github_repo_id = m.github_repo_id
       left join (select github_repo_id, sum(amount_base_units) claimed from repo_claims where status = 'settled' group by github_repo_id) c on c.github_repo_id = m.github_repo_id
+      left join (select github_repo_id, sum(amount) collected from builder_fee_collections where status = 'settled' group by github_repo_id) w on w.github_repo_id = m.github_repo_id
       left join repo_beneficiaries b on b.github_repo_id = m.github_repo_id
       left join (select pool, sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric) as volume
         from trade_events where traded_at >= now() - interval '24 hours' group by pool) t on t.pool = m.pool
@@ -127,7 +129,7 @@ async function loadMarkets() {
     const markets = rows.map(({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, quoteAssetId, quoteMint, ...row }) => withSignals({ ...row,
       ...(quoteAssetId || quoteMint ? { quoteAssetId, quoteMint } : {}),
       stars: Number(row.stars), forks: Number(row.forks),
-      earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed)).toString(),
+      earned: row.earned, claimed: row.claimed, remaining: (BigInt(row.earned) - BigInt(row.claimed) - BigInt(row.platformCollected)).toString(),
       ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now))
     // Stamped rows only (SOL rows pass through untouched): stock figures, then their signals from the stock progress.
     const stock = await withStockStats(markets, { db: pool, connection: chain, withUnits: true, now })
@@ -202,6 +204,7 @@ async function singleMarket(column, value) {
       r.stars, r.forks, r.github_updated_at as "updatedAt", r.github_created_at as "githubCreatedAt", b.wallet as "beneficiaryWallet", b.bound_at as "beneficiaryBoundAt", b.method as "beneficiaryMethod",
       (select coalesce(sum(amount_base_units), 0)::text from builder_fee_credits where github_repo_id = m.github_repo_id) as earned,
       (select coalesce(sum(amount_base_units), 0)::text from repo_claims where github_repo_id = m.github_repo_id and status = 'settled') as claimed,
+      (select coalesce(sum(amount), 0)::text from builder_fee_collections where github_repo_id = m.github_repo_id and status = 'settled') as "platformCollected",
       ((select coalesce(sum((case when direction = 'buy' then input_base_units else output_base_units end)::numeric), 0)
         from trade_events where pool = m.pool and traded_at >= now() - interval '24 hours')
       + (select coalesce(sum(d.quote_amount), 0) from damm_trade_events d join graduation_events g on g.github_repo_id = d.github_repo_id and g.pool = d.pool
@@ -221,7 +224,7 @@ async function singleMarket(column, value) {
     const { lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash, ...market } = row
     const now = Date.now()
     const built = withSignals({ ...market, stars: Number(market.stars), forks: Number(market.forks),
-      remaining: (BigInt(market.earned) - BigInt(market.claimed)).toString(),
+      remaining: (BigInt(market.earned) - BigInt(market.claimed) - BigInt(market.platformCollected)).toString(),
       ...marketRowStats({ lastSqrtPrice, graduationStatus, observation, graduationError, migrationEvidenceHash }, now) }, Boolean(migrationEvidenceHash), now)
     if (!isStockMarket(built)) return { market: built }
     // A stock-paired market: its figures from the stock ledger, in raw units (the page reads display units separately).

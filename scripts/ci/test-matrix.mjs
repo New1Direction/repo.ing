@@ -21,6 +21,7 @@ const trusted = (port, name, user = 'postgres') => `postgres://${user}@127.0.0.1
 export const DEFAULT_GROUP_DATABASES = [
   launchtest('gitfun_launch'), launchtest('gitfun_claim'), launchtest('gitfun_reconcile'),
   launchtest('gitfun_bind'), launchtest('gitfun_verify'), launchtest('gitfun_lookup'),
+  launchtest('gitfun_builder_collections'),
   launchtest('gitfun_external_fees'), trusted(55443, 'repoing_builders'),
   // Opt-in real-PostgreSQL suites (skipped when their URL variable is unset); see DEFAULT_ENV.
   launchtest('repoing_tips_test'), launchtest('repoing_trade_sessions_test'), launchtest('repoing_referrals_test'), launchtest('repoing_x_links_test'),

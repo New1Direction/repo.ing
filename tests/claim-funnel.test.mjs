@@ -104,9 +104,6 @@ test('the store writes one row per event, prunes at most hourly, and reads the l
   const ledger = await store.ledger()
   assert.equal(ledger.outside.waitingLamports, '25960000000')
   assert.equal(ledger.team.earning, 0)
-  const ledgerQuery = pool.queries.at(-1)
-  assert.match(ledgerQuery.text, /builder_fee_credits/); assert.match(ledgerQuery.text, /repo_claims where status = 'settled'/)
-  assert.deepEqual(ledgerQuery.values, [['new1direction'], ['1388219884', '1250482335', '1269625283', '1266706783']])
   // Server events are best effort: no pool, a malformed event or a failed write never throws.
   assert.equal(await recordFunnelEvent(null, { event: 'verify_start' }), false)
   assert.equal(await recordFunnelEvent(fakePool(), { event: 'nope' }), false)
@@ -253,6 +250,13 @@ test('real PostgreSQL: funnel events keep to their lists, and the ledger funnel 
       waitingLamports: '5000000000', waiting: 1 })
     assert.deepEqual(ledger.team, { team: true, earning: 1, verified: 0, wallet: 1, paid: 0, earnedLamports: '2000000000', paidLamports: '0',
       waitingLamports: '0', waiting: 0 })
+    await pool.query(`insert into builder_fee_collections
+      (id,github_repo_id,mint,pool,wallet,amount,status,terms,terms_hash,expires_at,signature,signed_transaction,last_valid_block_height,receipt,settled_at)
+      values('00000000-0000-0000-0000-000000000001',1,'Mint1','Pool1','custody',1000000000,'settled','{}',repeat('a',64),now(),'Collected1','fixture',123,'{}',now())`)
+    const afterCollection = (await store.ledger()).outside
+    assert.equal(afterCollection.waitingLamports, '4000000000')
+    assert.equal(afterCollection.paidLamports, '1000000000')
+    assert.equal(afterCollection.earnedLamports, '8000000000')
 
     await store.record(parseFunnelBeacon(JSON.stringify({ event: 'claim_view', source: 'waiting', repoId: '1' })))
     await store.record(funnelEvent({ event: 'verify_start', source: 'waiting', repoId: '1' }))

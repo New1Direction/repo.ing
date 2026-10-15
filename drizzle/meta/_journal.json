@@ -526,6 +526,20 @@
       "when": 1790910037000,
       "tag": "0077_hook_lab_recipes",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1792063200000,
+      "tag": "0078_builder_fee_collections",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1792063200001,
+      "tag": "0079_hook_lab_recipes_forward",
+      "breakpoints": true
     }
   ]
 }

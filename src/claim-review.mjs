@@ -1,9 +1,10 @@
 // A settled payout increases `paid`. The same review can therefore never authorize another payout,
 // even if new trading later recreates exactly the same available amount.
-export function assertClaimSnapshot(review, { repoId, beneficiary, paid }) {
+export function assertClaimSnapshot(review, { repoId, beneficiary, paid, platformCollected = 0n }) {
   if (!Number.isFinite(review.expiresAt) || review.expiresAt <= Date.now()) throw new Error('Claim review expired. Refresh and review again.')
   if (review.repoId !== String(repoId) || review.wallet !== beneficiary.wallet ||
-      review.boundAt !== new Date(beneficiary.boundAt).toISOString() || review.paid !== String(paid)) {
+      review.boundAt !== new Date(beneficiary.boundAt).toISOString() || review.paid !== String(paid) ||
+      String(review.platformCollected ?? '0') !== String(platformCollected)) {
     throw new Error('Payout details changed or this review was already used. Refresh and review again.')
   }
 }

@@ -21,12 +21,13 @@ test('listMarkets queries once per window and keeps Date and BigInt-derived valu
   const indexedAt = new Date('2026-01-02T03:04:05Z')
   let queries = 0
   process.env.DATABASE_URL = 'postgres://memo-test.invalid/db'
-  globalThis.__gitfunPool = { query: async () => { queries++; return { rows: [{ repoId: '1', mint: 'm', indexedAt, stars: '7', forks: '2', earned: '1234', claimed: '200', volume24hLamports: '5' }] } } }
+  globalThis.__gitfunPool = { query: async () => { queries++; return { rows: [{ repoId: '1', mint: 'm', indexedAt, stars: '7', forks: '2', earned: '1234', claimed: '200', platformCollected: '100', volume24hLamports: '5' }] } } }
   const { listMarkets } = await import('../app/lib/server.mjs')
   const [first, second] = await Promise.all([listMarkets(), listMarkets()])
   const third = await listMarkets()
   assert.equal(queries, 1); assert.equal(first, second); assert.equal(first, third)
   const [market] = first.markets
   assert.ok(market.indexedAt instanceof Date); assert.equal(market.indexedAt.getTime(), indexedAt.getTime())
-  assert.equal(market.stars, 7); assert.equal(market.remaining, '1034'); assert.equal(market.earned, '1234')
+  assert.equal(market.stars, 7); assert.equal(market.remaining, '934'); assert.equal(market.earned, '1234')
+  assert.equal(market.claimed, '200'); assert.equal(market.platformCollected, '100')
 })
