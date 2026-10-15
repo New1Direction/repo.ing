@@ -35,7 +35,7 @@ const deploymentSchema = z.object({
 export async function inspectFreshPlain(connection, { confirmedNetwork, deployment } = {}) {
   requireMatch(confirmedNetwork === 'devnet', 'Explicit devnet confirmation required')
   const manifest = freshCandidateManifest()
-  const out = { network: 'devnet', manifestSha256: FRESH_MANIFEST_SHA256, observedSlot: null,
+  const out = { network: 'devnet', sourceCommit: FRESH_SOURCE_COMMIT, manifestSha256: FRESH_MANIFEST_SHA256, observedSlot: null,
     programs: [], configs: {}, accounts: {}, refusals: [], readyForUnsignedSimulation: false,
     canSign: false, canSubmit: false }
   const refuse = (subject, reason) => out.refusals.push({ subject, reason })
@@ -182,7 +182,9 @@ export function verifyFreshHltestPreview(input, { confirmedNetwork } = {}) {
   requireMatch(new VersionedTransaction(message).serialize().length === input.preview.wireBytes && input.preview.wireBytes === 1112
     && message.header.numRequiredSignatures === 2 && input.preview.signaturesRequired === 2, 'Wire size or signer count mismatch')
   return { schema: 'repoing/fresh-plain-preview-verification/1', network: 'devnet', manifestSha256: FRESH_MANIFEST_SHA256,
-    messageSha256: sha(bytes), wireBytes: 1112, creator: HLTEST_CREATOR, mint: HLTEST_MINT,
+    sourceCommit: FRESH_SOURCE_COMMIT, messageSha256: sha(bytes), wireBytes: 1112, creator: HLTEST_CREATOR, mint: HLTEST_MINT,
+    identities: { swap: FRESH_DEVNET.swap.toBase58(), launch: FRESH_DEVNET.launch.toBase58(), treasury: manifest.authority,
+      token: manifest.quoteMint.owner, quoteMint: manifest.quoteMint.address, lookupTable: manifest.alt.address },
     budget: input.budget, canSign: false, canSubmit: false, message }
 }
 
@@ -271,18 +273,22 @@ export async function recoverFreshHltest(connection, input, signature, options) 
     && mint.freezeAuthority === null && mint.hookAuthority === null && mint.hookProgram === null && mint.hookFlags === 0, 'Recovered mint differs from plain HLTEST')
   requireMatch(launch.version === 1 && launch.creator.toBase58() === HLTEST_CREATOR && launch.mint.toBase58() === HLTEST_MINT
     && launch.pool.toBase58() === addresses.pool && launch.quoteMint.toBase58() === manifest.quoteMint.address
-    && launch.creatorFeeBps === 0 && launch.modules === 0 && launch.customHook === null && launch.config.equals(PublicKey.default)
+    && launch.creatorFeeBps === 0 && launch.modules === 0 && launch.customHook === null && launch.customHookFlags === 0 && launch.config.equals(PublicKey.default)
     && isDeepStrictEqual(launch.rules, { ...NO_LAUNCH_RULES }) && launch.virtualQuote === 1000000000n
     && launch.status === 0 && !launch.creatorBought && launch.reserveTokens === 250000000000000n
     && launch.curveTokens === 750000000000000n && launch.lpFeeBps === 30 && launch.sniperWindowSecs === 30
     && launch.sniperStartBps === 8000 && launch.reserveHolding.toBase58() === addresses.launchReserve
     && launch.quoteHolding.toBase58() === addresses.launchQuote && launch.lpHolding.toBase58() === addresses.launchLp, 'Recovered launch differs from plain HLTEST')
   requireMatch(pool.version === 1 && pool.baseMint.toBase58() === HLTEST_MINT && pool.quoteMint.toBase58() === manifest.quoteMint.address
-    && pool.hookProgram?.equals(FRESH_DEVNET.launch) && pool.lpFeeBps === 30 && pool.feeModel === 1 && pool.protocolShareBps === 2500
+    && pool.hookProgram?.equals(FRESH_DEVNET.launch) && pool.hookFlags === 1985 && pool.lpFeeBps === 30
+    && pool.feeModel === 1 && pool.protocolFeeBps === 0 && pool.protocolShareBps === 2500
     && pool.baseVault.toBase58() === addresses.baseVault && pool.quoteVault.toBase58() === addresses.quoteVault
     && pool.lpMint.toBase58() === addresses.lpMint && pool.creator.toBase58() === addresses.launch
     && pool.curve && pool.swapCount === 0n && pool.baseReserve === 750000000000000n && pool.quoteReserve === 0n
     && pool.virtualBase === 375000000000000n && pool.virtualQuote === 1000000000n && pool.lpSupply === 0n, 'Recovered nested pool differs or has traded')
+  const lpMint = decodeMint(accounts.lpMint.data)
+  requireMatch(lpMint.version === 1 && lpMint.supply === 0n && lpMint.mintAuthority?.toBase58() === addresses.pool
+    && lpMint.hookProgram === null && lpMint.freezeAuthority === null, 'Recovered LP mint differs')
   const holdings = {}
   for (const [role, mintAddress, owner] of [
     ['launchReserve', HLTEST_MINT, addresses.launch], ['launchQuote', manifest.quoteMint.address, addresses.launch],
