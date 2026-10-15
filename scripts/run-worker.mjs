@@ -1,3 +1,4 @@
+import { createBuilderFeeCollections } from '../src/builder-fee-collections.mjs'
 import {createOperatingWalletMonitor} from '../src/operating-wallet-alerts.mjs'
 import {createBuilderReminders,createReminderSender,remindersConfigured} from '../src/builder-reminders.mjs'
 import {createReconciler} from '../src/reconcile.mjs'
@@ -114,6 +115,8 @@ const reinvest = process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL ? createBuild
   verification:rpcConnection(process.env.BUILDER_REINVEST_VERIFICATION_RPC_URL,'finalized','reinvestVerification')}) : null
 const claims = createClaimRecovery({ pool, connection })
 const platformFees = createPlatformFeeRecovery({ pool, connection })
+const builderCollections = { runOnce: createBuilderFeeCollections({ pool, connection, config,
+  verification: verificationUrls[0] ? rpcConnection(verificationUrls[0], 'finalized', 'verification') : null }).recover }
 // Tips: settle/abort already-signed tip-wallet transfers and resolve abandoned tips. Never signs; no key needed.
 const tipTransfers = createTipTransferRecovery({ pool, connection })
 const tipExpiry = createTipExpiry({ pool, connection })
@@ -419,7 +422,7 @@ async function observeTrends(){
 const reliabilityPool = createDatabasePool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 1000,
   statement_timeout: 1500, query_timeout: 2000 }, { log: () => {} })
 const reliability = createWorkerReliability({ write: payload => reliabilityPool.query(WRITE_WORKER_SNAPSHOT, [payload]) })
-for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
+for(const [job,worker] of Object.entries({launches,fees,stockFees,claims,builderCollections,allocations,discovery,liquidity,reinvest,platformFees,tipTransfers,tipExpiry,
   tipMonitor,partsFunds,chartOrdering,graduation,graduatedTrades,stockGraduation,operatingWallets,buybackReceipts,tradeCanary,reminders,launchAlerts,milestoneAlerts,trendAlerts,transparency})){
   if(!worker)continue
   const run=worker.runOnce;worker.runOnce=(...args)=>reliability.track(job,()=>meter.track(job,()=>run.apply(worker,args)))
@@ -457,6 +460,9 @@ try {
     catch (error) { if (error?.code !== '42P01') result.launchSessionError = 'Launch session expiry unavailable' }
     try { result.claims = await claims.runOnce() }
     catch { result.claimError = 'Claim recovery unavailable' }
+    try { result.builderCollections = await builderCollections.runOnce() }
+    catch { result.builderCollectionError = 'Builder collection recovery unavailable' }
+    if (result.builderCollectionError || result.builderCollections?.some(item => item.status === 'review')) process.exitCode = 1
     // Pasted payout addresses whose 48-hour hold has passed become the binding every payout path reads (database only;
     // the claim path also does this under its own lock). Before the migration reaches this database there are none.
     try {

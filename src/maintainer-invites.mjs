@@ -66,19 +66,21 @@ export function createMaintainerInvites({ pool, verifiedFee, repoMeta, env = pro
     // matches, so it bounds which markets need the slower chain check.
     // GitHub repositories only (an invite is a GitHub issue). The id range is what repositories.source records (0049).
     const { rows } = await pool.query(`select m.github_repo_id::text as "repoId", r.full_name as "fullName", r.stars,
-        coalesce(c.total,0) - coalesce(s.total,0) as recorded
+        coalesce(c.total,0) - coalesce(s.total,0) - coalesce(w.total,0) as recorded
       from markets m join repositories r on r.github_repo_id=m.github_repo_id
       left join (select github_repo_id, sum(amount_base_units) as total from builder_fee_credits group by 1) c on c.github_repo_id=m.github_repo_id
       left join (select github_repo_id, sum(amount_base_units) as total from repo_claims where status='settled' group by 1) s on s.github_repo_id=m.github_repo_id
+      left join (select github_repo_id, sum(amount) as total from builder_fee_collections where status='settled' group by 1) w on w.github_repo_id=m.github_repo_id
       left join maintainer_invites i on i.github_repo_id=m.github_repo_id
       where m.status='confirmed' and m.indexed_at is not null and m.launch_finality='finalized' and not r.archived
         and m.github_repo_id <= ${GITHUB_REPO_ID_MAX}
         and not exists (select 1 from repo_beneficiaries b where b.github_repo_id=m.github_repo_id)
         and not exists (select 1 from repo_claims x where x.github_repo_id=m.github_repo_id and x.status<>'aborted')
+        and not exists (select 1 from builder_fee_collections x where x.github_repo_id=m.github_repo_id and x.status='pending')
         and not exists (select 1 from repository_participation p where p.github_repo_id=m.github_repo_id)
         and not exists (select 1 from maintainer_opt_outs o where o.github_repo_id=m.github_repo_id and o.withdrawn_at is null)
         and i.dismissed_at is null and (i.invited_at is null or i.invited_at < $2)
-        and coalesce(c.total,0) - coalesce(s.total,0) >= $1
+        and coalesce(c.total,0) - coalesce(s.total,0) - coalesce(w.total,0) >= $1
       order by recorded desc, m.github_repo_id limit $3`, [String(threshold), new Date(now() - INVITE_SNOOZE_MS), maxChecks])
     const verified = []
     for (const row of rows) {

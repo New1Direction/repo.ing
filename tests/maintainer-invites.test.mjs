@@ -65,19 +65,23 @@ test('real PostgreSQL: migration, exclusions, snooze, permanent dismissal and is
       create table repository_participation(github_repo_id bigint primary key);
       create table maintainer_opt_outs(github_repo_id bigint,withdrawn_at timestamptz)`)
     await client.query(await readFile(new URL('../drizzle/0027_maintainer_invites.sql', import.meta.url), 'utf8'))
-    const ids = [1, 2, 3, 4, 5, 6, 7, 8]
+    await client.query(await readFile(new URL('../drizzle/0078_builder_fee_collections.sql', import.meta.url), 'utf8'))
+    const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9]
     await client.query(`insert into repositories select id,'o/r'||id,id*10,id=8 from unnest($1::bigint[]) id`, [ids])
     await client.query(`insert into markets select id,'confirmed',now(),'finalized' from unnest($1::bigint[]) id`, [ids])
     await client.query(`insert into builder_fee_credits select id, id*1000000000 from unnest($1::bigint[]) id`, [ids])
     await client.query(`insert into builder_fee_credits values(1,-800000000);insert into repo_beneficiaries values(3);
       insert into repo_claims values(4,100,'pending');insert into repository_participation values(5)`)
+    await client.query(`insert into builder_fee_collections
+      (id,github_repo_id,mint,pool,wallet,amount,status,terms,terms_hash,expires_at,signature,signed_transaction,last_valid_block_height,receipt,settled_at)
+      values('00000000-0000-0000-0000-000000000009',9,'mint','pool','wallet',8800000000,'settled','{}',repeat('a',64),now(),'collection9','fixture',123,'{}',now())`)
     const pool = { query: (...args) => client.query(...args) }
     let clock = now
     const invites = createMaintainerInvites({ pool, now: () => clock, env: {}, origin: 'https://repo.ing',
       verifiedFee: async repoId => repoId === '7' ? null : String(BigInt(repoId) * SOL - (repoId === '1' ? 800000000n : 0n)),
       repoMeta: async repoId => ({ fullName: `o/r${repoId}`, stars: 99, hasIssues: repoId !== '6' }) })
     let { candidates } = await invites.list()
-    // 1: below threshold (0.2 SOL); 3,4,5 claimed/engaged; 7 unverified; 8 archived.
+    // 1 and 9: below threshold after owner payouts/platform collections; 3,4,5 engaged; 7 unverified; 8 archived.
     assert.deepEqual(candidates.map(c => c.repoId), ['6', '2'])
     assert.equal(candidates[0].hasIssues, false); assert.equal(candidates[0].issueUrl, null)
     assert.match(candidates[1].issueUrl, /^https:\/\/github\.com\/o\/r2\/issues\/new\?title=/)

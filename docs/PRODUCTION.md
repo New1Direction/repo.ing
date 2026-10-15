@@ -52,6 +52,13 @@ git fetch -q origin && git show origin/main:scripts/ops/deploy.sh | bash -s -- 8
 
 A Git push saves source; it does not by itself establish a successful production rollout. Database migrations and deployment are separate operations. Documentation-only cleanup does not require a runtime deployment.
 
+#### Collection ledger and Hook Lab migration reconciliation
+
+Production recorded the collection DDL at timestamp `1792063200000` before adopting Hook Lab recipes. Its SQL is registered as `0078_builder_fee_collections` in the integrated journal with the same hash and timestamp; do not reset, delete or rewrite the existing migration record. The older `0077_hook_lab_recipes` timestamp is skipped on that database. `0079_hook_lab_recipes_forward` repeats its idempotent additive DDL after the production timestamp so both recipe tables and indexes are created without altering collection receipts. Fresh databases safely run all three migrations.
+
+Before this integrated web-only rollout, create a fresh encrypted backup that includes the settled collections, restore it into a disposable database, and verify the durable ledger. After web's pre-deploy migration, verify both `direct_coin_*` and `hook_lab_recipe_*` tables, unchanged settled collections and MATCH reconciliation. Deploy only `web`; leave the running worker unchanged. Check `/api/health`, `/coins/new` and `/coins/hltest`, including finalized read-only devnet recovery. None of these migrations or pages authorizes funding, signing, public execution or adoption of a hardened mainnet binary.
+
+
 Optional [agent launch reviews](AGENT_LAUNCH.md) require migration `0022`, a dedicated web-only `AGENT_LAUNCH_SECRET`, and `AGENT_LAUNCH_ENABLED=true`. Default is disabled. The new tools prepare review links and read indexed status; they never sign or submit a launch. Verify the endpoint and browser handoff before activation. Shared request quotas fail closed when the database is unavailable.
 
 The repo.ing AI credits sign-in handoff (`/handoff` and `/api/handoff/start`, `/approve`, `/token`; `src/repo-inference-handoff.mjs`) is off by default: every one of those answers 404 unless `REPO_INFERENCE_HANDOFF_ENABLED=true` on web, even when `REPO_INFERENCE_HANDOFF_SECRET` and `HANDOFF_ASSERTION_SECRET` are set. Owner decision 2026-10-08: keep it off until AI credits start (the credit service and a CLI with `repoing claim` are live). To turn it on, set both secrets, then the switch, and check that `/api/handoff/start` no longer answers 404.

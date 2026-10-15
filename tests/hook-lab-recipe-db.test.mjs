@@ -159,3 +159,47 @@ test('authenticated API saves and resumes all six complete recipes through the r
     await dropTestDatabase(admin, database); await admin.end()
   }
 })
+
+test('production collection migration does not strand Hook Lab recipes or alter recorded collections', async () => {
+  const { drizzle } = await import('drizzle-orm/node-postgres')
+  const { migrate } = await import('drizzle-orm/node-postgres/migrator')
+  const { mkdtemp, cp, writeFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const admin = new pg.Pool({ host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' })
+  const database = `hook_lab_forward_${randomUUID().replaceAll('-', '')}`
+  const folder = await mkdtemp(join(tmpdir(), 'hook-lab-forward-'))
+  let pool
+  try {
+    await admin.query(`create database ${database}`)
+    pool = new pg.Pool({ host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database })
+    await cp('drizzle', join(folder, 'drizzle'), { recursive: true })
+    const journalPath = join(folder, 'drizzle/meta/_journal.json')
+    const journal = JSON.parse(await readFile(journalPath, 'utf8'))
+    await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter(e => e.idx <= 76) }))
+    await migrate(drizzle(pool), { migrationsFolder: join(folder, 'drizzle') })
+    await pool.query(await readFile('drizzle/0078_builder_fee_collections.sql', 'utf8'))
+    await pool.query(`insert into drizzle.__drizzle_migrations(hash,created_at)
+      values('16f99c5629efa80cf599fdb1116fb5b25cbd504c8f4df151beb65d8a89dc8663',1792063200000)`)
+    await pool.query(`insert into repositories(github_repo_id,owner,name,full_name,stars,forks,archived,github_updated_at)
+      values(99881,'fixture','preserved','fixture/preserved',0,0,false,now())`)
+    await pool.query(`insert into builder_fee_collections
+      (id,github_repo_id,mint,pool,wallet,amount,status,terms,terms_hash,expires_at,signature,signed_transaction,last_valid_block_height,receipt,settled_at)
+      values('00000000-0000-0000-0000-000000099881',99881,'mint','pool','wallet',123,'settled','{}',repeat('a',64),now(),'historical-collection','fixture',123,'{}',now())`)
+    const before = (await pool.query('select * from builder_fee_collections')).rows
+    await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
+    const store = hookLabRecipeDrafts(pool), [template, raw] = recipeCases[0]
+    const saved = await store.save('101', { id: randomUUID(), revision: 0, envelope: createHookLabRecipe(raw, template) })
+    assert.deepEqual((await store.list('101')).drafts, [saved])
+    assert.equal((await store.list('101')).events[0].revision, saved.revision)
+    await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
+    assert.deepEqual((await pool.query('select * from builder_fee_collections')).rows, before)
+    assert.equal((await pool.query(`select count(*)::int as n from drizzle.__drizzle_migrations
+      where hash='16f99c5629efa80cf599fdb1116fb5b25cbd504c8f4df151beb65d8a89dc8663' and created_at=1792063200000`)).rows[0].n, 1)
+    assert.deepEqual((await store.list('101')).drafts, [saved])
+  } finally {
+    if (pool) { await pool.end(); await dropTestDatabase(admin, database) }
+    await admin.end()
+    await rm(folder, { recursive: true, force: true })
+  }
+})

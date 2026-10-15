@@ -35,18 +35,15 @@ test('a receiver credited extra lamports (e.g. a front-run temporary account) st
   assert.equal(receiverPaid(1_000n + 4_077n, 1_000n, 4_078n), false)
 })
 
-function fakeRpc({ slot = 500, height = 1_000, statusSlot = 500, status = null } = {}) {
-  const calls = []
-  return { calls,
-    getSlot: async () => slot,
-    getBlockHeight: async config => { calls.push(config); return height },
+function fakeRpc({ slot = 500, epochSlot = slot, height = 1_000, statusSlot = 500, status = null } = {}) {
+  return {
+    getEpochInfo: async () => ({ absoluteSlot: epochSlot, blockHeight: height }),
     getSignatureStatuses: async () => ({ context: { slot: statusSlot }, value: [status] }) }
 }
 
 test('expiry proof: expired and absent on a current node → abandon', async () => {
   const rpc = fakeRpc({ slot: 500, height: 1_000, statusSlot: 501 })
   assert.equal(await provablyExpiredUnlanded(rpc, 'sig', 900), true)
-  assert.deepEqual(rpc.calls[0], { commitment: 'finalized', minContextSlot: 500 })
 })
 
 test('expiry proof: a lagging history node cannot abandon a payout that may have landed', async () => {
@@ -56,4 +53,9 @@ test('expiry proof: a lagging history node cannot abandon a payout that may have
 test('expiry proof: not yet expired, or any signature record, keeps the claim pending', async () => {
   assert.equal(await provablyExpiredUnlanded(fakeRpc({ height: 900 }), 'sig', 900), false)
   assert.equal(await provablyExpiredUnlanded(fakeRpc({ height: 1_000, statusSlot: 600, status: { slot: 450 } }), 'sig', 900), false)
+})
+
+test('expiry proof: a later expiry bank cannot borrow freshness from an earlier finalized slot', async () => {
+  const rpc = fakeRpc({ slot: 500, epochSlot: 600, height: 1_000, statusSlot: 500 })
+  assert.equal(await provablyExpiredUnlanded(rpc, 'sig', 900), false)
 })

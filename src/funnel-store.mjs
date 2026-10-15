@@ -23,18 +23,20 @@ export const FUNNEL_SUMMARY_SQL = `select event, outcome, source,
 export const LEDGER_FUNNEL_SQL = `with repos as (
     select m.github_repo_id, (lower(r.owner) = any($1::text[]) or m.github_repo_id = any($2::bigint[])) as team,
       coalesce(f.earned, 0) as earned, coalesce(c.paid, 0) as paid,
+      coalesce(w.collected, 0) as collected,
       exists (select 1 from repo_verifications v where v.github_repo_id = m.github_repo_id and v.permission = 'admin') as verified,
       exists (select 1 from repo_beneficiaries b where b.github_repo_id = m.github_repo_id) as wallet
     from markets m join repositories r on r.github_repo_id = m.github_repo_id
     left join (select github_repo_id, sum(amount_base_units) as earned from builder_fee_credits group by 1) f on f.github_repo_id = m.github_repo_id
     left join (select github_repo_id, sum(amount_base_units) as paid from repo_claims where status = 'settled' group by 1) c on c.github_repo_id = m.github_repo_id
+    left join (select github_repo_id, sum(amount) as collected from builder_fee_collections where status='settled' group by 1) w on w.github_repo_id=m.github_repo_id
     where m.status = 'confirmed' and m.indexed_at is not null and m.launch_finality = 'finalized' and m.quote_asset_id is null
       and m.github_repo_id <= ${GITHUB_REPO_ID_MAX}
   )
   select team, count(*)::int as earning, count(*) filter (where verified)::int as verified, count(*) filter (where wallet)::int as wallet,
     count(*) filter (where paid > 0)::int as paid, sum(earned)::text as "earnedLamports", sum(paid)::text as "paidLamports",
-    coalesce(sum(greatest(earned - paid, 0)) filter (where not verified and not wallet), 0)::text as "waitingLamports",
-    count(*) filter (where not verified and not wallet and earned > paid)::int as waiting
+    coalesce(sum(greatest(earned - paid - collected, 0)) filter (where not verified and not wallet), 0)::text as "waitingLamports",
+    count(*) filter (where not verified and not wallet and earned > paid + collected)::int as waiting
   from repos where earned > 0 group by team order by team`
 
 export function createFunnelStore(pool, { now = Date.now, retentionDays = FUNNEL_RETENTION_DAYS, pruneEveryMs = PRUNE_EVERY_MS, onPruneError = () => {} } = {}) {

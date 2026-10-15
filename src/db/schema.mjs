@@ -1665,3 +1665,23 @@ export const directCoinEvents = pgTable('direct_coin_events', {
   check('direct_coin_events_outcome_check', sql`${t.outcome} in ('saved', 'refused', 'programs-present', 'missing-programs', 'unavailable')`),
   check('direct_coin_events_plan_hash_check', sql`${t.planHash} ~ '^[a-f0-9]{64}$'`),
   check('direct_coin_events_plan_check', sql`jsonb_typeof(${t.plan}) = 'object' and pg_column_size(${t.plan}) <= 4096`)])
+
+// Operator-reviewed debits of builder entitlement, separate from owner payouts and partner revenue.
+export const builderFeeCollections = pgTable('builder_fee_collections', {
+  id: uuid('id').primaryKey(),
+  githubRepoId: bigint('github_repo_id', { mode: 'bigint' }).notNull().references(() => repositories.githubRepoId),
+  mint: varchar('mint', { length: 44 }).notNull(), pool: varchar('pool', { length: 44 }).notNull(),
+  wallet: varchar('wallet', { length: 44 }).notNull(), amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
+  status: text('status').notNull(), terms: text('terms').notNull(), termsHash: varchar('terms_hash', { length: 64 }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  signature: varchar('signature', { length: 88 }).unique(), signedTransaction: text('signed_transaction'),
+  lastValidBlockHeight: bigint('last_valid_block_height', { mode: 'bigint' }), receipt: text('receipt'),
+  settledAt: timestamp('settled_at', { withTimezone: true }), resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolutionReason: text('resolution_reason'),
+}, table => [
+  uniqueIndex('builder_fee_collections_one_pending_per_repo').on(table.githubRepoId).where(sql`${table.status} = 'pending'`),
+  index('builder_fee_collections_repo_status').on(table.githubRepoId, table.status),
+  check('builder_fee_collections_positive', sql`${table.amount} > 0`),
+  check('builder_fee_collections_status', sql`${table.status} in ('reviewed','pending','settled','aborted')`),
+])

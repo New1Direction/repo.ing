@@ -1,3 +1,4 @@
+import { builderCollectionState } from './builder-collection-state.mjs'
 import { isBundleMarket } from './bundles.mjs'
 import { isEarlyAccessMarket } from './early-access.mjs'
 import { PublicKey } from '@solana/web3.js'
@@ -149,13 +150,14 @@ export function createReconciler({ pool, connection, config, earlyAccess = null,
           .from(repoClaims).where(eq(repoClaims.githubRepoId, repoId))
         const [settled] = await db.select({ total: sql`coalesce(sum(${repoClaims.amountBaseUnits}), 0)::text` })
           .from(repoClaims).where(sql`${repoClaims.githubRepoId} = ${repoId} and ${repoClaims.status} = 'settled'`)
+        const collection = await builderCollectionState(client, repoId)
         const recordedEarned = BigInt(credits.total)
         const recordedClaimed = BigInt(settled.total)
-        const expectedRemaining = recordedEarned - recordedClaimed
-        const base = { githubRepoId: repoId, pool: market.pool, recordedEarned, recordedClaimed,
+        const expectedRemaining = recordedEarned - recordedClaimed - collection.collected
+        const base = { githubRepoId: repoId, pool: market.pool, recordedEarned, recordedClaimed, platformCollected: collection.collected,
           expectedRemaining, onchainCreatorFee: null, difference: null }
-        if (Number(claims.pending) > 0) return { ...base, status: 'PENDING_REVIEW',
-          reason: `${claims.pending} unresolved claim intent(s)` }
+        if (Number(claims.pending) + collection.pending > 0) return { ...base, status: 'PENDING_REVIEW',
+          reason: `${Number(claims.pending) + collection.pending} unresolved payout or collection intent(s)` }
 
         let state
         try {

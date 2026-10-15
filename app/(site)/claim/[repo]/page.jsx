@@ -104,7 +104,7 @@ async function ClaimContent({ market, repo, query }) {
   const review = verifiedUser && beneficiary && claimable && claimable !== '0' ? seal({
     purpose: 'creator-claim-review', sessionId: session.sessionId, githubUserId: session.githubUserId,
     repoId, wallet: beneficiary.wallet, boundAt: new Date(beneficiary.boundAt).toISOString(),
-    amount: claimable, includeGraduatedFees: fees.graduated === true, paid: market.claimed, expiresAt: Math.min(session.expiresAt, Date.now() + 10 * 60_000),
+    amount: claimable, includeGraduatedFees: fees.graduated === true, paid: market.claimed, platformCollected: market.platformCollected, expiresAt: Math.min(session.expiresAt, Date.now() + 10 * 60_000),
   }) : null
   const usdEstimate = claimable === null ? null : formatUsdEstimate(claimable, usdPerSol)
   let reinvestEnabled = false
@@ -122,6 +122,7 @@ async function ClaimContent({ market, repo, query }) {
     {followsLater > 0n && <p className="muted claim-follows">Then {formatSolDisplay(followsLater.toString())} SOL of graduated pool fees in a second claim: an early
       access payout claims its curve fees and its graduated pool fees one at a time.</p>}
     <div className="claim-fee-history"><span>Total earned <strong title={`${formatUnits(market.earned)} SOL`}>{formatSolDisplay(market.earned)} SOL</strong></span><span>Already paid <strong title={`${formatUnits(market.claimed)} SOL`}>{formatSolDisplay(market.claimed)} SOL</strong></span></div>
+    {BigInt(market.platformCollected ?? '0') > 0n && <p>Platform collections: <strong title={`${formatUnits(market.platformCollected)} SOL`}>{formatSolDisplay(market.platformCollected)} SOL</strong>, not paid to the owner. <Link href="/how-it-works#builder-collections">Collection policy</Link></p>}
   </div>
   return <ClaimSteps summary={summary} repoId={repoId} mint={market.mint} repoName={repo.fullName} appAccess={access} appSettingsUrl={appSettingsUrl}
     verifiedUser={verifiedUser} beneficiaryWallet={beneficiary?.wallet ?? null} beneficiaryMethod={beneficiary?.method ?? 'signature'}

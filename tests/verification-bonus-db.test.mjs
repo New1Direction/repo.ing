@@ -91,6 +91,7 @@ function scriptedChain() {
     getTransaction: async signature => state.landed.get(signature) ?? null,
     getBlockHeight: async () => state.blockHeight,
     getSlot: async () => state.slot,
+    getEpochInfo: async () => ({ absoluteSlot: state.slot, blockHeight: state.blockHeight }),
   }
   // Finalizes the stored transaction with the given outcome; balance changes default to the exact intended ones.
   function land(signedTransaction, { err = null, launcherDelta, payerDelta } = {}) {

@@ -22,6 +22,7 @@ export async function builderOverview(session) {
   const { rows: marketRows } = await pool.query(`select m.github_repo_id::text as "repoId", m.mint, r.full_name as "fullName",
     (select coalesce(sum(amount_base_units),0)::text from builder_fee_credits where github_repo_id=m.github_repo_id) as earned,
     (select coalesce(sum(amount_base_units),0)::text from repo_claims where github_repo_id=m.github_repo_id and status='settled') as paid,
+    (select coalesce(sum(amount),0)::text from builder_fee_collections where github_repo_id=m.github_repo_id and status='settled') as "platformCollected",
     (select claim_signature from repo_claims where github_repo_id=m.github_repo_id and status='pending' limit 1) as "pendingSignature"
     from markets m join repositories r on r.github_repo_id=m.github_repo_id
     where m.github_repo_id=any($1::bigint[]) and m.status='confirmed' and m.indexed_at is not null
@@ -47,7 +48,7 @@ export async function builderOverview(session) {
     const expiresAt = Math.min(session.expiresAt, Date.now() + 30 * 60_000)
     const review = ready ? seal({ purpose: 'builder-claim-review', sessionId: session.sessionId,
       githubUserId: session.githubUserId, repoId: row.repoId, wallet: row.wallet,
-      boundAt: new Date(row.boundAt).toISOString(), amount: available, includeGraduatedFees: fees.graduated === true, paid: row.paid, expiresAt }) : null
+      boundAt: new Date(row.boundAt).toISOString(), amount: available, includeGraduatedFees: fees.graduated === true, paid: row.paid, platformCollected: row.platformCollected, expiresAt }) : null
     // Tips waiting (hidden when tips are disabled); claimable once a payout wallet is set and no tip payout is in flight.
     const tips = await repoTipSummary(row.repoId)
     const tipReview = tips?.waiting.length && row.wallet && !tips.waiting.some(t => t.inFlight)

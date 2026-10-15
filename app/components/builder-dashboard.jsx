@@ -133,6 +133,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
             return <article className="builder-repo-row" key={repo.repoId}><div className="builder-repo-name"><Link href={`/token/${repo.mint}`}>{repo.fullName}</Link><span className={`builder-row-state ${result?.status==='settled'?'paid':''}`}>{state}</span>{result?.error&&<small>{result.error}</small>}</div>
               {repo.ownerClaim?<div className="builder-repo-balance" data-code={repo.ownerClaim.code}><span>Builder fees</span><strong>Stock pair</strong><small>{repo.ownerClaim.message}</small></div>:
               <div className="builder-repo-balance"><span>Available</span><strong title={repo.available===null?undefined:`${formatUnits(repo.available)} SOL`}>{repo.available===null?'—':`${formatSolDisplay(repo.available)} SOL`}</strong><small>{formatSolDisplay(repo.earned)} SOL earned · {formatSolDisplay(repo.paid)} SOL paid</small></div>}
+              {BigInt(repo.platformCollected ?? '0') > 0n && <small>Platform collections: {formatSolDisplay(repo.platformCollected)} SOL, not an owner payout.</small>}
               {repo.tips?.waiting.length > 0 && <div className="builder-repo-tips"><span>Tips waiting{repo.tips.usd !== null ? ` · ≈ ${formatUsdValue(repo.tips.usd)}` : ''}</span>
                 <strong>{repo.tips.waiting.map(t => `${formatTokenAmount(t.amount, t.decimals)} ${t.symbol}`).join(' · ')}</strong>
                 {repo.tipReview ? <ClaimTips review={repo.tipReview} compact symbols={Object.fromEntries(repo.tips.waiting.map(t => [t.mint, t.symbol]))}/> :
@@ -148,6 +149,7 @@ export function BuilderDashboard({ signedIn, githubLogin, errorCode }) {
         </section>
         <BuilderReminders/>
         <p className="builder-footnote">Only repositories you administer and have shared with the GitHub App appear here; use the owner lookup above to find the others. For graduated pools, the payout includes SOL fees accrued before confirmation. Other new earnings stay available for your next claim.</p>
+        <p className="builder-footnote">Unclaimed builder fees may be reduced by manually approved platform collections, including repeated collections of half the remaining balance. <Link href="/how-it-works#builder-collections">Collection policy</Link>.</p>
       </>}
     </>}
   </div>
