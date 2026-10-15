@@ -1633,3 +1633,35 @@ export const operatorWorkerSnapshot = pgTable('operator_worker_snapshot', {
   id: smallint('id').primaryKey(),
   snapshot: jsonb('snapshot').notNull(),
 }, t => [check('operator_worker_snapshot_id_check', sql`${t.id} = 1`)])
+
+// Direct coin planning only (0076): private intent, never a market or signing session.
+export const directCoinDrafts = pgTable('direct_coin_drafts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  revision: integer('revision').notNull().default(1),
+  plan: jsonb('plan').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('direct_coin_drafts_user').on(t.githubUserId, t.updatedAt.desc()),
+  check('direct_coin_drafts_github_user_id_check', sql`${t.githubUserId} > 0`),
+  check('direct_coin_drafts_revision_check', sql`${t.revision} > 0`),
+  check('direct_coin_drafts_plan_check', sql`jsonb_typeof(${t.plan}) = 'object' and pg_column_size(${t.plan}) <= 4096`)])
+
+export const directCoinEvents = pgTable('direct_coin_events', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  githubUserId: bigint('github_user_id', { mode: 'bigint' }).notNull(),
+  draftId: uuid('draft_id').references(() => directCoinDrafts.id, { onDelete: 'cascade' }),
+  revision: integer('revision'),
+  action: text('action').notNull(),
+  adapter: text('adapter').notNull(),
+  outcome: text('outcome').notNull(),
+  planHash: text('plan_hash').notNull(),
+  plan: jsonb('plan').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, t => [index('direct_coin_events_user').on(t.githubUserId, t.createdAt.desc()), index('direct_coin_events_created').on(t.createdAt),
+  check('direct_coin_events_github_user_id_check', sql`${t.githubUserId} > 0`),
+  check('direct_coin_events_revision_check', sql`${t.revision} > 0`),
+  check('direct_coin_events_action_check', sql`${t.action} in ('save', 'inspect')`),
+  check('direct_coin_events_adapter_check', sql`${t.adapter} in ('raydium', 'meteora-dbc', 'meteora-damm', 'hooklab')`),
+  check('direct_coin_events_outcome_check', sql`${t.outcome} in ('saved', 'refused', 'programs-present', 'missing-programs', 'unavailable')`),
+  check('direct_coin_events_plan_hash_check', sql`${t.planHash} ~ '^[a-f0-9]{64}$'`),
+  check('direct_coin_events_plan_check', sql`jsonb_typeof(${t.plan}) = 'object' and pg_column_size(${t.plan}) <= 4096`)])
