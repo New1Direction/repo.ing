@@ -5,6 +5,7 @@ import { Connection, PublicKey } from '@solana/web3.js'
 import { defaultDirectPlan, previewDirectCoin, DEVNET_GENESIS, HOOK_AUTHORITY } from '../src/direct-coins.mjs'
 import { directCoinAdapter } from '../src/direct-coin-adapters.mjs'
 import { directRequestSchema } from '../src/direct-coin-drafts.mjs'
+import { loadDirectDraft, saveDirectDraft } from '../app/lib/direct-coin-draft.mjs'
 
 test('lane/standard/quote/LP/recipe boundaries refuse unsupported plans without claiming simulation or execution', () => {
   for (const adapter of ['raydium', 'meteora-dbc', 'meteora-damm', 'hooklab']) {
@@ -122,4 +123,60 @@ test('native adapter preserves upstream refusals, explicit parameters and unknow
   assert.equal(unavailable.status, 'unavailable')
   assert.ok(!JSON.stringify(unavailable).includes('sensitive RPC URL'))
   assert.throws(() => adapter.buildTransaction(plan), /disabled/)
+})
+
+test('device drafts preserve both lanes and legacy parameters; richer unknown recipes are never truncated', () => {
+  const values = new Map(), storage = { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, value) }
+  const standard = { ...defaultDirectPlan(), name: 'Legacy', symbol: 'OLD', adapter: 'meteora-dbc' }
+  values.set('repoing.direct-coin.v1', JSON.stringify(standard))
+  assert.equal(loadDirectDraft(storage, 'programmable').lane, 'programmable')
+  const native = { ...defaultDirectPlan('programmable'), name: 'Native', symbol: 'NATIVE', recipe: 'kit', creatorFeeBps: 137, kitMaxWalletBps: 850 }
+  saveDirectDraft(storage, native)
+  assert.deepEqual(loadDirectDraft(storage, 'standard'), standard)
+  assert.deepEqual(loadDirectDraft(storage), native)
+  saveDirectDraft(storage, standard)
+  assert.deepEqual(loadDirectDraft(storage, 'programmable'), native)
+  const richer = JSON.stringify({ ...native, blocks: [{ type: 'burn', bps: 73 }] })
+  values.set('repoing.direct-coin.v1.programmable', richer)
+  assert.throws(() => loadDirectDraft(storage, 'programmable'))
+  assert.equal(values.get('repoing.direct-coin.v1.programmable'), richer)
+  assert.throws(() => saveDirectDraft(storage, JSON.parse(richer)))
+  assert.equal(values.get('repoing.direct-coin.v1.programmable'), richer)
+})
+
+test('public inspection needs neither GitHub nor a database, but consent, origin, payload and rate limits still apply', async t => {
+  const { POST } = await import('../app/api/direct-coins/route.js')
+  const originBefore = process.env.APP_ORIGIN
+  process.env.APP_ORIGIN = 'https://repo.ing'
+  t.after(() => { if (originBefore === undefined) delete process.env.APP_ORIGIN; else process.env.APP_ORIGIN = originBefore })
+  const plan = { ...defaultDirectPlan('programmable'), name: 'Public', symbol: 'PUB', creatorFeeBps: 0 }
+  const input = { action: 'inspect', plan, confirmedNetwork: 'devnet' }
+  const request = (body, origin = 'https://repo.ing') => {
+    const req = new Request('https://repo.ing/api/direct-coins', { method: 'POST', headers: { origin, 'content-type': 'application/json', 'cf-connecting-ip': '192.0.2.197' }, body: JSON.stringify(body) })
+    req.cookies = { get: () => undefined }
+    return req
+  }
+  let reads = 0
+  t.mock.method(Connection.prototype, 'getGenesisHash', async () => { reads++; return 'wrong-network' })
+  t.mock.method(Connection.prototype, 'getMultipleAccountsInfoAndContext', async () => { throw new Error('Accounts must not be read after wrong genesis') })
+  const oldLimiter = globalThis.__repoingRequestLimiter
+  delete globalThis.__repoingRequestLimiter
+  try {
+    assert.equal((await POST(request(input, 'https://evil.invalid'))).status, 403)
+    assert.equal((await POST(request({ ...input, confirmedNetwork: undefined }))).status, 400)
+    assert.equal((await POST(request({ ...input, action: 'send' }))).status, 400)
+    assert.equal((await POST(request({ ...input, launcherWallet: HOOK_AUTHORITY }))).status, 400)
+    assert.equal((await POST(request({ action: 'save', plan }))).status, 401)
+    assert.equal(reads, 0)
+    const result = await POST(request(input)), body = await result.json()
+    assert.equal(result.status, 200)
+    assert.equal(body.audit, 'not-requested')
+    assert.equal(body.observation.status, 'refused')
+    assert.equal(body.observation.canSubmit, false)
+    assert.ok(body.observation.native.inspection.refusals.some(r => r.code === 'WRONG_GENESIS'))
+    assert.equal(reads, 1)
+    for (let i = 0; i < 3; i++) assert.equal((await POST(request({ ...input, plan: { ...plan, network: 'mainnet-beta' } }))).status, 422)
+    assert.equal((await POST(request(input))).status, 429)
+    assert.equal(reads, 1)
+  } finally { globalThis.__repoingRequestLimiter = oldLimiter }
 })

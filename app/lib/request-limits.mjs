@@ -34,6 +34,8 @@ export const REQUEST_LIMITS = Object.freeze({
   // The public launch preflight (/api/launch-preflight): an uncached repository costs two or three GitHub reads, then it is answered
   // from a 10-minute cache. A maintainer re-runs it after each fix.
   'launch:preflight': { burst: 20, perMinute: 6 },
+  // Full native binary/config inspection is public and read-only, but expensive. No wallet or GitHub identity required.
+  'direct-coins:inspect': { burst: 4, perMinute: 2 },
 })
 
 export { clientAddress }
