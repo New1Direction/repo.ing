@@ -1,0 +1,426 @@
+{
+  "source": "https://github.com/New1Direction/hook-lab/blob/9b3473e001a9abc73bf644d4206e47abc95a815b/programs/tests/vectors/launch-fees.json",
+  "license": "AGPL-3.0-only",
+  "swaps": [
+    {
+      "name": "open, holders 1%",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "buy",
+      "amountIn": "2",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 100,
+        "holderFeeSellBps": 100,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "0",
+        "holderFee": "0",
+        "burn": "0",
+        "holderFeeOn": true,
+        "received": "2",
+        "lpFee": "1",
+        "protocolFee": "0",
+        "netIn": "1",
+        "amountOut": "39999",
+        "delivered": "39999",
+        "failure": null
+      }
+    },
+    {
+      "name": "open, holders 1%",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "buy",
+      "amountIn": "3",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 100,
+        "holderFeeSellBps": 100,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "1",
+        "holderFee": "1",
+        "burn": "0",
+        "holderFeeOn": true,
+        "received": "1",
+        "lpFee": "1",
+        "protocolFee": "1",
+        "netIn": "-1",
+        "amountOut": null,
+        "delivered": null,
+        "failure": "fees_exceed_input"
+      }
+    },
+    {
+      "name": "open, holders 1%",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "buy",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 100,
+        "holderFeeSellBps": 100,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "5000000",
+        "holderFee": "10000000",
+        "burn": "0",
+        "holderFeeOn": true,
+        "received": "985000000",
+        "lpFee": "2955000",
+        "protocolFee": "3750000",
+        "netIn": "978295000",
+        "amountOut": "37816401029505",
+        "delivered": "37816401029505",
+        "failure": null
+      }
+    },
+    {
+      "name": "open, holders 1%",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "buy",
+      "amountIn": "1000000000",
+      "lpFeeBps": 8000,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 100,
+        "holderFeeSellBps": 100,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "5000000",
+        "holderFee": "10000000",
+        "burn": "0",
+        "holderFeeOn": true,
+        "received": "985000000",
+        "lpFee": "788000000",
+        "protocolFee": "3750000",
+        "netIn": "193250000",
+        "amountOut": "7677248770669",
+        "delivered": "7677248770669",
+        "failure": null
+      }
+    },
+    {
+      "name": "open, own rates per side",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "buy",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 0,
+        "holderFeeSellBps": 200,
+        "burnBuyBps": 25,
+        "burnSellBps": 100,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "5000000",
+        "holderFee": "0",
+        "burn": "95705078073",
+        "holderFeeOn": false,
+        "received": "995000000",
+        "lpFee": "2985000",
+        "protocolFee": "1250000",
+        "netIn": "990765000",
+        "amountOut": "38282031229473",
+        "delivered": "38186326151400",
+        "failure": null
+      }
+    },
+    {
+      "name": "open, own rates per side",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "sell",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 0,
+        "holderFeeSellBps": 200,
+        "burnBuyBps": 25,
+        "burnSellBps": 100,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "0",
+        "holderFee": "0",
+        "burn": "10000000",
+        "holderFeeOn": true,
+        "received": "990000000",
+        "lpFee": "0",
+        "protocolFee": "0",
+        "netIn": "990000000",
+        "amountOut": null,
+        "delivered": null,
+        "failure": "insufficient_liquidity"
+      }
+    },
+    {
+      "name": "open, creator only",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "buy",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 100,
+        "holderFeeBuyBps": 0,
+        "holderFeeSellBps": 0,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "0",
+        "minEligible": "0"
+      },
+      "expected": {
+        "creatorFee": "10000000",
+        "holderFee": "0",
+        "burn": "0",
+        "holderFeeOn": false,
+        "received": "990000000",
+        "lpFee": "2970000",
+        "protocolFee": "2500000",
+        "netIn": "984530000",
+        "amountOut": "38049265996393",
+        "delivered": "38049265996393",
+        "failure": null
+      }
+    },
+    {
+      "name": "open, creator only",
+      "reserves": {
+        "baseReserve": "750000000000000",
+        "quoteReserve": "0",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "sell",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 100,
+        "holderFeeBuyBps": 0,
+        "holderFeeSellBps": 0,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "0",
+        "minEligible": "0"
+      },
+      "expected": {
+        "creatorFee": "0",
+        "holderFee": "0",
+        "burn": "0",
+        "holderFeeOn": false,
+        "received": "1000000000",
+        "lpFee": "0",
+        "protocolFee": "0",
+        "netIn": "1000000000",
+        "amountOut": null,
+        "delivered": null,
+        "failure": "insufficient_liquidity"
+      }
+    },
+    {
+      "name": "traded, holders 1%",
+      "reserves": {
+        "baseReserve": "650000000000000",
+        "quoteReserve": "4200000000",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "buy",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 100,
+        "holderFeeSellBps": 100,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "5000000",
+        "holderFee": "10000000",
+        "burn": "0",
+        "holderFeeOn": true,
+        "received": "985000000",
+        "lpFee": "2955000",
+        "protocolFee": "3750000",
+        "netIn": "978295000",
+        "amountOut": "30109704610309",
+        "delivered": "30109704610309",
+        "failure": null
+      }
+    },
+    {
+      "name": "traded, holders 1%",
+      "reserves": {
+        "baseReserve": "650000000000000",
+        "quoteReserve": "4200000000",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "sell",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 100,
+        "holderFeeSellBps": 100,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "158",
+        "holderFee": "315",
+        "burn": "0",
+        "holderFeeOn": true,
+        "received": "1000000000",
+        "lpFee": "95",
+        "protocolFee": "119",
+        "netIn": "1000000000",
+        "amountOut": "31536",
+        "delivered": "30849",
+        "failure": null
+      }
+    },
+    {
+      "name": "traded, holders 1%",
+      "reserves": {
+        "baseReserve": "650000000000000",
+        "quoteReserve": "4200000000",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "sell",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 100,
+        "holderFeeSellBps": 100,
+        "burnBuyBps": 0,
+        "burnSellBps": 0,
+        "eligible": "1000001000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "158",
+        "holderFee": "0",
+        "burn": "0",
+        "holderFeeOn": false,
+        "received": "1000000000",
+        "lpFee": "95",
+        "protocolFee": "40",
+        "netIn": "1000000000",
+        "amountOut": "31536",
+        "delivered": "31243",
+        "failure": null
+      }
+    },
+    {
+      "name": "traded, own rates per side",
+      "reserves": {
+        "baseReserve": "650000000000000",
+        "quoteReserve": "4200000000",
+        "virtualBase": "375000000000000",
+        "virtualQuote": "28125000000"
+      },
+      "side": "sell",
+      "amountIn": "1000000000",
+      "lpFeeBps": 30,
+      "protocolShareBps": 2500,
+      "params": {
+        "creatorFeeBps": 50,
+        "holderFeeBuyBps": 0,
+        "holderFeeSellBps": 200,
+        "burnBuyBps": 25,
+        "burnSellBps": 100,
+        "eligible": "50000000000000",
+        "minEligible": "1000000000000"
+      },
+      "expected": {
+        "creatorFee": "156",
+        "holderFee": "623",
+        "burn": "10000000",
+        "holderFeeOn": true,
+        "received": "990000000",
+        "lpFee": "94",
+        "protocolFee": "195",
+        "netIn": "990000000",
+        "amountOut": "31221",
+        "delivered": "30153",
+        "failure": null
+      }
+    }
+  ]
+}

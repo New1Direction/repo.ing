@@ -179,18 +179,137 @@ durable per-step recovery/finality journal; and fresh hook-aware quotes/minimum
 output. Signed beta acceptance and separate final approval still follow those
 gates. A matching inspection is not simulation, authentication or launch readiness.
 
-The six richer template prototypes are not imported. Future adoption must version
-the plan envelope to carry the complete `hook-lab/1` `{coin, blocks}` recipe
-through device storage, API validation, database, export and resume without dropping
-any block or parameter. Migrate existing v1 recipes explicitly and prove round-trip
-equality for all six templates, including burns, locks and optional holder rewards.
-Never flatten them into today's recipe enum. Unknown envelope versions must refuse.
-Preserved unknown recipe fields/blocks must not imply capability: SDK validation
-must refuse unsupported intent, not silently convert it to a plain coin. The
-isolated recipe, custody and quote foundations require separate reviewed adoption.
+The Programmable lane now uses `repo-ing/hook-lab-recipe/1` around complete
+`hook-lab/1` `{coin, blocks}` recipes. The UI exposes plain coins only; the six
+template definitions remain an offline compatibility reference, not available
+launch options. Any nonempty rules refuse preflight, including an explicit zero
+creator-fee block; start a new plain draft explicitly rather than silently
+rewriting an old recipe. Template metadata never regenerates blocks on resume. Device/account storage,
+import/export and SDK inspection retain order, unknown fields and null versus zero.
+Legacy v1 plans remain untouched and convert only through an explicit action.
+Unknown versions, duplicate JSON members and secret-bearing fields refuse.
+
+Review found that the pinned SDK silently ignores some unknown coin/block fields.
+The consumer therefore preserves them in storage but adds preflight refusals and
+removes intent steps for unsupported fields. Never confuse lossless storage with
+protocol capability. SDK semantic/live-limit checks still govern supported fields.
+
+Adoption provenance: exact isolated recipe commit
+`14e89b02897c2387f38ca5c410f337ebce8a17f4`, custody commit
+`430644b6d3ed13fbf424217e2ee88bf2329822f4`, quote commit
+`c5c3d0a7adc7c06cd1b46e5f244993c7b45307fa` were transferred from their author
+threads (these were local, unpushed commits). The template prototype was recovered
+from archived thread `T-01a13d99-5abb-7161-8cd1-ab0933dc0bb7`, Changes capture
+`cap_01a13da04b5476ba92f61a072815107f`, not an invented upstream commit.
+Consumer changes register the recipe SQL as migration 0077, test the installed
+read-only SDK instead of a private checkout, and reject reserved secret fields.
+
+Client-only custody creates/unlocks encrypted mint/config identities after a fresh
+matching inspection, bound to wallet, serialized-envelope digest, devnet genesis,
+manifest and observed program/config hashes. It creates no on-chain accounts.
+Wallet/recipe changes permanently invalidate the opened journal. Keys, passphrases,
+ciphertext, reviews and signatures never enter recipe storage or server requests.
+Local retention is not backup: eviction, lost passphrase/device, XSS and rollback
+remain risks. There is no signing API or executable review. Recovery observations
+remain conservative: missing status is ambiguous, and finalized transaction success
+does not prove account postconditions.
+
+The quote model is adopted for offline regression/reference only. It covers swaps,
+not creation. `/api/hook-lab` returns an explicit unavailable launch quote (422),
+never hypothetical swap debit relabeled as launch economics. Trading is deferred.
+
+### Minimum guarded launch and owner approval package
+
+The owner reports the existing upgrade authority is lost. The next executable
+scope is **fresh-ID devnet plain creation only**: HLTEST with no template, zero
+rules/creator fee and no custom hook, initial buy, wrap or swap. The existing Kit
+hard-binds the old launch/swap IDs and cannot be used with the fresh programs.
+The native owner is preparing a separate fresh-ID candidate; public IDs, new
+authority, rebuilt artifacts and consumer pins are pending. The old-ID upgrade
+messages, budgets and binaries below are historical, not a deployment plan.
+Creation caps must cover launch AND nested pool fees, rent and instruction debit,
+with canonical config-economics commitment and inclusive slot deadline. Network
+and priority fees require a separate immutable-message budget. Do not fall back
+to legacy instructions if a guard or capability is missing.
+
+The producer's review source commit is
+[`4734a6a`](https://github.com/New1Direction/hook-lab/commit/4734a6abbda338de857287662e4c4625d13575a9),
+published in [Hook Lab PR #2](https://github.com/New1Direction/hook-lab/pull/2), based on
+Hook Lab origin/main `481d082f80fd1a379cb432c882c6fc4467b6b873`. The exact review archive was transferred
+from [the V2 delivery thread](https://ampcode.com/threads/T-01a13f66-e19d-73c3-93e1-a72d374905aa),
+not installed as a consumer dependency. Archive SHA256 is
+`68a6fa454e668bbfe6e241c30db6fe1dfe4fd1d10426a3f34abf115a14da0ae3`;
+all included checksums and the incremental Git bundle were independently verified.
+It includes source, explicit candidate IDLs/builders, canonical vectors, ELFs,
+test logs and `guarded-v2-acceptance.md`. These are undeployed review artifacts.
+
+| Historical old-ID review artifact (not for fresh deployment) | ELF bytes | File SHA256 |
+| --- | ---: | --- |
+| Swap `3yJKNHzDC7JA979RJNqxKSyo1jt6kLcJNk9bjUuebLN2` | 460640 | `a75f886720a602703fa6a25065f703f53c0bb6ef0ad47723de907b46248ad2b9` |
+| Launch `4CxedXkUfo6JLXSnzuxr2XA9xeXPsxQeR1xeTedhKMyd` | 588696 | `8fdc9b52a81cfe70310198fc273a756ce7a69c82cad38e399880b44138d77b04` |
+
+The producer reports post-fix unsigned LiteSVM 8/8 and Rust libraries 49/49.
+Consumer review independently reproduced the Python vectors and passed SDK
+245/245 in an isolated exact-commit checkout. The bounded independent ABI review
+also closed launch/swap error-origin collisions; that is not a full security
+audit or signed acceptance. The packaged unsigned all-kit fixture used 327,683 CU
+with a synthetic ALT; do not reuse the earlier 320k routed-kit ceiling or treat
+fixture sizes as live message budgets. Current consumer program/SDK/manifest pins stay unchanged.
+Old programs remain read-only; neither their execution nor an automatic fallback
+is allowed. A fresh deployment requires its own IDL addresses, callback PDAs,
+canonical vectors, ELF/normalized executable hashes and manifest verification.
+
+The proposed config recreation preserves observed economic values and quote mint,
+replaces admin/treasury/fee collector with a dedicated retained authority, and
+resets counters. The owner must approve the exact values, version/pause state and
+authority recovery evidence. The disposable creator must differ from treasury
+and must never become the program/config authority. Itemize config initialization
+and any new ALT in the fresh deployment budget; do not reuse old extension costs.
+
+Consumer sequencing after the fresh candidate is frozen:
+
+1. Verify published source, SDK/IDL/schema/vectors, manifest and candidate hashes
+   without changing the active read-only pin. Refuse templates and nonempty rules.
+2. After explicit deployment approval, verify devnet genesis, deployed bytes,
+   ProgramData authority and recreated config accounts before enabling V2 review.
+3. Build using the exact official V2 SDK, with no legacy fallback. Review all
+   instruction accounts/signers, fee/rent caps, config commitments, expiry and
+   separate exact-message network budget; simulate the unchanged unsigned bytes.
+4. Request separate owner approval for funding/signing/spend. Bind client signing
+   to the reviewed message and retained mint identity; persist recovery evidence
+   before submission. Never retry an ambiguous result automatically.
+5. Verify finalized launch/pool/mint/authority and fee/rent results, exercise
+   recovery/result display, then use the established Railway backup/migration
+   gates. Production web delivery does not authorize mainnet or additional routes.
+
+Before requesting owner deployment/signed acceptance, fill every missing item:
+
+| Approval artifact | Current evidence / blocker |
+| --- | --- |
+| Native revision, ELF hashes, program IDs, IDLs and canonical hash vectors | Historical old-ID review above; fresh plain-only candidate pending; current read-only pin unchanged |
+| Exact payer/mint/config addresses and retained recovery identities | Authorized disposable creator/mint generated and retained encrypted outside Git; public identities recorded separately. Fresh retained authority/config identities pending; client backup UI not yet provided |
+| Instruction fees, nested charges, all rent, network/priority fee, total capped budget | Fresh deployment/acceptance budget pending; old-ID budgets are superseded and offline swap math is not launch economics |
+| Exact message bytes, signers, blockhash/last-valid-height, config commitment/deadline | Fresh-ID messages pending; old upgrade messages must not be signed |
+| Simulation/postconditions and tamper/expiry/rollback tests | Producer's unsigned SBF evidence in package; no consumer RPC transaction simulation or signed acceptance |
+| Recovery/export and ambiguous-submit journal test evidence | Local encrypted CAS journal tested; no sender/retry/postcondition adapter or backup UX |
+| Deployment and signed acceptance commands | Fresh deployment/config recreation and separate acceptance commands pending; exact public IDs, authority custody, messages and spend require owner approval before any chain action |
+
+Ship source through required checks first. Production web/migration deployment and
+any devnet program deployment/signing/spending remain separate owner gates. Recheck
+encrypted recoverable backup and pending journal before applying 0077. Never use a
+funded production wallet or faucet as an implicit part of acceptance.
 
 ## Operator runbook
 
+- `0077_hook_lab_recipes.sql` adds separate text-backed recipe drafts and atomic save
+  events, not a reinterpretation of `direct_coin_drafts`. Ten account recipes,
+  64 KiB each, 30-day retention. Client UUID/revision retries deduplicate without
+  extending expiry; stale/different-owner writes fail 409. `/api/hook-lab` exposes
+  optional authenticated `GET`/`save`, anonymous consented `inspect`, and refusing
+  `quote`; all other actions fail. No wallet identity is accepted as account auth.
+  The nested JSON string transport preserves duplicate-member detection. Inspection
+  shares the existing per-client limiter; telemetry logs action/outcome/latency only.
+  Unavailable account storage must not block device drafts or public inspection.
 - Additive migration `0076_direct_coins.sql` adds private versioned drafts and audit
   events. Apply only to disposable local data during verification. Shared DB
   migration/deployment needs separate approval.
@@ -223,8 +342,8 @@ isolated recipe, custody and quote foundations require separate reviewed adoptio
   Audit stores plan/outcome, not the large RPC account snapshot. No new migration
   is required beyond 0076 for this adoption.
 
-Deployment gate (not performed by shipping source): authorize migration 0076 on
-the target shared database and a separate preview-only application deployment.
+Deployment gate (not performed by shipping source): authorize pending migrations
+0076 and 0077 on the target shared database and a separate preview-only application deployment.
 Before authorizing, back up the target, verify its migration journal and review
 pending migrations; do not run all unapplied migrations blindly. On an approved
 deployment, check `/coins/new`, anonymous API behavior, signed-in save/resume,
@@ -249,6 +368,8 @@ restart or any financial activation flag. Pushing/merging source is not deployme
 ```sql
 DELETE FROM direct_coin_drafts WHERE updated_at < now() - interval '30 days';
 DELETE FROM direct_coin_events WHERE created_at < now() - interval '30 days';
+DELETE FROM hook_lab_recipe_drafts WHERE updated_at <= now() - interval '30 days';
+DELETE FROM hook_lab_recipe_events WHERE created_at <= now() - interval '30 days';
 SELECT action, adapter, outcome, count(*) FROM direct_coin_events
 WHERE created_at > now() - interval '7 days' GROUP BY action, adapter, outcome;
 ```
