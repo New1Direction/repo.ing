@@ -143,8 +143,12 @@ Run only the separately reviewed main revision using the existing deployment mec
 
 ```sh
 git fetch -q origin
-git show origin/main:scripts/ops/deploy.sh | bash -s -- <reviewed-seven-character-main-sha> web worker
+git show origin/main:scripts/ops/deploy.sh | bash -s -- <reviewed-seven-character-main-sha> web
 ```
+
+This consumer release changes web only; no worker restart is needed. If an independently reviewed
+pending worker release is included, deploy web before worker. Inspect all pending migrations,
+especially `0076` and `0077`, rather than assuming the production journal is current.
 
 Do not substitute the candidate branch or claim pushing deploys Railway. See [PRODUCTION.md](PRODUCTION.md)
 and [BACKUPS.md](BACKUPS.md). No mainnet identities, approvals, release budgets or mainnet activation are
