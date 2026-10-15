@@ -279,7 +279,7 @@ test('listMarkets never waits on a hanging RPC: a stamped row comes back at once
   globalThis.fetch = () => new Promise(() => {})
   process.env.DATABASE_URL = 'postgres://stock-hang-test.invalid/db'
   process.env.SOLANA_RPC_URL = 'http://127.0.0.1:9/hang'
-  const solRow = { repoId: '1', mint: 'SolMint', pool: 'SolPool', indexedAt: new Date(), stars: '7', forks: '0', earned: '10', claimed: '0', volume24hLamports: '5' }
+  const solRow = { repoId: '1', mint: 'SolMint', pool: 'SolPool', indexedAt: new Date(), stars: '7', forks: '0', earned: '10', claimed: '0', platformCollected: '0', volume24hLamports: '5' }
   const stockRow = { ...solRow, repoId: stamped.repoId, mint: stamped.mint, pool: stamped.pool, volume24hLamports: '0', quoteAssetId: stamped.quoteAssetId, quoteMint: stamped.quoteMint }
   globalThis.__gitfunPool = { query: async sql => ({ rows: /from markets m join repositories r/.test(sql) ? [solRow, stockRow]
     : /stock_graduation_events/.test(sql) ? [] : [{ repoId: stamped.repoId, lastSqrtPrice: (SQRT * 2n).toString(), volume24h: '5' }] }) }

@@ -11,9 +11,9 @@ import { marketQuoteView } from '../src/quote-assets.mjs'
 // A stock-paired market's pages never say its trades pay the repo's builders in SOL (docs/STOCK_QUOTES.md, "Fee policy"):
 // every trade pays 1.75% in the stock, 0.30% to the launcher and 1.10% to permanent $REPOING / <stock> liquidity. Each
 // surface that said otherwise says that instead for a stock pair: the more-markets strip, the link-preview cards, the token
-// metadata, the trade result's and the launch kit's X posts, the launch kit itself and a declined pair's trust-panel tip. SOL
-// markets' output on those surfaces is pinned byte for byte in tests/stock-copy-sol-golden.test.mjs and
-// tests/hf-flag-off-ui.test.mjs; the token and shared-return pages are in tests/stock-pair-pages.test.mjs.
+// metadata, the trade result's and the launch kit's X posts, the launch kit itself and a declined pair's trust-panel tip.
+// SOL fee and claim behavior is covered by tests/stock-owner-claims.test.mjs;
+// the token and shared-return page boundaries are in tests/stock-pair-pages.test.mjs.
 const METAX = 'Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu', MINT = '3mg7sM6RFEBHiiFotFNfvteH1WdFcc9cujKuPaqZdfDz'
 const LINE = 'Every trade pays 1.75% in METAx: 0.30% to the launcher, 1.10% to permanent $REPOING / METAx liquidity.'
 const MIXED = 'SOL pairs pay builders in SOL. Stock pairs pay 0.30% to the launcher, 1.10% to $REPOING liquidity.'

@@ -438,7 +438,7 @@ wallet's launcher earnings in each stock. A wallet with no stock-pair market get
 - The share menu and the launch kit offer no README badge for a stock pair (the badge shows builder fees in SOL), and the
   launch kit no maintainer invitation.
 
-SOL markets read exactly as before (`tests/stock-copy-sol-golden.test.mjs`, `tests/hf-flag-off-ui.test.mjs`).
+SOL fee and owner-claim behavior is covered by `tests/stock-owner-claims.test.mjs` and `tests/stock-pair-pages.test.mjs`, without pinning whole-page wording snapshots.
 
 **Launcher earnings** (`src/stock-launcher-earnings.mjs`, raw units of the stock, per market and per launcher wallet):
 

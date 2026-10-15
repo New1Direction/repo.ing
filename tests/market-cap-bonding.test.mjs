@@ -61,6 +61,7 @@ test('list row stats read the last trade price and fresh verified progress only'
 test('listMarkets exposes only the derived numbers, never raw observation JSON', async () => {
   process.env.DATABASE_URL = 'postgres://mcap-test.invalid/db'
   globalThis.__gitfunPool = { query: async () => ({ rows: [{ repoId: '1', mint: 'm', indexedAt: new Date(), stars: '1', forks: '0', earned: '0', claimed: '0',
+    platformCollected: '0',
     volume24hLamports: '0', lastSqrtPrice: SQRT_1E_7, graduationStatus: 'VERIFIED', observation: observation({ age: 1000 }), graduationError: null, migrationEvidenceHash: null }] }) }
   const { listMarkets } = await import('../app/lib/server.mjs')
   const [market] = (await listMarkets()).markets

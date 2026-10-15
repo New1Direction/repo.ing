@@ -33,6 +33,7 @@ const row = (repoId, mint, stamp) => ({ repoId, mint, pool: `Pool${repoId}`, tok
   quoteMint: stamp ? METAX : null, owner: 'facebook', name: 'docusaurus', fullName: 'facebook/docusaurus', description: 'Easy to maintain open source documentation websites.',
   avatarUrl: null, source: 'github', stars: 60000, forks: 9000, updatedAt: null, githubCreatedAt: null, beneficiaryWallet: null, beneficiaryBoundAt: null,
   beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null, graduationStatus: null, observation: null,
+  platformCollected: '0',
   graduationError: null, migrationEvidenceHash: null })
 const MARKETS = [row(STOCK_ID, 'MintStockDocs', true), row(SOL_ID, 'MintSolHello', false)]
 // The stock ledgers' sums for the stock market: 0.003 METAx to the launcher, 0.011 METAx to the accumulator (raw).

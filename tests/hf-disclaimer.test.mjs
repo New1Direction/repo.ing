@@ -28,6 +28,7 @@ const ROW = { repoId: MODEL_ID, mint: MINT, pool: 'PoolModelGpt2', tokenName: 'g
   discoveryVersion: null, launcherWallet: 'LauncherWallet', verificationBonusLamports: null, owner: 'openai-community', name: 'gpt2', fullName: 'openai-community/gpt2',
   description: null, avatarUrl: null, source: 'huggingface', stars: 4194, forks: 0, updatedAt: null, githubCreatedAt: null, beneficiaryWallet: null,
   beneficiaryBoundAt: null, beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false, lastSqrtPrice: null,
+  platformCollected: '0',
   graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null }
 async function withModelDatabase(work) {
   const net = offlineFetch()

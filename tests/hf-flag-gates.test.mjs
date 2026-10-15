@@ -14,6 +14,7 @@ const ROW = { repoId: MODEL_ID, mint: MINT, pool: POOL, tokenName: 'gpt2', symbo
   launcherWallet: 'LauncherWallet', verificationBonusLamports: null, owner: 'openai-community', name: 'gpt2', fullName: 'openai-community/gpt2',
   description: 'Text generation · License: mit', avatarUrl: null, source: 'huggingface', stars: 0, forks: 0, updatedAt: null, githubCreatedAt: null,
   beneficiaryWallet: null, beneficiaryBoundAt: null, beneficiaryMethod: null, earned: '0', claimed: '0', volume24hLamports: '0', wasVerified: false,
+  platformCollected: '0',
   lastSqrtPrice: null, graduationStatus: null, observation: null, graduationError: null, migrationEvidenceHash: null }
 // A fresh, verified curve observation for this market (src/market-share.mjs graduationShare checks every field).
 const graduation = () => { const now = new Date().toISOString(); return { status: 'VERIFIED', reconciliation: JSON.stringify({ status: 'MATCH' }),
