@@ -135,9 +135,19 @@ test('migration 0049 keeps every existing row, refuses cross-range ids, and GitH
 
     await t.test('upgrading changes no existing row, the fee ledger included, and re-applying is a no-op', async () => {
       await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
+      const upgradedRelations = await columnsByRelation(pool)
+      const upgradedRows = await checksums(pool, upgradedRelations)
+      const applied = (await pool.query('select * from drizzle.__drizzle_migrations order by id')).rows
       await migrate(drizzle(pool), { migrationsFolder: 'drizzle' })
-      // 0049 and every later migration, in journal order: 0052 relaxes two of 0049's checks, which 0049 alone would add back.
-      for (const entry of journal.entries.slice(at)) {
+      assert.deepEqual(await columnsByRelation(pool), upgradedRelations)
+      assert.deepEqual(await checksums(pool, upgradedRelations), upgradedRows)
+      assert.deepEqual((await pool.query('select * from drizzle.__drizzle_migrations order by id')).rows, applied)
+      // Raw replay tests the model-source migrations this suite owns. 0052 must follow 0049
+      // because it relaxes two source checks. Unrelated one-shot migrations (e.g. the applied
+      // 0078 ledger) are retried through the real migrator above, never executed behind its journal.
+      const sourceEnd = journal.entries.findIndex(entry => entry.tag === '0052_model_builder_allocation')
+      assert.ok(sourceEnd > at)
+      for (const entry of journal.entries.slice(at, sourceEnd + 1)) {
         for (const statement of (await readFile(`drizzle/${entry.tag}.sql`, 'utf8')).split('--> statement-breakpoint')) await pool.query(statement)
       }
       assert.equal((await pool.query('select count(*)::int as n from drizzle.__drizzle_migrations')).rows[0].n, journal.entries.length)
