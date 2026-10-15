@@ -1,0 +1,82 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
+import { Connection, PublicKey } from '@solana/web3.js'
+import { defaultDirectPlan, previewDirectCoin, DEVNET_GENESIS, HOOK_AUTHORITY } from '../src/direct-coins.mjs'
+import { directCoinAdapter } from '../src/direct-coin-adapters.mjs'
+import { directRequestSchema } from '../src/direct-coin-drafts.mjs'
+
+test('lane/standard/quote/LP/recipe boundaries refuse unsupported plans without claiming simulation or execution', () => {
+  for (const adapter of ['raydium', 'meteora-dbc', 'meteora-damm', 'hooklab']) {
+    const plan = { ...defaultDirectPlan(adapter === 'hooklab' ? 'programmable' : 'standard'), adapter, name: 'Boundary Coin', symbol: 'BOUND' }
+    const client = directCoinAdapter(adapter)
+    assert.equal(client.preview(plan).compatible, true)
+    for (const patch of [{ network: 'mainnet-beta' }, { lane: plan.lane === 'standard' ? 'programmable' : 'standard' },
+      { standard: 'token-2022' }, { quote: 'usdc' }, { lpPolicy: 'burn' }, { lpPolicy: 'lock' }, { lpPolicy: 'creator' }, { recipe: 'lottery' }, { recipe: 'custom' }]) {
+      const preview = client.preview({ ...plan, ...patch })
+      assert.equal(preview.compatible, false, `${adapter}: ${JSON.stringify(patch)}`)
+      assert.ok(preview.refusals.length)
+      assert.equal(preview.canSubmit, false)
+      assert.equal(preview.canSign, false)
+      assert.equal(preview.quote, null)
+      assert.equal(preview.simulation.status, 'not-run')
+    }
+    assert.equal(client.preview({ ...plan, recipe: 'kit' }).compatible, adapter === 'hooklab')
+    assert.equal(client.preview({ ...plan, recipe: 'halfLife' }).compatible, adapter === 'hooklab')
+    assert.throws(() => client.buildTransaction(plan), /disabled/)
+  }
+  assert.throws(() => directCoinAdapter('constructor'), /Unknown adapter/)
+  assert.equal(defaultDirectPlan().adapter, 'raydium')
+  assert.match(previewDirectCoin(defaultDirectPlan('programmable')).venue.authority, /not SPL/)
+})
+
+test('strict requests reject secret/transaction/RPC injection, unknown actions and partial draft revisions', () => {
+  const base = { action: 'save', plan: defaultDirectPlan() }
+  assert.equal(directRequestSchema.safeParse(base).success, true)
+  for (const input of [{ ...base, secretKey: 'never accepted' }, { ...base, transaction: 'bytes' }, { ...base, action: 'send' },
+    { ...base, plan: { ...base.plan, rpcUrl: 'http://example.invalid' } }, { ...base, revision: 1 },
+    { ...base, id: '89130bd7-12a8-46cc-b604-ecc8585939ab' }, { ...base, plan: { ...base.plan, symbol: 'BAD<script>' } },
+    { action: 'inspect', plan: base.plan }, { action: 'inspect', plan: base.plan, confirmedNetwork: 'mainnet-beta' }]) {
+    assert.equal(directRequestSchema.safeParse(input).success, false)
+  }
+})
+
+test('Solana RPC adapter decodes program identities/authorities; missing programs and wrong genesis fail closed', async () => {
+  let genesis = DEVNET_GENESIS, missing = false
+  const loader = 'BPFLoaderUpgradeab1e11111111111111111111111'
+  const dataAddress = new PublicKey('3AWwgBXJfCT2D4jMYjYpbrGgxhLhcgVkreYzeQeF9mpM')
+  const program = Buffer.alloc(36); program.writeUInt32LE(2); dataAddress.toBuffer().copy(program, 4)
+  const data = Buffer.alloc(45); data.writeUInt32LE(3); data[12] = 1; new PublicKey(HOOK_AUTHORITY).toBuffer().copy(data, 13)
+  const account = (bytes, executable) => ({ data: [bytes.toString('base64'), 'base64'], executable, owner: loader, lamports: 1, rentEpoch: 0 })
+  const server = createServer(async (req, res) => {
+    let text = ''; for await (const chunk of req) text += chunk
+    const body = JSON.parse(text)
+    const result = body.method === 'getGenesisHash' ? genesis : body.method === 'getMultipleAccounts'
+      ? { context: { slot: 12345 }, value: body.params[0].map((_, i) => missing && i === 1 ? null : account(program, true)) }
+      : body.method === 'getAccountInfo' ? { context: { slot: 12346 }, value: account(data, false) } : null
+    res.setHeader('Content-Type', 'application/json')
+    res.end(JSON.stringify(result === null ? { jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'Only read methods allowed' } } : { jsonrpc: '2.0', id: body.id, result }))
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  try {
+    const connection = new Connection(`http://127.0.0.1:${server.address().port}`)
+    const adapter = directCoinAdapter('hooklab'), plan = defaultDirectPlan('programmable')
+    await assert.rejects(adapter.inspect(plan, { connection }), /confirmation/)
+    const options = { connection, confirmedNetwork: 'devnet' }
+    const read = await adapter.inspect(plan, options)
+    assert.equal(read.status, 'programs-present')
+    assert.equal(read.programs.length, 4)
+    assert.equal(read.programs[0].upgradeAuthority, HOOK_AUTHORITY)
+    assert.equal(read.programs[0].programData, dataAddress.toBase58())
+    assert.equal(read.slot, 12345)
+    assert.equal(read.canSubmit, false)
+    const recipe = await adapter.inspect({ ...plan, recipe: 'halfLife' }, options)
+    assert.ok(recipe.programs.some(p => p.name === 'halfLife'))
+    assert.ok(!recipe.programs.some(p => p.name === 'kit'))
+    missing = true
+    assert.equal((await adapter.inspect(plan, options)).status, 'missing-programs')
+    genesis = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
+    await assert.rejects(adapter.inspect(plan, options), /not Solana devnet/)
+    await assert.rejects(adapter.inspect({ ...plan, network: 'mainnet-beta' }, options), /Mainnet is not enabled/)
+  } finally { await new Promise(resolve => server.close(resolve)) }
+})

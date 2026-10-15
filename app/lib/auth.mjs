@@ -21,7 +21,7 @@ export const cookieOptions = { httpOnly: true, sameSite: 'lax', secure: process.
 // repo.ing AI credits handoff (dark; src/repo-inference-handoff.mjs), AI credit packs (dark; src/credits-packs.mjs), scheduled launches
 // and the guided launch (src/launch-guide.mjs).
 export const IDENTITY_SIGN_IN_PAGES = Object.freeze({ builders: '/builders', 'opt-out': '/opt-out', contributor: '/contributors/link', handoff: '/handoff', credits: '/credits', launches: '/launches/manage',
-  'launch-guide': '/launches/new' })
+  'launch-guide': '/launches/new', 'direct-coins': '/coins/new' })
 
 // Unlike the signed UI/state cookies, this credential cookie must be confidential.
 const sessionKey = () => {
