@@ -1,0 +1,125 @@
+{
+  "repository": "https://github.com/New1Direction/hook-lab",
+  "revision": "9b3473e001a9abc73bf644d4206e47abc95a815b",
+  "abiSourceCommit": "ee7234cb7a32781fecba5470f24f43233cf94167",
+  "manifestSha256": "3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403",
+  "sdkLockSha256": "224adb5f9e1050a0a50b84436283aa85fb262152ce81311842307348b4bc9f6d",
+  "esbuild": "0.25.12",
+  "target": "node22",
+  "externalWeb3": "1.98.4",
+  "dependencies": [
+    {
+      "package": "@anchor-lang/borsh@1.2.1",
+      "license": "Apache-2.0",
+      "licenses": {
+        "anchor-1.2.1.LICENSE": "66a06877935811daba7b7c33c4eedf0e6017616a4cc1bb5faa4dae72c13f638e"
+      }
+    },
+    {
+      "package": "@anchor-lang/core@1.2.1",
+      "license": "(MIT OR Apache-2.0)",
+      "licenses": {
+        "anchor-1.2.1.LICENSE": "66a06877935811daba7b7c33c4eedf0e6017616a4cc1bb5faa4dae72c13f638e"
+      }
+    },
+    {
+      "package": "@anchor-lang/errors@1.2.1",
+      "license": "Apache-2.0",
+      "licenses": {
+        "anchor-1.2.1.LICENSE": "66a06877935811daba7b7c33c4eedf0e6017616a4cc1bb5faa4dae72c13f638e"
+      }
+    },
+    {
+      "package": "@noble/hashes@1.8.0",
+      "license": "MIT",
+      "licenses": {
+        "LICENSE": "4f221aee6e072336700c408c68ab3b96a3fc09f6aebe6f48f1bd99e5ef13faec"
+      }
+    },
+    {
+      "package": "base-x@3.0.11",
+      "license": "MIT",
+      "licenses": {
+        "LICENSE.md": "a192bdfbed999ea06e52a3f5a85dd27dfed6ff3ad5a55050b345baba31afb0de"
+      }
+    },
+    {
+      "package": "bn.js@5.2.5",
+      "license": "MIT",
+      "licenses": {
+        "LICENSE": "445739f5b5eb63e5aeff5aeb0f35a45080a421615dce0d97f9939aeea498acdd"
+      }
+    },
+    {
+      "package": "bs58@4.0.1",
+      "license": "MIT",
+      "licenses": {
+        "bs58-4.0.1.LICENSE": "57efbd615689807b8341d557af0038fae58da7e2831f29f52d02902f657deb25",
+        "README.md": "7b20fe2d0de7ae612a5715fc45eabab7bf6743b8b77e0dc544c42b4daf2dd62a"
+      }
+    },
+    {
+      "package": "buffer-layout@1.2.2",
+      "license": "MIT",
+      "licenses": {
+        "LICENSE": "b045f14d68a6d261be7af212c53846b3b2d17917e3cb78f0f27042d14e070a03"
+      }
+    },
+    {
+      "package": "eventemitter3@4.0.7",
+      "license": "MIT",
+      "licenses": {
+        "LICENSE": "3aecc12b1cb28832b5f65ab64291de96568c3f236a74d646281b4491f7bcadbf"
+      }
+    },
+    {
+      "package": "pako@2.2.0",
+      "license": "(MIT AND Zlib)",
+      "licenses": {
+        "LICENSE": "a04665b3b2de56c66730c1f720f528175739e4104f79073614aa611da1e85539",
+        "lib/zlib/README": "20356aece8f36fda34645e97af3b163da0a88e253b78ffba298590d5b9121ebb"
+      }
+    },
+    {
+      "package": "safe-buffer@5.2.1",
+      "license": "MIT",
+      "licenses": {
+        "LICENSE": "c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac"
+      }
+    },
+    {
+      "package": "superstruct@0.15.5",
+      "license": "MIT",
+      "licenses": {
+        "License.md": "0f644bc01d85e4b1958bdfe5a851704bd886404c78188d4d6fba43dc8293bc91"
+      }
+    },
+    {
+      "package": "toml@4.2.0",
+      "license": "MIT",
+      "licenses": {
+        "LICENSE": "655fd92753bf55d35c30781173e8d6e6baaf9e1b6c8bb3d49ad742de1f9fb2f8"
+      }
+    }
+  ],
+  "files": {
+    "FORK.md": "6bd8f7d9bc5da2d102bfe259a0bb19db8aeb4320693c353f6ba535fc2510c30e",
+    "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "NOTICE": "a5a1dd861d3c67e75cf030b555527b7f7dc40420212a0c9162e02222cc429fff",
+    "THIRD_PARTY_NOTICES.md": "c79a9131e519c4b92b65dd8e6b4a5293f2cb1ee42e3abcc900c8bd588236f108",
+    "dist/index.mjs": "95ef4bf898b1f84a20111031028ef2722aec27388b8d214d27f542bd03c57a94",
+    "dist/index.mjs.LEGAL.txt": "f22b5342c07daf07ff02550d8c02385a7776ad162de558c65b76e2166cfc2973",
+    "idl/bordrless_bridge.json": "3cd2c95a14bfc0c2decd3bd0a6429044cbc7ca149f18e4c5c7c1d7d173b7732d",
+    "idl/bordrless_companion.json": "a0cbbcbf6955d333fe39b343f11278b3c667eaa31c3199ca7d117210d657e193",
+    "idl/bordrless_kit.json": "e6cd0ddb797e1b935e3f37b0b11d951cc7411d9c84345b2292357d910abcb810",
+    "idl/bordrless_launch.json": "b2bcc916dd7cdddcb24a7b3206957fe883975db18b3636f4dfb73aacb0d1b74a",
+    "idl/bordrless_swap.json": "000c0df40e27b8c44e5134c3c6aeea6e9bddb762a186f4ce3070534b3993f5e0",
+    "idl/bordrless_token.json": "93aaa54d2e0c22e444793ac84387c357d73b745d482becada32d7d6e23d2c506",
+    "idl/half_life.json": "1cb8d9f96acd9d9f9144f2cd230efdf8af90344ccf04dc98b91f9d9a31b49c93",
+    "idl/hook_timelock.json": "9da4225587504d1f7a36cc736bd9f03d075419410beb82dcbb6b0c1c258397c6",
+    "idl/hook_vault.json": "6518dc77db8cfe163a0bca461bb52bef57ab24ea07acacd969acbc579bfd98f4",
+    "idl/lottery_hook.json": "05002f5e6f124af6344cf5b1290fcb5b48fe35b775199b45e4a0f4c3ec21a48f",
+    "idl/tax_hook.json": "6e471544b434a80e5637ede5a04b1008c244a80137e76697bc06a9eabf88f3c6",
+    "integration/devnet.json": "3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403"
+  }
+}

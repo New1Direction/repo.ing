@@ -23,6 +23,7 @@ node_modules/
 artifacts/
 build/
 dist/
+!/vendor/hooklab-readonly/dist/
 coverage/
 .cache/
 .turbo/

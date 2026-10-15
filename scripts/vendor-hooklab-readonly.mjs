@@ -1,0 +1,101 @@
+// Rebuild only from the owner-approved, published Hook Lab revision. No chain access.
+import { build, version } from 'esbuild'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { readFile, writeFile, mkdir, readdir, copyFile } from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const revision = '9b3473e001a9abc73bf644d4206e47abc95a815b'
+const manifestHash = '3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403'
+const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
+const source = path.resolve(process.argv[2] || '')
+const output = path.join(root, 'vendor/hooklab-readonly')
+const sha = bytes => createHash('sha256').update(bytes).digest('hex')
+const git = (...args) => execFileSync('git', ['-C', source, ...args], { encoding: 'utf8' }).trim()
+if (!process.argv[2] || git('rev-parse', 'HEAD') !== revision || git('status', '--porcelain', '--untracked-files=no')) {
+  throw new Error(`Pass a clean Hook Lab checkout at ${revision}; first install its frozen SDK lockfile and run pnpm -C sdk build.`)
+}
+if (version !== '0.25.12') throw new Error('esbuild 0.25.12 is required.')
+const manifest = await readFile(path.join(source, 'sdk/packages/sdk/integration/devnet.json'))
+if (sha(manifest) !== manifestHash) throw new Error('Manifest checksum mismatch.')
+await mkdir(path.join(output, 'dist'), { recursive: true })
+const result = await build({
+  absWorkingDir: source,
+  stdin: { contents: `export { integrationCompatibility, integrationIdlRefusals, inspectDevnetIntegration } from './sdk/packages/sdk/src/integration.ts';
+export { integrationCapabilities, previewHookLabIntegration } from './sdk/packages/launcher/src/integration.ts';
+import { integrationManifest as upstreamManifest } from './sdk/packages/sdk/src/integration.ts';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+// Consumer integrity check stays inside the external Node package so bundlers cannot rewrite its asset URL.
+export function integrationManifest() {
+  const bytes = readFileSync(new URL('../integration/devnet.json', import.meta.url));
+  if (createHash('sha256').update(bytes).digest('hex') !== '${manifestHash}') throw new Error('Hook Lab manifest checksum mismatch.');
+  return upstreamManifest();
+}`, resolveDir: source, sourcefile: 'repoing-readonly-entry.ts' },
+  outfile: path.join(output, 'dist/index.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node22',
+  external: ['@solana/web3.js'], legalComments: 'external', metafile: true,
+  banner: { js: 'import {createRequire as __hooklabCreateRequire} from "node:module";const require=__hooklabCreateRequire(import.meta.url);' },
+})
+for (const directory of ['idl', 'integration']) {
+  await mkdir(path.join(output, directory), { recursive: true })
+  const names = directory === 'idl' ? (await readdir(path.join(source, 'sdk/packages/sdk/idl'))).filter(f => f.endsWith('.json')).sort() : ['devnet.json']
+  if (directory === 'idl' && names.length !== 11) throw new Error('Expected all eleven raw IDLs.')
+  for (const name of names) await copyFile(path.join(source, 'sdk/packages/sdk', directory, name), path.join(output, directory, name))
+}
+for (const name of ['LICENSE', 'NOTICE', 'FORK.md']) await copyFile(path.join(source, name), path.join(output, name))
+
+// Full licenses/notices for every bundled package, not just retained source comments.
+const packages = new Map()
+for (const input of Object.keys(result.metafile.inputs).sort()) {
+  if (!input.includes('node_modules/')) continue
+  let directory = path.dirname(path.resolve(source, input))
+  while (directory !== source && directory !== path.dirname(directory)) {
+    try {
+      const pkg = JSON.parse(await readFile(path.join(directory, 'package.json'), 'utf8'))
+      if (pkg.name && pkg.version) { packages.set(`${pkg.name}@${pkg.version}`, { directory, pkg }); break }
+    } catch (error) { if (error.code !== 'ENOENT') throw error }
+    directory = path.dirname(directory)
+  }
+}
+let notices = '# Bundled third-party licenses and notices\n\nGenerated from the pinned Hook Lab SDK lockfile. External @solana/web3.js is installed separately.\n'
+const dependencies = []
+for (const [id, { directory, pkg }] of [...packages].sort(([a], [b]) => a.localeCompare(b, 'en'))) {
+  const files = (await readdir(directory)).filter(f => /^(licen[cs]e|copying|notice|copyright)([.-]|$)/i.test(f)).sort()
+  if (id === 'pako@2.2.0') files.push('lib/zlib/README') // The root license covers MIT only, not its bundled zlib port.
+  // These npm tarballs omit LICENSE. Their npm gitHead values identify this exact source.
+  const anchorSource = ['@anchor-lang/core@1.2.1', '@anchor-lang/borsh@1.2.1', '@anchor-lang/errors@1.2.1'].includes(id)
+    ? 'https://github.com/otter-sec/anchor/blob/f1d20a94e8857d66e39810039aa5b5eee9ff733e/LICENSE' : null
+  if (!files.length && anchorSource) files.push('anchor-1.2.1.LICENSE')
+  if (id === 'bs58@4.0.1' && !files.length) files.push('bs58-4.0.1.LICENSE', 'README.md')
+  if (!files.length) throw new Error(`Missing complete license text for ${id}; inspect before redistributing.`)
+  notices += `\n## ${id}\n\nDeclared license: ${pkg.license}\n`
+  if (anchorSource) notices += `\nLicense source: ${anchorSource}\n`
+  if (id === 'bs58@4.0.1') notices += '\n4.0.1 declares MIT but omits its text. Full notice subsequently added by the project at https://github.com/cryptocoinjs/bs58/blob/ec21ace130d0c08cc317448952b679ec1b93f17d/LICENSE; original README credits retained below.\n'
+  const licenses = {}
+  for (const file of files) {
+    const supplemental = { 'anchor-1.2.1.LICENSE': '66a06877935811daba7b7c33c4eedf0e6017616a4cc1bb5faa4dae72c13f638e',
+      'bs58-4.0.1.LICENSE': '57efbd615689807b8341d557af0038fae58da7e2831f29f52d02902f657deb25' }
+    const bytes = await readFile(path.join(Object.hasOwn(supplemental, file) ? path.join(root, 'scripts/licenses') : directory, file))
+    if (Object.hasOwn(supplemental, file) && sha(bytes) !== supplemental[file]) throw new Error('Supplemental license checksum mismatch.')
+    notices += `\n### ${file}\n\n${bytes.toString('utf8')}\n`
+    licenses[file] = sha(bytes)
+  }
+  dependencies.push({ package: id, license: pkg.license, licenses })
+}
+await writeFile(path.join(output, 'THIRD_PARTY_NOTICES.md'), notices.trimEnd() + '\n')
+const files = {}
+for (const directory of ['', 'dist', 'idl', 'integration']) {
+  for (const entry of (await readdir(path.join(output, directory), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
+    if (!entry.isFile() || ['provenance.json', 'package.json'].includes(entry.name)) continue
+    const name = path.posix.join(directory, entry.name)
+    files[name] = sha(await readFile(path.join(output, name)))
+  }
+}
+await writeFile(path.join(output, 'provenance.json'), JSON.stringify({
+  repository: 'https://github.com/New1Direction/hook-lab', revision,
+  abiSourceCommit: JSON.parse(manifest).sourceCommit, manifestSha256: manifestHash,
+  sdkLockSha256: sha(await readFile(path.join(source, 'sdk/pnpm-lock.yaml'))),
+  esbuild: version, target: 'node22', externalWeb3: '1.98.4', dependencies, files,
+}, null, 2) + '\n')
+console.log(`Vendored six read-only exports from ${revision}; ${dependencies.length} bundled dependency notices.`)

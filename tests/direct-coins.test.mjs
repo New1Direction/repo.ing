@@ -60,23 +60,66 @@ test('Solana RPC adapter decodes program identities/authorities; missing program
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   try {
     const connection = new Connection(`http://127.0.0.1:${server.address().port}`)
-    const adapter = directCoinAdapter('hooklab'), plan = defaultDirectPlan('programmable')
+    const adapter = directCoinAdapter('raydium'), plan = defaultDirectPlan()
     await assert.rejects(adapter.inspect(plan, { connection }), /confirmation/)
     const options = { connection, confirmedNetwork: 'devnet' }
     const read = await adapter.inspect(plan, options)
     assert.equal(read.status, 'programs-present')
-    assert.equal(read.programs.length, 4)
+    assert.equal(read.programs.length, 2)
     assert.equal(read.programs[0].upgradeAuthority, HOOK_AUTHORITY)
     assert.equal(read.programs[0].programData, dataAddress.toBase58())
     assert.equal(read.slot, 12345)
     assert.equal(read.canSubmit, false)
-    const recipe = await adapter.inspect({ ...plan, recipe: 'halfLife' }, options)
-    assert.ok(recipe.programs.some(p => p.name === 'halfLife'))
-    assert.ok(!recipe.programs.some(p => p.name === 'kit'))
     missing = true
     assert.equal((await adapter.inspect(plan, options)).status, 'missing-programs')
     genesis = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
     await assert.rejects(adapter.inspect(plan, options), /not Solana devnet/)
     await assert.rejects(adapter.inspect({ ...plan, network: 'mainnet-beta' }, options), /Mainnet is not enabled/)
   } finally { await new Promise(resolve => server.close(resolve)) }
+})
+
+test('native adapter preserves upstream refusals, explicit parameters and unknown costs without enabling execution', async () => {
+  const adapter = directCoinAdapter('hooklab')
+  const plan = { ...defaultDirectPlan('programmable'), name: 'Native Coin', symbol: 'NATIVE' }
+  let genesis = DEVNET_GENESIS
+  const connection = {
+    getGenesisHash: async () => genesis,
+    getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 54321 }, value: keys.map(() => null) }),
+  }
+  const options = { confirmedNetwork: 'devnet', connection }
+  await assert.rejects(adapter.inspect(plan, { connection }), /confirmation/)
+  const missingParameters = await adapter.inspect(plan, options)
+  assert.equal(missingParameters.native.intent, null)
+  assert.match(missingParameters.native.intentRefusals[0], /no fee is inferred/)
+  for (const [recipe, expected] of [['none', 'plain'], ['kit', 'kit'], ['halfLife', 'halfLife']]) {
+    const result = await adapter.inspect({ ...plan, recipe, creatorFeeBps: 137, kitMaxWalletBps: 850 }, options)
+    assert.equal(result.status, 'refused')
+    assert.equal(result.slot, 54321)
+    assert.equal(result.programs.filter(p => p.status === 'matched' && p.expectedStatus === 'not-deployed').length, 4)
+    assert.equal(result.programs.filter(p => p.status === 'refused').length, 8)
+    assert.ok(result.native.inspection.refusals.some(r => r.code === 'DEPLOYMENT_MISMATCH'))
+    const intent = result.native.intent
+    assert.equal(intent.recipe, expected)
+    assert.equal(intent.creatorFeeBps, 137)
+    assert.equal(intent.rules.maxWalletBps, recipe === 'kit' ? 850 : 0)
+    assert.ok(intent.refusals.some(r => r.code === 'INSPECTION_INCOMPATIBLE'))
+    for (const key of ['exactWalletDebitLamports', 'rentLamports', 'networkFeeLamports', 'minOutputRaw', 'expiry']) assert.equal(intent[key], null)
+    assert.ok(intent.steps.length > 0 && intent.steps.every(s => s.messageBase64 === null))
+    assert.equal(result.canSubmit, false)
+    assert.equal(result.simulation.status, 'not-run')
+  }
+  const zero = await adapter.inspect({ ...plan, creatorFeeBps: 0 }, options)
+  assert.equal(zero.native.intent.creatorFeeBps, 0)
+  const unicode = await adapter.inspect({ ...plan, name: '界'.repeat(12), creatorFeeBps: 0 }, options)
+  assert.ok(unicode.native.intent.refusals.some(r => /UTF-8 bytes/.test(r.message)))
+  genesis = 'wrong-network'
+  const wrong = await adapter.inspect({ ...plan, creatorFeeBps: 0 }, options)
+  assert.equal(wrong.status, 'refused')
+  assert.equal(wrong.slot, null)
+  assert.ok(wrong.native.inspection.refusals.some(r => r.code === 'WRONG_GENESIS'))
+  connection.getGenesisHash = async () => { throw new Error('sensitive RPC URL must not escape') }
+  const unavailable = await adapter.inspect(plan, options)
+  assert.equal(unavailable.status, 'unavailable')
+  assert.ok(!JSON.stringify(unavailable).includes('sensitive RPC URL'))
+  assert.throws(() => adapter.buildTransaction(plan), /disabled/)
 })

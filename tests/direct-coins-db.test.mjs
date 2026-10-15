@@ -41,6 +41,12 @@ test('PostgreSQL: private versioned drafts, concurrent edits, atomic audit and r
     await store.save('501', { action: 'save', plan })
     assert.equal((await store.list('501')).drafts.length, 1)
     assert.equal((await pool.query('select count(*)::int as n from direct_coin_events')).rows[0].n, 1)
+    const native = { ...defaultDirectPlan('programmable'), name: 'Native', symbol: 'NATIVE', recipe: 'kit', creatorFeeBps: 137, kitMaxWalletBps: 850 }
+    await store.save('502', { action: 'save', plan: native })
+    const nativeSaved = await store.list('502')
+    assert.deepEqual(nativeSaved.drafts[0].plan, native)
+    assert.equal(nativeSaved.events[0].adapter, 'hooklab')
+    assert.equal(nativeSaved.events[0].outcome, 'saved')
   } finally { await pool.end() }
 })
 
