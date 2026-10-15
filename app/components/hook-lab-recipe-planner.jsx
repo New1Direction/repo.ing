@@ -145,13 +145,14 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
       </details>
     </section><aside className="coin-review">
       <h2>Quote & simulate</h2>
-      <p className="coin-note">Read-only inspection is available. A launch quote and transaction simulation are not: the adopted arithmetic model covers hypothetical swaps only, not launch fees, nested pool fees, rent or bridge funding.</p>
-      <dl><div><dt>Network</dt><dd>Solana devnet only</dd></div><div><dt>Quote asset</dt><dd>Native bridged SOL</dd></div><div><dt>LP custody</dt><dd>Launch PDA · permanently held</dd></div><div><dt>Total wallet debit</dt><dd>Unknown · not zero</dd></div><div><dt>Enforceable fee cap</dt><dd>Unavailable</dd></div></dl>
+      <p className="coin-note">Read-only fresh guarded program inspection is available. Historical HLTEST acceptance is not a quote for this draft. Public transaction construction, simulation and signing remain disabled.</p>
+      <dl><div><dt>Network</dt><dd>Solana devnet only</dd></div><div><dt>Quote asset</dt><dd>Native bridged SOL · no deposit</dd></div><div><dt>LP at curve creation</dt><dd>Zero supply · empty holding owned by launch PDA</dd></div><div><dt>This draft’s total debit</dt><dd>Unknown · not zero</dd></div><div><dt>This draft’s reviewed cap</dt><dd>Unavailable</dd></div></dl>
       <p className="coin-note">Protocol fees and the protocol-wide sniper fee still apply. Virtual reserves are not deposited SOL. Program upgrade/admin authority remains a custody risk.</p>
       <label className="coin-confirm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)}/><span>I confirm devnet for public read-only inspection. No spending, simulation or launch is authorized.</span></label>
       <button className="button primary" disabled={!ready || busy || !confirmed} onClick={() => perform('inspect')}>Inspect complete recipe on devnet</button>
       <button className="button" disabled>Quote / simulate — unavailable</button><button className="button" disabled>Review & sign — unavailable</button>
-      <p className="coin-note">Verification not started: no transaction submitted. All six gates remain: custody/recovery, exact debit caps, immutable simulated bytes, expiry, durable finality journal, and fresh hook-aware quotes. Native guarded V2 and signed acceptance are required; there is no legacy execution fallback.</p>
+      <p className="coin-note">This draft has no submitted transaction. Public wallet execution remains disabled; there is no legacy execution fallback.
+        An isolated owner-authorized plain HLTEST has finalized on fresh guarded devnet programs. <a href="/coins/hltest">Verify the retained HLTEST receipt and balances →</a></p>
       {observation && <section className="coin-observation"><h3>Read-only observation · slot {observation.inspection.observedSlot ?? 'unavailable'}</h3>
         <p>{observation.checkedAt} · not launch readiness</p>
         <ul>{observation.intent.refusals.map((r, i) => <li key={i}>{r.code}: {r.message}</li>)}</ul>

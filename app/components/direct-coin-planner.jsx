@@ -151,7 +151,7 @@ export function DirectCoinPlanner({ initialLane }) {
         {Object.entries(venue.programs).map(([name, address]) => <p key={name}>{name}<code>{address}</code></p>)}
         <p>{venue.sdk}</p>{plan.adapter === 'hooklab' && <>
           <p><a href={`https://github.com/New1Direction/hook-lab/commit/${HOOK_LAB_COMMIT}`} target="_blank" rel="noreferrer">ABI / deployment baseline ↗</a></p>
-          <p><a href={`https://github.com/New1Direction/hook-lab/commit/${HOOK_LAB_INTEGRATION_COMMIT}`} target="_blank" rel="noreferrer">Integration delivery revision ↗</a></p>
+          <p>Frozen fresh source revision (publication pending)<code>{HOOK_LAB_INTEGRATION_COMMIT}</code></p>
           <p>Manifest SHA-256<code>{HOOK_LAB_MANIFEST_SHA256}</code></p>
         </>}
       </details>

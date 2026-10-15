@@ -53,6 +53,7 @@ artifacts/
 build/
 dist/
 !/vendor/hooklab-readonly/dist/
+!/vendor/hooklab-guarded-candidate/dist/
 coverage/
 .cache/
 .turbo/

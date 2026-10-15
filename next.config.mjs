@@ -17,8 +17,12 @@ const securityHeaders = [
 const nextConfig = {
   poweredByHeader: false,
   // Native read-only SDK uses createRequire/new URL for exact-byte IDLs and manifest.
-  serverExternalPackages: ['@repo-ing/hooklab-readonly'],
-  outputFileTracingIncludes: { '/api/direct-coins': ['./node_modules/@repo-ing/hooklab-readonly/**/*'] },
+  serverExternalPackages: ['@repo-ing/hooklab-readonly', '@repo-ing/hooklab-guarded-candidate'],
+  outputFileTracingIncludes: {
+    '/api/direct-coins': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
+    '/api/hook-lab': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
+    '/api/hook-lab/acceptance': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
+  },
   // app/(site) and app/(ja) are separate root layouts (for <html lang>), so unmatched URLs need app/global-not-found.jsx.
   experimental: { globalNotFound: true },
   async headers() {

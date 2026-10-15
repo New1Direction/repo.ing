@@ -1,4 +1,5 @@
-// Rebuild only from the owner-approved, published Hook Lab revision. No chain access.
+// Rebuild pinned Hook Lab packages. Optional fresh-candidate mode is isolated and
+// undeployed: it must never replace the active read-only package. No chain access.
 import { build, version } from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -6,23 +7,46 @@ import { readFile, writeFile, mkdir, readdir, copyFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const revision = '9b3473e001a9abc73bf644d4206e47abc95a815b'
-const manifestHash = '3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403'
+const fresh = process.argv[3] === 'fresh-candidate'
+if (process.argv[3] && !fresh) throw new Error('Unknown vendoring mode.')
+const revision = fresh ? 'f3c57ccc15f327a65f447f51b6f4b61833de78b7' : '9b3473e001a9abc73bf644d4206e47abc95a815b'
+const manifestHash = fresh ? '1a0ee482d83587f80af790729733e662ce39096e078b5a18c4e5c7514d7682d4' : '3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403'
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const source = path.resolve(process.argv[2] || '')
-const output = path.join(root, 'vendor/hooklab-readonly')
+const output = path.join(root, fresh ? 'vendor/hooklab-guarded-candidate' : 'vendor/hooklab-readonly')
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 const git = (...args) => execFileSync('git', ['-C', source, ...args], { encoding: 'utf8' }).trim()
 if (!process.argv[2] || git('rev-parse', 'HEAD') !== revision || git('status', '--porcelain', '--untracked-files=no')) {
   throw new Error(`Pass a clean Hook Lab checkout at ${revision}; first install its frozen SDK lockfile and run pnpm -C sdk build.`)
 }
 if (version !== '0.25.12') throw new Error('esbuild 0.25.12 is required.')
-const manifest = await readFile(path.join(source, 'sdk/packages/sdk/integration/devnet.json'))
+const manifestPath = fresh ? path.join(source, '../candidate/candidate-manifest.json') : path.join(source, 'sdk/packages/sdk/integration/devnet.json')
+const manifest = await readFile(manifestPath)
 if (sha(manifest) !== manifestHash) throw new Error('Manifest checksum mismatch.')
+const idlDirectories = fresh ? ['idl', 'idl/guarded-v2', 'idl/fresh-devnet'] : ['idl']
+const idlHashes = {}
+for (const directory of idlDirectories) {
+  for (const name of (await readdir(path.join(source, 'sdk/packages/sdk', directory))).filter(f => f.endsWith('.json')).sort()) {
+    idlHashes[path.posix.join(directory, name)] = sha(await readFile(path.join(source, 'sdk/packages/sdk', directory, name)))
+  }
+}
 await mkdir(path.join(output, 'dist'), { recursive: true })
 const result = await build({
   absWorkingDir: source,
-  stdin: { contents: `export { integrationCompatibility, integrationIdlRefusals, inspectDevnetIntegration } from './sdk/packages/sdk/src/integration.ts';
+  stdin: { contents: fresh ? `
+export { FRESH_DEVNET, freshPlainLaunch, freshLaunchAddresses, freshRentInventory } from './sdk/packages/sdk/src/fresh-devnet.ts';
+export { launchEconomicsHash, poolEconomicsHash, launchV2Budget } from './sdk/packages/sdk/src/guarded.ts';
+export { decodeLaunchConfig, decodeSwapConfig, decodeLaunch, decodePool, decodeMint, decodeHolding, NO_LAUNCH_RULES } from './sdk/packages/sdk/src/accounts.ts';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+export function freshCandidateManifest() {
+  const expected = ${JSON.stringify({ ...idlHashes, 'integration/candidate.json': manifestHash })};
+  for (const [file, hash] of Object.entries(expected)) {
+    if (createHash('sha256').update(readFileSync(new URL('../' + file, import.meta.url))).digest('hex') !== hash) throw new Error('Fresh candidate asset checksum mismatch: ' + file);
+  }
+  return JSON.parse(readFileSync(new URL('../integration/candidate.json', import.meta.url), 'utf8'));
+}
+` : `export { integrationCompatibility, integrationIdlRefusals, inspectDevnetIntegration } from './sdk/packages/sdk/src/integration.ts';
 export { integrationCapabilities, previewHookLabIntegration } from './sdk/packages/launcher/src/integration.ts';
 import { integrationManifest as upstreamManifest } from './sdk/packages/sdk/src/integration.ts';
 import { readFileSync } from 'node:fs';
@@ -37,11 +61,11 @@ export function integrationManifest() {
   external: ['@solana/web3.js'], legalComments: 'external', metafile: true,
   banner: { js: 'import {createRequire as __hooklabCreateRequire} from "node:module";const require=__hooklabCreateRequire(import.meta.url);' },
 })
-for (const directory of ['idl', 'integration']) {
+for (const directory of [...idlDirectories, 'integration']) {
   await mkdir(path.join(output, directory), { recursive: true })
-  const names = directory === 'idl' ? (await readdir(path.join(source, 'sdk/packages/sdk/idl'))).filter(f => f.endsWith('.json')).sort() : ['devnet.json']
+  const names = directory.startsWith('idl') ? (await readdir(path.join(source, 'sdk/packages/sdk', directory))).filter(f => f.endsWith('.json')).sort() : [fresh ? 'candidate.json' : 'devnet.json']
   if (directory === 'idl' && names.length !== 11) throw new Error('Expected all eleven raw IDLs.')
-  for (const name of names) await copyFile(path.join(source, 'sdk/packages/sdk', directory, name), path.join(output, directory, name))
+  for (const name of names) await copyFile(directory === 'integration' ? manifestPath : path.join(source, 'sdk/packages/sdk', directory, name), path.join(output, directory, name))
 }
 for (const name of ['LICENSE', 'NOTICE', 'FORK.md']) await copyFile(path.join(source, name), path.join(output, name))
 
@@ -85,7 +109,7 @@ for (const [id, { directory, pkg }] of [...packages].sort(([a], [b]) => a.locale
 }
 await writeFile(path.join(output, 'THIRD_PARTY_NOTICES.md'), notices.trimEnd() + '\n')
 const files = {}
-for (const directory of ['', 'dist', 'idl', 'integration']) {
+for (const directory of ['', 'dist', ...idlDirectories, 'integration']) {
   for (const entry of (await readdir(path.join(output, directory), { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
     if (!entry.isFile() || ['provenance.json', 'package.json'].includes(entry.name)) continue
     const name = path.posix.join(directory, entry.name)
@@ -94,8 +118,8 @@ for (const directory of ['', 'dist', 'idl', 'integration']) {
 }
 await writeFile(path.join(output, 'provenance.json'), JSON.stringify({
   repository: 'https://github.com/New1Direction/hook-lab', revision,
-  abiSourceCommit: JSON.parse(manifest).sourceCommit, manifestSha256: manifestHash,
+  abiSourceCommit: fresh ? revision : JSON.parse(manifest).sourceCommit, manifestSha256: manifestHash,
   sdkLockSha256: sha(await readFile(path.join(source, 'sdk/pnpm-lock.yaml'))),
   esbuild: version, target: 'node22', externalWeb3: '1.98.4', dependencies, files,
 }, null, 2) + '\n')
-console.log(`Vendored six read-only exports from ${revision}; ${dependencies.length} bundled dependency notices.`)
+console.log(`Vendored ${fresh ? 'isolated guarded candidate' : 'six read-only exports'} from ${revision}; ${dependencies.length} bundled dependency notices.`)

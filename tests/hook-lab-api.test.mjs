@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Connection } from '@solana/web3.js'
 import { GET, POST } from '../app/api/hook-lab/route.js'
+import { GET as recoverAcceptance } from '../app/api/hook-lab/acceptance/route.js'
 import { createHookLabRecipe, serializeHookLabRecipe } from '../src/hook-lab-recipe.mjs'
 import { hookLabRecipeRefusals } from '../src/hook-lab-preflight.mjs'
 import { recipeCases } from './fixtures/hook-lab-recipes.mjs'
@@ -26,11 +27,11 @@ test('whole recipes reach the pinned parser; ignored extensions persist but neve
     assert.equal(observation.canBuild, false); assert.equal(observation.canSimulate, false)
     assert.equal(observation.canSign, false); assert.equal(observation.canSubmit, false)
     assert.equal(observation.bindingContext, null)
-    assert.ok(observation.intent.refusals.some(r => r.code === 'WRONG_GENESIS'))
+    assert.ok(observation.inspection.refusals.some(r => r.subject === 'network'))
     assert.ok(observation.intent.refusals.some(r => r.code === 'PLAIN_ONLY_BETA'))
     assert.deepEqual(observation.intent.steps, [])
-    assert.equal(observation.intent.rules.burnBuyBps, raw.blocks.find(b => b.type === 'burn')?.buy_bps ?? 0)
-    assert.equal(observation.intent.rules.burnSellBps, raw.blocks.find(b => b.type === 'burn')?.sell_bps ?? 0)
+    assert.equal(observation.intent.rules, undefined) // unsupported rules are not normalized into an executable intent
+    assert.deepEqual(envelope.recipe, raw)
     assert.ok(observation.intent.steps.every(s => s.messageBase64 === null))
     assert.equal((await POST(request({ ...body, confirmedNetwork: 'mainnet-beta' }))).status, 400)
   }
@@ -49,4 +50,16 @@ test('whole recipes reach the pinned parser; ignored extensions persist but neve
   assert.equal((await POST(request({ ...body, transaction: 'not-accepted' }))).status, 400)
   assert.equal((await POST(request({ ...body, envelopeText: body.envelopeText.replace('"buy_bps":35', '"buy_bps":0,"buy_bps":35') }))).status, 400)
   assert.equal((await POST(request({ action: 'save', id: 'fd54a54b-a976-4de4-9a49-f28a059f3a27', revision: 0, envelopeText: body.envelopeText }))).status, 401)
+})
+
+test('public acceptance recovery requires devnet and never accepts replacement identities or echoes RPC errors', async t => {
+  t.mock.method(Connection.prototype, 'getGenesisHash', async () => { throw new Error('private-rpc-credential') })
+  const request = query => new Request(`https://repo.ing/api/hook-lab/acceptance${query}`)
+  for (const query of ['', '?confirmedNetwork=mainnet-beta', '?confirmedNetwork=devnet&signature=replacement',
+    '?confirmedNetwork=devnet&confirmedNetwork=devnet', '?confirmedNetwork=devnet&rpcUrl=https://example.invalid']) {
+    assert.equal((await recoverAcceptance(request(query))).status, 400)
+  }
+  const response = await recoverAcceptance(request('?confirmedNetwork=devnet'))
+  assert.equal(response.status, 503)
+  assert.match((await response.json()).error, /Preserve the same mint and signature/)
 })

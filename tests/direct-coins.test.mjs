@@ -22,8 +22,8 @@ test('lane/standard/quote/LP/recipe boundaries refuse unsupported plans without 
       assert.equal(preview.quote, null)
       assert.equal(preview.simulation.status, 'not-run')
     }
-    assert.equal(client.preview({ ...plan, recipe: 'kit' }).compatible, adapter === 'hooklab')
-    assert.equal(client.preview({ ...plan, recipe: 'halfLife' }).compatible, adapter === 'hooklab')
+    assert.equal(client.preview({ ...plan, recipe: 'kit' }).compatible, false)
+    assert.equal(client.preview({ ...plan, recipe: 'halfLife' }).compatible, false)
     assert.throws(() => client.buildTransaction(plan), /disabled/)
   }
   assert.throws(() => directCoinAdapter('constructor'), /Unknown adapter/)
@@ -79,45 +79,39 @@ test('Solana RPC adapter decodes program identities/authorities; missing program
   } finally { await new Promise(resolve => server.close(resolve)) }
 })
 
-test('native adapter preserves upstream refusals, explicit parameters and unknown costs without enabling execution', async () => {
+test('fresh native adapter refuses legacy recipes, missing deployments and unknown costs without enabling execution', async () => {
   const adapter = directCoinAdapter('hooklab')
   const plan = { ...defaultDirectPlan('programmable'), name: 'Native Coin', symbol: 'NATIVE' }
   let genesis = DEVNET_GENESIS
   const connection = {
     getGenesisHash: async () => genesis,
-    getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 54321 }, value: keys.map(() => null) }),
+    getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 511377600 }, value: keys.map(() => null) }),
   }
   const options = { confirmedNetwork: 'devnet', connection }
   await assert.rejects(adapter.inspect(plan, { connection }), /confirmation/)
   const missingParameters = await adapter.inspect(plan, options)
   assert.equal(missingParameters.native.intent, null)
   assert.match(missingParameters.native.intentRefusals[0], /no fee is inferred/)
-  for (const [recipe, expected] of [['none', 'plain'], ['kit', 'kit'], ['halfLife', 'halfLife']]) {
-    const result = await adapter.inspect({ ...plan, recipe, creatorFeeBps: 137, kitMaxWalletBps: 850 }, options)
-    assert.equal(result.status, 'refused')
-    assert.equal(result.slot, 54321)
-    assert.equal(result.programs.filter(p => p.status === 'matched' && p.expectedStatus === 'not-deployed').length, 4)
-    assert.equal(result.programs.filter(p => p.status === 'refused').length, 8)
-    assert.ok(result.native.inspection.refusals.some(r => r.code === 'DEPLOYMENT_MISMATCH'))
-    const intent = result.native.intent
-    assert.equal(intent.recipe, expected)
-    assert.equal(intent.creatorFeeBps, 137)
-    assert.equal(intent.rules.maxWalletBps, recipe === 'kit' ? 850 : 0)
-    assert.ok(intent.refusals.some(r => r.code === 'INSPECTION_INCOMPATIBLE'))
-    for (const key of ['exactWalletDebitLamports', 'rentLamports', 'networkFeeLamports', 'minOutputRaw', 'expiry']) assert.equal(intent[key], null)
-    assert.ok(intent.steps.length > 0 && intent.steps.every(s => s.messageBase64 === null))
-    assert.equal(result.canSubmit, false)
-    assert.equal(result.simulation.status, 'not-run')
-  }
+  for (const recipe of ['kit', 'halfLife']) await assert.rejects(adapter.inspect({ ...plan, recipe, creatorFeeBps: 0 }, options), /Only plain/)
+  await assert.rejects(adapter.inspect({ ...plan, creatorFeeBps: 137 }, options), /zero creator fee/)
   const zero = await adapter.inspect({ ...plan, creatorFeeBps: 0 }, options)
-  assert.equal(zero.native.intent.creatorFeeBps, 0)
+  assert.equal(zero.status, 'refused')
+  assert.equal(zero.slot, 511377600)
+  assert.ok(zero.native.inspection.refusals.some(r => r.subject === 'swap'))
+  assert.ok(zero.native.inspection.refusals.some(r => r.subject === 'launch'))
+  assert.equal(zero.native.intent.recipe, 'plain')
+  assert.ok(zero.native.intent.refusals.some(r => r.code === 'INSPECTION_INCOMPATIBLE'))
+  for (const key of ['exactWalletDebitLamports', 'rentLamports', 'networkFeeLamports', 'minOutputRaw', 'expiry']) assert.equal(zero.native.intent[key], null)
+  assert.deepEqual(zero.native.intent.steps, [])
+  assert.equal(zero.canSubmit, false)
+  assert.equal(zero.simulation.status, 'not-run')
   const unicode = await adapter.inspect({ ...plan, name: '界'.repeat(12), creatorFeeBps: 0 }, options)
   assert.ok(unicode.native.intent.refusals.some(r => /UTF-8 bytes/.test(r.message)))
   genesis = 'wrong-network'
   const wrong = await adapter.inspect({ ...plan, creatorFeeBps: 0 }, options)
   assert.equal(wrong.status, 'refused')
   assert.equal(wrong.slot, null)
-  assert.ok(wrong.native.inspection.refusals.some(r => r.code === 'WRONG_GENESIS'))
+  assert.ok(wrong.native.inspection.refusals.some(r => r.subject === 'network'))
   connection.getGenesisHash = async () => { throw new Error('sensitive RPC URL must not escape') }
   const unavailable = await adapter.inspect(plan, options)
   assert.equal(unavailable.status, 'unavailable')
@@ -173,7 +167,7 @@ test('public inspection needs neither GitHub nor a database, but consent, origin
     assert.equal(body.audit, 'not-requested')
     assert.equal(body.observation.status, 'refused')
     assert.equal(body.observation.canSubmit, false)
-    assert.ok(body.observation.native.inspection.refusals.some(r => r.code === 'WRONG_GENESIS'))
+    assert.ok(body.observation.native.inspection.refusals.some(r => r.subject === 'network'))
     assert.equal(reads, 1)
     for (let i = 0; i < 3; i++) assert.equal((await POST(request({ ...input, plan: { ...plan, network: 'mainnet-beta' } }))).status, 422)
     assert.equal((await POST(request(input))).status, 429)
