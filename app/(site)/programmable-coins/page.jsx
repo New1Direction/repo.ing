@@ -70,11 +70,11 @@ export default function ProgrammableCoinsPage() {
       </section>
 
       <section id="early-access" className={styles.access} aria-labelledby="access-title">
-        <div><p className={styles.eyebrow}>EARLY ACCESS / PLANNING ONLY</p><h2 id="access-title">Bring an idea.<br/>Leave with a draft.</h2><p>Explore the existing preview now. No deposit, wallet signature, or purchase is required.</p><Link className="button primary" href="/coins/new">Open coin planner <ArrowRight size={18} aria-hidden="true"/></Link></div>
+        <div><p className={styles.eyebrow}>EARLY ACCESS / PLANNING ONLY</p><h2 id="access-title">Bring an idea.<br/>Leave with a draft.</h2><p>Explore the existing preview now. No deposit, wallet signature, or purchase is required.</p><Link className="button primary" href="/coins/new?lane=programmable">Create a Programmable Coin draft <ArrowRight size={18} aria-hidden="true"/></Link></div>
         <ol>
-          <li><strong>Choose Programmable Coin.</strong><p>The planner opens with Standard selected on a fresh device. Choose Programmable, name your coin, and select a supported recipe.</p></li>
+          <li><strong>Configure your Programmable Coin.</strong><p>This link opens the Programmable lane and resumes its device draft. Name your coin and select a supported recipe. Connecting your wallet shares an address only; signing remains disabled.</p></li>
           <li><strong>Review the terms.</strong><p>Read compatibility, fees, custody, and launch blockers. The device draft is saved locally; avoid confidential content.</p></li>
-          <li><strong>Optionally keep an account draft.</strong><p>Use the planner’s GitHub sign-in for account drafts and devnet checks. Account drafts and audit records expire after 30 days.</p></li>
+          <li><strong>Optionally keep an account draft.</strong><p>GitHub is optional for account backup and provenance, not required to configure or inspect devnet. Account drafts and audit records expire after 30 days.</p></li>
         </ol>
         <p className={styles.accessNote}><Timer size={18} aria-hidden="true"/><span>This is access to planning, not a beta admission or launch reservation. GitHub identifies draft ownership only—not wallet authority, access approval, or endorsement. No production launch date is promised.</span></p>
       </section>

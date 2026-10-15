@@ -1,8 +1,9 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { defaultDirectPlan, directPlanSchema, DIRECT_VENUES, DEVNET_GENESIS, HOOK_LAB_COMMIT, HOOK_LAB_INTEGRATION_COMMIT, HOOK_LAB_MANIFEST_SHA256, previewDirectCoin } from '../../src/direct-coins.mjs'
+import { useWallet } from './wallet'
+import { loadDirectDraft, saveDirectDraft } from '../lib/direct-coin-draft.mjs'
 
-const storageKey = 'repoing.direct-coin.v1'
 const docs = 'https://github.com/new1direction/repo.ing/blob/main/docs/DIRECT_COINS.md'
 async function api(body) {
   const response = await fetch('/api/direct-coins', body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' })
@@ -11,8 +12,11 @@ async function api(body) {
   return data
 }
 
-export function DirectCoinPlanner() {
-  const [plan, setPlan] = useState(defaultDirectPlan), [loaded, setLoaded] = useState(false)
+export function DirectCoinPlanner({ initialLane }) {
+  const { wallet, connect, changeWallet } = useWallet()
+  const generation = useRef(0)
+  const [plan, setPlan] = useState(() => defaultDirectPlan(initialLane)), [loaded, setLoaded] = useState(false)
+  const [storageReady, setStorageReady] = useState(false)
   const [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false)
   const [message, setMessage] = useState(''), [error, setError] = useState(''), [localError, setLocalError] = useState('')
   const [saved, setSaved] = useState(null), [listing, setListing] = useState({ signedIn: false, drafts: [], events: [] })
@@ -23,46 +27,74 @@ export function DirectCoinPlanner() {
   const refresh = async () => { const data = await api(); setListing(data); return data }
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(storageKey)
-      if (raw) { const result = directPlanSchema.safeParse(JSON.parse(raw)); if (result.success) setPlan(result.data) }
-    } catch { setLocalError('Device storage is unavailable or the saved draft is invalid.') }
+      setPlan(loadDirectDraft(localStorage, initialLane)); setStorageReady(true)
+    } catch { setLocalError('Device storage is unavailable or the saved draft cannot be read. It has not been overwritten. Reset only if you want to replace it.') }
     setLoaded(true)
     refresh().catch(e => setError(e.message))
   }, [])
   useEffect(() => {
-    if (!loaded || !parsed.success) return
-    try { localStorage.setItem(storageKey, JSON.stringify(parsed.data)); setLocalError('') }
+    generation.current++
+    setObservation(null); setConfirmed(false); setMessage('')
+  }, [wallet])
+  useEffect(() => {
+    if (!loaded || !storageReady || !parsed.success) return
+    try { saveDirectDraft(localStorage, parsed.data); setLocalError('') }
     catch { setLocalError('Device autosave failed. Keep this page open or save to your account.') }
-  }, [plan, loaded])
-  function change(patch) { setPlan(p => ({ ...p, ...patch })); setObservation(null); setConfirmed(false); setMessage(''); setError('') }
-  function lane(value) { change({ ...defaultDirectPlan(value), name: plan.name, symbol: plan.symbol }) }
+  }, [plan, loaded, storageReady])
+  function change(patch) { generation.current++; setPlan(p => ({ ...p, ...patch })); setObservation(null); setConfirmed(false); setMessage(''); setError('') }
+  function lane(value) {
+    try {
+      if (!storageReady) throw new Error('Device storage is not ready')
+      saveDirectDraft(localStorage, plan)
+      change(loadDirectDraft(localStorage, value)); setSaved(null)
+    } catch { setLocalError('Cannot switch safely while device storage or this draft is invalid. Your current draft is unchanged.') }
+  }
   async function perform(action) {
+    const requestGeneration = generation.current
     setBusy(true); setError(''); setMessage('')
     try {
       const result = await api({ action, plan, ...(action === 'inspect' ? { confirmedNetwork: confirmed ? 'devnet' : null }
         : saved ? { id: saved.id, revision: saved.revision } : {}) })
+      if (requestGeneration !== generation.current) return
       if (result.draft) { setSaved(result.draft); setMessage(`Saved to your account, revision ${result.draft.revision}.`) }
-      if (result.observation) { setObservation(result.observation); setMessage('Devnet read completed. This is not a transaction simulation or launch approval.') }
-      await refresh()
-    } catch (e) { setError(e.message) } finally { setBusy(false) }
+      if (result.observation) { setObservation(result.observation); setMessage(`Devnet read completed. Not a simulation or launch approval.${result.audit === 'unavailable' ? ' Optional account audit could not be saved.' : ''}`) }
+      if (action === 'save') await refresh()
+    } catch (e) { if (requestGeneration === generation.current) setError(e.message) } finally { setBusy(false) }
   }
   function resume(draft) {
     const result = directPlanSchema.safeParse(draft.plan)
     if (!result.success) { setError('This saved plan cannot be read by this version.'); return }
+    generation.current++
     setPlan(result.data); setSaved(draft); setObservation(null); setConfirmed(false); setError(''); setMessage(`Resumed revision ${draft.revision}.`)
   }
   function reset() {
-    setPlan(defaultDirectPlan()); setSaved(null); setObservation(null); setConfirmed(false); setError(''); setMessage('Started an empty device draft. Account drafts are unchanged.')
+    generation.current++
+    setPlan(defaultDirectPlan(plan.lane)); setStorageReady(true); setSaved(null); setObservation(null); setConfirmed(false); setError(''); setMessage('Started an empty draft in this lane. Other lane and account drafts are unchanged.')
   }
   return <>
-    <fieldset className="coin-lanes" disabled={busy}><legend className="sr-only">Choose a coin lane</legend>
+    <section className="coin-wallet" aria-labelledby="coin-wallet-title">
+      <div><h2 id="coin-wallet-title">Your wallet is the launch authority</h2>
+        <p>Configure and keep a device draft without GitHub or a wallet. A future launch must be reviewed and signed by your connected wallet, never authorized by GitHub.</p>
+        {wallet ? <><strong>Connected address · no signature requested</strong><code>{wallet}</code></> : <p>No wallet connected. Drafting and public devnet checks still work.</p>}
+        <p className="coin-note">Connection shares an address only. It does not confirm your wallet network, native-token support, or permission to spend. This planner checks devnet separately.</p></div>
+      <button className="button primary" onClick={() => (wallet ? changeWallet() : connect()).catch(e => setError(e.message))}>{wallet ? 'Change launch wallet' : 'Connect launch wallet'}</button>
+    </section>
+    <ol className="coin-flow" aria-label="Launch progress">
+      <li><strong>1. Connect wallet</strong><span>{wallet ? 'Address connected' : 'Optional while drafting'}</span></li>
+      <li aria-current="step"><strong>2. Configure</strong><span>Device draft · editable</span></li>
+      <li><strong>3. Simulate</strong><span>Blocked · no transaction</span></li>
+      <li><strong>4. Review</strong><span>Transaction review blocked</span></li>
+      <li><strong>5. Sign</strong><span>Disabled · no wallet request</span></li>
+      <li><strong>6. Verify</strong><span>Not started · no submission</span></li>
+    </ol>
+    <fieldset className="coin-lanes" disabled={busy || !loaded}><legend className="sr-only">Choose a coin lane</legend>
       <label className={plan.lane === 'standard' ? 'selected' : ''}><input type="radio" name="lane" checked={plan.lane === 'standard'} onChange={() => lane('standard')}/>
         <span><strong>Standard Coin</strong><small>Raydium LaunchLab by default</small><p>Standard SPL tokens. Familiar wallet support. Meteora liquidity is an advanced option.</p><em>For straightforward tokens</em></span></label>
       <label className={plan.lane === 'programmable' ? 'selected' : ''}><input type="radio" name="lane" checked={plan.lane === 'programmable'} onChange={() => lane('programmable')}/>
         <span><strong>Programmable Coin</strong><small>Hook Lab DEX · experimental devnet beta</small><p>Native hooks for custom behavior. Not SPL or Token-2022; ordinary wallets and DEXs do not automatically support it.</p><em>For supervised experimentation</em></span></label>
     </fieldset>
     <div className="coin-workspace"><section aria-labelledby="coin-plan-title">
-      <h2 id="coin-plan-title">1. Define your intent</h2>
+      <h2 id="coin-plan-title">Configure your {plan.lane === 'programmable' ? 'Programmable' : 'Standard'} Coin draft</h2>
       <p className="muted">A draft is not a token. No mint, pool or market is created.</p>
       <fieldset className="coin-fields" disabled={busy}><legend className="sr-only">Coin plan</legend>
         <div className="coin-field-row"><label>Coin name<input value={plan.name} maxLength={32} onChange={e => change({ name: e.target.value })} placeholder="Your coin name" autoComplete="off"/></label>
@@ -96,7 +128,7 @@ export function DirectCoinPlanner() {
       </fieldset>
       {!parsed.success && <p role="alert" className="coin-error">Use a name with letters, numbers, spaces, dots, underscores or hyphens, an uppercase alphanumeric symbol, and whole-number basis points within the shown bounds.</p>}
       {preview?.refusals.length > 0 && <div role="alert" className="coin-refusal"><strong>Unsupported combination</strong><ul>{preview.refusals.map(text => <li key={text}>{text}</li>)}</ul></div>}
-      <h2>2. Review what this means</h2>
+      <h2>Understand the terms</h2>
       <dl className="coin-terms">{[['Liquidity / curve', venue.curve], ['LP burn, lock & ownership', venue.lp], ['Fees & costs', venue.fees], ['Custody & authorities', venue.authority],
         ...(plan.lane === 'programmable' ? [['Recipe lifecycle', preview?.recipe]] : [])].map(([label, text]) => <div key={label}><dt>{label}</dt><dd>{text}</dd></div>)}</dl>
       <p className="coin-note">repo.ing is the interface. Hook Lab DEX is the native programmable venue. Hosting its interface does not make Raydium or Meteora understand Hook Lab hooks.</p>
@@ -124,8 +156,17 @@ export function DirectCoinPlanner() {
       <label className="coin-confirm"><input type="checkbox" checked={confirmed} disabled={busy || !preview?.compatible} onChange={e => setConfirmed(e.target.checked)}/>
         <span>I confirm Solana devnet for a public, read-only program check. This does not authorize spending or launching.</span></label>
       <button className="button primary" disabled={busy || !confirmed || !preview?.compatible} onClick={() => perform('inspect')}>{busy ? 'Working…' : 'Check devnet programs'}</button>
-      <button className="button" disabled aria-describedby="coin-signing-note">Wallet signing unavailable</button>
+      <button className="button" disabled aria-describedby="coin-signing-note">Simulate launch — unavailable</button>
+      <button className="button" disabled aria-describedby="coin-signing-note">Review & sign — unavailable</button>
       <p id="coin-signing-note" className="coin-note">No keys or seed phrases. Future approved transactions must be reviewed and wallet-signed on your device.</p>
+      {plan.lane === 'programmable' && <details><summary>Six gates before any launch can move funds</summary><ol>
+        <li>Client custody: retain mint/config keys on your device, with recovery.</li>
+        <li>Fee caps: enforce the exact maximum wallet debit, including every fee and rent.</li>
+        <li>Exact simulation bytes: sign only the immutable message that was simulated.</li>
+        <li>Expiry: enforce blockhash expiry and quote lifetime; refresh stale reviews.</li>
+        <li>Recovery journal: reconcile each step and ambiguous submission before retrying.</li>
+        <li>Hook-aware quotes: enforce fresh net minimum output, eligibility and slippage.</li>
+      </ol><p>All remain blockers. Inspection is not simulation; connecting a wallet does not satisfy these gates.</p></details>}
       {observation && <section className="coin-observation"><h3>Devnet observation</h3><p>Slot {observation.slot ?? 'not observed'} · {observation.native && observation.status === 'programs-present' ? 'deployment snapshot matched (not launch readiness)' : observation.status}</p><p>{observation.checkedAt}</p>
         <ul>{observation.warnings.map(text => <li key={text}>{text}</li>)}</ul>
         {observation.native ? <HookLabObservation observation={observation}/> : <details><summary>Observed accounts & authorities</summary>{observation.programs.map(p => <div key={p.name}><strong>{p.name}: {p.executable ? 'executable' : 'missing / not executable'}</strong>
@@ -134,8 +175,8 @@ export function DirectCoinPlanner() {
       </section>}
     </aside></div>
     <section className="coin-save" aria-label="Drafts and audit trail"><div><h2>Keep your plan, not your keys.</h2>
-      <p>{localError || (loaded ? 'Autosaved on this device. Account drafts and audit records expire after 30 days.' : 'Loading device draft…')}</p>
-      {!listing.signedIn && <a href="/api/github/start?mode=direct-coins">Sign in with GitHub for account drafts and devnet checks ↗</a>}</div>
+      <p>{localError || (loaded ? 'Each lane autosaves separately on this device. Optional GitHub account drafts and audit records expire after 30 days.' : 'Loading device draft…')}</p>
+      {!listing.signedIn && <a href="/api/github/start?mode=direct-coins">Optional: GitHub backup & provenance for drafts ↗</a>}</div>
       <div className="coin-actions"><button className="button" disabled={busy} onClick={reset}>Reset device draft</button>
         <button className="button primary" disabled={busy || !parsed.success || !listing.signedIn} onClick={() => perform('save')}>Save account draft</button></div>
     </section>

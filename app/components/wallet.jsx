@@ -241,8 +241,8 @@ export function WalletProvider({ children }) {
     {children}
     {choosing && <div className="wallet-overlay" onMouseDown={event => { if (event.target === event.currentTarget) cancelChoice() }}>
       <div ref={dialog} className="wallet-dialog" role="dialog" aria-modal="true" aria-labelledby="wallet-dialog-title">
-        <div className="wallet-dialog-heading"><div><span>Solana mainnet</span><h2 id="wallet-dialog-title">Connect a wallet</h2></div><button type="button" aria-label="Close wallet chooser" onClick={cancelChoice}><X size={21}/></button></div>
-        <p>Choose a wallet to trade and claim. You approve every transaction in your wallet.</p>
+        <div className="wallet-dialog-heading"><div><span>Solana wallet</span><h2 id="wallet-dialog-title">Connect a wallet</h2></div><button type="button" aria-label="Close wallet chooser" onClick={cancelChoice}><X size={21}/></button></div>
+        <p>Connecting shares your address, not permission to spend. Review the network and approve each transaction separately in your wallet.</p>
         {showAppLinks && <div className="wallet-app-links">
           <div className="wallet-list-label">Open in your wallet app <span>On your phone</span></div>
           <p>Phone browsers can't reach wallet apps. Open this page in your wallet's browser, then tap Connect wallet there.</p>
@@ -297,7 +297,7 @@ export function WalletButton() {
     </button>
     {wallet && open && <div className="wallet-account-menu">
       <div className="wallet-account-heading">{avatar ? <img className="wallet-account-avatar" src={avatar} alt="" referrerPolicy="no-referrer"/> : walletIcon ? <img src={walletIcon} alt=""/> : <Wallet size={22}/>}
-        <div><strong>{x ? `@${x.username}` : walletName || 'Solana wallet'}</strong><span>{x ? `${x.name ? `${x.name} · ` : ''}${walletName || 'Solana wallet'}` : 'Connected · Solana mainnet'}</span></div></div>
+        <div><strong>{x ? `@${x.username}` : walletName || 'Solana wallet'}</strong><span>{x ? `${x.name ? `${x.name} · ` : ''}${walletName || 'Solana wallet'}` : 'Connected · address only'}</span></div></div>
       <CopyAddress address={wallet} compact label="wallet address"/>
       {xKnown && !x && !xOff && <Link className="wallet-menu-action wallet-menu-x" href="/wallet#x-account" onClick={() => setOpen(false)}>
         <span><strong><XMark size={12}/>Connect X</strong><small>Show your @handle instead of this address</small></span><ArrowRight size={16}/></Link>}

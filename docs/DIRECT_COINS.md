@@ -139,6 +139,56 @@ production handoff, import query-string plans, or forward credentials, RPC URLs,
 program IDs or signing material across origins. repo.ing owns its lane/draft/API
 surface; Hook Lab owns native protocol contracts, deployment records and its builder.
 
+## Wallet-first UX audit and next safe increment
+
+The existing production repository flow (`app/components/launch-form.jsx`) calls
+`useWallet().connect()` before `prepare`, displays the returned costs in its inline
+review, invalidates review on wallet change/expiry, signs client-side through the
+shared provider, then submits to `/api/launch` for message/session checks and chain
+verification. GitHub repository lookup is not GitHub login. `WalletProvider` and
+`WalletButton` already provide discovery, reconnect, rejected connection, account
+change and disconnect behavior. Reuse those components; do not invent a second
+wallet account or use GitHub as launch authority.
+
+The existing transaction review is inline, not a generic transaction-review
+component. Its server-prepared launch session includes sealed mint-signing
+material (`src/launch-sessions.mjs`); copying that custody design into Hook Lab
+would violate its client-only mint/config custody gate. Its Wallet Standard
+signer currently pins `solana:mainnet`. This increment only connects an address
+through the shared provider; it never invokes that signer, checks a balance, or
+claims the wallet is on devnet. Shared connection labels now distinguish an
+address connection from network authorization. A future devnet signer needs
+explicit supported-chain validation, not a label change.
+
+Production `/coins/new` was reachable, but the link was buried below repository
+launch content, the explainer opened the Standard default, and inspection demanded
+GitHub. `/launch` now exposes explicit Standard and Programmable draft entries;
+the explainer links to `/coins/new?lane=programmable`. Only the lane enum is read
+from the URL, never recipe/RPC/program/credential data. Each lane retains its own
+device draft, including migration of the previous single draft. Bare links resume
+the last lane. Invalid/newer drafts are refused without automatic overwriting.
+Reset is explicit and remains in the current lane. Account drafts are optional.
+
+The UI presents Connect Wallet → Configure → Simulate → Review → Sign → Verify.
+Only connection, configuration and public read-only inspection work. Wallet or
+plan changes clear consent/observations, and late results cannot restore an old
+observation. Simulation, executable review, signing and verification remain blocked
+by **all six engineering gates**: client key custody/recovery; enforceable exact
+debit/fee caps; immutable reviewed simulation bytes; blockhash/quote expiry;
+durable per-step recovery/finality journal; and fresh hook-aware quotes/minimum
+output. Signed beta acceptance and separate final approval still follow those
+gates. A matching inspection is not simulation, authentication or launch readiness.
+
+The six richer template prototypes are not imported. Future adoption must version
+the plan envelope to carry the complete `hook-lab/1` `{coin, blocks}` recipe
+through device storage, API validation, database, export and resume without dropping
+any block or parameter. Migrate existing v1 recipes explicitly and prove round-trip
+equality for all six templates, including burns, locks and optional holder rewards.
+Never flatten them into today's recipe enum. Unknown envelope versions must refuse.
+Preserved unknown recipe fields/blocks must not imply capability: SDK validation
+must refuse unsupported intent, not silently convert it to a plain coin. The
+isolated recipe, custody and quote foundations require separate reviewed adoption.
+
 ## Operator runbook
 
 - Additive migration `0076_direct_coins.sql` adds private versioned drafts and audit
@@ -147,8 +197,14 @@ surface; Hook Lab owns native protocol contracts, deployment records and its bui
 - `GET /api/direct-coins` lists the signed-in user's drafts and their latest 50 audit
   entries. `POST` accepts only `save` or `inspect`, a strict plan, and (on save)
   draft ID/revision. Stale revisions return 409. Draft + audit writes are atomic.
-  Same-origin, encrypted existing GitHub session, account quota and bounded bodies
-  protect writes and RPC usage. No existing market or launch session is touched.
+  Account saves require same-origin, encrypted existing GitHub session, account
+  quota and bounded bodies. Public inspection requires same-origin, explicit devnet
+  confirmation and the existing per-client request limiter (burst 4, refill 2/minute
+  per web process). Like other public launch reads, this limiter is not authentication
+  or a distributed RPC budget. Inspection needs neither GitHub nor a database.
+  Signed-in inspection attempts optional account auditing; `audit` is `recorded`,
+  `unavailable` or `not-requested`. Storage outages do not block public reads; account
+  saves still fail closed. No existing market or launch session is touched.
 - Browser autosave is device-local and untrusted; server save is explicit, requires
   sign-in and revalidation. Avoid entering confidential content. Clear browser
   draft with Reset. Server drafts/events expire after 30 days; prune on each write
@@ -157,7 +213,7 @@ surface; Hook Lab owns native protocol contracts, deployment records and its bui
   devnet. It must return devnet genesis; existing `SOLANA_RPC_URL` is never reused.
   Bounded RPC timeouts, no automatic 429 retries, no user-selected endpoint.
 - Privacy-bounded telemetry: structured `directCoin` events carry action, adapter,
-  outcome and latency only. Private audit records contain validated plan snapshots
+  outcome, optional audit status and latency only. Private audit records contain validated plan snapshots
   and SHA-256 digest, never sessions, keys, wallet addresses or signed payloads.
   Aggregate audit outcomes for operational counts; do not export draft contents.
 - Hook Lab inspection returns a nested `native` receipt with delivery/hash,
