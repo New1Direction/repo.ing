@@ -171,3 +171,57 @@ the source-independent/frozen/hardened regression tests, `node scripts/ci/run-qu
 `node scripts/ci/run-tests.mjs`, and `npm run build`. PostgreSQL tests use a disposable database on
 55432; signatures and account/receipt fixtures are synthetic, not production messages or SBF acceptance.
 Browser checks use a synthetic public-address wallet with signing methods that throw.
+
+## Next operational increment: prerequisites and acceptance contract
+
+This is preparation, not an activation switch. Keep `submitPlainTransaction` and public POST
+unconditionally refusing throughout the next increment. Do not wire the existing mainnet trader
+or generic default-ID Hook Lab builders into this path.
+
+1. **Choose mint custody before building co-sign UX.** The owner draft leaves the mint null and
+   recommends a retained producer candidate. Confirm whether its private signer stays external
+   (owner returns a signature over the exact reviewed message), or a separately approved new
+   client-generated identity is intended. Never import a seed/private key into an API or silently
+   regenerate a mint. The current recipe vault creates both mint/config identities, exposes no
+   signing/export API and is not a plain-production custody contract. Preserve it unchanged.
+   A new client-only vault must retain the mint before review, export authenticated ciphertext
+   with its version/public identity/pin binding, and require a successful independent restore
+   comparison before co-signing. Test wrong passphrase, swapped public identity, corrupted backup,
+   storage failure, cross-tab race, old-backup rollback and wallet/profile change. A browser-only
+   journal cannot prove a backup is the newest without a separate trusted checkpoint.
+2. **Separate identity authentication from spending consent.** Reuse same-origin/session/rate-limit
+   patterns, not `/api/bind`: its signed challenge authorizes repository payouts, not direct coin
+   launch recovery. Specify a separate single-use short-lived challenge binding origin, GitHub
+   account, creator wallet, full genesis, profile digest and journal operation. Consume it
+   atomically with an owner-scoped journal write. Test replay/expiry, other users/wallets/origins,
+   stale sessions, body limits and DB failure. A wallet connection alone proves neither control
+   nor the on-chain creator grant. Preserve read-only recovery after grant revocation or disconnect.
+3. **Review exact bytes before any future signature prompt.** Show decoded production instruction,
+   resolved ALTs and all signers, creator rent/program debit versus outer payer fee, metadata,
+   supply/curve allocation, grant consumption/expiry/deadline, fee recipients and both pauses.
+   Re-read trusted two-provider evidence and exact simulation before review and before signing;
+   abort on drift. Retain each partial signature before another prompt and reject changed bytes.
+   With a separate outer payer there are three signers, not two. No sign-and-send wallet method,
+   automatic blockhash refresh, signature retry or hidden server signer. Test rejecting/reordered
+   wallet responses, disconnect mid-prompt, partial signer loss, expiry and storage failure using
+   ephemeral local identities only. Real wallet acceptance needs its own approval.
+4. **Bind live read adapters and monitoring separately.** Configure two independent provider trust
+   domains and the reviewed frozen dossier; check genesis, finalized ProgramData/ELFs/upgrade
+   authority, token/quote/dependency bytes, decoded creation/trading governance and creator grant.
+   Add provider timeouts, lag/drift/outage alerts and per-signature age/review-required counters.
+   Exercise the read adapter/indexer/journal against producer raw successful and failed launch
+   receipts, plus history pruning, disagreement, lost response, restart and conflicting finality.
+   No such production launch receipt exists yet. Preserve raw first-finalized evidence and original
+   signed bytes; a subsequent config change or unavailable snapshot is not permission to relaunch.
+5. **Stage adoption without execution.** Approve backup/disposable restore and all pending schema
+   changes first; then authorize only deployment observation and recovery display. Verify source,
+   IDL, SDK/profile/provenance and actual deployed identity bindings independently. Only later
+   approve creator, mint custody, metadata/economics, exact rent/network/priority budget, bounded
+   lifetime grant/exclusive expiry, creation deadline, creation unpause and consumer activation.
+   Trading can remain paused. On drift, block new preparation and preserve reconciliation; on-chain
+   pause/revoke, web rollback and DB restore are distinct authorized actions, not one rollback.
+
+The minimum producer gap is a deployment-bound creation acceptance fixture (raw message, all signer
+roles, simulation/account snapshots, finalized receipt, exact rent/fee/debit postconditions and
+counter changes). The paused-only package cannot substitute for it. Swaps/liquidity/Kit and
+LiquidityTek remain out of this increment.
