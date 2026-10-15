@@ -15,7 +15,7 @@ only; native launch and trading execution are future, separately gated work.
 | Raydium LaunchLab (Standard default) | SPL base via InitializeV2; dedicated InitializeWithToken2022 supports Token-2022 and optional transfer fees. No general Hook Lab callback support. Deprecated Initialize always fails. | GlobalConfig fixes quote, curve type and limits; PlatformConfig may narrow allowed configs/parameters. New launches graduate to CPMM. | PlatformConfig sets LP disposal, not a per-launch switch. Current CPMM migration combines creator/platform locked shares under platform Fee Key ownership and burns remainder; do not promise creator ownership. Read protocol/platform/creator/migration fees live. | SPL, wrapped SOL, config-controlled curve and LP policy planning only. Official SDK pinned to 0.2.74-alpha; no approved GlobalConfig/PlatformConfig supplied. |
 | Meteora DBC → DAMM v2 (advanced) | SPL and dedicated Token-2022 metadata flow. DBC has a separate TransferHook config/pool/swap path, but revokes hook program AND authority at completion. This is not Hook Lab's native standard. | Supported quote mint and curve belong to approved DBC config. Token-2022 quote fees must be zero, including scheduled fees; extensions may require a badge. | Config controls fees, vesting, partner/creator position allocations and locks. Never equate a DAMM position NFT with an SPL LP burn. | Existing official DBC SDK 1.5.13 retained; no direct-coin config approved. |
 | Meteora DAMM v2 (advanced direct liquidity) | SPL; permissionless Token-2022 allowlist: transfer fees, metadata pointer, token metadata, TransferHook only with program AND authority unset. Badges admit other mints but **do not provide general active-hook account forwarding**. | Requires two supported mints, actual deposits, price/liquidity and approved fee configuration; no launch bonding curve. | Position ownership, fee claims, permanent/time locks need explicit review. No blanket burn/lock promise. | Official cp-amm SDK 1.4.10 retained. Read-only identity / planning, not pool creation. |
-| Hook Lab DEX (Programmable) | Native Bordrless mint/holding standard, **neither SPL nor Token-2022**. Native token callbacks on transfer/mint/burn and pool callbacks on swaps/liquidity. One token hook: Kit OR Half-Life OR another supported hook. | Bridged SOL native mint; constant product with virtual offsets, not deposited SOL. Config sets supply/decimals/curve bounds. Default virtual quote 28.125 SOL is not a quote or a funding requirement. | Launch PDA holds LP permanently; not a user burn option. Creator fee applies both directions; hook cuts and burns compose with protocol fees. Historical setup sniper fee 80% for 30 seconds, first creator self-buy exception. | Experimental devnet beta. Plain, Kit max-wallet and fixed Half-Life intent validation; finalized deployment/config inspection. No arbitrary hooks, lottery, companion execution, bridge deposit or swaps. |
+| Hook Lab DEX (Programmable) | Native Bordrless mint/holding standard, **neither SPL nor Token-2022**. Native token and pool callbacks are protocol capabilities, not arbitrary cross-venue hook compatibility. Current consumer accepts plain, zero-rule recipes only. | Bridged SOL native mint; constant product with virtual offsets, not deposited SOL. Config sets supply/decimals/curve bounds. No implied real SOL deposit. | Curve creation mints no LP; the empty LP holding belongs to the launch PDA. No creator-owned position, LP burn or external lock is implied. Historical setup sniper fee 80% for 30 seconds, first creator self-buy exception. | Experimental devnet beta. Plain intent validation and finalized read-only inspection. Fresh guarded plain acceptance is an isolated candidate, not active execution. Kit, richer templates, trading, bridge execution and initial buys remain blocked. |
 
 Official sources fetched 2026-10-15:
 - [Raydium instructions](https://docs.raydium.io/products/launchlab/instructions),
@@ -125,7 +125,7 @@ Wrong genesis, IDL/config/binary/authority/lookup-table drift and unavailable RP
 return refusals; there is no cached readiness verdict. The RPC remains a trust
 boundary. Inspect again after state changes; a past slot is not a guarantee.
 
-Plans preserve an explicitly entered creator fee (basis points). Plain, Kit
+The original v1 adapter preserved an explicitly entered creator fee (basis points). Plain, Kit
 max-wallet and fixed Half-Life intent previews use the upstream parser and observed
 launch limits. A missing fee or Kit limit produces no native intent; it does not
 silently become zero or a plain coin. Old v1 drafts default these new nullable
@@ -133,6 +133,12 @@ fields to unknown. Kit rewards/locks are not configured by this form. Invalid
 metadata or live fee/rule limits refuse the intent independently of deployment
 matching. UI disclosures retain unknown total debit, rent, network fee, minimum
 output and expiry; intent steps contain `messageBase64: null`.
+
+The current recipe UI refuses all nonempty rules. The separate [fresh guarded plain
+candidate](HOOK_LAB_FRESH_PLAIN.md) pins different swap/launch IDs without replacing this
+read-only artifact. Its operator verifier reconstructs HLTEST messages and verifies
+finalized receipts; neither package exposes a signer or sender. Legacy execution is
+not a fallback. Candidate simulation is not signed devnet acceptance or consumer adoption.
 
 There is **no approved deployed Hook Lab UI URL**. Do not use an orb portal as a
 production handoff, import query-string plans, or forward credentials, RPC URLs,

@@ -95,7 +95,7 @@ absent after creation. The DEX programs remain upgradeable, config administratio
 entrypoints remain on-chain even though repo.ing does not expose them. Plain-only is a consumer limit,
 not a global on-chain canary restriction. Launch-pool LP fees route to protocol, not external LPs.
 The config also contains 30 bps LP fee and an 8,000 bps initial sniper fee over 30 seconds; trading is
-not enabled by this acceptance. repo.ing is the interface; **Hook Lab DEX** owns the native program ABI.
+not enabled by this acceptance. repo.ing is the interface; **Hook Lab DEX** supplies the native programs and ABI.
 
 ## Production rollout remains gated
 
