@@ -1,7 +1,8 @@
 # Production consumer boundary — local, inert preparation
 
-No active production dossier, vendor update, wallet execution, RPC indexer, journal write or
-migration is introduced by this increment. Frozen `f3c57ccc` HLTEST and the separate `826b5a4`
+No active production dossier, wallet execution, live RPC indexer or shared migration is
+introduced. An isolated disabled production SDK candidate and unapplied recovery migration are
+prepared for local tests only. Frozen `f3c57ccc` HLTEST and the separate `826b5a4`
 candidate remain unchanged. This document supersedes their rollout assumptions only for future
 production work; it does not change their historical evidence or activate any profile.
 
@@ -21,7 +22,7 @@ expired; never sign or submit its deployment messages from the consumer.
 
 | Capability | Source contract | Consumer state |
 | --- | --- | --- |
-| Plain creation | `createLaunchMainnet(..., PRODUCTION_PROGRAMS)`; zero creator fee, no rules/Kit/template/custom-hook accounts | Disabled: no adopted SDK, approved creator grant, deployment or activation |
+| Plain creation | `createLaunchMainnet(..., PRODUCTION_PROGRAMS)`; zero creator fee, no rules/Kit/template/custom-hook accounts | Offline builder/simulation adapter only; no adopted deployment, approved grant or activation |
 | Creator authorization | Cumulative lifetime counter, no reset on update; slot must be strictly less than expiry | No live grant asserted; no rolling-day or cap-one requirement inferred |
 | Pool creation | Guarded launch-PDA CPI only in production; direct/legacy creation rejected | No legacy/default-ID fallback |
 | Swap | Recipient net increase must meet `min_amount_out` | Disabled; no production lifecycle SDK builder or independently verified operation receipt |
@@ -77,7 +78,54 @@ signed transaction, signature, network, message hash, fee and slot. Outcomes dis
 or divergent evidence, pending finality, finalized failure, and finalized transaction only. A
 finalized transaction is **not** a verified mint/trade/liquidity result. There is no automatic
 retry, blockhash refresh, second mint, expiry cleanup, settlement assertion or write path.
-This is a pure normalized-evidence interface, not a live RPC receipt parser or durable indexer.
+This boundary remains a pure normalized-evidence interface. The separate disabled plain adapter
+below adds a read parser and durable candidate journal, not public operation readiness.
+
+## Disabled plain candidate
+
+`vendor/hooklab-production-candidate` is separately namespaced at merged source
+[`f3062df`](https://github.com/new1direction/hook-lab/commit/f3062dfc1133ae1b0cb3d2f4d9d41145a4677a32)
+(merge tree identical to `b3dc429`). Profile SHA256:
+`9df8e9ceaa3a73fb37c8af35254382f27e38bfc35d6a1fcfa4b72223e75e9cb7`.
+The reproducible vendoring script pins the source, SDK lock, IDLs and profile, retaining complete
+licenses. No active vendor or historic manifest is replaced. Mainnet genesis must use all 32
+decoded bytes: `5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`, never its shortened display form.
+
+- `preparePlainReview` strictly rejects extra fields (Kit/custom fee/hooks/direct pools), checks
+  the supplied creation pause, grant/quota/exclusive expiry, economics and fees, uses the official
+  production opt-in builder, and binds exact v0 bytes/ALT snapshots. Inputs are **offline supplied
+  snapshots**, not authenticated chain observations. Governance commitment/provenance/deployment
+  trust still requires the producer-specific live adapter before any use with a real wallet.
+- `simulatePlainReview` accepts an injected read adapter and simulates the retained unsigned
+  message with no blockhash replacement. Tested with synthetic RPC responses; it is not wired to
+  an HTTP simulation endpoint. `submitPlainTransaction` always throws 423 before side effects.
+- The creator pays instruction rent and program fees; the outer payer separately pays network
+  and priority fees. They may be different signers. Creation mints supply, creates a pool and
+  deposits the base allocation into a curve; “no initial buy/quote seeding” does not mean “no pool”.
+- `readPlainReceipt` fetches the retained signature at finalized commitment and poststate at or
+  after its slot. Two providers must agree on exact wire/slot/fee/balances and account bytes.
+  Verification covers account IDs/owners/sizes/version/discriminators, plain mint authorities,
+  supply/curve allocation, pool fees/vault links, holdings, registry, config/grant counters and
+  native rent/debits/treasury credit. Later trading/config changes, pre-funded creation accounts,
+  missing history, incompatible layouts or disagreement require review; never reconstruct a new
+  launch. Snapshot matches remain `chainVerified:false`: deployment trust is not adopted.
+- `plainRecoveryJournal` is an unwired PostgreSQL candidate: immutable owner/mint/message/signature,
+  serialized writes and atomic audit, retained raw finalized observations, no expiry/deletion, and
+  repeated read-only reconciliation. Latest outage status never deletes the first finalized
+  evidence. `pending()` rotates by check time, not a cursor that can skip unknown signatures.
+  There is no public write route, live scheduler, production DB connection or automatic send.
+- `/coins/production` reuses wallet connection for a public-address-only preparation interaction.
+  Explicit mainnet acknowledgement resets on wallet change. Readiness always refuses; review and
+  signing buttons remain disabled. No seed phrase/private key field exists. It does not implement
+  mint co-signing, encrypted mint backup/export, authenticated wallet binding, or operational
+  wallet acceptance; these remain blockers, not completed capabilities.
+
+`firstCreatorPacket()` leaves creator, mint, fee payer, metadata, economics, grant, deadline,
+network budget and message unset. Owner draft `first-plain-launch-v1.json`, SHA256
+`213c9d0d917f4ff6879b3c4d11fc60495c2a7ec63cfc684ffd29f2d5f01df114`, was checked as artifact-only,
+not imported. Its suggested zero-fee/quota-three/expiry/deadline/rent values are proposals, not
+live quotes or approved instructions. LiquidityTek remains a future specification, unsupported
+by the production plain route; no permanent LP-lock or Hooks parity claim is made.
 
 ## Producer contracts required before the next increment
 
@@ -101,17 +149,25 @@ This is a pure normalized-evidence interface, not a live RPC receipt parser or d
 
 ## Delivery and rollback boundaries
 
-No new migration, shared DB access or journal integration is needed for this unavailable observer.
-Do not apply historical candidate migration `0080` for this page. Future durable execution recovery
-needs an approved journal design and current encrypted backup/decrypt/disposable-restore verification
-before any shared migration; preserve existing journals and receipts on rollback. Never restore a
-stale DB over accepted chain activity. Disabling the consumer cannot pause a chain program.
+Migration `0081_hook_lab_plain_recovery.sql` is additive and registered for disposable tests, not
+approved for shared application. The unavailable page does not require it or historical `0080`.
+Before any deployment, inspect **all** pending migrations (the existing pre-deploy command applies
+them), approve the target and encrypted backup/decrypt/disposable restore, check schema compatibility
+and journal permissions, then separately authorize shared migration. Do not casually deploy this PR.
+Preserve journals/receipts on rollback; never restore stale DB state over accepted chain activity.
+Disabling the consumer cannot pause a chain program or reverse minted supply/account rent.
 
 Before activation, separately implement and test drift/unavailability alerts, non-secret receipt
 indexing, operator escalation and actual pause procedures. On mismatch stop new execution; observe
 existing signatures without regenerating transactions. Web rollback, authority actions and chain
-activation require separate approval. This increment makes no network calls or production claims.
+activation require separate approval. Journal health offers unresolved/review-required counts and
+oldest unresolved time; no production alert destination or scheduler is installed. The public path
+makes no chain calls. Stop future new work on drift, preserve the signed bytes, reconcile from both
+providers, and escalate to the owner. Pausing trading also blocks LP withdrawal; re-pause/revoke
+must be separately authorized and verified, not represented as an automatic rollback.
 
-Local checks: `node --test tests/hooklab-message-boundary.test.mjs tests/hooklab-production-observer.test.mjs`,
-the existing frozen/hardened regression tests, `node scripts/ci/run-quick-tests.mjs`, and `npm run build`.
-Fixtures use fabricated account bytes and disposable offline signatures, not production messages.
+Local checks include `node --test tests/hooklab-plain.test.mjs tests/hooklab-plain-journal-db.test.mjs`,
+the source-independent/frozen/hardened regression tests, `node scripts/ci/run-quick-tests.mjs`,
+`node scripts/ci/run-tests.mjs`, and `npm run build`. PostgreSQL tests use a disposable database on
+55432; signatures and account/receipt fixtures are synthetic, not production messages or SBF acceptance.
+Browser checks use a synthetic public-address wallet with signing methods that throw.

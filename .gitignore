@@ -55,6 +55,7 @@ dist/
 !/vendor/hooklab-readonly/dist/
 !/vendor/hooklab-guarded-candidate/dist/
 !/vendor/hooklab-hardened-candidate/dist/
+!/vendor/hooklab-production-candidate/dist/
 coverage/
 .cache/
 .turbo/

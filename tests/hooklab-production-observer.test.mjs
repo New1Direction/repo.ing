@@ -29,7 +29,7 @@ function fixture() {
     accounts.push({ address: pin.address, owner: pin.owner, executable: false, dataBase64: raw.toString('base64') })
     return pin
   })
-  const dossier = { schema: 'repoing/production-observation/1', genesisHash: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',
+  const dossier = { schema: 'repoing/production-observation/1', genesisHash: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
     artifacts: { sourceCommit: 'a'.repeat(40), profileSha256: 'b'.repeat(64), sdkSha256: 'c'.repeat(64), idlSha256: 'd'.repeat(64), provenanceSha256: 'e'.repeat(64) },
     providers: ['fixture-a', 'fixture-b'], minSlot: 100, maxSlotLag: 5, maxAgeMs: 1000, programs, accounts: pins }
   const observations = dossier.providers.map((provider, i) => ({ provider, genesisHash: dossier.genesisHash, commitment: 'finalized',
@@ -54,6 +54,7 @@ test('two retained finalized snapshots bind exact programs/authorities/ELFs/conf
 
 test('refuses wrong genesis/provider/finality, missing evidence, slot drift, changed dependencies and authority', () => {
   const cases = [f => { f.observations[1].genesisHash = address(30) },
+    f => { f.dossier.genesisHash = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'; f.observations.forEach(o => { o.genesisHash = f.dossier.genesisHash }) },
     f => { f.observations[1].provider = 'fixture-a' }, f => { f.observations[1].commitment = 'confirmed' },
     f => { f.observations[1].slot = 106 }, f => { f.observations[0].slot = 99 }, f => { f.observations[1].observedAtMs = 2001 },
     f => { f.observations[1].accounts.pop() }, f => { f.observations[1].accounts.push(f.observations[1].accounts[0]) },

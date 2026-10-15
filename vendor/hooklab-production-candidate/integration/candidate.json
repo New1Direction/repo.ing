@@ -1,0 +1,63 @@
+{
+  "schema": "hook-lab/production-profile/1",
+  "status": "source-build-candidate-not-deployed",
+  "buildFeature": "production",
+  "enforcementFeature": "mainnet",
+  "cluster": "mainnet-beta",
+  "genesisHash": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+  "programs": {
+    "launch": "E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft",
+    "swap": "B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk",
+    "token": "2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22",
+    "bridge": "CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7"
+  },
+  "deploymentCandidates": ["bordrless_launch", "bordrless_swap"],
+  "testOnlyBuilds": ["bordrless_token", "hook_tester"],
+  "quoteMint": "A49oVhX22ExMwTEtFC6Y8nhBdZ4LJDGhdXLDn4c2f59i",
+  "pdas": {
+    "launchConfig": "DkzaEgALTrq6H9Gw2ugpFvbTfwfSx2AHnPBN2nQptocw",
+    "swapConfig": "HgqTsdUHxpF2AZAwQck4CgTcYBc7mbzxaP17dACgxTLn",
+    "launchGovernance": "7UMHpxTLWPcoNMFffkzw7SH2d3qCR7TzAd1UdfkBxpKH",
+    "swapGovernance": "GJtXZdkBJzEWG4876i8BFcaf6gXy3BEUntGyYUUfZ2ZD",
+    "launchProgramData": "FHSVsk3nonaqAeFtgu56BFU9hg9KugxbHLoGkAAxgfyp",
+    "swapProgramData": "GuyHY9x78h52RX87RQ2nD8xnzr2dArnx5XDBz3HsJf7d",
+    "launchHookAuthority": "CXx746xb4fARbJCci4ShHqHbE8vquzkGMQvfZ9JeT8cf",
+    "swapSignerForLaunch": "HCmLYfqxHucGpyWKBm7ohFjW3Q6MjWARg8gUTP3W6snW",
+    "launchEventAuthority": "z1CqcpQHp9Qojr2r7BcgPrbR1jfUgHE3NDECDbcZ5t7",
+    "swapEventAuthority": "HrT36WiC3r5SbnmBRPWgZVPfBtevgMfCRTV11EqEMqMP",
+    "tokenEventAuthority": "69vhpnkYjtiJgdfU7QsA5Ww7V8FWtvPcZ2r4znuyByvq",
+    "tokenKitSignerAbiPlaceholder": "FqqJoqCXU4hwtSdes3VR1rp1H5kdPfPcxSrzfR11MNUx"
+  },
+  "requestedRolesNotDeployed": {
+    "ownerAdmin": "DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5",
+    "guardian": "CT4SioSvVFHcnuJbJMfcVgdR3GHAyK7VmrjvR6y3RmEY",
+    "treasuryAndCollector": "FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i",
+    "nonprivilegedPayer": "3eCFwDiKetHe9pg1zNEkTohUECu2vtsZDRMZ3jeR4g5o",
+    "upgradeAuthority": "9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md",
+    "creator": null
+  },
+  "upgradeCustody": {
+    "kind": "dedicated-owner-controlled-signer-not-a-timelock",
+    "verificationSha256": "be9391afc242be6da904734ee480ebc69b23f8acd67fb743b846895feb326ca7",
+    "manifestSha256": "214e47155589093785d3fff2ba91c6c5ea96ff9c98b47082ef15e3248885d4d5",
+    "recovery": "same-Mac-only; device/login-Keychain loss not covered",
+    "onChainAuthorityAssigned": false
+  },
+  "controlsSchema": "../../docs/mainnet-controls-schema.json",
+  "plainOnly": true,
+  "legacyFallback": false,
+  "kitCompatible": false,
+  "consumerEnabled": false,
+  "creationInitiallyPaused": true,
+  "tradingInitiallyPaused": true,
+  "liquiditySeeding": false,
+  "quota": "bounded-per-creator-lifetime-not-rolling-day",
+  "expiry": "exclusive-slot",
+  "hookCodeTimelockMinimumSeconds": 259200,
+  "launchSwapUpgradeTimelockImplemented": false,
+  "configTimelockImplemented": false,
+  "approvedEconomics": null,
+  "approvedFundingLamports": null,
+  "approvedMessages": null,
+  "executionAuthorized": false
+}

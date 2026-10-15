@@ -23,7 +23,7 @@ function fixture({ alt = false, extraBudget = false } = {}) {
       ...(extraBudget ? [budget[0]] : [])] }).compileToV0Message(alt ? [table] : [])
   const keys = message.getAccountKeys({ addressLookupTableAccounts: alt ? [table] : [] })
   const review = { schema: 'hooklab-message-review/1', operation: 'fixture',
-    genesisHash: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp', profileSha256: 'a'.repeat(64), policySha256: 'b'.repeat(64), intentSha256: 'c'.repeat(64),
+    genesisHash: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d', profileSha256: 'a'.repeat(64), policySha256: 'b'.repeat(64), intentSha256: 'c'.repeat(64),
     payer: payer.publicKey.toBase58(), wallet: wallet.publicKey.toBase58(),
     messageBase64: Buffer.from(message.serialize()).toString('base64'), messageSha256: sha(message.serialize()),
     requiredSigners: [payer.publicKey.toBase58(), wallet.publicKey.toBase58()],
@@ -48,6 +48,7 @@ test('wire review resolves ALT privileges and rounds requested-CU fees; never gr
     assert.equal(result.instructions.at(-1).program, SystemProgram.programId.toBase58())
     assert.equal(result.canSign, false); assert.equal(result.canSubmit, false); assert.equal(result.policyVerified, false)
     for (const change of [r => { r.maxNativeDebitLamports = '10927' }, r => { r.maxFeeLamports = '10600' },
+      r => { r.genesisHash = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp' },
       r => { r.accounts[0].writable = false }, r => { r.requiredSigners.reverse() }, r => { r.messageSha256 = 'f'.repeat(64) },
       r => { r.wallet = new PublicKey(Buffer.alloc(32, 19)).toBase58() }, r => { r.messageBase64 += '=' }]) {
       const invalid = structuredClone(review); change(invalid); assert.throws(() => inspectHookLabMessage(invalid))

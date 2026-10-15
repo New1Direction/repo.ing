@@ -9,8 +9,7 @@ import { z } from 'zod'
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const key = z.string().max(44).refine(v => { try { return new PublicKey(v).toBase58() === v } catch { return false } })
-// getGenesisHash is a base58 identifier, not necessarily a 32-byte public key.
-const genesis = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{16,44}$/)
+const genesis = key
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const u64 = z.string().regex(/^(0|[1-9]\d{0,19})$/).pipe(z.string().refine(v => BigInt(v) <= 0xffffffffffffffffn))
 const base64 = z.string().max(65536)

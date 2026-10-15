@@ -547,6 +547,13 @@
       "when": 1792063200002,
       "tag": "0080_hook_lab_recovery_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792063200003,
+      "tag": "0081_hook_lab_plain_recovery",
+      "breakpoints": true
     }
   ]
 }

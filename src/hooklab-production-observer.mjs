@@ -8,7 +8,7 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const key = z.string().max(44).refine(v => { try { return new PublicKey(v).toBase58() === v } catch { return false } })
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const loader = 'BPFLoaderUpgradeab1e11111111111111111111111'
-const mainnetGenesis = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
+const mainnetGenesis = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const role = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const accountPin = z.object({ role, address: key, owner: key, executable: z.boolean(), dataSha256: hash }).strict()
 const dossierSchema = z.object({
@@ -23,7 +23,7 @@ const dossierSchema = z.object({
   }).strict()).min(3).max(20),
   accounts: z.array(accountPin).min(4).max(80),
 }).strict()
-const observationSchema = z.object({ provider: role, genesisHash: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{16,44}$/), commitment: z.literal('finalized'),
+const observationSchema = z.object({ provider: role, genesisHash: key, commitment: z.literal('finalized'),
   slot: integer, observedAtMs: integer,
   accounts: z.array(z.object({ address: key, owner: key, executable: z.boolean(),
     dataBase64: z.string().max(14000000),
