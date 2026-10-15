@@ -225,9 +225,10 @@ with canonical config-economics commitment and inclusive slot deadline. Network
 and priority fees require a separate immutable-message budget. Do not fall back
 to legacy instructions if a guard or capability is missing.
 
-The producer's local, unpushed source commit is
-`4734a6abbda338de857287662e4c4625d13575a9`, based on Hook Lab origin/main
-`481d082f80fd1a379cb432c882c6fc4467b6b873`. The exact review archive was transferred
+The producer's review source commit is
+[`4734a6a`](https://github.com/New1Direction/hook-lab/commit/4734a6abbda338de857287662e4c4625d13575a9),
+published in [Hook Lab PR #2](https://github.com/New1Direction/hook-lab/pull/2), based on
+Hook Lab origin/main `481d082f80fd1a379cb432c882c6fc4467b6b873`. The exact review archive was transferred
 from [the V2 delivery thread](https://ampcode.com/threads/T-01a13f66-e19d-73c3-93e1-a72d374905aa),
 not installed as a consumer dependency. Archive SHA256 is
 `68a6fa454e668bbfe6e241c30db6fe1dfe4fd1d10426a3f34abf115a14da0ae3`;
