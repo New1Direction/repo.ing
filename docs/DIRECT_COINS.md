@@ -217,9 +217,13 @@ never hypothetical swap debit relabeled as launch economics. Trading is deferred
 
 ### Minimum guarded launch and owner approval package
 
-The next executable scope is devnet plain/Kit launch creation only, no initial buy,
-wrap, swap or arbitrary hook. Native guarded V2 is owned on Hook Lab's separate
-`feat/native-guarded-v2` branch. No V2 artifact or consumer pin is approved here.
+The owner reports the existing upgrade authority is lost. The next executable
+scope is **fresh-ID devnet plain creation only**: HLTEST with no template, zero
+rules/creator fee and no custom hook, initial buy, wrap or swap. The existing Kit
+hard-binds the old launch/swap IDs and cannot be used with the fresh programs.
+The native owner is preparing a separate fresh-ID candidate; public IDs, new
+authority, rebuilt artifacts and consumer pins are pending. The old-ID upgrade
+messages, budgets and binaries below are historical, not a deployment plan.
 Creation caps must cover launch AND nested pool fees, rent and instruction debit,
 with canonical config-economics commitment and inclusive slot deadline. Network
 and priority fees require a separate immutable-message budget. Do not fall back
@@ -236,7 +240,7 @@ all included checksums and the incremental Git bundle were independently verifie
 It includes source, explicit candidate IDLs/builders, canonical vectors, ELFs,
 test logs and `guarded-v2-acceptance.md`. These are undeployed review artifacts.
 
-| Existing devnet program (proposed upgrade order) | ELF bytes | File SHA256 |
+| Historical old-ID review artifact (not for fresh deployment) | ELF bytes | File SHA256 |
 | --- | ---: | --- |
 | Swap `3yJKNHzDC7JA979RJNqxKSyo1jt6kLcJNk9bjUuebLN2` | 460640 | `a75f886720a602703fa6a25065f703f53c0bb6ef0ad47723de907b46248ad2b9` |
 | Launch `4CxedXkUfo6JLXSnzuxr2XA9xeXPsxQeR1xeTedhKMyd` | 588696 | `8fdc9b52a81cfe70310198fc273a756ce7a69c82cad38e399880b44138d77b04` |
@@ -248,19 +252,44 @@ also closed launch/swap error-origin collisions; that is not a full security
 audit or signed acceptance. The packaged unsigned all-kit fixture used 327,683 CU
 with a synthetic ALT; do not reuse the earlier 320k routed-kit ceiling or treat
 fixture sizes as live message budgets. Current consumer program/SDK/manifest pins stay unchanged.
-Upgrading either live program will intentionally make the old inspection refuse.
+Old programs remain read-only; neither their execution nor an automatic fallback
+is allowed. A fresh deployment requires its own IDL addresses, callback PDAs,
+canonical vectors, ELF/normalized executable hashes and manifest verification.
+
+The proposed config recreation preserves observed economic values and quote mint,
+replaces admin/treasury/fee collector with a dedicated retained authority, and
+resets counters. The owner must approve the exact values, version/pause state and
+authority recovery evidence. The disposable creator must differ from treasury
+and must never become the program/config authority. Itemize config initialization
+and any new ALT in the fresh deployment budget; do not reuse old extension costs.
+
+Consumer sequencing after the fresh candidate is frozen:
+
+1. Verify published source, SDK/IDL/schema/vectors, manifest and candidate hashes
+   without changing the active read-only pin. Refuse templates and nonempty rules.
+2. After explicit deployment approval, verify devnet genesis, deployed bytes,
+   ProgramData authority and recreated config accounts before enabling V2 review.
+3. Build using the exact official V2 SDK, with no legacy fallback. Review all
+   instruction accounts/signers, fee/rent caps, config commitments, expiry and
+   separate exact-message network budget; simulate the unchanged unsigned bytes.
+4. Request separate owner approval for funding/signing/spend. Bind client signing
+   to the reviewed message and retained mint identity; persist recovery evidence
+   before submission. Never retry an ambiguous result automatically.
+5. Verify finalized launch/pool/mint/authority and fee/rent results, exercise
+   recovery/result display, then use the established Railway backup/migration
+   gates. Production web delivery does not authorize mainnet or additional routes.
 
 Before requesting owner deployment/signed acceptance, fill every missing item:
 
 | Approval artifact | Current evidence / blocker |
 | --- | --- |
-| Native revision, ELF hashes, program IDs, IDLs and canonical hash vectors | Exact review package above; not deployed or approved for execution; current readonly pin unchanged |
-| Exact payer/mint/config addresses and retained recovery identities | Client local identities supported; dedicated unfunded/devnet acceptance wallet must be selected by owner; backup flow not yet provided |
-| Instruction fees, nested charges, all rent, network/priority fee, total capped budget | Unknown; offline swap model cannot supply launch costs |
-| Exact message bytes, signers, blockhash/last-valid-height, config commitment/deadline | Not constructed; requires approved deterministic V2 builder and fresh state |
+| Native revision, ELF hashes, program IDs, IDLs and canonical hash vectors | Historical old-ID review above; fresh plain-only candidate pending; current read-only pin unchanged |
+| Exact payer/mint/config addresses and retained recovery identities | Authorized disposable creator/mint generated and retained encrypted outside Git; public identities recorded separately. Fresh retained authority/config identities pending; client backup UI not yet provided |
+| Instruction fees, nested charges, all rent, network/priority fee, total capped budget | Fresh deployment/acceptance budget pending; old-ID budgets are superseded and offline swap math is not launch economics |
+| Exact message bytes, signers, blockhash/last-valid-height, config commitment/deadline | Fresh-ID messages pending; old upgrade messages must not be signed |
 | Simulation/postconditions and tamper/expiry/rollback tests | Producer's unsigned SBF evidence in package; no consumer RPC transaction simulation or signed acceptance |
 | Recovery/export and ambiguous-submit journal test evidence | Local encrypted CAS journal tested; no sender/retry/postcondition adapter or backup UX |
-| Deployment and signed acceptance commands | Package acceptance document specifies swap-before-launch existing-ID upgrades and separate acceptance; payer, buffers, extension bytes and maximum spend remain owner decisions |
+| Deployment and signed acceptance commands | Fresh deployment/config recreation and separate acceptance commands pending; exact public IDs, authority custody, messages and spend require owner approval before any chain action |
 
 Ship source through required checks first. Production web/migration deployment and
 any devnet program deployment/signing/spending remain separate owner gates. Recheck
