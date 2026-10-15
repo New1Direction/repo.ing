@@ -69,7 +69,9 @@ test('receipt refusal: unknown, provider disagreement, pending, failed and posts
   let obs = plainObservations(f); obs[1].receipt.slot++; assert.equal(verify(obs).status, 'unresolved')
   obs = plainObservations(f); obs.forEach(o => { o.receipt.confirmationStatus = 'confirmed' }); assert.equal(verify(obs).status, 'pending-finality')
   obs = plainObservations(f); obs.forEach(o => { o.receipt.error = { InstructionError: [2, 'Custom'] } }); assert.equal(verify(obs).status, 'finalized-failure')
+  obs = plainObservations(f); obs.forEach(o => { o.receipt.slot = 150; o.snapshot.slot = 151 }); assert.equal(verify(obs).status, 'receipt-state-matched')
   for (const mutate of [
+    o => { o.receipt.slot = 151; o.snapshot.slot = 152 },
     o => { o.snapshot.accounts.mint.owner = f.plan.intent.creator },
     o => { o.snapshot.slot = 103 },
     o => { const b = Buffer.from(o.snapshot.accounts.creatorGrant.dataBase64, 'base64'); b[0] ^= 1; o.snapshot.accounts.creatorGrant.dataBase64 = b.toString('base64') },

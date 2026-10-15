@@ -44,6 +44,8 @@ export function verifyPlainReceipt(plan, signedBase64, observations, providers) 
   const result = { ...base, chainVerified: false }
   if (base.status !== 'finalized-transaction-only') return result
   try {
+    check(BigInt(observations[0].receipt.slot) <= BigInt(plan.intent.deadlineSlot)
+      && BigInt(observations[0].receipt.slot) < BigInt(plan.observed.creatorGrant.expiresAtSlot), 'Receipt outside creation window')
     check(observations.every(o => o.snapshot && Number.isSafeInteger(o.snapshot.slot) && o.snapshot.slot >= o.receipt.slot), 'Missing finalized state')
     check(isDeepStrictEqual(observations[0].snapshot.accounts, observations[1].snapshot.accounts), 'State providers disagree')
     const accounts = observations[0].snapshot.accounts
