@@ -10,6 +10,9 @@ import { QUOTE_PIN } from './hooklab-quote-model.mjs'
 export function hookLabRecipeRefusals(envelope) {
   const { recipe } = parseHookLabRecipe(envelope)
   const refusals = []
+  if (recipe.blocks.length) refusals.push({ code: 'PLAIN_ONLY_BETA', subject: 'blocks',
+    message: 'This beta accepts plain coins with no rule blocks. Stored rules are preserved, never silently removed or executed.',
+  })
   const unknown = (value, allowed, subject) => {
     for (const key of Object.keys(value)) if (!allowed.includes(key)) refusals.push({
       code: 'UNSUPPORTED_RECIPE_FIELD', subject: `${subject}.${key}`, message: 'Preserved in your draft, but not supported by this consumer. No intent is approved.',

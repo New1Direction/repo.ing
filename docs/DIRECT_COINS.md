@@ -180,8 +180,11 @@ output. Signed beta acceptance and separate final approval still follow those
 gates. A matching inspection is not simulation, authentication or launch readiness.
 
 The Programmable lane now uses `repo-ing/hook-lab-recipe/1` around complete
-`hook-lab/1` `{coin, blocks}` recipes. Six templates author this same contract;
-template metadata never regenerates blocks on resume. Device/account storage,
+`hook-lab/1` `{coin, blocks}` recipes. The UI exposes plain coins only; the six
+template definitions remain an offline compatibility reference, not available
+launch options. Any nonempty rules refuse preflight, including an explicit zero
+creator-fee block; start a new plain draft explicitly rather than silently
+rewriting an old recipe. Template metadata never regenerates blocks on resume. Device/account storage,
 import/export and SDK inspection retain order, unknown fields and null versus zero.
 Legacy v1 plans remain untouched and convert only through an explicit action.
 Unknown versions, duplicate JSON members and secret-bearing fields refuse.

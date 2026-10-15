@@ -16,9 +16,10 @@ test('whole recipes reach the pinned parser; ignored extensions persist but neve
     r.cookies = { get: () => undefined }; return r
   }
   assert.deepEqual(await (await GET(request())).json(), { signedIn: false, drafts: [], events: [] })
-  for (const [template, raw] of recipeCases) {
+  assert.deepEqual(hookLabRecipeRefusals(createHookLabRecipe({ format: 'hook-lab/1', coin: { name: 'Plain', ticker: 'PLAIN' }, blocks: [] })), [])
+  for (const [template, raw] of [...recipeCases, ['plain', { format: 'hook-lab/1', coin: { name: 'Zero', ticker: 'ZERO' }, blocks: [{ type: 'creator_fee', fee_bps: 0 }] }]]) {
     const envelope = createHookLabRecipe(raw, template)
-    assert.deepEqual(hookLabRecipeRefusals(envelope), [])
+    assert.ok(hookLabRecipeRefusals(envelope).some(r => r.code === 'PLAIN_ONLY_BETA'))
     const body = { action: 'inspect', confirmedNetwork: 'devnet', envelopeText: serializeHookLabRecipe(envelope) }
     const response = await POST(request(body)), { observation } = await response.json()
     assert.equal(response.status, 200)
@@ -26,6 +27,8 @@ test('whole recipes reach the pinned parser; ignored extensions persist but neve
     assert.equal(observation.canSign, false); assert.equal(observation.canSubmit, false)
     assert.equal(observation.bindingContext, null)
     assert.ok(observation.intent.refusals.some(r => r.code === 'WRONG_GENESIS'))
+    assert.ok(observation.intent.refusals.some(r => r.code === 'PLAIN_ONLY_BETA'))
+    assert.deepEqual(observation.intent.steps, [])
     assert.equal(observation.intent.rules.burnBuyBps, raw.blocks.find(b => b.type === 'burn')?.buy_bps ?? 0)
     assert.equal(observation.intent.rules.burnSellBps, raw.blocks.find(b => b.type === 'burn')?.sell_bps ?? 0)
     assert.ok(observation.intent.steps.every(s => s.messageBase64 === null))

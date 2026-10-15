@@ -1,7 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { useWallet } from './wallet'
-import { HOOK_LAB_TEMPLATES, HOOK_LAB_BLOCKS, createHookLabTemplateDraft } from '../../src/hook-lab-templates.mjs'
 import { createHookLabRecipe, importHookLabRecipe, serializeHookLabRecipe, exportHookLabRecipe,
   loadHookLabRecipe, saveHookLabRecipe, migrateDirectPlanV1ToHookLabRecipe, hookLabRecipeSaveSchema } from '../../src/hook-lab-recipe.mjs'
 import { createHookLabCustody, unlockHookLabCustody } from '../lib/hooklab-custody.mjs'
@@ -20,7 +19,7 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
   const { wallet } = useWallet()
   const [envelope, setEnvelope] = useState(initial), [ready, setReady] = useState(false)
   const [listing, setListing] = useState({ signedIn: false, drafts: [], events: [] }), [saved, setSaved] = useState(null)
-  const [template, setTemplate] = useState('plain'), [importText, setImportText] = useState('')
+  const [importText, setImportText] = useState('')
   const [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false), [observation, setObservation] = useState(null)
   const [error, setError] = useState(''), [notice, setNotice] = useState(''), [storageError, setStorageError] = useState('')
   const [passphrase, setPassphrase] = useState(''), [repeat, setRepeat] = useState(''), [lossAccepted, setLossAccepted] = useState(false)
@@ -57,17 +56,9 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
   function change(next) { invalidate(); setEnvelope(next); setError('') }
   function newDraft(next) { localStorage.removeItem(accountKey); change(next); setSaved(null); saveId.current = null }
   function setCoin(key, value) { change({ ...envelope, recipe: { ...recipe, coin: { ...recipe.coin, [key]: value } } }) }
-  function setField(index, key, value) {
-    change({ ...envelope, recipe: { ...recipe, blocks: recipe.blocks.map((b, i) => i === index ? { ...b, [key]: value === '' ? null : Number(value) } : b) } })
-  }
-  function startTemplate() {
-    if (!window.confirm('Replace this device recipe with the selected template? Export first to retain it. Account drafts and encrypted identities are unchanged.')) return
-    const draft = createHookLabTemplateDraft(template)
-    newDraft(createHookLabRecipe({ format: 'hook-lab/1', coin: draft.coin, blocks: draft.blocks }, template))
-  }
-  function addBlock(type) {
-    const fields = HOOK_LAB_BLOCKS[type].fields
-    change({ ...envelope, recipe: { ...recipe, blocks: [...recipe.blocks, { type, ...Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, f.fixed ?? null])) }] } })
+  function startPlain() {
+    if (!window.confirm('Replace this device recipe with a new plain draft? Export first to retain it. Account drafts and encrypted identities are unchanged.')) return
+    newDraft(initial())
   }
   function download(raw = false) {
     const url = URL.createObjectURL(new Blob([raw ? exportHookLabRecipe(envelope) : serializeHookLabRecipe(envelope)], { type: 'application/json' }))
@@ -126,7 +117,6 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
     } catch (e) { opened?.lock(); setError(e.message) }
     finally { setPassphrase(''); setRepeat(''); setBusy(false) }
   }
-  const selected = HOOK_LAB_TEMPLATES.find(t => t.id === envelope.template)
   return <section aria-label="Programmable Coin recipe" className="hook-recipe">
     <div className="coin-workspace"><section>
       <h2>Configure your Programmable Coin</h2>
@@ -138,22 +128,12 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
           catch { setError('Earlier plan could not be copied losslessly. It remains unchanged.') }
         }}>Copy {d.plan.name || 'Untitled'} ({d.id === 'device' ? 'device' : 'account'})</button>)}
       </details>}
-      <fieldset className="coin-fields" disabled={!ready || busy}><legend className="sr-only">Recipe template and fields</legend>
-        <label>Starting template<select value={template} onChange={e => setTemplate(e.target.value)}>{HOOK_LAB_TEMPLATES.map(t => <option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
-        <button className="button" onClick={startTemplate}>Start selected template</button>
-        <p className="coin-note">{selected?.description ?? 'Imported recipe. Template labels are metadata, never a source of replacement rules.'} Blank numeric fields are unknown, not zero.</p>
+      <fieldset className="coin-fields" disabled={!ready || busy}><legend className="sr-only">Plain coin fields</legend>
+        <p className="coin-note">Plain launch only: no optional hook, rules or creator fee. Richer templates and trading are deferred. Protocol fees still apply.</p>
+        <button className="button" onClick={startPlain}>Start new plain draft</button>
         <div className="coin-field-row"><label>Coin name<input value={recipe.coin.name} onChange={e => setCoin('name', e.target.value)}/></label>
           <label>Ticker<input value={recipe.coin.ticker} onChange={e => setCoin('ticker', e.target.value)}/></label></div>
-        {recipe.blocks.map((block, index) => {
-          const definition = Object.hasOwn(HOOK_LAB_BLOCKS, block.type) && HOOK_LAB_BLOCKS[block.type]
-          return <section className="coin-rule" key={index}><h3>{definition?.title ?? `Unsupported block: ${block.type}`}</h3>
-            {definition ? Object.entries(definition.fields).map(([key, field]) => <label key={key}>{field.label} ({field.unit})
-              <input type="number" min="0" step="1" readOnly={field.fixed !== undefined} value={block[key] ?? ''} onChange={e => setField(index, key, e.target.value)}/><small>{field.help}</small></label>)
-              : <p className="coin-note">Preserved exactly. Inspection must refuse unsupported intent, not drop it.</p>}
-            <button className="button" onClick={() => change({ ...envelope, recipe: { ...recipe, blocks: recipe.blocks.filter((_, i) => i !== index) } })}>Remove {definition?.title ?? block.type}</button>
-          </section>
-        })}
-        <div className="coin-actions">{(selected?.optionalBlocks ?? []).filter(type => !recipe.blocks.some(b => b.type === type)).map(type => <button className="button" key={type} onClick={() => addBlock(type)}>Add {HOOK_LAB_BLOCKS[type].title}</button>)}</div>
+        {recipe.blocks.length > 0 && <p role="alert" className="coin-error">This stored recipe contains rules outside the plain-only beta. Its rules are preserved, not applied or silently removed. Export it before explicitly starting a new plain draft.</p>}
       </fieldset>
       <details><summary>Import, export or migrate without losing rules</summary>
         <p>Export the full envelope for a repo.ing backup, or raw hook-lab/1 JSON for SDK review. Neither contains keys. Unknown fields stay intact but cannot approve an unsupported intent. Never paste keys, seed phrases or confidential data.</p>
