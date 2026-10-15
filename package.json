@@ -34,6 +34,7 @@
     "@modelcontextprotocol/server": "2.1.0",
     "@raydium-io/raydium-sdk-v2": "0.2.74-alpha",
     "@repo-ing/hooklab-guarded-candidate": "file:vendor/hooklab-guarded-candidate",
+    "@repo-ing/hooklab-hardened-candidate": "file:vendor/hooklab-hardened-candidate",
     "@repo-ing/hooklab-readonly": "file:vendor/hooklab-readonly",
     "@solana/spl-token": "0.4.13",
     "@solana/web3.js": "1.98.4",

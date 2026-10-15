@@ -54,6 +54,7 @@ build/
 dist/
 !/vendor/hooklab-readonly/dist/
 !/vendor/hooklab-guarded-candidate/dist/
+!/vendor/hooklab-hardened-candidate/dist/
 coverage/
 .cache/
 .turbo/
