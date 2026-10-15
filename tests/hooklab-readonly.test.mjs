@@ -6,15 +6,14 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import * as sdk from '@repo-ing/hooklab-readonly'
-import { HOOK_LAB_COMMIT, HOOK_LAB_INTEGRATION_COMMIT, HOOK_LAB_MANIFEST_SHA256 } from '../src/direct-coins.mjs'
 
-test('vendored contract preserves provenance, all assets and only the six read-only exports', async () => {
+test('archived read-only contract preserves historical provenance and only the six read-only exports', async () => {
   assert.deepEqual(Object.keys(sdk).sort(), ['inspectDevnetIntegration', 'integrationCapabilities', 'integrationCompatibility', 'integrationIdlRefusals', 'integrationManifest', 'previewHookLabIntegration'])
   const root = new URL('../vendor/hooklab-readonly/', import.meta.url)
   const provenance = JSON.parse(await readFile(new URL('provenance.json', root)))
-  assert.equal(provenance.revision, HOOK_LAB_INTEGRATION_COMMIT)
-  assert.equal(provenance.abiSourceCommit, HOOK_LAB_COMMIT)
-  assert.equal(provenance.manifestSha256, HOOK_LAB_MANIFEST_SHA256)
+  assert.equal(provenance.revision, '9b3473e001a9abc73bf644d4206e47abc95a815b')
+  assert.equal(provenance.abiSourceCommit, 'ee7234cb7a32781fecba5470f24f43233cf94167')
+  assert.equal(provenance.manifestSha256, '3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403')
   assert.equal(Object.keys(provenance.files).filter(p => p.startsWith('idl/')).length, 11)
   for (const [file, hash] of Object.entries(provenance.files)) {
     assert.equal(createHash('sha256').update(await readFile(new URL(file, root))).digest('hex'), hash, file)

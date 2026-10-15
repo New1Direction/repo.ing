@@ -2,18 +2,16 @@ import { z } from 'zod'
 
 export const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'
 export const HOOK_LAB_COMMIT = 'ee7234cb7a32781fecba5470f24f43233cf94167'
-export const HOOK_LAB_INTEGRATION_COMMIT = '9b3473e001a9abc73bf644d4206e47abc95a815b'
-export const HOOK_LAB_MANIFEST_SHA256 = '3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403'
-export const HOOK_AUTHORITY = 'HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG'
+export const HOOK_LAB_INTEGRATION_COMMIT = 'f3c57ccc15f327a65f447f51b6f4b61833de78b7'
+export const HOOK_LAB_MANIFEST_SHA256 = '1a0ee482d83587f80af790729733e662ce39096e078b5a18c4e5c7514d7682d4'
+export const HOOK_AUTHORITY = 'FFZMVjia7xD43EiWNBSKBiujL65hLbBJPdRg1GtE8He6'
 const spl = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
 const sol = 'So11111111111111111111111111111111111111112'
 const hookPrograms = {
   token: '554tgVzsJ6NvQFpKc39HV73EDdarx3PMyDJTohcvHMLJ',
-  dex: '3yJKNHzDC7JA979RJNqxKSyo1jt6kLcJNk9bjUuebLN2',
+  dex: '8tWHu3srJXpZPi3eP7CQk7intQTMzGKUxk3kU2Eedk1U',
   bridge: 'GXeSHtaGgb68LPsDzrYRfmup3afPsZUHefG2usnu7sgs',
-  launch: '4CxedXkUfo6JLXSnzuxr2XA9xeXPsxQeR1xeTedhKMyd',
-  kit: 'AZDzvrC6733F6orekbzyF5B6Vpd9DxnV9RGfRrDgzHhm',
-  halfLife: '3TCbABpXPA7ifs2Fge5j1XCbXNSHMdLHEXNMxuMAC6Ub',
+  launch: '54mcNnfUgrnw7ZjuLqY547Rkf5nSqMLHqYTrBK3GVyea',
 }
 export const DIRECT_VENUES = {
   raydium: {
@@ -46,11 +44,11 @@ export const DIRECT_VENUES = {
   hooklab: {
     label: 'Hook Lab DEX', lane: 'programmable', standard: 'bordrless', quote: 'bridged-sol',
     quoteMint: '9815kDrx6sNiXCnD2CvB8LKNJjbdKWmQYXzH5gYKABSq',
-    sdk: 'Hook Lab integration v1 — pinned Node-only inspection and intent preview', programs: hookPrograms,
+    sdk: 'Hook Lab guarded V2 — pinned fresh devnet, plain-only read-only inspection', programs: hookPrograms,
     curve: 'Native constant-product launch curve with virtual offsets → the same Hook Lab DEX. Virtual quote is not deposited SOL. A devnet check decodes live supply, decimals and bounds; it does not approve them.',
-    lp: 'Launch PDA holds LP permanently under the current program. This is a program-enforced lock, not an LP burn, and remains subject to upgrade risk.',
-    fees: 'Creator fee applies to buys and sells; hook cuts, burns and protocol fees can stack. Setup documents an 80% sniper fee for 30 seconds (first creator self-buy exception). Read live config economics below; total debit, rent and net output remain unknown.',
-    authority: 'Bridge programs custody underlying SOL. Native holdings are not SPL wallet balances. A single manifest key controls upgrades/admin/treasury. No production approval or independent audit.',
+    lp: 'Plain curve creation mints no LP. The empty LP holding belongs to the launch PDA; no LP burn or external lock is claimed. Programs remain upgradeable.',
+    fees: 'Plain-only: zero creator fee and optional rules. Pinned config has a 0.01 SOL launch fee, zero nested pool fee, 30 bps LP fee and 80% initial sniper fee over 30 seconds. Rent and network fees need an exact current message; historical HLTEST cost is not a new quote.',
+    authority: 'Bridge programs custody underlying SOL; no bridge execution is offered. Native holdings are not SPL wallet balances. Fresh swap/launch share a dedicated upgrade/admin/treasury authority; dependencies retain their own authorities. No mainnet approval or independent audit.',
   },
 }
 
@@ -81,15 +79,15 @@ export function previewDirectCoin(input) {
   if (plan.standard !== venue.standard) refusals.push('This adapter only previews its declared token standard. Token-2022 needs a separately reviewed extension path; native Hook Lab tokens are not SPL.')
   if (plan.quote !== venue.quote) refusals.push('Quote asset is not approved for this adapter. No implicit bridge or asset conversion is allowed.')
   if (plan.lpPolicy !== 'protocol') refusals.push('LP burn, lock and ownership cannot override protocol/config terms in this preview.')
-  if (plan.recipe !== 'none' && (plan.adapter !== 'hooklab' || !['kit', 'halfLife'].includes(plan.recipe))) refusals.push('This hook recipe is not supported by this adapter. Lottery and arbitrary hooks are disabled.')
+  if (plan.recipe !== 'none') refusals.push('Only plain coins are supported. Kit, richer templates and arbitrary hooks are disabled.')
+  if (plan.adapter === 'hooklab' && plan.creatorFeeBps !== null && plan.creatorFeeBps !== 0) refusals.push('Plain-only beta requires zero creator fee.')
   const blockers = ['Transaction generation, signing and sending are disabled; owner approval is required.',
-    plan.adapter === 'hooklab' ? 'Exact debit/rent/fee accounting, client mint-key retention, non-atomic recovery, hook-aware trading quotes and signed beta acceptance are outstanding.'
+    plan.adapter === 'hooklab' ? 'One isolated HLTEST acceptance is finalized. A public wallet launch flow, fresh per-draft exact quote/simulation and activation approval are still required.'
       : 'Approved configuration identities, live economics and transaction simulation are outstanding.']
   if (!plan.name || !plan.symbol) blockers.push('Enter a coin name and symbol before final review.')
-  if (plan.adapter === 'hooklab' && (plan.creatorFeeBps === null || (plan.recipe === 'kit' && plan.kitMaxWalletBps === null))) blockers.push('Enter explicit creator fee and Kit max-wallet parameters for a native intent preview. Identity inspection is still available.')
-  const recipe = plan.recipe === 'halfLife' ? 'Half-Life has a fixed 20% initial exit fee, halving every 6 hours, zero after 48 hours. Prepare → launch → furnace-light is non-atomic.'
-    : plan.recipe === 'kit' ? 'This integration previews Kit max-wallet only; rewards and locks are not configured by this form. Parameters require live config validation. Kit cannot combine with Half-Life.'
-      : 'No optional token hook requested. Protocol pool rules and fees still apply.'
+  if (plan.adapter === 'hooklab' && plan.creatorFeeBps === null) blockers.push('Set an explicit zero creator fee for a plain intent preview. Identity inspection is still available.')
+  const recipe = plan.recipe === 'none' ? 'No optional token hook requested. Protocol pool rules and fees still apply.'
+    : 'Unsupported stored template: preserved for export, never executed.'
   return { plan, venue, compatible: refusals.length === 0, refusals, blockers, recipe,
     mode: 'plan-preview', canBuild: false, canSign: false, canSubmit: false,
     quote: null, simulation: { status: 'not-run', reason: 'No transaction is generated. This is a plan preview, not an RPC simulation.' } }

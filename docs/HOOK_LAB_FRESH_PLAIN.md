@@ -1,9 +1,43 @@
 # Fresh guarded devnet plain-launch acceptance
 
-This is an **isolated candidate integration**, not adoption of live pins or an enabled
+The planner now adopts **fresh guarded devnet pins for read-only observation**, not an enabled
 wallet flow. The public recipe planner still refuses executable quotes/signing/submission.
 No module or operator command below loads a key, requests a faucet, signs or sends.
 Mainnet, legacy execution, Kit, templates, trading, bridge execution and initial buys are disabled.
+
+## Finalized one-off acceptance · 2026-10-15
+
+The separately owner-approved disposable-wallet client signed and submitted **once** on devnet.
+Signature: `42naDDDP4QcKK4ZkHyjGut9XrhDBKmDmjgZT5eHagF4mQx7T4GvQzjRb4rF6xcVsVroxsFZSG8xYZ9pYJsEHobkq`.
+Finalized slot: **511377021**. Reviewed message SHA-256:
+`b37e469ab2114c3623d78eca1334a2ee8a07f2d1d11d893d03185eb10ce8e1c0`.
+Only the expired recent blockhash changed from the producer's package; all other message bytes and
+deadline **511377611** remained unchanged. Fresh code/config inspection, exact fee/rent checks and
+unsigned simulation preceded signing. Retained creator/mint custody had passed encrypted off-host
+backup and process-reload restoration checks. No custody secret or signer is included in this release.
+
+The finalized receipt and native accounts verified **32,870,000 lamports** payer debit: 10,000,000
+treasury credit, 22,860,000 account rent, 10,000 network fee. Curve/reserve holdings are respectively
+750,000,000 and 250,000,000 HLTEST; quote, LP supply and swaps are zero. All four mint authorities
+are absent. This is not browser-wallet launch acceptance or general launch activation.
+
+`src/hooklab-hltest-acceptance.json` retains the exact public preview/signature for recovery, never
+resubmission. `/coins/hltest` shows the same mint after reload and explicitly confirms devnet before
+`GET /api/hook-lab/acceptance?confirmedNetwork=devnet` re-verifies receipt and current native accounts.
+The API accepts no alternative message, signature, mint or RPC. An unavailable/mutated/traded state
+refuses acceptance; it never creates a replacement mint. The planner and direct adapter also inspect
+the fresh deployment. No active consumer path falls back to legacy swap/launch IDs.
+
+`src/hooklab-fresh-deployment.json` pins finalized slot 511377577 and the post-acceptance config
+hashes with counters exactly one. Observation-only inspection can match these existing accounts;
+it always returns `readyForUnsignedSimulation:false`. The original acceptance inspector still
+requires unused configs/accounts and refuses a second launch. Changed counters, config bytes,
+economics, ELF, authorities or dependencies fail closed until separately reviewed.
+
+Producer final evidence archive SHA-256:
+`ee879433422907d17b79d0956c6cbaa92560c344df496ea62c6945945d66c76d`.
+Exact full ELF hashes are swap `bd1d72271d7c2ef7636ad7f6917262e3003b0cc171f68ebf0658e2de55422482`
+and launch `c63e41d531b957a36148ede41952fbab0c5a42b29e06d0e8da5346555110d3d4`.
 
 ## Exact candidate and identities
 
@@ -26,7 +60,9 @@ Its historical `NOT-DEPLOYED-NOT-ACCEPTED` label is preserved, not overwritten b
 `@repo-ing/hooklab-guarded-candidate` has fifteen exports, including only the guarded
 plain creation builder, account decoders, address/rent/budget/hash helpers and integrity-checked
 manifest reader. It deliberately omits the producer's admin-init helper and all send/sign,
-legacy builders, trading and Kit APIs. The original read-only package is unchanged.
+legacy builders, trading and Kit APIs. The original read-only package remains an archived artifact,
+not an active inspection or execution fallback. The historical hypothetical swap model is not used
+for fresh launch quotes.
 Rebuild with `node scripts/vendor-hooklab-readonly.mjs <exact-source-checkout> fresh-candidate`.
 The source's sibling `candidate/candidate-manifest.json` is required. Install the source SDK's
 frozen lockfile and build it first. Provenance records every packaged IDL/file and dependency notice.
@@ -113,3 +149,25 @@ git show origin/main:scripts/ops/deploy.sh | bash -s -- <reviewed-seven-characte
 Do not substitute the candidate branch or claim pushing deploys Railway. See [PRODUCTION.md](PRODUCTION.md)
 and [BACKUPS.md](BACKUPS.md). No mainnet identities, approvals, release budgets or mainnet activation are
 supplied here. Security/governance review and network-specific dependencies are separate NO-GO gates.
+
+## Mainnet-readiness delta · disabled, not an activation plan
+
+- Separate immutable network manifests must pin the genesis, all dependency programs/ProgramData,
+  reproducible ELF/IDL/source hashes, config commitments, quote mint and ALT. Never derive mainnet
+  addresses or token support from this devnet candidate. No mainnet RPC is needed for this work.
+- A public wallet flow still needs connected-wallet/network binding, explicit identity/economics and
+  recipient review, full rent/network/priority cashflow caps, exact unsigned simulation, reviewed
+  message/signature validation, expiry and a durable same-mint recovery journal. This release has no
+  public signing/submission implementation; the one-off acceptance client is not such a flow.
+- Enforce creator allowlist/quota/expiry and legacy-route refusal on chain, not merely in the UI.
+  Separate creation/trading gates and pause-only guardian from delayed admin/unpause. Fresh devnet
+  programs do not establish these controls. Independent security and governance approval is required.
+- Establish production custody/restore ceremonies with independently controlled upgrade/admin,
+  guardian and treasury identities. A public key or offline governance policy is not deployed control.
+- Monitor program/config drift, quote/dependency changes, debit mismatches, unresolved submissions,
+  finalized indexing lag, recovery failures and RPC availability. This release emits bounded recovery
+  outcomes only; production alert routing, pause ownership and incident drills remain owner gates.
+- Railway deployment is a separate approval from chain activation. Require exact reviewed source,
+  required CI, authenticated access, current encrypted DB backup plus disposable restore, web-before-
+  worker rollout and read-only smoke tests. Mainnet funding/signing/writes/deployment stay NO-GO until
+  a separately reviewed dossier supplies exact messages, budget, approvers and activation scope.

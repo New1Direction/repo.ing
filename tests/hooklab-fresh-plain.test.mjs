@@ -47,6 +47,16 @@ test('plain HLTEST reconstruction exactly matches the independently supplied 111
   assert.equal(result.canSign, false)
   assert.equal(result.canSubmit, false)
   assert.throws(() => verifyFreshHltestPreview(fixture, { confirmedNetwork: 'mainnet-beta' }), /devnet/)
+  // Published recovery uses the signed acceptance's message, not the historical unsigned fixture.
+})
+
+test('public recovery pins the finalized acceptance and its exact fresh program identities', async () => {
+  const accepted = JSON.parse(await readFile(new URL('../src/hooklab-hltest-acceptance.json', import.meta.url)))
+  const result = verifyFreshHltestPreview(accepted.preview, options)
+  assert.equal(result.messageSha256, 'b37e469ab2114c3623d78eca1334a2ee8a07f2d1d11d893d03185eb10ce8e1c0')
+  assert.equal(accepted.signature, '42naDDDP4QcKK4ZkHyjGut9XrhDBKmDmjgZT5eHagF4mQx7T4GvQzjRb4rF6xcVsVroxsFZSG8xYZ9pYJsEHobkq')
+  assert.equal(accepted.finalizedSlot, 511377021)
+  assert.deepEqual(accepted.identities, result.identities)
 })
 
 test('acceptance refuses altered recipes, caps, identities, legacy hashes, display and instruction bytes', () => {

@@ -1,15 +1,21 @@
 import { createHash } from 'node:crypto'
-import { integrationManifest, inspectDevnetIntegration, previewHookLabIntegration } from '@repo-ing/hooklab-readonly'
+import { freshCandidateManifest } from '@repo-ing/hooklab-guarded-candidate'
+import { inspectFreshPlain } from './hooklab-fresh-plain.mjs'
+import deployment from './hooklab-fresh-deployment.json' with { type: 'json' }
 import { HOOK_LAB_MANIFEST_SHA256 } from './direct-coins.mjs'
 import { HOOK_LAB_BLOCKS } from './hook-lab-templates.mjs'
 import { parseHookLabRecipe, serializeHookLabRecipe } from './hook-lab-recipe.mjs'
-import { QUOTE_PIN } from './hooklab-quote-model.mjs'
 
 // A persisted extension is not a capability. The pinned parser ignores some
 // unknown fields; refuse those here instead of approving a normalized subset.
 export function hookLabRecipeRefusals(envelope) {
   const { recipe } = parseHookLabRecipe(envelope)
   const refusals = []
+  for (const [field, max] of [['name', 32], ['ticker', 10]]) {
+    const bytes = Buffer.byteLength(recipe.coin[field], 'utf8')
+    if (bytes < 1 || bytes > max) refusals.push({ code: 'INVALID_COIN_TEXT', subject: `coin.${field}`,
+      message: `${field} must contain 1–${max} UTF-8 bytes. The draft is preserved.` })
+  }
   if (recipe.blocks.length) refusals.push({ code: 'PLAIN_ONLY_BETA', subject: 'blocks',
     message: 'This beta accepts plain coins with no rule blocks. Stored rules are preserved, never silently removed or executed.',
   })
@@ -28,25 +34,26 @@ export function hookLabRecipeRefusals(envelope) {
 
 export const hookLabLaunchQuote = Object.freeze({
   status: 'unavailable', executable: false, capEnforced: false, exactWalletDebitLamports: null,
-  reason: 'The adopted model covers hypothetical swaps only. Launch fees, nested pool fees, rent, bridge funding and an exact message are not a guarded launch quote.',
-  modelManifestSha256: QUOTE_PIN.manifestSha256,
+  reason: 'The finalized HLTEST receipt is historical acceptance, not a quote for this draft. Public transaction construction, simulation and signing remain disabled.',
+  manifestSha256: HOOK_LAB_MANIFEST_SHA256,
 })
 
 export async function inspectHookLabRecipe(envelope, connection, confirmedNetwork) {
   envelope = parseHookLabRecipe(envelope)
   if (confirmedNetwork !== 'devnet') throw new Error('Explicit devnet confirmation required')
-  const manifest = integrationManifest()
-  const inspection = await inspectDevnetIntegration(connection, { confirmedNetwork, manifest })
+  const manifest = freshCandidateManifest()
+  const inspection = await inspectFreshPlain(connection, { confirmedNetwork, deployment, observationOnly: true })
   const extra = hookLabRecipeRefusals(envelope)
-  const intent = previewHookLabIntegration(envelope.recipe, inspection)
-  intent.refusals.push(...extra)
-  // Never retain a seemingly actionable subset after an unsupported field.
-  if (extra.length) intent.steps = []
+  const intent = { recipe: 'plain', refusals: [...extra], steps: [], warnings: [
+    'Read-only fresh guarded devnet observation, not a launch quote or execution approval.',
+    'Native custom tokens are not SPL or Token-2022. Programs remain upgradeable; admin powers remain broad.',
+  ], exactWalletDebitLamports: null, rentLamports: null, networkFeeLamports: null, minOutputRaw: null, expiry: null }
+  if (!inspection.readyForObservation) intent.refusals.push({ code: 'INSPECTION_INCOMPATIBLE', message: 'Fresh pinned deployment/config verification failed.' })
   const recipeDigest = createHash('sha256').update(serializeHookLabRecipe(envelope)).digest('hex')
   const bindingContext = inspection.refusals.length || intent.refusals.length ? null : {
     genesisHash: manifest.genesisHash, recipeDigest, manifestDigest: HOOK_LAB_MANIFEST_SHA256,
-    programs: inspection.programs.filter(p => p.binaryHash).map(p => ({ address: p.programId, sha256: p.binaryHash })),
-    configs: Object.values(inspection.accounts).map(a => ({ address: a.address, sha256: a.dataSha256 })),
+    programs: inspection.programs.map(p => ({ address: p.address, sha256: p.normalizedHash })),
+    configs: Object.values(inspection.configs).map(a => ({ address: a.address, sha256: a.dataSha256 })),
   }
   return { inspection, intent, bindingContext, checkedAt: new Date().toISOString(), quote: hookLabLaunchQuote,
     canBuild: false, canSimulate: false, canSign: false, canSubmit: false }

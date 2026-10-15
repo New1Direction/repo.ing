@@ -25,6 +25,7 @@ const deploymentProgram = z.object({ deploySlot: integer.positive(), configSha25
 const deploymentSchema = z.object({
   schema: z.literal('repoing/fresh-plain-deployment/1'), sourceCommit: z.literal(FRESH_SOURCE_COMMIT),
   manifestSha256: z.literal(FRESH_MANIFEST_SHA256), finalizedSlot: integer.positive(),
+  expectedCreations: z.union([z.literal(0), z.literal(1)]).default(0),
   swap: deploymentProgram, launch: deploymentProgram,
 }).strict()
 
@@ -32,12 +33,13 @@ const deploymentSchema = z.object({
  * Evidence is an operator-reviewed producer observation, never an authorization token.
  * Matching code is still upgradeable; hashes are not bound by the native creation guard.
  */
-export async function inspectFreshPlain(connection, { confirmedNetwork, deployment } = {}) {
+export async function inspectFreshPlain(connection, { confirmedNetwork, deployment, observationOnly = false } = {}) {
   requireMatch(confirmedNetwork === 'devnet', 'Explicit devnet confirmation required')
+  requireMatch(typeof observationOnly === 'boolean', 'Invalid inspection purpose')
   const manifest = freshCandidateManifest()
   const out = { network: 'devnet', sourceCommit: FRESH_SOURCE_COMMIT, manifestSha256: FRESH_MANIFEST_SHA256, observedSlot: null,
     programs: [], configs: {}, accounts: {}, refusals: [], readyForUnsignedSimulation: false,
-    canSign: false, canSubmit: false }
+    readyForObservation: false, canSign: false, canSubmit: false }
   const refuse = (subject, reason) => out.refusals.push({ subject, reason })
   const parsed = deploymentSchema.safeParse(deployment)
   if (!parsed.success) refuse('deployment', 'Finalized producer deployment/config evidence is required; candidate files alone do not establish deployment.')
@@ -99,7 +101,8 @@ export async function inspectFreshPlain(connection, { confirmedNetwork, deployme
         requireMatch(economics.toString('hex') === manifest.acceptanceEconomics[role === 'swap' ? 'poolHash' : 'launchHash'], 'Config economics mismatch')
         const dataSha256 = sha(data)
         if (parsed.success) requireMatch(dataSha256 === parsed.data[role].configSha256, 'Config changed since producer verification')
-        requireMatch((role === 'swap' ? decoded.poolsCreated : decoded.launches) === 0n, 'Acceptance requires unused configs')
+        const expectedCreations = observationOnly && parsed.success ? parsed.data.expectedCreations : 0
+        requireMatch((role === 'swap' ? decoded.poolsCreated : decoded.launches) === BigInt(expectedCreations), 'Config creation counter differs from pinned evidence')
         out.configs[role] = { address: manifest.configs[role], dataSha256, economicsHash: economics.toString('hex'), decoded: json(decoded) }
       } catch (error) { refuse(`${role}Config`, error.message) }
     }
@@ -119,7 +122,7 @@ export async function inspectFreshPlain(connection, { confirmedNetwork, deployme
       out.accounts.alt = { address: manifest.alt.address, dataSha256: sha(data) }
     } catch (error) { refuse('alt', error.message) }
     for (const account of inventory) {
-      if (accounts.get(account.address.toBase58()) != null) refuse(account.role, 'Creation account already exists. Recover this mint; never relaunch with a new key.')
+      if (!observationOnly && accounts.get(account.address.toBase58()) != null) refuse(account.role, 'Creation account already exists. Recover this mint; never relaunch with a new key.')
     }
     const creator = accounts.get(HLTEST_CREATOR)
     if (creator && (creator.executable || creator.owner.toBase58() !== '11111111111111111111111111111111' || creator.data.length)) refuse('creator', 'Creator must be a system wallet')
@@ -128,7 +131,8 @@ export async function inspectFreshPlain(connection, { confirmedNetwork, deployme
     // RPC errors can contain credential-bearing URLs. Never copy them into telemetry or output.
     refuse('rpc', 'Finalized snapshot unavailable or inconsistent; no readiness inferred')
   }
-  out.readyForUnsignedSimulation = out.refusals.length === 0
+  out.readyForObservation = out.refusals.length === 0
+  out.readyForUnsignedSimulation = out.readyForObservation && !observationOnly
   return out
 }
 

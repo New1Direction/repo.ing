@@ -35,21 +35,18 @@ export function directCoinAdapter(id) {
       if (!preview.compatible) throw new DirectCoinError(preview.refusals.join(' '))
       if (id === 'hooklab') {
         // Lazy Node-only boundary: a broken native artifact must not disable Standard Coin.
-        const sdk = await import('@repo-ing/hooklab-readonly')
-        const manifest = sdk.integrationManifest()
-        const inspection = await sdk.inspectDevnetIntegration(connection, { confirmedNetwork, manifest })
-        const plan = preview.plan, intentRefusals = []
-        if (plan.creatorFeeBps === null) intentRefusals.push('Enter an explicit creator fee in basis points (0 is allowed); no fee is inferred.')
-        if (plan.recipe === 'kit' && plan.kitMaxWalletBps === null) intentRefusals.push('Enter an explicit Kit max-wallet limit; other Kit rules are not configured here.')
-        const blocks = [{ type: 'creator_fee', fee_bps: plan.creatorFeeBps }]
-        if (plan.recipe === 'kit') blocks.push({ type: 'max_wallet', pct_bps: plan.kitMaxWalletBps })
-        if (plan.recipe === 'halfLife') blocks.push({ type: 'exit_halflife', start_bps: 2000, half_secs: 21600, zero_secs: 172800 })
-        const intent = intentRefusals.length ? null : sdk.previewHookLabIntegration({ format: 'hook-lab/1', coin: { name: plan.name, ticker: plan.symbol }, blocks }, inspection)
+        const { inspectHookLabRecipe } = await import('./hook-lab-preflight.mjs')
+        const { createHookLabRecipe } = await import('./hook-lab-recipe.mjs')
+        const plan = preview.plan
+        const envelope = createHookLabRecipe({ format: 'hook-lab/1', coin: { name: plan.name, ticker: plan.symbol }, blocks: [] }, 'plain')
+        const { inspection, intent: observedIntent } = await inspectHookLabRecipe(envelope, connection, confirmedNetwork)
+        const intentRefusals = plan.creatorFeeBps === null ? ['Enter an explicit zero creator fee; no fee is inferred.'] : []
+        const intent = intentRefusals.length ? null : observedIntent
         return { network: 'devnet', slot: inspection.observedSlot, checkedAt: new Date().toISOString(),
-          status: inspection.refusals.some(r => r.code === 'INSPECTION_UNAVAILABLE') ? 'unavailable' : inspection.refusals.length ? 'refused' : 'programs-present',
-          warnings: inspection.warnings, programs: inspection.programs.map(p => ({ ...p, expectedStatus: manifest.programs.find(m => m.role === p.role).status })),
+          status: inspection.refusals.some(r => r.subject === 'rpc') ? 'unavailable' : inspection.refusals.length ? 'refused' : 'programs-present',
+          warnings: observedIntent.warnings, programs: inspection.programs,
           native: { deliveryCommit: HOOK_LAB_INTEGRATION_COMMIT, manifestSha256: HOOK_LAB_MANIFEST_SHA256,
-            capabilities: sdk.integrationCapabilities, inspection, intent, intentRefusals },
+            capabilities: { plainOnly: true, canBuild: false, canSubmit: false }, inspection, intent, intentRefusals },
           canSubmit: false, simulation: preview.simulation }
       }
       if (await connection.getGenesisHash() !== DEVNET_GENESIS) throw new DirectCoinError('RPC genesis is not Solana devnet. Refusing inspection.')

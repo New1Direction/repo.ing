@@ -1,0 +1,15 @@
+{
+  "schema": "repoing/fresh-plain-deployment/1",
+  "sourceCommit": "f3c57ccc15f327a65f447f51b6f4b61833de78b7",
+  "manifestSha256": "1a0ee482d83587f80af790729733e662ce39096e078b5a18c4e5c7514d7682d4",
+  "finalizedSlot": 511377577,
+  "expectedCreations": 1,
+  "swap": {
+    "deploySlot": 511371942,
+    "configSha256": "f3813cf1f95863c54da5bbaa94688b5aadce1f19300b7f89b308c9cf73b948a8"
+  },
+  "launch": {
+    "deploySlot": 511375868,
+    "configSha256": "e75d529c05e1dd943159ede390302cfc73841cf73895b450253d49ff449b56c4"
+  }
+}

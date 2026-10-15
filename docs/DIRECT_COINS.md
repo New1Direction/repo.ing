@@ -8,6 +8,14 @@ Bordrless-style native coin through Hook Lab programs inside repo.ing, **not a
 Hook Lab platform token**. `/coins/new` currently implements planning and reads
 only; native launch and trading execution are future, separately gated work.
 
+**Fresh guarded devnet adoption:** the active read-only planner now pins source
+`f3c57ccc15f327a65f447f51b6f4b61833de78b7`, fresh swap/launch IDs, exact IDLs/ELFs
+and post-HLTEST config evidence. One owner-authorized plain HLTEST finalized at
+slot 511377021; `/coins/hltest` verifies its receipt and native holdings read-only.
+Public wallet construction/simulation/signing remain disabled. The original
+inspection package and the historical delivery notes below are archival, not
+fallbacks. See [fresh acceptance and rollout gates](HOOK_LAB_FRESH_PLAIN.md).
+
 ## Primary-source compatibility matrix
 
 | Venue | Token standard / hooks | Quote and curve | LP and fees | This increment |
@@ -63,8 +71,9 @@ genesis, slot, owner, ProgramData and upgrade authority only; executable account
 detection proves neither binary identity nor safety. Hook Lab additionally checks
 the approved deployment hashes, raw IDLs, config identities, quote wrapper/mint and
 exact lookup-table order at one finalized slot. Neither inspection approves economics.
-Hook Lab's pinned manifest records a single upgrade/admin/treasury key
-`HUZSwDaS7u7bfqrrhDUjCVoi6xCVDDXZhM6snvJ3YQdG`. Its bridge holds underlying assets
+The fresh swap/launch manifest records a single upgrade/admin/treasury key
+`FFZMVjia7xD43EiWNBSKBiujL65hLbBJPdRg1GtE8He6`; older dependencies retain their
+own authorities. Its bridge holds underlying assets
 in program custody; holders receive native claims. Program upgrades remain a
 custody risk even when mint/hook authority is revoked and LP is PDA-locked.
 repo.ing holds no user assets or signing keys in this path. GitHub sign-in identifies
