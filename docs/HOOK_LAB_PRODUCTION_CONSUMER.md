@@ -1,8 +1,8 @@
 # Production consumer boundary — local, inert preparation
 
-No active production dossier, wallet execution, live RPC indexer or shared migration is
-introduced. An isolated disabled production SDK candidate and unapplied recovery migration are
-prepared for local tests only. Frozen `f3c57ccc` HLTEST and the separate `826b5a4`
+No active production dossier, wallet execution, scheduled live indexer or shared migration is
+introduced. An isolated disabled production SDK candidate, opt-in account recovery reads,
+operator-invoked monitor and unapplied recovery migrations are prepared. Frozen `f3c57ccc` HLTEST and the separate `826b5a4`
 candidate remain unchanged. This document supersedes their rollout assumptions only for future
 production work; it does not change their historical evidence or activate any profile.
 
@@ -109,15 +109,16 @@ decoded bytes: `5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`, never its shorten
   native rent/debits/treasury credit. Later trading/config changes, pre-funded creation accounts,
   missing history, incompatible layouts or disagreement require review; never reconstruct a new
   launch. Snapshot matches remain `chainVerified:false`: deployment trust is not adopted.
-- `plainRecoveryJournal` is an unwired PostgreSQL candidate: immutable owner/mint/message/signature,
+- `plainRecoveryJournal` is a disabled PostgreSQL candidate: immutable owner/mint/message/signature,
   serialized writes and atomic audit, retained raw finalized observations, no expiry/deletion, and
   repeated read-only reconciliation. Latest outage status never deletes the first finalized
   evidence. `pending()` rotates by check time, not a cursor that can skip unknown signatures.
-  There is no public write route, live scheduler, production DB connection or automatic send.
+  There is no public write route, live scheduler or automatic send. Account reads and explicit
+  operator reconciliation can use an approved database only after separate rollout.
 - `/coins/production` reuses wallet connection for a public-address-only preparation interaction.
   Explicit mainnet acknowledgement resets on wallet change. Readiness always refuses; review and
   signing buttons remain disabled. No seed phrase/private key field exists. It does not implement
-  mint co-signing, encrypted mint backup/export, authenticated wallet binding, or operational
+  mint co-signing, encrypted mint backup/export, a public wallet-proof endpoint, or operational
   wallet acceptance; these remain blockers, not completed capabilities.
 
 `firstCreatorPacket()` leaves creator, mint, fee payer, metadata, economics, grant, deadline,
@@ -149,15 +150,16 @@ by the production plain route; no permanent LP-lock or Hooks parity claim is mad
 
 ## Delivery and rollback boundaries
 
-Migration `0081_hook_lab_plain_recovery.sql` is additive and registered for disposable tests, not
-approved for shared application. The unavailable page does not require it or historical `0080`.
+Migrations `0081_hook_lab_plain_recovery.sql` and `0082_hook_lab_plain_authorization.sql` are additive
+and registered for disposable tests, not approved for shared application. The default disabled
+page/account route does not require them or historical `0080`.
 Before any deployment, inspect **all** pending migrations (the existing pre-deploy command applies
 them), approve the target and encrypted backup/decrypt/disposable restore, check schema compatibility
 and journal permissions, then separately authorize shared migration. Do not casually deploy this PR.
 Preserve journals/receipts on rollback; never restore stale DB state over accepted chain activity.
 Disabling the consumer cannot pause a chain program or reverse minted supply/account rent.
 
-Before activation, separately implement and test drift/unavailability alerts, non-secret receipt
+Before activation, separately configure and accept alert delivery, scheduled non-secret receipt
 indexing, operator escalation and actual pause procedures. On mismatch stop new execution; observe
 existing signatures without regenerating transactions. Web rollback, authority actions and chain
 activation require separate approval. Journal health offers unresolved/review-required counts and
@@ -225,3 +227,58 @@ The minimum producer gap is a deployment-bound creation acceptance fixture (raw 
 roles, simulation/account snapshots, finalized receipt, exact rent/fee/debit postconditions and
 counter changes). The paused-only package cannot substitute for it. Swaps/liquidity/Kit and
 LiquidityTek remain out of this increment.
+
+## Authenticated recovery increment — disabled, not production adoption
+
+`GET /api/hook-lab/production/account` derives ownership only from the encrypted GitHub session.
+It returns private/no-store summaries for that owner (latest 50, or one explicit UUID), never raw
+signed bytes, provider URLs or arbitrary dossier input. No wallet connection or active creator
+grant is required to recover. The default gate needs neither a database nor RPC. When separately
+enabled, database-backed quotas allow 120 reads/hour/account; storage failure returns 503 and
+provider failure does not hide retained operations. The `/coins/production` account section
+distinguishes signed-out, disabled, empty, retained and unavailable states. Every state refuses
+transaction actions. Public POST and `submitPlainTransaction` still unconditionally return 423.
+
+Private journal methods `challenge`/`prepareAuthenticated` provide a separate Ed25519 control
+proof bound to origin, GitHub owner/session, creator, operation UUID, full genesis, profile and
+message digest. Proofs expire after five minutes, are rate-limited (10 per ten minutes), and are
+consumed atomically with the preparation/audit. Failed persistence rolls back consumption; replay,
+wrong origin/session/wallet/message and concurrent reuse refuse. **No HTTP proof endpoint or wallet
+prompt is exposed:** trusted deployment/policy preparation has not been implemented or approved.
+Do not pass a public supplied plan into these methods, or expose the unauthenticated internal
+`prepare`/`recordSigned` methods. The proof is not a grant or spending consent. It does not retain
+external partial signatures; only full exact signed transactions can enter the existing journal.
+
+The operator read adapter uses explicit HTTPS provider connections, exact reviewed dossier digest,
+mainnet genesis and one complete finalized batch per provider. Each HTTP request has an eight-second
+deadline with no SDK rate-limit retries; observation has an eight-second overall deadline. Provider
+IDs must match the dossier and be independently reviewed as distinct trust domains. Different URLs
+alone do not prove independence. Full account hashes remain mandatory: **the producer's historical
+supply-byte exception is not adopted**. Matching bytes does not verify signed provenance, policy
+semantics, deployment adoption or an operation. No automatic pin refresh exists.
+
+Operator configuration (all absent/false by default):
+
+| Variable | Purpose and authorization boundary |
+| --- | --- |
+| `HOOKLAB_PRODUCTION_ACCOUNT_ENABLED=true` | Enables authenticated recovery reads only, after schema/backup/service rollout approval. No execution effect. |
+| `HOOKLAB_PRODUCTION_DOSSIER_FILE`, `HOOKLAB_PRODUCTION_DOSSIER_SHA256` | Operator-reviewed strict `repoing/production-observation/1` JSON and its independent digest; not a producer packet automatically converted to adoption. |
+| `HOOKLAB_PRODUCTION_RPC_PRIMARY_ID`, `HOOKLAB_PRODUCTION_RPC_SECONDARY_ID` | Dossier's independently reviewed provider identities. |
+| `HOOKLAB_PRODUCTION_RPC_PRIMARY_URL`, `HOOKLAB_PRODUCTION_RPC_SECONDARY_URL` | Private HTTPS RPC credentials, stored as secrets; never public inputs or logs. |
+| `HOOKLAB_PRODUCTION_MONITOR_ENABLED=true` | Allows an explicit `node scripts/check-hooklab-production.mjs` pass to read RPC and update retained journal observations. Requires separate DB-write/rollout approval; no chain writes. |
+
+The monitor is **not registered in the worker or any scheduler**. It returns non-secret structured
+health/alerts for missing/drifted deployment evidence, unavailable receipts, review-required receipts,
+and unresolved signatures at least five minutes old. It reconciles up to 25 retained signatures even
+when validly configured evidence drifts; invalid provider/dossier configuration blocks RPC selection.
+It exits nonzero on unavailable/attention-required results. Alert transport, delivery acknowledgement,
+on-call ownership and an independent pause procedure remain deployment blockers, not completed work.
+Never delay an authorized emergency pause until a receipt is accepted.
+
+Disabling account reads or the monitor preserves journal and audit rows. Do not delete the tables
+or restore stale backups as rollback. A configuration rollout must not apply migrations implicitly:
+inspect all pending migrations and obtain target-specific approval first. Current receipt readers
+observe later finalized state, **not historical operation state**; retained ordered post-state plus
+transaction evidence is still required before accepting a past operation after re-pause. No
+production curve builder, trading adapter, new deployed-success claim or real-wallet acceptance is
+introduced. Synthetic signatures/accounts in tests prove software contracts only.

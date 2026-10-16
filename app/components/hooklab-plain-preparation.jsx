@@ -49,3 +49,50 @@ export function HookLabPlainPreparation({ packet }) {
     </details>
   </div></section>
 }
+
+// Recovery is GitHub-owner scoped, independent of wallet connection or creator-grant expiry.
+// No response, wallet, query string or local storage value can enable a transaction action.
+export function HookLabProductionAccount() {
+  const [account, setAccount] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  async function refresh() {
+    setBusy(true); setError(''); setAccount(null)
+    try {
+      const response = await fetch('/api/hook-lab/production/account', { cache: 'no-store' })
+      const result = await response.json()
+      if (response.status === 401) setAccount({ signedIn: false })
+      else if (!response.ok) setError(result.error || 'Recovery unavailable. Preserve the original message, mint and signature.')
+      else setAccount(result)
+    } catch { setError('Recovery service unavailable. Preserve the original message, mint and signature; do not retry a launch.') }
+    finally { setBusy(false) }
+  }
+  return <section className="coin-entry-points" aria-labelledby="production-account"><div>
+    <h2 id="production-account">Your retained operations</h2>
+    <p>Sign in with GitHub to read your recovery journal after its separate service rollout. Wallet connection is not authentication. This account view cannot prepare, sign, submit or retry a transaction.</p>
+    <div className="coin-actions">
+      <a className="button" href="/api/github/start?mode=hooklab-production">Sign in with GitHub</a>
+      <button className="button" type="button" disabled={busy} onClick={refresh}>{busy ? 'Reading…' : 'Refresh retained operations'}</button>
+    </div>
+    <div aria-live="polite" aria-busy={busy}>
+      {error && <p role="alert" className="coin-error">{error}</p>}
+      {account?.signedIn === false && <p>Sign in with GitHub first. No wallet signature is needed to read retained operations.</p>}
+      {account?.signedIn && <>
+        <p>Signed in as {account.githubLogin}. {account.status === 'disabled' ? account.error : 'Read-only recovery. Deployment adoption and all execution remain disabled.'}</p>
+        {account.evidence && <p>Account evidence: {account.evidence.status}. {account.evidence.reason} Policy and provenance acceptance remain unverified.</p>}
+        {account.status === 'read-only' && !account.entries.length && <p>No retained operations for this account. This is not evidence that a transaction was never submitted elsewhere.</p>}
+        {account.entries?.length > 0 && <>
+          <p>Latest {account.entries.length} of up to 50 entries. Receipt retention is not production acceptance. A later outage never authorizes a replacement launch.</p>
+          <ul className="coin-history">{account.entries.map(entry => <li key={entry.id}>
+            <details><summary>Operation {entry.id} · {entry.status}</summary>
+              <p>Mint<code>{entry.mint}</code>Message SHA256<code>{entry.messageSha256}</code></p>
+              <p>Original signature<code>{entry.signature || 'No fully signed transaction retained'}</code></p>
+              <p>First finalized evidence: {entry.receiptRetained ? 'retained, not accepted production evidence' : 'not retained'}. Chain operation verified: no. Retry disabled.</p>
+            </details>
+          </li>)}</ul>
+        </>}
+      </>}
+    </div>
+    <p>External partial-signature backup and historical post-operation acceptance are not implemented here. Emergency pause must never wait for receipt acceptance.</p>
+  </div></section>
+}

@@ -554,6 +554,13 @@
       "when": 1792063200003,
       "tag": "0081_hook_lab_plain_recovery",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792173600000,
+      "tag": "0082_hook_lab_plain_authorization",
+      "breakpoints": true
     }
   ]
 }

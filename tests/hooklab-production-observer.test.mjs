@@ -3,6 +3,10 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { inspectProductionEvidence } from '../src/hooklab-production-observer.mjs'
+import { readProductionEvidence } from '../src/hooklab-production-rpc.mjs'
+import { monitorPlainProduction } from '../src/hooklab-production-monitor.mjs'
+import { plainFixture } from './fixtures/hooklab-plain.mjs'
+import { verifyPlainReceipt } from '../src/hooklab-plain-receipts.mjs'
 import { GET, POST } from '../app/api/hook-lab/production/route.js'
 
 const sha = data => createHash('sha256').update(data).digest('hex')
@@ -89,4 +93,82 @@ test('public production endpoint remains unavailable and refuses all execution w
     assert.equal(result.status, 423); assert.equal((await result.json()).code, 'PRODUCTION_EXECUTION_DISABLED')
   }
   assert.deepEqual(await GET().json(), readiness)
+})
+
+test('trusted read adapters bind one finalized inventory per provider without accepting policy or executing', async () => {
+  const f = fixture(), dossierJson = JSON.stringify(f.dossier)
+  let reads = 0
+  const providers = f.observations.map(o => ({ provider: o.provider, connection: {
+    getGenesisHash: async () => o.genesisHash,
+    getMultipleAccountsInfoAndContext: async (keys, config) => {
+      reads++
+      assert.deepEqual(config, { commitment: 'finalized', minContextSlot: 100 })
+      return { context: { slot: o.slot }, value: keys.map(k => {
+        const a = o.accounts.find(a => a.address === k.toBase58())
+        return a ? { owner: new PublicKey(a.owner), executable: a.executable, data: Buffer.from(a.dataBase64, 'base64') } : null
+      }) }
+    },
+  } }))
+  const input = { dossierJson, expectedSha256: sha(dossierJson), providers, now: () => 2000 }
+  const result = await readProductionEvidence(input)
+  assert.equal(result.status, 'account-bindings-matched')
+  assert.deepEqual(result.observedSlots, [100, 101])
+  assert.equal(reads, 2)
+  assert.equal(result.policyVerified, false); assert.equal(result.canSubmit, false)
+  assert.equal((await readProductionEvidence({ ...input, expectedSha256: '0'.repeat(64) })).status, 'mismatch')
+  assert.equal(reads, 2, 'unreviewed dossier must not reach RPC')
+  assert.equal((await readProductionEvidence({ ...input, providers: [providers[0], providers[0]] })).status, 'mismatch')
+  f.observations[1].accounts.at(-1).dataBase64 = 'AAAA'
+  assert.equal((await readProductionEvidence(input)).status, 'mismatch', 'full account hashing still rejects drift')
+  f.observations[1].accounts.pop()
+  assert.equal((await readProductionEvidence(input)).status, 'unavailable')
+  providers[1].connection.getGenesisHash = async () => { throw Error('https://rpc.invalid/private-token') }
+  const unavailable = await readProductionEvidence(input)
+  assert.equal(unavailable.status, 'unavailable'); assert.ok(!JSON.stringify(unavailable).includes('private-token'))
+  providers[1].connection.getGenesisHash = () => new Promise(() => {})
+  assert.equal((await readProductionEvidence({ ...input, timeoutMs: 5 })).status, 'unavailable')
+})
+
+test('operator monitor stays inert by default, alerts on drift/age and still reconciles retained signatures', async () => {
+  assert.deepEqual((await monitorPlainProduction()).alerts, [])
+  assert.equal((await monitorPlainProduction({ enabled: true })).status, 'unavailable')
+  const f = fixture(), retained = plainFixture(), dossierJson = JSON.stringify(f.dossier)
+  const providers = f.observations.map(o => ({ provider: o.provider, connection: {
+    getGenesisHash: async () => o.genesisHash,
+    getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: o.slot }, value: keys.map(k => {
+      const a = o.accounts.find(a => a.address === k.toBase58())
+      return { owner: new PublicKey(a.owner), executable: a.executable, data: Buffer.from(a.dataBase64, 'base64') }
+    }) }),
+    getTransaction: async () => null,
+  } }))
+  const evidence = { dossierJson, expectedSha256: sha(dossierJson), providers }
+  let observations = 0
+  const journal = {
+    pending: async () => [{ id: 'retained-operation', github_user_id: '101', plan: retained.plan, signed_transaction: retained.signed }],
+    observe: async (owner, id, obs, ids) => {
+      observations++
+      const result = verifyPlainReceipt(retained.plan, retained.signed, obs, ids)
+      return { id, status: result.status }
+    },
+    health: async () => ({ unresolved: '1', review_required: '0', latest_unavailable: '1', oldest_unresolved: new Date(0) }),
+  }
+  const input = { enabled: true, evidence, journal, now: () => 2000, maxUnresolvedAgeMs: 2000 }
+  const result = await monitorPlainProduction(input)
+  assert.equal(result.evidence.accountBindingsMatched, true)
+  assert.deepEqual(result.receipts, [{ id: 'retained-operation', status: 'unresolved' }])
+  assert.deepEqual(result.alerts, ['RECEIPT_PROVIDER_UNAVAILABLE', 'RECEIPT_UNRESOLVED_TOO_LONG'])
+  assert.equal(result.executionEnabled, false); assert.equal(result.canSign, false); assert.equal(result.canSubmit, false)
+  const younger = await monitorPlainProduction({ ...input, maxUnresolvedAgeMs: 2001 })
+  assert.ok(!younger.alerts.includes('RECEIPT_UNRESOLVED_TOO_LONG'))
+  f.observations[1].accounts.at(-1).dataBase64 = 'AAAA'
+  const drifted = await monitorPlainProduction(input)
+  assert.equal(drifted.status, 'attention-required')
+  assert.ok(drifted.alerts.includes('DEPLOYMENT_EVIDENCE_UNAVAILABLE_OR_DRIFTED'))
+  assert.equal(observations, 3, 'deployment drift must not erase unresolved signature reconciliation')
+  await monitorPlainProduction({ ...input, evidence: { ...evidence, expectedSha256: '0'.repeat(64) } })
+  assert.equal(observations, 3, 'invalid configuration must not select receipt providers')
+  journal.health = async () => { throw Error('private connection data') }
+  const unavailable = await monitorPlainProduction(input)
+  assert.ok(unavailable.alerts.includes('JOURNAL_HEALTH_UNAVAILABLE'))
+  assert.ok(!JSON.stringify(unavailable).includes('private connection data'))
 })

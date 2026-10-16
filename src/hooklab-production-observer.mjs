@@ -11,7 +11,7 @@ const loader = 'BPFLoaderUpgradeab1e11111111111111111111111'
 const mainnetGenesis = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const role = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const accountPin = z.object({ role, address: key, owner: key, executable: z.boolean(), dataSha256: hash }).strict()
-const dossierSchema = z.object({
+export const productionDossierSchema = z.object({
   schema: z.literal('repoing/production-observation/1'), genesisHash: z.literal(mainnetGenesis),
   artifacts: z.object({ sourceCommit: z.string().regex(/^[a-f0-9]{40}$/), profileSha256: hash,
     sdkSha256: hash, idlSha256: hash, provenanceSha256: hash }).strict(),
@@ -62,7 +62,7 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
   try {
     check(typeof dossierJson === 'string' && Buffer.byteLength(dossierJson) <= 65536, 'Invalid dossier size')
     check(hash.parse(expectedSha256) === sha(dossierJson), 'Dossier digest mismatch')
-    const d = dossierSchema.parse(JSON.parse(dossierJson))
+    const d = productionDossierSchema.parse(JSON.parse(dossierJson))
     const now = integer.parse(nowMs)
     check(new Set(d.providers).size === 2, 'Independent provider bindings required')
     check(['launch', 'swap', 'token'].every(r => d.programs.some(p => p.role === r)), 'Missing executable dependency')

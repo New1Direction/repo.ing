@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { AppHeader, Footer } from '../../../components/ui'
 import { productionReadiness } from '../../../../src/hooklab-production-observer.mjs'
 import { firstCreatorPacket } from '../../../../src/hooklab-plain.mjs'
-import { HookLabPlainPreparation } from '../../../components/hooklab-plain-preparation'
+import { HookLabPlainPreparation, HookLabProductionAccount } from '../../../components/hooklab-plain-preparation'
 import '../../../direct-coins.css'
 
 export const metadata = { title: 'Hook Lab production readiness · repo.ing', robots: { index: false } }
@@ -17,6 +17,7 @@ export default function ProductionReadinessPage() {
       <p>repo.ing is the consumer interface for Hook Lab DEX. No production profile is adopted here. Wallet connection is available for preparation only; transactions and funds remain disabled.</p>
     </header>
     <HookLabPlainPreparation packet={firstCreatorPacket()}/>
+    <HookLabProductionAccount/>
     <section className="coin-entry-points" aria-labelledby="production-status"><div>
       <h2 id="production-status">Mainnet evidence unavailable</h2>
       <p>Network: Solana mainnet-beta (intended, not verified). Program identities, deployment slots, pause state and balances are unverified. No active creator or retained production receipt is bound.</p>
