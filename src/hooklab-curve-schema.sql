@@ -65,3 +65,15 @@ CREATE TABLE hook_lab_curve_challenges (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX hook_lab_curve_challenge_quota ON hook_lab_curve_challenges(github_user_id,created_at);
+
+-- Operator acknowledgement/escalation is evidence, not delivery certainty or trading permission.
+CREATE TABLE hook_lab_curve_alert_reviews (
+  journal_id uuid NOT NULL,
+  sequence bigint NOT NULL,
+  kind text NOT NULL CHECK (kind IN ('acknowledged','escalated')),
+  operator_github_user_id bigint NOT NULL CHECK (operator_github_user_id > 0),
+  evidence_sha256 text NOT NULL CHECK (evidence_sha256 ~ '^[a-f0-9]{64}$'),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (journal_id,sequence,kind),
+  FOREIGN KEY (journal_id,sequence) REFERENCES hook_lab_curve_alerts(journal_id,sequence)
+);

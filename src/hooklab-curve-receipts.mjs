@@ -1,10 +1,51 @@
-// Candidate historical accounting contract. Supplied history is NOT authenticated by this module.
+// Candidate historical accounting. Archive author authentication is not chain-history acceptance.
+import { createPublicKey, verify } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import bs58 from 'bs58'
 import { VersionedTransaction } from '@solana/web3.js'
 import { decodePool, decodeHolding } from '@repo-ing/hooklab-production-candidate'
-import { inspectCurveState, verifyCurvePlan } from './hooklab-curve.mjs'
+import { inspectCurveState, verifyCurvePlan, curveDigest } from './hooklab-curve.mjs'
 import { reconcileHookLabReceipts, verifyHookLabSignedMessage } from './hooklab-message-boundary.mjs'
+
+/** Candidate adapter for a pinned archive assertion, NOT proof of chain history correctness.
+ * All pins and the fetcher are server-owned; no public request may choose any of them. There is
+ * intentionally no configured provider/key or accepted archive schema. No private key is used.
+ * Pinning/signature verification authenticates the archive author, not its replay/capture method.
+ */
+export function createCurveArchiveReader({ readArchive, publicKeyPem, archiveSha256, source }) {
+  if (typeof readArchive !== 'function' || !/^[a-f0-9]{64}$/.test(archiveSha256 ?? '')
+    || !/^[a-z][a-z0-9-]{0,63}$/.test(source ?? '')) throw new Error('Server-owned archive pins required')
+  const key = createPublicKey(publicKeyPem)
+  if (key.asymmetricKeyType !== 'ed25519') throw new Error('Archive requires Ed25519')
+  const signerSha256 = curveDigest(key.export({ format: 'der', type: 'spki' }))
+  return async context => {
+    const { plan, receipt } = context
+    verifyCurvePlan(plan)
+    const envelope = await readArchive(context)
+    const canonical = (value, max) => {
+      if (typeof value !== 'string' || value.length > max) throw new Error('Archive size/encoding differs')
+      const bytes = Buffer.from(value, 'base64')
+      if (!bytes.length || bytes.toString('base64') !== value) throw new Error('Archive size/encoding differs')
+      return bytes
+    }
+    const raw = canonical(envelope?.payloadBase64, 32768), signature = canonical(envelope?.signatureBase64, 88)
+    if (curveDigest(raw) !== archiveSha256 || signature.length !== 64
+      || !verify(null, Buffer.concat([Buffer.from('repo.ing curve archive assertion v1\n'), raw]), key, signature)) {
+      throw new Error('Archive hash/signature differs')
+    }
+    const payload = JSON.parse(raw.toString('utf8'))
+    if (!Buffer.from(JSON.stringify(payload)).equals(raw) || payload.schema !== 'repoing/curve-archive-assertion/1'
+      || payload.source !== source || payload.genesisHash !== plan.review.genesisHash
+      || payload.profileSha256 !== plan.review.profileSha256 || !isDeepStrictEqual(payload.receipt, receipt)
+      || payload.history?.schema !== 'repoing/curve-history/1'
+      || payload.history.signature !== receipt?.signature || payload.history.slot !== receipt?.slot
+      || payload.history.messageSha256 !== plan.review.messageSha256) throw new Error('Archive transaction binding differs')
+    return { schema: 'repoing/curve-history-archive-result/1', history: payload.history,
+      archive: { source, signerSha256, archiveSha256, payloadBase64: envelope.payloadBase64,
+        signerPublicKeyPem: key.export({ format: 'pem', type: 'spki' }),
+        signatureBase64: envelope.signatureBase64, signatureVerified: true, chainVerified: false } }
+  }
+}
 
 /** Standard RPC supplies transaction/fee evidence only, NEVER historical custom-token state.
  * readHistory is a separately reviewed replay/archive adapter. Omitting it must remain useful for
@@ -36,12 +77,17 @@ export async function readCurveReceipt(connection, provider, plan, signedBase64,
     slot: tx.slot, confirmationStatus: 'finalized', feeLamports: exact(tx.meta?.fee), error: tx.meta?.err,
     balances: Array.from({ length: keys.length }, (_, n) => ({ address: keys.get(n).toBase58(),
       before: exact(tx.meta?.preBalances[n]), after: exact(tx.meta?.postBalances[n]) })) }
-  let history = null
+  let history = null, historyArchive = null
   // An unavailable history service must not discard a known finalized transaction response.
   if (readHistory && tx.meta?.err === null) {
-    try { history = await bounded(() => readHistory({ provider, signature: retained.signature, slot: tx.slot, plan })) } catch { /* unresolved history */ }
+    try {
+      const response = await bounded(() => readHistory({ provider, signature: retained.signature, slot: tx.slot, plan, receipt }))
+      if (response?.schema === 'repoing/curve-history-archive-result/1') {
+        history = response.history; historyArchive = response.archive
+      } else history = response
+    } catch { /* unresolved history; never discard the finalized RPC response */ }
   }
-  return { provider, receipt, history, transactionResponse: JSON.parse(JSON.stringify(tx)) }
+  return { provider, receipt, history, ...(historyArchive ? { historyArchive } : {}), transactionResponse: JSON.parse(JSON.stringify(tx)) }
 }
 
 /** Explicit internal worker integration; no scheduler registration and no broadcast path. */

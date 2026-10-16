@@ -4,11 +4,11 @@ import { randomUUID, createPrivateKey, sign } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import pg from 'pg'
-import { curveFixture, curveObservations, curveRpc } from './fixtures/hooklab-curve.mjs'
-import { curveRecoveryJournal, deliverCurveAlert } from '../src/hooklab-curve-journal.mjs'
+import { curveFixture, curveObservations, curveRpc, curveArchive } from './fixtures/hooklab-curve.mjs'
+import { curveRecoveryJournal, deliverCurveAlert, readCurveAlertEscalations, recordCurveAlertReview } from '../src/hooklab-curve-journal.mjs'
 import { curveTrialBudgets } from '../src/hooklab-curve-budgets.mjs'
 import { prepareCurveReview, CURVE_PROFILE } from '../src/hooklab-curve.mjs'
-import { indexCurveReceipts } from '../src/hooklab-curve-receipts.mjs'
+import { indexCurveReceipts, createCurveArchiveReader } from '../src/hooklab-curve-receipts.mjs'
 import { createTelegramSender } from '../src/launch-alerts-senders.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
@@ -55,8 +55,9 @@ test('curve journal survives concurrent partials, atomic audit failure, restart 
     assert.equal((await journal.observe(owner, id, conflicting)).status, 'review-required')
     assert.deepEqual((await journal.get(owner, id)).first_finalized, retained.first_finalized)
     assert.deepEqual((await journal.pending()).map(r => r.id), [id])
+    const archive = curveArchive(f)
     const indexed = await indexCurveReceipts(journal, ['alpha', 'beta'].map(provider => ({ provider,
-      connection: curveRpc(f), readHistory: async () => obs[0].history })))
+      connection: curveRpc(f), readHistory: createCurveArchiveReader({ ...archive.pins, readArchive: async () => archive.envelope }) })))
     assert.deepEqual(indexed, [{ id, status: 'review-required' }])
     // A later matching read must not erase an earlier finalized contradiction, even after restart.
     await pool.end(); pool = new pg.Pool({ ...config, database }); journal = curveRecoveryJournal(pool, ['alpha', 'beta'])
@@ -65,6 +66,8 @@ test('curve journal survives concurrent partials, atomic audit failure, restart 
     const indexedEvents = (await journal.get(owner, id)).events
     assert.ok(indexedEvents.at(-2).evidence.observations.every(o => o.transactionResponse))
     assert.deepEqual(indexedEvents.at(-2).evidence.observations[0].receipt, obs[0].receipt)
+    assert.equal(indexedEvents.at(-2).evidence.observations[0].historyArchive.payloadBase64, archive.envelope.payloadBase64)
+    assert.equal(indexedEvents.at(-2).evidence.observations[1].historyArchive.signatureBase64, archive.envelope.signatureBase64)
 
     // Real HTTP request/response on loopback using the existing channel sender, never Telegram.
     const messages = []
@@ -110,6 +113,22 @@ test('curve journal survives concurrent partials, atomic audit failure, restart 
     assert.equal(messages.length, 2)
     const exhausted = (await pool.query('select status,attempts from hook_lab_curve_alerts where journal_id=$1', [drillId])).rows[0]
     assert.deepEqual(exhausted, { status: 'failed', attempts: 3 })
+    const queue = await readCurveAlertEscalations(pool)
+    assert.deepEqual(queue.map(r => r.reason).sort(), ['ambiguous-delivery', 'attempts-exhausted'])
+    const target = queue.find(r => r.journal_id === drillId)
+    const review = { journalId: target.journal_id, sequence: target.sequence, kind: 'escalated', evidenceSha256: 'a'.repeat(64) }
+    await recordCurveAlertReview(pool, '303', review)
+    await assert.rejects(recordCurveAlertReview(pool, '404', { ...review, evidenceSha256: 'b'.repeat(64) }), /duplicate/)
+    assert.equal((await readCurveAlertEscalations(pool)).find(r => r.journal_id === drillId).escalation_recorded, true)
+    await recordCurveAlertReview(pool, '303', { ...review, kind: 'acknowledged', evidenceSha256: 'c'.repeat(64) })
+    // A separately retained operator acknowledgement neither resets attempts nor resends anything.
+    await pool.end(); pool = new pg.Pool({ ...config, database })
+    assert.equal((await readCurveAlertEscalations(pool)).some(r => r.journal_id === drillId), false)
+    assert.equal((await deliverCurveAlert(pool, sender)).status, 'idle'); assert.equal(messages.length, 2)
+    assert.deepEqual((await pool.query('select status,attempts from hook_lab_curve_alerts where journal_id=$1', [drillId])).rows[0], exhausted)
+    await pool.query("update hook_lab_curve_events set created_at=now()-interval '6 minutes'")
+    assert.deepEqual((await readCurveAlertEscalations(pool)).map(r => r.reason).sort(),
+      ['acknowledgement-overdue', 'acknowledgement-overdue', 'ambiguous-delivery'])
     journal = curveRecoveryJournal(pool, ['alpha', 'beta'])
     await pool.query(`update hook_lab_curve_journal set plan=jsonb_set(plan,'{canSubmit}','true') where id=$1`, [id])
     await assert.rejects(journal.get(owner, id), /plan changed/)

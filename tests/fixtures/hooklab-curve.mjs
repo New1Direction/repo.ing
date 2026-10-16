@@ -1,15 +1,16 @@
 // Synthetic production-ID ABI bytes. Only ephemeral local keys; never sent to a chain.
+import { generateKeyPairSync, sign } from 'node:crypto'
 import { Keypair, PublicKey, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { accountBytes } from './hooklab-plain.mjs'
-import { prepareCurveReview } from '../../src/hooklab-curve.mjs'
+import { prepareCurveReview, curveDigest } from '../../src/hooklab-curve.mjs'
 
 const programs = {
   launch: new PublicKey('E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft'),
   swap: new PublicKey('B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk'),
   token: new PublicKey('2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22'),
 }
-export function curveFixture({ side = 'buy', recipientSame = false, payerSame = false } = {}) {
+export function curveFixture({ side = 'buy', recipientSame = false, payerSame = false, unsignedOnly = false } = {}) {
   const trader = Keypair.generate(), payer = payerSame ? trader : Keypair.generate()
   const recipient = recipientSame ? trader : Keypair.generate(), mint = Keypair.generate().publicKey
   const quote = new PublicKey('A49oVhX22ExMwTEtFC6Y8nhBdZ4LJDGhdXLDn4c2f59i')
@@ -62,7 +63,7 @@ export function curveFixture({ side = 'buy', recipientSame = false, payerSame = 
   const plan = prepareCurveReview(intent, observed)
   const tx = new VersionedTransaction(VersionedMessage.deserialize(Buffer.from(plan.review.messageBase64, 'base64')))
   const partial = signer => { const t = new VersionedTransaction(tx.message); t.sign([signer]); return Buffer.from(t.serialize()).toString('base64') }
-  tx.sign(payerSame ? [trader] : [trader, payer])
+  if (!unsignedOnly) tx.sign(payerSame ? [trader] : [trader, payer])
   const signed = Buffer.from(tx.serialize()).toString('base64')
   const patchAccount = (role, changes, target = accounts) => {
     const f = fields[role]
@@ -99,4 +100,15 @@ export function curveRpc(f) {
     meta: { err: null, fee: Number(receipt.feeLamports), preBalances: receipt.balances.map(b => Number(b.before)),
       postBalances: receipt.balances.map(b => Number(b.after)) } }),
     getMultipleAccountsInfoAndContext() { throw new Error('Later state must never be substituted for history') } }
+}
+
+export function curveArchive(f, patch = {}) {
+  const { receipt, history } = curveObservations(f)[0]
+  const payload = { schema: 'repoing/curve-archive-assertion/1', source: 'synthetic-archive',
+    genesisHash: f.plan.review.genesisHash, profileSha256: f.plan.review.profileSha256, receipt, history, ...patch }
+  const raw = Buffer.from(JSON.stringify(payload)), keys = generateKeyPairSync('ed25519')
+  const envelope = { payloadBase64: raw.toString('base64'),
+    signatureBase64: sign(null, Buffer.concat([Buffer.from('repo.ing curve archive assertion v1\n'), raw]), keys.privateKey).toString('base64') }
+  return { payload, envelope, pins: { publicKeyPem: keys.publicKey.export({ format: 'pem', type: 'spki' }),
+    archiveSha256: curveDigest(raw), source: 'synthetic-archive' } }
 }

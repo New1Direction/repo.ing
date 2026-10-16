@@ -2,10 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { PublicKey, VersionedTransaction } from '@solana/web3.js'
-import { curveFixture, curveObservations, curveRpc } from './fixtures/hooklab-curve.mjs'
+import { curveFixture, curveObservations, curveRpc, curveArchive } from './fixtures/hooklab-curve.mjs'
 import { buildCurveInstruction, prepareCurveReview, mergeCurveSignatures, simulateCurveReview,
   submitCurveTransaction, CURVE_PROFILE } from '../src/hooklab-curve.mjs'
-import { inspectCurveReceipt, readCurveReceipt } from '../src/hooklab-curve-receipts.mjs'
+import { inspectCurveReceipt, readCurveReceipt, createCurveArchiveReader } from '../src/hooklab-curve-receipts.mjs'
 import { curveActivationStatus, inspectCurveTrialProposal } from '../src/hooklab-curve-activation.mjs'
 
 test('actual frozen production Rust builder matches every instruction byte and ordered meta',
@@ -167,4 +167,40 @@ test('bounded trial proposal binds exact messages, exposure, exclusive window an
   assert.throws(() => inspectCurveTrialProposal(proposal, f.plan, sell, 2000), /expired/)
   assert.equal(curveActivationStatus().mode, 'disabled'); assert.equal(curveActivationStatus().acceptedPolicySha256, null)
   assert.equal(curveActivationStatus().kitSupported, false); assert.equal(curveActivationStatus().customHooksSupported, false)
+})
+
+test('pinned archive signature authenticates an assertion, never chain history; invalid archives retain finalized RPC evidence', async () => {
+  const f = curveFixture(), archive = curveArchive(f), other = curveArchive(f)
+  const read = (a, pins = a.pins) => readCurveReceipt(curveRpc(f), 'alpha', f.plan, f.signed,
+    createCurveArchiveReader({ ...pins, readArchive: async () => a.envelope }))
+  const good = await read(archive)
+  assert.deepEqual(good.history, archive.payload.history)
+  assert.equal(good.historyArchive.signatureVerified, true)
+  assert.equal(good.historyArchive.chainVerified, false)
+  assert.equal(good.historyArchive.payloadBase64, archive.envelope.payloadBase64)
+  assert.equal(good.historyArchive.signatureBase64, archive.envelope.signatureBase64)
+  const result = inspectCurveReceipt(f.plan, f.signed, [good, { ...good, provider: 'beta' }], ['alpha', 'beta'])
+  assert.equal(result.status, 'candidate-deltas-matched')
+  assert.equal(result.historyProvenanceVerified, false); assert.equal(result.chainVerified, false); assert.equal(result.canSubmit, false)
+  const bad = [
+    [other, archive.pins], // Correct payload, wrong signing key.
+    [archive, { ...archive.pins, archiveSha256: 'f'.repeat(64) }],
+    [{ ...archive, envelope: { ...archive.envelope, payloadBase64: `${archive.envelope.payloadBase64}\n` } }],
+    [curveArchive(f, { source: 'foreign-source' })],
+    [curveArchive(f, { genesisHash: f.intent.mint })],
+    [curveArchive(f, { profileSha256: 'b'.repeat(64) })],
+    [curveArchive(f, { receipt: { ...archive.payload.receipt, slot: 105 } })],
+    [curveArchive(f, { history: { ...archive.payload.history, slot: 105 } })],
+    [curveArchive(f, { history: { ...archive.payload.history, messageSha256: 'b'.repeat(64) } })],
+  ]
+  for (const [a, pins] of bad) {
+    const rejected = await read(a, pins)
+    assert.equal(rejected.history, null); assert.equal(rejected.historyArchive, undefined)
+    assert.deepEqual(rejected.receipt, good.receipt); assert.deepEqual(rejected.transactionResponse, good.transactionResponse)
+  }
+  // Even an honestly authenticated archive can assert false state. Accounting must still refuse it.
+  const falseState = structuredClone(archive.payload.history); delete falseState.after.quoteVault
+  const falseObservation = await read(curveArchive(f, { history: falseState }))
+  assert.equal(falseObservation.historyArchive.signatureVerified, true)
+  assert.equal(inspectCurveReceipt(f.plan, f.signed, [falseObservation, { ...falseObservation, provider: 'beta' }], ['alpha', 'beta']).status, 'review-required')
 })

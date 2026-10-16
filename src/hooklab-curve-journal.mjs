@@ -188,3 +188,36 @@ export async function deliverCurveAlert(pool, sender) {
     status === 'sent' && typeof outcome.messageId === 'string' ? outcome.messageId.slice(0, 128) : null, retry])
   return { status: updated.rowCount === 1 ? status : 'unknown', journalId: job.journal_id, sequence: job.sequence }
 }
+
+/** Private operator integration only. The caller authenticates/authorizes the operator and retains
+ * the referenced acknowledgement or escalation evidence. Never a public self-attestation API.
+ * An acknowledgement does not rewrite delivery status, clear trade conflicts or release budgets.
+ */
+export async function recordCurveAlertReview(pool, operator, input) {
+  ownerSchema.parse(operator)
+  const r = z.object({ journalId: z.uuid(), sequence: z.string().regex(/^[1-9]\d{0,17}$/),
+    kind: z.enum(['acknowledged', 'escalated']), evidenceSha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(input)
+  await pool.query(`insert into hook_lab_curve_alert_reviews(journal_id,sequence,kind,operator_github_user_id,evidence_sha256)
+    values($1,$2,$3,$4,$5)`, [r.journalId, r.sequence, r.kind, operator, r.evidenceSha256])
+  return { recorded: true, canSubmit: false }
+}
+
+/** Read-only escalation queue, not a second delivery worker. Escalation never resends an unknown
+ * message. A provider message ID alone never counts as a human acknowledgement.
+ */
+export async function readCurveAlertEscalations(pool) {
+  return (await pool.query(`select a.journal_id,a.sequence,a.status,a.attempts,
+      case when a.status='unknown' then 'ambiguous-delivery'
+        when a.status='failed' and a.attempts >= 3 then 'attempts-exhausted'
+        when a.status='sending' then 'stale-in-flight'
+        else 'acknowledgement-overdue' end as reason,
+      exists(select 1 from hook_lab_curve_alert_reviews r where r.journal_id=a.journal_id
+        and r.sequence=a.sequence and r.kind='escalated') as escalation_recorded
+    from hook_lab_curve_alerts a join hook_lab_curve_events e using(journal_id,sequence)
+    where not exists(select 1 from hook_lab_curve_alert_reviews r where r.journal_id=a.journal_id
+      and r.sequence=a.sequence and r.kind='acknowledged')
+      and (a.status='unknown' or (a.status='failed' and a.attempts >= 3)
+        or (a.status='sending' and a.attempted_at < now()-interval '2 minutes')
+        or e.created_at < now()-interval '5 minutes')
+    order by e.created_at,a.journal_id,a.sequence limit 100`)).rows
+}
