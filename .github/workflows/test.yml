@@ -4,13 +4,23 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Original serial ordering is a daily backstop for cross-group dependencies.
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Serial backstop or repeatable exact-head sharded benchmark
+        type: choice
+        options: [serial, sharded]
+        default: serial
 
 permissions:
   contents: read
   issues: write
 
 concurrency:
-  group: test-${{ github.ref }}
+  group: test-${{ github.event_name }}-${{ github.ref }}-${{ inputs.suite }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -35,11 +45,15 @@ jobs:
       - name: Run quick tests (no database or validator)
         run: node scripts/ci/run-quick-tests.mjs
 
-  tests:
-    name: node --test (PostgreSQL + solana-test-validator)
+  integration:
+    name: integration (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # The suite ran 50-58 minutes before the early access chain tests; 60 cut PR #199's run off mid-suite with no failure.
-    timeout-minutes: 90
+    # Each matrix job owns its PostgreSQL, ledgers, ports and filesystem. No in-host parallel tests.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON((github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.suite != 'sharded')) && '["serial"]' || '["default","primary","stock","isolated"]') }}
+    timeout-minutes: ${{ matrix.shard == 'serial' && 120 || 60 }}
     services:
       postgres:
         image: postgres:17-alpine
@@ -90,15 +104,37 @@ jobs:
           scripts/ci/start-validator.sh "$RUNNER_TEMP/validator"
 
       - name: Run full test suite
-        run: node scripts/ci/run-tests.mjs
+        run: node scripts/ci/run-tests.mjs --shard=${{ matrix.shard }}
+        env:
+          CI_TEST_REPORT_DIR: ${{ runner.temp }}/test-reports
+
+      - name: Save test results and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/test-reports
+          retention-days: 14
 
       - name: Validator log
         if: failure()
         run: tail -200 "$RUNNER_TEMP/validator/validator.log" || true
 
+  tests:
+    # Preserve the existing full-suite check name; missing/cancelled shards must not pass it.
+    name: node --test (PostgreSQL + solana-test-validator)
+    needs: integration
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every integration shard
+        env:
+          RESULT: ${{ needs.integration.result }}
+        run: test "$RESULT" = success
+
       # Not required before merge (quick tests are); a failure on main opens an issue so it is fixed immediately.
       - name: Open an issue when the full suite fails on main
-        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: failure() && (github.event_name == 'push' || github.event_name == 'schedule') && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
