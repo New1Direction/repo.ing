@@ -8,13 +8,19 @@ on:
     # Original serial ordering is a daily backstop for cross-group dependencies.
     - cron: '23 8 * * *'
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Serial backstop or repeatable exact-head sharded benchmark
+        type: choice
+        options: [serial, sharded]
+        default: serial
 
 permissions:
   contents: read
   issues: write
 
 concurrency:
-  group: test-${{ github.event_name }}-${{ github.ref }}
+  group: test-${{ github.event_name }}-${{ github.ref }}-${{ inputs.suite }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -24,7 +30,7 @@ env:
 jobs:
   quick:
     name: quick tests
-    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.suite == 'sharded')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -47,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["serial"]' || '["default","primary","stock","isolated"]') }}
+        shard: ${{ fromJSON((github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.suite != 'sharded')) && '["serial"]' || '["default","primary","stock","isolated"]') }}
     timeout-minutes: ${{ matrix.shard == 'serial' && 120 || 60 }}
     services:
       postgres:
@@ -107,7 +113,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports-${{ matrix.shard }}
+          name: test-reports-${{ matrix.shard }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/test-reports
           retention-days: 14
 
@@ -139,7 +145,7 @@ jobs:
 
   build:
     name: next build
-    if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.suite == 'sharded')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

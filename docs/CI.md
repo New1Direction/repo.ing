@@ -32,10 +32,13 @@ name aggregates all shards and fails on failed, cancelled or skipped integration
 
 ## Serial backstop and profiling
 
-The nightly run (08:23 UTC) and manual `workflow_dispatch` run **the entire suite in the original serial order** on one
+The nightly run (08:23 UTC) and default manual `workflow_dispatch` run **the entire suite in the original serial order** on one
 runner. The serial timeout is 120 minutes (the baseline was already close to the old 90-minute cap). Failures on scheduled
 main runs open an issue, as push failures already did. Schedules take effect only after merge. To run the backstop on a
 specific branch, use `gh workflow run test.yml --ref <branch>` and verify the run's `headSha` before interpreting results.
+Add `-f suite=sharded` to benchmark all four shards, quick tests and build on the exact branch head rather than a PR merge
+ref. Serial and sharded dispatches have separate concurrency groups. Repeated sharded dispatches queue without cancelling
+the running benchmark; submit the next only when there is no pending one (GitHub retains only one pending run per group).
 
 Local commands (from the repository root):
 
@@ -47,8 +50,9 @@ node scripts/ci/run-tests.mjs                          # Full original serial su
 CI_TEST_REPORT_DIR=/tmp/test-reports node scripts/ci/run-tests.mjs --shard=primary
 ```
 
-Each CI job uploads `test-reports-<shard>` for 14 days: per-group TAP plus `timings.json` with setup/test durations,
+Each CI job uploads `test-reports-<shard>-<attempt>` for 14 days: per-group TAP plus `timings.json` with setup/test durations,
 file membership, exit status and counters. Timings persist after each finished group, including prior groups on failure.
+Attempt-specific artifact names preserve prior results and avoid name conflicts when rerunning jobs.
 Use these to rebalance **whole** groups if durations drift; do not remove slow tests or shorten their timeouts.
 
 ## Cache policy and limits
