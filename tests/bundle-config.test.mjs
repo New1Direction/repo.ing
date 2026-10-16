@@ -91,8 +91,8 @@ test('the checker accepts exactly the launch-fee config with the router as fee c
     /dynamic fee/)
   assert.throws(() => assertBundleConfig(decoded, { ...options, reference: { ...reference, partnerLiquidityPercentage: 1 } }),
     /beyond the fee claimer: partnerLiquidityPercentage/)
-  // Fields the curve check does not cover (migration fees, migrated pool fees, vesting) are caught only by the reference.
-  for (const [field, value] of [['migrationFeePercentage', 1], ['migratedPoolFeeBps', 1], ['migratedCollectFeeMode', 1]]) {
+  // Fields the curve check does not cover (including DBC's version-1 migration semantics) are caught only by the reference.
+  for (const [field, value] of [['migrationFeePercentage', 1], ['migratedPoolFeeBps', 1], ['migratedCollectFeeMode', 1], ['version', 1]]) {
     assert.equal(assertBundleConfig(tampered(field, value), { leftoverReceiver: CREATOR }), true, `${field} without a reference`)
     assert.throws(() => assertBundleConfig(tampered(field, value), options), new RegExp(`beyond the fee claimer: ${field}`))
   }

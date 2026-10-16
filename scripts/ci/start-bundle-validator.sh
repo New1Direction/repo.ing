@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start a disposable solana-test-validator for the Bundle launch chain test (docs/BUNDLE_LAUNCH.md):
-#   - the DBC, DAMM v2, Token-2022 and Metaplex token metadata programs exactly as deployed on mainnet (read with
-#     `solana program dump`);
+#   - the historical DBC fixture used by start-validator.sh, matching the version-0 launch-fee config snapshot;
+#   - DAMM v2, Token-2022 and Metaplex token metadata programs read from mainnet with `solana program dump`;
 #   - the DAMM v2 pool config a SOL curve migrates into (FixedBps100), the snapshot start-validator.sh loads;
 #   - the bundle vault program (tests/fixtures/validator/bundle_vault.so, built by scripts/build-bundle-vault.sh) as an
 #     upgradeable program whose upgrade authority is a test key written to <work-dir>/bundle-authority.json.
@@ -18,6 +18,11 @@ GOSSIP_PORT="${BUNDLE_VALIDATOR_GOSSIP_PORT:-18300}"
 DYNAMIC_PORTS="${BUNDLE_VALIDATOR_DYNAMIC_PORTS:-18301-18360}"
 READY_TIMEOUT_SECONDS="${VALIDATOR_READY_TIMEOUT_SECONDS:-180}"
 MAINNET="${MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}"
+# Test-only snapshot conformance, not current-mainnet compatibility. DBC 0.2.2 creates version-1 configs;
+# never normalize that semantic difference or update production config pins to make this test pass.
+SDK_COMMIT=a28b7239e71899eb52ff7aacac4dec90441885c4
+DBC_SHA256=71e06857b67882bff19d9c57134b150530a168973eea30c75edc7ceec4eaf401
+DBC_FIXTURE_URL="https://raw.githubusercontent.com/MeteoraAg/dynamic-bonding-curve-sdk/${SDK_COMMIT}/packages/dynamic-bonding-curve/tests/fixtures/dynamic_bonding_curve.so"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DBC=dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN
 DAMM=cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG
@@ -29,7 +34,10 @@ DAMM_MIGRATION_CONFIG=Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp
 FIXTURES="$WORK_DIR/fixtures"
 mkdir -p "$FIXTURES"
 
-for program in "dbc:$DBC" "cp_amm:$DAMM" "token2022:$TOKEN_2022" "metaplex:$METAPLEX"; do
+DBC_FIXTURE="$FIXTURES/dbc-$DBC_SHA256.so"
+[ -s "$DBC_FIXTURE" ] || curl -sSfL --retry 3 -o "$DBC_FIXTURE" "$DBC_FIXTURE_URL"
+printf '%s  %s\n' "$DBC_SHA256" "$DBC_FIXTURE" | sha256sum --check --status
+for program in "cp_amm:$DAMM" "token2022:$TOKEN_2022" "metaplex:$METAPLEX"; do
   name="${program%%:*}" id="${program#*:}"
   [ -s "$FIXTURES/$name.so" ] || solana program dump "$id" "$FIXTURES/$name.so" --url "$MAINNET" > /dev/null
 done
@@ -43,7 +51,7 @@ solana-test-validator --reset \
   --ledger "$WORK_DIR/ledger" \
   --rpc-port "$RPC_PORT" --faucet-port "$FAUCET_PORT" --gossip-port "$GOSSIP_PORT" --dynamic-port-range "$DYNAMIC_PORTS" \
   --limit-ledger-size 10000000 \
-  --bpf-program "$DBC" "$FIXTURES/dbc.so" \
+  --bpf-program "$DBC" "$DBC_FIXTURE" \
   --bpf-program "$DAMM" "$FIXTURES/cp_amm.so" \
   --bpf-program "$TOKEN_2022" "$FIXTURES/token2022.so" \
   --bpf-program "$METAPLEX" "$FIXTURES/metaplex.so" \

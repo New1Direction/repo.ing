@@ -18,10 +18,10 @@ import { ACC_SCALE, BUNDLE_ERRORS, BUNDLE_VAULT_PROGRAM_ID as PROGRAM, STATUS, b
   refundInstruction, releaseInstruction, routeCurveFeesInstruction, routePoolFeesInstruction, routerAddress, setPausedInstruction, setPlatformInstruction,
   setPolicyInstruction, settleInstruction, splitClaim, tokenAccountOf, vaultAddress, vaultSwapCurveInstruction, vaultSwapPoolInstruction } from '../src/bundle-vault.mjs'
 
-// Bundle launches (docs/BUNDLE_LAUNCH.md) on the programs mainnet runs (scripts/ci/start-bundle-validator.sh): the bundle vault
-// program from tests/fixtures/validator/bundle_vault.so with Meteora DBC, DAMM v2 and Metaplex as deployed. Raises, refunds, the
+// Bundle launches (docs/BUNDLE_LAUNCH.md) on the historical DBC fixture (scripts/ci/start-bundle-validator.sh): the bundle vault
+// program from tests/fixtures/validator/bundle_vault.so with DAMM v2 and Metaplex as deployed. Raises, refunds, the
 // one-transaction launch, the vault's limits, fee routing with the vault's rebate, backer claims, graduation and DAMM v2.
-// Nothing here touches mainnet beyond the validator script reading its programs once.
+// This is snapshot conformance, not acceptance of the current mainnet DBC program.
 const RPC = process.env.BUNDLE_CHAIN_RPC ?? `http://127.0.0.1:${process.env.BUNDLE_VALIDATOR_RPC_PORT ?? 8939}`
 const SOL = 1_000_000_000n
 const DBC = new PublicKey('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN')
@@ -45,7 +45,7 @@ async function stopValidator(work) {
   await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 }
 
-test('bundle launches on mainnet\'s programs: raises, refunds, launch, vault limits, fee routing, claims, graduation', { timeout: 1_200_000 }, async t => {
+test('bundle launches on the historical DBC fixture: raises, refunds, launch, vault limits, fee routing, claims, graduation', { timeout: 1_200_000 }, async t => {
   assert.match(RPC, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/, 'a local validator only')
   let work = process.env.BUNDLE_CHAIN_WORK_DIR, started = false
   const connection = new Connection(RPC, 'confirmed')
