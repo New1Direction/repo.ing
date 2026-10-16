@@ -269,7 +269,8 @@ Operator configuration (all absent/false by default):
 
 The monitor is **not registered in the worker or any scheduler**. It returns non-secret structured
 health/alerts for missing/drifted deployment evidence, unavailable receipts, review-required receipts,
-and unresolved signatures at least five minutes old. It reconciles up to 25 retained signatures even
+and unresolved operations whose journal entries are at least five minutes old (entry age, not time
+since signing). It reconciles up to 25 retained signatures even
 when validly configured evidence drifts; invalid provider/dossier configuration blocks RPC selection.
 It exits nonzero on unavailable/attention-required results. Alert transport, delivery acknowledgement,
 on-call ownership and an independent pause procedure remain deployment blockers, not completed work.
