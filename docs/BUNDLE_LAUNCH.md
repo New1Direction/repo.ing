@@ -132,14 +132,24 @@ node --test tests/bundle-setup-chain.test.mjs  # full suite: the mainnet setup k
 scripts/build-bundle-vault.sh                  # after any change to programs/bundle-vault (the fixture hash test fails otherwise)
 ```
 
-The chain test runs on DBC, DAMM v2 and Metaplex as deployed on mainnet: platform setup and its refusals; four raises (one
+The chain tests use the historical DBC SDK fixture at commit
+[`a28b7239e71899eb52ff7aacac4dec90441885c4`](https://github.com/MeteoraAg/dynamic-bonding-curve-sdk/commit/a28b7239e71899eb52ff7aacac4dec90441885c4),
+the same fixture as `scripts/ci/start-validator.sh`, with SHA256
+`71e06857b67882bff19d9c57134b150530a168973eea30c75edc7ceec4eaf401` checked before startup.
+DAMM v2, Token-2022 and Metaplex are still read from mainnet. These are local snapshot-conformance tests,
+**not current-mainnet DBC compatibility acceptance**. DBC 0.2.2 creates version-1 configs with different
+[transfer-fee/migration semantics](https://github.com/MeteoraAg/dynamic-bonding-curve/blob/91e696eef6a3764157220f6c104f079b7830fc04/CHANGELOG.md);
+the saved launch-fee config is version 0. The setup review must continue rejecting that difference.
+A green suite does not approve a new config, a new DBC version, or any production pin change.
+
+The vault chain test covers platform setup and its refusals; four raises (one
 launched, one missing its target, one cancelled, one full but stale) with exact refunds and repeated refunds refused; the
 one-transaction launch, its refusals and replays; the cooldown and every vault limit; routing with the rebate measured
 exactly on the pool's counter, concurrent routings paying once; backer claims pro rata, concurrent and replayed claims paying
 once, rounding bounds; graduation, the router's LP position, DAMM v2 vault trades, rebates within one lamport and claims.
 
 The setup chain test runs the setup scripts' code in their order: the bundle config built, simulated, created and checked
-(equal to a launch-fee config in every field but the fee claimer, and to the live one in `tests/fixtures/launch-fee-config-mainnet.json`;
+(equal to a launch-fee config in every field but the fee claimer, and to the saved mainnet snapshot in `tests/fixtures/launch-fee-config-mainnet.json`;
 look-alikes with another fee claimer or leftover receiver refused); the platform refused for another config (`BadSettings`)
 and another signer (`NotUpgradeAuthority`), then created with both wrapped SOL accounts (after lamports were sent to the
 platform and treasury addresses), equal to the reviewed terms, once only, and changed by the admin only (`NotAdmin`); the 14-key lookup table; then a 5 SOL raise launched in one v0 transaction

@@ -18,10 +18,10 @@ import { buildBundleLookupTableTransaction, buildBundlePlatformTransaction, bund
 import { configDifferences } from '../src/launch-fee-config.mjs'
 import { createFixedConfig } from './fixed-config.mjs'
 
-// The Bundle launch mainnet setup kit (docs/BUNDLE_LAUNCH.md, "Mainnet setup") on the programs mainnet runs
+// The Bundle launch mainnet setup kit (docs/BUNDLE_LAUNCH.md, "Mainnet setup") on the historical DBC fixture
 // (scripts/ci/start-bundle-validator.sh): the code scripts/create-bundle-config.mjs, scripts/init-bundle-platform.mjs and
 // scripts/create-bundle-lookup-table.mjs run, in their order, with their refusals; then one real bundle launch on exactly that
-// config, platform and lookup table. Nothing here touches mainnet beyond the validator script reading its programs once.
+// config, platform and lookup table. This is snapshot conformance, not acceptance of the current mainnet DBC program.
 const RPC = process.env.BUNDLE_CHAIN_RPC ?? `http://127.0.0.1:${process.env.BUNDLE_VALIDATOR_RPC_PORT ?? 8939}`
 const SOL = 1_000_000_000n
 // The creator signer on mainnet, the leftover receiver of the launch-fee config and the bundle config (an address: it signs nothing).
@@ -43,7 +43,7 @@ async function stopValidator(work) {
   await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 }
 
-test('the Bundle launch setup kit on mainnet\'s programs: config, platform, lookup table, then a real launch on them', { timeout: 600_000 }, async t => {
+test('the Bundle launch setup kit on the historical DBC fixture: config, platform, lookup table, then a real launch on them', { timeout: 600_000 }, async t => {
   assert.match(RPC, /^http:\/\/(127\.0\.0\.1|localhost):\d+$/, 'a local validator only')
   let work = process.env.BUNDLE_CHAIN_WORK_DIR, started = false
   const connection = new Connection(RPC, 'confirmed')
@@ -97,7 +97,7 @@ test('the Bundle launch setup kit on mainnet\'s programs: config, platform, look
       assert.ok(assertBundleConfig(await readBundleConfig(connection, config, { leftoverReceiver: LEFTOVER, reference }), { leftoverReceiver: LEFTOVER }),
         'as the platform and lookup table scripts read it')
       costs.config = { bytes: review.accountBytes, rentLamports: review.rentLamports, debitLamports: review.totalDebitLamports }
-      // A config mainnet's DBC creates today differs from the live launch-fee config in its fee claimer only: the mainnet dry run's check.
+      // The historical DBC fixture must reproduce the saved launch-fee config, differing in its fee claimer only.
       const live = dbc.state.getProgram().coder.accounts.decode('poolConfig', Buffer.from(LIVE_LAUNCH_FEE_CONFIG.data, 'base64'))
       assert.deepEqual(configDifferences(poolConfig, live), ['feeClaimer'])
 
