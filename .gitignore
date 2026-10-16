@@ -29,6 +29,7 @@ id_dsa
 secrets/
 .secrets/
 credentials/
+.amp/hooklab-curve-email-drills/
 
 # Local databases and validator state
 *.db

@@ -178,7 +178,8 @@ export async function deliverCurveAlert(pool, sender) {
   if (!job) return { status: 'idle' }
   let outcome
   try {
-    outcome = await sender({ text: `Hook Lab curve review required. Journal ${job.journal_id}, event ${job.sequence}. New execution remains disabled.` })
+    outcome = await sender({ key: `hooklab-curve-alert/${job.journal_id}/${job.sequence}`,
+      text: `Hook Lab curve review required. Journal ${job.journal_id}, event ${job.sequence}. New execution remains disabled.` })
   } catch { outcome = { status: 'unknown' } }
   let status = ['sent', 'failed', 'unknown'].includes(outcome?.status) ? outcome.status : 'unknown'
   if (status === 'sent' && (typeof outcome.messageId !== 'string' || !outcome.messageId)) status = 'unknown'

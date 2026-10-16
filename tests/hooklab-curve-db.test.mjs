@@ -10,6 +10,7 @@ import { curveTrialBudgets } from '../src/hooklab-curve-budgets.mjs'
 import { prepareCurveReview, CURVE_PROFILE } from '../src/hooklab-curve.mjs'
 import { indexCurveReceipts, createCurveArchiveReader } from '../src/hooklab-curve-receipts.mjs'
 import { createTelegramSender } from '../src/launch-alerts-senders.mjs'
+import { createCurveEmailSender } from '../src/hooklab-curve-email.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 
 test('curve journal survives concurrent partials, atomic audit failure, restart and conflicting/outage history; durable alert HTTP delivery', async () => {
@@ -69,19 +70,26 @@ test('curve journal survives concurrent partials, atomic audit failure, restart 
     assert.equal(indexedEvents.at(-2).evidence.observations[0].historyArchive.payloadBase64, archive.envelope.payloadBase64)
     assert.equal(indexedEvents.at(-2).evidence.observations[1].historyArchive.signatureBase64, archive.envelope.signatureBase64)
 
-    // Real HTTP request/response on loopback using the existing channel sender, never Telegram.
-    const messages = []
+    // Real HTTP on loopback only, never the email provider or Telegram.
+    const messages = [], keys = [], emailId = randomUUID()
     server = createServer(async (request, response) => {
       let body = ''; for await (const chunk of request) body += chunk
       messages.push(JSON.parse(body))
+      keys.push(request.headers['idempotency-key'])
       response.writeHead(200, { 'content-type': 'application/json' })
-      response.end(JSON.stringify({ ok: true, result: { message_id: 42 } }))
+      response.end(JSON.stringify({ id: emailId, ok: true, result: { message_id: 42 } }))
     })
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
     const sender = createTelegramSender({ token: 'synthetic-token', chatId: 'synthetic-private-destination',
       fetchImpl: (_url, options) => fetch(`http://127.0.0.1:${server.address().port}/alert`, options) })
-    const sent = await deliverCurveAlert(pool, sender)
+    const email = createCurveEmailSender({ HOOKLAB_CURVE_EMAIL_ENABLED: 'true', RESEND_API_KEY: 'synthetic-key',
+      HOOKLAB_CURVE_ALERT_FROM: 'alerts@example.com', HOOKLAB_CURVE_ALERT_TO: 'owner@example.com' },
+    (_url, options) => fetch(`http://127.0.0.1:${server.address().port}/alert`, options))
+    const sent = await deliverCurveAlert(pool, email)
     assert.equal(sent.status, 'sent'); assert.equal(messages.length, 1)
+    assert.equal(keys[0], `hooklab-curve-alert/${sent.journalId}/${sent.sequence}`)
+    assert.equal((await pool.query('select message_id from hook_lab_curve_alerts where journal_id=$1 and sequence=$2',
+      [sent.journalId, sent.sequence])).rows[0].message_id, emailId)
     assert.match(messages[0].text, /execution remains disabled/)
     assert.equal(messages[0].text.includes(f.signed), false)
     const unknown = await deliverCurveAlert(pool, async () => { throw new Error('response lost') })

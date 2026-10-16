@@ -196,7 +196,41 @@ checks above using that artifact's `ci/provenance.sigstore.json`. The runtime te
 This extends instruction parity to local SBF compatibility. It does not establish a creator/grant
 creation lifecycle, nonzero-fee policy, real liquidity/custody availability, live history or Hooks parity.
 
-## Alert drill and review runbook — no production destination configured
+An additional read-only check on 2026-10-16 observed the deployed custom-token ProgramData at
+finalized slots 457789834/457789833 through the two public RPCs. Its complete data SHA256 remains
+`ce477d831af66664ce6f5ae6c6ad13ae619270be045dffd2bbb8cf057a8e5b27`, matching the frozen producer
+dependency observation. Its 326504-byte ELF payload hash is
+`7aa07deb41a5545bcaff0d3fb966d5344538ec8f5c9f2155db4de030e3255df1`, **not** the source-built token
+hash above. A temporary copy of the same runtime test, changing only the token hash and test label,
+passed with that observed payload and the frozen launch/swap ELFs: both recipient modes, exact
+round-trip state and refusal controls. The temporary test was removed; no runtime pin was adopted.
+This checks that observed binary's compatibility on synthetic unsigned state, not its source-build
+equivalence or historical execution. The launch/swap candidate accounts were absent on both RPCs;
+the current quote-account full data hash also differed from the frozen proposal. A refreshed reviewed
+dossier is required; no mutable-supply exception or deployment/trading approval follows from these reads.
+
+## Alert drill and review runbook — delivery remains opt-in
+
+`createCurveEmailSender` uses the fixed Resend API and captures a server-owned recipient/sender.
+It requires **all** of `HOOKLAB_CURVE_EMAIL_ENABLED=true`, `HOOKLAB_CURVE_ALERT_FROM`,
+`HOOKLAB_CURVE_ALERT_TO` and `RESEND_API_KEY`; no builder-reminder feature or consent is reused.
+Keep the private destination and API credential out of source, public responses and logs. Configure
+credentials through the private secret store, never a command argument or thread message. The sender
+must be verified with the provider. No worker, public route or deployment is enabled by this module.
+The outbox supplies a stable journal/event idempotency key. Provider conflicts, timeouts, 5xx,
+malformed successes and lost responses remain `unknown`, never automatically retried. Resend's
+24-hour key retention is only an extra defense; the durable unknown/claim state is the retry boundary.
+
+`node scripts/check-hooklab-curve-email.mjs` checks configuration without sending. After separate
+destination/drill approval, `node scripts/check-hooklab-curve-email.mjs --send UUID` sends one clearly
+labelled synthetic alert. Before HTTP it exclusively claims and fsyncs a private record in
+`.amp/hooklab-curve-email-drills/`; it retains only hashes, timestamps and the provider outcome/ID.
+The same UUID can never send again, including after a crash or unknown response. Preserve that
+directory across process restarts and archive the record privately; an orb-local file is not an
+off-site backup. Do not delete claims or choose a new UUID to retry an ambiguous send. Provider
+acceptance is not inbox delivery or human acknowledgement: both flags remain false. Retain the
+recipient's separate acknowledgement and escalation evidence before claiming a real drill passed.
+Local loopback tests exercise this adapter and its journal integration; no real email has been sent.
 
 | Retained outcome | Required operator action before any further execution |
 | --- | --- |
@@ -219,8 +253,9 @@ must never wait for receipt acceptance or alert acknowledgement.
 
 ## Adoption and delivery stops
 
-Plain launch/auth/readiness/UI/monitor work remains owned by its existing consumer thread and is
-not imported here. `src/hooklab-curve-schema.sql` is a **candidate**, not a registered migration:
+Plain launch/auth/readiness/UI/monitor work remains owned by its existing consumer thread. Its
+published changes are now on main; no unpublished consumer work was copied here.
+`src/hooklab-curve-schema.sql` is a **candidate**, not a registered migration:
 the consumer owns 0082. Assign numbering during authorized integration, inspect all pending
 migrations and approve encrypted backup/disposable restore before shared application. Preserve
 journals on rollback. No shared database, web, on-chain or consumer activation has been performed.
@@ -234,10 +269,10 @@ local; this does not validate production key recovery or the owner's backup syst
 Migration adoption must follow this order; these are gates, not commands approved for a shared DB:
 
 1. Inventory the exact target database/deployment identity, PostgreSQL version, applied migration
-   hashes/order and all pending migrations at the integration head. Current fetched `origin/main`
-   at `5e540e2bc8993716c9abab20e180ce0981e4efee` ends at idx81, version7,
-   `0081_hook_lab_plain_recovery`, when1792063200003. This is repository inventory, **not target DB
-   inventory**. Consumer0082 remains reserved and unadopted; do not copy or register it here.
+   hashes/order and all pending migrations at the integration head. Fetched `origin/main`
+   at `b2afc0f1449fb1d2ded7e4cd49d9ae064a53e881` ends at idx82, version7,
+   `0082_hook_lab_plain_authorization`, when1792173600000. This is repository inventory, **not target DB
+   inventory**. No shared application of consumer0082 or curve tables is established by this inventory.
 2. Agree final merge order with the consumer; allocate the next collision-free tag/index/timestamp
    only then. Review exact schema SQL/hash and pending changes. The seven curve tables remain
    unregistered. Do not use `IF NOT EXISTS` to conceal partial installation or drift.
@@ -249,7 +284,8 @@ Migration adoption must follow this order; these are gates, not commands approve
    no plain rows or migration history were changed. The committed migration test applies all current
    registered migrations, forces a final-table collision and checks rollback of all six earlier
    creates, successful installation, repeat refusal and preservation of plain recovery/events/ledger.
-   It does not test the consumer's unavailable0082 or a future final integration order.
+   It passed again with the published consumer0082 in the registered ledger. It does not establish
+   a future final integration order or verify the schema/data of a shared target database.
 5. Obtain separate exact shared-write approval before any target migration. Keep all HTTP mutations
    423 and trading disabled before/after rollout. Roll back service/read flags, **not journals**;
    never drop recovery tables or release holds as a rollback shortcut.
