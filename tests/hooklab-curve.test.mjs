@@ -1,11 +1,24 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { PublicKey, VersionedTransaction } from '@solana/web3.js'
 import { curveFixture, curveObservations, curveRpc } from './fixtures/hooklab-curve.mjs'
 import { buildCurveInstruction, prepareCurveReview, mergeCurveSignatures, simulateCurveReview,
   submitCurveTransaction, CURVE_PROFILE } from '../src/hooklab-curve.mjs'
 import { inspectCurveReceipt, readCurveReceipt } from '../src/hooklab-curve-receipts.mjs'
 import { curveActivationStatus, inspectCurveTrialProposal } from '../src/hooklab-curve-activation.mjs'
+
+test('actual frozen production Rust builder matches every instruction byte and ordered meta',
+  { skip: !process.env.HOOKLAB_CURVE_PARITY_BINARY }, () => {
+    for (const side of ['buy', 'sell']) for (const recipientSame of [false, true]) {
+      const f = curveFixture({ side, recipientSame }), i = f.intent
+      const rust = JSON.parse(execFileSync(process.env.HOOKLAB_CURVE_PARITY_BINARY,
+        [i.mint, i.trader, i.recipient, side === 'buy' ? '1' : '0', i.amountIn, i.minAmountOut], { encoding: 'utf8' }))
+      const ix = buildCurveInstruction(i, f.observed)
+      assert.deepEqual({ programId: ix.programId.toBase58(), dataHex: ix.data.toString('hex'),
+        accounts: ix.keys.map(k => ({ address: k.pubkey.toBase58(), signer: k.isSigner, writable: k.isWritable })) }, rust)
+    }
+  })
 
 test('production plain buy/sell: exact source ABI, independent PDA metas, asymmetric recipients and amounts', () => {
   for (const side of ['buy', 'sell']) for (const payerSame of [true, false]) {
