@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // Runs the full test suite against a disposable PostgreSQL server and local validator.
-// Usage: node scripts/ci/run-tests.mjs [--exclude=name ...] [name ...]   (no names: every tests/*.test.mjs)
+// Usage: node scripts/ci/run-tests.mjs [--shard=default|primary|stock|isolated|serial] [--list] [--exclude=name ...] [name ...]
+// No shard/names: every tests/*.test.mjs, in the original serial order. Shards require separate hosts/services.
 // Requires PostgreSQL on 127.0.0.1:55432 (user postgres, trust or password "launchtest")
 // and solana-test-validator on 127.0.0.1:8909 (scripts/ci/start-validator.sh).
 import { spawn } from 'node:child_process'
-import { readdirSync, readFileSync, mkdtempSync } from 'node:fs'
+import { readdirSync, readFileSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -100,11 +101,23 @@ async function prepareGroup(group) {
 const matches = (file, name) => file === name || file === `${name}.test.mjs`
 
 function buildGroups(argv) {
+  const shards = ['default', 'primary', 'stock', 'isolated', 'serial']
+  const shardArgs = argv.filter(arg => arg.startsWith('--shard='))
+  const shard = shardArgs[0]?.slice('--shard='.length) ?? 'serial'
+  if (shardArgs.length > 1 || !shards.includes(shard)) throw new Error('invalid --shard')
+  for (const arg of argv) {
+    if (arg.startsWith('--') && arg !== '--list' && !arg.startsWith('--shard=') && !arg.startsWith('--exclude=')) {
+      throw new Error(`unknown option: ${arg}`)
+    }
+  }
   const all = readdirSync(TEST_DIR).filter(name => name.endsWith('.test.mjs')).sort()
   const pinned = new Set(PINNED_GROUPS.flatMap(group => group.files.map(file => `${file}.test.mjs`)))
   for (const file of pinned) if (!all.includes(file)) throw new Error(`test-matrix references missing ${file}`)
   const excluded = argv.filter(arg => arg.startsWith('--exclude=')).map(arg => arg.slice('--exclude='.length))
   const only = argv.filter(arg => !arg.startsWith('--'))
+  for (const name of [...excluded, ...only]) {
+    if (!all.some(file => matches(file, name))) throw new Error(`unknown test: ${name}`)
+  }
   const selected = file => (!only.length || only.some(name => matches(file, name)))
     && !excluded.some(name => matches(file, name))
   const groups = [{ name: 'default', env: DEFAULT_ENV, unset: ['DATABASE_URL'], databases: DEFAULT_GROUP_DATABASES,
@@ -114,9 +127,19 @@ function buildGroups(argv) {
       databases: [group.databaseUrl], selfManaged: Boolean(group.selfManaged),
       files: group.files.map(file => `${file}.test.mjs`) })
   }
-  return groups
+  // Never split a database/environment group. Each shard has its own PostgreSQL,
+  // validators, filesystem and ports; files within it still execute serially.
+  // Keep the large default group intact, including its shared scratch databases.
+  const owner = group => group.name === 'default' ? 'default'
+    : group.files.every(file => file.startsWith('stock-')) ? 'stock'
+    : ['bundle-launch-chain', 'early-access-launch-chain'].includes(group.name) ? 'isolated'
+    : 'primary'
+  const selectedGroups = groups
+    .filter(group => shard === 'serial' || owner(group) === shard)
     .map(group => ({ ...group, files: group.files.filter(selected) }))
     .filter(group => group.files.length)
+  if (!selectedGroups.length) throw new Error('no tests selected')
+  return selectedGroups
 }
 
 function parseTapSummary(file) {
@@ -147,18 +170,31 @@ function runGroup(group, reportDir) {
 
 async function main() {
   const groups = buildGroups(process.argv.slice(2))
+  if (process.argv.includes('--list')) {
+    // Flush the complete plan before main's process.exit, including when stdout is a pipe.
+    await new Promise((resolve, reject) => process.stdout.write(`${JSON.stringify(groups, null, 2)}\n`, error => error ? reject(error) : resolve()))
+    return 0
+  }
+  const started = performance.now()
+  const reportDir = process.env.CI_TEST_REPORT_DIR || mkdtempSync(path.join(tmpdir(), 'repoing-tests-'))
+  mkdirSync(reportDir, { recursive: true })
+  console.log(`Test reports: ${reportDir}`)
   await aliasPorts(groups)
   await createRoles()
-  const reportDir = mkdtempSync(path.join(tmpdir(), 'repoing-tests-'))
   const results = []
   for (const group of groups) {
+    const prepareStarted = performance.now()
     await prepareGroup(group)
-    results.push(await runGroup(group, reportDir))
+    const testStarted = performance.now()
+    const result = await runGroup(group, reportDir)
+    results.push({ ...result, files: group.files, prepareMs: testStarted - prepareStarted, testMs: performance.now() - testStarted })
+    // Persist after every group so failures/timeouts still leave useful profiling evidence.
+    writeFileSync(path.join(reportDir, 'timings.json'), JSON.stringify({ durationMs: performance.now() - started, results }, null, 2))
   }
   const totals = Object.fromEntries(COUNTERS.map(key => [key, results.reduce((sum, result) => sum + result[key], 0)]))
   console.log('\n=== summary')
   for (const result of results) {
-    console.log(`${result.code === 0 ? 'ok  ' : 'FAIL'} ${result.name}: pass ${result.pass}, fail ${result.fail}, skipped ${result.skipped}`)
+    console.log(`${result.code === 0 ? 'ok  ' : 'FAIL'} ${result.name}: pass ${result.pass}, fail ${result.fail}, skipped ${result.skipped}; setup ${(result.prepareMs / 1000).toFixed(1)}s, tests ${(result.testMs / 1000).toFixed(1)}s`)
   }
   console.log(COUNTERS.map(key => `${key} ${totals[key]}`).join(', '))
   return results.every(result => result.code === 0) ? 0 : 1
