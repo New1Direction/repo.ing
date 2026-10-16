@@ -17,6 +17,7 @@ import { createClaim } from '../src/claim.mjs'
 import { createClaimRecovery } from '../src/claim-settlement.mjs'
 import { createReconciler } from '../src/reconcile.mjs'
 import { loadFinalizedTransaction } from '../src/finalized-transaction.mjs'
+import { createBuilderFeeCollections } from '../src/builder-fee-collections.mjs'
 
 test('graduation credits finalized SOL fees, pays once, and recovers a lost broadcast', async () => {
   assert.equal(process.env.SOLANA_RPC_URL,'http://127.0.0.1:8909')
@@ -70,10 +71,31 @@ test('graduation credits finalized SOL fees, pays once, and recovers a lost broa
     let reconciliation=await createReconciler({pool,connection,config}).reconcile(repoId)
     assert.equal(reconciliation.status,'MATCH')
     assert.equal(reconciliation.onchainCreatorFee,before.onchainCreatorFee+snapshot.available)
+    const collectionWallet = Keypair.generate().publicKey
+    const collections = createBuilderFeeCollections({ pool, connection, verification: connection, config, creator,
+      env: { BUILDER_FEE_COLLECTION_ENABLED: 'true' } })
+    const collectionAmount = before.onchainCreatorFee / 2n
+    const collectionReview = await collections.review({ repoId, receiver: collectionWallet.toBase58(), amount: String(collectionAmount) })
+    assert.equal(collectionReview.terms.unclaimed, String(before.onchainCreatorFee))
+    await assert.rejects(collections.review({ repoId, receiver: collectionWallet.toBase58(),
+      amount: String(before.onchainCreatorFee + 1n) }), /exceeds/)
+    // DAMM accrual must neither inflate the DBC collection nor invalidate its approval.
+    await swap(true)
+    assert.equal((await worker().runOnce())[0].status, 'OK')
+    const retainedDamm = await fees.read(market)
+    const collected = await collections.claim({ reviewId: collectionReview.id, termsHash: collectionReview.termsHash })
+    assert.equal(collected.reconciliation, 'MATCH')
+    assert.equal(BigInt(await connection.getBalance(collectionWallet, 'finalized')), collectionAmount)
+    assert.equal(BigInt((await dbc.state.getPool(poolKey)).poolState.creatorQuoteFee.toString()), before.onchainCreatorFee - collectionAmount)
+    assert.equal((await fees.read(market)).available, retainedDamm.available)
+    assert.equal((await pool.query('select count(*)::int n from repo_claims')).rows[0].n, 0)
+    reconciliation = await createReconciler({ pool, connection, config }).reconcile(repoId)
+    assert.equal(reconciliation.status, 'MATCH')
+    assert.equal(reconciliation.platformCollected, collectionAmount)
     await pool.query('insert into repo_beneficiaries(github_repo_id,github_user_id,wallet) values($1,123,$2)',[repoId,receiver.publicKey.toBase58()])
     const {rows:[beneficiary]}=await pool.query('select * from repo_beneficiaries where github_repo_id=$1',[repoId])
     const verifier={verifyCurrentAuthority:async()=>({verified:true,permission:'admin',githubRepoId:BigInt(repoId),githubUserId:123n,verifiedAt:new Date()})}
-    const request={githubRepoId:repoId,githubAuthorization:{},review:{repoId,wallet:beneficiary.wallet,boundAt:beneficiary.bound_at.toISOString(),paid:'0',amount:String(reconciliation.onchainCreatorFee),includeGraduatedFees:true,expiresAt:Date.now()+600000}}
+    const request={githubRepoId:repoId,githubAuthorization:{},review:{repoId,wallet:beneficiary.wallet,boundAt:beneficiary.bound_at.toISOString(),paid:'0',platformCollected:String(collectionAmount),amount:String(reconciliation.onchainCreatorFee),includeGraduatedFees:true,expiresAt:Date.now()+600000}}
     const claim=createClaim({pool,connection,config,creator,githubVerifier:verifier})
     await assert.rejects(claim.claim({...request,review:{...request.review,includeGraduatedFees:false}}),/updated claim review/)
     const unauthorized=createClaim({pool,connection,config,creator,githubVerifier:{verifyCurrentAuthority:async()=>({verified:false,permission:'write',githubRepoId:BigInt(repoId),githubUserId:123n,verifiedAt:new Date()})}})
@@ -85,6 +107,9 @@ test('graduation credits finalized SOL fees, pays once, and recovers a lost broa
     await swap(true)
     assert.equal((await worker().runOnce())[0].status,'OK')
     reconciliation=await createReconciler({pool,connection,config}).reconcile(repoId)
+    // Owner payouts that include DAMM fees must not become negative DBC entitlement,
+    // and newly earned DAMM fees cannot fund another DBC-only collection.
+    await assert.rejects(collections.review({ repoId, receiver: collectionWallet.toBase58(), amount: '1' }), /exceeds/)
     const next={...request,review:{...request.review,paid:String(receipt.amountBaseUnits),amount:String(reconciliation.onchainCreatorFee)}}
     const broken=Object.create(connection)
     broken.simulateTransaction=async(...args)=>{
@@ -110,7 +135,7 @@ test('graduation credits finalized SOL fees, pays once, and recovers a lost broa
     const {rows:[totals]}=await pool.query("select count(*)::int as count,sum(amount_base_units)::text as paid from repo_claims where status='settled'")
     assert.equal(totals.count,2)
     assert.ok(BigInt(totals.paid)>receipt.amountBaseUnits+BigInt(next.review.amount))
-    assert.equal(BigInt(totals.paid),reconciliation.recordedEarned)
+    assert.equal(BigInt(totals.paid) + collectionAmount,reconciliation.recordedEarned)
     // An unrecorded external position withdrawal is a discrepancy, never a fabricated payout.
     await pool.query('update repo_claims set damm_amount_base_units=damm_amount_base_units-1 where damm_amount_base_units>0')
     assert.equal((await createReconciler({pool,connection,config}).reconcile(repoId)).status,'MISMATCH')
