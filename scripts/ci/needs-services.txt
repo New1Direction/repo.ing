@@ -91,3 +91,4 @@ early-access-hook-chain
 early-access-links-db
 repo-inference-handoff-db
 early-access-launch-chain
+hooklab-curve-db
