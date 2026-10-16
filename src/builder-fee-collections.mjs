@@ -51,7 +51,6 @@ export function createBuilderFeeCollections({ pool, connection, verification = n
     if (reads.slice(1).some(r => r.value.some((a, i) => !a.data.equals(reads[0].value[i].data)))) throw Error('RPC disagreement; refresh review')
     const s = dbc.state.getProgram().coder.accounts.decode('virtualPool', reads[0].value[0].data).poolState
     const fixed = dbc.state.getProgram().coder.accounts.decode('poolConfig', reads[0].value[1].data)
-    if (s.isMigrated) throw Error('Graduated markets are not supported for builder collection')
     if (!s.config.equals(configKey) || s.baseMint.toBase58() !== m.mint || s.creator.toBase58() !== m.creatorWallet ||
         !s.creator.equals(creator.publicKey) || !fixed.quoteMint.equals(NATIVE_MINT) || fixed.collectFeeMode !== 0 ||
         fixed.tokenType !== 0 || fixed.creatorTradingFeePercentage <= 0 || !s.creatorBaseFee.isZero()) throw Error('Canonical creator or SOL fee config mismatch')
@@ -59,9 +58,11 @@ export function createBuilderFeeCollections({ pool, connection, verification = n
     if (to.equals(creator.publicKey) || !PublicKey.isOnCurve(to)) throw Error('Receiver must be a separate normal SOL wallet')
     const account = await connection.getAccountInfo(to, 'finalized')
     if (account && (account.executable || !account.owner.equals(SystemProgram.programId))) throw Error('Receiver must be a normal SOL wallet')
+    // Graduation leaves DBC fees claimable. DAMM position fees are a separate,
+    // all-or-nothing claim and must never fund this exact DBC withdrawal.
     const { rows: [totals] } = await db.query(`select
-      coalesce((select sum(amount_base_units) from builder_fee_credits where github_repo_id=$1),0)::text as earned,
-      coalesce((select sum(amount_base_units) from repo_claims where github_repo_id=$1 and status='settled'),0)::text as "ownerPaid",
+      coalesce((select sum(amount_base_units) from fee_events where github_repo_id=$1),0)::text as earned,
+      coalesce((select sum(amount_base_units - damm_amount_base_units) from repo_claims where github_repo_id=$1 and status='settled'),0)::text as "ownerPaid",
       coalesce((select sum(amount) from builder_fee_collections where github_repo_id=$1 and status='settled'),0)::text as "platformCollected",
       (select count(*) from repo_claims where github_repo_id=$1 and status='pending')::int +
       (select count(*) from platform_fee_claims where github_repo_id=$1 and status='pending')::int +
@@ -75,7 +76,7 @@ export function createBuilderFeeCollections({ pool, connection, verification = n
     if (amount <= 0n) throw Error('No economical builder fees remain')
     if (amount > unclaimed) throw Error('Exact collection amount exceeds unclaimed builder fees')
     return { purpose: PURPOSE, repoId: String(repoId), mint: m.mint, pool: m.pool, config: configKey.toBase58(),
-      source: creator.publicKey.toBase58(), receiver: to.toBase58(), earned: totals.earned, ownerPaid: totals.ownerPaid,
+      source: creator.publicKey.toBase58(), receiver: to.toBase58(), feeSource: 'DBC', earned: totals.earned, ownerPaid: totals.ownerPaid,
       platformCollected: totals.platformCollected, unclaimed: String(unclaimed), amount: String(amount), remaining: String(unclaimed - amount),
       creatorUnclaimed: s.creatorQuoteFee.toString(), partnerUnclaimed: s.partnerQuoteFee.toString(), quoteVault: s.quoteVault.toBase58(),
       ...(exactAmount === undefined ? {} : { selection: 'exact' }),
