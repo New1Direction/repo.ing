@@ -30,7 +30,6 @@ env:
 jobs:
   quick:
     name: quick tests
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.suite == 'sharded')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -145,7 +144,6 @@ jobs:
 
   build:
     name: next build
-    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.suite == 'sharded')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
