@@ -1,0 +1,11 @@
+{
+  "name": "@repo-ing/hooklab-production-candidate",
+  "version": "0.0.0-f3062df",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": "./dist/index.mjs",
+  "engines": { "node": ">=22" },
+  "peerDependencies": { "@solana/web3.js": "1.98.4" },
+  "files": ["dist", "idl", "integration", "LICENSE", "NOTICE", "FORK.md", "THIRD_PARTY_NOTICES.md", "provenance.json"]
+}

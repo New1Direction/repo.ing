@@ -8,22 +8,24 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const fresh = process.argv[3] === 'fresh-candidate'
-if (process.argv[3] && !fresh) throw new Error('Unknown vendoring mode.')
-const revision = fresh ? 'f3c57ccc15f327a65f447f51b6f4b61833de78b7' : '9b3473e001a9abc73bf644d4206e47abc95a815b'
-const manifestHash = fresh ? '1a0ee482d83587f80af790729733e662ce39096e078b5a18c4e5c7514d7682d4' : '3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403'
+const hardened = process.argv[3] === 'hardened-candidate'
+const production = process.argv[3] === 'production-candidate'
+if (process.argv[3] && !fresh && !hardened && !production) throw new Error('Unknown vendoring mode.')
+const revision = production ? 'f3062dfc1133ae1b0cb3d2f4d9d41145a4677a32' : hardened ? '826b5a480dfafbe9395f9e9b9c280d07fc7eb809' : fresh ? 'f3c57ccc15f327a65f447f51b6f4b61833de78b7' : '9b3473e001a9abc73bf644d4206e47abc95a815b'
+const manifestHash = production ? '9df8e9ceaa3a73fb37c8af35254382f27e38bfc35d6a1fcfa4b72223e75e9cb7' : hardened ? '4352214b2194a70e45f0b2cf16e10e2a62c29b947574b41a5caeff749c9d87f0' : fresh ? '1a0ee482d83587f80af790729733e662ce39096e078b5a18c4e5c7514d7682d4' : '3e904e1030f581d8b79879aaf43a5f3c9d20f63979008c2e4b0799581e14e403'
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const source = path.resolve(process.argv[2] || '')
-const output = path.join(root, fresh ? 'vendor/hooklab-guarded-candidate' : 'vendor/hooklab-readonly')
+const output = path.join(root, production ? 'vendor/hooklab-production-candidate' : hardened ? 'vendor/hooklab-hardened-candidate' : fresh ? 'vendor/hooklab-guarded-candidate' : 'vendor/hooklab-readonly')
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 const git = (...args) => execFileSync('git', ['-C', source, ...args], { encoding: 'utf8' }).trim()
 if (!process.argv[2] || git('rev-parse', 'HEAD') !== revision || git('status', '--porcelain', '--untracked-files=no')) {
   throw new Error(`Pass a clean Hook Lab checkout at ${revision}; first install its frozen SDK lockfile and run pnpm -C sdk build.`)
 }
 if (version !== '0.25.12') throw new Error('esbuild 0.25.12 is required.')
-const manifestPath = fresh ? path.join(source, '../candidate/candidate-manifest.json') : path.join(source, 'sdk/packages/sdk/integration/devnet.json')
+const manifestPath = production ? path.join(source, 'deployments/production/profile.json') : hardened ? path.join(source, 'deployments/hardened-devnet/profile.json') : fresh ? path.join(source, '../candidate/candidate-manifest.json') : path.join(source, 'sdk/packages/sdk/integration/devnet.json')
 const manifest = await readFile(manifestPath)
 if (sha(manifest) !== manifestHash) throw new Error('Manifest checksum mismatch.')
-const idlDirectories = fresh ? ['idl', 'idl/guarded-v2', 'idl/fresh-devnet'] : ['idl']
+const idlDirectories = hardened || production ? ['idl', 'idl/guarded-v2', 'idl/mainnet-controls'] : fresh ? ['idl', 'idl/guarded-v2', 'idl/fresh-devnet'] : ['idl']
 const idlHashes = {}
 for (const directory of idlDirectories) {
   for (const name of (await readdir(path.join(source, 'sdk/packages/sdk', directory))).filter(f => f.endsWith('.json')).sort()) {
@@ -33,7 +35,36 @@ for (const directory of idlDirectories) {
 await mkdir(path.join(output, 'dist'), { recursive: true })
 const result = await build({
   absWorkingDir: source,
-  stdin: { contents: fresh ? `
+  stdin: { contents: production ? `
+export { PRODUCTION_PROGRAMS, createLaunchMainnet, mainnetLaunchAddresses,
+  creatorAuthorizationAddress, creationControlHash } from './sdk/packages/sdk/src/mainnet-controls.ts';
+export { decodeLaunchConfig, decodeSwapConfig, decodeLaunch, decodePool, decodeMint, decodeHolding, NO_LAUNCH_RULES } from './sdk/packages/sdk/src/accounts.ts';
+export { encodeHookAccountList } from './sdk/packages/sdk/src/hooks.ts';
+export { launchEconomicsHash, poolEconomicsHash } from './sdk/packages/sdk/src/guarded.ts';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+export function productionCandidateManifest() {
+  const expected = ${JSON.stringify({ ...idlHashes, 'integration/candidate.json': manifestHash })};
+  for (const [file, hash] of Object.entries(expected)) {
+    if (createHash('sha256').update(readFileSync(new URL('../' + file, import.meta.url))).digest('hex') !== hash) throw new Error('Production candidate asset checksum mismatch: ' + file);
+  }
+  return JSON.parse(readFileSync(new URL('../integration/candidate.json', import.meta.url), 'utf8'));
+}
+` : hardened ? `
+export { HARDENED_DEVNET_PROGRAMS, mainnetLaunchAddresses, governanceAddress,
+  creatorAuthorizationAddress, governanceCommitment, creatorAuthorizationHash, creationControlHash } from './sdk/packages/sdk/src/mainnet-controls.ts';
+export { quoteLaunchSwap } from './sdk/packages/shared/src/policy.ts';
+export { decodeLaunchConfig, decodeSwapConfig, decodeLaunch, decodePool, decodeMint, decodeHolding } from './sdk/packages/sdk/src/accounts.ts';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+export function hardenedCandidateManifest() {
+  const expected = ${JSON.stringify({ ...idlHashes, 'integration/candidate.json': manifestHash })};
+  for (const [file, hash] of Object.entries(expected)) {
+    if (createHash('sha256').update(readFileSync(new URL('../' + file, import.meta.url))).digest('hex') !== hash) throw new Error('Hardened candidate asset checksum mismatch: ' + file);
+  }
+  return JSON.parse(readFileSync(new URL('../integration/candidate.json', import.meta.url), 'utf8'));
+}
+` : fresh ? `
 export { FRESH_DEVNET, freshPlainLaunch, freshLaunchAddresses, freshRentInventory } from './sdk/packages/sdk/src/fresh-devnet.ts';
 export { launchEconomicsHash, poolEconomicsHash, launchV2Budget } from './sdk/packages/sdk/src/guarded.ts';
 export { decodeLaunchConfig, decodeSwapConfig, decodeLaunch, decodePool, decodeMint, decodeHolding, NO_LAUNCH_RULES } from './sdk/packages/sdk/src/accounts.ts';
@@ -63,7 +94,7 @@ export function integrationManifest() {
 })
 for (const directory of [...idlDirectories, 'integration']) {
   await mkdir(path.join(output, directory), { recursive: true })
-  const names = directory.startsWith('idl') ? (await readdir(path.join(source, 'sdk/packages/sdk', directory))).filter(f => f.endsWith('.json')).sort() : [fresh ? 'candidate.json' : 'devnet.json']
+  const names = directory.startsWith('idl') ? (await readdir(path.join(source, 'sdk/packages/sdk', directory))).filter(f => f.endsWith('.json')).sort() : [fresh || hardened || production ? 'candidate.json' : 'devnet.json']
   if (directory === 'idl' && names.length !== 11) throw new Error('Expected all eleven raw IDLs.')
   for (const name of names) await copyFile(directory === 'integration' ? manifestPath : path.join(source, 'sdk/packages/sdk', directory, name), path.join(output, directory, name))
 }
@@ -118,8 +149,8 @@ for (const directory of ['', 'dist', ...idlDirectories, 'integration']) {
 }
 await writeFile(path.join(output, 'provenance.json'), JSON.stringify({
   repository: 'https://github.com/New1Direction/hook-lab', revision,
-  abiSourceCommit: fresh ? revision : JSON.parse(manifest).sourceCommit, manifestSha256: manifestHash,
+  abiSourceCommit: fresh || hardened || production ? revision : JSON.parse(manifest).sourceCommit, manifestSha256: manifestHash,
   sdkLockSha256: sha(await readFile(path.join(source, 'sdk/pnpm-lock.yaml'))),
   esbuild: version, target: 'node22', externalWeb3: '1.98.4', dependencies, files,
 }, null, 2) + '\n')
-console.log(`Vendored ${fresh ? 'isolated guarded candidate' : 'six read-only exports'} from ${revision}; ${dependencies.length} bundled dependency notices.`)
+console.log(`Vendored ${production ? 'disabled production candidate' : hardened ? 'inert hardened candidate' : fresh ? 'isolated guarded candidate' : 'six read-only exports'} from ${revision}; ${dependencies.length} bundled dependency notices.`)

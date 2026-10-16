@@ -1,0 +1,47 @@
+{
+  "schema": "hook-lab/hardened-devnet-profile/1",
+  "status": "proposed-unfunded-not-authorized-for-execution",
+  "buildFeature": "hardened-devnet",
+  "enforcementFeature": "mainnet",
+  "cluster": "devnet",
+  "genesisHash": "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+  "programs": {
+    "launch": "2J2N11ZsXVJprzu5wenwdvT93zCAZgQPyc1VG2WCxnHa",
+    "swap": "5MtGSoU6JVKiMM7wUjMePMAyMCVH5oBW5jTSfTJ9aP9w",
+    "token": "554tgVzsJ6NvQFpKc39HV73EDdarx3PMyDJTohcvHMLJ"
+  },
+  "roles": {
+    "upgrade": "7EWF4FgFqP2DRQFdKh5gDoytJ9jh2wYEtafMECpEChwZ",
+    "payer": "BAQ8m4KG5d4n1xShNQvtGNznaa5M4KyZUModfDq9vgzq",
+    "admin": "FqDfJsrp2cH4JH6x75KmtKkqrWwiVQ5mzA6PL6jwqTR6",
+    "guardian": "7sTsPorjKdrTX2gQUPERTp6H5xZahXHyLBE19MoPjBx1",
+    "treasury": "Ho9fPgtr2LrZMfaXgRFUsVMTKKj6M6aBMk7CRU6NfM6T",
+    "creator": "4AA5C4V3Wy624ATKBePnbSb79hhKotxmLSZwEpk45wzP",
+    "mint": "J4SRkyQXvUcbgtCGBvYKFiFjMsQp12uWdMLeDHqgbNpC"
+  },
+  "pdas": {
+    "launchConfig": "HQpVcVZwU9BbbLaXtVeBdpm4GEimtw4BSbbzsgCNWj7W",
+    "swapConfig": "DPbQR6A6r1mktMb2pRKnCLuc6paDQgL9Ap2GRyNQPjip",
+    "launchGovernance": "3SYWEXkrMYqDjP1HxP3x4v7vDhX8U5zR75oKwkoJf1ae",
+    "swapGovernance": "4xT4Lw5FdVBuroiYgBNZ8yNvg3pDFqnf6g2dMZp7Jpp6",
+    "creatorAuthorization": "BjGs6pcJFwifiqPHj6YCN6HVNUgHBvQ59Bhszk4Angep",
+    "launchProgramData": "mZ4AKBh7NFkBgaVc3HS97xFjai6Hks26Mh7XUqieca6",
+    "swapProgramData": "2qTej9nhh7QH3uA6U5VTA9aUMzvWFyThZDsnFVfaCL22"
+  },
+  "quoteMint": "9815kDrx6sNiXCnD2CvB8LKNJjbdKWmQYXzH5gYKABSq",
+  "existingAltCandidate": "CTDTrr1BGubB17SveVw9nvTJPkbL4GBcW7bkY9LNy8U6",
+  "controlsSchema": "../../docs/mainnet-controls-schema.json",
+  "plainOnly": true,
+  "legacyFallback": false,
+  "consumerEnabled": false,
+  "creationInitiallyPaused": true,
+  "tradingAlwaysPausedDuringAcceptance": true,
+  "creatorLifetimeCap": "1",
+  "authorizationExpirySlot": null,
+  "guardDeadlineSlot": null,
+  "approvedEconomics": null,
+  "approvedFundingLamports": null,
+  "custodyEvidence": "Distinct DEVNET TEST EOAs only; local encrypted reload reported. Off-orb recovery and spending authorization required. Not production quorum/delay evidence.",
+  "identityProposalArchiveSha256": "48d36abdb20f6921a59a8a232aa695598aed0e9170ade6f061b6bc107a6d1498",
+  "frozenFreshDevnetSourceUnchanged": "f3c57ccc15f327a65f447f51b6f4b61833de78b7"
+}

@@ -88,7 +88,7 @@ export function fakeChain({ lamports = {}, mints = {}, height = 1000 } = {}) {
       return { owner: new PublicKey(t.programId), data, lamports: Number(RENT), executable: false }
     },
     async getBalance(key) { return Number(state.lamports.get(key.toBase58()) ?? 0n) },
-    async getEpochInfo() { return { epoch: 900 } },
+    async getEpochInfo() { return { epoch: 900, absoluteSlot: blockHeight + 100, blockHeight } },
     async getLatestBlockhash() { return { blockhash: BLOCKHASH, lastValidBlockHeight: blockHeight + 150 } },
     async getRecentPrioritizationFees() { return [] },
     async simulateTransaction(tx) {
@@ -105,12 +105,12 @@ export function fakeChain({ lamports = {}, mints = {}, height = 1000 } = {}) {
       return signature
     },
     async getSignatureStatuses(signatures) {
-      return { context: { slot: 10 }, value: signatures.map(s => receipts.has(s) ? { confirmationStatus: 'finalized', err: receipts.get(s).meta.err } : null) }
+      return { context: { slot: blockHeight + 100 }, value: signatures.map(s => receipts.has(s) ? { confirmationStatus: 'finalized', err: receipts.get(s).meta.err } : null) }
     },
     async getTransaction(signature) { return receipts.get(signature) ?? null },
     async confirmTransaction({ signature }) { return { value: { err: receipts.get(signature)?.meta.err ?? null } } },
     async getBlockHeight() { return blockHeight },
-    async getSlot() { return 10 },
+    async getSlot() { return blockHeight + 100 },
   }
   return connection
 }
