@@ -102,7 +102,11 @@ test('the credit service session is encrypted, bound to its GitHub account and s
   assert.equal(openCreditsSession(sealed, '42', secret).token, token)
   assert.equal(openCreditsSession(sealed, '43', secret), null, 'another GitHub account')
   assert.equal(openCreditsSession(sealed, '42', randomBytes(32).toString('hex')), null, 'another key')
-  assert.equal(openCreditsSession(`${sealed.slice(0, -2)}AA`, '42', secret), null, 'tampered')
+  const tampered = sealed.split('.')
+  const tag = Buffer.from(tampered[3], 'base64url')
+  tag[0] ^= 1 // Always change authenticated bytes; replacing a suffix can leave it unchanged.
+  tampered[3] = tag.toString('base64url')
+  assert.equal(openCreditsSession(tampered.join('.'), '42', secret), null, 'tampered')
   assert.equal(openCreditsSession(sealed, '42', secret, expiresAt + 1), null, 'expired')
   assert.equal(openCreditsSession(sealCreditsSession({ token, githubUserId: '42', expiresAt: Date.now() + (CREDITS_SESSION_SECONDS + 60) * 1000 }, secret), '42', secret), null, 'too long')
   assert.equal(openCreditsSession(sealCreditsSession({ token: 'short', githubUserId: '42', expiresAt }, secret), '42', secret), null)
