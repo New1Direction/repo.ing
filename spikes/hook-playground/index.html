@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Explore launch mechanics in repo.ing’s educational Hook Playground. Local simulations only, never quotes or transactions."
+    />
+    <title>Hook Playground · Simulation · repo.ing</title>
+    <link rel="icon" href="assets/brand-cat.webp" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#workspace">Skip to builder</a>
+    <header class="header">
+      <div class="brand">
+        <img
+          src="assets/brand-cat.webp"
+          width="32"
+          height="32"
+          alt="repo.ing cat"
+        /><span>repo<span class="mint">.ing</span></span>
+      </div>
+      <span class="divider">/</span
+      ><span class="header-title">Hook Playground</span
+      ><span class="badge">SIMULATION</span
+      ><button class="quiet" id="boundary">
+        Scope & assumptions <span aria-hidden="true">↗</span>
+      </button>
+    </header>
+    <main>
+      <section class="intro">
+        <div>
+          <div class="eyebrow">A SANDBOX FOR YOUR NEXT IDEA</div>
+          <h1>Build the rules.<span> See the ripple.</span></h1>
+          <p>
+            Connect a launch, explore the trade-offs. Nothing leaves this
+            playground.
+          </p>
+        </div>
+        <div class="mode" role="group" aria-label="Experience level">
+          <button id="beginner" aria-pressed="true">Beginner</button
+          ><button id="expert" aria-pressed="false">Expert</button>
+        </div>
+      </section>
+      <div class="notice">
+        <span class="mint" aria-hidden="true">◈</span
+        ><span
+          ><strong>Simulation, not a launch.</strong> Illustrative numbers, not
+          Hook quotes. No wallet, RPC, signing, or chain actions.</span
+        ><button id="learn">What’s supported?</button>
+      </div>
+      <noscript
+        ><p class="validation">
+          JavaScript is required for the local simulation. No wallet or
+          server-side simulation is available. Enable JavaScript and reload to
+          continue.
+        </p></noscript
+      >
+      <div id="startup-error" class="validation">
+        The playground is loading. If this message remains, reload the page or
+        check that JavaScript and the site’s local assets are allowed. Your
+        saved draft has not been changed.
+      </div>
+      <div class="toolbar">
+        <div class="recipe-title">
+          <span class="status-dot"></span
+          ><strong id="scenario-name">Plain launch exploration</strong
+          ><span class="muted">/ draft</span>
+        </div>
+        <div class="toolbar-actions">
+          <button id="import">Import</button
+          ><button id="export">
+            Export scenario <span aria-hidden="true">↓</span></button
+          ><button id="reset" title="Restore the illustrative example">
+            Reset
+          </button>
+        </div>
+      </div>
+      <div class="draft-bar">
+        <span id="save-status" role="status">Local draft storage</span
+        ><span>Only this browser · not a backup</span
+        ><button id="backup-draft" class="quiet">Back up draft ↓</button>
+      </div>
+      <div id="storage-warning" class="storage-warning" hidden>
+        <p id="storage-message" role="status"></p>
+        <div class="recovery-actions">
+          <button id="recover-raw">Download saved data</button
+          ><button id="reload-draft">Load saved draft</button
+          ><button id="replace-draft">Save this draft instead</button>
+        </div>
+      </div>
+      <div class="workspace" id="workspace" tabindex="-1">
+        <aside class="library">
+          <div class="section-label">MODULE LIBRARY <span>06</span></div>
+          <p class="help">Add a module. Connect an idea.</p>
+          <div id="library-list"></div>
+          <button class="custom" id="custom">
+            <span>⌘</span><strong>Custom Hook</strong
+            ><small>Outside this playground ↗</small>
+          </button>
+          <div class="library-note">
+            <span class="mint">↳</span> Start with a curve.<br />Everything else
+            builds on it.
+          </div>
+        </aside>
+        <section class="canvas-section" aria-label="Launch flow">
+          <div class="canvas-heading">
+            <span
+              ><strong>Your launch flow</strong
+              ><small id="connected-count"></small></span
+            ><button id="clear" class="quiet">Clear canvas</button>
+          </div>
+          <div class="canvas" id="canvas"></div>
+          <div class="canvas-legend">
+            <span><i></i> Connected</span><span>+ Add from the library</span
+            ><span>Click a module to edit</span>
+          </div>
+        </section>
+        <aside
+          class="inspector"
+          id="inspector"
+          aria-label="Module settings"
+        ></aside>
+      </div>
+      <section class="simulation" aria-labelledby="simulation-title">
+        <div class="sim-heading">
+          <div>
+            <div class="eyebrow">THE RIPPLE EFFECT</div>
+            <h2 id="simulation-title" tabindex="-1">
+              Live simulation <span class="badge live">LOCAL MODEL</span>
+            </h2>
+          </div>
+          <p>Change a module. Every outcome follows.</p>
+        </div>
+        <div id="validation"></div>
+        <div class="sim-layout">
+          <div class="chart-panel">
+            <div class="chart-heading">
+              <div>
+                <span class="muted">Modeled spot price</span
+                ><strong id="spot-price">—</strong>
+              </div>
+              <span class="chart-key"><i></i> Buy-only scenario</span>
+            </div>
+            <div id="chart"></div>
+            <div class="scenario-controls" id="scenario-controls"></div>
+          </div>
+          <div class="results" id="results"></div>
+        </div>
+        <div class="sim-footnote">
+          * SOL-equivalent units in a toy model, not native SOL or bridged-SOL
+          quotes. No sniper fees, gas, rent, MEV, or market demand prediction.
+          <button id="method">Read the model ↗</button>
+        </div>
+      </section>
+      <footer>
+        <span
+          ><img src="assets/brand-cat.webp" width="19" height="19" alt="" />
+          Made for the builders. Not yet for the chain.</span
+        ><span>repo.ing / experiments / hook-playground</span>
+      </footer>
+    </main>
+    <div id="toast" role="status"></div>
+    <dialog id="dialog" aria-labelledby="dialog-title">
+      <div class="dialog-top">
+        <span class="eyebrow">HOOK PLAYGROUND</span
+        ><button id="close-dialog" aria-label="Close dialog">×</button>
+      </div>
+      <div id="dialog-content"></div>
+    </dialog>
+    <script type="module" src="app.mjs"></script>
+  </body>
+</html>
