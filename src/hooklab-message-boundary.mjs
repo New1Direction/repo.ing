@@ -49,9 +49,10 @@ export function inspectHookLabMessage(input) {
   requireThat(new Set(review.accounts.map(a => a.address)).size === review.accounts.length, 'Duplicate resolved account')
   requireThat(isDeepStrictEqual(review.lookupTables.map(t => t.address), message.addressTableLookups.map(t => t.accountKey.toBase58())), 'Lookup table list differs')
   const tables = review.lookupTables.map(t => {
-    const raw = bytes(t.dataBase64, 16384)
+    const raw = bytes(t.dataBase64, 56 + 32 * 256)
     requireThat(sha(raw) === t.sha256, 'Lookup table hash differs')
     const state = AddressLookupTableAccount.deserialize(raw)
+    requireThat(state.addresses.length <= 256, 'Lookup table exceeds the 256-address protocol bound')
     requireThat(state.deactivationSlot === 0xffffffffffffffffn && state.lastExtendedSlot < review.observedSlot, 'Lookup table inactive or not warmed')
     return new AddressLookupTableAccount({ key: new PublicKey(t.address), state })
   })

@@ -1,0 +1,52 @@
+{
+  "schema": "hook-lab/offline-inclusive-max-wallet-builder-profile/1",
+  "profileId": "inclusive-creator-quote-candidate-fa2e2a5cdf62",
+  "status": "offline-candidate-not-adopted",
+  "sourceCommit": "a33957a3f4285351949852ce5fb49cb3616ef496",
+  "sourcePatchSha256": "fa2e2a5cdf624619341697bf4decf474f4abbe51d6e577a927281882e0411ecc",
+  "buildFeature": "inclusive-fees-candidate",
+  "genesisHash": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+  "programs": {
+    "launch": "E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft",
+    "swap": "B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk",
+    "gate": "BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb",
+    "token": "2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22",
+    "bridge": "CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7"
+  },
+  "quoteMint": "A49oVhX22ExMwTEtFC6Y8nhBdZ4LJDGhdXLDn4c2f59i",
+  "idlSha256": {
+    "launch": "f3cb25209462044c139e8c81cf3d4fd28d2d4bd4023e265d4aaef78c9566fb8b",
+    "swap": "719b407b1f4ba90daa4770e6ab5b3e55b2dfe33f013b4b236ec72fb7b2134493",
+    "gate": "fbcab6e26d3439c0b0afc3fb43a3afbab6c091ad11ba83cbfbefc11fab412b43"
+  },
+  "elfSha256": {
+    "launch": "d4193f3634e68fb50c4bbfddc9ac2fc2e60f0ed2e1c6847c8a1580420875e9bb",
+    "swap": "3d5e1abee7fa2ff5f8d9a2b6c691b80849c75b298b4156f81d545dfa5f1caeaa",
+    "gate": "d7233dd0fd23f58f2d1efec1543017395684f43827155e8b884a624c62493857"
+  },
+  "dependencyObservation": {
+    "tokenElfSha256": "7aa07deb41a5545bcaff0d3fb966d5344538ec8f5c9f2155db4de030e3255df1",
+    "sourceProvenanceVerified": false,
+    "ownerAcceptanceVerified": false
+  },
+  "capability": {
+    "kind": "immutable-initial-supply-owner-cap-until-authenticated-graduation",
+    "beforeTransferOnly": true,
+    "creatorFeeBps": 100,
+    "rules": "none",
+    "atomicPrepareAndLaunch": false,
+    "prepareMintSignerRequired": true,
+    "launchAdminCosignerRequired": true,
+    "policyVersion": 2,
+    "feeModel": 2,
+    "protocolShareBps": 2500,
+    "eligibleFeeClass": "creator-quote",
+    "rounding": "floor-platform-per-swap-residual-creator"
+  },
+  "artifactAdopted": false,
+  "ownerApprovalVerified": false,
+  "executionAuthorized": false,
+  "publicExecutionEnabled": false,
+  "canSign": false,
+  "canSubmit": false
+}
