@@ -7,7 +7,8 @@ import { indexHookNativeBatch } from '../src/hooklab-native-indexer.mjs'
 import { nativeIndexFixture, key } from './fixtures/hooklab-native-index.mjs'
 
 const decoder = productionHookEventDecoder(), swap = decoder.programs[1]
-function receipt() {
+function receipt(swapProgram = swap) {
+  const swap = swapProgram
   const authority = PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], new PublicKey(swap))[0].toBase58()
   // Independently laid out ProtocolFeesCollected: pool, u64 quote_amount, collector, i64 ts.
   const body = Buffer.alloc(80)
@@ -66,4 +67,18 @@ test('decoder binding and malformed self-CPI stop the index checkpoint; valid re
   assert.equal(committed, null)
   f.manifest.idlSha256 = '0'.repeat(64)
   await assert.rejects(indexHookNativeBatch({ ...f, store, decoder }), /binding differs/)
+})
+
+test('new custom-production addresses require their explicit source pin and still cannot imply adoption', () => {
+  const custom = productionHookEventDecoder({ sourceCommit: '823442c7a7c3572ddf8ecf82c8084591ebb170c9' })
+  const raw = receipt(custom.programs[1])
+  assert.deepEqual(decoder.decode(raw).events, [])
+  const decoded = custom.decode(raw)
+  assert.equal(decoded.events[0].program, '4MsvuuDtsAsdGcSz7NWfSRtMZYcXXLrU4LNeT9MKeiKE')
+  assert.equal(decoded.events[0].data.quote_amount, '9007199254740993')
+  assert.equal(decoded.economicPostconditions, false)
+  assert.equal(decoded.deploymentAdopted, false)
+  assert.deepEqual(custom.decode(receipt()).events, [])
+  assert.notEqual(custom.idlSha256, decoder.idlSha256)
+  assert.throws(() => productionHookEventDecoder({ sourceCommit: 'f3062dfc1133ae1b0cb3d2f4d9d41145a4677a32' }), /Unpinned/)
 })

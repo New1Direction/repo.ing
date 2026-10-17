@@ -8,10 +8,18 @@ import bs58 from 'bs58'
 const sha = value => createHash('sha256').update(value).digest('hex')
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const tag = Buffer.from('e445a52e51cb9a1d', 'hex') // Anchor EVENT_IX_TAG_LE; self-CPI, not log strings.
-const pins = [
-  ['bordrless_launch', 'E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft', '929403a199c9cb411d25980a49667f531612efcdb7e449b13af9258b638869fb'],
-  ['bordrless_swap', 'B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk', 'ba5409de62f8d56f3500a72f5b7d11cfdefd85027d2ec3bd56e2137ae76bc414'],
-]
+const plainSource = 'b3dc4297735fe2e061fca7b6563d69cf81e0911c'
+const profiles = {
+  [plainSource]: { directory: '', pins: [
+    ['bordrless_launch', 'E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft', '929403a199c9cb411d25980a49667f531612efcdb7e449b13af9258b638869fb'],
+    ['bordrless_swap', 'B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk', 'ba5409de62f8d56f3500a72f5b7d11cfdefd85027d2ec3bd56e2137ae76bc414'],
+  ] },
+  // Pinned source candidate, NOT a deployed/adopted capability. No runtime ABI override.
+  '823442c7a7c3572ddf8ecf82c8084591ebb170c9': { directory: 'custom-production/', pins: [
+    ['bordrless_launch', 'Ky5HeYrE3HK3oh5x2kGzHFpkxnQXHcXQLFAZPzkcvSG', '9240ff013753c9ab893663f7b89279f1e5f1baade080f8fbf61f4f07a6a15c57'],
+    ['bordrless_swap', '4MsvuuDtsAsdGcSz7NWfSRtMZYcXXLrU4LNeT9MKeiKE', '93a6721f59989c30423d7ad5a99cfd4592a9fd001160429bc063d74085fe2e13'],
+  ] },
+}
 const normalize = value => {
   if (BN.isBN(value)) return value.toString(10)
   if (value instanceof PublicKey) return value.toBase58()
@@ -20,9 +28,11 @@ const normalize = value => {
   return value
 }
 
-export function productionHookEventDecoder() {
+export function productionHookEventDecoder({ sourceCommit = plainSource } = {}) {
+  check(Object.hasOwn(profiles, sourceCommit), 'Unpinned event ABI source')
+  const { pins, directory } = profiles[sourceCommit]
   const bindings = new Map(pins.map(([name, program, hash]) => {
-    const bytes = readFileSync(new URL(`../vendor/hooklab-event-abi/${name}.json`, import.meta.url))
+    const bytes = readFileSync(new URL(`../vendor/hooklab-event-abi/${directory}${name}.json`, import.meta.url))
     check(sha(bytes) === hash, 'Event ABI artifact drift')
     const idl = JSON.parse(bytes)
     check(idl.address === program, 'Event ABI program mismatch')
@@ -30,7 +40,7 @@ export function productionHookEventDecoder() {
       authority: PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], new PublicKey(program))[0].toBase58() }]
   }))
   return {
-    sourceCommit: 'b3dc4297735fe2e061fca7b6563d69cf81e0911c',
+    sourceCommit,
     idlSha256: sha(JSON.stringify(pins)),
     programs: pins.map(p => p[1]),
     decode(raw) {

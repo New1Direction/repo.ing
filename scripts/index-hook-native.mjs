@@ -17,7 +17,7 @@ if (process.argv.length !== 4 || process.argv[2] !== '--once') {
     }
     const adapters = manifest.providers.map((provider, i) => ({ provider, read: createHookIndexRpc(urls[i]) }))
     pool = new pg.Pool({ connectionString: process.env.HOOK_INDEX_DATABASE_URL, max: 1, connectionTimeoutMillis: 8000 })
-    console.log(JSON.stringify(await indexHookNativeBatch({ manifest, adapters, store: hookNativeIndexStore(pool), decoder: productionHookEventDecoder() })))
+    console.log(JSON.stringify(await indexHookNativeBatch({ manifest, adapters, store: hookNativeIndexStore(pool), decoder: productionHookEventDecoder({ sourceCommit: manifest.sourceCommit }) })))
   } catch {
     // Driver/RPC errors may contain credentials; retain only the failure status here.
     console.error('Hook index batch failed or commit outcome unknown. Reread the stored checkpoint; review manifest, schema, archive coverage and provider agreement.')

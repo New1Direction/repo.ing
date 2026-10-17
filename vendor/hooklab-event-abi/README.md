@@ -11,3 +11,11 @@ custom-Hook candidate. Addresses and SHA256 are checked by the decoder before us
 Parsing an event with this ABI does not establish that these bytes were deployed at its slot,
 that the transaction finalized, or that its economic postconditions hold. No SDK builder is
 exported here. Existing historical ELF/provenance artifacts remain unchanged.
+
+`custom-production/` separately retains the new-address launch/swap ABI from local hook-lab
+source `823442c7a7c3572ddf8ecf82c8084591ebb170c9`. It is a candidate, not deployed evidence or
+approval. The decoder selects this only with that exact source pin; old and new addresses never
+decode under each other's profile. No arbitrary ABI/source override is supported.
+
+* launch: `9240ff013753c9ab893663f7b89279f1e5f1baade080f8fbf61f4f07a6a15c57`
+* swap: `93a6721f59989c30423d7ad5a99cfd4592a9fd001160429bc063d74085fe2e13`

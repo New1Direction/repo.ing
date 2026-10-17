@@ -170,3 +170,12 @@ never replace it with simulation, configured fees, a threshold event or a collec
 Owner approval must name the operation budget and action; deployment approval is not trade,
 unpause, migration or public-activation approval. The Playground remains metadata-only and no
 client readiness, exported recipe or observed snapshot can populate the adoption ledger.
+
+The one-shot observer can select the separately pinned custom-production event ABI from hook-lab
+source `823442c7a7c3572ddf8ecf82c8084591ebb170c9` via the manifest's `sourceCommit`. This only
+prepares decoding for the new launch/swap addresses; it does not adopt or activate them. The old
+`b3dc429` deployed-plain ABI stays distinct, and the `f3062df` SDK is not an event-source pin.
+Choose a new isolated stream/profile and prove archive coverage from the eventual deployment
+receipts; no deployment/start slot is invented here. HTTP execution remains 423 and all public
+capabilities remain false. Keep UI metadata drafts separate; a decoder release needs no wallet
+connection, trading UI, worker autostart, public unpause or change to Meteora volume/forecasts.
