@@ -2,6 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PublicKey } from '@solana/web3.js'
 import bs58 from 'bs58'
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { productionHookEventDecoder } from '../src/hooklab-native-events.mjs'
 import { indexHookNativeBatch } from '../src/hooklab-native-indexer.mjs'
 import { nativeIndexFixture, key } from './fixtures/hooklab-native-index.mjs'
@@ -81,4 +86,107 @@ test('new custom-production addresses require their explicit source pin and stil
   assert.deepEqual(custom.decode(receipt()).events, [])
   assert.notEqual(custom.idlSha256, decoder.idlSha256)
   assert.throws(() => productionHookEventDecoder({ sourceCommit: 'f3062dfc1133ae1b0cb3d2f4d9d41145a4677a32' }), /Unpinned/)
+})
+
+test('all four ABI byte pins and program identities remain explicit and distinct', () => {
+  const pins = [
+    ['bordrless_launch.json', 'E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft', '929403a199c9cb411d25980a49667f531612efcdb7e449b13af9258b638869fb'],
+    ['bordrless_swap.json', 'B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk', 'ba5409de62f8d56f3500a72f5b7d11cfdefd85027d2ec3bd56e2137ae76bc414'],
+    ['custom-production/bordrless_launch.json', 'Ky5HeYrE3HK3oh5x2kGzHFpkxnQXHcXQLFAZPzkcvSG', '9240ff013753c9ab893663f7b89279f1e5f1baade080f8fbf61f4f07a6a15c57'],
+    ['custom-production/bordrless_swap.json', '4MsvuuDtsAsdGcSz7NWfSRtMZYcXXLrU4LNeT9MKeiKE', '93a6721f59989c30423d7ad5a99cfd4592a9fd001160429bc063d74085fe2e13'],
+  ]
+  for (const [file, program, hash] of pins) {
+    const bytes = readFileSync(new URL(`../vendor/hooklab-event-abi/${file}`, import.meta.url))
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), hash)
+    assert.equal(JSON.parse(bytes).address, program)
+  }
+  assert.equal(new Set(pins.map(p => p[1])).size, 4)
+})
+
+test('unknown decoder options and manifest fields fail before RPC or checkpoint access', async () => {
+  for (const options of [null, [], { idl: {} }, { sourceCommit: decoder.sourceCommit, program: swap },
+    { sourceCommit: decoder.sourceCommit, executionEnabled: true }]) {
+    assert.throws(() => productionHookEventDecoder(options), /Unknown event decoder options/)
+  }
+  for (const unknown of [{ executionEnabled: true }, { deploymentAdopted: true }, { idl: {} }, { rpcUrl: 'https://rpc.invalid' }]) {
+    const f = nativeIndexFixture()
+    Object.assign(f.manifest, unknown)
+    f.adapters = f.adapters.map(a => ({ ...a, read: () => assert.fail('must not read RPC') }))
+    const store = { load: () => assert.fail('must not access checkpoint'), commit: () => assert.fail('must not commit') }
+    await assert.rejects(indexHookNativeBatch({ ...f, store, decoder }))
+  }
+})
+
+test('decoder output cannot overwrite receipt identity or promote economic/deployment evidence', async () => {
+  for (const change of [
+    out => { out.signature = 'substituted' },
+    out => { out.receiptStatus = 'accepted-trade' },
+    out => { out.economicPostconditions = true },
+    out => { out.deploymentAdopted = true },
+    out => { out.events[0].accepted = true },
+  ]) {
+    const f = nativeIndexFixture()
+    Object.assign(f.manifest, { sourceCommit: decoder.sourceCommit, idlSha256: decoder.idlSha256, programs: [swap] })
+    f.blocks.get(100).transactions = [receipt()]
+    const unsafeDecoder = { ...decoder, decode(raw) { const out = decoder.decode(raw); change(out); return out } }
+    const store = { load: async () => ({ nextSlot: 100, lastBlock: null }), commit: () => assert.fail('must not commit') }
+    await assert.rejects(indexHookNativeBatch({ ...f, store, decoder: unsafeDecoder }))
+  }
+})
+
+test('observer CLI requires explicit one-shot invocation and isolated configuration, with redacted failures', () => {
+  const script = new URL('../scripts/index-hook-native.mjs', import.meta.url)
+  const run = (args, env = {}) => spawnSync(process.execPath, [script.pathname, ...args], { env, encoding: 'utf8', timeout: 5000 })
+  const noArgs = run([])
+  assert.equal(noArgs.status, 2)
+  assert.match(noArgs.stderr, /Usage:/)
+  const directory = mkdtempSync(join(tmpdir(), 'hook-index-cli-'))
+  try {
+    const f = nativeIndexFixture()
+    Object.assign(f.manifest, { sourceCommit: decoder.sourceCommit, idlSha256: decoder.idlSha256, programs: [swap] })
+    const file = join(directory, 'manifest.json')
+    const failures = [
+      { manifest: f.manifest, env: { DATABASE_URL: 'do-not-use-default-database', SOLANA_RPC_URL: 'do-not-use-default-rpc' } },
+      { manifest: { ...f.manifest, executionEnabled: true }, env: {} },
+      { manifest: f.manifest, env: { HOOK_INDEX_DATABASE_URL: 'do-not-connect',
+        HOOK_INDEX_RPC_ALPHA: 'https://same.invalid/private-a', HOOK_INDEX_RPC_BETA: 'https://same.invalid/private-b' } },
+    ]
+    for (const { manifest, env } of failures) {
+      writeFileSync(file, JSON.stringify(manifest))
+      const result = run(['--once', file], env)
+      assert.equal(result.status, 1)
+      assert.equal(result.stdout, '')
+      assert.match(result.stderr, /Hook index batch failed or commit outcome unknown/)
+      assert.doesNotMatch(result.stderr, /do-not-|same\.invalid|private-[ab]/)
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }) }
+})
+
+test('same-ID max-wallet ABI requires exact source patch and cannot imply adoption', async () => {
+  const sourceCommit = 'a33957a3f4285351949852ce5fb49cb3616ef496'
+  const sourcePatchSha256 = 'd1c5447d6e4c0400ad641679cb0e409425f2ce1ef9aaf6500611215f3491c13f'
+  assert.throws(() => productionHookEventDecoder({ sourceCommit }), /patch binding/)
+  assert.throws(() => productionHookEventDecoder({ sourceCommit, sourcePatchSha256: '0'.repeat(64) }), /patch binding/)
+  assert.throws(() => productionHookEventDecoder({ sourceCommit: decoder.sourceCommit, sourcePatchSha256 }), /patch binding/)
+  const candidate = productionHookEventDecoder({ sourceCommit, sourcePatchSha256 })
+  assert.deepEqual(candidate.programs, decoder.programs)
+  assert.notEqual(candidate.idlSha256, decoder.idlSha256)
+  const out = candidate.decode(receipt())
+  assert.equal(out.events[0].data.quote_amount, '9007199254740993')
+  assert.equal(out.economicPostconditions, false)
+  assert.equal(out.deploymentAdopted, false)
+  const bytes = readFileSync(new URL('../vendor/hooklab-event-abi/max-wallet-reuse/bordrless_launch.json', import.meta.url))
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), 'b1f564880120eac65ba7f35031260b74f93c9b5004edb55ce0543884fa6b5f8f')
+  assert.equal(JSON.parse(bytes).address, candidate.programs[0])
+  const f = nativeIndexFixture()
+  Object.assign(f.manifest, { sourceCommit, sourcePatchSha256, idlSha256: candidate.idlSha256, programs: [swap] })
+  f.blocks.get(100).transactions = [receipt()]
+  let committed = null
+  const store = { load: async () => ({ nextSlot: 100, lastBlock: null }), commit: async b => { committed = b } }
+  await indexHookNativeBatch({ ...f, store, decoder: candidate })
+  assert.equal(committed.rows[0].eventStatus, 'decoded-self-cpi')
+  for (const patch of [undefined, '0'.repeat(64)]) {
+    f.manifest.sourcePatchSha256 = patch
+    await assert.rejects(indexHookNativeBatch({ ...f, store: { load: () => assert.fail('must not access checkpoint') }, decoder: candidate }), /binding differs/)
+  }
 })

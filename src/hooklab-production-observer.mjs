@@ -1,4 +1,6 @@
 // Inert, source-independent evidence boundary. No active profile, RPC, SDK defaults or execution.
+import {readFileSync} from 'node:fs'
+import {BorshCoder} from '@anchor-lang/core'
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
@@ -11,7 +13,7 @@ const loader = 'BPFLoaderUpgradeab1e11111111111111111111111'
 const mainnetGenesis = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const role = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 const accountPin = z.object({ role, address: key, owner: key, executable: z.boolean(), dataSha256: hash }).strict()
-export const productionDossierSchema = z.object({
+const dossierV1 = z.object({
   schema: z.literal('repoing/production-observation/1'), genesisHash: z.literal(mainnetGenesis),
   artifacts: z.object({ sourceCommit: z.string().regex(/^[a-f0-9]{40}$/), profileSha256: hash,
     sdkSha256: hash, idlSha256: hash, provenanceSha256: hash }).strict(),
@@ -23,6 +25,27 @@ export const productionDossierSchema = z.object({
   }).strict()).min(3).max(20),
   accounts: z.array(accountPin).min(4).max(80),
 }).strict()
+const stableAccountPin=accountPin.extend({binding:z.literal('config-counters-v1'),approvedDataBase64:z.string().max(8192),idlSha256:hash}).strict()
+export const productionDossierSchema=z.union([dossierV1,dossierV1.extend({schema:z.literal('repoing/production-observation/2'),accounts:z.array(z.union([accountPin,stableAccountPin])).min(4).max(80)}).strict()])
+// Runtime source artifacts are rooted at the app directory and included in Next tracing.
+const codecBytes={launch:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json`),swap:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_swap.json`)}
+const codecs=Object.fromEntries(['launch','swap'].map(role=>{const bytes=codecBytes[role];return [role,{sha256:sha(bytes),coder:new BorshCoder(JSON.parse(bytes)),idl:JSON.parse(bytes)}]}))
+export function productionAccountBindingMatches(pin,observed,dossier){
+ try{
+  if(!observed||observed.address!==pin.address||observed.owner!==pin.owner||observed.executable!==pin.executable)return false
+  const current=rawAccount(observed)
+  if(!pin.binding)return sha(current)===pin.dataSha256
+  if(pin.binding!=='config-counters-v1'||dossier.schema!=='repoing/production-observation/2'||pin.executable||!['launch-config','swap-config'].includes(pin.role))return false
+  const role=pin.role.split('-')[0],codec=codecs[role],program=dossier.programs.find(p=>p.role===role)
+  if(!program||pin.address!==PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(program.address))[0].toBase58()||program.address!==pin.owner||codec.sha256!==pin.idlSha256||codec.idl.address!==program.address)return false
+  const approved=rawAccount({dataBase64:pin.approvedDataBase64});if(sha(approved)!==pin.dataSha256||approved.length!==current.length)return false
+  const decode=bytes=>{const value=codec.coder.accounts.decode('Config',bytes),encoded=Buffer.concat([bytes.subarray(0,8),codec.coder.types.encode('Config',value)]);if(!encoded.equals(bytes))throw Error('Noncanonical Config');return value}
+  const base=decode(approved),live=decode(current),field=role==='launch'?'launches':'pools_created'
+  if(live[field].lt(base[field]))return false
+  live[field]=base[field]
+  return Buffer.concat([current.subarray(0,8),codec.coder.types.encode('Config',live)]).equals(approved)
+ }catch{return false}
+}
 const observationSchema = z.object({ provider: role, genesisHash: key, commitment: z.literal('finalized'),
   slot: integer, observedAtMs: integer,
   accounts: z.array(z.object({ address: key, owner: key, executable: z.boolean(),
@@ -98,8 +121,7 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
       }
       for (const a of d.accounts) {
         const observed = accounts.get(a.address)
-        check(observed.owner === a.owner && observed.executable === a.executable
-          && sha(rawAccount(observed)) === a.dataSha256, 'Config/control/quote account drift')
+        check(productionAccountBindingMatches(a,observed,d), 'Config/control/quote account drift')
       }
     }
     return { ...out, status: 'account-bindings-matched', reason: 'Retained bytes match; policy semantics, provenance signatures and operation receipts remain unverified',

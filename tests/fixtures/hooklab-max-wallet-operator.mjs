@@ -1,0 +1,30 @@
+// Injected synthetic operators and RPC only. No live evidence or configuration.
+import { createHash } from 'node:crypto'
+import { BorshCoder } from '@anchor-lang/core'
+import { PublicKey } from '@solana/web3.js'
+import { maxWalletLaunchFixture } from './hooklab-max-wallet-launch.mjs'
+import { parseMaxWalletPreparationRequest } from '../../src/hooklab-inclusive-max-wallet-profile.mjs'
+import { buildMaxWalletLaunchReviewForFixture } from '../../src/hooklab-max-wallet-launch.mjs'
+const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),loader='BPFLoaderUpgradeab1e11111111111111111111111'
+export function maxWalletOperatorFixture(transform=x=>x,{baseFixture=maxWalletLaunchFixture,compile=buildMaxWalletLaunchReviewForFixture,tokenElf=Buffer.from([127,69,76,70])}={}){
+ const f=transform(baseFixture()),baseline=compile(f),p=JSON.parse(f.profile.json)
+ const accounts=new Map(f.observations[0].accounts.map(x=>[x.address,x.account]))
+ const tokenData=Buffer.alloc(45+tokenElf.length);tokenData.writeUInt32LE(3);tokenData.writeBigUInt64LE(1n,4);tokenElf.copy(tokenData,45)
+ const tokenPd=PublicKey.findProgramAddressSync([pk(p.programs.token).toBuffer()],pk(loader))[0].toBase58()
+ accounts.set(tokenPd,{address:tokenPd,owner:loader,executable:false,lamports:'1',dataBase64:tokenData.toString('base64')})
+ accounts.set(f.lookupTable.address,{...f.lookupTable,executable:false,lamports:'1'})
+ if(p.dependencyObservation.tokenElfSha256!==sha(tokenElf)){p.dependencyObservation.tokenElfSha256=sha(tokenElf);f.profile.json=JSON.stringify(p);f.profile.expectedSha256=sha(f.profile.json)}
+ const programs=['launch','swap','gate','token'].map(role=>{
+  const address=p.programs[role],programData=PublicKey.findProgramAddressSync([pk(address).toBuffer()],pk(loader))[0].toBase58(),bytes=Buffer.from(accounts.get(programData).dataBase64,'base64')
+  return {role,address,programData,upgradeAuthority:bytes[12]?pk(bytes.subarray(13,45)).toBase58():null,deploySlot:Number(bytes.readBigUInt64LE(4)),programDataSha256:sha(bytes),elfLength:role==='token'?tokenElf.length:f.profile.elfLengths[role],elfSha256:role==='token'?sha(tokenElf):p.elfSha256[role]}
+ })
+ const addresses=baseline.addresses,roles={'launch-config':addresses.launchConfig,'swap-config':addresses.swapConfig,'creation-control':addresses.launchGovernance,'swap-governance':addresses.swapGovernance,'quote-mint':p.quoteMint}
+ const dossier={schema:f.request.policyVersion===2?'repoing/production-observation/2':'repoing/production-observation/1',genesisHash:p.genesisHash,artifacts:{sourceCommit:p.sourceCommit,profileSha256:f.profile.expectedSha256,sdkSha256:sha('test'),idlSha256:sha('test'),provenanceSha256:sha('test')},providers:f.profile.providers,minSlot:0,maxSlotLag:5,maxAgeMs:5000,programs,
+  accounts:Object.entries(roles).map(([role,address])=>{const a=accounts.get(address);return {role,address,owner:a.owner,executable:a.executable,dataSha256:sha(Buffer.from(a.dataBase64,'base64')),...(f.request.policyVersion===2&&['launch-config','swap-config'].includes(role)?{binding:'config-counters-v1',approvedDataBase64:a.dataBase64,idlSha256:sha(Buffer.from(f.profile.idls[role.split('-')[0]],'base64'))}:{})}})}
+ const decode=(role,address)=>new BorshCoder(JSON.parse(Buffer.from(f.profile.idls[role],'base64'))).accounts.decode('Config',Buffer.from(accounts.get(address).dataBase64,'base64'))
+ const lc=decode('launch',addresses.launchConfig),sc=decode('swap',addresses.swapConfig),dossierJson=JSON.stringify(dossier)
+ const config={schema:f.request.policyVersion===2?'repoing/inclusive-max-wallet-operator-config/1':'repoing/max-wallet-operator-config/1',...(f.request.policyVersion===2?{feeModel:2}:{}),enabled:true,approvalReference:'synthetic-local-test-only',profileSha256:f.profile.expectedSha256,dossierSha256:sha(dossierJson),providerTrustDomains:f.profile.providers.map((provider,i)=>({provider,trustDomain:`test-${i}`,origin:`https://test-${i}.invalid/`})),economics:{creatorFeeBps:f.request.creatorFeeBps,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,protocolFeeBps:sc.protocol_fee_bps,launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()},reviewer:f.request.reviewer,treasury:lc.treasury.toBase58(),lookupTable:{address:f.lookupTable.address,sha256:f.lookupTable.sha256},lamportsPerSignature:'5000'}
+ const connections=f.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:`https://test-${i}.invalid/`,async getGenesisHash(){return p.genesisHash},async getMultipleAccountsInfoAndContext(keys){return {context:{slot:f.observations[i].slot},value:keys.map(k=>{const a=accounts.get(k.toBase58());return a?{owner:pk(a.owner),executable:a.executable,lamports:Number(a.lamports),data:Buffer.from(a.dataBase64,'base64')}:null})}},async getLatestBlockhashAndContext(){return {context:{slot:f.recentBlockhash.observedSlot},value:{blockhash:f.recentBlockhash.blockhash,lastValidBlockHeight:f.recentBlockhash.lastValidBlockHeight}}},async isBlockhashValid(){return {context:{slot:f.recentBlockhash.observedSlot},value:true}},async getBlockHeight(){return f.recentBlockhash.currentBlockHeight},async getFeeForMessage(){return {context:{slot:f.recentBlockhash.observedSlot},value:Number(f.recentBlockhash.networkFeeLamports)}}}}))
+ const preparation={id:'00000000-0000-4000-8000-000000000001',wallet:f.request.creator,profileSha256:f.profile.expectedSha256,preparationIntentSha256:f.preparationEvidence.preparationIntentSha256,preparedRequest:parseMaxWalletPreparationRequest((({reviewer,name,symbol,uri,virtualQuote,...r})=>({...r,schema:r.policyVersion===2?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1'}))(f.request)),executionSlot:f.preparationEvidence.executionSlot,preparedAccountHashes:f.preparationEvidence.preparedAccountHashes}
+ return {config,profile:f.profile,dossierJson,connections,preparation,request:f.request,limits:f.limits,clock:()=>1000,baseline,accounts,f}
+}
