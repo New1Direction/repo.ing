@@ -93,3 +93,4 @@ repo-inference-handoff-db
 early-access-launch-chain
 hooklab-curve-db
 hooklab-curve-migration-db
+hooklab-native-index-db
