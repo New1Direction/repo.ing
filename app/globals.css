@@ -883,3 +883,6 @@ body{overflow-x:clip}
    token tabs' rule is an inset shadow, so the overflow box clips neither. At 320 px the header row keeps Menu on screen. */
 @media(max-width:700px){.discovery-tabs{overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.discovery-tabs::-webkit-scrollbar,.market-nav::-webkit-scrollbar{display:none}.discovery-tabs button{flex:1 0 auto}.discovery-tabs button:focus-visible{outline-offset:-3px}.market-nav{overflow-x:auto;overflow-y:hidden;scrollbar-width:none;border-bottom:0;box-shadow:inset 0 -1px var(--border)}.market-nav>*{flex:none}.market-nav>:focus-visible{outline-offset:-3px}}
 @media(max-width:360px){.app-header nav{gap:8px}}
+/* Hooks stays visible on phones, alongside the existing Launch and official-token links. */
+@media(max-width:700px){.app-header nav>a.nav-hooks{display:inline-flex;padding:0 10px}.app-header nav{column-gap:8px}.mobile-nav{margin-left:auto}}
+@media(max-width:360px){.app-header nav a.nav-launch{padding:0 8px}.app-header nav a.nav-token{padding:0 7px;font-size:12px}.app-header nav a.nav-token img{display:none}.app-header nav>a.nav-hooks{padding:0 4px}.mobile-nav-toggle{padding:0 7px;gap:4px}}

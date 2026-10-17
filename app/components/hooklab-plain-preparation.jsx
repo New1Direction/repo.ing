@@ -57,7 +57,7 @@ export function HookLabProductionAccount() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   async function refresh() {
-    setBusy(true); setError(''); setAccount(null)
+    setBusy(true); setError('')
     try {
       const response = await fetch('/api/hook-lab/production/account', { cache: 'no-store' })
       const result = await response.json()
@@ -76,6 +76,7 @@ export function HookLabProductionAccount() {
     </div>
     <div aria-live="polite" aria-busy={busy}>
       {error && <p role="alert" className="coin-error">{error}</p>}
+      {(error || busy) && account?.signedIn && <p>Showing the last successful account read, not fresh chain evidence. Do not retry or replace an operation.</p>}
       {account?.signedIn === false && <p>Sign in with GitHub first. No wallet signature is needed to read retained operations.</p>}
       {account?.signedIn && <>
         <p>Signed in as {account.githubLogin}. {account.status === 'disabled' ? account.error : 'Read-only recovery. Deployment adoption and all execution remain disabled.'}</p>

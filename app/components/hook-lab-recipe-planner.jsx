@@ -5,8 +5,15 @@ import { createHookLabRecipe, importHookLabRecipe, serializeHookLabRecipe, expor
   loadHookLabRecipe, saveHookLabRecipe, migrateDirectPlanV1ToHookLabRecipe, hookLabRecipeSaveSchema } from '../../src/hook-lab-recipe.mjs'
 import { createHookLabCustody, unlockHookLabCustody } from '../lib/hooklab-custody.mjs'
 import { openHookLabCustodyStore } from '../lib/hooklab-custody-store.mjs'
+import { createHookLabTemplateDraft } from '../../src/hook-lab-templates.mjs'
+import { HooksDraftSteps } from './hooks-draft-steps'
+import { HooksUnavailable, HooksRisk } from './hooks-ui'
 
 const initial = () => createHookLabRecipe({ format: 'hook-lab/1', coin: { name: '', ticker: '' }, blocks: [] }, 'plain')
+function templateRecipe(id) {
+  const { coin, blocks } = createHookLabTemplateDraft(id)
+  return createHookLabRecipe({ format: 'hook-lab/1', coin, blocks }, id)
+}
 const accountKey = 'repo.ing:hook-lab-account-save:1'
 async function api(body) {
   const response = await fetch('/api/hook-lab', body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : { cache: 'no-store' })
@@ -15,9 +22,9 @@ async function api(body) {
   return data
 }
 
-export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
+export function HookLabRecipePlanner({ legacyPlan = {}, legacyDrafts = [], guided = false, initialTemplate = 'plain' }) {
   const { wallet } = useWallet()
-  const [envelope, setEnvelope] = useState(initial), [ready, setReady] = useState(false)
+  const [envelope, setEnvelope] = useState(() => guided ? templateRecipe(initialTemplate) : initial()), [ready, setReady] = useState(false)
   const [listing, setListing] = useState({ signedIn: false, drafts: [], events: [] }), [saved, setSaved] = useState(null)
   const [importText, setImportText] = useState('')
   const [confirmed, setConfirmed] = useState(false), [busy, setBusy] = useState(false), [observation, setObservation] = useState(null)
@@ -38,7 +45,7 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
   }
   useEffect(() => {
     try {
-      const draft = loadHookLabRecipe(localStorage) ?? initial()
+      const draft = loadHookLabRecipe(localStorage) ?? (guided ? templateRecipe(initialTemplate) : initial())
       const raw = localStorage.getItem(accountKey)
       if (raw) { const { id, revision } = hookLabRecipeSaveSchema.parse({ ...JSON.parse(raw), envelope: draft }); setSaved({ id, revision }); saveId.current = id }
       setEnvelope(draft); setReady(true)
@@ -54,7 +61,10 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
     catch { setStorageError('Device save failed. Export the recipe before leaving; no keys are included.') }
   }, [envelope, ready])
   function change(next) { invalidate(); setEnvelope(next); setError('') }
-  function newDraft(next) { localStorage.removeItem(accountKey); change(next); setSaved(null); saveId.current = null }
+  function newDraft(next) {
+    try { localStorage.removeItem(accountKey); change(next); setSaved(null); saveId.current = null }
+    catch { setError('Cannot replace the draft safely on this device. Export it before leaving.') }
+  }
   function setCoin(key, value) { change({ ...envelope, recipe: { ...recipe, coin: { ...recipe.coin, [key]: value } } }) }
   function startPlain() {
     if (!window.confirm('Replace this device recipe with a new plain draft? Export first to retain it. Account drafts and encrypted identities are unchanged.')) return
@@ -119,6 +129,9 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
   }
   return <section aria-label="Programmable Coin recipe" className="hook-recipe">
     <div className="coin-workspace"><section>
+      {guided ? <HooksDraftSteps envelope={envelope} change={change} disabled={!ready || busy} initialTemplate={initialTemplate} startTemplate={id => {
+        if (window.confirm('Replace this device recipe? Export first to retain it. Account drafts and encrypted identities are unchanged.')) newDraft(templateRecipe(id))
+      }}/> : <>
       <h2>Configure your Programmable Coin</h2>
       <p className="coin-note">Hook Lab DEX · experimental devnet beta. Native tokens, not SPL or Token-2022. Drafts never authorize your wallet.</p>
       {(legacyPlan.name || legacyDrafts.length > 0) && <details open><summary>Earlier Programmable drafts are still available</summary>
@@ -135,15 +148,21 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
           <label>Ticker<input value={recipe.coin.ticker} onChange={e => setCoin('ticker', e.target.value)}/></label></div>
         {recipe.blocks.length > 0 && <p role="alert" className="coin-error">This stored recipe contains rules outside the plain-only beta. Its rules are preserved, not applied or silently removed. Export it before explicitly starting a new plain draft.</p>}
       </fieldset>
+      </>}
       <details><summary>Import, export or migrate without losing rules</summary>
         <p>Export the full envelope for a repo.ing backup, or raw hook-lab/1 JSON for SDK review. Neither contains keys. Unknown fields stay intact but cannot approve an unsupported intent. Never paste keys, seed phrases or confidential data.</p>
-        <div className="coin-actions"><button className="button" onClick={() => download()}>Export full recipe</button><button className="button" onClick={() => download(true)}>Export raw SDK recipe</button></div>
+        <div className="coin-actions"><button className="button" disabled={!ready} onClick={() => download()}>Export full recipe</button><button className="button" disabled={!ready} onClick={() => download(true)}>Export raw SDK recipe</button></div>
         <label className="coin-import">Recipe JSON<textarea value={importText} maxLength={65536} onChange={e => setImportText(e.target.value)}/></label>
         <button className="button" disabled={!ready || busy} onClick={() => { try { const next = importHookLabRecipe(importText); if (window.confirm('Replace the device recipe with this import?')) { newDraft(next); setImportText('') } } catch { setError('Import refused: unsupported version, duplicate fields, oversized or invalid JSON. Current recipe is unchanged.') } }}>Import recipe</button>
-        <button className="button" disabled={!ready || busy} onClick={() => { try { if (window.confirm('Copy the legacy plan into this recipe? The original plan will be retained.')) newDraft(migrateDirectPlanV1ToHookLabRecipe(legacyPlan)) } catch { setError('Legacy plan cannot be converted losslessly.') } }}>Copy legacy Programmable draft</button>
+        {!guided && <button className="button" disabled={!ready || busy} onClick={() => { try { if (window.confirm('Copy the legacy plan into this recipe? The original plan will be retained.')) newDraft(migrateDirectPlanV1ToHookLabRecipe(legacyPlan)) } catch { setError('Legacy plan cannot be converted losslessly.') } }}>Copy legacy Programmable draft</button>}
         <pre>{JSON.stringify(envelope, null, 2)}</pre>
       </details>
     </section><aside className="coin-review">
+      {guided ? <><img src="/launch-icons/receipts-ui.webp" width={64} height={64} alt=""/><h2>Your draft stays yours</h2><p className="coin-note">Saving a recipe does not launch a coin or request a wallet signature.</p><HooksUnavailable/>
+        <dl><div><dt>Wallet</dt><dd>{wallet ? 'Connected · no signing' : 'Not required for drafts'}</dd></div><div><dt>Transaction</dt><dd>Not prepared</dd></div><div><dt>Total cost</dt><dd>Unknown · not zero</dd></div></dl>
+        <button className="button" disabled={!ready} onClick={() => download()}>Export draft backup</button><a className="button" href="/hooks/mine">Retained operations &amp; recovery</a>
+        <details><summary>Advanced devnet inspection</summary><p className="coin-note">The existing plain-only inspector can read this shared device draft. Unsupported rules are preserved and refused, not removed.</p><a href="/coins/new?lane=programmable">Open read-only devnet tools</a></details><HooksRisk/>
+      </> : <>
       <h2>Quote & simulate</h2>
       <p className="coin-note">Read-only fresh guarded program inspection is available. Historical HLTEST acceptance is not a quote for this draft. Public transaction construction, simulation and signing remain disabled.</p>
       <dl><div><dt>Network</dt><dd>Solana devnet only</dd></div><div><dt>Quote asset</dt><dd>Native bridged SOL · no deposit</dd></div><div><dt>LP at curve creation</dt><dd>Zero supply · empty holding owned by launch PDA</dd></div><div><dt>This draft’s total debit</dt><dd>Unknown · not zero</dd></div><div><dt>This draft’s reviewed cap</dt><dd>Unavailable</dd></div></dl>
@@ -171,8 +190,9 @@ export function HookLabRecipePlanner({ legacyPlan, legacyDrafts = [] }) {
           <button className="button" disabled={busy || !lossAccepted || passphrase.length < 16} onClick={() => retainIdentity(true)}>Unlock for recovery only</button></>}
         {identity && <><p>Public mint</p><code>{identity.mint}</code><p>Public config</p><code>{identity.config}</code><p>Local journal ID</p><code>{identity.id}</code><button className="button" onClick={lock}>Lock identities</button></>}
       </details>
+      </>}
     </aside></div>
-    <section className="coin-save"><div><h2>Keep the complete recipe</h2><p>{storageError || 'Autosaved on this device. Account storage is optional and expires after 30 days. Encrypted identities are never in recipe exports.'}</p>
+    <section className="coin-save"><div><h2>Keep the complete recipe</h2><p role={storageError ? 'alert' : 'status'}>{storageError || (ready ? 'Autosaved on this device. Account storage is optional and expires after 30 days. Encrypted identities are never in recipe exports.' : 'Reading this device’s draft…')}</p>
       {!listing.signedIn && <a href="/api/github/start?mode=direct-coins">Optional GitHub account backup & provenance ↗</a>}</div>
       <button className="button primary" disabled={!ready || busy || !listing.signedIn} onClick={() => perform('save')}>Save complete account recipe</button>
     </section>
