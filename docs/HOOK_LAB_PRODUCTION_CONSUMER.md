@@ -6,6 +6,82 @@ operator-invoked monitor and unapplied recovery migrations are prepared. Frozen 
 candidate remain unchanged. This document supersedes their rollout assumptions only for future
 production work; it does not change their historical evidence or activate any profile.
 
+## 2026-10-17 integration handoff: paused deployment, not an executable customer path
+
+**GO for S1 draft-only UI review; NO-GO for public creation/trading.** The smallest UI path is
+`/hooks/templates` → Plain draft → identity/rules review → export or optional account backup.
+The six templates are authoring tools, not six supported production launch types. Launch,
+signing, buy/sell, liquidity, claims, graduation and automatic recovery retries remain disabled.
+No address below is imported into runtime configuration or adopted as a trusted dossier.
+
+Source: the [deployment worker](https://ampcode.com/threads/T-01a146fc-4b3c-70aa-ba5a-afef1de4145f),
+`.amp/in/artifacts/hooklab-manual-production/plain-launch-decision.md`, SHA256
+`5b52c79bd756bf179786238ac07d70ff29fc2ac8dd25fbb9f4c7205a93ac5d7c`.
+Its `evidence/plain-sprint-snapshot.json` was downloaded and decoded for this handoff (SHA256
+`b0cd8d32c700d8c84ccf066b4d92a8b5faf569753cbe94459729a0bcf26842b0`). At
+2026-10-17T12:45:48.429Z, finalized Helius slots 458041424–434 and PublicNode 458041437–447
+agree on decoded configs/governance: launch and swap paused, both revisions zero, zero launches
+and pools, absent canary mint and creator authorization. This is retained, non-atomic read evidence,
+not a fresh observation by this consumer, signed auditor attestation or live-test acceptance.
+
+| Observed role | Public address |
+| --- | --- |
+| Launch program | `E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft` |
+| Launch config | `DkzaEgALTrq6H9Gw2ugpFvbTfwfSx2AHnPBN2nQptocw` |
+| Launch governance | `7UMHpxTLWPcoNMFffkzw7SH2d3qCR7TzAd1UdfkBxpKH` |
+| Launch ProgramData | `FHSVsk3nonaqAeFtgu56BFU9hg9KugxbHLoGkAAxgfyp` |
+| Swap program | `B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk` |
+| Swap config | `HgqTsdUHxpF2AZAwQck4CgTcYBc7mbzxaP17dACgxTLn` |
+| Swap governance | `GJtXZdkBJzEWG4876i8BFcaf6gXy3BEUntGyYUUfZ2ZD` |
+| Swap ProgramData | `GuyHY9x78h52RX87RQ2nD8xnzr2dArnx5XDBz3HsJf7d` |
+| Native token dependency (program, not canary mint) | `2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22` |
+| Token ProgramData | `DKLv3pkwUzvBPZQaPyCVGRJhU5Lt9q87pyVZDDAteLun` |
+| SOL bridge dependency | `CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7` |
+| Bridge ProgramData | `2c3D4AfndnSGBxVtr94sXYcU5HyNBrwYoityAxzQg2yJ` |
+| Bridge config | `Dwf4C8tTMYwicp8cU5MYcTtMQVVJTN7W3LcXCQ1UEhMs` |
+| SOL wrapper | `3ta59VvLDKLnCKMhYihiC3fQ7W9jPKty6xfx3h5puHGS` |
+| SOL vault | `EAcZR2i8A6BbnKRdWuyMVDTuiNkD6qc4RkFpxUYJ9Qba` |
+| Native bridged quote mint | `A49oVhX22ExMwTEtFC6Y8nhBdZ4LJDGhdXLDn4c2f59i` |
+| Launch/swap treasury and fee collector | `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i` |
+| Upgrade authority | `9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md` |
+| Admin | `DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5` |
+| Guardian | `CT4SioSvVFHcnuJbJMfcVgdR3GHAyK7VmrjvR6y3RmEY` |
+| Test wallet (100,000,000 lamports at observation) | `DrAhCGXsHLNdJ9ihhRBkyKZSzY446qKg1Dcx6zEm9dmi` |
+
+No pool/canary mint exists in this observation. Separate token-global config/governance and bridge
+governance addresses are not established. The worker separately reports matching bridge reads at
+slots 458042445/464: wrapping is **not paused**; launch/swap pause does not stop the bridge.
+
+Decoded launch config has supply 1,000,000,000,000,000 raw units, decimals 6, curveBps 7500,
+and min/max virtualQuote both 1,000,000,000 raw quote units. Launch fee, LP fee, creator fee ceiling,
+sniper window/start fee, swap protocol fee, pool-creation fee and launch protocol share are zero.
+Holder/burn/aggregate-rule fee ceilings and lock ceilings are zero; max-wallet bounds are both
+1 bps, but the production plain route rejects rule blocks entirely. These are snapshot values,
+not editable UI defaults, quotes, deposited SOL or proof that a launch has no network/rent cost.
+
+The deployed contract supports guarded `createLaunchMainnet(..., PRODUCTION_PROGRAMS)` with plain
+metadata/virtualQuote, zero creator fee, no rules/Kit/custom-hook/template/config extras, and a
+bounded creator authorization. Plain curve callbacks use the fixed launch program; they are not
+user-authored Hooks. Direct/legacy pool creation remains forbidden. Source-enforced configured fee
+destinations are not proof of a nonzero payout. **Nonzero fee routing and mainnet graduation remain
+unproven.** Graduation requires the curve's quote threshold or base sold out; the bounded trial
+excludes crossing it. Zero launch/pool counters are not graduation evidence. Upgrade/config
+authorities have no timelock; the separate three-day hook-code delay does not provide one.
+
+The worker matched archived verified producer/source pins with deployed ELF hashes (no fresh
+Sigstore trust verification): launch `faa3d46728a4848789413c3f55599b116bfa5984e371504e4f56afcccc88f9ec`,
+swap `abda98457f24e5581ba8fe82cbe9caabfb8f39c4323fee8f972046c9003ecc62`.
+Six successful finalized deployment/config/governance receipts are reported, **not trading receipts**.
+No owner live buy/sell/graduation receipt or accepted customer execution backend was supplied.
+
+In this checkout, `/api/hook-lab` refuses quote with 422 and unsupported actions/networks with 400;
+both `/api/hook-lab/production` and `/api/hook-lab/production/account` POST unconditionally return
+423. These distinct gates must not be confused with a missing implementation that can be enabled
+by removing one status code. S1 changes none of them. The integration owner must apply the reviewed
+UI commit to a fresh isolated branch, rerun PostgreSQL-backed tests, and separately obtain
+push/merge/deployment and any shared-migration approval. Do not start the existing general worker,
+adopt these pins, unpause, or enable execution as part of the UI integration.
+
 ## Verified source inventory is not deployment acceptance
 
 Source inspected: Hook Lab PR #3 head
@@ -28,7 +104,7 @@ expired; never sign or submit its deployment messages from the consumer.
 | Swap | Recipient net increase must meet `min_amount_out` | Disabled; no production lifecycle SDK builder or independently verified operation receipt |
 | Add/remove liquidity | Both reject trading pause and curve pools; add minimum LP and remove minimum base/quote | Disabled; pause also blocks withdrawal, so do not advertise emergency exit |
 | Graduation | First LP belongs to launch PDA; launch has no instruction to move it | No owner withdrawal claim, no graduation button |
-| Pauses | Creation and trading are independent; authenticated creation can occur while trading is paused | Observed state unavailable; a requested paused deployment is not evidence of actual pause |
+| Pauses | Creation and trading are independent; authenticated creation can occur while trading is paused | Runtime observation remains unavailable; retained 2026-10-17 paused evidence above is not live consumer adoption |
 | Authority | No config or launch/swap upgrade timelock; separate hook-code minimum is three days | No quorum, 24-hour delay, immutable custody or recovery claim |
 | Kit/full Hooks, bridge | Production plain creation excludes Kit; generic capability flags are profile-dependent | Unsupported; no implied parity or external AMM hook compatibility |
 
