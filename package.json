@@ -28,6 +28,7 @@
     "reconcile:repo": "node scripts/reconcile-repo.mjs"
   },
   "dependencies": {
+    "@anchor-lang/core": "1.2.1",
     "@metamask/connect-solana": "^2.1.1",
     "@meteora-ag/cp-amm-sdk": "1.4.10",
     "@meteora-ag/dynamic-bonding-curve-sdk": "1.5.13",

@@ -33,7 +33,7 @@ owner-scoped and available after disconnect/grant revocation. Preserve same mint
 signature; expiry, a failed RPC read, or a missing receipt cannot authorize replacement/rebroadcast.
 The plain journal does not yet retain partial signatures: do not advertise that as implemented there.
 
-## Native index: implemented raw discovery; decoding remains blocked
+## Native index: discovery and pinned self-CPI decoding; acceptance remains blocked
 
 `indexHookNativeBatch({manifest, adapters, store})` scans at most 32 slots per call (default eight),
 bounded by the lower of two finalized roots. Operator-selected distinct trust domains must agree on
@@ -54,10 +54,20 @@ activation, default manifest, cron, public index endpoint or general-worker regi
 
 RPC is restricted to five read methods with timeout, HTTPS and redirects refused. Retained hashes
 are of normalized JSON, not raw wire attestations. Rows separately expose `receiptStatus`,
-`eventStatus:undecoded`, `economicPostconditions:false` and `deploymentAdopted:false`. No event name
-is guessed from logs or selected from a mismatched IDL. CPI event-authority/discriminator decoding,
-ordered historical account replay, adopted deployment intervals and accepted event fixtures are
-the next adapter work. Never feed these raw rows into Meteora analytics or mark them settled trades.
+`eventStatus`, `economicPostconditions:false` and `deploymentAdopted:false`.
+`productionHookEventDecoder()` optionally decodes launch/swap self-CPI events using exact
+production-address IDLs from `b3dc429`, retained with hashes in `vendor/hooklab-event-abi`.
+It verifies instruction ancestry, event-authority PDA, discriminator and canonical Borsh bytes;
+integers larger than JavaScript's safe range stay decimal strings. Logs are never event authority.
+Missing CPI stack heights or malformed events stop a decoded batch before checkpoint advancement.
+The manifest must match the decoder's source, combined ABI digest and explicit program inventory.
+`transactionFailed` concerns the outer transaction: outer success does not prove that an inner
+invocation was not rolled back after a caught failure. These are decoded observations, not trades.
+
+Ordered transaction-bound historical account replay, independently reviewed deployment intervals
+and real operation acceptance fixtures remain missing. Never feed raw/decoded rows into Meteora
+volume, Playground forecasts or settled-trade analytics. The historical `f3062df` SDK and the new
+custom candidate must not be substituted for this decoder's source/addresses.
 
 ## Receipt and economic acceptance gates
 
@@ -116,3 +126,47 @@ that must be accepted separately. No trial may cross its budget to manufacture a
    and any unpause. Binary adoption, push, deploy, real-money operations and shared migrations remain
    forbidden in this task. Local protocol implementation/builds are separately authorized follow-on
    work, not deployment. Disable new preparation on drift; preserve evidence and read-only recovery.
+
+## Owner-operated observer / Railway preparation
+
+`node scripts/index-hook-native.mjs --once <reviewed-manifest.json>` runs one bounded decoded batch
+and exits. It requires `HOOK_INDEX_DATABASE_URL` (an explicitly selected isolated database), plus
+`HOOK_INDEX_RPC_<PROVIDER>` for the manifest's two providers (uppercase, hyphens replaced by `_`).
+It refuses the same origin, but different origins alone do not prove provider independence. It
+never uses the application's default database/RPC, applies a migration, starts a loop or signs.
+No Railway configuration or service was mutated. No automatic retry/restart is configured.
+
+Before any shared rollout, the owner must approve the exact SQL, backup/restore rehearsal, least-
+privilege database role, archive providers and retained-data policy. Start with a dedicated Hook
+observer service/job; **do not start `scripts/run-worker.mjs`**, which owns unrelated operations.
+Use the one-shot command as the reviewed job command, with restart disabled initially. A separate
+approved scheduler can invoke it after catch-up/throughput review. Alert on nonzero exit, checkpoint
+lag, provider disagreement/pruning, ABI drift and stalled scans; never skip a slot to recover.
+
+Construct the manifest offline with `hookIndexManifestSchema`: mainnet genesis, retained profile
+digest, reviewed start slot, provider labels, and the decoder's `sourceCommit`, `idlSha256` and
+`programs`. Do not infer the start slot from “now”; prove archive coverage from deployment onward.
+First run on disposable PostgreSQL, retain complete evidence, then obtain target-specific approval.
+On rollback stop new batches, preserve database/checkpoints/journals, and leave HTTP execution
+blocked. Do not delete streams or downgrade evidence, even if a UI release is rolled back.
+
+## Deployment adoption / owner acceptance packet
+
+Adoption must be a separately reviewed, server-owned append-only ledger, initially empty. Each
+entry must bind genesis; exact launch/swap/token/bridge addresses and ProgramData; source, ABI,
+SDK, policy and ELF/provenance hashes; upgrade/admin/guardian/collector roles; quote mint/decimals;
+and an inclusive start/exclusive end **transaction position** (slot plus transaction index).
+A slot-only interval can misattribute a transaction before an upgrade in the same slot. Derive
+positions from finalized loader receipts and transaction-ordered historical program/account
+evidence, not latest account snapshots. Close an interval on upgrade/config drift; no overlapping
+or open-ended “forever trusted” intervals. The current observer matches snapshots only and cannot
+establish this ledger. Accordingly **every decoded row still has deploymentAdopted:false**.
+
+The acceptance packet must retain exact reviewed messages, partial and final signatures, first-
+finalized evidence, both providers' receipts, ordered account pre/postimages and independent
+economic assertions. Include separate creation, rejected callback, buy, sell, protocol accrual,
+collector settlement, recovery/outage and graduation records. Keep missing evidence explicit;
+never replace it with simulation, configured fees, a threshold event or a collector address.
+Owner approval must name the operation budget and action; deployment approval is not trade,
+unpause, migration or public-activation approval. The Playground remains metadata-only and no
+client readiness, exported recipe or observed snapshot can populate the adoption ledger.

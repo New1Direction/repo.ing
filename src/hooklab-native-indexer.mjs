@@ -64,8 +64,10 @@ function rowsForBlock(block, manifest, slot) {
  * Both independent operator-selected providers must agree. No cursor skips a missing/pruned block.
  * This is native transaction discovery, NOT a decoded event index or accepted trade/volume feed.
  */
-export async function indexHookNativeBatch({ manifest: input, adapters, store, limit = 8 }) {
+export async function indexHookNativeBatch({ manifest: input, adapters, store, limit = 8, decoder = null }) {
   const manifest = hookIndexManifestSchema.parse(input), stream = digest(manifest)
+  if (decoder) check(decoder.sourceCommit === manifest.sourceCommit && decoder.idlSha256 === manifest.idlSha256
+    && manifest.programs.every(p => decoder.programs.includes(p)), 'Decoder/stream ABI binding differs')
   check(Number.isInteger(limit) && limit > 0 && limit <= 32, 'Invalid batch limit')
   check(Array.isArray(adapters) && adapters.length === 2 && adapters[0].read !== adapters[1].read
     && new Set(adapters.map(a => a.provider)).size === 2
@@ -98,7 +100,11 @@ export async function indexHookNativeBatch({ manifest: input, adapters, store, l
       transactionDetails: 'full', rewards: false, maxSupportedTransactionVersion: 0 }])
     check(pair[0] && isDeepStrictEqual(pair[0], pair[1]), 'Missing or disagreeing finalized block')
     const b = pair[0]
-    rows.push(...rowsForBlock(b, manifest, slot))
+    const discovered = rowsForBlock(b, manifest, slot)
+    for (const row of discovered) {
+      if (decoder) Object.assign(row, decoder.decode(row.raw))
+      rows.push(row)
+    }
     if (lastBlock) check(b.parentSlot === lastBlock.slot && b.previousBlockhash === lastBlock.blockhash, 'Finalized ancestry differs')
     else check(b.parentSlot < manifest.startSlot, 'Initial block inventory omitted a parent')
     blocks.push({ slot, blockhash: b.blockhash, normalizedSha256: digest(b) })
