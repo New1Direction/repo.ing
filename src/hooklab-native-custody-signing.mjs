@@ -53,7 +53,7 @@ export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,a
     check(expected.length===new Set(expected).size&&review.requiredSigners.length===expected.length&&expected.every(x=>review.requiredSigners.includes(x)))
     if(stage==='launch'){
      verifyNativeAdminSignerIdentity({configuredAdmin:adminSigner?.address,observedAdmin,owner,mint:row.mint,selectedConfig:row.selected_config})
-     if(signerAddress===adminSigner.address){check(typeof adminSigner.sign==='function');return Uint8Array.from(await adminSigner.sign(Buffer.from(message)))}
+     if(signerAddress===adminSigner.address){check(typeof adminSigner.sign==='function');return Uint8Array.from(await adminSigner.sign(Buffer.from(message),{review,owner,mint:row.mint,selectedConfig:row.selected_config}))}
     }
     check(signerAddress===row.mint||(stage==='preparation'&&signerAddress===row.selected_config))
     keys=codec.open(identity(row),row.sealed_signers)

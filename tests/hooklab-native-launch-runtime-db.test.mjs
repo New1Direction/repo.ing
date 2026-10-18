@@ -15,6 +15,7 @@ import {compileMaxWalletLaunchReview} from '../src/hooklab-max-wallet-launch.mjs
 import {maxWalletOperatorFixture} from './fixtures/hooklab-max-wallet-operator.mjs'
 import {rebindMaxWalletLaunchFixture} from './fixtures/hooklab-max-wallet-launch-settlement.mjs'
 import {dropTestDatabase} from './fixtures/drop-test-database.mjs'
+import {ownerApprovalStore,remoteAdminSigner} from '../src/hooklab-owner-approval.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),seed=label=>createHash('sha256').update(`LOCAL FULL RUNTIME TEST ONLY ${label}`).digest()
 const wallet=Keypair.fromSeed(seed('wallet')),adminKey=Keypair.fromSeed(seed('admin'))
 const signAdmin=message=>sign(null,message,createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed('admin')]),format:'der',type:'pkcs8'}))
@@ -27,12 +28,12 @@ function operator(mint,selectedConfig){return maxWalletOperatorFixture(input=>{
  const bytes=Buffer.alloc(56+32*keys.length);old.subarray(0,56).copy(bytes);keys.forEach((k,i)=>pk(k).toBuffer().copy(bytes,56+32*i));input.lookupTable.dataBase64=bytes.toString('base64');input.lookupTable.sha256=sha(bytes)
  return input
 },{baseFixture:inclusiveMaxWalletLaunchFixture,compile:compileMaxWalletLaunchReview,tokenElf:inclusiveTokenElf()})}
-test('real runtime completes two launches with unchanged dossier, retained identities and unknown-outcome recovery',async()=>{
+async function realRuntimeScenario({remoteAdmin=false}={}){
  const pgConfig={host:'127.0.0.1',port:55432,user:'postgres',password:'launchtest',database:'postgres'},dbAdmin=new pg.Pool(pgConfig),database=`full_native_${randomUUID().replaceAll('-','')}`;let pool
  const oldFetch=globalThis.fetch
  try{
   await dbAdmin.query(`create database ${database}`);pool=new pg.Pool({...pgConfig,database})
-  for(const file of ['hooklab-wallet-principal-schema.sql','hooklab-wallet-preparation-schema.sql','hooklab-native-signer-custody-schema.sql','hooklab-new-mint-preparation-schema.sql','hooklab-native-signing-schema.sql','hooklab-native-signing-attempt-schema.sql','hooklab-native-signing-context-schema.sql','hooklab-native-signing-refresh-schema.sql','hooklab-native-signing-wallet-request-schema.sql','hooklab-native-launch-context-schema.sql'])await pool.query(await readFile(new URL(`../src/${file}`,import.meta.url),'utf8'))
+  for(const file of [...(remoteAdmin?['hooklab-owner-approval-schema.sql']:[]),'hooklab-wallet-principal-schema.sql','hooklab-wallet-preparation-schema.sql','hooklab-native-signer-custody-schema.sql','hooklab-new-mint-preparation-schema.sql','hooklab-native-signing-schema.sql','hooklab-native-signing-attempt-schema.sql','hooklab-native-signing-context-schema.sql','hooklab-native-signing-refresh-schema.sql','hooklab-native-signing-wallet-request-schema.sql','hooklab-native-launch-context-schema.sql'])await pool.query(await readFile(new URL(`../src/${file}`,import.meta.url),'utf8'))
   let f=operator(Keypair.fromSeed(seed('initial-mint')).publicKey.toBase58(),Keypair.fromSeed(seed('initial-config')).publicKey.toBase58()),phase=0,hideTransaction=false,current=f.accounts
   const token=Buffer.alloc(32,53).toString('base64url'),owner=wallet.publicKey.toBase58(),profile=JSON.parse(f.profile.json),startSlot=f.f.observations[0].slot,receipts=new Map(),rentBySize={90:1517280,81:1454640,176:2115840}
   const initial=f,now=Date.now(),limits={...f.limits,maxAgeMs:60000,reviewExpiresAtMs:now+60000},prepLimits={nowMs:now,maxAgeMs:60000,maxSlotLag:5,validUntilSlot:startSlot+50,reviewExpiresAtMs:now+60000,maxRentLamports:String(Object.values(rentBySize).reduce((a,b)=>a+b,0)),maxNetworkFeeLamports:'15000',maxTotalDebitLamports:String(Object.values(rentBySize).reduce((a,b)=>a+b,0)+15000),computeUnitLimit:600000,computeUnitPriceMicroLamports:'0'}
@@ -71,7 +72,12 @@ test('real runtime completes two launches with unchanged dossier, retained ident
   }
   globalThis.fetch=async(...args)=>{try{return await syntheticFetch(...args)}catch(e){console.error('SYNTHETIC SEND FAILURE',e.stack);throw e}}
   await pool.query("insert into hook_lab_wallet_sessions(token_sha256,wallet,origin,audience,genesis_hash,expires_at) values($1,$2,'https://repo.ing','general-launcher',$3,clock_timestamp()+interval '30 minutes')",[sha(token),owner,profile.genesisHash])
-  const runtime=createNativeLaunchRuntime(pool,{enabled:true,origin:'https://repo.ing',ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:initial.config,profile:initial.profile,dossierJson:initial.dossierJson,connections,keyRing:{test:Buffer.alloc(32,57)},activeKeyId:'test',adminSigner:{address:adminKey.publicKey.toBase58(),sign:signAdmin},preparationLimits:prepLimits,launchLimits:limits})
+  let ownerSignatures=0;const ownerStore=remoteAdmin?ownerApprovalStore(pool,{adminAddress:adminKey.publicKey.toBase58()}):null
+  const runtime=createNativeLaunchRuntime(pool,{enabled:true,origin:'https://repo.ing',ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:initial.config,profile:initial.profile,dossierJson:initial.dossierJson,connections,keyRing:{test:Buffer.alloc(32,57)},activeKeyId:'test',adminSigner:remoteAdmin?remoteAdminSigner(pool,{address:adminKey.publicKey.toBase58(),observe:async()=>({slot:0,blockHeight:0,nowMs:Date.now()}),
+   sleep:async()=>{ // owner-agent stand-in: sign each pending exact message with the admin key, once
+    const {rows}=await pool.query("select id,message_base64 from hook_lab_owner_sign_requests where status='pending'")
+    for(const row of rows){ownerSignatures++;await ownerStore.submitSignature(row.id,signAdmin(Buffer.from(row.message_base64,'base64')).toString('base64'))}
+   }}):{address:adminKey.publicKey.toBase58(),sign:signAdmin},preparationLimits:prepLimits,launchLimits:limits})
   let lastLaunchId
   for(let launchNumber=0;launchNumber<2;launchNumber++){
   const operationId=randomUUID(),preparationId=randomUUID(),launchId=randomUUID();lastLaunchId=launchId
@@ -86,8 +92,13 @@ test('real runtime completes two launches with unchanged dossier, retained ident
    assert.equal((await runtime.lifecycle.reconcile(token,id)).status,'finalized-success')
    await assert.rejects(runtime.lifecycle.submitOnce(token,id))
   }
+  if(remoteAdmin)assert.equal(ownerSignatures,launchNumber+1,'exactly one owner signature per launch, none for preparation');
   assert.equal(receipts.size,(launchNumber+1)*2);const {rows:[custody]}=await pool.query('select * from hook_lab_native_signer_custody where operation_id=$1',[operationId]);assert.equal(custody.stage,'launch-finalized');assert.equal(custody.mint,reserved.mint)
   }
   await pool.query('update hook_lab_wallet_sessions set revoked_at=clock_timestamp() where token_sha256=$1',[sha(token)]);await assert.rejects(runtime.lifecycle.get(token,lastLaunchId))
  }finally{globalThis.fetch=oldFetch;if(pool)await pool.end();await dropTestDatabase(dbAdmin,database);await dbAdmin.end()}
-})
+}
+test('real runtime completes two launches with unchanged dossier, retained identities and unknown-outcome recovery',()=>realRuntimeScenario())
+// Same scenario with the admin key OUT of the server: the remote signer queues each exact message and
+// an owner-agent stand-in answers with the admin signature, exactly as the owner's Mac would.
+test('real runtime completes the same launches through the owner-approval remote admin signer',()=>realRuntimeScenario({remoteAdmin:true}))
