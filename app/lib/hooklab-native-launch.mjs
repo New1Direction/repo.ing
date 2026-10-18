@@ -7,16 +7,17 @@ import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
 import { readLimitedBody } from '../../src/token-image.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
 import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
+import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(1).max(9999),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict(),
  z.object({action:z.literal('review'),operationId:uuid,signingId:uuid,stage:z.enum(['preparation','launch'])}).strict(),
- z.object({action:z.enum(['get','refresh-review','wallet-request','cosign','submit','reconcile']),signingId:uuid}).strict(),
+ z.object({action:z.enum(['get','refresh-review','wallet-request','cosign','submit','reconcile','expire']),signingId:uuid}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:uuid,signedTransactionBase64:z.string().max(1644)}).strict(),
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 export function createNativeLaunchHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=nativeLaunchRuntime,
- database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
+ database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota,ownerApprovals=ownerApprovalStore}={}){
  return async request=>{
   if(env.HOOK_NATIVE_LAUNCH_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')return reply({status:'blocked',blockers:[{code:'NATIVE_LAUNCH_DISABLED',message:'The native launcher is not enabled.'}]})
   let pool
@@ -37,6 +38,13 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    const lifecycle=service.lifecycle
    let result
    if(input.action==='reserve'){
+    if(env.HOOK_OWNER_APPROVED_LAUNCHES==='true'){
+     // Owner-approved release: prepare only the exact coin the owner invited for this wallet.
+     const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS}),db=await pool.connect()
+     try{await db.query('begin');await approvals.bindLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri});await db.query('commit')}
+     catch(error){await db.query('rollback').catch(()=>{});return reply({status:'awaiting-owner',error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Wait for repo.ing to invite your launch request.'},409)}
+     finally{db.release()}
+    }
     const reserved=await service.reserve({sessionToken:token,owner:owner.wallet,input})
     if(reserved.owner!==owner.wallet||reserved.operationId!==input.operationId)throw Error()
     result={operationId:reserved.operationId,mint:reserved.mint,selectedConfig:reserved.selectedConfig,request:reserved.request}
@@ -53,7 +61,12 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
      const signer=existing.review.requiredSigners.find(x=>x!==owner.wallet&&!existing.signedBy.includes(x));if(!signer)throw Error()
      operation=await lifecycle.coSignNext(token,input.signingId,signer)
     }else if(input.action==='submit')operation=await lifecycle.submitOnce(token,input.signingId)
-    else operation=await lifecycle.reconcile(token,input.signingId)
+    else if(input.action==='expire')operation=await lifecycle.expire(token,input.signingId)
+    else{
+     operation=await lifecycle.reconcile(token,input.signingId)
+     if(env.HOOK_OWNER_APPROVED_LAUNCHES==='true'&&operation?.stage==='launch'&&operation?.status==='finalized-success')
+      await ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS}).markLaunched(operation.custodyOperationId)
+    }
     result={operation:publicNativeOperation(operation)}
    }
    // Durable signatures/outcomes remain retained even if this response loses auth.
