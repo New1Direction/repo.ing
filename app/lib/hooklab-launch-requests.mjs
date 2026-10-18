@@ -9,6 +9,7 @@ import { clientAddress } from '../../src/client-address.mjs'
 import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
 import { assertSameOrigin } from './auth.mjs'
 import { walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQuota } from './hooklab-wallet-identity.mjs'
+import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('create'),requestId:uuid,name:text(32).min(1),symbol:text(10).min(1),uri:text(200),creatorFeeBps:z.number().int(),capBps:z.number().int()}).strict(),
@@ -30,7 +31,7 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
     return reply({status:'available',...await approvals.availability()})
    }
    if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
-   try{assertSameOrigin(request,config.origin);if(new URL(request.url).origin!==config.origin||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
+   try{assertSameOrigin(request,config.origin);if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
    if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
    if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')return reply({error:'JSON required.'},415)
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)

@@ -8,6 +8,7 @@ import { readLimitedBody } from '../../src/token-image.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
 import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
+import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(1).max(9999),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict(),
@@ -24,7 +25,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
   try{
    const config=configuration(env)
    if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
-   try{assertSameOrigin(request,config.origin);if(new URL(request.url).origin!==config.origin||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
+   try{assertSameOrigin(request,config.origin);if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
    if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
    if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')return reply({error:'JSON required.'},415)
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)

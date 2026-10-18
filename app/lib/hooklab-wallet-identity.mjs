@@ -8,6 +8,7 @@ import { readLimitedBody } from '../../src/token-image.mjs'
 import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
 import { hookAddress } from '../../src/hooklab-execution-contract.mjs'
 import { executionGenesis } from '../../src/hooklab-local-acceptance.mjs'
+import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 const BINDING = '__Host-hook-wallet-binding', SESSION = '__Host-hook-wallet-session'
 const sha = value => createHash('sha256').update(value).digest('hex')
 const headers = { 'Cache-Control': 'private, no-store', Vary: 'Cookie', 'X-Content-Type-Options': 'nosniff' }
@@ -61,7 +62,7 @@ export function createWalletIdentityHandler({ env = process.env, configuration =
     let pool
     try {
       const config = configuration(env)
-      if (new URL(request.url).origin !== config.origin || request.headers.get('sec-fetch-site') === 'cross-site') return reply({ error: 'Open the launcher on its configured origin.' }, 403)
+      if (!servedFromConfiguredOrigin(request, config.origin) || request.headers.get('sec-fetch-site') === 'cross-site') return reply({ error: 'Open the launcher on its configured origin.' }, 403)
       if (!['GET', 'POST'].includes(request.method)) return reply({ error: 'Method not allowed.' }, 405)
       if (request.method === 'POST') {
         try { assertSameOrigin(request, config.origin) } catch { return reply({ error: 'Open the launcher on its configured origin.' }, 403) }

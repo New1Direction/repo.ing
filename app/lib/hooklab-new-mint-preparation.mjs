@@ -7,6 +7,7 @@ import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
 import { hookAddress } from '../../src/hooklab-execution-contract.mjs'
 import { readLimitedBody } from '../../src/token-image.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
+import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 const schema=z.object({operationId:z.uuid(),wallet:hookAddress,capBps:z.number().int().min(1).max(9999),label:z.string().min(1).refine(s=>Buffer.byteLength(s)<=32)}).strict()
 const blockers=[{code:'OWNER_CUSTODY_APPROVAL_REQUIRED',message:'Server custody and its encryption-key policy need owner approval before a mint can be reserved.'},
  {code:'OPERATOR_DEPLOYMENT_APPROVAL_REQUIRED',message:'Owner-approved deployment pins and their fresh chain-state verifier are not configured.'}]
@@ -20,7 +21,7 @@ export function createNewMintPreparationHandler({env=process.env,configuration=w
   try{
    const config=configuration(env)
    if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
-   try{assertSameOrigin(request,config.origin);if(new URL(request.url).origin!==config.origin||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
+   try{assertSameOrigin(request,config.origin);if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
    if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
    const sessionToken=walletIdentitySessionToken(request);if(!sessionToken)return reply({error:'Sign in with your wallet first.'},401)
    if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')return reply({error:'JSON required.'},415)
