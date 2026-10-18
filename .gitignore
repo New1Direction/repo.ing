@@ -20,6 +20,7 @@ node_modules/
 *wallet*.json
 # Reviewed public program ABI; never exempt wallet/key material generally.
 !/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/hook_max_wallet.json
+!/vendor/hooklab-event-abi/max-wallet-candidate/hook_max_wallet.json
 *private*key*
 *secret*key*
 *credentials*.json
@@ -32,6 +33,12 @@ secrets/
 .secrets/
 credentials/
 .amp/hooklab-curve-email-drills/
+
+# Historical ELF-bearing fixtures remain private; max-wallet names are ignored above.
+/tests/fixtures/hooklab-custom-rust-vector.json
+/tests/fixtures/hooklab-custom-launch-rust-vector.json
+/tests/fixtures/buy-app-plan.json
+/tests/fixtures/sell-app-plan.json
 
 # Local databases and validator state
 *.db

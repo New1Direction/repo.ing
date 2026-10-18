@@ -8,6 +8,7 @@ async function call(body){const response=await fetch(endpoint,{method:'POST',cre
 export function HookLocalOperations({genesisHash}){
  const {wallet,provider}=useWallet(),walletRef=useRef(wallet);walletRef.current=wallet
  const [mint,setMint]=useState(''),[kind,setKind]=useState('prepare-trading'),[id,setId]=useState(''),[operation,setOperation]=useState(null)
+ const operationRef=useRef(operation);operationRef.current=operation
  const [busy,setBusy]=useState(false),[accepted,setAccepted]=useState(false),[uncertain,setUncertain]=useState(false),[error,setError]=useState('')
  const running=useRef(false)
  useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(storage));if(saved&&/^[0-9a-f-]{36}$/.test(saved.id)){setId(saved.id);setMint(saved.mint);setKind(saved.kind);setUncertain(true)}}catch{}},[])
@@ -25,14 +26,14 @@ export function HookLocalOperations({genesisHash}){
   const address=walletRef.current,reviewed=operation.review
   if(!accepted||Date.now()>=reviewed.reviewExpiresAtMs)throw Error('Accept the current unexpired review first')
   const value=await call({action:'wallet-request',signingId:id}),review=value.review
-  setOperation(current=>({...current,walletRequestIssued:true}))
-  if(review.messageSha256!==reviewed.messageSha256||review.wallet!==address||review.genesisHash!==genesisHash)throw Error('Wallet, network or reviewed message changed')
+  if(walletRef.current!==address||operationRef.current?.id!==id||review.messageSha256!==reviewed.messageSha256||review.wallet!==address||review.genesisHash!==genesisHash)throw Error('Wallet, network or reviewed operation changed')
+  setOperation(current=>current?.id===id?{...current,walletRequestIssued:true}:current)
   const {VersionedTransaction}=await import('@solana/web3.js'),tx=VersionedTransaction.deserialize(decode(value.partialTransactionBase64)),message=tx.message.serialize()
   if(encode(message)!==review.messageBase64)throw Error('Message differs from issued review')
   const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',message))].map(x=>x.toString(16).padStart(2,'0')).join('')
-  if(hash!==reviewed.messageSha256||walletRef.current!==address)throw Error('Message or active wallet changed')
+  if(hash!==reviewed.messageSha256||walletRef.current!==address||operationRef.current?.id!==id)throw Error('Message, active wallet or reviewed operation changed')
   const prior=tx.signatures.map(s=>encode(s)),signed=await provider().signTransaction(tx)
-  if(walletRef.current!==address||encode(signed.message.serialize())!==encode(message))throw Error('Wallet changed the reviewed transaction')
+  if(walletRef.current!==address||operationRef.current?.id!==id||encode(signed.message.serialize())!==encode(message))throw Error('Wallet or reviewed operation changed')
   for(let i=0;i<prior.length;i++)if(review.requiredSigners[i]!==address&&encode(signed.signatures[i])!==prior[i])throw Error('Wallet changed another signature')
   receive(await call({action:'retain-wallet',signingId:id,signedTransactionBase64:encode(signed.serialize())}))
  })

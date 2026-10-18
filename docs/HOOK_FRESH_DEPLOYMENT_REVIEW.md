@@ -266,47 +266,91 @@ the owner selects production economics and quote access, then obtain an
 all-in approval before any signing. Recheck balances, buffers, rent, fees,
 authority and blockhashes immediately before that approval.
 
-## Owner approval checklist — one canonical list
+## Consolidated owner approval sheet — NO-GO, no spending authorized
 
-- [x] Read supplied source archives and setup instructions; retain exact PR baselines.
-- [x] Rebuild launch/swap/gate and verify real on-validator ELF bytes.
-- [x] Complete one fresh local browser launch, buy, sell and fee collection.
-- [x] Verify packet limit, ALT activation, cap enforcement, rejection, natural
-  expiry and same-signature lost-response recovery without duplicate send.
-- [x] Retain the earlier expired partial operation and its old DB/ledger.
-- [x] Include the public gate IDL; retain secret/keypair ignores.
-- [x] Production build with public test-wallet flag set: no synthetic wallet
-  choice in the real production browser; local operations returned 404 with
-  local flag off and 409 with all local flags on; no signing row was created.
-- [x] Direct production guards rejected the otherwise-valid local profile;
-  synthetic adapter was absent and local-off genesis stayed mainnet.
-- [ ] Supply the original non-secret seven-fixture pack or exact historical
-  replay/export inputs; restore authenticity pins and rerun the 17 affected
-  regression entries. The current regression gate is not green.
-- [ ] Review the frozen source commit and the known local wallet-switch UI
-  race below; explicitly authorize a separate fix if wanted. No source fix
-  or feature was added after the freeze.
-- [ ] Approve retained E73/B2 upgrades and seeded buffer staging using existing
-  payer `3eCF…4g5o` / authority `9GCf…EN1md`; do not create new wallet keys.
-- [ ] Identify the existing signer custody reference for gate `BdAa…Kfxb`
-  and approve its deployment/read-back. Separately approve irreversible
-  finalization only after verifying actual deployed bytes; no automatic final.
-- [ ] Approve production creator rate, wallet cap, creator/collector recipients,
-  quote asset/access and governed config changes while preserving existing
-  admin/guardian/treasury/upgrade roles and closed execution.
-- [ ] Resolve external token-source provenance, funded production quote/bridge
-  assumptions and independent recovery proof. Same-Mac copies alone are
-  insufficient; no replacement token program is authorized.
-- [ ] Rehearse the exact retained-ID/seeded-buffer unsigned packet on separate
-  disposable state. Do not restart or reset the accepted local environment.
-- [ ] Obtain two genuinely independent production readers and fresh
-  genesis/ELF/IDL/config/governance/recipient/authority observations, then
-  regenerate the production dossier and ALT pins. Local evidence is not approval.
-- [ ] Approve exact unsigned messages, signer roles, expiry/fee bounds, the
-  component budget and a separately closed all-in budget/operational reserve.
-- [ ] Owner signs and executes locally only after explicit authorization,
-  verifies bytes/roles/pauses after each step, and separately authorizes
-  bounded live tests and any later activation, merge or unpause.
+This is the single approval sheet for retaining the existing E73/B2 program
+identities and deploying the already-pinned BdAa gate. It is not an execution
+packet or permission to fund anything. **Authorized spend now: 0 SOL.**
+Local browser acceptance and production-isolation evidence remain valid;
+the historical-fixture blocker is resolved by the 475/475 rerun below.
+
+### Decisions required before an executable plan
+
+| Approval field | Verified fact / proposed use | Current decision |
+| --- | --- | --- |
+| Retained launch/swap IDs | E73/B2 and their existing `9GCf…EN1md` upgrade authority, not new program IDs | Owner approval pending |
+| Upgrade authority custody | `production-upgrade-authority-v1/material/primary/manifest.public.json`, role `production-upgrade-authority` | Public reference found; owner must verify usable custody and independent recovery |
+| Payer and buffer base | Existing `3eCF…4g5o`, `mainnet-canary-v1/material/primary/manifest.public.json`, role `operational-payer`; seeded buffers from the budget table | Owner approval pending; funding source and refund destination must also be selected from existing roles |
+| Gate program signer | Existing address `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb` | **BLOCKED:** no matching signer role found in the 11 existing public custody manifests inspected; provide its public manifest path/role only, never keys |
+| Gate finalization | Read back exact ELF, then separately approve irreversible removal of upgrade authority | Not approved; never finalize automatically |
+| Gross creator fee rate | Explicit production basis-point value, covered by launch fee bounds | **Not selected.** Local 100 bps is not a production recommendation |
+| Wallet cap | Explicit production basis-point cap in the pinned v2 policy | **Not selected.** Local 200 bps is not approved |
+| Platform split / surcharge | `platform = floor(gross / 4)`, `creator = gross - platform`, per swap; swap share 2,500 bps; no flat/sniper/LP/rules surcharge | Required unchanged contract; no extra platform surcharge |
+| Production recipients | Existing treasury `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i` is the existing collector-role candidate, not an approved new destination | Approve exact creator and collector public keys and derived quote receiving accounts; do not promote controlled-test/synthetic identities by default |
+| Admin / guardian / treasury | Retain `DVdd…Tj8S5` / `CT4S…RmEY` / `FhEw…sW3i` and their public custody references above | No role rotation or new production wallets proposed |
+| Quote and live acceptance | Existing token/quote program, funded access/bridge, liquidity, exact bounded launch/buy/sell/collection amounts and native/quote rents | **Not selected/priced;** recovered token ELF source provenance unresolved |
+| Funding and failure policy | Select existing funding/return roles, reserve, priority-fee bound, failed/re-signed-attempt allowance and whether on-chain IDL publication is excluded | **Not selected;** no implicit retry, additional transfer or priority fee authorized |
+| Release evidence | Two independent fresh production readers, custody recovery proof, exact unsigned packet/expiry bounds and disposable-state rehearsal | Incomplete; dated single-reader observations are not current authorization |
+
+No new program identity may be generated to work around the missing gate
+signer. If its existing custody cannot be identified, stop for a separate
+identity decision; rebuilding and renewed acceptance would then be required.
+No production key, encrypted wallet payload or Keychain secret was opened.
+
+### Exact action order, after the approval fields and all-in quote close
+
+The sequence below fixes the instruction-family order; message bytes,
+recipients, governance hashes, live amounts and fee bounds are still pending.
+It must not be presented as an already-built/rehearsed production packet.
+
+| Order | Owner-controlled action | Required checkpoint before continuing |
+| ---: | --- | --- |
+| 0 | Review the source commit and pinned ELFs/IDLs; identify BdAa signer custody; resolve token provenance, quote access and recovery proof; build/rehearse the entire unsigned packet on separate disposable state | Approve all inputs and the complete funding ceiling; fresh independent-reader proofs must agree on genesis, code, authorities, config/governance, recipients and buffer absence |
+| 1 | Fund only the existing operational payer from the approved existing source, using the approved transfer message and reserve | Confirm finalized funding and approved balance; no new payer or identity keys |
+| 2 | Launch first: atomic seeded buffer create + initialize + exact 50,512-byte ProgramData extension; write the pinned ELF in 830 chunks of at most 916 bytes; verify buffer bytes; upgrade E73 with spill to the same payer | Verify deployed ELF, unchanged `9GCf…EN1md` authority, retained roles/pauses and returned buffer deposit before funding the next stage |
+| 3 | Swap second: atomic seeded buffer create + initialize + exact 26,024-byte extension; 606 writes; verify buffer; upgrade B2 with spill to the same payer | Same byte/authority/role/pause/refund verification; never stage both large buffers concurrently |
+| 4 | Gate: seeded buffer create + initialize, 207 writes and read-back; create/deploy BdAa with its existing program signer, existing payer and approved upgrade authority | Verify Program/ProgramData addresses, exact pinned ELF, expected authority and rents; gate signer custody must already be proved |
+| 5 | Only under its separate explicit approval, finalize the verified gate immutable | Read back null gate upgrade authority and exact deployed bytes; irreversible rent/authority consequences accepted |
+| 6 | Migrate existing swap and launch economics with their `governed_set_config(expected, args)` instructions: swap share 2,500 and surcharge fields zero, then launch approved fee bounds; preserve both existing config pauses and all roles | Re-read config/governance after each message; refresh expected hashes/revisions rather than replaying stale ones; do not reinitialize existing Config/Governance |
+| 7 | Review/init the selected creator authorization (`init_creator_authorization` only if fresh inventory still proves it absent), recipient quote holdings and exact production ALT create/extend messages | Verify authorization limits, quote ownership, ALT activation and refreshed post-config dossier/table pins before preparing any launch |
+| 8 | Owner separately approves necessary gate/pause changes and bounded live launch, buy, sell and collection messages, amounts, sizes and fee ceilings | No live test or unpause is authorized by this sheet; verify the per-swap floor/remainder split and single-transaction retry identity, and restore the agreed paused state |
+| 9 | Reconcile actual spend/refunds; return surplus only via the approved existing recipient and message | Stop on any mismatch; any later activation, merge or general unpause is a distinct owner decision |
+
+All messages retain the 1,232-byte limit. Loader writes are 916 bytes at
+most and omit the compute-unit-price instruction under the quoted zero-priority
+geometry. Never use default CLI ephemeral key generation, silently retry a
+re-signed transaction, or advance after an unverified/unknown outcome.
+The currently observed governance gate bits are mixed (launch creation true,
+trading false; swap creation false, trading true); both config pauses are true.
+"Closed execution" means retaining those pauses, not claiming every gate bit
+is false. No gate or pause was changed by this work.
+
+### All-in funding ceiling — blocked, not the component estimate
+
+The exact conditional **code/gate component** and peak payer funding remain
+the figures in the budget tables above: 1.366921640 SOL non-reclaimable
+rent/base fees, 4.127082480 SOL peak payer balance including the proposed
+reserve, and 6.680779120 SOL cumulative recycled upgrade-buffer deposits.
+Those amounts assume one successful attempt per write/action, no priority
+fees, no on-chain IDL publication and separately approved gate finalization.
+The dated payer shortfall is not an instruction to transfer money.
+
+**There is no defensible numeric all-in production ceiling yet.** Do not
+approve 1.366921640 SOL as total spend or 4.127082480 SOL as a complete funding
+request. Additional governed-config/authorization/ALT messages, funding and
+return fees, quote/bridge/liquidity/live-test amounts and rents, priority or
+retry allowances, and the reserve must first be explicitly selected and quoted.
+Unknown components are not zero.
+
+The final non-reclaimable ceiling must sum the code/gate component and every
+approved additional action's net rent, network fees and bounded test costs.
+The funding ceiling must separately be the maximum chronological cumulative
+outflow minus verified refunds, plus the approved reserve; do not add recycled
+buffer deposits to profit or mistake gross turnover for net cost.
+Re-quote using fresh rent/fee/balance/authority data and include the funding
+transaction's source-wallet fee before requesting owner approval.
+Until that complete numeric sheet and exact unsigned messages exist, **NO-GO:
+no signing, spending, broadcasting, deployment, merging or unpausing**.
 
 ## Verification limits and evidence
 
@@ -320,80 +364,64 @@ missing `app/lib/model-pulse.mjs` import from
 `app/components/hf/model-pulse-slot.jsx`, plus the existing bigint native
 binding fallback. Neither warning was suppressed or represented as fixed.
 
-The broad root Node invocation was not a supported full CI run. The grouped
-runner requires distinct pinned database environments and destructive
-scratch setup; it was not run against the preserved server. The supplied
-source-only inventories explicitly omit historical max-wallet/custom Rust
-vectors. Their authentic artifacts, not JS-derived substitutes, are required
-for the blocked legacy regression files. Current inclusive generated evidence
-is available through `HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR` and
-`HOOKLAB_INCLUSIVE_TOKEN_ELF` as described in the local runbook.
+The full repository CI runner requires distinct pinned database environments
+and destructive scratch setup; it was not run against the preserved server.
+The supplied source-only inventories omitted historical vectors; their
+authentic restoration and the completed 17-file rerun are recorded below.
+Current inclusive evidence uses `HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR`
+and `HOOKLAB_INCLUSIVE_TOKEN_ELF` as described in the local runbook.
 
-The actual Hook Lab regression invocation, after fixing the Node/CommonJS
-`BN` import and supplying authentic current inclusive evidence, was:
+### Historical-fixture regression blocker — resolved
 
-```sh
-env NODE_ENV=development \
-  HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR=/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/rebuilt-inclusive/evidence \
-  HOOKLAB_INCLUSIVE_TOKEN_ELF=/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/rebuilt-inclusive/elf/bordrless_token.so \
-  /usr/bin/sandbox-exec -f scripts/hooks-local-macos.sb \
-  node --test --test-concurrency=4 tests/hooklab-*.test.mjs
-```
+The retained ZIP SHA-256 was verified as
+`8aedbb40b75de2e119eaaa7150852b7ed091b576ae657e9e401ac2e7a2594263`.
+Only the seven permitted fixture payloads were read and restored privately.
+The five legacy vectors/plans match their source pins and pairings; the
+custom pair preserves original vector identities
+`42a557ce9e91e2c092b51b590ebbbee6223a3df6708ec70d20923744a677a523` and
+`f5820f16ea1a4ab59598f8d85e0c068c7e44492ce81c18acfbb617b5a6d389f2`.
+No historical source/deployment files were applied and no golden pins changed.
 
-| Observed tests | Passed | Failed on missing authentic fixture files | Skipped |
-| ---: | ---: | ---: | ---: |
-| 219 | 200 | 17 | 2 |
+The additionally supplied authentic public legacy IDL was restored at
+`vendor/hooklab-event-abi/max-wallet-candidate/hook_max_wallet.json`,
+SHA-256 `d9b0d22e56156035df0ada4935d9cd00f0520019b049fec0d6238e4df8ca4088`.
+Its narrow ignore exception is separate from the inclusive IDL exception;
+wallet/keypair ignores remain active. Neither IDL replaces the other.
+The private fixtures, including custom-vector and plan aliases, stay excluded.
 
-**This is not a green full regression gate.** The last observed 17 failures
-were missing-fixture load errors, not 17 evaluated assertion failures.
-The requested restoration/rerun remains blocked; it was not relabeled as
-passed or replaced with a narrower test selection.
+All **17 affected test files executed: 475 tests passed, zero failed,
+zero skipped, exit 0**. This includes the late-policy finalized-receipt
+regression in `tests/hooklab-native-signing-db.test.mjs`. It is not a claim
+that the entire repository/CI suite passed.
 
-| Needed authentic artifact | Authenticity requirement |
-| --- | --- |
-| `hooklab-max-wallet-rust-vector.json` | File SHA-256 `1c7b0bbd26faab7246f0e5c0ef3f58b0f56d93313c4dd368ed9861a1f23a2962` |
-| `hooklab-max-wallet-buy-rust-vector.json` | Original executed legacy Rust vector, not the inclusive v2 output |
-| `hooklab-max-wallet-sell-rust-vector.json` | Original executed legacy Rust vector, not the inclusive v2 output |
-| `buy-app-plan.json` | Original plan paired with that Rust buy vector |
-| `sell-app-plan.json` | Original plan paired with that Rust sell vector |
-| `hooklab-custom-rust-vector.json` | Identifies original full source-vector SHA-256 `42a557ce9e91e2c092b51b590ebbbee6223a3df6708ec70d20923744a677a523` |
-| `hooklab-custom-launch-rust-vector.json` | Pinned source-vector identity `f5820f16ea1a4ab59598f8d85e0c068c7e44492ce81c18acfbb617b5a6d389f2` |
+Tests used an unchanged private copy of current source, a macOS sandbox
+denying outbound access except loopback PostgreSQL 55432, UUID-named scratch
+databases, and the existing `HOOKLAB_GENERATED_FIXTURE_DIR`,
+`HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR` and `HOOKLAB_INCLUSIVE_TOKEN_ELF`
+overrides. Two initial Linux-default inclusive-artifact path errors were
+resolved through those existing overrides, not source or pin changes.
+No validator or app submission was possible from the test process.
 
-Use `HOOKLAB_GENERATED_FIXTURE_DIR` for the five-file legacy set; its app-plan
-aliases resolve to `buy-app-plan.json` / `sell-app-plan.json`. The custom
-pair has direct `tests/fixtures/` paths. Keep ELF-bearing generated data out
-of the source commit.
-
-Both supplied source-only inventories deliberately exclude these payloads.
-They were not found in the inspected workspaces/public artifact caches,
-temporary vector files or tracked fixture history. Authenticated GitHub
-access works; the inspected consumer CI artifact contains only TAP/timings,
-and its workflow uploads reports rather than these vectors. Public API 404s
-were not treated as proof of inaccessible repository credentials.
-
-The public eight-account fixture, paused proposal and token ELF already
-exist at `hooks-local-state/build-inputs/`. They are not the missing inputs.
-The existing legacy builder exporter uses random public fixture keys unless
-given its original replay vector; regenerating arbitrary new keys cannot
-match the frozen hash. The supplied source lacks the historical custom
-and legacy buy/sell export paths needed to reproduce the whole pack.
-Provide those non-secret original payloads or exact replay/export inputs,
-not keys. No golden-vector fabrication, inclusive substitution or pin change
-was made.
-
-The updated late-policy-receipt regression in
-`tests/hooklab-native-signing-db.test.mjs` is among the files blocked by the
-missing max-wallet fixture; it is not represented as passed. Real local
-launch/trade/collection and production isolation have separate exercised
-browser/runtime evidence.
+Private evidence:
+`/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/historical-fixture-recovery-8aedbb40/legacy-idl-regression-results.private.json`.
+Raw TAP and historical payloads remain under that private 0700 directory
+with 0600 payload/report files. They must not be published, committed,
+broadcast or substituted into the accepted deployment candidate.
+The accepted services were not restarted. All checked program ELF copies,
+the separate inclusive IDL and existing database identities were preserved;
+the tests left no scratch databases. No custody secrets were accessed.
 
 ## Final freeze checks and review limits
 
-The accepted 50-file integration runtime source was hashed before handoff
-work. Its aggregate is
+The accepted 50-file integration runtime source was hashed before handoff;
+its historical aggregate was
 `a1688fd2f3f3af1af358ac050e435886acdad8b2c11ee3dea1f1fa3a8290bd27`.
-Only handoff documentation changed after that freeze. No accepted service,
-database or ledger was restarted or reset, and no financial flow was replayed.
+After that freeze, the owner explicitly authorized the missing public legacy
+IDL restoration, narrow ignore exception and local wallet-switch fix.
+The only runtime implementation changed is the local operations component.
+No accepted service, database or ledger was restarted/reset, and no financial
+flow was replayed. Runtime dependencies were not reinstalled: new test-only
+DOM dependencies were installed in the private source copy.
 
 The final offline guard/sender smoke command passed **8/8**, without touching
 accepted state:
@@ -404,26 +432,70 @@ env NODE_ENV=development /usr/bin/sandbox-exec -f scripts/hooks-local-macos.sb \
   tests/hooklab-native-transaction-sender.test.mjs
 ```
 
-This is additional guard evidence, **not** a substitute for the blocked
-17 historical regression entries. It covers production/mainnet/origin/DB
-refusal, exact synthetic signing/rejection, expired requests, slot/deadline
-crossing, failed simulation, lost-response single-send and message identity.
+This guard evidence covers production/mainnet/origin/DB refusal, synthetic
+signing/rejection, expiry/deadlines, failed simulation, lost-response
+single-send and message identity. The formerly blocked historical regression
+gate is now separately resolved by the 475/475 run above.
 
-Separate static review found a P2 local-only UI race in
-`app/components/hooklab-local-operations.jsx:28`: disconnect/switch while
-`wallet-request` awaits a response can recreate a partial operation after
-the wallet effect clears it; rendering then dereferences `operation.review`.
-The ID/wallet-guarded update is the proposed fix. It was not applied under
-the requested runtime freeze. Backend ownership checks remain separate.
-Missing persistent route/ALT/finality regression cases and unbounded local
-PostgreSQL waits were recorded as coverage/residual limits, not falsely
-reported as observed failing assertions.
+### Wallet-switch P2 — fixed and exercised
 
-Nine local review lenses completed. The independent Claude CLI pass
-requested `claude-opus-5` at high reasoning but timed out with no usable
-artifact. Actual serving model/effort and cross-model independence remain
-unverified; adversarial coverage is degraded, not green. No production
-action or automatic source fix resulted from review.
+`app/components/hooklab-local-operations.jsx` previously recreated a partial
+operation when a late `wallet-request` response arrived after a wallet reset.
+The response now checks the live wallet and retained operation ID before
+updating state; the functional update preserves null or a different operation.
+The operation identity is also rechecked after asynchronous hashing and wallet
+signing, so switching away and back cannot reuse a cleared review.
+Backend ownership, signature and production-isolation checks are unchanged.
+
+`tests/hooklab-local-operations-ui.test.mjs` renders the actual component with
+real React state/effects and a DOM. Before the fix, wallet switch, disconnect
+and switch-away/back all failed with the `operation.review` render crash;
+the unchanged-wallet handoff passed. After the fix **4/4 passed**.
+A real Chromium isolated-component smoke, offline and with signing forbidden,
+also exercised a deferred response followed by wallet switching: zero render
+errors, zero signing calls, zero retain calls, no revived operation card,
+and the retained signing ID remained visible. This was a component regression,
+not a replay of financial acceptance or a fake on-validator success.
+
+The consolidated Hook Lab rerun selected **62 files: 678 tests, 676 passed,
+zero failed, two skipped**, exit 0. The two skips are the existing opt-in frozen
+production ELF round-trip and frozen production Rust-builder execution tests;
+they were not represented as exercised. The historical vectors and current
+inclusive evidence were both supplied through their existing private paths.
+Initial broader-harness failures from omitted app/scripts files and denied
+ephemeral HTTP test-server access were corrected in the private harness,
+not by changing source expectations.
+
+The broad run used complete current-source copies, an external-network/custody/
+accepted-file-write sandbox and an inherited private Node socket guard refusing
+accepted app/validator ports. Its preflight proved ephemeral loopback HTTP
+worked while ports 3443, 18898, 18899, 18999, 19000, 8909, 8910 and 3001 and
+external traffic were denied. The original PostgreSQL-only sandbox for the
+17-file rerun was unchanged. Raw TAP, browser proof and fixture data remain
+private under `historical-fixture-recovery-8aedbb40/`.
+
+### Unresolved review findings and verification limits
+
+- Unbounded local PostgreSQL connection/query waits remain a reliability limit;
+  no timeout feature was added as part of the wallet-switch fix.
+- Dedicated persistent local-route/ALT-activation/finality-boundary coverage
+  remains incomplete beyond the passing sender/late-policy cases. Prior real
+  acceptance is not a substitute for every future permanent boundary test.
+- The full repository CI matrix, with its destructive scratch-service setup,
+  was not run against the retained environment. The 62-file result is Hook Lab
+  coverage, not a green entire-repository claim.
+- The prior nine-lens local review's independent Claude CLI attempt timed out
+  without a usable artifact; its serving model and independent adversarial
+  coverage remain unverified. Do not relabel that historical review green.
+- Gate signer custody, independent recovery proof, external token-source
+  provenance, production economics/quote/recipients, exact unsigned rehearsal,
+  fresh independent readers and the all-in ceiling remain release blockers
+  in the consolidated approval sheet. No production action was performed.
+
+Current fix-scoped reviews of the async UI/tests/ignore boundaries and the
+upgrade-sheet arithmetic/action order both returned **no actionable findings**.
+They were local reviewers, not a claimed replacement for the missing
+independent cross-model review. The unrelated local resume helper was excluded.
 
 ## Primary references
 
