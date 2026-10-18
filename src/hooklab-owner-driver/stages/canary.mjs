@@ -128,7 +128,7 @@ async function launchInput(ctx, pinned, prepSlot) {
   snapshot, bh, validUntilSlot }
 }
 const launch = {
-  name: 'canary-launch',
+  name: 'canary-launch', needsMemo: true,
   async build(ctx, pinned) {
     const blocked = canaryBlocked(ctx); if (blocked) return { blocked }
     const prepSlot = pinned?.prepSlot ?? ctx.journal.lastSuccess('canary-prepare')?.slot ?? ctx.options.prepSlot
@@ -202,7 +202,7 @@ async function tradeInput(ctx, side, amountIn, minAmountOut, maxImpact, pinned) 
 function tradeStage(side) {
   const stage = `canary-${side}`
   return {
-    name: stage,
+    name: stage, needsMemo: true,
     async build(ctx, pinned) {
       const blocked = canaryBlocked(ctx); if (blocked) return { blocked }
       const decision = value(ctx.config, side === 'buy' ? 'canaryBuy' : 'canarySell')

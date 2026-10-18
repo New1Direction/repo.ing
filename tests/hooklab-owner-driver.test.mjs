@@ -17,8 +17,8 @@ import * as ix from '../src/hooklab-owner-driver/instructions.mjs'
 import { nextState } from '../src/hooklab-owner-driver/stages/common.mjs'
 import { canaryCommitment } from '../src/hooklab-canary-policy.mjs'
 import { binding } from '../src/hooklab-owner-driver/artifacts.mjs'
-import { makeReaders, verifyGenesis } from '../src/hooklab-owner-driver/rpc.mjs'
-import { execute } from '../src/hooklab-owner-driver/execute.mjs'
+import { makeReaders, verifyGenesis, redact } from '../src/hooklab-owner-driver/rpc.mjs'
+import { execute, awaitFinal, EXPIRY_MARGIN_BLOCKS } from '../src/hooklab-owner-driver/execute.mjs'
 import { parseArgs } from '../src/hooklab-owner-driver/cli.mjs'
 import { PROGRAMS, QUOTE_MINT, MAINNET_ROLES, MAINNET_GENESIS, derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
 import { localConfig, syntheticRoles } from './fixtures/hooklab-owner-local.mjs'
@@ -102,10 +102,12 @@ test('one-send journal: exclusive claim, persisted history, pending and last suc
     journal.claim({ stage: 'grant', messageSha256: sha, lastValidBlockHeight: 10 })
     assert.throws(() => journal.claim({ stage: 'grant', messageSha256: sha }), /already claimed/)
     assert.equal(journal.pending('grant').length, 1)
-    journal.update(sha, { status: 'signed', signature: 'sig' }); journal.update(sha, { status: 'finalized-success', slot: 42 })
+    journal.update(sha, { status: 'signed', signature: 'sig' }); journal.update(sha, { status: 'finalized-success', slot: 42, postconditions: 'failed' })
     assert.equal(journal.pending('grant').length, 0)
+    assert.equal(journal.lastSuccess('grant'), null, 'unverified postconditions never count as success')
+    journal.update(sha, { postconditions: 'verified' })
     assert.equal(journal.lastSuccess('grant').slot, 42)
-    assert.deepEqual(journal.get(sha).history.map(h => h.status), ['signed', 'finalized-success'])
+    assert.deepEqual(journal.get(sha).history.map(h => h.status), ['signed', 'finalized-success', 'finalized-success'])
     assert.throws(() => journal.claim({ stage: 'x', messageSha256: '../etc' }), /sha256/)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
@@ -167,4 +169,47 @@ test('CLI argument parsing refuses unknown flags and stages', () => {
   assert.throws(() => parseArgs(['plan', 'grant', '--yes']), /Unsupported/)
   assert.throws(() => parseArgs(['plan', 'deploy']), /Unknown stage/)
   assert.throws(() => parseArgs(['sign', 'grant']), /usage/)
+})
+
+test('mainnet config pins the canary mint and grant creator and caps the priority price', () => {
+  const dir = scratch()
+  try {
+    const raw = JSON.parse(readFileSync(template, 'utf8'))
+    assert.throws(() => loadConfig(write(dir, 'a.json', { ...raw, decisions: { ...raw.decisions, canaryMint: { value: Keypair.generate().publicKey.toBase58(), approved: true } } })), /canary mint is pinned/)
+    const grant = { ...raw.decisions.grant, value: { ...raw.decisions.grant.value, creator: MAINNET_ROLES.admin } }
+    assert.throws(() => loadConfig(write(dir, 'b.json', { ...raw, decisions: { ...raw.decisions, grant } })), /grant creator is pinned/)
+    assert.throws(() => loadConfig(write(dir, 'c.json', { ...raw, decisions: { ...raw.decisions, computeUnitPriceMicroLamports: { value: '50001', approved: true } } })), /50,000/)
+    assert.equal(redact('https://rpc.example/v1?api-key=secret'), 'https://rpc.example/v1?<redacted>')
+    assert.equal(redact('https://api.mainnet-beta.solana.com'), 'https://api.mainnet-beta.solana.com')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+const fakeReaders = ({ status, height = 1000, statusError = false }) => [0, 1].map(i => ({ connection: {
+  getSignatureStatuses: async () => { if (statusError === true || statusError === i) throw Error('429 Too Many Requests'); return { value: [status] } },
+  getBlockHeight: async () => height, getTransaction: async () => null } }))
+test('finality: RPC errors never count as an expired, unlanded transaction', async () => {
+  const sig = '1'.repeat(64)
+  assert.equal((await awaitFinal({ readers: fakeReaders({ status: null, height: 10000, statusError: 1 }) }, sig, 100, '', 2)).status, 'pending')
+  assert.equal((await awaitFinal({ readers: fakeReaders({ status: null, height: 100 + EXPIRY_MARGIN_BLOCKS }) }, sig, 100, '', 1)).status, 'pending')
+  assert.equal((await awaitFinal({ readers: fakeReaders({ status: null, height: 101 + EXPIRY_MARGIN_BLOCKS }) }, sig, 100, '', 1)).status, 'expired-unlanded')
+  assert.equal((await awaitFinal({ readers: fakeReaders({ status: { confirmationStatus: 'confirmed' }, height: 10000 }) }, sig, 100, '', 1)).status, 'pending')
+})
+test('one-send is keyed on the reviewed plan: a refreshed attempt blocks any second send of that plan', async () => {
+  const dir = scratch()
+  try {
+    const raw = JSON.parse(readFileSync(template, 'utf8'))
+    for (const name of Object.keys(raw.decisions)) raw.decisions[name].approved = true
+    const ctx = { config: loadConfig(write(dir, 'c.json', raw)), journal: openJournal(path.join(dir, 'j')), root: path.join(dir, 'runs'), network: 'mainnet-beta', genesis: MAINNET_GENESIS }
+    const { review } = sample('11111111111111111111111111111112'), R = review.messageSha256, runDir = path.join(ctx.root, 'launch-config-x')
+    const { mkdirSync } = await import('node:fs'); mkdirSync(runDir, { recursive: true })
+    write(runDir, 'plan.json', { stage: 'launch-config', network: 'mainnet-beta', genesisHash: MAINNET_GENESIS, messageSha256: R, messageBase64: review.messageBase64, review, pinned: {}, expect: {} })
+    ctx.journal.claim({ stage: 'launch-config', messageSha256: 'ef'.repeat(32), reviewedMessageSha256: R, lastValidBlockHeight: 1 })
+    ctx.journal.update('ef'.repeat(32), { status: 'finalized-success', signature: 'sig', slot: 9 })
+    await assert.rejects(execute(ctx, 'launch-config', { messageSha256: R, log: () => {} }), /already used .*one-send refuses a resend/)
+    const tampered = sample('So11111111111111111111111111111111111111112').review
+    write(runDir, 'plan.json', { stage: 'launch-config', network: 'mainnet-beta', genesisHash: MAINNET_GENESIS, messageSha256: R, messageBase64: tampered.messageBase64, review, pinned: {}, expect: {} })
+    await assert.rejects(execute(ctx, 'launch-config', { messageSha256: R, log: () => {} }), /tampered plan/)
+    const release = ctx.journal.lock('grant')
+    assert.throws(() => ctx.journal.lock('grant'), /refusing concurrent sends/)
+    release(); ctx.journal.lock('grant')()
+  } finally { rmSync(dir, { recursive: true, force: true }) }
 })

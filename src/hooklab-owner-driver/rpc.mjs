@@ -11,6 +11,8 @@ export const DEFAULT_MAINNET_RPC = ['https://api.mainnet-beta.solana.com', 'http
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const loopback = url => ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
 
+// Display form never includes query strings (providers often carry API keys there).
+export const redact = url => { const u = new URL(url); return `${u.origin}${u.pathname === '/' ? '' : u.pathname}${u.search ? '?<redacted>' : ''}` }
 export function makeReaders({ rpc, rpc2, localTest }) {
   const urls = [rpc ?? (localTest ? null : DEFAULT_MAINNET_RPC[0]), rpc2 ?? (localTest ? null : DEFAULT_MAINNET_RPC[1])]
   check(urls.every(Boolean), 'Two RPC URLs are required (--rpc and --rpc2)')
@@ -19,7 +21,7 @@ export function makeReaders({ rpc, rpc2, localTest }) {
   check(parsed[0].origin !== parsed[1].origin, 'The two RPC providers must have distinct origins')
   if (localTest) check(parsed.every(loopback), '--local-test accepts loopback RPC endpoints only')
   else check(parsed.every(u => u.protocol === 'https:' && !loopback(u)), 'Mainnet mode requires two remote HTTPS RPC providers')
-  return urls.map((url, i) => ({ provider: i === 0 ? 'primary' : 'secondary', url, connection: new Connection(url, { commitment: 'finalized', disableRetryOnRateLimit: true }) }))
+  return urls.map((url, i) => ({ provider: i === 0 ? 'primary' : 'secondary', url: redact(url), connection: new Connection(url, { commitment: 'finalized', disableRetryOnRateLimit: true }) }))
 }
 /** Verifies genesis on both providers. Mainnet mode requires the mainnet genesis; --local-test forbids it. */
 export async function verifyGenesis(readers, { localTest, expectedLocalGenesis }) {

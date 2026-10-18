@@ -70,7 +70,7 @@ const grant = {
     const afterState = nextState(governance.state, {})
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'grant', payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, instructionDebitLamports: String(rent) })
     return { observedSlot: snapshot.slot, review, deadlineSlot: undefined, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight, expiresAtSlot },
-      sections: [{ title: 'creator authorization (new account)', rows: [`address ${authorization}`, `creator ${creator}`, `enabled true; max_launches ${g.maxLaunches} (lifetime); expires_at_slot ${expiresAtSlot} (exclusive; observed slot ${snapshot.slot} + ${g.expirySlots})`] },
+      sections: [{ title: 'creator authorization (new account)', rows: [`address ${authorization}`, `creator ${creator}`, `enabled true; max_launches ${g.maxLaunches} (lifetime); expires_at_slot ${expiresAtSlot} (exclusive; ${pinned?.expiresAtSlot ? 'pinned at plan time' : `observed slot ${snapshot.slot} + ${g.expirySlots}`}; current slot ${snapshot.slot})`] },
         governanceSection('launch', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), `rent ${sol(rent)} paid by payer for the 73-byte authorization`] }],
       expect: { authorization, creator, expiresAtSlot, maxLaunches: g.maxLaunches, commitment: hex(ix.governanceCommitment('launch', afterState)) } }
   },

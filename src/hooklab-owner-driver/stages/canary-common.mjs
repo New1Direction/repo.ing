@@ -35,7 +35,7 @@ export function swapRequest(ctx, side, amountIn, minAmountOut, maxPriceImpactBps
     mint: ctx.roles.mint, selectedConfig: ctx.roles.selectedConfig, amountIn: String(amountIn), minAmountOut: String(minAmountOut), maxInput: String(amountIn), maxPriceImpactBps }
 }
 // Durable public record of the canary lookup table address (written after step one finalizes).
-export const altRecordPath = ctx => path.join(ctx.runsRoot, ctx.genesis.slice(0, 16), 'alt.public.json')
+export const altRecordPath = ctx => path.join(ctx.journal.dir, '..', 'alt.public.json')
 export function altRecord(ctx) {
   const decided = value(ctx.config, 'lookupTable')
   if (existsSync(altRecordPath(ctx))) {

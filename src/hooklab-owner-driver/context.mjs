@@ -20,7 +20,7 @@ function enterLocalScope(genesis) {
     HOOK_WALLET_IDENTITY_ORIGIN: 'https://127.0.0.1:19443', HOOK_WALLET_IDENTITY_DATABASE_URL: 'postgresql://127.0.0.1/hooks_local_owner_driver',
     HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY: 'https://127.0.0.1:19444', HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY: 'https://127.0.0.1:19445' })
 }
-export async function createContext({ configPath, rpc, rpc2, localTest = false, runsRoot, options = {} }) {
+export async function createContext({ configPath, rpc, rpc2, localTest = false, runsRoot, journalRoot, options = {} }) {
   const config = loadConfig(configPath)
   if (localTest !== (config.network === 'local-test')) throw Error(localTest ? '--local-test requires a config with network "local-test"' : 'A local-test config can only be used with --local-test')
   const readers = makeReaders({ rpc, rpc2, localTest })
@@ -30,6 +30,8 @@ export async function createContext({ configPath, rpc, rpc2, localTest = false, 
     if (Object.values(MAINNET_ROLES).includes(value(config, 'canaryMint'))) throw Error('Local-test canary mint must be synthetic')
   }
   const roles = roleAddresses(config), root = path.join(runsRoot, genesis.slice(0, 16))
+  // The one-send journal lives apart from --runs so moving or cleaning run directories never drops it.
+  const journal = openJournal(path.join(journalRoot, genesis.slice(0, 16)))
   return { config, readers, genesis, localTest, network: localTest ? 'local-test' : 'mainnet-beta', roles, programs: PROGRAMS, quoteMint: QUOTE_MINT,
-    envelope: compilerEnvelope({ genesisHash: genesis, providers: readers.map(r => r.provider), local: localTest }), runsRoot, root, journal: openJournal(root), options }
+    envelope: compilerEnvelope({ genesisHash: genesis, providers: readers.map(r => r.provider), local: localTest }), runsRoot, root, journal, options }
 }

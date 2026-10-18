@@ -28,7 +28,8 @@ export const configSchema = z.object({
     canaryWrapLamports: decision(raw),
     collectRoute: decision(z.enum(['sol', 'quote'])),
     lookupTable: decision(key.nullable()),
-    computeUnitPriceMicroLamports: decision(raw),
+    // Bounded priority price: at 1.4M CU this caps the priority fee at 0.07 SOL.
+    computeUnitPriceMicroLamports: decision(raw.refine(v => BigInt(v) <= 50000n, 'compute unit price above 50,000 micro-lamports')),
   }).strict(),
 }).strict()
 
@@ -39,12 +40,12 @@ export const STAGE_DECISIONS = Object.freeze({
   grant: ['grant', 'computeUnitPriceMicroLamports'],
   'gate-finalize': ['computeUnitPriceMicroLamports'],
   fund: ['fund', 'computeUnitPriceMicroLamports'],
-  alt: ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canaryLaunch', 'computeUnitPriceMicroLamports'],
+  alt: ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canaryLaunch', 'lookupTable', 'computeUnitPriceMicroLamports'],
   'canary-prepare': ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canaryLaunch', 'computeUnitPriceMicroLamports'],
   'canary-gates-open-creation': ['computeUnitPriceMicroLamports'],
   'canary-gates-close-creation': ['computeUnitPriceMicroLamports'],
   'canary-launch': ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canaryLaunch', 'lookupTable', 'computeUnitPriceMicroLamports'],
-  'canary-holdings': ['canaryMint', 'canaryWrapLamports', 'computeUnitPriceMicroLamports'],
+  'canary-holdings': ['canaryMint', 'canaryWrapLamports', 'canaryBuy', 'computeUnitPriceMicroLamports'],
   'canary-buy': ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canaryBuy', 'lookupTable', 'computeUnitPriceMicroLamports'],
   'canary-sell': ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canarySell', 'lookupTable', 'computeUnitPriceMicroLamports'],
   collect: ['canaryMint', 'collectRoute', 'computeUnitPriceMicroLamports'],
@@ -58,6 +59,8 @@ export function loadConfig(path) {
   if (parsed.network === 'mainnet-beta') {
     if (parsed.roles && Object.entries(parsed.roles).some(([role, address]) => role !== 'selectedConfig' && address !== undefined && MAINNET_ROLES[role] !== address))
       throw Error('Mainnet config may not substitute pinned role addresses')
+    if (parsed.decisions.canaryMint.value !== MAINNET_ROLES.mint) throw Error('Mainnet canary mint is pinned to the controlled-test mint')
+    if (parsed.decisions.grant.value.creator !== MAINNET_ROLES.creator) throw Error('Mainnet grant creator is pinned to the controlled-test creator')
   }
   return parsed
 }

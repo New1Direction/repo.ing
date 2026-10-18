@@ -85,7 +85,7 @@ function flatten(value, prefix, out = []) {
   return out
 }
 export function renderPreview(p) {
-  const lines = [`=== Hook Lab owner driver :: ${p.stage} (${p.network}) ===`, `genesis           ${p.genesisHash}`, `observed slot     ${p.observedSlot} (two providers: ${p.providers.join(', ')})`]
+  const lines = [`=== Hook Lab owner driver :: ${p.stage} (${p.network}) ===`, `genesis           ${p.genesisHash}`, `observed slot     ${p.observedSlot ?? "n/a (blocked before reading account state)"} (two providers: ${p.providers.join(', ')})`]
   if (p.blocked) lines.push('', `BLOCKED: ${p.blocked}`)
   for (const note of p.notes ?? []) lines.push(`note: ${note}`)
   if (p.decisions) lines.push(`decisions         ${p.decisions.map(d => `${d.name}=${JSON.stringify(d.value)}${d.approved ? ' (approved)' : ' (NOT approved)'}`).join('; ') || 'none'}`)
