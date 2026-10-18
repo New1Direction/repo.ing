@@ -108,7 +108,8 @@ test('owner driver runs every stage end to end on a local validator', { skip: !a
     assert.notEqual(second.sha, first.sha)
     await assert.rejects(main(['plan', 'customer-grant', ...common, '--creator', roles.creator.publicKey.toBase58()], quiet), /may not be one of the owner role addresses/)
   })
-  t.diagnostic(`canary creator balance left after launch, buy, sell and collect: ${await validator.connection.getBalance(roles.creator.publicKey, 'finalized')} lamports of the funded 50000000`)
+  // The local fund stage gives the creator 2 SOL; mainnet funds 0.05 SOL, so this spend must stay well below that.
+  t.diagnostic(`canary creator spent ${2000000000 - await validator.connection.getBalance(roles.creator.publicKey, 'finalized')} lamports on prepare, launch, buy, sell and collect`)
   await t.test('shared trade table: created with the 16 shared trade addresses, frozen, then complete', async () => {
     const created = await run('trade-table', ['payer'], { approve: true })
     assert.match(created.receipt.postconditions.join(' '), /holds the 16 shared trade addresses/)
