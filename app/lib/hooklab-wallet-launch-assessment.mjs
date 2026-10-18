@@ -7,6 +7,7 @@ import { readLimitedBody } from '../../src/token-image.mjs'
 import { coLocatedWalletPreparationJournal } from '../../src/hooklab-wallet-preparation.mjs'
 import { preparationReadConnections } from '../../src/hooklab-preparation-read-transport.mjs'
 import { assessWalletLaunchPreparation,walletLaunchAssessmentRequestSchema } from '../../src/hooklab-wallet-launch-assessment.mjs'
+import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 const headers={'Cache-Control':'private, no-store',Vary:'Cookie'}
 const reply=(body,status=200)=>Response.json({...body,executionAuthorized:false,canSign:false,canSubmit:false,canLaunch:false},{status,headers})
 export function walletLaunchAssessmentConfiguration(env=process.env){
@@ -24,7 +25,7 @@ export function createWalletLaunchAssessmentHandler({env=process.env,configurati
   let pool
   try{
    const config=configuration(env)
-   if(new URL(request.url).origin!==config.origin||request.headers.get('sec-fetch-site')==='cross-site')return reply({error:'Open the configured launcher origin.'},403)
+   if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')return reply({error:'Open the configured launcher origin.'},403)
    if(!['GET','POST'].includes(request.method))return reply({error:'Method unavailable.'},405)
    if(request.method==='POST'){try{assertSameOrigin(request,config.origin)}catch{return reply({error:'Open the configured launcher origin.'},403)}}
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)

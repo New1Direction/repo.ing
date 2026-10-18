@@ -8,6 +8,7 @@ import {readLimitedBody} from '../../src/token-image.mjs'
 import {clientAddress} from '../../src/client-address.mjs'
 import {inclusiveMaxWalletSwapRequestSchema} from '../../src/hooklab-inclusive-max-wallet-swap.mjs'
 import {inclusiveTradeRuntime} from './hooklab-inclusive-trade-runtime.mjs'
+import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 const intent=inclusiveMaxWalletSwapRequestSchema.pick({mint:true,selectedConfig:true,capBps:true,creatorFeeBps:true,side:true,amountIn:true,minAmountOut:true,maxInput:true,maxPriceImpactBps:true}).strict()
 const body=z.discriminatedUnion('action',[
  z.object({action:z.literal('quote'),signingId:z.uuid(),request:intent}).strict(),
@@ -23,7 +24,7 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
   try{
    const config=configuration(env)
    if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
-   try{assertSameOrigin(request,config.origin);if(new URL(request.url).origin!==config.origin||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured trading origin.'},403)}
+   try{assertSameOrigin(request,config.origin);if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured trading origin.'},403)}
    if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
    if(request.headers.get('content-type')?.split(';')[0].trim()!=='application/json')return reply({error:'JSON required.'},415)
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)
