@@ -11,6 +11,8 @@ import { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransactio
 import { loadArtifacts, ELF } from '../../src/hooklab-owner-driver/artifacts.mjs'
 import { idlInstruction } from '../../src/hooklab-owner-driver/instructions.mjs'
 import { PROGRAMS, QUOTE_MINT, LOADER, SYSTEM, MAINNET_GENESIS, pda, pk, kb, holdingAddress, sha256, derivedAddresses } from '../../src/hooklab-owner-driver/pins.mjs'
+export const LOCAL_FEE_BPS=Number(process.env.HOOKLAB_OWNER_LOCAL_FEE_BPS??100),LOCAL_CAP_BPS=Number(process.env.HOOKLAB_OWNER_LOCAL_CAP_BPS??200)
+if(![50,100,200].includes(LOCAL_FEE_BPS)||![100,200,300,500].includes(LOCAL_CAP_BPS))throw Error('local fee/cap must be an owner menu value')
 
 export const ELF_DIR = process.env.HOOKLAB_OWNER_ELF_DIR ?? '/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/rebuilt-inclusive/elf'
 export const VALIDATOR = process.env.HOOKLAB_OWNER_VALIDATOR ?? '/opt/homebrew/bin/solana-test-validator'
@@ -134,7 +136,8 @@ export function localConfig(roles, overrides = {}, { collectRoute = 'quote' } = 
   const a = role => roles[role].publicKey.toBase58(), yes = value => ({ value, approved: true })
   return { schema: 'repoing/hooklab-owner-config/1', network: 'local-test', note: 'synthetic local validator only',
     roles: Object.fromEntries(['admin', 'guardian', 'treasury', 'upgrade', 'payer', 'creator'].map(r => [r, a(r)])),
-    decisions: { creatorFeeBps: yes(100), maxRulesFeeBps: yes(100), launchProtocolShareBps: yes(2500), protocolFeeBps: yes(0), capBps: yes(200),
+    // Menu variants: HOOKLAB_OWNER_LOCAL_FEE_BPS in {50,100,200}, HOOKLAB_OWNER_LOCAL_CAP_BPS in {100,200,300,500}.
+    decisions: { customerGrantPolicy: yes({ expirySlots: "9000" }), creatorFeeBps: yes(LOCAL_FEE_BPS), maxCreatorFeeBps: yes(200), maxRulesFeeBps: yes(200), launchProtocolShareBps: yes(2500), protocolFeeBps: yes(0), capBps: yes(LOCAL_CAP_BPS),
       grant: yes({ creator: a('creator'), maxLaunches: '1', expirySlots: '100000' }), selectedConfig: yes(a('selectedConfig')), canaryMint: yes(a('mint')),
       canaryLaunch: yes({ name: 'Local canary', symbol: 'LCANARY', uri: '', label: 'private-canary', virtualQuote: '1000000000', maxRentLamports: '60000000' }),
       canaryBuy: yes({ amountInRaw: '1000200', slippageBps: 50, maxPriceImpactBps: 1000 }), canarySell: yes({ amountInRaw: 'all', slippageBps: 50, maxPriceImpactBps: 1000 }),

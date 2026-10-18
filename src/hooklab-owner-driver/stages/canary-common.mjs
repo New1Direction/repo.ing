@@ -16,7 +16,7 @@ export const SELECTED_CONFIG_COMMAND = 'solana-keygen new --no-bip39-passphrase 
 export function canaryBlocked(ctx) {
   const reasons = []
   if (!ctx.roles.selectedConfig) reasons.push(`selectedConfig not chosen (owner approval required to generate it; the tool never generates it). Command the owner would run: ${SELECTED_CONFIG_COMMAND}`)
-  if (value(ctx.config, 'capBps') === null) reasons.push('capBps not chosen (owner chooses 100 or 200)')
+  if (value(ctx.config, 'capBps') === null) reasons.push('capBps not chosen (owner chooses 100, 200, 300 or 500)')
   return reasons.length ? reasons.join('; ') : null
 }
 export function preparationRequest(ctx) {

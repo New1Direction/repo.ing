@@ -15,9 +15,12 @@ export const configSchema = z.object({
   note: z.string().optional(),
   roles: z.object(Object.fromEntries(ROLE_NAMES.map(r => [r, key.optional()]))).strict().optional(),
   decisions: z.object({
-    creatorFeeBps: decision(bps), maxRulesFeeBps: decision(bps), launchProtocolShareBps: decision(bps), protocolFeeBps: decision(bps),
-    capBps: decision(z.union([z.literal(100), z.literal(200)]).nullable()),
+    creatorFeeBps: decision(bps), maxCreatorFeeBps: decision(bps), maxRulesFeeBps: decision(bps), launchProtocolShareBps: decision(bps), protocolFeeBps: decision(bps),
+    // Owner-approved wallet-cap menu: 1%, 2% (default), 3% or 5%.
+    capBps: decision(z.union([z.literal(100), z.literal(200), z.literal(300), z.literal(500)]).nullable()),
     grant: decision(z.object({ creator: key, maxLaunches: raw, expirySlots: raw }).strict()),
+    // Per-invite customer grants: one more launch, short expiry. The creator comes from --creator.
+    customerGrantPolicy: decision(z.object({ expirySlots: raw.refine(v => BigInt(v) >= 1500n && BigInt(v) <= 216000n, 'expiry between ~10 minutes and ~1 day of slots') }).strict()),
     selectedConfig: decision(key.nullable()),
     canaryMint: decision(key),
     canaryLaunch: decision(z.object({ name: z.string().min(1).max(32), symbol: z.string().min(1).max(10), uri: z.string().max(200), label: z.string().min(1).max(32),
@@ -35,9 +38,10 @@ export const configSchema = z.object({
 
 // Stage -> decisions that must be approved before execute. Plan reports the same list.
 export const STAGE_DECISIONS = Object.freeze({
-  'launch-config': ['creatorFeeBps', 'maxRulesFeeBps', 'computeUnitPriceMicroLamports'],
+  'launch-config': ['maxCreatorFeeBps', 'maxRulesFeeBps', 'computeUnitPriceMicroLamports'],
   'swap-config': ['launchProtocolShareBps', 'protocolFeeBps', 'computeUnitPriceMicroLamports'],
   grant: ['grant', 'computeUnitPriceMicroLamports'],
+  'customer-grant': ['customerGrantPolicy', 'computeUnitPriceMicroLamports'],
   'gate-finalize': ['computeUnitPriceMicroLamports'],
   fund: ['fund', 'computeUnitPriceMicroLamports'],
   alt: ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canaryLaunch', 'lookupTable', 'computeUnitPriceMicroLamports'],

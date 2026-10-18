@@ -66,6 +66,14 @@ export function initCreatorAuthorization(programs, { admin, payer, creator, enab
   { admin, payer, config: d.launchConfig, governance: d.launchGovernance, authorization: authorizationAddress(creator, programs.launch), system_program: SYSTEM },
   { programId: programs.launch })
 }
+// Re-enable an existing creator grant (lifetime quota never resets; consumed launches stay counted).
+export function setCreatorAuthorization(programs, { admin, creator, enabled = true, expiresAtSlot, maxLaunches, expectedGovernance }) {
+  const d = derivedAddresses(programs)
+  return idlInstruction('launch', 'set_creator_authorization', {
+    args: { enabled: !!enabled, expires_at_slot: u64(expiresAtSlot), max_launches: u64(maxLaunches) }, expected_governance: bytes32(expectedGovernance) },
+  { admin, config: d.launchConfig, governance: d.launchGovernance, authorization: authorizationAddress(creator, programs.launch) },
+  { programId: programs.launch })
+}
 // Upgradeable loader SetAuthority (tag 4) without a new authority: irreversible immutability.
 export function loaderFinalize(programData, currentAuthority) {
   return new TransactionInstruction({ programId: pk(LOADER), data: Buffer.from([4, 0, 0, 0]),

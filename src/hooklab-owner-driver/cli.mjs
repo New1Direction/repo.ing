@@ -14,13 +14,14 @@ export const USAGE = `usage:
        [--approved STAGE:SHA256] [--run DIR] [--prep-slot N] [--rpc URL --rpc2 URL] [--config PATH] [--runs DIR] [--journal DIR] [--local-test]
   (one-send journal default: ~/.hooklab-owner/journal/<genesis>; never delete it while any attempt is unresolved)
   node scripts/hooklab-owner.mjs status [--rpc URL --rpc2 URL] [--config PATH] [--local-test]
+  customer-grant also takes --creator PUBKEY (one more launch for that customer wallet)
 stages (in order): ${STAGE_ORDER.join(', ')}
 roles: admin guardian treasury upgrade payer creator mint selectedConfig
 mainnet: reads verify genesis 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d on two HTTPS providers; plan never signs or sends.`
 
 const repeatable = new Set(['--key', '--approved'])
 const flags = new Set(['--local-test'])
-const valued = new Set(['--rpc', '--rpc2', '--config', '--runs', '--journal', '--message-sha256', '--run', '--prep-slot', ...repeatable])
+const valued = new Set(['--rpc', '--rpc2', '--config', '--runs', '--journal', '--message-sha256', '--run', '--prep-slot', '--creator', ...repeatable])
 export function parseArgs(argv) {
   const [command, maybeStage, ...rest] = argv
   const stage = command === 'status' ? 'status' : maybeStage
@@ -41,7 +42,7 @@ export async function main(argv, { log = console.log, confirm } = {}) {
   const args = parseArgs(argv)
   const ctx = await createContext({ configPath: path.resolve(args.config ?? path.join(REPO_ROOT, 'hooklab-owner.config.json')), rpc: args.rpc, rpc2: args.rpc2,
     localTest: !!args['local-test'], runsRoot: path.resolve(args.runs ?? path.join(REPO_ROOT, 'hooklab-owner-runs')),
-    journalRoot: path.resolve(args.journal ?? path.join(os.homedir(), '.hooklab-owner', 'journal')), options: { prepSlot: args['prep-slot'] } })
+    journalRoot: path.resolve(args.journal ?? path.join(os.homedir(), '.hooklab-owner', 'journal')), options: { prepSlot: args['prep-slot'], creator: args.creator } })
   if (args.command === 'status' || args.stage === 'status') {
     const built = await STAGES.status.build(ctx)
     const text = renderPreview({ stage: 'status', network: ctx.network, genesisHash: ctx.genesis, observedSlot: built.observedSlot, providers: ctx.readers.map(r => `${r.provider}=${r.url}`), sections: built.sections })

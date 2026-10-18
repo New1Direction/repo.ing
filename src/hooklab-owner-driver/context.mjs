@@ -11,7 +11,7 @@ import { status } from './stages/status.mjs'
 
 export const STAGES = Object.freeze({ ...adminStages, ...canaryStages, status })
 export const STAGE_ORDER = Object.freeze(['status', 'launch-config', 'swap-config', 'grant', 'gate-finalize', 'fund', 'canary-prepare', 'alt',
-  'canary-gates-open-creation', 'canary-launch', 'canary-gates-close-creation', 'canary-holdings', 'canary-buy', 'canary-sell', 'collect'])
+  'canary-gates-open-creation', 'canary-launch', 'canary-gates-close-creation', 'canary-holdings', 'canary-buy', 'canary-sell', 'collect', 'customer-grant'])
 
 // Only after a verified non-mainnet genesis on two loopback RPCs: the repo compilers accept a
 // local profile solely through this explicit acceptance scope (format-checked, never connected).

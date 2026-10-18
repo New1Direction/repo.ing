@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } fro
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { main } from '../src/hooklab-owner-driver/cli.mjs'
-import { ELF_DIR, VALIDATOR, syntheticRoles, writeKeyFiles, startValidator, bootstrapConfigs, localConfig, cloneBridge, cleanup } from './fixtures/hooklab-owner-local.mjs'
+import { ELF_DIR, VALIDATOR, syntheticRoles, writeKeyFiles, startValidator, bootstrapConfigs, localConfig, cloneBridge, cleanup, LOCAL_FEE_BPS } from './fixtures/hooklab-owner-local.mjs'
 
 const available = existsSync(VALIDATOR) && existsSync(path.join(ELF_DIR, 'bordrless_launch.so'))
 const required = process.env.HOOKLAB_OWNER_LOCAL_REQUIRED === 'true'
@@ -26,16 +26,16 @@ test('owner driver runs every stage end to end on a local validator', { skip: !a
   writeFileSync(configPath, JSON.stringify(localConfig(roles, {}, { collectRoute: route }), null, 2))
   const common = ['--local-test', '--rpc', validator.url, '--rpc2', validator.url2, '--config', configPath, '--runs', path.join(root, 'runs'), '--journal', path.join(root, 'journal')]
   const quiet = { log: () => {} }
-  const planStage = async stage => {
-    const result = await main(['plan', stage, ...common], quiet)
+  const planStage = async (stage, extra = []) => {
+    const result = await main(['plan', stage, ...common, ...extra], quiet)
     assert.ok(result.built.review, `${stage} plan blocked: ${result.built.blocked}`)
     assert.equal(result.preview.simulation.err, null, `${stage} simulation failed: ${JSON.stringify(result.preview.simulation)}`)
     for (const file of ['plan.json', 'preview.json', 'preview.txt', 'unsigned-tx.base64']) assert.ok(existsSync(path.join(result.runDir, file)), `${stage} missing ${file}`)
     return result
   }
-  const run = async (stage, signerRoles, { approve = false } = {}) => {
-    const { built } = await planStage(stage), sha = built.review.messageSha256
-    const args = ['execute', stage, ...common, '--message-sha256', sha, ...signerRoles.flatMap(r => ['--key', `${r}=${keys[r]}`]), ...(approve ? ['--approved', `${stage}:${sha}`] : [])]
+  const run = async (stage, signerRoles, { approve = false, extra = [] } = {}) => {
+    const { built } = await planStage(stage, extra), sha = built.review.messageSha256
+    const args = ['execute', stage, ...common, ...extra, '--message-sha256', sha, ...signerRoles.flatMap(r => ['--key', `${r}=${keys[r]}`]), ...(approve ? ['--approved', `${stage}:${sha}`] : [])]
     const result = await main(args, quiet)
     assert.equal(result.receipt.status, 'finalized-success', stage)
     assert.ok(result.receipt.postconditions.length > 0, `${stage} postconditions missing`)
@@ -79,7 +79,7 @@ test('owner driver runs every stage end to end on a local validator', { skip: !a
       assert.equal(events[0].data.platform_collector, roles.treasury.publicKey.toBase58())
       fees.push({ side, gross, platform, creator })
     }
-    assert.equal(fees[0].gross, 10002n, 'buy of 1,000,200 raw quote at 100 bps')
+    assert.equal(fees[0].gross, 1000200n * BigInt(LOCAL_FEE_BPS) / 10000n, `buy of 1,000,200 raw quote at ${LOCAL_FEE_BPS} bps`)
   })
   await t.test(`collection pays exactly the accrued creator and platform shares (${route} route)`, async () => {
     const treasury = roles.treasury.publicKey, before = await validator.connection.getBalance(treasury, 'finalized')
@@ -90,6 +90,14 @@ test('owner driver runs every stage end to end on a local validator', { skip: !a
     assert.equal(collected.data.collector, roles.treasury.publicKey.toBase58())
     const platformTotal = fees.reduce((n, f) => n + f.platform, 0n), after = await validator.connection.getBalance(treasury, 'finalized')
     if (route === 'sol') assert.equal(BigInt(after - before), platformTotal, 'treasury received the platform share as SOL')
+  })
+  await t.test('customer-grant creates a one-launch grant, then re-enables it for exactly one more, and refuses role addresses', async () => {
+    const customer = (await import('@solana/web3.js')).Keypair.generate().publicKey.toBase58()
+    const first = await run('customer-grant', ['payer', 'admin'], { extra: ['--creator', customer] })
+    assert.match(first.receipt.postconditions.join(' '), /one more launch allowed/)
+    const second = await run('customer-grant', ['payer', 'admin'], { extra: ['--creator', customer] })
+    assert.notEqual(second.sha, first.sha)
+    await assert.rejects(main(['plan', 'customer-grant', ...common, '--creator', roles.creator.publicKey.toBase58()], quiet), /may not be one of the owner role addresses/)
   })
   await t.test('one-send journal refuses to resend a finalized message', async () => {
     const journal = path.join(root, 'journal', validator.genesisHash.slice(0, 16), 'journal')

@@ -11,7 +11,8 @@ import { check, decode, owned, hex, nextState, governanceSection, governanceView
 
 const configRole = { 'launch-config': 'launch', 'swap-config': 'swap' }
 function wanted(ctx, role, current) {
-  if (role === 'launch') return { ...current, max_creator_fee_bps: value(ctx.config, 'creatorFeeBps'),
+  // Ceilings, not the canary's own fee: they bound every creator-selectable fee (0.5%, 1%, 2%).
+  if (role === 'launch') return { ...current, max_creator_fee_bps: value(ctx.config, 'maxCreatorFeeBps'),
     rule_bounds: { ...current.rule_bounds, max_rules_fee_bps: value(ctx.config, 'maxRulesFeeBps') } }
   return { ...current, protocol_fee_bps: value(ctx.config, 'protocolFeeBps'), launch_protocol_share_bps: value(ctx.config, 'launchProtocolShareBps') }
 }
@@ -81,6 +82,51 @@ const grant = {
       && a.consumed.isZero() && a.revision.isZero(), 'Creator authorization differs from the reviewed grant')
     check(governanceView('launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs from the predicted post-state')
     return [`authorization ${expect.authorization} enabled, quota ${expect.maxLaunches}, expiry ${expect.expiresAtSlot}`]
+  },
+}
+
+// One owner-approved customer launch: create the creator's grant (1 launch) or re-enable an existing
+// one for exactly one more launch. Each grant advances launch governance, which invalidates any other
+// in-flight launch review, so the owner agent invites one creator at a time.
+const customerGrant = {
+  name: 'customer-grant',
+  async build(ctx, pinned) {
+    const creator = ctx.options?.creator
+    check(typeof creator === 'string' && pk(creator).toBase58() === creator, 'customer-grant requires --creator PUBKEY')
+    check(!Object.values(ctx.roles).includes(creator), 'customer creator may not be one of the owner role addresses')
+    const policy = value(ctx.config, 'customerGrantPolicy'), authorization = authorizationAddress(creator, ctx.programs.launch)
+    const { snapshot, governance } = await governedSnapshot(ctx, 'launch', [authorization])
+    const existing = snapshot.accounts.get(authorization)
+    const expiresAtSlot = pinned?.expiresAtSlot ?? String(BigInt(snapshot.slot) + BigInt(policy.expirySlots))
+    const expectedGovernance = ix.governanceCommitment('launch', governance.state)
+    let instruction, rent = 0n, before = null, maxLaunches
+    if (existing) {
+      before = decode('launch', 'CreatorAuthorization', owned(snapshot.accounts, authorization, ctx.programs.launch, 'authorization'))
+      check(before.creator.toBase58() === creator, 'existing authorization belongs to a different creator')
+      maxLaunches = String(BigInt(before.consumed.toString()) + 1n)
+      instruction = ix.setCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, creator, expiresAtSlot, maxLaunches, expectedGovernance })
+    } else {
+      maxLaunches = '1'
+      rent = BigInt((await rentExemption(ctx.readers, [73]))[73])
+      instruction = ix.initCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, payer: ctx.roles.payer, creator, expiresAtSlot, maxLaunches, expectedGovernance })
+    }
+    const afterState = nextState(governance.state, {})
+    const { review, blockhash } = await simpleMessage(ctx, { stage: 'customer-grant', payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, instructionDebitLamports: String(rent) })
+    return { observedSlot: snapshot.slot, review, deadlineSlot: undefined, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight, expiresAtSlot },
+      sections: [{ title: existing ? 'creator authorization (re-enable for one more launch)' : 'creator authorization (new account)', rows: [`address ${authorization}`, `creator ${creator}`,
+        ...(before ? [`before: enabled ${before.enabled}; consumed ${before.consumed} of ${before.max_launches}; expires_at_slot ${before.expires_at_slot}`] : []),
+        `after: enabled true; max_launches ${maxLaunches} (lifetime, so exactly one more launch); expires_at_slot ${expiresAtSlot} (exclusive; observed slot ${snapshot.slot} + ${policy.expirySlots})`]},
+        governanceSection('launch', governance.state, afterState),
+        { title: 'funds', rows: [payerRow(ctx, snapshot), existing ? 'no rent: the authorization already exists' : `rent ${sol(rent)} paid by payer for the 73-byte authorization`] }],
+      expect: { authorization, creator, expiresAtSlot, maxLaunches, commitment: hex(ix.governanceCommitment('launch', afterState)) } }
+  },
+  async verify(ctx, expect) {
+    const { snapshot, governance } = await governedSnapshot(ctx, 'launch', [expect.authorization])
+    const a = decode('launch', 'CreatorAuthorization', owned(snapshot.accounts, expect.authorization, ctx.programs.launch, 'authorization'))
+    check(a.creator.toBase58() === expect.creator && a.enabled && a.expires_at_slot.toString() === expect.expiresAtSlot && a.max_launches.toString() === expect.maxLaunches
+      && BigInt(a.consumed.toString()) + 1n === BigInt(expect.maxLaunches), 'Creator authorization differs from the reviewed customer grant')
+    check(governanceView('launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs from the predicted post-state')
+    return [`customer ${expect.creator}: one more launch allowed until slot ${expect.expiresAtSlot}`]
   },
 }
 
@@ -173,7 +219,7 @@ function creationGateStage(stage, open) {
 }
 
 export const adminStages = {
-  'launch-config': governedConfigStage('launch-config'), 'swap-config': governedConfigStage('swap-config'), grant, 'gate-finalize': gateFinalize, fund,
+  'launch-config': governedConfigStage('launch-config'), 'swap-config': governedConfigStage('swap-config'), grant, 'customer-grant': customerGrant, 'gate-finalize': gateFinalize, fund,
   'canary-gates-open-creation': creationGateStage('canary-gates-open-creation', true), 'canary-gates-close-creation': creationGateStage('canary-gates-close-creation', false),
 }
 export { BN }
