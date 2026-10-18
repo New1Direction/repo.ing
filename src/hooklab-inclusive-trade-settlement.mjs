@@ -54,7 +54,7 @@ export async function collectInclusiveTradeSettlement({config,profile,dossierJso
    const meta=tx.meta;check(meta&&Array.isArray(meta.innerInstructions)&&meta.err!==undefined)
    const wire=new VersionedTransaction(tx.transaction.message);wire.signatures=tx.transaction.signatures.map(s=>bs58.decode(s))
    check(Buffer.from(wire.serialize()).toString('base64')===signedTransactionBase64)
-   const slot=integer(tx.slot);check(bound.dossier.programs.every(pin=>pin.deploySlot<=slot));const block=await connection.getBlock(slot,{commitment:'finalized',transactionDetails:'signatures',rewards:false,maxSupportedTransactionVersion:0})
+   const slot=integer(tx.slot);check(bound.dossier.programs.every(pin=>pin.deploySlot<=slot));const block=await connection.getBlockSignatures(slot,'finalized')
    check(block&&pk(block.blockhash).toBase58()===block.blockhash&&pk(block.previousBlockhash).toBase58()===block.previousBlockhash
     &&block.blockhash!==block.previousBlockhash&&Array.isArray(block.signatures)
     &&block.signatures.every(s=>bs58.decode(s).length===64&&bs58.encode(bs58.decode(s))===s)

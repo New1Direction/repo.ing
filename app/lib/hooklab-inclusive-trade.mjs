@@ -29,8 +29,9 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)
    let input;try{input=body.parse(JSON.parse((await readLimitedBody(request,8192)).toString('utf8')))}catch{return reply({error:'Invalid trading request.'},400)}
    pool=database(config)
-   if(!await quota(pool,[[`inclusive-trade:${clientAddress(request)??'unknown'}`,30]]))return reply({error:'Too many requests.'},429)
-   const principal=principalStore(pool,config),owner=await principal.resolve(token),service=runtime()
+   const observing=input.action==='get'||input.action==='reconcile'
+   if(!await quota(pool,[[`inclusive-trade:${observing?'observe':'action'}:${clientAddress(request)??'unknown'}`,observing?120:30]]))return reply({error:'Too many requests.'},429)
+   const principal=principalStore(pool,{enabled:true,origin:config.origin,audience:config.audience,genesisHash:config.genesisHash}),owner=await principal.resolve(token),service=runtime()
    if(!service)return reply({status:'blocked',blockers:[{code:'INCLUSIVE_TRADE_RUNTIME_UNCONFIGURED',message:'Exact approved program pins and trading settings are not installed.'}]})
    if(service.origin!==config.origin)throw Error()
    const lifecycle=service.lifecycle

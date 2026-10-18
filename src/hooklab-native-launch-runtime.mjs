@@ -8,21 +8,24 @@ import { coLocatedMaxWalletPreparationResolver } from './hooklab-max-wallet-prep
 import { coLocatedMaxWalletLaunchResolver } from './hooklab-max-wallet-launch-resolver.mjs'
 import { reviewNewMintPreparationCandidate } from './hooklab-new-mint-preparation.mjs'
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
+import { isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustodyApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
- config,profile,dossierJson,connections,keyRing,activeKeyId,adminSigner,preparationLimits,launchLimits,clock=Date.now}={}){
+ config,profile,dossierJson,connections,keyRing,activeKeyId,adminSigner,preparationLimits,launchLimits,reviewTiming,launchLookupTable,clock=Date.now}={}){
  if(enabled!==true||!ownerCustodyApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Explicit complete release approvals required')
  config=structuredClone(config);profile=structuredClone(profile);preparationLimits=structuredClone(preparationLimits);launchLimits=structuredClone(launchLimits)
  if(!adminSigner||typeof adminSigner.sign!=='function'||adminSigner.address!==config.reviewer)throw Error('Exact approved admin signer required')
  if(JSON.parse(profile.json).buildFeature==='inclusive-fees-candidate'){
   const dossier=JSON.parse(dossierJson)
-  if(dossier.schema!=='repoing/production-observation/2'||!['launch-config','swap-config'].every(role=>dossier.accounts.some(a=>a.role===role&&a.binding==='config-counters-v1')))throw Error('Explicit stable counter bindings required')
+  if((dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||!['launch-config','swap-config'].every(role=>dossier.accounts.some(a=>a.role===role&&a.binding==='config-counters-v1')))throw Error('Explicit stable counter bindings required')
  }
  const settings={enabled,origin,keyRing,activeKeyId}
  const custody=nativeSignerCustodyStore(pool,settings)
  const preparationResolver=coLocatedMaxWalletPreparationResolver(pool,{origin,config,profile,dossierJson,connections,custody,clock})
  const launchResolver=coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dossierJson,connections,clock})
- const context=nativeLaunchContext(pool,{enabled,origin,preparationResolver,launchResolver,preparationLimits,launchLimits})
- const adapter=nativeCustodySigningAdapter({...settings,adminSigner}),sender=nativeTransactionSender({enabled,connections})
+ if(launchLookupTable!==undefined&&typeof launchLookupTable!=='function')throw Error('Explicit launch lookup-table provider required')
+ const launchResolverFor=launchLookupTable?async({preparationId,review})=>coLocatedMaxWalletLaunchResolver(pool,{origin,config:{...config,lookupTable:await launchLookupTable({preparationId,allowCreate:review===undefined})},profile,dossierJson,connections,clock}):undefined
+ const context=nativeLaunchContext(pool,{enabled,origin,preparationResolver,launchResolver,launchResolverFor,preparationLimits,launchLimits,reviewTiming,clock})
+ const adapter=nativeCustodySigningAdapter({...settings,adminSigner}),sender=nativeTransactionSender({enabled,connections,clock})
  const lifecycle=nativeSigningLifecycle(pool,{enabled,origin,resolver:context,custodyAdapter:adapter,sender,stageOperations:{preparation:JSON.parse(profile.json).buildFeature==='inclusive-fees-candidate'?'inclusive-max-wallet-preparation':'max-wallet-preparation',launch:'max-wallet-launch'}})
  const preparationProfile={json:profile.json,expectedSha256:profile.expectedSha256,providers:profile.providers,
   idls:{launch:profile.idls.launch,gate:profile.idls.gate},elfLengths:{launch:profile.elfLengths.launch,gate:profile.elfLengths.gate}}

@@ -3,7 +3,8 @@
 // then this session row. Logout/revoke only updates session rows, never journals.
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
-import { hookAddress, HOOK_MAINNET_GENESIS } from './hooklab-execution-contract.mjs'
+import { hookAddress } from './hooklab-execution-contract.mjs'
+import { executionGenesis } from './hooklab-local-acceptance.mjs'
 const fail=()=>Object.assign(Error('Wallet session unavailable, expired or changed'),{status:401})
 export async function lockWalletPrincipal(db, sessionToken, expectedOrigin) {
   let origin
@@ -15,8 +16,8 @@ export async function lockWalletPrincipal(db, sessionToken, expectedOrigin) {
   const {rows:[row]}=await db.query(`select wallet,origin,audience,genesis_hash,expires_at,revoked_at
     from hook_lab_wallet_sessions where token_sha256=$1 for share`,[digest])
   const {rows:[clock]}=await db.query('select clock_timestamp() as now')
-  if(!row||row.origin!==expectedOrigin||row.audience!=='general-launcher'||row.genesis_hash!==HOOK_MAINNET_GENESIS
+  if(!row||row.origin!==expectedOrigin||row.audience!=='general-launcher'||row.genesis_hash!==executionGenesis()
     ||row.revoked_at!==null||!(row.expires_at instanceof Date)||row.expires_at<=clock.now||!hookAddress.safeParse(row.wallet).success||!PublicKey.isOnCurve(new PublicKey(row.wallet).toBuffer()))throw fail()
-  return Object.freeze({kind:'wallet',wallet:row.wallet,origin:expectedOrigin,audience:'general-launcher',genesisHash:HOOK_MAINNET_GENESIS,
+  return Object.freeze({kind:'wallet',wallet:row.wallet,origin:expectedOrigin,audience:'general-launcher',genesisHash:executionGenesis(),
     expiresAt:row.expires_at.toISOString(),executionAuthorized:false,canLaunch:false,canSign:false,canSubmit:false})
 }

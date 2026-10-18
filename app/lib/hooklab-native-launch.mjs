@@ -29,8 +29,9 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    const token=walletIdentitySessionToken(request);if(!token)return reply({error:'Sign in with your wallet first.'},401)
    let input;try{input=inputSchema.parse(JSON.parse((await readLimitedBody(request,8192)).toString('utf8')))}catch{return reply({error:'Invalid launcher request.'},400)}
    pool=database(config)
-   if(!await quota(pool,[[`native-launch:${clientAddress(request)??'unknown'}`,30]]))return reply({error:'Too many requests. Try again later.'},429)
-   const principal=principalStore(pool,config),owner=await principal.resolve(token)
+   const observing=input.action==='get'||input.action==='reconcile'
+   if(!await quota(pool,[[`native-launch:${observing?'observe':'action'}:${clientAddress(request)??'unknown'}`,observing?120:30]]))return reply({error:'Too many requests. Try again later.'},429)
+   const principal=principalStore(pool,{enabled:true,origin:config.origin,audience:config.audience,genesisHash:config.genesisHash}),owner=await principal.resolve(token)
    const service=runtime()
    if(!service)return reply({status:'blocked',blockers:[{code:'APPROVED_RUNTIME_UNCONFIGURED',message:'Owner-approved custody, exact deployment and fee settings are not configured.'}]})
    const lifecycle=service.lifecycle

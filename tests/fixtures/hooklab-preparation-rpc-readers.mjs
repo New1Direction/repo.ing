@@ -20,7 +20,7 @@ export function customPreparationRpcProviders(fixture) {
           meta: { fee: Number(t.feeLamports), err: structuredClone(t.err), preBalances: t.preBalances.map(Number), postBalances: t.postBalances.map(Number),
             loadedAddresses: { writable: t.loadedAddresses.writable.map(pk), readonly: t.loadedAddresses.readonly.map(pk) } } }
       },
-      async getBlock(...args) { record('getBlock', args); if (!observation.block) return null; const { slot, ...block } = observation.block; return structuredClone(block) },
+      async getBlockSignatures(...args) { record('getBlockSignatures', args); if (!observation.block) return null; const { slot, ...block } = observation.block; return structuredClone(block) },
       async getMultipleAccountsInfoAndContext(...args) {
         record('getMultipleAccountsInfoAndContext', args)
         if (!observation.snapshot) return null

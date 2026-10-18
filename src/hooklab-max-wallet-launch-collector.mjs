@@ -9,7 +9,8 @@ import { hookAddress, hookDigest, hookRawAmount } from './hooklab-execution-cont
 import { parseMaxWalletProfile, parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
 import { compileMaxWalletLaunchReview, maxWalletLaunchInventory, parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { hookLabReviewSchema, inspectHookLabMessage } from './hooklab-message-boundary.mjs'
-import { productionDossierSchema, inspectProductionEvidence } from './hooklab-production-observer.mjs'
+import { parseExecutionDossier, inspectProductionEvidence } from './hooklab-production-observer.mjs'
+import { assertLocalExecutionEndpoint, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 const integer=v=>{check(Number.isSafeInteger(v)&&v>=0,'Invalid RPC integer');return v}
@@ -36,15 +37,16 @@ export function validateMaxWalletOperatorBindings({config,profile,dossierJson,co
  check(c.enabled,'Operator configuration is disabled')
  check(sha(profile.json)===c.profileSha256&&profile.expectedSha256===c.profileSha256,'Profile pin differs')
  check(sha(dossierJson)===c.dossierSha256,'Dossier pin differs')
- const d=productionDossierSchema.parse(JSON.parse(dossierJson))
+ const d=parseExecutionDossier(JSON.parse(dossierJson))
  check(d.artifacts.profileSha256===c.profileSha256&&d.artifacts.sourceCommit===p.sourceCommit&&d.genesisHash===p.genesisHash,'Dossier profile binding differs')
  check(Array.isArray(connections)&&connections.length===2&&connections[0].connection!==connections[1].connection,'Two independent connections required')
  const names=connections.map(x=>x.provider)
  check(new Set(names).size===2&&isDeepStrictEqual(names,profile.providers)&&isDeepStrictEqual(names,d.providers)
   &&isDeepStrictEqual(names,c.providerTrustDomains.map(x=>x.provider)),'Provider names differ')
- check(new Set(c.providerTrustDomains.map(x=>x.trustDomain)).size===2,'Independent operator-reviewed trust domains required')
+ if(!isLocalExecutionDossier(d))check(new Set(c.providerTrustDomains.map(x=>x.trustDomain)).size===2,'Independent operator-reviewed trust domains required')
  const origins=connections.map(({connection},i)=>{
   const u=new URL(connection.rpcEndpoint),pin=new URL(c.providerTrustDomains[i].origin)
+  assertLocalExecutionEndpoint(connection.rpcEndpoint)
   check(u.protocol==='https:'&&!u.username&&!u.password&&!u.hash&&pin.href===`${pin.origin}/`&&u.origin===pin.origin,'Provider origin differs')
   return u.origin
  })

@@ -4,14 +4,16 @@ import { PublicKey,VersionedMessage } from '@solana/web3.js'
 import { isDeepStrictEqual } from 'node:util'
 import { hookLabReviewSchema,inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { createHash } from 'node:crypto'
-import { inclusiveMaxWalletProfileSchema,inclusiveMaxWalletPreparationRequestSchema,planInclusiveMaxWalletPreparation } from './hooklab-inclusive-max-wallet-preparation.mjs'
+import { inclusiveMaxWalletPreparationRequestSchema,planInclusiveMaxWalletPreparation } from './hooklab-inclusive-max-wallet-preparation.mjs'
+import { parseInclusiveMaxWalletProfile } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { assertLocalExecutionEndpoint } from './hooklab-local-acceptance.mjs'
 const fail=()=>Object.assign(Error('Max-wallet preparation reads unavailable or changed'),{code:'MAX_WALLET_PREPARATION_READS_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
 const integer=value=>{check(Number.isSafeInteger(value)&&value>=0);return value}
 const pk=value=>new PublicKey(value)
 const pda=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>typeof s==='string'?Buffer.from(s):s),pk(program))[0].toBase58()
 export function inclusiveMaxWalletPreparationInventory(profile,request){
- const p=inclusiveMaxWalletProfileSchema.parse(profile),r=inclusiveMaxWalletPreparationRequestSchema.parse(request),L=p.programs.launch,G=p.programs.gate,loader='BPFLoaderUpgradeab1e11111111111111111111111'
+ const p=parseInclusiveMaxWalletProfile(profile),r=inclusiveMaxWalletPreparationRequestSchema.parse(request),L=p.programs.launch,G=p.programs.gate,loader='BPFLoaderUpgradeab1e11111111111111111111111'
  return [L,G,pda(loader,pk(L).toBuffer()),pda(loader,pk(G).toBuffer()),pda(L,'config'),pda(G,'policy-v2',pk(r.mint).toBuffer()),
   pda(G,'bordrless-hook-accounts',pk(r.mint).toBuffer()),r.mint,r.selectedConfig,r.creator,r.feePayer,pda(L,'launch',pk(r.mint).toBuffer())]
 }
@@ -19,7 +21,7 @@ export async function collectInclusiveMaxWalletPreparationReview({profile,reques
  try{
   const retainedReview=expectedReview===undefined?null:hookLabReviewSchema.parse(expectedReview)
   if(retainedReview)inspectHookLabMessage(retainedReview)
-  const p=inclusiveMaxWalletProfileSchema.parse(JSON.parse(profile.json)),r=inclusiveMaxWalletPreparationRequestSchema.parse(request)
+  const p=parseInclusiveMaxWalletProfile(JSON.parse(profile.json)),r=inclusiveMaxWalletPreparationRequestSchema.parse(request)
   check(createHash('sha256').update(profile.json).digest('hex')===profile.expectedSha256)
   check(Array.isArray(connections)&&connections.length===2&&new Set(connections.map(x=>x.provider)).size===2
    &&JSON.stringify(connections.map(x=>x.provider))===JSON.stringify(profile.providers))
@@ -27,6 +29,7 @@ export async function collectInclusiveMaxWalletPreparationReview({profile,reques
   const endpoints=connections.map(x=>x.connection.rpcEndpoint)
   if(endpoints.some(x=>x!==undefined)){
    check(endpoints.every(x=>typeof x==='string'))
+   endpoints.forEach(assertLocalExecutionEndpoint)
    const urls=endpoints.map(x=>new URL(x));check(urls.every(x=>x.protocol==='https:'&&!x.username&&!x.password&&!x.hash))
    check(urls[0].origin!==urls[1].origin)
   }

@@ -64,8 +64,8 @@ test('durable exact-message signing retains partials, refuses mutation and sends
   current=await store.get(token,id);assert.equal(current.status,'outcome-unknown');assert.ok(current.signature)
   await assert.rejects(store.submitOnce(token,id));assert.equal(sends,1)
   current=await store.reconcile(token,id);assert.equal(current.status,'outcome-unknown')
-  outcome='finalized-success';current=await store.reconcile(token,id);assert.equal(current.status,'finalized-success')
-  assert.equal(current.settlement.executionStatus,'finalized-executed');assert.equal(current.settlement.policyReviewRequired,true);assert.equal(current.settlement.quote.delivered,'9');assert.ok(!JSON.stringify(current).includes('NEVER-BROWSER'))
+  outcome='finalized-success';current=await store.reconcile(token,id);assert.equal(current.status,'review-required')
+  assert.equal(current.settlement.evidenceConflict,false);assert.ok(!JSON.stringify(current).includes('NEVER-BROWSER'))
   outcome='finalized-failure';current=await store.reconcile(token,id);assert.equal(current.status,'review-required')
   outcome='finalized-success';current=await store.reconcile(token,id);assert.equal(current.status,'review-required')
   const saved=(await pool.query('select * from hook_lab_native_signing_operations where id=$1',[id])).rows[0]

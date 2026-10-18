@@ -25,6 +25,6 @@ for(const [name,mutate]of [
  ['different config approval',f=>{f.config.approvalReference+='changed'}],['wrong signature',f=>{f.signature='invalid'}],
 ])test(`settlement stays unresolved for ${name}`,async()=>{const f=await maxWalletSettlementFixture();mutate(f);assert.equal((await collectMaxWalletLaunchSettlement(f)).status,'unresolved')})
 test('two providers disagreeing on immutable transaction metadata creates conflict',async()=>{
- const f=await maxWalletSettlementFixture();f.connections[1].connection.getBlock=async()=>({...f.block,blockhash:'11111111111111111111111111111111'})
+ const f=await maxWalletSettlementFixture();f.connections[1].connection.getBlockSignatures=async()=>({...f.block,blockhash:'11111111111111111111111111111111'})
  assert.equal((await collectMaxWalletLaunchSettlement(f)).status,'conflict')
 })

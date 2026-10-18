@@ -7,6 +7,7 @@ import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { verifyWalletSignature } from './github-wallet-links.mjs'
 import { HOOK_MAINNET_GENESIS, hookAddress } from './hooklab-execution-contract.mjs'
+import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
 const sha = value => createHash('sha256').update(value).digest('hex')
 const fail = () => Object.assign(new Error('Wallet identity unavailable, expired or changed'), { status: 401 })
 const check = value => { if (!value) throw fail() }
@@ -31,7 +32,9 @@ const challengeMessage = row => [
 const noAuthority = { executionAuthorized: false, canSign: false, canSubmit: false, canLaunch: false }
 
 export function walletPrincipalStore(pool, input) {
-  const config = Object.freeze(configSchema.parse(input))
+  const local = localAcceptanceNetwork()
+  const schema = local ? configSchema.extend({ origin: z.literal(local.origin), genesisHash: z.literal(local.genesisHash) }).strict() : configSchema
+  const config = Object.freeze(schema.parse(input))
   const enabled = () => check(config.enabled === true)
   const scoped = row => row && row.origin === config.origin && row.audience === config.audience && row.genesis_hash === config.genesisHash
   const scope = [config.origin, config.audience, config.genesisHash]

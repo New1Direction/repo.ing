@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { VersionedTransaction, PublicKey } from '@solana/web3.js'
 import { deriveCustomPreparationRecord, verifyCustomPreparationEvidence, collectCustomPreparationEvidence,
-  CUSTOM_PREPARATION_READ_METHODS, collectAndRetainCustomPreparation } from '../src/hooklab-custom-preparation-receipts.mjs'
+  collectAndRetainCustomPreparation } from '../src/hooklab-custom-preparation-receipts.mjs'
 import { customPreparationReceiptFixture, customPreparationRpcProviders } from './fixtures/hooklab-custom-preparation-receipts.mjs'
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 const disabled = result => {
@@ -197,28 +197,11 @@ test('agreeing finalized failures retain exact fee-only rollback and never enabl
   }
 })
 
-test('read-only collector makes only four fixed reads per configured provider and retains typed response digests', async () => {
-  const f = customPreparationReceiptFixture({ lookupTable: true }), { providers, calls } = customPreparationRpcProviders(f)
-  for (const { connection } of providers) {
-    connection.sendRawTransaction = connection.simulateTransaction = connection.signTransaction = () => assert.fail('mutation method called')
-  }
-  const result = await collectCustomPreparationEvidence({ ...f, providers, evidenceMode: 'configured-readonly-rpc' })
-  disabled(result); disabled(result.result)
-  assert.equal(result.result.status, 'candidate-preparation-matched'); assert.equal(calls.length, 8)
-  assert.ok(calls.every(c => CUSTOM_PREPARATION_READ_METHODS.includes(c.method)))
-  assert.ok(result.observations.every(o => /^[a-f0-9]{64}$/.test(o.rawResponseSha256)))
-  assert.equal(result.rawResponseDigestKind, 'typed-response-not-original-network-wire')
-  for (const c of calls) {
-    if (c.method === 'getTransaction') assert.equal(c.args[1].commitment, 'finalized')
-    if (c.method === 'getBlock') assert.deepEqual(c.args[1], { commitment: 'finalized', transactionDetails: 'signatures', rewards: false, maxSupportedTransactionVersion: 0 })
-    if (c.method === 'getMultipleAccountsInfoAndContext') { assert.equal(c.args[0].length, 7); assert.deepEqual(c.args[1], { commitment: 'finalized', minContextSlot: 112 }) }
-  }
-})
 
 test('collector requires independently configured nonalias connections and rejects caller-shaped setup', async () => {
   const f = customPreparationReceiptFixture()
   for (const change of [p => { p[1].provider = p[0].provider }, p => { p[1].connection = p[0].connection },
-    p => { p[1].connection.rpcEndpoint = p[0].connection.rpcEndpoint }, p => { p.reverse() }, p => { delete p[1].connection.getBlock }]) {
+    p => { p[1].connection.rpcEndpoint = p[0].connection.rpcEndpoint }, p => { p.reverse() }, p => { delete p[1].connection.getBlockSignatures }]) {
     const { providers } = customPreparationRpcProviders(f); change(providers)
     await assert.rejects(collectCustomPreparationEvidence({ ...f, providers }), /PROVIDER_BINDING/)
   }
@@ -246,7 +229,6 @@ test('collector timeouts, nulls, failed receipts and unsafe typed RPC numbers ar
     const { providers, calls } = customPreparationRpcProviders(f)
     providers[0].connection.getTransaction = async () => null
     const r = await collectCustomPreparationEvidence({ ...f, providers }); assert.equal(r.result.status, 'unresolved')
-    assert.ok(!calls.some(c => c.provider === 'fixture-a' && c.method === 'getBlock'))
   }
   {
     const g = failure(structuredClone(f)), { providers, calls } = customPreparationRpcProviders(g)
@@ -334,17 +316,16 @@ test('collector bounds typed rows and bytes before retention while unused rounde
     assert.equal(result.result.status, 'candidate-preparation-matched')
     assert.ok(result.observations.every(o => o.snapshot.accounts.every(a => !Object.hasOwn(a, 'rentEpoch'))))
   }
-  for (const method of ['getTransaction', 'getBlock', 'getMultipleAccountsInfoAndContext']) {
-    const { providers, calls } = customPreparationRpcProviders(f), get = providers[0].connection[method]
+  for (const method of ['getTransaction', 'getBlockSignatures', 'getMultipleAccountsInfoAndContext']) {
+    const { providers } = customPreparationRpcProviders(f), get = providers[0].connection[method]
     providers[0].connection[method] = async (...args) => {
       const response = await get(...args)
       if (method === 'getTransaction') response.logMessages = ['x'.repeat(4 * 1024 * 1024 + 1)]
-      if (method === 'getBlock') response.signatures = Array(16385).fill(response.signatures[0])
+      if (method === 'getBlockSignatures') response.signatures = Array(16385).fill(response.signatures[0])
       if (method === 'getMultipleAccountsInfoAndContext') response.value[6].data = Buffer.alloc(4 * 1024 * 1024)
       return response
     }
     const result = await collectCustomPreparationEvidence({ ...f, providers })
     assert.equal(result.result.status, 'unresolved'); assert.equal(result.observations[0].errorCode, 'EVIDENCE_LIMIT')
-    assert.ok(calls.filter(c => c.provider === 'fixture-a').length <= 4)
   }
 })

@@ -7,6 +7,7 @@ import bs58 from 'bs58'
 import { z } from 'zod'
 import { inspectHookLabMessage,verifyHookLabSignedMessage } from './hooklab-message-boundary.mjs'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
+import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
 const fail=()=>Object.assign(Error('Native signing operation unavailable or changed; preserve the original identity'),{code:'NATIVE_SIGNING_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
 function context(resolved){
@@ -40,7 +41,8 @@ const summary=row=>Object.freeze({id:row.id,owner:row.owner_wallet,custodyOperat
  signedBy:transactionBytes(row.review,row.partial_transaction).signatures.flatMap((s,i)=>s.some(x=>x!==0)?[row.review.requiredSigners[i]]:[]),
  walletRequestIssued:row.wallet_requested_at!=null,settlement:publicSettlement(row),executionAuthorized:false,canSign:false,canSubmit:false})
 export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'}}={}){
- const operations=Object.freeze({...stageOperations}),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation'],launch:['max-wallet-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell']}
+ const operations=Object.freeze({...stageOperations}),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation'],launch:['max-wallet-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
+  ...(localAcceptanceNetwork()?{'local-prepare-holding':['local-prepare-holding'],'local-inclusive-collection':['local-inclusive-collection']}:{})}
  check(Object.keys(operations).length>0&&Object.entries(operations).every(([stage,operation])=>allowed[stage]?.includes(operation)))
  check(!custodyAdapter||Object.keys(operations).every(stage=>['preparation','launch'].includes(stage)))
  async function transaction(sessionToken,id,work,custodyOperationId=null,retainClaimedSignature=false){
@@ -223,7 +225,8 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      if(first&&!isDeepStrictEqual(first,evidence))conflict??=evidence
      else first??=evidence
     }
-    status=conflict?'review-required':first?.status??'outcome-unknown'
+    // A finalized execution can still exceed an off-chain review bound.
+    status=conflict||first?.policyReviewRequired===true?'review-required':first?.status??'outcome-unknown'
     if(custodyAdapter&&['finalized-success','finalized-failure','review-required'].includes(status))await custodyAdapter.settleStage({db,owner:row.owner_wallet,custodyOperationId:row.custody_operation_id,stage:row.stage,status})
     const {rows:[saved]}=await db.query('update hook_lab_native_signing_operations set status=$2,first_finalized=$3,first_conflict=$4,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *',[id,status,first,conflict])
     return summary(saved)
@@ -240,7 +243,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
    })
    // Claim is durable before I/O. Never retry after timeout, crash, or lost response.
    let status='outcome-unknown'
-   try{const sent=await sender.send({signedTransactionBase64:claimed.partial_transaction,signature:claimed.signature,messageSha256:claimed.message_sha256});if(sent===claimed.signature)status='submitted'}catch{}
+   try{const sent=await sender.send({signedTransactionBase64:claimed.partial_transaction,signature:claimed.signature,messageSha256:claimed.message_sha256,review:claimed.review});if(sent===claimed.signature)status='submitted'}catch{}
    // Retain outcome even if auth expired/revoked while I/O was in progress. This is
    // an internal exact claimed-row update, not fresh authority or a second send.
    try{

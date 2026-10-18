@@ -360,7 +360,7 @@ function checkCurrentPrograms(input, plan, snapshot, transactionSlot) {
 
 // These are the only connection operations invoked. getMultipleAccountsInfoAndContext is web3's
 // typed wrapper for getMultipleAccounts. Never sign, send, simulate, generate keys or call a wallet.
-export const CUSTOM_PREPARATION_READ_METHODS = Object.freeze(['getGenesisHash', 'getTransaction', 'getBlock', 'getMultipleAccountsInfoAndContext'])
+export const CUSTOM_PREPARATION_READ_METHODS = Object.freeze(['getGenesisHash', 'getTransaction', 'getBlockSignatures', 'getMultipleAccountsInfoAndContext'])
 const amountFromRpc = value => { check(Number.isSafeInteger(value) && value >= 0, 'INVALID_RESPONSE'); return String(value) }
 function normalizeTransaction(tx) {
   check(tx?.transaction?.message?.version === 0, 'INVALID_RESPONSE')
@@ -460,8 +460,7 @@ export async function collectCustomPreparationEvidence({ preparationInput, signe
       const tx = await read(() => connection.getTransaction(signed.signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }))
       if (tx !== null) {
         observation.transaction = normalizeTransaction(tx)
-        const block = await read(() => connection.getBlock(observation.transaction.slot,
-          { commitment: 'finalized', transactionDetails: 'signatures', rewards: false, maxSupportedTransactionVersion: 0 }))
+        const block = await read(() => connection.getBlockSignatures(observation.transaction.slot, 'finalized'))
         if (block !== null) observation.block = blockSchema.parse({ slot: observation.transaction.slot, blockhash: block.blockhash,
           previousBlockhash: block.previousBlockhash, parentSlot: block.parentSlot, blockHeight: block.blockHeight,
           blockTime: block.blockTime, signatures: block.signatures })

@@ -6,7 +6,8 @@ import { assertSameOrigin } from './auth.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
 import { readLimitedBody } from '../../src/token-image.mjs'
 import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
-import { HOOK_MAINNET_GENESIS, hookAddress } from '../../src/hooklab-execution-contract.mjs'
+import { hookAddress } from '../../src/hooklab-execution-contract.mjs'
+import { executionGenesis } from '../../src/hooklab-local-acceptance.mjs'
 const BINDING = '__Host-hook-wallet-binding', SESSION = '__Host-hook-wallet-session'
 const sha = value => createHash('sha256').update(value).digest('hex')
 const headers = { 'Cache-Control': 'private, no-store', Vary: 'Cookie', 'X-Content-Type-Options': 'nosniff' }
@@ -38,7 +39,7 @@ export function walletIdentityConfiguration(env = process.env) {
   if (origin.protocol !== 'https:' || origin.origin !== env.HOOK_WALLET_IDENTITY_ORIGIN
     || !env.HOOK_WALLET_IDENTITY_DATABASE_URL) throw Error('Explicit identity configuration required')
   return { origin: origin.origin, databaseUrl: env.HOOK_WALLET_IDENTITY_DATABASE_URL,
-    audience: 'general-launcher', genesisHash: HOOK_MAINNET_GENESIS, enabled: true }
+    audience: 'general-launcher', genesisHash: executionGenesis(env), enabled: true }
 }
 // Fail-closed, shared DB quota. Never respects the unrelated REQUEST_LIMITS_DISABLED flag.
 export async function walletIdentityQuota(pool, scopes) {

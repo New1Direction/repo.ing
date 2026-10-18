@@ -115,7 +115,7 @@ export async function collectMaxWalletLaunchSettlement({config,profile,dossierJs
    const wire=new VersionedTransaction(t.transaction.message);wire.signatures=t.transaction.signatures.map(x=>bs58.decode(x));check(Buffer.from(wire.serialize()).toString('base64')===signedTransactionBase64)
    const loaded=meta.loadedAddresses??{writable:[],readonly:[]},keys=t.transaction.message.getAccountKeys({accountKeysFromLookups:loaded}),all=Array.from({length:keys.length},(_,i)=>key(keys.get(i)))
    check(isDeepStrictEqual(all,review.accounts.map(x=>x.address))&&meta.preBalances.length===all.length&&meta.postBalances.length===all.length)
-   const block=await read(()=>connection.getBlock(slot,{commitment:'finalized',transactionDetails:'signatures',rewards:false,maxSupportedTransactionVersion:0}))
+   const block=await read(()=>connection.getBlockSignatures(slot,'finalized'))
    check(block&&key(pk(block.blockhash))===block.blockhash&&key(pk(block.previousBlockhash))===block.previousBlockhash&&block.blockhash!==block.previousBlockhash
     &&Array.isArray(block.signatures)&&block.signatures.every(x=>bs58.decode(x).length===64&&bs58.encode(bs58.decode(x))===x)&&block.signatures.filter(x=>x===signature).length===1&&new Set(block.signatures).size===block.signatures.length&&int(block.parentSlot)<slot&&int(block.blockHeight)<=review.lastValidBlockHeight)
    check(slot>=review.observedSlot&&slot<=review.validUntilSlot&&block.blockHeight>=ci.recentBlockhash.currentBlockHeight)

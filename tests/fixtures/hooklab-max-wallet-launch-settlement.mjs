@@ -27,7 +27,7 @@ export async function maxWalletSettlementFixture(){
  const loaded=review.accounts.slice(tx.message.staticAccountKeys.length),transaction={slot,transaction:{message:tx.message,signatures:tx.signatures.map(x=>bs58.encode(x))},meta:{err:null,fee:Number(f.f.recentBlockhash.networkFeeLamports),preBalances,postBalances,
   loadedAddresses:{writable:loaded.filter(x=>x.writable).map(x=>pk(x.address)),readonly:loaded.filter(x=>!x.writable).map(x=>pk(x.address))},innerInstructions}}
  const block={parentSlot:slot-1,blockHeight:slot,blockhash:pk(Buffer.alloc(32,161)).toBase58(),previousBlockhash:pk(Buffer.alloc(32,162)).toBase58(),signatures:[signature]}
- for(const {connection}of f.connections){connection.getTransaction=async()=>transaction;connection.getBlock=async()=>block;connection.getMultipleAccountsInfoAndContext=async keys=>({context:{slot:slot+2},value:keys.map(k=>{const a=accounts.get(k.toBase58());return a?{owner:pk(a.owner),executable:a.executable,lamports:Number(a.lamports),data:Buffer.from(a.dataBase64,'base64')}:null})})}
+ for(const {connection}of f.connections){connection.getTransaction=async()=>transaction;connection.getBlockSignatures=async()=>block;connection.getMultipleAccountsInfoAndContext=async keys=>({context:{slot:slot+2},value:keys.map(k=>{const a=accounts.get(k.toBase58());return a?{owner:pk(a.owner),executable:a.executable,lamports:Number(a.lamports),data:Buffer.from(a.dataBase64,'base64')}:null})})}
  return {...f,review,settlementContext,signedTransactionBase64,signature,transaction,block,postAccounts:accounts,expected}
 }
 

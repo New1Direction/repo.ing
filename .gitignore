@@ -18,6 +18,8 @@ node_modules/
 *.secrets
 *keypair*.json
 *wallet*.json
+# Reviewed public program ABI; never exempt wallet/key material generally.
+!/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/hook_max_wallet.json
 *private*key*
 *secret*key*
 *credentials*.json

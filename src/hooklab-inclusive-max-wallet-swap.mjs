@@ -8,7 +8,7 @@ import BN from 'bn.js'
 import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, TransactionInstruction, TransactionMessage } from '@solana/web3.js'
 import { z } from 'zod'
 import { hookAddress as key, hookDigest as digest, hookRawAmount as u64 } from './hooklab-execution-contract.mjs'
-import { inclusiveMaxWalletProfileSchema as maxWalletProfileSchema } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { parseInclusiveMaxWalletProfile } from './hooklab-inclusive-max-wallet-profile.mjs'
 import { modelInclusiveCreatorQuote } from './hooklab-inclusive-fee-quote.mjs'
 import { readInclusiveFeePolicy } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
@@ -133,7 +133,7 @@ function metasFor(profile, r, a, swap) {
 }
 /** Full deterministic read inventory; callers must provide exactly these rows, including absences. */
 export function inclusiveMaxWalletSwapInventory(profileInput, requestInput) {
-  const profile = maxWalletProfileSchema.parse(profileInput), r = inclusiveMaxWalletSwapRequestSchema.parse(requestInput), a = deriveAddresses(profile, r)
+  const profile = parseInclusiveMaxWalletProfile(profileInput), r = inclusiveMaxWalletSwapRequestSchema.parse(requestInput), a = deriveAddresses(profile, r)
   const addresses = [profile.programs.launch, profile.programs.swap, profile.programs.gate, profile.programs.token,
     r.trader, r.recipient, r.feePayer, r.mint, profile.quoteMint, r.selectedConfig, ...Object.values(a)]
   return [...new Set(addresses)].sort()
@@ -168,7 +168,7 @@ export function compileInclusiveMaxWalletSwapReview(input) {
 function compile(input, fixture) {
   const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
-  const profile = maxWalletProfileSchema.parse(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
+  const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
   check(new Set([...Object.values(profile.programs), profile.quoteMint, zero, KIT]).size === 8, 'Profile program roles alias')
   const launch = binding(envelope, profile, 'launch'), swap = binding(envelope, profile, 'swap'), gate = binding(envelope, profile, 'gate')
   for (const name of ['before_swap_inclusive_v1', 'after_swap_inclusive_v1']) {

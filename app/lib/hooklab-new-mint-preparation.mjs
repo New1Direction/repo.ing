@@ -27,7 +27,7 @@ export function createNewMintPreparationHandler({env=process.env,configuration=w
    let input;try{input=schema.parse(JSON.parse((await readLimitedBody(request,2048)).toString('utf8')))}catch{return reply({error:'Invalid preparation request.'},400)}
    pool=database(config)
    if(!await quota(pool,[[`new-mint:${clientAddress(request)??'unknown'}`,10],[`new-mint:wallet:${input.wallet}`,10]]))return reply({error:'Too many reviews. Try again later.'},429)
-   const principal=principalStore(pool,config),owner=await principal.resolve(sessionToken)
+   const principal=principalStore(pool,{enabled:true,origin:config.origin,audience:config.audience,genesisHash:config.genesisHash}),owner=await principal.resolve(sessionToken)
    if(owner.wallet!==input.wallet)return reply({error:'Connected wallet does not match the signed-in owner.'},403)
    if(candidateReview===null)return reply({status:'blocked',operationId:input.operationId,wallet:owner.wallet,blockers})
    // Explicit server injection for local tests only. The deployed route supplies none.

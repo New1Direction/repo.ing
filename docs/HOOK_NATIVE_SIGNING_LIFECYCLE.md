@@ -24,6 +24,12 @@ The resolver contract is INTERNAL, not an owner-signature wire format:
   Its finalized evidence must contain immutable receipt identity, not changing read
   timestamps/current snapshots. First finality and first conflict are sticky.
 
+A finalized-success receipt describes successful on-chain execution, not approval
+of an exceeded review-only bound. If the first authenticated finalized receipt
+sets `policyReviewRequired: true`, the operation is retained as `review-required`
+even without conflicting evidence. The original finalized receipt and signed
+wire remain immutable; this state never authorizes another submission.
+
 Operator approval is an explicit deployment process/configuration gate, not inferred
 from a supplied digest or fabricated cryptographic owner attestation. The actual
 production resolver is a separate integration. An injected status string is trusted

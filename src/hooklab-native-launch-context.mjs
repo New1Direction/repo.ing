@@ -6,8 +6,10 @@ import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
 const check=x=>{if(!x)throw Error('Launch context unavailable or changed')}
 const preparationOf=request=>parseMaxWalletPreparationRequest(Object.fromEntries(Object.entries(request).filter(([k])=>!['schema','reviewer','name','symbol','uri','virtualQuote'].includes(k)).concat([['schema',request.policyVersion===2?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1']])))
-export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolver,launchResolver,preparationLimits,launchLimits}={}){
+export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolver,launchResolver,launchResolverFor,preparationLimits,launchLimits,reviewTiming,clock=Date.now}={}){
  const limits=structuredClone({preparationLimits,launchLimits})
+ check(reviewTiming===undefined||typeof reviewTiming==='function')
+ check(launchResolverFor===undefined||typeof launchResolverFor==='function')
  async function transaction(token,id,work){
   let db
   try{
@@ -24,8 +26,16 @@ export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolv
  async function resolve(input,expectedReview){
   const c=await get(input.sessionToken,input.custodyOperationId)
   check(input.owner===c.owner_wallet)
-  const result=input.stage==='preparation'?await preparationResolver.resolve({sessionToken:input.sessionToken,custodyOperationId:input.custodyOperationId,limits:c.preparation_limits,expectedReview})
-   :input.stage==='launch'?await launchResolver.resolve({sessionToken:input.sessionToken,preparationId:input.custodyOperationId,request:c.launch_request,limits:c.launch_limits,expectedReview}):null
+  const approved=input.stage==='preparation'?c.preparation_limits:input.stage==='launch'?c.launch_limits:null
+  check(approved)
+  const activeLaunchResolver=input.stage==='launch'&&launchResolverFor?await launchResolverFor({preparationId:input.custodyOperationId,review:expectedReview}):launchResolver
+  // Only unsigned review creation can obtain a new timing lease. Revalidation
+  // keeps the issued deadline and slot ceiling; financial limits never change.
+  const timing=expectedReview?{nowMs:clock(),validUntilSlot:expectedReview.validUntilSlot,reviewExpiresAtMs:expectedReview.reviewExpiresAtMs}
+   :reviewTiming?await reviewTiming({stage:input.stage}):approved
+  const activeLimits={...approved,nowMs:timing.nowMs,validUntilSlot:timing.validUntilSlot,reviewExpiresAtMs:timing.reviewExpiresAtMs}
+  const result=input.stage==='preparation'?await preparationResolver.resolve({sessionToken:input.sessionToken,custodyOperationId:input.custodyOperationId,limits:activeLimits,expectedReview})
+   :await activeLaunchResolver.resolve({sessionToken:input.sessionToken,preparationId:input.custodyOperationId,request:c.launch_request,limits:activeLimits,expectedReview})
   check(result&&isDeepStrictEqual(c,await get(input.sessionToken,input.custodyOperationId)))
   return result
  }
@@ -45,8 +55,9 @@ export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolv
   revalidate:input=>resolve(input,input.review),
   async reconcile(input){
    const c=await get(input.sessionToken,input.custodyOperationId);check(c.owner_wallet===input.owner)
+   const activeLaunchResolver=input.stage==='launch'&&launchResolverFor?await launchResolverFor({preparationId:input.custodyOperationId,review:input.review}):launchResolver
    const result=input.stage==='preparation'?await preparationResolver.reconcile(input)
-    :input.stage==='launch'?await launchResolver.reconcile({...input,preparationId:input.custodyOperationId}):null
+    :input.stage==='launch'?await activeLaunchResolver.reconcile({...input,preparationId:input.custodyOperationId}):null
    check(result&&isDeepStrictEqual(c,await get(input.sessionToken,input.custodyOperationId)));return result
   },
  })

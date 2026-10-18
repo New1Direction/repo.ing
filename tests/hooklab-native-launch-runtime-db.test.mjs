@@ -46,7 +46,7 @@ test('real runtime completes two launches with unchanged dossier, retained ident
    async getMultipleAccountsInfoAndContext(keys){if(keys.length===12)setIdentity(keys[7].toBase58(),keys[8].toBase58());return {context:{slot:startSlot+phase},value:keys.map(k=>{const a=current.get(k.toBase58());return a?{owner:pk(a.owner),executable:a.executable,lamports:Number(a.lamports??0),data:Buffer.from(a.dataBase64,'base64')}:null})}},
    async getLatestBlockhashAndContext(){return {context:{slot:startSlot+phase},value:{blockhash:initial.f.recentBlockhash.blockhash,lastValidBlockHeight:startSlot+150}}},
    async isBlockhashValid(){return {context:{slot:startSlot+phase},value:true}},async getBlockHeight(){return startSlot+phase},async getFeeForMessage(message){return {context:{slot:startSlot+phase},value:message.header.numRequiredSignatures*5000}},
-   async simulateTransaction(){return {value:{err:null}}},async getTransaction(signature){return hideTransaction?null:receipts.get(signature)?.transaction??null},async getBlock(slot){return [...receipts.values()].find(r=>r.transaction.slot===slot)?.block??null},
+   async simulateTransaction(){return {context:{slot:startSlot+phase},value:{err:null}}},async getTransaction(signature){return hideTransaction?null:receipts.get(signature)?.transaction??null},async getBlockSignatures(slot){return [...receipts.values()].find(r=>r.transaction.slot===slot)?.block??null},
   }}))
   for(const {connection}of connections)for(const [name,method]of Object.entries(connection)){if(typeof method==='function')connection[name]=async(...args)=>{try{return await method(...args)}catch(e){console.error('SYNTHETIC RPC FAILURE',name,e.message);throw e}}}
   const syntheticFetch=async(url,opts)=>{

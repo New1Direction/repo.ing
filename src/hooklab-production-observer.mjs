@@ -4,6 +4,7 @@ import {BorshCoder} from '@anchor-lang/core'
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
+import { LOCAL_DOSSIER_SCHEMA, localAcceptanceNetwork, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 
 const sha = data => createHash('sha256').update(data).digest('hex')
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
@@ -27,6 +28,14 @@ const dossierV1 = z.object({
 }).strict()
 const stableAccountPin=accountPin.extend({binding:z.literal('config-counters-v1'),approvedDataBase64:z.string().max(8192),idlSha256:hash}).strict()
 export const productionDossierSchema=z.union([dossierV1,dossierV1.extend({schema:z.literal('repoing/production-observation/2'),accounts:z.array(z.union([accountPin,stableAccountPin])).min(4).max(80)}).strict()])
+export function parseExecutionDossier(value) {
+  if (value?.schema !== LOCAL_DOSSIER_SCHEMA) return productionDossierSchema.parse(value)
+  const local = localAcceptanceNetwork()
+  if (!local) throw Error('Local dossier requires isolated acceptance configuration')
+  return dossierV1.extend({ schema: z.literal(LOCAL_DOSSIER_SCHEMA), genesisHash: z.literal(local.genesisHash),
+    topology: z.literal('single-local-validator-two-proxies'),
+    accounts: z.array(z.union([accountPin, stableAccountPin])).min(4).max(80) }).strict().parse(value)
+}
 // Runtime source artifacts are rooted at the app directory and included in Next tracing.
 const codecBytes={launch:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json`),swap:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_swap.json`)}
 const codecs=Object.fromEntries(['launch','swap'].map(role=>{const bytes=codecBytes[role];return [role,{sha256:sha(bytes),coder:new BorshCoder(JSON.parse(bytes)),idl:JSON.parse(bytes)}]}))
@@ -35,7 +44,7 @@ export function productionAccountBindingMatches(pin,observed,dossier){
   if(!observed||observed.address!==pin.address||observed.owner!==pin.owner||observed.executable!==pin.executable)return false
   const current=rawAccount(observed)
   if(!pin.binding)return sha(current)===pin.dataSha256
-  if(pin.binding!=='config-counters-v1'||dossier.schema!=='repoing/production-observation/2'||pin.executable||!['launch-config','swap-config'].includes(pin.role))return false
+  if(pin.binding!=='config-counters-v1'||(dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||pin.executable||!['launch-config','swap-config'].includes(pin.role))return false
   const role=pin.role.split('-')[0],codec=codecs[role],program=dossier.programs.find(p=>p.role===role)
   if(!program||pin.address!==PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(program.address))[0].toBase58()||program.address!==pin.owner||codec.sha256!==pin.idlSha256||codec.idl.address!==program.address)return false
   const approved=rawAccount({dataBase64:pin.approvedDataBase64});if(sha(approved)!==pin.dataSha256||approved.length!==current.length)return false
@@ -85,7 +94,7 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
   try {
     check(typeof dossierJson === 'string' && Buffer.byteLength(dossierJson) <= 65536, 'Invalid dossier size')
     check(hash.parse(expectedSha256) === sha(dossierJson), 'Dossier digest mismatch')
-    const d = productionDossierSchema.parse(JSON.parse(dossierJson))
+    const d = parseExecutionDossier(JSON.parse(dossierJson))
     const now = integer.parse(nowMs)
     check(new Set(d.providers).size === 2, 'Independent provider bindings required')
     check(['launch', 'swap', 'token'].every(r => d.programs.some(p => p.role === r)), 'Missing executable dependency')

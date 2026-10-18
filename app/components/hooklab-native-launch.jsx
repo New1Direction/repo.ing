@@ -57,6 +57,7 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
   const running = useRef(false)
   const [identity, setIdentity] = useState(null)
   const [ids, setIds] = useState({ operationId: '', preparationId: '', launchId: '' })
+  const [completedIds, setCompletedIds] = useState(null)
   const [form, setForm] = useState({ label: '', name: '', symbol: '', uri: '', capBps: '', creatorFeeBps: '', virtualQuote: '' })
   const [reservation, setReservation] = useState(null)
   const [operation, setOperation] = useState(null)
@@ -70,7 +71,10 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
   const activeWallet = !!identity && identity.wallet === wallet
   const signingId = operation?.id || ids.launchId || ids.preparationId
   useEffect(() => {
-    try { const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved && ['operationId', 'preparationId', 'launchId'].every(key => saved[key] === '' || uuid(saved[key]))) setIds(saved) } catch {}
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey)); if (saved && ['operationId', 'preparationId', 'launchId'].every(key => saved[key] === '' || uuid(saved[key]))) setIds(saved)
+      const completed = JSON.parse(localStorage.getItem(storageKey + '.last-completed')); if (completed && ['operationId', 'preparationId', 'launchId'].every(key => uuid(completed[key]))) setCompletedIds(completed)
+    } catch {}
     const timer = setInterval(() => setClock(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [])
@@ -164,6 +168,13 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
     const value = await request({ action: name, signingId: operation.id })
     if (receive(value)) setUncertain(false)
   })
+  const startSeparateLaunch = () => run(async () => {
+    if (!activeWallet || operation?.status !== 'finalized-success' || operation.stage !== 'launch') throw Error('The original launch must be finalized before starting a separate launch.')
+    localStorage.setItem(storageKey + '.last-completed', JSON.stringify(ids))
+    retain({ operationId: '', preparationId: '', launchId: '' }); setCompletedIds(ids)
+    setOperation(null); setReservation(null); setQuote(null); setAccepted(false); setUncertain(false)
+    setForm({ label: '', name: '', symbol: '', uri: '', capBps: '', creatorFeeBps: '', virtualQuote: '' })
+  })
   const expired = operation && clock >= operation.review.reviewExpiresAtMs
   const canAct = activeWallet && !busy && !uncertain && blockers.length === 0 && (!operation || !!quote)
   const waiting = operation && pendingStatuses.has(operation.status)
@@ -179,8 +190,11 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
     <section className="inner-card"><h2>Resume your operation</h2><p>Keep these IDs. Resume the original operation after a timeout or reload; never create a replacement to bypass an uncertain outcome.</p>
       {Object.entries({ operationId: 'Operation ID', preparationId: 'Preparation signing ID', launchId: 'Launch signing ID' }).map(([key, label]) => <label key={key} style={{ display: 'block' }}>{label}<input style={{ display: 'block', width: '100%' }} value={ids[key]} disabled={busy || !!operation} onChange={event => { const next = { ...ids, [key]: event.target.value }; setIds(next); setAccepted(false) }}/></label>)}
       <button disabled={!activeWallet || busy || !uuid(signingId)} onClick={() => { try { retain(ids); refresh() } catch { setError('Browser storage is unavailable. Save the IDs before proceeding.') } }}>Refresh / resume retained operation</button>
-      {!operation && ids.operationId && !ids.preparationId && <button disabled={!activeWallet || busy || uncertain} onClick={() => reviewStage('preparation')}>Resume preparation review</button>}
+      {/* Re-review the same retained ID; the server returns an existing request rather than replacing it. */}
+      {!operation && uuid(ids.operationId) && !ids.launchId && <button disabled={!activeWallet || busy} onClick={() => reviewStage('preparation')}>Resume retained preparation review</button>}
+      {!operation && uuid(ids.operationId) && uuid(ids.launchId) && <button disabled={!activeWallet || busy} onClick={() => reviewStage('launch')}>Resume retained launch review</button>}
     </section>
+    {completedIds && <details><summary>Last completed launch IDs</summary><dl><dt>Operation</dt><dd>{completedIds.operationId}</dd><dt>Preparation</dt><dd>{completedIds.preparationId}</dd><dt>Launch</dt><dd>{completedIds.launchId}</dd></dl></details>}
     {blockers.length > 0 && <section className="hooks-notice" role="status"><div><h2>Launch unavailable</h2><ul>{blockers.map(item => <li key={item.code}>{item.message} ({item.code})</li>)}</ul><p>No wallet signing is offered while these server gates are closed.</p></div></section>}
     {error && <p role="alert">{error}</p>}
     {uncertain && <p role="alert">The last action needs a status refresh. Keep the original IDs; do not retry signing or submission.</p>}
@@ -194,9 +208,9 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
       {operation.status === 'reviewed' && expired && operation.walletRequestIssued && <p role="alert">The original message was issued to your wallet. Preserve this signing ID; a new review is blocked until the original outcome is resolved.</p>}
       {operation.status === 'signed' && <button disabled={!canAct || expired} onClick={() => action('submit')}>Submit signed {operation.stage} transaction once</button>}
       {waiting && <><p>The original transaction is checked every 8 seconds while this page is open.</p><button disabled={busy || !activeWallet} onClick={() => action('reconcile')}>Check original transaction now</button></>}
-      {operation.signature && <p>Transaction receipt: <a href={`https://explorer.solana.com/tx/${encodeURIComponent(operation.signature)}`} target="_blank" rel="noreferrer">{operation.signature}</a></p>}
+      {operation.signature && <p>Transaction receipt: {genesisHash === '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d' ? <a href={`https://explorer.solana.com/tx/${encodeURIComponent(operation.signature)}`} target="_blank" rel="noreferrer">{operation.signature}</a> : <code>{operation.signature}</code>}</p>}
       {operation.status === 'finalized-success' && operation.stage === 'preparation' && <button disabled={!canAct} onClick={() => reviewStage('launch')}>Review launch with confirmed preparation</button>}
-      {operation.status === 'finalized-success' && operation.stage === 'launch' && <p>Your launch is finalized. Keep both signing IDs and the transaction receipt for your records. <Link href="/hooks/trade">Open buy / sell and check trading availability</Link>.</p>}
+      {operation.status === 'finalized-success' && operation.stage === 'launch' && <><p>Your launch is finalized. Keep both signing IDs and the transaction receipt for your records. <Link href="/hooks/trade">Open buy / sell and check trading availability</Link>.</p><button disabled={!canAct} onClick={startSeparateLaunch}>Start a separate launch</button></>}
     </section>}
   </div>
 }

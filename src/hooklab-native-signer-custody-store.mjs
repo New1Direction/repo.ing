@@ -7,7 +7,7 @@ import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet
 import { Keypair } from '@solana/web3.js'
 import { walletPrincipalStore } from './hooklab-wallet-principal.mjs'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
-import { HOOK_MAINNET_GENESIS } from './hooklab-execution-contract.mjs'
+import { executionGenesis } from './hooklab-local-acceptance.mjs'
 import { nativeSignerCustodyCodec,nativeCustodyIdentitySchema } from './hooklab-native-signer-custody.mjs'
 const fail=()=>Object.assign(Error('Native signer custody unavailable or changed'),{code:'NATIVE_CUSTODY_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
@@ -22,7 +22,7 @@ const summary=row=>Object.freeze({operationId:row.operation_id,custodySessionId:
  preparedRequest:row.preparation_request??null,encryptedSignersRetained:true,ownerCustodyApprovalVerified:false,canSign:false,canSubmit:false,executionAuthorized:false})
 const wipe=signers=>{signers?.mint?.secretKey?.fill(0);signers?.selectedConfig?.secretKey?.fill(0)}
 export function nativeSignerCustodyStore(pool,{enabled=false,origin,keyRing,activeKeyId,signerFactory=()=>({mint:Keypair.generate(),selectedConfig:Keypair.generate()})}={}){
- const principal=walletPrincipalStore(pool,{enabled,origin,audience:'general-launcher',genesisHash:HOOK_MAINNET_GENESIS})
+ const principal=walletPrincipalStore(pool,{enabled,origin,audience:'general-launcher',genesisHash:executionGenesis()})
  const codec=nativeSignerCustodyCodec({enabled,keyRing,activeKeyId})
  async function transaction(sessionToken,operationId,work){
   let db

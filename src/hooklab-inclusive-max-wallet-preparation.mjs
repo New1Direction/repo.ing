@@ -21,7 +21,7 @@ const raw = (text, maximum) => {
 }
 const role = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
 // Shared schema module imports only the legacy module, avoiding cyclic V3 imports.
-import { inclusiveMaxWalletProfileSchema, inclusiveMaxWalletPreparationRequestSchema } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { parseInclusiveMaxWalletProfile, inclusiveMaxWalletPreparationRequestSchema } from './hooklab-inclusive-max-wallet-profile.mjs'
 export { inclusiveMaxWalletProfileSchema, inclusiveMaxWalletPreparationRequestSchema } from './hooklab-inclusive-max-wallet-profile.mjs'
 const account = z.object({ address: key, owner: key, executable: z.boolean(), dataBase64: z.string().max(14000000), lamports: u64 }).strict()
 const presentOrAbsent = z.object({ address: key, account: account.nullable() }).strict()
@@ -85,7 +85,7 @@ function programEvidence(accounts, artifact, observedSlot, immutable) {
 export function planInclusiveMaxWalletPreparation(input) {
   const { profile: envelope, request: r, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
-  const profile = inclusiveMaxWalletProfileSchema.parse(JSON.parse(envelope.json))
+  const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json))
   check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
   const artifact = role => ({ program: profile.programs[role], idlBase64: envelope.idls[role], idlSha256: profile.idlSha256[role],
     elfSha256: profile.elfSha256[role], elfLength: envelope.elfLengths[role] })
@@ -221,7 +221,7 @@ export function deriveInclusiveMaxWalletPreparedAccounts(input) {
     request: inclusiveMaxWalletPreparationRequestSchema, launchConfig: account, observedCreatedAtUnixSeconds: i64 }).strict().parse(input)
   const { profile: envelope, request: r, launchConfig, observedCreatedAtUnixSeconds } = value
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
-  const profile = inclusiveMaxWalletProfileSchema.parse(JSON.parse(envelope.json)), L = profile.programs.launch, G = profile.programs.gate
+  const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), L = profile.programs.launch, G = profile.programs.gate
   check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
   const bind = role => binding({ idlBase64: envelope.idls[role], idlSha256: profile.idlSha256[role], program: profile.programs[role] })
   const launch = bind('launch'), gate = bind('gate'), c = readLaunchConfig(launch, profile, r, launchConfig)

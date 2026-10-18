@@ -122,10 +122,10 @@ expires, then resume the retained signing ID.
 - **Submission claimed/submitted/unknown:** reconcile the original signature.
   Trading uses authenticated transaction-local token transfer and swap events;
   later unrelated swaps do not replace the original receipt. The on-chain
-  minimum output is binding. The impact ceiling is a review-only bound, so
-  a proven finalized execution can separately require policy review if actual
-  impact exceeded that bound. The UI shows quoted versus actual results and
-  never treats a policy warning as permission to resend.
+  minimum output is binding. Slot and impact ceilings remain review-only bounds:
+  a proven finalized execution exceeding either is retained as `review-required`,
+  not an approved successful operation. The UI preserves the actual execution
+  receipt and never treats policy review as permission to resend.
   Never send again, swap providers for a second send, or generate another mint.
 - **Finalized failure/conflict:** retain all identities, signatures and evidence;
   halt dependent launch work for operator review. No timeout-based erasure.
@@ -151,3 +151,234 @@ from compilation or fixture replay alone.
 
 Keep actual transaction IDs and acceptance receipts outside the source-only
 patch. No live acceptance is asserted by this document.
+
+## Isolated local browser setup and acceptance
+
+The local adapter is development-only, not a production adoption path. Use
+`scripts/hooks-local-server.mjs`; do not enable a production signer or point
+the local database at production. The launcher and trade pages are:
+
+- `https://localhost:3443/hooks/launch-review`
+- `https://localhost:3443/hooks/trade`
+
+On this Mac the accepted state directory is
+`/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/acceptance-2`.
+Its `local-chain.public.json` identifies the non-mainnet genesis, disposable
+database, synthetic public roles and setup receipts. TLS material and the
+local signer-encryption key stay outside source in that private directory.
+Never copy wallet/keypair files into the repository.
+
+With the existing local PostgreSQL, private validator and fixed TCP bridge
+running, restart only the app from the app clone:
+
+```sh
+env NODE_ENV=development \
+  NODE_EXTRA_CA_CERTS=/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/acceptance-2/local-cert.pem \
+  HOOK_LOCAL_ACCEPTANCE_STATE=/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/acceptance-2 \
+  /usr/bin/sandbox-exec -f scripts/hooks-local-macos.sb \
+  node scripts/hooks-local-server.mjs
+```
+
+Select **Local hooks test wallet (synthetic only)** and sign in. No production
+wallet, extension permission or seed import is needed. Local quote assets are
+unbacked synthetic native assets with nine decimals, not wallet SOL or SPL
+tokens. The tested creator rate is 100 bps and wallet cap is 200 bps; neither is
+production approval.
+
+### Isolation and reproducibility
+
+- The app rejects production mode, a mainnet genesis, non-loopback endpoints
+  and non-disposable database scope. Its two HTTPS proxies reach the same
+  validator; they are not independent production-provider evidence.
+- The macOS app sandbox denies external outbound networking and access to
+  the production custody directory. The validator runs on the private
+  `hooks-local-only` network; the TCP bridge has fixed RPC/WS destinations.
+- `hooks-local-genesis.mjs` and `hooks-local-initialize.mjs` are only for a
+  **new** empty local environment. Initialization refuses an existing config.
+  Never reset the current ledger or rerun setup to recover an uncertain
+  signing operation.
+- A new state directory must be visible through the existing narrow Colima
+  state share. Do not expand VM mounts to the home or production custody
+  directories. Use a new ledger volume and database for a separately approved
+  disposable run; retain the previous environment.
+- Rebuild instructions are in the supplied reproducibility supplement and
+  `scripts/hooks-local-linux-build.sh`. The accepted rebuilt launch/swap/gate
+  ELFs are 759,976 / 554,808 / 188,960 bytes. The external token ELF is a pinned
+  recovered dependency, not proof of reproducible token-source provenance.
+- The required public gate ABI is
+  `vendor/hooklab-event-abi/inclusive-max-wallet-candidate/hook_max_wallet.json`.
+  Its exact ignore exception must remain; it is not permission to unignore
+  wallet/keypair material generally.
+
+### Local runtime image and disk safety
+
+Use `scripts/hooks-local-runtime.Dockerfile` for the validator and TCP bridge,
+not the much larger Rust compiler image. The existing Agave 4.3.0 binaries
+stay in `hooks-local-tool-cache`; this does not rebuild or replace programs.
+The validator script still verifies all four ELF hashes before startup.
+Use a **Dockerfile-only context** inside the existing narrow VM share, never
+the private state root or custody directory. The Mac's legacy builder stalled;
+the private VM already provides Buildx, so run the build there:
+
+```sh
+runtime_context="$(mktemp -d /Users/clubpenguin/Documents/ChatGPT/hooks-local-state/runtime-build.XXXXXX)"
+install -m 644 scripts/hooks-local-runtime.Dockerfile "$runtime_context/Dockerfile"
+colima --profile hooks-local ssh -- docker buildx build --load \
+  --platform linux/amd64 --tag hooks-local-runtime:agave4.3.0 \
+  --file "$runtime_context/Dockerfile" "$runtime_context"
+rm "$runtime_context/Dockerfile"
+rmdir "$runtime_context"
+```
+
+Keep the same narrow state/tool-cache/ledger mounts and private networks when
+switching images. Do not reset a ledger, rerun initialization, create a new
+genesis or change program/ALT pins merely to restart the runtime. The bridge
+mounts its fixed Python file read-only and has no custody mount.
+
+The 2,400,000-shred retention setting is not a total VM disk quota: accounts,
+snapshots and compaction also use space. Keep disk headroom before extended
+testing. Only task-owned unused build/runtime artifacts may be reclaimed
+automatically; preserved ledgers and databases are not cleanup targets.
+
+The dedicated VM's ext4 data mount was live-remounted with `discard`, then
+trimmed, so freed VM blocks return to the Mac's sparse disk instead of
+accumulating after compaction. This did not delete a ledger or database.
+The live mount option must be rechecked after a VM restart. Only apply this
+to this dedicated profile's confirmed ext4 data mount, not the host disk:
+
+```sh
+colima --profile hooks-local ssh -- findmnt --noheadings --output FSTYPE,OPTIONS /mnt/lima-colima-hooks-local
+colima --profile hooks-local ssh -- sudo mount -o remount,discard /mnt/lima-colima-hooks-local
+colima --profile hooks-local ssh -- sudo fstrim -av
+```
+
+After the runtime-image switch, the same genesis, program ELF bytes, active
+38-address ALT and all post-collection balances were verified without a reset,
+reinitialization or transaction replay. Bounded history had already pruned
+the original acceptance transaction slots from RPC; their immutable
+first-finalized receipts and signed bytes remain in PostgreSQL and the saved
+acceptance report. Preserving a ledger volume is not a promise of unbounded
+historical RPC availability. Pending operations still fail closed when their
+required receipt cannot be read; never relax that check or replace a
+wallet-issued message to compensate. `runtime-resumed.public.json` records
+the exact current-history boundary and preserved state.
+
+### Why the launch-stage ALT is separate
+
+The preparation's original config and evidence stay immutable. Once the
+confirmed preparation resolves the per-launch accounts, the local provider
+creates and extends a real 38-address table for that root operation. It checks
+the table owner, authority, exact inventory and activation before compiling
+the launch. Table provisioning completes **before** the fresh review lease
+starts; otherwise finality waits consume the wallet's signing window.
+
+Each provisioning step retains its original signed bytes and submission claim
+before sending. Unknown outcomes reconcile that signature only. Revalidation
+uses `allowCreate: false`; a refresh/get must not silently create another ALT.
+The transaction compiler, wallet checks and sender retain the 1,232-byte
+limit. No account-validation or fee-model exception is used to make it fit.
+
+### Verified local result, 2026-10-18
+
+One fresh genesis/database completed the real browser flow. Every row below
+finalized within its reviewed slot ceiling, with all Ed25519 signatures
+verified and one RPC submission per browser transaction.
+
+| Browser transaction | Fully signed serialized bytes | Signatures |
+| --- | ---: | ---: |
+| Preparation | 809 | 3 |
+| Launch | 821 | 3 |
+| Native trading holding | 338 | 1 |
+| Buy | 705 | 1 |
+| Sell | 705 | 1 |
+| Fee collection | 655 | 2 |
+
+The launch consists of a 628-byte message, 192 signature bytes and one count
+byte. The packet has 411 bytes of headroom, without changing contract semantics.
+
+| Execution | Gross creator fee | Platform floor(gross / 4) | Creator remainder |
+| --- | ---: | ---: | ---: |
+| Buy | 10,002 | 2,500 | 7,502 |
+| Sell | 4,954 | 1,238 | 3,716 |
+| Collected, raw quote units | 14,956 | 3,738 | 11,218 |
+
+Rounding occurs per swap, not after summing gross fees. Collection cleared
+creator/protocol accruals and left the pool's pricing reserve unchanged.
+There was no additional platform surcharge.
+
+The actual collection receipt is
+`3uSCin13UNNPbeA8J11Sc1TK5j1ukCGu8Kz2SdP35KfoEq7oFFuYhXe3Jn9MTRg624xWEy4sqHEJahEyq8dwtkQu`
+at finalized local slot 1,834. Recipient balance deltas independently match
+the accrued split:
+
+| Raw native-quote account | Before collection | After collection | Change |
+| --- | ---: | ---: | ---: |
+| Creator `7bbS…msf` | 9,999,999,490,190 | 9,999,999,501,408 | +11,218 |
+| Platform `9Wo1…Wo7` | 0 | 3,738 | +3,738 |
+| Creator accrual | 11,218 | 0 | -11,218 |
+| Protocol accrual | 3,738 | 0 | -3,738 |
+| Pool pricing reserve | 494,854 | 494,854 | 0 |
+
+These are nine-decimal native-quote token units on the isolated validator,
+not mainnet SOL receipts. The synthetic quote is unbacked.
+
+The same run verified:
+
+- Above-cap server review returned 409 without a signing row. A genuinely
+  signed, signature-verified simulation against the rebuilt gate failed with
+  `CapExceeded` / custom error 6001; it was never broadcast.
+- Wallet rejection retained no signature. Recovery used the original signing
+  ID and exact message, not a replacement quote.
+- A deliberately lost real RPC send response reconciled the original
+  signature. A second submit returned 409; the audit retained one send.
+- Natural unsigned expiry hid signing and returned 409 from wallet-request,
+  with no issuance marker or signature. Explicit unsigned refresh preserved
+  the financial intent and ID. The already-signed expired-message guard made
+  zero simulation and dispatch calls.
+- The prior expired partial collection remained in the old database with its
+  original wallet signature, no admin signature and no submission claim.
+  Owner-selected fresh isolation did not erase or recover that operation.
+
+Actual IDs, public balance deltas, receipts, RPC send audit and screenshots
+remain outside source under the state directory, principally
+`consolidated-acceptance.public.json`, `browser-launch-success.png` and
+`browser-trading-acceptance.png`. The throwaway balance reader was corrected
+after sell; no financial transaction was replayed.
+
+For repository-wide regression checks use the existing grouped
+`scripts/ci/run-tests.mjs` runner on **separate disposable CI services**.
+Blanket root `node --test` mixes incompatible database environments and also
+discovers SDK/spike suites outside that runner. Do not let CI reset the
+preserved acceptance databases or ledgers. Historical Rust vectors omitted
+from the source-only archives require authentic independently generated
+artifacts; do not fabricate expectations to obtain a green check.
+
+Production approvals, public custody references, the retained-E73/B2 upgrade
+budget and the single owner approval checklist are in
+`HOOK_FRESH_DEPLOYMENT_REVIEW.md`.
+
+### Frozen owner handoff
+
+The accepted environment stays running at
+`https://localhost:3443/hooks/launch-review` and
+`https://localhost:3443/hooks/trade`. No feature or runtime code changed
+after the owner requested the freeze; no service restart or financial
+replay was performed for the handoff.
+
+The accepted genesis is `EZQnEdWBjWRvJnbF9M32QeLaoxYjA5LcJKNtqYcvo7Re`,
+root `6d89e035-0245-4625-a33f-26a48ea78691`, and mint
+`3nemupoa5P2dhtj5nbZHrvgJqqQTMXLmzEdW5aWgKjng`.
+The warmed per-launch table is
+`CHChD6gN9sVz7x4ANq4MSrwLX8yXh8XGCGiVSFEPb1Zs`, with 38 addresses.
+Launch receipt
+`5LtMRHXMNvomgUb3ydPaYvDEpRqT74xyJMXsKTxUgeTXTEgMaJ1faDudbB11q81H2KVb9ZnFLbKzoNyh3KdC4249`
+finalized at slot 1,061 with the measured 821-byte fully signed wire.
+
+Original first-finalized evidence, canonical signed wires and the complete
+consolidated report remain in the preserved local database/state directory.
+Later ledger retention pruned those early slots from current RPC history;
+`getTransaction` is not claimed to remain archival. Post-storage runtime
+read-back retained the same genesis/program bytes/ALT/balances. Missing
+historical RPC evidence still fails closed; it never grants permission to
+resend. The final report separates the blocked 17 fixture-dependent legacy
+regression entries from the passing browser acceptance and 8/8 guard smoke.

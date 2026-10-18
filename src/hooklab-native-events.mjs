@@ -1,7 +1,8 @@
 // Read-only decoder, deliberately separate from deployment/economic acceptance.
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { BorshCoder, BN } from '@anchor-lang/core'
+import { BorshCoder } from '@anchor-lang/core'
+import BN from 'bn.js'
 import { PublicKey } from '@solana/web3.js'
 import bs58 from 'bs58'
 

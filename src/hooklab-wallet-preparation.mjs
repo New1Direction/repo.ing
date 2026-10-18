@@ -5,7 +5,8 @@ import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { deriveCustomPreparationRecord, collectCustomPreparationEvidence, verifyCustomPreparationEvidence } from './hooklab-custom-preparation-receipts.mjs'
 import { verifyHookLabSignedMessage } from './hooklab-message-boundary.mjs'
-import { hookAddress, HOOK_MAINNET_GENESIS } from './hooklab-execution-contract.mjs'
+import { hookAddress } from './hooklab-execution-contract.mjs'
+import { executionGenesis } from './hooklab-local-acceptance.mjs'
 import { walletPrincipalStore } from './hooklab-wallet-principal.mjs'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
@@ -29,7 +30,7 @@ function createJournal(pool, { enabled = false, principalStore, providers: confi
   const owner = async sessionToken => {
     check(enabled === true)
     const principal = await principalStore.resolve(sessionToken)
-    check(principal?.kind === 'wallet' && principal.audience === 'general-launcher' && principal.genesisHash === HOOK_MAINNET_GENESIS)
+    check(principal?.kind === 'wallet' && principal.audience === 'general-launcher' && principal.genesisHash === executionGenesis())
     return hookAddress.parse(principal.wallet)
   }
   const derive = (preparationInput, signedTransactionBase64) => {
@@ -149,6 +150,6 @@ export function coLocatedWalletPreparationJournal(pool, input) {
   const { enabled, origin, providers, expectedProfileSha256 } = z.object({ enabled:z.boolean().default(false),
     origin:z.string(),providers:z.array(z.object({provider:z.string(),connection:z.unknown()}).strict()).length(2),
     expectedProfileSha256:z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(input)
-  const principalStore=walletPrincipalStore(pool,{enabled,origin,audience:'general-launcher',genesisHash:HOOK_MAINNET_GENESIS})
+  const principalStore=walletPrincipalStore(pool,{enabled,origin,audience:'general-launcher',genesisHash:executionGenesis()})
   return createJournal(pool,{enabled,principalStore,providers,expectedProfileSha256},(db,token)=>lockWalletPrincipal(db,token,origin))
 }

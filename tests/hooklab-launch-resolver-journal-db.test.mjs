@@ -23,10 +23,10 @@ test('durable launch resolution requires actual co-located auth and fresh confli
   await assert.rejects(walletPreparationJournal(pool,{enabled:true,principalStore:{resolve:async()=>({wallet:owner})},providers:rpc.providers,expectedProfileSha256:f.expectedProfileSha256}).resolveForLaunch(token,id))
   await pool.query('update hook_lab_wallet_sessions set revoked_at=clock_timestamp() where token_sha256=$1',[digest]);await assert.rejects(journal.resolveForLaunch(token,id))
   await pool.query('update hook_lab_wallet_sessions set revoked_at=null where token_sha256=$1',[digest])
-  const original=rpc.providers[1].connection.getBlock
-  rpc.providers[1].connection.getBlock=async(...args)=>({...await original(...args),blockhash:f.preparationInput.request.mint})
+  const original=rpc.providers[1].connection.getBlockSignatures
+  rpc.providers[1].connection.getBlockSignatures=async(...args)=>({...await original(...args),blockhash:f.preparationInput.request.mint})
   await assert.rejects(journal.resolveForLaunch(token,id))
-  rpc.providers[1].connection.getBlock=original
+  rpc.providers[1].connection.getBlockSignatures=original
   await assert.rejects(journal.resolveForLaunch(token,id));assert.equal((await journal.get(token,id)).evidenceConflict,true)
  }finally{if(pool)await pool.end();await dropTestDatabase(admin,database);await admin.end()}
 })
