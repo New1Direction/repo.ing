@@ -99,6 +99,40 @@ test('owner driver runs every stage end to end on a local validator', { skip: !a
     assert.notEqual(second.sha, first.sha)
     await assert.rejects(main(['plan', 'customer-grant', ...common, '--creator', roles.creator.publicKey.toBase58()], quiet), /may not be one of the owner role addresses/)
   })
+  await t.test('shared trade table: created with the 16 shared trade addresses, frozen, then complete', async () => {
+    const created = await run('trade-table', ['payer'], { approve: true })
+    assert.match(created.receipt.postconditions.join(' '), /holds the 16 shared trade addresses/)
+    const frozen = await run('trade-table', ['payer'], { approve: true })
+    assert.match(frozen.receipt.postconditions.join(' '), /frozen; data sha256 [0-9a-f]{64}/)
+    const again = await main(['plan', 'trade-table', ...common], quiet)
+    assert.match(String(again.built.blocked), /complete and frozen/)
+  })
+  await t.test('owner agent creates a per-launch table with the admin key on chain, then reclaim deactivates it', async () => {
+    const { ownerTableExecutor } = await import('../src/hooklab-owner-agent-tables.mjs')
+    const { launchTableInventory, verifyLaunchTable } = await import('../src/hooklab-owner-launch-tables.mjs')
+    const { adminSignerFromKeypair } = await import('../src/hooklab-owner-agent.mjs')
+    const { compilerEnvelope } = await import('../src/hooklab-owner-driver/artifacts.mjs')
+    const { derivedAddresses, PROGRAMS: P } = await import('../src/hooklab-owner-driver/pins.mjs')
+    const { Keypair, PublicKey: Key, LAMPORTS_PER_SOL } = await import('@solana/web3.js')
+    const connection = validator.connection, adminAddress = roles.admin.publicKey.toBase58()
+    await connection.confirmTransaction(await connection.requestAirdrop(roles.admin.publicKey, LAMPORTS_PER_SOL / 10), 'finalized')
+    const envelope = compilerEnvelope({ genesisHash: validator.genesisHash, providers: ['local-a', 'local-b'], local: true })
+    const config = await connection.getAccountInfo(new Key(derivedAddresses(P).launchConfig), 'finalized')
+    const customer = Keypair.generate().publicKey.toBase58()
+    const request = { schema: 'repoing/inclusive-max-wallet-launch-request/1', policyKind: 'max-wallet', policyVersion: 2, creator: customer, feePayer: customer,
+      mint: Keypair.generate().publicKey.toBase58(), selectedConfig: Keypair.generate().publicKey.toBase58(), capBps: 500, label: 'customer', creatorFeeBps: 200, rules: 'none',
+      hookFlags: 1, feeModel: 2, protocolShareBps: 2500, reviewer: adminAddress, name: 'A customer coin with a long name', symbol: 'CUSTOMER', uri: `https://repo.ing/m/${'x'.repeat(150)}`, virtualQuote: '1000000000' }
+    const { inventory, inventorySha256 } = launchTableInventory(envelope, request, config.data)
+    const admin = adminSignerFromKeypair(JSON.stringify([...roles.admin.secretKey]), adminAddress)
+    const executor = ownerTableExecutor({ connections: [connection, connection], admin, journalDir: path.join(root, 'agent-tables'), sleep })
+    const job = { preparationId: '0f3c9a52-6a43-4e0e-b8a8-2a1c1d9e7b10', launchRequestId: '5b7f4c1e-8a0f-4d55-9a49-3f7c0c2b9d11', creator: customer, mint: request.mint, inventory, inventorySha256 }
+    const table = await executor.ensure(job)
+    const account = await connection.getAccountInfo(new Key(table), 'finalized')
+    assert.equal(verifyLaunchTable({ data: account.data, owner: account.owner.toBase58(), inventory, adminAddress }).addresses.length, inventory.length)
+    assert.equal(await executor.ensure(job), table, 'a finished table is reused, never recreated')
+    const reclaimed = await executor.reclaim(new Set())
+    assert.match(reclaimed.join(' '), /deactivated/)
+  })
   await t.test('one-send journal refuses to resend a finalized message', async () => {
     const journal = path.join(root, 'journal', validator.genesisHash.slice(0, 16), 'journal')
     const collect = readdirSync(journal).filter(f => /^[a-f0-9]{64}\.json$/.test(f)).map(f => JSON.parse(readFileSync(path.join(journal, f), 'utf8'))).find(e => e.stage === 'collect')

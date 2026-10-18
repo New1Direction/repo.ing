@@ -53,10 +53,11 @@ export const STAGE_DECISIONS = Object.freeze({
   'canary-buy': ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canaryBuy', 'lookupTable', 'computeUnitPriceMicroLamports'],
   'canary-sell': ['selectedConfig', 'canaryMint', 'capBps', 'creatorFeeBps', 'canarySell', 'lookupTable', 'computeUnitPriceMicroLamports'],
   collect: ['canaryMint', 'collectRoute', 'computeUnitPriceMicroLamports'],
+  'trade-table': ['computeUnitPriceMicroLamports'],
   status: [],
 })
 // Irreversible, fund-moving or gate-opening stages need a per-run --approved STAGE:<message sha256>.
-export const APPROVAL_FLAG_STAGES = Object.freeze(new Set(['gate-finalize', 'fund', 'canary-gates-open-creation', 'canary-buy', 'canary-sell']))
+export const APPROVAL_FLAG_STAGES = Object.freeze(new Set(['gate-finalize', 'fund', 'canary-gates-open-creation', 'canary-buy', 'canary-sell', 'trade-table']))
 
 export function loadConfig(path) {
   const parsed = configSchema.parse(JSON.parse(readFileSync(path, 'utf8')))

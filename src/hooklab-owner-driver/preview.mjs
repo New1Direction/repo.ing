@@ -48,6 +48,7 @@ function decodeKnown(ix, programs) {
     const type = AddressLookupTableInstruction.decodeInstructionType(ix)
     if (type === 'CreateLookupTable') { const c = AddressLookupTableInstruction.decodeCreateLookupTable(ix); return { name: type, args: { recentSlot: String(c.recentSlot) }, names: ['table', 'authority', 'payer', 'system_program'] } }
     if (type === 'ExtendLookupTable') { const e = AddressLookupTableInstruction.decodeExtendLookupTable(ix); return { name: type, args: { count: e.addresses.length, addresses: e.addresses.map(a => a.toBase58()) }, names: ['table', 'authority', 'payer', 'system_program'] } }
+    if (type === 'FreezeLookupTable') return { name: 'FreezeLookupTable (PERMANENT: addresses and rent locked forever)', args: {}, names: ['table', 'authority'] }
     return { name: type, args: {} }
   }
   const role = Object.entries(programs).find(([, address]) => address === program)?.[0]

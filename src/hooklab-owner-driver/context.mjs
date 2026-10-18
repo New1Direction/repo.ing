@@ -8,10 +8,11 @@ import { PROGRAMS, QUOTE_MINT, MAINNET_ROLES } from './pins.mjs'
 import { adminStages } from './stages/admin.mjs'
 import { canaryStages } from './stages/canary.mjs'
 import { status } from './stages/status.mjs'
+import { tradeTable } from './stages/trade-table.mjs'
 
-export const STAGES = Object.freeze({ ...adminStages, ...canaryStages, status })
+export const STAGES = Object.freeze({ ...adminStages, ...canaryStages, 'trade-table': tradeTable, status })
 export const STAGE_ORDER = Object.freeze(['status', 'launch-config', 'swap-config', 'grant', 'gate-finalize', 'fund', 'canary-prepare', 'alt',
-  'canary-gates-open-creation', 'canary-launch', 'canary-gates-close-creation', 'canary-holdings', 'canary-buy', 'canary-sell', 'collect', 'customer-grant'])
+  'canary-gates-open-creation', 'canary-launch', 'canary-gates-close-creation', 'canary-holdings', 'canary-buy', 'canary-sell', 'collect', 'trade-table', 'customer-grant'])
 
 // Only after a verified non-mainnet genesis on two loopback RPCs: the repo compilers accept a
 // local profile solely through this explicit acceptance scope (format-checked, never connected).

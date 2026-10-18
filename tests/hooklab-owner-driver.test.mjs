@@ -52,7 +52,7 @@ test('approval refusals: per-decision approval and the explicit approval-flag st
     assert.deepEqual(unapproved(config, 'launch-config'), ['maxRulesFeeBps'])
     raw.decisions.maxRulesFeeBps.approved = true
     assert.doesNotThrow(() => assertExecutable(loadConfig(write(dir, 'c2.json', raw)), 'launch-config'))
-    assert.deepEqual([...APPROVAL_FLAG_STAGES].sort(), ['canary-buy', 'canary-gates-open-creation', 'canary-sell', 'fund', 'gate-finalize'])
+    assert.deepEqual([...APPROVAL_FLAG_STAGES].sort(), ['canary-buy', 'canary-gates-open-creation', 'canary-sell', 'fund', 'gate-finalize', 'trade-table'])
     raw.roles = { admin: MAINNET_ROLES.guardian }
     assert.throws(() => loadConfig(write(dir, 'c3.json', raw)), /may not substitute pinned role/)
     const local = localConfig(syntheticRoles()); local.roles.admin = MAINNET_ROLES.admin
