@@ -91,6 +91,15 @@ test('owner driver runs every stage end to end on a local validator', { skip: !a
     const platformTotal = fees.reduce((n, f) => n + f.platform, 0n), after = await validator.connection.getBalance(treasury, 'finalized')
     if (route === 'sol') assert.equal(BigInt(after - before), platformTotal, 'treasury received the platform share as SOL')
   })
+  await t.test('public activation opens launches and trading on both governances, then both close again', async () => {
+    await run('open-launches', ['payer', 'admin'], { approve: true })
+    await run('open-trading', ['payer', 'admin'], { approve: true })
+    const { text } = await main(['status', ...common], quiet)
+    assert.equal((text.match(/gates creation=false trading=false/g) ?? []).length, 2, text)
+    await run('close-trading', ['payer', 'admin'])
+    await run('close-launches', ['payer', 'admin'])
+    assert.match(String((await main(['plan', 'close-trading', ...common], quiet)).built.blocked), /already closed/)
+  })
   await t.test('customer-grant creates a one-launch grant, then re-enables it for exactly one more, and refuses role addresses', async () => {
     const customer = (await import('@solana/web3.js')).Keypair.generate().publicKey.toBase58()
     const first = await run('customer-grant', ['payer', 'admin'], { extra: ['--creator', customer] })
@@ -99,6 +108,7 @@ test('owner driver runs every stage end to end on a local validator', { skip: !a
     assert.notEqual(second.sha, first.sha)
     await assert.rejects(main(['plan', 'customer-grant', ...common, '--creator', roles.creator.publicKey.toBase58()], quiet), /may not be one of the owner role addresses/)
   })
+  t.diagnostic(`canary creator balance left after launch, buy, sell and collect: ${await validator.connection.getBalance(roles.creator.publicKey, 'finalized')} lamports of the funded 50000000`)
   await t.test('shared trade table: created with the 16 shared trade addresses, frozen, then complete', async () => {
     const created = await run('trade-table', ['payer'], { approve: true })
     assert.match(created.receipt.postconditions.join(' '), /holds the 16 shared trade addresses/)

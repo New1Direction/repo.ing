@@ -218,8 +218,38 @@ function creationGateStage(stage, open) {
   }
 }
 
+// Public trading switch. Swap Config.paused mirrors the trading gate; pool creation stays open.
+// Customer (non-canary) launches and trades need BOTH governances fully open, so this is the
+// public activation step together with open-launches.
+function tradingGateStage(stage, open) {
+  return {
+    name: stage,
+    async build(ctx, pinned) {
+      const { snapshot, config, governance } = await governedSnapshot(ctx, 'swap')
+      if (governance.state.gates.trading === !open && !governance.state.gates.creation) return { blocked: `swap trading gate is already ${open ? 'open' : 'closed'}`, observedSlot: snapshot.slot }
+      const gates = { creation: false, trading: !open }
+      const instruction = ix.governanceSetGates(ctx.programs, 'swap', ctx.roles.admin, ix.governanceCommitment('swap', governance.state), gates)
+      const afterState = nextState(governance.state, { gates })
+      const { review, blockhash } = await simpleMessage(ctx, { stage, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 60000 })
+      return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
+        sections: [{ title: 'swap trading gate', rows: [`swap config paused ${config.paused} -> ${!open} (Config.paused mirrors the trading gate)`,
+          open ? 'OPENS public trading of every hook coin (anyone may buy and sell)' : 'CLOSES trading of every hook coin (emergency stop)'] },
+        governanceSection('swap', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no transfer; network fee only'] }],
+        expect: { paused: !open, commitment: hex(ix.governanceCommitment('swap', afterState)) } }
+    },
+    async verify(ctx, expect) {
+      const { config, governance } = await governedSnapshot(ctx, 'swap')
+      check(config.paused === expect.paused && governance.state.gates.trading === expect.paused && !governance.state.gates.creation, 'Swap trading gate differs from the reviewed post-state')
+      check(governanceView('swap', governance.state).commitment === expect.commitment, 'Swap governance commitment differs')
+      return [`swap config paused=${config.paused}; commitment ${expect.commitment}`]
+    },
+  }
+}
+
 export const adminStages = {
   'launch-config': governedConfigStage('launch-config'), 'swap-config': governedConfigStage('swap-config'), grant, 'customer-grant': customerGrant, 'gate-finalize': gateFinalize, fund,
   'canary-gates-open-creation': creationGateStage('canary-gates-open-creation', true), 'canary-gates-close-creation': creationGateStage('canary-gates-close-creation', false),
+  'open-launches': creationGateStage('open-launches', true), 'close-launches': creationGateStage('close-launches', false),
+  'open-trading': tradingGateStage('open-trading', true), 'close-trading': tradingGateStage('close-trading', false),
 }
 export { BN }
