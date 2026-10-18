@@ -32,6 +32,7 @@ export function productionKeyRing(env){
 // Everything the runtimes need, verified. Separate from installation so it can be tested.
 export async function productionSettings({env=process.env,readBundle=path=>readFile(path),connectionFor=url=>new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true})}={}){
  need(env.HOOK_OWNER_APPROVED_LAUNCHES==='true','owner-approved launches are not enabled')
+ need(env.HOOK_NATIVE_LAUNCH_ENABLED==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true','native launch and wallet identity switches must both be on')
  const bytes=await readBundle(env.HOOKLAB_PRODUCTION_BUNDLE_FILE??refuse('HOOKLAB_PRODUCTION_BUNDLE_FILE is not set'))
  need(/^[a-f0-9]{64}$/.test(env.HOOKLAB_PRODUCTION_BUNDLE_SHA256??'')&&sha(bytes)===env.HOOKLAB_PRODUCTION_BUNDLE_SHA256,'production bundle differs from its approved hash')
  const bundle=JSON.parse(bytes)
@@ -65,12 +66,15 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  if(nativeLaunchRuntime())return {installed:true}
  const s=await productionSettings({env}),identity=walletIdentityConfiguration(env)
  const pool=createHookLabDatabasePool(identity,10,'runtime')
+ try{
  const base={enabled:true,origin:identity.origin,ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,
   config:s.bundle.config,profile:s.bundle.profile,dossierJson:s.bundle.dossierJson,connections:s.connections,keyRing:s.keyRing,activeKeyId:s.activeKeyId,
   adminSigner:remoteAdminSigner(pool,{address:s.bundle.config.reviewer,observe:s.observers.live}),expiryObserver:s.observers.bothPast}
  const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,reviewTiming:s.reviewTiming,...await s.launchLimits()})
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
- installInclusiveTradeRuntime(createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits}))
- return {installed:true}
+ // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
+ if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true')installInclusiveTradeRuntime(createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits}))
+ return {installed:true,trading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'}
+ }catch(error){if(!nativeLaunchRuntime())await pool.end().catch(()=>{});throw error}
 }

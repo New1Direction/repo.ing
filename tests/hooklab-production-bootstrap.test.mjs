@@ -9,7 +9,7 @@ const admin='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5'
 const bundleBytes=Buffer.from(JSON.stringify({schema:'repoing/production-operator-bundle/1',profile:{providers:['helius','publicnode']},
  config:{reviewer:admin,economics:{launchFeeLamports:'0',poolCreationFeeLamports:'0'}},dossierJson:'{}'}))
 const ring=JSON.stringify({'k-2026-10':Buffer.alloc(32,7).toString('base64')})
-const env={HOOK_OWNER_APPROVED_LAUNCHES:'true',HOOKLAB_PRODUCTION_BUNDLE_FILE:'/approved/bundle.json',HOOKLAB_PRODUCTION_BUNDLE_SHA256:createHash('sha256').update(bundleBytes).digest('hex'),
+const env={HOOK_OWNER_APPROVED_LAUNCHES:'true',HOOK_NATIVE_LAUNCH_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true',HOOKLAB_PRODUCTION_BUNDLE_FILE:'/approved/bundle.json',HOOKLAB_PRODUCTION_BUNDLE_SHA256:createHash('sha256').update(bundleBytes).digest('hex'),
  HOOK_LAUNCH_ADMIN_ADDRESS:admin,HOOKLAB_PRODUCTION_RPC_PRIMARY_URL:'https://mainnet.helius-rpc.com/?api-key=x',HOOKLAB_PRODUCTION_RPC_SECONDARY_URL:'https://solana-rpc.publicnode.com',
  HOOK_NATIVE_KEYRING_JSON:ring,HOOK_NATIVE_ACTIVE_KEY_ID:'k-2026-10'}
 const fake=(slot,blockHeight)=>({getSlot:async()=>slot,getBlockHeight:async()=>blockHeight})
@@ -22,6 +22,8 @@ test('production settings verify the approved bundle, admin, RPCs, key ring and 
  assert.equal((await productionSettings({env:{...env,HOOKLAB_PRIORITY_MICROLAMPORTS:'10000'},...deps})).tradeLimits.maxNetworkFeeLamports,'29000')
  for(const [change,message] of [
   [{HOOK_OWNER_APPROVED_LAUNCHES:'false'},/not enabled/],
+  [{HOOK_NATIVE_LAUNCH_ENABLED:undefined},/switches must both be on/],
+  [{HOOK_WALLET_IDENTITY_ENABLED:'false'},/switches must both be on/],
   [{HOOKLAB_PRODUCTION_BUNDLE_SHA256:'0'.repeat(64)},/differs from its approved hash/],
   [{HOOK_LAUNCH_ADMIN_ADDRESS:'9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md'},/not the configured launch admin/],
   [{HOOKLAB_PRODUCTION_RPC_SECONDARY_URL:'http://insecure.example'},/two HTTPS production RPC URLs/],
