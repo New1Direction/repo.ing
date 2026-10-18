@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
 import { HOOK_LAB_TEMPLATES } from '../src/hook-lab-templates.mjs'
+import { existsSync } from 'node:fs'
 
 test('Hooks discovery links to all draft templates without claiming live markets', async () => {
   const { default: Market } = await appModule('app/(site)/hooks/page.jsx')
@@ -11,7 +12,12 @@ test('Hooks discovery links to all draft templates without claiming live markets
   assert.match(market, /href="\/hooks\/templates"/)
   const templates = html(h(Templates))
   for (const template of HOOK_LAB_TEMPLATES) assert.ok(templates.includes(`href="/hooks/new?template=${template.id}"`))
-  assert.equal((templates.match(/Draft only/g) ?? []).length, 6)
+  assert.equal((templates.match(/Draft only/g) ?? []).length, 5)
+  assert.equal((templates.match(/Launch available/g) ?? []).length, 1)
+  for (const template of HOOK_LAB_TEMPLATES) {
+    assert.ok(templates.includes(`src="/hook-icons/${template.id}.webp"`), `${template.id} icon`)
+    assert.ok(existsSync(new URL(`../public/hook-icons/${template.id}.webp`, import.meta.url)), `${template.id} icon file`)
+  }
 })
 
 test('guided builder initializes every template without selecting editable economic values', async () => {

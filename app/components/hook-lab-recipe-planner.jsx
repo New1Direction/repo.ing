@@ -158,7 +158,7 @@ export function HookLabRecipePlanner({ legacyPlan = {}, legacyDrafts = [], guide
         <pre>{JSON.stringify(envelope, null, 2)}</pre>
       </details>
     </section><aside className="coin-review">
-      {guided ? <><img src="/launch-icons/receipts-ui.webp" width={64} height={64} alt=""/><h2>Your draft stays yours</h2><p className="coin-note">Saving a recipe does not launch a coin or request a wallet signature.</p><HooksUnavailable/>
+      {guided ? <><img src="/launch-icons/receipts-ui.webp" width={64} height={64} alt=""/><h2>Your draft stays yours</h2><p className="coin-note">Saving a recipe does not launch a coin or request a wallet signature.</p><HooksUnavailable title="Max wallet coins can launch now">Finish the steps, then continue to launch with repo.ing approval. Other recipes stay drafts for now.</HooksUnavailable>
         <dl><div><dt>Wallet</dt><dd>{wallet ? 'Connected · no signing' : 'Not required for drafts'}</dd></div><div><dt>Transaction</dt><dd>Not prepared</dd></div><div><dt>Total cost</dt><dd>Unknown · not zero</dd></div></dl>
         <button className="button" disabled={!ready} onClick={() => download()}>Export draft backup</button><a className="button" href="/hooks/mine">Retained operations &amp; recovery</a>
         <details><summary>Advanced devnet inspection</summary><p className="coin-note">The existing plain-only inspector can read this shared device draft. Unsupported rules are preserved and refused, not removed.</p><a href="/coins/new?lane=programmable">Open read-only devnet tools</a></details><HooksRisk/>

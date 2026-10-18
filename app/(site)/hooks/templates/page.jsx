@@ -1,18 +1,17 @@
 import Link from 'next/link'
-import { ArrowRight, Blocks, Flame, LockKeyhole, Timer, Users, Coins } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { HOOK_LAB_TEMPLATES } from '../../../../src/hook-lab-templates.mjs'
 import { HooksIntro, HooksNav, HooksRisk } from '../../../components/hooks-ui'
 
-export const metadata = { title: 'Hook templates — repo.ing', description: 'Six guided recipe templates. Drafts only; no live launch or trading.' }
-const icons = [Blocks, Coins, Flame, LockKeyhole, Users, Timer]
+export const metadata = { title: 'Hook templates — repo.ing', description: 'Six guided recipe templates. Max wallet coins launch now with repo.ing approval; the others are drafts for now.' }
+// Each preset's icon lives at /hook-icons/<template id>.webp (128 px source, shown at 56 px).
 
 export default function HooksTemplatesPage() {
-  return <><HooksIntro title="Choose your coin’s rules.">Six curated recipes. Start a draft without connecting a wallet.</HooksIntro><HooksNav active="templates"/>
-    <div className="hooks-template-grid">{HOOK_LAB_TEMPLATES.map((template, index) => {
-      const Icon = icons[index]
-      return <article className="hooks-card hooks-template" key={template.id}><div className="hooks-between"><Icon size={22} aria-hidden="true"/><span className="badge">Draft only</span></div>
+  return <><HooksIntro title="Choose your coin’s rules.">Six curated recipes. Max wallet launches now; the others are drafts for now.</HooksIntro><HooksNav active="templates"/>
+    <div className="hooks-template-grid">{HOOK_LAB_TEMPLATES.map(template => {
+      return <article className="hooks-card hooks-template" key={template.id}><div className="hooks-between"><img src={`/hook-icons/${template.id}.webp`} width={56} height={56} alt="" decoding="async"/><span className="badge">{template.id === 'max-wallet' ? 'Launch available' : 'Draft only'}</span></div>
         <h2>{template.title}</h2><p>{template.description}</p><p className="hooks-fine">{template.warnings.join(' ')}</p>
-        <Link className="button" href={`/hooks/new?template=${template.id}`}>Start {template.title} draft <ArrowRight size={15} aria-hidden="true"/></Link>
+        <Link className="button" href={`/hooks/new?template=${template.id}`}>{template.id === 'max-wallet' ? 'Start a Max wallet coin' : `Start ${template.title} draft`} <ArrowRight size={15} aria-hidden="true"/></Link>
       </article>
     })}</div><HooksRisk/>
   </>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { HookNativeLaunch } from './hooklab-native-launch'
 import { CREATOR_FEE_BPS_CHOICES, DEFAULT_CREATOR_FEE_BPS, WALLET_CAP_BPS_CHOICES, DEFAULT_WALLET_CAP_BPS, percent } from '../../src/hooklab-launch-menus.mjs'
+import { readLaunchHandoff } from '../lib/hooklab-launch-handoff.mjs'
 
 const endpoint = '/api/hook-lab/launch-requests'
 const statusText = {
@@ -35,6 +36,8 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
   const [form, setForm] = useState({ name: '', symbol: '', uri: '', creatorFeeBps: DEFAULT_CREATOR_FEE_BPS, capBps: DEFAULT_WALLET_CAP_BPS })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  // Details carried over from a Max wallet draft (/hooks/new); invalid values are ignored.
+  useEffect(() => { const handoff = readLaunchHandoff(window.location.search); if (Object.keys(handoff).length) setForm(current => ({ ...current, ...handoff })) }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -44,7 +47,7 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
       setSignedOut(false); setRequest(mine.request ?? null); setOnline(!!mine.online)
     } catch (e) { setError(e.message) }
   }, [])
-  useEffect(() => { refresh(); const timer = setInterval(refresh, 10_000); return () => clearInterval(timer) }, [refresh])
+  useEffect(() => { refresh(); const timer = setInterval(refresh, 5_000); return () => clearInterval(timer) }, [refresh])
 
   const act = body => async () => {
     setBusy(true); setError('')
@@ -59,7 +62,7 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
       <h2>Request a launch</h2>
       <p role="status"><strong>{online === null ? 'Checking repo.ing approvals…' : online ? 'repo.ing approvals are online' : 'repo.ing approvals are offline'}</strong>
         {online === false && ' — you can still queue a request; you will be invited when approvals are open.'}</p>
-      {signedOut && <p>Sign in with your wallet in the launcher below, then refresh this panel.</p>}
+      {signedOut && <p><strong>Step 1:</strong> sign in with your wallet below (“Review sign-in message”). This panel updates by itself a few seconds later.{form.name && <> Your coin <strong>{form.name} · {form.symbol}</strong> ({percent(form.creatorFeeBps)} fee, {percent(form.capBps)} wallet cap) is ready to queue.</>}</p>}
       {request && <dl><dt>Your request</dt><dd>{request.symbol} · {request.name}</dd><dt>Creator fee / wallet cap</dt><dd>{percent(request.creatorFeeBps)} of each trade / {percent(request.capBps)} of supply per wallet</dd><dt>Status</dt><dd>{statusText[request.status] ?? request.status}</dd>
         {request.inviteExpiresAt && request.status === 'invited' && <><dt>Invite ends</dt><dd>{new Date(request.inviteExpiresAt).toLocaleTimeString()}</dd></>}</dl>}
       {request && ['queued', 'invited'].includes(request.status) && <button disabled={busy} onClick={act({ action: 'cancel', requestId: request.id })}>Cancel request</button>}
@@ -75,8 +78,9 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
       </>}
       {error && <p role="alert">{error}</p>}
     </section>
+    {/* Distinct keys remount the launcher when the invite lands, so it drops the waiting state it started with. */}
     {approvedIntent
-      ? <HookNativeLaunch genesisHash={genesisHash} initialBlockers={initialBlockers} approvedIntent={approvedIntent}/>
-      : <HookNativeLaunch genesisHash={genesisHash} initialBlockers={[...initialBlockers, { code: 'AWAITING_OWNER_INVITE', message: 'Queue a launch request above. Preparation starts after repo.ing invites your coin.' }]}/>}
+      ? <HookNativeLaunch key="invited" genesisHash={genesisHash} initialBlockers={initialBlockers} approvedIntent={approvedIntent}/>
+      : <HookNativeLaunch key="waiting" genesisHash={genesisHash} initialBlockers={[...initialBlockers, { code: 'AWAITING_OWNER_INVITE', message: 'Queue a launch request above. Preparation starts after repo.ing invites your coin.' }]}/>}
   </>
 }

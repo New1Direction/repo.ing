@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useWallet } from './wallet'
 import { HookWalletSignIn } from './hooklab-wallet-signin'
+import { lockedLaunchFields, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
 
 const endpoint = '/api/hook-lab/native-launch'
 const storageKey = 'repo.ing.hooks.native-launch.ids.v1'
@@ -115,16 +116,9 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
   }, [activeWallet, operation?.id, operation?.status, ids.operationId])
   const reserve = () => run(async () => {
     if (!activeWallet) throw Error('Connect and sign in with the same wallet first.')
-    if (!/^\d{1,4}$/.test(form.capBps) || +form.capBps < 1 || +form.capBps > 9999) throw Error('Max-wallet cap must be 1–9999 basis points.')
-    if (!/^\d{1,4}$/.test(form.creatorFeeBps) || +form.creatorFeeBps > 9999) throw Error('Enter an explicit creator fee from 0–9999 basis points.')
-    if (!/^(0|[1-9][0-9]*)$/.test(form.virtualQuote)) throw Error('Enter the virtual quote amount in integer base units.')
-    for (const [key, limit] of Object.entries({ label: 32, name: 32, symbol: 10, uri: 200 })) {
-      if (!form[key].trim()) throw Error(`Enter ${key}.`)
-      if (new TextEncoder().encode(form[key]).length > limit) throw Error(`${key} must be at most ${limit} UTF-8 bytes.`)
-    }
-    if (new URL(form.uri).protocol !== 'https:') throw Error('Use an HTTPS metadata URL.')
+    const input = reservationInput(form, approvedIntent)
     const next = { ...ids, operationId: ids.operationId || crypto.randomUUID() }; retain(next)
-    const value = await request({ action: 'reserve', operationId: next.operationId, ...form, capBps: Number(form.capBps), creatorFeeBps: Number(form.creatorFeeBps), ...(approvedIntent ?? {}) })
+    const value = await request({ action: 'reserve', operationId: next.operationId, ...input })
     if (receive(value)) {
       if (value.operationId !== next.operationId || !value.mint) throw Error('Reservation identity changed. Preserve the operation ID.')
       setReservation(value); setUncertain(false)
@@ -186,15 +180,18 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
   const expired = operation && clock >= operation.review.reviewExpiresAtMs
   const canAct = activeWallet && !busy && !uncertain && blockers.length === 0 && (!operation || !!quote)
   const waiting = operation && pendingStatuses.has(operation.status)
+  const locked = lockedLaunchFields(approvedIntent)
+  const awaitingInvite = blockers.length > 0 && blockers.every(item => item.code === 'AWAITING_OWNER_INVITE')
   return <div style={{ overflowWrap: 'anywhere' }}>
     <ol aria-label="Launch steps"><li>Connect and authenticate wallet</li><li>Reserve your mint and review exact economics</li><li>Sign and confirm preparation</li><li>Review, sign and confirm launch</li></ol>
     {!wallet && <button disabled={busy} onClick={() => run(() => connect())}>Connect wallet</button>}
     <HookWalletSignIn genesisHash={genesisHash} onIdentity={setIdentity}/>
-    <section className="inner-card"><h2>New coin</h2><p>Choose a max-wallet cap and creator fee explicitly. Final costs and cap are shown from the verified server review. Virtual quote is a pricing input, not deposited SOL.</p>
-      {Object.entries({ label: 'Internal label', name: 'Coin name', symbol: 'Symbol', uri: 'Metadata HTTPS URL', capBps: 'Maximum wallet cap (basis points)', creatorFeeBps: 'Creator fee (basis points)', virtualQuote: 'Virtual quote (integer base units)' }).map(([key, label]) => <label key={key} style={{ display: 'block', marginBottom: 12 }}>{label}<input style={{ display: 'block', width: '100%' }} value={approvedIntent && Object.hasOwn(approvedIntent, key) ? approvedIntent[key] : form[key]} disabled={busy || !!reservation || !!operation || (!!approvedIntent && Object.hasOwn(approvedIntent, key))} inputMode={['capBps', 'creatorFeeBps', 'virtualQuote'].includes(key) ? 'numeric' : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })}/></label>)}
+    {/* While an owner-approved coin waits for its invite, the request form above is the only coin form. */}
+    {!awaitingInvite && <section className="inner-card"><h2>New coin</h2><p>Choose a max-wallet cap and creator fee explicitly. Final costs and cap are shown from the verified server review. Virtual quote is a pricing input, not deposited SOL.</p>
+      {Object.entries({ label: 'Internal label', name: 'Coin name', symbol: 'Symbol', uri: 'Metadata HTTPS URL', capBps: 'Maximum wallet cap (basis points)', creatorFeeBps: 'Creator fee (basis points)', virtualQuote: 'Virtual quote (integer base units)' }).map(([key, label]) => <label key={key} style={{ display: 'block', marginBottom: 12 }}>{label}<input style={{ display: 'block', width: '100%' }} value={Object.hasOwn(locked, key) ? locked[key] : form[key]} disabled={busy || !!reservation || !!operation || Object.hasOwn(locked, key)} inputMode={['capBps', 'creatorFeeBps', 'virtualQuote'].includes(key) ? 'numeric' : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })}/></label>)}
       <button disabled={!activeWallet || busy || !!operation || !!reservation || uncertain} onClick={reserve}>{busy ? 'Working…' : 'Reserve mint and check availability'}</button>
       {reservation && <><p>Reserved mint: {reservation.mint}</p><button disabled={!canAct} onClick={() => reviewStage('preparation')}>Get exact preparation review</button></>}
-    </section>
+    </section>}
     <section className="inner-card"><h2>Resume your operation</h2><p>Keep these IDs. Resume the original operation after a timeout or reload; never create a replacement to bypass an uncertain outcome.</p>
       {Object.entries({ operationId: 'Operation ID', preparationId: 'Preparation signing ID', launchId: 'Launch signing ID' }).map(([key, label]) => <label key={key} style={{ display: 'block' }}>{label}<input style={{ display: 'block', width: '100%' }} value={ids[key]} disabled={busy || !!operation} onChange={event => { const next = { ...ids, [key]: event.target.value }; setIds(next); setAccepted(false) }}/></label>)}
       <button disabled={!activeWallet || busy || !uuid(signingId)} onClick={() => { try { retain(ids); refresh() } catch { setError('Browser storage is unavailable. Save the IDs before proceeding.') } }}>Refresh / resume retained operation</button>
@@ -203,7 +200,9 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
       {!operation && uuid(ids.operationId) && uuid(ids.launchId) && <button disabled={!activeWallet || busy} onClick={() => reviewStage('launch')}>Resume retained launch review</button>}
     </section>
     {completedIds && <details><summary>Last completed launch IDs</summary><dl><dt>Operation</dt><dd>{completedIds.operationId}</dd><dt>Preparation</dt><dd>{completedIds.preparationId}</dd><dt>Launch</dt><dd>{completedIds.launchId}</dd></dl></details>}
-    {blockers.length > 0 && <section className="hooks-notice" role="status"><div><h2>Launch unavailable</h2><ul>{blockers.map(item => <li key={item.code}>{item.message} ({item.code})</li>)}</ul><p>No wallet signing is offered while these server gates are closed.</p></div></section>}
+    {blockers.length > 0 && (awaitingInvite
+      ?<section className="hooks-notice" role="status"><div><h2>Waiting for repo.ing’s invite</h2><p>{blockers[0].message} You sign nothing until then.</p></div></section>
+      : <section className="hooks-notice" role="status"><div><h2>Launch unavailable</h2><ul>{blockers.map(item => <li key={item.code}>{item.message} ({item.code})</li>)}</ul><p>No wallet signing is offered while these server gates are closed.</p></div></section>)}
     {error && <p role="alert">{error}</p>}
     {uncertain && <p role="alert">The last action needs a status refresh. Keep the original IDs; do not retry signing or submission.</p>}
     {operation && <section className="inner-card" aria-live="polite"><h2>{operation.stage === 'preparation' ? 'Mint preparation' : 'Coin launch'}</h2><p>{statusLabels[operation.status] || `Retained status: ${operation.status}`}</p>
