@@ -2,6 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { BorshCoder } from '@anchor-lang/core'
 import { sha256, PROGRAMS, QUOTE_MINT, MAINNET_GENESIS, LOCAL_PROFILE_SCHEMA } from './pins.mjs'
+import { productionProfileJson } from '../hooklab-production-operator-bundle.mjs'
 
 const root = new URL('../../', import.meta.url)
 const candidate = new URL('vendor/hooklab-event-abi/inclusive-max-wallet-candidate/', root)
@@ -43,10 +44,11 @@ export function loadArtifacts() {
   cached = Object.freeze({ text, idls, coders, profile })
   return cached
 }
-// Compiler envelope. Mainnet keeps the exact reviewed profile bytes; local-test rebinds genesis only.
+// Compiler envelope: the reviewed profile plus the owner's fee and cap menus, byte-identical to the
+// profile the production app serves customers. Local-test rebinds schema, id and genesis only.
 export function compilerEnvelope({ genesisHash, providers, local }) {
-  const { text, profile } = loadArtifacts()
-  const json = local ? JSON.stringify({ ...profile, schema: LOCAL_PROFILE_SCHEMA, profileId: `local-owner-driver-${genesisHash.slice(0, 12)}`, genesisHash }) : text.profile
+  const { text, profile } = loadArtifacts(), production = productionProfileJson(profile)
+  const json = local ? JSON.stringify({ ...JSON.parse(production), schema: LOCAL_PROFILE_SCHEMA, profileId: `local-owner-driver-${genesisHash.slice(0, 12)}`, genesisHash }) : production
   if (!local && genesisHash !== MAINNET_GENESIS) throw Error('Mainnet envelope requires the mainnet genesis')
   return Object.freeze({ json, expectedSha256: sha256(json),
     idls: Object.fromEntries(['launch', 'swap', 'gate'].map(role => [role, Buffer.from(text[role]).toString('base64')])),
