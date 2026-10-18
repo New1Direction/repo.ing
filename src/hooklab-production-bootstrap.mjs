@@ -11,6 +11,27 @@ const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
 
+// Two independent providers are never on exactly the same finalized slot. A read that names a
+// minContextSlot the slower provider has not reached yet fails with RPC error -32016; wait for it to
+// catch up (bounded) instead of refusing every launch and trade. Any other error, and every send,
+// passes through untouched; non-function properties (rpcEndpoint) are unchanged.
+const BEHIND=/Minimum context slot has not been reached|-32016/
+// Snapshot-to-blockhash slack across two real providers (the second waits to catch up): ~6 s. The
+// on-chain guards (deadline slot, minimum output, price impact) are unchanged.
+const SLOT_LAG=16
+export function catchUpConnection(connection,{attempts=12,delayMs=500,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
+ return new Proxy(connection,{get(target,property,receiver){
+  const value=Reflect.get(target,property,receiver)
+  if(typeof value!=='function')return value
+  return async(...args)=>{
+   for(let attempt=1;;attempt++){
+    try{return await value.apply(target,args)}
+    catch(error){if(attempt>=attempts||!BEHIND.test(String(error?.message??'')+String(error?.code??'')))throw error;await sleep(delayMs)}
+   }
+  }
+ }})
+}
+
 // live: the later of the two providers (never sign late). bothPast: the earlier finalized view
 // (an attempt only expires once BOTH providers are past its limits).
 export function chainObservers(connections){
@@ -31,7 +52,7 @@ export function productionKeyRing(env){
 }
 
 // Everything the runtimes need, verified. Separate from installation so it can be tested.
-export async function productionSettings({env=process.env,readBundle=path=>readFile(path),connectionFor=url=>new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true})}={}){
+export async function productionSettings({env=process.env,readBundle=path=>readFile(path),connectionFor=url=>catchUpConnection(new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true}))}={}){
  need(env.HOOK_OWNER_APPROVED_LAUNCHES==='true','owner-approved launches are not enabled')
  need(env.HOOK_NATIVE_LAUNCH_ENABLED==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true','native launch and wallet identity switches must both be on')
  const bytes=await readBundle(env.HOOKLAB_PRODUCTION_BUNDLE_FILE??refuse('HOOKLAB_PRODUCTION_BUNDLE_FILE is not set'))
@@ -49,12 +70,12 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
  const priority=env.HOOKLAB_PRIORITY_MICROLAMPORTS??'0'
  need(/^(0|[1-9][0-9]{0,6})$/.test(priority),'HOOKLAB_PRIORITY_MICROLAMPORTS must be a small integer')
  const networkFee=String(3*5000+Math.ceil(1400000*Number(priority)/1e6))
- const common=async()=>({...await reviewTiming(),maxAgeMs:60000,maxSlotLag:5,maxNetworkFeeLamports:networkFee,computeUnitLimit:1400000,computeUnitPriceMicroLamports:priority})
+ const common=async()=>({...await reviewTiming(),maxAgeMs:60000,maxSlotLag:SLOT_LAG,maxNetworkFeeLamports:networkFee,computeUnitLimit:1400000,computeUnitPriceMicroLamports:priority})
  return {bundle,connections,observers,reviewTiming,
   async launchLimits(){const c=await common();return {preparationLimits:{...c,maxRentLamports:'20000000',maxTotalDebitLamports:String(20000000+Number(networkFee))},
    launchLimits:{...c,maxLaunchFeeLamports:bundle.config.economics.launchFeeLamports,maxPoolCreationFeeLamports:bundle.config.economics.poolCreationFeeLamports,
     maxRentLamports:'100000000',maxInstructionDebitLamports:'100000000',maxTotalDebitLamports:String(100000000+Number(networkFee))}}},
-  tradeLimits:{nowMs:Date.now(),maxAgeMs:60000,maxSlotLag:5,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:networkFee,maxTotalDebitLamports:networkFee,
+  tradeLimits:{nowMs:Date.now(),maxAgeMs:60000,maxSlotLag:SLOT_LAG,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:networkFee,maxTotalDebitLamports:networkFee,
    computeUnitLimit:1400000,computeUnitPriceMicroLamports:priority},
   ...productionKeyRing(env)}
 }

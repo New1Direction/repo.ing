@@ -47,3 +47,15 @@ test('instrumentation does nothing unless the production bootstrap is explicitly
  try{process.env.NEXT_RUNTIME='nodejs';delete process.env.HOOK_PRODUCTION_BOOTSTRAP;assert.equal(await register(),undefined)}
  finally{if(before===undefined)delete process.env.HOOK_PRODUCTION_BOOTSTRAP;else process.env.HOOK_PRODUCTION_BOOTSTRAP=before;if(runtime===undefined)delete process.env.NEXT_RUNTIME;else process.env.NEXT_RUNTIME=runtime}
 })
+
+test('a provider still behind the other catches up instead of refusing; other errors and plain properties pass through',async()=>{
+ const {catchUpConnection}=await import('../src/hooklab-production-bootstrap.mjs')
+ let calls=0
+ const behind={rpcEndpoint:'https://api.mainnet-beta.solana.com',async isBlockhashValid(){if(++calls<3)throw Error('failed to determine if the blockhash is valid: Minimum context slot has not been reached');return {value:true}},
+  async getSlot(){throw Error('429 Too Many Requests')}}
+ const c=catchUpConnection(behind,{sleep:async()=>{}})
+ assert.equal(c.rpcEndpoint,'https://api.mainnet-beta.solana.com')
+ assert.deepEqual(await c.isBlockhashValid('x',{minContextSlot:5}),{value:true});assert.equal(calls,3)
+ await assert.rejects(c.getSlot(),/429/,'unrelated errors are not retried')
+ calls=-100;await assert.rejects(catchUpConnection(behind,{sleep:async()=>{},attempts:3}).isBlockhashValid('x'),/Minimum context slot/,'bounded')
+})

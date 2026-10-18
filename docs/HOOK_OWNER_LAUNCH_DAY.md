@@ -100,7 +100,7 @@ rent locked). The final plan prints the table address for the bundle.
 
 ```sh
 export HOOKLAB_PRODUCTION_RPC_PRIMARY_URL=...   # the Helius URL Railway uses (from your password manager)
-export HOOKLAB_PRODUCTION_RPC_SECONDARY_URL=https://solana-rpc.publicnode.com
+export HOOKLAB_PRODUCTION_RPC_SECONDARY_URL=https://api.mainnet-beta.solana.com
 node scripts/hooklab-production-bundle.mjs --trade-table <TABLE> --approval-reference "launch-day-2026-10-18" --out config/hooklab-production-bundle.json
 ```
 
@@ -134,7 +134,7 @@ reference (`SOLANA_RPC_URL` is the existing Helius variable), never copied:
 railway variable set $R --skip-deploys HOOK_WALLET_IDENTITY_ENABLED=true HOOK_WALLET_IDENTITY_ORIGIN=https://repo.ing \
   'HOOK_WALLET_IDENTITY_DATABASE_URL=${{ Postgres.DATABASE_URL }}' HOOK_NATIVE_LAUNCH_ENABLED=true HOOK_OWNER_APPROVED_LAUNCHES=true \
   HOOK_LAUNCH_ADMIN_ADDRESS=DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5 HOOK_NATIVE_ACTIVE_KEY_ID=k-2026-10 \
-  'HOOKLAB_PRODUCTION_RPC_PRIMARY_URL=${{ SOLANA_RPC_URL }}' HOOKLAB_PRODUCTION_RPC_SECONDARY_URL=https://solana-rpc.publicnode.com \
+  'HOOKLAB_PRODUCTION_RPC_PRIMARY_URL=${{ SOLANA_RPC_URL }}' HOOKLAB_PRODUCTION_RPC_SECONDARY_URL=https://api.mainnet-beta.solana.com \
   HOOKLAB_PRIORITY_MICROLAMPORTS=10000
 ```
 
