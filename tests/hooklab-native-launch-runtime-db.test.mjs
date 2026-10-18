@@ -16,6 +16,7 @@ import {maxWalletOperatorFixture} from './fixtures/hooklab-max-wallet-operator.m
 import {rebindMaxWalletLaunchFixture} from './fixtures/hooklab-max-wallet-launch-settlement.mjs'
 import {dropTestDatabase} from './fixtures/drop-test-database.mjs'
 import {ownerApprovalStore,remoteAdminSigner} from '../src/hooklab-owner-approval.mjs'
+import {verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair} from '../src/hooklab-owner-agent.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),seed=label=>createHash('sha256').update(`LOCAL FULL RUNTIME TEST ONLY ${label}`).digest()
 const wallet=Keypair.fromSeed(seed('wallet')),adminKey=Keypair.fromSeed(seed('admin'))
 const signAdmin=message=>sign(null,message,createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed('admin')]),format:'der',type:'pkcs8'}))
@@ -73,11 +74,30 @@ async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}=
   }
   globalThis.fetch=async(...args)=>{try{return await syntheticFetch(...args)}catch(e){console.error('SYNTHETIC SEND FAILURE',e.stack);throw e}}
   await pool.query("insert into hook_lab_wallet_sessions(token_sha256,wallet,origin,audience,genesis_hash,expires_at) values($1,$2,'https://repo.ing','general-launcher',$3,clock_timestamp()+interval '30 minutes')",[sha(token),owner,profile.genesisHash])
+  const ownerAgentKey=adminSignerFromKeypair(JSON.stringify([...adminKey.secretKey]),adminKey.publicKey.toBase58())
   let ownerSignatures=0,ownerAway=false,chainPastDeadline=false;const ownerStore=remoteAdmin?ownerApprovalStore(pool,{adminAddress:adminKey.publicKey.toBase58()}):null
   const runtime=createNativeLaunchRuntime(pool,{enabled:true,origin:'https://repo.ing',ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:initial.config,profile:initial.profile,dossierJson:initial.dossierJson,connections,keyRing:{test:Buffer.alloc(32,57)},activeKeyId:'test',adminSigner:remoteAdmin?remoteAdminSigner(pool,{address:adminKey.publicKey.toBase58(),observe:async()=>({slot:ownerAway?10**9:0,blockHeight:0,nowMs:Date.now()}),
    sleep:async()=>{ // owner-agent stand-in: sign each pending exact message with the admin key, once
-    const {rows}=await pool.query("select id,message_base64 from hook_lab_owner_sign_requests where status='pending'")
-    if(!ownerAway)for(const row of rows){ownerSignatures++;await ownerStore.submitSignature(row.id,signAdmin(Buffer.from(row.message_base64,'base64')).toString('base64'))}
+    const {rows}=await pool.query("select id,message_base64,message_sha256,signer_address,valid_until_slot,last_valid_block_height from hook_lab_owner_sign_requests where status='pending'")
+    if(!ownerAway)for(const row of rows){
+     // Exactly what the owner's Mac does: decode the real message, resolve its tables, match the invite.
+     const {rows:[op]}=await pool.query('select review from hook_lab_native_signing_operations where message_sha256=$1',[row.message_sha256])
+     const lookupTables=op.review.lookupTables.map(t=>decodeLookupTable(t.address,Buffer.from(t.dataBase64,'base64')))
+     const signRequest={messageBase64:row.message_base64,messageSha256:row.message_sha256,signer:row.signer_address,validUntilSlot:row.valid_until_slot,lastValidBlockHeight:row.last_valid_block_height}
+     const invited={creator:owner,name:initial.request.name,symbol:initial.request.symbol,uri:initial.request.uri}
+     const approved={launchProgram:profile.programs.launch,admin:adminKey.publicKey.toBase58(),creatorFeeBps:initial.request.creatorFeeBps,feeModel:2}
+     const live={slot:startSlot,blockHeight:0}
+     if(!ownerSignatures){
+      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited:{...invited,name:'Other coin'},approved,lookupTables,live}),/name, symbol or URI differs/)
+      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited:{...invited,creator:adminKey.publicKey.toBase58()},approved,lookupTables,live}),/not the invited creator/)
+      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited,approved:{...approved,creatorFeeBps:200},lookupTables,live}),/approved economics/)
+      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,live:{slot:Number(row.valid_until_slot)-5,blockHeight:0}}),/too close/)
+      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited,approved,lookupTables:[],live}),/unresolved lookup table/)
+     }
+     const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,live})
+     assert.equal(checked.creatorFeeBps,initial.request.creatorFeeBps)
+     ownerSignatures++;await ownerStore.submitSignature(row.id,ownerAgentKey.signBase64(Buffer.from(row.message_base64,'base64')))
+    }
    }}):{address:adminKey.publicKey.toBase58(),sign:signAdmin},expiryObserver:async()=>chainPastDeadline?{slot:10**9,blockHeight:10**9}:{slot:1,blockHeight:1},preparationLimits:prepLimits,launchLimits:limits})
   let lastLaunchId
   for(let launchNumber=0;launchNumber<2;launchNumber++){
