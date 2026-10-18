@@ -85,44 +85,54 @@ const inviteLedgerPath=path.join(homedir(),'.hooklab-owner','invited.json')
 const invitedByMe=()=>{try{return JSON.parse(readFileSync(inviteLedgerPath,'utf8'))}catch(error){if(error.code==='ENOENT')return {};throw error}}
 function recordInvite(request){
  mkdirSync(path.dirname(inviteLedgerPath),{recursive:true,mode:0o700})
- const ledger={...invitedByMe(),[request.id]:{creator:request.creator,symbol:request.symbol,invitedAt:new Date().toISOString()}}
+ const ledger={...invitedByMe(),[request.id]:{creator:request.creator,name:request.name,symbol:request.symbol,uri:request.uri,creatorFeeBps:request.creatorFeeBps,capBps:request.capBps,invitedAt:new Date().toISOString()}}
  writeFileSync(`${inviteLedgerPath}.next`,JSON.stringify(ledger,null,1),{mode:0o600});renameSync(`${inviteLedgerPath}.next`,inviteLedgerPath)
 }
+// The server's copy of an invite must still equal what this agent invited.
+const INVITE_FIELDS=['creator','name','symbol','uri','creatorFeeBps','capBps']
+const matchesLedger=invited=>{const mine=invited&&invitedByMe()[invited.id];return !!mine&&INVITE_FIELDS.every(k=>mine[k]===invited[k])}
+// Waiting states log once a minute and back off, instead of spamming or declining for good.
+const waits=new Map()
+function wait(id,reason){const w=waits.get(id)??{n:0,loggedAt:0};w.n++;w.until=Date.now()+Math.min(60_000,1_500*2**Math.min(w.n,6))
+ if(Date.now()-w.loggedAt>60_000){console.log(`Table request waiting: ${reason}`);w.loggedAt=Date.now()};waits.set(id,w)}
 let tableJob=null
 async function handleTableRequest(tableRequest){
  if(handled.has(`table:${tableRequest.preparationId}`))return
  const invited=queue.requests.find(r=>r.id===tableRequest.launchRequestId)
  const decline=async reason=>{handled.add(`table:${tableRequest.preparationId}`);console.log(`REFUSED table request for ${tableRequest.creator}: ${reason}`)
   await api({action:'decline-table',preparationId:tableRequest.preparationId}).catch(()=>{})}
- // Definitive refusals: not invited by this agent, or the request differs from the invite.
+ // Not in this agent's invite ledger: never pay for it, but do not decline for good either (the owner decides).
  const mine=invitedByMe()[tableRequest.launchRequestId]
- if(!mine||mine.creator!==tableRequest.creator)return decline('this agent did not invite that request')
+ if(!mine)return wait(tableRequest.preparationId,`request ${tableRequest.launchRequestId} is not in this agent's invite ledger; nothing will be paid for it`)
+ if(!matchesLedger(invited)||mine.creator!==tableRequest.creator)return decline('the request differs from what this agent invited')
  let configBytes,grant
  try{
   const infos=await Promise.all(connections.map(c=>c.getAccountInfo(PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(LAUNCH_PROGRAM))[0],'finalized')))
   if(!infos[0]||!infos[1]||!infos[0].data.equals(infos[1].data))throw Error('launch config missing or providers disagree')
   configBytes=infos[0].data;grant=await grantStatus(tableRequest.creator)
- }catch(error){console.log(`Table request waiting (${error.message}); will retry.`);return}
- if(!grant.usable)return decline(`creator grant not usable (${grant.reason})`)
+ }catch(error){return wait(tableRequest.preparationId,error.message)}
+ // A missing or nearly expired grant can be fixed with customer-grant; wait instead of declining.
+ if(!grant.usable)return wait(tableRequest.preparationId,`creator grant not usable (${grant.reason}); run customer-grant for ${tableRequest.creator}`)
  let checked
  try{checked=verifyTableRequest({tableRequest,invited,envelope,launchConfigBytes:configBytes,adminAddress:ADMIN})}catch(error){return decline(error.message)}
  console.log(`\nTABLE for ${invited.symbol} creator ${invited.creator} mint ${tableRequest.launchRequest.mint}: ${checked.inventory.length} addresses`)
  const table=await tables.ensure({preparationId:tableRequest.preparationId,launchRequestId:invited.id,creator:invited.creator,mint:tableRequest.launchRequest.mint,...checked})
  await api({action:'table',preparationId:tableRequest.preparationId,tableAddress:table})
- handled.add(`table:${tableRequest.preparationId}`);console.log(`TABLE READY ${table}`)
+ handled.add(`table:${tableRequest.preparationId}`);waits.delete(tableRequest.preparationId);console.log(`TABLE READY ${table}`)
 }
 // Table creation takes ~20-40 s; it runs beside the heartbeat so the site keeps showing the owner online.
 function startTableJobs(){
  if(tableJob||!accepting)return
- const next=(queue.tableRequests??[]).find(t=>!handled.has(`table:${t.preparationId}`))
+ const next=(queue.tableRequests??[]).find(t=>!handled.has(`table:${t.preparationId}`)&&!(waits.get(t.preparationId)?.until>Date.now()))
  if(!next)return
- tableJob=handleTableRequest(next).catch(error=>console.log(`Table not ready yet (${error.message}); will resume the same journaled transactions.`)).finally(()=>{tableJob=null})
+ tableJob=handleTableRequest(next).catch(error=>wait(next.preparationId,`${error.message}; the same journaled transactions resume`)).finally(()=>{tableJob=null})
 }
 async function handleSignRequest(signRequest){
  if(handled.has(signRequest.id))return;handled.add(signRequest.id)
  const invited=queue.requests.find(r=>['invited','launching'].includes(r.status)&&r.creator===signRequest.context?.owner)
  try{
   if(!invited)throw Error('no invited request for this creator')
+  if(!matchesLedger(invited))throw Error('the server\'s invite differs from what this agent invited')
   const tables=await lookupTables(signRequest.messageBase64),policy=await mintPolicy(launchMintFromMessage(signRequest.messageBase64,tables,LAUNCH_PROGRAM))
   const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables:tables,policy,live:await live()})
   console.log(`\nSIGN? ${checked.symbol} "${checked.name}" creator ${checked.creator} mint ${checked.mint} fee ${percent(checked.creatorFeeBps)} cap ${percent(checked.capBps)} · ${checked.slotsLeft} slots / ${checked.blocksLeft} blocks left`)
@@ -148,8 +158,10 @@ rl.on('line',async line=>{
    const grant=await grantStatus(pick.creator)
    if(!grant.usable){console.log(`Creator grant not usable (${grant.reason}). Issue it first with the owner driver:\n  node scripts/hooklab-owner.mjs plan customer-grant --creator ${pick.creator} --rpc URL --rpc2 URL\nreview the preview, then: node scripts/hooklab-owner.mjs execute customer-grant --creator ${pick.creator} --message-sha256 <preview sha> --key payer=<pipe> --key admin=<pipe> --rpc URL --rpc2 URL\nthen invite again.`);return}
    const minutes=Number(arg2??opt['invite-minutes'])
-   recordInvite(pick)
-   console.log(`Invited until ${new Date((await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})).request.inviteExpiresAt).toLocaleTimeString()}`)
+   const {request:confirmed}=await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})
+   if(!INVITE_FIELDS.every(k=>confirmed[k]===pick[k]))throw Error('server returned a different invite')
+   recordInvite(confirmed)
+   console.log(`Invited until ${new Date(confirmed.inviteExpiresAt).toLocaleTimeString()}`)
   }
   else if(cmd==='reclaim'){
    // Only with a fresh view of open requests: a stale or empty queue would look like every launch had finished.

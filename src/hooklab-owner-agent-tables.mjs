@@ -16,7 +16,8 @@ function acquireLock(dir){
   try{const fd=openSync(lock,'wx',0o600);writeFileSync(fd,String(process.pid));closeSync(fd);break}
   catch(error){
    if(error.code!=='EEXIST')throw error
-   const pid=Number(readFileSync(lock,'utf8'));let alive=false;try{process.kill(pid,0);alive=pid!==process.pid}catch{}
+   // Only ESRCH proves the holder is gone; EPERM means a live process we may not signal.
+   const pid=Number(readFileSync(lock,'utf8'));let alive=false;try{process.kill(pid,0);alive=pid!==process.pid}catch(error){alive=error.code!=='ESRCH'}
    if(alive)throw Error(`another owner agent (pid ${pid}) is using ${dir}`)
    unlinkSync(lock)
   }
