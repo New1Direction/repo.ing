@@ -30,6 +30,8 @@ async function inTransaction(pool,work){
 }
 const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,status:row.status,
  invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString()})
+const publicTableRequest=row=>Object.freeze({preparationId:row.preparation_id,launchRequestId:row.launch_request_id,creator:row.creator_wallet,launchRequest:row.launch_request,
+ inventory:row.inventory,inventorySha256:row.inventory_sha256,status:row.status,tableAddress:row.table_address,createdAt:row.created_at.toISOString()})
 const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,messageBase64:row.message_base64,messageSha256:row.message_sha256,context:row.context,
  validUntilSlot:String(row.valid_until_slot),lastValidBlockHeight:String(row.last_valid_block_height),reviewExpiresAt:row.review_expires_at.toISOString(),status:row.status,createdAt:row.created_at.toISOString()})
 
@@ -50,7 +52,8 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     await db.query("update hook_lab_owner_sign_requests set status='expired',decided_at=clock_timestamp() where status='pending' and review_expires_at<=clock_timestamp()")
     const {rows:requests}=await db.query("select * from hook_lab_launch_requests where status in ('queued','invited','launching') order by created_at limit 50")
     const {rows:signs}=await db.query("select * from hook_lab_owner_sign_requests where status='pending' order by created_at limit 10")
-    return Object.freeze({requests:requests.map(publicRequest),signRequests:signs.map(publicSignRequest)})
+    const {rows:tables}=await db.query("select * from hook_lab_owner_table_requests where status='requested' order by created_at limit 10")
+    return Object.freeze({requests:requests.map(publicRequest),signRequests:signs.map(publicSignRequest),tableRequests:tables.map(publicTableRequest)})
    })
   },
   async createRequest(creator,{id,...intent}){
@@ -112,6 +115,15 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     const {rows:[saved]}=await db.query("update hook_lab_owner_sign_requests set status='signed',signature=$2,decided_at=clock_timestamp() where id=$1 returning *",[row.id,signatureBase64])
     return publicSignRequest(saved)
    })
+  },
+  // Owner agent only. The address is only a claim: the server verifies the table on chain before use.
+  async submitTable(preparationId,tableAddress){
+   const {rows:[row]}=await pool.query("update hook_lab_owner_table_requests set status='created',table_address=$2,decided_at=clock_timestamp() where preparation_id=$1 and status='requested' returning *",[z.uuid().parse(preparationId),address.parse(tableAddress)])
+   check(row,'Table request is no longer pending');return publicTableRequest(row)
+  },
+  async declineTable(preparationId){
+   const {rows:[row]}=await pool.query("update hook_lab_owner_table_requests set status='declined',decided_at=clock_timestamp() where preparation_id=$1 and status='requested' returning *",[z.uuid().parse(preparationId)])
+   check(row,'Table request is no longer pending');return publicTableRequest(row)
   },
   async declineSignRequest(id){
    const {rows:[row]}=await pool.query("update hook_lab_owner_sign_requests set status='declined',decided_at=clock_timestamp() where id=$1 and status='pending' returning *",[z.uuid().parse(id)])

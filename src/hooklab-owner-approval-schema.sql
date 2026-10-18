@@ -59,3 +59,36 @@ begin
 end $$;
 create trigger hook_lab_owner_sign_request_immutable before update on hook_lab_owner_sign_requests
  for each row execute function hook_lab_owner_sign_request_immutable();
+
+-- One address lookup table per prepared launch (a launch does not fit a packet without one).
+-- The server records the exact inventory; the owner's Mac agent recomputes it, creates the table
+-- with the admin key and reports the address; the server verifies the table on chain before use.
+create table hook_lab_owner_table_requests (
+ preparation_id uuid primary key,
+ launch_request_id uuid not null unique references hook_lab_launch_requests(id),
+ creator_wallet text not null,
+ launch_request jsonb not null,
+ inventory jsonb not null,
+ inventory_sha256 text not null check(inventory_sha256 ~ '^[a-f0-9]{64}$'),
+ status text not null check(status in ('requested','created','declined')),
+ table_address text,
+ issued_table_sha256 text check(issued_table_sha256 ~ '^[a-f0-9]{64}$'),
+ created_at timestamptz not null default clock_timestamp(),
+ decided_at timestamptz,
+ check((status='created')=(table_address is not null)),
+ check((status='requested')=(decided_at is null)),
+ check(issued_table_sha256 is null or status='created')
+);
+create function hook_lab_owner_table_request_immutable() returns trigger language plpgsql as $$
+begin
+ if row(new.preparation_id,new.launch_request_id,new.creator_wallet,new.launch_request,new.inventory,new.inventory_sha256,new.created_at)
+ is distinct from row(old.preparation_id,old.launch_request_id,old.creator_wallet,old.launch_request,old.inventory,old.inventory_sha256,old.created_at)
+ then raise exception 'Owner table request identity is immutable'; end if;
+ if old.status<>'requested' and row(new.status,new.table_address) is distinct from row(old.status,old.table_address)
+ then raise exception 'Owner table request already decided'; end if;
+ if old.issued_table_sha256 is not null and new.issued_table_sha256 is distinct from old.issued_table_sha256
+ then raise exception 'Issued launch lookup table is immutable'; end if;
+ return new;
+end $$;
+create trigger hook_lab_owner_table_request_immutable before update on hook_lab_owner_table_requests
+ for each row execute function hook_lab_owner_table_request_immutable();

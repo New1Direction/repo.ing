@@ -14,6 +14,8 @@ const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('decline'),requestId:uuid}).strict(),
  z.object({action:z.literal('sign'),signRequestId:uuid,signatureBase64:z.string().max(100)}).strict(),
  z.object({action:z.literal('decline-sign'),signRequestId:uuid}).strict(),
+ z.object({action:z.literal('table'),preparationId:uuid,tableAddress:z.string().min(32).max(44)}).strict(),
+ z.object({action:z.literal('decline-table'),preparationId:uuid}).strict(),
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}})
 export function ownerTokenMatches(header,expectedSha256){
@@ -38,7 +40,9 @@ export function createOwnerApprovalsHandler({env=process.env,configuration=walle
    else if(input.action==='invite')result={request:await approvals.invite(input.requestId,{inviteMs:input.inviteSeconds*1000})}
    else if(input.action==='decline')result={request:await approvals.decline(input.requestId)}
    else if(input.action==='sign')result={signRequest:await approvals.submitSignature(input.signRequestId,input.signatureBase64)}
-   else result={signRequest:await approvals.declineSignRequest(input.signRequestId)}
+   else if(input.action==='decline-sign')result={signRequest:await approvals.declineSignRequest(input.signRequestId)}
+   else if(input.action==='table')result={tableRequest:await approvals.submitTable(input.preparationId,input.tableAddress)}
+   else result={tableRequest:await approvals.declineTable(input.preparationId)}
    return reply({status:'ok',...result})
   }catch(error){
    // Store messages are fixed, owner-facing and contain no secrets; anything else stays generic.

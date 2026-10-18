@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { Connection } from '@solana/web3.js'
 import { remoteAdminSigner } from './hooklab-owner-approval.mjs'
+import { remoteLaunchLookupTable } from './hooklab-owner-launch-tables.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
@@ -70,7 +71,9 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  const base={enabled:true,origin:identity.origin,ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,
   config:s.bundle.config,profile:s.bundle.profile,dossierJson:s.bundle.dossierJson,connections:s.connections,keyRing:s.keyRing,activeKeyId:s.activeKeyId,
   adminSigner:remoteAdminSigner(pool,{address:s.bundle.config.reviewer,observe:s.observers.live}),expiryObserver:s.observers.bothPast}
- const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,reviewTiming:s.reviewTiming,...await s.launchLimits()})
+ // Each launch gets its own lookup table, created by the owner's Mac agent; trades use the bundle's shared table.
+ const launchLookupTable=remoteLaunchLookupTable(pool,{envelope:s.bundle.profile,connections:s.connections,adminAddress:s.bundle.config.reviewer})
+ const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,launchLookupTable,reviewTiming:s.reviewTiming,...await s.launchLimits()})
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.

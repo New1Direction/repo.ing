@@ -6,20 +6,28 @@
 //     "admin=$HOME/Library/Application Support/Hook Lab Custody/custody-da8970c2-1b18-4dc7-a4bc-9f096e42d5cc/primary:owner-admin" \
 //     -- node scripts/hooklab-owner-agent.mjs --admin-key '{admin}' --rpc "$HELIUS_URL" --rpc2 https://solana-rpc.publicnode.com
 //
-// Commands while running: list | invite N [minutes] | decline N | pause | resume | quit
+// Commands while running: list | invite N [minutes] | decline N | reclaim | pause | resume | quit
+// For each prepared launch it also creates that launch's lookup table with the admin key (about
+// 0.0097 SOL rent per table, returned by `reclaim` after the launch finishes), after re-deriving the
+// table's addresses itself. Journal (public data only): ~/.hooklab-owner/launch-tables.
 // It signs ONLY a launch message that decodes to the invited creator and coin, the invited fee,
 // one create_launch_custom_v3 call, an on-chain mint policy with the invited cap and fee, and a
 // deadline that both RPC providers say is still open. Fee and cap menus come from the release code.
 import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { Connection,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress } from '../src/hooklab-owner-agent.mjs'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
+import { verifyTableRequest } from '../src/hooklab-owner-launch-tables.mjs'
+import { ownerTableExecutor } from '../src/hooklab-owner-agent-tables.mjs'
+import { productionArtifacts,productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
 const LAUNCH_PROGRAM='E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft',GATE_PROGRAM='BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb',ADMIN='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',FEE_MODEL=2
 const {values:opt}=parseArgs({options:{origin:{type:'string',default:'https://repo.ing'},'admin-key':{type:'string'},rpc:{type:'string'},rpc2:{type:'string'},
- 'invite-minutes':{type:'string',default:'15'},'confirm-each':{type:'boolean',default:false},'poll-ms':{type:'string',default:'1500'}}})
+ 'invite-minutes':{type:'string',default:'15'},'confirm-each':{type:'boolean',default:false},'poll-ms':{type:'string',default:'1500'},'table-microlamports':{type:'string',default:'10000'}}})
 const die=message=>{console.error(message);process.exit(2)}
 const token=process.env.HOOK_OWNER_APPROVAL_TOKEN
 if(!token||token.length<32)die('Set HOOK_OWNER_APPROVAL_TOKEN (from your Keychain) first.')
@@ -28,7 +36,9 @@ const admin=adminSignerFromKeypair(readFileSync(opt['admin-key'],'utf8'),ADMIN) 
 const connections=[new Connection(opt.rpc,'confirmed'),new Connection(opt.rpc2,'confirmed')]
 const launchCoder=new BorshCoder(JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url))))
 const approved={launchProgram:LAUNCH_PROGRAM,gateProgram:GATE_PROGRAM,admin:ADMIN,creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:FEE_MODEL}
-let accepting=true,queue={requests:[],signRequests:[]},busy=false
+const {base,idls}=productionArtifacts(),envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')]))}
+const tables=ownerTableExecutor({connections,admin,journalDir:path.join(homedir(),'.hooklab-owner','launch-tables'),microLamports:Number(opt['table-microlamports']),log:console.log})
+let accepting=true,queue={requests:[],signRequests:[],tableRequests:[]},busy=false
 const handled=new Set()
 
 async function api(body){
@@ -69,6 +79,25 @@ function show(){
  queue.requests.forEach((r,i)=>console.log(` ${i+1}. ${r.status.padEnd(9)} ${r.symbol.padEnd(10)} ${r.name.padEnd(32)} fee ${percent(r.creatorFeeBps)} cap ${percent(r.capBps)} creator ${r.creator}${r.inviteExpiresAt?` invite until ${new Date(r.inviteExpiresAt).toLocaleTimeString()}`:''}`))
  if(!queue.requests.length)console.log(' (no launch requests)')
 }
+async function handleTableRequest(tableRequest){
+ if(handled.has(`table:${tableRequest.preparationId}`))return
+ const invited=queue.requests.find(r=>r.id===tableRequest.launchRequestId)
+ let checked
+ try{
+  const infos=await Promise.all(connections.map(c=>c.getAccountInfo(PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(LAUNCH_PROGRAM))[0],'finalized')))
+  if(!infos[0]||!infos[1]||!infos[0].data.equals(infos[1].data))throw Error('launch config missing or providers disagree')
+  checked=verifyTableRequest({tableRequest,invited,envelope,launchConfigBytes:infos[0].data,adminAddress:ADMIN})
+ }catch(error){
+  handled.add(`table:${tableRequest.preparationId}`);console.log(`REFUSED table request for ${tableRequest.creator}: ${error.message}`)
+  await api({action:'decline-table',preparationId:tableRequest.preparationId}).catch(()=>{});return
+ }
+ try{
+  console.log(`\nTABLE for ${invited.symbol} creator ${invited.creator} mint ${tableRequest.launchRequest.mint}: ${checked.inventory.length} addresses`)
+  const table=await tables.ensure({preparationId:tableRequest.preparationId,launchRequestId:invited.id,creator:invited.creator,mint:tableRequest.launchRequest.mint,...checked})
+  await api({action:'table',preparationId:tableRequest.preparationId,tableAddress:table})
+  handled.add(`table:${tableRequest.preparationId}`);console.log(`TABLE READY ${table}`)
+ }catch(error){console.log(`Table not ready yet (${error.message}); will resume the same journaled transactions.`)}
+}
 async function handleSignRequest(signRequest){
  if(handled.has(signRequest.id))return;handled.add(signRequest.id)
  const invited=queue.requests.find(r=>['invited','launching'].includes(r.status)&&r.creator===signRequest.context?.owner)
@@ -101,8 +130,9 @@ rl.on('line',async line=>{
    const minutes=Number(arg2??opt['invite-minutes'])
    console.log(`Invited until ${new Date((await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})).request.inviteExpiresAt).toLocaleTimeString()}`)
   }
+  else if(cmd==='reclaim'){const lines=await tables.reclaim(new Set(queue.requests.map(r=>r.id)));console.log(lines.length?lines.join('\n'):'Nothing to reclaim.')}
   else if(cmd==='quit'){accepting=false;await api({action:'heartbeat',accepting:false,agentAddress:ADMIN}).catch(()=>{});process.exit(0)}
-  else console.log('Commands: list | invite N [minutes] | decline N | pause | resume | quit')
+  else console.log('Commands: list | invite N [minutes] | decline N | reclaim | pause | resume | quit')
  }catch(error){console.log(`Failed: ${error.message}`)}
 })
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await api({action:'heartbeat',accepting:false,agentAddress:ADMIN}).catch(()=>{});process.exit(130)})
@@ -112,7 +142,7 @@ for(;;){
   const before=JSON.stringify(queue.requests)
   queue=await api({action:'heartbeat',accepting,agentAddress:ADMIN})
   if(JSON.stringify(queue.requests)!==before)show()
-  if(!busy&&accepting){busy=true;try{for(const s of queue.signRequests)await handleSignRequest(s)}finally{busy=false}}
+  if(!busy&&accepting){busy=true;try{for(const t of queue.tableRequests??[])await handleTableRequest(t);for(const s of queue.signRequests)await handleSignRequest(s)}finally{busy=false}}
  }catch(error){console.log(`Heartbeat failed: ${error.message}`)}
  await new Promise(r=>setTimeout(r,Number(opt['poll-ms'])))
 }

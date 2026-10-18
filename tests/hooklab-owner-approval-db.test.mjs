@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createHash,randomUUID,sign as edSign,createPrivateKey } from 'node:crypto'
-import { Keypair } from '@solana/web3.js'
+import { Keypair,PublicKey } from '@solana/web3.js'
 import pg from 'pg'
 import { ownerApprovalStore,remoteAdminSigner,verifyEd25519 } from '../src/hooklab-owner-approval.mjs'
 
@@ -114,4 +114,55 @@ test('remote admin signer returns only a verified owner signature before the rea
   return {slot:999,blockHeight:1_000,nowMs:Date.now()}
  },sleep:async()=>{}})
  assert.ok(verifyEd25519(admin,raced,await racer.sign(raced,{review:reviewFor(raced)})))
+}))
+
+test('per-launch lookup table: requested once, created only by the agent claim, verified on chain, issued bytes locked',async()=>withDatabase(async pool=>{
+ const {productionArtifacts,productionProfileJson}=await import('../src/hooklab-production-operator-bundle.mjs')
+ const {remoteLaunchLookupTable,launchTableInventory,verifyTableRequest}=await import('../src/hooklab-owner-launch-tables.mjs')
+ const fixture=JSON.parse(await readFile(new URL('./fixtures/hooklab-mainnet-public-accounts.json',import.meta.url),'utf8'))
+ const {base,idls}=productionArtifacts(),envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.entries(idls).map(([r,b])=>[r,b.toString('base64')]))}
+ const configBytes=Buffer.from(fixture.accounts['launch-config'].dataBase64,'base64'),realAdmin='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5'
+ const store=ownerApprovalStore(pool,{adminAddress:admin})
+ const request=await store.createRequest(creatorA,{id:randomUUID(),...intent});await store.invite(request.id,{inviteMs:600_000})
+ const preparationId=randomUUID();await store.bindLaunch(pool,creatorA,preparationId,intent)
+ const launchRequest={schema:'repoing/inclusive-max-wallet-launch-request/1',policyKind:'max-wallet',policyVersion:2,creator:creatorA,feePayer:creatorA,mint:keypair('mint').publicKey.toBase58(),
+  selectedConfig:keypair('selected').publicKey.toBase58(),capBps:200,label:'customer',creatorFeeBps:100,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500,reviewer:realAdmin,
+  name:intent.name,symbol:intent.symbol,uri:intent.uri,virtualQuote:'1000000000'}
+ const {inventory}=launchTableInventory(envelope,launchRequest,configBytes),tableAddress=keypair('table').publicKey.toBase58()
+ const tableData=(addresses=inventory)=>{const h=Buffer.alloc(56);h.writeUInt32LE(1,0);h.writeBigUInt64LE(0xffffffffffffffffn,4);h.writeBigUInt64LE(100n,12);h[21]=1;new PublicKey(realAdmin).toBuffer().copy(h,22)
+  return Buffer.concat([h,...addresses.map(a=>new PublicKey(a).toBuffer())])}
+ let onChain=tableData()
+ const configAddress=PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(JSON.parse(envelope.json).programs.launch))[0].toBase58()
+ const connection={getSlot:async()=>200,async getAccountInfo(k){const a=k.toBase58()
+  if(a===configAddress)return {owner:new PublicKey(JSON.parse(envelope.json).programs.launch),data:configBytes}
+  if(a===tableAddress)return {owner:new PublicKey('AddressLookupTab1e1111111111111111111111111'),data:onChain};return null}}
+ const readLaunch=async id=>id===preparationId?{owner_wallet:creatorA,launch_request:launchRequest,launch_request_id:request.id}:undefined
+ let agentRan=0
+ // The owner agent's part: it sees the request in its heartbeat, re-derives it, and reports the table.
+ const sleep=async()=>{if(agentRan++)return
+  const {requests,tableRequests}=await store.heartbeat({accepting:true,agentAddress:admin})
+  assert.equal(tableRequests.length,1)
+  verifyTableRequest({tableRequest:tableRequests[0],invited:requests.find(r=>r.id===tableRequests[0].launchRequestId),envelope,launchConfigBytes:configBytes,adminAddress:realAdmin})
+  await store.submitTable(preparationId,tableAddress)}
+ const provider=remoteLaunchLookupTable(pool,{envelope,connections:[{connection},{connection}],adminAddress:realAdmin,readLaunch,sleep,pollMs:1,timeoutMs:5_000})
+ const pin=await provider({preparationId,allowCreate:true})
+ assert.equal(pin.address,tableAddress);assert.equal(pin.sha256,createHash('sha256').update(onChain).digest('hex'))
+ assert.deepEqual(await provider({preparationId,allowCreate:false}),pin,'later signing stages reuse the issued table')
+ await assert.rejects(store.submitTable(preparationId,keypair('other-table').publicKey.toBase58()),/no longer pending/)
+ await assert.rejects(provider({preparationId:randomUUID(),allowCreate:false}),/not bound/)
+ onChain=tableData([...inventory].reverse())
+ await assert.rejects(provider({preparationId,allowCreate:false}),/addresses differ/)
+ await assert.rejects(pool.query("update hook_lab_owner_table_requests set inventory='[]'::jsonb"),/immutable/)
+ await assert.rejects(pool.query("update hook_lab_owner_table_requests set issued_table_sha256=repeat('0',64)"),/immutable/)
+ // A request the agent never answers fails clearly instead of hanging; without allowCreate nothing is requested.
+ const second=await store.createRequest(creatorB,{id:randomUUID(),...intent});await store.cancelRequest(creatorA,request.id).catch(()=>{})
+ await pool.query("update hook_lab_launch_requests set status='launched' where id=$1",[request.id])
+ await store.invite(second.id,{inviteMs:600_000});const prep2=randomUUID();await store.bindLaunch(pool,creatorB,prep2,intent)
+ const lr2={...launchRequest,creator:creatorB,feePayer:creatorB,mint:keypair('mint-2').publicKey.toBase58()}
+ const silent=remoteLaunchLookupTable(pool,{envelope,connections:[{connection},{connection}],adminAddress:realAdmin,sleep:async()=>{},pollMs:1,timeoutMs:20,
+  readLaunch:async()=>({owner_wallet:creatorB,launch_request:lr2,launch_request_id:second.id})})
+ await assert.rejects(silent({preparationId:prep2,allowCreate:false}),/missing/)
+ await assert.rejects(silent({preparationId:prep2,allowCreate:true}),/still preparing/)
+ await store.declineTable(prep2)
+ await assert.rejects(silent({preparationId:prep2,allowCreate:true}),/declined/)
 }))
