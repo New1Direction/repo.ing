@@ -1,4 +1,5 @@
 // Complete server composition, opt-in only. No credentials or endpoint discovery.
+import { isApprovedLaunchChoice } from './hooklab-launch-menus.mjs'
 import { nativeSignerCustodyStore } from './hooklab-native-signer-custody-store.mjs'
 import { nativeCustodySigningAdapter } from './hooklab-native-custody-signing.mjs'
 import { nativeSigningLifecycle } from './hooklab-native-signing.mjs'
@@ -33,7 +34,8 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
   async reserve({sessionToken,owner,input}){
    try{
     // Creator rate is an explicit immutable approved profile/configuration input.
-    if(input.creatorFeeBps!==config.economics.creatorFeeBps)throw Error()
+    const reviewedProfile=JSON.parse(profile.json)
+    if(reviewedProfile.capability.creatorFeeBpsChoices?!isApprovedLaunchChoice(reviewedProfile,input):input.creatorFeeBps!==config.economics.creatorFeeBps)throw Error()
     const result=await reviewNewMintPreparationCandidate({custody,sessionToken,input:{operationId:input.operationId,capBps:input.capBps,label:input.label,creatorFeeBps:input.creatorFeeBps},
      profile:preparationProfile,connections,limits:preparationLimits,clock})
     if(result.custody.owner!==owner)throw Error()

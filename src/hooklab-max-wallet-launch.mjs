@@ -1,6 +1,7 @@
 // Deterministic stage-two compiler. No RPC, keys, signing, sends, storage or adoption.
 // The public production path is intentionally closed. Synthetic state is usable ONLY through
 // buildMaxWalletLaunchReviewForFixture, and never becomes a production preparation receipt.
+import { approvedCreatorFees } from './hooklab-launch-menus.mjs'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { BorshCoder } from '@anchor-lang/core'
@@ -199,7 +200,7 @@ function compileLaunch(input, fixture, canary = false) {
   check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
   const launch = binding(envelope, profile, 'launch'), swap = binding(envelope, profile, 'swap'), gate = binding(envelope, profile, 'gate')
   const inclusive=r.policyVersion===2
-  check(inclusive === (profile.buildFeature==='inclusive-fees-candidate') && (!inclusive || r.creatorFeeBps===profile.capability.creatorFeeBps), 'Compiler family or explicit fee differs')
+  check(inclusive === (profile.buildFeature==='inclusive-fees-candidate') && (!inclusive || approvedCreatorFees(profile).includes(r.creatorFeeBps)), 'Compiler family or explicit fee differs')
   const prep = parseMaxWalletPreparationRequest({ schema: inclusive?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1', policyKind: r.policyKind, policyVersion: r.policyVersion, creator: r.creator, feePayer: r.feePayer,
     mint: r.mint, selectedConfig: r.selectedConfig, capBps: r.capBps, label: r.label, creatorFeeBps: r.creatorFeeBps, rules: r.rules, hookFlags: r.hookFlags,...(inclusive?{feeModel:2,protocolShareBps:2500}:{}) })
   check(proof.profileSha256 === envelope.expectedSha256 && proof.preparationIntentSha256 === sha(JSON.stringify(prep)), 'Preparation intent/profile differs')

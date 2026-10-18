@@ -1,6 +1,7 @@
 // Explicit inclusive mode-2 max-wallet swap planner for local synthetic SBF review only.
 // No signing, submission, connection, new holding creation or production route.
 // The ordinary SwapArgs ABI enforces exact input/minimum output; TTL remains offchain.
+import { approvedCreatorFees } from './hooklab-launch-menus.mjs'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { BorshCoder } from '@anchor-lang/core'
@@ -213,7 +214,7 @@ function compile(input, fixture, canary = false) {
     && r.trader === r.recipient && r.trader === r.feePayer, 'Canary admin, payer or recipient binding differs')
   const policyBytes = owned(accounts, a.policy, G, 90), policy = decoded(gate, 'PolicyV2', policyBytes), registry = owned(accounts, a.registry, G, 81)
   check(policy.version === 2 && policy.fee_model === 2 && policy.protocol_share_bps === 2500
-    && policy.creator_fee_bps === r.creatorFeeBps && profile.capability.creatorFeeBps === r.creatorFeeBps && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n
+    && policy.creator_fee_bps === r.creatorFeeBps && approvedCreatorFees(profile).includes(r.creatorFeeBps) && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n
     && str(policy.quote_mint) === profile.quoteMint && policy.lp_fee_bps === 0, 'Max-wallet policy binding differs')
   const cap = n(policy.initial_supply) * BigInt(r.capBps) / 10000n
   check(cap > 0n && registry.equals(Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000', 'hex'), kb(a.policy), Buffer.from([0, 0]), kb(a.launch)])), 'Cap or exact max-wallet registry differs')
