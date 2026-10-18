@@ -1,5 +1,5 @@
 // HTTP boundary for candidate UI integration. Production custody/adoption are unset.
-import pg from 'pg'
+import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { z } from 'zod'
 import { assertSameOrigin } from './auth.mjs'
 import { walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQuota } from './hooklab-wallet-identity.mjs'
@@ -12,7 +12,7 @@ const blockers=[{code:'OWNER_CUSTODY_APPROVAL_REQUIRED',message:'Server custody 
  {code:'OPERATOR_DEPLOYMENT_APPROVAL_REQUIRED',message:'Owner-approved deployment pins and their fresh chain-state verifier are not configured.'}]
 const reply=(body,status=200)=>Response.json({...body,productionUnsignedMessage:null,executionAuthorized:false,canSign:false,canSubmit:false},{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 export function createNewMintPreparationHandler({env=process.env,configuration=walletIdentityConfiguration,
- database=config=>new pg.Pool({connectionString:config.databaseUrl,max:2,connectionTimeoutMillis:5000,query_timeout:5000}),
+ database=createHookLabDatabasePool,
  principalStore=walletPrincipalStore,quota=walletIdentityQuota,candidateReview=null}={}){
  return async request=>{
   if(env.HOOK_WALLET_NEW_MINT_REVIEW_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')return reply({status:'disabled'},404)

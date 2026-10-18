@@ -1,5 +1,5 @@
 import {publicNativeOperation} from './hooklab-native-operation-public.mjs'
-import pg from 'pg'
+import {createHookLabDatabasePool} from '../../src/hooklab-database.mjs'
 import {z} from 'zod'
 import {assertSameOrigin} from './auth.mjs'
 import {walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQuota} from './hooklab-wallet-identity.mjs'
@@ -16,7 +16,7 @@ const body=z.discriminatedUnion('action',[
 ])
 const reply=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 export function createInclusiveTradeHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=inclusiveTradeRuntime,
- database=c=>new pg.Pool({connectionString:c.databaseUrl,max:2,connectionTimeoutMillis:5000,query_timeout:5000}),principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
+ database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
  return async request=>{
   if(env.HOOK_INCLUSIVE_TRADING_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')return reply({status:'blocked',blockers:[{code:'INCLUSIVE_TRADING_DISABLED',message:'Trading awaits explicit deployment and fee approval.'}]})
   let pool

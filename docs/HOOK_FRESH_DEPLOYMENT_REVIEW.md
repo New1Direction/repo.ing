@@ -9,17 +9,30 @@ deployment, merging, upgrades or unpausing. None was performed. The owner
 performs final signing and live acceptance locally.
 
 The recommended values below are **not approved**: 100 bps gross creator fee
-and a 200 bps v2 wallet cap. They reuse the accepted test values deliberately,
-not as an implicit production promotion. Preserve the implemented per-swap
-model: repo.ing receives `floor(gross / 4)`, the creator receives the remainder,
-and there is no additional platform surcharge.
+and a 200 bps v2 wallet cap. **The proposed 2% cap differs from the earlier
+1% proposal and doubles the permitted per-wallet allocation.** Reusing local
+test values does not approve production settings. repo.ing receives
+`floor(gross / 4)` per swap, the creator receives the remainder, and there is
+no additional platform surcharge.
+
+**Release status remains NO-GO; the PostgreSQL regression blocker is resolved.**
+The disk-full incident stopped the local services. The owner subsequently approved
+deleting only the npm download cache and two webpack caches, and recovering only
+the existing PostgreSQL cluster. Its normal WAL recovery completed; all six
+database identities and six retained finality receipts match the saved evidence.
+The final five-test PostgreSQL run and no-signing SQL/HTTP smoke both passed.
+VM/Docker, validator, bridge and browser recovery was not approved or performed.
+The accepted browser URL is not currently served. Production actions remain blocked.
 
 ## Source and artifact baseline
 
 - App baseline: `New1Direction/repo.ing` PR #304,
   `d3eb0df2701be2b77e624d60750b99bc8bb23ebe`.
-- Frozen app source: `4f611561f2502699e2ffb039ef759fa65f36380c`.
-  This closure changes this approval document only, not the accepted runtime.
+- Accepted app runtime baseline: `4f611561f2502699e2ffb039ef759fa65f36380c`.
+  Prior approval-only commit: `38f635e5167e5f39ed073727ee10fb52edb629b9`.
+  This follow-up adds the verified database deadline fix and its regression tests;
+  it does not replace the earlier financial browser-acceptance baseline.
+  No program source, artifact pin or identity changed.
 - Protocol baseline: `New1Direction/hook-lab` PR #5,
   `134e16de1aadeac921bb314284fd3fd181c86097`.
 - Protocol source was not modified. Existing commit patches were not reapplied.
@@ -91,19 +104,28 @@ Their public deterministic test identities must never be used for production.
 
 ## Read-only retained-state assessment
 
-Independent read-only checks now agree across **Solana Labs**
+Independent preparation checks use **Solana Labs**
 `https://api.mainnet-beta.solana.com` and **Allnodes/PublicNode**
-`https://solana.publicnode.com`. Both return mainnet genesis
-`5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`; finalized account contexts
-458,306,602 and 458,306,584 agree on all 23 compared role accounts and the
-four ProgramData records. A subsequent two-provider check at slots
-458,318,583–586 proves all three proposed seeded buffers absent.
-Rent and base-signature fee quotes also agree. These are preparation evidence,
-not a signing-time freshness certificate. Re-read before each owner action.
+`https://solana.publicnode.com`, both with mainnet genesis
+`5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`.
+The first new 26-role/four-ProgramData snapshot agreed on state but its secondary
+observations spanned 22 slots, so independent review correctly rejected it as
+a five-slot freshness certificate. `allComparedStateAgrees` alone is insufficient.
 
-PublicNode bulk `getMultipleAccounts` returned HTTP 403; separate
-`getAccountInfo` reads succeeded. The alternate dRPC free endpoint rejected
-the chain. Neither failure was treated as a successful reader.
+A subsequent read-only recollection compared all **30 accounts in 814 ms**.
+Both providers returned **slot 458381139**: zero slot spread, within the
+unchanged five-second/five-slot limits. State agreed independently; the shared
+`quoteMint`, `solVault` and `nativeWrapper` accounts had changed since the earlier
+packet snapshot. Those changes are explicitly recorded, not waived or attributed
+to an assistant transaction. The unsigned packet requires fresh state binding.
+No rent/fee quote or funding-ceiling change was observed.
+
+PublicNode `getMultipleAccounts` returned HTTP 403; one JSON-RPC batch of
+individual `getAccountInfo` calls succeeded. This is a private read-only evidence
+probe, not a production adapter change. The earlier dRPC rejection and an
+initial read-only HTTP 429 were not treated as successful readers. No signing,
+simulation or submission RPC was used. Re-read before every owner action;
+even the successful preparation observation is not a lasting signing certificate.
 
 | Object | Observed state |
 | --- | --- |
@@ -287,7 +309,7 @@ Every recommendation remains pending explicit owner approval.
 | Gross creator fee | **100 bps / 1%** | Set launch maximum creator fee to 100 and aggregate rules-fee bound to 100; the latter is a validation bound, not another charge |
 | Platform share | **2,500 bps of gross creator fee**, integer floor per swap | Creator receives `gross - floor(gross/4)`; no extra platform fee |
 | Other charges / author share | Flat launch/pool fee, protocol surcharge, LP/sniper/holder/burn fee and selected-config author share **all zero** | Preserve the inclusive model and direct creator remainder |
-| Wallet cap | **200 bps / 2% in PolicyV2** | Legacy selected rules remain all zero. Preserve global legacy max-wallet bounds 1/1; do not widen them for a v2 policy |
+| Wallet cap | **Proposed 200 bps / 2% in PolicyV2, versus earlier 100 bps / 1%** | Requires explicit approval of the doubled allocation. Legacy selected rules remain all zero; preserve global legacy max-wallet bounds 1/1 |
 | Platform recipient | Existing treasury/collector **`FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i`** | Verify its canonical A49 quote holding and pinned inclusive policy recipient |
 | Creator recipient | Each launch's actual creator; first controlled canary only: **`DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9`** | Existing `dedicated-creator` role, not a general production default |
 | Canary mint | Existing **`2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn`**, `separate-mint` role | Verify custody/absence. Do not repurpose the old `6qi…` mint identity |
@@ -320,7 +342,7 @@ The existing external token is
 `CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7`.
 Neither program is part of the proposed upgrades.
 
-### Exact next step for BdAa — owner-local public output only
+### BdAa public-key check — completed, mismatch
 
 No BdAa signer role was found in the eleven public custody manifests.
 Filename-only searches found this **local rebuild artifact**, not a verified
@@ -331,18 +353,21 @@ production custody record:
   '/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/rebuilt-inclusive/elf/hook_max_wallet-keypair.json'
 ```
 
-The owner runs this public-key display locally and compares its sole public
-output with `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb`.
-It neither signs nor broadcasts and has no output-file flag. Do not `cat`,
-copy, export or send the keypair/seed/Keychain secret. I did not open this
-keypair. A matching public key identifies a candidate, not independent backup
-or proof of usable production custody.
+The documented command was run locally. Its sole public output was
+**`CUBGH9bhbMQnWcfXgjtXhgNFCKUxdDCBiFQnY7SVxQ1i`**, which does **not** match
+`BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb`.
+No key contents were printed, copied, exported or uploaded, and no transaction
+was signed. This local rebuild artifact cannot supply the existing BdAa identity.
+Do not generate a replacement or treat the source's declared address as custody.
 
-If it differs, stop: ask the original identity-generation operator for the
-**public-only custody record**—address, role, local reference and Keychain
-service name. Do not generate a replacement BdAa identity. The source's
-documented production key locations had no matching filename in the
-filename-only search; that is not proof the key does not exist elsewhere.
+The exact next step is to obtain the **original BdAa program-identity custody
+record** from its generation operator: public address and role, original
+set/journal ID, manifest path, owner-local signer handle/reference, and Keychain
+service/account labels if applicable. The operator then runs the same public-key
+display against that original local reference and compares BdAa locally.
+Return only the public result and custody reference—not the keypair, seed,
+passphrase, encrypted payload or Keychain secret. An address match still needs
+independent recovery proof.
 
 For the separate selected-config prerequisite, recover only the public
 config/journal identity and matching creator/mainnet/profile binding from the
@@ -463,27 +488,40 @@ unknowns. A different action list requires a different reviewed ceiling.
 
 ### One owner approval checklist — no item is execution permission by itself
 
-- [ ] Approve retained E73/B2, exact source/IDL/ELF pins and seeded-buffer order.
-- [ ] Identify BdAa custody, verify all required signers and independent recovery;
-      identify the selected-config public address/journal and existing prefunder.
-- [ ] Obtain authoritative external-token source/build attestation; approve the
-      explicitly mutable external token/bridge dependency trust and pinned code.
-- [ ] Approve 100-bps gross fee, 2,500-bps share of that fee, 200-bps v2 cap,
-      zero extra charges/author share, FhE collector and per-launch creator
-      recipient; DkD/2T2 are for this one controlled canary only.
-- [ ] Approve exact one-launch grant/absolute expiry, metadata, canonical ALT,
-      0.01-SOL wrap ceiling, one 1,000,200-raw-quote buy, bounded sell,
-      quote collection and closed final execution state.
+- [ ] Retain launch `E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft`
+      and swap `B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk`;
+      approve exact pins, extensions and sequential buffer/spill order.
+- [ ] Verify original gate signer `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb`,
+      upgrade signer `9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md`,
+      payer `3eCFwDiKetHe9pg1zNEkTohUECu2vtsZDRMZ3jeR4g5o`,
+      admin `DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5` and guardian
+      `CT4SioSvVFHcnuJbJMfcVgdR3GHAyK7VmrjvR6y3RmEY`.
+      Supply independent recovery, existing selected-config binding and prefunder
+      public address/custody reference. Do not generate replacements.
+- [ ] Complete independent external-token source/build attestation and approve
+      mutable dependency trust for token `2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22`
+      and bridge `CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7`.
+- [ ] Explicitly choose **proposed 2% cap versus earlier 1%**, **1% gross creator
+      fee**, per-swap **floor 25% platform / remainder creator**, zero surcharge
+      and zero author share. Platform recipient:
+      `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i`.
+      Each launch pays its actual creator; this one canary uses
+      `DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9` and existing mint
+      `2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn`, not general defaults.
+- [ ] Approve the exact ordered bounded canary: one-launch grant/absolute expiry,
+      canonical warm ALT, 0.01-SOL wrap ceiling, one 1,000,200-raw-quote buy,
+      sell no more than acquired base, quote fee collection and final closed gates.
 - [ ] Approve **4.176442240 SOL total capital ceiling**, including existing payer
       credit; fresh cash at most **4.175267240 SOL**; 0.05-SOL retained reserve,
-      zero priority fee, zero newly signed retries, no unpriced extra actions.
-- [ ] Review/rehearse the final address-bound unsigned packet and fresh
-      independent-reader dossier; re-quote fees/rent and measure every signed
-      size with reserved signature slots without signing production messages.
-- [ ] Separately consent to gate immutable finalization after exact read-back.
-- [ ] Owner locally signs and executes only after the above prerequisites close;
-      verifies each upgrade spill, fee floor/remainder and final pauses, and
-      handles any live test. No merging or general activation is authorized.
+      zero priority fee/newly signed retries and no unpriced additional actions.
+- [ ] Review stage-specific fresh address-bound unsigned messages, independent
+      state and actual fee/rent quotes; every reserved signed wire size ≤1,232.
+      Separately consent to immutable gate finalization after exact read-back:
+      future gate upgrades/closure/rent recovery are then permanently unavailable.
+- [ ] After every prerequisite closes, owner locally signs/executes only the
+      separately approved paused-deployment/canary stages and verifies spills,
+      receipts, fee arithmetic and restored pauses. This does not approve merging,
+      public trading, a general unpause or any action by the assistant.
 
 ## Verification limits and evidence
 
@@ -577,10 +615,11 @@ its historical aggregate was
 `a1688fd2f3f3af1af358ac050e435886acdad8b2c11ee3dea1f1fa3a8290bd27`.
 After that freeze, the owner explicitly authorized the missing public legacy
 IDL restoration, narrow ignore exception and local wallet-switch fix.
-The only runtime implementation changed is the local operations component.
-No accepted service, database or ledger was restarted/reset, and no financial
-flow was replayed. Runtime dependencies were not reinstalled: new test-only
-DOM dependencies were installed in the private source copy.
+At the accepted `4f61156` freeze, the only runtime implementation change was the
+local operations component. This follow-up additionally changes database-pool
+construction and targeted tests, as detailed below. The owner later approved
+PostgreSQL-only recovery after the disk-full service exits. No ledger/database
+reset, validator/browser restart or financial transaction replay was performed.
 
 The final offline guard/sender smoke command passed **8/8**, without touching
 accepted state:
@@ -644,20 +683,20 @@ ledgers are source changes.
 | --- | --- | --- |
 | Authentic historical fixtures / legacy IDL | **Resolved; non-blocking** | Verified archive and IDL pins; 17 affected files, 475/475 tests. No pin changes or historical source applied |
 | Wallet-switch race | **Resolved; non-blocking** | Four actual-component regressions and real Chromium deferred-response smoke; no signing/retain call or revived card after wallet switch |
-| Independent current production readers | **Completed preparation evidence; non-blocking** | Solana Labs and Allnodes agree on 23 account roles/four ProgramData records; agreed rents/signature fees and all three absent buffers. Signing-time refresh remains an owner hold point |
+| Independent current production readers | **Fresh preparation recollection passed; signing-time refresh remains blocking** | 30 accounts agree at slot 458381139 in 814 ms. Earlier 22-slot secondary spread was rejected. Three shared quote/bridge accounts changed since the packet snapshot; rebind before signing |
 | Retained E73/B2 upgrade mechanics | **Completed; non-blocking** | Separate validator, real old ELF bytes/lengths, exact extensions, 830/606 writes and real upgrades: **1,440 finalized signed transactions**, maximum **1,232 bytes**, exact candidate hashes, full buffer spills, unchanged config/governance bytes; wrong authority refused for both |
 | Production local-route refusal | **Completed private boundary proof; non-blocking** | Actual POST handler under `NODE_ENV=production`: local flag off → 404; on → 409 even with local wallet flag set. Valid dev config was checked separately. Scratch signing-table fingerprint unchanged, zero accepted-validator sends |
 | ALT owner/completeness/activation/warm boundary | **Completed private boundary proof; non-blocking** | Actual provider against the real retained 38-address table passes; declared client-side account-read faults for wrong owner, missing address, deactivated state and unwarmed slot all refuse. No table creation or validator writes |
 | First finality / failed outcome / duplicate dispatch | **Completed scoped evidence; non-blocking** | Fresh offline two-file run: **17 tests passed, zero failed/skipped**, real scratch PostgreSQL plus fee-only failure collector tests. First finality is immutable, later conflicts force review, no second dispatch. Read-only accepted DB retains six finalized receipts; original RPC slots are pruned and were not fabricated/re-queried as success |
 | Production-quote bridge access and close rent | **Completed local public-byte proof; non-blocking** | Separate native-token/bridge clone: four finalized signed transactions, max **484 bytes**, **10,000,000 lamports ↔ 10,000,000 raw quote**, no bridge surcharge, supply/vault restored, empty holding rent refunded. Mainnet and accepted validator untouched |
-| Full final address-bound unsigned production/canary packet | **Blocking before signing** | Config identity and prefunder public address are not designated; post-upgrade deploy slots/control hashes and fresh absolute expiries must be read before the final packet. This is not misrepresented as a completed production rehearsal |
-| BdAa custody and selected-config custody | **Blocking** | BdAa absent from eleven public manifests; rebuild keypair is only an unverified candidate. Selected-config signer/public journal not identified. Owner-local public-only lookup is specified above |
-| Independent signer recovery | **Blocking** | Primary/recovery manifests on one Mac do not prove independent recovery. Owner must verify outside this session without exporting keys |
-| External token source attestation / mutable dependencies | **Blocking for release** | Token `7aa07…` matches both live readers and the local accepted dependency, but workspace production token pin `3d6b8d…` differs and source-recovery evidence is `sourceProvenanceVerified: false`. Embedded public security.txt names a repository, **no source revision**. Obtain exact source/tree/lock/features/toolchain/build attestation; never replace the accepted ELF or change pins |
-| Unbounded local PostgreSQL waits | **Non-blocking for paused program upgrades and owner-led canary; blocking for unattended/public activation** | Known reliability limit, not hidden or “fixed” by a new timeout feature. The local-operations route remains impossible to enable in production mode |
+| Full final address-bound unsigned production/canary packet | **Blocking before signing** | Independently decoded 1,650 core messages have zero signatures and max reserved signed wire size 1,232 bytes. Config/prefunder identities, future deployment slots/controls, actual ALT and finalized trade amounts still prevent a final canary packet. Earlier blockhash/state must not be signed |
+| BdAa custody and selected-config custody | **Blocking** | Public-only rebuild check returned CUBGH9…, not BdAa. Original BdAa custody record required. No compatible selected-config public identity/journal binding found; do not create or substitute one |
+| Independent signer recovery | **Blocking** | Same-Mac backup manifests do not establish independent recovery. Owner supplies public expected/observed/match records from a separate trust domain/device, not secret material |
+| External token source/build attestation | **Blocking until independent rebuild/attestation** | Public source commit/build recipe identified; raw `7aa07…` trims 15 zero bytes to canonical `ec9d9f…`, exactly the upstream/on-chain executable hash. This is not a binary mismatch. Public verifier reports `is_verified:false`; no local reproduction completed because of disk/VM limits |
+| PostgreSQL deadline fix | **Resolved targeted regression blocker; non-blocking on its own** | Final real-DB run: 5/5 passed, zero failures/skips, including actual quota lock waiter/55P03, request rollback and runtime 14/15-second policy. Final actual smoke: 5,003-ms checkout, 30,007-ms idle rollback/replacement, production HTTP 404/409. Production topology/custody-adapter checks remain separate public-activation gates |
 | Entire-repository CI / unrelated build warning | **Non-blocking for this restricted program/canary review; required before any later merge/general app release** | Hook Lab result is 676 pass/0 fail/2 skips, not a green whole repo. Full runner needs isolated destructive scratch services; missing model-pulse import warning remains unrelated and unresolved |
 | Two opt-in frozen production SBF/Rust tests | **Non-blocking for these candidate ELFs** | Intentionally skipped tests pin the older `faa3…`/`abda…` baseline, not this candidate. Actual candidate browser execution and retained-ID loader rehearsal provide the relevant runtime evidence; no baseline repinning |
-| Historical independent Claude review timeout | **Non-blocking for this bounded owner-led route; disclosed review degradation** | No usable result or serving-model attestation; not relabeled green or counted as independent corroboration. Prior scoped local reviews returned no actionable UI/ignore/arithmetic findings; they are not a cross-model replacement |
+| Independent code/packet review | **Completed review and targeted post-review verification; not release approval** | Six local personas and attested Claude Opus 5 reviewed timeout scope. The confirmed lock-test gap is corrected and passes the final five-test real-DB run; final smoke also passes. Independent packet audit confirms size/signers/budget and rejects the original stale snapshot |
 | Approved economics/recipients/funding and treasury availability | **Blocking owner decisions** | Every pending value now has one recommendation and finite ceiling. Treasury is zero; no assumption that funding is already available and no transfer authorized |
 
 The retained-program rehearsal preserves the actual public E73/B2 IDs,
@@ -701,9 +740,173 @@ Evidence files (private, not part of the source commit):
 - `bridge/native-quote-evidence.private.json` and the explicit synthetic
   genesis transformation records.
 
-Only this canonical approval document changes in this closure. No features,
-production actions, accepted service restart/reset, private fixture publication
-or key export occurred. The unrelated local resume helper remains excluded.
+The earlier approval closure changed only this canonical document. This
+follow-up prepares the explicitly requested database reliability fix, not new
+features. Program identities, source/IDL/ELF pins, financial semantics, custody
+boundaries and transaction lifecycle guards remain unchanged. The unrelated
+local resume helper and private historical fixtures remain excluded.
+
+## Release-prerequisite follow-up — exact remaining inputs
+
+### Existing custody and independent recovery
+
+No tool-accessible public record identifies an existing selected config compatible
+with creator `DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9`, mint
+`2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn`, mainnet genesis and the exact
+candidate profile. The original controlled-test manifest is explicitly
+local-first, and its same-Mac recovery record is not independent production proof.
+
+The owner must provide **public-only**:
+
+1. Original BdAa custody reference and matching owner-local public-key result.
+2. Existing selected-config public address, matching creator/mint/genesis/profile
+   binding, profile/manifest digest, original browser origin/profile and public
+   journal/vault ID or custody manifest path. It must be a distinct on-curve
+   identity and its expected on-chain account must still be absent. No decrypted
+   journal, ciphertext export, secret or new identity is requested.
+3. Existing owner prefunder's public address and local custody reference. FhE is
+   the intended intermediary/recipient, not an assumed available funding source.
+4. Independent recovery on a separate owner-controlled device/trust domain for
+   every required signer: expected and observed public addresses, match result,
+   date, device/control description, backup reference and helper hash. Recover
+   locally and derive public addresses only; no test signing or secret transfer.
+
+### External-token source/build evidence — corrected representation
+
+The immutable public repository commit is
+[`BordrlessDex/bordrless-programs@be0f9feb5503d246f3d71d7d641cc325c8ec2e08`](https://github.com/BordrlessDex/bordrless-programs/tree/be0f9feb5503d246f3d71d7d641cc325c8ec2e08),
+tree `38f27df7fb771bbb10299f9e4f41fa18af4de6f1`. The committed `Cargo.lock`
+Git blob is `303a70189a6852f7c7db9a280109d15e683af81d`.
+Its README pairs token `2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22`
+with canonical executable SHA-256
+`ec9d9f528be0fa7e301e476e6e6a19ec79332fa45dc4e6bccd9f26f5355e5152`.
+
+Observed raw `7aa07…` is 326,504 bytes. Removing 15 terminal zero bytes gives
+326,489 bytes and exactly that canonical hash. **Do not call these two hash
+representations a code mismatch, replace the raw artifact, or change its pin.**
+The public [Osec status](https://verify.osec.io/status/2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22)
+returns that same on-chain hash but `is_verified:false`, with no repo/commit
+verification record. The README claim is not our completed independent build.
+
+The documented build uses default token features, **not** the local fork's
+`production` feature: Linux x86_64, Agave 4.3.0, platform-tools v1.57, SBPF v3,
+Anchor 1.2.0, locked dependencies. The public verifier image tag currently resolves
+to amd64 digest `sha256:12fd4c0a0790f0fc41ef74b0cdb6bccc167ba6137eb1adb749bac649481c86bd`.
+The historical README pins a mutable tag, and the source commit is unsigned.
+
+A private source download was retained briefly (archive SHA-256
+`5b3357b7b3a66762e15883a8415049023a56d3ca310d9a763f9f55a12e050a92`),
+but extraction failed with `ENOSPC` before any build. The new image pull was
+cancelled; only that new archive was removed, and this request's public
+preflight/unsigned packet were losslessly compressed to recover space.
+No old source, private fixture, wallet or deployment candidate was replaced.
+Default/orbstack Docker sockets were unavailable; the existing hooks-only daemon
+was initially reachable, then metadata/help/guest free-block-trim commands timed
+out. No daemon/VM was restarted and no broad image/data pruning was attempted.
+
+To finish the **external-token build only**: restore adequate local disk/VM
+availability (20 GiB free headroom is a recommendation, not a measured unpacked
+image requirement), then separately authorize only the no-upload pinned build and
+compare the **trimmed executable** hash. This build/download was not resumed by
+the PostgreSQL recovery approval. Prevent build-time keypair generation; no new
+identities are authorized. Alternatively obtain a complete independent attestation
+binding exact source/tree/lock/features, image/toolchain digests, invocation,
+live program/deploy slot and canonical hash. Do not run `verify-from-repo` or
+any upload/signing command.
+
+### PostgreSQL correction and verification boundary
+
+`src/hooklab-database.mjs` reuses the existing error-listener pool wrapper.
+Nine existing route/runtime/bootstrap constructors use the common bounded policy:
+5-second connection/checkout, 2-second lock, request statement/client 4/5 seconds,
+runtime statement/client 14/15 seconds, idle transaction 30 seconds.
+The explicit runtime profile preserves the previous 15-second allowance.
+Startup options cannot be overridden by URL parameters or `PGOPTIONS`.
+No lifecycle claims, retry rules, auth, ownership, sender or activation flags changed.
+
+`tests/hooklab-database-timeouts.test.mjs` uses real disposable PostgreSQL plus a
+nonresponsive loopback PG handshake. Initial pre-fix run: 0 pass/2 fail; initial
+post-fix run: 4 pass/0 fail. A separate actual SQL/HTTP smoke measured checkout
+5,002 ms, idle SQLSTATE `25P03` at 30,012 ms, rollback and connection replacement,
+and production responses 404/409 with the local wallet flag set.
+
+Independent review found the quota test could pass before SQL. Its correction
+observes an actual PostgreSQL waiter and asserts `55P03` under the same held lock.
+The fifth regression exercises a six-second runtime write and subsequent
+14-second server cancellation with rollback.
+
+After explicit owner approval, only these three caches were deleted:
+`~/.npm/_cacache`, the app's `.next/cache/webpack`, and
+`.next/dev/cache/webpack`. Their measured allocation totaled 1,734,184,960 bytes.
+The recovery-only operating gate was **1,073,741,824 bytes free on the Mac**;
+the achieved pre-start free space was **1,866,874,880 bytes**. This is not a
+claimed physical minimum or permission for a compiler-image pull. A full stack
+restart remains separately gated on 2 GiB free on both Mac and VM.
+
+PostgreSQL 17.11 was started with its unchanged data directory and loopback port.
+Automatic WAL recovery completed. Startup warned while replaying a DROP for the
+already-absent OID 68048 directory; no existing database directory or WAL was
+deleted to work around it. All six pre-existing database OIDs remain unchanged,
+and all six accepted signatures/original finalized slots match retained evidence.
+Accepted operation-row fingerprints are identical before and after verification.
+This is a scoped preservation check, not a full physical database-integrity scrub.
+
+**Final post-review run: 5 tests passed, 0 failed, 0 skipped**, in 33.611 seconds:
+`node --test tests/hooklab-database-timeouts.test.mjs`, under the retained
+loopback-only sandbox/accepted-endpoint denial wrapper. The final separate actual
+SQL/HTTP smoke passed: checkout **5,003 ms**, idle SQLSTATE `25P03` at **30,007 ms**,
+rollback and replacement connection verified, and production HTTP **404/409**
+with the local wallet flag set. No signatures or RPC submissions were generated.
+All six existing database IDs and accepted operation fingerprints are preserved;
+the tests/smoke left no scratch databases.
+
+The earlier no-database subset also passed 11/11; syntax checks passed for all
+11 changed code/test files, and eight ELF copies plus both public IDLs retain
+their pins. Final evidence is private in `postgres-five-after-recovery.private.tap`,
+`timeout-smoke.private.json`, and `database-preservation-*-tests.private.json`.
+Pre-recovery smoke evidence was retained separately, not overwritten.
+The PostgreSQL regression blocker is resolved. This is not a replay of browser
+financial acceptance and does not authorize public activation.
+
+Before public activation, also verify the actual production database topology
+accepts the startup GUCs and reports the intended bounds; pooler compatibility
+is untested, not a demonstrated defect. A chosen custody adapter must have a
+bounded response below the 30-second idle limit and preserve unknown-signature
+recovery. No new adapter or relaxed timeout path is introduced here.
+
+### Unsigned packet and readiness split
+
+Private evidence root:
+`hooks-local-state/release-prerequisites-20261018/`.
+`packet/core-unsigned.private.jsonl.gz` losslessly preserves all **1,650** messages;
+uncompressed SHA-256
+`f6df6a5bdd2c3ea5cae9a93287d228d9bef2f5fb5ec308accc2f220435178489`.
+The independently decoded messages reserve every required signature slot, all
+zero; maximum complete serialized size is **1,232 bytes**, with contiguous
+830/606/207 writes and exact retained identities/authority/buffer placement.
+`fresh-independent-preflight.private.json.gz` preserves the original rejected
+snapshot; `fresh-reader-boundary.private.json` preserves the successful
+814-ms recollection and the three changed shared accounts. Compression does
+not make the old blockhash or state fresh.
+
+The proposed **4.176442240 SOL** capital ceiling is unchanged. Independent review
+reconciled 1,650 core messages plus at most 25 additional messages/39 signatures.
+No extra retries, surcharge, identities or spending allowance were added.
+The manifest remains explicitly a **core review subset**, not a final canary:
+config/prefunder identities, post-upgrade deploy slots/controls, actual warm ALT,
+absolute expiries and finalized buy/sell/collection state are still unavailable.
+Regenerate each stage with fresh blockhash, dual-reader observations and fees;
+never sign the expired review bundle or invent future amounts.
+
+**Paused deployment/canary:** mechanics, core address placement, size and budget
+have review evidence, but custody/recovery, source build attestation, final packet
+and owner approvals still make this NO-GO. The bounded canary also requires its
+separately approved temporary openings and verified restoration to closed state.
+**Public trading:** additionally NO-GO for production topology/custody-adapter
+checks and broader app release checks already listed above. The targeted
+PostgreSQL regression is now resolved; the rest of the local stack remains
+unrecovered under the owner's PostgreSQL-only approval. No merge, general
+activation, compiler-image pull or production action is authorized.
 
 ## Primary references
 

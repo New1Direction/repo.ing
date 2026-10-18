@@ -1,7 +1,7 @@
 // Isolated identity HTTP boundary. Default off, no transaction or launch authority.
 import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
-import pg from 'pg'
+import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { assertSameOrigin } from './auth.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
 import { readLimitedBody } from '../../src/token-image.mjs'
@@ -54,7 +54,7 @@ export async function walletIdentityQuota(pool, scopes) {
   return true
 }
 export function createWalletIdentityHandler({ env = process.env, configuration = walletIdentityConfiguration,
-  database = config => new pg.Pool({ connectionString: config.databaseUrl, max: 2, connectionTimeoutMillis: 5000, query_timeout: 5000 }),
+  database = createHookLabDatabasePool,
   store = walletPrincipalStore, quota = walletIdentityQuota } = {}) {
   return async request => {
     if (env.HOOK_WALLET_IDENTITY_ENABLED !== 'true') return reply({ status: 'disabled' }, 404)

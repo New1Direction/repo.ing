@@ -26,9 +26,9 @@ export async function initializeInclusiveTradeRuntime({settings,env=process.env}
  let pool
  try {
   if(inclusiveTradeRuntime()||env.HOOK_INCLUSIVE_TRADING_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')throw Error()
-  const [{default:pg},{walletIdentityConfiguration}]=await Promise.all([import('pg'),import('./hooklab-wallet-identity.mjs')])
+  const [{createHookLabDatabasePool},{walletIdentityConfiguration}]=await Promise.all([import('../../src/hooklab-database.mjs'),import('./hooklab-wallet-identity.mjs')])
   const identity=walletIdentityConfiguration(env);if(settings.origin!==identity.origin)throw Error()
-  pool=new pg.Pool({connectionString:identity.databaseUrl,max:10,connectionTimeoutMillis:5000,query_timeout:15000})
+  pool=createHookLabDatabasePool(identity,10,'runtime')
   const configured=createInclusiveTradeRuntime(pool,settings);installInclusiveTradeRuntime(configured);return configured
  } catch {await pool?.end().catch(()=>{});throw Error('Complete approved trading configuration unavailable')}
 }

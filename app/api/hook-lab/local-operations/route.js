@@ -1,4 +1,4 @@
-import pg from 'pg'
+import { createHookLabDatabasePool } from '../../../../src/hooklab-database.mjs'
 import { z } from 'zod'
 import { localAcceptanceNetwork } from '../../../../src/hooklab-local-acceptance.mjs'
 import { hookAddress } from '../../../../src/hooklab-execution-contract.mjs'
@@ -25,7 +25,7 @@ export async function POST(request){
   const input=body.parse(JSON.parse((await readLimitedBody(request,8192)).toString('utf8')))
   const {databaseUrl,...scope}=walletIdentityConfiguration(),service=globalThis[Symbol.for('repo.ing.hooklab.local-operations')]
   if(!service||service.origin!==local.origin)throw Error('Local runtime unavailable')
-  pool=new pg.Pool({connectionString:databaseUrl,max:2})
+  pool=createHookLabDatabasePool({databaseUrl})
   if(!await walletIdentityQuota(pool,[[`local-operations:${local.origin}`,120]]))return reply({error:'Local request quota exceeded'},429)
   const principal=walletPrincipalStore(pool,scope),owner=await principal.resolve(token),lifecycle=service.lifecycle
   if(input.action==='wallet-request')return reply({status:'available',...await lifecycle.walletRequest(token,input.signingId)})

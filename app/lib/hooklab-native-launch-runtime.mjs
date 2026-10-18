@@ -14,11 +14,11 @@ export async function initializeNativeLaunchRuntime({settings,env=process.env}={
  let pool
  try{
   if(nativeLaunchRuntime()||env.HOOK_NATIVE_LAUNCH_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')throw Error()
-  const [{default:pg},{walletIdentityConfiguration},{createNativeLaunchRuntime}]=await Promise.all([
-   import('pg'),import('./hooklab-wallet-identity.mjs'),import('../../src/hooklab-native-launch-runtime.mjs')])
+  const [{createHookLabDatabasePool},{walletIdentityConfiguration},{createNativeLaunchRuntime}]=await Promise.all([
+   import('../../src/hooklab-database.mjs'),import('./hooklab-wallet-identity.mjs'),import('../../src/hooklab-native-launch-runtime.mjs')])
   const identity=walletIdentityConfiguration(env)
   if(settings.origin!==identity.origin)throw Error()
-  pool=new pg.Pool({connectionString:identity.databaseUrl,max:10,connectionTimeoutMillis:5000,query_timeout:15000})
+  pool=createHookLabDatabasePool(identity,10,'runtime')
   const configured=createNativeLaunchRuntime(pool,settings)
   installNativeLaunchRuntime(configured)
   return configured

@@ -1,6 +1,6 @@
 // Server-only startup for the isolated local acceptance process. No production keys.
 import { readFile, writeFile } from 'node:fs/promises'
-import pg from 'pg'
+import { createHookLabDatabasePool } from '../src/hooklab-database.mjs'
 import { Connection } from '@solana/web3.js'
 import { createPrivateKey, sign } from 'node:crypto'
 import { createNativeLaunchRuntime } from '../src/hooklab-native-launch-runtime.mjs'
@@ -58,7 +58,7 @@ export async function bootstrapLocalHooks() {
   if(operator.schema!=='repoing/local-operator-bundle/1'||operator.genesisHash!==network.genesisHash||profile.json!==profileJson
    ||profile.expectedSha256!==sha(profileJson)||config.profileSha256!==profile.expectedSha256||config.dossierSha256!==sha(dossierJson)
    ||config.reviewer!==chain.roles.admin||config.treasury!==chain.roles.collector)throw Error('Retained local operator approval differs; preserve pending operations instead of replacing it')
-  const pool=new pg.Pool({connectionString:process.env.HOOK_WALLET_IDENTITY_DATABASE_URL,max:10})
+  const pool=createHookLabDatabasePool({databaseUrl:process.env.HOOK_WALLET_IDENTITY_DATABASE_URL},10)
   const key=await readFile(`${state}/local-custody-key.bin`);if(key.length!==32)throw Error('Local encryption key is unavailable')
   const admin=localKey('admin'),privateKey=createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),Buffer.from(admin.secretKey.subarray(0,32))]),format:'der',type:'pkcs8'})
   const base={enabled:true,origin:network.origin,ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config,profile,dossierJson,connections,

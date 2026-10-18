@@ -1,4 +1,4 @@
-import pg from 'pg'
+import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { z } from 'zod'
 import { assertSameOrigin } from './auth.mjs'
 import { walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQuota } from './hooklab-wallet-identity.mjs'
@@ -16,7 +16,7 @@ export function walletLaunchAssessmentConfiguration(env=process.env){
  return {...identity,providers:preparationReadConnections(settings),expectedProfileSha256}
 }
 export function createWalletLaunchAssessmentHandler({env=process.env,configuration=walletLaunchAssessmentConfiguration,
- database=config=>new pg.Pool({connectionString:config.databaseUrl,max:2,connectionTimeoutMillis:5000,query_timeout:5000}),
+ database=createHookLabDatabasePool,
  journal=(pool,config)=>coLocatedWalletPreparationJournal(pool,{enabled:true,origin:config.origin,providers:config.providers,expectedProfileSha256:config.expectedProfileSha256}),
  quota=walletIdentityQuota}={}){
  return async request=>{
