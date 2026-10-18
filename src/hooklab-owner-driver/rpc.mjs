@@ -67,7 +67,12 @@ export async function readAccounts(readers, genesisHash, addresses, { attempts =
 }
 /** A finalized blockhash confirmed valid by both providers, with block heights. */
 export async function readBlockhash(readers, minSlot = 0) {
-  const latest = await readers[0].connection.getLatestBlockhashAndContext({ commitment: 'finalized', minContextSlot: minSlot })
+  let latest
+  // The primary may trail the secondary by a slot or two; wait briefly for it to reach minSlot.
+  for (let attempt = 0; ; attempt++) {
+    try { latest = await readers[0].connection.getLatestBlockhashAndContext({ commitment: 'finalized', minContextSlot: minSlot }); break }
+    catch (error) { if (attempt >= 10 || !/Minimum context slot/i.test(error.message ?? '')) throw error; await new Promise(resolve => setTimeout(resolve, 500)) }
+  }
   const confirmations = await Promise.all(readers.map(async r => {
     const valid = await r.connection.isBlockhashValid(latest.value.blockhash, { commitment: 'finalized' })
     check(valid.value === true, 'Blockhash not yet valid on both providers')

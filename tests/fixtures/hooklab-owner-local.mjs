@@ -47,7 +47,7 @@ function tokenAccount(name, value, size) {
 }
 const account = (pubkey, { lamports, data = Buffer.alloc(0), owner = SYSTEM, executable = false }) => ({ pubkey, account: { lamports, data: [data.toString('base64'), 'base64'], owner, executable, rentEpoch: 0 } })
 /** Synthetic genesis: quote mint at the production quote address (no bridge backing), holdings, payer/upgrade lamports. */
-export function writeGenesis(dir, roles, { creatorQuote = '10000000000' } = {}) {
+export function writeGenesis(dir, roles, { creatorQuote = '10000000000', bridge = null } = {}) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const amount = new BN('1000000000000000')
   const mint = tokenAccount('Mint', { version: 1, decimals: 9, supply: amount, max_supply: amount, mint_authority: null, freeze_authority: null, hook_authority: null,
@@ -58,19 +58,38 @@ export function writeGenesis(dir, roles, { creatorQuote = '10000000000' } = {}) 
     return account(address, { lamports: 10000000, owner: PROGRAMS.token, data: tokenAccount('Holding', { version: 1, bump, mint: pk(QUOTE_MINT), owner: pk(owner), amount: new BN(value),
       delegate: null, delegated_amount: new BN(0), frozen: false, hook_data: Array(64).fill(0), reserved: Array(16).fill(0) }, 204) })
   }
-  const rows = [account(QUOTE_MINT, { lamports: 10000000, owner: PROGRAMS.token, data: mint }),
+  // With a bridge copy the real quote mint (and bridge state) replace the synthetic quote mint.
+  const rows = [...(bridge ? bridge.rows : [account(QUOTE_MINT, { lamports: 10000000, owner: PROGRAMS.token, data: mint })]),
     holding(roles.creator.publicKey.toBase58(), creatorQuote), holding(roles.treasury.publicKey.toBase58(), '0'),
     account(roles.payer.publicKey.toBase58(), { lamports: 1000000000000 }), account(roles.upgrade.publicKey.toBase58(), { lamports: 100000000000 })]
   rows.forEach((row, i) => writeFileSync(path.join(dir, `account-${i}.json`), JSON.stringify(row)))
 }
-export async function startValidator(root, roles) {
+/** Read-only copy of the production bridge (program ELF, config, native wrapper, SOL vault) and the
+ * real bridged-SOL quote mint, so collect_protocol_fees_sol runs against production bridge code locally.
+ * Uses getGenesisHash + getMultipleAccounts only; returns null when mainnet is unreachable. */
+export async function cloneBridge(dir, rpc = process.env.HOOKLAB_OWNER_MAINNET_RPC ?? 'https://api.mainnet-beta.solana.com') {
+  try {
+    const mainnet = new Connection(rpc, { commitment: 'finalized', disableRetryOnRateLimit: true })
+    if (await mainnet.getGenesisHash() !== MAINNET_GENESIS) return null
+    const d = derivedAddresses(), keys = [d.bridgeProgramData, d.bridgeConfig, d.bridgeNativeWrapper, d.bridgeSolVault, QUOTE_MINT]
+    const accounts = await mainnet.getMultipleAccountsInfo(keys.map(pk))
+    if (accounts.some(a => !a)) return null
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const elf = path.join(dir, 'bordrless_bridge.mainnet-copy.so')
+    writeFileSync(elf, accounts[0].data.subarray(45))
+    const rows = keys.slice(1).map((address, i) => account(address, { lamports: accounts[i + 1].lamports, data: Buffer.from(accounts[i + 1].data), owner: accounts[i + 1].owner.toBase58() }))
+    return { elf, elfSha256: sha256(readFileSync(elf)), rows }
+  } catch { return null }
+}
+export async function startValidator(root, roles, { bridge = null } = {}) {
   for (const [role, file] of Object.entries(ELF_FILES)) if (sha256(readFileSync(path.join(ELF_DIR, file))) !== ELF[role].sha256) throw Error(`Pinned ${role} ELF differs`)
   const base = await portRange(4), rpc = base, faucet = base + 2, gossip = base + 3
   const ledger = path.join(root, 'ledger'), genesis = path.join(root, 'genesis'), upgrade = roles.upgrade.publicKey.toBase58()
-  writeGenesis(genesis, roles)
+  writeGenesis(genesis, roles, { bridge })
   const args = ['--ledger', ledger, '--reset', '--quiet', '--bind-address', '127.0.0.1', '--rpc-port', String(rpc), '--faucet-port', String(faucet), '--gossip-port', String(gossip),
     '--limit-ledger-size', '10000', '--account-dir', genesis,
-    ...Object.entries(ELF_FILES).flatMap(([role, file]) => ['--upgradeable-program', PROGRAMS[role], path.join(ELF_DIR, file), upgrade])]
+    ...Object.entries(ELF_FILES).flatMap(([role, file]) => ['--upgradeable-program', PROGRAMS[role], path.join(ELF_DIR, file), upgrade]),
+    ...(bridge ? ['--upgradeable-program', PROGRAMS.bridge, bridge.elf, upgrade] : [])]
   const child = spawn(VALIDATOR, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: false })
   let stderr = ''; child.stderr.on('data', d => { stderr = (stderr + d).slice(-4000) })
   const url = `http://127.0.0.1:${rpc}`, url2 = `http://localhost:${rpc}`, connection = new Connection(url, { commitment: 'finalized' })
@@ -111,7 +130,7 @@ export async function bootstrapConfigs(connection, roles, genesisHash) {
       { ...common, admin: a('admin'), payer: a('payer'), config: role === 'launch' ? d.launchConfig : d.swapConfig, governance: role === 'launch' ? d.launchGovernance : d.swapGovernance })], [roles.payer, roles.admin])
   }
 }
-export function localConfig(roles, overrides = {}) {
+export function localConfig(roles, overrides = {}, { collectRoute = 'quote' } = {}) {
   const a = role => roles[role].publicKey.toBase58(), yes = value => ({ value, approved: true })
   return { schema: 'repoing/hooklab-owner-config/1', network: 'local-test', note: 'synthetic local validator only',
     roles: Object.fromEntries(['admin', 'guardian', 'treasury', 'upgrade', 'payer', 'creator'].map(r => [r, a(r)])),
@@ -119,7 +138,7 @@ export function localConfig(roles, overrides = {}) {
       grant: yes({ creator: a('creator'), maxLaunches: '1', expirySlots: '100000' }), selectedConfig: yes(a('selectedConfig')), canaryMint: yes(a('mint')),
       canaryLaunch: yes({ name: 'Local canary', symbol: 'LCANARY', uri: '', label: 'private-canary', virtualQuote: '1000000000', maxRentLamports: '60000000' }),
       canaryBuy: yes({ amountInRaw: '1000200', slippageBps: 50, maxPriceImpactBps: 1000 }), canarySell: yes({ amountInRaw: 'all', slippageBps: 50, maxPriceImpactBps: 1000 }),
-      fund: yes({ creatorLamports: '2000000000', adminLamports: '1000000000', treasuryLamports: '1000000000' }), canaryWrapLamports: yes('0'), collectRoute: yes('quote'),
+      fund: yes({ creatorLamports: '2000000000', adminLamports: '1000000000', treasuryLamports: '1000000000' }), canaryWrapLamports: yes('0'), collectRoute: yes(collectRoute),
       lookupTable: yes(null), computeUnitPriceMicroLamports: yes('0'), ...overrides } }
 }
 export const cleanup = root => rmSync(root, { recursive: true, force: true })
