@@ -72,7 +72,10 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    // Durable signatures/outcomes remain retained even if this response loses auth.
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()
    return reply({status:'available',...result})
-  }catch(error){return reply({error:error.status===401?'Wallet session expired. Sign in again.':'Launcher unavailable or changed. Preserve the operation IDs and reconcile any pending transaction.'},error.status===401?401:409)}
+  }catch(error){
+   // Owner-approval messages are fixed, customer-facing and secret-free (e.g. the owner is still preparing the launch table).
+   const message=error.status===401?'Wallet session expired. Sign in again.':error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Launcher unavailable or changed. Preserve the operation IDs and reconcile any pending transaction.'
+   return reply({error:message},error.status===401?401:409)}
   finally{await pool?.end().catch(()=>{})}
  }
 }
