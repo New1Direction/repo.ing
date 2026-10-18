@@ -28,12 +28,12 @@ function operator(mint,selectedConfig){return maxWalletOperatorFixture(input=>{
  const bytes=Buffer.alloc(56+32*keys.length);old.subarray(0,56).copy(bytes);keys.forEach((k,i)=>pk(k).toBuffer().copy(bytes,56+32*i));input.lookupTable.dataBase64=bytes.toString('base64');input.lookupTable.sha256=sha(bytes)
  return input
 },{baseFixture:inclusiveMaxWalletLaunchFixture,compile:compileMaxWalletLaunchReview,tokenElf:inclusiveTokenElf()})}
-async function realRuntimeScenario({remoteAdmin=false}={}){
+async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}={}){
  const pgConfig={host:'127.0.0.1',port:55432,user:'postgres',password:'launchtest',database:'postgres'},dbAdmin=new pg.Pool(pgConfig),database=`full_native_${randomUUID().replaceAll('-','')}`;let pool
  const oldFetch=globalThis.fetch
  try{
   await dbAdmin.query(`create database ${database}`);pool=new pg.Pool({...pgConfig,database})
-  for(const file of [...(remoteAdmin?['hooklab-owner-approval-schema.sql']:[]),'hooklab-wallet-principal-schema.sql','hooklab-wallet-preparation-schema.sql','hooklab-native-signer-custody-schema.sql','hooklab-new-mint-preparation-schema.sql','hooklab-native-signing-schema.sql','hooklab-native-signing-attempt-schema.sql','hooklab-native-signing-context-schema.sql','hooklab-native-signing-refresh-schema.sql','hooklab-native-signing-wallet-request-schema.sql','hooklab-native-launch-context-schema.sql'])await pool.query(await readFile(new URL(`../src/${file}`,import.meta.url),'utf8'))
+  for(const file of [...(remoteAdmin?['hooklab-owner-approval-schema.sql']:[]),'hooklab-wallet-principal-schema.sql','hooklab-wallet-preparation-schema.sql','hooklab-native-signer-custody-schema.sql','hooklab-new-mint-preparation-schema.sql','hooklab-native-signing-schema.sql','hooklab-native-signing-attempt-schema.sql','hooklab-native-signing-context-schema.sql','hooklab-native-signing-refresh-schema.sql','hooklab-native-signing-wallet-request-schema.sql','hooklab-native-launch-context-schema.sql','hooklab-native-signing-expiry-schema.sql'])await pool.query(await readFile(new URL(`../src/${file}`,import.meta.url),'utf8'))
   let f=operator(Keypair.fromSeed(seed('initial-mint')).publicKey.toBase58(),Keypair.fromSeed(seed('initial-config')).publicKey.toBase58()),phase=0,hideTransaction=false,current=f.accounts
   const token=Buffer.alloc(32,53).toString('base64url'),owner=wallet.publicKey.toBase58(),profile=JSON.parse(f.profile.json),startSlot=f.f.observations[0].slot,receipts=new Map(),rentBySize={90:1517280,81:1454640,176:2115840}
   const initial=f,now=Date.now(),limits={...f.limits,maxAgeMs:60000,reviewExpiresAtMs:now+60000},prepLimits={nowMs:now,maxAgeMs:60000,maxSlotLag:5,validUntilSlot:startSlot+50,reviewExpiresAtMs:now+60000,maxRentLamports:String(Object.values(rentBySize).reduce((a,b)=>a+b,0)),maxNetworkFeeLamports:'15000',maxTotalDebitLamports:String(Object.values(rentBySize).reduce((a,b)=>a+b,0)+15000),computeUnitLimit:600000,computeUnitPriceMicroLamports:'0'}
@@ -42,10 +42,11 @@ async function realRuntimeScenario({remoteAdmin=false}={}){
    f=operator(mint,selectedConfig);assert.equal(f.config.lookupTable.sha256,initial.config.lookupTable.sha256);current=new Map([...f.accounts,...current])
    const a=f.baseline.addresses;for(const address of [a.policy,a.registry,selectedConfig])current.set(address,null)
   }
+  let blockhashEpoch=0 // a real chain moves to a new blockhash once the old one can no longer land
   const connections=f.connections.map(({provider,connection})=>({provider,connection:{rpcEndpoint:connection.rpcEndpoint,
    async getGenesisHash(){return profile.genesisHash},async getMinimumBalanceForRentExemption(size){assert.ok(rentBySize[size]);return rentBySize[size]},
    async getMultipleAccountsInfoAndContext(keys){if(keys.length===12)setIdentity(keys[7].toBase58(),keys[8].toBase58());return {context:{slot:startSlot+phase},value:keys.map(k=>{const a=current.get(k.toBase58());return a?{owner:pk(a.owner),executable:a.executable,lamports:Number(a.lamports??0),data:Buffer.from(a.dataBase64,'base64')}:null})}},
-   async getLatestBlockhashAndContext(){return {context:{slot:startSlot+phase},value:{blockhash:initial.f.recentBlockhash.blockhash,lastValidBlockHeight:startSlot+150}}},
+   async getLatestBlockhashAndContext(){return {context:{slot:startSlot+phase},value:{blockhash:blockhashEpoch?bs58.encode(createHash('sha256').update(`synthetic blockhash after expiry ${blockhashEpoch}`).digest()):initial.f.recentBlockhash.blockhash,lastValidBlockHeight:startSlot+150}}},
    async isBlockhashValid(){return {context:{slot:startSlot+phase},value:true}},async getBlockHeight(){return startSlot+phase},async getFeeForMessage(message){return {context:{slot:startSlot+phase},value:message.header.numRequiredSignatures*5000}},
    async simulateTransaction(){return {context:{slot:startSlot+phase},value:{err:null}}},async getTransaction(signature){return hideTransaction?null:receipts.get(signature)?.transaction??null},async getBlockSignatures(slot){return [...receipts.values()].find(r=>r.transaction.slot===slot)?.block??null},
   }}))
@@ -72,17 +73,37 @@ async function realRuntimeScenario({remoteAdmin=false}={}){
   }
   globalThis.fetch=async(...args)=>{try{return await syntheticFetch(...args)}catch(e){console.error('SYNTHETIC SEND FAILURE',e.stack);throw e}}
   await pool.query("insert into hook_lab_wallet_sessions(token_sha256,wallet,origin,audience,genesis_hash,expires_at) values($1,$2,'https://repo.ing','general-launcher',$3,clock_timestamp()+interval '30 minutes')",[sha(token),owner,profile.genesisHash])
-  let ownerSignatures=0;const ownerStore=remoteAdmin?ownerApprovalStore(pool,{adminAddress:adminKey.publicKey.toBase58()}):null
-  const runtime=createNativeLaunchRuntime(pool,{enabled:true,origin:'https://repo.ing',ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:initial.config,profile:initial.profile,dossierJson:initial.dossierJson,connections,keyRing:{test:Buffer.alloc(32,57)},activeKeyId:'test',adminSigner:remoteAdmin?remoteAdminSigner(pool,{address:adminKey.publicKey.toBase58(),observe:async()=>({slot:0,blockHeight:0,nowMs:Date.now()}),
+  let ownerSignatures=0,ownerAway=false,chainPastDeadline=false;const ownerStore=remoteAdmin?ownerApprovalStore(pool,{adminAddress:adminKey.publicKey.toBase58()}):null
+  const runtime=createNativeLaunchRuntime(pool,{enabled:true,origin:'https://repo.ing',ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:initial.config,profile:initial.profile,dossierJson:initial.dossierJson,connections,keyRing:{test:Buffer.alloc(32,57)},activeKeyId:'test',adminSigner:remoteAdmin?remoteAdminSigner(pool,{address:adminKey.publicKey.toBase58(),observe:async()=>({slot:ownerAway?10**9:0,blockHeight:0,nowMs:Date.now()}),
    sleep:async()=>{ // owner-agent stand-in: sign each pending exact message with the admin key, once
     const {rows}=await pool.query("select id,message_base64 from hook_lab_owner_sign_requests where status='pending'")
-    for(const row of rows){ownerSignatures++;await ownerStore.submitSignature(row.id,signAdmin(Buffer.from(row.message_base64,'base64')).toString('base64'))}
-   }}):{address:adminKey.publicKey.toBase58(),sign:signAdmin},preparationLimits:prepLimits,launchLimits:limits})
+    if(!ownerAway)for(const row of rows){ownerSignatures++;await ownerStore.submitSignature(row.id,signAdmin(Buffer.from(row.message_base64,'base64')).toString('base64'))}
+   }}):{address:adminKey.publicKey.toBase58(),sign:signAdmin},expiryObserver:async()=>chainPastDeadline?{slot:10**9,blockHeight:10**9}:{slot:1,blockHeight:1},preparationLimits:prepLimits,launchLimits:limits})
   let lastLaunchId
   for(let launchNumber=0;launchNumber<2;launchNumber++){
   const operationId=randomUUID(),preparationId=randomUUID(),launchId=randomUUID();lastLaunchId=launchId
   const reserved=await runtime.reserve({sessionToken:token,owner,input:{operationId,capBps:initial.request.capBps,label:initial.request.label,name:initial.request.name,symbol:initial.request.symbol,uri:initial.request.uri,virtualQuote:initial.request.virtualQuote,creatorFeeBps:initial.request.creatorFeeBps}})
   for(const [id,stage]of [[preparationId,'preparation'],[launchId,'launch']]){
+   if(expireFirstAttempt&&launchNumber===0&&stage==='launch'){ // owner away: the first attempt must expire without any send
+    const abandoned=randomUUID(),sendsBefore=receipts.size
+    await runtime.lifecycle.createReview(token,abandoned,{custodyOperationId:operationId,stage})
+    const aw=await runtime.lifecycle.walletRequest(token,abandoned),atx=VersionedTransaction.deserialize(Buffer.from(aw.partialTransactionBase64,'base64'));atx.sign([wallet])
+    await runtime.lifecycle.retainWalletSignature(token,abandoned,Buffer.from(atx.serialize()).toString('base64'))
+    ownerAway=true
+    for(const signer of aw.review.requiredSigners.filter(k=>k!==owner)){
+     if(signer===adminKey.publicKey.toBase58())await assert.rejects(runtime.lifecycle.coSignNext(token,abandoned,signer))
+     else await runtime.lifecycle.coSignNext(token,abandoned,signer)
+    }
+    ownerAway=false
+    assert.equal((await pool.query("select status from hook_lab_owner_sign_requests order by created_at desc limit 1")).rows[0].status,'expired')
+    await assert.rejects(runtime.lifecycle.expire(token,abandoned),undefined,'refused while the blockhash could still land')
+    chainPastDeadline=true;const expired=await runtime.lifecycle.expire(token,abandoned);chainPastDeadline=false;blockhashEpoch++
+    assert.equal(expired.status,'expired')
+    await assert.rejects(runtime.lifecycle.submitOnce(token,abandoned),undefined,'expired operation can never be submitted')
+    await assert.rejects(runtime.lifecycle.expire(token,abandoned),undefined,'expiry is final')
+    assert.equal(receipts.size,sendsBefore,'nothing was sent for the abandoned attempt')
+    assert.equal((await pool.query('select stage from hook_lab_native_signer_custody where operation_id=$1',[operationId])).rows[0].stage,'preparation-finalized')
+   }
    const review=await runtime.lifecycle.createReview(token,id,{custodyOperationId:operationId,stage});assert.equal(review.status,'reviewed')
    const wr=await runtime.lifecycle.walletRequest(token,id),tx=VersionedTransaction.deserialize(Buffer.from(wr.partialTransactionBase64,'base64'));tx.sign([wallet]);await runtime.lifecycle.retainWalletSignature(token,id,Buffer.from(tx.serialize()).toString('base64'))
    for(const signer of wr.review.requiredSigners.filter(k=>k!==owner))await runtime.lifecycle.coSignNext(token,id,signer)
@@ -102,3 +123,4 @@ test('real runtime completes two launches with unchanged dossier, retained ident
 // Same scenario with the admin key OUT of the server: the remote signer queues each exact message and
 // an owner-agent stand-in answers with the admin signature, exactly as the owner's Mac would.
 test('real runtime completes the same launches through the owner-approval remote admin signer',()=>realRuntimeScenario({remoteAdmin:true}))
+test('owner-away launch attempt expires on chain evidence, never sends, and a fresh review then completes',()=>realRuntimeScenario({remoteAdmin:true,expireFirstAttempt:true}))

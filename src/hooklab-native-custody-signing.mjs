@@ -61,6 +61,11 @@ export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,a
     try{return sign(null,Buffer.from(message),createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed]),format:'der',type:'pkcs8'}))}finally{seed.fill(0)}
    }catch{throw fail()}finally{wipe(keys)}
   },
+  // Only after the lifecycle proves on chain that the stage's transaction can never land.
+  async reopenStage({db,owner,custodyOperationId,stage}){
+   try{const row=record(db,custodyOperationId,owner);check([`${stage}-reviewed`,`${stage}-signed`].includes(row.stage))
+    await transition(db,row,stage==='launch'?'preparation-finalized':'reserved')}catch{throw fail()}
+  },
   async completeStage({db,owner,custodyOperationId,stage}){
    try{const row=record(db,custodyOperationId,owner);check(row.stage===`${stage}-reviewed`);await transition(db,row,`${stage}-signed`)}catch{throw fail()}
   },
