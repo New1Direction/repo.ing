@@ -97,7 +97,7 @@ rl.on('line',async line=>{
   else if(cmd==='decline'&&pick)console.log((await api({action:'decline',requestId:pick.id})).request.status)
   else if(cmd==='invite'&&pick){
    const grant=await grantStatus(pick.creator)
-   if(!grant.usable){console.log(`Creator grant not usable (${grant.reason}). Issue it first with the owner driver:\n  node scripts/hooklab-owner.mjs plan grant --creator ${pick.creator} --max-launches 1\nthen invite again.`);return}
+   if(!grant.usable){console.log(`Creator grant not usable (${grant.reason}). Issue it first with the owner driver:\n  node scripts/hooklab-owner.mjs plan customer-grant --creator ${pick.creator} --rpc URL --rpc2 URL\nreview the preview, then: node scripts/hooklab-owner.mjs execute customer-grant --creator ${pick.creator} --message-sha256 <preview sha> --key payer=<pipe> --key admin=<pipe> --rpc URL --rpc2 URL\nthen invite again.`);return}
    const minutes=Number(arg2??opt['invite-minutes'])
    console.log(`Invited until ${new Date((await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})).request.inviteExpiresAt).toLocaleTimeString()}`)
   }
