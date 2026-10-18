@@ -53,13 +53,18 @@ export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,a
     check(expected.length===new Set(expected).size&&review.requiredSigners.length===expected.length&&expected.every(x=>review.requiredSigners.includes(x)))
     if(stage==='launch'){
      verifyNativeAdminSignerIdentity({configuredAdmin:adminSigner?.address,observedAdmin,owner,mint:row.mint,selectedConfig:row.selected_config})
-     if(signerAddress===adminSigner.address){check(typeof adminSigner.sign==='function');return Uint8Array.from(await adminSigner.sign(Buffer.from(message)))}
+     if(signerAddress===adminSigner.address){check(typeof adminSigner.sign==='function');return Uint8Array.from(await adminSigner.sign(Buffer.from(message),{review,owner,mint:row.mint,selectedConfig:row.selected_config}))}
     }
     check(signerAddress===row.mint||(stage==='preparation'&&signerAddress===row.selected_config))
     keys=codec.open(identity(row),row.sealed_signers)
     const key=signerAddress===row.mint?keys.mint:keys.selectedConfig,seed=Buffer.from(key.secretKey).subarray(0,32)
     try{return sign(null,Buffer.from(message),createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed]),format:'der',type:'pkcs8'}))}finally{seed.fill(0)}
    }catch{throw fail()}finally{wipe(keys)}
+  },
+  // Only after the lifecycle proves on chain that the stage's transaction can never land.
+  async reopenStage({db,owner,custodyOperationId,stage}){
+   try{const row=record(db,custodyOperationId,owner);check([`${stage}-reviewed`,`${stage}-signed`].includes(row.stage))
+    await transition(db,row,stage==='launch'?'preparation-finalized':'reserved')}catch{throw fail()}
   },
   async completeStage({db,owner,custodyOperationId,stage}){
    try{const row=record(db,custodyOperationId,owner);check(row.stage===`${stage}-reviewed`);await transition(db,row,`${stage}-signed`)}catch{throw fail()}

@@ -5,12 +5,13 @@ import { z } from 'zod'
 import { parseMaxWalletPreparationRequest,parseMaxWalletProfile,isInclusiveMaxWalletProfile } from './hooklab-inclusive-max-wallet-profile.mjs'
 import { collectMaxWalletPreparationReview } from './hooklab-max-wallet-preparation-collector.mjs'
 import { collectInclusiveMaxWalletPreparationReview } from './hooklab-inclusive-max-wallet-preparation-collector.mjs'
+import { isApprovedLaunchChoice } from './hooklab-launch-menus.mjs'
 const inputSchema=z.object({operationId:z.uuid(),capBps:z.number().int().min(1).max(9999),label:z.string().min(1).refine(x=>Buffer.byteLength(x)<=32),creatorFeeBps:z.number().int().min(0).max(9999).optional()}).strict()
 const identity=record=>({operationId:record.operationId,custodySessionId:record.custodySessionId,owner:record.owner,profileSha256:record.profileSha256,mint:record.mint,selectedConfig:record.selectedConfig,stage:record.stage,revision:record.revision})
 export async function reviewNewMintPreparationCandidate({custody,sessionToken,input,profile,connections,limits,clock}){
  const {operationId,capBps,label,creatorFeeBps}=inputSchema.parse(input)
  const parsedProfile=parseMaxWalletProfile(JSON.parse(profile.json)),inclusive=isInclusiveMaxWalletProfile(parsedProfile)
- if(inclusive&&(creatorFeeBps===undefined||creatorFeeBps!==parsedProfile.capability.creatorFeeBps))throw Error('Explicit exact approved creator fee required')
+ if(inclusive&&(creatorFeeBps===undefined||!isApprovedLaunchChoice(parsedProfile,{creatorFeeBps,capBps})))throw Error('Explicit approved creator fee and wallet cap required')
  if(!inclusive&&creatorFeeBps!==undefined&&creatorFeeBps!==0)throw Error('Unsupported creator fee')
  const reserved=await custody.reserveNewCandidate(sessionToken,operationId,profile.expectedSha256)
  if(!['reserved','preparation-reviewed'].includes(reserved.stage))throw Error('Existing mint requires reconciliation; replacement preparation refused')

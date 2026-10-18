@@ -14,7 +14,8 @@ const encode = bytes => btoa(String.fromCharCode(...bytes))
 const equal = (a, b) => a.length === b.length && a.every((value, index) => value === b[index])
 const statusLabels = {
   reviewed: 'Ready for your review', partial: 'Wallet signed; additional signatures needed', signed: 'All signatures retained; ready to submit',
-  'signing-claimed': 'Server signature in progress. Refresh the retained operation.', 'signing-unknown': 'Server signing outcome is uncertain. Operator recovery is required.',
+  'signing-claimed': 'Waiting for the repo.ing approval signature. Keep this page open.', 'signing-unknown': 'The approval signature did not arrive before the transaction deadline. Nothing was sent. Once the deadline has passed, close this attempt and start a fresh review.',
+  expired: 'This attempt expired before every signature arrived. Nothing was sent. Start a fresh review to try again.',
   'submission-claimed': 'Submission in progress', submitted: 'Submitted; awaiting finalized confirmation', 'outcome-unknown': 'Transaction outcome is unknown; checking the original signature',
   'finalized-success': 'Confirmed and finalized', 'finalized-failure': 'Finalized with a failure. Do not start a replacement until the retained operation is reviewed.',
   'review-required': 'Conflicting evidence requires operator review. Signing and submission are stopped.',
@@ -51,7 +52,7 @@ function Review({ operation, quote }) {
   </section>
 }
 
-export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
+export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIntent = null }) {
   const { wallet, connect, provider } = useWallet()
   const walletRef = useRef(wallet); walletRef.current = wallet
   const running = useRef(false)
@@ -123,7 +124,7 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
     }
     if (new URL(form.uri).protocol !== 'https:') throw Error('Use an HTTPS metadata URL.')
     const next = { ...ids, operationId: ids.operationId || crypto.randomUUID() }; retain(next)
-    const value = await request({ action: 'reserve', operationId: next.operationId, ...form, capBps: Number(form.capBps), creatorFeeBps: Number(form.creatorFeeBps) })
+    const value = await request({ action: 'reserve', operationId: next.operationId, ...form, capBps: Number(form.capBps), creatorFeeBps: Number(form.creatorFeeBps), ...(approvedIntent ?? {}) })
     if (receive(value)) {
       if (value.operationId !== next.operationId || !value.mint) throw Error('Reservation identity changed. Preserve the operation ID.')
       setReservation(value); setUncertain(false)
@@ -168,6 +169,13 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
     const value = await request({ action: name, signingId: operation.id })
     if (receive(value)) setUncertain(false)
   })
+  // After an expired attempt: same operation, new signing ID, entirely fresh review and signatures.
+  const freshReview = stage => run(async () => {
+    const key = stage === 'preparation' ? 'preparationId' : 'launchId'
+    const next = { ...ids, [key]: crypto.randomUUID() }; retain(next); setAccepted(false); setQuote(null)
+    const value = await request({ action: 'review', operationId: next.operationId, signingId: next[key], stage })
+    if (receive(value, next[key])) setUncertain(false)
+  })
   const startSeparateLaunch = () => run(async () => {
     if (!activeWallet || operation?.status !== 'finalized-success' || operation.stage !== 'launch') throw Error('The original launch must be finalized before starting a separate launch.')
     localStorage.setItem(storageKey + '.last-completed', JSON.stringify(ids))
@@ -183,7 +191,7 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
     {!wallet && <button disabled={busy} onClick={() => run(() => connect())}>Connect wallet</button>}
     <HookWalletSignIn genesisHash={genesisHash} onIdentity={setIdentity}/>
     <section className="inner-card"><h2>New coin</h2><p>Choose a max-wallet cap and creator fee explicitly. Final costs and cap are shown from the verified server review. Virtual quote is a pricing input, not deposited SOL.</p>
-      {Object.entries({ label: 'Internal label', name: 'Coin name', symbol: 'Symbol', uri: 'Metadata HTTPS URL', capBps: 'Maximum wallet cap (basis points)', creatorFeeBps: 'Creator fee (basis points)', virtualQuote: 'Virtual quote (integer base units)' }).map(([key, label]) => <label key={key} style={{ display: 'block', marginBottom: 12 }}>{label}<input style={{ display: 'block', width: '100%' }} value={form[key]} disabled={busy || !!reservation || !!operation} inputMode={['capBps', 'creatorFeeBps', 'virtualQuote'].includes(key) ? 'numeric' : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })}/></label>)}
+      {Object.entries({ label: 'Internal label', name: 'Coin name', symbol: 'Symbol', uri: 'Metadata HTTPS URL', capBps: 'Maximum wallet cap (basis points)', creatorFeeBps: 'Creator fee (basis points)', virtualQuote: 'Virtual quote (integer base units)' }).map(([key, label]) => <label key={key} style={{ display: 'block', marginBottom: 12 }}>{label}<input style={{ display: 'block', width: '100%' }} value={approvedIntent && Object.hasOwn(approvedIntent, key) ? approvedIntent[key] : form[key]} disabled={busy || !!reservation || !!operation || (!!approvedIntent && Object.hasOwn(approvedIntent, key))} inputMode={['capBps', 'creatorFeeBps', 'virtualQuote'].includes(key) ? 'numeric' : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })}/></label>)}
       <button disabled={!activeWallet || busy || !!operation || !!reservation || uncertain} onClick={reserve}>{busy ? 'Working…' : 'Reserve mint and check availability'}</button>
       {reservation && <><p>Reserved mint: {reservation.mint}</p><button disabled={!canAct} onClick={() => reviewStage('preparation')}>Get exact preparation review</button></>}
     </section>
@@ -207,6 +215,8 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [] }) {
       {operation.status === 'partial' && operation.signedBy?.includes(wallet) && <button disabled={!canAct || expired} onClick={() => action('cosign')}>Complete next server signature</button>}
       {operation.status === 'reviewed' && expired && operation.walletRequestIssued && <p role="alert">The original message was issued to your wallet. Preserve this signing ID; a new review is blocked until the original outcome is resolved.</p>}
       {operation.status === 'signed' && <button disabled={!canAct || expired} onClick={() => action('submit')}>Submit signed {operation.stage} transaction once</button>}
+      {expired && ['reviewed', 'partial', 'signed', 'signing-claimed', 'signing-unknown'].includes(operation.status) && !operation.signature && <><p>This attempt's deadline has passed and it was never sent. Closing it is checked against the chain first, so the old transaction can never land.</p><button disabled={!activeWallet || busy} onClick={() => action('expire')}>Close expired attempt (nothing was sent)</button></>}
+      {operation.status === 'expired' && <button disabled={!canAct} onClick={() => freshReview(operation.stage)}>Start a fresh {operation.stage} review</button>}
       {waiting && <><p>The original transaction is checked every 8 seconds while this page is open.</p><button disabled={busy || !activeWallet} onClick={() => action('reconcile')}>Check original transaction now</button></>}
       {operation.signature && <p>Transaction receipt: {genesisHash === '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d' ? <a href={`https://explorer.solana.com/tx/${encodeURIComponent(operation.signature)}`} target="_blank" rel="noreferrer">{operation.signature}</a> : <code>{operation.signature}</code>}</p>}
       {operation.status === 'finalized-success' && operation.stage === 'preparation' && <button disabled={!canAct} onClick={() => reviewStage('launch')}>Review launch with confirmed preparation</button>}

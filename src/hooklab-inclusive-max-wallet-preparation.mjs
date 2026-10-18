@@ -1,5 +1,6 @@
 // Explicit inclusive-model V3 preparation. Legacy zero-fee planner is untouched.
 // Offline stage-one byte planner. No RPC, key generation, signatures, sends or adoption.
+import { isApprovedLaunchChoice } from './hooklab-launch-menus.mjs'
 import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import BN from 'bn.js'
@@ -204,7 +205,7 @@ function readLaunchConfig(launch, profile, request, account) {
     && c.reserved.every(v => v === 0), 'Launch configuration layout differs')
   check(c.quote_mint.toBase58() === profile.quoteMint && profile.quoteMint !== request.mint
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0
-    && request.creatorFeeBps === profile.capability.creatorFeeBps && request.creatorFeeBps <= c.max_creator_fee_bps && request.creatorFeeBps <= c.rule_bounds.max_rules_fee_bps
+    && isApprovedLaunchChoice(profile, request) && request.creatorFeeBps <= c.max_creator_fee_bps && request.creatorFeeBps <= c.rule_bounds.max_rules_fee_bps
     && BigInt(c.supply.toString(10)) > 0n
     && BigInt(c.supply.toString(10)) * BigInt(request.capBps) / 10000n > 0n, 'Max-wallet launch economics or rounded cap invalid')
   return c
