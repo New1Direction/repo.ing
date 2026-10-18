@@ -372,12 +372,130 @@ Return only the public result and custody reference—not the keypair, seed,
 passphrase, encrypted payload or Keychain secret. An address match still needs
 independent recovery proof.
 
+**Original provenance is now pinned more precisely, not resolved custody.**
+BdAa first appears as the `hook_gate` production candidate in
+`hook-lab-local/deployments/custom-hooks-production/profile.json` and its public
+`hook_gate.json`. `docs/MAX_WALLET_CANDIDATE.md:26-29` then reuses that same address
+for the alternative max-wallet binary; the program name change did not create
+another signer. Do not assume a `hook_max_wallet` rebuild key is the original key.
+The original public handoff explicitly says the keys were generated privately
+outside both repositories (`docs/CUSTOM_PAUSED_DEPLOYMENT.md:53-57,131-138`).
+Its concrete locator is **Amp thread `T-01a149f3-dfcc-720c-b113-3705cb46a89e`,
+artifact `hook-custom-paused-a33957a.tar.gz`**. The artifact/generation logs were
+not opened: request only the generation operator's public custody record.
+No inspected public record proves that signer was transferred to this Mac.
+
+The eleven public custody manifests have no BdAa role. Additional filename-only
+searches for `*gate*keypair*.json` under Desktop and Documents/ChatGPT returned
+no matches; this is scoped absence, not a claim about every disk or remote backup.
+No private key file was read, hashed, exported or used to derive another address.
+If the original operator cannot locate custody/backup, public metadata cannot
+reconstruct the private signer; this identity remains blocked, not substituted.
+
 For the separate selected-config prerequisite, recover only the public
 config/journal identity and matching creator/mainnet/profile binding from the
 original browser profile/origin or existing custody record. The planner's
 “Unlock for recovery only” control is for mint/config journals, **not** a
 generic program-signer finder. Do not create a journal or use a synthetic
 config to bypass this prerequisite.
+
+**Selected-config lookup, public columns only:** each of the existing local
+databases `hooks_local`, `hooks_local_dkzqyuye2jwn` and
+`hooks_local_ezqnedwbjwrv` has the native custody table, but a read-only query of
+public identity columns filtered to the intended DkD creator and 2T2 mint returned
+zero rows. `sealed_signers`, envelopes, ciphertext and unrelated rows were not read.
+This does not prove there is no journal at another original browser origin.
+
+For browser custody, the exact discovery location is the original browser
+profile/origin, IndexedDB **`repoing-hooklab-custody-v1`**, object store **`vaults`**.
+`app/lib/hooklab-custody-store.mjs:25-35` exposes keyless `listIds()` only for
+journal IDs; `load(id)` retrieves a vault and is not a public metadata export.
+An existing **`hooklab-public-identity/1`** export is preferred. Otherwise the
+owner may locally unlock the original journal and return only its public
+`{schemaVersion,id,binding,mint,config}` projection. `publicIdentity()` itself
+requires an already-open session (`app/lib/hooklab-custody.mjs:160-165`), not an
+unauthenticated lookup. The assistant did not launch a browser, read a raw
+profile/vault, unlock anything or request the passphrase.
+The `hooklab-binding/1` public binding must match wallet, mainnet genesis,
+recipe/manifest digests and program/config pins (`:50-57`). Do not create a
+replacement journal to turn an unresolved lookup into a match.
+
+**Prefunder is an owner designation.** No inspected public manifest assigns
+that role. A treasury/payer address or a large wallet balance does not supply
+funding authority or consent. The owner must name the existing single-signature
+prefunder's public address and local custody reference; FhE remains the proposed
+intermediary/recipient, not an inferred available funding source.
+
+### Actual public exposure and the limits of existing controls
+
+These are source-derived capability findings for the pinned mainnet/inclusive
+candidate, not a signed exploit demonstration or permission to open a gate.
+
+| Surface | What an outsider can do | Existing boundary / exact limitation |
+| --- | --- | --- |
+| Launch creation while launch creation is open | A creator with its own valid enabled/unexpired/unconsumed grant can use the permitted launch route; the plain mainnet route does not require the custom admin reviewer | Every mainnet route still needs the creator signature and PDA-bound grant; legacy unguarded/v2 creation is disabled. The custom/inclusive route additionally needs the admin reviewer. One DkD grant limits DkD issuance, not other grants or traders |
+| Swaps while B2 trading is open | Any trader owning/delegated for the input holding can buy/sell in an eligible existing pool, including the canary, via direct instructions or another router. Output can go to another valid holding | No DkD-only, per-mint/per-pool trader allowlist, trade reviewer or app/router exclusivity exists in this flow. The app's 0.01-SOL budget, review TTL and min-out constrain its own transactions, not outsiders |
+| Price and graduation | Outsider-funded trades can move reserves/price, consume curve inventory and cause the owner's min-out failure. Anyone may crank graduation once the bound curve's quote threshold or sold-out condition is met | Ordering/front-running/sandwich exposure is not prevented by the creator grant or wallet cap. Graduation is threshold-gated and does not pay the cranker the launch's LP; it is not a claimed observed exploit |
+| Max-wallet | One funding trader can split output across different owners; many owner wallets can each receive up to their own pre-graduation cap | The cap checks the destination owner's native holding, not a person's aggregate wallets or funding trader. Only the canonical pool destination is exempt; incoming reserve transfers refuse. After authenticated graduation the cap ends |
+| Other pool creation and liquidity | Trading opening does **not** let outsiders directly create B2 pools. Eligible non-curve pools permit deposits of own/delegated assets and withdrawal against own/delegated LP | Mainnet pool creation requires the authenticated E73 hook-authority CPI and guard. A curve canary rejects both add/remove liquidity until graduation. Swap's creation bit must remain false; its adapter rejects setting it true, so it is not a separate per-canary pool-creation toggle |
+| Transfers, burns, graduation and fees after pausing | Pausing the DEX is not a universal asset freeze. Token transfers/burns retain their owner/delegate and hook checks; eligible graduation and claims have their own conditions. Anyone may crank bridged-SOL protocol collection to its forced collector | Outsiders cannot debit DkD/treasury/LP without owner/delegate authority, claim creator/author fees without their signer, redirect forced collection, change governance/admin or supply a forged reviewer. Token fee collection requires admin; governance/reopening remains privileged |
+
+**B8 must also cover third-party exit risk:** once an outsider buys during the
+public window, restoring `swap Config.paused=true` blocks that outsider's B2 sell
+as well as further buys (`swap.rs:107-119`). Token transfer/burn is not a B2 exit
+liquidity guarantee. A test label, small owner budget or short window cannot
+prevent a third party entering and then being unable to sell through the paused
+DEX. Do not describe this sequence as private or consequence-free.
+
+Key evidence: protocol `bordrless_launch/src/lib.rs:82-153,231-239`,
+`controls.rs:127-185`, `custom.rs:105-110`;
+`bordrless_swap/src/instructions/pool.rs:164-198,240-245`,
+`swap.rs:69-120,135-156`, `liquidity.rs:103-110`,
+`governance.rs:67-78,203-208`; `hook_max_wallet/src/lib.rs:188-201,324-327`.
+The mainnet/inclusive feature chain is in `bordrless_launch/Cargo.toml:11-17`.
+These distinctions prevent two incorrect claims: “everyone can launch without
+a grant” and “everyone can withdraw the curve's LP”; neither follows from opening.
+
+**Public grant inventory is incomplete independent evidence.** Solana Labs
+returned zero E73 accounts matching the candidate's 73-byte
+`CreatorAuthorization` discriminator at finalized slot **458407048**. Allnodes
+returned `-32602`, “Indexed requests require a personal token”; that is **not**
+a second zero-account result. Refresh through suitable independent operators
+before claiming only the one new canary grant is live. No grant was created,
+revoked or consumed by this lookup.
+
+**Existing controls can restrict issuance and time, not make the current canary
+private.** A single valid grant plus the custom reviewer controls the intended
+launch; closing/exhausting it does not prevent trading in an existing pool.
+On-chain, authenticated E73 pool creation may occur while swap trading stays
+paused (`pool.rs:240-245`). Thus narrower non-overlapping creation/trading windows
+are possible at the program level, but each open trading window remains public.
+
+**Confirmed application restriction:** the actual launch compiler requires both
+configs unpaused (`src/hooklab-max-wallet-launch.mjs:205-207`) and both governance
+gate bits false (`:133-139`). The inclusive swap compiler likewise requires both
+governance bits false (`src/hooklab-inclusive-max-wallet-swap.mjs:67-76`), so
+closing launch creation before the buy/sell is also rejected by the current flow.
+These are the Hook Lab compilers/collectors, not the unrelated Meteora router.
+The safer on-chain order is therefore **not supported by this app as reviewed**.
+No check was relaxed and no source/packet sequence was changed to pretend otherwise.
+
+An atomic open/action/close envelope is not an approved workaround: the current
+launch compiler fixes exactly three canonical instructions and signer privileges
+(`hooklab-max-wallet-launch.mjs:302-321`). Any additional governance envelope,
+stricter gate ordering or restricted-trading design needs explicit owner scope,
+new exact message/privilege/size validation and fresh fee/budget review. Do not
+claim a private RPC/bundle, short window or hidden URL supplies an on-chain allowlist.
+
+**Classification:** no new unprivileged on-chain authorization bypass, theft or
+fee-model defect was established. Permissionless trading on an open DEX and the
+cap's per-owner scope are contract behavior/operator exposure. The two compilers'
+mixed-state rejection is a concrete integration/capability limitation if a
+narrower canary is required—not missing custody evidence and not a newly
+reproduced failure of completed acceptance. The resolved PostgreSQL defect in
+`6137392` stays closed. A claim of a private canary through the unchanged reviewed
+flow would be wrong; the owner must accept the public-window risk, authorize
+separately reviewed restrictive work, or keep the test blocked.
 
 ### Exact ordered owner actions and fee inventory
 
@@ -504,18 +622,18 @@ Every row is open; its closure needs the stated evidence and explicit owner
 decision. The current whole-route preparation hold is not waived merely because
 a particular identity or parameter is technically used only by the canary.
 
-| Gate | Stage / exact remaining blocker | Owner decision or evidence needed |
+| Gate | Classification / stage | Exact remaining owner decision or public evidence |
 | --- | --- | --- |
-| **B1 — Retained identities and usable custody** | Shared hold before production funding/signing | Approve retained launch `E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft`, swap `B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk`, their pinned upgrades/extensions and existing role mapping above. Locate the **original** `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb` signer and supply its public-only custody reference/matching local public-key result; the CUBGH9… rebuild key is rejected. No replacement identities or signer rotation |
-| **B2 — Selected config and prefunder** | Whole-route preparation hold; selected config is used by the canary | Supply the existing config public address and original journal/custody reference bound to creator `DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9`, mint `2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn`, mainnet and the approved profile digest. Designate the existing single-signature prefunder public address/local custody reference. No new wallet or substituted config is assumed |
-| **B3 — Independent recovery** | Shared hold | Provide owner-local recovery verification from a separate device/trust domain for every required signer: expected/observed public addresses, match, date, backup/control reference and helper hash. Same-Mac manifests do not satisfy this; no keys, ciphertext export or test signing is requested |
-| **B4 — External-token provenance and mutable trust** | Shared release hold | Obtain a complete independent source/build attestation, or separately authorize the pinned no-upload/no-keypair build after adequate capacity is available. Bind upstream `be0f9feb5503d246f3d71d7d641cc325c8ec2e08`, tree/lock/features/toolchain/image and canonical `ec9d9f…`; retain raw `7aa07…` unchanged. Also approve the explicitly mutable token `2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22` and bridge `CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7` dependencies. Matching raw/canonical hashes is not a completed rebuild or hosted verification |
-| **B5 — Exact economics and recipients** | Approve before governed settings/canary | Explicitly choose **proposed 2% cap versus earlier 1%**; approve **1% gross creator fee**, platform `floor(gross/4)` per swap, creator remainder and **zero extra surcharge/other charges/author share**. Approve platform recipient `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i`; each launch pays its actual creator, with DkD above only for this canary. Preserve the other curve/mint/legacy-bound values in the recommendation table |
-| **B6 — Gate deployment coverage and irreversibility** | Gate deployment/finalization, before the canary | Approve initial authority `9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md` and separately consent to immutable finalization **only after exact ID/ELF read-back**: future gate upgrades, closure and rent recovery then become impossible. The 1,440-transaction E73/B2 rehearsal did not exercise first gate deployment. Explicitly dispose of that coverage gap—request that one missing rehearsal, or accept the existing unsigned geometry review with this limitation; do not relabel it as a passing deployment rehearsal |
-| **B7 — Funding ceiling and finite inventory** | Before any funding/signing | Approve **4.176442240 SOL total capital ceiling**, conditionally including 0.001175000 SOL existing payer credit; fresh cash at most **4.175267240 SOL**, peak payer **4.176432240 SOL**, 0.05 SOL retained reserve. Approve sequential buffer recycling and the exact 1,650 core plus at most 25 additional messages/39 signatures. Zero priority fee, zero newly signed retries or unpriced extras. Re-quote balances/rent/fees; any variance stops for re-approval, not an automatic top-up |
-| **B8 — Controlled live-test permission** | Separate permission after paused-stage verification; not public activation | Approve one DkD launch grant with `expiresSlot=S+9000`, exact metadata and warm 38-address ALT; wrap at most 0.01 SOL; one 1,000,200-raw-quote buy; sell no more than finalized acquired base; 50-bps slippage with freshly computed min-out; exact creator/platform collection and specified closes/returns. Approve the temporary **global** creation/trading gate openings and restoration to the documented closed state; an on-chain opening is not a private/allowlisted test. Owner performs signing/live actions locally; unknown outcomes reconcile the original signature only |
-| **B9 — Fresh stage-bound packet and independent review** | Paused packet before its spend; new canary packets at their later hold points | Explicitly accept staged review with no automatic continuation. Supply B2 identities, then review the final paused packet; refresh two independent operators, account absence/authority/ELF bindings, fee quotes, absolute expiry and every reserved-signature wire size ≤1,232. After owner actions, bind actual deployment slots/controls, warm ALT and finalized trade/claim/return amounts. Keep five-second/five-slot reader bounds and 60-second/+96-slot review expiry. The reviewed 1,650-message zero-signature bundle is a core subset with stale blockhash/state, **not** the final canary |
-| **B10 — Local rehearsal availability, not a failed acceptance** | Before a newly required local stage rehearsal/runtime-readiness check | Full-stack recovery remains unapproved. Before validator/app startup require **2,147,483,648 bytes free on both Mac and VM data filesystem**, then obtain separate recovery approval. The last measured Mac free space was 1,879,375,872 bytes, below that gate; guest capacity is unverified. Do not restart the VM/validator/bridge/app or resume the compiler pull under the earlier PostgreSQL-only approval |
+| **B1 — Retained identities and usable custody** | **Missing custody evidence; shared hold** | Approve retained E73/B2 pins/roles. Ask the original **Amp `T-01a149f3-dfcc-720c-b113-3705cb46a89e`** generation operator for BdAa's public custody record: public address/role, original set/journal ID, manifest path, owner-local signer reference and applicable Keychain labels; return a matching owner-local public-key result only. The original address belongs to the earlier `hook_gate` candidate; the later CUBGH9… rebuild key is rejected. No original key path is publicly proven and no substitute is authorized |
+| **B2 — Selected config and prefunder** | **Missing identity/binding evidence plus owner designation; whole-route hold** | Supply an existing `hooklab-public-identity/1` export bound to DkD creator, 2T2 mint, mainnet and approved digests/pins, plus original browser origin/profile and journal ID. If no export exists, owner locally unlocks the original journal and returns public projection only; the assistant does not unlock/read ciphertext. Three filtered local public-column lookups returned no match. Designate the existing single-signature prefunder public address/local reference; do not infer it from balances or FhE's role |
+| **B3 — Independent recovery** | **Missing recovery evidence; shared hold** | Verify required existing signers on a separate owner-controlled device/trust domain; provide expected/observed public addresses, match, date and backup/control/helper references. Same-Mac manifests are insufficient. No secrets, key/ciphertext exports or test signing |
+| **B4 — External-token provenance and mutable trust** | **Missing build attestation plus trust approval** | Provide independent pinned source/build evidence or separately authorize a capacity-safe no-upload/no-keypair build. Raw `7aa07…` and canonical `ec9d9f…` differ only by 15 terminal zero bytes, not code; neither the public README nor unverified hosted status is our independent reproduction. Approve mutable token/bridge dependency trust; no compiler pull/build is currently authorized |
+| **B5 — Exact economics and recipients** | **Owner policy approval, not a new fee defect** | Choose proposed **2% cap versus earlier 1%**; approve **1% gross creator fee**, platform `floor(gross/4)`, creator remainder, zero surcharge/other charges/author share. Approve FhE collector and per-launch actual creator, with DkD/2T2 only for this controlled test, and unchanged remaining curve/mint/legacy-bound values. Full addresses and recommended parameters remain above |
+| **B6 — First gate deployment and irreversibility** | **Execution evidence gap; preparation now complete, not a passed runtime test** | The missing branch is prepared offline as **209 zero-signature messages**: setup, 207 writes and first deploy; max wire 1,232, deploy 598 bytes, no finalization. Original BdAa custody and separate signing/runtime authorization are still required to execute that case on a new isolated non-mainnet ledger, with retained identities and normal checks. Do not repeat E73/B2/browser/trade/fee acceptance. Post-deploy authority must remain9GC; immutable finalization is a later separate irreversible decision after exact read-back |
+| **B7 — Funding ceiling and finite inventory** | **Conditional owner budget approval; any revised sequence needs re-quote** | Baseline remains **4.176442240 SOL total capital**, fresh cash at most **4.175267240 SOL**, peak payer **4.176432240 SOL**, including conditional old credit and 0.05-SOL reserve. No spending is authorized. The 1,650-core/25-additional/39-signature inventory applies to the existing sequence only; B8 restrictive work/envelopes/reordering are not priced as unchanged. Re-quote actual balances/rents/fees and reapprove any variance; no new identities, priority fees or newly signed retries |
+| **B8 — Canary exposure choice** | **Confirmed app restriction/operator exposure, not merely missing proof** | **Recommended now: keep closed while B1/B2 are unresolved.** Then explicitly choose: accept the current app's public global opening and outsider trading/price/graduation risks; separately authorize restrictive sequence/envelope work with targeted compiler/review/budget validation; or do not run live. Existing grant/reviewer limits issuance, not traders. Confirm suitable independent grant inventory—the primary returned zero matching accounts but the secondary indexing request was denied. If accepting the baseline, approve the exact one-launch grant/expiry, metadata/ALT, ≤0.01-SOL wrap, one 1,000,200-raw-quote buy, bounded sell, 50-bps fresh min-out, fee collection/returns and restored closed state; these bound owner actions, not outsiders |
+| **B9 — Fresh stage-bound packet and review** | **Missing public inputs/freshness; stage-specific hold** | Accept staged reviews with no automatic continuation. Bind B2 identities before the paused packet; later bind actual deployment controls, warm ALT and finalized trade/claim/return amounts. Keep independent operators, account/ELF/authority checks, five-second/five-slot observations, 60-second/+96-slot review expiry and 1,232-byte limit. The core/subset snapshots have old blockhashes and are not executable local or mainnet packets. No signature, submission or validation bypass |
+| **B10 — Local rehearsal availability** | **Operational capacity/authorization gap, not a code defect** | Full-stack recovery remains unapproved. Require **2,147,483,648 bytes free on both Mac and VM data filesystem** before validator/app startup, then separate recovery authorization. Last measured Mac free space 1,879,375,872 bytes was below gate; guest capacity unverified. No VM/validator/bridge/app restart, new ledger initialization or compiler pull was performed; preserve all existing databases, ledgers, keys and evidence |
 
 **Evidence carry-forward and limited rechecks.** Keep the original browser,
 historical-fixture, wallet-switch, fee, E73/B2 upgrade, bridge, ALT and finality
@@ -908,6 +1026,50 @@ config/prefunder identities, post-upgrade deploy slots/controls, actual warm ALT
 absolute expiries and finalized buy/sell/collection state are still unavailable.
 Regenerate each stage with fresh blockhash, dual-reader observations and fees;
 never sign the expired review bundle or invent future amounts.
+
+### First-gate deployment rehearsal — prepared only, no finalization
+
+New private preparation directory:
+`hooks-local-state/release-prerequisites-20261018/first-gate-deployment-preparation/`.
+`prepare.mjs` ran once under `offline-only.sb`, denying networking, custody-key
+reads and source/accepted-state writes. It decoded and checked the original
+core checksum, exact retained addresses/signers/privileges, public seeded-buffer
+derivation, all contiguous ELF chunks and instruction discriminants. It generated
+`initial-deploy-unsigned.snapshot.jsonl.gz` and
+`prepared-first-deployment.private.json`, not a deployment-success response.
+
+| Prepared property | Actual offline result |
+| --- | --- |
+| Gate / ProgramData | `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb` / `GC3cuBuTstMXscgSXSEnRWDerW8iie9w1np3Q9b6MKo8` |
+| Buffer | `5vu1QCSuXqLqdht9BDy7e4YWPBBL2aHAGrAJj9qkaEi6`; public seed `hl-g-d7233dd0` |
+| Payer / authority | Existing `3eCFwDiKetHe9pg1zNEkTohUECu2vtsZDRMZ3jeR4g5o` / `9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md`; no substitutions |
+| Messages / signature slots | **209 / 418**, every signature slot zero; finalization message excluded |
+| Writes / ELF | **207**, 916-byte chunks, last 264 bytes; 188,960-byte pinned ELF |
+| Reserved signed wire sizes | Setup **381**, initial deploy **598**, maximum **1,232 bytes** |
+| Accounts | Buffer 188,997 bytes; program 36; ProgramData 189,005 |
+| New key reads / identities / signatures / submitted transactions / spending / finalization instructions | **All zero** |
+| Runtime deployment result | **Not run; not verified** |
+
+Uncompressed subset SHA-256:
+`bc31f3397eb53b0f694dc9f70a36c86036e9630d0f78050165f499bcf7fd0202`.
+All original acceptance/core evidence is retained. No accepted ledger was reset
+or reused and no completed stage was replayed.
+
+Future execution requires the original retained signers under a new explicit
+authorization, a separately approved isolated non-mainnet genesis distinct from
+the accepted one, absence checks, fresh local rent/fees/blockhashes, normal
+signature verification and read-back. It must verify executable BdAa, the exact
+ProgramData ELF/actual slot, **authority still9GC and not null**, and full buffer
+refund/rent/fee conservation. The pinned Agave4.3 loader drains the buffer to payer
+before paying ProgramData rent and records the supplied authority
+(`programs/bpf_loader/src/lib.rs`, DeployWithMaxDataLen); no finalization is needed
+to exercise this missing branch.
+
+Recorded historical mainnet quotes are buffer rent960,755,000, program rent833,120,
+ProgramData rent960,795,640 and 418-signature fee2,090,000 lamports. They are not
+current funding permission or a promise about local-default rent, which differs.
+Do not submit the snapshot's inherited old blockhash. No execution driver was
+run, no keys were accessed and no production action is authorized by preparation.
 
 **Paused deployment and controlled live test:** remain NO-GO on the consolidated
 B1–B10 list above. B10 is a local recovery/rehearsal gate, not a claim that the
