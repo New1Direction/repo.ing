@@ -109,34 +109,51 @@ economics. Commit the file; it prints the two Railway variables for it.
 
 ## 7. Server configuration (Railway)
 
-Apply missing schema files to the production database in this order (check
-first: `select table_name from information_schema.tables where table_name like 'hook_lab_%'`):
-the eleven files in `HOOK_NATIVE_LAUNCH_RUNBOOK.md`, then
-`hooklab-wallet-identity-quota-schema.sql`, `hooklab-native-signing-expiry-schema.sql`,
-`hooklab-owner-approval-schema.sql`.
+Project `repo-ing` (507c3e92-c0a7-4c83-8622-172e88509b68), service `web`, environment `production`.
+Hooks run only in `web`. The Postgres service has no public endpoint, so database work runs inside the
+`web` container through `railway ssh`.
 
-Variables (values never go in chat or Git):
+```sh
+R="-p 507c3e92-c0a7-4c83-8622-172e88509b68 -s web -e production"
+```
 
-| Variable | Value |
-|---|---|
-| `HOOK_PRODUCTION_BOOTSTRAP` | `true` |
-| `HOOK_OWNER_APPROVED_LAUNCHES`, `HOOK_NATIVE_LAUNCH_ENABLED`, `HOOK_WALLET_IDENTITY_ENABLED` | `true` |
-| `HOOK_WALLET_IDENTITY_ORIGIN` / `_DATABASE_URL` | existing wallet identity settings |
-| `HOOK_LAUNCH_ADMIN_ADDRESS` | `DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5` |
-| `HOOK_OWNER_APPROVAL_TOKEN_SHA256` | printed by `hooklab-server-secrets token` |
-| `HOOK_NATIVE_KEYRING_JSON` / `HOOK_NATIVE_ACTIVE_KEY_ID` | pasted from `hooklab-server-secrets copy-keyring` / `k-2026-10` |
-| `HOOKLAB_PRODUCTION_BUNDLE_FILE` / `_SHA256` | printed by step 6 |
-| `HOOKLAB_PRODUCTION_RPC_PRIMARY_URL` / `_SECONDARY_URL` | same two URLs as step 6, same order |
-| `HOOKLAB_PRIORITY_MICROLAMPORTS` | `10000` recommended (about 0.000014 SOL per customer transaction) |
-| `HOOK_INCLUSIVE_TRADING_ENABLED` | `true` only at public activation |
+**Schema** (checked 2026-10-18: 0 of the 14 tables exist; only the planner's two
+`hook_lab_recipe_*` tables). `check` is read-only; `apply` runs all 14 files in one transaction,
+refuses if any table exists, and only for the reviewed SQL hash:
 
-Server credentials (owner-run; values never shown, written to disk or put in arguments), with
-`T=~/Documents/ChatGPT/hooks-local-state/owner-tools` (hashes in its `REVIEW-MANIFEST.sha256`):
-`$T/hooklab-server-secrets token` (stores the agent token in your Keychain, prints its SHA-256),
-`$T/hooklab-server-secrets keyring` (stores the key ring), then with Railway's variable editor open
-`$T/hooklab-server-secrets copy-keyring` (clipboard for 60 s, then cleared). The admin key never goes
-to the server. On start-up the server logs either nothing or
-`Hook Lab production bootstrap refused: <reason>`.
+```sh
+node scripts/hooklab-production-schema.mjs show           # files, tables, sha256
+node scripts/hooklab-production-schema.mjs check | railway ssh $R -- node
+node scripts/hooklab-production-schema.mjs apply --sha256 2e4968864c9deaf3c8a03f8732cc0bd353c86e195835907c348398fd029f55b0 | railway ssh $R -- node
+```
+
+**Settings** (`--skip-deploys`: nothing restarts until the app deploy). The Helius URL is reused by
+reference (`SOLANA_RPC_URL` is the existing Helius variable), never copied:
+
+```sh
+railway variable set $R --skip-deploys HOOK_WALLET_IDENTITY_ENABLED=true HOOK_WALLET_IDENTITY_ORIGIN=https://repo.ing \
+  'HOOK_WALLET_IDENTITY_DATABASE_URL=${{ Postgres.DATABASE_URL }}' HOOK_NATIVE_LAUNCH_ENABLED=true HOOK_OWNER_APPROVED_LAUNCHES=true \
+  HOOK_LAUNCH_ADMIN_ADDRESS=DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5 HOOK_NATIVE_ACTIVE_KEY_ID=k-2026-10 \
+  'HOOKLAB_PRODUCTION_RPC_PRIMARY_URL=${{ SOLANA_RPC_URL }}' HOOKLAB_PRODUCTION_RPC_SECONDARY_URL=https://solana-rpc.publicnode.com \
+  HOOKLAB_PRIORITY_MICROLAMPORTS=10000
+```
+
+After step 6: `HOOKLAB_PRODUCTION_BUNDLE_FILE=config/hooklab-production-bundle.json`,
+`HOOKLAB_PRODUCTION_BUNDLE_SHA256=<printed>`, then `HOOK_PRODUCTION_BOOTSTRAP=true`.
+At public activation only: `HOOK_INCLUSIVE_TRADING_ENABLED=true`.
+
+**Credentials** (values never shown, written to disk or put in arguments; every Keychain read asks
+you first). `T=~/Documents/ChatGPT/hooks-local-state/owner-tools` (hashes in `REVIEW-MANIFEST.sha256`):
+
+```sh
+$T/hooklab-server-secrets token        # agent token -> Keychain; prints HOOK_OWNER_APPROVAL_TOKEN_SHA256=...
+$T/hooklab-server-secrets keyring      # server key ring -> Keychain
+railway variable set $R --skip-deploys HOOK_OWNER_APPROVAL_TOKEN_SHA256=<printed hash>
+security find-generic-password -s repoing-hook-keyring -w | tr -d '\n' | railway variable set $R --skip-deploys HOOK_NATIVE_KEYRING_JSON --stdin
+```
+
+The key ring travels Keychain -> pipe -> Railway only. The admin key never goes to the server. On
+start-up the server logs either nothing or `Hook Lab production bootstrap refused: <reason>`.
 
 ## 8. Owner agent (while launches are open)
 
