@@ -28,11 +28,14 @@ The accepted browser URL is not currently served. Production actions remain bloc
 
 - App baseline: `New1Direction/repo.ing` PR #304,
   `d3eb0df2701be2b77e624d60750b99bc8bb23ebe`.
-- Accepted app runtime baseline: `4f611561f2502699e2ffb039ef759fa65f36380c`.
-  Prior approval-only commit: `38f635e5167e5f39ed073727ee10fb52edb629b9`.
-  This follow-up adds the verified database deadline fix and its regression tests;
-  it does not replace the earlier financial browser-acceptance baseline.
-  No program source, artifact pin or identity changed.
+- Financial browser-acceptance baseline: `4f611561f2502699e2ffb039ef759fa65f36380c`.
+- Current app release source: **`61373924fc9a384118b0edaf3f130f5fb3857d15`**,
+  `fix(hooklab): bound PostgreSQL waits without losing signing recovery`.
+  Its final five PostgreSQL tests and SQL/HTTP smoke passed. It adds the bounded
+  database policy and regressions without invalidating the earlier financial,
+  wallet-switch, ABI, fee-settlement or retained-program acceptance evidence.
+- Prior approval-only commit: `38f635e5167e5f39ed073727ee10fb52edb629b9`.
+  No program source, artifact pin, wallet role or program identity changed.
 - Protocol baseline: `New1Direction/hook-lab` PR #5,
   `134e16de1aadeac921bb314284fd3fd181c86097`.
 - Protocol source was not modified. Existing commit patches were not reapplied.
@@ -378,13 +381,21 @@ config to bypass this prerequisite.
 
 ### Exact ordered owner actions and fee inventory
 
-**Pre-sign hold point:** close custody, recovery, external provenance and
-selected-config prerequisites; approve every value above; assemble the exact
-unsigned instruction/account manifest with fresh absolute slots/blockhashes.
-No production packet is claimed complete while the selected-config address
-and funding-source public address are missing. Re-quote every actual message,
-verify canonical address placement and all fully signed wire sizes ≤1,232,
-and rehearse the final address-bound canary before authorizing any spend.
+**Pre-sign hold point:** the current whole-route custody, recovery, provenance,
+identity and approval holds remain in force. The consolidated checklist below
+is authoritative for what is still open; closed acceptance is not reopened.
+The owner must explicitly approve the stage-review boundaries before any action.
+Complete the paused-deployment account/instruction/fee manifest before its
+funding or signing; then stop at each separately approved stage.
+
+Post-upgrade deployment slots/control hashes and the warm ALT must be observed
+before launch review. Actual acquired base, fee claims and surplus returns bind
+only after the preceding transactions finalize. They cannot truthfully be
+precomputed into one final canary packet before deployment. Until the owner
+accepts these staged hold points, the route remains blocked, not silently relaxed.
+Re-quote each actual stage, refresh absolute expiries/blockhashes and independent
+observations, and keep every complete signed wire size at most 1,232 bytes.
+No paused-stage approval authorizes temporary openings, finalization or a next stage.
 
 The existing **1,650 code/gate messages** run between rows 2 and 3:
 launch create/init/extend + 830 writes + upgrade; verify complete spill;
@@ -488,40 +499,40 @@ unknowns. A different action list requires a different reviewed ceiling.
 
 ### One owner approval checklist — no item is execution permission by itself
 
-- [ ] Retain launch `E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft`
-      and swap `B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk`;
-      approve exact pins, extensions and sequential buffer/spill order.
-- [ ] Verify original gate signer `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb`,
-      upgrade signer `9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md`,
-      payer `3eCFwDiKetHe9pg1zNEkTohUECu2vtsZDRMZ3jeR4g5o`,
-      admin `DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5` and guardian
-      `CT4SioSvVFHcnuJbJMfcVgdR3GHAyK7VmrjvR6y3RmEY`.
-      Supply independent recovery, existing selected-config binding and prefunder
-      public address/custody reference. Do not generate replacements.
-- [ ] Complete independent external-token source/build attestation and approve
-      mutable dependency trust for token `2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22`
-      and bridge `CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7`.
-- [ ] Explicitly choose **proposed 2% cap versus earlier 1%**, **1% gross creator
-      fee**, per-swap **floor 25% platform / remainder creator**, zero surcharge
-      and zero author share. Platform recipient:
-      `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i`.
-      Each launch pays its actual creator; this one canary uses
-      `DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9` and existing mint
-      `2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn`, not general defaults.
-- [ ] Approve the exact ordered bounded canary: one-launch grant/absolute expiry,
-      canonical warm ALT, 0.01-SOL wrap ceiling, one 1,000,200-raw-quote buy,
-      sell no more than acquired base, quote fee collection and final closed gates.
-- [ ] Approve **4.176442240 SOL total capital ceiling**, including existing payer
-      credit; fresh cash at most **4.175267240 SOL**; 0.05-SOL retained reserve,
-      zero priority fee/newly signed retries and no unpriced additional actions.
-- [ ] Review stage-specific fresh address-bound unsigned messages, independent
-      state and actual fee/rent quotes; every reserved signed wire size ≤1,232.
-      Separately consent to immutable gate finalization after exact read-back:
-      future gate upgrades/closure/rent recovery are then permanently unavailable.
-- [ ] After every prerequisite closes, owner locally signs/executes only the
-      separately approved paused-deployment/canary stages and verifies spills,
-      receipts, fee arithmetic and restored pauses. This does not approve merging,
-      public trading, a general unpause or any action by the assistant.
+The following is the **single remaining blocker/decision list** for this route.
+Every row is open; its closure needs the stated evidence and explicit owner
+decision. The current whole-route preparation hold is not waived merely because
+a particular identity or parameter is technically used only by the canary.
+
+| Gate | Stage / exact remaining blocker | Owner decision or evidence needed |
+| --- | --- | --- |
+| **B1 — Retained identities and usable custody** | Shared hold before production funding/signing | Approve retained launch `E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft`, swap `B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk`, their pinned upgrades/extensions and existing role mapping above. Locate the **original** `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb` signer and supply its public-only custody reference/matching local public-key result; the CUBGH9… rebuild key is rejected. No replacement identities or signer rotation |
+| **B2 — Selected config and prefunder** | Whole-route preparation hold; selected config is used by the canary | Supply the existing config public address and original journal/custody reference bound to creator `DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9`, mint `2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn`, mainnet and the approved profile digest. Designate the existing single-signature prefunder public address/local custody reference. No new wallet or substituted config is assumed |
+| **B3 — Independent recovery** | Shared hold | Provide owner-local recovery verification from a separate device/trust domain for every required signer: expected/observed public addresses, match, date, backup/control reference and helper hash. Same-Mac manifests do not satisfy this; no keys, ciphertext export or test signing is requested |
+| **B4 — External-token provenance and mutable trust** | Shared release hold | Obtain a complete independent source/build attestation, or separately authorize the pinned no-upload/no-keypair build after adequate capacity is available. Bind upstream `be0f9feb5503d246f3d71d7d641cc325c8ec2e08`, tree/lock/features/toolchain/image and canonical `ec9d9f…`; retain raw `7aa07…` unchanged. Also approve the explicitly mutable token `2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22` and bridge `CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7` dependencies. Matching raw/canonical hashes is not a completed rebuild or hosted verification |
+| **B5 — Exact economics and recipients** | Approve before governed settings/canary | Explicitly choose **proposed 2% cap versus earlier 1%**; approve **1% gross creator fee**, platform `floor(gross/4)` per swap, creator remainder and **zero extra surcharge/other charges/author share**. Approve platform recipient `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i`; each launch pays its actual creator, with DkD above only for this canary. Preserve the other curve/mint/legacy-bound values in the recommendation table |
+| **B6 — Gate deployment coverage and irreversibility** | Gate deployment/finalization, before the canary | Approve initial authority `9GCfczwLVfyGTE4RRrEHbGqSdHGD35U3Z5ifo7YEN1md` and separately consent to immutable finalization **only after exact ID/ELF read-back**: future gate upgrades, closure and rent recovery then become impossible. The 1,440-transaction E73/B2 rehearsal did not exercise first gate deployment. Explicitly dispose of that coverage gap—request that one missing rehearsal, or accept the existing unsigned geometry review with this limitation; do not relabel it as a passing deployment rehearsal |
+| **B7 — Funding ceiling and finite inventory** | Before any funding/signing | Approve **4.176442240 SOL total capital ceiling**, conditionally including 0.001175000 SOL existing payer credit; fresh cash at most **4.175267240 SOL**, peak payer **4.176432240 SOL**, 0.05 SOL retained reserve. Approve sequential buffer recycling and the exact 1,650 core plus at most 25 additional messages/39 signatures. Zero priority fee, zero newly signed retries or unpriced extras. Re-quote balances/rent/fees; any variance stops for re-approval, not an automatic top-up |
+| **B8 — Controlled live-test permission** | Separate permission after paused-stage verification; not public activation | Approve one DkD launch grant with `expiresSlot=S+9000`, exact metadata and warm 38-address ALT; wrap at most 0.01 SOL; one 1,000,200-raw-quote buy; sell no more than finalized acquired base; 50-bps slippage with freshly computed min-out; exact creator/platform collection and specified closes/returns. Approve the temporary **global** creation/trading gate openings and restoration to the documented closed state; an on-chain opening is not a private/allowlisted test. Owner performs signing/live actions locally; unknown outcomes reconcile the original signature only |
+| **B9 — Fresh stage-bound packet and independent review** | Paused packet before its spend; new canary packets at their later hold points | Explicitly accept staged review with no automatic continuation. Supply B2 identities, then review the final paused packet; refresh two independent operators, account absence/authority/ELF bindings, fee quotes, absolute expiry and every reserved-signature wire size ≤1,232. After owner actions, bind actual deployment slots/controls, warm ALT and finalized trade/claim/return amounts. Keep five-second/five-slot reader bounds and 60-second/+96-slot review expiry. The reviewed 1,650-message zero-signature bundle is a core subset with stale blockhash/state, **not** the final canary |
+| **B10 — Local rehearsal availability, not a failed acceptance** | Before a newly required local stage rehearsal/runtime-readiness check | Full-stack recovery remains unapproved. Before validator/app startup require **2,147,483,648 bytes free on both Mac and VM data filesystem**, then obtain separate recovery approval. The last measured Mac free space was 1,879,375,872 bytes, below that gate; guest capacity is unverified. Do not restart the VM/validator/bridge/app or resume the compiler pull under the earlier PostgreSQL-only approval |
+
+**Evidence carry-forward and limited rechecks.** Keep the original browser,
+historical-fixture, wallet-switch, fee, E73/B2 upgrade, bridge, ALT and finality
+acceptance records, plus commit `6137392`'s five-test/smoke/preservation evidence.
+This documentation-only consolidation invalidates none of them; no tests or
+financial flows are rerun. B6 records a genuinely uncovered case, not a request
+to repeat completed tests. On later authorized recovery, check only availability,
+retained genesis/ELFs/ALT and database/receipt preservation; do not recreate or
+replay accepted launches/trades. An approved cap/recipient/config change requires
+only its affected policy/boundary/recipient, account/ALT binding and transaction
+size checks. Fresh signing-time state/fee/expiry reads are mandatory even without
+code changes; they are not historical acceptance reruns. A changed ELF/IDL or
+runtime source requires its actually affected checks, not reuse of invalid proof.
+
+Closing these review gates is **not** permission for the assistant to fund, sign,
+broadcast, deploy, finalize, merge or unpause. The owner separately authorizes
+and executes each production stage locally; public trading is a different decision.
 
 ## Verification limits and evidence
 
@@ -898,15 +909,27 @@ absolute expiries and finalized buy/sell/collection state are still unavailable.
 Regenerate each stage with fresh blockhash, dual-reader observations and fees;
 never sign the expired review bundle or invent future amounts.
 
-**Paused deployment/canary:** mechanics, core address placement, size and budget
-have review evidence, but custody/recovery, source build attestation, final packet
-and owner approvals still make this NO-GO. The bounded canary also requires its
-separately approved temporary openings and verified restoration to closed state.
-**Public trading:** additionally NO-GO for production topology/custody-adapter
-checks and broader app release checks already listed above. The targeted
-PostgreSQL regression is now resolved; the rest of the local stack remains
-unrecovered under the owner's PostgreSQL-only approval. No merge, general
-activation, compiler-image pull or production action is authorized.
+**Paused deployment and controlled live test:** remain NO-GO on the consolidated
+B1–B10 list above. B10 is a local recovery/rehearsal gate, not a claim that the
+mainnet loader needs the local browser to run. Existing completed acceptance and
+the resolved PostgreSQL regression are not blockers.
+
+**Separate public-trading requirements — not implied by the bounded test:**
+
+- Owner must approve the production app/operator profile, durable custody adapter
+  and RPC operators/endpoints. Verify the actual production database/pooler accepts
+  the startup GUCs and effective deadline policy; establish a signer bound below
+  the 30-second idle-transaction limit and unknown-signature recovery. This is not
+  permission to enable synthetic signing or relax production guards.
+- Complete the broader app CI/build and production integration checks before
+  merge/general app release. The unrelated missing model-pulse import warning and
+  non-green whole-repository CI remain open; scoped Hook Lab passes do not close them.
+- Review the owner's actual controlled-live receipts, per-swap floor/remainder,
+  recipient balances and restored pauses. Independently revalidate current
+  production configuration/dependencies; retained local acceptance is not live proof.
+- Obtain a **new, explicit public go-live/general-unpause decision**. A paused
+  upgrade, temporary global test opening, restored local stack or passing canary
+  does not authorize public trading or merging. Production execution stays blocked.
 
 ## Primary references
 
