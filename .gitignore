@@ -109,3 +109,6 @@ __pycache__/
 # Rust build output (programs/*, scripts/build-early-access-hook.sh)
 programs/*/target/
 spikes/*/program/target/
+
+# Hook Lab owner-driver run directories (unsigned plans, journal, receipts)
+/hooklab-owner-runs/
