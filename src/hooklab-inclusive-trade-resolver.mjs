@@ -6,6 +6,7 @@ import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-col
 import {inspectProductionEvidence} from './hooklab-production-observer.mjs'
 import {compileInclusiveMaxWalletSwapReview,inclusiveMaxWalletSwapInventory,inclusiveMaxWalletSwapRequestSchema} from './hooklab-inclusive-max-wallet-swap.mjs'
 import {collectInclusiveTradeSettlement} from './hooklab-inclusive-trade-settlement.mjs'
+import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
 const check=v=>{if(!v)throw Error('Inclusive trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
@@ -18,7 +19,8 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
   const {quote:ignored,...raw}=intent??{}
   const request=inclusiveMaxWalletSwapRequestSchema.parse({...raw,schema:'repoing/inclusive-max-wallet-swap-request/1',policyKind:'max-wallet',policyVersion:2,
    feeModel:2,protocolShareBps:2500,trader:owner,recipient:owner,feePayer:owner})
-  check(stage===`inclusive-${request.side}`&&request.creatorFeeBps===bound.config.economics.creatorFeeBps)
+  // Any fee from the owner's menu; the compiler then requires it to equal the coin's on-chain PolicyV2 fee.
+  check(stage===`inclusive-${request.side}`&&approvedCreatorFees(bound.profile).includes(request.creatorFeeBps))
   if(originalContext)check(originalContext.configurationSha256===configurationSha256&&isDeepStrictEqual(originalContext.compilationInput.request,request))
   const started=integer(clock()),inventory=inclusiveMaxWalletSwapInventory(bound.profile,request)
   const extras=[...new Set([...bound.dossier.programs.flatMap(p=>[p.address,p.programData]),...bound.dossier.accounts.map(x=>x.address),...(bound.config.lookupTable?[bound.config.lookupTable.address]:[])])]
