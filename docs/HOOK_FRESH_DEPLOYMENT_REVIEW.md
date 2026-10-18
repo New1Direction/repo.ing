@@ -8,20 +8,25 @@ This does **not** authorize production signing, funding, broadcasting,
 deployment, merging, upgrades or unpausing. None was performed. The owner
 performs final signing and live acceptance locally.
 
-The local 100 bps creator fee and 200 bps wallet cap are test inputs only.
-Production rate, cap and recipients remain unapproved. Preserve the implemented
-model: each swap pays `floor(gross creator fee / 4)` to repo.ing and the
-remainder to the creator; no additional platform surcharge.
+The recommended values below are **not approved**: 100 bps gross creator fee
+and a 200 bps v2 wallet cap. They reuse the accepted test values deliberately,
+not as an implicit production promotion. Preserve the implemented per-swap
+model: repo.ing receives `floor(gross / 4)`, the creator receives the remainder,
+and there is no additional platform surcharge.
 
 ## Source and artifact baseline
 
 - App baseline: `New1Direction/repo.ing` PR #304,
   `d3eb0df2701be2b77e624d60750b99bc8bb23ebe`.
+- Frozen app source: `4f611561f2502699e2ffb039ef759fa65f36380c`.
+  This closure changes this approval document only, not the accepted runtime.
 - Protocol baseline: `New1Direction/hook-lab` PR #5,
   `134e16de1aadeac921bb314284fd3fd181c86097`.
 - Protocol source was not modified. Existing commit patches were not reapplied.
 - Original `Gitfun` repository and unrelated payout work were not modified.
-- Actual build: Agave 4.3.0, platform-tools 1.57, SBF v3, Rust 1.97.1.
+- Build tooling: Agave 4.3.0, platform-tools 1.57, SBF v3. The cached SBF
+  compiler reports Rust 1.95.0; Rust 1.97.1 was the host compiler metadata,
+  not the SBF compiler version.
 
 The supplied protocol candidate tree
 `3e25d73f3dd82c56e0d7456790ea88f64fdc0e01` is the PR #5 tree.
@@ -86,12 +91,19 @@ Their public deterministic test identities must never be used for production.
 
 ## Read-only retained-state assessment
 
-RPC: `https://api.mainnet-beta.solana.com`; verified mainnet genesis
-`5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`.
-Finalized headers were refreshed at slot 458,273,954. Config/governance
-decoding used slot 458,275,222; owner-account inventories used slots
-458,276,220–221. These are read-only observations from one provider, not
-the two-independent-provider production dossier still required.
+Independent read-only checks now agree across **Solana Labs**
+`https://api.mainnet-beta.solana.com` and **Allnodes/PublicNode**
+`https://solana.publicnode.com`. Both return mainnet genesis
+`5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d`; finalized account contexts
+458,306,602 and 458,306,584 agree on all 23 compared role accounts and the
+four ProgramData records. A subsequent two-provider check at slots
+458,318,583–586 proves all three proposed seeded buffers absent.
+Rent and base-signature fee quotes also agree. These are preparation evidence,
+not a signing-time freshness certificate. Re-read before each owner action.
+
+PublicNode bulk `getMultipleAccounts` returned HTTP 403; separate
+`getAccountInfo` reads succeeded. The alternate dRPC free endpoint rejected
+the chain. Neither failure was treated as a successful reader.
 
 | Object | Observed state |
 | --- | --- |
@@ -101,21 +113,23 @@ the two-independent-provider production dossier still required.
 | Candidate gate `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb` | Absent; its existing program-signer custody reference has not been identified |
 | Operational payer | 1,175,000 lamports |
 | Upgrade authority wallet | 902,231 lamports; the proposed payer remains the separate operational payer |
-| Existing buffers under `9GCf…EN1md` | None in the finalized Loader V3 authority-filtered inventory |
+| Proposed seeded launch/swap/gate buffers | All three absent on both independent readers; addresses below |
 
-**Retained-ID upgrades are supported by the loader.** Launch and swap do not
-need new program identities or their program-identity keys to upgrade.
+**Retained-ID upgrades are supported and their loader mechanics have now been
+rehearsed on separate disposable state.** Launch and swap need neither new
+program identities nor their program-identity keys to upgrade.
 The current accepted ELFs require exact ProgramData extensions of 50,512 and
 26,024 bytes. Both exceed the 10,240-byte minimum; Agave 4.3.0 does not round
 an already-above-minimum extension to another 10 KiB multiple.
 
 The accepted inclusive IDLs decode the existing 250-byte launch Config,
-189-byte swap Config and both 348-byte governance accounts. Both config
-pauses remain true, governance revisions are zero, and no admin transfer is
-pending. The complete owner-account inventory at those slots contains only
-Config and Governance for each program: no Launch, Pool or creator-grant
-accounts were returned. This is observed layout compatibility, not a blanket
-claim about every future market or a production upgrade rehearsal.
+189-byte swap Config and both 348-byte governance accounts identically on
+both readers. Both pauses remain true, governance revisions are zero and no
+admin transfer is pending. The selected creator grant and receiving holdings
+are absent. The older full owner-account scan returned only Config and
+Governance, not Launch/Pool/grant accounts; it is not a fresh global inventory.
+The rehearsal below proves loader execution and preserved config bytes under
+synthetic authority, not possession of any production signer.
 
 Code upgrades alone cannot enable the inclusive fee model:
 
@@ -145,8 +159,9 @@ Use temporary Loader V3 buffers created with
 `SystemProgram.createAccountWithSeed`, with the existing operational payer
 as both payer and base, and `9GCf…EN1md` as buffer authority. These are loader
 accounts, not new wallets or program identities; no buffer keypair is needed.
-Only public addresses were derived/read and unsigned messages fee-quoted.
-No account was created and no production signature or broadcast occurred.
+Only public production addresses/accounts were derived/read and unsigned
+messages fee-quoted. No production account creation, signature or broadcast
+occurred. The separate local rehearsal uses deterministic synthetic signers.
 
 The non-secret address labels and resulting absent buffer accounts are:
 
@@ -164,9 +179,10 @@ requires its existing identity signer; finalization is a separate approval.
 This is an owner-review proposal, not an implemented production signing
 tool or a rehearsed/executable production packet.
 
-Finalized rent quotes fit `R(n) = 650240 + 5080 * n` lamports. Buffer metadata
-is 37 bytes, ProgramData metadata 45 bytes, and a Program account 36 bytes.
-Unsigned fee quotes at slots 458,276,216–218 confirmed these message costs:
+Fresh finalized rent quotes from both readers fit
+`R(n) = 650240 + 5080 * n` lamports. Buffer metadata is 37 bytes,
+ProgramData metadata 45 bytes, and a Program account 36 bytes.
+The original exact loader-message measurements are:
 
 | Proposed message | Required signatures | Wire bytes with reserved signature slots | Base fee, lamports |
 | --- | ---: | ---: | ---: |
@@ -177,10 +193,10 @@ Unsigned fee quotes at slots 458,276,216–218 confirmed these message costs:
 | Gate Program creation + initial deployment | 3 | 598 | 15,000 |
 | Gate immutable finalization | 2 | 303 | 10,000 |
 
-These are **unsigned size/fee measurements**, not production signatures or
-simulation/execution success. The 916-byte write has a 1,103-byte message;
-two reserved 64-byte signatures plus their count make 1,232 bytes.
-A 917-byte payload measures 1,233 and is not allowed.
+The production packets remain unsigned. Their write geometry was additionally
+exercised with real synthetic signatures in the disposable rehearsal:
+the 916-byte payload reaches, but never exceeds, 1,232 serialized bytes.
+The 917-byte negative measurement is 1,233 bytes and remains forbidden.
 
 Omit the compute-unit-price instruction entirely. Even specifying zero
 changes the CLI instruction/chunk geometry. The actual accepted ELF files
@@ -206,17 +222,15 @@ with execution gates/config pauses unchanged. Launch-first minimizes this
 sequential schedule's peak; doing swap first leaves its spent rent/fees
 unavailable when funding the larger launch buffer.
 
-Before the launch spill, the payer must cover its 3,861,516,280 buffer
-deposit, 256,600,960 extension and 8,315,000 stage fees: 4,126,432,240
-lamports. Add a proposed retained payer reserve of 650,240 lamports:
+Before the launch spill, the code stage requires 4,126,432,240 lamports:
+3,861,516,280 buffer rent + 256,600,960 extension rent + 8,315,000 fees.
+The recommended **50,000,000-lamport retained payer reserve** replaces the
+earlier 650,240-lamport dust proposal. The complete chronological funding
+ceiling, including both funding-transfer fees and the canary, appears in the
+single approval sheet below.
 
-| Funding measure | Lamports | SOL |
-| --- | ---: | ---: |
-| Peak payer balance including proposed reserve | 4,127,082,480 | 4.127082480 |
-| Observed payer balance | 1,175,000 | 0.001175000 |
-| Conditional payer funding shortfall | 4,125,907,480 | 4.125907480 |
-| Cumulative upgrade-buffer deposits returned to the payer | 6,680,779,120 | 6.680779120 |
-| Payer balance left after this component if funded to that peak | 2,760,160,840 | 2.760160840 |
+Cumulative launch/swap buffer deposits returned to the payer:
+**6,680,779,120 lamports**.
 
 The two buffer refunds are **recycled sequential credits**, not an extra
 return to add to the final payer balance. Each ProgramData is already
@@ -225,7 +239,7 @@ buffer deposit to the payer on upgrade. Gate buffer funding is recycled
 into new permanent ProgramData rent, not a net reclaimable gate refund.
 Existing E73/B2 program rent remains in place, not refunded. The immutable
 gate's rent cannot later be reclaimed through an upgrade-authority close.
-No funding, refund or return transfer was performed.
+No production funding, refund or return transfer was performed.
 
 ### Reconciliation with 7.660660400 SOL
 
@@ -235,122 +249,241 @@ launch writes; direct ELF chunk measurement requires 830, adding 10,000
 lamports. The corrected same-length fresh benchmark is **7.660670400 SOL**
 (7,644,155,400 permanent rent + 16,515,000 base fees).
 
-Stock CLI retained-ID staging, with approved existing buffer identity
-signers, would cost **1.366936640 SOL** and need a proposed peak payer balance
-of **4.127128120 SOL** including the same reserve. CLI funds Buffer accounts
-at the larger ProgramData rent, and each initial transaction has two
-signatures. Its auto-extension is included in that transaction, not an
-extra extension transaction. Do not use its default ephemeral signer
-generation without approval. The seeded proposal avoids those new keys
-and saves 15,000 lamports in initial-message fees.
+Stock CLI retained-ID staging with separately approved existing buffer signers
+would cost 1.366936640 SOL for the code/gate component, not the recommended
+seeded component. CLI funds buffers at the larger ProgramData rent and adds
+an initial signature. Its auto-extension is part of that initial transaction.
+Do not use its default ephemeral signer generation. The seeded route avoids
+those keys and saves 15,000 lamports in initial-message fees.
 
 The fresh benchmark is not an executable alternative: these binaries declare
 the existing E73/B2 addresses. Different program identities would need
 explicit approval, rebuilding, new pins and renewed acceptance. None was
 generated.
 
-### Costs and inputs not silently treated as zero
+## Consolidated owner approval sheet — one bounded route, NO-GO
 
-A final all-in production cap remains blocked on the owner-selected action
-list and inputs: governed economics/config proposals, creator grants,
-production ALT setup, quote funding/bridge access and liquidity, owner live
-launch/buy/sell/collection amounts and rents, funding/return transfers,
-priority fees and failed/re-signed-attempt allowance, independent custody
-recovery proof and optional on-chain IDL publication.
+**Authorized production spend/signatures/broadcasts now: zero.**
+Recommend retained E73/B2 upgrades, the existing BdAa gate and **one controlled
+owner-led canary**, ending with both execution config pauses restored.
+This is not approval for general rollout, production web activation, merging
+or leaving execution open. No new production wallet or program ID is proposed.
+Historical-fixture recovery is resolved; its actual results are below.
 
-The existing zero-fee config is not compatible with the accepted inclusive
-100-bps test profile. Do not price that test rate into production approval,
-silently reuse local recipients/cap, or pretend code upgrades include the
-required migration. Quote the exact unsigned additional action list after
-the owner selects production economics and quote access, then obtain an
-all-in approval before any signing. Recheck balances, buffers, rent, fees,
-authority and blockhashes immediately before that approval.
+### Recommended values for every pending decision
 
-## Consolidated owner approval sheet — NO-GO, no spending authorized
+Every recommendation remains pending explicit owner approval.
 
-This is the single approval sheet for retaining the existing E73/B2 program
-identities and deploying the already-pinned BdAa gate. It is not an execution
-packet or permission to fund anything. **Authorized spend now: 0 SOL.**
-Local browser acceptance and production-isolation evidence remain valid;
-the historical-fixture blocker is resolved by the 475/475 rerun below.
-
-### Decisions required before an executable plan
-
-| Approval field | Verified fact / proposed use | Current decision |
+| Decision | Recommended value | Required approval/evidence |
 | --- | --- | --- |
-| Retained launch/swap IDs | E73/B2 and their existing `9GCf…EN1md` upgrade authority, not new program IDs | Owner approval pending |
-| Upgrade authority custody | `production-upgrade-authority-v1/material/primary/manifest.public.json`, role `production-upgrade-authority` | Public reference found; owner must verify usable custody and independent recovery |
-| Payer and buffer base | Existing `3eCF…4g5o`, `mainnet-canary-v1/material/primary/manifest.public.json`, role `operational-payer`; seeded buffers from the budget table | Owner approval pending; funding source and refund destination must also be selected from existing roles |
-| Gate program signer | Existing address `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb` | **BLOCKED:** no matching signer role found in the 11 existing public custody manifests inspected; provide its public manifest path/role only, never keys |
-| Gate finalization | Read back exact ELF, then separately approve irreversible removal of upgrade authority | Not approved; never finalize automatically |
-| Gross creator fee rate | Explicit production basis-point value, covered by launch fee bounds | **Not selected.** Local 100 bps is not a production recommendation |
-| Wallet cap | Explicit production basis-point cap in the pinned v2 policy | **Not selected.** Local 200 bps is not approved |
-| Platform split / surcharge | `platform = floor(gross / 4)`, `creator = gross - platform`, per swap; swap share 2,500 bps; no flat/sniper/LP/rules surcharge | Required unchanged contract; no extra platform surcharge |
-| Production recipients | Existing treasury `FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i` is the existing collector-role candidate, not an approved new destination | Approve exact creator and collector public keys and derived quote receiving accounts; do not promote controlled-test/synthetic identities by default |
-| Admin / guardian / treasury | Retain `DVdd…Tj8S5` / `CT4S…RmEY` / `FhEw…sW3i` and their public custody references above | No role rotation or new production wallets proposed |
-| Quote and live acceptance | Existing token/quote program, funded access/bridge, liquidity, exact bounded launch/buy/sell/collection amounts and native/quote rents | **Not selected/priced;** recovered token ELF source provenance unresolved |
-| Funding and failure policy | Select existing funding/return roles, reserve, priority-fee bound, failed/re-signed-attempt allowance and whether on-chain IDL publication is excluded | **Not selected;** no implicit retry, additional transfer or priority fee authorized |
-| Release evidence | Two independent fresh production readers, custody recovery proof, exact unsigned packet/expiry bounds and disposable-state rehearsal | Incomplete; dated single-reader observations are not current authorization |
+| Launch/swap identities | Retain E73/B2; exact pinned ELFs above, exact 50,512/26,024-byte extensions | Approve source/artifact pins and retained-ID route |
+| Upgrade signer | Existing `9GCf…EN1md`; do not use it as fee payer or rotate it | Owner verifies usable custody and independent recovery, public result only |
+| Payer / buffer base | Existing `3eCF…4g5o`; seeded buffers above; authority `9GCf…EN1md` | Approve exact addresses, seeds, rents and spill-to-payer recipient |
+| Funding / surplus recipient | Existing treasury `FhEw…sW3i` for funding and all surplus; existing owner single-signature SOL wallet prefunds it | Treasury currently has zero lamports. Record the prefunder's public address/custody reference; no new wallet. A multisig, swap or different funding fee requires re-approval |
+| Payer reserve | Retain **50,000,000 lamports / 0.05 SOL** after surplus return | Reserve is held capital, not permission to spend it |
+| Admin / guardian | Retain `DVdd…Tj8S5` / `CT4S…RmEY` | No role reassignment; recovery verified locally by owner |
+| Gate signer | Existing **`BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb`** only | **Blocking:** locate its existing signer; exact non-exporting next step below |
+| Gate authority / finalization | Existing `9GCf…EN1md` initially; recommend immutable only after exact byte/ID read-back | Separate irreversible-finalization consent; never automatic |
+| Gross creator fee | **100 bps / 1%** | Set launch maximum creator fee to 100 and aggregate rules-fee bound to 100; the latter is a validation bound, not another charge |
+| Platform share | **2,500 bps of gross creator fee**, integer floor per swap | Creator receives `gross - floor(gross/4)`; no extra platform fee |
+| Other charges / author share | Flat launch/pool fee, protocol surcharge, LP/sniper/holder/burn fee and selected-config author share **all zero** | Preserve the inclusive model and direct creator remainder |
+| Wallet cap | **200 bps / 2% in PolicyV2** | Legacy selected rules remain all zero. Preserve global legacy max-wallet bounds 1/1; do not widen them for a v2 policy |
+| Platform recipient | Existing treasury/collector **`FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i`** | Verify its canonical A49 quote holding and pinned inclusive policy recipient |
+| Creator recipient | Each launch's actual creator; first controlled canary only: **`DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9`** | Existing `dedicated-creator` role, not a general production default |
+| Canary mint | Existing **`2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn`**, `separate-mint` role | Verify custody/absence. Do not repurpose the old `6qi…` mint identity |
+| Selected-config signer | Reuse an existing compatible creator/mainnet/profile-bound config identity | **Blocking:** public config address and local journal/custody reference not identified. If none exists, obtain separate consent for a config-account signer; do not silently generate or repurpose one |
+| Creator authorization | One launch, enabled; `expiresSlot = S + 9,000`, where S is the fresh finalized slot used to build the grant | Display the exact absolute expiry before signing. Grant changes the governance commitment; refresh it before launch |
+| Curve / mint parameters | Preserve 7,500 bps curve allocation, raw supply `1,000,000,000,000,000`, decimals 6, virtual quote `1,000,000,000` | No unrelated parameter migration |
+| Canary metadata | Name `repo.ing Hook Canary`, symbol `RHOOKTEST`, URI empty | Both existing validators permit an empty URI. No fabricated URL, metadata hosting or public launch |
+| Quote access | Existing native token `2X…`, bridge `CtL…`, quote **`A49oVhX22ExMwTEtFC6Y8nhBdZ4LJDGhdXLDn4c2f59i`**; wrap at most **10,000,000 lamports / 0.01 SOL** | No new wrapper/mint/vault, no external swap, no separate liquidity provision; attestation and fresh dependency checks remain mandatory |
+| One buy / one sell | Buy exactly **1,000,200 raw native quote**; sell only the finalized acquired base, at most the entire acquired amount | Buy is inside the wrap allowance, not an additional capital charge. Recommended slippage 50 bps with fresh compiler-calculated integer min-out; no invented future output |
+| Fee collection | Existing tested combined `claim_creator_fees` + `collect_protocol_fees`, paid by DkD and co-signed by DVdd | Pay native quote to DkD/FhE holdings. Do not substitute the unexercised SOL-collection path. Creator unwraps its remaining quote; treasury quote receipts remain held |
+| Launch ALT | Canonical **38 addresses**, 1,272-byte table; authority DVdd, payer 3eCF | Two messages: create + first 20, extend remaining 18. Verify actual owner/authority/addresses/hash, active state and warm slot; retain table, do not freeze/deactivate/close it in this route |
+| Creator tranche | Exactly **42,749,400 lamports** from 3eCF to existing DkD | 32,664,400 rents + 10,000,000 quote capital + 85,000 bounded creator fees; no further top-up |
+| Review / expiry | Preserve 60-second review TTL and at most +96 slots, whichever expires first; reader age at most 5 seconds and lag at most 5 slots | Rebuild unsigned review after any control/config change; never reuse an expired signed request |
+| Priority / retries | Zero priority fee; zero newly signed retry allowance; `maxRetries: 0`, normal signature checks and preflight | Unknown outcome: reconcile the original signature/ID only. Any new attempt requires a new reviewed budget |
+| Publication / activation | No on-chain IDL publication or public metadata spend; no general unpause or merge | Both public IDLs remain source files; private fixtures, journals and wallets remain excluded |
+| Reader policy | Two distinct operator endpoints agreeing on exact current state; use owner-approved production endpoints at signing time | Current Solana Labs/Allnodes read-only evidence is complete, but anonymous public RPC is not recommended as production app infrastructure |
+| Recovery / provenance | Independent owner-controlled recovery proof for signers; authoritative source/build attestation for the external token | **Blocking:** same-Mac recovery is not independent, and matching external ELF bytes alone do not prove source provenance |
 
-No new program identity may be generated to work around the missing gate
-signer. If its existing custody cannot be identified, stop for a separate
-identity decision; rebuilding and renewed acceptance would then be required.
-No production key, encrypted wallet payload or Keychain secret was opened.
+Public receiving/grant targets for that controlled canary, currently absent
+on both readers:
 
-### Exact action order, after the approval fields and all-in quote close
+| Account | Public address |
+| --- | --- |
+| DkD A49 quote holding | `Ct5SCe1bMqpPm6DN4iuKVcP77gyv5vQyzEP6Zc7gbK85` |
+| FhE A49 quote holding | `GpFsm7FLfvkykG83VY55wwxxpWKoDeUcMeTB5ddHrhBx` |
+| DkD creator authorization | `Ehfpy1rTpv9uiVpmWUKgYfM6ZQ9bYxuPFNCcxtpgu2mv` |
 
-The sequence below fixes the instruction-family order; message bytes,
-recipients, governance hashes, live amounts and fee bounds are still pending.
-It must not be presented as an already-built/rehearsed production packet.
+The existing external token is
+`2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22`; the existing bridge is
+`CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7`.
+Neither program is part of the proposed upgrades.
 
-| Order | Owner-controlled action | Required checkpoint before continuing |
-| ---: | --- | --- |
-| 0 | Review the source commit and pinned ELFs/IDLs; identify BdAa signer custody; resolve token provenance, quote access and recovery proof; build/rehearse the entire unsigned packet on separate disposable state | Approve all inputs and the complete funding ceiling; fresh independent-reader proofs must agree on genesis, code, authorities, config/governance, recipients and buffer absence |
-| 1 | Fund only the existing operational payer from the approved existing source, using the approved transfer message and reserve | Confirm finalized funding and approved balance; no new payer or identity keys |
-| 2 | Launch first: atomic seeded buffer create + initialize + exact 50,512-byte ProgramData extension; write the pinned ELF in 830 chunks of at most 916 bytes; verify buffer bytes; upgrade E73 with spill to the same payer | Verify deployed ELF, unchanged `9GCf…EN1md` authority, retained roles/pauses and returned buffer deposit before funding the next stage |
-| 3 | Swap second: atomic seeded buffer create + initialize + exact 26,024-byte extension; 606 writes; verify buffer; upgrade B2 with spill to the same payer | Same byte/authority/role/pause/refund verification; never stage both large buffers concurrently |
-| 4 | Gate: seeded buffer create + initialize, 207 writes and read-back; create/deploy BdAa with its existing program signer, existing payer and approved upgrade authority | Verify Program/ProgramData addresses, exact pinned ELF, expected authority and rents; gate signer custody must already be proved |
-| 5 | Only under its separate explicit approval, finalize the verified gate immutable | Read back null gate upgrade authority and exact deployed bytes; irreversible rent/authority consequences accepted |
-| 6 | Migrate existing swap and launch economics with their `governed_set_config(expected, args)` instructions: swap share 2,500 and surcharge fields zero, then launch approved fee bounds; preserve both existing config pauses and all roles | Re-read config/governance after each message; refresh expected hashes/revisions rather than replaying stale ones; do not reinitialize existing Config/Governance |
-| 7 | Review/init the selected creator authorization (`init_creator_authorization` only if fresh inventory still proves it absent), recipient quote holdings and exact production ALT create/extend messages | Verify authorization limits, quote ownership, ALT activation and refreshed post-config dossier/table pins before preparing any launch |
-| 8 | Owner separately approves necessary gate/pause changes and bounded live launch, buy, sell and collection messages, amounts, sizes and fee ceilings | No live test or unpause is authorized by this sheet; verify the per-swap floor/remainder split and single-transaction retry identity, and restore the agreed paused state |
-| 9 | Reconcile actual spend/refunds; return surplus only via the approved existing recipient and message | Stop on any mismatch; any later activation, merge or general unpause is a distinct owner decision |
+### Exact next step for BdAa — owner-local public output only
 
-All messages retain the 1,232-byte limit. Loader writes are 916 bytes at
-most and omit the compute-unit-price instruction under the quoted zero-priority
-geometry. Never use default CLI ephemeral key generation, silently retry a
-re-signed transaction, or advance after an unverified/unknown outcome.
-The currently observed governance gate bits are mixed (launch creation true,
-trading false; swap creation false, trading true); both config pauses are true.
-"Closed execution" means retaining those pauses, not claiming every gate bit
-is false. No gate or pause was changed by this work.
+No BdAa signer role was found in the eleven public custody manifests.
+Filename-only searches found this **local rebuild artifact**, not a verified
+production custody record:
 
-### All-in funding ceiling — blocked, not the component estimate
+```sh
+/opt/homebrew/bin/solana-keygen pubkey \
+  '/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/rebuilt-inclusive/elf/hook_max_wallet-keypair.json'
+```
 
-The exact conditional **code/gate component** and peak payer funding remain
-the figures in the budget tables above: 1.366921640 SOL non-reclaimable
-rent/base fees, 4.127082480 SOL peak payer balance including the proposed
-reserve, and 6.680779120 SOL cumulative recycled upgrade-buffer deposits.
-Those amounts assume one successful attempt per write/action, no priority
-fees, no on-chain IDL publication and separately approved gate finalization.
-The dated payer shortfall is not an instruction to transfer money.
+The owner runs this public-key display locally and compares its sole public
+output with `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb`.
+It neither signs nor broadcasts and has no output-file flag. Do not `cat`,
+copy, export or send the keypair/seed/Keychain secret. I did not open this
+keypair. A matching public key identifies a candidate, not independent backup
+or proof of usable production custody.
 
-**There is no defensible numeric all-in production ceiling yet.** Do not
-approve 1.366921640 SOL as total spend or 4.127082480 SOL as a complete funding
-request. Additional governed-config/authorization/ALT messages, funding and
-return fees, quote/bridge/liquidity/live-test amounts and rents, priority or
-retry allowances, and the reserve must first be explicitly selected and quoted.
-Unknown components are not zero.
+If it differs, stop: ask the original identity-generation operator for the
+**public-only custody record**—address, role, local reference and Keychain
+service name. Do not generate a replacement BdAa identity. The source's
+documented production key locations had no matching filename in the
+filename-only search; that is not proof the key does not exist elsewhere.
 
-The final non-reclaimable ceiling must sum the code/gate component and every
-approved additional action's net rent, network fees and bounded test costs.
-The funding ceiling must separately be the maximum chronological cumulative
-outflow minus verified refunds, plus the approved reserve; do not add recycled
-buffer deposits to profit or mistake gross turnover for net cost.
-Re-quote using fresh rent/fee/balance/authority data and include the funding
-transaction's source-wallet fee before requesting owner approval.
-Until that complete numeric sheet and exact unsigned messages exist, **NO-GO:
-no signing, spending, broadcasting, deployment, merging or unpausing**.
+For the separate selected-config prerequisite, recover only the public
+config/journal identity and matching creator/mainnet/profile binding from the
+original browser profile/origin or existing custody record. The planner's
+“Unlock for recovery only” control is for mint/config journals, **not** a
+generic program-signer finder. Do not create a journal or use a synthetic
+config to bypass this prerequisite.
+
+### Exact ordered owner actions and fee inventory
+
+**Pre-sign hold point:** close custody, recovery, external provenance and
+selected-config prerequisites; approve every value above; assemble the exact
+unsigned instruction/account manifest with fresh absolute slots/blockhashes.
+No production packet is claimed complete while the selected-config address
+and funding-source public address are missing. Re-quote every actual message,
+verify canonical address placement and all fully signed wire sizes ≤1,232,
+and rehearse the final address-bound canary before authorizing any spend.
+
+The existing **1,650 code/gate messages** run between rows 2 and 3:
+launch create/init/extend + 830 writes + upgrade; verify complete spill;
+swap create/init/extend + 606 writes + upgrade; verify spill; gate
+create/init + 207 writes + initial deploy, exact read-back, then separately
+approved finalization. Never stage both large buffers simultaneously.
+Production gate initial deployment is not rehearsed or authorized by the
+synthetic retained-program test.
+
+| Order | Action | Fee payer; other required signers | Signature count | Fee ceiling, lamports |
+| ---: | --- | --- | ---: | ---: |
+| 1 | Existing owner wallet prefunds FhE with 4,175,262,240 lamports | Existing owner funding wallet | 1 | 5,000 |
+| 2 | FhE funds 3eCF with 4,175,257,240; then execute the verified code/gate sequence above | FhE; code-stage signers as previously tabulated | 1 for transfer | 5,000 for transfer |
+| 3 | Swap governed config: share 2,500, surcharge fields zero, preserve pause/roles | 3eCF; DVdd | 2 | 10,000 |
+| 4 | Launch governed config: approved fee bounds, preserve other fields/pause/roles | 3eCF; DVdd | 2 | 10,000 |
+| 5 | Initialize the absent one-launch DkD grant with exact expiry; refresh governance commitment | 3eCF; DVdd | 2 | 10,000 |
+| 6 | Create canonical ALT and append first 20 addresses | 3eCF; DVdd authority | 2 | 10,000 |
+| 7 | Append remaining 18, wait for finality/warm slot and pin actual table bytes | 3eCF; DVdd | 2 | 10,000 |
+| 8 | Fund existing DkD with the exact 42,749,400-lamport tranche | 3eCF | 1 | 5,000 |
+| 9 | Create DkD and FhE A49 quote holdings together, only if still absent | DkD | 1 | 5,000 |
+| 10 | Existing bridge `wrap_sol` for exactly 10,000,000 lamports | DkD | 1 | 5,000 |
+| 11 | Prepare v2 policy, registry and selected config; verify their exact bytes | DkD; existing mint and approved config identity | 3 | 15,000 |
+| 12 | Separately approved launch creation opening; refresh unsigned launch controls | 3eCF; DVdd | 2 | 10,000 |
+| 13 | Separately approved swap trading opening; refresh final unsigned launch/market review | 3eCF; DVdd | 2 | 10,000 |
+| 14 | One guarded inclusive launch; verify finalized events, allocations and policy | DkD; mint and DVdd reviewer | 3 | 15,000 |
+| 15 | Create DkD base holding **after the mint exists** | DkD | 1 | 5,000 |
+| 16 | One bounded buy | DkD | 1 | 5,000 |
+| 17 | One bounded sell of acquired base; reconcile original signature before continuing | DkD | 1 | 5,000 |
+| 18 | Restore launch creation closed/config paused | 3eCF; DVdd | 2 | 10,000 |
+| 19 | Restore swap trading closed/config paused | 3eCF; DVdd | 2 | 10,000 |
+| 20 | Combined native-quote creator/platform fee collection with exact recipient checks | DkD; DVdd | 2 | 10,000 |
+| 21 | Unwrap remaining DkD native quote; no treasury unwrap in this route | DkD | 1 | 5,000 |
+| 22 | Close empty DkD quote holding, rent back to DkD | DkD | 1 | 5,000 |
+| 23 | Close DkD base holding **only if actually empty and closable** | DkD | 1 | 5,000 |
+| 24 | Return verified DkD surplus to FhE; leave enough for its exact transfer fee | DkD | 1 | 5,000 |
+| 25 | Return 3eCF surplus to FhE, retaining 50,000,000 lamports | 3eCF | 1 | 5,000 |
+| **Additional-message ceiling** | **25 messages, each at most once** | **39 signatures** | **39** | **195,000** |
+
+Rows 18/19 restore the actual initial mixed gate state: launch creation=true,
+trading=false; swap creation=false, trading=true. **True means closed.**
+Both corresponding config pauses finish true. Fee-collection contract paths
+do not reject a paused config, so gates need not stay open for collection.
+Any mismatch/unknown outcome stops progression without re-signing; the owner
+uses the already reviewed close actions and retains the original receipts.
+
+### One exact all-in funding ceiling
+
+**Recommended capital ceiling: 4,176,442,240 lamports = 4.176442240 SOL.**
+This is the maximum capital required for the specified chronological route,
+not net burn, an instruction to transfer, or a contingency allowance.
+It includes the observed payer credit and both ordinary funding-transfer
+fees. It is conditional on unchanged rents/fees/authority/account absence and
+the exact finite inventory above; any variance stops for re-approval.
+
+| Funding measure | Lamports | SOL |
+| --- | ---: | ---: |
+| Peak balance required in 3eCF, including 0.05-SOL retained reserve | 4,176,432,240 | 4.176432240 |
+| Already observed in existing 3eCF | 1,175,000 | 0.001175000 |
+| Required additional owner cash, including both funding-transfer fees | 4,175,267,240 | 4.175267240 |
+| **Single all-in capital ceiling, existing credit plus fresh cash** | **4,176,442,240** | **4.176442240** |
+
+Later operations occur **after verified buffer spills** and fit the remaining
+cash; do not add their gross turnover to the launch-stage peak. The treasury
+currently has zero lamports: existing funds have not been located or spent.
+
+| Additional account rent | Bytes / count | Lamports |
+| --- | --- | ---: |
+| Creator authorization | 73 | 1,021,080 |
+| Canonical per-launch ALT | 1,272 / 38 addresses | 7,112,000 |
+| DkD quote/base plus FhE quote holdings | 204 × 3 | 5,059,680 |
+| PolicyV2 + registry + selected config | 90 + 81 + 176 | 3,713,480 |
+| Launch, mint, pool, LP mint, pool registry, five holdings, inclusive fee policy | 565 + 519 + 411 + 519 + 186 + 204 × 5 + 75 | 23,891,240 |
+| **Additional gross rent** | | **40,797,480** |
+
+| Final allocation / fee bound | Lamports | SOL |
+| --- | ---: | ---: |
+| All added account rent, code/gate plus canary | 1,391,229,120 | 1.391229120 |
+| All network fees: 1,650 code/gate + at most 25 additional messages | 16,685,000 | 0.016685000 |
+| **Added rent + network fees** | **1,407,914,120** | **1.407914120** |
+| Maximum quote capital exposed, including the buy rather than adding it twice | 10,000,000 | 0.010000000 |
+| Reserve retained in payer, not consumed | 50,000,000 | 0.050000000 |
+| **Conservative maximum allocated after surplus return** | **1,467,914,120** | **1.467914120** |
+
+The quote and reserve rows are held/exposed capital, **not network fees or
+expected losses**. No sell proceeds, collected fees or account-close refunds
+are assumed to finance an earlier action. The allocation bound conservatively
+does not credit up to 3,373,120 lamports of DkD holding rent until both empty
+closes are finalized. The FhE quote holding and active ALT are retained;
+no refund from them is priced. ProgramData and immutable-gate rent are not
+reclaimed in this route. Sequential buffer refunds are already recycled.
+
+Under maximum debits, the payer balance immediately **before** its last
+transaction is 2,758,533,120 lamports: transfer **2,708,528,120** to FhE,
+pay that transaction's **5,000** fee, retain **50,000,000**. The final fee is
+counted once in the 195,000-lamport additional-fee total, not subtracted twice.
+Any verified creator surplus is additional. Calculate the actual return from
+the finalized balance less that fee/reserve, never from an optimistic refund.
+On-chain IDL publication, extra liquidity, extra buy/sell, priority fees and
+newly signed retries are excluded **by explicit zero allowances**, not omitted
+unknowns. A different action list requires a different reviewed ceiling.
+
+### One owner approval checklist — no item is execution permission by itself
+
+- [ ] Approve retained E73/B2, exact source/IDL/ELF pins and seeded-buffer order.
+- [ ] Identify BdAa custody, verify all required signers and independent recovery;
+      identify the selected-config public address/journal and existing prefunder.
+- [ ] Obtain authoritative external-token source/build attestation; approve the
+      explicitly mutable external token/bridge dependency trust and pinned code.
+- [ ] Approve 100-bps gross fee, 2,500-bps share of that fee, 200-bps v2 cap,
+      zero extra charges/author share, FhE collector and per-launch creator
+      recipient; DkD/2T2 are for this one controlled canary only.
+- [ ] Approve exact one-launch grant/absolute expiry, metadata, canonical ALT,
+      0.01-SOL wrap ceiling, one 1,000,200-raw-quote buy, bounded sell,
+      quote collection and closed final execution state.
+- [ ] Approve **4.176442240 SOL total capital ceiling**, including existing payer
+      credit; fresh cash at most **4.175267240 SOL**; 0.05-SOL retained reserve,
+      zero priority fee, zero newly signed retries, no unpriced extra actions.
+- [ ] Review/rehearse the final address-bound unsigned packet and fresh
+      independent-reader dossier; re-quote fees/rent and measure every signed
+      size with reserved signature slots without signing production messages.
+- [ ] Separately consent to gate immutable finalization after exact read-back.
+- [ ] Owner locally signs and executes only after the above prerequisites close;
+      verifies each upgrade spill, fee floor/remainder and final pauses, and
+      handles any live test. No merging or general activation is authorized.
 
 ## Verification limits and evidence
 
@@ -358,6 +491,32 @@ Local evidence lives outside source at
 `/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/acceptance-2/`, including
 `consolidated-acceptance.public.json`, browser screenshots and production-mode
 probe results. No production keys are stored there by this work.
+
+### Accepted browser execution and actual fee split
+
+The retained real-browser launch was **821 fully signed bytes**, buy/sell
+705 bytes each, and combined fee collection 655 bytes, all below 1,232.
+The accepted URLs remain `https://localhost:3443/hooks/launch-review` and
+`https://localhost:3443/hooks/trade`. No financial browser flow was replayed
+for this approval closure.
+
+All amounts below are raw native quote, nine decimals; values are retained
+actual finalized receipts, not predictions for the proposed future canary.
+
+| Accepted swap | Gross creator fee | Platform receipt/accrual | Creator receipt/accrual | Extra surcharge |
+| --- | ---: | ---: | ---: | ---: |
+| Buy | 10,002 | 2,500 | 7,502 | 0 |
+| Sell | 4,954 | 1,238 | 3,716 | 0 |
+| Combined collection | 14,956 | 3,738 | 11,218 | 0 |
+
+The floor is applied **per swap**: `10002 // 4 = 2500`,
+`4954 // 4 = 1238`. Do not floor the combined gross: that would incorrectly
+produce 3,739. Actual collection cleared both accrued balances and left the
+pool reserve unchanged. Lost-response acceptance retained the same signature,
+observed one RPC submission and refused duplicate submission with HTTP 409.
+The cap-violation simulation returned the real gate `CapExceeded`/6001 with
+signature verification enabled and no broadcast. Expiry issued no wallet
+request, retained no signature and dispatched no expired transaction.
 
 `npm run build -- --webpack` completed with exit 0. It reported an unrelated
 missing `app/lib/model-pulse.mjs` import from
@@ -474,28 +633,77 @@ external traffic were denied. The original PostgreSQL-only sandbox for the
 17-file rerun was unchanged. Raw TAP, browser proof and fixture data remain
 private under `historical-fixture-recovery-8aedbb40/`.
 
-### Unresolved review findings and verification limits
+### Closure evidence and disposition of every remaining coverage gap
 
-- Unbounded local PostgreSQL connection/query waits remain a reliability limit;
-  no timeout feature was added as part of the wallet-switch fix.
-- Dedicated persistent local-route/ALT-activation/finality-boundary coverage
-  remains incomplete beyond the passing sender/late-policy cases. Prior real
-  acceptance is not a substitute for every future permanent boundary test.
-- The full repository CI matrix, with its destructive scratch-service setup,
-  was not run against the retained environment. The 62-file result is Hook Lab
-  coverage, not a green entire-repository claim.
-- The prior nine-lens local review's independent Claude CLI attempt timed out
-  without a usable artifact; its serving model and independent adversarial
-  coverage remain unverified. Do not relabel that historical review green.
-- Gate signer custody, independent recovery proof, external token-source
-  provenance, production economics/quote/recipients, exact unsigned rehearsal,
-  fresh independent readers and the all-in ceiling remain release blockers
-  in the consolidated approval sheet. No production action was performed.
+Private closure evidence root:
+`/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/approval-closure-20261018/`.
+No private fixtures, serialized historical messages, wallet secrets or runtime
+ledgers are source changes.
 
-Current fix-scoped reviews of the async UI/tests/ignore boundaries and the
-upgrade-sheet arithmetic/action order both returned **no actionable findings**.
-They were local reviewers, not a claimed replacement for the missing
-independent cross-model review. The unrelated local resume helper was excluded.
+| Gap or finding | Disposition for the proposed bounded route | Evidence / reason |
+| --- | --- | --- |
+| Authentic historical fixtures / legacy IDL | **Resolved; non-blocking** | Verified archive and IDL pins; 17 affected files, 475/475 tests. No pin changes or historical source applied |
+| Wallet-switch race | **Resolved; non-blocking** | Four actual-component regressions and real Chromium deferred-response smoke; no signing/retain call or revived card after wallet switch |
+| Independent current production readers | **Completed preparation evidence; non-blocking** | Solana Labs and Allnodes agree on 23 account roles/four ProgramData records; agreed rents/signature fees and all three absent buffers. Signing-time refresh remains an owner hold point |
+| Retained E73/B2 upgrade mechanics | **Completed; non-blocking** | Separate validator, real old ELF bytes/lengths, exact extensions, 830/606 writes and real upgrades: **1,440 finalized signed transactions**, maximum **1,232 bytes**, exact candidate hashes, full buffer spills, unchanged config/governance bytes; wrong authority refused for both |
+| Production local-route refusal | **Completed private boundary proof; non-blocking** | Actual POST handler under `NODE_ENV=production`: local flag off → 404; on → 409 even with local wallet flag set. Valid dev config was checked separately. Scratch signing-table fingerprint unchanged, zero accepted-validator sends |
+| ALT owner/completeness/activation/warm boundary | **Completed private boundary proof; non-blocking** | Actual provider against the real retained 38-address table passes; declared client-side account-read faults for wrong owner, missing address, deactivated state and unwarmed slot all refuse. No table creation or validator writes |
+| First finality / failed outcome / duplicate dispatch | **Completed scoped evidence; non-blocking** | Fresh offline two-file run: **17 tests passed, zero failed/skipped**, real scratch PostgreSQL plus fee-only failure collector tests. First finality is immutable, later conflicts force review, no second dispatch. Read-only accepted DB retains six finalized receipts; original RPC slots are pruned and were not fabricated/re-queried as success |
+| Production-quote bridge access and close rent | **Completed local public-byte proof; non-blocking** | Separate native-token/bridge clone: four finalized signed transactions, max **484 bytes**, **10,000,000 lamports ↔ 10,000,000 raw quote**, no bridge surcharge, supply/vault restored, empty holding rent refunded. Mainnet and accepted validator untouched |
+| Full final address-bound unsigned production/canary packet | **Blocking before signing** | Config identity and prefunder public address are not designated; post-upgrade deploy slots/control hashes and fresh absolute expiries must be read before the final packet. This is not misrepresented as a completed production rehearsal |
+| BdAa custody and selected-config custody | **Blocking** | BdAa absent from eleven public manifests; rebuild keypair is only an unverified candidate. Selected-config signer/public journal not identified. Owner-local public-only lookup is specified above |
+| Independent signer recovery | **Blocking** | Primary/recovery manifests on one Mac do not prove independent recovery. Owner must verify outside this session without exporting keys |
+| External token source attestation / mutable dependencies | **Blocking for release** | Token `7aa07…` matches both live readers and the local accepted dependency, but workspace production token pin `3d6b8d…` differs and source-recovery evidence is `sourceProvenanceVerified: false`. Embedded public security.txt names a repository, **no source revision**. Obtain exact source/tree/lock/features/toolchain/build attestation; never replace the accepted ELF or change pins |
+| Unbounded local PostgreSQL waits | **Non-blocking for paused program upgrades and owner-led canary; blocking for unattended/public activation** | Known reliability limit, not hidden or “fixed” by a new timeout feature. The local-operations route remains impossible to enable in production mode |
+| Entire-repository CI / unrelated build warning | **Non-blocking for this restricted program/canary review; required before any later merge/general app release** | Hook Lab result is 676 pass/0 fail/2 skips, not a green whole repo. Full runner needs isolated destructive scratch services; missing model-pulse import warning remains unrelated and unresolved |
+| Two opt-in frozen production SBF/Rust tests | **Non-blocking for these candidate ELFs** | Intentionally skipped tests pin the older `faa3…`/`abda…` baseline, not this candidate. Actual candidate browser execution and retained-ID loader rehearsal provide the relevant runtime evidence; no baseline repinning |
+| Historical independent Claude review timeout | **Non-blocking for this bounded owner-led route; disclosed review degradation** | No usable result or serving-model attestation; not relabeled green or counted as independent corroboration. Prior scoped local reviews returned no actionable UI/ignore/arithmetic findings; they are not a cross-model replacement |
+| Approved economics/recipients/funding and treasury availability | **Blocking owner decisions** | Every pending value now has one recommendation and finite ceiling. Treasury is zero; no assumption that funding is already available and no transfer authorized |
+
+The retained-program rehearsal preserves the actual public E73/B2 IDs,
+ProgramData addresses, old/new ELF bytes and exact capacities. In its genesis
+only, deployment slots were normalized to zero and the loader authority was
+replaced with the existing **synthetic** E329 role. The actual 9GC production
+custody was never touched. Local rent uses the validator's different schedule;
+its refund amounts are not substituted into the separately measured mainnet
+budget. This proves upgrade mechanics, **not** BdAa initial deployment or
+the still-missing full address-bound production packet.
+
+The quote-access rehearsal copied public token/bridge ELF and mint/wrapper/
+config/vault state, normalized deployment slots/local rent and used synthetic
+balances. It left external authorities unchanged and never used them.
+The initial probe's confirmation helper raised
+`TransactionExpiredBlockheightExceededError`; its original holding-creation
+signature was then read as finalized over HTTP and **not resent**. This was a
+confirmation failure, not an expired transaction falsely counted as success.
+The remaining three steps finalized normally. Four unique signatures and 20,000 total
+local base fees were verified; holding rent 2,310,720 was fully returned.
+The mainnet holding quote remains 1,686,560, not that local rent.
+
+The live token remains upgradeable by external
+`5wni4K2qdSfTr6JspbLXDStfbq1XSmzMpF75RSpwsjBH`; bridge by external
+`5xsibKwtiN6ruxsYrEyWVpV3KcwuzSPbQd1n28a7spEd`.
+Bridge ELF hash is
+`9866c6b42409a9465756040f623c70200a10bd24bf3408f23abe1d2d98f25591`.
+They are neither immutable nor controlled by the 9GC upgrade role.
+Require exact fresh dependency read-back and owner acceptance of this trust
+boundary; neither is an invitation to upgrade those external programs.
+
+Evidence files (private, not part of the source commit):
+
+- `preflight/two-provider-verified.private.json` and
+  `preflight/seeded-buffers-verified.private.json`;
+- `rent-fees.private.json` and `all-in-budget.private.json`, including the
+  exact 25-message inventory and chronological reserve/spill conservation;
+- `rehearsal/loader-upgrade-evidence.private.json`;
+- `coverage/route-alt-evidence.private.json` and
+  `coverage/finality-regressions.private.tap`;
+- `bridge/native-quote-evidence.private.json` and the explicit synthetic
+  genesis transformation records.
+
+Only this canonical approval document changes in this closure. No features,
+production actions, accepted service restart/reset, private fixture publication
+or key export occurred. The unrelated local resume helper remains excluded.
 
 ## Primary references
 
@@ -505,3 +713,5 @@ independent cross-model review. The unrelated local resume helper was excluded.
 - [Loader V3 state sizes](https://docs.rs/crate/solana-loader-v3-interface/7.0.0/source/src/state.rs)
 - [Solana rent-exemption RPC](https://solana.com/docs/rpc/http/getminimumbalanceforrentexemption)
 - [Solana unsigned message-fee RPC](https://solana.com/docs/rpc/http/getfeeformessage)
+- [Solana cluster endpoints and public-RPC limitations](https://solana.com/docs/references/clusters)
+- [Allnodes PublicNode operator and endpoints](https://publicnode.com/)
