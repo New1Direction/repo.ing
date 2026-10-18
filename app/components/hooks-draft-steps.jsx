@@ -2,6 +2,8 @@
 import { useRef, useState } from 'react'
 import { HOOK_LAB_TEMPLATES, HOOK_LAB_BLOCKS, hookLabTemplateDraftSchema, exportHookLabTemplate } from '../../src/hook-lab-templates.mjs'
 import { HooksUnavailable } from './hooks-ui'
+import { launchableDraft, launchHandoffHref } from '../lib/hooklab-launch-handoff.mjs'
+import { percent } from '../../src/hooklab-launch-menus.mjs'
 
 // Presentation only: the existing recipe planner owns lossless storage and account revisions.
 export function HooksDraftSteps({ envelope, change, disabled, initialTemplate, startTemplate }) {
@@ -16,6 +18,7 @@ export function HooksDraftSteps({ envelope, change, disabled, initialTemplate, s
   })) }).success
   let issues = []
   try { exportHookLabTemplate(draft) } catch (error) { issues = error.issues?.map(issue => `${issue.path.join(' · ')}: ${issue.message}`) ?? ['This recipe needs SDK review.'] }
+  const launch = launchableDraft({ templateId: envelope.template, coin: recipe.coin, blocks: recipe.blocks })
   function move(next) { setStep(next); requestAnimationFrame(() => heading.current?.focus()) }
   function coin(key, value) { change({ ...envelope, recipe: { ...recipe, coin: { ...recipe.coin, [key]: value } } }) }
   function blocks(next) { change({ ...envelope, recipe: { ...recipe, blocks: next } }) }
@@ -23,7 +26,7 @@ export function HooksDraftSteps({ envelope, change, disabled, initialTemplate, s
     <ol className="hooks-steps" aria-label="Draft creation steps">{['Identity', 'Rules', 'Review', 'Launch'].map((label, index) => <li key={label}><button type="button" aria-current={step === index ? 'step' : undefined} onClick={() => move(index)}><span>{index + 1}</span>{label}</button></li>)}</ol>
     <div className="hooks-between"><span className="badge">{template?.title || 'Imported recipe'} · draft only</span><button className="button" disabled={disabled} onClick={() => startTemplate(initialTemplate)}>Start new {HOOK_LAB_TEMPLATES.find(item => item.id === initialTemplate)?.title} draft</button></div>
     {envelope.template !== initialTemplate && <p className="coin-note">Your existing device recipe is preserved. To use the requested template instead, export this recipe first, then explicitly start a new draft above.</p>}
-    <h2 ref={heading} tabIndex={-1}>{['Give your coin an identity', 'Make every rule explicit', 'Review your recipe', 'Launch is not enabled'][step]}</h2>
+    <h2 ref={heading} tabIndex={-1}>{['Give your coin an identity', 'Make every rule explicit', 'Review your recipe', launch.intent ? 'Launch your coin' : 'Not launchable yet'][step]}</h2>
     {!editable && <p className="coin-error" role="alert">This imported recipe contains fields or rules outside the guided editor. All fields are preserved. Export it for SDK review, or explicitly start a new draft.</p>}
     {step === 0 && <fieldset className="coin-fields" disabled={disabled}><legend className="sr-only">Coin identity</legend>
       <label>Coin name<input value={recipe.coin.name} onChange={event => coin('name', event.target.value)} aria-describedby="hooks-name-help"/><small id="hooks-name-help">Up to 32 UTF-8 bytes. No token is created by saving.</small></label>
@@ -41,7 +44,11 @@ export function HooksDraftSteps({ envelope, change, disabled, initialTemplate, s
     {step === 2 && <><p className="coin-note">{issues.length ? 'This draft is incomplete or needs SDK review. You can still save and export it.' : 'Field format is complete. This is not a validated quote or launch approval.'}</p>
       {issues.length > 0 && <ul className="hooks-issues">{issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul>}
       <dl className="coin-terms"><div><dt>Identity</dt><dd>{recipe.coin.name || 'Name missing'} · {recipe.coin.ticker || 'Ticker missing'}</dd></div><div><dt>Rules</dt><dd>{recipe.blocks.length ? recipe.blocks.map(block => HOOK_LAB_BLOCKS[block.type]?.title || block.type).join(', ') : 'No optional rules'}</dd></div><div><dt>Total debit / minimum received</dt><dd>Unknown · not zero. No quote or simulation.</dd></div></dl><details><summary>Complete recipe · all retained fields</summary><pre>{JSON.stringify(recipe, null, 2)}</pre></details></>}
-    {step === 3 && <><HooksUnavailable/><p>No transaction has been prepared, signed or submitted by this builder. Wallet connection cannot unlock launch.</p><p>Keep this draft or inspect existing operations in <a href="/hooks/mine">My coins</a>. A missing receipt never authorizes a new mint or a retry.</p><button className="button primary" disabled>Sign and launch — unavailable</button></>}
+    {step === 3 && (launch.intent
+      ? <><p>Max wallet coins launch through repo.ing approval: queue your request, repo.ing invites it, then you sign preparation and launch in your own wallet. Nothing is signed until then.</p>
+        <dl className="coin-terms"><div><dt>Coin</dt><dd>{launch.intent.name} · {launch.intent.symbol}</dd></div><div><dt>Creator fee</dt><dd>{percent(launch.intent.creatorFeeBps)} of each trade (you keep 75%, repo.ing 25%)</dd></div><div><dt>Wallet cap</dt><dd>{percent(launch.intent.capBps)} of supply until graduation</dd></div></dl>
+        <a className="button primary" href={launchHandoffHref(launch.intent)}>Continue to launch</a></>
+      : <><HooksUnavailable title="Not launchable yet">{launch.reason}</HooksUnavailable><p>This draft stays saved on this device. Existing operations are in <a href="/hooks/mine">My coins</a>.</p><a className="button primary" href="/hooks/new?template=max-wallet">Start a Max wallet coin</a></>)}
     <div className="hooks-step-actions"><button className="button" disabled={step === 0} onClick={() => move(step - 1)}>Back</button>{step < 3 && <button className="button primary" onClick={() => move(step + 1)}>{['Continue to rules', 'Review draft', 'View launch availability'][step]}</button>}</div>
   </div>
 }
