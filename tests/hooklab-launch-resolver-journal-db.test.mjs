@@ -1,4 +1,3 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { randomUUID,createHash } from 'node:crypto'
@@ -6,6 +5,9 @@ import pg from 'pg'
 import { coLocatedWalletPreparationJournal,walletPreparationJournal } from '../src/hooklab-wallet-preparation.mjs'
 import { maxWalletPreparationReceiptFixture,maxWalletPreparationRpcProviders } from './fixtures/hooklab-max-wallet-preparation-receipts.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 const token=Buffer.alloc(32,37).toString('base64url'),digest=createHash('sha256').update(token).digest('hex')
 test('durable launch resolution requires actual co-located auth and fresh conflict-free exact preparation',async()=>{
  const config={host:'127.0.0.1',port:55432,user:'postgres',password:'launchtest',database:'postgres'},admin=new pg.Pool(config),database=`launch_resolver_${randomUUID().replaceAll('-','')}`;let pool

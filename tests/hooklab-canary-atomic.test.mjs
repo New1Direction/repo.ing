@@ -14,6 +14,7 @@ import {collectCanaryInclusiveTradeSettlement,deriveCanaryInclusiveTradePostcond
 import {inspectHookLabMessage} from '../src/hooklab-message-boundary.mjs'
 import {canaryCommitment} from '../src/hooklab-canary-policy.mjs'
 import {makeCanaryState,canaryCollectorBindings,localTestEnvironment,pk,pda} from './fixtures/hooklab-canary.mjs'
+import {missingArtifactEnv} from './fixtures/hooklab-generated-artifact.mjs'
 
 function runner(){
  const child=spawn(process.env.HOOKLAB_CANARY_PYTHON??'python3',['-u',fileURLToPath(new URL('./fixtures/hooklab-canary-svm.py',import.meta.url))],{
@@ -27,7 +28,7 @@ function runner(){
 }
 const elfDirectory=process.env.HOOKLAB_CANARY_ELF_DIR
 
-test('canary closes trading atomically with real signed SBF execution and authenticated index-3 receipts', {skip:!elfDirectory&&process.env.HOOKLAB_CANARY_REQUIRED!=='true',timeout:120000},async t=>{
+test('canary closes trading atomically with real signed SBF execution and authenticated index-3 receipts', {skip:process.env.HOOKLAB_CANARY_REQUIRED!=='true'&&missingArtifactEnv(['HOOKLAB_CANARY_ELF_DIR'],'four pinned inclusive ELFs; HOOKLAB_CANARY_PYTHONPATH must hold solders 0.29.0'),timeout:120000},async t=>{
  assert.ok(elfDirectory,'HOOKLAB_CANARY_ELF_DIR is required for canary acceptance; skipping is not a release gate')
  const saved=Object.fromEntries(Object.keys(localTestEnvironment()).map(k=>[k,process.env[k]]))
  Object.assign(process.env,localTestEnvironment())

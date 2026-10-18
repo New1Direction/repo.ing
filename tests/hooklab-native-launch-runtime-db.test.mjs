@@ -1,5 +1,4 @@
 // End-to-end local PostgreSQL + actual runtime/compiler/custody; synthetic RPC only.
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
 import {randomUUID,createHash,createPrivateKey,sign} from 'node:crypto'
@@ -15,6 +14,9 @@ import {compileMaxWalletLaunchReview} from '../src/hooklab-max-wallet-launch.mjs
 import {maxWalletOperatorFixture} from './fixtures/hooklab-max-wallet-operator.mjs'
 import {rebindMaxWalletLaunchFixture} from './fixtures/hooklab-max-wallet-launch-settlement.mjs'
 import {dropTestDatabase} from './fixtures/drop-test-database.mjs'
+import { combineSkips, missingGeneratedArtifacts, missingInclusiveArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(combineSkips(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']), missingInclusiveArtifacts(['inclusive-builder-vector.json'], { tokenElf: true })))
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),seed=label=>createHash('sha256').update(`LOCAL FULL RUNTIME TEST ONLY ${label}`).digest()
 const wallet=Keypair.fromSeed(seed('wallet')),adminKey=Keypair.fromSeed(seed('admin'))
 const signAdmin=message=>sign(null,message,createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed('admin')]),format:'der',type:'pkcs8'}))

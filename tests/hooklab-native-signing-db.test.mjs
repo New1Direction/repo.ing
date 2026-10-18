@@ -1,5 +1,4 @@
 // Only deterministic synthetic signers and injected transports; no RPC or live keys.
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { randomUUID,createHash,createPrivateKey,sign } from 'node:crypto'
@@ -9,6 +8,9 @@ import { nativeSigningLifecycle } from '../src/hooklab-native-signing.mjs'
 import { planMaxWalletPreparation } from '../src/hooklab-max-wallet-preparation.mjs'
 import { maxWalletPreparationReceiptFixture } from './fixtures/hooklab-max-wallet-preparation-receipts.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 const token=Buffer.alloc(32,29).toString('base64url'),digest=createHash('sha256').update(token).digest('hex'),seedLabel='native-signing'
 const seed=role=>createHash('sha256').update(`max-wallet RECEIPT TEST FIXTURE ONLY: ${seedLabel}:${role}`).digest()
 const testSigner=role=>Keypair.fromSeed(seed(role))

@@ -1,4 +1,3 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { BorshCoder } from '@anchor-lang/core'
@@ -12,6 +11,9 @@ const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 // Injected fake RPC for deterministic local tests only. No fixture adapter is
 // imported by any production module; these tests do not establish live readiness.
 import { maxWalletOperatorFixture as fixture } from './fixtures/hooklab-max-wallet-operator.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 
 test('collector uses actual deterministic compiler with separate durable proof schema and exact fixture-vector instruction bytes',async()=>{
  const f=fixture(),out=await collectMaxWalletLaunchReview(f)

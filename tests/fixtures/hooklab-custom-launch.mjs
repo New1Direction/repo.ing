@@ -4,16 +4,20 @@ import { createHash } from 'node:crypto'
 import { BorshCoder } from '@anchor-lang/core'
 import { PublicKey } from '@solana/web3.js'
 import { customPreparationRequestSchema } from '../../src/hooklab-custom-preparation.mjs'
+import { generatedCustomArtifact } from './hooklab-generated-artifact.mjs'
 const sha = b => createHash('sha256').update(b).digest('hex')
 const read = path => readFileSync(new URL(path, import.meta.url))
-const vector = JSON.parse(read('./hooklab-custom-launch-rust-vector.json'))
 const idls = { launch: read('../../vendor/hooklab-event-abi/custom-preparation-reuse/bordrless_launch.json'),
   swap: read('../../vendor/hooklab-event-abi/bordrless_swap.json'), gate: read('../../vendor/hooklab-event-abi/custom-production/hook_gate.json') }
-const profile = JSON.parse(vector.profileJson), pk = value => new PublicKey(value)
+// Read lazily: the generated vector is private (HOOKLAB_GENERATED_FIXTURE_DIR), so importing this module never needs it.
+let retained
+const retainedVector = () => retained ??= JSON.parse(readFileSync(generatedCustomArtifact('hooklab-custom-launch-rust-vector.json', import.meta.url)))
+const pk = value => new PublicKey(value)
 const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), pk(program))[0].toBase58()
 const launch = new BorshCoder(JSON.parse(idls.launch))
-export const customLaunchRustVector = () => structuredClone(vector)
+export const customLaunchRustVector = () => structuredClone(retainedVector())
 export function customLaunchFixture() {
+  const vector = retainedVector(), profile = JSON.parse(vector.profileJson)
   const decoded = launch.instruction.decode(Buffer.from(vector.expectedInstruction.dataHex, 'hex')).data
   const prep = customPreparationRequestSchema.parse({ schema: 'repoing/custom-preparation-request/1', creator: vector.request.creator, feePayer: vector.request.payer,
     mint: vector.request.futureMint, selectedConfig: vector.request.selectedConfig, blockedOwner: vector.request.blockedOwner, label: vector.request.label,

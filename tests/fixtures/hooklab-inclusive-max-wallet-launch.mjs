@@ -5,9 +5,11 @@ import {BorshCoder} from '@anchor-lang/core'
 import {PublicKey} from '@solana/web3.js'
 import {inclusiveMaxWalletPreparationRequestSchema} from '../../src/hooklab-inclusive-max-wallet-profile.mjs'
 import {maxWalletLaunchInventory} from '../../src/hooklab-max-wallet-launch.mjs'
+import {inclusiveGeneratedArtifact,inclusiveTokenElfPath} from './hooklab-generated-artifact.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),read=path=>readFileSync(new URL(path,import.meta.url))
-export const inclusiveTokenElf=()=>readFileSync(process.env.HOOKLAB_INCLUSIVE_TOKEN_ELF ?? '/workspace/shared/hooks-release/recovered-amp/rebuilt-inclusive/bordrless_token.so')
-export const inclusiveRustVector=()=>JSON.parse(readFileSync(`${process.env.HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR ?? '/workspace/shared/hooks-release/recovered-amp/audit/inclusive'}/inclusive-builder-vector.json`))
+// Private generated artifacts: HOOKLAB_INCLUSIVE_TOKEN_ELF and HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR (no defaults).
+export const inclusiveTokenElf=()=>readFileSync(inclusiveTokenElfPath())
+export const inclusiveRustVector=()=>JSON.parse(readFileSync(inclusiveGeneratedArtifact('inclusive-builder-vector.json')))
 export function inclusiveMaxWalletLaunchFixture(){
  const v=inclusiveRustVector(),json=read('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/offline-builder-profile.json').toString(),p=JSON.parse(json),manifest=JSON.parse(read('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/build-artifacts.json'))
  const profile={json,expectedSha256:sha(json),providers:['fixture-a','fixture-b'],idls:Object.fromEntries([['launch','bordrless_launch'],['swap','bordrless_swap'],['gate','hook_max_wallet']].map(([role,name])=>[role,read(`../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/${name}.json`).toString('base64')])),elfLengths:Object.fromEntries(Object.entries(manifest.artifacts).map(([role,a])=>[role,a.elfLength]))}

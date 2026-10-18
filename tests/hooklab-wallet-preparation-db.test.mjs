@@ -1,4 +1,3 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
@@ -7,6 +6,9 @@ import { walletPreparationJournal } from '../src/hooklab-wallet-preparation.mjs'
 import { maxWalletPreparationReceiptFixture, maxWalletPreparationRpcProviders } from './fixtures/hooklab-max-wallet-preparation-receipts.mjs'
 import { HOOK_MAINNET_GENESIS } from '../src/hooklab-execution-contract.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 const disabled=value=>{for(const key of ['productionAccepted','preparationReceiptAccepted','collectionAuthenticated','eligibleForProductionLaunch','executionAuthorized','publicExecutionEnabled','canLaunch','canSign','canSubmit','canRetry'])assert.equal(value[key],false,key)}
 test('wallet-owned evidence is collected through two configured readers, durable and never authorizes production',async t=>{
  const config={host:'127.0.0.1',port:55432,user:'postgres',password:'launchtest',database:'postgres'},admin=new pg.Pool(config),database=`wallet_preparation_${randomUUID().replaceAll('-','')}`

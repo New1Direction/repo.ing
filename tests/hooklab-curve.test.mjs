@@ -7,9 +7,10 @@ import { buildCurveInstruction, prepareCurveReview, mergeCurveSignatures, simula
   submitCurveTransaction, CURVE_PROFILE } from '../src/hooklab-curve.mjs'
 import { inspectCurveReceipt, readCurveReceipt, createCurveArchiveReader } from '../src/hooklab-curve-receipts.mjs'
 import { curveActivationStatus, inspectCurveTrialProposal } from '../src/hooklab-curve-activation.mjs'
+import { missingArtifactEnv } from './fixtures/hooklab-generated-artifact.mjs'
 
 test('actual frozen production Rust builder matches every instruction byte and ordered meta',
-  { skip: !process.env.HOOKLAB_CURVE_PARITY_BINARY }, () => {
+  { skip: missingArtifactEnv(['HOOKLAB_CURVE_PARITY_BINARY'], 'frozen Hook Lab repoing_curve_parity example') }, () => {
     for (const side of ['buy', 'sell']) for (const recipientSame of [false, true]) {
       const f = curveFixture({ side, recipientSame }), i = f.intent
       const rust = JSON.parse(execFileSync(process.env.HOOKLAB_CURVE_PARITY_BINARY,

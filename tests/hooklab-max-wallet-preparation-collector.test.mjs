@@ -1,4 +1,3 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { PublicKey } from '@solana/web3.js'
 import { collectMaxWalletPreparationReview } from '../src/hooklab-max-wallet-preparation-collector.mjs'
@@ -6,6 +5,9 @@ import { planMaxWalletPreparation } from '../src/hooklab-max-wallet-preparation.
 import { maxWalletPlanningReadConnections } from '../src/hooklab-preparation-read-transport.mjs'
 import { maxWalletPreparationFixture } from './fixtures/hooklab-max-wallet-preparation.mjs'
 import { fakePlanningReaders as fake } from './fixtures/hooklab-max-wallet-planning-readers.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 test('two-reader collector reproduces exact independently executed preparation message with both fee quotes',async()=>{
  const f=maxWalletPreparationFixture(),out=await collectMaxWalletPreparationReview({...f,connections:fake(f),clock:()=>1000})
  assert.deepEqual(out.plan,planMaxWalletPreparation(f));assert.equal(out.collection.feeQuotedByBoth,true);assert.equal(out.plan.canSign,false)

@@ -1,5 +1,4 @@
 // Isolated disposable PostgreSQL only. All signatures and observations are synthetic.
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
@@ -8,6 +7,9 @@ import { customPreparationJournal, customPreparationSummary } from '../src/hookl
 import { maxWalletPreparationReceiptFixture } from './fixtures/hooklab-max-wallet-preparation-receipts.mjs'
 import { customPreparationReceiptFixture } from './fixtures/hooklab-custom-preparation-receipts.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 const trusted = f => ({ expectedProfileSha256: f.expectedProfileSha256, expectedProviders: f.expectedProviders, evidenceMode: f.evidenceMode })
 const retained = (f, observations = f.observations) => ({ preparationInput: f.preparationInput, signedTransactionBase64: f.signedTransactionBase64, observations })
 function disabled(value) {

@@ -1,6 +1,5 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
-import { generatedMaxWalletArtifact } from './fixtures/hooklab-generated-artifact.mjs'
+import { generatedMaxWalletArtifact, missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
 import { readFileSync } from 'node:fs'
 import { BorshCoder } from '@anchor-lang/core'
 import BN from 'bn.js'
@@ -8,8 +7,12 @@ import { PublicKey, VersionedMessage, VersionedTransaction } from '@solana/web3.
 import { buildMaxWalletSwapReview, buildMaxWalletSwapReviewForFixture, maxWalletSwapInventory } from '../src/hooklab-max-wallet-swap.mjs'
 import { maxWalletSwapFixture, maxWalletSwapRustVector } from './fixtures/hooklab-max-wallet-swap.mjs'
 import { sha, pk } from './fixtures/hooklab-max-wallet-preparation.mjs'
-const fixture = maxWalletSwapFixture(), baseline = buildMaxWalletSwapReviewForFixture(fixture)
-const names = { ...baseline.addresses, selectedConfig: fixture.request.selectedConfig, trader: fixture.request.trader, mint: fixture.request.mint, quoteMint: JSON.parse(fixture.profile.json).quoteMint }
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const artifacts = missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json', 'hooklab-max-wallet-buy-rust-vector.json', 'hooklab-max-wallet-sell-rust-vector.json', 'hooklab-max-wallet-buy-app-plan.json', 'hooklab-max-wallet-sell-app-plan.json'])
+const test = testRequiring(artifacts)
+// Built only when the private vector is present; otherwise every case is skipped and these stay null.
+const fixture = artifacts ? null : maxWalletSwapFixture(), baseline = fixture && buildMaxWalletSwapReviewForFixture(fixture)
+const names = fixture && { ...baseline.addresses, selectedConfig: fixture.request.selectedConfig, trader: fixture.request.trader, mint: fixture.request.mint, quoteMint: JSON.parse(fixture.profile.json).quoteMint }
 const entry = (f, name) => f.observations[0].accounts.find(a => a.address === (names[name] ?? name))
 function editAccount(f, name, edit) { const item = entry(f, name); edit(item.account, item); f.observations[1].accounts = structuredClone(f.observations[0].accounts) }
 function editBytes(f, name, edit) { editAccount(f, name, a => { const bytes = Buffer.from(a.dataBase64, 'base64'); edit(bytes); a.dataBase64 = bytes.toString('base64') }) }

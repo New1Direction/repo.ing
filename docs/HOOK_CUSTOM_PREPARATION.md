@@ -91,3 +91,5 @@ and preparation instructions. It identifies full source vector SHA-256
 `dd3ee75373208bc58c2079d107fb8c7e998b01560ae33a69ca36b109c8f20391`.
 Its provenance is synthetic LiteSVM, never RPC; `productionPreparationReceipt` remains null. No
 private keys or signatures are included. The test cannot turn this fixture into live evidence.
+It is untracked; supply it (and `hooklab-custom-launch-rust-vector.json`) through
+`HOOKLAB_GENERATED_FIXTURE_DIR`. Without it the vector test skips with a `missing private hook artifact` reason.

@@ -1,4 +1,3 @@
-import test from 'node:test'
 import {createHash} from 'node:crypto'
 import assert from 'node:assert/strict'
 import {BorshCoder} from '@anchor-lang/core'
@@ -6,6 +5,9 @@ import {maxWalletOperatorFixture} from './fixtures/hooklab-max-wallet-operator.m
 import {inclusiveMaxWalletLaunchFixture,inclusiveTokenElf} from './fixtures/hooklab-inclusive-max-wallet-launch.mjs'
 import {compileMaxWalletLaunchReview} from '../src/hooklab-max-wallet-launch.mjs'
 import {productionAccountBindingMatches,productionDossierSchema} from '../src/hooklab-production-observer.mjs'
+import { combineSkips, missingGeneratedArtifacts, missingInclusiveArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(combineSkips(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']), missingInclusiveArtifacts(['inclusive-builder-vector.json'], { tokenElf: true })))
 test('schema2 binds canonical Config and ignores only monotonic named counters',()=>{
  const f=maxWalletOperatorFixture(x=>x,{baseFixture:inclusiveMaxWalletLaunchFixture,compile:compileMaxWalletLaunchReview,tokenElf:inclusiveTokenElf()}),d=JSON.parse(f.dossierJson)
  for(const role of ['launch','swap']){
