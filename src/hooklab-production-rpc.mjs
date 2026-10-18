@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
-import { inspectProductionEvidence, productionDossierSchema } from './hooklab-production-observer.mjs'
+import { inspectProductionEvidence, parseExecutionDossier } from './hooklab-production-observer.mjs'
 
 // Server-owned read adapters only. Neither the dossier digest nor provider identities may come
 // from an HTTP request. Account matching is not policy approval, adoption or operation acceptance.
@@ -11,7 +11,7 @@ export async function readProductionEvidence({ dossierJson, expectedSha256, prov
   try {
     if (typeof dossierJson !== 'string' || Buffer.byteLength(dossierJson) > 65536
       || createHash('sha256').update(dossierJson).digest('hex') !== expectedSha256) throw Error()
-    dossier = productionDossierSchema.parse(JSON.parse(dossierJson))
+    dossier = parseExecutionDossier(JSON.parse(dossierJson))
     addresses = [...dossier.programs.flatMap(p => [p.address, p.programData]), ...dossier.accounts.map(a => a.address)]
     const roles = [...dossier.programs, ...dossier.accounts].map(a => a.role)
     if (addresses.length > 100 || new Set(addresses).size !== addresses.length || new Set(roles).size !== roles.length

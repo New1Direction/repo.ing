@@ -1,0 +1,9 @@
+(version 1)
+; Applied only to this disposable local app process and its children.
+; The validator is separately isolated in a Docker network with no egress.
+(allow default)
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*"))
+; The local test app needs none of the owner's production custody material.
+(deny file-read* file-write*
+  (subpath "/Users/clubpenguin/Library/Application Support/Hook Lab Custody"))

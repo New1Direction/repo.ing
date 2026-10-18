@@ -1,0 +1,47 @@
+{
+  "schema": "hook-lab/offline-max-wallet-builder-profile/1",
+  "profileId": "max-wallet-reuse-candidate-d1c5447d6e4c",
+  "status": "offline-candidate-not-adopted",
+  "sourceCommit": "a33957a3f4285351949852ce5fb49cb3616ef496",
+  "sourcePatchSha256": "d1c5447d6e4c0400ad641679cb0e409425f2ce1ef9aaf6500611215f3491c13f",
+  "buildFeature": "max-wallet-reuse-candidate",
+  "genesisHash": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+  "programs": {
+    "launch": "E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft",
+    "swap": "B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk",
+    "gate": "BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb",
+    "token": "2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22",
+    "bridge": "CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7"
+  },
+  "quoteMint": "A49oVhX22ExMwTEtFC6Y8nhBdZ4LJDGhdXLDn4c2f59i",
+  "idlSha256": {
+    "launch": "b1f564880120eac65ba7f35031260b74f93c9b5004edb55ce0543884fa6b5f8f",
+    "swap": "ba5409de62f8d56f3500a72f5b7d11cfdefd85027d2ec3bd56e2137ae76bc414",
+    "gate": "d9b0d22e56156035df0ada4935d9cd00f0520019b049fec0d6238e4df8ca4088"
+  },
+  "elfSha256": {
+    "launch": "982f898d7095aef78ac16ca77b000562075da32206813fd6921b3d0726e11f58",
+    "swap": "9588aa111d2eed1e6fc1b9baedd7335cb72a7e1aab70f22a7a0e56d60a4240cc",
+    "gate": "2ba056f3df838e8ff70cd0a508636cd587fc1591991a2d0cc7dfc4d641043ac9"
+  },
+  "dependencyObservation": {
+    "tokenElfSha256": "7aa07deb41a5545bcaff0d3fb966d5344538ec8f5c9f2155db4de030e3255df1",
+    "sourceProvenanceVerified": false,
+    "ownerAcceptanceVerified": false
+  },
+  "capability": {
+    "kind": "immutable-initial-supply-owner-cap-until-authenticated-graduation",
+    "beforeTransferOnly": true,
+    "creatorFeeBps": 0,
+    "rules": "none",
+    "atomicPrepareAndLaunch": false,
+    "prepareMintSignerRequired": true,
+    "launchAdminCosignerRequired": true
+  },
+  "artifactAdopted": false,
+  "ownerApprovalVerified": false,
+  "executionAuthorized": false,
+  "publicExecutionEnabled": false,
+  "canSign": false,
+  "canSubmit": false
+}

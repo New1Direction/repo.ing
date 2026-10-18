@@ -7,9 +7,10 @@ import { join } from 'node:path'
 import { PublicKey, ComputeBudgetProgram, TransactionMessage } from '@solana/web3.js'
 import { curveFixture, curveObservations } from './fixtures/hooklab-curve.mjs'
 import { buildCurveInstruction, prepareCurveReview, curveDigest } from '../src/hooklab-curve.mjs'
+import { missingArtifactEnv } from './fixtures/hooklab-generated-artifact.mjs'
 
 test('frozen production ELFs execute exact unsigned v0 buy/sell round trips and atomically refuse slippage, pause and placeholder drift',
-  { skip: !process.env.HOOKLAB_CURVE_RUNTIME_BINARY }, () => {
+  { skip: missingArtifactEnv(['HOOKLAB_CURVE_RUNTIME_BINARY'], 'frozen Hook Lab repoing_curve_runtime example; SBF_OUT_DIR must hold the three pinned production ELFs') }, () => {
     const directory = process.env.SBF_OUT_DIR
     for (const [program, sha] of Object.entries({
       bordrless_launch: 'faa3d46728a4848789413c3f55599b116bfa5984e371504e4f56afcccc88f9ec',

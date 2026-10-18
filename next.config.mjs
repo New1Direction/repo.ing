@@ -19,11 +19,13 @@ const nextConfig = {
   // Native read-only SDK uses createRequire/new URL for exact-byte IDLs and manifest.
   serverExternalPackages: ['@repo-ing/hooklab-readonly', '@repo-ing/hooklab-guarded-candidate', '@repo-ing/hooklab-hardened-candidate', '@repo-ing/hooklab-production-candidate'],
   outputFileTracingIncludes: {
+    '/*': ['./vendor/hooklab-event-abi/inclusive-max-wallet-candidate/*.json', './vendor/hooklab-production-candidate/idl/bordrless_token.json'],
     '/api/direct-coins': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
     '/api/hook-lab': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
     '/api/hook-lab/acceptance': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
     '/api/hook-lab/hardened': ['./node_modules/@repo-ing/hooklab-hardened-candidate/**/*'],
     '/api/hook-lab/production': ['./node_modules/@repo-ing/hooklab-production-candidate/**/*'],
+    '/api/hook-lab/production/receipts': ['./vendor/hooklab-event-abi/**/*'],
     '/coins/production': ['./node_modules/@repo-ing/hooklab-production-candidate/**/*'],
   },
   // app/(site) and app/(ja) are separate root layouts (for <html lang>), so unmatched URLs need app/global-not-found.jsx.

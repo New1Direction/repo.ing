@@ -1,0 +1,70 @@
+{
+  "kind": "source-only-inclusive-swap-candidate",
+  "artifactAdopted": false,
+  "canSign": false,
+  "canSubmit": false,
+  "files": [
+    {
+      "path": "src/hooklab-inclusive-fee-abi.mjs",
+      "sha256": "52a3c3a290714c1fb9c62a1f6f2cf4d03c6c73aefa68f14f29c55536ca10485d"
+    },
+    {
+      "path": "src/hooklab-inclusive-fee-quote.mjs",
+      "sha256": "739f0bd787d620bdbc5320608398b6f1fa07d861420ffdd3f6f0336524772e7e"
+    },
+    {
+      "path": "src/hooklab-inclusive-max-wallet-swap.mjs",
+      "sha256": "401195fe765ebc907bb0bacc09bf7c4950cbfc920bf71a91472f25fe66c4df99"
+    },
+    {
+      "path": "tests/hooklab-inclusive-fee.test.mjs",
+      "sha256": "f6ad4499160d19b5cf89d161958dfc91ad4efb0d96766091a1813d6e78114dc0"
+    },
+    {
+      "path": "tests/hooklab-inclusive-max-wallet-swap.test.mjs",
+      "sha256": "984a0d185d36d10d84041a5136997ec16c0d5e34555797aaf1068b0a2b7a1f70"
+    },
+    {
+      "path": "tests/fixtures/hooklab-inclusive-max-wallet-swap.mjs",
+      "sha256": "522a3f44316943c004e6d118bdd3f10c0d6355a775992401e1c3351dd68fbef2"
+    },
+    {
+      "path": "scripts/check-inclusive-swap-vectors.mjs",
+      "sha256": "484d3b860497755c8313361c81b00bf85542e44a8486f38214bf70122cf3526a"
+    },
+    {
+      "path": "docs/HOOK_INCLUSIVE_SWAP_ADAPTER.md",
+      "sha256": "f27479c62f070d12837fe1ca748fed53072cfa257959b350ba0406616ae66cb8"
+    },
+    {
+      "path": "src/hooklab-inclusive-trade-resolver.mjs",
+      "sha256": "f6d91ad32e90de02d3aaa0f7abd9f27655508d7a473b4a2ec47c2d9bac33938b"
+    },
+    {
+      "path": "src/hooklab-inclusive-trade-settlement.mjs",
+      "sha256": "466d0d5a44fde513d00cac1550cb15d3ba8216034fc3700d1fd86676482c7f60"
+    },
+    {
+      "path": "app/lib/hooklab-inclusive-trade-runtime.mjs",
+      "sha256": "e1bd88cab4be6dd2ed4933648b20e45dbcc9b62273d93dec464f93909af1e32f"
+    },
+    {
+      "path": "app/lib/hooklab-inclusive-trade.mjs",
+      "sha256": "014d31180c0093acb947bcbefd866d540124632ba4f5e5275c8fb04dd4e9c1b5"
+    },
+    {
+      "path": "app/api/hook-lab/inclusive-trade/route.js",
+      "sha256": "8f122d21cf25868081747b9448d613ba443478e6f22cc409a3cc5101584e75a0"
+    },
+    {
+      "path": "tests/hooklab-inclusive-trade-http.test.mjs",
+      "sha256": "459a00c5412cf532a836f2134a69eac84160da7fa9448e8083515402b7a784ee"
+    }
+  ],
+  "excludes": [
+    "ELF binaries",
+    "account snapshot vectors",
+    "live credentials",
+    "deployment profiles"
+  ]
+}

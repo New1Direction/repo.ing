@@ -94,3 +94,26 @@ early-access-launch-chain
 hooklab-curve-db
 hooklab-curve-migration-db
 hooklab-native-index-db
+hooklab-native-reads-db
+hooklab-custom-preparation-journal-db
+
+hooklab-max-wallet-preparation-journal-db
+
+hooklab-wallet-principal-db
+
+hooklab-wallet-identity-http-db
+
+hooklab-wallet-preparation-db
+
+hooklab-wallet-principal-lock-db
+hooklab-wallet-preparation-colocated-db
+hooklab-native-signer-custody-db
+hooklab-new-mint-preparation-db
+hooklab-native-signing-db
+
+hooklab-native-launch-runtime-db
+hooklab-launch-resolver-journal-db
+# Real disposable PostgreSQL on 127.0.0.1:55432 (scratch databases it creates itself).
+hooklab-database-timeouts
+# Owner-approved launch store, real PostgreSQL on 127.0.0.1:55432.
+hooklab-owner-approval-db

@@ -9,6 +9,12 @@ import { XMark } from './x-mark'
 import { hasXHandle, xAvatar } from './x-handle-link'
 import { useXLink } from './x-link-state'
 import { createWalletProvider, hasWalletAppBrowser, isPhoneBrowser, listSolanaWallets, walletBrowseLinks } from '../lib/solana-wallet.mjs'
+import { localHookWalletChoice } from '../lib/hooklab-local-wallet.mjs'
+
+function availableWallets() {
+  const local = localHookWalletChoice(window)
+  return local ? [local] : listSolanaWallets(registry.get(), window)
+}
 
 const WalletContext = createContext(null)
 const registry = getWallets()
@@ -94,7 +100,7 @@ export function WalletProvider({ children }) {
     const remembered = rememberedWallet()
     const refresh = () => {
       if (!active) return
-      const available = listSolanaWallets(registry.get(), window)
+      const available = availableWallets()
       setChoices(available)
       if (restoreAttempted.current) return
       if (!remembered || selectedProvider.current) {
@@ -158,12 +164,12 @@ export function WalletProvider({ children }) {
     if (pendingChoice.current) return pendingChoice.current.promise
     generation.current++
     setRestoring(false)
-    setChoices(listSolanaWallets(registry.get(), window))
+    setChoices(availableWallets())
     setAppLinks(isPhoneBrowser(window) ? walletBrowseLinks(window.location.href) : null)
     setError('')
     setChoosing(true)
-    setLoadingWallets(true)
-    void loadMetaMask().catch(() => { /* Other installed wallets remain available. */ }).finally(() => setLoadingWallets(false))
+    setLoadingWallets(!localHookWalletChoice(window))
+    if (!localHookWalletChoice(window)) void loadMetaMask().catch(() => { /* Other installed wallets remain available. */ }).finally(() => setLoadingWallets(false))
     const promise = new Promise((resolve, reject) => { pendingChoice.current = { resolve, reject } })
     pendingChoice.current.promise = promise
     return promise

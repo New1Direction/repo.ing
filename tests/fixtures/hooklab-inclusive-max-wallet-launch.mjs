@@ -1,0 +1,26 @@
+// Actual executed source vector, adapted only into synthetic RPC observations.
+import {readFileSync} from 'node:fs'
+import {createHash} from 'node:crypto'
+import {BorshCoder} from '@anchor-lang/core'
+import {PublicKey} from '@solana/web3.js'
+import {inclusiveMaxWalletPreparationRequestSchema} from '../../src/hooklab-inclusive-max-wallet-profile.mjs'
+import {maxWalletLaunchInventory} from '../../src/hooklab-max-wallet-launch.mjs'
+import {inclusiveGeneratedArtifact,inclusiveTokenElfPath} from './hooklab-generated-artifact.mjs'
+const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),read=path=>readFileSync(new URL(path,import.meta.url))
+// Private generated artifacts: HOOKLAB_INCLUSIVE_TOKEN_ELF and HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR (no defaults).
+export const inclusiveTokenElf=()=>readFileSync(inclusiveTokenElfPath())
+export const inclusiveRustVector=()=>JSON.parse(readFileSync(inclusiveGeneratedArtifact('inclusive-builder-vector.json')))
+export function inclusiveMaxWalletLaunchFixture(){
+ const v=inclusiveRustVector(),json=read('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/offline-builder-profile.json').toString(),p=JSON.parse(json),manifest=JSON.parse(read('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/build-artifacts.json'))
+ const profile={json,expectedSha256:sha(json),providers:['fixture-a','fixture-b'],idls:Object.fromEntries([['launch','bordrless_launch'],['swap','bordrless_swap'],['gate','hook_max_wallet']].map(([role,name])=>[role,read(`../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/${name}.json`).toString('base64')])),elfLengths:Object.fromEntries(Object.entries(manifest.artifacts).map(([role,a])=>[role,a.elfLength]))}
+ const b=new BorshCoder(JSON.parse(Buffer.from(profile.idls.launch,'base64'))),decoded=b.instruction.decode(Buffer.from(v.launch.instruction.dataHex,'hex')).data,all=v.launch.accountsBefore.map(({pubkey:address,account})=>({address,account:account?{address,owner:account.owner,executable:account.executable,lamports:account.lamports,dataBase64:account.dataBase64}:null})),map=new Map(all.map(x=>[x.address,x.account]))
+ const configAddress=PublicKey.findProgramAddressSync([Buffer.from('config')],pk(p.programs.launch))[0].toBase58(),configBytes=Buffer.from(map.get(configAddress).dataBase64,'base64'),c=b.accounts.decode('Config',configBytes)
+ const prep=inclusiveMaxWalletPreparationRequestSchema.parse({schema:'repoing/inclusive-max-wallet-preparation-request/1',policyKind:'max-wallet',policyVersion:2,creator:v.request.creator,feePayer:v.request.payer,mint:v.request.futureMint,selectedConfig:v.request.selectedConfig,capBps:v.request.capBps,label:v.request.label,creatorFeeBps:v.request.creatorFeeBps,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500})
+ const request={...prep,schema:'repoing/inclusive-max-wallet-launch-request/1',reviewer:c.admin.toBase58(),name:decoded.args.name,symbol:decoded.args.symbol,uri:decoded.args.uri,virtualQuote:decoded.args.virtual_quote.toString()},derived=maxWalletLaunchInventory(profile,request,configBytes),a=derived.addresses,slot=Number(v.slot)
+ const accountHash=address=>sha(Buffer.from(map.get(address).dataBase64,'base64')),addresses=[...new Set(v.launch.instruction.keys.filter(k=>!k.isSigner).map(k=>k.pubkey))],table=Buffer.alloc(56+32*addresses.length)
+ table.writeUInt32LE(1);table.writeBigUInt64LE(0xffffffffffffffffn,4);table.writeBigUInt64LE(BigInt(slot-1),12);addresses.forEach((x,i)=>pk(x).toBuffer().copy(table,56+32*i))
+ return {profile,request,preparationEvidence:{schema:'repoing/max-wallet-durable-prepared-state/1',profileSha256:profile.expectedSha256,preparationIntentSha256:sha(JSON.stringify(prep)),executionSlot:slot,preparedAccountHashes:{policy:accountHash(a.policy),registry:accountHash(a.registry),selectedConfig:accountHash(prep.selectedConfig)}},
+ reviewedStateHashes:Object.fromEntries(['launchConfig','swapConfig','launchGovernance','swapGovernance','authorization','quoteMint'].map(k=>[k,accountHash(k==='quoteMint'?p.quoteMint:a[k])])),observations:profile.providers.map(provider=>({provider,genesisHash:p.genesisHash,commitment:'finalized',slot,observedAtMs:1000,accounts:derived.inventory.map(address=>({address,account:map.get(address)??null}))})),
+ recentBlockhash:{blockhash:v.blockhash,genesisHash:p.genesisHash,providers:profile.providers,observedAtMs:1000,currentBlockHeight:slot,blockhashValid:true,lastValidBlockHeight:slot+150,observedSlot:slot,networkFeeLamports:'15000',lamportsPerSignature:'5000'},lookupTable:{address:pk(Buffer.alloc(32,211)).toBase58(),owner:'AddressLookupTab1e1111111111111111111111111',dataBase64:table.toString('base64'),sha256:sha(table)},
+ limits:{nowMs:1000,maxAgeMs:5000,maxSlotLag:5,validUntilSlot:Number(decoded.guard.deadline_slot.toString()),reviewExpiresAtMs:6000,maxLaunchFeeLamports:decoded.guard.max_launch_fee_lamports.toString(),maxPoolCreationFeeLamports:decoded.guard.max_pool_creation_fee_lamports.toString(),maxRentLamports:decoded.guard.max_rent_lamports.toString(),maxInstructionDebitLamports:decoded.guard.max_total_debit_lamports.toString(),maxNetworkFeeLamports:'15000',maxTotalDebitLamports:String(BigInt(decoded.guard.max_total_debit_lamports.toString())+15000n),computeUnitLimit:1400000,computeUnitPriceMicroLamports:'0'}}
+}

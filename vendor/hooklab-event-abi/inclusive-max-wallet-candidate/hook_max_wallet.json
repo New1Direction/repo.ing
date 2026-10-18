@@ -1,0 +1,777 @@
+{
+  "address": "BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb",
+  "metadata": {
+    "name": "hook_max_wallet",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Immutable per-owner max-wallet policy, lifted only by authenticated launch graduation."
+  },
+  "instructions": [
+    {
+      "name": "before_transfer",
+      "discriminator": [
+        23,
+        118,
+        189,
+        23,
+        179,
+        222,
+        94,
+        146
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "signer": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  104,
+                  111,
+                  111,
+                  107,
+                  45,
+                  97,
+                  117,
+                  116,
+                  104,
+                  111,
+                  114,
+                  105,
+                  116,
+                  121
+                ]
+              },
+              {
+                "kind": "const",
+                "value": [
+                  157,
+                  216,
+                  154,
+                  45,
+                  73,
+                  11,
+                  238,
+                  159,
+                  245,
+                  73,
+                  203,
+                  188,
+                  119,
+                  206,
+                  25,
+                  175,
+                  120,
+                  18,
+                  214,
+                  254,
+                  95,
+                  121,
+                  172,
+                  47,
+                  235,
+                  52,
+                  145,
+                  110,
+                  122,
+                  40,
+                  67,
+                  112
+                ]
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                22,
+                191,
+                99,
+                19,
+                166,
+                17,
+                127,
+                217,
+                51,
+                65,
+                231,
+                59,
+                81,
+                67,
+                228,
+                84,
+                21,
+                162,
+                62,
+                169,
+                56,
+                206,
+                195,
+                214,
+                157,
+                110,
+                130,
+                214,
+                238,
+                65,
+                220,
+                87
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "source"
+        },
+        {
+          "name": "destination"
+        },
+        {
+          "name": "authority"
+        },
+        {
+          "name": "policy"
+        },
+        {
+          "name": "launch",
+          "docs": [
+            "transaction-global writability is legitimate during launch, swaps and graduation."
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": {
+              "name": "TokenHookArgs"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "prepare",
+      "discriminator": [
+        121,
+        155,
+        156,
+        90,
+        164,
+        252,
+        220,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Future mint signature prevents policy squatting; existing mints are refused."
+          ],
+          "signer": true
+        },
+        {
+          "name": "policy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "registry",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "initial_supply",
+          "type": "u64"
+        },
+        {
+          "name": "cap_bps",
+          "type": "u16"
+        },
+        {
+          "name": "quote_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "lp_fee_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "prepare_v2",
+      "discriminator": [
+        8,
+        131,
+        61,
+        141,
+        114,
+        125,
+        125,
+        134
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Future mint signature prevents policy squatting; existing mints are refused."
+          ],
+          "signer": true
+        },
+        {
+          "name": "policy",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  108,
+                  105,
+                  99,
+                  121,
+                  45,
+                  118,
+                  50
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "registry",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "initial_supply",
+          "type": "u64"
+        },
+        {
+          "name": "cap_bps",
+          "type": "u16"
+        },
+        {
+          "name": "quote_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "lp_fee_bps",
+          "type": "u16"
+        },
+        {
+          "name": "creator_fee_bps",
+          "type": "u16"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Policy",
+      "discriminator": [
+        222,
+        135,
+        7,
+        163,
+        235,
+        177,
+        33,
+        68
+      ]
+    },
+    {
+      "name": "PolicyV2",
+      "discriminator": [
+        67,
+        207,
+        61,
+        240,
+        251,
+        54,
+        253,
+        254
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "BadCallback"
+    },
+    {
+      "code": 6001,
+      "name": "CapExceeded"
+    },
+    {
+      "code": 6002,
+      "name": "BadPolicy"
+    },
+    {
+      "code": 6003,
+      "name": "BadLaunch"
+    }
+  ],
+  "types": [
+    {
+      "name": "Mint",
+      "docs": [
+        "A mint. Address: any signer at creation (a keypair, or a PDA of the creating program)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "docs": [
+              "Layout version."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "decimals",
+            "docs": [
+              "Decimals."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "supply",
+            "docs": [
+              "Current supply."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "max_supply",
+            "docs": [
+              "Largest supply ever allowed; 0 means unlimited."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "mint_authority",
+            "docs": [
+              "May mint; `None` once revoked."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "freeze_authority",
+            "docs": [
+              "May freeze and thaw holdings; `None` once revoked."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "hook_authority",
+            "docs": [
+              "May change the hook; `None` locks the hook for ever."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "metadata_authority",
+            "docs": [
+              "May change the metadata; `None` fixes it for ever."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "hook_program",
+            "docs": [
+              "The hook program, if any."
+            ],
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "hook_flags",
+            "docs": [
+              "Which callbacks run (`bordrless_hook::token_flags`)."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "name",
+            "docs": [
+              "Name."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "symbol",
+            "docs": [
+              "Symbol."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "uri",
+            "docs": [
+              "Metadata URI."
+            ],
+            "type": "string"
+          },
+          {
+            "name": "created_at",
+            "docs": [
+              "Creation time."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "creator",
+            "docs": [
+              "Who paid for the creation."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "hook_signer_bump",
+            "docs": [
+              "Bump of `[\"hook-authority\", hook_program]`, this program's signer of every callback to the",
+              "hook (one per hook program, so a hook can tell its own callbacks from a signer another hook",
+              "passed on); 0 without a hook. Set with the hook."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "Reserved."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                31
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Phase",
+      "docs": [
+        "Before or after the operation."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Before"
+          },
+          {
+            "name": "After"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Policy",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "initial_supply",
+            "type": "u64"
+          },
+          {
+            "name": "cap_bps",
+            "type": "u16"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_fee_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PolicyV2",
+      "docs": [
+        "Explicit new policy account; version-1 bytes and zero-fee semantics remain unchanged."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "version",
+            "type": "u8"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "initial_supply",
+            "type": "u64"
+          },
+          {
+            "name": "cap_bps",
+            "type": "u16"
+          },
+          {
+            "name": "quote_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "lp_fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "fee_model",
+            "type": "u8"
+          },
+          {
+            "name": "protocol_share_bps",
+            "type": "u16"
+          },
+          {
+            "name": "creator_fee_bps",
+            "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TokenHookArgs",
+      "docs": [
+        "Arguments of a token hook callback. Balances and hook data are those of the holdings before",
+        "(`Before`) or after (`After`) the operation; `delta` is what the deltas took, known only after."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "op",
+            "docs": [
+              "The operation."
+            ],
+            "type": {
+              "defined": {
+                "name": "TokenOp"
+              }
+            }
+          },
+          {
+            "name": "phase",
+            "docs": [
+              "Before or after it."
+            ],
+            "type": {
+              "defined": {
+                "name": "Phase"
+              }
+            }
+          },
+          {
+            "name": "mint",
+            "docs": [
+              "The mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "source",
+            "docs": [
+              "Source holding (the mint for a mint)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "destination",
+            "docs": [
+              "Destination holding (the mint for a burn)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "source_owner",
+            "docs": [
+              "Owner of the source holding (default for a mint)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "destination_owner",
+            "docs": [
+              "Owner of the destination holding (default for a burn)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "docs": [
+              "Who signed."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "authority_is_delegate",
+            "docs": [
+              "Whether the signer acted as a delegate rather than the owner."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "The amount of the operation."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "delta",
+            "docs": [
+              "The sum of the deltas a `before_transfer` answer took (zero before)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "source_balance",
+            "docs": [
+              "Source balance."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "destination_balance",
+            "docs": [
+              "Destination balance."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "decimals",
+            "docs": [
+              "Decimals of the mint."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "supply",
+            "docs": [
+              "Supply of the mint."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "source_hook_data",
+            "docs": [
+              "The source holding's hook data (zeros for a mint)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "destination_hook_data",
+            "docs": [
+              "The destination holding's hook data (zeros for a burn)."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "TokenOp",
+      "docs": [
+        "What a token hook is being told about."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Transfer"
+          },
+          {
+            "name": "Mint"
+          },
+          {
+            "name": "Burn"
+          }
+        ]
+      }
+    }
+  ]
+}
