@@ -12,6 +12,7 @@ import { parseInclusiveMaxWalletProfile } from './hooklab-inclusive-max-wallet-p
 import { modelInclusiveCreatorQuote } from './hooklab-inclusive-fee-quote.mjs'
 import { readInclusiveFeePolicy } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
+import { canaryGateMatches, canarySwapTransition } from './hooklab-canary-policy.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -63,11 +64,11 @@ function programEvidence(accounts, program, expected, length, slot, immutable) {
   check(elf.subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])) && sha(elf) === expected
     && db.subarray(45 + length).every(b => b === 0), 'Program ELF differs')
 }
-function governance(binding, role, program, configAddress, config, gov, genesis) {
+function governance(binding, role, program, configAddress, config, gov, genesis, canary) {
   const s = gov.state, roles = Object.values(s.roles).map(str)
   check(str(s.program) === program && str(s.config) === configAddress && Buffer.from(s.genesis).equals(kb(genesis))
     && str(s.roles.admin) === str(config.admin) && str(s.roles.treasury) === str(config.treasury)
-    && !s.gates.creation && !s.gates.trading && s.pending_admin === null
+    && (canary ? canaryGateMatches(role, config, s) : !s.gates.creation && !s.gates.trading) && s.pending_admin === null
     && new Set(roles).size === 4 && !roles.includes(zero), 'Governance identity, roles or gates differ')
   check(gov.bump === bump(program, 'governance'), 'Governance bump differs')
   const economics = hash(`hook-lab/${role}-governed-economics/1\0`, kb(program), binding.coder.types.encode('ConfigArgs', {
@@ -165,7 +166,12 @@ export function compileInclusiveMaxWalletSwapReview(input) {
   check(input?.provenance === 'server-collected-finalized-state-not-execution-authorization', 'Server collection provenance required')
   return compile(input, false)
 }
-function compile(input, fixture) {
+// Separate owner-canary policy. This does not enable a production signing route.
+export function compileCanaryInclusiveMaxWalletSwapReview(input) {
+  check(input?.provenance === 'server-collected-finalized-state-not-execution-authorization', 'Server collection provenance required')
+  return compile(input, false, true)
+}
+function compile(input, fixture, canary = false) {
   const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
@@ -195,12 +201,16 @@ function compile(input, fixture) {
   }
   for (const name of ['kitConfig', 'holderVault']) check(accounts.get(a[name]) === null, 'No-Kit account unexpectedly initialized')
   const c = decoded(launch, 'Config', owned(accounts, a.launchConfig, L, 250)), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
-  check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && !d.paused
+  check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && d.paused === canary
     && c.reserved.every(v => v === 0) && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
   const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
-  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash)
+  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, canary); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, canary)
+  const transition = canary ? canarySwapTransition(swap, sg, a) : null
+  if (canary) check(str(c.admin) === transition.admin && str(d.fee_collector) === str(d.treasury)
+    && !roles.includes(transition.admin) && transition.admin !== r.trader
+    && r.trader === r.recipient && r.trader === r.feePayer, 'Canary admin, payer or recipient binding differs')
   const policyBytes = owned(accounts, a.policy, G, 90), policy = decoded(gate, 'PolicyV2', policyBytes), registry = owned(accounts, a.registry, G, 81)
   check(policy.version === 2 && policy.fee_model === 2 && policy.protocol_share_bps === 2500
     && policy.creator_fee_bps === r.creatorFeeBps && profile.capability.creatorFeeBps === r.creatorFeeBps && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n
@@ -219,12 +229,14 @@ function compile(input, fixture) {
     && str(state.reserve_holding) === a.launchReserve && str(state.quote_holding) === a.launchQuote && str(state.lp_holding) === a.launchLp
     && n(state.curve_tokens) + n(state.reserve_tokens) === n(policy.initial_supply) && state.kit_caller_bump === 0
     && ['creator_unlock_at', 'early_window_end', 'early_unlock_at', 'graduation_topup', 'graduation_burned', 'holder_fees_accrued', 'burned_on_trades', 'author_fees_paid'].every(k => state[k].isZero()), 'Launch is not the canonical pre-graduation max-wallet candidate')
+  if (canary) check(str(state.creator) === r.trader, 'Canary trader must be the launch creator')
   check(pool.version === 1 && pool.bump === bump(S, 'pool', kb(r.mint), kb(profile.quoteMint), enc(0, 2), kb(L)) && pool.lp_mint_bump === bump(S, 'lp', kb(a.pool))
     && str(pool.base_mint) === r.mint && str(pool.quote_mint) === profile.quoteMint && str(pool.lp_mint) === a.lpMint && str(pool.base_vault) === a.baseVault
     && str(pool.quote_vault) === a.quoteVault && pool.hook_program && str(pool.hook_program) === L && pool.hook_flags === 1985
     && pool.hook_signer_bump === bump(S, 'hook-authority', kb(L)) && pool.curve && pool.lp_supply.isZero() && str(pool.creator) === a.launch
     && pool.lp_fee_bps === 0 && pool.protocol_fee_bps === 0 && pool.protocol_share_bps === 2500 && pool.fee_model === 2
     && pool.reserved.every(v => v === 0) && n(pool.virtual_base) === n(state.virtual_base) && n(pool.virtual_quote) === n(state.virtual_quote), 'Pool binding or inclusive-fee curve policy differs')
+  if (canary) check(n(pool.swap_count) === (r.side === 'buy' ? 0n : 1n), 'Canary permits only the first buy and its single sell')
   const mint = typed(gate, 'Mint', owned(accounts, r.mint, T, 519)), quote = typed(gate, 'Mint', owned(accounts, profile.quoteMint, T, 519))
   for (const m of [mint, quote]) check(Buffer.byteLength(m.name) <= 32 && Buffer.byteLength(m.symbol) <= 10 && Buffer.byteLength(m.uri) <= 200, 'Mint metadata size differs')
   check(mint.version === 1 && !mint.mint_authority && !mint.freeze_authority && !mint.hook_authority && !mint.metadata_authority
@@ -288,24 +300,28 @@ function compile(input, fixture) {
       && (b[21] === 1 ? b.subarray(54, 56).every(v => v === 0) : b.subarray(22, 56).every(v => v === 0))
       && state.lastExtendedSlotStartIndex <= state.addresses.length && new Set(state.addresses.map(str)).size === state.addresses.length, 'Lookup table hash, canonical state or addresses differ')
   }
-  const message = new TransactionMessage({ payerKey: pk(r.feePayer), recentBlockhash: bh.blockhash, instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: l.computeUnitLimit }),
-    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) }), instruction] }).compileToV0Message(tables)
+  const budget = [ComputeBudgetProgram.setComputeUnitLimit({ units: l.computeUnitLimit }),
+    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) })]
+  const instructions = [...budget, ...(canary ? [transition.open, instruction, transition.close] : [instruction])]
+  const message = new TransactionMessage({ payerKey: pk(r.feePayer), recentBlockhash: bh.blockhash, instructions }).compileToV0Message(tables)
   check(!lookupTable || message.addressTableLookups.length === 1, 'Unused lookup table')
   const keys = message.getAccountKeys({ addressLookupTableAccounts: tables }), bytes = message.serialize(), priority = (BigInt(l.computeUnitLimit) * BigInt(l.computeUnitPriceMicroLamports) + 999999n) / 1000000n
   check(BigInt(bh.networkFeeLamports) === BigInt(message.header.numRequiredSignatures) * BigInt(bh.lamportsPerSignature) + priority, 'Network fee differs from explicit signature fee basis')
-  const review = { schema: 'hooklab-message-review/1', operation: `inclusive-max-wallet-${r.side}${fixture ? '-fixture' : ''}`, genesisHash: profile.genesisHash, profileSha256: envelope.expectedSha256,
+  const review = { schema: 'hooklab-message-review/1', operation: `${canary ? 'canary-' : ''}inclusive-max-wallet-${r.side}${fixture ? '-fixture' : ''}`, genesisHash: profile.genesisHash, profileSha256: envelope.expectedSha256,
     policySha256: sha(JSON.stringify(obs)), intentSha256: sha(JSON.stringify(r)), payer: r.feePayer, wallet: r.trader, messageBase64: Buffer.from(bytes).toString('base64'), messageSha256: sha(bytes),
     requiredSigners: message.staticAccountKeys.slice(0, message.header.numRequiredSignatures).map(str), accounts: Array.from({ length: keys.length }, (_, i) => ({ address: str(keys.get(i)), signer: message.isAccountSigner(i), writable: message.isAccountWritable(i) })),
     lookupTables: lookupTable ? [lookupTable] : [], observedSlot: slot, validUntilSlot: l.validUntilSlot, observedAtMs: l.nowMs, reviewExpiresAtMs: l.reviewExpiresAtMs,
     lastValidBlockHeight: bh.lastValidBlockHeight, baseFeeLamports: String(BigInt(bh.networkFeeLamports) - priority), maxFeeLamports: l.maxNetworkFeeLamports,
     instructionDebitLamports: '0', maxNativeDebitLamports: l.maxTotalDebitLamports }
-  const inspected = inspectHookLabMessage(review), signers = new Set([r.trader, r.feePayer]), writable = new Set([r.feePayer, ...metas.filter(m => m.isWritable).map(m => str(m.pubkey))])
-  check(inspected.instructions.length === 3 && review.accounts.every(a => a.signer === signers.has(a.address) && a.writable === writable.has(a.address)), 'Compiled swap privileges differ')
+  const inspected = inspectHookLabMessage(review), signers = new Set([r.trader, r.feePayer, ...(canary ? [transition.admin] : [])])
+  const writable = new Set([r.feePayer, ...metas.filter(m => m.isWritable).map(m => str(m.pubkey)), ...(canary ? [a.swapConfig, a.swapGovernance] : [])])
+  check(inspected.instructions.length === (canary ? 5 : 3) && review.accounts.every(a => a.signer === signers.has(a.address) && a.writable === writable.has(a.address)), 'Compiled swap privileges differ')
   const canonicalInstruction = { program: S, dataHex: data.toString('hex'), accounts: metas.map(m => ({ address: str(m.pubkey), signer: m.isSigner, writable: m.isWritable })) }
-  const effective = { ...canonicalInstruction, accounts: canonicalInstruction.accounts.map(m => review.accounts.find(a => a.address === m.address)) }
-  check(isDeepStrictEqual(inspected.instructions[2], effective), 'Effective swap metas differ')
-  return freeze({ schema: 'repoing/inclusive-max-wallet-swap-review/1', status: fixture ? 'offline-synthetic-review-only' : 'deterministic-review-not-authorization', provenance, request: r, releaseProfileSha256: envelope.expectedSha256,
+  const canonical = instructions.map(ix => ({ program: str(ix.programId), dataHex: ix.data.toString('hex'), accounts: ix.keys.map(m => review.accounts.find(a => a.address === str(m.pubkey))) }))
+  check(isDeepStrictEqual(inspected.instructions, canonical), 'Effective swap envelope metas differ')
+  return freeze({ schema: canary ? 'repoing/canary-inclusive-max-wallet-swap-review/1' : 'repoing/inclusive-max-wallet-swap-review/1', status: fixture ? 'offline-synthetic-review-only' : 'deterministic-review-not-authorization', provenance, request: r, releaseProfileSha256: envelope.expectedSha256,
     sourceCommit: profile.sourceCommit, sourcePatchSha256: profile.sourcePatchSha256, addresses: a, review, canonicalInstruction, instructions: inspected.instructions,
+    ...(canary ? { canary: transition.evidence } : {}),
     quote: { delivered: String(delivered), minAmountOut: r.minAmountOut, capRaw: String(cap), priceImpactBps: String(impact), lpFee: '0', protocolFee: String(quoteResult.fees.platformQuote),
       grossCreatorFee: String(quoteResult.fees.grossQuote), netCreatorFee: String(quoteResult.fees.creatorQuote),
       feeModel: 2, protocolShareBps: 2500, creatorFeeBps: r.creatorFeeBps, platformCollector: feePolicy.collector,

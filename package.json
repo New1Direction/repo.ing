@@ -18,6 +18,7 @@
     "test:index": "node --test tests/launch-indexer.test.mjs",
     "test:trade": "node --test tests/trade.test.mjs",
     "test:fees": "node --test tests/fee-accrual.test.mjs",
+    "test:hooks:canary": "HOOKLAB_CANARY_REQUIRED=true node --test tests/hooklab-canary-atomic.test.mjs",
     "fees:earned": "node scripts/read-repo-earnings.mjs",
     "test:github-verification": "node --test tests/github-verification.test.mjs",
     "github:verify-live": "node scripts/github-live-callback.mjs",

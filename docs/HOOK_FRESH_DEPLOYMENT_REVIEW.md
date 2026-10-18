@@ -29,11 +29,13 @@ The accepted browser URL is not currently served. Production actions remain bloc
 - App baseline: `New1Direction/repo.ing` PR #304,
   `d3eb0df2701be2b77e624d60750b99bc8bb23ebe`.
 - Financial browser-acceptance baseline: `4f611561f2502699e2ffb039ef759fa65f36380c`.
-- Current app release source: **`61373924fc9a384118b0edaf3f130f5fb3857d15`**,
+- Database-policy source baseline: **`61373924fc9a384118b0edaf3f130f5fb3857d15`**,
   `fix(hooklab): bound PostgreSQL waits without losing signing recovery`.
   Its final five PostgreSQL tests and SQL/HTTP smoke passed. It adds the bounded
   database policy and regressions without invalidating the earlier financial,
   wallet-switch, ABI, fee-settlement or retained-program acceptance evidence.
+  The current source adds the separately authorized canary-only builders and
+  settlement verification described below; ordinary production routes remain closed.
 - Prior approval-only commit: `38f635e5167e5f39ed073727ee10fb52edb629b9`.
   No program source, artifact pin, wallet role or program identity changed.
 - Protocol baseline: `New1Direction/hook-lab` PR #5,
@@ -324,7 +326,7 @@ Every recommendation remains pending explicit owner approval.
 | One buy / one sell | Buy exactly **1,000,200 raw native quote**; sell only the finalized acquired base, at most the entire acquired amount | Buy is inside the wrap allowance, not an additional capital charge. Recommended slippage 50 bps with fresh compiler-calculated integer min-out; no invented future output |
 | Fee collection | Existing tested combined `claim_creator_fees` + `collect_protocol_fees`, paid by DkD and co-signed by DVdd | Pay native quote to DkD/FhE holdings. Do not substitute the unexercised SOL-collection path. Creator unwraps its remaining quote; treasury quote receipts remain held |
 | Launch ALT | Canonical **38 addresses**, 1,272-byte table; authority DVdd, payer 3eCF | Two messages: create + first 20, extend remaining 18. Verify actual owner/authority/addresses/hash, active state and warm slot; retain table, do not freeze/deactivate/close it in this route |
-| Creator tranche | Exactly **42,749,400 lamports** from 3eCF to existing DkD | 32,664,400 rents + 10,000,000 quote capital + 85,000 bounded creator fees; no further top-up |
+| Creator tranche | Exactly **42,759,400 lamports** from 3eCF to existing DkD | 32,664,400 rents + 10,000,000 quote capital + 95,000 bounded creator network fees; +10,000 versus the superseded public-window route for the two admin co-signatures |
 | Review / expiry | Preserve 60-second review TTL and at most +96 slots, whichever expires first; reader age at most 5 seconds and lag at most 5 slots | Rebuild unsigned review after any control/config change; never reuse an expired signed request |
 | Priority / retries | Zero priority fee; zero newly signed retry allowance; `maxRetries: 0`, normal signature checks and preflight | Unknown outcome: reconcile the original signature/ID only. Any new attempt requires a new reviewed budget |
 | Publication / activation | No on-chain IDL publication or public metadata spend; no general unpause or merge | Both public IDLs remain source files; private fixtures, journals and wallets remain excluded |
@@ -384,6 +386,26 @@ Its concrete locator is **Amp thread `T-01a149f3-dfcc-720c-b113-3705cb46a89e`,
 artifact `hook-custom-paused-a33957a.tar.gz`**. The artifact/generation logs were
 not opened: request only the generation operator's public custody record.
 No inspected public record proves that signer was transferred to this Mac.
+
+Authenticated `amp threads search` returned this exact thread's metadata
+(title **Build production Hooks backend and indexer foundation**, updated
+`2026-10-17T17:55:32.744Z`), but no original host, signer handle or public-key
+verification. Static access redirects to sign-in. Thread/archive bodies were
+not exported or opened to hunt through possible secrets. Custody remains
+unverified; the source declaration of BdAa is not a signer-possession check.
+
+**One exact prompt for the original thread:**
+
+> Locate the original `hook_gate` program-identity signer expected to resolve to
+> `BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb`—not the payer, upgrade
+> authority or rebuilt `hook_max_wallet` identity. Return only its original
+> host/orb and signer handle/path or custody manifest/service/account locator,
+> plus a locally performed public-key check showing expected address, observed
+> address and match. Do not print, copy, attach, export or upload any keypair,
+> seed, passphrase, private-key array, ciphertext/envelope, archive contents or
+> Keychain secret. Do not create, substitute or migrate identities, sign, fund,
+> deploy or unpause. If inaccessible, return only the original custody/backup
+> reference needed.
 
 The eleven public custody manifests have no BdAa role. Additional filename-only
 searches for `*gate*keypair*.json` under Desktop and Documents/ChatGPT returned
@@ -464,38 +486,93 @@ a second zero-account result. Refresh through suitable independent operators
 before claiming only the one new canary grant is live. No grant was created,
 revoked or consumed by this lookup.
 
-**Existing controls can restrict issuance and time, not make the current canary
-private.** A single valid grant plus the custom reviewer controls the intended
+**Ordinary globally opened flow:** existing controls restrict issuance and time,
+not outsider access. A single valid grant plus the custom reviewer controls the intended
 launch; closing/exhausting it does not prevent trading in an existing pool.
 On-chain, authenticated E73 pool creation may occur while swap trading stays
 paused (`pool.rs:240-245`). Thus narrower non-overlapping creation/trading windows
 are possible at the program level, but each open trading window remains public.
 
-**Confirmed application restriction:** the actual launch compiler requires both
-configs unpaused (`src/hooklab-max-wallet-launch.mjs:205-207`) and both governance
-gate bits false (`:133-139`). The inclusive swap compiler likewise requires both
-governance bits false (`src/hooklab-inclusive-max-wallet-swap.mjs:67-76`), so
-closing launch creation before the buy/sell is also rejected by the current flow.
-These are the Hook Lab compilers/collectors, not the unrelated Meteora router.
-The safer on-chain order is therefore **not supported by this app as reviewed**.
-No check was relaxed and no source/packet sequence was changed to pretend otherwise.
+**Ordinary application restriction remains unchanged:** ordinary launch requires
+both configs unpaused and ordinary trade requires both governance gate bits
+false. These ordinary entrypoints are not used to bypass paused-state validation.
 
-An atomic open/action/close envelope is not an approved workaround: the current
-launch compiler fixes exactly three canonical instructions and signer privileges
-(`hooklab-max-wallet-launch.mjs:302-321`). Any additional governance envelope,
-stricter gate ordering or restricted-trading design needs explicit owner scope,
-new exact message/privilege/size validation and fresh fee/budget review. Do not
-claim a private RPC/bundle, short window or hidden URL supplies an on-chain allowlist.
+**Canary-only implementation and isolated acceptance.** Dedicated
+`compileCanaryMaxWalletLaunchReview` accepts creation open/trading paused.
+Creation is closed separately before any trade. Dedicated
+`compileCanaryInclusiveMaxWalletSwapReview` starts with both configs closed and
+constructs exactly two compute instructions, governed open, one bound swap,
+governed close. The existing direct admin co-signs. The creator is the trader,
+recipient and payer; only the pool's first buy and single following sell qualify.
+There is no separately committed trading opening and no public-trading activation.
+This is for a fresh never-publicly-traded canary, not a way to handle existing
+outside holders. Neither private RPC nor a hidden URL is an access control.
 
-**Classification:** no new unprivileged on-chain authorization bypass, theft or
-fee-model defect was established. Permissionless trading on an open DEX and the
-cap's per-owner scope are contract behavior/operator exposure. The two compilers'
-mixed-state rejection is a concrete integration/capability limitation if a
-narrower canary is required—not missing custody evidence and not a newly
-reproduced failure of completed acceptance. The resolved PostgreSQL defect in
-`6137392` stays closed. A claim of a private canary through the unchanged reviewed
-flow would be wrong; the owner must accept the public-window risk, authorize
-separately reviewed restrictive work, or keep the test blocked.
+The separate canary settlement verifier authenticates exact signed wire,
+trade/token self-CPI ancestry at instruction **3**, direct `GovernanceChanged`
+logs for instructions **2/4**, full commitments, exact two-revision advancement
+and closed governance/config state at that transaction's commit, not the latest
+mutable state when an old receipt is recovered. Ordinary receipt attribution remains
+instruction **2**. No instruction-count, privilege or signature check was waived.
+
+Targeted acceptance: **20 pass, 0 fail, 0 skip**, fresh in-memory LiteSVM,
+network denied, normal signature/blockhash checks, existing pinned SBF-v3 ELFs,
+synthetic signers only. No validator, app, bridge or database was restarted.
+This is new canary-path evidence, not a replay of completed browser/financial,
+historical-fixture, loader or PostgreSQL acceptance and not two independent RPCs.
+
+| Synthetic transaction | Fully signed wire bytes | Compute units |
+| --- | ---: | ---: |
+| Guarded launch with trading paused | 765 | 379,853 |
+| Atomic buy | 654 | 184,657 |
+| Atomic sell | 654 | 164,955 |
+
+All fit 1,232 bytes and the explicit 1,400,000-CU ceiling. Governance closing
+proof remains available under a 10,000-byte log limit. Tests deny missing admin
+signatures, outsider governance/buy/sell attempts, stale opening commitments and
+duplicate buys; prove rollback on swap failure, failed close and compute
+exhaustion inside the swap; reject wrong-index/missing-close/altered-wire
+receipts, expired reviews and oversized bytes; and deny local profiles in
+production mode. The authenticated collector resolves a canonical failed
+transaction and recovers the buy after the later sell advances governance,
+without resending. A signed but unexecuted message remains unresolved despite
+fabricated caller receipt data. Synthetic block/inclusion framing belongs only
+to the test adapters; logs, events, signatures, resolved keys, native balances
+and account bytes come from actual SBF execution. This is not production
+finality evidence. Fresh snapshots are generated from source codecs; the seven
+private historical fixtures are not read.
+
+The required release gate is `npm run test:hooks:canary` from the app root,
+with `HOOKLAB_CANARY_ELF_DIR` pointing to the retained four pinned ELFs,
+`HOOKLAB_CANARY_PYTHON` to Python 3.10+, and
+`HOOKLAB_CANARY_PYTHONPATH` to an isolated installation of **solders 0.29.0**,
+jsonalias 0.1.1 and typing-extensions 4.15.0. The first attempted 0.27.1 runner
+could not load these SBF-v3 binaries; no ELF was rebuilt or weakened to fix it.
+The final run used macOS `sandbox-exec` to deny networking and custody/key paths.
+The required command was also run without the ELF variable: it exited **1**
+with `HOOKLAB_CANARY_ELF_DIR is required`, not a skipped green acceptance.
+Optional default test discovery is not this release gate. Provisioning private
+pinned ELFs/runtime for a future CI job is not completed by this local run.
+Private final evidence is `hooks-local-state/atomic-canary-20261018/`:
+`after-review-verified.private.tap` and `after-review-verified.private.json`.
+Earlier runs remain preserved. One intermediate harness assertion expected
+an error name where the SVM returns code 6100; the final assertion checks the
+actual authorization code and instruction index. No program check was relaxed.
+
+Independent local/cross-model review found and closed two receipt-boundary
+defects: historical recovery no longer compares mutable live governance with
+old end-state, and the caller-only receipt-success helper was removed.
+Only the authenticated collector emits execution facts, including
+`tradingPausedAtCommit`; a historical receipt does not certify current signing
+readiness. Fresh signing still requires current-state compilation. The required
+test command closes the missing-environment false-green acceptance gap.
+
+**Classification:** the canary mixed-state integration gap is implemented and
+locally exercised. No production signing or submission adapter was enabled.
+The PostgreSQL defect in `6137392` remains resolved. Original custody,
+independent recovery, token provenance, policy approval, first-gate deployment
+rehearsal and a fresh production-address-bound unsigned packet remain separate
+release gates. Synthetic sizes are not a measurement of that future packet.
 
 ### Exact ordered owner actions and fee inventory
 
@@ -532,30 +609,28 @@ synthetic retained-program test.
 | 5 | Initialize the absent one-launch DkD grant with exact expiry; refresh governance commitment | 3eCF; DVdd | 2 | 10,000 |
 | 6 | Create canonical ALT and append first 20 addresses | 3eCF; DVdd authority | 2 | 10,000 |
 | 7 | Append remaining 18, wait for finality/warm slot and pin actual table bytes | 3eCF; DVdd | 2 | 10,000 |
-| 8 | Fund existing DkD with the exact 42,749,400-lamport tranche | 3eCF | 1 | 5,000 |
+| 8 | Fund existing DkD with the exact 42,759,400-lamport tranche | 3eCF | 1 | 5,000 |
 | 9 | Create DkD and FhE A49 quote holdings together, only if still absent | DkD | 1 | 5,000 |
 | 10 | Existing bridge `wrap_sol` for exactly 10,000,000 lamports | DkD | 1 | 5,000 |
 | 11 | Prepare v2 policy, registry and selected config; verify their exact bytes | DkD; existing mint and approved config identity | 3 | 15,000 |
-| 12 | Separately approved launch creation opening; refresh unsigned launch controls | 3eCF; DVdd | 2 | 10,000 |
-| 13 | Separately approved swap trading opening; refresh final unsigned launch/market review | 3eCF; DVdd | 2 | 10,000 |
-| 14 | One guarded inclusive launch; verify finalized events, allocations and policy | DkD; mint and DVdd reviewer | 3 | 15,000 |
+| 12 | Separately approved launch creation opening while swap trading stays closed; refresh canary launch review | 3eCF; DVdd | 2 | 10,000 |
+| 13 | One guarded inclusive launch with trading still paused; verify finalized events/allocations | DkD; mint and DVdd reviewer | 3 | 15,000 |
+| 14 | Close launch creation/config; verify both configs closed before trading | 3eCF; DVdd | 2 | 10,000 |
 | 15 | Create DkD base holding **after the mint exists** | DkD | 1 | 5,000 |
-| 16 | One bounded buy | DkD | 1 | 5,000 |
-| 17 | One bounded sell of acquired base; reconcile original signature before continuing | DkD | 1 | 5,000 |
-| 18 | Restore launch creation closed/config paused | 3eCF; DVdd | 2 | 10,000 |
-| 19 | Restore swap trading closed/config paused | 3eCF; DVdd | 2 | 10,000 |
-| 20 | Combined native-quote creator/platform fee collection with exact recipient checks | DkD; DVdd | 2 | 10,000 |
-| 21 | Unwrap remaining DkD native quote; no treasury unwrap in this route | DkD | 1 | 5,000 |
-| 22 | Close empty DkD quote holding, rent back to DkD | DkD | 1 | 5,000 |
-| 23 | Close DkD base holding **only if actually empty and closable** | DkD | 1 | 5,000 |
-| 24 | Return verified DkD surplus to FhE; leave enough for its exact transfer fee | DkD | 1 | 5,000 |
-| 25 | Return 3eCF surplus to FhE, retaining 50,000,000 lamports | 3eCF | 1 | 5,000 |
-| **Additional-message ceiling** | **25 messages, each at most once** | **39 signatures** | **39** | **195,000** |
+| 16 | One atomic governed open/bound buy/close; exact message and closing proof | DkD; DVdd | 2 | 10,000 |
+| 17 | Fresh reviewed atomic open/bounded sell/close; reconcile original signatures before continuing | DkD; DVdd | 2 | 10,000 |
+| 18 | Combined native-quote creator/platform fee collection while paused | DkD; DVdd | 2 | 10,000 |
+| 19 | Unwrap remaining DkD native quote; no treasury unwrap | DkD | 1 | 5,000 |
+| 20 | Close empty DkD quote holding, rent back to DkD | DkD | 1 | 5,000 |
+| 21 | Close DkD base holding **only if actually empty and closable** | DkD | 1 | 5,000 |
+| 22 | Return verified DkD surplus to FhE, retaining its exact transfer fee | DkD | 1 | 5,000 |
+| 23 | Return 3eCF surplus to FhE, retaining 50,000,000 lamports | 3eCF | 1 | 5,000 |
+| **Additional-message ceiling** | **23 messages, each at most once** | **37 signatures** | **37** | **185,000** |
 
-Rows 18/19 restore the actual initial mixed gate state: launch creation=true,
-trading=false; swap creation=false, trading=true. **True means closed.**
-Both corresponding config pauses finish true. Fee-collection contract paths
-do not reject a paused config, so gates need not stay open for collection.
+Row 14 and each atomic trade restore creation=true/trading=false for launch,
+creation=false/trading=true for swap. **True means closed.** Both config pauses
+finish true. There is no separate swap-opening/closing transaction. Collection
+does not reject a paused config, so gates need not remain open for collection.
 Any mismatch/unknown outcome stops progression without re-signing; the owner
 uses the already reviewed close actions and retains the original receipts.
 
@@ -591,11 +666,11 @@ currently has zero lamports: existing funds have not been located or spent.
 | Final allocation / fee bound | Lamports | SOL |
 | --- | ---: | ---: |
 | All added account rent, code/gate plus canary | 1,391,229,120 | 1.391229120 |
-| All network fees: 1,650 code/gate + at most 25 additional messages | 16,685,000 | 0.016685000 |
-| **Added rent + network fees** | **1,407,914,120** | **1.407914120** |
+| All network fees: 1,650 code/gate + at most 23 additional messages | 16,675,000 | 0.016675000 |
+| **Added rent + network fees** | **1,407,904,120** | **1.407904120** |
 | Maximum quote capital exposed, including the buy rather than adding it twice | 10,000,000 | 0.010000000 |
 | Reserve retained in payer, not consumed | 50,000,000 | 0.050000000 |
-| **Conservative maximum allocated after surplus return** | **1,467,914,120** | **1.467914120** |
+| **Conservative maximum allocated after surplus return** | **1,467,904,120** | **1.467904120** |
 
 The quote and reserve rows are held/exposed capital, **not network fees or
 expected losses**. No sell proceeds, collected fees or account-close refunds
@@ -606,14 +681,23 @@ no refund from them is priced. ProgramData and immutable-gate rent are not
 reclaimed in this route. Sequential buffer refunds are already recycled.
 
 Under maximum debits, the payer balance immediately **before** its last
-transaction is 2,758,533,120 lamports: transfer **2,708,528,120** to FhE,
+transaction is 2,758,543,120 lamports: transfer **2,708,538,120** to FhE,
 pay that transaction's **5,000** fee, retain **50,000,000**. The final fee is
-counted once in the 195,000-lamport additional-fee total, not subtracted twice.
+counted once in the 185,000-lamport additional-fee total, not subtracted twice.
 Any verified creator surplus is additional. Calculate the actual return from
 the finalized balance less that fee/reserve, never from an optimistic refund.
 On-chain IDL publication, extra liquidity, extra buy/sell, priority fees and
 newly signed retries are excluded **by explicit zero allowances**, not omitted
 unknowns. A different action list requires a different reviewed ceiling.
+
+The superseded public-window route used 25 additional messages/39 signatures.
+Atomic trades remove two 2-signature gate transactions and add an admin
+signature to each trade: **net saving 10,000 lamports**, with **no new rent**.
+The creator tranche increases by 10,000, while payer gate fees decrease by
+20,000. **The all-in capital ceiling remains 4.176442240 SOL:** the earlier
+launch-buffer peak, before the canary, still dominates. No priority or new
+signed retry allowance is introduced. Actual production message sizes,
+balances/rents/fees and bindings still require fresh independent review.
 
 ### One owner approval checklist — no item is execution permission by itself
 
@@ -630,18 +714,18 @@ a particular identity or parameter is technically used only by the canary.
 | **B4 — External-token provenance and mutable trust** | **Missing build attestation plus trust approval** | Provide independent pinned source/build evidence or separately authorize a capacity-safe no-upload/no-keypair build. Raw `7aa07…` and canonical `ec9d9f…` differ only by 15 terminal zero bytes, not code; neither the public README nor unverified hosted status is our independent reproduction. Approve mutable token/bridge dependency trust; no compiler pull/build is currently authorized |
 | **B5 — Exact economics and recipients** | **Owner policy approval, not a new fee defect** | Choose proposed **2% cap versus earlier 1%**; approve **1% gross creator fee**, platform `floor(gross/4)`, creator remainder, zero surcharge/other charges/author share. Approve FhE collector and per-launch actual creator, with DkD/2T2 only for this controlled test, and unchanged remaining curve/mint/legacy-bound values. Full addresses and recommended parameters remain above |
 | **B6 — First gate deployment and irreversibility** | **Execution evidence gap; preparation now complete, not a passed runtime test** | The missing branch is prepared offline as **209 zero-signature messages**: setup, 207 writes and first deploy; max wire 1,232, deploy 598 bytes, no finalization. Original BdAa custody and separate signing/runtime authorization are still required to execute that case on a new isolated non-mainnet ledger, with retained identities and normal checks. Do not repeat E73/B2/browser/trade/fee acceptance. Post-deploy authority must remain9GC; immutable finalization is a later separate irreversible decision after exact read-back |
-| **B7 — Funding ceiling and finite inventory** | **Conditional owner budget approval; any revised sequence needs re-quote** | Baseline remains **4.176442240 SOL total capital**, fresh cash at most **4.175267240 SOL**, peak payer **4.176432240 SOL**, including conditional old credit and 0.05-SOL reserve. No spending is authorized. The 1,650-core/25-additional/39-signature inventory applies to the existing sequence only; B8 restrictive work/envelopes/reordering are not priced as unchanged. Re-quote actual balances/rents/fees and reapprove any variance; no new identities, priority fees or newly signed retries |
-| **B8 — Canary exposure choice** | **Confirmed app restriction/operator exposure, not merely missing proof** | **Recommended now: keep closed while B1/B2 are unresolved.** Then explicitly choose: accept the current app's public global opening and outsider trading/price/graduation risks; separately authorize restrictive sequence/envelope work with targeted compiler/review/budget validation; or do not run live. Existing grant/reviewer limits issuance, not traders. Confirm suitable independent grant inventory—the primary returned zero matching accounts but the secondary indexing request was denied. If accepting the baseline, approve the exact one-launch grant/expiry, metadata/ALT, ≤0.01-SOL wrap, one 1,000,200-raw-quote buy, bounded sell, 50-bps fresh min-out, fee collection/returns and restored closed state; these bound owner actions, not outsiders |
+| **B7 — Funding ceiling and finite inventory** | **Conditional owner budget approval; fresh quote still required** | Proposed restrictive route remains **4.176442240 SOL total capital**, fresh cash at most **4.175267240 SOL**, peak payer **4.176432240 SOL**. Inventory is 1,650 core + 23 additional messages/37 additional signatures; network fees 16,675,000 lamports. Creator tranche is 42,759,400 lamports; no new rent, priority fees or newly signed retries. The earlier launch-buffer peak keeps funding unchanged despite the 10,000-lamport net fee saving. Reapprove any fresh quote/identity/custody-wrapper variance; no spending is authorized |
+| **B8 — Restricted canary approval** | **Canary implementation/runtime gap resolved; owner production approval remains open** | Recommend only the fresh never-publicly-traded canary path: launch with swap paused, close creation, then atomic open/bound buy/close and fresh open/bounded sell/close. Ordinary app gates stay unchanged; do not use a public global trading window. Review the dedicated builders/settlements and actual final unsigned packet, approve DVdd co-signing both trades, one-launch grant/expiry, metadata/ALT, at most 0.01-SOL wrap, exact 1,000,200-raw buy, bounded sell, fresh 50-bps min-out, fee collection/returns and closed end state. Local synthetic acceptance is 18/18, not production execution permission. B1/B2 and independent grant inventory still block progression |
 | **B9 — Fresh stage-bound packet and review** | **Missing public inputs/freshness; stage-specific hold** | Accept staged reviews with no automatic continuation. Bind B2 identities before the paused packet; later bind actual deployment controls, warm ALT and finalized trade/claim/return amounts. Keep independent operators, account/ELF/authority checks, five-second/five-slot observations, 60-second/+96-slot review expiry and 1,232-byte limit. The core/subset snapshots have old blockhashes and are not executable local or mainnet packets. No signature, submission or validation bypass |
-| **B10 — Local rehearsal availability** | **Operational capacity/authorization gap, not a code defect** | Full-stack recovery remains unapproved. Require **2,147,483,648 bytes free on both Mac and VM data filesystem** before validator/app startup, then separate recovery authorization. Last measured Mac free space 1,879,375,872 bytes was below gate; guest capacity unverified. No VM/validator/bridge/app restart, new ledger initialization or compiler pull was performed; preserve all existing databases, ledgers, keys and evidence |
+| **B10 — Local rehearsal availability** | **Operational capacity/authorization gap for full-stack recovery** | Require **2,147,483,648 bytes free on both Mac and VM data filesystem**, plus separate recovery authorization, before validator/app startup. Current-task Mac measurement was 3,544,965,120 bytes free; guest capacity remains unverified. No VM/validator/bridge/app restart or ledger/database reset occurred. New canary testing used a fresh in-memory SVM and a private isolated Python dependency directory only; preserve all existing databases, ledgers, keys and acceptance evidence |
 
 **Evidence carry-forward and limited rechecks.** Keep the original browser,
 historical-fixture, wallet-switch, fee, E73/B2 upgrade, bridge, ALT and finality
 acceptance records, plus commit `6137392`'s five-test/smoke/preservation evidence.
-This documentation-only consolidation invalidates none of them; no tests or
-financial flows are rerun. B6 records a genuinely uncovered case, not a request
-to repeat completed tests. On later authorized recovery, check only availability,
-retained genesis/ELFs/ALT and database/receipt preservation; do not recreate or
+The new canary-only diff was exercised separately; only its targeted tests ran.
+B6 remains an uncovered loader branch, not a request to repeat accepted tests.
+On later authorized full-stack recovery, check availability, retained
+genesis/ELFs/ALT and database/receipt preservation; do not recreate or
 replay accepted launches/trades. An approved cap/recipient/config change requires
 only its affected policy/boundary/recipient, account/ALT binding and transaction
 size checks. Fresh signing-time state/fee/expiry reads are mandatory even without
@@ -1019,7 +1103,10 @@ snapshot; `fresh-reader-boundary.private.json` preserves the successful
 not make the old blockhash or state fresh.
 
 The proposed **4.176442240 SOL** capital ceiling is unchanged. Independent review
-reconciled 1,650 core messages plus at most 25 additional messages/39 signatures.
+reconciled the historical public-window sequence of 1,650 core plus 25 additional
+messages/39 signatures. That retained snapshot is not overwritten. The current
+atomic-canary recommendation above instead uses 23 additional messages/37
+signatures and reduces network fees by 10,000 lamports; peak capital is unchanged.
 No extra retries, surcharge, identities or spending allowance were added.
 The manifest remains explicitly a **core review subset**, not a final canary:
 config/prefunder identities, post-upgrade deploy slots/controls, actual warm ALT,

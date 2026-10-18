@@ -8,7 +8,7 @@ import BN from 'bn.js'
 import bs58 from 'bs58'
 import {PublicKey,VersionedTransaction} from '@solana/web3.js'
 import {encodeHookAccountList} from '@repo-ing/hooklab-production-candidate'
-import {compileMaxWalletLaunchReview} from './hooklab-max-wallet-launch.mjs'
+import {compileMaxWalletLaunchReview,compileCanaryMaxWalletLaunchReview} from './hooklab-max-wallet-launch.mjs'
 import {productionAccountBindingMatches} from './hooklab-production-observer.mjs'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inspectHookLabMessage,verifyHookLabSignedMessage} from './hooklab-message-boundary.mjs'
@@ -39,9 +39,9 @@ function size(b,t,field){
 function accountBytes(b,name,value){const bytes=Buffer.alloc(8+size(b,{defined:{name}}));Buffer.from(b.idl.accounts.find(a=>a.name===name).discriminator).copy(bytes);b.coder.types.encode(name,value).copy(bytes,8);return bytes}
 function eventBytes(b,name,value){return Buffer.concat([tag,Buffer.from(b.idl.events.find(e=>e.name===name).discriminator),b.coder.types.encode(name,value)])}
 function decode(b,name,account){check(account&&!account.executable);const bytes=raw(account.dataBase64),v=b.coder.accounts.decode(name,bytes);check(accountBytes(b,name,v).equals(bytes));return v}
-function context(input){
- check(input?.schema==='repoing/max-wallet-launch-settlement-context/1')
- const ci=input.compilationInput,plan=compileMaxWalletLaunchReview(ci),p=JSON.parse(ci.profile.json)
+function context(input,canary=false){
+ check(input?.schema===(canary?'repoing/canary-max-wallet-launch-settlement-context/1':'repoing/max-wallet-launch-settlement-context/1'))
+ const ci=input.compilationInput,plan=(canary?compileCanaryMaxWalletLaunchReview:compileMaxWalletLaunchReview)(ci),p=JSON.parse(ci.profile.json)
  const bindings={launch:binding(JSON.parse(raw(ci.profile.idls.launch))),swap:binding(JSON.parse(raw(ci.profile.idls.swap))),token:binding(tokenIdl)}
  // Token IDL is used only as a frozen account-layout codec, never to choose a
  // program address. Actual token identity and executable bytes are operator-pinned.
@@ -50,9 +50,11 @@ function context(input){
 }
 // Pure expected-state derivation: no acceptance/authority. Useful for offline
 // verification and local synthetic tests; callers cannot provide expected bytes.
-export function deriveMaxWalletLaunchPostconditions(settlementContext,{slot,timestamp}){
+export function deriveMaxWalletLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,false)}
+export function deriveCanaryMaxWalletLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,true)}
+function derivePostconditions(settlementContext,{slot,timestamp},canary){
  int(slot);int(timestamp)
- const {ci,plan,p,b,before}=context(settlementContext),r=plan.request,a=plan.addresses,{launch:L,swap:S,token:T,gate:G}=p.programs
+ const {ci,plan,p,b,before}=context(settlementContext,canary),r=plan.request,a=plan.addresses,{launch:L,swap:S,token:T,gate:G}=p.programs
  const lc=decode(b.launch,'Config',before.get(a.launchConfig)),sc=decode(b.swap,'Config',before.get(a.swapConfig)),auth=decode(b.launch,'CreatorAuthorization',before.get(a.authorization))
  const quote=decode(b.token,'Mint',before.get(p.quoteMint)),supply=BigInt(lc.supply.toString()),curve=supply*BigInt(lc.curve_bps)/10000n,reserve=supply-curve,vbase=curve*reserve/(curve-reserve),vquote=BigInt(r.virtualQuote),graduation=vquote*(curve-reserve)/reserve
  const inclusive=r.policyVersion===2
@@ -99,10 +101,12 @@ function authenticatedEvents(tx,b,programs){
  }
  return events
 }
-export async function collectMaxWalletLaunchSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature}){
+export function collectMaxWalletLaunchSettlement(args){return collectSettlement(args,false)}
+export function collectCanaryMaxWalletLaunchSettlement(args){return collectSettlement(args,true)}
+async function collectSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature},canary){
  let identity={signature,messageSha256:review?.messageSha256,profileSha256:review?.profileSha256,configurationSha256:settlementContext?.configurationSha256}
  try{
-  const {config:c,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),{ci,plan,p,b,before}=context(settlementContext)
+  const {config:c,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),{ci,plan,p,b,before}=context(settlementContext,canary)
   check(settlementContext.configurationSha256===sha(JSON.stringify(c))&&isDeepStrictEqual(ci.profile,profile)&&isDeepStrictEqual(plan.review,review))
   for(const pin of d.accounts){const account=before.get(pin.address);check(productionAccountBindingMatches(pin,account,d))}
   const signed=verifyHookLabSignedMessage(review,signedTransactionBase64);check(signed.signature===signature&&review.profileSha256===c.profileSha256)
@@ -133,7 +137,7 @@ export async function collectMaxWalletLaunchSettlement({config,profile,dossierJs
   add(review.payer,-fee)
   if(t.error!==null){check(t.keys.every((k,i)=>BigInt(t.post[i])-BigInt(t.pre[i])===(deltas.get(k)??0n)));return {...identity,status:'finalized-failure',inclusion,transactionSha256:sha(JSON.stringify(t)),feeLamports:String(fee)}}
   const events=authenticatedEvents(t,b,p.programs);check(events.length===2&&events.filter(x=>x.name==='LaunchCreated').length===1&&events.filter(x=>x.name==='PoolCreated').length===1)
-  const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),expected=deriveMaxWalletLaunchPostconditions(settlementContext,{slot:t.slot,timestamp})
+  const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),expected=derivePostconditions(settlementContext,{slot:t.slot,timestamp},canary)
   check(isDeepStrictEqual(events.map(({data,...e})=>e).sort((a,b)=>a.name.localeCompare(b.name)),expected.events.sort((a,b)=>a.name.localeCompare(b.name))))
   const want=new Map(expected.accounts.map(x=>[x.address,x])),actual=new Map(snapshotInventory.map((k,i)=>[k,accounts[i]]))
   for(const pin of d.programs){const pd=actual.get(pin.programData);check(pd&&pd.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&!pd.executable&&sha(raw(pd.dataBase64))===pin.programDataSha256&&pin.deploySlot<=t.slot)}

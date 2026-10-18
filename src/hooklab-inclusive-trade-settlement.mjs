@@ -9,7 +9,8 @@ import BN from 'bn.js'
 import {verifyHookLabSignedMessage,inspectHookLabMessage} from './hooklab-message-boundary.mjs'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inclusiveCreatorFee,modelInclusiveCreatorQuote} from './hooklab-inclusive-fee-quote.mjs'
-import {compileInclusiveMaxWalletSwapReview} from './hooklab-inclusive-max-wallet-swap.mjs'
+import {compileInclusiveMaxWalletSwapReview,compileCanaryInclusiveMaxWalletSwapReview} from './hooklab-inclusive-max-wallet-swap.mjs'
+import {canarySwapTransition,verifyCanaryGovernanceLogs} from './hooklab-canary-policy.mjs'
 const check=v=>{if(!v)throw Error('Inclusive receipt evidence differs')},sha=x=>createHash('sha256').update(x).digest('hex')
 const n=x=>x.toString(),pk=x=>new PublicKey(x),tag=Buffer.from('e445a52e51cb9a1d','hex')
 const tokenIdlBytes=readFileSync(`${process.cwd()}/vendor/hooklab-production-candidate/idl/bordrless_token.json`)
@@ -17,8 +18,10 @@ check(sha(tokenIdlBytes)==='93aaa54d2e0c22e444793ac84387c357d73b745d482becada32d
 const tokenCoder=new BorshCoder(JSON.parse(tokenIdlBytes))
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
 // Derive exact affected post-state from retained authenticated pre-state and event timestamp.
-export function deriveInclusiveTradePostconditions(ci, timestamp) {
- const plan=compileInclusiveMaxWalletSwapReview(ci),q=plan.quote,r=plan.request,a=plan.addresses,buy=r.side==='buy'
+export function deriveInclusiveTradePostconditions(ci, timestamp) { return derivePostconditions(ci,timestamp,false) }
+export function deriveCanaryInclusiveTradePostconditions(ci, timestamp) { return derivePostconditions(ci,timestamp,true) }
+function derivePostconditions(ci,timestamp,canary) {
+ const plan=(canary?compileCanaryInclusiveMaxWalletSwapReview:compileInclusiveMaxWalletSwapReview)(ci),q=plan.quote,r=plan.request,a=plan.addresses,buy=r.side==='buy'
  const before=new Map(ci.observations[0].accounts.map(x=>[x.address,x.account]))
  const expected=new Map([...before].map(([address,v])=>[address,v?(({lamports,...rest})=>rest)(v):null]))
  const update=(role,type,address,edit)=>{
@@ -36,17 +39,20 @@ export function deriveInclusiveTradePostconditions(ci, timestamp) {
  for(const [name,amount]of [['baseVault',q.after.baseReserve],['quoteVault',q.after.quoteVault],['traderBase',q.after.traderBase],['traderQuote',q.after.traderQuote],['launchQuote',q.after.launchQuote]]){
   const old=expected.get(a[name]),bytes=Buffer.from(old.dataBase64,'base64');bytes.writeBigUInt64LE(BigInt(amount),74);expected.set(a[name],{...old,dataBase64:bytes.toString('base64')})
  }
+ if(canary){const old=expected.get(a.swapGovernance);expected.set(a.swapGovernance,{...old,dataBase64:plan.canary.finalGovernanceDataBase64})}
  return [...expected].map(([address,account])=>({address,account}))
 }
-export async function collectInclusiveTradeSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature}){
+export function collectInclusiveTradeSettlement(args){return collectSettlement(args,false)}
+export function collectCanaryInclusiveTradeSettlement(args){return collectSettlement(args,true)}
+async function collectSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature},canary){
  const identity={signature,messageSha256:review?.messageSha256,profileSha256:review?.profileSha256}
  try{
   const bound=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),ci=settlementContext.compilationInput
-  check(settlementContext.schema==='repoing/inclusive-trade-settlement-context/1'&&isDeepStrictEqual(ci.profile,profile))
-  const plan=compileInclusiveMaxWalletSwapReview(ci),r=plan.request,q=plan.quote,p=bound.profile
+  check(settlementContext.schema===(canary?'repoing/canary-inclusive-trade-settlement-context/1':'repoing/inclusive-trade-settlement-context/1')&&isDeepStrictEqual(ci.profile,profile))
+  const plan=(canary?compileCanaryInclusiveMaxWalletSwapReview:compileInclusiveMaxWalletSwapReview)(ci),r=plan.request,q=plan.quote,p=bound.profile
   check(isDeepStrictEqual(plan.review,review)&&verifyHookLabSignedMessage(review,signedTransactionBase64).signature===signature)
   const pinned=[...new Set(bound.dossier.programs.flatMap(p=>[p.address,p.programData]))]
-  const inventory=[...pinned,plan.addresses.policy,plan.addresses.inclusiveFeePolicy]
+  const inventory=[...new Set([...pinned,plan.addresses.policy,plan.addresses.inclusiveFeePolicy])]
   const observedAtMs=Date.now()
   const rows=await Promise.all(connections.map(async({provider,connection})=>{
    check(await connection.getGenesisHash()===p.genesisHash)
@@ -70,7 +76,7 @@ export async function collectInclusiveTradeSettlement({config,profile,dossierJso
    return {provider,stateAccounts,observation:{provider,genesisHash:p.genesisHash,commitment:'finalized',slot:snapshot.context.slot,observedAtMs,
      accounts:stateAccounts.filter(x=>pinned.includes(x.address)).map(x=>{check(x.account);return x.account})},
     evidence:{slot,parentSlot:block.parentSlot,blockHeight:block.blockHeight,transactionIndex:block.signatures.indexOf(signature),blockhash:block.blockhash,previousBlockhash:block.previousBlockhash,error:meta.err,fee:integer(meta.fee),pre:meta.preBalances,post:meta.postBalances,
-     keys:addresses,instructions:tx.transaction.message.compiledInstructions.map(x=>({programIdIndex:x.programIdIndex})),innerInstructions:meta.innerInstructions}}
+     keys:addresses,instructions:tx.transaction.message.compiledInstructions.map(x=>({programIdIndex:x.programIdIndex})),innerInstructions:meta.innerInstructions,...(canary?{logs:meta.logMessages}:{})}}
   }))
   if(rows.some(x=>x===null))return {...identity,status:'unresolved'}
   if(!isDeepStrictEqual(rows[0].evidence,rows[1].evidence))return {...identity,status:'conflict'}
@@ -93,6 +99,18 @@ export async function collectInclusiveTradeSettlement({config,profile,dossierJso
   check(tx.keys.every((k,i)=>BigInt(integer(tx.post[i]))-BigInt(integer(tx.pre[i]))===(k===review.payer?-BigInt(fee):0n)))
   const inclusion={slot:tx.slot,parentSlot:tx.parentSlot,blockHeight:tx.blockHeight,transactionIndex:tx.transactionIndex,blockhash:tx.blockhash,previousBlockhash:tx.previousBlockhash}
   if(tx.error!==null)return {...identity,status:'finalized-failure',inclusion,feeLamports:fee,transactionSha256:sha(JSON.stringify(tx))}
+  const execution=verifyTradeEvents({ci,plan,tx,canary})
+  return {...identity,status:'finalized-success',executionStatus:'finalized-executed',
+   reviewSlotBoundExceeded:tx.slot>review.validUntilSlot,reviewSlotCeilingEnforcedOnchain:false,
+   policyReviewRequired:execution.quote.priceImpactReviewBoundExceeded||tx.slot>review.validUntilSlot,reviewBoundsSatisfied:!execution.quote.priceImpactReviewBoundExceeded&&tx.slot<=review.validUntilSlot,
+   onchainMinimumOutputSatisfied:true,impactCeilingEnforcedOnchain:false,inclusion,feeLamports:fee,quote:execution.quote,
+   tokenBalances:execution.tokenBalances,transactionSha256:sha(JSON.stringify(tx)),authenticatedFeeEvent:true,authenticatedTokenBalanceEvents:true,
+   ...(canary?{governanceTransitionsVerified:true,tradingPausedAtCommit:true,governanceRevision:plan.canary.finalRevision}:{})}
+ }catch{return {...identity,status:'unresolved'}}
+}
+function verifyTradeEvents({ci,plan,tx,canary}){
+ const p=JSON.parse(ci.profile.json),r=plan.request,actionIndex=canary?3:2
+ const profile=ci.profile
   const idl=JSON.parse(Buffer.from(profile.idls.swap,'base64')),coder=new BorshCoder(idl),events=[],transfers=[]
   const eventAuthority=PublicKey.findProgramAddressSync([Buffer.from('__event_authority')],pk(p.programs.swap))[0].toBase58(),groups=new Set()
   for(const group of tx.innerInstructions){check(Number.isInteger(group.index)&&group.index>=0&&group.index<tx.instructions.length&&!groups.has(group.index));groups.add(group.index)
@@ -101,7 +119,7 @@ export async function collectInclusiveTradeSettlement({config,profile,dossierJso
     if(program===p.programs.token){
      const bytes=Buffer.from(bs58.decode(ix.data));if(!bytes.subarray(0,8).equals(tag))continue
      const authority=PublicKey.findProgramAddressSync([Buffer.from('__event_authority')],pk(program))[0].toBase58()
-     check(group.index===2&&parent===program&&stack[h-2]===p.programs.swap&&ix.accounts.length===1&&tx.keys[ix.accounts[0]]===authority)
+     check(group.index===actionIndex&&parent===program&&stack[h-2]===p.programs.swap&&ix.accounts.length===1&&tx.keys[ix.accounts[0]]===authority)
      const event=tokenCoder.events.decode(bytes.subarray(8).toString('base64'));check(event?.name==='Transferred')
      const def=JSON.parse(tokenIdlBytes).events.find(x=>x.name===event.name)
      check(Buffer.concat([tag,Buffer.from(def.discriminator),tokenCoder.types.encode(event.name,event.data)]).equals(bytes))
@@ -109,7 +127,7 @@ export async function collectInclusiveTradeSettlement({config,profile,dossierJso
     }
     if(program!==p.programs.swap)continue
     const bytes=Buffer.from(bs58.decode(ix.data));if(!bytes.subarray(0,8).equals(tag))continue
-    check(group.index===2&&parent===program&&ix.accounts.length===1&&tx.keys[ix.accounts[0]]===eventAuthority)
+    check(group.index===actionIndex&&parent===program&&ix.accounts.length===1&&tx.keys[ix.accounts[0]]===eventAuthority)
     const event=coder.events.decode(bytes.subarray(8).toString('base64'));check(event)
     const def=idl.events.find(e=>e.name===event.name);check(Buffer.concat([tag,Buffer.from(def.discriminator),coder.types.encode(event.name,event.data)]).equals(bytes))
     if(['InclusiveCreatorFeeAccrued','Swapped'].includes(event.name))events.push(event)
@@ -118,12 +136,12 @@ export async function collectInclusiveTradeSettlement({config,profile,dossierJso
   check(events.length===2)
   const f=events.find(x=>x.name==='InclusiveCreatorFeeAccrued')?.data,s=events.find(x=>x.name==='Swapped')?.data,buy=r.side==='buy'
   const execution=verifyInclusiveTradeExecution({ci,plan,feeEvent:f,swapEvent:s,transfers,slot:tx.slot})
-  return {...identity,status:'finalized-success',executionStatus:'finalized-executed',
-   reviewSlotBoundExceeded:tx.slot>review.validUntilSlot,reviewSlotCeilingEnforcedOnchain:false,
-   policyReviewRequired:execution.quote.priceImpactReviewBoundExceeded||tx.slot>review.validUntilSlot,reviewBoundsSatisfied:!execution.quote.priceImpactReviewBoundExceeded&&tx.slot<=review.validUntilSlot,
-   onchainMinimumOutputSatisfied:true,impactCeilingEnforcedOnchain:false,inclusion,feeLamports:fee,quote:execution.quote,
-   tokenBalances:execution.tokenBalances,transactionSha256:sha(JSON.stringify(tx)),authenticatedFeeEvent:true,authenticatedTokenBalanceEvents:true}
- }catch{return {...identity,status:'unresolved'}}
+ if(canary){
+  const binding={idl,coder},row=ci.observations[0].accounts.find(x=>x.address===plan.addresses.swapGovernance)
+  const gov=coder.accounts.decode('Governance',Buffer.from(row.account.dataBase64,'base64'))
+  verifyCanaryGovernanceLogs({logs:tx.logs,binding,transition:canarySwapTransition(binding,gov,plan.addresses),instructions:plan.instructions,timestamp:n(s.ts)})
+ }
+ return execution
 }
 
 // Called only after the collector authenticates canonical self-CPI event bytes,

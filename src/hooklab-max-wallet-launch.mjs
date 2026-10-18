@@ -12,6 +12,7 @@ import { maxWalletPreparationRequestSchema, maxWalletProfileSchema } from './hoo
 import { inclusiveMaxWalletPreparationRequestSchema, parseMaxWalletProfile, parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
 import { inclusiveEconomicsHash, inclusiveHookAccountsHash, inclusiveFeePolicyAddress } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
+import { canaryGateMatches } from './hooklab-canary-policy.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -89,6 +90,12 @@ const collectedInputSchema = inputSchema.extend({ preparationEvidence: collected
 export function compileMaxWalletLaunchReview(input) {
   return compileLaunch(collectedInputSchema.parse(input), false)
 }
+// Dedicated unsigned canary compiler: creation open, trading closed. No route enables it.
+export function compileCanaryMaxWalletLaunchReview(input) {
+  const parsed = collectedInputSchema.parse(input)
+  check(parsed.request.policyVersion === 2, 'Canary requires the inclusive candidate')
+  return compileLaunch(parsed, false, true)
+}
 // Derive the exact inventory from pinned ABI/config; this does not trust their semantics.
 export function maxWalletLaunchInventory(envelope, request, launchConfigBytes) {
   const profile = parseMaxWalletProfile(JSON.parse(envelope.json))
@@ -130,11 +137,11 @@ function programEvidence(accounts, program, expected, length, slot, immutable) {
   check(elf.subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])) && sha(elf) === expected
     && db.subarray(45 + length).every(b => b === 0), 'Program ELF differs')
 }
-function governance(binding, role, program, configAddress, config, gov, genesis) {
+function governance(binding, role, program, configAddress, config, gov, genesis, canary) {
   const s = gov.state, roles = Object.values(s.roles).map(str)
   check(str(s.program) === program && str(s.config) === configAddress && Buffer.from(s.genesis).equals(kb(genesis))
     && str(s.roles.admin) === str(config.admin) && str(s.roles.treasury) === str(config.treasury)
-    && !s.gates.creation && !s.gates.trading && s.pending_admin === null
+    && (canary ? canaryGateMatches(role, config, s, true) : !s.gates.creation && !s.gates.trading) && s.pending_admin === null
     && (role !== 'swap' || str(config.fee_collector) === str(config.treasury))
     && new Set(roles).size === 4 && !roles.includes(zero), 'Governance identity, roles or gates differ')
   check(gov.bump === bump(program, 'governance'), 'Governance bump differs')
@@ -185,7 +192,7 @@ function exactMetas(profile, r, c, a, binding) {
 export function buildMaxWalletLaunchReviewForFixture(input) {
   return compileLaunch(inputSchema.parse(input), true)
 }
-function compileLaunch(input, fixture) {
+function compileLaunch(input, fixture, canary = false) {
   const { profile: envelope, request: r, observations, preparationEvidence: proof, reviewedStateHashes, recentBlockhash: bh, lookupTable, limits: l } = input
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
@@ -203,9 +210,10 @@ function compileLaunch(input, fixture) {
   const accounts = new Map(observations[0].accounts.map(item => { check(!item.account || item.account.address === item.address, 'Account identity differs'); return [item.address, item.account] }))
   check(accounts.size === observations[0].accounts.length, 'Duplicate observation account')
   const c = decoded(launch, 'Config', owned(accounts, pda(L, 'config'), L, 250)), d = decoded(swap, 'Config', owned(accounts, pda(S, 'config'), S, 189))
-  check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && !c.paused && !d.paused
+  check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && !c.paused && d.paused === canary
     && c.reserved.every(x => x === 0) && d.reserved.every(x => x === 0), 'Config version, reserved state or pause differs')
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury) && str(c.admin) === r.reviewer, 'Current admin, treasury or quote differs')
+  if (canary) check(str(c.admin) === str(d.admin), 'Canary requires the existing shared admin role')
   const a = addressesFor(profile, r, c), metas = exactMetas(profile, r, c, a, launch)
   const inventory = [...new Set([...metas.map(m => str(m.pubkey)), a.launchProgramData, a.swapProgramData, a.swapGovernance, r.feePayer])].sort()
   check(isDeepStrictEqual([...accounts.keys()].sort(), inventory), 'Incomplete or extra launch inventory')
@@ -240,7 +248,7 @@ function compileLaunch(input, fixture) {
   const observedHashes = Object.fromEntries(Object.keys(reviewedStateHashes).map(name => [name, sha(raw(accounts.get(name === 'quoteMint' ? profile.quoteMint : a[name])?.dataBase64 ?? '', 8192))]))
   check(isDeepStrictEqual(reviewedStateHashes, observedHashes), 'Reviewed current state hashes differ')
   const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
-  const launchGov = governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash), swapGov = governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash)
+  const launchGov = governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, canary), swapGov = governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, canary)
   const auth = decoded(launch, 'CreatorAuthorization', owned(accounts, a.authorization, L, 73)), slot = Math.max(...observations.map(o => o.slot))
   check(str(auth.creator) === r.creator && auth.enabled && n(auth.consumed) < n(auth.max_launches) && n(auth.expires_at_slot) > BigInt(l.validUntilSlot), 'Current creator grant, quota or exclusive expiry differs')
   // The quote is a native-token mint. Decode its option fields without borrowing a launch builder.
@@ -305,7 +313,7 @@ function compileLaunch(input, fixture) {
   const keys = message.getAccountKeys({ addressLookupTableAccounts: tables }), bytes = message.serialize()
   const priority = (BigInt(l.computeUnitLimit) * BigInt(l.computeUnitPriceMicroLamports) + 999999n) / 1000000n
   check(BigInt(bh.networkFeeLamports) === BigInt(message.header.numRequiredSignatures) * BigInt(bh.lamportsPerSignature) + priority, 'Network fee quote differs from explicit signature fee basis')
-  const review = { schema: 'hooklab-message-review/1', operation: fixture ? 'max-wallet-launch-fixture' : 'max-wallet-launch', genesisHash: profile.genesisHash, profileSha256: envelope.expectedSha256,
+  const review = { schema: 'hooklab-message-review/1', operation: canary ? 'canary-max-wallet-launch' : fixture ? 'max-wallet-launch-fixture' : 'max-wallet-launch', genesisHash: profile.genesisHash, profileSha256: envelope.expectedSha256,
     policySha256: sha(JSON.stringify({ proof, reviewedStateHashes, observations })), intentSha256: sha(JSON.stringify(r)), payer: r.feePayer, wallet: r.creator,
     messageBase64: Buffer.from(bytes).toString('base64'), messageSha256: sha(bytes), requiredSigners: message.staticAccountKeys.slice(0, message.header.numRequiredSignatures).map(str),
     accounts: Array.from({ length: keys.length }, (_, i) => ({ address: str(keys.get(i)), signer: message.isAccountSigner(i), writable: message.isAccountWritable(i) })),
@@ -319,7 +327,7 @@ function compileLaunch(input, fixture) {
   // Solana compiles their privilege union; this is expected and never widens Policy/registry.
   const effective = { ...canonicalInstruction, accounts: canonicalInstruction.accounts.map(m => review.accounts.find(a => a.address === m.address)) }
   check(isDeepStrictEqual(inspected.instructions[2], effective), 'Effective instruction metas differ from canonical max-wallet launch policy')
-  return freeze({ schema: 'repoing/max-wallet-launch-review/1', status: fixture ? 'offline-synthetic-review-only' : 'unauthenticated-deterministic-review-only', provenance: fixture ? proof.provenance : 'compiler-inputs-not-authority', sourceCommit: profile.sourceCommit,
+  return freeze({ schema: canary ? 'repoing/canary-max-wallet-launch-review/1' : 'repoing/max-wallet-launch-review/1', status: fixture ? 'offline-synthetic-review-only' : 'unauthenticated-deterministic-review-only', provenance: fixture ? proof.provenance : 'compiler-inputs-not-authority', sourceCommit: profile.sourceCommit,
     sourcePatchSha256: profile.sourcePatchSha256, releaseProfileSha256: envelope.expectedSha256, request: r, addresses: a, review, canonicalInstruction, instructions: inspected.instructions,
     policyKind: 'max-wallet', policyVersion: r.policyVersion, ...(inclusive?{feeModel:2,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps}:{}), policy: { initialSupply: n(policy.initial_supply).toString(), capBps: policy.cap_bps,
       capRaw: (n(policy.initial_supply) * BigInt(policy.cap_bps) / 10000n).toString(), endsAt: 'authenticated-graduation', poolExemption: 'canonical-pool-only' },
