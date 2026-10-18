@@ -22,6 +22,7 @@ UPGRADE="upgrade=$C/production-upgrade-authority-v1/material/primary:production-
 CREATOR="creator=$C/controlled-test-identities-v1/material/primary:dedicated-creator"
 MINT="mint=$C/controlled-test-identities-v1/material/primary:separate-mint"
 H="node scripts/hooklab-owner.mjs"
+CFG="$HOME/.hooklab-owner/mainnet.config.json"   # your private copy with your approvals (never committed)
 ```
 
 Reads use two public providers by default (api.mainnet-beta.solana.com and
@@ -71,12 +72,13 @@ fee sweeps land.
 
 ## 4. Canary (private, controlled creator)
 
-1. Selected-config key (owner, single use):
-   `solana-keygen new --no-bip39-passphrase --silent --outfile "$C/selected-config-canary.json"`;
-   put `solana-keygen pubkey "$C/selected-config-canary.json"` into
-   `decisions.selectedConfig.value`. It signs only `canary-prepare`; delete the
-   file once that stage is finalized (the account it created needs no key).
-2. `canary-prepare`: creator, mint, `selectedConfig="$C/selected-config-canary.json"` (plain path, no wrapper name).
+1. Selected-config key (owner, single use, encrypted in custody):
+   `~/Documents/ChatGPT/hooks-local-state/owner-tools/hooklab-oneshot-key canary-selected-config-v1 selected-config`
+   generates the key in memory, stores only its AES-GCM envelope in custody and the wrapping key in
+   your login Keychain, and prints the public address. Put that address into
+   `decisions.selectedConfig.value`. It signs only `canary-prepare` and controls nothing afterwards.
+2. `canary-prepare`: creator, mint, selectedConfig, opened together:
+   `$K "$CREATOR" "$MINT" "selected=$C/canary-selected-config-v1/primary:selected-config" -- $H execute canary-prepare --config "$CFG" --message-sha256 <SHA> --key creator={creator} --key mint={mint} --key selectedConfig={selected}`
 3. `alt` twice: payer (creates the canary table, 0.0097 SOL rent).
 4. `canary-gates-open-creation` **approval flag**: payer, admin.
 5. `canary-launch`: creator, mint, admin.
@@ -121,16 +123,19 @@ Variables (values never go in chat or Git):
 | `HOOK_OWNER_APPROVED_LAUNCHES`, `HOOK_NATIVE_LAUNCH_ENABLED`, `HOOK_WALLET_IDENTITY_ENABLED` | `true` |
 | `HOOK_WALLET_IDENTITY_ORIGIN` / `_DATABASE_URL` | existing wallet identity settings |
 | `HOOK_LAUNCH_ADMIN_ADDRESS` | `DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5` |
-| `HOOK_OWNER_APPROVAL_TOKEN_SHA256` | `security find-generic-password -s repoing-owner-agent -w \| tr -d '\n' \| shasum -a 256` |
-| `HOOK_NATIVE_KEYRING_JSON` / `HOOK_NATIVE_ACTIVE_KEY_ID` | `{"k-2026-10":"<openssl rand -base64 32>"}` / `k-2026-10` |
+| `HOOK_OWNER_APPROVAL_TOKEN_SHA256` | printed by `hooklab-server-secrets token` |
+| `HOOK_NATIVE_KEYRING_JSON` / `HOOK_NATIVE_ACTIVE_KEY_ID` | pasted from `hooklab-server-secrets copy-keyring` / `k-2026-10` |
 | `HOOKLAB_PRODUCTION_BUNDLE_FILE` / `_SHA256` | printed by step 6 |
 | `HOOKLAB_PRODUCTION_RPC_PRIMARY_URL` / `_SECONDARY_URL` | same two URLs as step 6, same order |
 | `HOOKLAB_PRIORITY_MICROLAMPORTS` | `10000` recommended (about 0.000014 SOL per customer transaction) |
 | `HOOK_INCLUSIVE_TRADING_ENABLED` | `true` only at public activation |
 
-The owner-agent token: `openssl rand -hex 32 | pbcopy`, then
-`security add-generic-password -s repoing-owner-agent -a "$USER" -w` and paste
-at its prompt. On start-up the server logs either nothing or
+Server credentials (owner-run; values never shown, written to disk or put in arguments), with
+`T=~/Documents/ChatGPT/hooks-local-state/owner-tools` (hashes in its `REVIEW-MANIFEST.sha256`):
+`$T/hooklab-server-secrets token` (stores the agent token in your Keychain, prints its SHA-256),
+`$T/hooklab-server-secrets keyring` (stores the key ring), then with Railway's variable editor open
+`$T/hooklab-server-secrets copy-keyring` (clipboard for 60 s, then cleared). The admin key never goes
+to the server. On start-up the server logs either nothing or
 `Hook Lab production bootstrap refused: <reason>`.
 
 ## 8. Owner agent (while launches are open)

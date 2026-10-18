@@ -11,7 +11,7 @@ import { readAccounts } from '../rpc.mjs'
 import { check } from './common.mjs'
 
 export const EVENT_TAG = Buffer.from('e445a52e51cb9a1d', 'hex')
-export const SELECTED_CONFIG_COMMAND = 'solana-keygen new --no-bip39-passphrase --silent --outfile "<owner custody dir>/selected-config-keypair.json"  # owner-run, inside custody; then set decisions.selectedConfig.value to its public key'
+export const SELECTED_CONFIG_COMMAND = '~/Documents/ChatGPT/hooks-local-state/owner-tools/hooklab-oneshot-key canary-selected-config-v1 selected-config  # owner-run: encrypted in custody, wrapping key in your Keychain; then set decisions.selectedConfig.value to the printed address and sign canary-prepare with selected=<custody>/canary-selected-config-v1/primary:selected-config'
 
 export function canaryBlocked(ctx) {
   const reasons = []
