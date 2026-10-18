@@ -1,7 +1,7 @@
 // Shared lookup table for customer trades. A buy or sell touches 35 accounts and fits a packet only
 // when the 16 addresses common to every trade come from a table. Step 1 creates the table with
 // exactly those addresses (payer is authority and payer); step 2 freezes it, so its bytes, and the
-// production bundle's pin on them, can never change. Freezing is irreversible: the ~0.0057 SOL rent
+// production bundle's pin on them, can never change. Freezing is irreversible: the 0.00484 SOL rent
 // stays locked. Launches use their own per-launch tables (owner agent), not this one.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
@@ -64,7 +64,7 @@ export const tradeTable = {
     const freeze = AddressLookupTableProgram.freezeLookupTable({ lookupTable: new PublicKey(existing.address), authority: new PublicKey(payer) })
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'trade-table', payer, instructions: [freeze], pinned, snapshot: base, units: 30000 })
     return { observedSlot: base.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
-      notes: ['step 2 of 2: FREEZE the shared trade table. Irreversible: its addresses can never change and its rent (~0.0057 SOL) stays locked'],
+      notes: ['step 2 of 2: FREEZE the shared trade table. Irreversible: its addresses can never change and its rent (0.00484 SOL) stays locked'],
       sections: [{ title: 'freeze shared trade lookup table', rows: [`table ${existing.address}: ${inventory.length} addresses, authority ${payer} -> none (permanent)`] }],
       expect: { step: 'freeze', table: existing.address, inventory } }
   },

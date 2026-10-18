@@ -95,11 +95,11 @@
     "fund": {
       "value": {
         "creatorLamports": "50000000",
-        "adminLamports": "1000000",
+        "adminLamports": "50000000",
         "treasuryLamports": "1000000"
       },
       "approved": false,
-      "note": "payer -> creator 0.05 SOL (approved test funding); admin and treasury 0.001 SOL each so they exist as rent-exempt system accounts (canary launch and SOL fee collection need them)"
+      "note": "payer -> creator 0.05 SOL (approved test funding); admin 0.05 SOL pays per-launch lookup tables (0.0097 SOL rent each, returned by the owner agent reclaim); treasury 0.001 SOL so it is a rent-exempt system account (SOL fee collection needs it)"
     },
     "canaryWrapLamports": {
       "value": "1100000",

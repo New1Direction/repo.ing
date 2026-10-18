@@ -37,7 +37,7 @@ test('committed config template is unapproved, mainnet-pinned and has the review
   assert.ok(Object.values(config.decisions).every(x => x.approved === false))
   const v = Object.fromEntries(Object.entries(config.decisions).map(([k, x]) => [k, x.value]))
   assert.deepEqual([v.creatorFeeBps, v.maxCreatorFeeBps, v.maxRulesFeeBps, v.launchProtocolShareBps, v.protocolFeeBps, v.capBps, v.selectedConfig], [100, 200, 200, 2500, 0, 200, null])
-  assert.deepEqual([v.fund.creatorLamports, v.fund.adminLamports, v.fund.treasuryLamports], ['50000000', '1000000', '1000000'])
+  assert.deepEqual([v.fund.creatorLamports, v.fund.adminLamports, v.fund.treasuryLamports], ['50000000', '50000000', '1000000'])
   assert.deepEqual(v.canaryBuy, { amountInRaw: '1000200', slippageBps: 50, maxPriceImpactBps: 1000 })
   for (const stage of ['launch-config', 'swap-config', 'grant', 'gate-finalize', 'canary-buy']) assert.throws(() => assertExecutable(config, stage), /not approved|not chosen/)
   assert.throws(() => assertExecutable(config, 'canary-prepare'), /not chosen: selectedConfig/)
