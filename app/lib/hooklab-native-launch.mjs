@@ -41,7 +41,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     if(env.HOOK_OWNER_APPROVED_LAUNCHES==='true'){
      // Owner-approved release: prepare only the exact coin the owner invited for this wallet.
      const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS}),db=await pool.connect()
-     try{await db.query('begin');await approvals.bindLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri});await db.query('commit')}
+     try{await db.query('begin');await approvals.bindLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps});await db.query('commit')}
      catch(error){await db.query('rollback').catch(()=>{});return reply({status:'awaiting-owner',error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Wait for repo.ing to invite your launch request.'},409)}
      finally{db.release()}
     }

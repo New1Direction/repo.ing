@@ -16,7 +16,8 @@ import {maxWalletOperatorFixture} from './fixtures/hooklab-max-wallet-operator.m
 import {rebindMaxWalletLaunchFixture} from './fixtures/hooklab-max-wallet-launch-settlement.mjs'
 import {dropTestDatabase} from './fixtures/drop-test-database.mjs'
 import {ownerApprovalStore,remoteAdminSigner} from '../src/hooklab-owner-approval.mjs'
-import {verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair} from '../src/hooklab-owner-agent.mjs'
+import {verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,policyAddress} from '../src/hooklab-owner-agent.mjs'
+import {CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES} from '../src/hooklab-launch-menus.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),seed=label=>createHash('sha256').update(`LOCAL FULL RUNTIME TEST ONLY ${label}`).digest()
 const wallet=Keypair.fromSeed(seed('wallet')),adminKey=Keypair.fromSeed(seed('admin'))
 const signAdmin=message=>sign(null,message,createPrivateKey({key:Buffer.concat([Buffer.from('302e020100300506032b657004220420','hex'),seed('admin')]),format:'der',type:'pkcs8'}))
@@ -84,18 +85,24 @@ async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}=
      const {rows:[op]}=await pool.query('select review from hook_lab_native_signing_operations where message_sha256=$1',[row.message_sha256])
      const lookupTables=op.review.lookupTables.map(t=>decodeLookupTable(t.address,Buffer.from(t.dataBase64,'base64')))
      const signRequest={messageBase64:row.message_base64,messageSha256:row.message_sha256,signer:row.signer_address,validUntilSlot:row.valid_until_slot,lastValidBlockHeight:row.last_valid_block_height}
-     const invited={creator:owner,name:initial.request.name,symbol:initial.request.symbol,uri:initial.request.uri}
-     const approved={launchProgram:profile.programs.launch,admin:adminKey.publicKey.toBase58(),creatorFeeBps:initial.request.creatorFeeBps,feeModel:2}
+     const invited={creator:owner,name:initial.request.name,symbol:initial.request.symbol,uri:initial.request.uri,creatorFeeBps:initial.request.creatorFeeBps,capBps:initial.request.capBps}
+     const approved={launchProgram:profile.programs.launch,gateProgram:profile.programs.gate,admin:adminKey.publicKey.toBase58(),creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:2}
+     const policyKey=policyAddress(profile.programs.gate,op.review.accounts.find(a=>a.signer&&a.address!==owner&&a.address!==adminKey.publicKey.toBase58()).address),policyAccount=current.get(policyKey)
+     const policy=policyAccount&&{address:policyKey,owner:policyAccount.owner,data:Buffer.from(policyAccount.dataBase64,'base64')}
      const live={slot:startSlot,blockHeight:0}
      if(!ownerSignatures){
-      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited:{...invited,name:'Other coin'},approved,lookupTables,live}),/name, symbol or URI differs/)
-      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited:{...invited,creator:adminKey.publicKey.toBase58()},approved,lookupTables,live}),/not the invited creator/)
-      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited,approved:{...approved,creatorFeeBps:200},lookupTables,live}),/approved economics/)
-      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,live:{slot:Number(row.valid_until_slot)-5,blockHeight:0}}),/too close/)
-      assert.throws(()=>verifyLaunchSignRequest({signRequest,invited,approved,lookupTables:[],live}),/unresolved lookup table/)
+      const args={signRequest,invited,approved,lookupTables,policy,live}
+      assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,name:'Other coin'}}),/name, symbol or URI differs/)
+      assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,creator:adminKey.publicKey.toBase58()}}),/not the invited creator/)
+      assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,creatorFeeBps:200}}),/approved economics/)
+      assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,capBps:500}}),/wallet cap or fee policy differs/)
+      assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,creatorFeeBps:75}}),/not an approved choice/)
+      assert.throws(()=>verifyLaunchSignRequest({...args,policy:undefined}),/policy missing/)
+      assert.throws(()=>verifyLaunchSignRequest({...args,live:{slot:Number(row.valid_until_slot)-5,blockHeight:0}}),/too close/)
+      assert.throws(()=>verifyLaunchSignRequest({...args,lookupTables:[]}),/unresolved lookup table/)
      }
-     const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,live})
-     assert.equal(checked.creatorFeeBps,initial.request.creatorFeeBps)
+     const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,policy,live})
+     assert.equal(checked.creatorFeeBps,initial.request.creatorFeeBps);assert.equal(checked.capBps,initial.request.capBps)
      ownerSignatures++;await ownerStore.submitSignature(row.id,ownerAgentKey.signBase64(Buffer.from(row.message_base64,'base64')))
     }
    }}):{address:adminKey.publicKey.toBase58(),sign:signAdmin},expiryObserver:async()=>chainPastDeadline?{slot:10**9,blockHeight:10**9}:{slot:1,blockHeight:1},preparationLimits:prepLimits,launchLimits:limits})

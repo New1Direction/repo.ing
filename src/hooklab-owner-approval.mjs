@@ -4,12 +4,16 @@
 import { createHash,createPublicKey,randomUUID,verify } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
+import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES } from './hooklab-launch-menus.mjs'
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const address=z.string().refine(x=>{try{return new PublicKey(x).toBase58()===x}catch{return false}})
 const text=max=>z.string().min(1).refine(x=>Buffer.byteLength(x)<=max)
-export const launchIntentSchema=z.object({name:text(32),symbol:text(10),uri:z.string().refine(x=>Buffer.byteLength(x)<=200)}).strict()
+export const launchIntentSchema=z.object({name:text(32),symbol:text(10),uri:z.string().refine(x=>Buffer.byteLength(x)<=200),
+ creatorFeeBps:z.number().int().refine(x=>CREATOR_FEE_BPS_CHOICES.includes(x)),capBps:z.number().int().refine(x=>WALLET_CAP_BPS_CHOICES.includes(x))}).strict()
+
+const parseIntent=intent=>{try{return launchIntentSchema.parse(intent)}catch{throw fail('Choose a name, symbol, an approved creator fee (0.5%, 1% or 2%) and an approved wallet cap (1%, 2%, 3% or 5%)')}}
 
 export function verifyEd25519(signerAddress,message,signature){
  try{
@@ -24,7 +28,7 @@ async function inTransaction(pool,work){
  catch(error){await db.query('rollback').catch(()=>{});throw error}
  finally{db.release()}
 }
-const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,status:row.status,
+const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,status:row.status,
  invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString()})
 const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,messageBase64:row.message_base64,messageSha256:row.message_sha256,context:row.context,
  validUntilSlot:String(row.valid_until_slot),lastValidBlockHeight:String(row.last_valid_block_height),reviewExpiresAt:row.review_expires_at.toISOString(),status:row.status,createdAt:row.created_at.toISOString()})
@@ -50,9 +54,9 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    })
   },
   async createRequest(creator,{id,...intent}){
-   address.parse(creator);z.uuid().parse(id);const value=launchIntentSchema.parse(intent)
+   address.parse(creator);z.uuid().parse(id);const value=parseIntent(intent)
    try{
-    const {rows:[row]}=await pool.query("insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,status) values($1,$2,$3,$4,$5,'queued') returning *",[id,creator,value.name,value.symbol,value.uri])
+    const {rows:[row]}=await pool.query("insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status) values($1,$2,$3,$4,$5,$6,$7,'queued') returning *",[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps])
     return publicRequest(row)
    }catch(error){if(error.code==='23505')throw fail('You already have an open launch request');throw error}
   },
@@ -83,11 +87,11 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   },
   // Called on reserve: the creator may prepare only the exact coin the owner invited.
   async bindLaunch(db,creator,custodyOperationId,intent){
-   const value=launchIntentSchema.parse(intent)
+   const value=parseIntent(intent)
    await expireInvites(db)
    const {rows:[row]}=await db.query("select * from hook_lab_launch_requests where creator_wallet=$1 and status in ('invited','launching') for update",[address.parse(creator)])
    check(row,'Wait for repo.ing to invite your launch request')
-   check(row.name===value.name&&row.symbol===value.symbol&&row.uri===value.uri,'Launch details differ from the approved request')
+   check(row.name===value.name&&row.symbol===value.symbol&&row.uri===value.uri&&row.creator_fee_bps===value.creatorFeeBps&&row.cap_bps===value.capBps,'Launch details differ from the approved request')
    if(row.status==='launching'){check(row.custody_operation_id===custodyOperationId,'This request is already bound to another launch');return publicRequest(row)}
    check(row.invite_expires_at>new Date(),'Your launch invite expired')
    const {rows:[bound]}=await db.query("update hook_lab_launch_requests set status='launching',custody_operation_id=$2,updated_at=clock_timestamp() where id=$1 and status='invited' returning *",[row.id,z.uuid().parse(custodyOperationId)])

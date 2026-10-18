@@ -124,7 +124,7 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
     }
     if (new URL(form.uri).protocol !== 'https:') throw Error('Use an HTTPS metadata URL.')
     const next = { ...ids, operationId: ids.operationId || crypto.randomUUID() }; retain(next)
-    const value = await request({ action: 'reserve', operationId: next.operationId, ...form, ...(approvedIntent ?? {}), capBps: Number(form.capBps), creatorFeeBps: Number(form.creatorFeeBps) })
+    const value = await request({ action: 'reserve', operationId: next.operationId, ...form, capBps: Number(form.capBps), creatorFeeBps: Number(form.creatorFeeBps), ...(approvedIntent ?? {}) })
     if (receive(value)) {
       if (value.operationId !== next.operationId || !value.mint) throw Error('Reservation identity changed. Preserve the operation ID.')
       setReservation(value); setUncertain(false)
@@ -191,7 +191,7 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
     {!wallet && <button disabled={busy} onClick={() => run(() => connect())}>Connect wallet</button>}
     <HookWalletSignIn genesisHash={genesisHash} onIdentity={setIdentity}/>
     <section className="inner-card"><h2>New coin</h2><p>Choose a max-wallet cap and creator fee explicitly. Final costs and cap are shown from the verified server review. Virtual quote is a pricing input, not deposited SOL.</p>
-      {Object.entries({ label: 'Internal label', name: 'Coin name', symbol: 'Symbol', uri: 'Metadata HTTPS URL', capBps: 'Maximum wallet cap (basis points)', creatorFeeBps: 'Creator fee (basis points)', virtualQuote: 'Virtual quote (integer base units)' }).map(([key, label]) => <label key={key} style={{ display: 'block', marginBottom: 12 }}>{label}<input style={{ display: 'block', width: '100%' }} value={approvedIntent && ['name', 'symbol', 'uri'].includes(key) ? approvedIntent[key] : form[key]} disabled={busy || !!reservation || !!operation || (!!approvedIntent && ['name', 'symbol', 'uri'].includes(key))} inputMode={['capBps', 'creatorFeeBps', 'virtualQuote'].includes(key) ? 'numeric' : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })}/></label>)}
+      {Object.entries({ label: 'Internal label', name: 'Coin name', symbol: 'Symbol', uri: 'Metadata HTTPS URL', capBps: 'Maximum wallet cap (basis points)', creatorFeeBps: 'Creator fee (basis points)', virtualQuote: 'Virtual quote (integer base units)' }).map(([key, label]) => <label key={key} style={{ display: 'block', marginBottom: 12 }}>{label}<input style={{ display: 'block', width: '100%' }} value={approvedIntent && Object.hasOwn(approvedIntent, key) ? approvedIntent[key] : form[key]} disabled={busy || !!reservation || !!operation || (!!approvedIntent && Object.hasOwn(approvedIntent, key))} inputMode={['capBps', 'creatorFeeBps', 'virtualQuote'].includes(key) ? 'numeric' : undefined} onChange={event => setForm({ ...form, [key]: event.target.value })}/></label>)}
       <button disabled={!activeWallet || busy || !!operation || !!reservation || uncertain} onClick={reserve}>{busy ? 'Working…' : 'Reserve mint and check availability'}</button>
       {reservation && <><p>Reserved mint: {reservation.mint}</p><button disabled={!canAct} onClick={() => reviewStage('preparation')}>Get exact preparation review</button></>}
     </section>

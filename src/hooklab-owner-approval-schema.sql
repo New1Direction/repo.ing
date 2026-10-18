@@ -17,6 +17,8 @@ create table hook_lab_launch_requests (
  name text not null check(octet_length(name) between 1 and 32),
  symbol text not null check(octet_length(symbol) between 1 and 10),
  uri text not null check(octet_length(uri)<=200),
+ creator_fee_bps integer not null check(creator_fee_bps between 1 and 9999),
+ cap_bps integer not null check(cap_bps between 1 and 9999),
  status text not null check(status in ('queued','invited','launching','launched','declined','cancelled','invite-expired')),
  invited_at timestamptz,
  invite_expires_at timestamptz,

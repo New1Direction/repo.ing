@@ -26,7 +26,7 @@ function reviewFor(message,{validUntilSlot=1_000,lastValidBlockHeight=2_000,revi
  return {operation:'max-wallet-launch',messageBase64:bytes.toString('base64'),messageSha256:createHash('sha256').update(bytes).digest('hex'),
   requiredSigners:[creatorA,admin],validUntilSlot,lastValidBlockHeight,reviewExpiresAtMs}
 }
-const intent={name:'Canary Coin',symbol:'CNRY',uri:''}
+const intent={name:'Canary Coin',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:200}
 
 test('presence, queue, single invite and exact-detail binding',async()=>withDatabase(async pool=>{
  const store=ownerApprovalStore(pool,{adminAddress:admin})
@@ -41,6 +41,7 @@ test('presence, queue, single invite and exact-detail binding',async()=>withData
 
  const a=await store.createRequest(creatorA,{id:randomUUID(),...intent})
  await assert.rejects(store.createRequest(creatorA,{id:randomUUID(),...intent}),/already have an open/)
+ for(const off of [{creatorFeeBps:75},{capBps:250},{creatorFeeBps:0}])await assert.rejects(store.createRequest(creatorB,{id:randomUUID(),...intent,...off}),/approved creator fee/)
  const b=await store.createRequest(creatorB,{id:randomUUID(),...intent,symbol:'BBB'})
  await assert.rejects(store.invite(a.id,{inviteMs:30_000}),/1-60 minutes/)
  assert.equal((await store.invite(a.id,{inviteMs:600_000})).status,'invited')
@@ -50,6 +51,8 @@ test('presence, queue, single invite and exact-detail binding',async()=>withData
  try{
   await assert.rejects(store.bindLaunch(db,creatorB,op,{...intent,symbol:'BBB'}),/Wait for repo.ing/)
   await assert.rejects(store.bindLaunch(db,creatorA,op,{...intent,name:'Other'}),/differ from the approved/)
+  await assert.rejects(store.bindLaunch(db,creatorA,op,{...intent,capBps:500}),/differ from the approved/,'cap is bound to the invite')
+  await assert.rejects(store.bindLaunch(db,creatorA,op,{...intent,creatorFeeBps:200}),/differ from the approved/,'fee is bound to the invite')
   assert.equal((await store.bindLaunch(db,creatorA,op,intent)).status,'launching')
   assert.equal((await store.bindLaunch(db,creatorA,op,intent)).custodyOperationId,op,'same operation is idempotent')
   await assert.rejects(store.bindLaunch(db,creatorA,randomUUID(),intent),/bound to another launch/)

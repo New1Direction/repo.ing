@@ -56,10 +56,10 @@ test('creator requests use the session wallet, show availability, and prepare no
  const handler=createLaunchRequestsHandler(creatorOptions(store))
  assert.equal((await (await handler(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()).online,true)
  for(const [req,status] of [[creatorRequest({action:'get'},{origin:'https://wrong.invalid'}),403],[creatorRequest({action:'get'},{cookie:''}),401],
-  [creatorRequest({action:'create',requestId:id,name:'A',symbol:'B',uri:'',creator:'substitute'}),400],[creatorRequest({action:'create',requestId:id,name:'x'.repeat(33),symbol:'B',uri:''}),400]])
+  [creatorRequest({action:'create',requestId:id,name:'A',symbol:'B',uri:'',creatorFeeBps:100,capBps:200,creator:'substitute'}),400],[creatorRequest({action:'create',requestId:id,name:'x'.repeat(33),symbol:'B',uri:'',creatorFeeBps:100,capBps:200}),400]])
   assert.equal((await handler(req)).status,status)
  assert.equal(seen.length,0)
- assert.equal((await (await handler(creatorRequest({action:'create',requestId:id,name:'Canary',symbol:'CNRY',uri:''}))).json()).request.status,'queued')
+ assert.equal((await (await handler(creatorRequest({action:'create',requestId:id,name:'Canary',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:200}))).json()).request.status,'queued')
  await handler(creatorRequest({action:'get'}));await handler(creatorRequest({action:'cancel',requestId:id}))
  assert.deepEqual(seen.map(x=>x[1]),[creator,creator,creator],'identity comes only from the wallet session')
  assert.equal((await createLaunchRequestsHandler({...creatorOptions(store),quota:async()=>false})(creatorRequest({action:'get'}))).status,429)
@@ -69,7 +69,7 @@ test('native launch reserve waits for the owner invite; expire and launched mark
  const launchEnv={HOOK_NATIVE_LAUNCH_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true',HOOK_OWNER_APPROVED_LAUNCHES:'true',HOOK_LAUNCH_ADMIN_ADDRESS:admin}
  const reserveInput={action:'reserve',operationId:id,capBps:200,label:'canary',name:'Canary',symbol:'CNRY',uri:'',virtualQuote:'1000000000',creatorFeeBps:100}
  let reserves=0,expires=0;const launched=[];let invited=false
- const approvals=()=>({bindLaunch:async(_db,wallet,operationId,intent)=>{assert.equal(wallet,creator);assert.equal(operationId,id);assert.deepEqual(intent,{name:'Canary',symbol:'CNRY',uri:''})
+ const approvals=()=>({bindLaunch:async(_db,wallet,operationId,intent)=>{assert.equal(wallet,creator);assert.equal(operationId,id);assert.deepEqual(intent,{name:'Canary',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:200})
   if(!invited)throw known('Wait for repo.ing to invite your launch request')},markLaunched:async op=>launched.push(op)})
  const service={reserve:async({owner})=>{reserves++;return {owner,operationId:id,mint:'m',selectedConfig:'c',request:{}}},lifecycle:{
   expire:async()=>{expires++;return {id,status:'expired',review:{messageBase64:'x',messageSha256:'a'.repeat(64)}}},reconcile:async()=>({id,stage:'launch',status:'finalized-success',custodyOperationId:id,review:{messageBase64:'x',messageSha256:'a'.repeat(64)}})}}

@@ -11,7 +11,7 @@ import { assertSameOrigin } from './auth.mjs'
 import { walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQuota } from './hooklab-wallet-identity.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
- z.object({action:z.literal('create'),requestId:uuid,name:text(32).min(1),symbol:text(10).min(1),uri:text(200)}).strict(),
+ z.object({action:z.literal('create'),requestId:uuid,name:text(32).min(1),symbol:text(10).min(1),uri:text(200),creatorFeeBps:z.number().int(),capBps:z.number().int()}).strict(),
  z.object({action:z.literal('get')}).strict(),
  z.object({action:z.literal('cancel'),requestId:uuid}).strict(),
 ])
@@ -38,7 +38,7 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    if(!await quota(pool,[[`launch-request:${input.action==='get'?'observe':'action'}:${clientAddress(request)??'unknown'}`,input.action==='get'?120:10]]))return reply({error:'Too many requests. Try again later.'},429)
    const owner=await principalStore(pool,{enabled:true,origin:config.origin,audience:config.audience,genesisHash:config.genesisHash}).resolve(token)
    let launchRequest
-   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:input.uri})
+   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)
    return reply({status:'available',request:launchRequest,...await approvals.availability()})
