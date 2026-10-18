@@ -2,11 +2,11 @@
 // copy so their output can be compared byte-for-byte with the owner driver's JS ports.
 import { execFileSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-export const SDK_ROOT = process.env.HOOKLAB_SDK_ROOT ?? '/Users/clubpenguin/Documents/ChatGPT/hook-lab-local/sdk'
+export const SDK_ROOT = process.env.HOOKLAB_SDK_ROOT ?? path.join(homedir(), 'Documents/ChatGPT/hook-lab-local/sdk')
 const repoNodeModules = fileURLToPath(new URL('../../node_modules/', import.meta.url))
 export const sdkAvailable = () => existsSync(path.join(SDK_ROOT, 'packages/sdk/src/mainnet-controls.ts'))
 
