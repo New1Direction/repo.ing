@@ -81,3 +81,23 @@ test('refuses before signing when the admin cannot pay the table rent',async()=>
  const {state,admin,connections}=chain({balance:1_000})
  await assert.rejects(ownerTableExecutor({connections,admin,journalDir:dir,sleep}).ensure(job),/admin needs/);assert.equal(state.signed,0)
 }))
+
+test('spend is bounded: one table per invited request, a cap on open tables, one agent per journal',async()=>withDir(async dir=>{
+ const {state,admin,connections}=chain(),tables=ownerTableExecutor({connections,admin,journalDir:dir,sleep})
+ await tables.ensure(job)
+ await assert.rejects(tables.ensure({...job,preparationId:'11111111-1111-4111-8111-111111111111'}),/one table per request/)
+ for(const [i,id] of ['22222222-2222-4222-8222-222222222222','33333333-3333-4333-8333-333333333333'].entries())
+  await tables.ensure({...job,preparationId:id,launchRequestId:`4444444${i}-4444-4444-8444-444444444444`})
+ const before=state.signed
+ await assert.rejects(tables.ensure({...job,preparationId:'55555555-5555-4555-8555-555555555555',launchRequestId:'66666666-6666-4666-8666-666666666666'}),/still open; run reclaim/)
+ assert.equal(state.signed,before,'nothing signed past the cap')
+ const {writeFileSync}=await import('node:fs');writeFileSync(path.join(dir,'agent.lock'),String(process.ppid))
+ assert.throws(()=>ownerTableExecutor({connections,admin,journalDir:dir,sleep}),/another owner agent/)
+}))
+
+test('a step that keeps expiring stops before signing again',async()=>withDir(async dir=>{
+ const {state,admin,connections}=chain({drop:new Set([0])})
+ connections[0].sendRawTransaction=async wire=>{state.height+=200;return bs58.encode(VersionedTransaction.deserialize(wire).signatures[0])}   // nothing ever lands
+ await assert.rejects(ownerTableExecutor({connections,admin,journalDir:dir,sleep}).ensure(job),/expired 3 times/)
+ assert.equal(state.signed,3,'exactly the capped number of signatures')
+}))

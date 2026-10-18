@@ -145,13 +145,15 @@ test('per-launch lookup table: requested once, created only by the agent claim, 
   verifyTableRequest({tableRequest:tableRequests[0],invited:requests.find(r=>r.id===tableRequests[0].launchRequestId),envelope,launchConfigBytes:configBytes,adminAddress:realAdmin})
   await store.submitTable(preparationId,tableAddress)}
  const provider=remoteLaunchLookupTable(pool,{envelope,connections:[{connection},{connection}],adminAddress:realAdmin,readLaunch,sleep,pollMs:1,timeoutMs:5_000})
+ await store.heartbeat({accepting:true,agentAddress:admin})
  const pin=await provider({preparationId,allowCreate:true})
  assert.equal(pin.address,tableAddress);assert.equal(pin.sha256,createHash('sha256').update(onChain).digest('hex'))
  assert.deepEqual(await provider({preparationId,allowCreate:false}),pin,'later signing stages reuse the issued table')
  await assert.rejects(store.submitTable(preparationId,keypair('other-table').publicKey.toBase58()),/no longer pending/)
  await assert.rejects(provider({preparationId:randomUUID(),allowCreate:false}),/not bound/)
  onChain=tableData([...inventory].reverse())
- await assert.rejects(provider({preparationId,allowCreate:false}),/addresses differ/)
+ assert.deepEqual(await provider({preparationId,allowCreate:false}),pin,'settlement and reconcile keep the issued pin even after the table is reclaimed')
+ await assert.rejects(provider({preparationId,allowCreate:true}),/addresses differ/,'a fresh review re-verifies the table on chain')
  await assert.rejects(pool.query("update hook_lab_owner_table_requests set inventory='[]'::jsonb"),/immutable/)
  await assert.rejects(pool.query("update hook_lab_owner_table_requests set issued_table_sha256=repeat('0',64)"),/immutable/)
  // A request the agent never answers fails clearly instead of hanging; without allowCreate nothing is requested.
@@ -162,6 +164,9 @@ test('per-launch lookup table: requested once, created only by the agent claim, 
  const silent=remoteLaunchLookupTable(pool,{envelope,connections:[{connection},{connection}],adminAddress:realAdmin,sleep:async()=>{},pollMs:1,timeoutMs:20,
   readLaunch:async()=>({owner_wallet:creatorB,launch_request:lr2,launch_request_id:second.id})})
  await assert.rejects(silent({preparationId:prep2,allowCreate:false}),/missing/)
+ await pool.query("update hook_lab_owner_presence set last_seen_at=clock_timestamp()-interval '1 minute'")
+ await assert.rejects(silent({preparationId:prep2,allowCreate:true}),/offline/,'an offline approver fails fast instead of holding the request')
+ await store.heartbeat({accepting:true,agentAddress:admin})
  await assert.rejects(silent({preparationId:prep2,allowCreate:true}),/still preparing/)
  await store.declineTable(prep2)
  await assert.rejects(silent({preparationId:prep2,allowCreate:true}),/declined/)

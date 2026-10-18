@@ -103,7 +103,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
       values($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11) returning *`,[id,owner,custodyOperationId,stage,review.profileSha256,review,review.messageSha256,wire(tx),retainedContext.configurationSha256,retainedContext.settlementContext,resolved.request??null])
      return summary(saved)
     },custodyOperationId)
-   }catch{throw fail()}
+   }catch(error){throw error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error:fail()}   // fixed owner-approval texts reach the customer
   },
   async get(sessionToken,id){return transaction(sessionToken,id,async(_db,row)=>{check(row);return summary(row)})},
   async refreshReview(sessionToken,id){
@@ -129,7 +129,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      const {rows:[saved]}=await db.query('update hook_lab_native_signing_operations set review=$2,message_sha256=$3,partial_transaction=$4,settlement_context=$5,review_generation=review_generation+1,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *',[id,review,review.messageSha256,wire(tx),retainedContext.settlementContext])
      return summary(saved)
     })
-   }catch{throw fail()}
+   }catch(error){throw error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error:fail()}   // fixed owner-approval texts reach the customer
   },
 
   async walletRequest(sessionToken,id){

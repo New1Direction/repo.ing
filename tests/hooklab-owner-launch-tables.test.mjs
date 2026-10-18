@@ -15,7 +15,7 @@ const envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.
 const launchConfigBytes=Buffer.from(fixture.accounts['launch-config'].dataBase64,'base64')
 const key=label=>Keypair.fromSeed(createHash('sha256').update(`OWNER TABLE TEST ONLY ${label}`).digest()).publicKey.toBase58()
 const creator=key('creator')
-const invited={id:'5b7f4c1e-8a0f-4d55-9a49-3f7c0c2b9d11',status:'launching',creator,name:'Table Coin',symbol:'TBL',uri:'',creatorFeeBps:100,capBps:200}
+const invited={id:'5b7f4c1e-8a0f-4d55-9a49-3f7c0c2b9d11',custodyOperationId:'0f3c9a52-6a43-4e0e-b8a8-2a1c1d9e7b10',status:'launching',creator,name:'Table Coin',symbol:'TBL',uri:'',creatorFeeBps:100,capBps:200}
 const launchRequest=(over={})=>({schema:'repoing/inclusive-max-wallet-launch-request/1',policyKind:'max-wallet',policyVersion:2,creator,feePayer:creator,mint:key('mint'),
  selectedConfig:key('selected'),capBps:200,label:'customer',creatorFeeBps:100,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500,reviewer:ADMIN,
  name:'Table Coin',symbol:'TBL',uri:'',virtualQuote:'1000000000',...over})
@@ -44,7 +44,7 @@ test('the agent accepts only a table request that matches the invited launch and
  }
  const tampered={...ok,inventory:[...ok.inventory.slice(0,-1),key('attacker')]}
  assert.throws(()=>verifyTableRequest({tableRequest:tampered,invited,envelope,launchConfigBytes,adminAddress:ADMIN}),/own derivation/)
- for(const other of [undefined,{...invited,status:'invited'},{...invited,id:'00000000-0000-4000-8000-000000000000'},{...invited,creator:key('x')}])
+ for(const other of [undefined,{...invited,status:'invited'},{...invited,id:'00000000-0000-4000-8000-000000000000'},{...invited,creator:key('x')},{...invited,custodyOperationId:'00000000-0000-4000-8000-000000000001'}])
   assert.throws(()=>verifyTableRequest({tableRequest:ok,invited:other,envelope,launchConfigBytes,adminAddress:ADMIN}),/No launching request/)
 })
 

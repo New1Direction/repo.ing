@@ -6,8 +6,9 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
-import { PublicKey } from '@solana/web3.js'
+import { AddressLookupTableAccount,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
+import { sharedTradeAddresses } from './hooklab-owner-launch-tables.mjs'
 import { CREATOR_FEE_BPS_CHOICES,DEFAULT_CREATOR_FEE_BPS,WALLET_CAP_BPS_CHOICES,DEFAULT_WALLET_CAP_BPS,CREATOR_FEE_CEILING_BPS } from './hooklab-launch-menus.mjs'
 export const MAINNET_GENESIS='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const LOADER='BPFLoaderUpgradeab1e11111111111111111111111',TOKEN_ELF_LENGTH=326504
@@ -71,6 +72,10 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
  })
  const table=observed.at(-1)
  need(table.owner==='AddressLookupTab1e1111111111111111111111111','lookup table is not an address lookup table')
+ const tableState=AddressLookupTableAccount.deserialize(Uint8Array.from(table.data))
+ // The shared trade table must be frozen with exactly the addresses every trade shares, so the pin never drifts.
+ need(!tableState.authority&&tableState.deactivationSlot===0xffffffffffffffffn,'trade lookup table is not frozen and active; run the trade-table stage to completion')
+ need(isDeepStrictEqual(tableState.addresses.map(a=>a.toBase58()),sharedTradeAddresses(JSON.parse(profileJson))),'trade lookup table addresses differ from the shared trade addresses')
  const lc=new BorshCoder(JSON.parse(idls.launch)).accounts.decode('Config',Buffer.from(accounts[0].approvedDataBase64,'base64'))
  const sc=new BorshCoder(JSON.parse(idls.swap)).accounts.decode('Config',Buffer.from(accounts[1].approvedDataBase64,'base64'))
  need(lc.max_creator_fee_bps>=CREATOR_FEE_CEILING_BPS&&lc.rule_bounds.max_rules_fee_bps>=CREATOR_FEE_CEILING_BPS,`launch fee ceilings are below ${CREATOR_FEE_CEILING_BPS} bps; apply the approved config change first`)

@@ -6,24 +6,16 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
-import { AddressLookupTableAccount, AddressLookupTableProgram, Keypair, PublicKey, SYSVAR_SLOT_HASHES_PUBKEY } from '@solana/web3.js'
-import { inclusiveMaxWalletSwapInventory } from '../../hooklab-inclusive-max-wallet-swap.mjs'
+import { AddressLookupTableAccount, AddressLookupTableProgram, PublicKey, SYSVAR_SLOT_HASHES_PUBKEY } from '@solana/web3.js'
+import { sharedTradeAddresses } from '../../hooklab-owner-launch-tables.mjs'
 import { readAccounts } from '../rpc.mjs'
 import * as ix from '../instructions.mjs'
 import { ALT_PROGRAM, sha256 } from '../pins.mjs'
 import { check, simpleMessage } from './common.mjs'
 
 const recordPath = ctx => path.join(ctx.journal.dir, '..', 'trade-table.public.json')
-const synthetic = label => Keypair.fromSeed(Buffer.from(sha256(`repo.ing shared trade table derivation ${label}`), 'hex')).publicKey.toBase58()
-// The addresses every trade shares: the intersection of two trades with nothing else in common.
-export function sharedTradeAddresses(envelope) {
-  const profile = JSON.parse(envelope.json)
-  const request = label => ({ schema: 'repoing/inclusive-max-wallet-swap-request/1', policyKind: 'max-wallet', policyVersion: 2, creatorFeeBps: profile.capability.creatorFeeBps,
-    feeModel: 2, protocolShareBps: 2500, capBps: profile.capability.defaultCapBps ?? 200, side: 'buy', trader: synthetic(`${label} trader`), recipient: synthetic(`${label} trader`),
-    feePayer: synthetic(`${label} trader`), mint: synthetic(`${label} mint`), selectedConfig: synthetic(`${label} config`), amountIn: '1', minAmountOut: '1', maxInput: '1', maxPriceImpactBps: 100 })
-  const a = inclusiveMaxWalletSwapInventory(profile, request('a')), b = inclusiveMaxWalletSwapInventory(profile, request('b'))
-  return a.filter(address => b.includes(address))
-}
+// The addresses every trade shares (same derivation the production bundle checks).
+export const sharedTradeAddressesFor = envelope => sharedTradeAddresses(JSON.parse(envelope.json))
 function record(ctx) { return existsSync(recordPath(ctx)) ? JSON.parse(readFileSync(recordPath(ctx), 'utf8')) : null }
 function writeRecord(ctx, value) {
   mkdirSync(path.dirname(recordPath(ctx)), { recursive: true, mode: 0o700 })
@@ -40,7 +32,7 @@ async function readTable(ctx, address) {
 export const tradeTable = {
   name: 'trade-table',
   async build(ctx, pinned) {
-    const payer = ctx.roles.payer, inventory = sharedTradeAddresses(ctx.envelope), existing = record(ctx)
+    const payer = ctx.roles.payer, inventory = sharedTradeAddressesFor(ctx.envelope), existing = record(ctx)
     const base = await readAccounts(ctx.readers, ctx.genesis, [payer])
     if (!existing) {
       let recentSlot = pinned?.recentSlot

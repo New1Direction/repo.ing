@@ -8,11 +8,22 @@ import { createHash } from 'node:crypto'
 import { AddressLookupTableAccount,AddressLookupTableProgram,ComputeBudgetProgram,PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { maxWalletLaunchInventory } from './hooklab-max-wallet-launch.mjs'
+import { inclusiveMaxWalletSwapInventory } from './hooklab-inclusive-max-wallet-swap.mjs'
 const fail=message=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const ACTIVE=0xffffffffffffffffn
 export const TABLE_CHUNK=20
+const syntheticKey=label=>new PublicKey(createHash('sha256').update(`repo.ing shared trade table derivation ${label}`).digest()).toBase58()
+// The addresses every trade shares: the intersection of two trades that have nothing else in common.
+// The shared trade table holds exactly these, frozen; the production bundle checks it.
+export function sharedTradeAddresses(profile){
+ const request=label=>({schema:'repoing/inclusive-max-wallet-swap-request/1',policyKind:'max-wallet',policyVersion:2,creatorFeeBps:profile.capability.creatorFeeBps,
+  feeModel:2,protocolShareBps:2500,capBps:profile.capability.defaultCapBps??200,side:'buy',trader:syntheticKey(`${label} trader`),recipient:syntheticKey(`${label} trader`),
+  feePayer:syntheticKey(`${label} trader`),mint:syntheticKey(`${label} mint`),selectedConfig:syntheticKey(`${label} config`),amountIn:'1',minAmountOut:'1',maxInput:'1',maxPriceImpactBps:100})
+ const a=inclusiveMaxWalletSwapInventory(profile,request('a')),b=inclusiveMaxWalletSwapInventory(profile,request('b'))
+ return a.filter(address=>b.includes(address))
+}
 
 export function launchTableInventory(envelope,launchRequest,launchConfigBytes){
  const {inventory}=maxWalletLaunchInventory(envelope,launchRequest,launchConfigBytes)
@@ -36,7 +47,7 @@ async function readLaunchConfig(connections,envelope){
 
 // Injected as the native launch runtime's launchLookupTable provider.
 export function remoteLaunchLookupTable(pool,{envelope,connections,adminAddress,timeoutMs=90_000,pollMs=1_000,warmMs=20_000,
- sleep=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now,
+ sleep=ms=>new Promise(r=>setTimeout(r,ms)),now=Date.now,presenceWindowMs=20_000,
  readLaunch=async id=>(await pool.query(`select c.owner_wallet,c.launch_request,r.id as launch_request_id from hook_lab_native_launch_context c
   join hook_lab_launch_requests r on r.custody_operation_id=c.custody_operation_id and r.status in ('launching','launched') where c.custody_operation_id=$1`,[id])).rows[0]}={}){
  check(Array.isArray(connections)&&connections.length===2,'Two providers required')
@@ -54,9 +65,14 @@ export function remoteLaunchLookupTable(pool,{envelope,connections,adminAddress,
    row=await select(preparationId)
   }
   check(row.inventory_sha256===inventorySha256&&JSON.stringify(row.inventory)===JSON.stringify(inventory),'Launch lookup inventory changed')
+  // After a review was issued, later stages reuse its pin: revalidation re-checks the table bytes on chain
+  // through the collector, and settlement does not read the table (so a reclaimed table never blocks reconcile).
+  if(allowCreate!==true){check(row.status==='created'&&row.issued_table_sha256,'Retained launch lookup table missing; a signed launch never gets a replacement');return Object.freeze({address:row.table_address,sha256:row.issued_table_sha256})}
   const deadline=now()+timeoutMs
   while(row.status==='requested'){
-   check(allowCreate===true&&now()<deadline,'repo.ing is still preparing this launch; try the review again in a minute')
+   const {rows:[presence]}=await pool.query('select accepting and last_seen_at>clock_timestamp()-make_interval(secs=>$1) as online from hook_lab_owner_presence where id=1',[presenceWindowMs/1000])
+   check(presence?.online,'repo.ing\'s approver is offline right now; try again later')
+   check(now()<deadline,'repo.ing is still preparing this launch; try the review again in a minute')
    await sleep(pollMs);row=await select(preparationId)
   }
   check(row.status==='created','The owner declined this launch')
@@ -78,7 +94,7 @@ export function remoteLaunchLookupTable(pool,{envelope,connections,adminAddress,
 // launch the owner invited and the agent's own reads before the admin key pays for anything.
 export function verifyTableRequest({tableRequest,invited,envelope,launchConfigBytes,adminAddress}){
  const r=tableRequest.launchRequest
- check(invited&&invited.id===tableRequest.launchRequestId&&invited.status==='launching'&&invited.creator===tableRequest.creator,'No launching request matches this table request')
+ check(invited&&invited.id===tableRequest.launchRequestId&&invited.status==='launching'&&invited.creator===tableRequest.creator&&invited.custodyOperationId===tableRequest.preparationId,'No launching request matches this table request')
  check(r.creator===invited.creator&&r.feePayer===invited.creator&&r.reviewer===adminAddress&&r.name===invited.name&&r.symbol===invited.symbol&&r.uri===invited.uri
   &&r.creatorFeeBps===invited.creatorFeeBps&&r.capBps===invited.capBps,'Table request differs from the invited launch')
  const own=launchTableInventory(envelope,r,launchConfigBytes)

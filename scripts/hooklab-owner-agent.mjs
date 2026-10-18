@@ -13,7 +13,7 @@
 // It signs ONLY a launch message that decodes to the invited creator and coin, the invited fee,
 // one create_launch_custom_v3 call, an on-chain mint policy with the invited cap and fee, and a
 // deadline that both RPC providers say is still open. Fee and cap menus come from the release code.
-import { readFileSync } from 'node:fs'
+import { mkdirSync,readFileSync,renameSync,writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
@@ -38,7 +38,7 @@ const launchCoder=new BorshCoder(JSON.parse(readFileSync(new URL('../vendor/hook
 const approved={launchProgram:LAUNCH_PROGRAM,gateProgram:GATE_PROGRAM,admin:ADMIN,creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:FEE_MODEL}
 const {base,idls}=productionArtifacts(),envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')]))}
 const tables=ownerTableExecutor({connections,admin,journalDir:path.join(homedir(),'.hooklab-owner','launch-tables'),microLamports:Number(opt['table-microlamports']),log:console.log})
-let accepting=true,queue={requests:[],signRequests:[],tableRequests:[]},busy=false
+let accepting=true,queue={requests:[],signRequests:[],tableRequests:[]},busy=false,lastHeartbeatOk=0
 const handled=new Set()
 
 async function api(body){
@@ -79,24 +79,44 @@ function show(){
  queue.requests.forEach((r,i)=>console.log(` ${i+1}. ${r.status.padEnd(9)} ${r.symbol.padEnd(10)} ${r.name.padEnd(32)} fee ${percent(r.creatorFeeBps)} cap ${percent(r.capBps)} creator ${r.creator}${r.inviteExpiresAt?` invite until ${new Date(r.inviteExpiresAt).toLocaleTimeString()}`:''}`))
  if(!queue.requests.length)console.log(' (no launch requests)')
 }
+// Only requests this agent invited (ledger on disk) can make the admin pay for a table: at most one
+// table per invited request, and only while the creator's on-chain grant still allows the launch.
+const inviteLedgerPath=path.join(homedir(),'.hooklab-owner','invited.json')
+const invitedByMe=()=>{try{return JSON.parse(readFileSync(inviteLedgerPath,'utf8'))}catch(error){if(error.code==='ENOENT')return {};throw error}}
+function recordInvite(request){
+ mkdirSync(path.dirname(inviteLedgerPath),{recursive:true,mode:0o700})
+ const ledger={...invitedByMe(),[request.id]:{creator:request.creator,symbol:request.symbol,invitedAt:new Date().toISOString()}}
+ writeFileSync(`${inviteLedgerPath}.next`,JSON.stringify(ledger,null,1),{mode:0o600});renameSync(`${inviteLedgerPath}.next`,inviteLedgerPath)
+}
+let tableJob=null
 async function handleTableRequest(tableRequest){
  if(handled.has(`table:${tableRequest.preparationId}`))return
  const invited=queue.requests.find(r=>r.id===tableRequest.launchRequestId)
- let checked
+ const decline=async reason=>{handled.add(`table:${tableRequest.preparationId}`);console.log(`REFUSED table request for ${tableRequest.creator}: ${reason}`)
+  await api({action:'decline-table',preparationId:tableRequest.preparationId}).catch(()=>{})}
+ // Definitive refusals: not invited by this agent, or the request differs from the invite.
+ const mine=invitedByMe()[tableRequest.launchRequestId]
+ if(!mine||mine.creator!==tableRequest.creator)return decline('this agent did not invite that request')
+ let configBytes,grant
  try{
   const infos=await Promise.all(connections.map(c=>c.getAccountInfo(PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(LAUNCH_PROGRAM))[0],'finalized')))
   if(!infos[0]||!infos[1]||!infos[0].data.equals(infos[1].data))throw Error('launch config missing or providers disagree')
-  checked=verifyTableRequest({tableRequest,invited,envelope,launchConfigBytes:infos[0].data,adminAddress:ADMIN})
- }catch(error){
-  handled.add(`table:${tableRequest.preparationId}`);console.log(`REFUSED table request for ${tableRequest.creator}: ${error.message}`)
-  await api({action:'decline-table',preparationId:tableRequest.preparationId}).catch(()=>{});return
- }
- try{
-  console.log(`\nTABLE for ${invited.symbol} creator ${invited.creator} mint ${tableRequest.launchRequest.mint}: ${checked.inventory.length} addresses`)
-  const table=await tables.ensure({preparationId:tableRequest.preparationId,launchRequestId:invited.id,creator:invited.creator,mint:tableRequest.launchRequest.mint,...checked})
-  await api({action:'table',preparationId:tableRequest.preparationId,tableAddress:table})
-  handled.add(`table:${tableRequest.preparationId}`);console.log(`TABLE READY ${table}`)
- }catch(error){console.log(`Table not ready yet (${error.message}); will resume the same journaled transactions.`)}
+  configBytes=infos[0].data;grant=await grantStatus(tableRequest.creator)
+ }catch(error){console.log(`Table request waiting (${error.message}); will retry.`);return}
+ if(!grant.usable)return decline(`creator grant not usable (${grant.reason})`)
+ let checked
+ try{checked=verifyTableRequest({tableRequest,invited,envelope,launchConfigBytes:configBytes,adminAddress:ADMIN})}catch(error){return decline(error.message)}
+ console.log(`\nTABLE for ${invited.symbol} creator ${invited.creator} mint ${tableRequest.launchRequest.mint}: ${checked.inventory.length} addresses`)
+ const table=await tables.ensure({preparationId:tableRequest.preparationId,launchRequestId:invited.id,creator:invited.creator,mint:tableRequest.launchRequest.mint,...checked})
+ await api({action:'table',preparationId:tableRequest.preparationId,tableAddress:table})
+ handled.add(`table:${tableRequest.preparationId}`);console.log(`TABLE READY ${table}`)
+}
+// Table creation takes ~20-40 s; it runs beside the heartbeat so the site keeps showing the owner online.
+function startTableJobs(){
+ if(tableJob||!accepting)return
+ const next=(queue.tableRequests??[]).find(t=>!handled.has(`table:${t.preparationId}`))
+ if(!next)return
+ tableJob=handleTableRequest(next).catch(error=>console.log(`Table not ready yet (${error.message}); will resume the same journaled transactions.`)).finally(()=>{tableJob=null})
 }
 async function handleSignRequest(signRequest){
  if(handled.has(signRequest.id))return;handled.add(signRequest.id)
@@ -128,9 +148,14 @@ rl.on('line',async line=>{
    const grant=await grantStatus(pick.creator)
    if(!grant.usable){console.log(`Creator grant not usable (${grant.reason}). Issue it first with the owner driver:\n  node scripts/hooklab-owner.mjs plan customer-grant --creator ${pick.creator} --rpc URL --rpc2 URL\nreview the preview, then: node scripts/hooklab-owner.mjs execute customer-grant --creator ${pick.creator} --message-sha256 <preview sha> --key payer=<pipe> --key admin=<pipe> --rpc URL --rpc2 URL\nthen invite again.`);return}
    const minutes=Number(arg2??opt['invite-minutes'])
+   recordInvite(pick)
    console.log(`Invited until ${new Date((await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})).request.inviteExpiresAt).toLocaleTimeString()}`)
   }
-  else if(cmd==='reclaim'){const lines=await tables.reclaim(new Set(queue.requests.map(r=>r.id)));console.log(lines.length?lines.join('\n'):'Nothing to reclaim.')}
+  else if(cmd==='reclaim'){
+   // Only with a fresh view of open requests: a stale or empty queue would look like every launch had finished.
+   if(Date.now()-lastHeartbeatOk>10_000)throw Error('no fresh heartbeat; reclaim refuses to guess which launches are finished')
+   if(tableJob)throw Error('a table is being created; reclaim after it finishes')
+   const lines=await tables.reclaim(new Set(queue.requests.map(r=>r.id)));console.log(lines.length?lines.join('\n'):'Nothing to reclaim.')}
   else if(cmd==='quit'){accepting=false;await api({action:'heartbeat',accepting:false,agentAddress:ADMIN}).catch(()=>{});process.exit(0)}
   else console.log('Commands: list | invite N [minutes] | decline N | reclaim | pause | resume | quit')
  }catch(error){console.log(`Failed: ${error.message}`)}
@@ -140,9 +165,10 @@ console.log(`Owner agent for ${opt.origin}. Admin ${ADMIN}. Fee menu ${CREATOR_F
 for(;;){
  try{
   const before=JSON.stringify(queue.requests)
-  queue=await api({action:'heartbeat',accepting,agentAddress:ADMIN})
+  queue=await api({action:'heartbeat',accepting,agentAddress:ADMIN});lastHeartbeatOk=Date.now()
   if(JSON.stringify(queue.requests)!==before)show()
-  if(!busy&&accepting){busy=true;try{for(const t of queue.tableRequests??[])await handleTableRequest(t);for(const s of queue.signRequests)await handleSignRequest(s)}finally{busy=false}}
+  startTableJobs()
+  if(!busy&&accepting){busy=true;try{for(const s of queue.signRequests)await handleSignRequest(s)}finally{busy=false}}
  }catch(error){console.log(`Heartbeat failed: ${error.message}`)}
  await new Promise(r=>setTimeout(r,Number(opt['poll-ms'])))
 }

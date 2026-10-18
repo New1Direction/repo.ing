@@ -5,7 +5,8 @@ import assert from 'node:assert/strict'
 import { existsSync,readFileSync } from 'node:fs'
 import { PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
-import { collectProductionOperatorBundle,productionArtifacts,MAINNET_GENESIS } from '../src/hooklab-production-operator-bundle.mjs'
+import { collectProductionOperatorBundle,productionArtifacts,productionProfileJson,MAINNET_GENESIS } from '../src/hooklab-production-operator-bundle.mjs'
+import { sharedTradeAddresses } from '../src/hooklab-owner-launch-tables.mjs'
 import { validateMaxWalletOperatorBindings } from '../src/hooklab-max-wallet-launch-collector.mjs'
 
 const elfDir=process.env.HOOKLAB_PRODUCTION_ELF_DIR
@@ -21,7 +22,13 @@ function programData(elf,authority,slot=458600000){
  if(authority){header[12]=1;new PublicKey(authority).toBuffer().copy(header,13)}
  return Buffer.concat([header,elf])
 }
-function chain({gateAuthority=null,ceilings=200,share=2500,tamperLaunchElf=false,disagree=false}={}){
+// Shared trade table bytes: type 1, active, frozen (no authority) unless an authority is given.
+function tradeTable({authority=null,addresses}={}){
+ const shared=addresses??sharedTradeAddresses(JSON.parse(productionProfileJson(productionArtifacts().base))),h=Buffer.alloc(56);h.writeUInt32LE(1,0);h.writeBigUInt64LE(0xffffffffffffffffn,4)
+ if(authority){h[21]=1;new PublicKey(authority).toBuffer().copy(h,22)}
+ return Buffer.concat([h,...shared.map(a=>new PublicKey(a).toBuffer())])
+}
+function chain({gateAuthority=null,ceilings=200,share=2500,tamperLaunchElf=false,disagree=false,table=tradeTable()}={}){
  const {base,idls}=productionArtifacts(),P=base.programs,pda=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>typeof s==='string'?Buffer.from(s):s),new PublicKey(program))[0].toBase58()
  const elf=name=>readFileSync(`${elfDir}/${name}.so`),launchElf=elf('bordrless_launch');if(tamperLaunchElf)launchElf[100]^=1
  const accounts=new Map([
@@ -29,7 +36,7 @@ function chain({gateAuthority=null,ceilings=200,share=2500,tamperLaunchElf=false
   [pda(LOADER,new PublicKey(P.swap).toBuffer()),{owner:LOADER,data:programData(elf('bordrless_swap'),AUTHORITY)}],
   [pda(LOADER,new PublicKey(P.gate).toBuffer()),{owner:LOADER,data:programData(elf('hook_max_wallet'),gateAuthority)}],
   [pda(LOADER,new PublicKey(P.token).toBuffer()),{owner:LOADER,data:programData(elf('bordrless_token'),'5wni4K2qdSfTr6JspbLXDStfbq1XSmzMpF75RSpwsjBH')}],
-  [LOOKUP_TABLE,{owner:ALT_OWNER,data:Buffer.alloc(56+32*38,7)}],
+  [LOOKUP_TABLE,{owner:ALT_OWNER,data:table}],
  ])
  // The approved governed config change applied to the public pre-deploy bytes.
  const edit=(role,mutate)=>{const coder=new BorshCoder(JSON.parse(idls[role.split('-')[0]])),a=fixture.accounts[role],bytes=Buffer.from(a.dataBase64,'base64'),c=coder.accounts.decode('Config',bytes);mutate(c)
@@ -63,4 +70,6 @@ test('production bundle refuses an upgradeable gate, unapplied economics, drifte
  await assert.rejects(collect({share:0}),/inclusive 25% split/)
  await assert.rejects(collect({tamperLaunchElf:true}),/launch deployed code differs/)
  await assert.rejects(collect({disagree:true}),/providers disagree/)
+ await assert.rejects(collect({table:tradeTable({authority:AUTHORITY})}),/not frozen/)
+ await assert.rejects(collect({table:tradeTable({addresses:[AUTHORITY]})}),/addresses differ/)
 })
