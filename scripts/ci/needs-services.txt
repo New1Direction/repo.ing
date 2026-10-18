@@ -115,3 +115,5 @@ hooklab-native-launch-runtime-db
 hooklab-launch-resolver-journal-db
 # Real disposable PostgreSQL on 127.0.0.1:55432 (scratch databases it creates itself).
 hooklab-database-timeouts
+# Owner-approved launch store, real PostgreSQL on 127.0.0.1:55432.
+hooklab-owner-approval-db

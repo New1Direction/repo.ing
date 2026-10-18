@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import BN from 'bn.js'
 import { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
@@ -14,7 +15,7 @@ import { PROGRAMS, QUOTE_MINT, LOADER, SYSTEM, MAINNET_GENESIS, pda, pk, kb, hol
 export const LOCAL_FEE_BPS=Number(process.env.HOOKLAB_OWNER_LOCAL_FEE_BPS??100),LOCAL_CAP_BPS=Number(process.env.HOOKLAB_OWNER_LOCAL_CAP_BPS??200)
 if(![50,100,200].includes(LOCAL_FEE_BPS)||![100,200,300,500].includes(LOCAL_CAP_BPS))throw Error('local fee/cap must be an owner menu value')
 
-export const ELF_DIR = process.env.HOOKLAB_OWNER_ELF_DIR ?? '/Users/clubpenguin/Documents/ChatGPT/hooks-local-state/rebuilt-inclusive/elf'
+export const ELF_DIR = process.env.HOOKLAB_OWNER_ELF_DIR ?? path.join(homedir(), 'Documents/ChatGPT/hooks-local-state/rebuilt-inclusive/elf')
 export const VALIDATOR = process.env.HOOKLAB_OWNER_VALIDATOR ?? '/opt/homebrew/bin/solana-test-validator'
 const ELF_FILES = { launch: 'bordrless_launch.so', swap: 'bordrless_swap.so', gate: 'hook_max_wallet.so', token: 'bordrless_token.so' }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
