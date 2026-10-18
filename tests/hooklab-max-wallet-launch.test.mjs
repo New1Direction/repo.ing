@@ -1,4 +1,3 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { BorshCoder } from '@anchor-lang/core'
@@ -7,9 +6,14 @@ import { PublicKey, VersionedMessage, VersionedTransaction } from '@solana/web3.
 import { buildMaxWalletLaunchReview, buildMaxWalletLaunchReviewForFixture } from '../src/hooklab-max-wallet-launch.mjs'
 import { maxWalletPreparationRequestSchema } from '../src/hooklab-max-wallet-preparation.mjs'
 import { maxWalletLaunchFixture, maxWalletRustVector } from './fixtures/hooklab-max-wallet-launch.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const artifacts = missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json'])
+const test = testRequiring(artifacts)
 const sha = b => createHash('sha256').update(b).digest('hex'), pk = value => new PublicKey(value)
-const fixture = maxWalletLaunchFixture(), baseline = buildMaxWalletLaunchReviewForFixture(fixture)
-const names = { ...baseline.addresses, selectedConfig: fixture.request.selectedConfig, creator: fixture.request.creator,
+// Built only when the private vector is present; otherwise every case is skipped and these stay null.
+const fixture = artifacts ? null : maxWalletLaunchFixture(), baseline = fixture && buildMaxWalletLaunchReviewForFixture(fixture)
+const names = fixture && { ...baseline.addresses, selectedConfig: fixture.request.selectedConfig, creator: fixture.request.creator,
   reviewer: fixture.request.reviewer, mint: fixture.request.mint, quoteMint: JSON.parse(fixture.profile.json).quoteMint }
 const entry = (f, name, index = 0) => f.observations[index].accounts.find(a => a.address === (names[name] ?? name))
 function editAccount(f, name, edit, { rebind = false } = {}) {

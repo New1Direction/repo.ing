@@ -1,4 +1,3 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { BorshCoder } from '@anchor-lang/core'
@@ -8,6 +7,9 @@ import { deriveCustomPreparationRecord, verifyCustomPreparationEvidence, collect
   collectAndRetainCustomPreparation } from '../src/hooklab-custom-preparation-receipts.mjs'
 import { maxWalletPreparationReceiptFixture, maxWalletPreparationRpcProviders } from './fixtures/hooklab-max-wallet-preparation-receipts.mjs'
 import { customPreparationReceiptFixture } from './fixtures/hooklab-custom-preparation-receipts.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 const sha = v => createHash('sha256').update(v).digest('hex')
 const pk = a => new PublicKey(a)
 const both = (f, edit) => f.observations.forEach(edit)

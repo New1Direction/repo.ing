@@ -1,7 +1,9 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import {collectMaxWalletLaunchSettlement} from '../src/hooklab-max-wallet-launch-settlement.mjs'
 import {maxWalletSettlementFixture} from './fixtures/hooklab-max-wallet-launch-settlement.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 test('exact signed launch, finalized inclusion, authenticated events and full initial postconditions settle immutably',async()=>{
  const f=await maxWalletSettlementFixture(),first=await collectMaxWalletLaunchSettlement(f)
  assert.equal(first.status,'finalized-success');assert.equal(first.signature,f.signature)

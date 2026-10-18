@@ -1,4 +1,3 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { randomUUID,createHash } from 'node:crypto'
@@ -9,6 +8,9 @@ import { reviewNewMintPreparationCandidate } from '../src/hooklab-new-mint-prepa
 import { maxWalletPreparationReceiptFixture } from './fixtures/hooklab-max-wallet-preparation-receipts.mjs'
 import { fakePlanningReaders } from './fixtures/hooklab-max-wallet-planning-readers.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 const token=Buffer.alloc(32,19).toString('base64url'),digest=createHash('sha256').update(token).digest('hex'),seedLabel='new-mint-candidate'
 const testSigner=role=>Keypair.fromSeed(createHash('sha256').update(`max-wallet RECEIPT TEST FIXTURE ONLY: ${seedLabel}:${role}`).digest())
 test('new mint reserves once durably, collects exact preparation, freezes intent, refreshes safely and survives failure without replacement',async()=>{

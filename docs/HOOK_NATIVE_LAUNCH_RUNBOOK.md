@@ -382,3 +382,33 @@ read-back retained the same genesis/program bytes/ALT/balances. Missing
 historical RPC evidence still fails closed; it never grants permission to
 resend. The final report separates the blocked 17 fixture-dependent legacy
 regression entries from the passing browser acceptance and 8/8 guard smoke.
+
+## Release check
+
+Generated ELF-derived fixtures and the pinned ELFs stay private and untracked. Without them, the
+required quick CI lane skips each dependent test with a reason that starts
+`missing private hook artifact:` and names the variable to set. Those skips are not release
+evidence. Before a hooks release, run the complete hooks suite with the artifacts supplied:
+
+```sh
+scripts/hooks-release-check.sh            # or pass specific test files
+```
+
+It runs `tests/hooklab-*`, `tests/hooks-*`, `tests/hook-*` and
+`tests/programmable-coins-page` serially with `HOOKLAB_CANARY_REQUIRED=true`. It stops at once
+if PostgreSQL is unreachable on `127.0.0.1:55432` (user `postgres`, password `launchtest`). The
+`*-db` tests create and drop their own scratch databases there. The final summary lists
+tests, pass, fail and skip counts with every skip reason. The check exits non-zero on any
+failure and on any missing-artifact skip.
+
+| Variable | Supplies |
+| --- | --- |
+| `HOOKLAB_GENERATED_FIXTURE_DIR` | max-wallet, buy/sell and custom-hook Rust vectors; buy/sell app plans |
+| `HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR` | `inclusive-builder-vector.json`, `inclusive-post-launch-snapshot.json` |
+| `HOOKLAB_INCLUSIVE_TOKEN_ELF` | rebuilt inclusive `bordrless_token.so` |
+| `HOOKLAB_CANARY_ELF_DIR`, `HOOKLAB_CANARY_PYTHONPATH` | the four pinned inclusive ELFs; solders 0.29.0 |
+| `SBF_OUT_DIR`, `HOOKLAB_CURVE_RUNTIME_BINARY`, `HOOKLAB_CURVE_PARITY_BINARY` | frozen production curve ELFs and the two Rust harnesses in `HOOK_LAB_CURVE_CANDIDATE.md` |
+
+The script header documents the defaults for the maintainer Mac's `hooks-local-state`. The two
+curve harness binaries have no default. They must be built from the frozen Hook Lab checkout.
+Until both variables point at them, the check reports two missing-artifact skips and fails.

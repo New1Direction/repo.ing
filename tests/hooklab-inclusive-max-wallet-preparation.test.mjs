@@ -39,9 +39,11 @@ test('inclusive inventory derives policy-v2; a request alone never generates pre
 import { BorshCoder } from '@anchor-lang/core'
 import { inclusiveMaxWalletPreparationFixture, sha } from './fixtures/hooklab-inclusive-max-wallet-preparation.mjs'
 import { inclusiveRustVector } from './fixtures/hooklab-inclusive-max-wallet-launch.mjs'
+import { missingInclusiveArtifacts } from './fixtures/hooklab-generated-artifact.mjs'
+const inclusiveVector = missingInclusiveArtifacts(['inclusive-builder-vector.json'])
 import { deriveInclusiveMaxWalletPreparedAccounts } from '../src/hooklab-inclusive-max-wallet-preparation.mjs'
 import { deriveCustomPreparationRecord } from '../src/hooklab-custom-preparation-receipts.mjs'
-test('V3 preparation instructions exactly match executed SBF bytes and prepared accounts',()=>{
+test('V3 preparation instructions exactly match executed SBF bytes and prepared accounts',{skip:inclusiveVector},()=>{
  const f=inclusiveMaxWalletPreparationFixture(),v=inclusiveRustVector(),plan=planInclusiveMaxWalletPreparation(f)
  const instruction=i=>({program:i.programId,dataHex:i.dataHex,accounts:i.keys.map(k=>({address:k.pubkey,signer:k.isSigner,writable:k.isWritable}))})
  assert.deepEqual(plan.instructions.slice(2),v.preparation.instructions.map(instruction))
@@ -55,7 +57,7 @@ test('V3 preparation instructions exactly match executed SBF bytes and prepared 
  assert.equal(record.expectedAccounts.policy.sha256,expected.accounts.policy.sha256)
  assert.equal(plan.policy.creatorFeeBps,100);assert.equal(plan.canSign,false);assert.equal(plan.canSubmit,false)
 })
-test('V3 preparation rejects unreviewed fee and retained configured ceilings',()=>{
+test('V3 preparation rejects unreviewed fee and retained configured ceilings',{skip:inclusiveVector},()=>{
  const f=inclusiveMaxWalletPreparationFixture();f.request.creatorFeeBps++
  assert.throws(()=>planInclusiveMaxWalletPreparation(f),/economics/)
  for(const ceiling of ['max_creator_fee_bps','max_rules_fee_bps']){

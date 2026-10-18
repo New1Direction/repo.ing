@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { PublicKey, VersionedMessage } from '@solana/web3.js'
 import { planCustomPreparation } from '../src/hooklab-custom-preparation.mjs'
 import { customPreparationFixture } from './fixtures/hooklab-custom-preparation.mjs'
+import { generatedCustomArtifact, missingGeneratedArtifacts } from './fixtures/hooklab-generated-artifact.mjs'
 const sha = b => createHash('sha256').update(b).digest('hex')
 
 test('offline preparation uses exact two source instructions, canonical metas and three/four external signers', () => {
@@ -48,9 +49,9 @@ test('unknown fields, policy widening, signer aliasing, invalid profiles and mut
   for (const change of mutations) { const f = customPreparationFixture(); change(f); assert.throws(() => planCustomPreparation(f)) }
 })
 
-test('preparation bytes and ordered metas match the executed Rust retained-ID staging vector', async () => {
+test('preparation bytes and ordered metas match the executed Rust retained-ID staging vector', { skip: missingGeneratedArtifacts(['hooklab-custom-rust-vector.json']) }, async () => {
   const { readFileSync } = await import('node:fs')
-  const fixture = JSON.parse(readFileSync(new URL('./fixtures/hooklab-custom-rust-vector.json', import.meta.url)))
+  const fixture = JSON.parse(readFileSync(generatedCustomArtifact('hooklab-custom-rust-vector.json')))
   assert.equal(fixture.originalVectorSha256, '42a557ce9e91e2c092b51b590ebbbee6223a3df6708ec70d20923744a677a523')
   assert.equal(fixture.profileSha256, 'dd3ee75373208bc58c2079d107fb8c7e998b01560ae33a69ca36b109c8f20391')
   assert.equal(sha(fixture.profileJson), fixture.profileSha256)

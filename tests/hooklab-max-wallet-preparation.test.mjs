@@ -1,10 +1,12 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
 import { BorshCoder } from '@anchor-lang/core'
 import BN from 'bn.js'
 import { PublicKey, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 import { planMaxWalletPreparation, deriveMaxWalletPreparedAccounts, maxWalletPreparationRequestSchema } from '../src/hooklab-max-wallet-preparation.mjs'
 import { maxWalletPreparationFixture, maxWalletRustVector, maxWalletSnapshot, maxWalletFrozenPins, sha, pk, pda } from './fixtures/hooklab-max-wallet-preparation.mjs'
+import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+// Every case needs private generated artifacts; without them each skips with the reason below.
+const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 const both = (f, edit) => f.observations.forEach(edit)
 function editConfig(f, edit) {
   const coder = new BorshCoder(JSON.parse(Buffer.from(f.profile.idls.launch, 'base64')))
