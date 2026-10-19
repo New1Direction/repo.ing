@@ -2,6 +2,7 @@
 import BN from 'bn.js'
 import { PublicKey, SystemInstruction, TransactionMessage, VersionedMessage, AddressLookupTableInstruction, ComputeBudgetInstruction } from '@solana/web3.js'
 import { loadArtifacts } from './artifacts.mjs'
+import { loadNativeArtifacts } from '../hooklab-native-pins.mjs'
 import { lookupAccount } from './message.mjs'
 import { LOADER, SYSTEM, ALT_PROGRAM, COMPUTE_BUDGET, derivedAddresses, holdingAddress } from './pins.mjs'
 
@@ -53,7 +54,9 @@ function decodeKnown(ix, programs) {
   }
   const role = Object.entries(programs).find(([, address]) => address === program)?.[0]
   if (!role) return { name: 'UNKNOWN PROGRAM', args: { dataHex: ix.data.toString('hex') } }
-  const { coders, idls } = loadArtifacts(), decoded = coders[role].instruction.decode(ix.data)
+  // Instructions only the reviewed native-SOL build has (e.g. governed_set_native_launches) decode with its pinned IDL.
+  const pinned = loadArtifacts(), native = ['launch', 'swap'].includes(role) ? loadNativeArtifacts() : null
+  const { coders, idls } = pinned.coders[role].instruction.decode(ix.data) || !native ? pinned : native, decoded = coders[role].instruction.decode(ix.data)
   if (!decoded) return { name: `UNDECODABLE ${role} instruction`, args: { dataHex: ix.data.toString('hex') } }
   const definition = idls[role].instructions.find(x => x.name === decoded.name)
   return { name: `${role}.${decoded.name}`, args: plain(decoded.data), names: definition.accounts.map(a => a.name) }

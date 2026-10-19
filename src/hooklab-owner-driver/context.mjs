@@ -10,11 +10,12 @@ import { canaryStages } from './stages/canary.mjs'
 import { status } from './stages/status.mjs'
 import { tradeTable } from './stages/trade-table.mjs'
 import { launchUsdBounds } from './stages/launch-bounds.mjs'
+import { nativeLaunches } from './stages/native-launches.mjs'
 
-export const STAGES = Object.freeze({ ...adminStages, ...canaryStages, 'trade-table': tradeTable, 'launch-usd-bounds': launchUsdBounds, status })
+export const STAGES = Object.freeze({ ...adminStages, ...canaryStages, 'trade-table': tradeTable, 'launch-usd-bounds': launchUsdBounds, 'native-launches': nativeLaunches, status })
 export const STAGE_ORDER = Object.freeze(['status', 'launch-config', 'swap-config', 'grant', 'gate-finalize', 'fund', 'canary-prepare', 'alt',
   'canary-gates-open-creation', 'canary-launch', 'canary-gates-close-creation', 'canary-holdings', 'canary-buy', 'canary-sell', 'collect', 'trade-table', 'customer-grant',
-  'open-launches', 'open-trading', 'close-trading', 'close-launches', 'launch-usd-bounds'])
+  'open-launches', 'open-trading', 'close-trading', 'close-launches', 'launch-usd-bounds', 'native-launches'])
 
 // Only after a verified non-mainnet genesis on two loopback RPCs: the repo compilers accept a
 // local profile solely through this explicit acceptance scope (format-checked, never connected).
