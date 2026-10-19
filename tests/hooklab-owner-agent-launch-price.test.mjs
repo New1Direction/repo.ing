@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import BN from 'bn.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { AddressLookupTableAccount,ComputeBudgetProgram,Keypair,PublicKey,TransactionInstruction,TransactionMessage } from '@solana/web3.js'
-import { checkInvitePriceAgainst,invitedVirtualQuote,ownerRequestLines,policyAddress,verifyLaunchSignRequest } from '../src/hooklab-owner-agent.mjs'
+import { checkAfterInvite,checkBeforeInvite,checkInvitePriceAgainst,invitedVirtualQuote,ownerRequestLines,policyAddress,verifyLaunchSignRequest } from '../src/hooklab-owner-agent.mjs'
 import { STANDARD_VIRTUAL_QUOTE } from '../src/hooklab-launch-pricing.mjs'
 
 const vendor=name=>JSON.parse(readFileSync(new URL(`../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/${name}`,import.meta.url)))
@@ -68,6 +68,21 @@ test('the agent reads SOL itself: a server price more than 3% from its own is ne
  assert.throws(()=>checkInvitePriceAgainst(pricing,own(102.5)),/more than 3%/)
  assert.throws(()=>checkInvitePriceAgainst(pricing,[{source:'coinbase',usd:150}]),/at least two must agree/,'no own quorum: nothing is recorded')
  assert.equal(checkInvitePriceAgainst(null,[]),null,'an unpriced invite needs no price read')
+})
+
+test('the agent checks the live on-chain limits before asking for an invite and again on the price it gets back',()=>{
+ const today={min:1_000_000_000n,max:1_000_000_000n},widened={min:5_625_000_000n,max:112_500_000_000n}
+ const own=[{source:'coinbase',usd:105.62},{source:'jupiter',usd:105.64}]
+ assert.throws(()=>checkBeforeInvite({priced:true,ownReadings:own,bounds:today}),/On-chain limits are 1–1 SOL, but this launch would open at 53\.25 SOL\. Sign the launch-usd-bounds change first\./)
+ assert.equal(checkBeforeInvite({priced:true,ownReadings:own,bounds:widened}),'53251917070')
+ assert.throws(()=>checkBeforeInvite({priced:true,ownReadings:own.slice(0,1),bounds:widened}),/at least two must agree/,'no own SOL read: no invite')
+ assert.equal(checkBeforeInvite({priced:false,ownReadings:[],bounds:today}),STANDARD_VIRTUAL_QUOTE,'pricing off: the standard quote, today’s limits')
+ assert.throws(()=>checkBeforeInvite({priced:false,ownReadings:[],bounds:widened}),/would open at 1 SOL\. Deploy with HOOK_LAUNCH_USD_PRICING=true first\./)
+ assert.equal(checkAfterInvite({confirmed:invited,ownReadings:own,bounds:widened}),'53251917070')
+ assert.throws(()=>checkAfterInvite({confirmed:invited,ownReadings:own,bounds:today}),/On-chain limits are 1–1 SOL/,'limits changed between the two reads')
+ assert.throws(()=>checkAfterInvite({confirmed:invited,ownReadings:[{source:'coinbase',usd:150},{source:'jupiter',usd:150}],bounds:widened}),/more than 3%/)
+ const unpriced={...invited};delete unpriced.pricing
+ assert.equal(checkAfterInvite({confirmed:unpriced,ownReadings:[],bounds:today}),STANDARD_VIRTUAL_QUOTE)
 })
 
 test('list shows the owner the fixed opening and graduation values, or when they will be fixed',()=>{

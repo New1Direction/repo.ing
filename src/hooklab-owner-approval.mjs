@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES } from './hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinProfileFields } from './hooklab-coin-profile.mjs'
 import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing } from './hooklab-launch-pricing.mjs'
+import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -125,10 +126,12 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    check(row,'Only a queued or invited request can be cancelled');return publicRequest(row)
   },
   // Owner agent only. The agent issues the creator grant on chain before inviting. With USD pricing on, price is the
-  // SOL price read at invite ({solUsdMicros,sources,virtualQuote}); it is re-derived here and stored with the invite.
-  async invite(id,{inviteMs,price}){
+  // SOL price read at invite ({solUsdMicros,sources,virtualQuote}) and liveBounds the launch config's current
+  // {min,max} virtual quote: the price is re-derived here, and stored with the invite only if the chain accepts it.
+  async invite(id,{inviteMs,price,liveBounds}){
    check(Number.isSafeInteger(inviteMs)&&inviteMs>=60_000&&inviteMs<=maxInviteMs,'Invite window must be 1-60 minutes')
    const pricing=usdPricing?checkLaunchPricing(price):null
+   if(pricing)checkLiveBounds(pricing.virtualQuote,liveBounds)
    return inTransaction(pool,async db=>{
     await expireInvites(db)
     try{

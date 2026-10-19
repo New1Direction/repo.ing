@@ -98,16 +98,22 @@ test('native launch reserve waits for the owner invite; expire and launched mark
 })
 
 const fixedPrice={solUsdMicros:'105630000',virtualQuote:'53251917070',sources:[{source:'coingecko',usdMicros:'105620000'},{source:'jupiter',usdMicros:'105630000'}]}
-test('USD pricing: the owner invite reads the SOL price fresh and stores it; off, invites stay exactly as before',async()=>{
- const seen=[],options=(env,launchPrice)=>({env,configuration:()=>({}),database:()=>pool,launchPrice,
+test('USD pricing: the owner invite reads the SOL price and the on-chain limits fresh; off, invites stay exactly as before',async()=>{
+ const widened={min:5_625_000_000n,max:112_500_000_000n}
+ const seen=[],options=(env,launchPrice,launchBounds=async()=>widened)=>({env,configuration:()=>({}),database:()=>pool,launchPrice,launchBounds,
   store:(_pool,settings)=>({invite:async(requestId,input)=>{seen.push([settings.usdPricing,requestId,input]);return {id:requestId,status:'invited'}}})})
  let reads=0
  const on=createOwnerApprovalsHandler(options({...ownerEnv,HOOK_LAUNCH_USD_PRICING:'true'},async()=>{reads++;return fixedPrice}))
  assert.equal((await on(ownerRequest({action:'invite',requestId:id,inviteSeconds:600}))).status,200)
- assert.deepEqual(seen.pop(),[true,id,{inviteMs:600_000,price:fixedPrice}]);assert.equal(reads,1)
- const off=createOwnerApprovalsHandler(options(ownerEnv,async()=>{reads++;return fixedPrice}))
+ assert.deepEqual(seen.pop(),[true,id,{inviteMs:600_000,price:fixedPrice,liveBounds:widened}]);assert.equal(reads,1)
+ const off=createOwnerApprovalsHandler(options(ownerEnv,async()=>{reads++;return fixedPrice},async()=>{throw Error('never read')}))
  assert.equal((await off(ownerRequest({action:'invite',requestId:id,inviteSeconds:600}))).status,200)
- assert.deepEqual(seen.pop(),[false,id,{inviteMs:600_000}]);assert.equal(reads,1,'off: no price is read')
+ assert.deepEqual(seen.pop(),[false,id,{inviteMs:600_000}]);assert.equal(reads,1,'off: no price or chain read')
+ // Limits unreadable: the owner is told why, and nothing reaches the store.
+ const unread=createOwnerApprovalsHandler(options({...ownerEnv,HOOK_LAUNCH_USD_PRICING:'true'},async()=>fixedPrice,
+  async()=>{throw Object.assign(Error('The RPC providers disagree on the launch config; try the invite again'),{code:'LAUNCH_PRICE_REFUSED'})}))
+ const disagree=await unread(ownerRequest({action:'invite',requestId:id,inviteSeconds:600}))
+ assert.equal(disagree.status,409);assert.match((await disagree.json()).error,/providers disagree on the launch config/);assert.equal(seen.length,0)
  // A refused price reaches the owner in plain words and invites nothing.
  const refused=createOwnerApprovalsHandler(options({...ownerEnv,HOOK_LAUNCH_USD_PRICING:'true'},async()=>{throw Object.assign(Error('SOL price sources disagree by more than 2% (coingecko $100.00, jupiter $103.00). Try again in a minute.'),{code:'LAUNCH_PRICE_REFUSED'})}))
  const response=await refused(ownerRequest({action:'invite',requestId:id,inviteSeconds:600}))

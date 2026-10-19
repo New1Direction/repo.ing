@@ -43,6 +43,9 @@ const intent={name:'Canary Coin',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:2
 const launch=(over={})=>({...intent,virtualQuote:STANDARD_VIRTUAL_QUOTE,...over})
 const price={solUsdMicros:'105630000',virtualQuote:'53251917070',
  sources:[{source:'coingecko',usdMicros:'105620000'},{source:'jupiter',usdMicros:'105630000'},{source:'coinbase',usdMicros:'105640000'}]}
+const outlierPrice={...price,sources:[{source:'coingecko',usdMicros:'105620000'},{source:'jupiter',usdMicros:'120000000',ignored:true},{source:'coinbase',usdMicros:'105640000'}]}
+// The launch config's limits after the owner signs launch-usd-bounds.
+const widened={min:5_625_000_000n,max:112_500_000_000n}
 
 test('presence, queue, single invite and exact-detail binding',async()=>withDatabase(async pool=>{
  const store=ownerApprovalStore(pool,{adminAddress:admin})
@@ -88,17 +91,21 @@ test('USD pricing: the invite fixes one immutable price, and only that opening p
  const store=ownerApprovalStore(pool,{adminAddress:admin,usdPricing:true})
  const a=await store.createRequest(creatorA,{id:randomUUID(),...intent})
  assert.equal((await store.requestFor(creatorA)).pricing,null,'queued: no price is fixed yet')
- await assert.rejects(store.invite(a.id,{inviteMs:600_000}),/Launch price is missing/,'pricing on: an invite needs a price')
- await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,virtualQuote:'112500000000'}}),/does not follow from its SOL price/)
- await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,sources:price.sources.slice(0,1)}}),/at least two must agree/)
- await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,solUsdMicros:'40000000',sources:price.sources.map(s=>({...s,usdMicros:'40000000'}))}}),/outside the launch config/)
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,liveBounds:widened}),/Launch price is missing/,'pricing on: an invite needs a price')
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,virtualQuote:'112500000000'},liveBounds:widened}),/does not follow from its SOL price/)
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,sources:price.sources.slice(0,1)},liveBounds:widened}),/at least two must agree/)
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,solUsdMicros:'40000000',sources:price.sources.map(s=>({...s,usdMicros:'40000000'}))},liveBounds:widened}),/outside the launch config/)
+ // The live on-chain limits are read before the invite is recorded: an opening the chain refuses never holds the slot.
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price}),/On-chain launch limits are unavailable/)
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price,liveBounds:{min:1_000_000_000n,max:1_000_000_000n}}),
+  /On-chain limits are 1–1 SOL, but this launch would open at 53\.25 SOL\. Sign the launch-usd-bounds change first\./)
  assert.equal((await store.requestFor(creatorA)).status,'queued','a refused price leaves the request queued')
  assert.equal((await pool.query('select count(*)::int n from hook_lab_launch_request_prices')).rows[0].n,0)
 
- const invited=await store.invite(a.id,{inviteMs:600_000,price})
+ const invited=await store.invite(a.id,{inviteMs:600_000,price:outlierPrice,liveBounds:widened})
  assert.equal(invited.status,'invited')
  const {pricedAt,...fixed}=invited.pricing
- assert.deepEqual(fixed,price);assert.ok(Date.parse(pricedAt)>0)
+ assert.deepEqual(fixed,outlierPrice,'the ignored outlier is stored with its mark');assert.ok(Date.parse(pricedAt)>0)
  assert.deepEqual((await store.requestFor(creatorA)).pricing,invited.pricing,'the creator sees the fixed price')
  assert.deepEqual((await store.heartbeat({accepting:true,agentAddress:admin})).requests[0].pricing,invited.pricing,'the agent sees what it approves')
  const op=randomUUID(),db=await pool.connect()

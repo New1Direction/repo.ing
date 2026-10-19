@@ -8,7 +8,7 @@ import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 import { readLimitedBody } from '../../src/token-image.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
 import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
-import { launchPriceAtInvite } from './hooklab-launch-price.mjs'
+import { launchBoundsAtInvite,launchPriceAtInvite } from './hooklab-launch-price.mjs'
 const uuid=z.uuid()
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('heartbeat'),accepting:z.boolean(),agentAddress:z.string().max(44)}).strict(),
@@ -28,7 +28,7 @@ export function ownerTokenMatches(header,expectedSha256){
 // Fixed, owner-facing and secret-free: store refusals and launch-price refusals (public source prices only).
 const ownerFacing=error=>['OWNER_APPROVAL_UNAVAILABLE','LAUNCH_PRICE_REFUSED'].includes(error?.code)
 export function createOwnerApprovalsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,store=ownerApprovalStore,
- launchPrice=launchPriceAtInvite}={}){
+ launchPrice=launchPriceAtInvite,launchBounds=()=>launchBoundsAtInvite(env)}={}){
  return async request=>{
   if(env.HOOK_OWNER_APPROVED_LAUNCHES!=='true')return reply({status:'blocked',error:'Owner-approved launches are not enabled.'},503)
   if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
@@ -42,8 +42,12 @@ export function createOwnerApprovalsHandler({env=process.env,configuration=walle
    const usdPricing=usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing})
    let result
    if(input.action==='heartbeat')result=await approvals.heartbeat({accepting:input.accepting,agentAddress:input.agentAddress})
-   // The SOL price is read fresh for each invite, before the invite transaction, and fixed with it.
-   else if(input.action==='invite')result={request:await approvals.invite(input.requestId,{inviteMs:input.inviteSeconds*1000,...(usdPricing&&{price:await launchPrice()})})}
+   // The SOL price and the live on-chain limits are read fresh for each invite, before the invite transaction; the
+   // store fixes the price only if the chain would accept its opening quote.
+   else if(input.action==='invite'){
+    const [price,liveBounds]=usdPricing?await Promise.all([launchPrice(),launchBounds()]):[]
+    result={request:await approvals.invite(input.requestId,{inviteMs:input.inviteSeconds*1000,...(usdPricing&&{price,liveBounds})})}
+   }
    else if(input.action==='decline')result={request:await approvals.decline(input.requestId)}
    else if(input.action==='sign')result={signRequest:await approvals.submitSignature(input.signRequestId,input.signatureBase64)}
    else if(input.action==='decline-sign')result={signRequest:await approvals.declineSignRequest(input.signRequestId)}

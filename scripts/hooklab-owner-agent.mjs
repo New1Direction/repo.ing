@@ -22,8 +22,9 @@ import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { Connection,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
-import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress,invitedVirtualQuote,ownerRequestLines,checkInvitePriceAgainst } from '../src/hooklab-owner-agent.mjs'
+import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress,invitedVirtualQuote,ownerRequestLines,checkBeforeInvite,checkAfterInvite } from '../src/hooklab-owner-agent.mjs'
 import { readSolUsdSources } from '../src/sol-usd-sources.mjs'
+import { readLiveLaunchBounds } from '../src/hooklab-launch-bounds.mjs'
 import { STANDARD_VIRTUAL_QUOTE,formatSol,ownerPricingLine } from '../src/hooklab-launch-pricing.mjs'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinImageUrl,coinLinks } from '../src/hooklab-coin-profile.mjs'
@@ -174,11 +175,15 @@ rl.on('line',async line=>{
    const grant=await grantStatus(pick.creator)
    if(!grant.usable){console.log(`Creator grant not usable (${grant.reason}). Issue it first with the owner driver:\n  node scripts/hooklab-owner.mjs plan customer-grant --creator ${pick.creator} --rpc URL --rpc2 URL\nreview the preview, then: node scripts/hooklab-owner.mjs execute customer-grant --creator ${pick.creator} --message-sha256 <preview sha> --key payer=<pipe> --key admin=<pipe> --rpc URL --rpc2 URL\nthen invite again.`);return}
    const minutes=Number(arg2??opt['invite-minutes'])
+   // First this Mac's own SOL read (when the server prices invites) and the live launch-config limits: never ask for
+   // an invite the chain would refuse, since it would hold the single invite slot until it expired.
+   const priced=pick.pricing!==undefined,ownReadings=priced?await readSolUsdSources():[],bounds=await readLiveLaunchBounds(connections)
+   checkBeforeInvite({priced,ownReadings,bounds})
    const {request:confirmed}=await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})
    if(!INVITE_FIELDS.every(k=>confirmed[k]===pick[k]))throw Error('server returned a different invite')
-   // A price that does not re-derive from its sources, or that this Mac's own SOL read does not confirm, is never
-   // recorded, so nothing is ever signed for this invite.
-   try{invitedVirtualQuote(confirmed);if(confirmed.pricing)checkInvitePriceAgainst(confirmed.pricing,await readSolUsdSources())}
+   // A price that does not re-derive from its sources, that this Mac's read does not confirm, or that the same limits
+   // refuse is never recorded, so nothing is ever signed for this invite.
+   try{checkAfterInvite({confirmed,ownReadings,bounds})}
    catch(error){throw Error(`${error.message}; this invite is NOT recorded and will not be signed (decline ${arg} to release it)`)}
    recordInvite(confirmed)
    console.log(`Invited until ${new Date(confirmed.inviteExpiresAt).toLocaleTimeString()}${confirmed.pricing?`\n  ${ownerPricingLine(confirmed.pricing)}`:''}`)

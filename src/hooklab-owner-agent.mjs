@@ -5,7 +5,8 @@ import { createHash,createPrivateKey,sign } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { AddressLookupTableAccount,PublicKey,VersionedMessage } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
-import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing,formatSolPrice,ownerPricingLine,solUsdQuorum } from './hooklab-launch-pricing.mjs'
+import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing,formatSolPrice,launchVirtualQuote,ownerPricingLine,solUsdQuorum } from './hooklab-launch-pricing.mjs'
+import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
 const COMPUTE_BUDGET='ComputeBudget111111111111111111111111111111'
 const launchIdl=JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url)))
 const coder=new BorshCoder(launchIdl)
@@ -33,6 +34,19 @@ export function checkInvitePriceAgainst(pricing,ownReadings){
  const [lo,hi]=server<mine?[server,mine]:[mine,server]
  need(hi*10000n<=lo*10300n,`server SOL price ${formatSolPrice(server)} is more than 3% from this Mac's ${formatSolPrice(mine)}`)
  return own
+}
+// Before an invite: the opening this Mac expects (its own SOL read when the server prices invites, else the standard
+// quote) must fit the live on-chain limits, so the agent never asks for an invite the chain would refuse.
+export function checkBeforeInvite({priced,ownReadings,bounds}){
+ const quote=priced?launchVirtualQuote(solUsdQuorum(ownReadings).solUsdMicros):STANDARD_VIRTUAL_QUOTE
+ checkLiveBounds(quote,bounds);return quote
+}
+// After: the server's price re-derives, is within 3% of this Mac's read, and its quote fits the same live limits.
+// Returns the quote the invite ledger records.
+export function checkAfterInvite({confirmed,ownReadings,bounds}){
+ const quote=invitedVirtualQuote(confirmed)
+ if(confirmed.pricing)checkInvitePriceAgainst(confirmed.pricing,ownReadings)
+ checkLiveBounds(quote,bounds);return quote
 }
 // Extra list rows for one request: the fixed price, or when it will be fixed. Nothing while USD pricing is off.
 export function ownerRequestLines(request){
