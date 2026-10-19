@@ -60,6 +60,18 @@ export async function watchCustomerApi(browser: { addInitScript(script: (arg: an
   }, marker)
 }
 
+/** (c), collected: where the marker showed up on the current page and in the customer API responses seen since the last
+ * clearState, recorded (with `where`) instead of failing at once, so one leak does not hide the rest of the run. A final
+ * test asserts the list is empty. Returns how many API responses were checked. */
+export const markerLeaks: string[] = []
+export async function recordMarkerLeaks(browser: { evaluate<T>(fn: () => T): Promise<T> }, marker: string, where: string): Promise<number> {
+  const seen = await browser.evaluate(() => ({ html: document.documentElement.outerHTML, text: document.body?.innerText ?? '',
+    watch: JSON.parse(sessionStorage.getItem('__e2eApiWatch') ?? '{"responses":0,"leaks":[]}') }))
+  const leaks = [...(seen.html.includes(marker) ? ['page markup'] : []), ...(seen.text.includes(marker) ? ['page text'] : []), ...new Set<string>(seen.watch.leaks.map((p: string) => `API ${p}`))]
+  for (const leak of leaks) markerLeaks.push(`${where}: ${leak}`)
+  return seen.watch.responses
+}
+
 /** (c): no customer API response seen so far held the marker, and it is nowhere in the current page's text or markup (RSC
  * payloads included). Returns how many API responses were checked. */
 export async function expectMarkerHidden(browser: { evaluate<T>(fn: () => T): Promise<T> }, marker: string): Promise<number> {

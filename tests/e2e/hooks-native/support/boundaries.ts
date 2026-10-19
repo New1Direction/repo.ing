@@ -16,18 +16,20 @@ const MAX_FILL_ROUNDS = 40
 const sends = async (control: (method: 'GET', route: string) => Promise<Record<string, number>>) => control('GET', '/rpc/sends')
 const solText = (lamports: bigint) => `${lamports / 1_000_000_000n}.${(lamports % 1_000_000_000n).toString().padStart(9, '0')}`
 
-/** Buys from fresh Node wallets (real signatures, the same API) until one capped buy can finish the curve. */
-async function fillUntilOneBuyLeft(mint: string): Promise<void> {
+/** Buys from fresh Node wallets (real signatures, the same API) until one capped buy can finish the curve. onFilled is
+ * called with each settled fill (its operation and the filler's address) for the caller's own exact checks. */
+export async function fillUntilOneBuyLeft(mint: string, onFilled?: (op: any, address: string) => Promise<void>): Promise<number> {
   for (let round = 1; ; round++) {
     if (round > MAX_FILL_ROUNDS) throw new Error(`the curve did not come within one buy of its end in ${MAX_FILL_ROUNDS} fill rounds`)
     const market = await marketView(mint), fill = finalFillLamports(market), max = maxBuyLamports(market, 0n)
-    if (fill !== null && max === fill) return
+    if (fill !== null && max === fill) return round - 1
     const filler = new SiteClient(await freshWallet(120))
     await filler.signIn()
     const quote = await filler.nativeQuote(market, 'buy', (max as bigint) * 98n / 100n)
     if (quote.status !== 200) throw new Error(`fill round ${round}: review refused ${JSON.stringify(quote.json)}`)
     const op = await filler.signAndSettle(quote.signingId)
     if (op?.status !== 'finalized-success') throw new Error(`fill round ${round}: ${op?.status} ${op?.signature}`)
+    await onFilled?.(op, filler.address)
   }
 }
 
