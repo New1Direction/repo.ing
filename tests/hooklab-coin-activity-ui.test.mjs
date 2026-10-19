@@ -4,6 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
+import { appendOlderTrades, mergeTradePage } from '../app/lib/hooklab-coin-display.mjs'
 
 const { HookTradesList, HookHoldersList, HookCoinActivity } = await appModule('app/components/hooklab-coin-activity.jsx')
 const { HookCoinChart } = await appModule('app/components/hooklab-coin-chart.jsx')
@@ -83,4 +84,23 @@ test('coin page: a listed coin gets the chart and the activity tabs, in phone or
     assert.ok(hero >= 0 && hero < panel && panel < chart && chart < activity && activity < blocks, `order ${[hero, panel, chart, activity, blocks]}`)
     assert.match(page, /class="hooks-coin-layout has-activity"/)
   } finally { delete globalThis[key] }
+})
+
+test('older trades stay joined to a refreshed first page, with nothing silently skipped', () => {
+  const rows = (from, to) => Array.from({ length: from - to + 1 }, (_, i) => ({ signature: `s${from - i}`, eventIndex: 0, swapCount: String(from - i) }))
+  const counts = list => [list.trades[0].swapCount, list.trades.at(-1).swapCount, list.trades.length, list.next]
+  let shown = mergeTradePage(null, { trades: rows(100, 81), next: '81' })
+  shown = appendOlderTrades(shown, { trades: rows(80, 61), next: '61' })
+  assert.deepEqual(counts(shown), ['100', '61', 40, '61'])
+  // Five new trades: the refreshed page overlaps what is shown, so 85..81 stay.
+  shown = mergeTradePage(shown, { trades: rows(105, 86), next: '86' })
+  assert.deepEqual(counts(shown), ['105', '61', 45, '61'])
+  // Thirty new trades: 110..106 were never fetched, so the list starts again from the refreshed page.
+  shown = mergeTradePage(shown, { trades: rows(135, 116), next: '116' })
+  assert.deepEqual(counts(shown), ['135', '116', 20, '116'])
+  assert.deepEqual(counts(mergeTradePage(shown, { trades: rows(135, 116), next: '116' })), ['135', '116', 20, '116'], 'a repeat changes nothing')
+})
+
+test('while older history is still being read, the trades list says so', () => {
+  assert.match(html(h(HookTradesList, { trades: [sell], symbol: 'TEST', decimals: 6, now, backfilling: true })), /Older trades are still loading/)
 })

@@ -12,34 +12,35 @@ const market = { mint, name: 'Test Coin', symbol: 'TEST', decimals: 6, graduated
   pool: { swapCount: '2' } }
 const trade = (swapCount, side) => ({ signature: `${'5'.repeat(87)}${swapCount}`, eventIndex: 10, side, trader, tradedAt: '2026-10-18T20:49:37.000Z',
   slot: '458573472', swapCount: String(swapCount), quoteAmount: '980295', baseAmount: '1112870787571', curveBase: '1125000000000000', curveQuote: '1000000001' })
-function fakeStore({ indexed = 2n } = {}) {
+function fakeStore({ indexed = 2n, walking = false } = {}) {
   const calls = []
   return { calls, store: {
-    async indexedSwapCount(p) { calls.push(['indexedSwapCount', p]); return indexed },
+    async progress(p) { calls.push(['progress', p]); return { swapCount: indexed, walking } },
     async trades(p, options) { calls.push(['trades', p, options]); return { trades: [trade(2, 'sell'), trade(1, 'buy')].slice(0, options.limit), next: options.limit < 2 ? '2' : null } },
     async summary(p, options) { calls.push(['summary', p, options]); return { totalTrades: 2, volume24hLamports: '1980495', firstTradeAt: '2026-10-18T20:48:51.000Z',
       lastTradeAt: '2026-10-18T20:49:37.000Z', latest: { signature: 'x', swapCount: '2', tradedAt: '2026-10-18T20:49:37.000Z', curveBase: '1', curveQuote: '1', priceSol: 0.00000000089 } } },
     async candles(p, options) { calls.push(['candles', p, options]); return [{ time: 1792356300, open: 1, high: 2, low: 0.5, close: 1.5, volumeLamports: '1980495', count: 2 }] },
   } }
 }
-function setup({ listed = true, indexed = 2n, allowed = () => true, runtime, holdersTtlMs = 60_000 } = {}) {
-  const db = fakeStore({ indexed }), ensured = [], rpcCalls = [], opened = []
+function setup({ listed = true, indexed = 2n, walking = false, allowed = () => true, runtime, holdersTtlMs = 60_000 } = {}) {
+  const db = fakeStore({ indexed, walking }), ensured = [], rpcCalls = [], opened = [], listings = []
   const service = runtime === undefined ? { market: async m => m === mint ? { market, wallet: null } : null, activity: hookActivityRpc(canaryConnection({ calls: rpcCalls })) } : runtime
-  const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async m => listed && m === mint ? { id: 'coin', name: 'Test Coin' } : null,
+  const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async m => { listings.push(m); return listed && m === mint ? { id: 'coin', name: 'Test Coin' } : null },
     openStore: () => { opened.push('open'); return { store: db.store, close: async () => opened.push('close') } },
     indexer: { ensure: async args => { ensured.push(args); return 'indexed' } }, allowed, holdersTtlMs })
-  return { handlers, db, ensured, rpcCalls, opened }
+  return { handlers, db, ensured, rpcCalls, opened, listings }
 }
 const get = (handler, path, m = mint) => handler(new Request(`https://repo.ing/api/hook-lab/market/${m}/${path}`), { mint: m })
 
 test('only listed Hooks coins with valid addresses, within the rate limit', async () => {
-  const { handlers } = setup()
+  const { handlers, listings } = setup()
   for (const kind of ['trades', 'candles', 'holders']) {
     assert.equal((await get(handlers[kind], kind, 'not-a-mint')).status, 404)
     assert.equal((await get(handlers[kind], kind, `${mint}0`)).status, 404, 'not canonical base58')
     assert.equal((await get(handlers[kind], kind, '11111111111111111111111111111111')).status, 404, 'not listed')
     const unlisted = await get(setup({ listed: false }).handlers[kind], kind)
     assert.equal(unlisted.status, 404); assert.match((await unlisted.json()).error, /not listed/)
+    assert.equal(unlisted.headers.get('cache-control'), 'no-store', 'a listing read that failed must not be cached as not listed')
     assert.equal((await get(setup({ allowed: () => false }).handlers[kind], kind)).status, 429)
     assert.equal((await get(setup({ runtime: null }).handlers[kind], kind)).status, 503)
     assert.equal((await get(setup({ runtime: { market: async () => ({ market }) } }).handlers[kind], kind)).status, 503, 'no activity reads')
@@ -47,6 +48,7 @@ test('only listed Hooks coins with valid addresses, within the rate limit', asyn
   assert.equal((await get(handlers.trades, 'trades?before=abc')).status, 400)
   assert.equal((await get(handlers.trades, 'trades?limit=500')).status, 400)
   assert.equal((await get(handlers.candles, 'candles?interval=2m')).status, 400)
+  assert.ok(!listings.includes('11111111111111111111111111111111'), 'the database is only asked about real Hooks coins')
 })
 
 test('trades: newest first with a cursor for older pages; the index catches up first', async () => {
@@ -54,10 +56,10 @@ test('trades: newest first with a cursor for older pages; the index catches up f
   const response = await get(handlers.trades, 'trades?limit=1')
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'public, max-age=5')
   const body = await response.json()
-  assert.deepEqual(body, { status: 'available', decimals: 6, next: '2', syncing: 1, trades: [{ signature: trade(2).signature, eventIndex: 10, side: 'sell', trader,
+  assert.deepEqual(body, { status: 'available', decimals: 6, next: '2', syncing: 1, backfilling: false, trades: [{ signature: trade(2).signature, eventIndex: 10, side: 'sell', trader,
     tradedAt: '2026-10-18T20:49:37.000Z', solLamports: '980295', tokenBaseUnits: '1112870787571', swapCount: '2' }] })
   assert.equal(ensured.length, 1)
-  assert.deepEqual({ ...ensured[0], rpc: undefined }, { coin: { mint, pool }, rpc: undefined, chainSwapCount: 2n, indexedSwapCount: 1n })
+  assert.deepEqual({ ...ensured[0], rpc: undefined }, { coin: { mint, pool }, rpc: undefined, behind: true })
   assert.deepEqual(db.calls.find(c => c[0] === 'trades'), ['trades', pool, { before: null, limit: 1 }])
   assert.deepEqual(opened, ['open', 'close'])
   const older = await get(handlers.trades, 'trades?before=2&limit=20')
@@ -68,7 +70,7 @@ test('trades: newest first with a cursor for older pages; the index catches up f
 test('candles: one interval of SOL prices, with the volume and latest price', async () => {
   const { handlers, db } = setup()
   const body = await (await get(handlers.candles, 'candles?interval=5m')).json()
-  assert.deepEqual(body, { status: 'available', interval: '5m', intervalSeconds: 300, decimals: 6, syncing: 0, totalTrades: 2, volume24hLamports: '1980495',
+  assert.deepEqual(body, { status: 'available', interval: '5m', intervalSeconds: 300, decimals: 6, syncing: 0, backfilling: false, totalTrades: 2, volume24hLamports: '1980495',
     firstTradeAt: '2026-10-18T20:48:51.000Z', lastTradeAt: '2026-10-18T20:49:37.000Z', latest: { priceSol: 0.00000000089, tradedAt: '2026-10-18T20:49:37.000Z' },
     candles: [{ time: 1792356300, open: 1, high: 2, low: 0.5, close: 1.5, volumeLamports: '1980495', count: 2 }] })
   assert.deepEqual(db.calls.find(c => c[0] === 'candles'), ['candles', pool, { seconds: 300, decimals: 6 }])
@@ -86,35 +88,39 @@ test('holders: one token-program read per minute per coin, labelled, with each s
   assert.equal(rpcCalls.filter(c => c.method === 'getProgramAccounts').length, 1, 'cached for a minute')
 })
 
-test('the on-demand index runs only when the chain is ahead, once per coin at a time, and never holds a request long', async () => {
+test('the on-demand index runs only when behind, once per coin at a time, never holds a request long, and backs off after an error', async () => {
   let clock = 0, release
   const runs = [], closes = []
   const indexer = createOnDemandIndexer({ now: () => clock, minMs: 10_000, waitMs: 20, maxRunning: 1, onError: () => {},
     openStore: () => ({ store: 'db', close: async () => closes.push(clock) }),
     index: args => { runs.push(args); return new Promise(resolve => { release = resolve }) } })
   const coin = { mint, pool }, other = { mint: pool, pool: mint }
-  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', chainSwapCount: 2n, indexedSwapCount: 2n }), 'current')
-  assert.equal(runs.length, 0, 'nothing new on chain: no RPC at all')
-  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', chainSwapCount: 3n, indexedSwapCount: 2n }), 'pending', 'a slow pass keeps running after the wait')
+  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', behind: false }), 'current')
+  assert.equal(runs.length, 0, 'nothing new on chain and no walk left: no RPC at all')
+  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', behind: true }), 'pending', 'a slow pass keeps running after the wait')
   assert.deepEqual(runs.map(r => [r.coin, r.store, r.rpc]), [[coin, 'db', 'rpc']])
-  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', chainSwapCount: 3n, indexedSwapCount: 2n }), 'pending', 'joins the pass in flight')
-  assert.equal(await indexer.ensure({ coin: other, rpc: 'rpc', chainSwapCount: 3n, indexedSwapCount: 2n }), 'busy', 'bounded across coins')
+  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', behind: true }), 'pending', 'joins the pass in flight')
+  assert.equal(await indexer.ensure({ coin: other, rpc: 'rpc', behind: true }), 'busy', 'bounded across coins')
   assert.equal(runs.length, 1)
   release({ status: 'indexed' }); await new Promise(r => setImmediate(r))
   assert.deepEqual(closes, [0], 'the pass closes its own database pool')
   clock = 5_000
-  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', chainSwapCount: 4n, indexedSwapCount: 3n }), 'recent')
+  assert.equal(await indexer.ensure({ coin, rpc: 'rpc', behind: true }), 'recent')
   clock = 10_000
-  const again = indexer.ensure({ coin, rpc: 'rpc', chainSwapCount: 4n, indexedSwapCount: 3n })
+  const again = indexer.ensure({ coin, rpc: 'rpc', behind: true })
   release({ status: 'indexed' })
   assert.equal(await again, 'indexed'); assert.equal(runs.length, 2)
-  // A failing pass is reported, and the coin waits out the interval before trying again.
+  // A failing pass is reported, and the coin waits a minute before trying again.
   const errors = []
-  const failing = createOnDemandIndexer({ now: () => 0, minMs: 10_000, waitMs: 50, onError: error => errors.push(error.code),
+  let failingClock = 0
+  const failing = createOnDemandIndexer({ now: () => failingClock, minMs: 10_000, errorMs: 60_000, waitMs: 50, onError: error => errors.push(error.code),
     openStore: () => ({ store: 'db', close: async () => {} }), index: async () => { throw Object.assign(Error('HOOK_TRADE_SLOT_MISMATCH'), { code: 'HOOK_TRADE_SLOT_MISMATCH' }) } })
-  assert.equal(await failing.ensure({ coin, rpc: 'rpc', chainSwapCount: 2n, indexedSwapCount: 0n }), 'error')
+  assert.equal(await failing.ensure({ coin, rpc: 'rpc', behind: true }), 'error')
   assert.deepEqual(errors, ['HOOK_TRADE_SLOT_MISMATCH'])
-  assert.equal(await failing.ensure({ coin, rpc: 'rpc', chainSwapCount: 2n, indexedSwapCount: 0n }), 'recent')
+  failingClock = 30_000
+  assert.equal(await failing.ensure({ coin, rpc: 'rpc', behind: true }), 'recent', 'past the usual interval, still backing off')
+  failingClock = 60_000
+  assert.equal(await failing.ensure({ coin, rpc: 'rpc', behind: true }), 'error'); assert.equal(errors.length, 2)
 })
 
 test('a failing holders read answers 503 and is not retried for a few seconds', async () => {

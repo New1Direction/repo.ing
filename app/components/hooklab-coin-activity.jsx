@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { DetailsTabs } from './details-tabs'
 import { visiblePolling } from '../lib/visible-polling.mjs'
 import { formatSolDisplay } from '../lib/format.mjs'
-import { coinAmount, explorerAddress, explorerTx, hookActivityUrl, percentLabel, shortAddress, shortAge } from '../lib/hooklab-coin-display.mjs'
+import { appendOlderTrades, coinAmount, explorerAddress, explorerTx, hookActivityUrl, mergeTradePage, percentLabel, shortAddress, shortAge } from '../lib/hooklab-coin-display.mjs'
 
 const POLL_MS = 30_000
 const AFTER_TRADE_MS = [0, 5_000]
@@ -12,10 +12,10 @@ const Skeleton = ({ label, rows = 4 }) => <div className="hooks-activity-loading
 const Wallet = ({ address }) => <a href={explorerAddress(address)} target="_blank" rel="noopener noreferrer" title={address}>{shortAddress(address)}</a>
 
 // Newest first, as the trades API orders them. trades: null while loading.
-export function HookTradesList({ trades, symbol, decimals, now, failed = false, more = false, loadingMore = false, syncing = 0, onMore, onRetry }) {
+export function HookTradesList({ trades, symbol, decimals, now, failed = false, more = false, loadingMore = false, syncing = 0, backfilling = false, onMore, onRetry }) {
   if (!trades) return failed ? <div className="hooks-activity-empty" role="status"><strong>Trades are taking a moment to load.</strong>
     {onRetry && <button type="button" className="button outline" onClick={onRetry}>Try again</button>}</div> : <Skeleton label="Loading trades"/>
-  const note = syncing > 0 && <p className="hooks-activity-note" role="status">{syncing === 1 ? '1 new trade is confirming.' : `${syncing} new trades are confirming.`} It shows up here in a few seconds.</p>
+  const note = (syncing > 0 || backfilling) && <p className="hooks-activity-note" role="status">{syncing > 0 && `${syncing === 1 ? '1 new trade is confirming.' : `${syncing} new trades are confirming.`} It shows up here in a few seconds. `}{backfilling && 'Older trades are still loading.'}</p>
   if (!trades.length) return <>{note}<div className="hooks-activity-empty" role="status"><img src="/launch-icons/discovery-fees.webp" width={48} height={48} alt=""/><strong>No trades yet. Be the first.</strong>
     <span>Every buy and sell shows up here with its wallet, a few seconds after it lands.</span></div></>
   return <>{note}<div className="hooks-table-scroll"><table className="hooks-table hooks-trades-table">
@@ -57,14 +57,19 @@ async function readJson(url, signal = null) {
 }
 
 function TradesPanel({ mint, symbol, decimals, initial }) {
-  const [page, setPage] = useState(initial), [failed, setFailed] = useState(false), [older, setOlder] = useState({ trades: [], next: null, loading: false })
+  // list: what is shown ({ trades, next }); page: the newest first page (its syncing and backfilling notes).
+  const [page, setPage] = useState(initial), [list, setList] = useState(() => initial && mergeTradePage(null, initial))
+  const [failed, setFailed] = useState(false), [loadingMore, setLoadingMore] = useState(false)
   const [now, setNow] = useState(() => Date.now()), [retry, setRetry] = useState(0)
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 15_000); return () => clearInterval(timer) }, [])
   useEffect(() => {
     let active = true, timers = []
     const controller = new AbortController()
     async function refresh() {
-      try { const result = await readJson(hookActivityUrl(mint, 'trades'), controller.signal); if (active) { setPage(result); setFailed(false); setNow(Date.now()) } }
+      try {
+        const result = await readJson(hookActivityUrl(mint, 'trades'), controller.signal)
+        if (active) { setPage(result); setList(shown => mergeTradePage(shown, result)); setFailed(false); setNow(Date.now()) }
+      }
       catch { if (active) setFailed(true) }
     }
     const onTrade = event => { if (event.detail?.mint === mint) timers = AFTER_TRADE_MS.map(ms => setTimeout(refresh, ms)) }
@@ -72,20 +77,14 @@ function TradesPanel({ mint, symbol, decimals, initial }) {
     window.addEventListener('repoing:trade-confirmed', onTrade)
     return () => { active = false; controller.abort(); stop(); timers.forEach(clearTimeout); window.removeEventListener('repoing:trade-confirmed', onTrade) }
   }, [mint, retry])
-  // Older pages follow the first page's oldest trade; a refreshed first page keeps the ones still older than it.
-  const first = page?.trades ?? null, oldest = first?.length ? BigInt(first.at(-1).swapCount) : null
-  const trades = first && [...first, ...older.trades.filter(t => oldest !== null && BigInt(t.swapCount) < oldest)]
-  const next = older.trades.length ? older.next : page?.next
   async function more() {
-    if (!next || older.loading) return
-    setOlder(value => ({ ...value, loading: true }))
-    try {
-      const result = await readJson(hookActivityUrl(mint, 'trades', { before: next }))
-      setOlder(value => ({ trades: [...value.trades, ...result.trades], next: result.next, loading: false }))
-    } catch { setOlder(value => ({ ...value, loading: false })) }
+    if (!list?.next || loadingMore) return
+    setLoadingMore(true)
+    try { const result = await readJson(hookActivityUrl(mint, 'trades', { before: list.next })); setList(shown => appendOlderTrades(shown, result)) }
+    catch { /* The button stays; a tap tries again. */ } finally { setLoadingMore(false) }
   }
-  return <HookTradesList trades={trades} symbol={symbol} decimals={decimals} now={now} failed={failed && !page} more={Boolean(next)} loadingMore={older.loading}
-    syncing={page?.syncing ?? 0} onMore={more} onRetry={() => setRetry(n => n + 1)}/>
+  return <HookTradesList trades={list?.trades ?? null} symbol={symbol} decimals={decimals} now={now} failed={failed && !list} more={Boolean(list?.next)} loadingMore={loadingMore}
+    syncing={page?.syncing ?? 0} backfilling={page?.backfilling ?? false} onMore={more} onRetry={() => setRetry(n => n + 1)}/>
 }
 
 // Holders cost a token-program read, so they load only once their tab is opened, then every minute while it stays open.

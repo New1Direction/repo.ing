@@ -4,9 +4,10 @@
 // Where the trade index runs: here, in the web service, on demand. Hook Lab is kept out of the general worker
 // (docs/HOOK_LAB_EXECUTION_FOUNDATION.md), and its pinned RPC providers and database are installed only in the web process
 // (src/hooklab-production-bootstrap.mjs), so a worker loop would need its own copy of both. A request first compares the
-// chain's swap counter (from the coin read the trade panel already polls, cached 3 s) with the index's: equal means no RPC
-// at all. Behind, one pass per coin runs at a time, at most every REFRESH_MIN_MS, with at most MAX_RUNNING_REFRESHES coins
-// at once; the request waits up to REFRESH_WAIT_MS for it and a longer pass finishes in the background.
+// chain's swap counter (from the coin read the trade panel already polls, cached 3 s) with the index's: equal, with no walk
+// filling in older history, means no RPC at all. Otherwise one pass per coin runs at a time, at most every REFRESH_MIN_MS
+// (ERROR_BACKOFF_MS after a failure), with at most MAX_RUNNING_REFRESHES coins at once; the request waits up to
+// REFRESH_WAIT_MS for it and a longer pass finishes in the background. The index only moves while someone views a coin.
 import { PublicKey } from '@solana/web3.js'
 import { createRateLimiter } from './csp-report.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
@@ -21,6 +22,7 @@ import { hookCoinAddresses } from '../../src/hooklab-inclusive-max-wallet-swap.m
 import { PROGRAMS, QUOTE_MINT } from '../../src/hooklab-owner-driver/pins.mjs'
 
 export const REFRESH_MIN_MS = 10_000
+export const ERROR_BACKOFF_MS = 60_000
 export const REFRESH_WAIT_MS = 2_500
 export const MAX_RUNNING_REFRESHES = 3
 export const HOLDERS_TTL_MS = 60_000
@@ -50,28 +52,29 @@ export function openHookCoinStore(env = process.env) {
   return { store: hookCoinTradeStore(pool), close: () => pool.end().catch(() => {}) }
 }
 
-// ensure() resolves to 'current' (nothing new on chain), 'recent' (this coin was refreshed under minMs ago), 'busy' (enough
-// coins are refreshing), or the pass's outcome: 'indexed', 'current', 'error', or 'pending' while it keeps running.
+// ensure({ coin, rpc, behind }) resolves to 'current' (not behind), 'recent' (this coin was refreshed under minMs ago, or
+// failed under errorMs ago), 'busy' (enough coins are refreshing), or the pass's outcome: 'indexed', 'current', 'error',
+// or 'pending' while it keeps running.
 export function createOnDemandIndexer({ openStore = () => openHookCoinStore(), index = indexHookCoinTrades, now = Date.now, minMs = REFRESH_MIN_MS,
-  waitMs = REFRESH_WAIT_MS, maxRunning = MAX_RUNNING_REFRESHES, onError = reportOnce } = {}) {
+  errorMs = ERROR_BACKOFF_MS, waitMs = REFRESH_WAIT_MS, maxRunning = MAX_RUNNING_REFRESHES, onError = reportOnce } = {}) {
   const states = new Map()
   let running = 0
   function start(coin, rpc) {
-    const state = { at: now(), pass: null }
+    const state = { at: now(), pass: null, failed: false }
     states.set(coin.pool, state); running++
     state.pass = (async () => {
       const { store, close } = openStore()
       try { return (await index({ rpc, store, coin })).status } finally { await close() }
-    })().catch(error => { onError(error); return 'error' }).finally(() => { running--; state.pass = null })
+    })().catch(error => { onError(error); state.failed = true; return 'error' }).finally(() => { running--; state.pass = null })
     if (states.size > 1000) states.delete(states.keys().next().value)
     return state
   }
   return Object.freeze({
-    async ensure({ coin, rpc, chainSwapCount, indexedSwapCount }) {
-      if (indexedSwapCount >= chainSwapCount) return 'current'
+    async ensure({ coin, rpc, behind }) {
+      if (!behind) return 'current'
       let state = states.get(coin.pool)
       if (!state?.pass) {
-        if (state && now() - state.at < minMs) return 'recent'
+        if (state && now() - state.at < (state.failed ? errorMs : minMs)) return 'recent'
         if (running >= maxRunning) return 'busy'
         state = start(coin, rpc)
       }
@@ -88,27 +91,29 @@ const publicTrade = t => ({ signature: t.signature, eventIndex: t.eventIndex, si
 export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, listed = launchedCoinProfile, openStore = () => openHookCoinStore(),
   indexer = null, allowed = defaultLimiter, holdersTtlMs = HOLDERS_TTL_MS, holdersRetryMs = HOLDERS_RETRY_MS, now = Date.now } = {}) {
   const holderFailures = new Map()
-  // A listed coin's market read, then work({ service, market, addresses }); every refusal before any database read.
+  // A listed coin's market read, then work({ service, market, addresses }). The coin is read (cached) first, so the database
+  // is only asked about real Hooks coins; "not listed" is never cached, as a failed listing read also answers null.
   const guarded = work => async (request, { mint }) => {
     if (!address(mint)) return reply({ error: 'Unknown coin.' }, 404)
     if (!allowed(clientAddress(request) ?? 'unknown')) return reply({ error: 'Too many requests. Try again shortly.' }, 429)
     const service = runtime()
     if (!service?.market || !service.activity) return unavailable()
     try {
-      if (!await listed(mint)) return reply({ error: 'This coin is not listed on repo.ing.' }, 404, 'public, max-age=60')
       const view = await cachedMarket(service, mint)
       if (!view?.market) return reply({ error: 'This is not a Hooks coin.' }, 404, 'public, max-age=60')
+      if (!await listed(mint)) return reply({ error: 'This coin is not listed on repo.ing.' }, 404)
       return await work({ service, market: view.market, addresses: await addressesOf(mint), url: new URL(request.url) })
     } catch (error) { reportOnce(error); return unavailable() }
   }
-  // The index caught up to the chain's swap counter (or as far as one short wait allows), then read(store, syncing).
+  // The index caught up to the chain's swap counter (or as far as one short wait allows), then read(store, pool, sync):
+  // sync.syncing is how many newer swaps are not indexed yet, sync.backfilling whether older history is still being read.
   const indexed = async ({ service, market, addresses }, read) => {
     const { store, close } = openStore(), coin = { mint: market.mint, pool: addresses.pool }, chainSwapCount = BigInt(market.pool.swapCount)
     try {
-      const before = await store.indexedSwapCount(coin.pool)
-      if (before < chainSwapCount) await (indexer ?? defaultIndexer()).ensure({ coin, rpc: service.activity, chainSwapCount, indexedSwapCount: before })
-      const after = before < chainSwapCount ? await store.indexedSwapCount(coin.pool) : before
-      return await read(store, coin.pool, Number(chainSwapCount > after ? chainSwapCount - after : 0n))
+      const before = await store.progress(coin.pool), behind = before.walking || before.swapCount < chainSwapCount
+      if (behind) await (indexer ?? defaultIndexer()).ensure({ coin, rpc: service.activity, behind })
+      const after = behind ? await store.progress(coin.pool) : before
+      return await read(store, coin.pool, { syncing: Number(chainSwapCount > after.swapCount ? chainSwapCount - after.swapCount : 0n), backfilling: after.walking })
     } finally { await close() }
   }
   return Object.freeze({
@@ -117,9 +122,9 @@ export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, li
       const limit = limitText === null ? TRADES_PAGE : Number(limitText)
       if (before !== null && !/^[1-9]\d{0,19}$/.test(before)) return reply({ error: 'Invalid page.' }, 400)
       if (!Number.isInteger(limit) || limit < 1 || limit > TRADES_PAGE_MAX) return reply({ error: 'Invalid page size.' }, 400)
-      return indexed(context, async (store, pool, syncing) => {
+      return indexed(context, async (store, pool, sync) => {
         const page = await store.trades(pool, { before, limit })
-        return reply({ status: 'available', decimals: context.market.decimals, next: page.next, syncing, trades: page.trades.map(publicTrade) },
+        return reply({ status: 'available', decimals: context.market.decimals, next: page.next, ...sync, trades: page.trades.map(publicTrade) },
           200, before ? 'public, max-age=60' : 'public, max-age=5')
       })
     }),
@@ -127,9 +132,9 @@ export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, li
       const interval = context.url.searchParams.get('interval') ?? DEFAULT_HOOK_INTERVAL, seconds = hookIntervalSeconds(interval)
       if (!seconds) return reply({ error: 'Choose 1m, 5m, 15m, 1h, 4h or 1d.' }, 400)
       const decimals = context.market.decimals
-      return indexed(context, async (store, pool, syncing) => {
+      return indexed(context, async (store, pool, sync) => {
         const [candles, summary] = await Promise.all([store.candles(pool, { seconds, decimals }), store.summary(pool, { decimals })])
-        return reply({ status: 'available', interval, intervalSeconds: seconds, decimals, syncing, totalTrades: summary.totalTrades,
+        return reply({ status: 'available', interval, intervalSeconds: seconds, decimals, ...sync, totalTrades: summary.totalTrades,
           volume24hLamports: summary.volume24hLamports, firstTradeAt: summary.firstTradeAt, lastTradeAt: summary.lastTradeAt,
           latest: summary.latest ? { priceSol: summary.latest.priceSol, tradedAt: summary.latest.tradedAt } : null, candles }, 200, 'public, max-age=5')
       })

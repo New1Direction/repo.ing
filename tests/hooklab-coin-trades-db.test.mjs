@@ -26,18 +26,22 @@ async function withDatabase(work) {
 const rpcWith = (options = {}) => { const calls = []; return { calls, rpc: hookActivityRpc(canaryConnection({ ...options, calls })) } }
 const methods = calls => calls.map(call => call.method)
 
-test('indexes the canary from its launch, oldest first, then reads only what is new', () => withDatabase(async pool => {
+const tradeCount = async pool => (await pool.query('select count(*)::int n from hook_lab_coin_trades')).rows[0].n
+const reads = calls => calls.filter(call => call.method === 'getTransaction').map(call => call.params[0])
+
+test('indexes the canary newest first and stops at the oldest new swap; then reads only what is new', () => withDatabase(async pool => {
   const store = hookCoinTradeStore(pool), { rpc, calls } = rpcWith()
-  assert.equal(await store.indexedSwapCount(coin.pool), 0n)
-  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin }), { status: 'indexed', transactions: 4, trades: 2, remaining: 0 })
-  assert.deepEqual(methods(calls), ['getSignaturesForAddress', 'getTransaction', 'getTransaction', 'getTransaction', 'getTransaction'])
-  assert.deepEqual(calls.slice(1).map(call => call.params[0]), [CANARY_LAUNCH, CANARY_BUY, CANARY_SELL, CANARY_CLAIM], 'oldest first')
+  assert.deepEqual(await store.progress(coin.pool), { swapCount: 0n, walking: false })
+  // One read at a time here, so the reads are exact (a pass reads up to `concurrency` ahead).
+  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, concurrency: 1 }), { status: 'indexed', transactions: 3, trades: 2, caughtUp: true })
+  // Swap 1 is the first swap after nothing indexed, so the launch before it is never read.
+  assert.deepEqual(reads(calls), [CANARY_CLAIM, CANARY_SELL, CANARY_BUY])
   assert.equal(calls[0].params[1].commitment, 'finalized'); assert.equal(calls[1].params[1].commitment, 'finalized')
-  assert.deepEqual(await store.cursor(coin.pool), { mint: coin.mint, signature: CANARY_CLAIM, slot: 458573623 })
-  assert.equal(await store.indexedSwapCount(coin.pool), 2n)
-  // Caught up: one signature read from the cursor, no transaction reads, nothing inserted.
+  assert.deepEqual(await store.cursor(coin.pool), { mint: coin.mint, done: { signature: CANARY_CLAIM, slot: 458573623 }, walk: null })
+  assert.deepEqual(await store.progress(coin.pool), { swapCount: 2n, walking: false })
+  // Caught up: one signature read from the cursor, no transaction reads, nothing written.
   calls.length = 0
-  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin }), { status: 'current', transactions: 0, trades: 0, remaining: 0 })
+  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin }), { status: 'current', transactions: 0, trades: 0, caughtUp: true })
   assert.deepEqual(methods(calls), ['getSignaturesForAddress']); assert.equal(calls[0].params[1].until, CANARY_CLAIM)
 }))
 
@@ -57,45 +61,76 @@ test('trades read newest first, one page at a time', () => withDatabase(async po
   assert.deepEqual(await store.trades('11111111111111111111111111111111', { limit: 5 }), { trades: [], next: null })
 }))
 
-test('a small budget walks forward a few transactions at a time to the same result', () => withDatabase(async pool => {
-  const store = hookCoinTradeStore(pool), { rpc } = rpcWith()
-  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, maxTransactions: 1 }), { status: 'indexed', transactions: 1, trades: 0, remaining: 3 })
-  assert.equal((await store.cursor(coin.pool)).signature, CANARY_LAUNCH)
-  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, maxTransactions: 2 }), { status: 'indexed', transactions: 2, trades: 2, remaining: 1 })
-  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, maxTransactions: 2 }), { status: 'indexed', transactions: 1, trades: 0, remaining: 0 })
-  assert.equal((await pool.query('select count(*)::int n from hook_lab_coin_trades')).rows[0].n, 2)
+test('a small budget walks a few transactions per pass, newest trades first, and resumes where it stopped', () => withDatabase(async pool => {
+  const store = hookCoinTradeStore(pool), { rpc, calls } = rpcWith()
+  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, maxTransactions: 2 }), { status: 'indexed', transactions: 2, trades: 1, caughtUp: false })
+  assert.deepEqual((await store.trades(coin.pool, { limit: 5 })).trades.map(t => t.side), ['sell'], 'the newest trade shows first')
+  assert.deepEqual(await store.progress(coin.pool), { swapCount: 2n, walking: true })
+  assert.deepEqual((await store.cursor(coin.pool)).walk, { top: { signature: CANARY_CLAIM, slot: 458573623 }, before: { signature: CANARY_SELL, slot: 458573472 }, floor: 0n })
+  calls.length = 0
+  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, maxTransactions: 2, concurrency: 1 }), { status: 'indexed', transactions: 1, trades: 1, caughtUp: true })
+  assert.deepEqual(methods(calls), ['getSignaturesForAddress', 'getSignaturesForAddress', 'getTransaction'], 'head check, then the walk from where it stopped')
+  assert.deepEqual(calls[1].params[1].before, CANARY_SELL)
+  assert.equal(await tradeCount(pool), 2)
+}))
+
+test('while a walk runs, newer transactions above it are caught up first', () => withDatabase(async pool => {
+  const store = hookCoinTradeStore(pool)
+  await indexHookCoinTrades({ rpc: rpcWith({ signatures: canary.signatures.slice(1) }).rpc, store, coin, maxTransactions: 1 })
+  assert.deepEqual((await store.cursor(coin.pool)).walk.top.signature, CANARY_SELL)
+  const { rpc, calls } = rpcWith()
+  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, maxTransactions: 2 }), { status: 'indexed', transactions: 2, trades: 1, caughtUp: true })
+  assert.deepEqual(reads(calls), [CANARY_CLAIM, CANARY_BUY])
+  assert.deepEqual((await store.cursor(coin.pool)).done.signature, CANARY_CLAIM)
+}))
+
+test('failed transactions cost no read and no budget; a long history never wedges a pass', () => withDatabase(async pool => {
+  const store = hookCoinTradeStore(pool)
+  const failed = canary.signatures.map(item => item.signature === CANARY_CLAIM ? { ...item, err: { InstructionError: [0, 'Custom'] } } : item)
+  const { rpc, calls } = rpcWith({ signatures: failed })
+  assert.deepEqual(await indexHookCoinTrades({ rpc, store, coin, maxTransactions: 1 }), { status: 'indexed', transactions: 2, trades: 1, caughtUp: false })
+  assert.deepEqual(reads(calls), [CANARY_SELL])
+  // One signature per page and two pages per pass: still progress every pass, never an error.
+  await pool.query('delete from hook_lab_coin_trade_cursors'); await pool.query('delete from hook_lab_coin_trades')
+  const small = { rpc: rpcWith().rpc, store, coin, pageSize: 1, maxPages: 2 }
+  assert.deepEqual(await indexHookCoinTrades(small), { status: 'indexed', transactions: 2, trades: 1, caughtUp: false })
+  assert.deepEqual(await indexHookCoinTrades(small), { status: 'indexed', transactions: 1, trades: 1, caughtUp: true })
+  assert.equal(await tradeCount(pool), 2)
 }))
 
 test('replaying history never stores a trade twice', () => withDatabase(async pool => {
   const store = hookCoinTradeStore(pool)
   await indexHookCoinTrades({ rpc: rpcWith().rpc, store, coin })
   await pool.query('delete from hook_lab_coin_trade_cursors')
-  assert.deepEqual(await indexHookCoinTrades({ rpc: rpcWith().rpc, store, coin }), { status: 'indexed', transactions: 4, trades: 0, remaining: 0 })
-  assert.equal((await pool.query('select count(*)::int n from hook_lab_coin_trades')).rows[0].n, 2)
+  // The floor is now the newest swap, so the walk reads the whole history back to the start.
+  assert.deepEqual(await indexHookCoinTrades({ rpc: rpcWith().rpc, store, coin }), { status: 'indexed', transactions: 4, trades: 0, caughtUp: true })
+  assert.equal(await tradeCount(pool), 2)
 }))
 
-test('RPC answers that disagree stop the run before the cursor passes them', () => withDatabase(async pool => {
+test('RPC answers that disagree stop the pass before the cursor passes them', () => withDatabase(async pool => {
   const store = hookCoinTradeStore(pool)
   const moved = clone(canary.transactions[CANARY_BUY]); moved.slot += 5
   await assert.rejects(indexHookCoinTrades({ rpc: rpcWith({ transactions: { ...canary.transactions, [CANARY_BUY]: moved } }).rpc, store, coin }), /HOOK_TRADE_SLOT_MISMATCH/)
-  assert.equal((await store.cursor(coin.pool)).signature, CANARY_LAUNCH, 'stopped before the disagreeing swap')
+  assert.equal((await store.cursor(coin.pool)).walk.before.signature, CANARY_SELL, 'stopped before the disagreeing swap')
   await assert.rejects(indexHookCoinTrades({ rpc: rpcWith({ transactions: { ...canary.transactions, [CANARY_BUY]: null } }).rpc, store, coin }), /HOOK_TRADE_TRANSACTION_MISSING/)
-  await pool.query('delete from hook_lab_coin_trade_cursors')
+  await pool.query('delete from hook_lab_coin_trade_cursors'); await pool.query('delete from hook_lab_coin_trades')
   const shuffled = [canary.signatures[1], canary.signatures[0], ...canary.signatures.slice(2)]
   await assert.rejects(indexHookCoinTrades({ rpc: rpcWith({ signatures: shuffled }).rpc, store, coin }), /HOOK_TRADE_HISTORY_ORDER/)
   const forged = canary.signatures.map((item, i) => i ? item : { ...item, signature: 'not-a-signature' })
   await assert.rejects(indexHookCoinTrades({ rpc: rpcWith({ signatures: forged }).rpc, store, coin }), /HOOK_TRADE_HISTORY_INVALID/)
-  assert.equal((await pool.query('select count(*)::int n from hook_lab_coin_trades')).rows[0].n, 0)
+  assert.equal(await tradeCount(pool), 0)
 }))
 
-test('a cursor another run moved stops this run without writing', () => withDatabase(async pool => {
+test('a cursor another pass moved stops this pass without writing', () => withDatabase(async pool => {
   const store = hookCoinTradeStore(pool)
   await indexHookCoinTrades({ rpc: rpcWith().rpc, store, coin, maxTransactions: 1 })
-  const [trade] = (await store.trades(coin.pool, { limit: 1 })).trades
-  assert.equal(trade, undefined)
-  await assert.rejects(store.record({ ...coin, previous: null, signature: CANARY_BUY, slot: 458573264, trades: [] }), /HOOK_TRADE_CURSOR_MOVED/)
-  await assert.rejects(store.record({ ...coin, previous: CANARY_SELL, signature: CANARY_BUY, slot: 458573264, trades: [] }), /HOOK_TRADE_CURSOR_MOVED/)
-  assert.equal((await store.cursor(coin.pool)).signature, CANARY_LAUNCH)
+  const state = await store.cursor(coin.pool)
+  const sell = { signature: CANARY_SELL, slot: 458573472 }
+  await assert.rejects(store.record({ ...coin, from: { done: null, walk: null }, to: { done: sell, walk: null }, trades: [] }), /HOOK_TRADE_CURSOR_MOVED/)
+  await assert.rejects(store.record({ ...coin, from: { ...state, walk: { ...state.walk, before: sell } }, to: { done: sell, walk: null }, trades: [] }), /HOOK_TRADE_CURSOR_MOVED/)
+  await assert.rejects(store.record({ pool: coin.pool, mint: CANARY_SELL.slice(0, 44), from: state, to: { done: sell, walk: null }, trades: [] }), /HOOK_TRADE_CURSOR_MOVED/)
+  assert.deepEqual(await store.cursor(coin.pool), state)
+  assert.equal(await tradeCount(pool), 0)
 }))
 
 test('candles: open and close follow the swap counter; volume is the SOL traders paid and received', () => withDatabase(async pool => {

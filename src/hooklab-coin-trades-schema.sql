@@ -27,11 +27,22 @@ create table hook_lab_coin_trades (
  unique(pool,swap_count)
 );
 create index hook_lab_coin_trades_pool_time on hook_lab_coin_trades(pool,traded_at);
--- Per pool: the newest finalized transaction naming the pool that has been read (trades or not).
+-- Per pool, the index's place in the pool's finalized history (src/hooklab-coin-trades.mjs). Everything up to last_signature
+-- is indexed (null: nothing yet). A walk in progress reads newest first from scan_top (the newest transaction when it began,
+-- raised as newer ones are caught up) down towards last_signature; everything from scan_top down to scan_before is indexed.
+-- scan_floor is the swap counter at last_signature: the walk is done at the swap after it, or at last_signature.
 create table hook_lab_coin_trade_cursors (
  pool text primary key check(pool ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'),
  mint text not null check(mint ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'),
- last_signature text not null check(last_signature ~ '^[1-9A-HJ-NP-Za-km-z]{64,88}$'),
- last_slot bigint not null check(last_slot>0),
- updated_at timestamptz not null default clock_timestamp()
+ last_signature text check(last_signature ~ '^[1-9A-HJ-NP-Za-km-z]{64,88}$'),
+ last_slot bigint check(last_slot>0),
+ scan_top text check(scan_top ~ '^[1-9A-HJ-NP-Za-km-z]{64,88}$'),
+ scan_top_slot bigint check(scan_top_slot>0),
+ scan_before text check(scan_before ~ '^[1-9A-HJ-NP-Za-km-z]{64,88}$'),
+ scan_before_slot bigint check(scan_before_slot>0),
+ scan_floor numeric(20,0) check(scan_floor>=0),
+ updated_at timestamptz not null default clock_timestamp(),
+ check((last_signature is null)=(last_slot is null)),
+ check((scan_top is null)=(scan_top_slot is null) and (scan_top is null)=(scan_before is null)
+  and (scan_top is null)=(scan_before_slot is null) and (scan_top is null)=(scan_floor is null))
 );

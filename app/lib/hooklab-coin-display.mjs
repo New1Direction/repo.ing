@@ -36,3 +36,15 @@ export function shortAge(tradedAt, now) {
   const minutes = Math.max(0, Math.floor(elapsed / 60000))
   return minutes < 1 ? 'now' : minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`
 }
+
+// The trades list: { trades (newest first, as the API pages them), next (the API cursor for the next older page) }.
+const swapOf = trade => BigInt(trade.swapCount)
+const newestFirst = trades => [...new Map(trades.map(t => [`${t.signature}:${t.eventIndex}`, t])).values()]
+  .sort((a, b) => swapOf(a) > swapOf(b) ? -1 : swapOf(a) < swapOf(b) ? 1 : 0)
+// A refreshed first page joined to the trades already shown. Swap counters run without gaps, so a refreshed page whose
+// oldest trade is more than one past the newest shown means trades in between were never fetched: start again from it.
+export function mergeTradePage(shown, page) {
+  if (!shown?.trades.length || !page.trades.length || swapOf(page.trades.at(-1)) > swapOf(shown.trades[0]) + 1n) return { trades: page.trades, next: page.next }
+  return { trades: newestFirst([...page.trades, ...shown.trades]), next: shown.next }
+}
+export const appendOlderTrades = (shown, page) => ({ trades: newestFirst([...shown.trades, ...page.trades]), next: page.next })
