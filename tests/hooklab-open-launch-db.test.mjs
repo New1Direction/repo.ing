@@ -10,6 +10,7 @@ import pg from 'pg'
 import { ownerApprovalStore } from '../src/hooklab-owner-approval.mjs'
 import { MIGRATIONS, migrationSchema, productionSchema } from '../scripts/hooklab-production-schema.mjs'
 import { launchVirtualQuote } from '../src/hooklab-launch-pricing.mjs'
+import { stackProfileFor } from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
 
 const config = { host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' }
 const key = label => Keypair.fromSeed(createHash('sha256').update(`OPEN LAUNCH DB TEST ONLY ${label}`).digest()).publicKey.toBase58()
@@ -77,6 +78,10 @@ test('a finalized open launch is listed; the owner delists it with a reason (app
   assert.deepEqual(await store.launchedCoins(), [])
   assert.equal((await launched(pool, store, operation, creator, mint)).status, 'launched')
   assert.deepEqual((await store.launchedCoins()).map(c => c.mint), [mint], 'listed automatically once the launch finalized')
+  // The listed records (what the coin page and the trade runtime are given) read under our own stack's profile, never the legacy one.
+  const profiles = { legacy: { id: 'legacy' }, own: { id: 'own' } }
+  assert.equal(stackProfileFor(profiles, await store.coinByMint(mint)), profiles.own, 'the coin page and its market read')
+  assert.equal(stackProfileFor(profiles, (await store.launchedCoins())[0]), profiles.own, 'the discovery list')
   await assert.rejects(store.moderate({ mint, action: 'delist', reason: 'made-up', actor: 'owner' }), /delisting reasons/)
   await assert.rejects(store.moderate({ mint: key('nobody'), action: 'delist', reason: 'placeholder-content-rules', actor: 'owner' }), /No coin launched/)
   const state = await store.moderate({ mint, action: 'delist', reason: 'placeholder-content-rules', actor: 'owner' })

@@ -19,6 +19,10 @@ const runtimeKey=Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
 // Two stacks: config/profile/dossierJson are bundle 2's (the legacy stack: the canary, bridged trades, Add SOL and Withdraw);
 // stack, when given, is our own stack's bundle ({config,profile,dossierJson}), which serves every native trade. Each coin is
 // read and traded under its own stack's bundle (src/hooklab-stack.mjs coinStack), and every check stays exact per stack.
+// The stack profile a coin is read and traded under. coin: the listed coin record (src/hooklab-owner-approval.mjs coinByMint,
+// launchedCoins), which carries its stack; a launch request row (its source) is classified by coinStack. null when that
+// stack has no bundle here (the coin then reads as not listed).
+export const stackProfileFor=(profiles,coin)=>(coin?.stack??coinStack(coin))==='own'?profiles.own:profiles.legacy
 export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
  config,profile,dossierJson,connections,limits,walletFundingEnabled=false,nativeTradingEnabled=false,openLaunches=false,stack=null}={}){
  if(!ownerTradingApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Complete explicit trade adoption required')
@@ -37,7 +41,7 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const sender=nativeTransactionSender({enabled:true,connections})
  const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen,connections})})
  // The coin's stack profile (programs, quote marker): server-side only, never sent to a customer.
- const profileFor=coin=>coinStack(coin)==='own'?profiles.own:profiles.legacy
+ const profileFor=coin=>stackProfileFor(profiles,coin)
  // Display-only market reads use the primary provider; trades and funding re-verify on both providers. coin: the listed
  // coin record (its stack); looked up when not given. A coin whose stack has no bundle here reads as not listed.
  const market=async(mint,wallet=null,coin)=>{

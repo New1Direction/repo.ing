@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {Keypair} from '@solana/web3.js'
 import {createInclusiveTradeHandler,nativeTradingOn} from '../app/lib/hooklab-inclusive-trade.mjs'
-import {createInclusiveTradeRuntime} from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
+import {createInclusiveTradeRuntime,stackProfileFor} from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
 import {createMarketHandler} from '../app/lib/hooklab-market.mjs'
 import {NATIVE_ELF} from '../src/hooklab-native-pins.mjs'
 import {compileNativeSwapReview,pinsNativeBuilds} from '../src/hooklab-native-swap.mjs'
@@ -112,4 +112,15 @@ test('the market API says whether native coins trade here yet',async()=>{
  assert.equal((await read(env,true)).nativeTrading,true)
  assert.equal((await read({},true)).nativeTrading,false);assert.equal((await read(env,false)).nativeTrading,false)
  assert.equal((await read(env,true)).market.native,true)
+})
+
+// Regression (self-serve e2e, 2026-10-19): the listed coin record (coinByMint, launchedCoins) carries its stack, not the
+// launch request's source, so every own-stack coin read as legacy: its page 404'd and the market said "not listed".
+test('a listed coin record is read and traded under its own stack\'s profile',()=>{
+ const profiles={legacy:{id:'legacy'},own:{id:'own'}}
+ assert.equal(stackProfileFor(profiles,{id:'a',stack:'own'}),profiles.own,'a listed coin of our own stack')
+ assert.equal(stackProfileFor(profiles,{id:'a',stack:'legacy'}),profiles.legacy,'a listed coin of the legacy stack')
+ assert.equal(stackProfileFor(profiles,{source:'open'}),profiles.own,'a launch request row');assert.equal(stackProfileFor(profiles,{source:'owner-invite'}),profiles.legacy)
+ assert.equal(stackProfileFor(profiles,null),profiles.legacy,'a coin the site did not launch reads under the legacy stack')
+ assert.equal(stackProfileFor({...profiles,own:null},{stack:'own'}),null,'no bundle for its stack: not listed here')
 })
