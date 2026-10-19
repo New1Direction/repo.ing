@@ -77,7 +77,9 @@ test('coin page: unavailable without a runtime, a full trading page for a real H
     creator: 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9', graduated: false, capBps: 200, creatorFeeBps: 100, initialSupply: '1000000000000000', capRaw: '20000000000000',
     pool: { baseReserve: '750000000000000', quoteReserve: '1', virtualBase: '375000000000000', virtualQuote: '1000000000', protocolFeesQuote: '0', swapCount: '2' },
     marketCapLamports: '888888888', graduationQuote: '2000000000', curveProgressBps: 0 }
-  globalThis[key] = { market: async requested => requested === mint ? { market, wallet: null } : null }
+  const outside = 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9'
+  globalThis[key] = { market: async requested => [mint, outside].includes(requested) ? { market: { ...market, mint: requested }, wallet: null } : null,
+    coinProfile: async requested => requested === mint ? { id: '11111111-1111-4111-8111-111111111111', name: 'Hook Lab Canary', symbol: 'HLCANARY', creator: market.creator, profile: null } : null }
   try {
     const page = html(await Token({ params: Promise.resolve({ mint }) }), { wallet: true })
     for (const text of [/\$HLCANARY/, /Hook Lab Canary/, /Market cap/, /0\.888 SOL/, /to graduation/, /Blocks on this coin/, /Max wallet/, /Creator fee/,
@@ -88,6 +90,7 @@ test('coin page: unavailable without a runtime, a full trading page for a real H
     const hero = page.indexOf('Hook Lab Canary'), panel = page.indexOf('aria-label="Trade $HLCANARY"'), blocks = page.indexOf('Blocks on this coin')
     assert.ok(hero >= 0 && hero < panel && panel < blocks, 'the trade panel comes right after the coin, before Blocks')
     await assert.rejects(Token({ params: Promise.resolve({ mint: '11111111111111111111111111111111' }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
+    await assert.rejects(Token({ params: Promise.resolve({ mint: outside }) }), /NEXT_HTTP_ERROR_FALLBACK;404/, 'a real Hooks coin not launched through repo.ing is not shown')
   } finally { delete globalThis[key] }
   await assert.rejects(Token({ params: Promise.resolve({ mint: 'not-a-mint' }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
 })

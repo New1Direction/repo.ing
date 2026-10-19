@@ -24,28 +24,24 @@ export function cached(key, ttlMs, load, now = Date.now) {
 }
 export const cachedMarket = (service, mint, wallet = null) => cached(`market:${mint}:${wallet ?? ''}`, 3000, () => service.market(mint, wallet))
 
-// The launch request behind a coin (image, links), when it launched through repo.ing approval.
-export function launchedCoinProfile(mint, options = {}) { return cached(`profile:${mint}`, 60_000, () => readLaunchedCoinProfile(mint, options)) }
-async function readLaunchedCoinProfile(mint, { env = process.env, database = createHookLabDatabasePool, store = ownerApprovalStore } = {}) {
-  if (env.HOOK_OWNER_APPROVED_LAUNCHES !== 'true') return null
-  let pool
-  try { pool = database(walletIdentityConfiguration(env)); return await store(pool, { adminAddress: env.HOOK_LAUNCH_ADMIN_ADDRESS }).coinByMint(mint) }
-  catch { return null } finally { await pool?.end().catch(() => {}) }
-}
+// The launch request (image, links) behind a coin listed on repo.ing, or null for any other coin. A failed read throws,
+// so an unreachable database shows as unavailable rather than as "not listed".
+export const listedCoin = (service, mint) => cached(`listed:${mint}`, 60_000, () => service.coinProfile(mint))
 
-export function createMarketHandler({ env = process.env, runtime = inclusiveTradeRuntime, allowed = defaultLimiter, profile = launchedCoinProfile } = {}) {
+export function createMarketHandler({ env = process.env, runtime = inclusiveTradeRuntime, allowed = defaultLimiter } = {}) {
   return async (request, { mint }) => {
     if (!address(mint)) return reply({ error: 'Unknown coin.' }, 404)
     const walletParam = new URL(request.url).searchParams.get('wallet'), wallet = walletParam ? address(walletParam) : null
     if (walletParam && !wallet) return reply({ error: 'Invalid wallet.' }, 400)
     if (!allowed(clientAddress(request) ?? 'unknown')) return reply({ error: 'Too many requests. Try again shortly.' }, 429)
     const service = runtime()
-    if (!service?.market) return reply({ status: 'unavailable', error: 'Trading data is unavailable right now.' }, 503)
+    if (!service?.market || !service.coinProfile) return reply({ status: 'unavailable', error: 'Trading data is unavailable right now.' }, 503)
     try {
-      // The coin is read (cached) first; the database is only asked about real Hooks coins.
+      // The listing is checked first (one cached database read), so unlisted coins are never read from Solana.
+      const coin = await listedCoin(service, mint)
+      if (!coin) return reply({ error: 'This coin isn’t listed on repo.ing.' }, 404, 'public, max-age=60')
       const view = await cachedMarket(service, mint, wallet)
-      if (!view) return reply({ error: 'This is not a Hooks coin.' }, 404, 'public, max-age=60')
-      const coin = await profile(mint)
+      if (!view) return reply({ error: 'This coin isn’t listed on repo.ing.' }, 404, 'public, max-age=60')
       // tradingOpen: whether this wallet may start trades yet (everyone once HOOK_TRADING_PUBLIC=true, else listed testers).
       return reply({ status: 'available', ...view, coin, funding: !!service.walletFunding, tradingOpen: env.HOOK_TRADING_PUBLIC === 'true' || (!!wallet && tradingOpenFor(env, wallet)) },
         200, wallet ? 'no-store' : 'public, max-age=5')
