@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs'
 import { createPublicKey, verify } from 'node:crypto'
 import { BorshCoder } from '@anchor-lang/core'
-import { PublicKey, VersionedMessage, type VersionedTransactionResponse } from '@solana/web3.js'
+import { PublicKey, SystemProgram, TransactionInstruction, VersionedMessage, type VersionedTransactionResponse } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { connection, stack, until } from './stack.ts'
 
@@ -17,6 +17,14 @@ const EMIT_CPI = Buffer.from('e445a52e51cb9a1d', 'hex')
 const pda = (program: string, ...seeds: (string | Buffer)[]) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), new PublicKey(program))[0].toBase58()
 export const launchAddress = (mint: string) => pda(PROGRAMS.launch, 'launch', new PublicKey(mint).toBuffer())
 export const holdingAddress = (mint: string, owner: string) => pda(PROGRAMS.token, 'holding', new PublicKey(mint).toBuffer(), new PublicKey(owner).toBuffer())
+const tokenCoder = new BorshCoder(vendor('hooklab-production-candidate/idl/bordrless_token.json'))
+/** The token program's permissionless create_holding: anyone may pay to create any owner's holding for a mint. */
+export function createHoldingInstruction(payer: string, mint: string, owner: string): TransactionInstruction {
+  const key = (address: string, isSigner = false, isWritable = false) => ({ pubkey: new PublicKey(address), isSigner, isWritable })
+  return new TransactionInstruction({ programId: new PublicKey(PROGRAMS.token), data: tokenCoder.instruction.encode('create_holding', {}), keys: [
+    key(payer, true, true), key(mint), key(owner), key(holdingAddress(mint, owner), false, true), key(SystemProgram.programId.toBase58()),
+    key(pda(PROGRAMS.token, '__event_authority')), key(PROGRAMS.token)] })
+}
 
 export async function receipt(signature: string): Promise<VersionedTransactionResponse> {
   return until(`finalized receipt ${signature}`, () => connection.getTransaction(signature, { commitment: 'finalized', maxSupportedTransactionVersion: 0 }), { timeoutMs: 120_000 })
