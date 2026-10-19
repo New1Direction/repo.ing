@@ -10,37 +10,50 @@ import { coLocatedMaxWalletLaunchResolver } from './hooklab-max-wallet-launch-re
 import { reviewNewMintPreparationCandidate } from './hooklab-new-mint-preparation.mjs'
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
+import { readOpenCreation } from './hooklab-open-creation.mjs'
+// openLaunches (HOOK_OPEN_LAUNCHES): self-serve launches. Anyone may launch while open creation is on chain; the launch
+// is create_launch_open_v1 through the operator's shared launch table, signed by the creator and the sealed mint key, with
+// no admin key and no owner approval. Launches reviewed before the switch still settle.
 export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustodyApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
- config,profile,dossierJson,connections,keyRing,activeKeyId,adminSigner,expiryObserver,preparationLimits,launchLimits,reviewTiming,launchLookupTable,nativeLaunches=false,clock=Date.now}={}){
+ config,profile,dossierJson,connections,keyRing,activeKeyId,adminSigner,expiryObserver,preparationLimits,launchLimits,reviewTiming,launchLookupTable,nativeLaunches=false,openLaunches=false,clock=Date.now}={}){
  if(enabled!==true||!ownerCustodyApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Explicit complete release approvals required')
  config=structuredClone(config);profile=structuredClone(profile);preparationLimits=structuredClone(preparationLimits);launchLimits=structuredClone(launchLimits)
- if(!adminSigner||typeof adminSigner.sign!=='function'||adminSigner.address!==config.reviewer)throw Error('Exact approved admin signer required')
+ if(openLaunches){if(nativeLaunches!==true||!config.launchLookupTable)throw Error('Open launches need native launches and the shared launch table')}
+ else if(!adminSigner||typeof adminSigner.sign!=='function'||adminSigner.address!==config.reviewer)throw Error('Exact approved admin signer required')
  if(JSON.parse(profile.json).buildFeature==='inclusive-fees-candidate'){
   const dossier=JSON.parse(dossierJson)
   if((dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||!['launch-config','swap-config'].every(role=>dossier.accounts.some(a=>a.role===role&&a.binding==='config-counters-v1')))throw Error('Explicit stable counter bindings required')
  }
  const settings={enabled,origin,keyRing,activeKeyId}
  const custody=nativeSignerCustodyStore(pool,settings)
- const preparationResolver=coLocatedMaxWalletPreparationResolver(pool,{origin,config,profile,dossierJson,connections,custody,clock})
+ const preparationResolver=coLocatedMaxWalletPreparationResolver(pool,{origin,config,profile,dossierJson,connections,custody,clock,open:openLaunches})
  // nativeLaunches (HOOK_NATIVE_LAUNCHES_ENABLED): v4 native-SOL launches compile once launch Config byte 186 is on.
- const launchResolver=coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dossierJson,connections,clock,nativeLaunches})
+ const launchResolver=coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dossierJson,connections,clock,nativeLaunches,open:openLaunches})
  if(launchLookupTable!==undefined&&typeof launchLookupTable!=='function')throw Error('Explicit launch lookup-table provider required')
- const launchResolverFor=launchLookupTable?async({preparationId,review})=>coLocatedMaxWalletLaunchResolver(pool,{origin,config:{...config,lookupTable:await launchLookupTable({preparationId,allowCreate:review===undefined})},profile,dossierJson,connections,clock,nativeLaunches}):undefined
+ // An open launch uses the one shared launch table; there is no per-launch table.
+ const launchResolverFor=launchLookupTable&&!openLaunches?async({preparationId,review})=>coLocatedMaxWalletLaunchResolver(pool,{origin,config:{...config,lookupTable:await launchLookupTable({preparationId,allowCreate:review===undefined})},profile,dossierJson,connections,clock,nativeLaunches}):undefined
  const context=nativeLaunchContext(pool,{enabled,origin,preparationResolver,launchResolver,launchResolverFor,preparationLimits,launchLimits,reviewTiming,clock})
- const adapter=nativeCustodySigningAdapter({...settings,adminSigner}),sender=nativeTransactionSender({enabled,connections,clock})
- const lifecycle=nativeSigningLifecycle(pool,{enabled,origin,resolver:context,custodyAdapter:adapter,sender,expiryObserver,stageOperations:{preparation:JSON.parse(profile.json).buildFeature==='inclusive-fees-candidate'?'inclusive-max-wallet-preparation':'max-wallet-preparation',launch:'max-wallet-launch'}})
+ const adapter=nativeCustodySigningAdapter({...settings,adminSigner:openLaunches?null:adminSigner,openLaunches}),sender=nativeTransactionSender({enabled,connections,clock})
+ const lifecycle=nativeSigningLifecycle(pool,{enabled,origin,resolver:context,custodyAdapter:adapter,sender,expiryObserver,stageOperations:{preparation:JSON.parse(profile.json).buildFeature==='inclusive-fees-candidate'?'inclusive-max-wallet-preparation':'max-wallet-preparation',launch:openLaunches?'open-launch':'max-wallet-launch'},
+  ...(openLaunches?{retiredOperations:{launch:['max-wallet-launch']}}:{})})
  const preparationProfile={json:profile.json,expectedSha256:profile.expectedSha256,providers:profile.providers,
   idls:{launch:profile.idls.launch,gate:profile.idls.gate},elfLengths:{launch:profile.elfLengths.launch,gate:profile.elfLengths.gate}}
- return Object.freeze({ownerCustodyApproved,operatorDeploymentApproved,economicsApproved,lifecycle,
+ const openCreation=()=>readOpenCreation(connections,JSON.parse(profile.json).programs.launch)
+ return Object.freeze({ownerCustodyApproved,operatorDeploymentApproved,economicsApproved,lifecycle,openLaunches,
+  // The chain's open-creation state and menus, from both providers (identical bytes), for the creator's form.
+  openCreation,
   async reserve({sessionToken,owner,input}){
    try{
-    // Creator rate is an explicit immutable approved profile/configuration input.
+    // Creator rate is an explicit immutable approved profile/configuration input; an open launch's comes from the chain.
     const reviewedProfile=JSON.parse(profile.json)
-    if(reviewedProfile.capability.creatorFeeBpsChoices?!isApprovedLaunchChoice(reviewedProfile,input):input.creatorFeeBps!==config.economics.creatorFeeBps)throw Error()
+    if(openLaunches){const chain=await openCreation();if(!chain.native||!chain.open||chain.paused||!chain.creatorFeeBps.includes(input.creatorFeeBps)||!chain.capBps.includes(input.capBps))throw Error()}
+    else if(reviewedProfile.capability.creatorFeeBpsChoices?!isApprovedLaunchChoice(reviewedProfile,input):input.creatorFeeBps!==config.economics.creatorFeeBps)throw Error()
     const result=await reviewNewMintPreparationCandidate({custody,sessionToken,input:{operationId:input.operationId,capBps:input.capBps,label:input.label,creatorFeeBps:input.creatorFeeBps},
      profile:preparationProfile,connections,limits:preparationLimits,clock})
     if(result.custody.owner!==owner)throw Error()
-    const request=parseMaxWalletLaunchRequest({...result.request,schema:result.request.policyVersion===2?'repoing/inclusive-max-wallet-launch-request/1':'repoing/max-wallet-launch-request/1',reviewer:config.reviewer,
+    const {schema:_,...prepared}=result.request
+    const request=parseMaxWalletLaunchRequest(openLaunches?{...prepared,schema:'repoing/open-launch-request/1',name:input.name,symbol:input.symbol,uri:input.uri,virtualQuote:input.virtualQuote}
+     :{...result.request,schema:result.request.policyVersion===2?'repoing/inclusive-max-wallet-launch-request/1':'repoing/max-wallet-launch-request/1',reviewer:config.reviewer,
      name:input.name,symbol:input.symbol,uri:input.uri,virtualQuote:input.virtualQuote})
     await context.bind(sessionToken,input.operationId,request)
     return {owner,operationId:input.operationId,mint:result.custody.mint,selectedConfig:result.custody.selectedConfig,request}

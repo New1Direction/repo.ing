@@ -1,0 +1,45 @@
+// The chain's open-creation state, for the creator's form and the server's reserve check: the launch Config's switches
+// and menus (src/hooklab-launch-config-reserved.mjs), its creation fee and opening-price bounds, and whether creation is
+// paused (Config.paused, or the launch governance's creation gate). Read at finalized from both providers, which must
+// return identical bytes. Read-only; no keys.
+import { PublicKey } from '@solana/web3.js'
+import { loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { LAUNCH_CONFIG_RESERVED_AT, parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
+
+const fail = message => Object.assign(Error(message), { code: 'OPEN_CREATION_UNAVAILABLE' })
+
+// HOOK_OPEN_LAUNCHES=true: self-serve launches (after the open-launches migration). The site's coin pages, metadata and
+// listing serve coins from either path while owner-approved launches remain readable.
+export const openLaunchesEnabled = env => env?.HOOK_OPEN_LAUNCHES === 'true'
+export const siteLaunchesEnabled = env => env?.HOOK_OWNER_APPROVED_LAUNCHES === 'true' || openLaunchesEnabled(env)
+const pda = (program, seed) => PublicKey.findProgramAddressSync([Buffer.from(seed)], new PublicKey(program))[0]
+
+export async function readOpenCreation(connections, launchProgram) {
+  if (!Array.isArray(connections) || connections.length !== 2) throw fail('Two providers required')
+  const keys = [pda(launchProgram, 'config'), pda(launchProgram, 'governance')]
+  const views = await Promise.all(connections.map(({ connection }) => connection.getMultipleAccountsInfoAndContext(keys, { commitment: 'finalized' })))
+  const [config, governance] = keys.map((_, i) => {
+    const [a, b] = views.map(v => v.value[i])
+    if (!a || !b || !a.owner.equals(b.owner) || !Buffer.from(a.data).equals(Buffer.from(b.data)) || a.owner.toBase58() !== launchProgram) throw fail('Launch configuration unavailable or providers disagree')
+    return Buffer.from(a.data)
+  })
+  const coder = loadNativeArtifacts().coders.launch, c = coder.accounts.decode('Config', config), g = coder.accounts.decode('Governance', governance)
+  const reserved = parseLaunchConfigReserved(config.subarray(LAUNCH_CONFIG_RESERVED_AT))
+  if (!reserved) throw fail('Launch configuration is in a state the reviewed programs never write')
+  return Object.freeze({ native: reserved.native, open: reserved.open, paused: c.paused || g.state.gates.creation,
+    creatorFeeBps: Object.freeze([...reserved.creatorFeeBps]), capBps: Object.freeze([...reserved.capBps]), maxCreatorFeeBps: c.max_creator_fee_bps,
+    launchFeeLamports: c.launch_fee_lamports.toString(), minVirtualQuote: c.min_virtual_quote.toString(), maxVirtualQuote: c.max_virtual_quote.toString() })
+}
+
+// Plain text for the launch program's errors a creator can meet in an open launch (hook-lab feat/open-creation ABI).
+const OPEN_LAUNCH_ERRORS = Object.freeze({
+  6120: 'Open launches are switched off right now. Try again later.',
+  6121: 'That creator fee or max-per-wallet choice is no longer offered. Pick one from the current list and review again.',
+  6122: 'This coin\'s launch settings belong to another wallet. Start again from your own wallet.',
+  6123: 'repo.ing\'s launch menu is being updated. Try again in a few minutes.',
+  6124: 'repo.ing\'s launch settings did not change.',
+  6055: 'Launches are paused right now. Your SOL was not spent; try again later.',
+  6056: 'repo.ing\'s launch settings changed while you were signing. Review again to get a fresh transaction.',
+  6103: 'Launches with ordinary SOL are switched off right now. Try again later.',
+})
+export const openLaunchErrorText = code => OPEN_LAUNCH_ERRORS[code] ?? null

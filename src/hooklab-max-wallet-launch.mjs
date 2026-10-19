@@ -14,9 +14,9 @@ import { inclusiveMaxWalletPreparationRequestSchema, parseMaxWalletProfile, pars
 import { inclusiveEconomicsHash, inclusiveHookAccountsHash, inclusiveFeePolicyAddress } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { canaryGateMatches } from './hooklab-canary-policy.mjs'
-import { NATIVE_IDL_SHA256 } from './hooklab-native-pins.mjs'
+import { NATIVE_BUILDS, nativeBuildOf } from './hooklab-native-pins.mjs'
 import { QUOTE_FORM_NATIVE, isNativeElfPin, nativeEconomicsHash } from './hooklab-native-launch.mjs'
-import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
+import { launchConfigReservedValid, parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -44,9 +44,19 @@ export const inclusiveMaxWalletLaunchRequestSchema = inclusiveMaxWalletPreparati
  schema:z.literal('repoing/inclusive-max-wallet-launch-request/1'),reviewer:key,name:byteString(32).refine(s=>s.length>0),
  symbol:byteString(10).refine(s=>s.length>0),uri:byteString(200),virtualQuote:u64,
 }).strict()
-export const parseMaxWalletLaunchRequest = request => (request?.policyVersion===2?inclusiveMaxWalletLaunchRequestSchema:maxWalletLaunchRequestSchema).parse(request)
+// Open (self-serve) launch: the creator's own coin, no reviewer. create_launch_open_v1 (hook-lab feat/open-creation ABI)
+// takes v4's arguments and 32 named accounts; its discriminator is sha256("global:create_launch_open_v1")[..8].
+export const OPEN_LAUNCH_DISCRIMINATOR = Buffer.from([51, 106, 16, 21, 31, 133, 167, 85])
+export const openLaunchRequestSchema = inclusiveMaxWalletPreparationRequestSchema.omit({ schema: true }).extend({
+  schema: z.literal('repoing/open-launch-request/1'), name: byteString(32).refine(s => s.length > 0),
+  symbol: byteString(10).refine(s => s.length > 0), uri: byteString(200), virtualQuote: u64,
+}).strict()
+// Every launch request shape: owner-approved (v1, inclusive) or open, by its schema.
+export const parseMaxWalletLaunchRequest = request => (request?.schema === 'repoing/open-launch-request/1' ? openLaunchRequestSchema
+  : request?.policyVersion===2?inclusiveMaxWalletLaunchRequestSchema:maxWalletLaunchRequestSchema).parse(request)
 const accountSchema = z.object({ address: key, owner: key, executable: z.boolean(), dataBase64: z.string().max(14000000), lamports: u64 }).strict()
 const stateHashesSchema = z.object({ launchConfig: digest, swapConfig: digest, launchGovernance: digest, swapGovernance: digest, authorization: digest, quoteMint: digest }).strict()
+const lookupTableSchema = z.object({ address: key, owner: z.literal(lookupOwner), dataBase64: z.string().max(22000), sha256: digest }).strict()
 const syntheticEvidenceSchema = z.object({ schema: z.literal('hooklab/max-wallet-synthetic-prepared-state/1'),
   provenance: z.literal('disposable-litesvm-synthetic-fixture-not-rpc-evidence'), status: z.literal('synthetic-prepared'),
   productionPreparationReceipt: z.null(), profileSha256: digest, preparationIntentSha256: digest, executionSlot: number,
@@ -63,7 +73,7 @@ const inputSchema = z.object({ profile: z.object({ json: z.string().max(16384), 
   recentBlockhash: z.object({ blockhash: key, genesisHash: key, providers: z.array(provider).length(2), observedAtMs: number,
     currentBlockHeight: number.positive(), blockhashValid: z.literal(true), lastValidBlockHeight: number.positive(), observedSlot: number,
     networkFeeLamports: u64, lamportsPerSignature: u64.refine(v => BigInt(v) > 0n) }).strict(),
-  lookupTable: z.object({ address: key, owner: z.literal(lookupOwner), dataBase64: z.string().max(22000), sha256: digest }).strict().nullable(),
+  lookupTable: lookupTableSchema.nullable(),
   limits: z.object({ nowMs: number, maxAgeMs: number.positive().max(60000), maxSlotLag: number.max(150), validUntilSlot: number,
     reviewExpiresAtMs: number, maxLaunchFeeLamports: u64, maxPoolCreationFeeLamports: u64, maxRentLamports: u64,
     maxInstructionDebitLamports: u64, maxNetworkFeeLamports: u64, maxTotalDebitLamports: u64,
@@ -101,6 +111,38 @@ export function compileCanaryMaxWalletLaunchReview(input) {
   const parsed = collectedInputSchema.parse(input)
   check(parsed.request.policyVersion === 2, 'Canary requires the inclusive candidate')
   return compileLaunch(parsed, false, true)
+}
+// An open launch: native only, open creation on, the fee and cap on the chain's menus, sent through the shared launch table.
+const openInputSchema = collectedInputSchema.extend({ request: openLaunchRequestSchema, reviewedStateHashes: stateHashesSchema.omit({ authorization: true }),
+  lookupTable: lookupTableSchema, nativeLaunches: z.literal(true) }).strict()
+export function compileOpenLaunchReview(input) {
+  return compileLaunch(openInputSchema.parse(input), false, false, true)
+}
+export function openLaunchInventory(envelope, request, launchConfigBytes) {
+  const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), r = openLaunchRequestSchema.parse(request), launch = binding(envelope, profile, 'launch')
+  const config = decoded(launch, 'Config', Buffer.from(launchConfigBytes)), a = addressesFor(profile, r, config), metas = exactMetas(profile, r, config, a, launch, OPEN)
+  return { addresses: a, inventory: [...new Set([...metas.map(m => str(m.pubkey)), a.launchProgramData, a.swapProgramData, a.swapGovernance, r.feePayer])].sort() }
+}
+// The exact 40 accounts (address, signer, writable) of an open launch for these identities, in instruction order.
+export function openLaunchAccounts(envelope, { creator, mint, selectedConfig }, launchConfigBytes) {
+  const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), launch = binding(envelope, profile, 'launch')
+  for (const value of [creator, mint, selectedConfig]) key.parse(value)
+  const r = { policyVersion: 2, creator, mint, selectedConfig }, config = decoded(launch, 'Config', Buffer.from(launchConfigBytes))
+  return Object.freeze(exactMetas(profile, r, config, addressesFor(profile, r, config), launch, OPEN).map(m => Object.freeze({ address: str(m.pubkey), signer: m.isSigner, writable: m.isWritable })))
+}
+// The shared launch table's addresses: every account two unrelated open launches have in common, sorted, less the launch
+// program (it is invoked, so the message names it directly). The owner creates and freezes this table once.
+export function openLaunchTableAddresses(envelope, launchConfigBytes) {
+  const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), launch = binding(envelope, profile, 'launch')
+  return openTableFor(profile, decoded(launch, 'Config', Buffer.from(launchConfigBytes)), launch)
+}
+const OPEN = 'open'
+function openTableFor(profile, config, launch) {
+  const synthetic = label => str(new PublicKey(createHash('sha256').update(`repo.ing shared launch table derivation ${label}`).digest()))
+  const metasFor = label => { const r = { policyVersion: 2, creator: synthetic(`${label} creator`), mint: synthetic(`${label} mint`), selectedConfig: synthetic(`${label} config`) }
+    return exactMetas(profile, r, config, addressesFor(profile, r, config), launch, OPEN).map(m => str(m.pubkey)) }
+  const other = new Set(metasFor('b'))
+  return [...new Set(metasFor('a').filter(address => other.has(address) && address !== profile.programs.launch))].sort()
 }
 // Derive the exact inventory from pinned ABI/config; this does not trust their semantics.
 export function maxWalletLaunchInventory(envelope, request, launchConfigBytes) {
@@ -177,10 +219,14 @@ function addressesFor(profile, request, config) {
     launchHookSigner: pda(L, 'hook-authority'), swapHookSigner: pda(S, 'hook-authority', kb(L)), swapEventAuthority: pda(S, '__event_authority'),
     tokenEventAuthority: pda(T, '__event_authority'), eventAuthority: pda(L, '__event_authority'), gateHookSigner: pda(T, 'hook-authority', kb(G)), ...(request.policyVersion===2?{inclusiveFeePolicy:inclusiveFeePolicyAddress(S,pool)}:{}) }
 }
-// v4 (native SOL) has exactly v3's accounts; only its data differs.
+// v4 (native SOL) has exactly v3's accounts; only its data differs. An open launch (OPEN) has v4's 32 named accounts and
+// exactly 8 remaining ones: v4's less the creator authorization and the reviewer.
 function exactMetas(profile, r, c, a, binding, instructionName = r.policyVersion===2?'create_launch_custom_v3':'create_launch_custom_mainnet') {
-  const { launch: L, swap: S, gate: G, token: T } = profile.programs
+  const { launch: L, swap: S, gate: G, token: T } = profile.programs, open = instructionName === OPEN
+  if (open) instructionName = 'create_launch_custom_v4'
   const abi = binding.idl.instructions.find(i => i.name === instructionName)
+  const own = open && binding.idl.instructions.find(i => i.name === 'create_launch_open_v1'), shape = x => x.accounts.slice(0, 32).map(m => [m.name, !!m.signer, !!m.writable, m.address ?? null])
+  check(!own || (abi && Buffer.from(own.discriminator).equals(OPEN_LAUNCH_DISCRIMINATOR) && isDeepStrictEqual(shape(own), shape(abi)) && isDeepStrictEqual(own.args, abi.args)), 'Open launch ABI differs from create_launch_custom_v4')
   const names = ['creator', 'config', 'treasury', 'mint', 'launch', 'launch_reserve', 'launch_quote', 'quote_mint', 'registry', 'dex_config', 'pool', 'lp_mint', 'base_vault', 'quote_vault', 'launch_lp', 'hook_signer', 'dex_hook_signer', 'dex_event_authority', 'swap_program', 'token_program', 'token_hook_signer', 'token_event_authority', 'system_program', 'kit_program', 'kit_config', 'kit_registry', 'reward_vault', 'kit_caller', 'kit_event_authority', 'launch_config', 'event_authority', 'program']
   check(abi && isDeepStrictEqual(abi.accounts.map(x => x.name), names) && Buffer.from(abi.discriminator).equals(hash(`global:${instructionName}`).subarray(0, 8)), 'Custom launch ABI differs')
   const placeholder = abi.accounts[20].address
@@ -190,7 +236,7 @@ function exactMetas(profile, r, c, a, binding, instructionName = r.policyVersion
     meta(a.launchReserve, true), meta(a.launchQuote, true), meta(profile.quoteMint), meta(a.poolRegistry, true), meta(a.swapConfig, true), meta(a.pool, true),
     meta(a.lpMint, true), meta(a.baseVault, true), meta(a.quoteVault, true), meta(a.launchLp, true), meta(a.launchHookSigner), meta(a.swapHookSigner),
     meta(a.swapEventAuthority), meta(S), meta(T), meta(placeholder), meta(a.tokenEventAuthority), meta(zero), ...Array.from({ length: 6 }, () => meta(L)),
-    meta(r.selectedConfig), meta(a.eventAuthority), meta(L), meta(a.launchGovernance), meta(a.authorization, true), meta(r.reviewer, false, true),
+    meta(r.selectedConfig), meta(a.eventAuthority), meta(L), meta(a.launchGovernance), ...(open ? [] : [meta(a.authorization, true), meta(r.reviewer, false, true)]),
     meta(a.gateProgramData), meta(G), meta(a.gateHookSigner), meta(a.registry), meta(a.policy), meta(a.launch), ...(r.policyVersion===2?[meta(a.inclusiveFeePolicy,true)]:[])]
   for (let i = 0; i < 32; i++) {
     const declared = abi.accounts[i], actual = keys[i], optionalAbsent = i >= 23 && i <= 28
@@ -207,14 +253,15 @@ function exactMetas(profile, r, c, a, binding, instructionName = r.policyVersion
 export function buildMaxWalletLaunchReviewForFixture(input) {
   return compileLaunch(inputSchema.parse(input), true)
 }
-function compileLaunch(input, fixture, canary = false) {
+function compileLaunch(input, fixture, canary = false, open = false) {
   const { profile: envelope, request: r, observations, preparationEvidence: proof, reviewedStateHashes, recentBlockhash: bh, lookupTable, limits: l, nativeLaunches = false } = input
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
   check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
   const launch = binding(envelope, profile, 'launch'), swap = binding(envelope, profile, 'swap'), gate = binding(envelope, profile, 'gate')
   const inclusive=r.policyVersion===2
-  check(inclusive === (profile.buildFeature==='inclusive-fees-candidate') && (!inclusive || approvedCreatorFees(profile).includes(r.creatorFeeBps)), 'Compiler family or explicit fee differs')
+  // An open launch offers the fees on the chain's menu (checked below); every other launch, the reviewed profile's menu.
+  check(inclusive === (profile.buildFeature==='inclusive-fees-candidate') && (!inclusive || open || approvedCreatorFees(profile).includes(r.creatorFeeBps)) && (!open || inclusive), 'Compiler family or explicit fee differs')
   const prep = parseMaxWalletPreparationRequest({ schema: inclusive?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1', policyKind: r.policyKind, policyVersion: r.policyVersion, creator: r.creator, feePayer: r.feePayer,
     mint: r.mint, selectedConfig: r.selectedConfig, capBps: r.capBps, label: r.label, creatorFeeBps: r.creatorFeeBps, rules: r.rules, hookFlags: r.hookFlags,...(inclusive?{feeModel:2,protocolShareBps:2500}:{}) })
   check(proof.profileSha256 === envelope.expectedSha256 && proof.preparationIntentSha256 === sha(JSON.stringify(prep)), 'Preparation intent/profile differs')
@@ -230,25 +277,37 @@ function compileLaunch(input, fixture, canary = false) {
   // Launch Config byte 186, as both providers read it: on, v3 and plain launches are closed and only a native-SOL v4
   // launch can be created. Compiled only on a server that enables it and pins the reviewed native programs and IDLs.
   const native = c.reserved[0] === 1
+  if (open) {
+    const menus = parseLaunchConfigReserved(Buffer.from(c.reserved))
+    check(native, 'Native launches are off on chain; an open launch is native SOL only')
+    check(menus.open, 'Open creation is off on chain')
+    check(menus.creatorFeeBps.includes(r.creatorFeeBps), 'The creator fee is not on the on-chain menu')
+    check(menus.capBps.includes(r.capBps), 'The wallet cap is not on the on-chain menu')
+    check(r.feePayer === r.creator, 'An open launch is signed and paid by its creator: the creator pays')
+  }
   check(!native || nativeLaunches === true, 'Native launches are on chain; this server is not enabled for them')
-  check(!native || (inclusive && !canary && ['launch', 'swap'].every(role => isNativeElfPin(role, profile.elfSha256[role], envelope.elfLengths[role])
-    && profile.idlSha256[role] === NATIVE_IDL_SHA256[role])), 'Native launches need the reviewed native-SOL programs and IDLs')
-  const instructionName = inclusive ? (native ? 'create_launch_custom_v4' : 'create_launch_custom_v3') : 'create_launch_custom_mainnet'
-  check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury) && str(c.admin) === r.reviewer, 'Current admin, treasury or quote differs')
+  // A native launch needs a reviewed native build (e357fdf or open-creation) pinned for both programs; an open launch, the
+  // open-creation build, the only one with create_launch_open_v1.
+  const build = nativeBuildOf(profile, envelope.elfLengths)
+  check(!native || (inclusive && !canary && build && ['launch', 'swap'].every(role => isNativeElfPin(role, profile.elfSha256[role], envelope.elfLengths[role]))), 'Native launches need the reviewed native-SOL programs and IDLs')
+  check(!open || build === 'open-36dd07e', 'Open launches need the reviewed open-creation launch program and IDL')
+  const instructionName = open ? OPEN : inclusive ? (native ? 'create_launch_custom_v4' : 'create_launch_custom_v3') : 'create_launch_custom_mainnet'
+  check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury) && (open || str(c.admin) === r.reviewer), 'Current admin, treasury or quote differs')
   if (canary) check(str(c.admin) === str(d.admin), 'Canary requires the existing shared admin role')
   const a = addressesFor(profile, r, c), metas = exactMetas(profile, r, c, a, launch, instructionName)
   const inventory = [...new Set([...metas.map(m => str(m.pubkey)), a.launchProgramData, a.swapProgramData, a.swapGovernance, r.feePayer])].sort()
   check(isDeepStrictEqual([...accounts.keys()].sort(), inventory), 'Incomplete or extra launch inventory')
-  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, zero, r.creator, r.mint, r.selectedConfig, r.reviewer, str(c.treasury)]
+  const reviewer = open ? [] : [r.reviewer]
+  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, zero, r.creator, r.mint, r.selectedConfig, ...reviewer, str(c.treasury)]
   check(new Set(roles).size === roles.length && (r.feePayer === r.creator || !roles.includes(r.feePayer)), 'Launch roles alias')
-  check([r.creator, r.feePayer, r.mint, r.selectedConfig, r.reviewer].every(k => PublicKey.isOnCurve(kb(k))), 'Required signer identity cannot be a PDA')
+  check([r.creator, r.feePayer, r.mint, r.selectedConfig, ...reviewer].every(k => PublicKey.isOnCurve(kb(k))), 'Required signer identity cannot be a PDA')
   check(!lookupTable || ![...inventory, ...roles, ComputeBudgetProgram.programId.toBase58()].includes(lookupTable.address), 'Lookup table aliases a launch role')
   for (const o of observations) for (const role of ['launch', 'swap', 'gate']) programEvidence(accounts, profile.programs[role], profile.elfSha256[role], envelope.elfLengths[role], o.slot, role === 'gate')
   const tokenProgram = accounts.get(T), tokenBytes = tokenProgram && raw(tokenProgram.dataBase64, 36)
   check(tokenProgram?.owner === loader && tokenProgram.executable && tokenBytes.length === 36 && tokenBytes.readUInt32LE() === 2
     && tokenBytes.subarray(4).equals(kb(pda(loader, kb(T)))), 'Token ProgramData linkage differs')
   for (const name of ['launch', 'pool', 'lpMint', 'launchReserve', 'launchQuote', 'poolRegistry', 'baseVault', 'quoteVault', 'launchLp',...(inclusive?['inclusiveFeePolicy']:[])]) check(accounts.get(a[name]) === null, 'Launch target already exists; reconcile, do not retry')
-  for (const address of new Set([r.creator, r.feePayer, r.reviewer, r.mint, str(c.treasury)])) {
+  for (const address of new Set([r.creator, r.feePayer, ...reviewer, r.mint, str(c.treasury)])) {
     const account = accounts.get(address)
     check((address === r.mint && account === null) || account && account.owner === zero && !account.executable && raw(account.dataBase64, 0).length === 0, 'Signer, treasury or future mint is not an empty system account')
   }
@@ -271,8 +330,10 @@ function compileLaunch(input, fixture, canary = false) {
   check(isDeepStrictEqual(reviewedStateHashes, observedHashes), 'Reviewed current state hashes differ')
   const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
   const launchGov = governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, canary), swapGov = governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, canary)
-  const auth = decoded(launch, 'CreatorAuthorization', owned(accounts, a.authorization, L, 73)), slot = Math.max(...observations.map(o => o.slot))
-  check(str(auth.creator) === r.creator && auth.enabled && n(auth.consumed) < n(auth.max_launches) && n(auth.expires_at_slot) > BigInt(l.validUntilSlot), 'Current creator grant, quota or exclusive expiry differs')
+  const slot = Math.max(...observations.map(o => o.slot))
+  // An open launch has no creator grant: anyone may launch while open creation is on and creation is not paused.
+  const auth = open ? null : decoded(launch, 'CreatorAuthorization', owned(accounts, a.authorization, L, 73))
+  if (!open) check(str(auth.creator) === r.creator && auth.enabled && n(auth.consumed) < n(auth.max_launches) && n(auth.expires_at_slot) > BigInt(l.validUntilSlot), 'Current creator grant, quota or exclusive expiry differs')
   // The quote is a native-token mint. Decode its option fields without borrowing a launch builder.
   const quote = owned(accounts, profile.quoteMint, T, 519)
   check(quote.subarray(0, 8).equals(hash('account:Mint').subarray(0, 8)) && quote[8] === 1, 'Quote mint discriminator or version differs')
@@ -313,15 +374,16 @@ function compileLaunch(input, fixture, canary = false) {
     enc(d.pool_creation_fee_lamports, 8), enc(d.protocol_fee_bps, 2), enc(d.launch_protocol_share_bps, 2))
   if(inclusive){launchEconomics=inclusiveEconomicsHash('launch',launchEconomics);poolEconomics=inclusiveEconomicsHash('pool',poolEconomics)}
   if(native){launchEconomics=nativeEconomicsHash('launch',launchEconomics);poolEconomics=nativeEconomicsHash('pool',poolEconomics)}
-  const authHash = hash('hook-lab:creator-authorization:v1', kb(L), kb(r.creator), enc(1, 1), enc(auth.expires_at_slot, 8), enc(auth.max_launches, 8), enc(auth.revision, 8))
-  const control = hash('hook-lab:mainnet-creation-controls:v1', kb(L), launchGov, authHash)
+  const control = open ? hash('hook-lab:open-creation-controls:v1', kb(L), launchGov)
+    : hash('hook-lab:mainnet-creation-controls:v1', kb(L), launchGov, hash('hook-lab:creator-authorization:v1', kb(L), kb(r.creator), enc(1, 1), enc(auth.expires_at_slot, 8), enc(auth.max_launches, 8), enc(auth.revision, 8)))
   let hookAccounts = hash('hook-lab:max-wallet-accounts:v1', kb(G), kb(a.registry), kb(G), enc(registryBytes.length, 4), registryBytes,
     kb(a.policy), kb(G), enc(policyBytes.length, 4), policyBytes, kb(a.launch), kb(L))
   if(inclusive)hookAccounts=inclusiveHookAccountsHash({program:G,registry:{address:a.registry,owner:G,data:registryBytes},policy:{address:a.policy,owner:G,data:policyBytes},launch:{address:a.launch,owner:L}})
   const guard = { version: 2, deadline_slot: bn(l.validUntilSlot), expected_launch_economics_hash: [...launchEconomics], expected_pool_economics_hash: [...poolEconomics],
     max_launch_fee_lamports: bn(l.maxLaunchFeeLamports), max_pool_creation_fee_lamports: bn(l.maxPoolCreationFeeLamports), max_rent_lamports: bn(l.maxRentLamports), max_total_debit_lamports: bn(l.maxInstructionDebitLamports) }
-  const data = launch.coder.instruction.encode(instructionName, { args: { name: r.name, symbol: r.symbol, uri: r.uri, creator_fee_bps: r.creatorFeeBps, virtual_quote: bn(r.virtualQuote), rules: noRules },
+  const data = launch.coder.instruction.encode(open ? 'create_launch_custom_v4' : instructionName, { args: { name: r.name, symbol: r.symbol, uri: r.uri, creator_fee_bps: r.creatorFeeBps, virtual_quote: bn(r.virtualQuote), rules: noRules },
     guard, ...(inclusive?{fee_model:2}:{}), ...(native?{quote_form:QUOTE_FORM_NATIVE}:{}), expected_control_hash: [...control], expected_hook_accounts_hash: [...hookAccounts] })
+  if (open) OPEN_LAUNCH_DISCRIMINATOR.copy(data, 0)   // v4's argument encoding under the open instruction's discriminator
   const instruction = new TransactionInstruction({ programId: pk(L), keys: metas, data })
   const tables = lookupTable ? [new AddressLookupTableAccount({ key: pk(lookupTable.address), state: AddressLookupTableAccount.deserialize(raw(lookupTable.dataBase64, 16384)) })] : []
   if (lookupTable) {
@@ -329,28 +391,31 @@ function compileLaunch(input, fixture, canary = false) {
     check(sha(b) === lookupTable.sha256 && b.length >= 56 && b.length <= 8248 && state.addresses.length <= 256 && (b.length - 56) % 32 === 0 && b.readUInt32LE() === 1 && [0, 1].includes(b[21])
       && (b[21] === 1 ? b.subarray(54, 56).every(v => v === 0) : b.subarray(22, 56).every(v => v === 0))
       && state.lastExtendedSlotStartIndex <= state.addresses.length && new Set(state.addresses.map(str)).size === state.addresses.length, 'Lookup table hash, canonical state or addresses differ')
+    // An open launch uses only the owner's shared launch table: frozen, active, exactly the constant addresses.
+    if (open) check(b[21] === 0 && state.deactivationSlot === 0xffffffffffffffffn && isDeepStrictEqual(state.addresses.map(str), openTableFor(profile, c, launch)), 'Lookup table is not the frozen shared launch table')
   }
   const message = new TransactionMessage({ payerKey: pk(r.feePayer), recentBlockhash: bh.blockhash, instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: l.computeUnitLimit }),
     ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) }), instruction] }).compileToV0Message(tables)
   check(!lookupTable || message.addressTableLookups.length === 1, 'Unused lookup table')
   const keys = message.getAccountKeys({ addressLookupTableAccounts: tables }), bytes = message.serialize()
+  if (open) check(1 + 64 * message.header.numRequiredSignatures + bytes.length <= 1232, 'Launch transaction exceeds the 1232-byte packet limit; shorten the coin URI')
   const priority = (BigInt(l.computeUnitLimit) * BigInt(l.computeUnitPriceMicroLamports) + 999999n) / 1000000n
   check(BigInt(bh.networkFeeLamports) === BigInt(message.header.numRequiredSignatures) * BigInt(bh.lamportsPerSignature) + priority, 'Network fee quote differs from explicit signature fee basis')
-  const review = { schema: 'hooklab-message-review/1', operation: canary ? 'canary-max-wallet-launch' : fixture ? 'max-wallet-launch-fixture' : 'max-wallet-launch', genesisHash: profile.genesisHash, profileSha256: envelope.expectedSha256,
+  const review = { schema: 'hooklab-message-review/1', operation: canary ? 'canary-max-wallet-launch' : fixture ? 'max-wallet-launch-fixture' : open ? 'open-launch' : 'max-wallet-launch', genesisHash: profile.genesisHash, profileSha256: envelope.expectedSha256,
     policySha256: sha(JSON.stringify({ proof, reviewedStateHashes, observations })), intentSha256: sha(JSON.stringify(r)), payer: r.feePayer, wallet: r.creator,
     messageBase64: Buffer.from(bytes).toString('base64'), messageSha256: sha(bytes), requiredSigners: message.staticAccountKeys.slice(0, message.header.numRequiredSignatures).map(str),
     accounts: Array.from({ length: keys.length }, (_, i) => ({ address: str(keys.get(i)), signer: message.isAccountSigner(i), writable: message.isAccountWritable(i) })),
     lookupTables: lookupTable ? [lookupTable] : [], observedSlot: slot, validUntilSlot: l.validUntilSlot, observedAtMs: l.nowMs, reviewExpiresAtMs: l.reviewExpiresAtMs,
     lastValidBlockHeight: bh.lastValidBlockHeight, baseFeeLamports: String(BigInt(bh.networkFeeLamports) - priority), maxFeeLamports: l.maxNetworkFeeLamports,
     instructionDebitLamports: l.maxInstructionDebitLamports, maxNativeDebitLamports: l.maxTotalDebitLamports }
-  const inspected = inspectHookLabMessage(review), wantSigners = new Set([r.creator, r.feePayer, r.mint, r.reviewer]), wantWritable = new Set([r.feePayer, ...metas.filter(m => m.isWritable).map(m => str(m.pubkey))])
+  const inspected = inspectHookLabMessage(review), wantSigners = new Set([r.creator, r.feePayer, r.mint, ...reviewer]), wantWritable = new Set([r.feePayer, ...metas.filter(m => m.isWritable).map(m => str(m.pubkey))])
   check(inspected.instructions.length === 3 && review.accounts.every(a => a.signer === wantSigners.has(a.address) && a.writable === wantWritable.has(a.address)), 'Compiled launch privileges differ')
   const canonicalInstruction = { program: L, dataHex: data.toString('hex'), accounts: metas.map(m => ({ address: str(m.pubkey), signer: m.isSigner, writable: m.isWritable })) }
   // Launch appears twice: declared writable as the target and read-only as a registry literal.
   // Solana compiles their privilege union; this is expected and never widens Policy/registry.
   const effective = { ...canonicalInstruction, accounts: canonicalInstruction.accounts.map(m => review.accounts.find(a => a.address === m.address)) }
   check(isDeepStrictEqual(inspected.instructions[2], effective), 'Effective instruction metas differ from canonical max-wallet launch policy')
-  return freeze({ schema: canary ? 'repoing/canary-max-wallet-launch-review/1' : 'repoing/max-wallet-launch-review/1', status: fixture ? 'offline-synthetic-review-only' : 'unauthenticated-deterministic-review-only', provenance: fixture ? proof.provenance : 'compiler-inputs-not-authority', sourceCommit: profile.sourceCommit,
+  return freeze({ schema: canary ? 'repoing/canary-max-wallet-launch-review/1' : open ? 'repoing/open-launch-review/1' : 'repoing/max-wallet-launch-review/1', status: fixture ? 'offline-synthetic-review-only' : 'unauthenticated-deterministic-review-only', provenance: fixture ? proof.provenance : 'compiler-inputs-not-authority', sourceCommit: profile.sourceCommit,
     sourcePatchSha256: profile.sourcePatchSha256, releaseProfileSha256: envelope.expectedSha256, request: r, addresses: a, review, canonicalInstruction, instructions: inspected.instructions,
     policyKind: 'max-wallet', policyVersion: r.policyVersion, ...(inclusive?{feeModel:2,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps}:{}), ...(native?{quoteForm:QUOTE_FORM_NATIVE}:{}), policy: { initialSupply: n(policy.initial_supply).toString(), capBps: policy.cap_bps,
       capRaw: (n(policy.initial_supply) * BigInt(policy.cap_bps) / 10000n).toString(), endsAt: 'authenticated-graduation', poolExemption: 'canonical-pool-only' },

@@ -33,6 +33,10 @@ export const MIGRATIONS = Object.freeze({
   // Native-SOL trades and creator claims: widens the signing stage list. Apply before the native routes are switched on.
   'native-stages': Object.freeze({ files: ['hooklab-native-signing-native-schema.sql'], requires: ['hook_lab_native_signing_operations'],
     inspect: "select pg_get_constraintdef(oid) as stage_check from pg_constraint where conname='hook_lab_native_signing_operations_stage_check'" }),
+  // Self-serve launches and coin moderation: the request source, the owner-invite-only single-invite index and the
+  // append-only moderation record. Apply before HOOK_OPEN_LAUNCHES=true.
+  'open-launches': Object.freeze({ files: ['hooklab-open-launch-schema.sql'], requires: ['hook_lab_launch_requests', 'hook_lab_launch_request_prices'],
+    inspect: "select indexdef from pg_indexes where indexname='hook_lab_launch_requests_single_invite'" }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

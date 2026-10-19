@@ -1,0 +1,27 @@
+{
+  "schema": "hook-lab/open-creation/vectors/1",
+  "fixture": "keys are 32 repeated bytes; config = key(9); governance state = genesis key(20), program, config key(9), roles key(21..24), revision, gates, digests key(25), key(26), pending_admin None or (key(27), -5)",
+  "formulas": {
+    "governance_commitment": "sha256(\"hook-lab/governance-state/1\\0\" || borsh(State))",
+    "open_control_hash": "sha256(\"hook-lab:open-creation-controls:v1\" || launch_program_id || governance_commitment)",
+    "open_creation_digest": "sha256(\"hook-lab:open-creation:v1\" || launch_program_id || config || on u8 || fee_menu 4 x u16 LE || cap_menu 4 x u16 LE)",
+    "config_bytes_186_204": "native u8 || open u8 || fee_menu 4 x u16 LE || cap_menu 4 x u16 LE"
+  },
+  "gov_a_commitment": "f62ce5af066f357a097cc4e93bcbd8f70361ab33fcea080795a60156d71cdb45",
+  "gov_a_open_control_hash": "443263b7a2a6c6fdda0fe01f44e52c9d276760c873d392e9922f1f0c06176796",
+  "gov_b_commitment": "1a0322403cd551f82248eb1c5100038415754b47908f696a755f6bbd16b6378e",
+  "gov_b_open_control_hash": "8543ea0ea082dfe9c51dea46853aea836c3dad653d3641dacf2acb8274ed86c6",
+  "gov_c_commitment": "13219c7103bf5416d07980c7f1d389af1a31211446248fcdeaeada1554d47f8b",
+  "gov_c_open_control_hash": "07fcc65b151524341c1445a3c5fee8a9d096cc5b4fa01c8f09696c6fd63d9090",
+  "open_creation_on1_owner_digest": "8609a5196f84e0d0781477bdc6c68e65228e35ae4f042bbac964eceb502d1c93",
+  "open_creation_on0_owner_digest": "9ce1ea9bb114c86fbb929b0028cf97b8776bdca15791e3243ed7ac86629bcd78",
+  "open_creation_on1_edge_digest": "3138cebf327da2a899e9f9feb21e00e8bd24628e443c4036ac8a58da8f374d69",
+  "open_creation_on0_empty_digest": "9ee8b127fe4edb6ae98dbf901618d809d358cc0e4c5b8db36fc415fa36009f03",
+  "config_bytes_186_204_native1_open1_owner": "010132006400c80000006400c8002c01f401",
+  "governed_set_open_creation_data": "28df67352701d61f0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0132006400c80000006400c8002c01f401",
+  "create_launch_open_v1_data": "336a10151f85a7550100000047010000004700000000640040b0464f010000000000000000000000000000000000000000000000000002f4010000000000000d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e002d310100000000010000000000200040e201000000000000c2eb0b0000000002010a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+  "create_launch_open_v1_discriminator": "336a10151f85a755",
+  "governed_set_open_creation_discriminator": "28df67352701d61f",
+  "event_OpenCreationSet_discriminator": "5e6dbe54ca53e122",
+  "event_OpenLaunchCreated_discriminator": "e445286c3ef244e7"
+}

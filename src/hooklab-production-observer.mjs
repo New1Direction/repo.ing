@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { LOCAL_DOSSIER_SCHEMA, localAcceptanceNetwork, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
-import { NATIVE_IDL_SHA256, loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { NATIVE_BUILDS, loadNativeArtifacts, loadOpenArtifacts, nativeBuildForRole } from './hooklab-native-pins.mjs'
+import { parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 import { isNativeElfPin } from './hooklab-native-launch.mjs'
 
 const sha = data => createHash('sha256').update(data).digest('hex')
@@ -43,16 +44,19 @@ export function parseExecutionDossier(value) {
 // Runtime source artifacts are rooted at the app directory and included in Next tracing.
 const codecBytes={launch:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json`),swap:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_swap.json`)}
 const codecs=Object.fromEntries(['launch','swap'].map(role=>{const bytes=codecBytes[role];return [role,{sha256:sha(bytes),coder:new BorshCoder(JSON.parse(bytes)),idl:JSON.parse(bytes)}]}))
-// Config codec for a config-counters-v1 pin. Two reviewed builds exist: bundle 2 (the IDLs above) and the native-SOL
-// builds of bundle 3 (vendor/hooklab-native-candidate, loaded on first use and only with their reviewed bytes). Config
-// has the same layout in both; the pin names its build by IDL hash, and that must be the build its program's ELF pin
-// names: the native IDL only beside the native ELF, the bundle-2 IDL never beside it. Any other IDL hash is refused.
+// Config codec for a config-counters-v1 pin. Reviewed builds: bundle 2 (the IDLs above) and the native-SOL builds
+// (e357fdf, and the open-creation build: vendor/hooklab-native-candidate, loaded on first use and only with their
+// reviewed bytes). Config has the same layout in all; the pin names its build by IDL hash, and that must be the build its
+// program's ELF pin names: a native IDL only beside that native build's ELF, the bundle-2 IDL never beside a native ELF.
+// Any other IDL hash is refused.
 function configCodec(role,pin,program){
- const native=pin.idlSha256===NATIVE_IDL_SHA256[role]
- if(native!==isNativeElfPin(role,program.elfSha256,program.elfLength))return null
- if(!native)return codecs[role].sha256===pin.idlSha256?codecs[role]:null
- const {idls,coders}=loadNativeArtifacts()
- return {sha256:NATIVE_IDL_SHA256[role],coder:coders[role],idl:idls[role]}
+ const build=nativeBuildForRole(role,{elfSha256:program.elfSha256,elfLength:program.elfLength,idlSha256:pin.idlSha256})
+ if(!build){
+  if(isNativeElfPin(role,program.elfSha256,program.elfLength))return null
+  return codecs[role].sha256===pin.idlSha256?codecs[role]:null
+ }
+ const {idls,coders}=build==='open-36dd07e'?loadOpenArtifacts():loadNativeArtifacts()
+ return {sha256:NATIVE_BUILDS[build].idlSha256[role],coder:coders[role],idl:idls[role]}
 }
 const tokenIdlBytes=readFileSync(`${process.cwd()}/vendor/hooklab-production-candidate/idl/bordrless_token.json`)
 export const TOKEN_IDL_SHA256=sha(tokenIdlBytes)
@@ -93,6 +97,12 @@ export function productionAccountBindingMatches(pin,observed,dossier){
   const base=decode(approved),live=decode(current),field=role==='launch'?'launches':'pools_created'
   if(live[field].lt(base[field]))return false
   live[field]=base[field]
+  // The launch Config's governed switches (native launches, open creation) and creator menus live in its reserved bytes
+  // and may move between any states the reviewed programs write; every compiler reads them live. Nothing else may.
+  if(role==='launch'){
+   if(!parseLaunchConfigReserved(Buffer.from(live.reserved))||!parseLaunchConfigReserved(Buffer.from(base.reserved)))return false
+   live.reserved=base.reserved
+  }
   return Buffer.concat([current.subarray(0,8),codec.coder.types.encode('Config',live)]).equals(approved)
  }catch{return false}
 }

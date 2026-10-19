@@ -6,6 +6,7 @@ import { clientAddress } from '../../src/client-address.mjs'
 import { inclusiveTradeRuntime } from './hooklab-inclusive-trade-runtime.mjs'
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
+import { openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
 import { nativeTradingOn, tradingOpenFor } from './hooklab-inclusive-trade.mjs'
 
@@ -63,10 +64,10 @@ export function createWalletBalancesHandler({ runtime = inclusiveTradeRuntime, a
   }
 }
 
-// Coins launched through repo.ing approval, for the Buy & sell list.
+// Coins launched through the site, for the Buy & sell list (delisted coins left out).
 export async function launchedCoins({ env = process.env, database = createHookLabDatabasePool, store = ownerApprovalStore, limit = 50 } = {}) {
-  if (env.HOOK_OWNER_APPROVED_LAUNCHES !== 'true') return []
+  if (!siteLaunchesEnabled(env)) return []
   let pool
-  try { pool = database(walletIdentityConfiguration(env)); return await store(pool, { adminAddress: env.HOOK_LAUNCH_ADMIN_ADDRESS }).launchedCoins(limit) }
+  try { pool = database(walletIdentityConfiguration(env)); return await store(pool, { adminAddress: env.HOOK_LAUNCH_ADMIN_ADDRESS, openLaunches: openLaunchesEnabled(env) }).launchedCoins(limit) }
   catch { return [] } finally { await pool?.end().catch(() => {}) }
 }

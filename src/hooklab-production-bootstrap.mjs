@@ -7,6 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { Connection } from '@solana/web3.js'
 import { remoteAdminSigner } from './hooklab-owner-approval.mjs'
 import { remoteLaunchLookupTable } from './hooklab-owner-launch-tables.mjs'
+import { openLaunchesEnabled, siteLaunchesEnabled } from './hooklab-open-creation.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
@@ -53,7 +54,8 @@ export function productionKeyRing(env){
 
 // Everything the runtimes need, verified. Separate from installation so it can be tested.
 export async function productionSettings({env=process.env,readBundle=path=>readFile(path),connectionFor=url=>catchUpConnection(new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true}))}={}){
- need(env.HOOK_OWNER_APPROVED_LAUNCHES==='true','owner-approved launches are not enabled')
+ need(siteLaunchesEnabled(env),'site launches are not enabled (neither HOOK_OWNER_APPROVED_LAUNCHES nor HOOK_OPEN_LAUNCHES is true)')
+ need(!openLaunchesEnabled(env)||env.HOOK_NATIVE_LAUNCHES_ENABLED==='true','open launches need HOOK_NATIVE_LAUNCHES_ENABLED=true (they are native SOL only)')
  need(env.HOOK_NATIVE_LAUNCH_ENABLED==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true','native launch and wallet identity switches must both be on')
  const bytes=await readBundle(env.HOOKLAB_PRODUCTION_BUNDLE_FILE??refuse('HOOKLAB_PRODUCTION_BUNDLE_FILE is not set'))
  need(/^[a-f0-9]{64}$/.test(env.HOOKLAB_PRODUCTION_BUNDLE_SHA256??'')&&sha(bytes)===env.HOOKLAB_PRODUCTION_BUNDLE_SHA256,'production bundle differs from its approved hash')
@@ -94,7 +96,9 @@ export async function bootstrapProductionHooks({env=process.env}={}){
   adminSigner:remoteAdminSigner(pool,{address:s.bundle.config.reviewer,observe:s.observers.live}),expiryObserver:s.observers.bothPast}
  // Each launch gets its own lookup table, created by the owner's Mac agent; trades use the bundle's shared table.
  const launchLookupTable=remoteLaunchLookupTable(pool,{envelope:s.bundle.profile,connections:s.connections,adminAddress:s.bundle.config.reviewer})
- const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,launchLookupTable,reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
+ // Open launches use the bundle's one shared launch table and need no admin co-signature; the owner's Mac is not involved.
+ const open=openLaunchesEnabled(env)
+ const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,...(open?{openLaunches:true}:{launchLookupTable}),reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
@@ -102,7 +106,7 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  // pins the upgraded programs.
  let nativeTrading=false
  if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'){
-  const trade=createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,
+  const trade=createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,openLaunches:openLaunchesEnabled(env),
    walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true',nativeTradingEnabled:env.HOOK_NATIVE_TRADING_ENABLED==='true'})
   installInclusiveTradeRuntime(trade);nativeTrading=trade.nativeTrading
   if(env.HOOK_NATIVE_TRADING_ENABLED==='true'&&!nativeTrading)console.error('Hook Lab native trading stays off: the production bundle does not pin the reviewed native-SOL programs')
