@@ -6,7 +6,7 @@ import { HooksRisk } from '../../../../components/hooks-ui'
 import { HookCoinPreview } from '../../../../components/hooklab-coin-form'
 import { HookTradePanel } from '../../../../components/hooklab-trade-panel'
 import { inclusiveTradeRuntime } from '../../../../lib/hooklab-inclusive-trade-runtime.mjs'
-import { cachedMarket, launchedCoinProfile } from '../../../../lib/hooklab-market.mjs'
+import { cachedMarket, listedCoin } from '../../../../lib/hooklab-market.mjs'
 import { coinImageUrl } from '../../../../../src/hooklab-coin-profile.mjs'
 import { hookBlock } from '../../../../../src/hooklab-blocks.mjs'
 import { executionGenesis } from '../../../../../src/hooklab-local-acceptance.mjs'
@@ -18,10 +18,13 @@ const short = address => `${address.slice(0, 4)}…${address.slice(-4)}`
 
 async function load(mint) {
   const runtime = inclusiveTradeRuntime()
-  if (!runtime?.market) return { unavailable: true }
+  if (!runtime?.market || !runtime.coinProfile) return { unavailable: true }
   try {
+    // Only coins launched through repo.ing are shown.
+    const coin = await listedCoin(runtime, mint)
+    if (!coin) return { missing: true }
     const view = await cachedMarket(runtime, mint)
-    return view ? { view, coin: await launchedCoinProfile(mint) } : { missing: true }
+    return view ? { view, coin } : { missing: true }
   } catch { return { unavailable: true } }
 }
 
