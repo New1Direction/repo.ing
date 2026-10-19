@@ -8,6 +8,7 @@ import { MIGRATIONS, migrationSchema, productionSchema } from '../scripts/hookla
 import { hookCoinTradeStore, indexHookCoinTrades } from '../src/hooklab-coin-trades.mjs'
 import { hookActivityRpc } from '../src/hooklab-coin-activity.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
+import { createCoinActivityHandlers, createOnDemandIndexer } from '../app/lib/hooklab-coin-activity.mjs'
 import { CANARY_BUY, CANARY_CLAIM, CANARY_LAUNCH, CANARY_SELL, canary, canaryConnection, clone } from './fixtures/hooklab-canary-trades.mjs'
 
 const config = { host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' }
@@ -127,4 +128,25 @@ test('the table refuses rows a decoder could never produce', () => withDatabase(
   await assert.rejects(insert(row.map((v, i) => i === 0 ? 'y'.repeat(64) : v)), /hook_lab_coin_trades_pool_swap_count_key/, 'one row per swap counter')
   await assert.rejects(insert(row.map((v, i) => i === 0 ? 'z'.repeat(64) : i === 9 ? 'hold' : i === 8 ? '2' : v)), /check/)
   await assert.rejects(insert(row.map((v, i) => i === 0 ? 'z'.repeat(64) : i === 2 ? 'Minted' : i === 8 ? '2' : v)), /check/)
+}))
+
+test('end to end: the first chart read indexes the coin, later reads cost no RPC until the chain moves', () => withDatabase(async pool => {
+  const calls = [], openStore = () => ({ store: hookCoinTradeStore(pool), close: async () => {} })
+  let swapCount = '2'
+  const service = { market: async () => ({ market: { mint: coin.mint, symbol: 'HLCANARY', decimals: 6, graduated: false, initialSupply: '1000000000000000',
+    supply: '1000000000000000', pool: { swapCount } }, wallet: null }), activity: hookActivityRpc(canaryConnection({ calls })) }
+  const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async () => ({ id: 'listed' }), openStore,
+    indexer: createOnDemandIndexer({ openStore, minMs: 0, waitMs: 5_000 }) })
+  const get = async path => (await handlers[path.split('?')[0]](new Request(`https://repo.ing/api/hook-lab/market/${coin.mint}/${path}`), { mint: coin.mint })).json()
+  const candles = await get('candles?interval=5m')
+  assert.deepEqual([candles.totalTrades, candles.syncing, candles.candles.length, candles.candles[0].count, candles.volume24hLamports], [2, 0, 1, 2, '1980495'])
+  assert.equal(methods(calls).filter(m => m === 'getTransaction').length, 4)
+  const trades = await get('trades')
+  assert.deepEqual(trades.trades.map(t => [t.side, t.solLamports]), [['sell', '980295'], ['buy', '1000200']])
+  assert.equal(calls.length, 5, 'the trades read cost no RPC: the index already matched the chain')
+  swapCount = '3'
+  // The market cache (3 s) still says 2 for this coin; once it reads 3, a pass finds nothing finalized yet and says so.
+  await new Promise(resolve => setTimeout(resolve, 3_100))
+  const ahead = await get('trades')
+  assert.equal(ahead.syncing, 1); assert.deepEqual(methods(calls.slice(5)), ['getSignaturesForAddress'])
 }))

@@ -29,3 +29,10 @@ export function percentLabel(percent) {
   if (percent > 0 && percent < 0.01) return '<0.01%'
   return `${percent.toLocaleString('en-US', { maximumFractionDigits: percent >= 10 ? 1 : 2 })}%`
 }
+// A trade's age in a narrow column: "now", "4m", "2h", "3d".
+export function shortAge(tradedAt, now) {
+  const elapsed = now - Date.parse(tradedAt)
+  if (!Number.isFinite(elapsed)) return '—'
+  const minutes = Math.max(0, Math.floor(elapsed / 60000))
+  return minutes < 1 ? 'now' : minutes < 60 ? `${minutes}m` : minutes < 1440 ? `${Math.floor(minutes / 60)}h` : `${Math.floor(minutes / 1440)}d`
+}
