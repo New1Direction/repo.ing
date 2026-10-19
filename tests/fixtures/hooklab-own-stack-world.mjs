@@ -26,6 +26,9 @@ import { collectInclusiveMaxWalletPreparationReview } from '../../src/hooklab-in
 import { collectOpenLaunchReview } from '../../src/hooklab-max-wallet-launch-collector.mjs'
 import { collectOpenLaunchSettlement } from '../../src/hooklab-max-wallet-launch-settlement.mjs'
 import { launchDebitLimits } from '../../src/hooklab-production-bootstrap.mjs'
+import { nativeTradeResolver } from '../../src/hooklab-native-trade-resolver.mjs'
+import { readHookCoinMarket } from '../../src/hooklab-coin-market.mjs'
+import { estimateTrade } from '../../app/lib/hooklab-trade-math.mjs'
 
 const sha = bytes => createHash('sha256').update(bytes).digest()
 const hex = bytes => sha(bytes).toString('hex')
@@ -33,7 +36,9 @@ const pk = value => new PublicKey(value), kb = value => pk(value).toBuffer()
 const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), pk(program))[0].toBase58()
 const LOADER = 'BPFLoaderUpgradeab1e11111111111111111111111', SYSTEM = '11111111111111111111111111111111', ALT = 'AddressLookupTab1e1111111111111111111111111'
 const DOMAIN = 'repo.ing atomic canary isolated SVM tests v1 '
-const ROLES = ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table', 'buyer']
+// The runner's roles, and 24 trader wallets (enough capped wallets to finish a curve at a 5% max per wallet).
+export const TRADERS = Object.freeze(Array.from({ length: 24 }, (_, i) => `trader-${i}`))
+const ROLES = ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table', 'buyer', ...TRADERS]
 // The runner's deterministic synthetic signers (tests/fixtures/hooklab-canary-svm.py).
 export const runnerKey = role => Keypair.fromSeed(sha(DOMAIN + role))
 export const OWNER_MENUS = Object.freeze({ creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] })
@@ -73,7 +78,9 @@ export function frozenTable(address, addresses) {
 // ELFs moved to fresh IDs; seed picks them).
 // rentPerByte: the bank's rent rate, lamports per byte of an account (128 bytes of overhead included in its size), as
 // mainnet's 5,080 today; the bank's own default otherwise.
-export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : 'independent', seed = 'a', rentPerByte = null } = {}) {
+// menus: the open-creation menus the owner sets (the owner's own unless given; a test that graduates a coin with two
+// wallets offers a 50% max per wallet).
+export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : 'independent', seed = 'a', rentPerByte = null, menus = OWNER_MENUS } = {}) {
   const env = localTestEnvironment(), saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]))
   Object.assign(process.env, env)
   const roles = Object.fromEntries(ROLES.map(role => [role, runnerKey(role).publicKey.toBase58()]))
@@ -96,7 +103,7 @@ export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : '
       accounts.push({ address: programData, account: { owner: LOADER, dataBase64: Buffer.concat([header, elfs[role]]).toString('base64'), lamports: '10000000000', executable: false } },
         { address: P[role], account: { owner: LOADER, dataBase64: program.toString('base64'), lamports: '10000000000', executable: true } })
     }
-    for (const role of ['admin', 'upgrade', 'guardian', 'treasury', 'outsider', 'creator', 'buyer']) accounts.push({ address: roles[role], account: { owner: SYSTEM, dataBase64: '', lamports: '100000000000', executable: false } })
+    for (const role of ['admin', 'upgrade', 'guardian', 'treasury', 'outsider', 'creator', 'buyer', ...TRADERS]) accounts.push({ address: roles[role], account: { owner: SYSTEM, dataBase64: '', lamports: '100000000000', executable: false } })
     accounts.push({ address: stack.quoteMint, account: markerMint(stack) })
     await svm.call('set', { accounts: accounts.sort((x, y) => Number(x.account.executable) - Number(y.account.executable)) })
 
@@ -144,7 +151,7 @@ export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : '
     await must('gate finalize', send(await message(roles.upgrade, [new TransactionInstruction({ programId: pk(LOADER), data: Buffer.from([4, 0, 0, 0]),
       keys: [{ pubkey: pk(pda(LOADER, kb(P.gate))), isSigner: false, isWritable: true }, { pubkey: pk(roles.upgrade), isSigner: true, isWritable: false }] })])))
     await must('native launches on', send(await message(roles.admin, [governedSetNativeLaunches({ launchProgram: P.launch, admin: roles.admin, expected: await commitment('launch'), on: true })])))
-    await must('open creation on', send(await message(roles.admin, [governedSetOpenCreation({ launchProgram: P.launch, admin: roles.admin, expected: await commitment('launch'), on: true, ...OWNER_MENUS })])))
+    await must('open creation on', send(await message(roles.admin, [governedSetOpenCreation({ launchProgram: P.launch, admin: roles.admin, expected: await commitment('launch'), on: true, ...menus })])))
 
     // The two frozen shared tables, at the owner's addresses, then our stack's production bundle read from the bank.
     const providers = ['local-a', 'local-b'], endpoints = [env.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY, env.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY]
@@ -224,3 +231,27 @@ export async function openLaunch(w, { creatorFeeBps, capBps, name, symbol, virtu
   } }
 }
 
+export const TRADE_LIMITS = Object.freeze({ nowMs: 1000, maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 0, reviewExpiresAtMs: 0, maxNetworkFeeLamports: '10000', maxTotalDebitLamports: '10000',
+  computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' })
+// The coin page's market read, as the trade runtime serves it for a coin of our stack.
+export const siteMarket = (w, mint, wallet = null) => readHookCoinMarket({ connection: w.connections()[0].connection, mint, wallet, profile: JSON.parse(w.bindings.profile.json) })
+export async function coinsHeld(w, mint, owner) { const bytes = await w.data(w.holdingOf(mint, owner)); return bytes.length ? bytes.readBigUInt64LE(74) : 0n }
+// A trade as the site runs it: the panel's minimum received (its estimate on the coin page's market read, less 3%), the
+// native trade resolver's review under the current bundle, the wallet's one approval, then settlement. The trader is a
+// runner wallet (the review simulates the exact transaction, and only the runner signs that). hold: review only.
+export async function siteTrade(w, coin, { owner, side, amountIn, graduate = false, hold = false }) {
+  const mint = coin.mint.publicKey.toBase58(), resolver = nativeTradeResolver({ ...w.bindings, connections: w.connections(), limits: TRADE_LIMITS, clock: () => 1000 })
+  const { market } = await siteMarket(w, mint)
+  const minAmountOut = String(estimateTrade(market, { side, amount: BigInt(amountIn), coinBalance: await coinsHeld(w, mint, owner), slippageBps: 300 }).minAmountOut)
+  const intent = { side, creatorFeeBps: coin.creatorFeeBps, capBps: coin.capBps, mint, selectedConfig: coin.request.selectedConfig,
+    amountIn: String(amountIn), minAmountOut, maxInput: String(amountIn), maxPriceImpactBps: 1000, graduate }
+  const prepared = await resolver.prepare({ owner, stage: `native-${side}`, intent })
+  if (prepared.review.requiredSigners.length !== 1 || prepared.review.requiredSigners[0] !== owner) throw Error('A trade is approved by its trader alone')
+  if (hold) return { prepared, resolver }
+  const sent = await w.send(prepared.review.messageBase64)
+  if (sent.error) throw Object.assign(Error(`trade failed: ${sent.error}`), { sent })
+  const settled = await resolver.reconcile({ review: prepared.review, configurationSha256: prepared.configurationSha256, settlementContext: prepared.settlementContext,
+    signedTransactionBase64: sent.wireBase64, signature: sent.signature })
+  if (settled.status !== 'finalized-success') throw Error(`trade did not settle: ${settled.status}`)
+  return { prepared, sent, settled }
+}

@@ -22,7 +22,8 @@ from solders.litesvm import LiteSVM
 assert solders.__version__ == '0.29.0'
 DOMAIN = 'repo.ing atomic canary isolated SVM tests v1 '
 roles = {role: Keypair.from_seed(hashlib.sha256((DOMAIN + role).encode()).digest())
-         for role in ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table', 'buyer']}
+         for role in ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table', 'buyer']
+         + [f'trader-{i}' for i in range(24)]}
 by_address = {str(k.pubkey()): k for k in roles.values()}
 svm = LiteSVM().with_sigverify(True).with_blockhash_check(True).with_log_bytes_limit(10000)
 svm.set_clock(Clock(100, 0, 0, 0, 1800000000))

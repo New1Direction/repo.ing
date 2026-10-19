@@ -11,12 +11,10 @@ import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js'
 import { LAUNCH_RENT_MARGIN_LAMPORTS, governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
 import { openLaunchCosts, openLaunchNetworkFee } from '../app/lib/hooklab-open-launch.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
-import { nativeTradeResolver } from '../src/hooklab-native-trade-resolver.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
 import { LEGACY_STACK } from '../src/hooklab-stack.mjs'
-import { ownStackWorld, openLaunch, launchLimitsFor, CREATION_FEE_LAMPORTS, OWNER_MENUS } from './fixtures/hooklab-own-stack-world.mjs'
+import { ownStackWorld, openLaunch, launchLimitsFor, siteTrade, coinsHeld as heldBy, TRADE_LIMITS, CREATION_FEE_LAMPORTS, OWNER_MENUS } from './fixtures/hooklab-own-stack-world.mjs'
 import { INDEPENDENT_SKIP, OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
-import { estimateTrade } from '../app/lib/hooklab-trade-math.mjs'
 
 const runner = process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HOOKLAB_CANARY_PYTHONPATH && 'the isolated SVM runner (HOOKLAB_CANARY_PYTHONPATH) is not available'
 // hook-lab's own independent-stack build at its placeholder IDs, and the reviewed ELFs relocated to fresh IDs: the same
@@ -24,7 +22,6 @@ const runner = process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HO
 const BUILDS = Object.freeze({ independent: INDEPENDENT_SKIP || runner, relocated: OWN_STACK_SKIP || runner })
 const sha = value => createHash('sha256').update(value).digest('hex')
 const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), new PublicKey(program))[0].toBase58()
-const TRADE_LIMITS = { nowMs: 1000, maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 0, reviewExpiresAtMs: 0, maxNetworkFeeLamports: '10000', maxTotalDebitLamports: '10000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' }
 
 for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build}) from nothing: owner setup, its bundle, then open launches by fresh wallets, trades and refusals`, { skip, timeout: 600000 }, async t => {
   // At mainnet's rent rate (5,080 lamports per byte), so the creator's outlay is the economics review's exact figure.
@@ -87,26 +84,10 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Short', symbol: 'SHORT', virtualQuote: '53251917070', funds: needLamports - 1n }), /unavailable/)
   })
 
-  // A trade through the website's native trade resolver under the current bundle. The trader is a runner wallet: the trade
-  // review simulates the exact transaction first, and only the runner signs that.
+  // Trades as the site runs them (tests/fixtures/hooklab-own-stack-world.mjs siteTrade), by a runner wallet.
   const owner = w.roles.buyer
-  const coinsHeld = async coin => { const bytes = await w.data(w.holdingOf(coin.mint.publicKey.toBase58(), owner)); return bytes.length ? bytes.readBigUInt64LE(74) : 0n }
-  async function trade(coin, side, amountIn, { hold = false } = {}) {
-    const resolver = nativeTradeResolver({ ...w.bindings, connections: w.connections(), limits: TRADE_LIMITS, clock: () => 1000 }), mint = coin.mint.publicKey.toBase58()
-    // The minimum received the trade panel would send: its estimate on the coin page's market read, less 3%.
-    const { market } = await readHookCoinMarket({ connection: w.connections()[0].connection, mint, profile })
-    const minAmountOut = String(estimateTrade(market, { side, amount: BigInt(amountIn), coinBalance: await coinsHeld(coin), slippageBps: 300 }).minAmountOut)
-    const intent = { side, creatorFeeBps: coin.creatorFeeBps, capBps: coin.capBps, mint, selectedConfig: coin.request.selectedConfig,
-      amountIn: String(amountIn), minAmountOut, maxInput: String(amountIn), maxPriceImpactBps: 1000, graduate: false }
-    const prepared = await resolver.prepare({ owner, stage: `native-${side}`, intent })
-    assert.deepEqual(prepared.review.requiredSigners, [owner], 'one approval, from the trader only')
-    if (hold) return { prepared, resolver }
-    const sent = await w.send(prepared.review.messageBase64)
-    assert.equal(sent.error, null, (sent.logs ?? []).slice(-8).join('\n'))
-    const settled = await resolver.reconcile({ review: prepared.review, configurationSha256: prepared.configurationSha256, settlementContext: prepared.settlementContext,
-      signedTransactionBase64: sent.wireBase64, signature: sent.signature })
-    assert.equal(settled.status, 'finalized-success'); return settled
-  }
+  const coinsHeld = coin => heldBy(w, coin.mint.publicKey.toBase58(), owner)
+  const trade = (coin, side, amountIn, { hold = false } = {}) => siteTrade(w, coin, { owner, side, amountIn, hold })
   await t.test('a wallet buys and sells a new coin with ordinary SOL through the website\'s trade resolver', async () => {
     await trade(coins[1], 'buy', 10000000)
     const held = await coinsHeld(coins[1]); assert.ok(held > 0n)
