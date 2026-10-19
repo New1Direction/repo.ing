@@ -172,6 +172,26 @@ test('the coin page of an own-stack coin: SOL and USD only, the delisted notice,
   }
 })
 
+// Regression (self-serve acceptance, 2026-10-19): the same coin's page, opened before and again after its delisting, shows
+// the owner's reason once the market data's 3 s cache has passed (it kept the pre-delisting record for 60 s).
+test('a coin page opened before a delisting shows the owner\'s reason on the next load after 3 s', async () => {
+  const { default: Token } = await appModule('app/(site)/hooks/token/[mint]/page.jsx')
+  const { COIN_PAGE_CACHE_MS } = await import('../app/lib/hooklab-market.mjs')
+  const { delistedNotice } = await import('../src/hooklab-coin-moderation.mjs')
+  const key = Symbol.for('repo.ing.hooklab.inclusive-trade-runtime'), id = PLACEHOLDER_IDS.swap
+  let coinRecord = ownCoin()
+  globalThis[key] = { market: async requested => requested === id ? { market: market({ mint: id }), wallet: null } : null, coinProfile: async requested => requested === id ? coinRecord : null }
+  try {
+    const load = async () => html(await Token({ params: Promise.resolve({ mint: id }) }), { wallet: true })
+    assert.doesNotMatch(await load(), /hooks-delisted-notice/)
+    coinRecord = ownCoin({ moderation: { delisted: true, reason: 'impersonation', notice: delistedNotice('impersonation') } })
+    await new Promise(resolve => setTimeout(resolve, COIN_PAGE_CACHE_MS + 100))
+    const page = await load()
+    assert.match(page, /class="hooks-delisted-notice"/)
+    assert.match(text(page), /repo\.ing has delisted this coin: It pretends to be a person, project or brand it isn(?:'|&#x27;)t\./) // the markup escapes the apostrophe
+  } finally { delete globalThis[key] }
+})
+
 test('the launch-requests API sends the chain\'s menus, fees and the network fee, never the stack\'s programs or marker', async () => {
   const { createLaunchRequestsHandler } = await import('../app/lib/hooklab-launch-requests.mjs')
   const env = { HOOK_OPEN_LAUNCHES: 'true', HOOK_WALLET_IDENTITY_ENABLED: 'true', HOOKLAB_PRIORITY_MICROLAMPORTS: '1000' }
