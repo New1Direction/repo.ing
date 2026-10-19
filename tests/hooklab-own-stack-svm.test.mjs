@@ -8,7 +8,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js'
-import { LAUNCH_RENT_MARGIN_LAMPORTS, governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
+import { LAUNCH_RENT_MARGIN_LAMPORTS, LAUNCH_SETTINGS_CHANGED, governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
 import { openLaunchCosts, openLaunchNetworkFee } from '../app/lib/hooklab-open-launch.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
@@ -119,10 +119,14 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     // Off the menu: the compiler refuses before anything is signed.
     await assert.rejects(openLaunch(w, { creatorFeeBps: 150, capBps: 200, name: 'Off menu', symbol: 'OFF', virtualQuote: '1000000000' }), /unavailable|menu/i)
     // Each governed change is followed by the owner collecting the bundle again (it pins both governances exactly).
-    const admin = async (label, instruction) => { await w.must(label, w.send(await w.message(w.roles.admin, [instruction]))); await w.recollect() }
+    const admin = async (label, instruction, { recollect = true } = {}) => { await w.must(label, w.send(await w.message(w.roles.admin, [instruction]))); if (recollect) await w.recollect() }
     // Reviewed while open, signed, then the owner turns open creation off: the program refuses it and only the network fee is spent.
     const early = await openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Too late', symbol: 'LATE', virtualQuote: '1000000000' })
-    await admin('open creation off', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: false, ...OWNER_MENUS }))
+    await admin('open creation off', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: false, ...OWNER_MENUS }), { recollect: false })
+    // Until the owner collects the bundle again, a launch review says so plainly (nothing is signed).
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Stale', symbol: 'STALE', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCH_SETTINGS_CHANGED })
+    await w.recollect()
     const creator = early.creator.publicKey.toBase58(), before = (await w.lamports([creator]))[creator]
     const off = (await early.send()).sent, refusedOff = failure(off)
     assert.ok([6120, 6056].includes(refusedOff.code), off.error); assert.ok(refusedOff.text, 'plain words for the customer')

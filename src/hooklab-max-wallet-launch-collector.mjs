@@ -12,6 +12,7 @@ import { hookLabReviewSchema, inspectHookLabMessage } from './hooklab-message-bo
 import { parseExecutionDossier, inspectProductionEvidence } from './hooklab-production-observer.mjs'
 import { assertLocalExecutionEndpoint, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 import { LAUNCH_STATE_HASHES, canonicalLaunchProof, canonicalObservation } from './hooklab-canonical-observation.mjs'
+import { launchSettingsChanged,passRefusal } from './hooklab-open-creation.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 const integer=v=>{check(Number.isSafeInteger(v)&&v>=0,'Invalid RPC integer');return v}
@@ -71,7 +72,7 @@ export async function collectMaxWalletLaunchReview(input){
 // An open (self-serve) launch: native, no reviewer, through the operator's shared launch table.
 export async function collectOpenLaunchReview(input){
  try{return await collectLaunchReview({...input,nativeLaunches:true,open:true})}
- catch{throw Object.assign(Error('Open launch evidence unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
+ catch(error){passRefusal(error,()=>Object.assign(Error('Open launch evidence unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'}))}
 }
 // nativeLaunches: HOOK_NATIVE_LAUNCHES_ENABLED on this server. The compiler then reads launch Config byte 186 from the two
 // providers' identical snapshots: on, it compiles create_launch_custom_v4; off, v3 exactly as before.
@@ -104,7 +105,8 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
  check(map.get(configAddress)?.dataBase64===Buffer.from(bootstrap.value[0].data).toString('base64'),'Bootstrap config changed')
  const evidence=inspectProductionEvidence({dossierJson,expectedSha256:c.dossierSha256,nowMs:integer(clock()),idls:profile.idls,observations:observations.map(o=>({...o,accounts:extra.filter(x=>x!==table?.address).map(address=>{const v=map.get(address);check(v,'Pinned account missing');const {lamports,...rest}=v;return rest})}))})
- check(evidence.accountBindingsMatched===true,'Deployment dossier does not match actual chain')
+ // The launch settings moved since the bundle was collected (an owner's governed change): say so plainly, until it is.
+ if(evidence.accountBindingsMatched!==true)throw launchSettingsChanged()
  // Require the reviewed dossier to bind every shared economic/governance account.
  for(const address of [a.launchConfig,a.swapConfig,a.launchGovernance,a.swapGovernance,p.quoteMint])check(d.accounts.some(x=>x.address===address),'Missing reviewed governance/economics pin')
  // An open launch's fee is the creator's choice from the chain's menu (the compiler checks it there); everything else is pinned.
