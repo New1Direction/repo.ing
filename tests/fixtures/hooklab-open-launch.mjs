@@ -6,7 +6,14 @@ import { Keypair, PublicKey } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { openLaunchInventory, openLaunchTableAddresses } from '../../src/hooklab-max-wallet-launch.mjs'
 import { encodeOpenCreationReserved } from '../../src/hooklab-launch-config-reserved.mjs'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import { makeCanaryState, canaryCollectorBindings, localTestEnvironment } from './hooklab-canary.mjs'
+import { missingArtifactEnv } from './hooklab-generated-artifact.mjs'
+
+// The open-creation build's launch ELF (hook-lab 36dd07e) beside the native ELFs (swap, gate and token are unchanged).
+export const OPEN_ELF_DIR = process.env.HOOKLAB_OPEN_ELF_DIR ?? path.join(homedir(), 'Documents/ChatGPT/hooks-local-state/native-open-36dd07e/elf')
+export const OPEN_SKIP = missingArtifactEnv(['HOOKLAB_NATIVE_ELF_DIR'], 'the reviewed native ELFs') || false
 
 export const OWNER_MENUS = Object.freeze({ creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] })
 const ROLES = ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'outsider', 'buyer', 'mint', 'config', 'table']
@@ -34,7 +41,7 @@ export function sharedTable(addresses, { frozen = true, extra = [], address = Ke
 export function openState({ reserved = { native: true, open: true, ...OWNER_MENUS }, capBps = 200 } = {}) {
   const roles = Object.fromEntries(ROLES.map(r => [r, Keypair.generate().publicKey.toBase58()]))
   const blockhash = bs58.encode(Keypair.generate().publicKey.toBuffer())
-  const state = makeCanaryState({ elfDirectory: process.env.HOOKLAB_NATIVE_ELF_DIR, roles, blockhash, native: true, capBps })
+  const state = makeCanaryState({ elfDirectory: process.env.HOOKLAB_NATIVE_ELF_DIR, openElfDirectory: OPEN_ELF_DIR, roles, blockhash, native: true, capBps })
   const programs = JSON.parse(state.profile.json).programs, configAddress = pda(programs.launch, Buffer.from('config'))
   const config = state.accounts.get(configAddress), bytes = Buffer.from(config.dataBase64, 'base64')
   encodeOpenCreationReserved(reserved).copy(bytes, 186); config.dataBase64 = bytes.toString('base64')

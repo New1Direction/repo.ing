@@ -4,7 +4,7 @@
 // HOOK_NATIVE_LAUNCHES_ENABLED, off by default.
 import { createHash } from 'node:crypto'
 import { PublicKey, TransactionInstruction } from '@solana/web3.js'
-import { NATIVE_ELF, NATIVE_FLAGS, loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { NATIVE_BUILDS, NATIVE_ELF, NATIVE_FLAGS, isReviewedNativeElf, loadNativeArtifacts } from './hooklab-native-pins.mjs'
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 
 const check = (ok, message) => { if (!ok) throw Error(message) }
@@ -77,14 +77,13 @@ function flagAt(bytes, { name, length, tagAt, some, none }) {
 export const launchIsNative = bytes => flagAt(bytes, { name: 'Launch', length: LAUNCH_ACCOUNT_BYTES, tagAt: 498, some: NATIVE_FLAGS.launch, none: NATIVE_FLAGS.launchWithoutHook })
 export const poolIsNative = bytes => flagAt(bytes, { name: 'Pool', length: 411, tagAt: 171, some: NATIVE_FLAGS.pool, none: NATIVE_FLAGS.poolWithoutHook })
 
-// A profile's ELF pin for the reviewed native build: the raw build output, or the trimmed bytes a deployed ProgramData holds.
-export function isNativeElfPin(role, sha256, length) {
-  const e = NATIVE_ELF[role]
-  return !!e && ((sha256 === e.sha256 && length === e.length) || (sha256 === e.trimmedSha256 && length === e.trimmedLength))
-}
-// A ProgramData account (45-byte header) holding exactly the reviewed native ELF: its trimmed bytes, then only zeros.
+// A profile's ELF pin for a reviewed native build (e357fdf or the open-creation build): the raw build output, or the
+// trimmed bytes a deployed ProgramData holds.
+export const isNativeElfPin = (role, sha256, length) => isReviewedNativeElf(role, sha256, length)
+// A ProgramData account (45-byte header) holding exactly a reviewed native ELF: its trimmed bytes, then only zeros.
 export function nativeProgramDataMatches(role, programData) {
-  const e = NATIVE_ELF[role], b = Buffer.from(programData)
-  if (!e || b.length < 45 + e.trimmedLength || b.readUInt32LE(0) !== 3) return false
-  return createHash('sha256').update(b.subarray(45, 45 + e.trimmedLength)).digest('hex') === e.trimmedSha256 && b.subarray(45 + e.trimmedLength).every(v => v === 0)
+  const b = Buffer.from(programData)
+  if (b.length < 45 || b.readUInt32LE(0) !== 3) return false
+  return Object.values(NATIVE_BUILDS).some(({ elf }) => { const e = elf[role]
+    return !!e && b.length >= 45 + e.trimmedLength && createHash('sha256').update(b.subarray(45, 45 + e.trimmedLength)).digest('hex') === e.trimmedSha256 && b.subarray(45 + e.trimmedLength).every(v => v === 0) })
 }

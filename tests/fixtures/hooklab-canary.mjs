@@ -9,7 +9,7 @@ import BN from 'bn.js'
 import {PublicKey,TransactionInstruction} from '@solana/web3.js'
 import {maxWalletLaunchInventory} from '../../src/hooklab-max-wallet-launch.mjs'
 import {inclusiveMaxWalletSwapInventory} from '../../src/hooklab-inclusive-max-wallet-swap.mjs'
-import {NATIVE_ELF,NATIVE_IDL_SHA256} from '../../src/hooklab-native-pins.mjs'
+import {NATIVE_ELF,NATIVE_IDL_SHA256,OPEN_ELF,OPEN_IDL_SHA256} from '../../src/hooklab-native-pins.mjs'
 export const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),zero=PublicKey.default.toBase58()
 export const loader='BPFLoaderUpgradeab1e11111111111111111111111'
 export const pda=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>typeof s==='string'?Buffer.from(s):s),pk(program))[0].toBase58()
@@ -25,17 +25,22 @@ export function localTestEnvironment(){return {NODE_ENV:'development',HOOK_LOCAL
 // registry and selected config (launchInput is then null), for a test that runs the real preparation first. capBps: the
 // synthetic coin's max per wallet. virtualQuote: a fixed curve instead (both launch Config bounds pinned to it), for trade
 // tests whose wallets must reach the curve's end.
-export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepared=true,capBps=200,virtualQuote=null}){
- const base=new URL('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/',import.meta.url),nativeBase=new URL('../../vendor/hooklab-native-candidate/',import.meta.url)
+// openElfDirectory: the open-creation build's launch ELF (hook-lab 36dd07e); the state then pins that launch program and
+// its IDL (native, with create_launch_open_v1), every other program as native.
+export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepared=true,capBps=200,virtualQuote=null,openElfDirectory=null}){
+ const open=!!openElfDirectory
+ if(open&&!native)throw Error('The open-creation build is native')
+ const base=new URL('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/',import.meta.url),nativeBase=new URL('../../vendor/hooklab-native-candidate/',import.meta.url),openBase=new URL('../../vendor/hooklab-native-candidate/open-36dd07e/',import.meta.url)
  const original=JSON.parse(readFileSync(new URL('offline-builder-profile.json',base))),idlNames={launch:'bordrless_launch',swap:'bordrless_swap',gate:'hook_max_wallet',token:'bordrless_token'}
- const idlUrl=role=>role==='token'?new URL('../../vendor/hooklab-production-candidate/idl/bordrless_token.json',import.meta.url):new URL(`${idlNames[role]}.json`,native&&NATIVE_ELF[role]?nativeBase:base)
+ const idlUrl=role=>role==='token'?new URL('../../vendor/hooklab-production-candidate/idl/bordrless_token.json',import.meta.url):new URL(`${idlNames[role]}.json`,open&&role==='launch'?openBase:native&&NATIVE_ELF[role]?nativeBase:base)
  const idls=Object.fromEntries(Object.keys(idlNames).map(role=>[role,JSON.parse(readFileSync(idlUrl(role)))]))
  const bindings=Object.fromEntries(Object.entries(idls).map(([role,idl])=>[role,{idl,coder:new BorshCoder(idl)}]))
- const elfPin=role=>role==='token'?original.dependencyObservation.tokenElfSha256:native&&NATIVE_ELF[role]?NATIVE_ELF[role].sha256:original.elfSha256[role]
- const artifacts=Object.entries(idlNames).map(([role,name])=>({role,address:original.programs[role],path:`${elfDirectory}/${name}.so`,sha256:elfPin(role)}))
+ const elfPin=role=>role==='token'?original.dependencyObservation.tokenElfSha256:open&&role==='launch'?OPEN_ELF.launch.sha256:native&&NATIVE_ELF[role]?NATIVE_ELF[role].sha256:original.elfSha256[role]
+ const artifacts=Object.entries(idlNames).map(([role,name])=>({role,address:original.programs[role],path:`${open&&role==='launch'?openElfDirectory:elfDirectory}/${name}.so`,sha256:elfPin(role)}))
  const elfs=Object.fromEntries(artifacts.map(a=>{const bytes=readFileSync(a.path);if(sha(bytes)!==a.sha256)throw Error('Pinned canary ELF differs');return [a.role,bytes]}))
- const profile={...original,schema:'hook-lab/local-inclusive-max-wallet-builder-profile/1',profileId:native?'fresh-isolated-native-launch':'fresh-isolated-atomic-canary',genesisHash:syntheticGenesis,
-  ...(native?{idlSha256:{...original.idlSha256,...NATIVE_IDL_SHA256},elfSha256:{...original.elfSha256,launch:NATIVE_ELF.launch.sha256,swap:NATIVE_ELF.swap.sha256}}:{})}
+ const profile={...original,schema:'hook-lab/local-inclusive-max-wallet-builder-profile/1',profileId:open?'fresh-isolated-open-launch':native?'fresh-isolated-native-launch':'fresh-isolated-atomic-canary',genesisHash:syntheticGenesis,
+  ...(open?{idlSha256:{...original.idlSha256,...OPEN_IDL_SHA256},elfSha256:{...original.elfSha256,launch:OPEN_ELF.launch.sha256,swap:OPEN_ELF.swap.sha256}}
+   :native?{idlSha256:{...original.idlSha256,...NATIVE_IDL_SHA256},elfSha256:{...original.elfSha256,launch:NATIVE_ELF.launch.sha256,swap:NATIVE_ELF.swap.sha256}}:{})}
  const json=JSON.stringify(profile),envelope={json,expectedSha256:sha(json),idls:Object.fromEntries(['launch','swap','gate'].map(role=>[role,Buffer.from(JSON.stringify(idls[role])).toString('base64')])),
   elfLengths:Object.fromEntries(['launch','swap','gate'].map(role=>[role,elfs[role].length])),providers:['isolated-a','isolated-b']}
  // Preserve exact public IDL byte pins, not JSON reserialization.

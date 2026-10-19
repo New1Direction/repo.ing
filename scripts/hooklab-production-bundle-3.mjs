@@ -12,22 +12,26 @@
 // Mainnet, after the owner's upgrade (RPC URLs from the environment, as for bundle 2:
 // HOOKLAB_PRODUCTION_RPC_PRIMARY_URL, HOOKLAB_PRODUCTION_RPC_SECONDARY_URL):
 //   node scripts/hooklab-production-bundle-3.mjs --trade-table ADDRESS --approval-reference TEXT [--out FILE]
-// Without --out nothing is written.
+// --build e357fdf (default) or open-36dd07e (self-serve launches; then --launch-table ADDRESS, the owner's frozen shared
+// launch table, is required). Without --out nothing is written.
 import { createHash } from 'node:crypto'
 import { existsSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { Connection } from '@solana/web3.js'
 import { MAINNET_ROLES } from '../src/hooklab-owner-driver/pins.mjs'
 import { PRODUCTION_NETWORK } from '../src/hooklab-production-operator-bundle.mjs'
-import { collectNativeProductionBundle } from '../src/hooklab-production-native-bundle.mjs'
+import { NATIVE_BUNDLE_BUILDS, collectNativeProductionBundle } from '../src/hooklab-production-native-bundle.mjs'
 // The reviewed providers, as scripts/hooklab-production-bundle.mjs lists them (provider name and trust domain by host).
 const KNOWN = [[/(^|\.)helius-rpc\.com$/, 'helius', 'helius'], [/(^|\.)publicnode\.com$/, 'publicnode', 'allnodes-publicnode'],
   [/(^|\.)rpcpool\.com$/, 'triton', 'triton-one'], [/^api\.mainnet-beta\.solana\.com$/, 'solana-labs', 'solana-foundation']]
 
 const die = message => { console.error(message); process.exit(2) }
 const { values: opt } = parseArgs({ options: { local: { type: 'boolean', default: false }, rpc: { type: 'string' }, rpc2: { type: 'string' },
-  'trade-table': { type: 'string' }, reviewer: { type: 'string' }, treasury: { type: 'string' }, 'approval-reference': { type: 'string' }, out: { type: 'string' } } })
+  'trade-table': { type: 'string' }, 'launch-table': { type: 'string' }, build: { type: 'string', default: 'e357fdf' },
+  reviewer: { type: 'string' }, treasury: { type: 'string' }, 'approval-reference': { type: 'string' }, out: { type: 'string' } } })
 if (!opt['trade-table']) die('Required: --trade-table ADDRESS')
+if (!NATIVE_BUNDLE_BUILDS.includes(opt.build)) die(`--build must be one of ${NATIVE_BUNDLE_BUILDS.join(', ')}`)
+if ((opt.build === 'open-36dd07e') !== !!opt['launch-table']) die('--launch-table ADDRESS goes with --build open-36dd07e (and only with it)')
 if (opt.out && existsSync(opt.out)) die(`${opt.out} exists; refusing to overwrite`)
 const connect = url => new Connection(url, { commitment: 'finalized', disableRetryOnRateLimit: true })
 
@@ -57,7 +61,7 @@ function mainnetInputs() {
 
 try {
   const inputs = opt.local ? await localInputs() : mainnetInputs()
-  const { preview, bundle } = await collectNativeProductionBundle({ ...inputs, lookupTable: opt['trade-table'] })
+  const { preview, bundle } = await collectNativeProductionBundle({ ...inputs, lookupTable: opt['trade-table'], build: opt.build, launchTable: opt['launch-table'] ?? null })
   const bytes = Buffer.from(JSON.stringify(bundle)), dossier = JSON.parse(bundle.dossierJson), profile = JSON.parse(bundle.profile.json)
   if (opt.out) writeFileSync(opt.out, bytes, { flag: 'wx', mode: 0o644 })
   console.log(JSON.stringify({ mode: opt.local ? 'local-dry-run' : 'mainnet', schema: bundle.schema, genesisHash: bundle.genesisHash, observedSlot: bundle.observedSlot,

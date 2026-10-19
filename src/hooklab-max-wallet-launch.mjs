@@ -14,7 +14,7 @@ import { inclusiveMaxWalletPreparationRequestSchema, parseMaxWalletProfile, pars
 import { inclusiveEconomicsHash, inclusiveHookAccountsHash, inclusiveFeePolicyAddress } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { canaryGateMatches } from './hooklab-canary-policy.mjs'
-import { NATIVE_IDL_SHA256 } from './hooklab-native-pins.mjs'
+import { NATIVE_BUILDS, nativeBuildOf } from './hooklab-native-pins.mjs'
 import { QUOTE_FORM_NATIVE, isNativeElfPin, nativeEconomicsHash } from './hooklab-native-launch.mjs'
 import { launchConfigReservedValid, parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 
@@ -122,6 +122,13 @@ export function openLaunchInventory(envelope, request, launchConfigBytes) {
   const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), r = openLaunchRequestSchema.parse(request), launch = binding(envelope, profile, 'launch')
   const config = decoded(launch, 'Config', Buffer.from(launchConfigBytes)), a = addressesFor(profile, r, config), metas = exactMetas(profile, r, config, a, launch, OPEN)
   return { addresses: a, inventory: [...new Set([...metas.map(m => str(m.pubkey)), a.launchProgramData, a.swapProgramData, a.swapGovernance, r.feePayer])].sort() }
+}
+// The exact 40 accounts (address, signer, writable) of an open launch for these identities, in instruction order.
+export function openLaunchAccounts(envelope, { creator, mint, selectedConfig }, launchConfigBytes) {
+  const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), launch = binding(envelope, profile, 'launch')
+  for (const value of [creator, mint, selectedConfig]) key.parse(value)
+  const r = { policyVersion: 2, creator, mint, selectedConfig }, config = decoded(launch, 'Config', Buffer.from(launchConfigBytes))
+  return Object.freeze(exactMetas(profile, r, config, addressesFor(profile, r, config), launch, OPEN).map(m => Object.freeze({ address: str(m.pubkey), signer: m.isSigner, writable: m.isWritable })))
 }
 // The shared launch table's addresses: every account two unrelated open launches have in common, sorted, less the launch
 // program (it is invoked, so the message names it directly). The owner creates and freezes this table once.
@@ -279,8 +286,11 @@ function compileLaunch(input, fixture, canary = false, open = false) {
     check(r.feePayer === r.creator, 'An open launch is signed and paid by its creator: the creator pays')
   }
   check(!native || nativeLaunches === true, 'Native launches are on chain; this server is not enabled for them')
-  check(!native || (inclusive && !canary && ['launch', 'swap'].every(role => isNativeElfPin(role, profile.elfSha256[role], envelope.elfLengths[role])
-    && profile.idlSha256[role] === NATIVE_IDL_SHA256[role])), 'Native launches need the reviewed native-SOL programs and IDLs')
+  // A native launch needs a reviewed native build (e357fdf or open-creation) pinned for both programs; an open launch, the
+  // open-creation build, the only one with create_launch_open_v1.
+  const build = nativeBuildOf(profile, envelope.elfLengths)
+  check(!native || (inclusive && !canary && build && ['launch', 'swap'].every(role => isNativeElfPin(role, profile.elfSha256[role], envelope.elfLengths[role]))), 'Native launches need the reviewed native-SOL programs and IDLs')
+  check(!open || build === 'open-36dd07e', 'Open launches need the reviewed open-creation launch program and IDL')
   const instructionName = open ? OPEN : inclusive ? (native ? 'create_launch_custom_v4' : 'create_launch_custom_v3') : 'create_launch_custom_mainnet'
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury) && (open || str(c.admin) === r.reviewer), 'Current admin, treasury or quote differs')
   if (canary) check(str(c.admin) === str(d.admin), 'Canary requires the existing shared admin role')
