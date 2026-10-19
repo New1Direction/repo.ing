@@ -56,7 +56,8 @@ jobs:
     # Skipped (never green) when the private artifacts are unavailable.
     if: needs.availability.outputs.run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # Stack ~5 min, E1 ~11 min, E2 ~20 min locally; hosted runners are slower.
+    timeout-minutes: 120
     services:
       postgres:
         image: postgres:17-alpine
