@@ -20,8 +20,13 @@ export const SCHEMA_FILES = Object.freeze(['hooklab-wallet-principal-schema.sql'
   'hooklab-new-mint-preparation-schema.sql', 'hooklab-native-signing-schema.sql', 'hooklab-native-signing-attempt-schema.sql', 'hooklab-native-signing-context-schema.sql',
   'hooklab-native-signing-refresh-schema.sql', 'hooklab-native-launch-context-schema.sql', 'hooklab-native-signing-trade-schema.sql',
   'hooklab-native-signing-wallet-request-schema.sql', 'hooklab-wallet-identity-quota-schema.sql', 'hooklab-native-signing-expiry-schema.sql', 'hooklab-owner-approval-schema.sql'])
-// name -> { files, requires }: requires lists existing tables the migration references.
-export const MIGRATIONS = Object.freeze({ 'coin-profiles': Object.freeze({ files: ['hooklab-coin-profile-schema.sql'], requires: ['hook_lab_launch_requests'] }) })
+// name -> { files, requires, inspect }: requires lists existing tables the migration references; inspect (optional) is a
+// read-only query whose rows are printed by check and apply, for migrations that change constraints rather than add tables.
+export const MIGRATIONS = Object.freeze({
+  'coin-profiles': Object.freeze({ files: ['hooklab-coin-profile-schema.sql'], requires: ['hook_lab_launch_requests'] }),
+  'wallet-funding': Object.freeze({ files: ['hooklab-native-signing-funding-schema.sql'], requires: ['hook_lab_native_signing_operations'],
+    inspect: "select pg_get_constraintdef(oid) as stage_check from pg_constraint where conname='hook_lab_native_signing_operations_stage_check'" }),
+})
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))
   const sql = parts.map(p => `-- ${p.name}\n${p.sql}`).join('\n')
@@ -31,20 +36,23 @@ export function productionSchema(files = SCHEMA_FILES) {
 export function migrationSchema(name) {
   const migration = Object.hasOwn(MIGRATIONS, name) ? MIGRATIONS[name] : null
   if (!migration) throw Error(`Unknown migration ${name}; known: ${Object.keys(MIGRATIONS).join(', ')}`)
-  return { ...productionSchema(migration.files), requires: [...migration.requires] }
+  return { ...productionSchema(migration.files), requires: [...migration.requires], inspect: migration.inspect ?? null }
 }
-function program({ mode, sql, tables, requires = [] }) {
-  return `const {Client}=require('pg');const tables=${JSON.stringify(tables)};const requires=${JSON.stringify(requires)};const sql=${JSON.stringify(sql)};const mode=${JSON.stringify(mode)}
+function program({ mode, sql, tables, requires = [], inspect = null }) {
+  return `const {Client}=require('pg');const tables=${JSON.stringify(tables)};const requires=${JSON.stringify(requires)};const sql=${JSON.stringify(sql)};const mode=${JSON.stringify(mode)};const inspect=${JSON.stringify(inspect)}
 const c=new Client({connectionString:process.env.DATABASE_URL,options:mode==='check'?'-c default_transaction_read_only=on':undefined})
 ;(async()=>{try{await c.connect()
  const ready=requires.length?(await c.query("select table_name from information_schema.tables where table_schema='public' and table_name = any($1)",[requires])).rows.length:0
  if(requires.length)console.log(mode+': '+ready+' of '+requires.length+' required tables exist ('+requires.join(', ')+')')
  if(mode!=='check'&&ready!==requires.length){console.log('STOP: required tables are missing; nothing applied');process.exitCode=1;return}
+ const show=async when=>{if(inspect)for(const row of (await c.query(inspect)).rows)console.log(when+': '+JSON.stringify(row))}
+ await show(mode==='check'?'current':'before')
  const present=(await c.query("select table_name from information_schema.tables where table_schema='public' and table_name = any($1)",[tables])).rows.map(r=>r.table_name)
  console.log(mode+': '+present.length+' of '+tables.length+' Hook Lab tables already exist'+(present.length?': '+present.sort().join(', '):''))
  if(mode==='check'){process.exitCode=0;return}
  if(present.length){console.log('STOP: some tables exist; nothing applied');process.exitCode=1;return}
  await c.query('begin');try{await c.query(sql);await c.query('commit')}catch(e){await c.query('rollback');throw e}
+ await show('after')
  const after=(await c.query("select count(*)::int n from information_schema.tables where table_schema='public' and table_name = any($1)",[tables])).rows[0].n
  console.log('applied in one transaction: '+after+' of '+tables.length+' tables now exist')
 }catch(e){console.log('ERROR (nothing committed): '+e.message);process.exitCode=1}finally{await c.end()}})()

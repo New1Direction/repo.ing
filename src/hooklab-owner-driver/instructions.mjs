@@ -114,6 +114,14 @@ export function wrapSol(programs, quoteMint, { user, lamports }) {
     wrapped_mint: quoteMint, user_wrapped: holdingAddress(quoteMint, user, programs.token), token_program: programs.token, token_event_authority: d.tokenEventAuthority,
     system_program: SYSTEM, event_authority: d.bridgeEventAuthority, program: programs.bridge }, { programId: programs.bridge, crossNetworkIdl: true })
 }
+// Bridge unwrap_sol: burns `amount` raw bridged SOL from the user's quote holding and pays the same lamports out of
+// the bridge vault to the user. Same eleven accounts as wrap_sol.
+export function unwrapSol(programs, quoteMint, { user, amount }) {
+  const d = derivedAddresses(programs)
+  return idlInstruction('bridge', 'unwrap_sol', { amount: u64(amount) }, { user, config: d.bridgeConfig, wrapper: d.bridgeNativeWrapper, sol_vault: d.bridgeSolVault,
+    wrapped_mint: quoteMint, user_wrapped: holdingAddress(quoteMint, user, programs.token), token_program: programs.token, token_event_authority: d.tokenEventAuthority,
+    system_program: SYSTEM, event_authority: d.bridgeEventAuthority, program: programs.bridge }, { programId: programs.bridge, crossNetworkIdl: true })
+}
 export const transfer = (from, to, lamports) => SystemProgram.transfer({ fromPubkey: pk(from), toPubkey: pk(to), lamports: BigInt(String(lamports)) })
 export const lookupCreate = (authority, payer, recentSlot) => AddressLookupTableProgram.createLookupTable({ authority: pk(authority), payer: pk(payer), recentSlot })
 export const lookupExtend = (authority, payer, table, addresses) => AddressLookupTableProgram.extendLookupTable({ authority: pk(authority), payer: pk(payer), lookupTable: pk(table), addresses: addresses.map(pk) })

@@ -65,17 +65,23 @@ test('guided builder initializes every template without selecting editable econo
   assert.match(invalid, /&quot;template&quot;: &quot;plain&quot;/)
 })
 
-test('token addresses are not treated as verified coins and cannot trade', async () => {
+test('coin page: unavailable without a runtime, a full trading page for a real Hooks coin, 404 otherwise', async () => {
   const { default: Token } = await appModule('app/(site)/hooks/token/[mint]/page.jsx')
-  const mint = '11111111111111111111111111111111'
-  for (const tab of ['market', 'rules']) {
-    const markup = html(await Token({ params: Promise.resolve({ mint }), searchParams: Promise.resolve({ tab }) }))
-    assert.match(markup, /Unverified coin/)
-    assert.match(markup, /disabled=""[^>]*>Buy unavailable/)
-    assert.match(markup, /disabled=""[^>]*>Sell unavailable/)
-    assert.match(markup, tab === 'rules' ? /Rules and curve are unverified/ : /Market data unavailable/)
-    assert.doesNotMatch(markup, /<canvas|<form/)
-  }
+  const mint = '2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn', key = Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
+  const down = html(await Token({ params: Promise.resolve({ mint }) }), { wallet: true })
+  assert.match(down, /Coin details are loading slowly/); assert.doesNotMatch(down, /<form/)
+  const market = { mint, name: 'Hook Lab Canary', symbol: 'HLCANARY', uri: '', decimals: 6, observedSlot: 1, selectedConfig: '5hvm6s9DCiYX5QQFDVkcTKs1sF3PCKnACxYLHHTJCKZr',
+    creator: 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9', graduated: false, capBps: 200, creatorFeeBps: 100, initialSupply: '1000000000000000', capRaw: '20000000000000',
+    pool: { baseReserve: '750000000000000', quoteReserve: '1', virtualBase: '375000000000000', virtualQuote: '1000000000', protocolFeesQuote: '0', swapCount: '2' },
+    marketCapLamports: '888888888', graduationQuote: '2000000000', curveProgressBps: 0 }
+  globalThis[key] = { market: async requested => requested === mint ? { market, wallet: null } : null }
+  try {
+    const page = html(await Token({ params: Promise.resolve({ mint }) }), { wallet: true })
+    for (const text of [/\$HLCANARY/, /Hook Lab Canary/, /Market cap/, /0\.888 SOL/, /to graduation/, /Blocks on this coin/, /Max wallet/, /Creator fee/,
+      /role="tablist"/, /You pay/, /Max slippage/, /Connect wallet/]) assert.match(page, text)
+    assert.doesNotMatch(page, /basis points|base units|selectedConfig|Unverified coin/)
+    await assert.rejects(Token({ params: Promise.resolve({ mint: '11111111111111111111111111111111' }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
+  } finally { delete globalThis[key] }
   await assert.rejects(Token({ params: Promise.resolve({ mint: 'not-a-mint' }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
 })
 

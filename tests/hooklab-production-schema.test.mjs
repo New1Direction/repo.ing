@@ -14,7 +14,7 @@ test('the reviewed bootstrap is unchanged', () => {
 })
 
 test('coin-profiles is a separate migration for one new table', () => {
-  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles'])
+  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding'])
   const migration = migrationSchema('coin-profiles')
   assert.deepEqual(migration.tables, ['hook_lab_coin_profiles'])
   assert.deepEqual(migration.requires, ['hook_lab_launch_requests'])
@@ -30,4 +30,13 @@ test('migrate prints a program only for the reviewed sha256; check is read-only'
   assert.equal(applied.status, 0); assert.match(applied.stdout, /create table hook_lab_coin_profiles/); assert.match(applied.stdout, /const mode="apply"/)
   const checked = run('migration-check', 'coin-profiles')
   assert.equal(checked.status, 0); assert.match(checked.stdout, /default_transaction_read_only=on/); assert.match(checked.stdout, /const mode="check"/)
+})
+
+test('wallet-funding only widens the signing stage list, idempotently, and shows the constraint', () => {
+  const migration = migrationSchema('wallet-funding')
+  assert.deepEqual(migration.tables, []); assert.deepEqual(migration.requires, ['hook_lab_native_signing_operations'])
+  assert.match(migration.sql, /drop constraint if exists hook_lab_native_signing_operations_stage_check/)
+  assert.match(migration.sql, /'preparation','launch','inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw'/)
+  assert.doesNotMatch(migration.sql, /drop table|delete|update /i)
+  assert.match(run('migration-check', 'wallet-funding').stdout, /stage_check/)
 })

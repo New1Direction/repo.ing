@@ -118,6 +118,11 @@ function deriveAddresses(profile, r) {
     tokenEventAuthority: pda(T, '__event_authority'), swapEventAuthority: pda(S, '__event_authority'),
     launchProgramData: pda(loader, kb(L)), swapProgramData: pda(loader, kb(S)), gateProgramData: pda(loader, kb(G)) }
 }
+// A coin's shared accounts (launch, pool, policy, vaults...), as every swap derives them; no trader accounts.
+export function hookCoinAddresses(profile, mint) {
+  const { traderBase, traderQuote, ...shared } = deriveAddresses(profile, { mint, side: 'buy', trader: mint, recipient: mint })
+  return shared
+}
 function metasFor(profile, r, a, swap) {
   const { launch: L, swap: S, gate: G, token: T } = profile.programs, meta = (address, writable = false, signer = false) => ({ pubkey: pk(address), isWritable: writable, isSigner: signer })
   const keys = [meta(r.trader, false, true), meta(a.swapConfig), meta(a.pool, true), meta(r.mint), meta(profile.quoteMint),

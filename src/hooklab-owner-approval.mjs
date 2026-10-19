@@ -35,8 +35,9 @@ async function inTransaction(pool,work){
 const publicProfile=row=>row.has_profile?Object.freeze({description:row.description,x:row.x_handle,website:row.website,telegram:row.telegram}):null
 const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,status:row.status,
  invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString(),
- ...(row.has_profile!==undefined&&{profile:publicProfile(row)})})
-const withProfile=`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile
+ ...(row.has_profile!==undefined&&{profile:publicProfile(row)}),...(row.status==='launched'&&row.mint&&{mint:row.mint})})
+const withProfile=`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,
+ (select o.resolved_request->>'mint' from hook_lab_native_signing_operations o where o.custody_operation_id=r.custody_operation_id and o.stage='launch') as mint
  from hook_lab_launch_requests r left join hook_lab_coin_profiles p on p.request_id=r.id`
 // Shown publicly (metadata and image) while the coin can still launch or has launched.
 const PUBLIC_COIN_STATUSES=['queued','invited','launching','launched']
@@ -88,6 +89,20 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    await expireInvites(pool)
    const {rows:[row]}=await pool.query(`${withProfile} where r.creator_wallet=$1 order by r.created_at desc limit 1`,[creator])
    return publicRequest(row)??null
+  },
+  // Public: coins launched through repo.ing approval, newest first, with their mints and profiles.
+  async launchedCoins(limit=50){
+   const {rows}=await pool.query(`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,o.resolved_request->>'mint' as mint
+    from hook_lab_launch_requests r join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch'
+    left join hook_lab_coin_profiles p on p.request_id=r.id where r.status='launched' order by r.updated_at desc limit $1`,[Math.min(Math.max(1,limit|0),100)])
+   return rows.filter(row=>address.safeParse(row.mint).success).map(row=>Object.freeze({id:row.id,mint:row.mint,name:row.name,symbol:row.symbol,creator:row.creator_wallet,
+    creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,profile:publicProfile(row)}))
+  },
+  // Public: the launch request (and profile) behind a launched coin, found through its launch operation's mint.
+  async coinByMint(mint){
+   const {rows:[row]}=await pool.query(`${withProfile} join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch'
+    where o.resolved_request->>'mint'=$1 and r.status='launched' order by r.created_at desc limit 1`,[address.parse(mint)])
+   return row?Object.freeze({id:row.id,name:row.name,symbol:row.symbol,creator:row.creator_wallet,profile:publicProfile(row)}):null
   },
   // Public: the coin's name, symbol, profile and image for its metadata and image URLs.
   async coinFor(id){

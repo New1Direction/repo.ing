@@ -6,6 +6,7 @@ import { createHash,randomUUID,sign as edSign,createPrivateKey } from 'node:cryp
 import { Keypair,PublicKey } from '@solana/web3.js'
 import pg from 'pg'
 import { ownerApprovalStore,remoteAdminSigner,verifyEd25519 } from '../src/hooklab-owner-approval.mjs'
+import { MIGRATIONS,migrationSchema,productionSchema } from '../scripts/hooklab-production-schema.mjs'
 
 const seed=label=>createHash('sha256').update(`OWNER APPROVAL TEST FIXTURE ONLY: ${label}`).digest()
 const keypair=label=>Keypair.fromSeed(seed(label))
@@ -17,7 +18,9 @@ async function withDatabase(work){
  const root=new pg.Pool(config),name=`owner_approval_${randomUUID().replaceAll('-','')}`;let pool
  try{
   await root.query(`create database ${name}`);pool=new pg.Pool({...config,database:name})
-  for(const file of ['hooklab-owner-approval-schema.sql','hooklab-coin-profile-schema.sql'])await pool.query(await readFile(new URL(`../src/${file}`,import.meta.url),'utf8'))
+  // Exactly the production schema: the reviewed bootstrap, then every named migration.
+  await pool.query(productionSchema().sql)
+  for(const name of Object.keys(MIGRATIONS))await pool.query(migrationSchema(name).sql)
   await work(pool)
  }finally{await pool?.end();await root.query(`drop database if exists ${name} with (force)`);await root.end()}
 }
@@ -193,6 +196,9 @@ test('coin profile: written with its request, shown to the creator and agent, pu
  await assert.rejects(pool.query("update hook_lab_coin_profiles set description='changed' where request_id=$1",[id]),/immutable/,'a reviewed profile cannot change')
  await assert.rejects(pool.query('delete from hook_lab_coin_profiles where request_id=$1',[id]),/immutable/)
  await assert.rejects(store.createRequest(creatorB,{id:randomUUID(),...intent,name:'Fake\n 2. queued'}),/approved creator fee|name/,'control characters in a name are refused')
+ assert.deepEqual(await store.launchedCoins(),[],'no launch operation yet, so no listed coin')
+ assert.equal(await store.coinByMint(creatorA),null)
+ assert.equal((await store.requestFor(creatorA)).mint,undefined,'mint appears only once launched')
  const legacy=await store.createRequest(creatorB,{id:randomUUID(),...intent})
  assert.equal(legacy.profile,null);assert.equal((await store.requestFor(creatorB)).profile,null);assert.equal(await store.coinFor(legacy.id),null)
 }))

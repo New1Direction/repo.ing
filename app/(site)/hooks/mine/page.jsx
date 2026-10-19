@@ -1,7 +1,10 @@
 import Link from 'next/link'
-import { HooksIntro, HooksNav, HooksUnavailable } from '../../../components/hooks-ui'
+import { HooksIntro, HooksNav, HooksRisk, HooksUnavailable } from '../../../components/hooks-ui'
+import { HookMyCoins } from '../../../components/hooklab-my-coins'
+import { executionGenesis } from '../../../../src/hooklab-local-acceptance.mjs'
 import { HookLabProductionAccount } from '../../../components/hooklab-plain-preparation'
 
+export const dynamic = 'force-dynamic'
 export const metadata = { title: 'My Hooks coins — repo.ing', robots: { index: false } }
 
 export default function HooksMinePage() {
@@ -14,11 +17,10 @@ export default function HooksMinePage() {
   </>
 }
 
-// While owner-approved launches are open: the creator's request and coin live on the launch page.
+// While owner-approved launches are open: the creator's SOL in Hook Lab (with withdraw) and their launch or coin.
 function LaunchedCoins() {
-  return <><HooksIntro title="My coins" art="receipts-ui">Your launch request, your coin and its receipts.</HooksIntro><HooksNav active="mine"/>
-    <div className="hooks-creator-grid"><div><section className="hooks-card"><h2>Your launch</h2><p>Your request, your invite and your launch receipt are all on the launch page. Sign in with the wallet you launched from.</p><Link className="button primary" href="/hooks/launch-review">Open your launch</Link></section><HookLabProductionAccount/></div>
-      <aside className="hooks-card"><h2>Trading your coin</h2><p>Buy and sell hooks coins on repo.ing. Most wallets don’t list them yet.</p><Link className="button" href="/hooks/trade">Buy &amp; sell</Link><hr/><h3>If something went wrong</h3><p>Keep your recovery IDs and the transaction receipt. Never start a second launch to get around an unclear result.</p></aside>
-    </div>
+  return <><HooksIntro title="My coins" art="receipts-ui">Your coins, your launch and your SOL in Hook Lab.</HooksIntro><HooksNav active="mine"/>
+    <HookMyCoins genesisHash={executionGenesis()}/>
+    <HooksRisk/>
   </>
 }
