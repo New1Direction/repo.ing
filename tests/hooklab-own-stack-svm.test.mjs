@@ -8,7 +8,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js'
-import { LAUNCH_RENT_MARGIN_LAMPORTS, LAUNCH_SETTINGS_CHANGED, governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
+import { LAUNCHES_PAUSED, LAUNCH_RENT_MARGIN_LAMPORTS, LAUNCH_SETTINGS_CHANGED, governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
 import { openLaunchCosts, openLaunchNetworkFee } from '../app/lib/hooklab-open-launch.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
@@ -123,17 +123,22 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     // Reviewed while open, signed, then the owner turns open creation off: the program refuses it and only the network fee is spent.
     const early = await openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Too late', symbol: 'LATE', virtualQuote: '1000000000' })
     await admin('open creation off', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: false, ...OWNER_MENUS }), { recollect: false })
-    // Until the owner collects the bundle again, a launch review says so plainly (nothing is signed).
+    // The chain says open launches are off, in plain words, even before the owner collects the bundle again.
     await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Stale', symbol: 'STALE', virtualQuote: '1000000000' }),
-      { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCH_SETTINGS_CHANGED })
+      { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6120) })
     await w.recollect()
     const creator = early.creator.publicKey.toBase58(), before = (await w.lamports([creator]))[creator]
     const off = (await early.send()).sent, refusedOff = failure(off)
     assert.ok([6120, 6056].includes(refusedOff.code), off.error); assert.ok(refusedOff.text, 'plain words for the customer')
     assert.equal(before - (await w.lamports([creator]))[creator], 10000n, 'only the network fee')
     assert.equal((await readOpenCreation(w.connections(), P)).open, false)
-    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Off', symbol: 'OFF2', virtualQuote: '1000000000' }), /unavailable/i, 'no review while off')
-    await admin('open creation on', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: true, ...OWNER_MENUS }))
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Off', symbol: 'OFF2', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6120) }, 'no review while off, in plain words')
+    await admin('open creation on', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: true, ...OWNER_MENUS }), { recollect: false })
+    // Open again on chain, but the bundle still pins the old launch settings: the review says so plainly until it is collected.
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Stale', symbol: 'STALE2', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCH_SETTINGS_CHANGED })
+    await w.recollect()
     // Reviewed and signed, then the guardian pauses creation (governance Pause, the guardian alone): refused on chain.
     const signed = await openLaunch(w, { creatorFeeBps: 50, capBps: 100, name: 'Paused', symbol: 'PAUSED', virtualQuote: '1000000000' })
     const heldTrade = await trade(coins[1], 'buy', 5000000, { hold: true })
@@ -143,7 +148,8 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     assert.equal((await readOpenCreation(w.connections(), P)).paused, true)
     const paused = (await signed.send()).sent, refusedPaused = failure(paused)
     assert.ok([6055, 6056].includes(refusedPaused.code), paused.error); assert.ok(refusedPaused.text)
-    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Paused 2', symbol: 'PAUSED2', virtualQuote: '1000000000' }), /unavailable/i, 'no review while paused')
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Paused 2', symbol: 'PAUSED2', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCHES_PAUSED }, 'no review while paused, in plain words')
     assert.equal(openLaunchErrorText(6055), 'Launches are paused right now. Your SOL was not spent; try again later.')
     // Creation is paused, trading is not: a trade signed before the pause lands on chain, and the website still reviews new ones.
     const traded = await w.send(heldTrade.prepared.review.messageBase64)

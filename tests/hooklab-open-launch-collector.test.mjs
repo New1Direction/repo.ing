@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { PublicKey } from '@solana/web3.js'
 import { collectOpenLaunchReview, collectMaxWalletLaunchReview } from '../src/hooklab-max-wallet-launch-collector.mjs'
 import { deriveOpenLaunchPostconditions } from '../src/hooklab-max-wallet-launch-settlement.mjs'
+import { openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
 import { openState, openRequest, openBindings, openConnections, openPreparation, OPEN_LIMITS, withLocalAcceptance } from './fixtures/hooklab-open-launch.mjs'
 import { missingArtifactEnv } from './fixtures/hooklab-generated-artifact.mjs'
 
@@ -30,7 +31,12 @@ test('refused: no shared launch table configured, a table that differs from its 
   await assert.rejects(collect(world, { config: { ...bindings.config, launchLookupTable: { ...bindings.config.launchLookupTable, sha256: '0'.repeat(64) } } }), /Open launch evidence unavailable/)
   await assert.rejects(collect(world, { request: { ...openRequest(world), reviewer: world.roles.admin } }), /Open launch evidence unavailable/)
   const off = openState({ reserved: { native: true, open: false, creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] } })
-  await assert.rejects(collect(off), /Open launch evidence unavailable/)
+  // The chain's own state reaches the creator in plain words (a customer-visible refusal), not a masked error.
+  await assert.rejects(collect(off), { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6120) })
+  const native = openState({ reserved: { native: false, open: true, creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] } })
+  await assert.rejects(collect(native), { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6103) })
+  const menu = openState({ reserved: { native: true, open: true, creatorFeeBps: [50, 200], capBps: [100, 200, 300, 500] } })
+  await assert.rejects(collect(menu), { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6121) }, 'the creator chose 100, no longer offered')
   // The owner-approved path does not take an open request.
   await assert.rejects(collectMaxWalletLaunchReview({ ...bindings, connections: openConnections(world), preparation: openPreparation(world), request: openRequest(world), limits: OPEN_LIMITS, clock: () => 1000 }))
 }))

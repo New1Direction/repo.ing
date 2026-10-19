@@ -91,6 +91,9 @@ export function governedSetOpenCreation({ launchProgram, admin, expected, on, cr
 // changes them, until the bundle is collected again). Shown to the creator as is; trading, selling and claims carry on.
 export const LAUNCH_SETTINGS_CHANGED = 'repo.ing is updating its launch settings. Try again in a few minutes. Nothing was signed or spent.'
 export const launchSettingsChanged = () => Object.assign(Error(LAUNCH_SETTINGS_CHANGED), { code: 'HOOKLAB_USER_REFUSAL' })
+// A launch reviewed while creation is paused on chain (the guardian's pause, or not yet open).
+export const LAUNCHES_PAUSED = 'Launches are paused right now. Nothing was signed or spent; try again later.'
+export const launchesPaused = () => Object.assign(Error(LAUNCHES_PAUSED), { code: 'HOOKLAB_USER_REFUSAL' })
 const isRefusal = error => error?.code === 'HOOKLAB_USER_REFUSAL'
 export const passRefusal = (error, masked) => { throw isRefusal(error) ? error : masked() }
 

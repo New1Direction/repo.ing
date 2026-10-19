@@ -9,7 +9,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import BN from 'bn.js'
 import { ComputeBudgetProgram, Keypair } from '@solana/web3.js'
-import { governedSetOpenCreation, readOpenCreation } from '../src/hooklab-open-creation.mjs'
+import { LAUNCHES_PAUSED, LAUNCH_SETTINGS_CHANGED, governedSetOpenCreation, readOpenCreation } from '../src/hooklab-open-creation.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeTradeResolver } from '../src/hooklab-native-trade-resolver.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
@@ -106,11 +106,12 @@ test('our own stack: a creation pause, an open-creation toggle and a fee and men
 
   await t.test('open launches refuse in plain words while creation is paused and, once it reopens, until the bundle is refreshed', async () => {
     const choice = { creatorFeeBps: 100, capBps: 300, virtualQuote: '1000000000' }
-    await assert.rejects(openLaunch(w, { ...choice, name: 'Paused', symbol: 'PAUSED' }), /unavailable or changed/, 'paused')
+    await assert.rejects(openLaunch(w, { ...choice, name: 'Paused', symbol: 'PAUSED' }), { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCHES_PAUSED }, 'paused')
     await w.must('creation reopened', w.send(await w.message(w.roles.admin, [w.ix('launch', 'governance_action',
       { expected: [...await w.commitment('launch')], action: { SetGates: [{ creation: false, trading: false }] } }, { authority: w.roles.admin })])))
     assert.equal((await readOpenCreation(w.connections(), P)).paused, false)
-    await assert.rejects(openLaunch(w, { ...choice, name: 'Stale', symbol: 'STALE' }), /unavailable or changed/, 'the bundle still pins the old launch-side state')
+    await assert.rejects(openLaunch(w, { ...choice, name: 'Stale', symbol: 'STALE' }), { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCH_SETTINGS_CHANGED },
+      'the bundle still pins the old launch-side state')
     await w.recollect()
     const fresh = await openLaunch(w, { ...choice, name: 'Fresh', symbol: 'FRESH' })
     assert.equal((await (await fresh.send()).settle()).status, 'finalized-success', 'after the refresh, launches settle')

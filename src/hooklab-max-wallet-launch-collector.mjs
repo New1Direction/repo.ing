@@ -12,7 +12,8 @@ import { hookLabReviewSchema, inspectHookLabMessage } from './hooklab-message-bo
 import { parseExecutionDossier, inspectProductionEvidence } from './hooklab-production-observer.mjs'
 import { assertLocalExecutionEndpoint, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 import { LAUNCH_STATE_HASHES, canonicalLaunchProof, canonicalObservation } from './hooklab-canonical-observation.mjs'
-import { launchSettingsChanged,passRefusal } from './hooklab-open-creation.mjs'
+import { launchSettingsChanged,launchesPaused,openCreatorFeeCeiling,openLaunchErrorText,passRefusal } from './hooklab-open-creation.mjs'
+import { parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 const integer=v=>{check(Number.isSafeInteger(v)&&v>=0,'Invalid RPC integer');return v}
@@ -76,6 +77,15 @@ export async function collectOpenLaunchReview(input){
 }
 // nativeLaunches: HOOK_NATIVE_LAUNCHES_ENABLED on this server. The compiler then reads launch Config byte 186 from the two
 // providers' identical snapshots: on, it compiles create_launch_custom_v4; off, v3 exactly as before.
+// The launch Config as an open launch meets it, in the creator's words: creation paused, open launches or native launches
+// switched off, or a choice no longer on the menu under the current ceiling (the compiler refuses the same).
+function openLaunchState(config,request){
+ const reserved=parseLaunchConfigReserved(Buffer.from(config.reserved)),refuse=message=>Object.assign(Error(message),{code:'HOOKLAB_USER_REFUSAL'})
+ if(config.paused)throw launchesPaused()
+ if(!reserved?.native)throw refuse(openLaunchErrorText(6103))
+ if(!reserved.open)throw refuse(openLaunchErrorText(6120))
+ if(!reserved.creatorFeeBps.includes(request.creatorFeeBps)||request.creatorFeeBps>openCreatorFeeCeiling(config)||!reserved.capBps.includes(request.capBps))throw refuse(openLaunchErrorText(6121))
+}
 async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,limits,expectedReview,clock=Date.now,nativeLaunches=false,open=false}){
  const {config:c,profile:p,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections})
  const r=open?openLaunchRequestSchema.parse(request):parseMaxWalletLaunchRequest(request),table=open?c.launchLookupTable:c.lookupTable
@@ -105,7 +115,9 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
  check(map.get(configAddress)?.dataBase64===Buffer.from(bootstrap.value[0].data).toString('base64'),'Bootstrap config changed')
  const evidence=inspectProductionEvidence({dossierJson,expectedSha256:c.dossierSha256,nowMs:integer(clock()),idls:profile.idls,observations:observations.map(o=>({...o,accounts:extra.filter(x=>x!==table?.address).map(address=>{const v=map.get(address);check(v,'Pinned account missing');const {lamports,...rest}=v;return rest})}))})
- // The launch settings moved since the bundle was collected (an owner's governed change): say so plainly, until it is.
+ // Creation paused on chain (the launch Config mirrors the governance creation gate): say so plainly. Otherwise, the launch
+ // settings moved since the bundle was collected (an owner's governed change): say that, until it is collected again.
+ if(open)openLaunchState(new BorshCoder(JSON.parse(Buffer.from(profile.idls.launch,'base64'))).accounts.decode('Config',Buffer.from(map.get(configAddress).dataBase64,'base64')),r)
  if(evidence.accountBindingsMatched!==true)throw launchSettingsChanged()
  // Require the reviewed dossier to bind every shared economic/governance account.
  for(const address of [a.launchConfig,a.swapConfig,a.launchGovernance,a.swapGovernance,p.quoteMint])check(d.accounts.some(x=>x.address===address),'Missing reviewed governance/economics pin')
