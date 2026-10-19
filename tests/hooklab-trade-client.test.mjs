@@ -107,9 +107,12 @@ test('the panel’s swap request passes the trade API’s exact schema (a reject
   assert.deepEqual(seen.map(x => x.stage), ['inclusive-buy', 'inclusive-sell'])
 })
 
-test('buys that the swap would refuse are caught before any SOL moves: impact over 10%, graduation, max per wallet', () => {
+test('buys that would be refused are caught before any SOL moves: impact over 10%, past the end of the curve, max per wallet', () => {
   assert.match(estimateTrade({ ...market, capBps: 9000 }, { side: 'buy', amount: 400_000_000n }).error, /more than 10%/)
-  assert.match(estimateTrade({ ...market, capBps: 9000, graduationQuote: '20000000' }, { side: 'buy', amount: 30_000_000n }).error, /graduation/)
+  // The swap does not refuse a buy that reaches graduation; the website stops it at exactly the final fill.
+  const small = { ...market, capBps: 9000, graduationQuote: '20000000' }, fill = maxBuyLamports(small)
+  assert.match(estimateTrade(small, { side: 'buy', amount: 30_000_000n }).error, /more than this coin’s curve has left: 0\.020202 SOL buys all of it/)
+  assert.equal(estimateTrade(small, { side: 'buy', amount: fill }).graduates, true)
   assert.ok(!estimateTrade({ ...market, graduationQuote: '2000000000' }, { side: 'buy', amount: 10_000_000n }).error)
 })
 

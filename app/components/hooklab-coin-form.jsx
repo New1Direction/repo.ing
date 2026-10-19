@@ -15,14 +15,15 @@ const LINK_ICONS = { x: XMark, website: () => <Globe size={14} aria-hidden="true
 const LINK_LABELS = { x: 'X', website: 'Website', telegram: 'Telegram' }
 
 // The coin as people will see it: image, ticker, name, its rules and links.
-export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, profile = null, note }) {
+// capLifted: the coin has graduated, so its max per wallet no longer applies.
+export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, profile = null, note, capLifted = false }) {
   const links = profile ? coinLinks(profile) : {}
   const [failed, setFailed] = useState(null)
   const shown = image && image !== failed
   return <div className="launch-token-summary hooks-coin-preview" role="group" aria-label="Coin preview">
     <div className="preview-avatar">{shown ? <img src={image} alt="" onError={() => setFailed(image)}/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
     <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Coin name'}</span>
-      <small>Max {percent(capBps)} per wallet · {percent(creatorFeeBps)} creator fee</small>
+      <small>{capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee</small>
       {Object.keys(links).length > 0 && <span className="hooks-coin-links">{Object.entries(links).map(([key, href]) => {
         const Icon = LINK_ICONS[key]
         return <a key={key} href={href} target="_blank" rel="noopener noreferrer"><Icon/>{LINK_LABELS[key]}</a>

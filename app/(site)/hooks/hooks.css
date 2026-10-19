@@ -140,3 +140,17 @@
 @media(max-width:760px){.hooks-coin-stats{grid-template-columns:1fr 1fr}.hooks-mine{grid-template-columns:1fr}.hooks-open-coin>div{flex-direction:column}.hooks-coin-hero .launch-token-summary strong{font-size:26px}}
 /* Phones: the ticker keeps whole words, and the creator gets a full row instead of wrapping its address. */
 @media(max-width:420px){.hooks-coin-hero .launch-token-summary .preview-avatar{width:56px;height:56px}.hooks-coin-hero .launch-token-summary strong{font-size:22px;overflow-wrap:normal;word-break:normal}.hooks-coin-stats>div:nth-child(3){grid-column:1/-1}.hooks-coin-stats dd{font-size:15px}}
+/* Graduation on the coin page: SOL to go under the curve bar, a softly pulsing full bar while it graduates, then a badge and what changed. */
+.hooks-graduation-next{margin:10px 0 0;color:var(--muted)!important;font-size:13px;line-height:1.55}.hooks-graduation-next strong{color:var(--text)}
+.hooks-curve.is-graduating .hooks-curve-bar span{animation:hooks-graduating 1.8s ease-in-out infinite}
+@keyframes hooks-graduating{50%{opacity:.5}}
+@media(prefers-reduced-motion:reduce){.hooks-curve.is-graduating .hooks-curve-bar span{animation:none}}
+.hooks-graduation.is-graduated{margin-top:18px}.hooks-graduation.is-graduated small{color:var(--muted);font-size:12px}
+.hooks-graduated-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 11px;border-radius:999px;font-size:13px;font-weight:700;color:#101713;background:var(--green)}
+.hooks-graduation-facts{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.hooks-graduation-facts li{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid color-mix(in srgb,var(--green) 50%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--green) 6%,var(--bg))}
+.hooks-graduation-facts li>svg{flex:none;margin-top:2px;color:var(--green)}.hooks-graduation-facts div{display:flex;flex-direction:column;gap:3px;min-width:0}
+.hooks-graduation-facts strong{font-size:14px}.hooks-graduation-facts span{color:var(--muted);font-size:13px;line-height:1.45}
+.hooks-graduation-stats{margin-top:10px}
+.hooks-trade .hooks-trade-graduates{margin:10px 0 0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--green) 50%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--green) 7%,var(--surface));color:var(--muted)!important;font-size:13px;line-height:1.5}.hooks-trade-graduates strong{color:var(--text)}
+@media(max-width:560px){.hooks-graduation-facts{grid-template-columns:1fr}}

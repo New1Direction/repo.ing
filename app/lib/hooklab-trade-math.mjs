@@ -1,6 +1,9 @@
 // Pure trade-panel math for Hooks coins: amounts, estimates and the steps a buy or sell takes. No network or wallet.
 // Estimates use the same quote model the server compiles with; the server's exact review is what gets signed.
 import { modelInclusiveCreatorQuote } from '../../src/hooklab-inclusive-fee-quote.mjs'
+import { finalFillLamports, isReady } from '../../src/hooklab-graduation.mjs'
+
+export { finalFillLamports }
 
 export const SOL_DECIMALS = 9
 // Network fee per step at the production compute budget and priority (an upper bound shown before signing).
@@ -8,6 +11,10 @@ export const STEP_FEE_LAMPORTS = { fund: 7000n, withdraw: 7000n, buy: 19000n, se
 export const SLIPPAGE_CHOICES = [100, 300, 500]
 // The server reviews trades with at most this price impact (its request schema caps it at 10%).
 export const MAX_PRICE_IMPACT_BPS = 1000
+// Buying the last of a curve goes out as one transaction, [buy the exact final fill, graduate], and a graduated coin
+// trades on its open pool; both need the native-SOL swap the server doesn't build yet. Until it does, the panel shows
+// these estimates but holds them (graduationHold), so no SOL moves into Hook Lab for a trade the server would refuse.
+export const GRADUATION_TRADING_OPEN = false
 
 // '0.05' -> 50_000_000n for 9 decimals; null when the text is not a positive amount with at most `decimals` places.
 export function parseUnits(text, decimals) {
@@ -29,22 +36,39 @@ export const sol = (lamports, places = 4) => `${formatUnits(lamports, SOL_DECIMA
 
 const QUOTE_ERRORS = { MAX_WALLET: 'That would put you over this coin’s max per wallet.', MIN_OUTPUT: 'Price moved too much for this amount.' }
 
-// Estimated result of a buy (amount in lamports) or sell (amount in raw coin units) at the current curve.
+// Estimated result of a buy (amount in lamports) or sell (amount in raw coin units) at the current pool. On the curve a
+// buy can take at most the final fill, which graduates the coin (graduates: true); after graduation the pool is plain
+// constant product on its real reserves, the creator fee still applies and there is no max per wallet.
 export function estimateTrade(market, { side, amount, coinBalance = 0n, slippageBps = 300 }) {
-  const p = market.pool
+  const p = market.pool, graduated = !!market.graduated, curveBuy = side === 'buy' && !graduated && !!market.graduationQuote
+  if (curveBuy && isReady(p, market.graduationQuote)) return { error: 'This coin has finished its bonding curve and is graduating. Buying opens again once it moves to its open market. Selling still works.' }
+  const fill = curveBuy ? finalFillLamports(market) : null
+  if (fill !== null && amount > fill) return { error: `That’s more than this coin’s curve has left: ${sol(fill, 6)} buys all of it and graduates the coin.` }
   try {
     const quote = modelInclusiveCreatorQuote({ side, amountIn: amount, minAmountOut: 1n, maxInput: amount, creatorFeeBps: market.creatorFeeBps,
       feeModel: 2, protocolShareBps: 2500, lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
-      authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: BigInt(coinBalance),
+      authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: BigInt(coinBalance), maxWalletLifted: graduated,
       pool: { baseReserve: BigInt(p.baseReserve), quoteReserve: BigInt(p.quoteReserve), virtualBase: BigInt(p.virtualBase), virtualQuote: BigInt(p.virtualQuote), protocolFeesQuote: BigInt(p.protocolFeesQuote) },
       policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: market.creatorFeeBps, lpFeeBps: 0, initialSupply: BigInt(market.initialSupply), capBps: market.capBps } })
     const minAmountOut = quote.delivered * BigInt(10000 - slippageBps) / 10000n
     if (minAmountOut <= 0n) return { error: 'This amount is too small to trade.' }
     if (quote.priceImpactBps > BigInt(MAX_PRICE_IMPACT_BPS)) return { error: 'That moves the price more than 10%. Try a smaller amount.' }
-    // Trades that would reach the graduation point are not supported here yet (the swap refuses them).
-    if (market.graduationQuote && quote.after.quoteReserve >= BigInt(market.graduationQuote)) return { error: 'That would take the coin to graduation, which this page can’t trade through yet. Try a smaller amount.' }
-    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, priceImpactBps: Number(quote.priceImpactBps) }
-  } catch (error) { return { error: QUOTE_ERRORS[error?.message] ?? 'This amount can’t be traded right now.' } }
+    const graduates = fill !== null && amount === fill
+    // Without an exact fill no buy can stop at the graduation point, so one that gets there would overshoot it.
+    if (curveBuy && !graduates && isReady(quote.after, market.graduationQuote)) return { error: 'That would take the coin past graduation. Try a smaller amount.' }
+    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, priceImpactBps: Number(quote.priceImpactBps), graduates }
+  } catch (error) {
+    if (curveBuy && error?.message === 'INSUFFICIENT_LIQUIDITY') return { error: 'That’s more than this coin’s curve has left. Try a smaller amount.' }
+    return { error: QUOTE_ERRORS[error?.message] ?? 'This amount can’t be traded right now.' }
+  }
+}
+
+// Why the panel holds an estimate it can show but not send yet (see GRADUATION_TRADING_OPEN), or ''.
+export function graduationHold(market, estimate, open = GRADUATION_TRADING_OPEN) {
+  if (open) return ''
+  if (market?.graduated) return 'This coin has graduated to its open market. Trading it on repo.ing opens again soon.'
+  if (estimate?.graduates) return 'This buy finishes the curve and graduates the coin. Finishing a curve from repo.ing opens soon, so buy a little less for now.'
+  return ''
 }
 
 // The steps a buy takes: add SOL to Hook Lab when the bridged balance or holdings fall short, then the swap.
@@ -68,12 +92,14 @@ export function planSell({ amount, wallet, rentLamports = 0 }) {
   return { steps, shortfall: BigInt(wallet.lamports) < needed + 890880n ? needed + 890880n - BigInt(wallet.lamports) : 0n }
 }
 
-// The largest buy (in lamports, within 0.000001 SOL) that keeps this wallet under the coin's max per wallet at the
-// current curve, or null when nothing more can be bought. Searched with the same model, so it matches the estimate.
+// The largest buy (in lamports) this wallet can make right now, or null when nothing more can be bought: on the curve
+// the smaller of the max per wallet (within 0.000001 SOL) and the final fill (exact), after graduation the price-impact
+// limit. Searched with the same model, so it matches the estimate.
 export function maxBuyLamports(market, coinBalance = 0n, ceiling = 1_000_000_000_000n) {
   const fits = amount => !estimateTrade(market, { side: 'buy', amount, coinBalance }).error
-  if (fits(ceiling)) return ceiling
-  let low = 0n, high = ceiling
+  const fill = finalFillLamports(market), top = fill !== null && fill <= ceiling ? fill : ceiling
+  if (top > 0n && fits(top)) return top
+  let low = 0n, high = top
   while (high - low > 1000n) { const mid = (low + high) / 2n; if (fits(mid)) low = mid; else high = mid }
   return low > 0n ? low : null
 }
