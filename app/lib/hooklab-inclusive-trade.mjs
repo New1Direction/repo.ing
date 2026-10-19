@@ -21,7 +21,7 @@ const body=z.discriminatedUnion('action',[
  // Wallet funding: add SOL to Hook Lab (creating the needed holdings), or withdraw bridged SOL back to the wallet.
  z.object({action:z.literal('fund'),signingId:z.uuid(),request:z.object({mint:mintKey.nullable(),lamports:z.string().regex(/^(0|[1-9]\d{0,19})$/)}).strict()}).strict(),
  z.object({action:z.literal('withdraw'),signingId:z.uuid(),request:z.object({lamports}).strict()}).strict(),
- z.object({action:z.enum(['get','refresh-review','wallet-request','submit','reconcile']),signingId:z.uuid()}).strict(),
+ z.object({action:z.enum(['get','refresh-review','wallet-request','submit','reconcile','expire']),signingId:z.uuid()}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:z.uuid(),signedTransactionBase64:z.string().max(1644)}).strict(),
 ])
 // Until HOOK_TRADING_PUBLIC=true, only listed tester wallets may start trades or funding (existing operations stay recoverable).
@@ -75,6 +75,8 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
     else if(input.action==='refresh-review')operation=await lifecycle.refreshReview(token,input.signingId)
     else if(input.action==='retain-wallet')operation=await lifecycle.retainWalletSignature(token,input.signingId,input.signedTransactionBase64)
     else if(input.action==='submit')operation=await lifecycle.submitOnce(token,input.signingId)
+    // A never-sent operation whose blockhash both providers prove expired closes as expired (nothing was ever sent).
+    else if(input.action==='expire')operation=await lifecycle.expire(token,input.signingId)
     else operation=await lifecycle.reconcile(token,input.signingId)
     if(operation.owner!==owner.wallet||!STAGES.includes(operation.stage))throw Error()
     result={operation:publicNativeOperation(operation)}

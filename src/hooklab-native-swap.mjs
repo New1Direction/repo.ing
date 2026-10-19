@@ -19,13 +19,12 @@ import { approvedCreatorFees } from './hooklab-launch-menus.mjs'
 import { hookCoinAddresses, swapAccountEvidence } from './hooklab-inclusive-max-wallet-swap.mjs'
 import { NATIVE_BUILDS, NATIVE_FLAGS, loadNativeArtifacts, nativeBuildOf } from './hooklab-native-pins.mjs'
 import { STATUS_GRADUATED, finalFillLamports, isReady } from './hooklab-graduation.mjs'
-import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 import { isNativeElfPin } from './hooklab-native-launch.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { createHolding, instructionsFor } from './hooklab-owner-driver/instructions.mjs'
 import { isStackProfile, kitOf, profileRolesDistinct } from './hooklab-stack.mjs'
 
-const { raw, owned, decoded, programEvidence, governance, typed, readHolding, noRules } = swapAccountEvidence
+const { raw, owned, decoded, programEvidence, governance, launchSideIdentity, typed, readHolding, noRules } = swapAccountEvidence
 const check = (value, message) => { if (!value) throw Error(message) }
 // Refusals about the trader's own trade, in words the signing lifecycle may show them (everything else stays masked).
 const refuseUnless = (value, message) => { if (!value) throw Object.assign(Error(message), { code: 'HOOKLAB_USER_REFUSAL' }) }
@@ -183,15 +182,14 @@ export function compileNativeSwapReview(input) {
   check(wallet && wallet.owner === zero && !wallet.executable && raw(wallet.dataBase64, 0).length === 0, 'Wallet must be an empty system account')
   for (const name of ['kitConfig', 'holderVault']) check(accounts.get(a[name]) === null, 'No-Kit account unexpectedly initialized')
   const rent = rentFrom(accounts.get(RENT_SYSVAR))
-  const configBytes = owned(accounts, a.launchConfig, L, 250), c = decoded(launch, 'Config', configBytes), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
-  // Config.reserved[0] is the native-launches switch (byte 186): either value trades, it only steers new launches.
-  check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && !d.paused
-    && configBytes[NATIVE_FLAGS.configNativeLaunches] === c.reserved[0] && launchConfigReservedValid(c.reserved)
-    && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
-  check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
-    && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
-  const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
-  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, false, { trading: true }); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, false, { trading: true })
+  // The launch Config and launch governance only for their identity: their pause, gates, economics, menus and reserved
+  // bytes (the native-launches and open-creation switches) are launch-side state no trade executes against.
+  launchSideIdentity(launch, L, accounts, a, profile)
+  const d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
+  check(d.version === 1 && d.bump === bump(S, 'config') && !d.paused && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
+  check(d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
+  const sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
+  governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, false, { trading: true })
   const policy = decoded(gate, 'PolicyV2', owned(accounts, a.policy, G, 90)), registry = owned(accounts, a.registry, G, 81)
   check(policy.version === 2 && policy.fee_model === 2 && policy.protocol_share_bps === 2500
     && policy.creator_fee_bps === r.creatorFeeBps && approvedCreatorFees(profile).includes(r.creatorFeeBps) && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n

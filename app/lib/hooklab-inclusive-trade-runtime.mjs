@@ -4,6 +4,7 @@ import {nativeTransactionSender} from '../../src/hooklab-native-transaction-send
 import {inclusiveTradeResolver} from '../../src/hooklab-inclusive-trade-resolver.mjs'
 import {nativeTradeResolver} from '../../src/hooklab-native-trade-resolver.mjs'
 import {pinsNativeBuilds} from '../../src/hooklab-native-swap.mjs'
+import {provenFinalizedProgress} from '../../src/hooklab-blockhash-proof.mjs'
 import {stagedResolver,walletFundingResolver} from '../../src/hooklab-wallet-funding-resolver.mjs'
 import {readHookCoinMarket,readHookWalletBalances} from '../../src/hooklab-coin-market.mjs'
 import {ownerApprovalStore} from '../../src/hooklab-owner-approval.mjs'
@@ -34,7 +35,7 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const nativeOpen=nativeTradingEnabled===true&&pinsNativeBuilds(nativeBundle.profile)
  const native=nativeTradeResolver({...nativeBundle,connections,limits})
  const sender=nativeTransactionSender({enabled:true,connections})
- const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen})})
+ const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen,connections})})
  // The coin's stack profile (programs, quote marker): server-side only, never sent to a customer.
  const profileFor=coin=>coinStack(coin)==='own'?profiles.own:profiles.legacy
  // Display-only market reads use the primary provider; trades and funding re-verify on both providers. coin: the listed
@@ -57,12 +58,13 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
 }
 // The trade lifecycle's resolvers and stages: bridged trades and funding, and native trades. The native stages are always
 // registered, so a sent native trade stays readable and settles whatever the switch says; while native trading is off
-// they are closed to new work (review, refresh, wallet request, send).
-export function tradeLifecycleSettings({trade,funding,native,nativeOpen}){
+// they are closed to new work (review, refresh, wallet request, send). connections: the runtime's two providers, which
+// prove a never-sent operation's blockhash expired before expire() closes it (none: expire() is unavailable).
+export function tradeLifecycleSettings({trade,funding,native,nativeOpen,connections=null}){
  return {resolver:stagedResolver({'inclusive-buy':trade,'inclusive-sell':trade,'wallet-fund':funding,'wallet-withdraw':funding,'native-buy':native,'native-sell':native}),
   stageOperations:{'inclusive-buy':'inclusive-max-wallet-buy','inclusive-sell':'inclusive-max-wallet-sell','wallet-fund':'hooklab-wallet-fund','wallet-withdraw':'hooklab-wallet-withdraw',
    'native-buy':'native-max-wallet-buy','native-sell':'native-max-wallet-sell'},
-  closedStages:nativeOpen?[]:['native-buy','native-sell']}
+  closedStages:nativeOpen?[]:['native-buy','native-sell'],expiryObserver:connections?()=>provenFinalizedProgress(connections):null}
 }
 export function installInclusiveTradeRuntime(value){
  if(inclusiveTradeRuntime()||!value||value.ownerTradingApproved!==true||value.operatorDeploymentApproved!==true||value.economicsApproved!==true||!value.lifecycle)throw Error('Complete approved trading runtime required')

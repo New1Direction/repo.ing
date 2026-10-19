@@ -110,6 +110,8 @@ hooklab-wallet-preparation-colocated-db
 hooklab-native-signer-custody-db
 hooklab-new-mint-preparation-db
 hooklab-native-signing-db
+# Expiring never-sent native trade reviews through the signing lifecycle: real PostgreSQL on 127.0.0.1:55432 and the reviewed native ELFs.
+hooklab-native-trade-expire-db
 
 hooklab-native-launch-runtime-db
 hooklab-launch-resolver-journal-db

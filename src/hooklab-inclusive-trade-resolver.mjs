@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto'
 import {isDeepStrictEqual} from 'node:util'
 import {PublicKey,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
-import {inspectProductionEvidence} from './hooklab-production-observer.mjs'
+import {inspectProductionEvidence,tradeEvidenceAddresses} from './hooklab-production-observer.mjs'
 import {compileInclusiveMaxWalletSwapReview,inclusiveMaxWalletSwapInventory,inclusiveMaxWalletSwapRequestSchema} from './hooklab-inclusive-max-wallet-swap.mjs'
 import {collectInclusiveTradeSettlement} from './hooklab-inclusive-trade-settlement.mjs'
 import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
@@ -32,7 +32,9 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
   check(stage===`inclusive-${request.side}`&&approvedCreatorFees(bound.profile).includes(request.creatorFeeBps))
   if(originalContext)check(originalContext.configurationSha256===configurationSha256&&isDeepStrictEqual(originalContext.compilationInput.request,request))
   const started=integer(clock()),inventory=inclusiveMaxWalletSwapInventory(bound.profile,request)
-  const extras=[...new Set([...bound.dossier.programs.flatMap(p=>[p.address,p.programData]),...bound.dossier.accounts.map(x=>x.address),...(bound.config.lookupTable?[bound.config.lookupTable.address]:[])])]
+  // Trade-scope evidence only (programs, swap config and governance, quote mint): a launch-side pause or policy change
+  // must not stop holders trading (src/hooklab-production-observer.mjs LAUNCH_SIDE_ROLES).
+  const extras=[...new Set([...tradeEvidenceAddresses(bound.dossier),...(bound.config.lookupTable?[bound.config.lookupTable.address]:[])])]
   const all=[...new Set([...inventory,...extras])].sort(),minSlot=expectedReview?.observedSlot??bound.dossier.minSlot
   const observations=await Promise.all(providers.map(async({provider,connection})=>{
    check(await connection.getGenesisHash()===bound.profile.genesisHash)
@@ -48,7 +50,7 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
   const quoteMint=observations[0].accounts.find(x=>x.address===p.quoteMint)
   observations[1].accounts=observations[1].accounts.map(x=>x.address===p.quoteMint?quoteMint:x)
   const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
-  const evidence=inspectProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:bound.config.dossierSha256,nowMs:integer(clock()),idls:retained.profile.idls,
+  const evidence=inspectProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:bound.config.dossierSha256,nowMs:integer(clock()),idls:retained.profile.idls,scope:'trade',
    observations:observations.map(o=>({...o,accounts:extras.filter(a=>a!==bound.config.lookupTable?.address).map(address=>{const a=map.get(address);check(a);const {lamports,...rest}=a;return rest})}))})
   check(evidence.accountBindingsMatched===true)
   const slot=Math.max(...observations.map(x=>x.slot))

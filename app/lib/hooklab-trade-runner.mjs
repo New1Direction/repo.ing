@@ -1,7 +1,7 @@
 // Drives one wallet-signed Hook Lab operation (buy, sell, add SOL, withdraw SOL) through the server lifecycle:
 // exact review -> the wallet signs exactly the reviewed bytes -> sent once -> finalized receipt. Browser-side checks
 // mirror the server's: the same message, this wallet as the only signer, and nothing else signed or changed.
-const FINAL = new Set(['finalized-success', 'finalized-failure', 'review-required'])
+const FINAL = new Set(['finalized-success', 'finalized-failure', 'review-required', 'expired'])
 const encode = bytes => btoa(String.fromCharCode(...bytes))
 const decode = value => Uint8Array.from(atob(value), char => char.charCodeAt(0))
 const equal = (a, b) => a.length === b.length && a.every((value, index) => value === b[index])
@@ -23,6 +23,15 @@ export function expectOperation(value, { signingId, wallet, genesisHash }) {
     || op.review.payer !== wallet || op.review.requiredSigners?.length !== 1 || op.review.requiredSigners[0] !== wallet)
     throw Error('The transaction or wallet changed. Nothing more was signed.')
   return op
+}
+
+// Never sent and past its review deadline: the server can close it as expired once both providers prove its blockhash
+// can no longer land (until then the expire call is refused and the panel tries again later).
+const UNSENT = new Set(['reviewed', 'partial', 'signed', 'signing-claimed', 'signing-unknown'])
+export const expiredUnsent = (op, now = Date.now()) => UNSENT.has(op.status) && !op.signature && now >= op.review.reviewExpiresAtMs
+export async function closeExpired({ call = callTrade, op, signingId, wallet, genesisHash, now = Date.now() }) {
+  if (!expiredUnsent(op, now)) return op
+  return expectOperation(await call({ action: 'expire', signingId }), { signingId, wallet, genesisHash })
 }
 
 // create: the body that starts it ({ action: 'quote' | 'fund' | 'withdraw', request }). onStatus('review'|'sign'|'send'|'confirm').

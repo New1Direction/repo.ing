@@ -5,7 +5,7 @@ import { ArrowDown, Check, LoaderCircle, X } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
 import { DELISTED_BUY_TEXT, GRADUATION_TRADING_OPEN, HOLDING_RENT_LAMPORTS, SLIPPAGE_CHOICES, buyOff, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, ownStackCoin, parseUnits, tradesFromWallet, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
-import { callTrade, expectOperation, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
+import { callTrade, closeExpired, expectOperation, expiredUnsent, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import '../trade-panel.css'
 
 // Rent for one 204-byte Hook Lab holding (app/lib/hooklab-trade-math.mjs); the server's review uses the live value before signing.
@@ -197,7 +197,11 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       try {
         const ids = { signingId: entry.signingId, wallet: address, genesisHash }
         const op = expectOperation(await callTrade({ action: 'get', signingId: entry.signingId }), ids)
-        if (op.status === 'reviewed' || isFinal(op.status)) { forgetOperation(localStorage, entry.signingId); continue }
+        if (isFinal(op.status)) { forgetOperation(localStorage, entry.signingId); continue }
+        // Never sent and past its deadline: close it (expired) instead of trying to send it; if the chain has not yet
+        // passed its blockhash, keep it and try again on the next visit.
+        if (expiredUnsent(op)) { if ((await closeExpired({ op, ...ids })).status === 'expired') forgetOperation(localStorage, entry.signingId); continue }
+        if (op.status === 'reviewed') { forgetOperation(localStorage, entry.signingId); continue }
         const final = await runOperation({ create: { action: 'get' }, ...ids, signTransaction: async () => { throw Error('unsigned') } })
         if (isFinal(final.status)) forgetOperation(localStorage, entry.signingId)
       } catch {}
