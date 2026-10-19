@@ -4,13 +4,14 @@ import Link from 'next/link'
 import { ArrowDown, Check, LoaderCircle, X } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
-import { GRADUATION_TRADING_OPEN, SLIPPAGE_CHOICES, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, parseUnits, planBuy, planSell, sol, tradeButton, tradeIntent } from '../lib/hooklab-trade-math.mjs'
+import { GRADUATION_TRADING_OPEN, SLIPPAGE_CHOICES, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, parseUnits, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
 import { callTrade, expectOperation, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import '../trade-panel.css'
 
 // Rent for one 204-byte Hook Lab holding at today's rent rate; the server's review uses the live value before signing.
 const HOLDING_RENT = '1686560'
-const STEP_LABELS = { fund: 'Add SOL to Hook Lab', buy: 'Buy', sell: 'Sell', withdraw: 'Withdraw SOL to your wallet' }
+const STEP_LABELS = { fund: 'Add SOL to Hook Lab', buy: 'Buy', sell: 'Sell', graduate: 'Buy and graduate', withdraw: 'Withdraw SOL to your wallet' }
+const stepLabel = (kind, symbol) => ['buy', 'sell', 'graduate'].includes(kind) ? `${STEP_LABELS[kind]} ${symbol}` : STEP_LABELS[kind]
 const STATUS_TEXT = { review: 'Preparing…', sign: 'Approve in your wallet', send: 'Sending…', confirm: 'Confirming on Solana…' }
 const explorer = signature => `https://explorer.solana.com/tx/${encodeURIComponent(signature)}`
 
@@ -36,9 +37,13 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   const refresh = useCallback(async () => { try { const next = await readMarket(mint, wallet); setView(next); setLoadError(''); return next } catch (e) { setLoadError(e.message); return null } }, [mint, wallet])
   useEffect(() => { refresh(); const timer = setInterval(() => { if (!running.current) refresh() }, 10000); return () => clearInterval(timer) }, [refresh])
 
+  // A native-SOL coin trades straight from the wallet (one approval, no Add SOL) once the site turns native trading on;
+  // a bridged coin keeps the Hook Lab flow. Coins whose two native flags disagree never trade here.
+  const native = !!market?.native, nativeOpen = nativeTradingOpen(view), graduationOpen = native ? nativeOpen : GRADUATION_TRADING_OPEN
   const buying = side === 'buy', decimals = buying ? 9 : market?.decimals ?? 6, raw = parseUnits(amount, decimals)
   const estimate = useMemo(() => market && raw ? estimateTrade(market, { side, amount: raw, coinBalance: BigInt(mine?.coin ?? 0), slippageBps }) : null, [market, raw, side, mine?.coin, slippageBps])
-  const plan = useMemo(() => !raw || !mine ? null : buying ? planBuy({ amount: raw, wallet: mine, rentLamports: HOLDING_RENT }) : planSell({ amount: raw, wallet: mine }), [raw, mine, buying])
+  const plan = useMemo(() => !raw || !mine ? null : native ? planNative({ side, amount: raw, wallet: mine, rentLamports: HOLDING_RENT })
+    : buying ? planBuy({ amount: raw, wallet: mine, rentLamports: HOLDING_RENT }) : planSell({ amount: raw, wallet: mine }), [raw, mine, buying, native, side])
   const bridged = BigInt(mine?.bridgedSol ?? 0), coinBalance = BigInt(mine?.coin ?? 0)
   // Max: when the curve's end comes first it is the exact final fill (any less doesn't graduate; one lamport short while
   // graduating buys are held). Otherwise leave 2% headroom under the cap: the curve can move before the buy lands.
@@ -46,14 +51,15 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   const maxBuy = useMemo(() => {
     const max = market ? maxBuyLamports(market, coinBalance) : null
     if (max === null || max !== fill) return max === null ? null : max * 98n / 100n
-    return GRADUATION_TRADING_OPEN ? max : max > 1n ? max - 1n : null
-  }, [market, coinBalance, fill])
-  // A full curve waits for graduate (buys pause); a graduated coin or a graduating buy is shown but held for now.
-  const buyPaused = buying && !!market?.curveComplete, hold = market ? graduationHold(market, estimate) : ''
+    return graduationOpen ? max : max > 1n ? max - 1n : null
+  }, [market, coinBalance, fill, graduationOpen])
+  // A full curve waits for graduate (buys pause); a held trade (tradeHold) is shown but not sent.
+  const buyPaused = buying && !!market?.curveComplete, hold = market ? tradeHold(view, estimate) : ''
   const capNote = buying && estimate?.error && /max per wallet/.test(estimate.error)
     ? (maxBuy ? `You can buy up to about ${sol(maxBuy, 4)} right now (${market.capBps / 100}% of the supply per wallet).` : 'This wallet already holds the most this coin allows.') : ''
   const tooMuch = raw && mine && (buying ? false : raw > coinBalance)
-  const button = tradeButton({ wallet, signedIn: session.signedIn, side, symbol, hasAmount: !!raw, blocked: !!estimate?.error || !!tooMuch || !!hold || buyPaused, tradingOpen: !!view?.tradingOpen, busy: busy || session.busy })
+  const button = tradeButton({ wallet, signedIn: session.signedIn, side, symbol, hasAmount: !!raw, blocked: !!estimate?.error || !!tooMuch || !!hold || buyPaused,
+    tradingOpen: !!view?.tradingOpen, busy: busy || session.busy, graduates: !!estimate?.graduates && !hold })
 
   // One operation through review -> wallet -> send -> confirm, tracked in the step list and kept across reloads.
   // A trade that executed but landed after its reviewed slot settles as review-required: it still happened.
@@ -74,8 +80,9 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
     const executed = op.status === 'finalized-success' || (op.status === 'review-required' && op.settlement?.executionStatus === 'finalized-executed')
     update({ status: executed ? 'done' : 'failed', signature: op.signature })
     // The coin's chart and trades read again (app/components/hooklab-coin-chart.jsx, hooklab-coin-activity.jsx).
-    if (executed && (kind === 'buy' || kind === 'sell')) window.dispatchEvent(new CustomEvent('repoing:trade-confirmed', { detail: { mint, signature: op.signature } }))
-    if (!executed) throw Error(op.status === 'finalized-failure' ? `${STEP_LABELS[kind]} failed on Solana. Only its network fee was charged.`
+    if (executed && ['buy', 'sell', 'graduate'].includes(kind)) window.dispatchEvent(new CustomEvent('repoing:trade-confirmed', { detail: { mint, signature: op.signature } }))
+    // A native trade's failure names the program error the server decoded; anything else reads as before.
+    if (!executed) throw Error(op.status === 'finalized-failure' ? nativeFailureText(op.settlement?.errorName, STEP_LABELS[kind])
       : op.status === 'review-required' ? 'This transaction needs a manual check. It is saved; nothing more will be signed for it.'
       : 'Still confirming. Your transaction is saved; this page keeps checking it.')
     return op
@@ -113,7 +120,20 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       const fresh = await load(), me = fresh?.wallet
       if (!me) throw Error('Could not read your balances. Try again.')
       if (!fresh.tradingOpen) throw Error('Trading opens to everyone soon. We are testing buys, sells and withdrawals first.')
-      if (buying) {
+      if (fresh.market.native || fresh.market.quoteFormMismatch) {
+        // Native-SOL coin: one approval. The swap takes the SOL from the wallet (or pays it there); the finishing buy
+        // graduates the coin in the same transaction. Everything that could refuse it is checked first.
+        const e = estimateTrade(fresh.market, { side, amount: raw, coinBalance: BigInt(me.coin ?? 0), slippageBps })
+        if (e.error) throw Error(e.error)
+        if (tradeHold(fresh, e)) throw Error(tradeHold(fresh, e))
+        if (!buying && raw > BigInt(me.coin ?? 0)) throw Error(`You hold ${formatUnits(BigInt(me.coin ?? 0), market.decimals, 2)} ${symbol}.`)
+        const p = planNative({ side, amount: raw, wallet: me, rentLamports: HOLDING_RENT })
+        if (p.shortfall > 0n) throw Error(`You need about ${sol(p.shortfall, 5)} more SOL in your wallet for this ${buying ? 'buy and its' : 'sale’s'} network fee.`)
+        const kind = buying && e.graduates ? 'graduate' : side
+        setSteps([{ kind, status: 'todo' }])
+        const op = await step(address, 0, { action: 'native-quote', request: nativeTradeIntent(fresh.market, side, raw, e.minAmountOut, e.graduates) }, kind)
+        setResult({ kind: side, native: true, received: op.settlement?.quote?.delivered ?? e.delivered, graduated: kind === 'graduate' })
+      } else if (buying) {
         // Everything that could refuse the buy is checked before any SOL moves into Hook Lab.
         const first = estimateTrade(fresh.market, { side: 'buy', amount: raw, coinBalance: BigInt(me.coin ?? 0), slippageBps })
         if (first.error) throw Error(first.error)
@@ -194,7 +214,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
         onClick={() => { setSide(value); setAmount(''); setError(''); setResult(null) }}>{value === 'buy' ? 'Buy' : 'Sell'}</button>)}
     </div>
     {view && !view.tradingOpen && <p className="hooks-trade-soon" role="status">Trading opens to everyone soon. We are testing buys, sells and withdrawals first.</p>}
-    {market.graduated && hold && <p className="hooks-trade-soon" role="status">{hold}</p>}
+    {hold && (market.graduated || native || market.quoteFormMismatch) && <p className="hooks-trade-soon" role="status">{hold}</p>}
     {buyPaused && <p className="hooks-trade-soon" role="status">This coin’s bonding curve is full and it’s graduating. Buying pauses until it opens on its new market; you can still sell.</p>}
     <form onSubmit={trade} aria-busy={busy}>
       <div className="trade-field">
@@ -218,35 +238,58 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
         {SLIPPAGE_CHOICES.map(bps => <button type="button" key={bps} aria-pressed={slippageBps === bps} disabled={busy} onClick={() => setSlippageBps(bps)}>{bps / 100}%</button>)}</div>
       {estimate?.error && <p className="inline-error" role="alert">{estimate.error} {capNote}</p>}
       {tooMuch && <p className="inline-error" role="alert">You hold {formatUnits(coinBalance, market.decimals, 2)} {symbol}.</p>}
-      {estimate?.graduates && <p className="hooks-trade-graduates" role="status"><strong>This buy finishes the curve.</strong> {hold
-        ? 'Finishing a curve from repo.ing opens soon, so buy a little less for now.'
-        : `${symbol} graduates in the same transaction: its liquidity is locked forever and the max per wallet lifts.`}</p>}
-      {estimate && !estimate.error && <dl className="trade-details">
-        <div><dt>Minimum received</dt><dd>{formatUnits(estimate.minAmountOut, buying ? market.decimals : 9, buying ? 0 : 6)} {buying ? symbol : 'SOL'}</dd></div>
-        <div><dt>Price impact</dt><dd className={estimate.priceImpactBps >= 500 ? 'is-high' : undefined}>{(estimate.priceImpactBps / 100).toFixed(2)}%</dd></div>
-        <div><dt>Creator fee <small>(included, {market.creatorFeeBps / 100}%)</small></dt><dd>{sol(estimate.creatorFee, 6)}</dd></div>
-        {plan?.steps.some(s => s.rentLamports > 0n) && <div><dt>Hook Lab deposits <small>(first trade only)</small></dt><dd>{sol(plan.steps.find(s => s.kind === 'fund').rentLamports, 5)}</dd></div>}
-        {plan && <div><dt>Network fees</dt><dd>{sol(plan.steps.reduce((sum, s) => sum + s.feeLamports, 0n), 6)}</dd></div>}
-        {plan?.walletCost !== undefined && <div className="trade-details-total"><dt>From your wallet</dt><dd>{sol(plan.walletCost, 5)}</dd></div>}
-      </dl>}
-      {plan && plan.steps.length > 1 && !steps && <p className="trade-note">{plan.steps.length} approvals in your wallet: {plan.steps.map(s => s.kind === 'buy' || s.kind === 'sell' ? `${STEP_LABELS[s.kind]} ${symbol}` : STEP_LABELS[s.kind]).join(', then ')}.</p>}
+      <HookTradeSummary market={market} symbol={symbol} buying={buying} estimate={estimate} plan={plan} hold={hold} native={native}/>
+      {plan && !steps && (native ? <p className="trade-note">One approval in your wallet.</p>
+        : plan.steps.length > 1 && <p className="trade-note">{plan.steps.length} approvals in your wallet: {plan.steps.map(s => stepLabel(s.kind, symbol)).join(', then ')}.</p>)}
       <button type="submit" className="button primary trade-submit" disabled={button.disabled}>{session.busy ? 'Approve in your wallet…' : button.label}</button>
       {button.action === 'sign-in' && !session.busy && <p className="trade-note">Signing in is a free message in your wallet. It sends no transaction.</p>}
       {session.error && <p className="inline-error" role="alert">{session.error}</p>}
     </form>
     {steps && <ol className="hooks-trade-steps" aria-label="Progress">{steps.map((s, i) => <li key={i} data-state={s.status}>
       <span aria-hidden="true">{s.status === 'done' ? <Check size={14}/> : s.status === 'failed' ? <X size={14}/> : ['review', 'sign', 'send', 'confirm'].includes(s.status) ? <LoaderCircle size={14} className="image-picker-spinner"/> : i + 1}</span>
-      <div><strong>{s.kind === 'buy' || s.kind === 'sell' ? `${STEP_LABELS[s.kind]} ${symbol}` : STEP_LABELS[s.kind]}</strong>
+      <div><strong>{stepLabel(s.kind, symbol)}</strong>
         <small>{STATUS_TEXT[s.status] ?? (s.status === 'done' ? 'Done' : s.status === 'failed' ? 'Stopped' : 'Waiting')}{s.signature && <> · <a href={explorer(s.signature)} target="_blank" rel="noopener noreferrer">Receipt</a></>}</small></div></li>)}</ol>}
     {result && <p className="hooks-trade-result" role="status">{result.kind === 'buy' ? `You bought ${formatUnits(BigInt(result.received), market.decimals, 0)} ${symbol}.${result.graduated ? ` ${symbol} has graduated.` : ''}`
-      : `${sol(result.received, 6)} is back in your wallet.`}</p>}
+      : `${sol(result.received, 6)} ${result.native ? 'went straight to' : 'is back in'} your wallet.`}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
-    {mine && <div className="hooks-trade-balances">
-      <div><span>Wallet</span><strong>{sol(mine.lamports)}</strong></div>
-      <div><span>In Hook Lab</span><strong>{sol(bridged, 6)}</strong>{bridged > 0n && view?.funding && <button type="button" className="hooks-text-button" disabled={busy} onClick={withdrawAll}>Withdraw</button>}</div>
-      <div><span>{symbol}</span><strong>{formatUnits(coinBalance, market.decimals, 0)}</strong></div>
-    </div>}
-    <p className="trade-note">Hooks coins trade with SOL moved into Hook Lab. Buying moves it in for you; selling sends it back to your wallet. <Link href="/hooks/blocks">How Hooks work</Link></p>
+    {mine && <HookTradeBalances mine={mine} market={market} symbol={symbol} native={native} canWithdraw={!!view?.funding} busy={busy} onWithdraw={withdrawAll}/>}
+    <HookTradeNote native={native}/>
   </div>
+}
+
+// Under the amounts: the finishing buy's graduation, then what the trade costs. A native coin's first buy pays one
+// deposit for the wallet's coin account; a bridged coin's first trade pays the Hook Lab deposits.
+export function HookTradeSummary({ market, symbol, buying, estimate, plan, hold, native }) {
+  if (!estimate || estimate.error) return null
+  const deposit = native ? plan?.depositLamports ?? 0n : plan?.steps.find(s => s.kind === 'fund')?.rentLamports ?? 0n
+  return <>
+    {estimate.graduates && !(native && hold) && <p className="hooks-trade-graduates" role="status"><strong>This buy finishes the curve.</strong> {hold
+      ? 'Finishing a curve from repo.ing opens soon, so buy a little less for now.'
+      : `${symbol} graduates in the same transaction: its liquidity is locked forever and the max per wallet lifts.`}</p>}
+    <dl className="trade-details">
+      <div><dt>Minimum received</dt><dd>{formatUnits(estimate.minAmountOut, buying ? market.decimals : 9, buying ? 0 : 6)} {buying ? symbol : 'SOL'}</dd></div>
+      <div><dt>Price impact</dt><dd className={estimate.priceImpactBps >= 500 ? 'is-high' : undefined}>{(estimate.priceImpactBps / 100).toFixed(2)}%</dd></div>
+      <div><dt>Creator fee <small>(included, {market.creatorFeeBps / 100}%)</small></dt><dd>{sol(estimate.creatorFee, 6)}</dd></div>
+      {deposit > 0n && <div><dt>{native ? <>Coin account deposit <small>(first buy only)</small></> : <>Hook Lab deposits <small>(first trade only)</small></>}</dt><dd>{sol(deposit, 5)}</dd></div>}
+      {plan && <div><dt>Network fees</dt><dd>{sol(plan.steps.reduce((sum, s) => sum + s.feeLamports, 0n), 6)}</dd></div>}
+      {plan?.walletCost !== undefined && (buying || !native) && <div className="trade-details-total"><dt>From your wallet</dt><dd>{sol(plan.walletCost, 5)}</dd></div>}
+    </dl>
+  </>
+}
+
+// The wallet's balances under the panel. A native coin trades from the wallet itself, so there is no Hook Lab balance;
+// a bridged coin shows it, with Withdraw whenever there is any.
+export function HookTradeBalances({ mine, market, symbol, native, canWithdraw, busy, onWithdraw }) {
+  const bridged = BigInt(mine.bridgedSol ?? 0)
+  return <div className={`hooks-trade-balances${native ? ' is-native' : ''}`}>
+    <div><span>Wallet</span><strong>{sol(mine.lamports)}</strong></div>
+    {!native && <div><span>In Hook Lab</span><strong>{sol(bridged, 6)}</strong>{bridged > 0n && canWithdraw && <button type="button" className="hooks-text-button" disabled={busy} onClick={onWithdraw}>Withdraw</button>}</div>}
+    <div><span>{symbol}</span><strong>{formatUnits(BigInt(mine.coin ?? 0), market.decimals, 0)}</strong></div>
+  </div>
+}
+
+export function HookTradeNote({ native }) {
+  return <p className="trade-note">{native ? 'This coin trades straight from your wallet’s SOL: one approval per trade, nothing to move in or out first. '
+    : 'Hooks coins trade with SOL moved into Hook Lab. Buying moves it in for you; selling sends it back to your wallet. '}<Link href="/hooks/blocks">How Hooks work</Link></p>
 }
 

@@ -11,7 +11,7 @@ import bs58 from 'bs58'
 import {verifyHookLabSignedMessage,inspectHookLabMessage} from './hooklab-message-boundary.mjs'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {compileNativeSwapReview} from './hooklab-native-swap.mjs'
-import {loadNativeArtifacts} from './hooklab-native-pins.mjs'
+import {loadNativeArtifacts,nativeErrorName} from './hooklab-native-pins.mjs'
 import {loadArtifacts} from './hooklab-owner-driver/artifacts.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
 import {inclusiveCreatorFee,modelInclusiveCreatorQuote} from './hooklab-inclusive-fee-quote.mjs'
@@ -49,7 +49,7 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
    const snapshot=await connection.getMultipleAccountsInfoAndContext(inventory.map(pk),{commitment:'finalized',minContextSlot:slot})
    check(integer(snapshot.context.slot)>=slot&&snapshot.value.length===inventory.length)
    const stateAccounts=snapshot.value.map((v,i)=>({address:inventory[i],account:v?{address:inventory[i],owner:v.owner.toBase58(),executable:v.executable,dataBase64:Buffer.from(v.data).toString('base64')}:null}))
-   return {provider,stateAccounts,evidence:{slot,parentSlot:block.parentSlot,blockHeight:block.blockHeight,transactionIndex:block.signatures.indexOf(signature),blockhash:block.blockhash,previousBlockhash:block.previousBlockhash,error:meta.err,fee:integer(meta.fee),pre:meta.preBalances,post:meta.postBalances,
+   return {provider,stateAccounts,logs:Array.isArray(meta.logMessages)?meta.logMessages:[],evidence:{slot,parentSlot:block.parentSlot,blockHeight:block.blockHeight,transactionIndex:block.signatures.indexOf(signature),blockhash:block.blockhash,previousBlockhash:block.previousBlockhash,error:meta.err,fee:integer(meta.fee),pre:meta.preBalances,post:meta.postBalances,
      keys:addresses,instructions:tx.transaction.message.compiledInstructions.map(x=>({programIdIndex:x.programIdIndex})),innerInstructions:meta.innerInstructions}}
   }))
   if(rows.some(x=>x===null))return {...identity,status:'unresolved'}
@@ -75,7 +75,7 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
   if(tx.error!==null){
    // A failed transaction moves nothing but its fee.
    check(tx.keys.every((k,i)=>delta(i)===(k===review.payer?-BigInt(fee):0n)))
-   return {...identity,status:'finalized-failure',inclusion,feeLamports:fee,transactionSha256:sha(JSON.stringify(tx))}
+   return {...identity,status:'finalized-failure',inclusion,feeLamports:fee,errorName:failureName(rows[0].logs,p.programs),transactionSha256:sha(JSON.stringify(tx))}
   }
   // The fee and a buy's input are exact; a sale's output and the fee on it follow the pool it met. Every account's
   // lamports moved exactly as that executed trade says, and no other account's moved at all.
@@ -92,6 +92,17 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
    onchainMinimumOutputSatisfied:true,impactCeilingEnforcedOnchain:false,inclusion,feeLamports:fee,quote:execution.quote,lamportDeltas:execution.lamportDeltas,
    tokenBalances:execution.tokenBalances,...(plan.graduates?{graduated:true}:{}),transactionSha256:sha(JSON.stringify(tx)),authenticatedFeeEvent:true,authenticatedTokenBalanceEvents:true}
  }catch{return {...identity,status:'unresolved'}}
+}
+
+// The program error that stopped a failed trade, for the customer's message only: the runtime logs the program that
+// raised it ("Program <id> failed: custom program error: 0x..."), and the same name has different numbers in the swap
+// and the launch (nativeErrorName, review item I-4), while the gate has its own list. null when it is anything else.
+function failureName(logs,P){
+ const line=logs.map(x=>/^Program (\w{32,44}) failed: custom program error: 0x([0-9a-f]{1,8})$/.exec(x)).find(Boolean)
+ if(!line)return null
+ const [,program,hex]=line,code=parseInt(hex,16)
+ if(program===P.gate)return loadArtifacts().idls.gate.errors?.find(e=>e.code===code)?.name??null
+ return nativeErrorName(program,code)
 }
 
 // Self-CPI events of the trade, in instruction order, each canonical and under its program's event authority, with the

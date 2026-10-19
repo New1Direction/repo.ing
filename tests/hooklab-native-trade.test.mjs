@@ -85,9 +85,9 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   await trade(roles.buyer,'buy',20000000)
   await assert.rejects(resolverAt(RESTARTED).revalidate({owner:roles.creator,stage:'native-buy',...stored}),/changed/,'another trade moved the pool')
   await assert.rejects(resolverAt(BOOT).revalidate({owner:roles.creator,stage:'native-sell',...stored}),/changed/,'another stage')
-  await assert.rejects(prepare(roles.outsider,'sell',1),/needs a coin holding/)
+  await assert.rejects(prepare(roles.outsider,'sell',1),{code:'HOOKLAB_USER_REFUSAL',message:/holds none of this coin/})
   await assert.rejects(prepare(roles.creator,'sell',1000,{graduate:true}),/Only a buy graduates/)
-  await assert.rejects(prepare(roles.creator,'buy',finalFillLamports(await market()),{graduate:true}),/MAX_WALLET|Price impact|final fill/)
+  await assert.rejects(prepare(roles.creator,'buy',finalFillLamports(await market()),{graduate:true}),{code:'HOOKLAB_USER_REFUSAL',message:/max per wallet|moves the price/})
   // A simulation that moves any watched account differently (here the launch PDA by one lamport) is refused too.
   await assert.rejects(nativeTradeResolver({...w.bindings,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000,connections:w.connections().map(c=>({...c,connection:{...c.connection,
    simulateTransaction:async(tx,config)=>{const r=await c.connection.simulateTransaction(tx,config);r.value.accounts[1]={...r.value.accounts[1],lamports:r.value.accounts[1].lamports+1};return r}}}))})
@@ -114,7 +114,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  })
  await t.test('a buy over the max per wallet is refused by the review and, built by hand, by the chain',async()=>{
   const over=1500000000n
-  await assert.rejects(prepare(roles.creator,'buy',over),/MAX_WALLET|Price impact/)
+  await assert.rejects(prepare(roles.creator,'buy',over),{code:'HOOKLAB_USER_REFUSAL',message:/max per wallet/})
   const ix=nativeSwapV2Instruction(profile,{side:'buy',trader:roles.creator,mint:roles.mint,amountIn:over,minAmountOut:1})
   const protectedState=async()=>(await w.svm.call('get',{addresses:[a.pool,a.launch,a.baseVault,w.holdingOf(roles.mint,roles.creator)]})).accounts
   const before=await protectedState(),result=await w.send(await w.compile(roles.creator,[ComputeBudgetProgram.setComputeUnitLimit({units:1400000}),ix]))
@@ -131,8 +131,8 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   assert.ok(fill&&last===roles.buyer,'the second wallet can finish the curve')
  })
  await t.test('a graduation review is exact or refused: one lamport short, or the fill without graduate',async()=>{
-  await assert.rejects(prepare(last,'buy',fill-1n,{graduate:true}),/final fill changed/)
-  await assert.rejects(prepare(last,'buy',fill),/reaches graduation/)
+  await assert.rejects(prepare(last,'buy',fill-1n,{graduate:true}),{code:'HOOKLAB_USER_REFUSAL',message:/curve changed/})
+  await assert.rejects(prepare(last,'buy',fill),{code:'HOOKLAB_USER_REFUSAL',message:/curve changed/})
  })
  await t.test('the graduation transaction fits in one packet for a wallet without a holding, with the shared trade table or none',async()=>{
   const input=(await prepare(last,'buy',fill,{graduate:true})).settlementContext.compilationInput,shared=sharedTradeAddresses(profile)
@@ -152,6 +152,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   assert.ok(['InsufficientLiquidity','NotReady'].includes(nativeErrorName(program,Number(code))),sent.error)
   const failed=await resolverAt(RESTARTED).reconcile({...stored,signedTransactionBase64:sent.wireBase64,signature:sent.signature})
   assert.equal(failed.status,'finalized-failure');assert.equal(failed.feeLamports,'5000')
+  assert.equal(failed.errorName,nativeErrorName(program,Number(code)),'named by the program that raised it, for the customer’s message')
   assert.equal((await market()).graduated,false)
  })
  await t.test('the exact final fill and graduate go out as ONE transaction, and settle only with the launch graduated',async()=>{
@@ -164,7 +165,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  })
  await t.test('after graduation: no cap, constant product on the real reserves, the same inclusive fee',async()=>{
   const held=await coins(roles.creator);assert.ok(held>CAP-CAP/100n&&held<=CAP,'the creator sat at the old cap')
-  await assert.rejects(prepare(roles.creator,'buy',100000000,{graduate:true}),/already graduated/)
+  await assert.rejects(prepare(roles.creator,'buy',100000000,{graduate:true}),{code:'HOOKLAB_USER_REFUSAL',message:/curve changed/})
   const {settled}=await trade(roles.creator,'buy',100000000)
   assert.ok(await coins(roles.creator)>CAP,'over the old max per wallet');assert.equal(settled.quote.grossCreatorFee,'1000000')
   const sold=await trade(roles.buyer,'sell',(await coins(roles.buyer))/20n)

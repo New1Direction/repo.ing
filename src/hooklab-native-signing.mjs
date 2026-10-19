@@ -34,7 +34,7 @@ const complete=tx=>tx.signatures.every(s=>s.some(x=>x!==0))
 function publicSettlement(row){
  const value=row.first_finalized??row.first_conflict;if(!value)return null
  const take=(object,keys)=>Object.fromEntries(keys.filter(k=>typeof object?.[k]==='boolean'||(typeof object?.[k]==='string'&&object[k].length<=256)||(Number.isSafeInteger(object?.[k])&&object[k]>=0)).map(k=>[k,object[k]]))
- return Object.freeze({...take(value,['status','executionStatus','policyReviewRequired','reviewBoundsSatisfied','reviewSlotBoundExceeded','onchainMinimumOutputSatisfied','impactCeilingEnforcedOnchain','signature','messageSha256','profileSha256','feeLamports']),
+ return Object.freeze({...take(value,['status','executionStatus','policyReviewRequired','reviewBoundsSatisfied','reviewSlotBoundExceeded','onchainMinimumOutputSatisfied','impactCeilingEnforcedOnchain','signature','messageSha256','profileSha256','feeLamports','errorName','graduated']),
   evidenceConflict:!!row.first_conflict,inclusion:take(value.inclusion,['slot','blockHeight','blockhash','previousBlockhash']),
   quote:take(value.quote,['delivered','priceImpactBps','priceImpactReviewBoundExceeded','grossCreatorFee','protocolFee','netCreatorFee','platformCollector'])})
 }

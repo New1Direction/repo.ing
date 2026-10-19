@@ -24,6 +24,10 @@ import { createHolding, graduateHookCoin } from './hooklab-owner-driver/instruct
 
 const { raw, owned, decoded, programEvidence, governance, typed, readHolding, KIT, noRules } = swapAccountEvidence
 const check = (value, message) => { if (!value) throw Error(message) }
+// Refusals about the trader's own trade, in words the signing lifecycle may show them (everything else stays masked).
+const refuseUnless = (value, message) => { if (!value) throw Object.assign(Error(message), { code: 'HOOKLAB_USER_REFUSAL' }) }
+const CURVE_CHANGED = 'This coin’s curve changed since you picked the amount. Check it and try again.'
+const QUOTE_REFUSALS = { MAX_WALLET: 'That would put you over this coin’s max per wallet.', MIN_OUTPUT: 'Price moved too much for this amount.' }
 const sha = value => createHash('sha256').update(value).digest('hex')
 const hash = (...values) => createHash('sha256').update(Buffer.concat(values.map(v => Buffer.from(v)))).digest()
 const pk = value => new PublicKey(value), kb = value => pk(value).toBuffer(), str = value => value.toBase58()
@@ -206,26 +210,28 @@ export function compileNativeSwapReview(input) {
   const poolLamports = lamportsOf(accounts, a.pool), launchLamports = lamportsOf(accounts, a.launch), walletLamports = lamportsOf(accounts, r.trader)
   check(poolLamports >= rent(POOL_LEN) + n(pool.quote_reserve) + n(pool.protocol_fees_quote) && launchLamports >= rent(LAUNCH_LEN), 'Native pool books differ from its lamports')
   const traderBaseAccount = accounts.get(a.traderBase), createsHolding = traderBaseAccount === null
-  check(!createsHolding || buy, 'Selling needs a coin holding')
+  refuseUnless(!createsHolding || buy, 'This wallet holds none of this coin.')
   const traderBase = createsHolding ? 0n : readHolding(accounts, a.traderBase, T, r.mint, r.trader)
   const amount = BigInt(r.amountIn), maxU64 = (1n << 64n) - 1n, maxU128 = (1n << 128n) - 1n
-  check(buy || amount <= traderBase, 'Input exceeds source holding')
+  refuseUnless(buy || amount <= traderBase, 'You’re selling more than this wallet holds.')
   const p = { baseReserve: n(pool.base_reserve), quoteReserve: n(pool.quote_reserve), virtualBase: n(pool.virtual_base), virtualQuote: n(pool.virtual_quote), protocolFeesQuote: n(pool.protocol_fees_quote) }
   // After graduation the gate reads Launch status 1 and stops capping, so the model lifts the cap only then.
-  const q = modelInclusiveCreatorQuote({ side: r.side, amountIn: amount, minAmountOut: BigInt(r.minAmountOut),
-    maxInput: BigInt(r.maxInput), creatorFeeBps: r.creatorFeeBps, feeModel: 2, protocolShareBps: 2500,
-    lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
-    authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: traderBase, maxWalletLifted: graduated, pool: p,
-    policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: policy.creator_fee_bps, lpFeeBps: 0, initialSupply: n(policy.initial_supply), capBps: policy.cap_bps } })
-  check(q.priceImpactBps <= BigInt(r.maxPriceImpactBps), 'Price impact exceeds explicit bound')
+  let q
+  try {
+    q = modelInclusiveCreatorQuote({ side: r.side, amountIn: amount, minAmountOut: BigInt(r.minAmountOut),
+      maxInput: BigInt(r.maxInput), creatorFeeBps: r.creatorFeeBps, feeModel: 2, protocolShareBps: 2500,
+      lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
+      authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: traderBase, maxWalletLifted: graduated, pool: p,
+      policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: policy.creator_fee_bps, lpFeeBps: 0, initialSupply: n(policy.initial_supply), capBps: policy.cap_bps } })
+  } catch (error) { refuseUnless(!QUOTE_REFUSALS[error?.message], QUOTE_REFUSALS[error?.message]); throw error }
+  refuseUnless(q.priceImpactBps <= BigInt(r.maxPriceImpactBps), `That moves the price more than ${r.maxPriceImpactBps / 100}%. Try a smaller amount.`)
   const { grossQuote: gross, platformQuote: platform, creatorQuote: creator } = q.fees
   // Graduation: only the exact final fill finishes the curve, in the same transaction as graduate (design §4.6).
   const fill = graduated ? null : finalFillLamports({ graduated: false, graduationQuote: String(state.graduation_quote), creatorFeeBps: r.creatorFeeBps, pool: p })
-  if (graduated) check(!r.graduate, 'This coin has already graduated')
+  if (graduated) refuseUnless(!r.graduate, CURVE_CHANGED)
   else {
-    check(!isReady(p, n(state.graduation_quote)), 'Curve complete: waiting for graduate')
-    check(r.graduate ? buy && fill !== null && amount === fill && isReady(q.after, n(state.graduation_quote)) : !buy || !isReady(q.after, n(state.graduation_quote)),
-      r.graduate ? 'The final fill changed' : 'This buy reaches graduation: send it as the final fill')
+    refuseUnless(!isReady(p, n(state.graduation_quote)), 'This coin has finished its bonding curve and is graduating. Buying opens again once it moves to its open market.')
+    refuseUnless(r.graduate ? buy && fill !== null && amount === fill && isReady(q.after, n(state.graduation_quote)) : !buy || !isReady(q.after, n(state.graduation_quote)), CURVE_CHANGED)
   }
   check(n(pool.base_volume) + (buy ? q.grossOutput : amount) <= maxU128 && n(pool.quote_volume) + (buy ? amount - creator : q.grossOutput) <= maxU128
     && q.after.quoteReserve + q.after.protocolFeesQuote <= maxU64, 'Post-swap arithmetic overflow')
@@ -236,7 +242,7 @@ export function compileNativeSwapReview(input) {
     && l.reviewExpiresAtMs > l.nowMs && l.reviewExpiresAtMs - l.nowMs <= l.maxAgeMs, 'Review blockhash or offchain lifetime differs')
   const holdingRent = createsHolding ? rent(HOLDING_LEN) : 0n, fee = BigInt(bh.networkFeeLamports), debit = (buy ? amount : 0n) + holdingRent
   // The wallet stays rent-exempt: what it pays leaves at least an empty account's minimum, and a sale lands in a funded account.
-  check(walletLamports >= fee + debit + rent(0), 'Not enough SOL for this trade, its fees and the wallet’s own minimum balance')
+  refuseUnless(walletLamports >= fee + debit + rent(0), 'You need a little more SOL for this trade, its network fee and your wallet’s minimum balance.')
   check(fee + debit <= BigInt(l.maxTotalDebitLamports), 'Payer debit exceeds its reviewed bound')
   const swapIx = nativeSwapV2Instruction(profile, { side: r.side, trader: r.trader, mint: r.mint, amountIn: amount, minAmountOut: r.minAmountOut })
   const budget = [ComputeBudgetProgram.setComputeUnitLimit({ units: l.computeUnitLimit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) })]
