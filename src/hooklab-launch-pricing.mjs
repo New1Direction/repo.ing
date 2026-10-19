@@ -43,18 +43,25 @@ export function solUsdMicros(usd) {
   return micros
 }
 
-// readings: [{ source, usdMicros: bigint }] from distinct named sources. Median (midpoint of the middle two when even).
+// Median of bigints (midpoint of the middle two when even, rounded half up).
+function median(values) {
+  const sorted = [...values].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), mid = sorted.length >> 1
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid] + 1n) / 2n
+}
+// readings: [{ source, usdMicros: bigint }] from distinct named sources. The median of every answer picks out the
+// sources within 2% of it; at least two must remain, and their median is the price. Dropped outliers stay in the
+// record, marked ignored, so the owner sees them and anyone can re-derive the same choice.
 function quorum(readings) {
   const names = readings.map(r => r.source)
   need(readings.length >= 2, `Only ${readings.length} SOL price source${readings.length === 1 ? '' : 's'} answered${names.length ? ` (${names.join(', ')})` : ''}; at least two must agree before a launch is priced. Try again in a minute.`)
   need(new Set(names).size === names.length && names.every(name => SOL_USD_SOURCE_NAMES.includes(name)), 'SOL prices must come from independent known sources')
-  const values = readings.map(r => r.usdMicros).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  const min = values[0], max = values.at(-1), mid = values.length >> 1
-  need(values.every(v => v > 0n), 'SOL price must be a positive dollar amount')
-  need(max * 10000n <= min * (10000n + MAX_SOURCE_SPREAD_BPS),
-    `SOL price sources disagree by more than 2% (${readings.map(r => `${r.source} ${formatSolPrice(r.usdMicros)}`).join(', ')}). Try again in a minute.`)
-  const median = values.length % 2 ? values[mid] : (values[mid - 1] + values[mid] + 1n) / 2n
-  return { solUsdMicros: median.toString(), sources: readings.map(r => ({ source: r.source, usdMicros: r.usdMicros.toString() })) }
+  need(readings.every(r => r.usdMicros > 0n), 'SOL price must be a positive dollar amount')
+  const center = median(readings.map(r => r.usdMicros))
+  const kept = readings.map(r => { const gap = r.usdMicros > center ? r.usdMicros - center : center - r.usdMicros; return gap * 10000n <= center * MAX_SOURCE_SPREAD_BPS })
+  need(kept.filter(Boolean).length >= 2,
+    `SOL price sources disagree: fewer than two are within 2% of their median (${readings.map(r => `${r.source} ${formatSolPrice(r.usdMicros)}`).join(', ')}). Try again in a minute.`)
+  return { solUsdMicros: median(readings.filter((_, i) => kept[i]).map(r => r.usdMicros)).toString(),
+    sources: readings.map((r, i) => ({ source: r.source, usdMicros: r.usdMicros.toString(), ...(!kept[i] && { ignored: true }) })) }
 }
 // readings: [{ source, usd }] as the price APIs answered (failed sources left out).
 export const solUsdQuorum = readings => quorum(readings.map(r => ({ source: r.source, usdMicros: solUsdMicros(r.usd) })))
@@ -71,12 +78,15 @@ export function launchVirtualQuote(priceMicros) {
   return virtualQuote.toString()
 }
 
-// A stored or returned price, re-derived from its own sources: the median, then the virtual quote, must reproduce.
+// A stored or returned price, re-derived from its own sources: the ignored marks, the median, then the virtual quote
+// must all reproduce.
 export function checkLaunchPricing(pricing) {
   need(pricing && typeof pricing === 'object' && Array.isArray(pricing.sources), 'Launch price is missing')
-  need(pricing.sources.every(s => s && typeof s.source === 'string' && /^[1-9]\d{0,15}$/.test(String(s.usdMicros))), 'Launch price sources are malformed')
+  need(pricing.sources.every(s => s && typeof s.source === 'string' && /^[1-9]\d{0,15}$/.test(String(s.usdMicros)) && [undefined, true].includes(s.ignored)), 'Launch price sources are malformed')
   const derived = quorum(pricing.sources.map(s => ({ source: s.source, usdMicros: BigInt(s.usdMicros) })))
-  need(/^\d{1,16}$/.test(String(pricing.solUsdMicros)) && derived.solUsdMicros === String(pricing.solUsdMicros), 'Launch SOL price does not match its sources')
+  const marks = sources => sources.map(s => `${s.source}:${s.usdMicros}:${s.ignored === true}`).join()
+  need(/^\d{1,16}$/.test(String(pricing.solUsdMicros)) && derived.solUsdMicros === String(pricing.solUsdMicros) && marks(derived.sources) === marks(pricing.sources),
+    'Launch SOL price does not match its sources')
   need(launchVirtualQuote(derived.solUsdMicros) === String(pricing.virtualQuote), 'Launch opening price does not follow from its SOL price')
   return { solUsdMicros: derived.solUsdMicros, sources: derived.sources, virtualQuote: String(pricing.virtualQuote) }
 }
@@ -92,5 +102,5 @@ export function launchValues(virtualQuote, priceMicros = null) {
 export function ownerPricingLine(pricing) {
   const v = launchValues(pricing.virtualQuote, pricing.solUsdMicros)
   return `Opens at ≈${formatUsd(v.openingUsdMicros)} (${formatSol(v.virtualQuote)} virtual), graduates at ≈${formatUsd(v.graduationUsdMicros)} / ${formatSol(v.raiseLamports)} raised`
-    + ` · SOL ${formatSolPrice(pricing.solUsdMicros)} (${pricing.sources.map(s => `${s.source} ${formatSolPrice(s.usdMicros)}`).join(', ')})`
+    + ` · SOL ${formatSolPrice(pricing.solUsdMicros)} (${pricing.sources.map(s => `${s.source} ${formatSolPrice(s.usdMicros)}${s.ignored ? ' ignored' : ''}`).join(', ')})`
 }

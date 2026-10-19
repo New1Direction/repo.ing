@@ -28,7 +28,10 @@ test('the invite price is the agreeing median with its virtual quote, or a clear
     sources: [{ source: 'coingecko', usdMicros: '105620000' }, { source: 'jupiter', usdMicros: '105630000' }, { source: 'coinbase', usdMicros: '105640000' }] })
   assert.equal((await launchPriceAtInvite(sources({ jupiter: 150, coinbase: 150 }))).virtualQuote, '37500000000', 'CoinGecko rate-limited: two sources still agree')
   await assert.rejects(launchPriceAtInvite(sources({ coingecko: 150 })), err => err.code === 'LAUNCH_PRICE_REFUSED' && /Only 1 SOL price source answered/.test(err.message))
-  await assert.rejects(launchPriceAtInvite(sources({ coingecko: 150, jupiter: 160, coinbase: 150 })), /disagree by more than 2%/)
+  const outlier = await launchPriceAtInvite(sources({ coingecko: 150, jupiter: 160, coinbase: 150 }))
+  assert.equal(outlier.virtualQuote, '37500000000', 'one stale source is ignored when the other two agree')
+  assert.deepEqual(outlier.sources[1], { source: 'jupiter', usdMicros: '160000000', ignored: true })
+  await assert.rejects(launchPriceAtInvite(sources({ coingecko: 150, coinbase: 160 })), /fewer than two are within 2% of their median/)
   await assert.rejects(launchPriceAtInvite(sources({ coingecko: 40, jupiter: 40 })), /outside the launch config's 5\.625–112\.5 SOL bounds/)
 })
 
