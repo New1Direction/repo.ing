@@ -10,7 +10,6 @@ import path from 'node:path'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import { LEGACY_STACK, parseStack } from '../../src/hooklab-stack.mjs'
 import { OPEN_ELF, OPEN_SOURCE } from '../../src/hooklab-native-pins.mjs'
-import { stackFromIndependentBuild } from '../../src/hooklab-stack-build.mjs'
 
 const sha = bytes => createHash('sha256').update(bytes).digest()
 const hex = bytes => sha(bytes).toString('hex')
@@ -121,13 +120,5 @@ export function ownStack({ seed = 'a', freshKit = false, upgradeAuthority = PLAC
   return { stack, elfs, idls }
 }
 
-// hook-lab feat/independent-stack's own build (no relocation): its ELFs, IDLs and ids file, read from
-// HOOKLAB_INDEPENDENT_DIR (default hooks-local-state/independent-b2ce42e). Every pin is computed from the files, so a
-// rebuild needs no change here. upgradeAuthority: the key the test bank's ProgramData names (the ids file names the
-// owner's upgrade authority, which tests never hold).
-export const INDEPENDENT_DIR = process.env.HOOKLAB_INDEPENDENT_DIR ?? path.join(state, 'independent-b2ce42e')
-export const INDEPENDENT_SKIP = !existsSync(path.join(INDEPENDENT_DIR, 'ids', 'independent.json')) && 'the independent-stack build (HOOKLAB_INDEPENDENT_DIR) is not available'
-export function independentStack({ dir = INDEPENDENT_DIR, upgradeAuthority } = {}) {
-  const { stack, elfs, idls } = stackFromIndependentBuild(dir, { upgradeAuthority })
-  return { stack, elfs, idls }
-}
+// hook-lab feat/independent-stack's own build (no relocation), as tests/fixtures/hooklab-independent-stack.mjs finds it.
+export { INDEPENDENT_DIR, INDEPENDENT_SKIP, independentStack } from './hooklab-independent-stack.mjs'
