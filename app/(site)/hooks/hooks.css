@@ -2,3 +2,88 @@
 @media(max-width:1000px){.hooks-template-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.hooks-page .coin-workspace,.hooks-token-grid,.hooks-creator-grid{grid-template-columns:minmax(0,1fr) 300px;gap:22px}}
 @media(max-width:760px){.hooks-page{width:calc(100% - 32px);padding-top:28px}.hooks-intro{gap:16px;align-items:flex-start}.hooks-intro-action img{width:56px;height:56px}.hooks-intro:has(.button){flex-wrap:wrap}.hooks-intro:has(.button) .hooks-intro-action{flex-direction:row;width:100%;justify-content:space-between}.hooks-intro:has(.button) .hooks-intro-action .button{flex:1}.hooks-page .coin-workspace,.hooks-token-grid,.hooks-creator-grid{grid-template-columns:1fr}.hooks-explain{display:block}.hooks-card{padding:22px}.hooks-empty{padding:36px 20px}.hooks-nav{gap:24px}.hooks-page .coin-save{margin-top:24px}.hooks-page .coin-save>.button{width:100%}.hooks-page .coin-review{padding:20px}.hooks-token-grid aside{order:-1}.hooks-token-grid aside .hooks-notice{margin:12px 0}.hooks-trade-actions{position:sticky;bottom:12px}.hooks-steps{gap:6px}.hooks-steps button{font-size:12px;gap:5px}}
 @media(max-width:480px){.hooks-template-grid{grid-template-columns:1fr}.hooks-intro>div:first-child{min-width:0}.hooks-intro h1{font-size:32px}.hooks-intro-action img{width:48px;height:48px}.hooks-page .coin-actions{flex-direction:column}.hooks-page .coin-fields{margin-bottom:22px}.hooks-page .coin-save p{line-height:1.6}.hooks-page .coin-entry-points{padding:18px}.hooks-step-actions .button{padding:10px 14px}.hooks-page .coin-rule{padding:16px}}
+/* Hooks launch: the repository launch form's layout (globals .launch-*) with hooks-specific pieces. */
+.hooks-nav{overflow-x:auto;scrollbar-width:none}.hooks-nav::-webkit-scrollbar{display:none}.hooks-nav a{white-space:nowrap}
+.hooks-launch{display:flex;flex-direction:column;gap:22px;margin-bottom:28px}
+.hooks-page .launch-panel{margin-top:0;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.hooks-page .launch-fields h2,.hooks-page .hooks-status h2,.hooks-page .hooks-sign-panel>h2{font-size:30px;letter-spacing:-.03em;margin:0 0 4px}
+.hooks-page .launch-subtitle{font-size:16px;margin:0 0 22px;color:var(--muted)}
+.hooks-launch-steps,.hooks-sign-steps{display:flex;gap:8px;list-style:none;margin:0;padding:0;counter-reset:none}
+.hooks-launch-steps li,.hooks-sign-steps li{flex:1;display:flex;align-items:center;gap:10px;min-width:0;padding:12px 14px;border:1px solid var(--border);border-radius:10px;color:var(--dim);font-size:14px;font-weight:600;background:var(--bg)}
+.hooks-launch-steps li>span,.hooks-sign-steps li>span{flex:none;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;border:1px solid var(--border-strong);font-size:12px}
+.hooks-launch-steps li[data-state=current],.hooks-sign-steps li[data-state=current]{color:var(--text);border-color:var(--green);background:color-mix(in srgb,var(--green) 7%,var(--surface))}
+.hooks-launch-steps li[data-state=current]>span,.hooks-sign-steps li[data-state=current]>span{border-color:var(--green);color:var(--green)}
+.hooks-launch-steps li[data-state=done],.hooks-sign-steps li[data-state=done]{color:var(--muted)}
+.hooks-launch-steps li[data-state=done]>span,.hooks-sign-steps li[data-state=done]>span{background:var(--green);border-color:var(--green);color:#101713}
+.hooks-coin-preview>div:last-child{gap:4px}
+.hooks-coin-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.hooks-coin-links a{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border:1px solid var(--border);border-radius:999px;color:var(--text);font-size:12px;text-decoration:none}
+.hooks-coin-links a:hover{border-color:var(--green);color:var(--green)}
+.launch-buy-presets.hooks-presets-3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.hooks-page .launch-buy-presets button{min-height:44px;font-weight:600}
+.hooks-page .launch-buy-hint{margin:0;color:var(--muted);font-size:13px;line-height:1.6}
+.hooks-textarea{height:auto;min-height:88px;padding:12px 16px;resize:vertical;font:inherit;line-height:1.5}
+.hooks-over{color:var(--red)}
+.hooks-links{border:0;padding:0;margin:22px 0 0;min-width:0;display:grid;gap:8px}
+.hooks-links legend{padding:0;margin:0 0 7px;float:left;width:100%}
+.hooks-link-input{display:flex;align-items:center;height:48px;border:1px solid #4a5257;border-radius:8px;overflow:hidden}
+.hooks-link-input:focus-within{border-color:#8bdbad}
+.hooks-link-input>span{flex:none;display:flex;align-items:center;gap:7px;width:118px;height:100%;padding:0 14px;border-right:1px solid var(--border);color:var(--muted);font-size:14px;background:var(--surface2)}
+.hooks-link-input input{flex:1;min-width:0;height:100%;padding:0 14px;border:0;outline:0;background:none;color:var(--text);font:inherit}
+.hooks-how ol{margin:14px 0 0;padding-left:20px;display:grid;gap:12px}
+.hooks-how li{color:var(--muted);font-size:14px;line-height:1.55;padding-left:4px}
+.hooks-how li strong{color:var(--text);display:block;margin-bottom:2px}
+.hooks-signin h3{margin:0 0 6px}.hooks-signin p{margin:0 0 14px;font-size:14px}
+.hooks-signin-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.hooks-signin-row>svg{color:var(--green)}.hooks-signin-row .button{margin-left:auto}
+.hooks-submit-error{text-align:center;margin:18px 0 0}
+.hooks-text-button{background:none;border:0;padding:0;color:var(--text);text-decoration:underline;text-underline-offset:3px;font:inherit;cursor:pointer}
+.hooks-ended{margin:0 0 20px;padding:12px 16px;border:1px solid var(--border-strong);border-radius:8px;background:var(--surface2);color:var(--text)!important;font-size:14px}
+.hooks-online{display:flex;align-items:center;gap:8px;font-size:13px;margin:12px 0 0}
+.hooks-online>span{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+.hooks-online.is-online>span{background:var(--green);box-shadow:0 0 0 4px color-mix(in srgb,var(--green) 18%,transparent)}
+.hooks-online-center{justify-content:center}
+.hooks-status{display:flex;flex-direction:column;gap:6px}
+.hooks-status .launch-token-summary{margin-bottom:14px}
+.hooks-status p{margin:0}
+.hooks-status .launch-review-actions:empty{display:none}
+.hooks-sign-panel{display:flex;flex-direction:column;gap:18px}
+.hooks-guided{display:flex;flex-direction:column;gap:16px}
+.hooks-operation h3{margin:0 0 6px;font-size:20px}.hooks-operation p{margin:0 0 12px}
+.hooks-step-eyebrow{color:var(--green)!important;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:0 0 4px!important}
+.hooks-operation-status{color:var(--text)!important;font-weight:600}
+.hooks-cost{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:4px 16px;padding:16px;border:1px solid var(--border-strong);border-radius:10px;background:var(--bg);margin:6px 0 12px}
+.hooks-cost span{font-size:14px}.hooks-cost strong{font-size:22px;font-variant-numeric:tabular-nums;color:var(--green)}.hooks-cost small{grid-column:1/-1;color:var(--muted);font-size:12px}
+.hooks-review-terms{font-size:13px}
+.hooks-technical{margin:0 0 14px;font-size:13px}.hooks-technical summary{cursor:pointer;color:var(--muted)}.hooks-technical[open] summary{margin-bottom:10px}
+.hooks-accept{display:flex;align-items:flex-start;gap:10px;margin:4px 0 14px;font-size:14px;cursor:pointer}.hooks-accept input{margin-top:3px;accent-color:var(--green)}
+.hooks-operation .button+.button{margin-left:10px}
+.hooks-receipt a{overflow-wrap:anywhere}
+.hooks-recovery{margin:0}.hooks-recovery p{font-size:13px}
+.hooks-recovery-field{display:block;font-size:13px;color:var(--muted);margin:0 0 10px}.hooks-recovery-field .field-input{margin-top:6px;font-family:ui-monospace,monospace;font-size:13px}
+.hooks-recovery .button{margin:6px 10px 0 0}
+.hooks-benefits{margin:0 0 8px}
+.hooks-template.is-launchable{border-color:color-mix(in srgb,var(--green) 55%,var(--border))}
+@media(max-width:760px){.hooks-launch-steps,.hooks-sign-steps{overflow-x:auto;scrollbar-width:none}.hooks-launch-steps li,.hooks-sign-steps li{flex:0 0 auto;padding:10px 12px;font-size:13px}.hooks-page .launch-fields h2,.hooks-page .hooks-status h2,.hooks-page .hooks-sign-panel>h2{font-size:26px}.hooks-link-input>span{width:auto}.hooks-operation .button{width:100%}.hooks-operation .button+.button{margin:10px 0 0}}
+.hooks-status .launch-token-summary{max-width:620px}
+.hooks-returning{margin:0 0 18px;font-size:14px}
+.hooks-uncertain{padding:14px 16px;border:1px solid color-mix(in srgb,var(--red) 45%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--red) 7%,var(--surface))}.hooks-uncertain p{margin:0 0 10px;color:var(--text)!important;font-size:14px}
+/* Blocks: rules snap onto a coin like bricks; live ones carry green studs, coming ones sit dashed and quiet. */
+.hooks-blocks{margin-top:26px}
+.hooks-blocks-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px}.hooks-blocks-head .field-label{margin:0}.hooks-blocks-head>span{color:var(--muted);font-size:13px}
+.hooks-block{--stud:var(--border-strong);position:relative;margin-top:12px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--bg)}
+.hooks-block::before{content:'';position:absolute;top:-7px;left:18px;width:78px;height:7px;background:radial-gradient(ellipse 8px 7px at 50% 100%,var(--stud) 96%,transparent 100%) 0 0/26px 7px repeat-x}
+.hooks-block.is-on{--stud:var(--green);border-color:color-mix(in srgb,var(--green) 55%,var(--border));background:color-mix(in srgb,var(--green) 5%,var(--bg))}
+.hooks-block header{display:flex;align-items:center;gap:12px;margin-bottom:12px}.hooks-block header img{flex:none;object-fit:contain}
+.hooks-block header>div{min-width:0;display:flex;flex-direction:column;gap:2px}.hooks-block header strong{font-size:15px}.hooks-block header>div>span{color:var(--muted);font-size:13px;line-height:1.45}
+.hooks-block-state{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700;color:#101713;background:var(--green)}
+.hooks-block-state.is-soon{color:var(--muted);background:none;border:1px solid var(--border-strong)}
+.hooks-block .launch-buy-presets{margin-bottom:8px}
+.hooks-blocks-soon-title{margin:22px 0 2px!important;font-size:13px;font-weight:600;color:var(--muted)}
+.hooks-blocks-soon{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}
+.hooks-block.is-soon{border-style:dashed;padding:12px 14px;background:none}.hooks-block.is-soon header{margin:0;gap:10px}.hooks-block.is-soon header img{width:32px;height:32px;opacity:.6}
+.hooks-block.is-soon header strong{font-size:14px;color:var(--muted)}.hooks-block.is-soon header>div>span{font-size:12px}
+@media(max-width:560px){.hooks-blocks-soon{grid-template-columns:1fr}.hooks-blocks-head{flex-direction:column;gap:2px}}
+.hooks-block-grid{list-style:none;margin:8px 0 12px;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}
+.hooks-block-grid .hooks-block{padding:20px}.hooks-block-grid .hooks-block header{margin:0}.hooks-block-grid .hooks-block header strong{font-size:17px}.hooks-block-grid .hooks-block header>div>span{font-size:14px}
+.hooks-block-grid .hooks-block.is-soon header img{width:48px;height:48px}
+@media(max-width:760px){.hooks-block-grid{grid-template-columns:1fr}}

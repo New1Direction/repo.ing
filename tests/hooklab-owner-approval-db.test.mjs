@@ -17,7 +17,7 @@ async function withDatabase(work){
  const root=new pg.Pool(config),name=`owner_approval_${randomUUID().replaceAll('-','')}`;let pool
  try{
   await root.query(`create database ${name}`);pool=new pg.Pool({...config,database:name})
-  await pool.query(await readFile(new URL('../src/hooklab-owner-approval-schema.sql',import.meta.url),'utf8'))
+  for(const file of ['hooklab-owner-approval-schema.sql','hooklab-coin-profile-schema.sql'])await pool.query(await readFile(new URL(`../src/${file}`,import.meta.url),'utf8'))
   await work(pool)
  }finally{await pool?.end();await root.query(`drop database if exists ${name} with (force)`);await root.end()}
 }
@@ -170,4 +170,36 @@ test('per-launch lookup table: requested once, created only by the agent claim, 
  await assert.rejects(silent({preparationId:prep2,allowCreate:true}),/still preparing/)
  await store.declineTable(prep2)
  await assert.rejects(silent({preparationId:prep2,allowCreate:true}),/declined/)
+}))
+
+test('coin profile: written with its request, shown to the creator and agent, public only while the coin can launch',async()=>withDatabase(async pool=>{
+ const store=ownerApprovalStore(pool,{adminAddress:admin}),image='data:image/png;base64,iVBORw0KGgo='
+ const profile={image,description:'The cat that ships.',x:'@repocat',website:'repo.ing',telegram:''}
+ const id=randomUUID(),created=await store.createRequest(creatorA,{id,...intent},profile)
+ assert.deepEqual(created.profile,{description:'The cat that ships.',x:'repocat',website:'https://repo.ing/',telegram:null})
+ assert.deepEqual((await store.requestFor(creatorA)).profile,created.profile)
+ assert.deepEqual((await store.heartbeat({accepting:true,agentAddress:admin})).requests[0].profile,created.profile,'the agent sees what it approves')
+ const coin=await store.coinFor(id)
+ assert.deepEqual(coin.request,{id,name:'Canary Coin',symbol:'CNRY',status:'queued'});assert.equal(coin.image,image);assert.equal(coin.profile.x,'repocat')
+ assert.equal(await store.coinFor('not-a-uuid'),null);assert.equal(await store.coinFor(randomUUID()),null)
+
+ await assert.rejects(store.createRequest(creatorA,{id:randomUUID(),...intent},profile),/already have an open/)
+ assert.equal((await pool.query('select count(*)::int n from hook_lab_coin_profiles')).rows[0].n,1,'a refused request leaves no profile behind')
+ await assert.rejects(store.createRequest(creatorB,{id:randomUUID(),...intent},{...profile,x:'not a handle'}),/X account/)
+ await assert.rejects(store.createRequest(creatorB,{id:randomUUID(),...intent},{...profile,image:'data:image/jpeg;base64,AAAA'}),/coin image/)
+
+ await store.decline(id)
+ assert.equal(await store.coinFor(id),null,'a declined coin is no longer served')
+ await assert.rejects(pool.query("update hook_lab_coin_profiles set description='changed' where request_id=$1",[id]),/immutable/,'a reviewed profile cannot change')
+ await assert.rejects(pool.query('delete from hook_lab_coin_profiles where request_id=$1',[id]),/immutable/)
+ await assert.rejects(store.createRequest(creatorB,{id:randomUUID(),...intent,name:'Fake\n 2. queued'}),/approved creator fee|name/,'control characters in a name are refused')
+ const legacy=await store.createRequest(creatorB,{id:randomUUID(),...intent})
+ assert.equal(legacy.profile,null);assert.equal((await store.requestFor(creatorB)).profile,null);assert.equal(await store.coinFor(legacy.id),null)
+}))
+
+test('one wallet can attach at most five coin images a day',async()=>withDatabase(async pool=>{
+ const store=ownerApprovalStore(pool,{adminAddress:admin}),profile={image:'data:image/png;base64,iVBORw0KGgo=',description:'',x:'',website:'',telegram:''}
+ for(let i=0;i<5;i++){const r=await store.createRequest(creatorA,{id:randomUUID(),...intent},profile);await store.cancelRequest(creatorA,r.id)}
+ await assert.rejects(store.createRequest(creatorA,{id:randomUUID(),...intent},profile),/several launch requests today/)
+ assert.equal((await store.createRequest(creatorB,{id:randomUUID(),...intent},profile)).status,'queued','other wallets are unaffected')
 }))

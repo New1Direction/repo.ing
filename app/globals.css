@@ -886,3 +886,6 @@ body{overflow-x:clip}
 /* Hooks stays visible on phones, alongside the existing Launch and official-token links. */
 @media(max-width:700px){.app-header nav>a.nav-hooks{display:inline-flex;padding:0 10px}.app-header nav{column-gap:8px}.mobile-nav{margin-left:auto}}
 @media(max-width:360px){.app-header nav a.nav-launch{padding:0 8px}.app-header nav a.nav-token{padding:0 7px;font-size:12px}.app-header nav a.nav-token img{display:none}.app-header nav>a.nav-hooks{padding:0 4px}.mobile-nav-toggle{padding:0 7px;gap:4px}}
+.nav-new-badge{display:inline-block;width:auto;height:20px;margin-left:6px;vertical-align:-5px;image-rendering:pixelated}
+/* Phones: no room for the badge beside Hooks, so it becomes a small teal dot. */
+@media(max-width:429px){.nav-new-badge{display:none}.app-header nav>a.nav-hooks{position:relative}.app-header nav>a.nav-hooks::before{content:'';position:absolute;top:calc(50% - 11px);right:0;width:6px;height:6px;border-radius:50%;background:#26f5c4}}

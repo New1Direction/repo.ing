@@ -22,6 +22,7 @@ import { Connection,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress } from '../src/hooklab-owner-agent.mjs'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
+import { UNSAFE_TEXT,coinImageUrl,coinLinks } from '../src/hooklab-coin-profile.mjs'
 import { verifyTableRequest } from '../src/hooklab-owner-launch-tables.mjs'
 import { ownerTableExecutor } from '../src/hooklab-owner-agent-tables.mjs'
 import { productionArtifacts,productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
@@ -74,9 +75,15 @@ async function grantStatus(creator){
  const usable=g.enabled&&BigInt(g.consumed.toString())<BigInt(g.max_launches.toString())&&BigInt(g.expires_at_slot.toString())>BigInt(now)+1500n
  return {address:address.toBase58(),usable,reason:usable?'ok':`enabled=${g.enabled} consumed=${g.consumed}/${g.max_launches} expiresAtSlot=${g.expires_at_slot} now=${now}`}
 }
+// Creator-supplied text is shown with control and bidi characters replaced, so it cannot fake list rows.
+const printable=value=>String(value).replace(new RegExp(UNSAFE_TEXT.source,'g'),'\ufffd')
 function show(){
  console.log(`\n[${new Date().toLocaleTimeString()}] approvals ${accepting?'OPEN':'PAUSED'} as ${ADMIN}`)
- queue.requests.forEach((r,i)=>console.log(` ${i+1}. ${r.status.padEnd(9)} ${r.symbol.padEnd(10)} ${r.name.padEnd(32)} fee ${percent(r.creatorFeeBps)} cap ${percent(r.capBps)} creator ${r.creator}${r.inviteExpiresAt?` invite until ${new Date(r.inviteExpiresAt).toLocaleTimeString()}`:''}`))
+ queue.requests.forEach((r,i)=>{
+  console.log(` ${i+1}. ${r.status.padEnd(9)} ${printable(r.symbol).padEnd(10)} ${printable(r.name).padEnd(32)} fee ${percent(r.creatorFeeBps)} cap ${percent(r.capBps)} creator ${r.creator}${r.inviteExpiresAt?` invite until ${new Date(r.inviteExpiresAt).toLocaleTimeString()}`:''}`)
+  // Review the image and links before inviting: they are what repo.ing will show for this coin.
+  if(r.profile)console.log(`    image ${coinImageUrl(opt.origin,r.id)}${Object.entries(coinLinks(r.profile)).map(([k,v])=>` · ${k} ${v}`).join('')}${r.profile.description?`\n    ${JSON.stringify(printable(r.profile.description))}`:''}`)
+ })
  if(!queue.requests.length)console.log(' (no launch requests)')
 }
 // Only requests this agent invited (ledger on disk) can make the admin pay for a table: at most one

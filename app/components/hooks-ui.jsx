@@ -8,7 +8,7 @@ export function HooksIntro({ title, children, art = 'launch-market', action }) {
 }
 
 export function HooksNav({ active }) {
-  return <nav className="hooks-nav" aria-label="Hooks navigation">{[['markets', '/hooks', 'Markets'], ['templates', '/hooks/templates', 'Templates'], ['mine', '/hooks/mine', 'My coins']].map(([key, href, label]) =>
+  return <nav className="hooks-nav" aria-label="Hooks navigation">{[['markets', '/hooks', 'Hooks'], ['launch', '/hooks/launch-review', 'Launch a coin'], ['trade', '/hooks/trade', 'Buy & sell'], ['blocks', '/hooks/blocks', 'Blocks'], ['mine', '/hooks/mine', 'My coins']].map(([key, href, label]) =>
     <Link key={key} href={href} aria-current={active === key ? 'page' : undefined}>{label}</Link>)}</nav>
 }
 
@@ -17,5 +17,5 @@ export function HooksUnavailable({ title = 'Execution unavailable', children }) 
 }
 
 export function HooksRisk() {
-  return <div className="hooks-notice"><Info size={20} aria-hidden="true"/><p>Hook Lab holdings are native assets, not SPL or Token-2022. Native bridged SOL is separate from wallet SOL. Virtual reserves are pricing inputs, not deposited SOL. Custody and program upgrades remain risks.</p></div>
+  return <div className="hooks-notice"><Info size={20} aria-hidden="true"/><p>Hooks coins run on repo.ing’s Hook Lab programs instead of the standard Solana token program, so most wallets and explorers won’t show them yet. Trades use SOL moved into Hook Lab, kept separate from the SOL in your wallet. repo.ing can still upgrade the launch and trading programs, and like any new coin, a hooks coin can lose all its value.</p></div>
 }

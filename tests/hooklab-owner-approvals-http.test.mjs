@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto'
 import { createOwnerApprovalsHandler,ownerTokenMatches } from '../app/lib/hooklab-owner-approvals.mjs'
 import { createLaunchRequestsHandler } from '../app/lib/hooklab-launch-requests.mjs'
 import { createNativeLaunchHandler } from '../app/lib/hooklab-native-launch.mjs'
+import { createCoinPublicHandler } from '../app/lib/hooklab-coin-public.mjs'
+import sharp from 'sharp'
 const ownerToken='o'.repeat(48),tokenSha=createHash('sha256').update(ownerToken).digest('hex')
 const admin='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',id='11111111-1111-4111-8111-111111111111'
 const sessionToken=Buffer.alloc(32,9).toString('base64url'),creator='synthetic-creator'
@@ -48,18 +50,31 @@ const creatorOptions=store=>({env:creatorEnv,configuration:()=>({origin:'https:/
 const creatorRequest=(body,headers={})=>new Request('https://repo.ing/api/hook-lab/launch-requests',{method:'POST',
  headers:{origin:'https://repo.ing','content-type':'application/json',cookie:`__Host-hook-wallet-session=${sessionToken}`,...headers},body:JSON.stringify(body)})
 
+// A prepared 512 x 512 PNG, as the image upload returns it (src/token-image.mjs normalizeTokenImage).
+const coinImage=`data:image/png;base64,${(await sharp({create:{width:512,height:512,channels:3,background:'#81e6ad'}}).png().toBuffer()).toString('base64')}`
+const coin={image:coinImage,description:'The cat that ships.',x:'@repocat',website:'repo.ing',telegram:''}
+
 test('creator requests use the session wallet, show availability, and prepare nothing',async()=>{
  assert.equal((await (await createLaunchRequestsHandler({env:{}})(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()).status,'blocked')
  const seen=[];const store={availability:async()=>({online:true,lastSeenAt:null}),
-  createRequest:async(wallet,value)=>{seen.push(['create',wallet,value]);return {id:value.id,status:'queued'}},
+  createRequest:async(wallet,value,profile)=>{seen.push(['create',wallet,value,profile]);return {id:value.id,status:'queued'}},
   requestFor:async wallet=>{seen.push(['get',wallet]);return null},cancelRequest:async(wallet,requestId)=>{seen.push(['cancel',wallet,requestId]);return {status:'cancelled'}}}
  const handler=createLaunchRequestsHandler(creatorOptions(store))
  assert.equal((await (await handler(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()).online,true)
  for(const [req,status] of [[creatorRequest({action:'get'},{origin:'https://wrong.invalid'}),403],[creatorRequest({action:'get'},{cookie:''}),401],
-  [creatorRequest({action:'create',requestId:id,name:'A',symbol:'B',uri:'',creatorFeeBps:100,capBps:200,creator:'substitute'}),400],[creatorRequest({action:'create',requestId:id,name:'x'.repeat(33),symbol:'B',uri:'',creatorFeeBps:100,capBps:200}),400]])
+  [creatorRequest({action:'create',requestId:id,name:'A',symbol:'B',creatorFeeBps:100,capBps:200,...coin,creator:'substitute'}),400],[creatorRequest({action:'create',requestId:id,name:'x'.repeat(33),symbol:'B',creatorFeeBps:100,capBps:200,...coin}),400],
+  [creatorRequest({action:'create',requestId:id,name:'A',symbol:'B',creatorFeeBps:100,capBps:200,...coin,uri:'https://elsewhere.invalid/m.json'}),400]])
   assert.equal((await handler(req)).status,status)
  assert.equal(seen.length,0)
- assert.equal((await (await handler(creatorRequest({action:'create',requestId:id,name:'Canary',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:200}))).json()).request.status,'queued')
+ for(const [body,message] of [[{...coin,image:''},/coin image/],[{...coin,image:'data:image/png;base64,AAAA'},/coin image/],[{...coin,x:'not a handle'},/X account/],[{...coin,website:'http://repo.ing'},/https website/]]){
+  const refused=await handler(creatorRequest({action:'create',requestId:id,name:'Canary',symbol:'CNRY',creatorFeeBps:100,capBps:200,...body}))
+  assert.equal(refused.status,400);assert.match((await refused.json()).error,message)
+ }
+ assert.equal(seen.length,0)
+ assert.equal((await (await handler(creatorRequest({action:'create',requestId:id,name:'Canary',symbol:'CNRY',creatorFeeBps:100,capBps:200,...coin}))).json()).request.status,'queued')
+ const [,,value,profile]=seen[0]
+ assert.deepEqual(value,{id,name:'Canary',symbol:'CNRY',uri:`https://repo.ing/api/hook-lab/coins/${id}/metadata`,creatorFeeBps:100,capBps:200},'repo.ing sets the metadata uri')
+ assert.deepEqual({...profile,image:profile.image.slice(0,22)},{image:'data:image/png;base64,',description:'The cat that ships.',x:'repocat',website:'https://repo.ing/',telegram:null})
  await handler(creatorRequest({action:'get'}));await handler(creatorRequest({action:'cancel',requestId:id}))
  assert.deepEqual(seen.map(x=>x[1]),[creator,creator,creator],'identity comes only from the wallet session')
  assert.equal((await createLaunchRequestsHandler({...creatorOptions(store),quota:async()=>false})(creatorRequest({action:'get'}))).status,429)
@@ -80,4 +95,26 @@ test('native launch reserve waits for the owner invite; expire and launched mark
  invited=true;assert.equal((await handler(launchRequest(reserveInput))).status,200);assert.equal(reserves,1)
  assert.equal((await (await handler(launchRequest({action:'expire',signingId:id}))).json()).operation.status,'expired');assert.equal(expires,1)
  await handler(launchRequest({action:'reconcile',signingId:id}));assert.deepEqual(launched,[id])
+})
+
+test('coin metadata and image are public, cacheable and only for coins that can launch',async()=>{
+ const coinId='22222222-2222-4222-8222-222222222222'
+ const coins={[coinId]:{request:{id:coinId,name:'Repo Cat',symbol:'RCAT',status:'queued'},profile:{description:'',x:'repocat',website:null,telegram:null},image:coinImage}}
+ let budget=Infinity
+ const handler=createCoinPublicHandler({env:creatorEnv,configuration:()=>({origin:'https://repo.ing'}),database:()=>pool,store:()=>({coinFor:async requested=>coins[requested]??null}),allowed:()=>budget-->0})
+ const metadata=await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/metadata`),{id:coinId,kind:'metadata'})
+ assert.equal(metadata.status,200);assert.match(metadata.headers.get('cache-control'),/public/)
+ assert.deepEqual(await metadata.json(),{name:'Repo Cat',symbol:'RCAT',description:'$RCAT launched on repo.ing.',image:`https://repo.ing/api/hook-lab/coins/${coinId}/image`,
+  twitter:'https://x.com/repocat',extensions:{twitter:'https://x.com/repocat'}})
+ const image=await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/image`),{id:coinId,kind:'image'})
+ assert.equal(image.status,200);assert.equal(image.headers.get('content-type'),'image/png')
+ assert.equal(image.headers.get('cache-control'),'public, max-age=300','not launched yet: a decline must take it down quickly')
+ coins[coinId]={...coins[coinId],request:{...coins[coinId].request,status:'launched'}}
+ assert.match((await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/image`),{id:coinId,kind:'image'})).headers.get('cache-control'),/immutable/)
+ const small=await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/image?w=128`),{id:coinId,kind:'image'})
+ assert.equal(small.headers.get('content-type'),'image/webp')
+ assert.equal((await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/image?w=99`),{id:coinId,kind:'image'})).status,400)
+ for(const missing of ['33333333-3333-4333-8333-333333333333','nope'])assert.equal((await handler(new Request(`https://repo.ing/api/hook-lab/coins/${missing}/metadata`),{id:missing,kind:'metadata'})).status,404)
+ budget=0;assert.equal((await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/metadata`),{id:coinId,kind:'metadata'})).status,429)
+ assert.equal((await createCoinPublicHandler({env:{}})(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/metadata`),{id:coinId,kind:'metadata'})).status,404)
 })

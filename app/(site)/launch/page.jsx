@@ -24,12 +24,18 @@ export default async function LaunchStart({ searchParams }) {
   return <><AppHeader active="launch"/><main className="section-wrap launch-start">
     <div className="page-intro"><div className="eyebrow">LAUNCH</div><h1>Give open source a market.</h1><p>{models ? 'Paste a public GitHub repository or Hugging Face model. Review the token and costs, then launch with your wallet.'
       : 'Paste a public GitHub repository. Review the token and costs, then launch with your wallet.'}</p></div>
-    <section className="coin-entry-points" aria-label="Create your own coin">
-      <div><strong>Your own coin, without a repository</strong><p>Device drafts and devnet checks. GitHub optional; launch execution is not available.</p></div>
-      <Link className="button primary" href="/coins/new?lane=programmable">Programmable Coin draft <ArrowRight size={15} aria-hidden="true"/></Link>
-      <Link className="button outline" href="/coins/new?lane=standard">Standard Coin draft</Link>
-      <Link href="/programmable-coins">How programmable coins work</Link>
-    </section>
+    {process.env.HOOK_OWNER_APPROVED_LAUNCHES === 'true'
+      ? <section className="coin-entry-points" aria-label="Create your own coin">
+        <div><strong>Your own coin, no repository needed</strong><p>Add a name, image and links, then snap on blocks: cap how much one wallet can hold and earn a fee on every trade. repo.ing approves each launch.</p></div>
+        <Link className="button primary" href="/hooks/launch-review">Launch your own coin <ArrowRight size={15} aria-hidden="true"/></Link>
+        <Link className="button outline" href="/hooks/blocks">See the blocks</Link>
+      </section>
+      : <section className="coin-entry-points" aria-label="Create your own coin">
+        <div><strong>Your own coin, without a repository</strong><p>Device drafts and devnet checks. GitHub optional; launch execution is not available.</p></div>
+        <Link className="button primary" href="/coins/new?lane=programmable">Programmable Coin draft <ArrowRight size={15} aria-hidden="true"/></Link>
+        <Link className="button outline" href="/coins/new?lane=standard">Standard Coin draft</Link>
+        <Link href="/programmable-coins">How programmable coins work</Link>
+      </section>}
     <RepoSearch key={initialUrl} initialUrl={initialUrl} models={models}/>
     {trending?.repos.length ? <TrendingLaunchStrip result={trending} discoveryEnabled={discoveryEnabled} now={Date.now()}/>
       : <Link href="/find-repos" className="launch-find-link">Find a repo gaining attention <ArrowRight size={15} aria-hidden="true"/></Link>}

@@ -48,8 +48,10 @@ function BondingLine({ market }) {
 const NAV_LINKS = [{ key: 'launch', href: '/launch', label: 'Launch' }, { key: 'explore', href: '/explore', label: 'Explore' }, { key: 'hooks', href: '/hooks', label: 'Hooks' }, { key: 'builders', href: '/builders', label: 'Builders' }, { key: 'stats', href: '/stats', label: 'Stats' }, { key: 'how-it-works', href: '/how-it-works', label: 'How it works' }, { key: 'repoing', href: OFFICIAL_TOKEN.marketPath, label: '$REPOING' }]
 const NAV_CLASSES = { launch: 'nav-launch', hooks: 'nav-hooks', repoing: 'nav-token' }
 // $REPOING is repo.ing's own token: a green pill with the brand cat, kept beside Launch on phones instead of in the menu.
+// Hooks carries the owner's pixel NEW! badge while hooks coins are new.
 const navLabel = link => link.key === 'repoing'
   ? <><img src="/brand-cat.webp" alt="" width={22} height={22} decoding="async" fetchPriority="low"/>{link.label}<span className="sr-only">, repo.ing's official token</span></>
+  : link.key === 'hooks' ? <>{link.label}<img className="nav-new-badge" src="/badges/new.webp" alt="" width={55} height={20} decoding="async"/><span className="sr-only">, new</span></>
   : link.label
 export function AppHeader({ active = '' }) {
   return <header className="app-header"><div className="header-inner">
