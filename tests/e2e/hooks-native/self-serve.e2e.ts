@@ -364,7 +364,8 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     await expect(screen.getByRole('group', { name: 'Buy amounts' }).getByRole('button').first()).toBeDisabled()
     const client = new SiteClient(holder.buyer); await client.signIn()
     const refusal = await client.nativeQuote(await marketView(coin.mint), 'buy', 10_000_000n)
-    expect(refusal.status).toBe(409)
+    // The trade API's blocked reply (HTTP 200, a blocker, no operation): nothing is reviewed for a delisted coin's buy.
+    expect([refusal.status, refusal.json?.status, refusal.json?.blockers?.[0]?.code, refusal.json?.operation]).toEqual([200, 'blocked', 'COIN_DELISTED', undefined])
     // The holder sells everything.
     await startTrade(screen, coin.symbol, 'sell', '100%')
     const [sell] = await finalizedOperations(holder.address, 'native-sell', 1), sold = await expectNativeSell(sell, holder.address, coin)
