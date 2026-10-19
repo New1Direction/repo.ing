@@ -111,6 +111,11 @@ export async function up({ keep = false } = {}) {
         return { signature: result.receipt.signature, postconditions: result.receipt.postconditions }
       },
       'GET /rpc/sends': async () => proxies.sends(),
+      'POST /rpc/faults': async ({ loseNextSendResponse = false, holdNextSendMs = 0, lowerLastValidBlockHeight = null }) => {
+        Object.assign(proxies.faults, { loseNextSendResponse: loseNextSendResponse === true, holdNextSendMs: Math.min(Number(holdNextSendMs) || 0, 120_000),
+          lowerLastValidBlockHeight: lowerLastValidBlockHeight && ['local-a', 'local-b'].includes(lowerLastValidBlockHeight.provider) ? { provider: lowerLastValidBlockHeight.provider, by: Number(lowerLastValidBlockHeight.by) } : null })
+        return { ...proxies.faults }
+      },
       // Which exact (unbound) dossier pins of the deployed bundle no longer match the chain (the site refuses every review then).
       'GET /site/bundle-drift': async () => {
         const dossier = JSON.parse(JSON.parse(readFileSync(app.bundle.file, 'utf8')).dossierJson)

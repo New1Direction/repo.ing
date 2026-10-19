@@ -11,7 +11,9 @@ import { freePort } from './common.mjs'
 const MAX_BODY = 4 * 1024 * 1024
 
 export async function startRpcProxies({ upstream, tls, auditFile, log }) {
-  const sends = new Map(), faults = { loseNextSendResponse: false }
+  // Fault switches (E2): drop the next send's response after it reached the validator; hold the next send's response for
+  // a while (the send still goes through); one provider reporting a lastValidBlockHeight lowered by `by` blocks.
+  const sends = new Map(), faults = { loseNextSendResponse: false, holdNextSendMs: 0, lowerLastValidBlockHeight: null }
   const tlsOptions = { key: readFileSync(tls.key), cert: readFileSync(tls.cert) }
   const servers = await Promise.all(['local-a', 'local-b'].map(async provider => {
     const port = await freePort()
@@ -34,8 +36,14 @@ export async function startRpcProxies({ upstream, tls, auditFile, log }) {
         for (let attempt = 1; ; attempt++) {
           try { upstreamResponse = await forward(); break } catch (error) { if (signature || attempt >= 3) throw error }
         }
-        const bytes = Buffer.from(await upstreamResponse.arrayBuffer())
+        let bytes = Buffer.from(await upstreamResponse.arrayBuffer())
         if (signature && faults.loseNextSendResponse) { faults.loseNextSendResponse = false; response.destroy(); return }
+        if (signature && faults.holdNextSendMs > 0) { const ms = faults.holdNextSendMs; faults.holdNextSendMs = 0; await new Promise(resolve => setTimeout(resolve, ms)) }
+        const lower = faults.lowerLastValidBlockHeight
+        if (lower?.provider === provider && !Array.isArray(input) && input.method === 'getLatestBlockhash') {
+          const reply = JSON.parse(bytes)
+          if (reply.result?.value?.lastValidBlockHeight) { reply.result.value.lastValidBlockHeight -= lower.by; bytes = Buffer.from(JSON.stringify(reply)) }
+        }
         response.writeHead(upstreamResponse.status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); response.end(bytes)
       } catch (error) {
         if (!response.headersSent) response.writeHead(502, { 'content-type': 'application/json' })
