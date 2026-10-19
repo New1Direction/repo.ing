@@ -316,6 +316,9 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     // The admin reopens; launches work again.
     await ownerStage({ stage: 'open-launches' })
     expect((await openCreationState()).paused).toBe(false)
+    // The owner's redeploy after a governed change: our stack's bundle pins the launch governance exactly, so launches wait
+    // for it to be collected again (trades and claims never did).
+    await control('POST', '/site/restart', { recollect: true })
     const reopened = await launchOpenCoinViaUi({ app, screen, browser }, { name: 'After Reopen', symbol: 'REOPEN', creatorFeeBps: 50, capBps: 500 })
     expectNoLegacyStack(await receipt(reopened.launchOp.signature as string))
     await recordMarkerLeaks(browser, stack.quoteMint as string, 'launch after reopening')
@@ -333,6 +336,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     expect((await walletLog(browser)).filter(e => e.kind === 'transaction')).toEqual([])
     await approvals.off()
     await ownerStage({ stage: 'open-trading' })
+    await control('POST', '/site/restart', { recollect: true }) // the bundle pins the swap governance exactly: redeploy
     approvals = await approveSignatures(browser)
     await app.open(`/hooks/token/${coin.mint}`)
     await startTrade(screen, coin.symbol, 'buy', '0.02')
