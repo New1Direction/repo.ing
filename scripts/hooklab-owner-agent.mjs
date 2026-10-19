@@ -11,9 +11,10 @@
 // 0.0097 SOL rent per table, returned by `reclaim` after the launch finishes), after re-deriving the
 // table's addresses itself. Journal (public data only): ~/.hooklab-owner/launch-tables.
 // It signs ONLY a launch message that decodes to the invited creator and coin, the invited fee,
-// one create_launch_custom_v3 call, an on-chain mint policy with the invited cap and fee, the
-// opening price (virtual quote) fixed with the invite, and a deadline that both RPC providers say
-// is still open. Fee and cap menus come from the release code. With USD pricing on, `list` and
+// one create_launch_custom_v3 call (or, once both RPC providers show the native-launches switch on, launch Config
+// byte 186, one create_launch_custom_v4 with the native quote form and the mint's own launch, pool and fee policy),
+// an on-chain mint policy with the invited cap and fee, the opening price (virtual quote) fixed with the invite, and
+// a deadline that both RPC providers say is still open. Fee and cap menus come from the release code. With USD pricing on, `list` and
 // `invite` show each invite's fixed price; check it before the launch reaches its signature.
 import { mkdirSync,readFileSync,renameSync,writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -24,13 +25,14 @@ import { Connection,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress,invitedVirtualQuote,ownerRequestLines,checkBeforeInvite,checkAfterInvite } from '../src/hooklab-owner-agent.mjs'
 import { readSolUsdSources } from '../src/sol-usd-sources.mjs'
-import { readLiveLaunchBounds } from '../src/hooklab-launch-bounds.mjs'
+import { readLiveLaunchBounds,readLiveNativeLaunches } from '../src/hooklab-launch-bounds.mjs'
 import { STANDARD_VIRTUAL_QUOTE,formatSol,ownerPricingLine } from '../src/hooklab-launch-pricing.mjs'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinImageUrl,coinLinks } from '../src/hooklab-coin-profile.mjs'
 import { verifyTableRequest } from '../src/hooklab-owner-launch-tables.mjs'
 import { ownerTableExecutor } from '../src/hooklab-owner-agent-tables.mjs'
 import { productionArtifacts,productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
+import { PROGRAMS,QUOTE_MINT } from '../src/hooklab-owner-driver/pins.mjs'
 const LAUNCH_PROGRAM='E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft',GATE_PROGRAM='BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb',ADMIN='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',FEE_MODEL=2
 const {values:opt}=parseArgs({options:{origin:{type:'string',default:'https://repo.ing'},'admin-key':{type:'string'},rpc:{type:'string'},rpc2:{type:'string'},
  'invite-minutes':{type:'string',default:'15'},'confirm-each':{type:'boolean',default:false},'poll-ms':{type:'string',default:'1500'},'table-microlamports':{type:'string',default:'10000'}}})
@@ -41,7 +43,7 @@ if(!opt['admin-key']||!opt.rpc||!opt.rpc2)die('Required: --admin-key PATH --rpc 
 const admin=adminSignerFromKeypair(readFileSync(opt['admin-key'],'utf8'),ADMIN)   // read once from the key pipe; never logged
 const connections=[new Connection(opt.rpc,'confirmed'),new Connection(opt.rpc2,'confirmed')]
 const launchCoder=new BorshCoder(JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url))))
-const approved={launchProgram:LAUNCH_PROGRAM,gateProgram:GATE_PROGRAM,admin:ADMIN,creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:FEE_MODEL}
+const approved={launchProgram:LAUNCH_PROGRAM,gateProgram:GATE_PROGRAM,swapProgram:PROGRAMS.swap,quoteMint:QUOTE_MINT,admin:ADMIN,creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:FEE_MODEL}
 const {base,idls}=productionArtifacts(),envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')]))}
 const tables=ownerTableExecutor({connections,admin,journalDir:path.join(homedir(),'.hooklab-owner','launch-tables'),microLamports:Number(opt['table-microlamports']),log:console.log})
 let accepting=true,queue={requests:[],signRequests:[],tableRequests:[]},busy=false,lastHeartbeatOk=0
@@ -132,7 +134,7 @@ async function handleTableRequest(tableRequest){
  if(!grant.usable)return wait(tableRequest.preparationId,`creator grant not usable (${grant.reason}); run customer-grant for ${tableRequest.creator}`)
  let checked
  try{checked=verifyTableRequest({tableRequest,invited:{...invited,virtualQuote:ledgerQuote(mine)},envelope,launchConfigBytes:configBytes,adminAddress:ADMIN})}catch(error){return decline(error.message)}
- console.log(`\nTABLE for ${invited.symbol} creator ${invited.creator} mint ${tableRequest.launchRequest.mint}: ${checked.inventory.length} addresses`)
+ console.log(`\nTABLE for ${invited.symbol} creator ${invited.creator} mint ${tableRequest.launchRequest.mint}: ${checked.inventory.length} addresses${checked.nativeLaunches?' (native-SOL launch)':''}`)
  const table=await tables.ensure({preparationId:tableRequest.preparationId,launchRequestId:invited.id,creator:invited.creator,mint:tableRequest.launchRequest.mint,...checked})
  await api({action:'table',preparationId:tableRequest.preparationId,tableAddress:table})
  handled.add(`table:${tableRequest.preparationId}`);waits.delete(tableRequest.preparationId);console.log(`TABLE READY ${table}`)
@@ -151,8 +153,10 @@ async function handleSignRequest(signRequest){
   if(!invited)throw Error('no invited request for this creator')
   if(!matchesLedger(invited))throw Error('the server\'s invite differs from what this agent invited')
   const tables=await lookupTables(signRequest.messageBase64),policy=await mintPolicy(launchMintFromMessage(signRequest.messageBase64,tables,LAUNCH_PROGRAM))
-  const checked=verifyLaunchSignRequest({signRequest,invited:{...invited,virtualQuote:ledgerQuote(invitedByMe()[invited.id])},approved,lookupTables:tables,policy,live:await live()})
-  console.log(`\nSIGN? ${checked.symbol} "${checked.name}" creator ${checked.creator} mint ${checked.mint} fee ${percent(checked.creatorFeeBps)} cap ${percent(checked.capBps)} opens ${formatSol(checked.virtualQuote)} virtual · ${checked.slotsLeft} slots / ${checked.blocksLeft} blocks left`)
+  // The launch route comes from this Mac's own two-provider read of launch Config byte 186, never from the server.
+  const nativeLaunches=await readLiveNativeLaunches(connections)
+  const checked=verifyLaunchSignRequest({signRequest,invited:{...invited,virtualQuote:ledgerQuote(invitedByMe()[invited.id])},approved,lookupTables:tables,policy,live:await live(),nativeLaunches})
+  console.log(`\nSIGN? ${checked.quoteForm?'native-SOL launch ':''}${checked.symbol} "${checked.name}" creator ${checked.creator} mint ${checked.mint} fee ${percent(checked.creatorFeeBps)} cap ${percent(checked.capBps)} opens ${formatSol(checked.virtualQuote)} virtual · ${checked.slotsLeft} slots / ${checked.blocksLeft} blocks left`)
   if(opt['confirm-each']&&!(await ask('Type yes to sign: ')==='yes'))throw Error('owner declined')
   await api({action:'sign',signRequestId:signRequest.id,signatureBase64:admin.signBase64(Buffer.from(signRequest.messageBase64,'base64'))})
   console.log(`SIGNED ${signRequest.messageSha256.slice(0,16)}…`)

@@ -1,0 +1,108 @@
+// The owner agent and native-SOL launches: it co-signs create_launch_custom_v4 only with the native quote form, the mint's
+// own launch, pool and fee policy, and only while its own two-provider read shows launch Config byte 186 on; v3 only while
+// it is off. Every invite check still applies. Synthetic messages and keys; no RPC.
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import BN from 'bn.js'
+import { BorshCoder } from '@anchor-lang/core'
+import { AddressLookupTableAccount, ComputeBudgetProgram, Keypair, PublicKey, TransactionInstruction, TransactionMessage } from '@solana/web3.js'
+import { policyAddress, verifyLaunchSignRequest } from '../src/hooklab-owner-agent.mjs'
+import { readLiveNativeLaunches } from '../src/hooklab-launch-bounds.mjs'
+import { verifyTableRequest } from '../src/hooklab-owner-launch-tables.mjs'
+import { loadNativeArtifacts } from '../src/hooklab-native-pins.mjs'
+import { PROGRAMS, QUOTE_MINT, derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
+
+const vendor = name => JSON.parse(readFileSync(new URL(`../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/${name}`, import.meta.url)))
+const v3Coder = new BorshCoder(vendor('bordrless_launch.json')), gateCoder = new BorshCoder(vendor('hook_max_wallet.json')), v4Coder = loadNativeArtifacts().coders.launch
+const key = label => Keypair.fromSeed(createHash('sha256').update(`OWNER AGENT NATIVE TEST ONLY ${label}`).digest()).publicKey
+const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), new PublicKey(program))[0]
+const { launch: LAUNCH, gate: GATE, swap: SWAP } = PROGRAMS, admin = key('admin'), creator = key('creator'), mint = key('mint')
+const approved = { launchProgram: LAUNCH, gateProgram: GATE, swapProgram: SWAP, quoteMint: QUOTE_MINT, admin: admin.toBase58(), creatorFeeChoices: [50, 100, 200], capChoices: [100, 200, 300, 500], feeModel: 2 }
+const invited = { id: '5b7f4c1e-8a0f-4d55-9a49-3f7c0c2b9d11', status: 'launching', creator: creator.toBase58(), name: 'Native Coin', symbol: 'NAT', uri: '', creatorFeeBps: 100, capBps: 200, virtualQuote: '53251917070' }
+const noRules = { holder_fee_buy_bps: 0, holder_fee_sell_bps: 0, burn_buy_bps: 0, burn_sell_bps: 0, max_wallet_bps: 0, creator_lock_secs: 0, early_window_secs: 0, early_lock_secs: 0 }
+const launchPda = pda(LAUNCH, 'launch', mint.toBuffer()), pool = pda(SWAP, 'pool', mint.toBuffer(), new PublicKey(QUOTE_MINT).toBuffer(), Buffer.alloc(2), new PublicKey(LAUNCH).toBuffer())
+const feePolicy = pda(SWAP, 'inclusive-fee-policy', pool.toBuffer())
+
+// The compiler's account layout: 32 declared accounts then 10 remaining ones (the admin reviewer at 34), the mint's fee
+// policy last; the read-only accounts in a lookup table (a launch does not fit a packet without one).
+function accounts(change = {}) {
+  const at = i => change[i] ?? (i === 0 ? creator : i === 3 ? mint : i === 4 ? launchPda : i === 10 ? pool : i === 34 ? admin : i === 41 ? feePolicy : key(`account ${i}`))
+  return Array.from({ length: change.length ?? 42 }, (_, i) => ({ pubkey: at(i), isSigner: [0, 3, 34].includes(i), isWritable: [0, 1, 2, 3, 4, 10, 41].includes(i) }))
+}
+const body = ({ virtualQuote = invited.virtualQuote, creatorFeeBps = 100, name = invited.name } = {}) => ({
+  args: { name, symbol: invited.symbol, uri: invited.uri, creator_fee_bps: creatorFeeBps, virtual_quote: new BN(virtualQuote), rules: noRules },
+  guard: { version: 2, deadline_slot: new BN(5000), expected_launch_economics_hash: Array(32).fill(1), expected_pool_economics_hash: Array(32).fill(2),
+    max_launch_fee_lamports: new BN(0), max_pool_creation_fee_lamports: new BN(0), max_rent_lamports: new BN(1), max_total_debit_lamports: new BN(1) },
+  fee_model: 2, expected_control_hash: Array(32).fill(3), expected_hook_accounts_hash: Array(32).fill(4) })
+const v4Data = (quoteForm = 1, fields = {}) => v4Coder.instruction.encode('create_launch_custom_v4', { ...body(fields), quote_form: quoteForm })
+function signRequest({ route = 'v4', quoteForm = 1, data: override, keys = accounts(), ...fields } = {}) {
+  const data = override ?? (route === 'v4' ? v4Data(quoteForm, fields) : v3Coder.instruction.encode('create_launch_custom_v3', body(fields)))
+  const readOnly = keys.filter(k => !k.isSigner && !k.isWritable).map(k => k.pubkey)
+  const table = new AddressLookupTableAccount({ key: key('table'), state: { deactivationSlot: 2n ** 64n - 1n, lastExtendedSlot: 1, lastExtendedSlotStartIndex: 0, authority: admin, addresses: readOnly } })
+  const message = new TransactionMessage({ payerKey: creator, recentBlockhash: key('blockhash').toBase58(), instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
+    new TransactionInstruction({ programId: new PublicKey(LAUNCH), keys, data })] }).compileToV0Message([table])
+  const bytes = Buffer.from(message.serialize())
+  return { table, request: { messageBase64: bytes.toString('base64'), messageSha256: createHash('sha256').update(bytes).digest('hex'), signer: admin.toBase58(), validUntilSlot: '5000', lastValidBlockHeight: '9000' } }
+}
+const policy = async (cap = 200) => ({ address: policyAddress(GATE, mint.toBase58()), owner: GATE, data: await gateCoder.accounts.encode('PolicyV2', { version: 2, mint, initial_supply: new BN('1000000000000000'),
+  cap_bps: cap, quote_mint: new PublicKey(QUOTE_MINT), lp_fee_bps: 0, fee_model: 2, protocol_share_bps: 2500, creator_fee_bps: 100 }) })
+const verify = async (built, { nativeLaunches = true, cap, over = {}, approve = approved } = {}) =>
+  verifyLaunchSignRequest({ signRequest: built.request, invited: { ...invited, ...over }, approved: approve, lookupTables: [built.table], policy: await policy(cap), live: { slot: 100, blockHeight: 100 }, nativeLaunches })
+
+test('switch on: the agent co-signs a v4 launch with the native quote form at the mint\'s own addresses', async () => {
+  const checked = await verify(signRequest())
+  assert.equal(checked.quoteForm, 1); assert.equal(checked.virtualQuote, invited.virtualQuote); assert.equal(checked.mint, mint.toBase58())
+})
+
+test('the agent\'s own switch reading decides the route: v3 while on, or v4 while off, is refused', async () => {
+  await assert.rejects(verify(signRequest({ route: 'v3' })), /native launches are on: refusing a bridged create_launch_custom_v3/)
+  await assert.rejects(verify(signRequest(), { nativeLaunches: false }), /native launches are off on chain: refusing create_launch_custom_v4/)
+  assert.equal((await verify(signRequest({ route: 'v3' }), { nativeLaunches: false })).quoteForm, null, 'switch off: v3 exactly as before')
+  for (const reading of [null, 'true', 1]) await assert.rejects(verify(signRequest(), { nativeLaunches: reading }), /switch was not read/, String(reading))
+})
+
+test('tampering refuses: quote form, discriminator, non-canonical data, a wrong pool, launch or fee policy', async () => {
+  for (const quoteForm of [0, 2, 255]) await assert.rejects(verify(signRequest({ quoteForm })), /quote form is not native SOL/, `form ${quoteForm}`)
+  const v4 = v4Data(), swapped = Buffer.concat([v3Coder.instruction.encode('create_launch_custom_v3', body()).subarray(0, 8), v4.subarray(8)])
+  await assert.rejects(verify(signRequest({ data: swapped })), /refusing a bridged create_launch_custom_v3/, 'v4 body under the v3 discriminator')
+  const unknown = Buffer.from(v4); unknown[0] ^= 1
+  await assert.rejects(verify(signRequest({ data: unknown })), /instruction is not create_launch_custom_v4/)
+  await assert.rejects(verify(signRequest({ data: Buffer.concat([v4, Buffer.from([0])]) })), /not canonical/, 'trailing bytes')
+  const other = key('other'), otherPool = pda(SWAP, 'pool', other.toBuffer(), new PublicKey(QUOTE_MINT).toBuffer(), Buffer.alloc(2), new PublicKey(LAUNCH).toBuffer())
+  for (const [index, wrong, label] of [[10, otherPool, 'another mint\'s pool'], [10, pda(SWAP, 'pool', mint.toBuffer(), new PublicKey(QUOTE_MINT).toBuffer(), Buffer.from([1, 0]), new PublicKey(LAUNCH).toBuffer()), 'a pool with another LP fee'],
+    [4, pda(LAUNCH, 'launch', other.toBuffer()), 'another launch'], [41, pda(SWAP, 'inclusive-fee-policy', otherPool.toBuffer()), 'another fee policy']])
+    await assert.rejects(verify(signRequest({ keys: accounts({ [index]: wrong }) })), /launch, pool or fee policy account is not the mint's own/, label)
+  await assert.rejects(verify(signRequest({ keys: accounts({ length: 41 }) })), /not the mint's own/, 'a short account list')
+  await assert.rejects(verify(signRequest({ keys: [...accounts(), { pubkey: key('extra'), isSigner: false, isWritable: false }] })), /not the mint's own/, 'an extra account')
+  await assert.rejects(verify(signRequest(), { approve: { ...approved, swapProgram: undefined } }), /no swap program or quote mint/)
+})
+
+test('every invite check still applies to a v4 launch', async () => {
+  await assert.rejects(verify(signRequest({ virtualQuote: '53251917071' })), /opening price \(virtual quote\) differs/)
+  await assert.rejects(verify(signRequest({ creatorFeeBps: 200 })), /creator fee or fee model differs/)
+  await assert.rejects(verify(signRequest({ name: 'Other' })), /coin name, symbol or URI differs/)
+  await assert.rejects(verify(signRequest(), { cap: 500 }), /on-chain wallet cap or fee policy differs/)
+  await assert.rejects(verify(signRequest({ keys: accounts({ 0: key('someone') }) })), /fee payer is not the invited creator|launch creator is not the invited creator/)
+  await assert.rejects(verify(signRequest(), { over: { capBps: 700 } }), /not an approved choice/)
+})
+
+test('the agent reads byte 186 from both providers: agreeing 0 or 1 only', async () => {
+  const config = switchByte => { const b = Buffer.alloc(250); createHash('sha256').update('account:Config').digest().copy(b, 0, 0, 8); b[186] = switchByte; return b }
+  const provider = data => ({ async getAccountInfo(address, commitment) { assert.equal(address.toBase58(), derivedAddresses().launchConfig); assert.equal(commitment, 'finalized'); return { owner: new PublicKey(LAUNCH), data } } })
+  assert.equal(await readLiveNativeLaunches([provider(config(1)), provider(config(1))]), true)
+  assert.equal(await readLiveNativeLaunches([provider(config(0)), provider(config(0))]), false)
+  await assert.rejects(readLiveNativeLaunches([provider(config(1)), provider(config(0))]), /providers disagree/)
+  await assert.rejects(readLiveNativeLaunches([provider(config(2)), provider(config(2))]), error => error.code === 'LAUNCH_PRICE_REFUSED' && /byte 186 is 2.*not signing any launch/.test(error.message))
+  await assert.rejects(readLiveNativeLaunches([provider(config(1))]), /Two RPC providers/)
+})
+
+test('a table request reports the route from the agent\'s own config read and refuses an impossible switch byte', () => {
+  const fixture = JSON.parse(readFileSync(new URL('./fixtures/hooklab-mainnet-public-accounts.json', import.meta.url)))
+  const live = Buffer.from(fixture.accounts['launch-config'].dataBase64, 'base64'), on = Buffer.from(live); on[186] = 1
+  const bad = Buffer.from(live); bad[186] = 7
+  for (const [bytes, expected] of [[live, false], [on, true]]) assert.throws(() => verifyTableRequest({ tableRequest: { launchRequest: {} }, invited: null, envelope: null, launchConfigBytes: bytes, adminAddress: approved.admin }),
+    /No launching request/, `switch ${expected}: reads, then the usual checks`)
+  assert.throws(() => verifyTableRequest({ tableRequest: { launchRequest: {} }, invited: null, envelope: null, launchConfigBytes: bad, adminAddress: approved.admin }), /byte 186 is 7.*no table is paid for/)
+})

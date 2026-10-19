@@ -9,6 +9,7 @@ import { AddressLookupTableAccount,AddressLookupTableProgram,ComputeBudgetProgra
 import { z } from 'zod'
 import { maxWalletLaunchInventory } from './hooklab-max-wallet-launch.mjs'
 import { inclusiveMaxWalletSwapInventory } from './hooklab-inclusive-max-wallet-swap.mjs'
+import { nativeLaunchesSwitch } from './hooklab-native-launch.mjs'
 const fail=message=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -92,15 +93,19 @@ export function remoteLaunchLookupTable(pool,{envelope,connections,adminAddress,
 
 // Owner agent: everything in a table request comes from the server and is checked against the
 // launch the owner invited and the agent's own reads before the admin key pays for anything.
-// invited.virtualQuote is the opening price from the agent's own invite ledger.
+// invited.virtualQuote is the opening price from the agent's own invite ledger. The agent's own launch Config read also
+// carries the native-launches switch (byte 186): a byte the reviewed programs never write refuses, and the result says
+// which route (v3 bridged, v4 native) this launch will take. The table is the same for both: v4 has v3's accounts.
 export function verifyTableRequest({tableRequest,invited,envelope,launchConfigBytes,adminAddress}){
+ let nativeLaunches
+ try{nativeLaunches=nativeLaunchesSwitch(launchConfigBytes)}catch(error){throw fail(`${error.message}; no table is paid for`)}
  const r=tableRequest.launchRequest
  check(invited&&invited.id===tableRequest.launchRequestId&&invited.status==='launching'&&invited.creator===tableRequest.creator&&invited.custodyOperationId===tableRequest.preparationId,'No launching request matches this table request')
  check(r.creator===invited.creator&&r.feePayer===invited.creator&&r.reviewer===adminAddress&&r.name===invited.name&&r.symbol===invited.symbol&&r.uri===invited.uri
   &&r.creatorFeeBps===invited.creatorFeeBps&&r.capBps===invited.capBps&&typeof invited.virtualQuote==='string'&&r.virtualQuote===invited.virtualQuote,'Table request differs from the invited launch')
  const own=launchTableInventory(envelope,r,launchConfigBytes)
  check(own.inventorySha256===tableRequest.inventorySha256&&JSON.stringify(own.inventory)===JSON.stringify(tableRequest.inventory),'Server inventory differs from the agent\'s own derivation')
- return own
+ return Object.freeze({...own,nativeLaunches})
 }
 // Instructions for the agent: create + first chunk, then one extend per further chunk.
 export function launchTableInstructions({admin,recentSlot,inventory,microLamports=0}){
