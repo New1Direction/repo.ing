@@ -7,6 +7,12 @@
 //
 // check is read-only (session forced read-only). apply runs every file below in ONE transaction,
 // only if none of their tables exist yet, and only for the exact SQL whose sha256 was reviewed.
+//
+// Tables added after the bootstrap ship as named migrations, applied the same way and only once
+// the tables they reference exist:
+//
+//   node scripts/hooklab-production-schema.mjs migration-check coin-profiles | railway ssh ... -- node
+//   node scripts/hooklab-production-schema.mjs migrate coin-profiles --sha256 <reviewed> | railway ssh ... -- node
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 // Order from HOOK_NATIVE_LAUNCH_RUNBOOK.md, then quota, expiry and owner approval.
@@ -14,16 +20,26 @@ export const SCHEMA_FILES = Object.freeze(['hooklab-wallet-principal-schema.sql'
   'hooklab-new-mint-preparation-schema.sql', 'hooklab-native-signing-schema.sql', 'hooklab-native-signing-attempt-schema.sql', 'hooklab-native-signing-context-schema.sql',
   'hooklab-native-signing-refresh-schema.sql', 'hooklab-native-launch-context-schema.sql', 'hooklab-native-signing-trade-schema.sql',
   'hooklab-native-signing-wallet-request-schema.sql', 'hooklab-wallet-identity-quota-schema.sql', 'hooklab-native-signing-expiry-schema.sql', 'hooklab-owner-approval-schema.sql'])
-export function productionSchema() {
-  const parts = SCHEMA_FILES.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))
+// name -> { files, requires }: requires lists existing tables the migration references.
+export const MIGRATIONS = Object.freeze({ 'coin-profiles': Object.freeze({ files: ['hooklab-coin-profile-schema.sql'], requires: ['hook_lab_launch_requests'] }) })
+export function productionSchema(files = SCHEMA_FILES) {
+  const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))
   const sql = parts.map(p => `-- ${p.name}\n${p.sql}`).join('\n')
   const tables = [...new Set(parts.flatMap(p => [...p.sql.matchAll(/create table (?:if not exists )?([a-z_]+)/gi)].map(m => m[1].toLowerCase())))]
   return { sql, sha256: createHash('sha256').update(sql).digest('hex'), tables, files: parts.map(p => ({ name: p.name, sha256: createHash('sha256').update(p.sql).digest('hex') })) }
 }
-function program({ mode, sql, tables }) {
-  return `const {Client}=require('pg');const tables=${JSON.stringify(tables)};const sql=${JSON.stringify(sql)};const mode=${JSON.stringify(mode)}
+export function migrationSchema(name) {
+  const migration = Object.hasOwn(MIGRATIONS, name) ? MIGRATIONS[name] : null
+  if (!migration) throw Error(`Unknown migration ${name}; known: ${Object.keys(MIGRATIONS).join(', ')}`)
+  return { ...productionSchema(migration.files), requires: [...migration.requires] }
+}
+function program({ mode, sql, tables, requires = [] }) {
+  return `const {Client}=require('pg');const tables=${JSON.stringify(tables)};const requires=${JSON.stringify(requires)};const sql=${JSON.stringify(sql)};const mode=${JSON.stringify(mode)}
 const c=new Client({connectionString:process.env.DATABASE_URL,options:mode==='check'?'-c default_transaction_read_only=on':undefined})
 ;(async()=>{try{await c.connect()
+ const ready=requires.length?(await c.query("select table_name from information_schema.tables where table_schema='public' and table_name = any($1)",[requires])).rows.length:0
+ if(requires.length)console.log(mode+': '+ready+' of '+requires.length+' required tables exist ('+requires.join(', ')+')')
+ if(mode!=='check'&&ready!==requires.length){console.log('STOP: required tables are missing; nothing applied');process.exitCode=1;return}
  const present=(await c.query("select table_name from information_schema.tables where table_schema='public' and table_name = any($1)",[tables])).rows.map(r=>r.table_name)
  console.log(mode+': '+present.length+' of '+tables.length+' Hook Lab tables already exist'+(present.length?': '+present.sort().join(', '):''))
  if(mode==='check'){process.exitCode=0;return}
@@ -40,7 +56,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error(`sha256 ${schema.sha256} (${schema.files.length} files, ${schema.tables.length} tables)`)
     for (const f of schema.files) console.error(`  ${f.sha256.slice(0, 16)}  ${f.name}`)
     console.error(`tables: ${schema.tables.join(', ')}`)
+    for (const name of Object.keys(MIGRATIONS)) {
+      const migration = migrationSchema(name)
+      console.error(`migration ${name}: sha256 ${migration.sha256} (tables: ${migration.tables.join(', ')}; requires: ${migration.requires.join(', ')})`)
+    }
   } else if (mode === 'check') process.stdout.write(program({ mode, ...schema }))
   else if (mode === 'apply' && flag === '--sha256' && value === schema.sha256) process.stdout.write(program({ mode, ...schema }))
-  else { console.error(`usage: show | check | apply --sha256 ${schema.sha256}`); process.exit(2) }
+  else if ((mode === 'migration-check' || mode === 'migrate') && Object.hasOwn(MIGRATIONS, flag)) {
+    const migration = migrationSchema(flag), [shaFlag, sha] = process.argv.slice(4)
+    if (mode === 'migration-check') process.stdout.write(program({ mode: 'check', ...migration }))
+    else if (shaFlag === '--sha256' && sha === migration.sha256) process.stdout.write(program({ mode: 'apply', ...migration }))
+    else { console.error(`usage: migrate ${flag} --sha256 ${migration.sha256}`); process.exit(2) }
+  }
+  else { console.error(`usage: show | check | apply --sha256 ${schema.sha256} | migration-check <name> | migrate <name> --sha256 <sha>`); process.exit(2) }
 }

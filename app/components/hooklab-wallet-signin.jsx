@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
+import { CheckCircle2 } from 'lucide-react'
 import { useWallet } from './wallet'
 import { walletSignatureBytes } from '../lib/solana-wallet.mjs'
 import { validateWalletIdentityChallenge, walletIdentitySessionState } from '../lib/hooklab-wallet-identity-client.mjs'
@@ -11,21 +12,26 @@ async function call(body) {
   if (!response.ok) throw Error(value.error || 'Wallet sign-in is unavailable.')
   return value
 }
-export function HookWalletSignIn({ genesisHash, onIdentity }) {
+export const shortAddress = address => address ? `${address.slice(0, 4)}…${address.slice(-4)}` : ''
+
+// The Hooks wallet session: proves wallet control with one signed message (no transaction). enabled: false
+// skips the session check, for a caller that was handed another instance's session.
+export function useHookWalletSession(genesisHash, { enabled = true } = {}) {
   const { wallet, connect, provider } = useWallet()
   const walletRef = useRef(wallet); walletRef.current = wallet
   const busyRef = useRef(false), sessionEpoch = useRef(0)
-  const [busy, setBusy] = useState(false), [challenge, setChallenge] = useState(null)
-  const [identity, setIdentity] = useState(null), [error, setError] = useState('')
-  useEffect(() => { setChallenge(null) }, [wallet])
-  useEffect(() => { onIdentity?.(identity) }, [identity, onIdentity])
+  const [busy, setBusy] = useState(false), [identity, setIdentity] = useState(null), [error, setError] = useState('')
+  const [checked, setChecked] = useState(!enabled)
   useEffect(() => {
+    if (!enabled) return
     let active = true
     const epoch = sessionEpoch.current
     call().then(value => { if (active && sessionEpoch.current === epoch) setIdentity(walletIdentitySessionState(value)) })
-      .catch(() => { if (active && sessionEpoch.current === epoch) { setIdentity(null); setError('Could not check your current session. Try signing in again.') } })
+      // A failed background check just reads as signed out: signing in reports its own errors.
+      .catch(() => { if (active && sessionEpoch.current === epoch) setIdentity(null) })
+      .finally(() => { if (active) setChecked(true) })
     return () => { active = false }
-  }, [])
+  }, [enabled])
   useEffect(() => {
     if (!identity) return
     const remaining = Date.parse(identity.expiresAt) - Date.now()
@@ -33,40 +39,48 @@ export function HookWalletSignIn({ genesisHash, onIdentity }) {
     const timer = setTimeout(() => setIdentity(null), remaining)
     return () => clearTimeout(timer)
   }, [identity])
+  // Resolves true when the action finished, false when it failed (the error is shown) or another was running.
   const run = async action => {
-    if (busyRef.current) return
+    if (busyRef.current) return false
     sessionEpoch.current += 1
     busyRef.current = true; setBusy(true); setError('')
-    try { await action() } catch (cause) { setError(cause.message || 'Sign-in could not finish. Start again.'); setChallenge(null) }
+    try { await action(); return true } catch (cause) { setError(cause.message || 'Sign-in could not finish. Try again.'); return false }
     finally { busyRef.current = false; setBusy(false) }
   }
-  const review = () => run(async () => {
-    const address = wallet || await connect()
-    const value = await call({ action: 'challenge', wallet: address })
-    if (walletRef.current && walletRef.current !== address) throw Error('Connected wallet changed. Start again.')
-    setChallenge(validateWalletIdentityChallenge(value.challenge, { wallet: address, origin: window.location.origin, genesisHash }))
-  })
+  // One click: connect if needed, fetch the challenge, check it is ours, and ask the wallet to sign it.
   const signIn = () => run(async () => {
-    const address = walletRef.current
-    const reviewed = validateWalletIdentityChallenge(challenge, { wallet: address, origin: window.location.origin, genesisHash })
+    const address = walletRef.current || await connect()
+    const changed = () => walletRef.current && walletRef.current !== address
+    const value = await call({ action: 'challenge', wallet: address })
+    if (changed()) throw Error('Connected wallet changed. Start again.')
+    const reviewed = validateWalletIdentityChallenge(value.challenge, { wallet: address, origin: window.location.origin, genesisHash })
     const adapter = provider()
-    if (typeof adapter?.signMessage !== 'function') throw Error('This wallet does not support message signing. Use a compatible wallet.')
+    if (typeof adapter?.signMessage !== 'function') throw Error('This wallet cannot sign messages. Try Phantom, Solflare or Backpack.')
     const bytes = walletSignatureBytes(await adapter.signMessage(new TextEncoder().encode(reviewed.message)))
     if (walletRef.current !== address) throw Error('Connected wallet changed. Start again.')
     validateWalletIdentityChallenge(reviewed, { wallet: address, origin: window.location.origin, genesisHash })
-    const value = await call({ action: 'verify', wallet: address, nonce: reviewed.nonce, signature: btoa(String.fromCharCode(...bytes)) })
-    setIdentity(walletIdentitySessionState(value)); setChallenge(null)
+    const verified = await call({ action: 'verify', wallet: address, nonce: reviewed.nonce, signature: btoa(String.fromCharCode(...bytes)) })
+    setIdentity(walletIdentitySessionState(verified))
   })
-  return <section className="inner-card">
-    <h2>Sign in with your wallet</h2>
-    <p>GitHub is optional. This message proves wallet control for this launcher. It sends no transaction and does not authorize a launch.</p>
-    {identity ? <><p>Signed in as {identity.wallet}. Session expires {identity.expiresAt}.</p>
-      <button disabled={busy} onClick={() => run(async () => { await call({ action: 'logout' }); setIdentity(null); setChallenge(null) })}>Sign out</button></>
-      : <button disabled={busy} onClick={review}>{busy ? 'Working…' : 'Review sign-in message'}</button>}
-    {challenge && <><p>Review the exact message before signing:</p><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{challenge.message}</pre>
-      <button disabled={busy || !wallet || wallet !== challenge.wallet} onClick={signIn}>Sign this message</button>
-      <button disabled={busy} onClick={() => setChallenge(null)}>Cancel</button></>}
-    {error && <p role="alert">{error}</p>}
-    {identity && wallet && identity.wallet !== wallet && <p role="alert">This session belongs to a different wallet. Sign out and sign in with your connected wallet before continuing.</p>}
+  const signOut = () => run(async () => { await call({ action: 'logout' }); setIdentity(null) })
+  const mismatch = !!(identity && wallet && identity.wallet !== wallet)
+  const connectWallet = () => run(async () => { await connect() })
+  return { identity, wallet, busy, error, checked, mismatch, signedIn: !!identity && !mismatch, signIn, signOut, connectWallet }
+}
+
+// Sign-in card. session: an existing useHookWalletSession result to show instead of starting another.
+export function HookWalletSignIn({ genesisHash, onIdentity, session: shared = null, title = 'Sign in with your wallet', children }) {
+  const own = useHookWalletSession(genesisHash, { enabled: !shared })
+  const session = shared ?? own
+  const { identity, wallet, busy, error, checked, mismatch, signIn, signOut, connectWallet } = session
+  useEffect(() => { onIdentity?.(identity) }, [identity, onIdentity])
+  return <section className="inner-card hooks-signin" aria-live="polite">
+    {identity ? <div className="hooks-signin-row"><CheckCircle2 size={18} aria-hidden="true"/><span>Signed in as <code title={identity.wallet}>{shortAddress(identity.wallet)}</code></span>
+      {!wallet && <button type="button" className="button primary" disabled={busy} onClick={connectWallet}>{busy ? 'Check your wallet…' : 'Connect this wallet'}</button>}
+      <button type="button" className="button outline" disabled={busy} onClick={signOut}>Sign out</button></div>
+      : <><h3>{title}</h3><p>{children ?? 'Your wallet shows a short sign-in message. Signing it is free and sends no transaction.'}</p>
+        <button type="button" className="button primary" disabled={busy || !checked} onClick={signIn}>{busy ? 'Check your wallet…' : wallet ? 'Sign in with wallet' : 'Connect wallet and sign in'}</button></>}
+    {error && <p className="inline-error" role="alert">{error}</p>}
+    {mismatch && <p className="inline-error" role="alert">This session belongs to {shortAddress(identity.wallet)}. Sign out, then sign in with the wallet you have connected.</p>}
   </section>
 }

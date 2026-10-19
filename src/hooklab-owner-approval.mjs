@@ -5,11 +5,14 @@ import { createHash,createPublicKey,randomUUID,verify } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES } from './hooklab-launch-menus.mjs'
+import { UNSAFE_TEXT,coinProfileFields } from './hooklab-coin-profile.mjs'
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const address=z.string().refine(x=>{try{return new PublicKey(x).toBase58()===x}catch{return false}})
-const text=max=>z.string().min(1).refine(x=>Buffer.byteLength(x)<=max)
+const text=max=>z.string().min(1).refine(x=>Buffer.byteLength(x)<=max).refine(x=>!UNSAFE_TEXT.test(x))
+// Coin images are stored for good, so one wallet can attach at most this many per day.
+const PROFILES_PER_CREATOR_PER_DAY=5
 export const launchIntentSchema=z.object({name:text(32),symbol:text(10),uri:z.string().refine(x=>Buffer.byteLength(x)<=200),
  creatorFeeBps:z.number().int().refine(x=>CREATOR_FEE_BPS_CHOICES.includes(x)),capBps:z.number().int().refine(x=>WALLET_CAP_BPS_CHOICES.includes(x))}).strict()
 
@@ -28,8 +31,15 @@ async function inTransaction(pool,work){
  catch(error){await db.query('rollback').catch(()=>{});throw error}
  finally{db.release()}
 }
+// Rows read with withProfile also carry the coin profile (null for requests queued before profiles existed).
+const publicProfile=row=>row.has_profile?Object.freeze({description:row.description,x:row.x_handle,website:row.website,telegram:row.telegram}):null
 const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,status:row.status,
- invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString()})
+ invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString(),
+ ...(row.has_profile!==undefined&&{profile:publicProfile(row)})})
+const withProfile=`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile
+ from hook_lab_launch_requests r left join hook_lab_coin_profiles p on p.request_id=r.id`
+// Shown publicly (metadata and image) while the coin can still launch or has launched.
+const PUBLIC_COIN_STATUSES=['queued','invited','launching','launched']
 const publicTableRequest=row=>Object.freeze({preparationId:row.preparation_id,launchRequestId:row.launch_request_id,creator:row.creator_wallet,launchRequest:row.launch_request,
  inventory:row.inventory,inventorySha256:row.inventory_sha256,status:row.status,tableAddress:row.table_address,createdAt:row.created_at.toISOString()})
 const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,messageBase64:row.message_base64,messageSha256:row.message_sha256,context:row.context,
@@ -50,24 +60,42 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     await db.query('update hook_lab_owner_presence set accepting=$1,agent_address=$2,last_seen_at=clock_timestamp(),updated_at=clock_timestamp() where id=1',[accepting,agentAddress])
     await expireInvites(db)
     await db.query("update hook_lab_owner_sign_requests set status='expired',decided_at=clock_timestamp() where status='pending' and review_expires_at<=clock_timestamp()")
-    const {rows:requests}=await db.query("select * from hook_lab_launch_requests where status in ('queued','invited','launching') order by created_at limit 50")
+    const {rows:requests}=await db.query(`${withProfile} where r.status in ('queued','invited','launching') order by r.created_at limit 50`)
     const {rows:signs}=await db.query("select * from hook_lab_owner_sign_requests where status='pending' order by created_at limit 10")
     const {rows:tables}=await db.query("select * from hook_lab_owner_table_requests where status='requested' order by created_at limit 10")
     return Object.freeze({requests:requests.map(publicRequest),signRequests:signs.map(publicSignRequest),tableRequests:tables.map(publicTableRequest)})
    })
   },
-  async createRequest(creator,{id,...intent}){
+  // profile: { image, description, x, website, telegram } as the server validated it (image: src/token-image.mjs
+  // validateTokenImage); written in the same transaction as the request and never changed afterwards.
+  async createRequest(creator,{id,...intent},profile=null){
    address.parse(creator);z.uuid().parse(id);const value=parseIntent(intent)
+   const coin=profile&&{...coinProfileFields(profile),image:profile.image}
+   check(!coin||(typeof coin.image==='string'&&coin.image.startsWith('data:image/png;base64,')),'Add a coin image')
    try{
-    const {rows:[row]}=await pool.query("insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status) values($1,$2,$3,$4,$5,$6,$7,'queued') returning *",[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps])
-    return publicRequest(row)
+    return await inTransaction(pool,async db=>{
+     const {rows:[row]}=await db.query("insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status) values($1,$2,$3,$4,$5,$6,$7,'queued') returning *",[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps])
+     if(!coin)return publicRequest({...row,has_profile:false})
+     const {rows:[{n}]}=await db.query("select count(*)::int n from hook_lab_coin_profiles p join hook_lab_launch_requests r on r.id=p.request_id where r.creator_wallet=$1 and p.created_at>clock_timestamp()-interval '1 day'",[creator])
+     check(n<PROFILES_PER_CREATOR_PER_DAY,'You have sent several launch requests today. Try again tomorrow')
+     await db.query('insert into hook_lab_coin_profiles(request_id,image,description,x_handle,website,telegram) values($1,$2,$3,$4,$5,$6)',[id,coin.image,coin.description,coin.x,coin.website,coin.telegram])
+     return publicRequest({...row,has_profile:true,description:coin.description,x_handle:coin.x,website:coin.website,telegram:coin.telegram})
+    })
    }catch(error){if(error.code==='23505')throw fail('You already have an open launch request');throw error}
   },
   async requestFor(creator){
    address.parse(creator)
    await expireInvites(pool)
-   const {rows:[row]}=await pool.query('select * from hook_lab_launch_requests where creator_wallet=$1 order by created_at desc limit 1',[creator])
+   const {rows:[row]}=await pool.query(`${withProfile} where r.creator_wallet=$1 order by r.created_at desc limit 1`,[creator])
    return publicRequest(row)??null
+  },
+  // Public: the coin's name, symbol, profile and image for its metadata and image URLs.
+  async coinFor(id){
+   if(!z.uuid().safeParse(id).success)return null
+   const {rows:[row]}=await pool.query(`${withProfile} where r.id=$1 and r.status=any($2) and p.request_id is not null`,[id,PUBLIC_COIN_STATUSES])
+   if(!row)return null
+   const {rows:[{image}]}=await pool.query('select image from hook_lab_coin_profiles where request_id=$1',[id])
+   return Object.freeze({request:Object.freeze({id:row.id,name:row.name,symbol:row.symbol,status:row.status}),profile:publicProfile(row),image})
   },
   async cancelRequest(creator,id){
    const {rows:[row]}=await pool.query("update hook_lab_launch_requests set status='cancelled',updated_at=clock_timestamp() where id=$1 and creator_wallet=$2 and status in ('queued','invited') returning *",[z.uuid().parse(id),address.parse(creator)])
