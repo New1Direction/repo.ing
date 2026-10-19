@@ -46,7 +46,8 @@ test('a full curve: "Graduating…" with a plain explanation of what happens nex
 test('after graduation: a Graduated badge, liquidity locked forever, max wallet lifted, and the numbers', async () => {
   const { HookCoinGraduation } = await appModule('app/components/hooklab-coin-graduation.jsx')
   const page = text(html(h(HookCoinGraduation, { market: markets.graduated })))
-  for (const expected of [/Graduated/, /Oct 9, 2025/, /Liquidity locked forever/, /Max wallet lifted/, /any amount of \$GRAD/, /106\.5 SOL/, /Burned at graduation/, /Creator fee 1% per trade/])
+  for (const expected of [/Graduated/, /Oct 9, 2025/, /Liquidity locked forever/, /no way to withdraw it\. Not even the creator can pull it/, /Max wallet lifted/, /any amount of \$GRAD/, /In the market 106\.5 SOL/,
+    /Coins in the market 250,000,000 \$GRAD/, /Creator fee 1% per trade/])
     assert.match(page, expected)
   assert.doesNotMatch(page, /Graduating|to graduation|Bonding curve/); assert.doesNotMatch(page, jargon)
 })
@@ -64,6 +65,7 @@ test('the coin page carries each state into the Blocks and the trade panel', asy
   const graduating = await render(markets.graduating)
   assert.match(graduating, /Graduating…/); assert.match(graduating, /Buying pauses until it opens on its new market; you can still sell/)
   const graduated = await render(markets.graduated)
-  assert.match(graduated, /Graduated/); assert.match(graduated, /Lifted at graduation/); assert.doesNotMatch(graduated, /until graduation/)
+  assert.match(graduated, /Graduated/); assert.match(graduated, /Lifted at graduation/); assert.doesNotMatch(graduated, /until graduation|Max 2% per wallet/)
+  assert.match(graduated, /No max per wallet · 1% creator fee/); assert.match(before, /Max 2% per wallet · 1% creator fee/)
   assert.match(graduated, /has graduated to its open market\. Trading it on repo\.ing opens again soon/)
 })

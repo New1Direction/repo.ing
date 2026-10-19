@@ -10,18 +10,18 @@ const day = seconds => new Date(seconds * 1000).toLocaleDateString('en-US', { mo
 export function HookCoinGraduation({ market }) {
   const symbol = `$${market.symbol}`, tokens = raw => `${formatUnits(BigInt(raw), market.decimals, 0)} ${symbol}`
   if (market.graduated) {
-    const g = market.graduation
+    const at = market.graduation?.at
     return <div className="hooks-graduation is-graduated" aria-label="Graduation">
       <div className="hooks-between"><span className="hooks-graduated-badge"><GraduationCap size={15} aria-hidden="true"/> Graduated</span>
-        {g?.at ? <small>on {day(g.at)}</small> : null}</div>
+        {at ? <small>on {day(at)}</small> : null}</div>
       <ul className="hooks-graduation-facts">
         <li><LockKeyhole size={18} aria-hidden="true"/><div><strong>Liquidity locked forever</strong>
-          <span>{solText(market.pool.quoteReserve, 2)} and {tokens(market.pool.baseReserve)} trade in an open market now. Nobody can pull that liquidity out, not even the creator.</span></div></li>
+          <span>The market’s liquidity belongs to the coin’s launch, which has no way to withdraw it. Not even the creator can pull it.</span></div></li>
         <li><Wallet size={18} aria-hidden="true"/><div><strong>Max wallet lifted</strong><span>Any wallet can hold any amount of {symbol} now.</span></div></li>
       </ul>
       <dl className="hooks-coin-stats hooks-graduation-stats">
         <div><dt>In the market</dt><dd>{solText(market.pool.quoteReserve, 2)}</dd></div>
-        {g && <div><dt>Burned at graduation</dt><dd>{tokens(g.burned)}</dd></div>}
+        <div><dt>Coins in the market</dt><dd>{tokens(market.pool.baseReserve)}</dd></div>
         <div><dt>Creator fee</dt><dd>{market.creatorFeeBps / 100}% per trade</dd></div>
       </dl>
     </div>
