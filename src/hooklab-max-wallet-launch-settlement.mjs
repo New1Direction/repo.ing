@@ -66,12 +66,20 @@ function context(input,canary=false){
  const before=new Map(ci.observations[0].accounts.map(x=>[x.address,x.account]))
  return {ci,plan,p,b:bindings,before}
 }
+// The swap names a pool's LP mint "<prefix> <token symbol>/<quote symbol>" (at most 32 characters): "Bordrless LP" in
+// bundle 2 and the builds before hook-lab 2b8b92a, "repo.ing LP" from 2b8b92a on (our own stack's release candidate).
+// The settlement accepts exactly these two, whichever the launch's swap wrote.
+export const LP_NAME_PREFIXES=Object.freeze(['Bordrless LP','repo.ing LP'])
+export function lpMintName(prefix,symbol,quoteSymbol){
+ if(!LP_NAME_PREFIXES.includes(prefix))throw Error('Unknown LP name prefix')
+ return Array.from(`${prefix} ${symbol}/${quoteSymbol}`).slice(0,32).join('')
+}
 // Pure expected-state derivation: no acceptance/authority. Useful for offline
 // verification and local synthetic tests; callers cannot provide expected bytes.
 export function deriveMaxWalletLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,false)}
 export function deriveCanaryMaxWalletLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,true)}
 export function deriveOpenLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,'open')}
-function derivePostconditions(settlementContext,{slot,timestamp},canary){
+function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=LP_NAME_PREFIXES[0]){
  int(slot);int(timestamp)
  const {ci,plan,p,b,before}=context(settlementContext,canary),r=plan.request,a=plan.addresses,{launch:L,swap:S,token:T,gate:G}=p.programs,open=canary==='open'
  // An open launch consumes no creator grant: it has none.
@@ -88,7 +96,7 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary){
   base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),hook_program:pk(L),hook_flags:1985,lp_fee_bps:lc.lp_fee_bps,
   base_reserve:bn(curve),virtual_base:bn(vbase),virtual_quote:bn(vquote),curve:true,creator:pk(a.launch),created_at:bn(timestamp),hook_signer_bump:bump(S,'hook-authority',pk(L).toBuffer()),fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,reserved:flagged('Pool',0)}
  const mint={...zeroStruct(b.token,'Mint'),version:1,decimals:lc.decimals,supply:bn(supply),max_supply:bn(supply),hook_program:pk(G),hook_flags:1,name:r.name,symbol:r.symbol,uri:r.uri,created_at:bn(timestamp),creator:pk(r.creator),hook_signer_bump:bump(T,'hook-authority',pk(G).toBuffer())}
- const lpMint={...zeroStruct(b.token,'Mint'),version:1,decimals:9,mint_authority:pk(a.pool),name:Array.from(`Bordrless LP ${r.symbol}/${quote.symbol}`).slice(0,32).join(''),symbol:'BLP',created_at:bn(timestamp),creator:pk(r.creator)}
+ const lpMint={...zeroStruct(b.token,'Mint'),version:1,decimals:9,mint_authority:pk(a.pool),name:lpMintName(lpName,r.symbol,quote.symbol),symbol:'BLP',created_at:bn(timestamp),creator:pk(r.creator)}
  const expected=new Map(),put=(address,owner,data)=>expected.set(address,{address,owner,executable:false,dataBase64:data.toString('base64')})
  // Mint authority is revoked after minting. Anchor serialization preserves the
  // prior Some(authority) tail when the final None value shortens its payload.
@@ -167,9 +175,12 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   const events=authenticatedEvents(t,b,p.programs),native=plan.quoteForm===1,open=canary==='open',names=['LaunchCreated','PoolCreated',...(native?['NativeLaunchCreated']:[]),...(open?['OpenLaunchCreated']:[])]
   check(events.length===names.length&&names.every(name=>events.filter(x=>x.name===name).length===1))
   if(open)check(events.findIndex(x=>x.name==='OpenLaunchCreated')<events.findIndex(x=>x.name==='LaunchCreated'))
-  const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),expected=derivePostconditions(settlementContext,{slot:t.slot,timestamp},canary)
+  const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),actual=new Map(snapshotInventory.map((k,i)=>[k,accounts[i]]))
+  // The expected state under the LP name this swap wrote (one of LP_NAME_PREFIXES); any other LP mint fails below.
+  const variants=LP_NAME_PREFIXES.map(prefix=>derivePostconditions(settlementContext,{slot:t.slot,timestamp},canary,prefix)),lpMintOf=x=>x.accounts.find(y=>y.address===plan.addresses.lpMint)
+  const expected=variants.find(x=>isDeepStrictEqual(actual.get(plan.addresses.lpMint),lpMintOf(x)))??variants[0]
   check(isDeepStrictEqual(events.map(({data,...e})=>e).sort((a,b)=>a.name.localeCompare(b.name)),expected.events.sort((a,b)=>a.name.localeCompare(b.name))))
-  const want=new Map(expected.accounts.map(x=>[x.address,x])),actual=new Map(snapshotInventory.map((k,i)=>[k,accounts[i]]))
+  const want=new Map(expected.accounts.map(x=>[x.address,x]))
   for(const pin of d.programs){const pd=actual.get(pin.programData);check(pd&&pd.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&!pd.executable&&sha(raw(pd.dataBase64))===pin.programDataSha256&&pin.deploySlot<=t.slot)}
   for(const [address,old]of before){const desired=want.get(address)??(old?(({lamports,...v})=>v)(old):null);check(isDeepStrictEqual(actual.get(address),desired))}
   // The flags themselves, read at their bytes: pool 351 and launch 560 are 1 after a v4 creation, 0 after v3.

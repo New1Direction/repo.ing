@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import {collectMaxWalletLaunchSettlement} from '../src/hooklab-max-wallet-launch-settlement.mjs'
+import plainTest from 'node:test'
+import {collectMaxWalletLaunchSettlement,LP_NAME_PREFIXES,lpMintName} from '../src/hooklab-max-wallet-launch-settlement.mjs'
 import {maxWalletSettlementFixture} from './fixtures/hooklab-max-wallet-launch-settlement.mjs'
 import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
 import {jsonbRoundTrip} from './fixtures/jsonb-round-trip.mjs'
@@ -39,4 +40,16 @@ for(const [name,mutate]of [
 test('two providers disagreeing on immutable transaction metadata creates conflict',async()=>{
  const f=await maxWalletSettlementFixture();f.connections[1].connection.getBlockSignatures=async()=>({...f.block,blockhash:'11111111111111111111111111111111'})
  assert.equal((await collectMaxWalletLaunchSettlement(f)).status,'conflict')
+})
+
+// Regression (self-serve on hook-lab's frozen 2b8b92a, 2026-10-19): that swap names a pool's LP mint "repo.ing LP
+// <token>/<quote symbol>" where bundle 2, the relocated reviewed ELFs and e775165 write "Bordrless LP ...", and the
+// settlement predicted only the old name, so every finalized launch on 2b8b92a settled as outcome-unknown.
+plainTest('a launch\'s LP mint name is one the swap writes: "Bordrless LP" or "repo.ing LP", the token and quote symbols, 32 characters at most', () => {
+  assert.deepEqual([...LP_NAME_PREFIXES], ['Bordrless LP', 'repo.ing LP'])
+  assert.equal(lpMintName('repo.ing LP', 'SSONE', 'QUOTE'), 'repo.ing LP SSONE/QUOTE')
+  assert.equal(lpMintName('Bordrless LP', 'SSONE', 'BSOL'), 'Bordrless LP SSONE/BSOL')
+  assert.equal(lpMintName('repo.ing LP', 'TENLETTERS', 'QUOTEQUOTEQ'), 'repo.ing LP TENLETTERS/QUOTEQUOT')
+  assert.equal(lpMintName('repo.ing LP', 'TENLETTERS', 'QUOTEQUOTEQ').length, 32)
+  assert.throws(() => lpMintName('Other LP', 'A', 'B'), /LP name/)
 })
