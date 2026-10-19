@@ -6,12 +6,15 @@ import { HooksRisk } from '../../../../components/hooks-ui'
 import { HookCoinPreview } from '../../../../components/hooklab-coin-form'
 import { HookTradePanel } from '../../../../components/hooklab-trade-panel'
 import { HookCoinGraduation } from '../../../../components/hooklab-coin-graduation'
+import { HookCoinChart } from '../../../../components/hooklab-coin-chart'
+import { HookCoinActivity } from '../../../../components/hooklab-coin-activity'
 import { inclusiveTradeRuntime } from '../../../../lib/hooklab-inclusive-trade-runtime.mjs'
 import { cachedMarket, listedCoin } from '../../../../lib/hooklab-market.mjs'
 import { coinImageUrl } from '../../../../../src/hooklab-coin-profile.mjs'
 import { hookBlock } from '../../../../../src/hooklab-blocks.mjs'
 import { executionGenesis } from '../../../../../src/hooklab-local-acceptance.mjs'
 import { formatUnits } from '../../../../lib/hooklab-trade-math.mjs'
+import { cachedSolUsdPrice } from '../../../../lib/sol-usd.mjs'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Hooks coin — repo.ing', robots: { index: false } }
@@ -35,11 +38,14 @@ export default async function HooksCoinPage({ params }) {
   const { view, coin, missing, unavailable } = await load(mint)
   if (missing) notFound()
   const market = view?.market
-  // One grid in reading order (coin, buy and sell, Blocks): phones stack it so the trade panel follows the coin, and
-  // desktop keeps the panel in a sticky right column. The panel renders even when coin data is slow, so a visitor
-  // can always connect a wallet.
+  // Every coin shown here launched through repo.ing, so once its market reads it gets the chart and the Trades and Holders
+  // tabs; its swaps are indexed (app/lib/hooklab-coin-activity.mjs).
+  const activity = Boolean(market && coin)
+  // One grid in reading order (coin, buy and sell, chart, trades and holders, Blocks): phones stack it so the trade panel
+  // follows the coin, and desktop keeps the panel in a sticky right column. The panel renders even when coin data is
+  // slow, so a visitor can always connect a wallet.
   return <><Link className="back-link" href="/hooks/trade"><ArrowLeft size={16} aria-hidden="true"/> Buy &amp; sell</Link>
-    <div className="hooks-coin-layout">
+    <div className={`hooks-coin-layout${activity ? ' has-activity' : ''}`}>
       {unavailable || !market ? <section className="hooks-card hooks-empty hooks-coin-hero"><img src="/launch-icons/find-repo.webp" width={72} height={72} alt=""/>
         <h1 className="hooks-coin-title">Coin details are loading slowly</h1><p>We couldn’t read this coin from Solana just now. Refresh in a moment.</p></section>
         : <section className="hooks-card hooks-coin-hero" aria-labelledby="hooks-coin-name">
@@ -55,6 +61,9 @@ export default async function HooksCoinPage({ params }) {
           <HookCoinGraduation market={market}/>
         </section>}
       <aside className="hooks-coin-side"><HookTradePanel mint={mint} genesisHash={executionGenesis()} initial={view ?? null}/></aside>
+      {/* The chart values the mint's current supply (graduation burns some), the same figure as the card's market cap. */}
+      {activity && <div className="hooks-coin-chart"><HookCoinChart mint={mint} symbol={market.symbol} decimals={market.decimals} supply={market.supply ?? market.initialSupply} solUsd={cachedSolUsdPrice()}/></div>}
+      {activity && <div className="hooks-coin-activity"><HookCoinActivity mint={mint} symbol={market.symbol} decimals={market.decimals}/></div>}
       {market && <section className="hooks-card hooks-coin-blocks-card" aria-labelledby="hooks-coin-blocks">
         <h2 id="hooks-coin-blocks">Blocks on this coin</h2>
         <ul className="hooks-block-grid hooks-coin-blocks">

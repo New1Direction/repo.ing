@@ -154,3 +154,35 @@
 .hooks-graduation-stats{margin-top:10px}
 .hooks-trade .hooks-trade-graduates{margin:10px 0 0;padding:10px 12px;border:1px solid color-mix(in srgb,var(--green) 50%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--green) 7%,var(--surface));color:var(--muted)!important;font-size:13px;line-height:1.5}.hooks-trade-graduates strong{color:var(--text)}
 @media(max-width:560px){.hooks-graduation-facts{grid-template-columns:1fr}}
+/* Listed coins: the chart and the Trades and Holders tabs sit under the coin card, left of the trade panel; phones stack
+   coin, trade panel, chart, tabs, Blocks. The chart reuses the repository markets' chart card (globals .chart-*). */
+.hooks-coin-layout.has-activity{grid-template-rows:auto auto auto auto 1fr;grid-template-areas:"hero side" "chart side" "activity side" "blocks side" "address side"}
+.hooks-coin-layout>.hooks-coin-chart{grid-area:chart;min-width:0}.hooks-coin-layout>.hooks-coin-activity{grid-area:activity;min-width:0}
+.hooks-chart-card .chart-headline>strong{overflow-wrap:anywhere}
+.hooks-chart-empty strong{font-size:18px}
+.hooks-activity{padding-top:10px}.hooks-activity .details-tabs{margin-top:0}
+.hooks-activity-note{margin:0 0 10px!important;font-size:13px}
+.hooks-activity-foot{margin:14px 0 0!important;font-size:12px;color:var(--dim)!important}
+.hooks-activity-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:26px 12px;text-align:center}
+.hooks-activity-empty img{margin-bottom:6px;object-fit:contain}.hooks-activity-empty strong{font-size:16px}.hooks-activity-empty span{max-width:340px;color:var(--muted);font-size:13px;line-height:1.5}
+.hooks-activity-empty .button{margin-top:8px}
+.hooks-activity-loading{display:grid;gap:14px;padding:10px 0}.hooks-activity-loading .skeleton-text{width:100%;height:16px}
+.hooks-activity-more{width:100%;margin-top:14px}
+.hooks-table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.hooks-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.hooks-table th{padding:0 8px 8px;border-bottom:1px solid var(--border);color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.04em;text-align:left;white-space:nowrap}
+.hooks-table td{height:44px;padding:0 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+.hooks-table :is(th,td):first-child{padding-left:0}.hooks-table :is(th,td):last-child{padding-right:0}
+.hooks-table .is-number{text-align:right}
+.hooks-table a{color:var(--text);text-decoration:none;text-underline-offset:3px}.hooks-table time{color:var(--muted)}
+@media(hover:hover){.hooks-table a:hover,.hooks-table a:hover time{color:var(--green);text-decoration:underline}}
+.hooks-table a:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:3px}
+.hooks-side{font-size:12px;font-weight:700}.hooks-side.is-buy{color:var(--green-dark)}.hooks-side.is-sell{color:var(--red)}
+.hooks-holders-table tr.is-labelled td{color:var(--muted)}
+.hooks-holder-label{display:inline-block;padding:2px 9px;border:1px dashed var(--border-strong);border-radius:999px;font-size:12px}
+.hooks-share{position:relative;display:inline-block;min-width:48px;padding-bottom:6px}
+.hooks-share::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;border-radius:2px;background:var(--green);opacity:.7;transform:scaleX(var(--share,0));transform-origin:left}
+@media(max-width:1000px){.hooks-coin-layout.has-activity{grid-template-rows:none;grid-template-areas:"hero" "side" "chart" "activity" "blocks" "address"}}
+/* 320-375 px: five trade columns fit in about 250 px (no unit in cells, compact ages and coin amounts); the table scrolls inside its card if not. */
+@media(max-width:420px){.hooks-activity{padding:10px 16px 16px}.hooks-table{font-size:12px}.hooks-table :is(th,td){padding-left:5px;padding-right:5px}.hooks-table th{font-size:10px}}
+.hooks-chart-card .chart-headline .hooks-chart-sol{color:var(--muted);font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}

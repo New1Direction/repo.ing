@@ -30,7 +30,8 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
   const view = {
     mint, name: coin.name, symbol: coin.symbol, uri: coin.uri, decimals, observedSlot: context.slot,
     selectedConfig: launch.config.toBase58(), creator: launch.creator.toBase58(), graduated,
-    capBps: policy.cap_bps, creatorFeeBps: policy.creator_fee_bps, initialSupply: s(policy.initial_supply),
+    // supply: the mint's current supply (graduation burns some), the figure the market cap below and the chart's use.
+    capBps: policy.cap_bps, creatorFeeBps: policy.creator_fee_bps, initialSupply: s(policy.initial_supply), supply: s(coin.supply),
     capRaw: s(BigInt(s(policy.initial_supply)) * BigInt(policy.cap_bps) / 10000n),
     pool: { baseReserve: s(pool.base_reserve), quoteReserve: s(pool.quote_reserve), virtualBase: s(pool.virtual_base),
       virtualQuote: s(pool.virtual_quote), protocolFeesQuote: s(pool.protocol_fees_quote), swapCount: s(pool.swap_count) },

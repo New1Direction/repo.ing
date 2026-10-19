@@ -2,9 +2,11 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
 // Accessible tabs (roles, arrow keys, Home/End). Panels stay mounted so server-rendered content and live cards keep
-// their state; a URL hash naming a tab's anchor (e.g. #repository) selects it.
-export function DetailsTabs({ tabs, initial, label = 'Details' }) {
-  const [selected, setSelected] = useState(initial ?? tabs[0]?.id)
+// their state; a URL hash naming a tab's anchor (e.g. #repository) selects it. onSelect(id), when given, hears each choice
+// (a panel that loads only once it is opened).
+export function DetailsTabs({ tabs, initial, label = 'Details', onSelect }) {
+  const [selected, setSelectedState] = useState(initial ?? tabs[0]?.id)
+  const setSelected = id => { setSelectedState(id); onSelect?.(id) }
   const list = useRef(null)
   const id = useId()
   useEffect(() => {

@@ -5,6 +5,7 @@ import {inclusiveTradeResolver} from '../../src/hooklab-inclusive-trade-resolver
 import {stagedResolver,walletFundingResolver} from '../../src/hooklab-wallet-funding-resolver.mjs'
 import {readHookCoinMarket,readHookWalletBalances} from '../../src/hooklab-coin-market.mjs'
 import {ownerApprovalStore} from '../../src/hooklab-owner-approval.mjs'
+import {hookActivityRpc} from '../../src/hooklab-coin-activity.mjs'
 import { isLocalExecutionDossier } from '../../src/hooklab-local-acceptance.mjs'
 const runtimeKey=Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
 // Withdrawing SOL from Hook Lab (unwrap) is always available, and every funding operation stays readable, so customers
@@ -25,7 +26,9 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const walletBalances=wallet=>readHookWalletBalances({connection:connections[0].connection,wallet})
  // Only coins launched through repo.ing approval are shown; a test coin or anything launched outside the site is not.
  const approvals=ownerApprovalStore(pool,{adminAddress:config.reviewer}),coinProfile=mint=>approvals.coinByMint(mint)
- return Object.freeze({origin,genesisHash:JSON.parse(profile.json).genesisHash,ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,walletFunding:walletFundingEnabled===true,walletWithdraw:true,lifecycle,market,walletBalances,coinProfile})
+ // The coin page's chart, trades and holders read the same primary provider (src/hooklab-coin-activity.mjs): reads only.
+ const activity=hookActivityRpc(connections[0].connection)
+ return Object.freeze({origin,genesisHash:JSON.parse(profile.json).genesisHash,ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,walletFunding:walletFundingEnabled===true,walletWithdraw:true,lifecycle,market,walletBalances,coinProfile,activity})
 }
 export function installInclusiveTradeRuntime(value){
  if(inclusiveTradeRuntime()||!value||value.ownerTradingApproved!==true||value.operatorDeploymentApproved!==true||value.economicsApproved!==true||!value.lifecycle)throw Error('Complete approved trading runtime required')

@@ -73,6 +73,8 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
     if (isFinal(op.status)) forgetOperation(localStorage, signingId)
     const executed = op.status === 'finalized-success' || (op.status === 'review-required' && op.settlement?.executionStatus === 'finalized-executed')
     update({ status: executed ? 'done' : 'failed', signature: op.signature })
+    // The coin's chart and trades read again (app/components/hooklab-coin-chart.jsx, hooklab-coin-activity.jsx).
+    if (executed && (kind === 'buy' || kind === 'sell')) window.dispatchEvent(new CustomEvent('repoing:trade-confirmed', { detail: { mint, signature: op.signature } }))
     if (!executed) throw Error(op.status === 'finalized-failure' ? `${STEP_LABELS[kind]} failed on Solana. Only its network fee was charged.`
       : op.status === 'review-required' ? 'This transaction needs a manual check. It is saved; nothing more will be signed for it.'
       : 'Still confirming. Your transaction is saved; this page keeps checking it.')
