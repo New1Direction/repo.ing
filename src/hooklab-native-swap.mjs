@@ -26,7 +26,9 @@ const { raw, owned, decoded, programEvidence, governance, typed, readHolding, KI
 const check = (value, message) => { if (!value) throw Error(message) }
 // Refusals about the trader's own trade, in words the signing lifecycle may show them (everything else stays masked).
 const refuseUnless = (value, message) => { if (!value) throw Object.assign(Error(message), { code: 'HOOKLAB_USER_REFUSAL' }) }
-const CURVE_CHANGED = 'This coin’s curve changed since you picked the amount. Check it and try again.'
+// The trade panel's largest slippage choice (app/lib/hooklab-trade-math.mjs SLIPPAGE_CHOICES).
+export const MAX_SLIPPAGE_BPS = 500n
+const CURVE_CHANGED ='This coin’s curve changed since you picked the amount. Check it and try again.'
 const QUOTE_REFUSALS = { MAX_WALLET: 'That would put you over this coin’s max per wallet.', MIN_OUTPUT: 'Price moved too much for this amount.' }
 const sha = value => createHash('sha256').update(value).digest('hex')
 const hash = (...values) => createHash('sha256').update(Buffer.concat(values.map(v => Buffer.from(v)))).digest()
@@ -251,6 +253,9 @@ export function compileNativeSwapReview(input) {
   const fill = graduated ? null : finalFillLamports({ graduated: false, graduationQuote: String(state.graduation_quote), creatorFeeBps: r.creatorFeeBps, pool: p })
   if (graduated) refuseUnless(!r.graduate, CURVE_CHANGED)
   else refuseUnless(r.graduate ? buy && fill !== null && amount === fill && isReady(q.after, n(state.graduation_quote)) : !buy || !isReady(q.after, n(state.graduation_quote)), CURVE_CHANGED)
+  // The client derives the minimum from one provider's quote; the two-provider state here bounds it: never further than
+  // the panel's largest slippage choice below what this trade delivers now (I1).
+  refuseUnless(BigInt(r.minAmountOut) >= q.delivered * (10000n - MAX_SLIPPAGE_BPS) / 10000n, 'Your minimum received allows more than 5% slippage. Refresh the amount and try again.')
   check(n(pool.base_volume) + (buy ? q.grossOutput : amount) <= maxU128 && n(pool.quote_volume) + (buy ? amount - creator : q.grossOutput) <= maxU128
     && q.after.quoteReserve + q.after.protocolFeesQuote <= maxU64, 'Post-swap arithmetic overflow')
   const slot = Math.max(...obs.map(o => o.slot))

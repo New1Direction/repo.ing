@@ -15,14 +15,16 @@ import {jsonbRoundTrip} from './fixtures/jsonb-round-trip.mjs'
 const LIMITS={maxAgeMs:5000,maxSlotLag:5,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:'10000',maxTotalDebitLamports:'10000',computeUnitLimit:1400000,computeUnitPriceMicroLamports:'0'}
 const BOOT=1800000000000
 const store=p=>jsonbRoundTrip({review:p.review,configurationSha256:p.configurationSha256,settlementContext:p.settlementContext})
-const buy=(roles,amountIn='1000003',extra={})=>({side:'buy',creatorFeeBps:100,capBps:5000,mint:roles.mint,selectedConfig:roles.config,amountIn,minAmountOut:'1',maxInput:amountIn,maxPriceImpactBps:1000,graduate:false,...extra})
+// A buy with the minimum received a panel would send (its estimate less 3%): the server refuses one allowing more than 5%.
+const buy=async(w,trader,amountIn='1000003',extra={})=>({side:'buy',creatorFeeBps:100,capBps:5000,mint:w.roles.mint,selectedConfig:w.roles.config,amountIn,
+ minAmountOut:await w.minimumOut('buy',amountIn,trader),maxInput:amountIn,maxPriceImpactBps:1000,graduate:false,...extra})
 
 test('F1: a first buy whose coin holding appears before it lands executes on chain, so it must settle',{skip:NATIVE_SKIP,timeout:600000},async t=>{
  const w=await nativeWorld({capBps:5000});t.after(w.close)
  const {roles}=w,profile=JSON.parse(w.state.profile.json)
  const resolver=nativeTradeResolver({...w.bindings,connections:w.connections(),limits:{...LIMITS,nowMs:BOOT},clock:()=>1000})
  // The buyer has no coin holding yet, so the review includes create_holding and charges its rent.
- const prepared=await resolver.prepare({owner:roles.buyer,stage:'native-buy',intent:buy(roles)})
+ const prepared=await resolver.prepare({owner:roles.buyer,stage:'native-buy',intent:await buy(w,roles.buyer)})
  assert.equal(prepared.request.quote.holdingRentLamports!=='0',true,'the review creates the holding')
  const stored=store(prepared)
  // Anyone (here another wallet; equally the buyer's own second tab or a bridged fund step) creates the buyer's holding
@@ -50,7 +52,7 @@ test('F1: a rent-rate change between review and landing settles when the holding
  const {roles,addresses:a}=w
  const resolver=nativeTradeResolver({...w.bindings,connections:w.connections(),limits:{...LIMITS,nowMs:BOOT},clock:()=>1000})
  // Reviewed at the bank's default 6,960 lamports per byte; lands at mainnet's 5,080 (SIMD-0437): the holding costs less.
- const cheaper=store(await resolver.prepare({owner:roles.buyer,stage:'native-buy',intent:buy(roles)}))
+ const cheaper=store(await resolver.prepare({owner:roles.buyer,stage:'native-buy',intent:await buy(w,roles.buyer)}))
  assert.equal(cheaper.settlementContext.compilationInput.request.trader,roles.buyer)
  await w.svm.call('rent',{lamportsPerByte:5080})
  const holding=w.holdingOf(roles.mint,roles.buyer),before=await w.lamports([roles.buyer,holding])
@@ -62,7 +64,7 @@ test('F1: a rent-rate change between review and landing settles when the holding
  assert.equal(settled.lamportDeltas[roles.buyer],String(-(5000n+1000003n+(128n+204n)*5080n)))
  // Reviewed at 5,080; the rate rises to 8,000 before it lands. The pool and launch get donations so the swap itself
  // still clears its own rent checks; the new holding then costs more than the review stated.
- const dearer=store(await resolver.prepare({owner:roles.outsider,stage:'native-buy',intent:buy(roles,'1000007')}))
+ const dearer=store(await resolver.prepare({owner:roles.outsider,stage:'native-buy',intent:await buy(w,roles.outsider,'1000007')}))
  await w.svm.call('rent',{lamportsPerByte:8000})
  await assert.rejects(resolver.revalidate({owner:roles.outsider,stage:'native-buy',...dearer}),'revalidation refuses a holding that now costs more')
  for(const address of [a.pool,a.launch])assert.equal((await w.send(await w.compile(roles.creator,[SystemProgram.transfer({fromPubkey:new PublicKey(roles.creator),toPubkey:new PublicKey(address),lamports:5000000})]))).error,null)
@@ -77,14 +79,14 @@ test('F4: one provider\'s low lastValidBlockHeight is refused at review, so an e
  // The harness's finalized height is 100. Provider 0 (the only one asked for the blockhash) answers lastValidBlockHeight
  // 110 instead of 250: still >= the current height and within 150, so before the fix the review and revalidation passed.
  const lying=w.connections().map((c,i)=>i===0?{...c,connection:{...c.connection,getLatestBlockhashAndContext:async()=>{const r=await c.connection.getLatestBlockhashAndContext();return {...r,value:{...r.value,lastValidBlockHeight:110}}}}}:c)
- await assert.rejects(nativeTradeResolver({...w.bindings,connections:lying,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000}).prepare({owner:roles.creator,stage:'native-buy',intent:buy(roles)}),
+ await assert.rejects(nativeTradeResolver({...w.bindings,connections:lying,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000}).prepare({owner:roles.creator,stage:'native-buy',intent:await buy(w,roles.creator)}),
   'the second provider’s block for that blockhash proves height 100 + 150, not 110')
  // Nor may the second provider vouch for another block.
  const otherBlock=w.connections().map((c,i)=>i===1?{...c,connection:{...c.connection,getBlock:async(...args)=>({...await c.connection.getBlock(...args),blockhash:roles.table})}}:c)
- await assert.rejects(nativeTradeResolver({...w.bindings,connections:otherBlock,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000}).prepare({owner:roles.creator,stage:'native-buy',intent:buy(roles)}))
+ await assert.rejects(nativeTradeResolver({...w.bindings,connections:otherBlock,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000}).prepare({owner:roles.creator,stage:'native-buy',intent:await buy(w,roles.creator)}))
  // An honest review lands at height 130 (tip height, inside the blockhash's real 150-block life) and settles.
  const honest=nativeTradeResolver({...w.bindings,connections:w.connections(),limits:{...LIMITS,nowMs:BOOT},clock:()=>1000})
- const control=store(await honest.prepare({owner:roles.creator,stage:'native-buy',intent:buy(roles)}))
+ const control=store(await honest.prepare({owner:roles.creator,stage:'native-buy',intent:await buy(w,roles.creator)}))
  assert.equal(control.review.lastValidBlockHeight,250)
  const sent=await w.send(control.review.messageBase64);assert.equal(sent.error,null)
  const landed=w.connections().map(c=>({...c,connection:{...c.connection,getBlockSignatures:async(...args)=>({...await c.connection.getBlockSignatures(...args),blockHeight:130})}}))
@@ -109,11 +111,11 @@ test('F3: lamports sent to a wallet\'s future holding address do not lock that w
  // ... and so does repo.ing's review. Another wallet (the outsider), its holding PDA pre-funded the same way.
  const victim=roles.outsider,victimHolding=w.holdingOf(roles.mint,victim)
  assert.equal((await w.send(await w.compile(roles.creator,[SystemProgram.transfer({fromPubkey:new PublicKey(roles.creator),toPubkey:new PublicKey(victimHolding),lamports:890880})]))).error,null)
- const result=await resolver.prepare({owner:victim,stage:'native-buy',intent:buy(roles)}).then(()=>'reviewed',e=>`refused: ${e.code??''} ${e.message}`)
+ const result=await resolver.prepare({owner:victim,stage:'native-buy',intent:await buy(w,victim)}).then(()=>'reviewed',e=>`refused: ${e.code??''} ${e.message}`)
  t.diagnostic(`review of the victim's first buy: ${result}`)
  assert.equal(result,'reviewed')
  // It pays only the rest of the holding's rent, and settles from the receipt's HoldingCreated.
- const prepared=await resolver.prepare({owner:victim,stage:'native-buy',intent:buy(roles,'1000005')}),stored=store(prepared)
+ const prepared=await resolver.prepare({owner:victim,stage:'native-buy',intent:await buy(w,victim,'1000005')}),stored=store(prepared)
  assert.equal(prepared.request.quote.holdingRentLamports,String((128n+204n)*6960n-890880n))
  const before=await w.lamports([victim,victimHolding]),sent=await w.send(stored.review.messageBase64);assert.equal(sent.error,null)
  const after=await w.lamports([victim,victimHolding])
@@ -127,8 +129,9 @@ test('I1: the server refuses a native review whose minimum received allows more 
  const w=await nativeWorld({capBps:5000});t.after(w.close)
  const {roles}=w
  const resolver=nativeTradeResolver({...w.bindings,connections:w.connections(),limits:{...LIMITS,nowMs:BOOT},clock:()=>1000})
- const delivered=BigInt((await resolver.prepare({owner:roles.creator,stage:'native-buy',intent:buy(roles,'1000003')})).request.quote.delivered)
- const floor=(delivered*9500n+9999n)/10000n
- await assert.rejects(resolver.prepare({owner:roles.creator,stage:'native-buy',intent:buy(roles,'1000003',{minAmountOut:String(floor-1n)})}),{code:'HOOKLAB_USER_REFUSAL',message:/slippage/})
- assert.equal((await resolver.prepare({owner:roles.creator,stage:'native-buy',intent:buy(roles,'1000003',{minAmountOut:String(floor)})})).request.quote.minAmountOut,String(floor))
+ const delivered=BigInt((await resolver.prepare({owner:roles.creator,stage:'native-buy',intent:await buy(w,roles.creator,'1000003')})).request.quote.delivered)
+ const floor=delivered*9500n/10000n
+ await assert.rejects(resolver.prepare({owner:roles.creator,stage:'native-buy',intent:await buy(w,roles.creator,'1000003',{minAmountOut:String(floor-1n)})}),{code:'HOOKLAB_USER_REFUSAL',message:/slippage/})
+ await assert.rejects(resolver.prepare({owner:roles.creator,stage:'native-buy',intent:await buy(w,roles.creator,'1000003',{minAmountOut:'1'})}),{code:'HOOKLAB_USER_REFUSAL',message:/slippage/},'a client that sends no real minimum')
+ assert.equal((await resolver.prepare({owner:roles.creator,stage:'native-buy',intent:await buy(w,roles.creator,'1000003',{minAmountOut:String(floor)})})).request.quote.minAmountOut,String(floor))
 })

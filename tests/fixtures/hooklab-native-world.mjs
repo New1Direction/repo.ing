@@ -11,6 +11,7 @@ import {NATIVE_ELF} from '../../src/hooklab-native-pins.mjs'
 import {canaryCommitment} from '../../src/hooklab-canary-policy.mjs'
 import {makeCanaryState,canaryCollectorBindings,localTestEnvironment,isolatedSvm,pk,pda} from './hooklab-canary.mjs'
 import {missingArtifactEnv} from './hooklab-generated-artifact.mjs'
+import {estimateTrade} from '../../app/lib/hooklab-trade-math.mjs'
 
 const sha=x=>createHash('sha256').update(x).digest()
 export const NATIVE_SKIP=process.env.HOOKLAB_CANARY_REQUIRED!=='true'&&missingArtifactEnv(['HOOKLAB_NATIVE_ELF_DIR'],
@@ -97,7 +98,19 @@ export async function nativeWorld({capBps=5000}={}){
  const e=localTestEnvironment(),bindings=canaryCollectorBindings(state)
  const connections=(alter)=>state.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:[e.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY,e.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY][i],...transport(alter)}}))
  const lamports=async addresses=>Object.fromEntries((await svm.call('get',{addresses})).accounts.map(r=>[r.address,BigInt(r.account?.lamports??0)]))
- return {svm,state,roles,addresses:a,programs:P,profile:base,send,submit,sync,expire,blockhash,compile,decoded,executed,connections,bindings,lamports,close,launched,lookup,
+ // The minimum received a panel would send for this trade now (its estimate less the slippage), or '1' where the
+ // estimate already refuses (those tests expect a refusal before the minimum matters).
+ const minimumOut=async(side,amount,trader,slippageBps=300)=>{
+  const holding=pda(P.token,'holding',pk(roles.mint).toBuffer(),pk(trader).toBuffer())
+  const rows=new Map((await svm.call('get',{addresses:[a.pool,a.launch,holding]})).accounts.map(r=>[r.address,r.account]))
+  const decode=(role,type,address)=>state.bindings[role].coder.accounts.decode(type,Buffer.from(rows.get(address).dataBase64,'base64'))
+  const p=decode('swap','Pool',a.pool),l=decode('launch','Launch',a.launch),held=rows.get(holding)?.owner===P.token?Buffer.from(rows.get(holding).dataBase64,'base64').readBigUInt64LE(74):0n
+  const market={graduated:l.status===1,graduationQuote:l.graduation_quote.toString(),creatorFeeBps:100,capBps,initialSupply:'1000000000000000',
+   pool:{baseReserve:p.base_reserve.toString(),quoteReserve:p.quote_reserve.toString(),virtualBase:p.virtual_base.toString(),virtualQuote:p.virtual_quote.toString(),protocolFeesQuote:p.protocol_fees_quote.toString()}}
+  const e=estimateTrade(market,{side,amount:BigInt(amount),coinBalance:held,slippageBps})
+  return e.error?'1':String(e.minAmountOut)
+ }
+ return {svm,state,roles,addresses:a,programs:P,profile:base,send,submit,sync,expire,blockhash,compile,decoded,executed,connections,bindings,lamports,close,launched,lookup,minimumOut,
   holdingOf:(mint,owner)=>pda(P.token,'holding',pk(mint).toBuffer(),pk(owner).toBuffer()),
   // The runner's deterministic synthetic test-domain key for a role (tests/fixtures/hooklab-canary-svm.py), to sign as a wallet.
   walletKey:role=>Keypair.fromSeed(sha(`repo.ing atomic canary isolated SVM tests v1 ${role}`))}

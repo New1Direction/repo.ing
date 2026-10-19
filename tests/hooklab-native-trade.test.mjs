@@ -41,7 +41,8 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  const market=async()=>{await w.sync([a.pool,a.launch]);const p=w.decoded('swap','Pool',a.pool),l=w.decoded('launch','Launch',a.launch)
   return {graduated:l.status===1,graduationQuote:l.graduation_quote.toString(),creatorFeeBps:100,capBps:CAP_BPS,initialSupply:String(SUPPLY),
    pool:{baseReserve:p.base_reserve.toString(),quoteReserve:p.quote_reserve.toString(),virtualBase:p.virtual_base.toString(),virtualQuote:p.virtual_quote.toString(),protocolFeesQuote:p.protocol_fees_quote.toString()}}}
- const prepare=(owner,side,amount,extra)=>resolverAt(BOOT).prepare({owner,stage:`native-${side}`,intent:intent(side,amount,extra)})
+ // A realistic minimum received (the panel's estimate less 3%), as the server refuses one that allows more than 5% (I1).
+ const prepare=async(owner,side,amount,extra={})=>resolverAt(BOOT).prepare({owner,stage:`native-${side}`,intent:intent(side,amount,{minAmountOut:await w.minimumOut(side,amount,owner),...extra})})
  const store=prepared=>jsonbRoundTrip({review:prepared.review,configurationSha256:prepared.configurationSha256,settlementContext:prepared.settlementContext})
  // The whole server path: review, store as jsonb, revalidate after a restart, execute the exact bytes, settle twice.
  async function trade(owner,side,amount,extra){
@@ -83,7 +84,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  await t.test('stale or changed state is refused before anything is signed',async()=>{
   const stored=store(await prepare(roles.creator,'buy',50000000))
   await trade(roles.buyer,'buy',20000000)
-  await assert.rejects(resolverAt(RESTARTED).revalidate({owner:roles.creator,stage:'native-buy',...stored}),/changed/,'another trade moved the pool')
+  await assert.rejects(resolverAt(RESTARTED).revalidate({owner:roles.creator,stage:'native-buy',...stored}),/changed|Price moved/,'another trade moved the pool')
   await assert.rejects(resolverAt(BOOT).revalidate({owner:roles.creator,stage:'native-sell',...stored}),/changed/,'another stage')
   await assert.rejects(prepare(roles.outsider,'sell',1),{code:'HOOKLAB_USER_REFUSAL',message:/holds none of this coin/})
   await assert.rejects(prepare(roles.creator,'sell',1000,{graduate:true}),/Only a buy graduates/)
@@ -91,7 +92,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   // A simulation that moves any watched account differently (here the launch PDA by one lamport) is refused too.
   await assert.rejects(nativeTradeResolver({...w.bindings,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000,connections:w.connections().map(c=>({...c,connection:{...c.connection,
    simulateTransaction:async(tx,config)=>{const r=await c.connection.simulateTransaction(tx,config);r.value.accounts[1]={...r.value.accounts[1],lamports:r.value.accounts[1].lamports+1};return r}}}))})
-   .prepare({owner:roles.creator,stage:'native-buy',intent:intent('buy',3000000)}),/changed/)
+   .prepare({owner:roles.creator,stage:'native-buy',intent:intent('buy',3000000,{minAmountOut:await w.minimumOut('buy',3000000,roles.creator)})}),/changed/)
  })
  await t.test('only a coin whose pool and launch are both native trades here; a bridged or half-flagged one is refused',async()=>{
   const input=(await prepare(roles.creator,'buy',3000000)).settlementContext.compilationInput
@@ -102,7 +103,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  })
  await t.test('a signed trade that lands after the pool moved settles from its own events, still exact to the lamport',async()=>{
   for(const [side,amount,other] of [['buy',30000000n,15000000],['sell',(await coins(roles.creator))/5n,15000001]]){
-   const prepared=await prepare(roles.creator,side,amount),stored=store(prepared)
+   const prepared=await prepare(roles.creator,side,amount,{minAmountOut:await w.minimumOut(side,amount,roles.creator,500)}),stored=store(prepared)
    await trade(roles.buyer,'buy',other)
    const watched=Object.keys(compileNativeSwapReview(stored.settlementContext.compilationInput).lamportDeltas)
    const before=await w.lamports(watched),sent=await w.send(prepared.review.messageBase64),after=await w.lamports(watched)

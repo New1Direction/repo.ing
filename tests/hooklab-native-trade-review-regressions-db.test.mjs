@@ -34,9 +34,11 @@ test('native review regressions through the signing lifecycle',{skip:NATIVE_SKIP
  // Lifecycles exactly as the trade runtime wires them (app/lib/hooklab-inclusive-trade-runtime.mjs), native open or not.
  const lifecycleWith=settings=>nativeSigningLifecycle(pool,{enabled:true,origin:ORIGIN,custodyAdapter:null,sender,...settings})
  const on=lifecycleWith(tradeLifecycleSettings({trade:{},funding:{},native,nativeOpen:true}))
- const intent=(side,amountIn)=>({side,creatorFeeBps:100,capBps:5000,mint:roles.mint,selectedConfig:roles.config,amountIn:String(amountIn),minAmountOut:'1',maxInput:String(amountIn),maxPriceImpactBps:1000,graduate:false})
+ // The minimum received a panel would send (its estimate less 3%).
+ const intent=async(side,amountIn)=>({side,creatorFeeBps:100,capBps:5000,mint:roles.mint,selectedConfig:roles.config,amountIn:String(amountIn),
+  minAmountOut:await w.minimumOut(side,amountIn,owner),maxInput:String(amountIn),maxPriceImpactBps:1000,graduate:false})
  async function submitted(side,amount){
-  const id=randomUUID();await on.createReview(token,id,{custodyOperationId:id,stage:`native-${side}`,intent:intent(side,amount)})
+  const id=randomUUID();await on.createReview(token,id,{custodyOperationId:id,stage:`native-${side}`,intent:await intent(side,amount)})
   const request=await on.walletRequest(token,id),tx=VersionedTransaction.deserialize(Buffer.from(request.partialTransactionBase64,'base64'));tx.sign([wallet])
   await on.retainWalletSignature(token,id,Buffer.from(tx.serialize()).toString('base64'))
   assert.equal((await on.submitOnce(token,id)).status,'submitted');return id
@@ -63,8 +65,8 @@ test('native review regressions through the signing lifecycle',{skip:NATIVE_SKIP
   const settled=await off.reconcile(token,id).catch(e=>({status:`threw ${e.code}`}))
   assert.equal(settled.status,'finalized-success','and a sent trade still settles')
   const fresh=randomUUID()
-  await assert.rejects(off.createReview(token,fresh,{custodyOperationId:fresh,stage:'native-buy',intent:intent('buy',1000)}),'no new native review while off')
-  const waiting=randomUUID();await on.createReview(token,waiting,{custodyOperationId:waiting,stage:'native-buy',intent:intent('buy',2000000)})
+  await assert.rejects(off.createReview(token,fresh,{custodyOperationId:fresh,stage:'native-buy',intent:await intent('buy',1000)}),'no new native review while off')
+  const waiting=randomUUID();await on.createReview(token,waiting,{custodyOperationId:waiting,stage:'native-buy',intent:await intent('buy',2000000)})
   for(const step of [()=>off.walletRequest(token,waiting),()=>off.refreshReview(token,waiting),()=>off.submitOnce(token,waiting)])await assert.rejects(step(),'nothing moves forward while off')
   assert.equal((await off.get(token,waiting)).status,'reviewed')
  })

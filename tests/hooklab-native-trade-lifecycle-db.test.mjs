@@ -31,9 +31,11 @@ test('native buy and sale through the signing lifecycle: one wallet approval eac
  const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin:ORIGIN,resolver:stagedResolver({'native-buy':native,'native-sell':native}),custodyAdapter:null,
   sender:{send:async({signedTransactionBase64})=>{sends++;return (await w.submit(signedTransactionBase64)).signature}},
   stageOperations:{'native-buy':'native-max-wallet-buy','native-sell':'native-max-wallet-sell'}})
- const intent=(side,amountIn)=>({side,creatorFeeBps:100,capBps:5000,mint:roles.mint,selectedConfig:roles.config,amountIn:String(amountIn),minAmountOut:'1',maxInput:String(amountIn),maxPriceImpactBps:1000,graduate:false})
+ // The minimum received a panel would send (its estimate less 3%).
+ const intent=async(side,amountIn)=>({side,creatorFeeBps:100,capBps:5000,mint:roles.mint,selectedConfig:roles.config,amountIn:String(amountIn),
+  minAmountOut:await w.minimumOut(side,amountIn,owner),maxInput:String(amountIn),maxPriceImpactBps:1000,graduate:false})
  async function trade(side,amount){
-  const id=randomUUID(),reviewed=await lifecycle.createReview(token,id,{custodyOperationId:id,stage:`native-${side}`,intent:intent(side,amount)})
+  const id=randomUUID(),reviewed=await lifecycle.createReview(token,id,{custodyOperationId:id,stage:`native-${side}`,intent:await intent(side,amount)})
   assert.equal(reviewed.status,'reviewed');assert.equal(reviewed.review.operation,`native-max-wallet-${side}`);assert.deepEqual(reviewed.review.requiredSigners,[owner])
   const request=await lifecycle.walletRequest(token,id),tx=VersionedTransaction.deserialize(Buffer.from(request.partialTransactionBase64,'base64'))
   tx.sign([wallet])
@@ -44,7 +46,7 @@ test('native buy and sale through the signing lifecycle: one wallet approval eac
   return settled
  }
  await t.test('the native stages need the native-stages migration',async()=>{
-  const id=randomUUID(),create=()=>lifecycle.createReview(token,id,{custodyOperationId:id,stage:'native-buy',intent:intent('buy',5000000)})
+  const id=randomUUID(),create=async()=>lifecycle.createReview(token,id,{custodyOperationId:id,stage:'native-buy',intent:await intent('buy',5000000)})
   await assert.rejects(create());assert.equal((await pool.query('select count(*)::int as n from hook_lab_native_signing_operations')).rows[0].n,0)
   await pool.query(migrationSchema('native-stages').sql)
   assert.equal((await create()).status,'reviewed','the same request, once the stage is allowed')
