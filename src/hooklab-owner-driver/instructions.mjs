@@ -136,6 +136,15 @@ export function instructionsFor(abiSource) {
   // its five optional accounts are absent, passed as the launch program's id read-only (as the program's own client
   // does). The max-wallet gate is the custom hook, so its slice follows as remaining accounts: the gate, the token
   // program's signer for it, then its registry's extras (policy, launch), all read-only as the registry lists them.
+  // graduate's token_hook_signer: the token program's signer for the kit (bundle 2 and the builds before the independent
+  // stack) or for the gate (hook-lab independent e775165, its TOKEN_HOOK_AUTHORITY). The launch IDL fixes which one;
+  // nothing else is accepted.
+  function tokenHookSigner(accounts, T, kit, G) {
+    const forKit = pda(T, 'hook-authority', kb(kit)), fixed = accounts.find(a => a.name === 'token_hook_signer')?.address
+    if (!fixed) return forKit
+    check([forKit, pda(T, 'hook-authority', kb(G))].includes(fixed), 'Fixed account launch.graduate.token_hook_signer differs')
+    return fixed
+  }
   function graduateHookCoin(programs, quoteMint, { cranker, mint, kit }) {
     check(kit, 'The kit program is required (it comes from the stack\'s profile)')
     const { launch: L, swap: S, gate: G, token: T } = programs, d = derivedAddresses(programs, quoteMint)
@@ -145,7 +154,7 @@ export function instructionsFor(abiSource) {
     const ix = idlInstruction('launch', 'graduate', {}, { cranker: pk(cranker).toBase58(), launch, mint, quote_mint: quoteMint, pool,
       launch_reserve: holdingAddress(mint, launch, T), base_vault: holdingAddress(mint, pool, T), quote_vault: holdingAddress(quoteMint, pool, T), lp_mint: lpMint,
       launch_lp: holdingAddress(lpMint, launch, T), hook_signer: pda(L, 'hook-authority'), swap_program: S, dex_event_authority: d.swapEventAuthority, token_program: T,
-      token_hook_signer: pda(T, 'hook-authority', kb(kit)), token_event_authority: d.tokenEventAuthority, ...absent, event_authority: d.launchEventAuthority },
+      token_hook_signer: tokenHookSigner(accounts, T, kit, G), token_event_authority: d.tokenEventAuthority, ...absent, event_authority: d.launchEventAuthority },
     { programId: L, remaining: [{ address: G }, { address: pda(T, 'hook-authority', kb(G)) }, { address: pda(G, 'policy-v2', kb(mint)) }, { address: launch }] })
     return new TransactionInstruction({ programId: ix.programId, data: ix.data, keys: ix.keys.map((k, i) => accounts[i]?.optional ? { ...k, isWritable: false } : k) })
   }
