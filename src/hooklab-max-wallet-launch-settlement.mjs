@@ -12,6 +12,7 @@ import {compileMaxWalletLaunchReview,compileCanaryMaxWalletLaunchReview} from '.
 import {productionAccountBindingMatches} from './hooklab-production-observer.mjs'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inspectHookLabMessage,verifyHookLabSignedMessage} from './hooklab-message-boundary.mjs'
+import {canonicalLaunchProof,canonicalObservation,canonicalStateHashes} from './hooklab-canonical-observation.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),bn=x=>new BN(String(x)),key=x=>x.toBase58()
 const check=v=>{if(!v)throw Error('Launch settlement evidence differs')}
 const read=async work=>{let timer;try{return await Promise.race([work(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Read unavailable')),5000)})])}finally{clearTimeout(timer)}}
@@ -41,7 +42,7 @@ function eventBytes(b,name,value){return Buffer.concat([tag,Buffer.from(b.idl.ev
 function decode(b,name,account){check(account&&!account.executable);const bytes=raw(account.dataBase64),v=b.coder.accounts.decode(name,bytes);check(accountBytes(b,name,v).equals(bytes));return v}
 function context(input,canary=false){
  check(input?.schema===(canary?'repoing/canary-max-wallet-launch-settlement-context/1':'repoing/max-wallet-launch-settlement-context/1'))
- const ci=input.compilationInput,plan=(canary?compileCanaryMaxWalletLaunchReview:compileMaxWalletLaunchReview)(ci),p=JSON.parse(ci.profile.json)
+ const stored=input.compilationInput,ci={...stored,preparationEvidence:canonicalLaunchProof(stored.preparationEvidence),reviewedStateHashes:canonicalStateHashes(stored.reviewedStateHashes),observations:stored.observations.map(canonicalObservation)},plan=(canary?compileCanaryMaxWalletLaunchReview:compileMaxWalletLaunchReview)(ci),p=JSON.parse(ci.profile.json)
  const bindings={launch:binding(JSON.parse(raw(ci.profile.idls.launch))),swap:binding(JSON.parse(raw(ci.profile.idls.swap))),token:binding(tokenIdl)}
  // Token IDL is used only as a frozen account-layout codec, never to choose a
  // program address. Actual token identity and executable bytes are operator-pinned.

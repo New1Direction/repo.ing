@@ -12,6 +12,7 @@ import { compileWalletFundingReview, walletFundingInventory, BRIDGE_PIN, HOLDING
 import { walletFundingResolver } from '../src/hooklab-wallet-funding-resolver.mjs'
 import { loadArtifacts } from '../src/hooklab-owner-driver/artifacts.mjs'
 import { PROGRAMS, QUOTE_MINT, MAINNET_GENESIS, LOADER, SYSTEM, derivedAddresses, holdingAddress, pda, kb } from '../src/hooklab-owner-driver/pins.mjs'
+import { jsonbRoundTrip } from './fixtures/jsonb-round-trip.mjs'
 
 const sha = b => createHash('sha256').update(b).digest('hex')
 const { coders } = loadArtifacts(), d = derivedAddresses(PROGRAMS, QUOTE_MINT)
@@ -147,11 +148,13 @@ function chain({ rows, receipt = null, blockHeight = 1100, simulated = () => nul
     getTransaction: async () => receipt, getBlockSignatures: async () => ({ blockhash: '11111111111111111111111111111112', previousBlockhash: '11111111111111111111111111111113', blockHeight, signatures: receipt ? [receipt.signature] : [] }),
   }
 }
-async function resolverFor(rows, receipts = [null, null], simulated = () => null) {
-  const bundle = JSON.parse(readFileSync(new URL('../config/hooklab-production-bundle-2.json', import.meta.url), 'utf8'))
+const bundle = JSON.parse(readFileSync(new URL('../config/hooklab-production-bundle-2.json', import.meta.url), 'utf8'))
+// Production limits carry the boot time (nowMs); a restart or deploy changes only that.
+const LIMITS = { maxAgeMs: 60000, maxSlotLag: 150, computeUnitPriceMicroLamports: '10000', maxNetworkFeeLamports: '29000' }
+async function resolverFor(rows, receipts = [null, null], simulated = () => null, bootLimits = {}) {
   const origins = bundle.config.providerTrustDomains.map(t => t.origin)
   const connections = bundle.profile.providers.map((provider, i) => ({ provider, connection: Object.assign(chain({ rows, receipt: receipts[i], simulated }), { rpcEndpoint: origins[i] + 'rpc' }) }))
-  const limits = { maxAgeMs: 60000, maxSlotLag: 150, computeUnitPriceMicroLamports: '10000', maxNetworkFeeLamports: '29000' }
+  const limits = { ...LIMITS, ...bootLimits }
   const tokenData = Buffer.from(rows[pda(LOADER, kb(PROGRAMS.token))].dataBase64, 'base64')
   return { resolver: walletFundingResolver({ config: bundle.config, profile: bundle.profile, dossierJson: bundle.dossierJson, connections, limits, clock: () => NOW, bridgePin: pin,
     tokenProgramDataSha256: sha(tokenData) }), connections }
@@ -184,6 +187,45 @@ test('resolver: review, identical revalidation, then a receipt with exactly the 
   assert.equal((await settle(good, off)).status, 'conflict')
   const failed = receiptFor(prepared.review, signed, { [OWNER]: -7000 }, { InstructionError: [4, 'Custom'] })
   assert.equal((await settle(failed, failed)).status, 'finalized-failure')
+})
+
+// A landed Add SOL as production keeps it: review and context read back from jsonb, reconciled after a restart.
+async function landedFund(bootLimits) {
+  const rows = state(), { resolver } = await resolverFor(rows, [null, null], exactFund(1000000, 2), bootLimits)
+  const prepared = await resolver.prepare({ owner: OWNER, stage: 'wallet-fund', intent: { action: 'fund', mint: COIN, lamports: '1000000' } })
+  const tx = VersionedTransaction.deserialize(Buffer.concat([Buffer.from([1]), Buffer.alloc(64), Buffer.from(prepared.review.messageBase64, 'base64')])); tx.sign([owner])
+  const signed = Buffer.from(tx.serialize()).toString('base64'), q = prepared.request.quote, rent = 1686560
+  const receipt = receiptFor(prepared.review, signed, { [OWNER]: -(7000 + 2 * rent + 1000000), [d.bridgeSolVault]: 1000000, [q.createdHoldings[0]]: rent, [q.createdHoldings[1]]: rent })
+  const stored = jsonbRoundTrip({ review: prepared.review, configurationSha256: prepared.configurationSha256, settlementContext: prepared.settlementContext })
+  const reconcile = async (args, limits = bootLimits) => (await resolverFor(rows, [receipt, receipt], () => null, limits)).resolver.reconcile({ ...stored, ...args, signedTransactionBase64: signed, signature: bs58.encode(tx.signatures[0]) })
+  return { rows, prepared, stored, reconcile }
+}
+const tokenProgramData = pda(LOADER, kb(PROGRAMS.token))
+
+test('resolver: a landed fund settles from its jsonb-stored review and context, also after a restart', async () => {
+  const { prepared, stored, reconcile } = await landedFund({ nowMs: NOW - 3600000 })
+  assert.notEqual(JSON.stringify(stored.settlementContext), JSON.stringify(prepared.settlementContext), 'jsonb reorders keys')
+  assert.equal((await reconcile({})).status, 'finalized-success', 'read back from jsonb')
+  assert.equal((await reconcile({}, { nowMs: NOW })).status, 'finalized-success', 'after a restart with a new boot clock')
+  assert.notEqual((await resolverFor(state(), [null, null], () => null, { nowMs: NOW, maxNetworkFeeLamports: '30000' })).resolver.configurationSha256, stored.configurationSha256, 'other limits still count')
+  // policySha256 still binds the observed state: any changed observed byte never settles.
+  const changed = jsonbRoundTrip(stored.settlementContext)
+  for (const o of changed.compilationInput.observations) o.accounts.find(x => x.address === tokenProgramData).account.dataBase64 = Buffer.alloc(8, 1).toString('base64')
+  assert.equal((await reconcile({ settlementContext: changed })).status, 'unresolved')
+})
+
+test('resolver: rows stored under the old boot-time configuration hash settle only when bound to the same profile', async () => {
+  const boot = { nowMs: NOW - 3600000 }, { stored, reconcile } = await landedFund(boot)
+  const legacy = sha(JSON.stringify({ funding: 1, config: bundle.config, profile: bundle.profile, dossierJson: bundle.dossierJson, limits: { ...LIMITS, ...boot } }))
+  const context = { ...stored.settlementContext, configurationSha256: legacy }
+  assert.equal((await reconcile({ configurationSha256: legacy, settlementContext: context }, { nowMs: NOW })).status, 'finalized-success')
+  assert.equal((await reconcile({ configurationSha256: legacy, settlementContext: stored.settlementContext }, { nowMs: NOW })).status, 'unresolved', 'context bound to another hash')
+  const otherProfile = jsonbRoundTrip(context); otherProfile.compilationInput.profile.providers = [...otherProfile.compilationInput.profile.providers].reverse()
+  assert.equal((await reconcile({ configurationSha256: legacy, settlementContext: otherProfile }, { nowMs: NOW })).status, 'unresolved', 'another profile')
+  // Before signing the hash must match exactly. It survives a restart now; a legacy row is reviewed again.
+  const { resolver } = await resolverFor(state(), [null, null], exactFund(1000000, 2), { nowMs: NOW }), fresh = { owner: OWNER, stage: 'wallet-fund', review: stored.review }
+  assert.equal((await resolver.revalidate({ ...fresh, configurationSha256: stored.configurationSha256, settlementContext: stored.settlementContext })).review.messageSha256, stored.review.messageSha256)
+  await assert.rejects(resolver.revalidate({ ...fresh, configurationSha256: legacy, settlementContext: context }))
 })
 
 test('resolver: a simulation that moves more of the customer’s SOL than reviewed is refused before signing', async () => {

@@ -1,9 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {spawn} from 'node:child_process'
-import {createInterface} from 'node:readline'
 import {readFileSync} from 'node:fs'
-import {fileURLToPath} from 'node:url'
 import {AddressLookupTableAccount,ComputeBudgetProgram,TransactionMessage,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
 import bs58 from 'bs58'
 import BN from 'bn.js'
@@ -13,26 +10,16 @@ import {deriveCanaryMaxWalletLaunchPostconditions} from '../src/hooklab-max-wall
 import {collectCanaryInclusiveTradeSettlement,deriveCanaryInclusiveTradePostconditions} from '../src/hooklab-inclusive-trade-settlement.mjs'
 import {inspectHookLabMessage} from '../src/hooklab-message-boundary.mjs'
 import {canaryCommitment} from '../src/hooklab-canary-policy.mjs'
-import {makeCanaryState,canaryCollectorBindings,localTestEnvironment,pk,pda} from './fixtures/hooklab-canary.mjs'
+import {makeCanaryState,canaryCollectorBindings,localTestEnvironment,isolatedSvm,pk,pda} from './fixtures/hooklab-canary.mjs'
 import {missingArtifactEnv} from './fixtures/hooklab-generated-artifact.mjs'
 
-function runner(){
- const child=spawn(process.env.HOOKLAB_CANARY_PYTHON??'python3',['-u',fileURLToPath(new URL('./fixtures/hooklab-canary-svm.py',import.meta.url))],{
-  env:{PATH:process.env.PATH,PYTHONPATH:process.env.HOOKLAB_CANARY_PYTHONPATH??'',PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'},stdio:['pipe','pipe','pipe']})
- const pending=[];let stderr=''
- child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-8000)})
- createInterface({input:child.stdout}).on('line',line=>{const p=pending.shift();if(!p)return;try{const value=JSON.parse(line);if(value.runnerError)p.reject(Error(`${value.runnerError}: ${value.message}`));else p.resolve(value)}catch(e){p.reject(e)}})
- child.on('error',e=>{while(pending.length)pending.shift().reject(e)})
- child.on('exit',code=>{while(pending.length)pending.shift().reject(Error(`Isolated SVM exited ${code}: ${stderr}`))})
- return {call:(op,fields={})=>new Promise((resolve,reject)=>{pending.push({resolve,reject});child.stdin.write(JSON.stringify({op,...fields})+'\n')}),close:()=>child.stdin.end()}
-}
 const elfDirectory=process.env.HOOKLAB_CANARY_ELF_DIR
 
 test('canary closes trading atomically with real signed SBF execution and authenticated index-3 receipts', {skip:process.env.HOOKLAB_CANARY_REQUIRED!=='true'&&missingArtifactEnv(['HOOKLAB_CANARY_ELF_DIR'],'four pinned inclusive ELFs; HOOKLAB_CANARY_PYTHONPATH must hold solders 0.29.0'),timeout:120000},async t=>{
  assert.ok(elfDirectory,'HOOKLAB_CANARY_ELF_DIR is required for canary acceptance; skipping is not a release gate')
  const saved=Object.fromEntries(Object.keys(localTestEnvironment()).map(k=>[k,process.env[k]]))
  Object.assign(process.env,localTestEnvironment())
- const svm=runner();t.after(()=>{svm.close();for(const [k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v}})
+ const svm=isolatedSvm();t.after(()=>{svm.close();for(const [k,v]of Object.entries(saved)){if(v===undefined)delete process.env[k];else process.env[k]=v}})
  const profile=JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/offline-builder-profile.json',import.meta.url)))
  const names={launch:'bordrless_launch',swap:'bordrless_swap',gate:'hook_max_wallet',token:'bordrless_token'}
  const init=await svm.call('init',{scope:'isolated-canary-svm/1',programs:Object.entries(names).map(([role,name])=>({address:profile.programs[role],path:`${elfDirectory}/${name}.so`,sha256:role==='token'?profile.dependencyObservation.tokenElfSha256:profile.elfSha256[role]}))})

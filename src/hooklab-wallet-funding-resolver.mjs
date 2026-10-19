@@ -10,6 +10,7 @@ import { inspectHookLabMessage, verifyHookLabSignedMessage } from './hooklab-mes
 import { BRIDGE_PIN, compileWalletFundingReview, refuse, verifyBridgeAccounts, walletFundingInventory, walletFundingRequestSchema, HOLDING_BYTES } from './hooklab-wallet-funding.mjs'
 import { LOADER, derivedAddresses, kb, pda } from './hooklab-owner-driver/pins.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
+import { canonicalObservation } from './hooklab-canonical-observation.mjs'
 
 // About 40 seconds from review to send (the wallet approval happens inside it); the compiler allows up to 150 slots.
 export const SIGNING_WINDOW_SLOTS = 100
@@ -33,7 +34,8 @@ function wrapperTotalOffset() {
 export function walletFundingResolver({ config, profile, dossierJson, connections, limits, clock = Date.now, bridgePin = BRIDGE_PIN, tokenProgramDataSha256 = null }) {
   const retained = structuredClone({ config, profile, dossierJson, limits }), providers = connections.map(x => ({ ...x }))
   const bound = validateMaxWalletOperatorBindings({ ...retained, connections: providers })
-  const p = bound.profile, configurationSha256 = sha(JSON.stringify({ funding: 1, ...retained }))
+  // limits.nowMs is the boot time, so it is left out (JSON drops undefined): a restart or deploy must not move this hash.
+  const p = bound.profile, configurationSha256 = sha(JSON.stringify({ funding: 1, ...retained, limits: { ...retained.limits, nowMs: undefined } }))
   const volatile = () => ({ wrapperAddress: derivedAddresses(p.programs, p.quoteMint).bridgeNativeWrapper, totalOffset: wrapperTotalOffset() })
   const fundingProfile = { genesisHash: p.genesisHash, programs: p.programs, quoteMint: p.quoteMint, profileSha256: bound.config.profileSha256, providers: profile.providers }
 
@@ -52,9 +54,9 @@ export function walletFundingResolver({ config, profile, dossierJson, connection
       check(await connection.getGenesisHash() === p.genesisHash)
       const state = await connection.getMultipleAccountsInfoAndContext(inventory.map(pk), { commitment: 'finalized', minContextSlot: expectedReview?.observedSlot ?? 0 })
       check(state.value.length === inventory.length)
-      return { provider, genesisHash: p.genesisHash, commitment: 'finalized', slot: integer(state.context.slot), observedAtMs: started,
+      return canonicalObservation({ provider, genesisHash: p.genesisHash, commitment: 'finalized', slot: integer(state.context.slot), observedAtMs: started,
         accounts: state.value.map((v, i) => ({ address: inventory[i], account: v ? { address: inventory[i], owner: v.owner.toBase58(), executable: v.executable,
-          lamports: String(integer(v.lamports)), dataBase64: Buffer.from(v.data).toString('base64') } : null })) }
+          lamports: String(integer(v.lamports)), dataBase64: Buffer.from(v.data).toString('base64') } : null })) })
     }))
     // Every wrap and unwrap by anyone moves the vault's lamports, the wrapper's running total and the bridged-SOL supply
     // together, so two providers answering at different slots differ there. Compare everything else, check the bridge is
@@ -130,8 +132,11 @@ export function walletFundingResolver({ config, profile, dossierJson, connection
   async function reconcile({ review, configurationSha256: hash, settlementContext, signedTransactionBase64, signature }) {
     const identity = { signature, messageSha256: review?.messageSha256, profileSha256: review?.profileSha256 }
     try {
-      check(hash === configurationSha256 && settlementContext?.schema === 'repoing/hooklab-wallet-funding-settlement-context/1' && settlementContext.configurationSha256 === configurationSha256)
-      const ci = settlementContext.compilationInput, plan = compileWalletFundingReview({ ...ci, bridgePin })
+      const ci = settlementContext?.compilationInput
+      // Rows stored while this hash held the boot clock keep the old one: accept it only bound to its own context and today's profile (the full review below must still recompile).
+      check(settlementContext?.schema === 'repoing/hooklab-wallet-funding-settlement-context/1' && settlementContext.configurationSha256 === hash
+        && (hash === configurationSha256 || isDeepStrictEqual(ci?.profile, fundingProfile)))
+      const plan = compileWalletFundingReview({ ...ci, observations: ci.observations.map(canonicalObservation), bridgePin })
       check(isDeepStrictEqual(plan.review, review) && verifyHookLabSignedMessage(review, signedTransactionBase64).signature === signature)
       const rows = await Promise.all(providers.map(async ({ connection }) => {
         check(await connection.getGenesisHash() === p.genesisHash)

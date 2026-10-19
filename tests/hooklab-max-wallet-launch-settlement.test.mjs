@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {collectMaxWalletLaunchSettlement} from '../src/hooklab-max-wallet-launch-settlement.mjs'
 import {maxWalletSettlementFixture} from './fixtures/hooklab-max-wallet-launch-settlement.mjs'
 import { missingGeneratedArtifacts, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
+import {jsonbRoundTrip} from './fixtures/jsonb-round-trip.mjs'
 // Every case needs private generated artifacts; without them each skips with the reason below.
 const test = testRequiring(missingGeneratedArtifacts(['hooklab-max-wallet-rust-vector.json']))
 test('exact signed launch, finalized inclusion, authenticated events and full initial postconditions settle immutably',async()=>{
@@ -10,6 +11,15 @@ test('exact signed launch, finalized inclusion, authenticated events and full in
  const original=f.connections[0].connection.getMultipleAccountsInfoAndContext
  for(const {connection}of f.connections)connection.getMultipleAccountsInfoAndContext=async(...args)=>{const v=await original(...args);v.context.slot+=5;return v}
  assert.deepEqual(await collectMaxWalletLaunchSettlement(f),first)
+})
+test('a launch settles from its jsonb-stored review and context; a changed observed account never does',async()=>{
+ const f=await maxWalletSettlementFixture(),stored=jsonbRoundTrip({review:f.review,settlementContext:f.settlementContext})
+ assert.notEqual(JSON.stringify(stored.settlementContext),JSON.stringify(f.settlementContext),'jsonb reorders keys')
+ assert.equal((await collectMaxWalletLaunchSettlement({...f,...stored})).status,'finalized-success')
+ // The settlement takes no limits: its configuration hash is the operator config alone, so a restart cannot move it.
+ const changed=jsonbRoundTrip(stored.settlementContext)
+ for(const o of changed.compilationInput.observations){const row=o.accounts.find(x=>x.address==='11111111111111111111111111111111');row.account.dataBase64=Buffer.from('changed').toString('base64')}
+ assert.equal((await collectMaxWalletLaunchSettlement({...f,...stored,settlementContext:changed})).status,'unresolved')
 })
 test('finalized failure requires exact fee-only balances and never becomes success',async()=>{
  const f=await maxWalletSettlementFixture();f.transaction.meta.err={InstructionError:[2,'Custom']};f.transaction.meta.postBalances=[...f.transaction.meta.preBalances]

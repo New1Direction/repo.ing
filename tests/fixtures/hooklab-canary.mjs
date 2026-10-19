@@ -1,5 +1,8 @@
 // Fresh synthetic setup, never historical fixture payloads or a production custody source.
 import {readFileSync} from 'node:fs'
+import {spawn} from 'node:child_process'
+import {createInterface} from 'node:readline'
+import {fileURLToPath} from 'node:url'
 import {createHash} from 'node:crypto'
 import {BorshCoder} from '@anchor-lang/core'
 import BN from 'bn.js'
@@ -107,4 +110,16 @@ export function canaryCollectorBindings(state){
   economics:{creatorFeeBps:100,authorShareBps:0,lpFeeBps:0,maxCreatorFeeBps:100,protocolFeeBps:0,launchProtocolShareBps:2500,launchFeeLamports:'0',poolCreationFeeLamports:'0'},
   reviewer:state.roles.admin,treasury:state.roles.treasury,lookupTable:{address:state.lookupTable.address,sha256:state.lookupTable.sha256},lamportsPerSignature:'5000'}
  return {config,profile:state.profile,dossierJson}
+}
+
+// One isolated in-memory SBF bank (LiteSVM via solders), driven line by line over stdio.
+export function isolatedSvm(){
+ const child=spawn(process.env.HOOKLAB_CANARY_PYTHON??'python3',['-u',fileURLToPath(new URL('./hooklab-canary-svm.py',import.meta.url))],{
+  env:{PATH:process.env.PATH,PYTHONPATH:process.env.HOOKLAB_CANARY_PYTHONPATH??'',PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'},stdio:['pipe','pipe','pipe']})
+ const pending=[];let stderr=''
+ child.stderr.on('data',chunk=>{stderr=(stderr+chunk).slice(-8000)})
+ createInterface({input:child.stdout}).on('line',line=>{const p=pending.shift();if(!p)return;try{const value=JSON.parse(line);if(value.runnerError)p.reject(Error(`${value.runnerError}: ${value.message}`));else p.resolve(value)}catch(e){p.reject(e)}})
+ child.on('error',e=>{while(pending.length)pending.shift().reject(e)})
+ child.on('exit',code=>{while(pending.length)pending.shift().reject(Error(`Isolated SVM exited ${code}: ${stderr}`))})
+ return {call:(op,fields={})=>new Promise((resolve,reject)=>{pending.push({resolve,reject});child.stdin.write(JSON.stringify({op,...fields})+'\n')}),close:()=>child.stdin.end()}
 }

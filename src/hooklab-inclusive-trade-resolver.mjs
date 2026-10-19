@@ -7,6 +7,7 @@ import {inspectProductionEvidence} from './hooklab-production-observer.mjs'
 import {compileInclusiveMaxWalletSwapReview,inclusiveMaxWalletSwapInventory,inclusiveMaxWalletSwapRequestSchema} from './hooklab-inclusive-max-wallet-swap.mjs'
 import {collectInclusiveTradeSettlement} from './hooklab-inclusive-trade-settlement.mjs'
 import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
+import {canonicalObservation} from './hooklab-canonical-observation.mjs'
 const check=v=>{if(!v)throw Error('Inclusive trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
@@ -18,7 +19,8 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
  const retained=structuredClone({config,profile,dossierJson,limits}),providers=connections.map(x=>({...x}))
  const bound=validateMaxWalletOperatorBindings({...retained,connections:providers}),p=bound.profile
  check(bound.config.feeModel===2&&bound.profile.buildFeature==='inclusive-fees-candidate')
- const configurationSha256=sha(JSON.stringify(retained))
+ // limits.nowMs is the boot time, so it is left out (JSON drops undefined): a restart or deploy must not move this hash.
+ const configurationSha256=sha(JSON.stringify({...retained,limits:{...retained.limits,nowMs:undefined}}))
  async function collect({owner,stage,intent,expectedReview,originalContext}){
   const {quote:ignored,...raw}=intent??{}
   const request=inclusiveMaxWalletSwapRequestSchema.parse({...raw,schema:'repoing/inclusive-max-wallet-swap-request/1',policyKind:'max-wallet',policyVersion:2,
@@ -33,8 +35,8 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
    check(await connection.getGenesisHash()===bound.profile.genesisHash)
    const state=await connection.getMultipleAccountsInfoAndContext(all.map(pk),{commitment:'finalized',minContextSlot:minSlot})
    check(state.value.length===all.length&&integer(state.context.slot)>=minSlot)
-   return {provider,genesisHash:bound.profile.genesisHash,commitment:'finalized',slot:state.context.slot,observedAtMs:started,
-    accounts:state.value.map((v,i)=>({address:all[i],account:v?{address:all[i],owner:v.owner.toBase58(),executable:v.executable,lamports:String(integer(v.lamports)),dataBase64:Buffer.from(v.data).toString('base64')}:null}))}
+   return canonicalObservation({provider,genesisHash:bound.profile.genesisHash,commitment:'finalized',slot:state.context.slot,observedAtMs:started,
+    accounts:state.value.map((v,i)=>({address:all[i],account:v?{address:all[i],owner:v.owner.toBase58(),executable:v.executable,lamports:String(integer(v.lamports)),dataBase64:Buffer.from(v.data).toString('base64')}:null}))})
   }))
   // The bridged-SOL quote mint's supply moves with every wrap and unwrap through the public bridge, so providers
   // answering at different slots differ there: compare without it, then use the first provider's mint for both.
@@ -80,10 +82,15 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
    configurationSha256,review:expectedReview??plan.review,request:{...request,quote:plan.quote},settlementContext:{schema:'repoing/inclusive-trade-settlement-context/1',configurationSha256,compilationInput},canSign:false,canSubmit:false}
  }
  return Object.freeze({
+  configurationSha256,
   prepare:collect,
   async revalidate({owner,stage,review,configurationSha256:hash,settlementContext}){
    check(hash===configurationSha256);return collect({owner,stage,intent:settlementContext.compilationInput.request,expectedReview:review,originalContext:settlementContext})
   },
-  async reconcile(args){check(args.configurationSha256===configurationSha256);return collectInclusiveTradeSettlement({...retained,connections:providers,...args})},
+  async reconcile(args){
+   // Rows stored while this hash held the boot clock keep the old one: accept it only bound to its own context and today's profile (settlement recompiles the full review).
+   check(args.configurationSha256===configurationSha256||(args.settlementContext?.configurationSha256===args.configurationSha256&&isDeepStrictEqual(args.settlementContext.compilationInput?.profile,retained.profile)))
+   return collectInclusiveTradeSettlement({...retained,connections:providers,...args})
+  },
  })
 }
