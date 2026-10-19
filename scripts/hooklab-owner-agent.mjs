@@ -37,7 +37,7 @@ const LAUNCH_PROGRAM='E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft',GATE_PROGRAM
 const {values:opt}=parseArgs({options:{origin:{type:'string',default:'https://repo.ing'},'admin-key':{type:'string'},rpc:{type:'string'},rpc2:{type:'string'},
  'invite-minutes':{type:'string',default:'15'},'confirm-each':{type:'boolean',default:false},'poll-ms':{type:'string',default:'1500'},'table-microlamports':{type:'string',default:'10000'},
  // Local acceptance only (the e2e suite): a disposable admin key file on a local validator; see src/hooklab-owner-agent-local.mjs.
- 'local-acceptance':{type:'boolean',default:false},'state-dir':{type:'string'}}})
+ 'local-acceptance':{type:'boolean',default:false},'state-dir':{type:'string'},genesis:{type:'string'}}})
 const die=message=>{console.error(message);process.exit(2)}
 const token=process.env.HOOK_OWNER_APPROVAL_TOKEN
 if(!token||token.length<32)die('Set HOOK_OWNER_APPROVAL_TOKEN (from your Keychain) first.')
@@ -45,7 +45,7 @@ if(!opt['admin-key']||!opt.rpc||!opt.rpc2)die('Required: --admin-key PATH --rpc 
 const adminKeyText=readFileSync(opt['admin-key'],'utf8')   // read once from the key pipe; never logged
 const connections=[new Connection(opt.rpc,'confirmed'),new Connection(opt.rpc2,'confirmed')]
 // Local acceptance: the admin is the disposable key's own address, checked against a non-mainnet genesis on two loopback RPCs.
-const local=opt['local-acceptance']?await localAgentSettings({origin:opt.origin,rpcs:[opt.rpc,opt.rpc2],connections,adminKeyText,stateDir:opt['state-dir'],mainnetAdmin:MAINNET_ADMIN}).catch(error=>die(error.message)):null
+const local=opt['local-acceptance']?await localAgentSettings({origin:opt.origin,rpcs:[opt.rpc,opt.rpc2],connections,adminKeyText,stateDir:opt['state-dir'],mainnetAdmin:MAINNET_ADMIN,expectedGenesis:opt.genesis}).catch(error=>die(error.message)):null
 const ADMIN=local?local.adminAddress:MAINNET_ADMIN,stateRoot=local?local.stateDir:path.join(homedir(),'.hooklab-owner')
 const admin=adminSignerFromKeypair(adminKeyText,ADMIN)
 const launchCoder=new BorshCoder(JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url))))

@@ -18,7 +18,7 @@ const disposable = Keypair.generate()
 const keyText = JSON.stringify([...disposable.secretKey])
 const reader = genesis => ({ getGenesisHash: async () => genesis })
 const base = () => ({ origin: 'https://localhost:4443', rpcs: ['https://127.0.0.1:4444/', 'https://127.0.0.1:4445/'],
-  connections: [reader(LOCAL_GENESIS), reader(LOCAL_GENESIS)], adminKeyText: keyText, stateDir: '/tmp/hooklab-owner-agent-local-test', mainnetAdmin: MAINNET_ADMIN })
+  connections: [reader(LOCAL_GENESIS), reader(LOCAL_GENESIS)], adminKeyText: keyText, stateDir: '/tmp/hooklab-owner-agent-local-test', mainnetAdmin: MAINNET_ADMIN, expectedGenesis: LOCAL_GENESIS })
 
 test('local acceptance takes the admin from the disposable key file and pins the local genesis', async () => {
   const settings = await localAgentSettings(base())
@@ -28,6 +28,17 @@ test('local acceptance takes the admin from the disposable key file and pins the
 test('local acceptance refuses a mainnet genesis on either provider', async () => {
   await assert.rejects(localAgentSettings({ ...base(), connections: [reader(MAINNET_GENESIS), reader(MAINNET_GENESIS)] }), /refuses the mainnet genesis/)
   await assert.rejects(localAgentSettings({ ...base(), connections: [reader(LOCAL_GENESIS), reader(MAINNET_GENESIS)] }), /different genesis/)
+})
+
+test('local acceptance signs only on the pinned local genesis: never devnet, testnet or another local validator', async () => {
+  const DEVNET = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG', TESTNET = '4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY'
+  await assert.rejects(localAgentSettings({ ...base(), expectedGenesis: undefined }), /must be pinned/)
+  await assert.rejects(localAgentSettings({ ...base(), expectedGenesis: DEVNET, connections: [reader(DEVNET), reader(DEVNET)] }), /public cluster/)
+  await assert.rejects(localAgentSettings({ ...base(), expectedGenesis: MAINNET_GENESIS, connections: [reader(MAINNET_GENESIS), reader(MAINNET_GENESIS)] }), /public cluster/)
+  await assert.rejects(localAgentSettings({ ...base(), connections: [reader(DEVNET), reader(DEVNET)] }), /public cluster genesis/)
+  await assert.rejects(localAgentSettings({ ...base(), connections: [reader(TESTNET), reader(TESTNET)] }), /public cluster genesis/)
+  const other = Keypair.generate().publicKey.toBase58()
+  await assert.rejects(localAgentSettings({ ...base(), connections: [reader(other), reader(other)] }), /pinned local genesis/)
 })
 
 test('local acceptance refuses non-loopback origins and RPCs', async () => {
@@ -58,7 +69,7 @@ test('the agent script in --local-acceptance mode exits before doing anything wh
   const port = rpc.address().port, dir = mkdtempSync(path.join(tmpdir(), 'owner-agent-local-')), keyFile = path.join(dir, 'admin.json'), stateDir = path.join(dir, 'state')
   writeFileSync(keyFile, keyText, { mode: 0o600 })
   try {
-    const child = spawn(process.execPath, ['scripts/hooklab-owner-agent.mjs', '--local-acceptance', '--state-dir', stateDir, '--admin-key', keyFile,
+    const child = spawn(process.execPath, ['scripts/hooklab-owner-agent.mjs', '--local-acceptance', '--genesis', LOCAL_GENESIS, '--state-dir', stateDir, '--admin-key', keyFile,
       '--origin', 'https://localhost:9', '--rpc', `http://127.0.0.1:${port}`, '--rpc2', `http://localhost:${port}`],
     { cwd: fileURLToPath(new URL('..', import.meta.url)), env: { PATH: process.env.PATH, HOME: dir, HOOK_OWNER_APPROVAL_TOKEN: 'x'.repeat(40) }, stdio: ['pipe', 'pipe', 'pipe'] })
     let stderr = ''; child.stderr.on('data', chunk => { stderr += chunk })
