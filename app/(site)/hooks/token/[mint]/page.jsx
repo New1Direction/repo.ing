@@ -37,8 +37,8 @@ export default async function HooksCoinPage({ params }) {
   const { view, coin, missing, unavailable } = await load(mint)
   if (missing) notFound()
   const market = view?.market
-  // Coins launched through repo.ing (a launch request behind them) get the chart and the Trades and Holders tabs; their
-  // swaps are indexed (app/lib/hooklab-coin-activity.mjs). Any other Hooks coin opened by address keeps the plain page.
+  // Every coin shown here launched through repo.ing, so once its market reads it gets the chart and the Trades and Holders
+  // tabs; its swaps are indexed (app/lib/hooklab-coin-activity.mjs).
   const activity = Boolean(market && coin)
   // One grid in reading order (coin, buy and sell, chart, trades and holders, Blocks): phones stack it so the trade panel
   // follows the coin, and desktop keeps the panel in a sticky right column. The panel renders even when coin data is

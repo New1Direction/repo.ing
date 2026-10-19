@@ -23,32 +23,39 @@ function fakeStore({ indexed = 2n, walking = false } = {}) {
   } }
 }
 function setup({ listed = true, indexed = 2n, walking = false, allowed = () => true, runtime, holdersTtlMs = 60_000 } = {}) {
-  const db = fakeStore({ indexed, walking }), ensured = [], rpcCalls = [], opened = [], listings = []
-  const service = runtime === undefined ? { market: async m => m === mint ? { market, wallet: null } : null, activity: hookActivityRpc(canaryConnection({ calls: rpcCalls })) } : runtime
-  const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async m => { listings.push(m); return listed && m === mint ? { id: 'coin', name: 'Test Coin' } : null },
+  const db = fakeStore({ indexed, walking }), ensured = [], rpcCalls = [], opened = [], listings = [], marketReads = []
+  const service = runtime === undefined ? { market: async m => { marketReads.push(m); return m === mint ? { market, wallet: null } : null },
+    activity: hookActivityRpc(canaryConnection({ calls: rpcCalls })), coinProfile: async () => null } : runtime
+  // listed(service, mint): app/lib/hooklab-market.mjs listedCoin's signature (its 60 s cache is shared, so tests answer directly).
+  const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async (svc, m) => { listings.push(m); return listed && m === mint ? { id: 'coin', name: 'Test Coin' } : null },
     openStore: () => { opened.push('open'); return { store: db.store, close: async () => opened.push('close') } },
     indexer: { ensure: async args => { ensured.push(args); return 'indexed' } }, allowed, holdersTtlMs })
-  return { handlers, db, ensured, rpcCalls, opened, listings }
+  return { handlers, db, ensured, rpcCalls, opened, listings, marketReads }
 }
 const get = (handler, path, m = mint) => handler(new Request(`https://repo.ing/api/hook-lab/market/${m}/${path}`), { mint: m })
 
 test('only listed Hooks coins with valid addresses, within the rate limit', async () => {
-  const { handlers, listings } = setup()
+  const { handlers, listings, marketReads } = setup()
   for (const kind of ['trades', 'candles', 'holders']) {
     assert.equal((await get(handlers[kind], kind, 'not-a-mint')).status, 404)
     assert.equal((await get(handlers[kind], kind, `${mint}0`)).status, 404, 'not canonical base58')
     assert.equal((await get(handlers[kind], kind, '11111111111111111111111111111111')).status, 404, 'not listed')
     const unlisted = await get(setup({ listed: false }).handlers[kind], kind)
     assert.equal(unlisted.status, 404); assert.match((await unlisted.json()).error, /not listed/)
-    assert.equal(unlisted.headers.get('cache-control'), 'no-store', 'a listing read that failed must not be cached as not listed')
+    assert.equal(unlisted.headers.get('cache-control'), 'public, max-age=60', 'as the market API: a failed listing read throws (503), never reads as not listed')
     assert.equal((await get(setup({ allowed: () => false }).handlers[kind], kind)).status, 429)
     assert.equal((await get(setup({ runtime: null }).handlers[kind], kind)).status, 503)
-    assert.equal((await get(setup({ runtime: { market: async () => ({ market }) } }).handlers[kind], kind)).status, 503, 'no activity reads')
+    assert.equal((await get(setup({ runtime: { market: async () => ({ market }), coinProfile: async () => null } }).handlers[kind], kind)).status, 503, 'no activity reads')
+    assert.equal((await get(setup({ runtime: { market: async () => ({ market }), activity: {} } }).handlers[kind], kind)).status, 503, 'no listing')
   }
   assert.equal((await get(handlers.trades, 'trades?before=abc')).status, 400)
   assert.equal((await get(handlers.trades, 'trades?limit=500')).status, 400)
   assert.equal((await get(handlers.candles, 'candles?interval=2m')).status, 400)
-  assert.ok(!listings.includes('11111111111111111111111111111111'), 'the database is only asked about real Hooks coins')
+  assert.ok(listings.includes('11111111111111111111111111111111') && !marketReads.includes('11111111111111111111111111111111'),
+    'the listing comes first, so an unlisted coin is never read from Solana')
+  const failing = createCoinActivityHandlers({ runtime: () => ({ market: async () => ({ market }), activity: {}, coinProfile: async () => null }),
+    listed: async () => { throw Error('database unreachable') } })
+  assert.equal((await get(failing.trades, 'trades')).status, 503, 'an unreachable database is unavailable, not "not listed"')
 })
 
 test('trades: newest first with a cursor for older pages; the index catches up first', async () => {
@@ -125,7 +132,7 @@ test('the on-demand index runs only when behind, once per coin at a time, never 
 
 test('a failing holders read answers 503 and is not retried for a few seconds', async () => {
   const calls = []
-  const service = { market: async () => ({ market: { ...market, mint: pool } }), activity: { holdings: async () => { calls.push('gpa'); throw Error('provider refused') } } }
+  const service = { market: async () => ({ market: { ...market, mint: pool } }), coinProfile: async () => null, activity: { holdings: async () => { calls.push('gpa'); throw Error('provider refused') } } }
   const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async () => ({ id: 'coin' }), openStore: () => { throw Error('no database needed') } })
   const read = () => handlers.holders(new Request(`https://repo.ing/api/hook-lab/market/${pool}/holders`), { mint: pool })
   assert.equal((await read()).status, 503); assert.equal((await read()).status, 503)

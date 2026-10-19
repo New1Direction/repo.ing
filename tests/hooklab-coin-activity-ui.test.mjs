@@ -65,19 +65,17 @@ test('the chart: loading, empty, then market cap in SOL with every candle size',
 
 test('coin page: a listed coin gets the chart and the activity tabs, in phone order', async () => {
   const { default: Token } = await appModule('app/(site)/hooks/token/[mint]/page.jsx')
-  const { cached } = await appModule('app/lib/hooklab-market.mjs')
   const mint = '2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn', key = Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
   const market = { mint, name: 'Hook Lab Canary', symbol: 'HLCANARY', uri: '', decimals: 6, observedSlot: 1, creator: trader, graduated: false, capBps: 200, creatorFeeBps: 100,
     initialSupply: '1000000000000000', supply: '1000000000000000', capRaw: '20000000000000', marketCapLamports: '888888888', graduationQuote: '2000000000', curveProgressBps: 0,
     pool: { baseReserve: '750000000000000', quoteReserve: '1', virtualBase: '375000000000000', virtualQuote: '1000000000', protocolFeesQuote: '0', swapCount: '2' } }
-  // Another Hooks coin, opened by address but not launched through repo.ing (no launch request behind it).
+  // Only coins launched through repo.ing are shown (the runtime's listing); another Hooks coin is not found at all.
   const other = 'FESS7xFpE9wzH4Kq8zbKztRNv1iFWQm9gwpsyhAkUJN1'
-  globalThis[key] = { market: async requested => [mint, other].includes(requested) ? { market: { ...market, mint: requested }, wallet: null } : null }
+  const listed = { id: '00000000-0000-4000-8000-000000000000', name: 'Hook Lab Canary', symbol: 'HLCANARY', creator: trader, profile: null }
+  globalThis[key] = { market: async requested => [mint, other].includes(requested) ? { market: { ...market, mint: requested }, wallet: null } : null,
+    coinProfile: async requested => requested === mint ? listed : null }
   try {
-    cached(`profile:${mint}`, 60_000, () => ({ id: '00000000-0000-4000-8000-000000000000', name: 'Hook Lab Canary', symbol: 'HLCANARY', creator: trader, profile: null }))
-    const unlisted = html(await Token({ params: Promise.resolve({ mint: other }) }), { wallet: true })
-    assert.match(unlisted, /Blocks on this coin/)
-    assert.doesNotMatch(unlisted, /price chart|activity"|has-activity/, 'coins not launched through repo.ing get no index')
+    await assert.rejects(Token({ params: Promise.resolve({ mint: other }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
     const page = html(await Token({ params: Promise.resolve({ mint }) }), { wallet: true })
     const at = text => page.indexOf(text)
     const [hero, panel, chart, activity, blocks] = ['Hook Lab Canary', 'aria-label="Trade $HLCANARY"', 'aria-label="$HLCANARY price chart"', 'aria-label="$HLCANARY activity"', 'Blocks on this coin'].map(at)

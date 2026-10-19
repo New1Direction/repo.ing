@@ -1,5 +1,6 @@
 // A listed Hooks coin's chart, trades and holders over HTTP (app/api/hook-lab/market/[mint]/{candles,trades,holders}).
-// Display only, and only for coins launched through repo.ing (the launch requests behind launchedCoinProfile).
+// Display only, and only for coins launched through repo.ing: the same listing as the coin page and the market API
+// (app/lib/hooklab-market.mjs listedCoin, from the trading runtime's coinProfile).
 //
 // Where the trade index runs: here, in the web service, on demand. Hook Lab is kept out of the general worker
 // (docs/HOOK_LAB_EXECUTION_FOUNDATION.md), and its pinned RPC providers and database are installed only in the web process
@@ -12,7 +13,7 @@ import { PublicKey } from '@solana/web3.js'
 import { createRateLimiter } from './csp-report.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
 import { inclusiveTradeRuntime } from './hooklab-inclusive-trade-runtime.mjs'
-import { cached, cachedMarket, launchedCoinProfile } from './hooklab-market.mjs'
+import { cached, cachedMarket, listedCoin } from './hooklab-market.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
 import { DEFAULT_HOOK_INTERVAL, hookIntervalSeconds } from './hooklab-coin-display.mjs'
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
@@ -88,20 +89,21 @@ const defaultIndexer = () => (sharedIndexer ??= createOnDemandIndexer())
 const publicTrade = t => ({ signature: t.signature, eventIndex: t.eventIndex, side: t.side, trader: t.trader, tradedAt: t.tradedAt,
   solLamports: t.quoteAmount, tokenBaseUnits: t.baseAmount, swapCount: t.swapCount })
 
-export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, listed = launchedCoinProfile, openStore = () => openHookCoinStore(),
+export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, listed = listedCoin, openStore = () => openHookCoinStore(),
   indexer = null, allowed = defaultLimiter, holdersTtlMs = HOLDERS_TTL_MS, holdersRetryMs = HOLDERS_RETRY_MS, now = Date.now } = {}) {
   const holderFailures = new Map()
-  // A listed coin's market read, then work({ service, market, addresses }). The coin is read (cached) first, so the database
-  // is only asked about real Hooks coins; "not listed" is never cached, as a failed listing read also answers null.
+  // A listed coin's market read, then work({ service, market, addresses }). As in the market API, the listing is checked
+  // first (one cached database read; a failed read throws, so it answers unavailable, never "not listed"), so an unlisted
+  // coin is never read from Solana.
   const guarded = work => async (request, { mint }) => {
     if (!address(mint)) return reply({ error: 'Unknown coin.' }, 404)
     if (!allowed(clientAddress(request) ?? 'unknown')) return reply({ error: 'Too many requests. Try again shortly.' }, 429)
     const service = runtime()
-    if (!service?.market || !service.activity) return unavailable()
+    if (!service?.market || !service.activity || !service.coinProfile) return unavailable()
     try {
+      if (!await listed(service, mint)) return reply({ error: 'This coin is not listed on repo.ing.' }, 404, 'public, max-age=60')
       const view = await cachedMarket(service, mint)
-      if (!view?.market) return reply({ error: 'This is not a Hooks coin.' }, 404, 'public, max-age=60')
-      if (!await listed(mint)) return reply({ error: 'This coin is not listed on repo.ing.' }, 404)
+      if (!view?.market) return reply({ error: 'This coin is not listed on repo.ing.' }, 404, 'public, max-age=60')
       return await work({ service, market: view.market, addresses: await addressesOf(mint), url: new URL(request.url) })
     } catch (error) { reportOnce(error); return unavailable() }
   }

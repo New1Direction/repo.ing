@@ -171,7 +171,8 @@ test('end to end: the first chart read indexes the coin, later reads cost no RPC
   const calls = [], openStore = () => ({ store: hookCoinTradeStore(pool), close: async () => {} })
   let swapCount = '2'
   const service = { market: async () => ({ market: { mint: coin.mint, symbol: 'HLCANARY', decimals: 6, graduated: false, initialSupply: '1000000000000000',
-    supply: '1000000000000000', pool: { swapCount } }, wallet: null }), activity: hookActivityRpc(canaryConnection({ calls })) }
+    supply: '1000000000000000', pool: { swapCount } }, wallet: null }), activity: hookActivityRpc(canaryConnection({ calls })),
+    coinProfile: async () => ({ id: 'listed' }) }
   const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async () => ({ id: 'listed' }), openStore,
     indexer: createOnDemandIndexer({ openStore, minMs: 0, waitMs: 5_000 }) })
   const get = async path => (await handlers[path.split('?')[0]](new Request(`https://repo.ing/api/hook-lab/market/${coin.mint}/${path}`), { mint: coin.mint })).json()
