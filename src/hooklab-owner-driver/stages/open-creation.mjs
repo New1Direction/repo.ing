@@ -23,6 +23,7 @@ import { governedSetOpenCreation, openCreationDigest } from '../../hooklab-open-
 import { openLaunchTableAddresses } from '../../hooklab-max-wallet-launch.mjs'
 import { check, cdecode, hex, nextState, gsection, gview, owned, simpleMessage, ixOf, abiOf, elfOf } from './common.mjs'
 import { governedSnapshot, payerRow, programDataState, verifyGovernedConfig } from './admin.mjs'
+import { checkMoneyRouting } from './money-routing.mjs'
 
 // The owner confirmed the creation fee for production (2026-10-19): 0.02 SOL.
 export const OWNER_CREATION_FEE_LAMPORTS = '20000000'
@@ -37,7 +38,9 @@ export const openCreation = {
     requireOpenStack(ctx, 'open-creation')
     const to = ctx.options?.to
     check(to === 'on' || to === 'off', 'open-creation requires --to on or --to off')
-    const on = to === 'on', menus = decisionValue(ctx.config, 'openCreationMenus')
+    const on = to === 'on'
+    if (on) { const refusal = await checkMoneyRouting(ctx, 'open-creation --to on'); if (refusal) return refusal }
+    const menus = decisionValue(ctx.config, 'openCreationMenus')
     check(menus, 'open-creation needs openCreationMenus in the config file (creator fee and max per wallet, 1 to 4 bps values each); it is never defaulted')
     const definition = abiOf(ctx).idls.launch.instructions.find(ix => ix.name === 'governed_set_open_creation')
     const d = derivedAddresses(ctx.programs, ctx.quoteMint)
