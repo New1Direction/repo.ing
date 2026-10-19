@@ -11,7 +11,7 @@ import { reviewNewMintPreparationCandidate } from './hooklab-new-mint-preparatio
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustodyApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
- config,profile,dossierJson,connections,keyRing,activeKeyId,adminSigner,expiryObserver,preparationLimits,launchLimits,reviewTiming,launchLookupTable,clock=Date.now}={}){
+ config,profile,dossierJson,connections,keyRing,activeKeyId,adminSigner,expiryObserver,preparationLimits,launchLimits,reviewTiming,launchLookupTable,nativeLaunches=false,clock=Date.now}={}){
  if(enabled!==true||!ownerCustodyApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Explicit complete release approvals required')
  config=structuredClone(config);profile=structuredClone(profile);preparationLimits=structuredClone(preparationLimits);launchLimits=structuredClone(launchLimits)
  if(!adminSigner||typeof adminSigner.sign!=='function'||adminSigner.address!==config.reviewer)throw Error('Exact approved admin signer required')
@@ -22,9 +22,10 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
  const settings={enabled,origin,keyRing,activeKeyId}
  const custody=nativeSignerCustodyStore(pool,settings)
  const preparationResolver=coLocatedMaxWalletPreparationResolver(pool,{origin,config,profile,dossierJson,connections,custody,clock})
- const launchResolver=coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dossierJson,connections,clock})
+ // nativeLaunches (HOOK_NATIVE_LAUNCHES_ENABLED): v4 native-SOL launches compile once launch Config byte 186 is on.
+ const launchResolver=coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dossierJson,connections,clock,nativeLaunches})
  if(launchLookupTable!==undefined&&typeof launchLookupTable!=='function')throw Error('Explicit launch lookup-table provider required')
- const launchResolverFor=launchLookupTable?async({preparationId,review})=>coLocatedMaxWalletLaunchResolver(pool,{origin,config:{...config,lookupTable:await launchLookupTable({preparationId,allowCreate:review===undefined})},profile,dossierJson,connections,clock}):undefined
+ const launchResolverFor=launchLookupTable?async({preparationId,review})=>coLocatedMaxWalletLaunchResolver(pool,{origin,config:{...config,lookupTable:await launchLookupTable({preparationId,allowCreate:review===undefined})},profile,dossierJson,connections,clock,nativeLaunches}):undefined
  const context=nativeLaunchContext(pool,{enabled,origin,preparationResolver,launchResolver,launchResolverFor,preparationLimits,launchLimits,reviewTiming,clock})
  const adapter=nativeCustodySigningAdapter({...settings,adminSigner}),sender=nativeTransactionSender({enabled,connections,clock})
  const lifecycle=nativeSigningLifecycle(pool,{enabled,origin,resolver:context,custodyAdapter:adapter,sender,expiryObserver,stageOperations:{preparation:JSON.parse(profile.json).buildFeature==='inclusive-fees-candidate'?'inclusive-max-wallet-preparation':'max-wallet-preparation',launch:'max-wallet-launch'}})

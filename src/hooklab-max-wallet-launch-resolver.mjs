@@ -7,7 +7,7 @@ import { coLocatedWalletPreparationJournal } from './hooklab-wallet-preparation.
 import { collectMaxWalletLaunchReview, validateMaxWalletOperatorBindings } from './hooklab-max-wallet-launch-collector.mjs'
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
-export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dossierJson,connections,clock=Date.now}){
+export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dossierJson,connections,clock=Date.now,nativeLaunches=false}){
  // Copy immutable JSON configuration so concurrent callers cannot repin an in-flight collection.
  const retained=JSON.parse(JSON.stringify({config,profile,dossierJson}))
  const providers=connections.map(({provider,connection})=>({provider,connection}))
@@ -33,7 +33,7 @@ export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dos
    const r=parseMaxWalletLaunchRequest(request),boundLimits=structuredClone(limits)
    const prep=await journal.resolveForLaunch(sessionToken,preparationId)
    check(prep.wallet===r.creator,'Session wallet does not own preparation')
-   const result=await collectMaxWalletLaunchReview({...retained,connections:providers,preparation:prep,request:r,limits:boundLimits,expectedReview,clock})
+   const result=await collectMaxWalletLaunchReview({...retained,connections:providers,preparation:prep,request:r,limits:boundLimits,expectedReview,clock,nativeLaunches:nativeLaunches===true})
    // Recheck current principal and durable identity after network work. No network
    // work is performed while the principal/database transaction lock is held.
    const final=await journal.get(sessionToken,preparationId)

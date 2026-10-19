@@ -13,6 +13,7 @@ import {productionAccountBindingMatches} from './hooklab-production-observer.mjs
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inspectHookLabMessage,verifyHookLabSignedMessage} from './hooklab-message-boundary.mjs'
 import {canonicalLaunchProof,canonicalObservation,canonicalStateHashes} from './hooklab-canonical-observation.mjs'
+import {launchIsNative,poolIsNative} from './hooklab-native-launch.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x),bn=x=>new BN(String(x)),key=x=>x.toBase58()
 const check=v=>{if(!v)throw Error('Launch settlement evidence differs')}
 const read=async work=>{let timer;try{return await Promise.race([work(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Read unavailable')),5000)})])}finally{clearTimeout(timer)}}
@@ -58,14 +59,16 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary){
  const {ci,plan,p,b,before}=context(settlementContext,canary),r=plan.request,a=plan.addresses,{launch:L,swap:S,token:T,gate:G}=p.programs
  const lc=decode(b.launch,'Config',before.get(a.launchConfig)),sc=decode(b.swap,'Config',before.get(a.swapConfig)),auth=decode(b.launch,'CreatorAuthorization',before.get(a.authorization))
  const quote=decode(b.token,'Mint',before.get(p.quoteMint)),supply=BigInt(lc.supply.toString()),curve=supply*BigInt(lc.curve_bps)/10000n,reserve=supply-curve,vbase=curve*reserve/(curve-reserve),vquote=BigInt(r.virtualQuote),graduation=vquote*(curve-reserve)/reserve
- const inclusive=r.policyVersion===2
+ const inclusive=r.policyVersion===2,native=plan.quoteForm===1
+ // A native-SOL (v4) launch sets both flags in its one creation: Launch.reserved[17] and Pool.reserved[0].
+ const flagged=(name,index)=>{const zero=zeroStruct(b[name==='Launch'?'launch':'swap'],name).reserved;if(native)zero[index]=1;return zero}
  const kitConfig=pda(kit,'kit',pk(r.mint).toBuffer()),holder=pda(T,'holding',pk(p.quoteMint).toBuffer(),pk(kitConfig).toBuffer())
  const launch={...zeroStruct(b.launch,'Launch'),version:1,bump:bump(L,'launch',pk(r.mint).toBuffer()),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),
-  reserve_holding:pk(a.launchReserve),quote_holding:pk(a.launchQuote),lp_holding:pk(a.launchLp),created_at:bn(timestamp),kit_config:pk(kitConfig),holder_vault:pk(holder),config:pk(r.selectedConfig),custom_hook:pk(G),custom_hook_flags:1}
+  reserve_holding:pk(a.launchReserve),quote_holding:pk(a.launchQuote),lp_holding:pk(a.launchLp),created_at:bn(timestamp),kit_config:pk(kitConfig),holder_vault:pk(holder),config:pk(r.selectedConfig),custom_hook:pk(G),custom_hook_flags:1,reserved:flagged('Launch',17)}
  const pool={...zeroStruct(b.swap,'Pool'),version:1,bump:bump(S,'pool',pk(r.mint).toBuffer(),pk(p.quoteMint).toBuffer(),(()=>{const v=Buffer.alloc(2);v.writeUInt16LE(lc.lp_fee_bps);return v})(),pk(L).toBuffer()),lp_mint_bump:bump(S,'lp',pk(a.pool).toBuffer()),
   base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),hook_program:pk(L),hook_flags:1985,lp_fee_bps:lc.lp_fee_bps,
-  base_reserve:bn(curve),virtual_base:bn(vbase),virtual_quote:bn(vquote),curve:true,creator:pk(a.launch),created_at:bn(timestamp),hook_signer_bump:bump(S,'hook-authority',pk(L).toBuffer()),fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps}
+  base_reserve:bn(curve),virtual_base:bn(vbase),virtual_quote:bn(vquote),curve:true,creator:pk(a.launch),created_at:bn(timestamp),hook_signer_bump:bump(S,'hook-authority',pk(L).toBuffer()),fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,reserved:flagged('Pool',0)}
  const mint={...zeroStruct(b.token,'Mint'),version:1,decimals:lc.decimals,supply:bn(supply),max_supply:bn(supply),hook_program:pk(G),hook_flags:1,name:r.name,symbol:r.symbol,uri:r.uri,created_at:bn(timestamp),creator:pk(r.creator),hook_signer_bump:bump(T,'hook-authority',pk(G).toBuffer())}
  const lpMint={...zeroStruct(b.token,'Mint'),version:1,decimals:9,mint_authority:pk(a.pool),name:Array.from(`Bordrless LP ${r.symbol}/${quote.symbol}`).slice(0,32).join(''),symbol:'BLP',created_at:bn(timestamp),creator:pk(r.creator)}
  const expected=new Map(),put=(address,owner,data)=>expected.set(address,{address,owner,executable:false,dataBase64:data.toString('base64')})
@@ -86,7 +89,9 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary){
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),launch_fee_lamports:lc.launch_fee_lamports,config:pk(r.selectedConfig),custom_hook:pk(G),custom_hook_flags:1,slot:bn(slot),ts:bn(timestamp)}
  const poolEvent={...zeroStruct(b.swap,'PoolCreated'),pool:pk(a.pool),payer:pk(r.creator),creator:pk(a.launch),base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),
   lp_fee_bps:lc.lp_fee_bps,fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,hook_program:pk(L),hook_flags:1985,virtual_base:bn(vbase),virtual_quote:bn(vquote),base_reserve:bn(curve),curve:true,slot:bn(slot),ts:bn(timestamp)}
- return {accounts:[...expected.values()],events:[{program:L,name:'LaunchCreated',dataBase64:eventBytes(b.launch,'LaunchCreated',launchEvent).toString('base64')},{program:S,name:'PoolCreated',dataBase64:eventBytes(b.swap,'PoolCreated',poolEvent).toString('base64')}],created:[r.mint,...['launch','pool','lpMint','launchReserve','launchQuote','poolRegistry','baseVault','quoteVault','launchLp',...(inclusive?['inclusiveFeePolicy']:[])].map(n=>a[n])],feesLamports:lc.launch_fee_lamports.add(sc.pool_creation_fee_lamports).toString(),treasury:key(lc.treasury)}
+ // E2-1: a v4 creation also announces itself after LaunchCreated, which still names bridged SOL as the quote.
+ const nativeEvent=native?[{program:L,name:'NativeLaunchCreated',dataBase64:eventBytes(b.launch,'NativeLaunchCreated',{launch:pk(a.launch),pool:pk(a.pool),mint:pk(r.mint),virtual_quote:bn(vquote)}).toString('base64')}]:[]
+ return {native,accounts:[...expected.values()],events:[{program:L,name:'LaunchCreated',dataBase64:eventBytes(b.launch,'LaunchCreated',launchEvent).toString('base64')},{program:S,name:'PoolCreated',dataBase64:eventBytes(b.swap,'PoolCreated',poolEvent).toString('base64')},...nativeEvent],created:[r.mint,...['launch','pool','lpMint','launchReserve','launchQuote','poolRegistry','baseVault','quoteVault','launchLp',...(inclusive?['inclusiveFeePolicy']:[])].map(n=>a[n])],feesLamports:lc.launch_fee_lamports.add(sc.pool_creation_fee_lamports).toString(),treasury:key(lc.treasury)}
 }
 function authenticatedEvents(tx,b,programs){
  const keys=tx.keys,events=[],groups=new Set()
@@ -97,7 +102,7 @@ function authenticatedEvents(tx,b,programs){
    const bytes=Buffer.from(bs58.decode(ix.data));if(!bytes.subarray(0,8).equals(tag))continue
    check(parent===program&&ix.accounts.length===1&&keys[ix.accounts[0]]===pda(program,'__event_authority'))
    const decoded=b[role].coder.events.decode(bytes.subarray(8).toString('base64'));check(decoded&&eventBytes(b[role],decoded.name,decoded.data).equals(bytes))
-   if(['LaunchCreated','PoolCreated'].includes(decoded.name)){check(group.index===2);events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:normalize(decoded.data)})}
+   if(['LaunchCreated','PoolCreated','NativeLaunchCreated'].includes(decoded.name)){check(group.index===2);events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:normalize(decoded.data)})}
   }
  }
  return events
@@ -137,12 +142,15 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   const deltas=new Map(),add=(address,n)=>deltas.set(address,(deltas.get(address)??0n)+n)
   add(review.payer,-fee)
   if(t.error!==null){check(t.keys.every((k,i)=>BigInt(t.post[i])-BigInt(t.pre[i])===(deltas.get(k)??0n)));return {...identity,status:'finalized-failure',inclusion,transactionSha256:sha(JSON.stringify(t)),feeLamports:String(fee)}}
-  const events=authenticatedEvents(t,b,p.programs);check(events.length===2&&events.filter(x=>x.name==='LaunchCreated').length===1&&events.filter(x=>x.name==='PoolCreated').length===1)
+  const events=authenticatedEvents(t,b,p.programs),native=plan.quoteForm===1
+  check(events.length===(native?3:2)&&['LaunchCreated','PoolCreated',...(native?['NativeLaunchCreated']:[])].every(name=>events.filter(x=>x.name===name).length===1))
   const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),expected=derivePostconditions(settlementContext,{slot:t.slot,timestamp},canary)
   check(isDeepStrictEqual(events.map(({data,...e})=>e).sort((a,b)=>a.name.localeCompare(b.name)),expected.events.sort((a,b)=>a.name.localeCompare(b.name))))
   const want=new Map(expected.accounts.map(x=>[x.address,x])),actual=new Map(snapshotInventory.map((k,i)=>[k,accounts[i]]))
   for(const pin of d.programs){const pd=actual.get(pin.programData);check(pd&&pd.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&!pd.executable&&sha(raw(pd.dataBase64))===pin.programDataSha256&&pin.deploySlot<=t.slot)}
   for(const [address,old]of before){const desired=want.get(address)??(old?(({lamports,...v})=>v)(old):null);check(isDeepStrictEqual(actual.get(address),desired))}
+  // The flags themselves, read at their bytes: pool 351 and launch 560 are 1 after a v4 creation, 0 after v3.
+  check(poolIsNative(raw(actual.get(plan.addresses.pool).dataBase64))===native&&launchIsNative(raw(actual.get(plan.addresses.launch).dataBase64))===native)
   let rent=0n
   for(const address of expected.created){const i=t.keys.indexOf(address);check(i>=0&&BigInt(t.post[i])>0n&&BigInt(t.post[i])>=BigInt(t.pre[i]));const increase=BigInt(t.post[i])-BigInt(t.pre[i]);rent+=increase;add(address,increase)}
   const fees=BigInt(expected.feesLamports),debit=rent+fees

@@ -66,7 +66,9 @@ export async function collectMaxWalletLaunchReview(input){
  try{return await collectLaunchReview(input)}
  catch{throw Object.assign(Error('Max-wallet launch evidence unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 }
-async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,limits,expectedReview,clock=Date.now}){
+// nativeLaunches: HOOK_NATIVE_LAUNCHES_ENABLED on this server. The compiler then reads launch Config byte 186 from the two
+// providers' identical snapshots: on, it compiles create_launch_custom_v4; off, v3 exactly as before.
+async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,limits,expectedReview,clock=Date.now,nativeLaunches=false}){
  const {config:c,profile:p,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections})
  const r=parseMaxWalletLaunchRequest(request)
  const retainedReview=expectedReview===undefined?null:hookLabReviewSchema.parse(expectedReview)
@@ -120,7 +122,7 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
   preparationIntentSha256:preparation.preparationIntentSha256,executionSlot:preparation.executionSlot,preparedAccountHashes:preparation.preparedAccountHashes}),
   reviewedStateHashes:Object.fromEntries(LAUNCH_STATE_HASHES.map(name=>[name,sha(Buffer.from(map.get(name==='quoteMint'?p.quoteMint:a[name]).dataBase64,'base64'))])),
   observations:observations.map(o=>({...o,accounts:o.accounts.filter(x=>inventory.includes(x.address))})),recentBlockhash,
-  lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:c.lookupTable.sha256}:null,limits:{...limits,nowMs:integer(clock())}}
+  lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:c.lookupTable.sha256}:null,limits:{...limits,nowMs:integer(clock())},...(nativeLaunches===true?{nativeLaunches:true}:{})}
  const plan=compileMaxWalletLaunchReview(compilationInput)
  if(retainedReview){
   // Only observation metadata may refresh. Wallet-consented bytes, accounts,
