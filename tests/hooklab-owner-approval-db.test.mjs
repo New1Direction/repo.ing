@@ -198,7 +198,7 @@ test('per-launch lookup table: requested once, created only by the agent claim, 
  const sleep=async()=>{if(agentRan++)return
   const {requests,tableRequests}=await store.heartbeat({accepting:true,agentAddress:admin})
   assert.equal(tableRequests.length,1)
-  verifyTableRequest({tableRequest:tableRequests[0],invited:requests.find(r=>r.id===tableRequests[0].launchRequestId),envelope,launchConfigBytes:configBytes,adminAddress:realAdmin})
+  verifyTableRequest({tableRequest:tableRequests[0],invited:{...requests.find(r=>r.id===tableRequests[0].launchRequestId),virtualQuote:STANDARD_VIRTUAL_QUOTE},envelope,launchConfigBytes:configBytes,adminAddress:realAdmin})
   await store.submitTable(preparationId,tableAddress)}
  const provider=remoteLaunchLookupTable(pool,{envelope,connections:[{connection},{connection}],adminAddress:realAdmin,readLaunch,sleep,pollMs:1,timeoutMs:5_000})
  await store.heartbeat({accepting:true,agentAddress:admin})

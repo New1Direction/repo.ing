@@ -11,8 +11,10 @@
 // 0.0097 SOL rent per table, returned by `reclaim` after the launch finishes), after re-deriving the
 // table's addresses itself. Journal (public data only): ~/.hooklab-owner/launch-tables.
 // It signs ONLY a launch message that decodes to the invited creator and coin, the invited fee,
-// one create_launch_custom_v3 call, an on-chain mint policy with the invited cap and fee, and a
-// deadline that both RPC providers say is still open. Fee and cap menus come from the release code.
+// one create_launch_custom_v3 call, an on-chain mint policy with the invited cap and fee, the
+// opening price (virtual quote) fixed with the invite, and a deadline that both RPC providers say
+// is still open. Fee and cap menus come from the release code. With USD pricing on, `list` and
+// `invite` show each invite's fixed price; check it before the launch reaches its signature.
 import { mkdirSync,readFileSync,renameSync,writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -20,7 +22,8 @@ import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { Connection,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
-import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress } from '../src/hooklab-owner-agent.mjs'
+import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress,invitedVirtualQuote,ownerRequestLines } from '../src/hooklab-owner-agent.mjs'
+import { STANDARD_VIRTUAL_QUOTE,formatSol,ownerPricingLine } from '../src/hooklab-launch-pricing.mjs'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinImageUrl,coinLinks } from '../src/hooklab-coin-profile.mjs'
 import { verifyTableRequest } from '../src/hooklab-owner-launch-tables.mjs'
@@ -83,6 +86,7 @@ function show(){
   console.log(` ${i+1}. ${r.status.padEnd(9)} ${printable(r.symbol).padEnd(10)} ${printable(r.name).padEnd(32)} fee ${percent(r.creatorFeeBps)} cap ${percent(r.capBps)} creator ${r.creator}${r.inviteExpiresAt?` invite until ${new Date(r.inviteExpiresAt).toLocaleTimeString()}`:''}`)
   // Review the image and links before inviting: they are what repo.ing will show for this coin.
   if(r.profile)console.log(`    image ${coinImageUrl(opt.origin,r.id)}${Object.entries(coinLinks(r.profile)).map(([k,v])=>` · ${k} ${v}`).join('')}${r.profile.description?`\n    ${JSON.stringify(printable(r.profile.description))}`:''}`)
+  for(const line of ownerRequestLines(r))console.log(line)
  })
  if(!queue.requests.length)console.log(' (no launch requests)')
 }
@@ -92,12 +96,16 @@ const inviteLedgerPath=path.join(homedir(),'.hooklab-owner','invited.json')
 const invitedByMe=()=>{try{return JSON.parse(readFileSync(inviteLedgerPath,'utf8'))}catch(error){if(error.code==='ENOENT')return {};throw error}}
 function recordInvite(request){
  mkdirSync(path.dirname(inviteLedgerPath),{recursive:true,mode:0o700})
- const ledger={...invitedByMe(),[request.id]:{creator:request.creator,name:request.name,symbol:request.symbol,uri:request.uri,creatorFeeBps:request.creatorFeeBps,capBps:request.capBps,invitedAt:new Date().toISOString()}}
+ const ledger={...invitedByMe(),[request.id]:{creator:request.creator,name:request.name,symbol:request.symbol,uri:request.uri,creatorFeeBps:request.creatorFeeBps,capBps:request.capBps,
+  virtualQuote:invitedVirtualQuote(request),invitedAt:new Date().toISOString()}}
  writeFileSync(`${inviteLedgerPath}.next`,JSON.stringify(ledger,null,1),{mode:0o600});renameSync(`${inviteLedgerPath}.next`,inviteLedgerPath)
 }
-// The server's copy of an invite must still equal what this agent invited.
+// The server's copy of an invite must still equal what this agent invited, opening price included. Ledger entries
+// written before USD pricing carry no price: those invites launch at the standard quote.
 const INVITE_FIELDS=['creator','name','symbol','uri','creatorFeeBps','capBps']
-const matchesLedger=invited=>{const mine=invited&&invitedByMe()[invited.id];return !!mine&&INVITE_FIELDS.every(k=>mine[k]===invited[k])}
+const ledgerQuote=mine=>mine.virtualQuote??STANDARD_VIRTUAL_QUOTE
+const matchesLedger=invited=>{const mine=invited&&invitedByMe()[invited.id]
+ return !!mine&&INVITE_FIELDS.every(k=>mine[k]===invited[k])&&ledgerQuote(mine)===(invited.pricing?.virtualQuote??STANDARD_VIRTUAL_QUOTE)}
 // Waiting states log once a minute and back off, instead of spamming or declining for good.
 const waits=new Map()
 function wait(id,reason){const w=waits.get(id)??{n:0,loggedAt:0};w.n++;w.until=Date.now()+Math.min(60_000,1_500*2**Math.min(w.n,6))
@@ -121,7 +129,7 @@ async function handleTableRequest(tableRequest){
  // A missing or nearly expired grant can be fixed with customer-grant; wait instead of declining.
  if(!grant.usable)return wait(tableRequest.preparationId,`creator grant not usable (${grant.reason}); run customer-grant for ${tableRequest.creator}`)
  let checked
- try{checked=verifyTableRequest({tableRequest,invited,envelope,launchConfigBytes:configBytes,adminAddress:ADMIN})}catch(error){return decline(error.message)}
+ try{checked=verifyTableRequest({tableRequest,invited:{...invited,virtualQuote:ledgerQuote(mine)},envelope,launchConfigBytes:configBytes,adminAddress:ADMIN})}catch(error){return decline(error.message)}
  console.log(`\nTABLE for ${invited.symbol} creator ${invited.creator} mint ${tableRequest.launchRequest.mint}: ${checked.inventory.length} addresses`)
  const table=await tables.ensure({preparationId:tableRequest.preparationId,launchRequestId:invited.id,creator:invited.creator,mint:tableRequest.launchRequest.mint,...checked})
  await api({action:'table',preparationId:tableRequest.preparationId,tableAddress:table})
@@ -141,8 +149,8 @@ async function handleSignRequest(signRequest){
   if(!invited)throw Error('no invited request for this creator')
   if(!matchesLedger(invited))throw Error('the server\'s invite differs from what this agent invited')
   const tables=await lookupTables(signRequest.messageBase64),policy=await mintPolicy(launchMintFromMessage(signRequest.messageBase64,tables,LAUNCH_PROGRAM))
-  const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables:tables,policy,live:await live()})
-  console.log(`\nSIGN? ${checked.symbol} "${checked.name}" creator ${checked.creator} mint ${checked.mint} fee ${percent(checked.creatorFeeBps)} cap ${percent(checked.capBps)} · ${checked.slotsLeft} slots / ${checked.blocksLeft} blocks left`)
+  const checked=verifyLaunchSignRequest({signRequest,invited:{...invited,virtualQuote:ledgerQuote(invitedByMe()[invited.id])},approved,lookupTables:tables,policy,live:await live()})
+  console.log(`\nSIGN? ${checked.symbol} "${checked.name}" creator ${checked.creator} mint ${checked.mint} fee ${percent(checked.creatorFeeBps)} cap ${percent(checked.capBps)} opens ${formatSol(checked.virtualQuote)} virtual · ${checked.slotsLeft} slots / ${checked.blocksLeft} blocks left`)
   if(opt['confirm-each']&&!(await ask('Type yes to sign: ')==='yes'))throw Error('owner declined')
   await api({action:'sign',signRequestId:signRequest.id,signatureBase64:admin.signBase64(Buffer.from(signRequest.messageBase64,'base64'))})
   console.log(`SIGNED ${signRequest.messageSha256.slice(0,16)}…`)
@@ -167,8 +175,10 @@ rl.on('line',async line=>{
    const minutes=Number(arg2??opt['invite-minutes'])
    const {request:confirmed}=await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})
    if(!INVITE_FIELDS.every(k=>confirmed[k]===pick[k]))throw Error('server returned a different invite')
+   // A price that does not re-derive from its sources is never recorded, so nothing is ever signed for this invite.
+   try{invitedVirtualQuote(confirmed)}catch(error){throw Error(`${error.message}; this invite is NOT recorded and will not be signed (decline ${arg} to release it)`)}
    recordInvite(confirmed)
-   console.log(`Invited until ${new Date(confirmed.inviteExpiresAt).toLocaleTimeString()}`)
+   console.log(`Invited until ${new Date(confirmed.inviteExpiresAt).toLocaleTimeString()}${confirmed.pricing?`\n  ${ownerPricingLine(confirmed.pricing)}`:''}`)
   }
   else if(cmd==='reclaim'){
    // Only with a fresh view of open requests: a stale or empty queue would look like every launch had finished.

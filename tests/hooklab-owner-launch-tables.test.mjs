@@ -15,7 +15,7 @@ const envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.
 const launchConfigBytes=Buffer.from(fixture.accounts['launch-config'].dataBase64,'base64')
 const key=label=>Keypair.fromSeed(createHash('sha256').update(`OWNER TABLE TEST ONLY ${label}`).digest()).publicKey.toBase58()
 const creator=key('creator')
-const invited={id:'5b7f4c1e-8a0f-4d55-9a49-3f7c0c2b9d11',custodyOperationId:'0f3c9a52-6a43-4e0e-b8a8-2a1c1d9e7b10',status:'launching',creator,name:'Table Coin',symbol:'TBL',uri:'',creatorFeeBps:100,capBps:200}
+const invited={id:'5b7f4c1e-8a0f-4d55-9a49-3f7c0c2b9d11',custodyOperationId:'0f3c9a52-6a43-4e0e-b8a8-2a1c1d9e7b10',status:'launching',creator,name:'Table Coin',symbol:'TBL',uri:'',creatorFeeBps:100,capBps:200,virtualQuote:'1000000000'}
 const launchRequest=(over={})=>({schema:'repoing/inclusive-max-wallet-launch-request/1',policyKind:'max-wallet',policyVersion:2,creator,feePayer:creator,mint:key('mint'),
  selectedConfig:key('selected'),capBps:200,label:'customer',creatorFeeBps:100,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500,reviewer:ADMIN,
  name:'Table Coin',symbol:'TBL',uri:'',virtualQuote:'1000000000',...over})
@@ -39,9 +39,10 @@ test('the agent accepts only a table request that matches the invited launch and
  const request=launchRequest(),ok=tableRequestFor(request)
  assert.equal(verifyTableRequest({tableRequest:ok,invited,envelope,launchConfigBytes,adminAddress:ADMIN}).inventory.length,38)
  for(const [change,label] of [[{name:'Other'},'name'],[{symbol:'X'},'symbol'],[{uri:'https://x.example'},'uri'],[{creatorFeeBps:200},'fee'],[{capBps:500},'cap'],
-  [{feePayer:key('payer')},'fee payer'],[{reviewer:key('reviewer')},'reviewer'],[{creator:key('someone')},'creator']]){
+  [{feePayer:key('payer')},'fee payer'],[{reviewer:key('reviewer')},'reviewer'],[{creator:key('someone')},'creator'],[{virtualQuote:'53251917070'},'opening price']]){
   assert.throws(()=>verifyTableRequest({tableRequest:{...ok,launchRequest:{...request,...change}},invited,envelope,launchConfigBytes,adminAddress:ADMIN}),/differs|derivation/,label)
  }
+ assert.throws(()=>verifyTableRequest({tableRequest:ok,invited:{...invited,virtualQuote:undefined},envelope,launchConfigBytes,adminAddress:ADMIN}),/differs/,'the opening price comes from the agent ledger, never assumed')
  const tampered={...ok,inventory:[...ok.inventory.slice(0,-1),key('attacker')]}
  assert.throws(()=>verifyTableRequest({tableRequest:tampered,invited,envelope,launchConfigBytes,adminAddress:ADMIN}),/own derivation/)
  for(const other of [undefined,{...invited,status:'invited'},{...invited,id:'00000000-0000-4000-8000-000000000000'},{...invited,creator:key('x')},{...invited,custodyOperationId:'00000000-0000-4000-8000-000000000001'}])
