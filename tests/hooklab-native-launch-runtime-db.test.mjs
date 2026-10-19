@@ -84,7 +84,7 @@ async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}=
     const {rows}=await pool.query("select id,message_base64,message_sha256,signer_address,valid_until_slot,last_valid_block_height from hook_lab_owner_sign_requests where status='pending'")
     if(!ownerAway)for(const row of rows){
      // Exactly what the owner's Mac does: decode the real message, resolve its tables, match the invite.
-     const {rows:[op]}=await pool.query('select review from hook_lab_native_signing_operations where message_sha256=$1',[row.message_sha256])
+     const {rows:[op]}=await pool.query('select review,resolved_request from hook_lab_native_signing_operations where message_sha256=$1',[row.message_sha256])
      const lookupTables=op.review.lookupTables.map(t=>decodeLookupTable(t.address,Buffer.from(t.dataBase64,'base64')))
      const signRequest={messageBase64:row.message_base64,messageSha256:row.message_sha256,signer:row.signer_address,validUntilSlot:row.valid_until_slot,lastValidBlockHeight:row.last_valid_block_height}
      const invited={creator:owner,name:initial.request.name,symbol:initial.request.symbol,uri:initial.request.uri,creatorFeeBps:initial.request.creatorFeeBps,capBps:initial.request.capBps,virtualQuote:initial.request.virtualQuote}
@@ -92,8 +92,12 @@ async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}=
      const policyKey=policyAddress(profile.programs.gate,op.review.accounts.find(a=>a.signer&&a.address!==owner&&a.address!==adminKey.publicKey.toBase58()).address),policyAccount=current.get(policyKey)
      const policy=policyAccount&&{address:policyKey,owner:policyAccount.owner,data:Buffer.from(policyAccount.dataBase64,'base64')}
      const live={slot:startSlot,blockHeight:0}
+     // The agent's own launch Config read, pinned envelope and read of the selected launch config (review F3).
+     const selectedAddress=op.resolved_request.selectedConfig,configAccount=current.get(f.baseline.addresses.launchConfig),selectedAccount=current.get(selectedAddress)
+     const own={envelope:initial.profile,launchConfigBytes:Buffer.from(configAccount.dataBase64,'base64'),
+      selectedConfig:selectedAccount&&{address:selectedAddress,owner:selectedAccount.owner,data:Buffer.from(selectedAccount.dataBase64,'base64')}}
      if(!ownerSignatures){
-      const args={signRequest,invited,approved,lookupTables,policy,live}
+      const args={signRequest,invited,approved,lookupTables,policy,live,...own}
       assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,name:'Other coin'}}),/name, symbol or URI differs/)
       assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,creator:adminKey.publicKey.toBase58()}}),/not the invited creator/)
       assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,creatorFeeBps:200}}),/approved economics/)
@@ -105,7 +109,7 @@ async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}=
       assert.throws(()=>verifyLaunchSignRequest({...args,live:{slot:Number(row.valid_until_slot)-5,blockHeight:0}}),/too close/)
       assert.throws(()=>verifyLaunchSignRequest({...args,lookupTables:[]}),/unresolved lookup table/)
      }
-     const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,policy,live})
+     const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,policy,live,...own})
      assert.equal(checked.creatorFeeBps,initial.request.creatorFeeBps);assert.equal(checked.capBps,initial.request.capBps);assert.equal(checked.virtualQuote,initial.request.virtualQuote)
      ownerSignatures++;await ownerStore.submitSignature(row.id,ownerAgentKey.signBase64(Buffer.from(row.message_base64,'base64')))
     }

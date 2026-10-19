@@ -94,11 +94,16 @@ export async function bootstrapProductionHooks({env=process.env}={}){
   adminSigner:remoteAdminSigner(pool,{address:s.bundle.config.reviewer,observe:s.observers.live}),expiryObserver:s.observers.bothPast}
  // Each launch gets its own lookup table, created by the owner's Mac agent; trades use the bundle's shared table.
  const launchLookupTable=remoteLaunchLookupTable(pool,{envelope:s.bundle.profile,connections:s.connections,adminAddress:s.bundle.config.reviewer})
- const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,launchLookupTable,reviewTiming:s.reviewTiming,...await s.launchLimits()})
+ const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,launchLookupTable,reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
  if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true')installInclusiveTradeRuntime(createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true'}))
+ // Native-SOL launches: their creators claim fees in SOL (stage native-claim). Off unless HOOK_NATIVE_LAUNCHES_ENABLED=true.
+ if(env.HOOK_NATIVE_LAUNCHES_ENABLED==='true'){
+  const {createNativeClaimRuntime,installNativeClaimRuntime}=await import('../app/lib/hooklab-native-claim-runtime.mjs')
+  installNativeClaimRuntime(createNativeClaimRuntime(pool,{...base,nativeLaunchesApproved:true,limits:s.tradeLimits}))
+ }
  return {installed:true,trading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'}
  }catch(error){if(!nativeLaunchRuntime())await pool.end().catch(()=>{});throw error}
 }

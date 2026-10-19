@@ -7,6 +7,9 @@ import { AddressLookupTableAccount,PublicKey,VersionedMessage } from '@solana/we
 import { BorshCoder } from '@anchor-lang/core'
 import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing,formatSolPrice,launchVirtualQuote,ownerPricingLine,solUsdQuorum } from './hooklab-launch-pricing.mjs'
 import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
+import { loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { CREATE_LAUNCH_V4_DISCRIMINATOR,QUOTE_FORM_NATIVE } from './hooklab-native-launch.mjs'
+import { maxWalletLaunchAccounts } from './hooklab-max-wallet-launch.mjs'
 const COMPUTE_BUDGET='ComputeBudget111111111111111111111111111111'
 const launchIdl=JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url)))
 const coder=new BorshCoder(launchIdl)
@@ -14,6 +17,11 @@ const gateCoder=new BorshCoder(JSON.parse(readFileSync(new URL('../vendor/hookla
 export const policyAddress=(gateProgram,mint)=>PublicKey.findProgramAddressSync([Buffer.from('policy-v2'),new PublicKey(mint).toBuffer()],new PublicKey(gateProgram))[0].toBase58()
 const createLaunch=launchIdl.instructions.find(i=>i.name==='create_launch_custom_v3')
 export const CREATE_LAUNCH_DISCRIMINATOR=Buffer.from(createLaunch.discriminator)
+// The 32 accounts create_launch_custom_v3 declares plus its 10 remaining ones (creation controls, reviewer, gate program
+// data, the gate's slice and the fee policy last); v4 has exactly the same list. Account 29 is the selected config.
+const LAUNCH_ACCOUNTS=createLaunch.accounts.length+10,SELECTED_CONFIG=29
+const DERIVED='launch accounts differ from the ones this agent derives from its own launch config read (treasury, configs, governance, programs, the mint\'s launch, pool and policies)'
+export { CREATE_LAUNCH_V4_DISCRIMINATOR }
 const refuse=reason=>Object.assign(Error(`Refused: ${reason}`),{code:'OWNER_AGENT_REFUSED'})
 const need=(ok,reason)=>{if(!ok)throw refuse(reason)}
 const num=value=>BigInt(value?.toString?.()??value)
@@ -61,7 +69,16 @@ export function ownerRequestLines(request){
 // policy: {address,owner,data} of the mint's PolicyV2, read by the agent itself
 // lookupTables: AddressLookupTableAccount[] resolved by the agent itself
 // live: {slot,blockHeight} observed by the agent itself
-export function verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,policy,live,marginSlots=12,marginBlocks=12}){
+// nativeLaunches: launch Config byte 186 as the agent itself read it from both of its providers (readLiveNativeLaunches).
+//  Off: only create_launch_custom_v3, as before. On: only create_launch_custom_v4 with the native quote form.
+// envelope, launchConfigBytes: the agent's pinned release envelope and the launch Config it read itself (with the switch).
+// selectedConfig: {address,owner,data} of the launch config the message names (account 29), read by the agent itself: the
+//  creator's own, with the invited fee and the gate as its hook.
+//  Both routes: the launch instruction's 42 accounts, with their signer and writable flags, must be exactly the ones the
+//  agent derives from these (review F3), which pins the treasury, configs, governance, programs, and the mint's launch,
+//  pool and policies. Every invite check applies as well.
+export function verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,policy,live,nativeLaunches=false,envelope,launchConfigBytes,selectedConfig,marginSlots=12,marginBlocks=12}){
+ need(nativeLaunches===true||nativeLaunches===false,'the native-launches switch was not read')
  need(approved.creatorFeeChoices.includes(invited.creatorFeeBps)&&approved.capChoices.includes(invited.capBps),'invited fee or cap is not an approved choice')
  need(/^[1-9]\d{0,19}$/.test(invited.virtualQuote??''),'invited opening price is missing')
  const bytes=Buffer.from(signRequest.messageBase64,'base64')
@@ -78,16 +95,35 @@ export function verifyLaunchSignRequest({signRequest,invited,approved,lookupTabl
  need(programs.every(p=>p===COMPUTE_BUDGET||p===approved.launchProgram),'message calls a program other than compute budget and launch')
  const launches=message.compiledInstructions.filter((_,i)=>programs[i]===approved.launchProgram)
  need(launches.length===1,'expected exactly one launch instruction')
- const ix=launches[0],data=Buffer.from(ix.data)
- need(data.subarray(0,8).equals(CREATE_LAUNCH_DISCRIMINATOR),'instruction is not create_launch_custom_v3')
- const decoded=coder.instruction.decode(data)
- need(decoded?.name==='create_launch_custom_v3','launch arguments do not decode')
- const {args,guard,fee_model:feeModel}=decoded.data
+ const ix=launches[0],data=Buffer.from(ix.data),v3=data.subarray(0,8).equals(CREATE_LAUNCH_DISCRIMINATOR),v4=data.subarray(0,8).equals(CREATE_LAUNCH_V4_DISCRIMINATOR)
+ if(nativeLaunches)need(v4,v3?'native launches are on: refusing a bridged create_launch_custom_v3':'instruction is not create_launch_custom_v4')
+ else need(v3,v4?'native launches are off on chain: refusing create_launch_custom_v4':'instruction is not create_launch_custom_v3')
+ const name=v4?'create_launch_custom_v4':'create_launch_custom_v3',launchCoder=v4?loadNativeArtifacts().coders.launch:coder,decoded=launchCoder.instruction.decode(data)
+ need(decoded?.name===name,'launch arguments do not decode')
+ const {args,guard,fee_model:feeModel,quote_form:quoteForm}=decoded.data
+ if(v4)need(quoteForm===QUOTE_FORM_NATIVE&&launchCoder.instruction.encode(name,decoded.data).equals(data),'quote form is not native SOL, or the launch data is not canonical')
  need(keys.get(ix.accountKeyIndexes[0]).toBase58()===invited.creator,'launch creator is not the invited creator')
  need(args.name===invited.name&&args.symbol===invited.symbol&&args.uri===invited.uri,'coin name, symbol or URI differs from the invited request')
  need(args.creator_fee_bps===invited.creatorFeeBps&&feeModel===approved.feeModel,'creator fee or fee model differs from the approved economics')
  need(args.virtual_quote.toString()===invited.virtualQuote,'opening price (virtual quote) differs from the invited request')
- const mint=keys.get(ix.accountKeyIndexes[3]).toBase58()
+ need(ix.accountKeyIndexes.length===LAUNCH_ACCOUNTS,DERIVED)
+ const at=i=>keys.get(ix.accountKeyIndexes[i]).toBase58(),mint=at(3)
+ // The selected config is the one the message names, and only if this agent's own read shows it is the invited creator's.
+ let selected
+ try{need(selectedConfig&&selectedConfig.address===at(SELECTED_CONFIG)&&selectedConfig.owner===approved.launchProgram,'');selected=coder.accounts.decode('LaunchConfig',Buffer.from(selectedConfig.data))}
+ catch{throw refuse('the selected launch config is not one this agent read for this launch')}
+ need(selected.version===1&&selected.creator.toBase58()===invited.creator&&selected.creator_fee_bps===invited.creatorFeeBps&&selected.custom_hook?.toBase58()===approved.gateProgram
+  &&selected.custom_hook_flags===1&&selected.author_share_bps===0,'the selected launch config is not the invited creator\'s, with the invited fee and the gate')
+ let expected
+ try{
+  const programs=JSON.parse(envelope.json).programs
+  need(programs.launch===approved.launchProgram&&programs.gate===approved.gateProgram,'')
+  expected=maxWalletLaunchAccounts(envelope,{creator:invited.creator,mint,selectedConfig:at(SELECTED_CONFIG),reviewer:approved.admin},launchConfigBytes)
+ }catch{throw refuse('the agent cannot derive the launch accounts from its own launch config read and envelope')}
+ // An account listed twice (the launch) carries the union of its privileges in the message, as Solana compiles it.
+ const union=(address,flag)=>expected.some(m=>m.address===address&&m[flag])
+ need(expected.length===LAUNCH_ACCOUNTS&&expected.every((m,i)=>{const k=ix.accountKeyIndexes[i]
+  return keys.get(k).toBase58()===m.address&&message.isAccountSigner(k)===union(m.address,'signer')&&message.isAccountWritable(k)===union(m.address,'writable')}),DERIVED)
  need(policy&&policy.address===policyAddress(approved.gateProgram,mint)&&policy.owner===approved.gateProgram,'mint policy missing or not owned by the gate')
  const p=gateCoder.accounts.decode('PolicyV2',Buffer.from(policy.data))
  need(p.version===2&&p.mint.toBase58()===mint&&p.cap_bps===invited.capBps&&p.creator_fee_bps===invited.creatorFeeBps&&p.fee_model===2&&p.protocol_share_bps===2500,
@@ -95,7 +131,7 @@ export function verifyLaunchSignRequest({signRequest,invited,approved,lookupTabl
  need(num(guard.deadline_slot)===num(signRequest.validUntilSlot),'deadline differs from the request')
  need(BigInt(live.slot)<num(signRequest.validUntilSlot)-BigInt(marginSlots),'deadline slot too close or passed')
  need(BigInt(live.blockHeight)<num(signRequest.lastValidBlockHeight)-BigInt(marginBlocks),'blockhash too close to expiry')
- return Object.freeze({creator:invited.creator,mint,capBps:p.cap_bps,name:args.name,symbol:args.symbol,uri:args.uri,
+ return Object.freeze({creator:invited.creator,mint,capBps:p.cap_bps,name:args.name,symbol:args.symbol,uri:args.uri,quoteForm:v4?QUOTE_FORM_NATIVE:null,
   creatorFeeBps:args.creator_fee_bps,feeModel,virtualQuote:args.virtual_quote.toString(),deadlineSlot:guard.deadline_slot.toString(),
   slotsLeft:(num(signRequest.validUntilSlot)-BigInt(live.slot)).toString(),blocksLeft:(num(signRequest.lastValidBlockHeight)-BigInt(live.blockHeight)).toString()})
 }

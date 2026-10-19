@@ -20,7 +20,7 @@ export default function HooksMinePage() {
 // While owner-approved launches are open: the creator's SOL in Hook Lab (with withdraw) and their launch or coin.
 function LaunchedCoins() {
   return <><HooksIntro title="My coins" art="receipts-ui">Your coins, your launch and your SOL in Hook Lab.</HooksIntro><HooksNav active="mine"/>
-    <HookMyCoins genesisHash={executionGenesis()}/>
+    <HookMyCoins genesisHash={executionGenesis()} nativeClaims={process.env.HOOK_NATIVE_LAUNCHES_ENABLED === 'true'}/>
     <HooksRisk/>
   </>
 }

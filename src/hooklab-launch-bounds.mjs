@@ -5,19 +5,33 @@ import { PublicKey } from '@solana/web3.js'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { PROGRAMS,derivedAddresses } from './hooklab-owner-driver/pins.mjs'
 import { STANDARD_VIRTUAL_QUOTE,formatSol } from './hooklab-launch-pricing.mjs'
+import { nativeLaunchesSwitch } from './hooklab-native-launch.mjs'
 const refuse=message=>Object.assign(Error(message),{code:'LAUNCH_PRICE_REFUSED'})
 const need=(ok,message)=>{if(!ok)throw refuse(message)}
 
 // connections: two objects with getAccountInfo(PublicKey, commitment), e.g. @solana/web3.js Connections.
-export async function readLiveLaunchBounds(connections,{programs=PROGRAMS}={}){
+async function readLiveLaunchConfig(connections,programs){
  need(Array.isArray(connections)&&connections.length===2,'Two RPC providers are needed to read the on-chain launch limits')
  const address=new PublicKey(derivedAddresses(programs).launchConfig)
  // Provider errors can carry the RPC URL and its API key; only a fixed message leaves here.
  let infos;try{infos=await Promise.all(connections.map(c=>c.getAccountInfo(address,'finalized')))}catch{throw refuse('Could not read the on-chain launch limits; try the invite again')}
  need(infos.every(i=>i&&i.owner.toBase58()===programs.launch),'The launch config is missing on chain; try the invite again')
  need(Buffer.from(infos[0].data).equals(Buffer.from(infos[1].data)),'The RPC providers disagree on the launch config; try the invite again')
- const config=loadArtifacts().coders.launch.accounts.decode('Config',Buffer.from(infos[0].data))
+ return Buffer.from(infos[0].data)
+}
+export async function readLiveLaunchBounds(connections,{programs=PROGRAMS}={}){
+ const config=loadArtifacts().coders.launch.accounts.decode('Config',await readLiveLaunchConfig(connections,programs))
  return Object.freeze({min:BigInt(config.min_virtual_quote.toString()),max:BigInt(config.max_virtual_quote.toString())})
+}
+// The native-SOL launch switch (launch Config byte 186) from the same two-provider finalized read: the owner agent's own
+// view of which launch route (v3 off, v4 on) it may co-sign. A byte other than 0 or 1 refuses.
+export async function readLiveNativeLaunches(connections,{programs=PROGRAMS}={}){
+ return (await readLiveLaunchConfigState(connections,{programs})).nativeLaunches
+}
+// The same read, with the Config bytes themselves (the owner agent derives the launch accounts from them).
+export async function readLiveLaunchConfigState(connections,{programs=PROGRAMS}={}){
+ const bytes=await readLiveLaunchConfig(connections,programs)
+ try{return Object.freeze({bytes,nativeLaunches:nativeLaunchesSwitch(bytes)})}catch(error){throw refuse(`${error.message}; not signing any launch`)}
 }
 
 export function checkLiveBounds(virtualQuote,bounds){
