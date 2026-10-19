@@ -9,7 +9,8 @@ import { parseInclusiveMaxWalletProfile } from '../src/hooklab-inclusive-max-wal
 import { productionArtifacts, productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
 import { stackProductionArtifacts } from '../src/hooklab-production-stack-bundle.mjs'
 import { hookCoinAddresses } from '../src/hooklab-inclusive-max-wallet-swap.mjs'
-import { ownStack, OWN_STACK_SKIP, PLACEHOLDER_IDS } from './fixtures/hooklab-own-stack.mjs'
+import { ownStack, OWN_STACK_SKIP, PLACEHOLDER_IDS, INDEPENDENT_DIR, INDEPENDENT_SKIP } from './fixtures/hooklab-own-stack.mjs'
+import { stackFromIndependentBuild } from '../src/hooklab-stack-build.mjs'
 
 const legacyProfile = JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/offline-builder-profile.json', import.meta.url)))
 
@@ -57,4 +58,15 @@ test('a stack descriptor is refused when its IDLs are not its build\'s or name o
   assert.throws(() => stackProfile(base, { ...stack, build: { ...stack.build, idlSha256: other.stack.build.idlSha256 } }, other.idls), /names another program/)
   assert.throws(() => parseStack({ ...stack, quoteMint: stack.programs.token }), /distinct/)
   assert.throws(() => parseStack({ ...stack, id: 'legacy' }))
+})
+
+test('our stack from hook-lab\'s independent build: the ids file\'s six fields, pins computed from the files, placeholder until reviewed', { skip: INDEPENDENT_SKIP }, () => {
+  const { stack } = stackFromIndependentBuild(INDEPENDENT_DIR), ids = JSON.parse(readFileSync(`${INDEPENDENT_DIR}/ids/independent.json`, 'utf8'))
+  assert.deepEqual(stack.programs, { launch: ids.launch, swap: ids.swap, gate: ids.gate, token: ids.token })
+  assert.equal(stack.quoteMint, ids.quoteMarkerMint); assert.equal(stack.upgradeAuthority, ids.upgradeAuthority); assert.equal(stack.status, 'placeholder')
+  // The trimmed pins agree with hook-lab's own ELF-HASHES.txt for every program.
+  const hashes = readFileSync(`${INDEPENDENT_DIR}/ELF-HASHES.txt`, 'utf8')
+  for (const role of ['launch', 'swap', 'gate', 'token']) assert.ok(hashes.includes(`trimmed sha256 ${stack.build.elf[role].trimmedSha256} len ${stack.build.elf[role].trimmedLength}`), role)
+  assert.equal(stack.build.open, true)
+  assert.throws(() => stackFromIndependentBuild(INDEPENDENT_DIR, { reviewed: true }), /placeholder keys/)
 })
