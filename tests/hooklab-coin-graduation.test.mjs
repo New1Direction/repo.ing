@@ -57,7 +57,9 @@ test('the coin page carries each state into the Blocks and the trade panel', asy
   // A fresh mint per render: the page caches each coin's market for a few seconds.
   const key = Symbol.for('repo.ing.hooklab.inclusive-trade-runtime'), render = async market => {
     const fresh = Keypair.generate().publicKey.toBase58()
-    globalThis[key] = { market: async requested => requested === fresh ? { market: { ...market, mint: fresh }, wallet: null } : null }
+    // Coin pages show only coins launched through repo.ing (#316), so the runtime lists this one.
+    globalThis[key] = { market: async requested => requested === fresh ? { market: { ...market, mint: fresh }, wallet: null } : null,
+      coinProfile: async requested => requested === fresh ? { id: '11111111-1111-4111-8111-111111111111', name: market.name, symbol: market.symbol, creator: market.creator, profile: null } : null }
     try { return text(html(await Token({ params: Promise.resolve({ mint: fresh }) }), { wallet: true })) } finally { delete globalThis[key] }
   }
   const before = await render(markets.before)
