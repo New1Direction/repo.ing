@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 import { STAGES } from './context.mjs'
-import { STAGE_DECISIONS, APPROVAL_FLAG_STAGES } from './config.mjs'
+import { STAGE_DECISIONS, APPROVAL_FLAG_STAGES, decisionOf } from './config.mjs'
 import { simulate } from './rpc.mjs'
 import { unsignedTransactionBase64 } from './message.mjs'
 import { addressBook, decodeMessage, renderPreview } from './preview.mjs'
@@ -13,12 +13,12 @@ import { signerRoles } from './stages/common.mjs'
 import { altRecord } from './stages/canary-common.mjs'
 
 export function book(ctx) {
-  const canary = ctx.roles.mint ? canaryAddresses(ctx.programs, ctx.quoteMint, ctx.roles.mint) : {}
-  const extra = { ...Object.fromEntries(Object.entries(canary).map(([k, v]) => [`canary ${k}`, v])), 'canary lookup table': altRecord(ctx)?.address }
+  const canary = ctx.roles.mint && !ctx.stack ? canaryAddresses(ctx.programs, ctx.quoteMint, ctx.roles.mint) : {}
+  const extra = { ...Object.fromEntries(Object.entries(canary).map(([k, v]) => [`canary ${k}`, v])), ...(ctx.stack ? { 'quote marker (internal)': ctx.quoteMint } : { 'canary lookup table': altRecord(ctx)?.address }) }
   return addressBook({ programs: ctx.programs, quoteMint: ctx.quoteMint, roles: ctx.roles, extra })
 }
 export function describe(ctx, stage, built) {
-  const decisions = (STAGE_DECISIONS[stage] ?? []).map(name => ({ name, value: ctx.config.decisions[name].value, approved: ctx.config.decisions[name].approved }))
+  const decisions = (STAGE_DECISIONS[stage] ?? []).map(name => ({ name, value: decisionOf(ctx.config, name)?.value ?? null, approved: !!decisionOf(ctx.config, name)?.approved }))
   const base = { stage, network: ctx.network, genesisHash: ctx.genesis, observedSlot: built.observedSlot, providers: ctx.readers.map(r => `${r.provider}=${r.url}`),
     decisions, notes: built.notes ?? [], sections: built.sections ?? [], blocked: built.blocked }
   if (!built.review) return base
@@ -26,7 +26,7 @@ export function describe(ctx, stage, built) {
   return { ...base, messageSha256: r.messageSha256, blockhash: VersionedMessage.deserialize(Buffer.from(r.messageBase64, 'base64')).recentBlockhash,
     lastValidBlockHeight: r.lastValidBlockHeight, deadlineSlot: built.deadlineSlot, payer: r.payer, requiredSigners: r.requiredSigners, signerRoles: signerRoles(ctx, r),
     networkFeeLamports: r.maxFeeLamports, wireBytes: Buffer.from(unsignedTransactionBase64(r.messageBase64), 'base64').length, lookupTable: lookupTable?.address ?? null,
-    approvalFlag: APPROVAL_FLAG_STAGES.has(stage), book: Object.fromEntries(names), instructions: decodeMessage(r.messageBase64, { programs: ctx.programs, book: names, lookupTable }) }
+    approvalFlag: APPROVAL_FLAG_STAGES.has(stage), book: Object.fromEntries(names), instructions: decodeMessage(r.messageBase64, { programs: ctx.programs, book: names, lookupTable, abi: ctx.abi }) }
 }
 export async function plan(ctx, stageName, { write = true, log = console.log } = {}) {
   const stage = STAGES[stageName]

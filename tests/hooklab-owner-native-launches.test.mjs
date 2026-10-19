@@ -10,7 +10,7 @@ import path from 'node:path'
 import { PublicKey } from '@solana/web3.js'
 import { loadArtifacts } from '../src/hooklab-owner-driver/artifacts.mjs'
 import { loadConfig, assertExecutable, APPROVAL_FLAG_STAGES, STAGE_DECISIONS } from '../src/hooklab-owner-driver/config.mjs'
-import { STAGES, STAGE_ORDER } from '../src/hooklab-owner-driver/context.mjs'
+import { STAGES, STAGE_ORDER, legacyChain } from '../src/hooklab-owner-driver/context.mjs'
 import { describe } from '../src/hooklab-owner-driver/plan.mjs'
 import { decodeMessage, addressBook, plain, renderPreview } from '../src/hooklab-owner-driver/preview.mjs'
 import { parseArgs } from '../src/hooklab-owner-driver/cli.mjs'
@@ -46,7 +46,7 @@ const chain = ({ config = liveConfig, governanceBytes = liveGovernance, launchEl
 const template = loadConfig(new URL('../hooklab-owner.config.json', import.meta.url))
 const journal = { dir: path.join(mkdtempSync(path.join(tmpdir(), 'hooklab-native-launches-')), 'journal') }
 const context = (accounts, to = 'on') => ({ config: template, readers: readers(accounts), genesis: MAINNET_GENESIS, network: 'mainnet-beta', roles: MAINNET_ROLES,
-  programs: PROGRAMS, quoteMint: QUOTE_MINT, envelope: { expectedSha256: 'aa'.repeat(32) }, journal, options: { to } })
+  ...legacyChain(), envelope: { expectedSha256: 'aa'.repeat(32) }, journal, options: { to } })
 after(() => rmSync(path.dirname(journal.dir), { recursive: true, force: true }))
 const stage = STAGES['native-launches']
 

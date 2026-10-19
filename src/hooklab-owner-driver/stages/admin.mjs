@@ -2,12 +2,11 @@
 import { isDeepStrictEqual } from 'node:util'
 import BN from 'bn.js'
 import { derivedAddresses, authorizationAddress, LOADER, SYSTEM, sha256, pk } from '../pins.mjs'
-import { ELF } from '../artifacts.mjs'
 import { readAccounts, rentExemption } from '../rpc.mjs'
 import { value } from '../config.mjs'
 import * as ix from '../instructions.mjs'
 import { fieldDiff, plain, sol } from '../preview.mjs'
-import { check, decode, owned, hex, nextState, governanceSection, governanceView, simpleMessage } from './common.mjs'
+import { check, cdecode, owned, hex, nextState, gsection, gview, simpleMessage } from './common.mjs'
 
 const configRole = { 'launch-config': 'launch', 'swap-config': 'swap' }
 function wanted(ctx, role, current) {
@@ -17,10 +16,10 @@ function wanted(ctx, role, current) {
   return { ...current, protocol_fee_bps: value(ctx.config, 'protocolFeeBps'), launch_protocol_share_bps: value(ctx.config, 'launchProtocolShareBps') }
 }
 export async function governedSnapshot(ctx, role, extra = []) {
-  const d = derivedAddresses(ctx.programs), config = role === 'launch' ? d.launchConfig : d.swapConfig, governance = role === 'launch' ? d.launchGovernance : d.swapGovernance
+  const d = derivedAddresses(ctx.programs, ctx.quoteMint), config = role === 'launch' ? d.launchConfig : d.swapConfig, governance = role === 'launch' ? d.launchGovernance : d.swapGovernance
   const snapshot = await readAccounts(ctx.readers, ctx.genesis, [config, governance, ctx.roles.payer, ...extra])
-  const c = decode(role, 'Config', owned(snapshot.accounts, config, ctx.programs[role], `${role} config`))
-  const g = decode(role, 'Governance', owned(snapshot.accounts, governance, ctx.programs[role], `${role} governance`))
+  const c = cdecode(ctx, role, 'Config', owned(snapshot.accounts, config, ctx.programs[role], `${role} config`))
+  const g = cdecode(ctx, role, 'Governance', owned(snapshot.accounts, governance, ctx.programs[role], `${role} governance`))
   check(c.admin.toBase58() === ctx.roles.admin && g.state.roles.admin.toBase58() === ctx.roles.admin, `${role} admin differs from the pinned admin role`)
   check(g.state.pending_admin === null, `${role} governance has a pending admin nomination; refusing`)
   return { snapshot, config: c, governance: g, addresses: { config, governance } }
@@ -29,9 +28,9 @@ export const payerRow = (ctx, snapshot) => `payer ${ctx.roles.payer} balance ${s
 // Post-execution check shared by every governed_set_config stage: the reviewed args and the predicted commitment.
 export async function verifyGovernedConfig(ctx, expect) {
   const { config, governance } = await governedSnapshot(ctx, expect.role)
-  const now = plain(expect.role === 'launch' ? ix.launchConfigArgs(config) : ix.swapConfigArgs(config))
+  const now = plain(expect.role === 'launch' ? ctx.ix.launchConfigArgs(config) : ctx.ix.swapConfigArgs(config))
   check(isDeepStrictEqual(now, expect.config), `${expect.role} config after execution differs from the reviewed values`)
-  check(governanceView(expect.role, governance.state).commitment === expect.commitment, 'Governance commitment differs from the predicted post-state')
+  check(gview(ctx, expect.role, governance.state).commitment === expect.commitment, 'Governance commitment differs from the predicted post-state')
   return [`${expect.role} config matches reviewed values`, `governance commitment ${expect.commitment}`]
 }
 
@@ -41,18 +40,18 @@ function governedConfigStage(stage) {
     name: stage,
     async build(ctx, pinned) {
       const { snapshot, config, governance } = await governedSnapshot(ctx, role)
-      const current = role === 'launch' ? ix.launchConfigArgs(config) : ix.swapConfigArgs(config), after = wanted(ctx, role, current)
+      const current = role === 'launch' ? ctx.ix.launchConfigArgs(config) : ctx.ix.swapConfigArgs(config), after = wanted(ctx, role, current)
       if (role === 'swap') check(after.fee_collector.toBase58() === after.treasury.toBase58(), 'Swap fee collector must equal the treasury')
       const diff = fieldDiff(plain(current), plain(after))
       if (!diff.length) return { blocked: `already applied: ${role} config already equals the decision values`, observedSlot: snapshot.slot }
-      const expected = ix.governanceCommitment(role, governance.state)
-      const instruction = ix.governedSetConfig(ctx.programs, role, ctx.roles.admin, expected, after)
+      const expected = ctx.ix.governanceCommitment(role, governance.state)
+      const instruction = ctx.ix.governedSetConfig(ctx.programs, role, ctx.roles.admin, expected, after)
       const afterState = nextState(governance.state, { config_digest: [...ix.economicsDigest(role, ctx.programs[role], after)], roles: { treasury: after.treasury } })
       const { review, blockhash } = await simpleMessage(ctx, { stage, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot })
       return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
         sections: [{ title: `${role} config field changes (before -> after)`, rows: diff.map(x => `${x.field}: ${JSON.stringify(x.before)} -> ${JSON.stringify(x.after)}`) },
-          governanceSection(role, governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
-        expect: { role, config: plain(after), commitment: hex(ix.governanceCommitment(role, afterState)) } }
+          gsection(ctx, role, governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
+        expect: { role, config: plain(after), commitment: hex(ctx.ix.governanceCommitment(role, afterState)) } }
     },
     verify: verifyGovernedConfig,
   }
@@ -65,24 +64,24 @@ const grant = {
     check(creator === ctx.roles.creator, 'Grant creator must be the pinned controlled-test creator role')
     const { snapshot, governance } = await governedSnapshot(ctx, 'launch', [authorization])
     const existing = snapshot.accounts.get(authorization)
-    if (existing) return { blocked: `creator authorization ${authorization} already exists: ${JSON.stringify(plain(decode('launch', 'CreatorAuthorization', existing)))}`, observedSlot: snapshot.slot }
+    if (existing) return { blocked: `creator authorization ${authorization} already exists: ${JSON.stringify(plain(cdecode(ctx, 'launch', 'CreatorAuthorization', existing)))}`, observedSlot: snapshot.slot }
     const expiresAtSlot = pinned?.expiresAtSlot ?? String(BigInt(snapshot.slot) + BigInt(g.expirySlots))
     const rent = (await rentExemption(ctx.readers, [73]))[73]
-    const instruction = ix.initCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, payer: ctx.roles.payer, creator, expiresAtSlot, maxLaunches: g.maxLaunches,
-      expectedGovernance: ix.governanceCommitment('launch', governance.state) })
+    const instruction = ctx.ix.initCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, payer: ctx.roles.payer, creator, expiresAtSlot, maxLaunches: g.maxLaunches,
+      expectedGovernance: ctx.ix.governanceCommitment('launch', governance.state) })
     const afterState = nextState(governance.state, {})
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'grant', payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, instructionDebitLamports: String(rent) })
     return { observedSlot: snapshot.slot, review, deadlineSlot: undefined, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight, expiresAtSlot },
       sections: [{ title: 'creator authorization (new account)', rows: [`address ${authorization}`, `creator ${creator}`, `enabled true; max_launches ${g.maxLaunches} (lifetime); expires_at_slot ${expiresAtSlot} (exclusive; ${pinned?.expiresAtSlot ? 'pinned at plan time' : `observed slot ${snapshot.slot} + ${g.expirySlots}`}; current slot ${snapshot.slot})`] },
-        governanceSection('launch', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), `rent ${sol(rent)} paid by payer for the 73-byte authorization`] }],
-      expect: { authorization, creator, expiresAtSlot, maxLaunches: g.maxLaunches, commitment: hex(ix.governanceCommitment('launch', afterState)) } }
+        gsection(ctx, 'launch', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), `rent ${sol(rent)} paid by payer for the 73-byte authorization`] }],
+      expect: { authorization, creator, expiresAtSlot, maxLaunches: g.maxLaunches, commitment: hex(ctx.ix.governanceCommitment('launch', afterState)) } }
   },
   async verify(ctx, expect) {
     const { snapshot, governance } = await governedSnapshot(ctx, 'launch', [expect.authorization])
-    const a = decode('launch', 'CreatorAuthorization', owned(snapshot.accounts, expect.authorization, ctx.programs.launch, 'authorization'))
+    const a = cdecode(ctx, 'launch', 'CreatorAuthorization', owned(snapshot.accounts, expect.authorization, ctx.programs.launch, 'authorization'))
     check(a.creator.toBase58() === expect.creator && a.enabled && a.expires_at_slot.toString() === expect.expiresAtSlot && a.max_launches.toString() === expect.maxLaunches
       && a.consumed.isZero() && a.revision.isZero(), 'Creator authorization differs from the reviewed grant')
-    check(governanceView('launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs from the predicted post-state')
+    check(gview(ctx, 'launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs from the predicted post-state')
     return [`authorization ${expect.authorization} enabled, quota ${expect.maxLaunches}, expiry ${expect.expiresAtSlot}`]
   },
 }
@@ -100,17 +99,17 @@ const customerGrant = {
     const { snapshot, governance } = await governedSnapshot(ctx, 'launch', [authorization])
     const existing = snapshot.accounts.get(authorization)
     const expiresAtSlot = pinned?.expiresAtSlot ?? String(BigInt(snapshot.slot) + BigInt(policy.expirySlots))
-    const expectedGovernance = ix.governanceCommitment('launch', governance.state)
+    const expectedGovernance = ctx.ix.governanceCommitment('launch', governance.state)
     let instruction, rent = 0n, before = null, maxLaunches
     if (existing) {
-      before = decode('launch', 'CreatorAuthorization', owned(snapshot.accounts, authorization, ctx.programs.launch, 'authorization'))
+      before = cdecode(ctx, 'launch', 'CreatorAuthorization', owned(snapshot.accounts, authorization, ctx.programs.launch, 'authorization'))
       check(before.creator.toBase58() === creator, 'existing authorization belongs to a different creator')
       maxLaunches = String(BigInt(before.consumed.toString()) + 1n)
-      instruction = ix.setCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, creator, expiresAtSlot, maxLaunches, expectedGovernance })
+      instruction = ctx.ix.setCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, creator, expiresAtSlot, maxLaunches, expectedGovernance })
     } else {
       maxLaunches = '1'
       rent = BigInt((await rentExemption(ctx.readers, [73]))[73])
-      instruction = ix.initCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, payer: ctx.roles.payer, creator, expiresAtSlot, maxLaunches, expectedGovernance })
+      instruction = ctx.ix.initCreatorAuthorization(ctx.programs, { admin: ctx.roles.admin, payer: ctx.roles.payer, creator, expiresAtSlot, maxLaunches, expectedGovernance })
     }
     const afterState = nextState(governance.state, {})
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'customer-grant', payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, instructionDebitLamports: String(rent) })
@@ -118,16 +117,16 @@ const customerGrant = {
       sections: [{ title: existing ? 'creator authorization (re-enable for one more launch)' : 'creator authorization (new account)', rows: [`address ${authorization}`, `creator ${creator}`,
         ...(before ? [`before: enabled ${before.enabled}; consumed ${before.consumed} of ${before.max_launches}; expires_at_slot ${before.expires_at_slot}`] : []),
         `after: enabled true; max_launches ${maxLaunches} (lifetime, so exactly one more launch); expires_at_slot ${expiresAtSlot} (exclusive; observed slot ${snapshot.slot} + ${policy.expirySlots})`]},
-        governanceSection('launch', governance.state, afterState),
+        gsection(ctx, 'launch', governance.state, afterState),
         { title: 'funds', rows: [payerRow(ctx, snapshot), existing ? 'no rent: the authorization already exists' : `rent ${sol(rent)} paid by payer for the 73-byte authorization`] }],
-      expect: { authorization, creator, expiresAtSlot, maxLaunches, commitment: hex(ix.governanceCommitment('launch', afterState)) } }
+      expect: { authorization, creator, expiresAtSlot, maxLaunches, commitment: hex(ctx.ix.governanceCommitment('launch', afterState)) } }
   },
   async verify(ctx, expect) {
     const { snapshot, governance } = await governedSnapshot(ctx, 'launch', [expect.authorization])
-    const a = decode('launch', 'CreatorAuthorization', owned(snapshot.accounts, expect.authorization, ctx.programs.launch, 'authorization'))
+    const a = cdecode(ctx, 'launch', 'CreatorAuthorization', owned(snapshot.accounts, expect.authorization, ctx.programs.launch, 'authorization'))
     check(a.creator.toBase58() === expect.creator && a.enabled && a.expires_at_slot.toString() === expect.expiresAtSlot && a.max_launches.toString() === expect.maxLaunches
       && BigInt(a.consumed.toString()) + 1n === BigInt(expect.maxLaunches), 'Creator authorization differs from the reviewed customer grant')
-    check(governanceView('launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs from the predicted post-state')
+    check(gview(ctx, 'launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs from the predicted post-state')
     return [`customer ${expect.creator}: one more launch allowed until slot ${expect.expiresAtSlot}`]
   },
 }
@@ -148,20 +147,20 @@ const gateFinalize = {
     if (!program || !data) return { blocked: `gate program ${gate} is not deployed yet (program ${program ? 'present' : 'absent'}, ProgramData ${data ? 'present' : 'absent'})`, observedSlot: snapshot.slot }
     const link = Buffer.from(program.dataBase64, 'base64')
     check(program.owner === LOADER && program.executable && link.readUInt32LE(0) === 2 && pk(link.subarray(4, 36)).toBase58() === d.gateProgramData, 'Gate program linkage differs')
-    const state = programDataState(data, ELF.gate)
+    const state = programDataState(data, ctx.elf.gate)
     if (state.authority === null) return { blocked: 'gate ProgramData is already immutable', observedSlot: snapshot.slot }
     check(state.authority === ctx.roles.upgrade, `Gate upgrade authority ${state.authority} is not the pinned upgrade role`)
-    if (!state.elfMatches) return { blocked: 'deployed gate ELF differs from the reviewed artifact d7233d...; refusing to make unreviewed code immutable', observedSlot: snapshot.slot }
-    const { review, blockhash } = await simpleMessage(ctx, { stage: 'gate-finalize', payer: ctx.roles.payer, instructions: [ix.loaderFinalize(d.gateProgramData, ctx.roles.upgrade)], pinned, snapshot, units: 20000 })
+    if (!state.elfMatches) return { blocked: `deployed gate ELF differs from the reviewed artifact ${ctx.elf.gate.sha256.slice(0, 12)}...; refusing to make unreviewed code immutable`, observedSlot: snapshot.slot }
+    const { review, blockhash } = await simpleMessage(ctx, { stage: 'gate-finalize', payer: ctx.roles.payer, instructions: [ctx.ix.loaderFinalize(d.gateProgramData, ctx.roles.upgrade)], pinned, snapshot, units: 20000 })
     return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
       sections: [{ title: 'IRREVERSIBLE gate finalization', rows: [`program ${gate}; ProgramData ${d.gateProgramData}; deploy slot ${state.deploySlot}`,
-        `upgrade authority ${state.authority} -> NONE (immutable forever)`, `deployed ELF sha256 ${ELF.gate.sha256} matches the reviewed artifact (${ELF.gate.length} bytes)`,
+        `upgrade authority ${state.authority} -> NONE (immutable forever)`, `deployed ELF sha256 ${ctx.elf.gate.sha256} matches the reviewed artifact (${ctx.elf.gate.length} bytes)`,
         'launch creation requires an immutable gate; this must precede canary-prepare and canary-launch'] }, { title: 'funds', rows: [payerRow(ctx, snapshot), 'no transfer; network fee only'] }],
       expect: { programData: d.gateProgramData } }
   },
   async verify(ctx, expect) {
     const snapshot = await readAccounts(ctx.readers, ctx.genesis, [expect.programData])
-    const state = programDataState(snapshot.accounts.get(expect.programData), ELF.gate)
+    const state = programDataState(snapshot.accounts.get(expect.programData), ctx.elf.gate)
     check(state.authority === null && state.elfMatches, 'Gate ProgramData is not immutable with the reviewed ELF')
     return ['gate ProgramData has no upgrade authority; ELF unchanged']
   },
@@ -183,7 +182,7 @@ const fund = {
       rows.push(`${sol(lamports)}  payer ${ctx.roles.payer} -> ${role} ${ctx.roles[role]} (balance ${sol(before)} -> ${sol(before + BigInt(lamports))})`)
     }
     check(BigInt(snapshot.accounts.get(ctx.roles.payer)?.lamports ?? 0) >= total + 10000n, 'Payer balance cannot cover the transfers plus fee')
-    const { review, blockhash } = await simpleMessage(ctx, { stage: 'fund', payer: ctx.roles.payer, instructions: targets.map(([role, l]) => ix.transfer(ctx.roles.payer, ctx.roles[role], l)),
+    const { review, blockhash } = await simpleMessage(ctx, { stage: 'fund', payer: ctx.roles.payer, instructions: targets.map(([role, l]) => ctx.ix.transfer(ctx.roles.payer, ctx.roles[role], l)),
       pinned, snapshot, units: 2000 + 1000 * targets.length, instructionDebitLamports: String(total) })
     return { observedSlot: snapshot.slot, review, notes, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
       sections: [{ title: `SOL transfers (total ${sol(total)})`, rows }, { title: 'funds', rows: [payerRow(ctx, snapshot)] }], expect: { balances } }
@@ -202,19 +201,19 @@ function creationGateStage(stage, open) {
       const { snapshot, config, governance } = await governedSnapshot(ctx, 'launch')
       if (governance.state.gates.creation === !open) return { blocked: `launch creation gate is already ${open ? 'open' : 'closed'}`, observedSlot: snapshot.slot }
       const gates = { creation: !open, trading: false }
-      const instruction = ix.governanceSetGates(ctx.programs, 'launch', ctx.roles.admin, ix.governanceCommitment('launch', governance.state), gates)
+      const instruction = ctx.ix.governanceSetGates(ctx.programs, 'launch', ctx.roles.admin, ctx.ix.governanceCommitment('launch', governance.state), gates)
       const afterState = nextState(governance.state, { gates })
       const { review, blockhash } = await simpleMessage(ctx, { stage, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 60000 })
       return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
         sections: [{ title: 'launch creation gate', rows: [`launch config paused ${config.paused} -> ${!open} (Config.paused mirrors the creation gate)`,
-          open ? 'OPENS launch creation for authorized creators only (allow-list grant + admin co-signature still required)' : 'CLOSES launch creation'] },
-        governanceSection('launch', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no transfer; network fee only'] }],
-        expect: { paused: !open, commitment: hex(ix.governanceCommitment('launch', afterState)) } }
+          open ? (ctx.stack ? 'OPENS launch creation: while open creation is on, anyone can launch through the website (no invite, no admin co-signature)' : 'OPENS launch creation for authorized creators only (allow-list grant + admin co-signature still required)') : 'CLOSES launch creation'] },
+        gsection(ctx, 'launch', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no transfer; network fee only'] }],
+        expect: { paused: !open, commitment: hex(ctx.ix.governanceCommitment('launch', afterState)) } }
     },
     async verify(ctx, expect) {
       const { config, governance } = await governedSnapshot(ctx, 'launch')
       check(config.paused === expect.paused && governance.state.gates.creation === expect.paused, 'Launch creation gate differs from the reviewed post-state')
-      check(governanceView('launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs')
+      check(gview(ctx, 'launch', governance.state).commitment === expect.commitment, 'Launch governance commitment differs')
       return [`launch config paused=${config.paused}; commitment ${expect.commitment}`]
     },
   }
@@ -230,19 +229,19 @@ function tradingGateStage(stage, open) {
       const { snapshot, config, governance } = await governedSnapshot(ctx, 'swap')
       if (governance.state.gates.trading === !open && !governance.state.gates.creation) return { blocked: `swap trading gate is already ${open ? 'open' : 'closed'}`, observedSlot: snapshot.slot }
       const gates = { creation: false, trading: !open }
-      const instruction = ix.governanceSetGates(ctx.programs, 'swap', ctx.roles.admin, ix.governanceCommitment('swap', governance.state), gates)
+      const instruction = ctx.ix.governanceSetGates(ctx.programs, 'swap', ctx.roles.admin, ctx.ix.governanceCommitment('swap', governance.state), gates)
       const afterState = nextState(governance.state, { gates })
       const { review, blockhash } = await simpleMessage(ctx, { stage, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 60000 })
       return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
         sections: [{ title: 'swap trading gate', rows: [`swap config paused ${config.paused} -> ${!open} (Config.paused mirrors the trading gate)`,
           open ? 'OPENS public trading of every hook coin (anyone may buy and sell)' : 'CLOSES trading of every hook coin (emergency stop)'] },
-        governanceSection('swap', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no transfer; network fee only'] }],
-        expect: { paused: !open, commitment: hex(ix.governanceCommitment('swap', afterState)) } }
+        gsection(ctx, 'swap', governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no transfer; network fee only'] }],
+        expect: { paused: !open, commitment: hex(ctx.ix.governanceCommitment('swap', afterState)) } }
     },
     async verify(ctx, expect) {
       const { config, governance } = await governedSnapshot(ctx, 'swap')
       check(config.paused === expect.paused && governance.state.gates.trading === expect.paused && !governance.state.gates.creation, 'Swap trading gate differs from the reviewed post-state')
-      check(governanceView('swap', governance.state).commitment === expect.commitment, 'Swap governance commitment differs')
+      check(gview(ctx, 'swap', governance.state).commitment === expect.commitment, 'Swap governance commitment differs')
       return [`swap config paused=${config.paused}; commitment ${expect.commitment}`]
     },
   }
