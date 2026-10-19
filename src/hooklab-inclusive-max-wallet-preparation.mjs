@@ -9,6 +9,7 @@ import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, Transaction
 import { z } from 'zod'
 import { hookAddress as key, hookDigest as hash, hookRawAmount as u64 } from './hooklab-execution-contract.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
+import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -202,7 +203,7 @@ function readLaunchConfig(launch, profile, request, account) {
   const bytes = raw(account.dataBase64, 250), c = launch.coder.accounts.decode('Config', bytes)
   check(bytes.length === 250 && bytes.equals(canonicalAccount(launch, 'Config', c, 250))
     && c.version === 1 && c.bump === PublicKey.findProgramAddressSync([Buffer.from('config')], pk(profile.programs.launch))[1]
-    && c.reserved.every(v => v === 0), 'Launch configuration layout differs')
+    && launchConfigReservedValid(c.reserved), 'Launch configuration layout differs')
   check(c.quote_mint.toBase58() === profile.quoteMint && profile.quoteMint !== request.mint
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0
     && isApprovedLaunchChoice(profile, request) && request.creatorFeeBps <= c.max_creator_fee_bps && request.creatorFeeBps <= c.rule_bounds.max_rules_fee_bps

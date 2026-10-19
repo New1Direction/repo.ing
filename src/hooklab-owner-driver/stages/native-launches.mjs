@@ -53,7 +53,8 @@ export const nativeLaunches = {
         { title: 'in-flight launches go stale', rows: [`the revision bump changes every launch's control hash: any launch reviewed or co-signed before this lands fails on chain (CreationPolicyChanged, or ${on ? 'BridgedCustomLaunchClosed' : 'NativeLaunchesOff'}) and is reviewed again`,
           `refresh: launch governance commitment ${before} -> ${next}; re-plan customer-grant and every launch-governance stage planned before`,
           'refresh: production bundle launch-config pin (approvedDataBase64/dataSha256) and creation-control pin: re-collect with scripts/hooklab-production-bundle.mjs and redeploy the dossier',
-          ...(on ? ['before this: the website runs with HOOK_NATIVE_LAUNCHES_ENABLED=true and the native-SOL profile, and the owner agent is the native-aware build (it refuses v4 otherwise)'] : [])] },
+          ...(on ? ['before this: the website release that keeps working with this byte on must be live: launch preparation, native launches and trading (swap_v2) with HOOK_NATIVE_LAUNCHES_ENABLED=true and the native-SOL profile. An older release refuses every new launch and every trade once this lands',
+            'before this: the owner agent is the native-aware build (an older one refuses every v4 launch)'] : [])] },
         { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
       expect: { on, commitment: next } }
   },

@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto'
 import { PublicKey, TransactionInstruction } from '@solana/web3.js'
 import { NATIVE_ELF, NATIVE_FLAGS, loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const sha = (...parts) => createHash('sha256').update(Buffer.concat(parts.map(p => Buffer.from(p)))).digest()
@@ -26,8 +27,10 @@ export const CREATE_LAUNCH_V4_DISCRIMINATOR = instructionDisc('create_launch_cus
 export function nativeLaunchesSwitch(configBytes) {
   const b = Buffer.from(configBytes), at = NATIVE_FLAGS.configNativeLaunches
   check(b.length === 250 && b.subarray(0, 8).equals(accountDisc('Config')), 'Not a launch Config account')
-  check(b.subarray(at + 1).every(v => v === 0), 'Launch Config reserved bytes after the switch are not zero')
-  check(b[at] === 0 || b[at] === 1, `Launch Config switch byte ${at} is ${b[at]}, not 0 or 1`)
+  if (!launchConfigReservedValid(b.subarray(at))) {
+    check(b.subarray(at + 1).every(v => v === 0), 'Launch Config reserved bytes after the switch are not zero')
+    check(false, `Launch Config switch byte ${at} is ${b[at]}, not 0 or 1`)
+  }
   return b[at] === 1
 }
 

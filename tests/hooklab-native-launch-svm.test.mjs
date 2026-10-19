@@ -13,6 +13,9 @@ import BN from 'bn.js'
 import bs58 from 'bs58'
 import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, TransactionInstruction, TransactionMessage, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 import { compileMaxWalletLaunchReview } from '../src/hooklab-max-wallet-launch.mjs'
+import { collectInclusiveMaxWalletPreparationReview } from '../src/hooklab-inclusive-max-wallet-preparation-collector.mjs'
+import { collectCustomPreparationEvidence } from '../src/hooklab-custom-preparation-receipts.mjs'
+import { collectMaxWalletLaunchReview } from '../src/hooklab-max-wallet-launch-collector.mjs'
 import { collectMaxWalletLaunchSettlement } from '../src/hooklab-max-wallet-launch-settlement.mjs'
 import { validateMaxWalletOperatorBindings } from '../src/hooklab-max-wallet-launch-collector.mjs'
 import { NATIVE_ELF, loadNativeArtifacts } from '../src/hooklab-native-pins.mjs'
@@ -39,7 +42,7 @@ const names = { launch: 'bordrless_launch', swap: 'bordrless_swap', gate: 'hook_
 const reviewed = JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/offline-builder-profile.json', import.meta.url)))
 
 // One bank, its synthetic state and a two-provider transport over it (fee and simulation answers fixed; every byte real).
-async function bank(t) {
+async function bank(t, { prepared = true } = {}) {
   assert.ok(elfDirectory, 'HOOKLAB_NATIVE_ELF_DIR is required for the native release check; skipping is not a release gate')
   const saved = Object.fromEntries(Object.keys(localTestEnvironment()).map(k => [k, process.env[k]]))
   Object.assign(process.env, localTestEnvironment())
@@ -47,12 +50,12 @@ async function bank(t) {
   t.after(() => { svm.close(); rmSync(dir, { recursive: true, force: true }); for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v } })
   const pin = role => NATIVE_ELF[role]?.sha256 ?? (role === 'token' ? reviewed.dependencyObservation.tokenElfSha256 : reviewed.elfSha256[role])
   const init = await svm.call('init', { scope: 'isolated-canary-svm/1', programs: Object.entries(names).map(([role, name]) => ({ address: PROGRAMS[role], path: `${elfDirectory}/${name}.so`, sha256: pin(role) })) })
-  const state = makeCanaryState({ elfDirectory, roles: init.roles, blockhash: init.blockhash, native: true }), roles = init.roles
+  const state = makeCanaryState({ elfDirectory, roles: init.roles, blockhash: init.blockhash, native: true, prepared }), roles = init.roles
   await svm.call('set', { accounts: [...state.accounts].map(([address, account]) => ({ address, account })).sort((x, y) => Number(x.account.executable) - Number(y.account.executable)) })
   const executed = new Map()
   const send = async (messageBase64, options = {}) => { const r = await svm.call('send', { messageBase64, ...options }); if (r.historyPresent) executed.set(r.signature, r); return r }
   // Everything the bank holds at the launch inventory too (the system program is a builtin account there, as on mainnet).
-  const inventory = state.launchInput.observations[0].accounts.map(x => x.address)
+  const inventory = state.inventory
   async function sync() { const r = await svm.call('get', { addresses: [...new Set([...state.accounts.keys(), ...Object.values(state.addresses), ...inventory, roles.mint, roles.outsider])] }); for (const row of r.accounts) if (row.account) state.accounts.set(row.address, row.account); return r }
   const account = async address => (await svm.call('get', { addresses: [address] })).accounts[0].account
   const connection = i => ({ rpcEndpoint: [localTestEnvironment().HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY, localTestEnvironment().HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY][i],
@@ -65,10 +68,10 @@ async function bank(t) {
     isBlockhashValid: async () => ({ context: { slot: 100 }, value: true }), getFeeForMessage: async m => ({ context: { slot: 100 }, value: 5000 * m.header.numRequiredSignatures }),
     simulateTransaction: async () => ({ context: { slot: 100 }, value: { err: null, logs: [], unitsConsumed: 1 } }),
     getTransaction: async signature => { const r = executed.get(signature); if (!r) return null; const signed = VersionedTransaction.deserialize(Buffer.from(r.wireBase64, 'base64'))
-      return { slot: r.slot, transaction: { message: signed.message, signatures: signed.signatures.map(s => bs58.encode(s)) }, meta: { err: r.error, fee: r.fee, preBalances: [...r.preBalances], postBalances: [...r.postBalances],
+      return { slot: r.slot, blockTime: 1800000000, transaction: { message: signed.message, signatures: signed.signatures.map(s => bs58.encode(s)) }, meta: { err: r.error, fee: r.fee, preBalances: [...r.preBalances], postBalances: [...r.postBalances],
         loadedAddresses: Object.fromEntries(Object.entries(r.loadedAddresses).map(([k, v]) => [k, v.map(pk)])), logMessages: [...r.logs],
         innerInstructions: r.innerInstructions.map(g => ({ index: g.index, instructions: g.instructions.map(({ dataBase64, ...ix }) => ({ ...ix, accounts: [...ix.accounts], data: bs58.encode(Buffer.from(dataBase64, 'base64')) })) })) } } },
-    getBlockSignatures: async () => ({ blockhash: roles.table, previousBlockhash: roles.config, parentSlot: 99, blockHeight: 100, signatures: [...executed.keys()] }) })
+    getBlockSignatures: async () => ({ blockhash: roles.table, previousBlockhash: roles.config, parentSlot: 99, blockHeight: 100, blockTime: 1800000000, signatures: [...executed.keys()] }) })
   const connections = state.profile.providers.map((provider, i) => ({ provider, connection: connection(i) }))
   const readers = [0, 1].map(i => ({ provider: i ? 'secondary' : 'primary', url: connections[i].connection.rpcEndpoint, connection: connections[i].connection }))
   const driver = to => ({ config: { decisions: { computeUnitPriceMicroLamports: { value: '0', approved: true } } }, readers, genesis: syntheticGenesis, network: 'local-test',
@@ -238,4 +241,36 @@ test('creator fees: swap_v2 buys pay the launch account, only the creator claims
   assert.equal((await reconcile(RESTARTED, { settlementContext: other })).status, 'unresolved', 'another coin')
   await assert.rejects(resolverAt(RESTARTED).prepare({ owner: roles.creator, stage: 'native-claim', intent: { mint } }), /Nothing to claim yet/)
   t.diagnostic(`buys paid the creator ${due} lamports; claim ${claimed.signature}: ${claimed.units} CU, fee ${claimed.fee}`)
+})
+
+// Review F1: after the switch flips, a new coin goes through the website's REAL path: the two-provider preparation collector
+// compiles the preparation over the live bank, it lands, its receipt is verified as production verifies it, then the launch
+// collector (dossier, pins, fee quotes) compiles v4 from that preparation proof, and the launch lands and settles. Nothing
+// here is synthetic preparation evidence.
+test('F1: after the flip, a new coin is prepared, launched as v4 and settled through the real collectors', { skip, timeout: 180000 }, async t => {
+  const b = await bank(t, { prepared: false }), { state, roles, send, sync } = b, a = state.addresses
+  const flip = await send((await STAGES['native-launches'].build(b.driver('on'), null)).review.messageBase64); assert.equal(flip.error, null, logs(flip))
+  await sync(); assert.equal(bytesOf(state.accounts.get(a.launchConfig))[186], 1)
+  for (const address of [a.policy, a.registry, roles.config]) assert.equal(await b.account(address), null, 'nothing is prepared yet')
+  // The preparation profile the runtime hands the collector: the release profile with only the launch and gate IDLs.
+  const p = state.profile, preparationProfile = { json: p.json, expectedSha256: p.expectedSha256, providers: p.providers, idls: { launch: p.idls.launch, gate: p.idls.gate }, elfLengths: { launch: p.elfLengths.launch, gate: p.elfLengths.gate } }
+  const collected = await collectInclusiveMaxWalletPreparationReview({ profile: preparationProfile, request: state.preparationRequest, connections: b.connections, clock: () => 1000,
+    limits: { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxRentLamports: '20000000', maxNetworkFeeLamports: '20000', maxTotalDebitLamports: '20020000', computeUnitLimit: 600000, computeUnitPriceMicroLamports: '0' } })
+  const prepared = await send(collected.plan.review.messageBase64); assert.equal(prepared.error, null, logs(prepared))
+  const receipt = await collectCustomPreparationEvidence({ preparationInput: collected.preparationInput, signedTransactionBase64: prepared.wireBase64, providers: b.connections,
+    expectedProfileSha256: p.expectedSha256, evidenceMode: 'configured-readonly-rpc' })
+  assert.equal(receipt.result.status, 'candidate-preparation-matched', JSON.stringify(receipt.result.reasonCode))
+  await sync()
+  const bindings = canaryCollectorBindings(state, { governance: true })
+  const launch = await collectMaxWalletLaunchReview({ ...bindings, connections: b.connections, request: state.request, nativeLaunches: true, clock: () => 1000,
+    preparation: { wallet: roles.creator, profileSha256: p.expectedSha256, preparationIntentSha256: createHash('sha256').update(JSON.stringify(state.preparationRequest)).digest('hex'),
+      preparedRequest: state.preparationRequest, executionSlot: receipt.result.finalizedSlot, preparedAccountHashes: receipt.result.matchedAccountHashes },
+    limits: { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxNetworkFeeLamports: '15000', maxTotalDebitLamports: '200015000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0',
+      maxLaunchFeeLamports: '0', maxPoolCreationFeeLamports: '0', maxRentLamports: '200000000', maxInstructionDebitLamports: '200000000' } })
+  assert.equal(launch.plan.quoteForm, 1)
+  const launched = await send(launch.plan.review.messageBase64); assert.equal(launched.error, null, logs(launched))
+  await sync(); assert.equal(bytesOf(state.accounts.get(a.pool))[351], 1); assert.equal(bytesOf(state.accounts.get(a.launch))[560], 1)
+  const settled = await collectMaxWalletLaunchSettlement({ ...bindings, connections: b.connections, review: launch.plan.review, settlementContext: launch.settlementContext,
+    signedTransactionBase64: launched.wireBase64, signature: launched.signature })
+  assert.equal(settled.status, 'finalized-success', JSON.stringify(settled))
 })

@@ -98,7 +98,8 @@ withElf('on the native build: one governed_set_native_launches against the live 
       /execute requires  --message-sha256 [0-9a-f]{64} --approved native-launches:/, /config account bytes change only at offset 186/,
       new RegExp(`recorded policy change digest ${nativeLaunchesDigest(PROGRAMS.launch, d.launchConfig, to === 'on').toString('hex')}`),
       /any launch reviewed or co-signed before this lands fails on chain \(CreationPolicyChanged/, /refresh: production bundle launch-config pin/,
-      /no SOL or token transfer besides the network fee/, to === 'on' ? /HOOK_NATIVE_LAUNCHES_ENABLED=true/ : /claim their fees/]) assert.match(text, line)
+      /no SOL or token transfer besides the network fee/, to === 'on' ? /website release that keeps working with this byte on must be live: launch preparation, native launches and trading \(swap_v2\) with HOOK_NATIVE_LAUNCHES_ENABLED=true/ : /claim their fees/,
+      to === 'on' ? /owner agent is the native-aware build/ : /native coins already launched keep trading/]) assert.match(text, line)
   }
 })
 

@@ -21,8 +21,9 @@ export function localTestEnvironment(){return {NODE_ENV:'development',HOOK_LOCAL
  HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY:'https://127.0.0.1:19444',HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY:'https://127.0.0.1:19445'}}
 // native: the reviewed native-SOL launch and swap builds (hook-lab e357fdf IDLs and ELFs, HOOKLAB_NATIVE_ELF_DIR) under an
 // ordinary open market (swap unpaused, no governance gate) with the owner's USD-priced virtual-quote bounds; the launch
-// Config switch starts off, as on mainnet before the governed change.
-export function makeCanaryState({elfDirectory,roles,blockhash,native=false}){
+// Config switch starts off, as on mainnet before the governed change. prepared: false leaves out the mint's prepared policy,
+// registry and selected config (launchInput is then null), for a test that runs the real preparation first.
+export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepared=true}){
  const base=new URL('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/',import.meta.url),nativeBase=new URL('../../vendor/hooklab-native-candidate/',import.meta.url)
  const original=JSON.parse(readFileSync(new URL('offline-builder-profile.json',base))),idlNames={launch:'bordrless_launch',swap:'bordrless_swap',gate:'hook_max_wallet',token:'bordrless_token'}
  const idlUrl=role=>role==='token'?new URL('../../vendor/hooklab-production-candidate/idl/bordrless_token.json',import.meta.url):new URL(`${idlNames[role]}.json`,native&&NATIVE_ELF[role]?nativeBase:base)
@@ -66,9 +67,9 @@ export function makeCanaryState({elfDirectory,roles,blockhash,native=false}){
    roles:Object.fromEntries(['admin','upgrade','guardian','treasury'].map(k=>[k,pk(roles[k])])),revision:bn(0),gates:{creation:false,trading:role==='swap'&&!native},config_digest:[...Buffer.from(sha(economics),'hex')],custody_digest:Array(32).fill(7),pending_admin:null}},348)
  }
  typed('launch','CreatorAuthorization',pda(L,'creator-authorization',pk(roles.creator).toBuffer()),value('launch','CreatorAuthorization',{creator:pk(roles.creator),enabled:true,expires_at_slot:bn(1000),max_launches:bn(1),revision:bn(1)}),73)
- typed('launch','LaunchConfig',roles.config,value('launch','LaunchConfig',{version:1,creator:pk(roles.creator),label:'private-canary',creator_fee_bps:100,custom_hook:pk(G),custom_hook_flags:1}),176)
- typed('gate','PolicyV2',pda(G,'policy-v2',pk(roles.mint).toBuffer()),value('gate','PolicyV2',{version:2,mint:pk(roles.mint),initial_supply:lc.supply,cap_bps:200,quote_mint:pk(profile.quoteMint),fee_model:2,protocol_share_bps:2500,creator_fee_bps:100}),90)
- put(pda(G,'bordrless-hook-accounts',pk(roles.mint).toBuffer()),G,Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000','hex'),pk(pda(G,'policy-v2',pk(roles.mint).toBuffer())).toBuffer(),Buffer.from([0,0]),pk(pda(L,'launch',pk(roles.mint).toBuffer())).toBuffer()]))
+ if(prepared)typed('launch','LaunchConfig',roles.config,value('launch','LaunchConfig',{version:1,creator:pk(roles.creator),label:'private-canary',creator_fee_bps:100,custom_hook:pk(G),custom_hook_flags:1}),176)
+ if(prepared)typed('gate','PolicyV2',pda(G,'policy-v2',pk(roles.mint).toBuffer()),value('gate','PolicyV2',{version:2,mint:pk(roles.mint),initial_supply:lc.supply,cap_bps:200,quote_mint:pk(profile.quoteMint),fee_model:2,protocol_share_bps:2500,creator_fee_bps:100}),90)
+ if(prepared)put(pda(G,'bordrless-hook-accounts',pk(roles.mint).toBuffer()),G,Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000','hex'),pk(pda(G,'policy-v2',pk(roles.mint).toBuffer())).toBuffer(),Buffer.from([0,0]),pk(pda(L,'launch',pk(roles.mint).toBuffer())).toBuffer()]))
  typed('token','Mint',profile.quoteMint,value('token','Mint',{version:1,decimals:9,supply:bn('1000000000000'),max_supply:bn('1000000000000'),name:'Synthetic quote',symbol:'TEST',creator:pk(roles.creator)}),519)
  const prep={schema:'repoing/inclusive-max-wallet-preparation-request/1',policyKind:'max-wallet',policyVersion:2,creator:roles.creator,feePayer:roles.creator,mint:roles.mint,selectedConfig:roles.config,capBps:200,label:'private-canary',creatorFeeBps:100,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500}
  const request={...prep,schema:'repoing/inclusive-max-wallet-launch-request/1',reviewer:roles.admin,name:'Private canary',symbol:'CANARY',uri:'',virtualQuote:native?'53251917070':'1000000000'}
@@ -85,18 +86,20 @@ export function makeCanaryState({elfDirectory,roles,blockhash,native=false}){
  const launchInputNow=()=>({profile:envelope,request,preparationEvidence:{schema:'repoing/max-wallet-durable-prepared-state/1',profileSha256:envelope.expectedSha256,preparationIntentSha256:sha(JSON.stringify(prep)),executionSlot:100,preparedAccountHashes:{policy:accountHash(a.policy),registry:accountHash(a.registry),selectedConfig:accountHash(roles.config)}},
   reviewedStateHashes:Object.fromEntries(['launchConfig','swapConfig','launchGovernance','swapGovernance','authorization','quoteMint'].map(k=>[k,accountHash(k==='quoteMint'?profile.quoteMint:a[k])])),observations:observe(derived.inventory),recentBlockhash:block(15000),lookupTable,
   limits:{...limits,maxLaunchFeeLamports:'0',maxPoolCreationFeeLamports:'0',maxRentLamports:'200000000',maxInstructionDebitLamports:'200000000'}})
- const launchInput=launchInputNow()
+ const launchInput=prepared?launchInputNow():null
  function tradeInput(side,amountIn='1000200',hash=blockhash){const r={schema:'repoing/inclusive-max-wallet-swap-request/1',policyKind:'max-wallet',policyVersion:2,creatorFeeBps:100,feeModel:2,protocolShareBps:2500,capBps:200,
   side,trader:roles.creator,recipient:roles.creator,feePayer:roles.creator,mint:roles.mint,selectedConfig:roles.config,amountIn,minAmountOut:'1',maxInput:amountIn,maxPriceImpactBps:1000}
   return {profile:envelope,request:r,provenance:'server-collected-finalized-state-not-execution-authorization',observations:observe(inclusiveMaxWalletSwapInventory(profile,r)),recentBlockhash:block(10000,hash),lookupTable,limits:{...limits,maxNetworkFeeLamports:'10000',maxTotalDebitLamports:'10000'}}}
  function holding(mint,owner,amount){const address=pda(T,'holding',pk(mint).toBuffer(),pk(owner).toBuffer());typed('token','Holding',address,value('token','Holding',{version:1,bump:bump(T,'holding',pk(mint).toBuffer(),pk(owner).toBuffer()),mint:pk(mint),owner:pk(owner),amount:bn(amount)}),204);return address}
  function instruction(role,name,args,values={}){const program=profile.programs[role],def=idls[role].instructions.find(ix=>ix.name===name),m={program,system_program:zero,config:pda(program,'config'),governance:pda(program,'governance'),event_authority:pda(program,'__event_authority'),...values}
   return new TransactionInstruction({programId:pk(program),data:bindings[role].coder.instruction.encode(name,args),keys:def.accounts.map(k=>({pubkey:pk(m[k.name]??k.address),isSigner:!!k.signer,isWritable:!!k.writable}))})}
- return {accounts,artifacts,profile:envelope,bindings,request,addresses:a,launchInput,launchInputNow,tradeInput,holding,instruction,roles,lookupTable,accountHash}
+ return {accounts,artifacts,profile:envelope,bindings,request,preparationRequest:prep,inventory:derived.inventory,addresses:a,launchInput,launchInputNow,tradeInput,holding,instruction,roles,lookupTable,accountHash}
 }
 
 // Test-only operator envelope. These adapters do not attest production finality or custody.
-export function canaryCollectorBindings(state){
+// governance: pin the two governance accounts as the production bundle does ('creation-control' is the launch governance,
+// plus 'swap-governance'), which the launch collector requires; the default keeps the canary's authorization pin.
+export function canaryCollectorBindings(state,{governance=false}={}){
  const p=JSON.parse(state.profile.json),e=localTestEnvironment()
  const programs=state.artifacts.map(artifact=>{
   const programData=pda(loader,pk(artifact.address).toBuffer()),bytes=Buffer.from(state.accounts.get(programData).dataBase64,'base64')
@@ -110,7 +113,7 @@ export function canaryCollectorBindings(state){
    provenanceSha256:sha(JSON.stringify(state.artifacts.map(({role,sha256})=>({role,sha256}))))},
   providers:state.profile.providers,minSlot:100,maxSlotLag:5,maxAgeMs:5000,programs,
   accounts:Object.entries({'launch-config':state.addresses.launchConfig,'swap-config':state.addresses.swapConfig,
-   'quote-mint':p.quoteMint,'creation-control':state.addresses.authorization}).map(([role,address])=>{
+   'quote-mint':p.quoteMint,...(governance?{'creation-control':state.addresses.launchGovernance,'swap-governance':state.addresses.swapGovernance}:{'creation-control':state.addresses.authorization})}).map(([role,address])=>{
     const account=state.accounts.get(address);return {role,address,owner:account.owner,executable:account.executable,dataSha256:state.accountHash(address)}
    })}
  const dossierJson=JSON.stringify(dossier),origins=[e.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY,e.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY]

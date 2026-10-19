@@ -16,6 +16,7 @@ import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { canaryGateMatches } from './hooklab-canary-policy.mjs'
 import { NATIVE_IDL_SHA256 } from './hooklab-native-pins.mjs'
 import { QUOTE_FORM_NATIVE, isNativeElfPin, nativeEconomicsHash } from './hooklab-native-launch.mjs'
+import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -216,7 +217,7 @@ function compileLaunch(input, fixture, canary = false) {
   check(accounts.size === observations[0].accounts.length, 'Duplicate observation account')
   const c = decoded(launch, 'Config', owned(accounts, pda(L, 'config'), L, 250)), d = decoded(swap, 'Config', owned(accounts, pda(S, 'config'), S, 189))
   check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && !c.paused && d.paused === canary
-    && [0, 1].includes(c.reserved[0]) && c.reserved.slice(1).every(x => x === 0) && d.reserved.every(x => x === 0), 'Config version, reserved state or pause differs')
+    && launchConfigReservedValid(c.reserved) && d.reserved.every(x => x === 0), 'Config version, reserved state or pause differs')
   // Launch Config byte 186, as both providers read it: on, v3 and plain launches are closed and only a native-SOL v4
   // launch can be created. Compiled only on a server that enables it and pins the reviewed native programs and IDLs.
   const native = c.reserved[0] === 1
