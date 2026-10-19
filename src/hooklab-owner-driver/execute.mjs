@@ -13,6 +13,7 @@ import { APPROVAL_FLAG_STAGES, assertExecutable } from './config.mjs'
 import { canonicalWithoutBlockhash, signerList } from './message.mjs'
 import { loadSigners, parseKeyArgs, wipe } from './keys.mjs'
 import { cpiEvents } from './stages/canary-common.mjs'
+import { abiOf } from './stages/common.mjs'
 import { describe } from './plan.mjs'
 import { plain, renderPreview } from './preview.mjs'
 import { sha256 } from './pins.mjs'
@@ -78,7 +79,7 @@ async function reconfirm(freshSha, options) {
 function receiptOf(ctx, stageName, entry, outcome) {
   return { schema: 'repoing/hooklab-owner-receipt/1', stage: stageName, network: ctx.network, genesisHash: ctx.genesis, messageSha256: entry.messageSha256,
     reviewedMessageSha256: entry.reviewedMessageSha256, signature: entry.signature, status: outcome.status, slot: outcome.slot ?? null, feeLamports: outcome.tx?.meta.fee ?? null,
-    error: outcome.tx?.meta.err ?? null, logs: outcome.tx?.meta.logMessages ?? [], events: outcome.tx ? cpiEvents(outcome.tx, ctx.programs, ctx.abi) : [] }
+    error: outcome.tx?.meta.err ?? null, logs: outcome.tx?.meta.logMessages ?? [], events: outcome.tx ? cpiEvents(outcome.tx, ctx.programs, abiOf(ctx)) : [] }
 }
 /** Write the receipt whatever happened; journal the postcondition result separately from finality. */
 async function settle(ctx, stage, entry, outcome, dir, { expect, memo, log }) {

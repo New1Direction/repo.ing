@@ -1,7 +1,8 @@
 // Shared stage helpers: decoding, governance prediction, blockhash pinning, simple compilation.
 import BN from 'bn.js'
 import { loadArtifacts } from '../artifacts.mjs'
-import { governanceCommitment } from '../instructions.mjs'
+import { governanceCommitment, instructionsFor } from '../instructions.mjs'
+import { ELF } from '../artifacts.mjs'
 import { readBlockhash, blockhashStillValid } from '../rpc.mjs'
 import { compileReviewed } from '../message.mjs'
 import { budget } from '../instructions.mjs'
@@ -31,10 +32,16 @@ export function governanceSection(role, before, after, commit = governanceCommit
   return { title: `${role} governance (before -> after)`, rows: [`revision    ${b.revision} -> ${a.revision}`, `commitment  ${b.commitment} -> ${a.commitment}`,
     `gates       creation=${b.gates.creation} trading=${b.gates.trading} -> creation=${a.gates.creation} trading=${a.gates.trading} (true = closed)`] }
 }
-// The same, under the run's stack ABI (ctx.ix, ctx.abi): every stage that can run on our own stack uses these.
-export const gview = (ctx, role, state) => governanceView(role, state, ctx.ix.governanceCommitment)
-export const gsection = (ctx, role, before, after) => governanceSection(role, before, after, ctx.ix.governanceCommitment)
-export const cdecode = (ctx, role, type, account) => decode(role, type, account, ctx.abi)
+// The run's stack: its instruction builders, ABI and ELF pins (src/hooklab-owner-driver/context.mjs). A context built
+// without them (older callers, tests) is the legacy stack.
+let legacyIx = null
+export const ixOf = ctx => ctx.ix ?? (legacyIx ??= instructionsFor(loadArtifacts))
+export const abiOf = ctx => ctx.abi ?? loadArtifacts()
+export const elfOf = ctx => ctx.elf ?? ELF
+// The same views under the run's stack: every stage that can run on our own stack uses these.
+export const gview = (ctx, role, state) => governanceView(role, state, ixOf(ctx).governanceCommitment)
+export const gsection = (ctx, role, before, after) => governanceSection(role, before, after, ixOf(ctx).governanceCommitment)
+export const cdecode = (ctx, role, type, account) => decode(role, type, account, abiOf(ctx))
 /** Reuse the reviewed blockhash while both providers still accept it; otherwise fetch a fresh one. */
 export async function blockhashFor(ctx, pinned, minSlot = 0) {
   if (pinned?.blockhash && await blockhashStillValid(ctx.readers, pinned.blockhash)) {

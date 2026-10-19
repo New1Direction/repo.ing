@@ -6,7 +6,7 @@ import BN from 'bn.js'
 import * as ix from '../instructions.mjs'
 import { fieldDiff, plain, sol } from '../preview.mjs'
 import { VIRTUAL_QUOTE_BOUNDS, formatSolPrice } from '../../hooklab-launch-pricing.mjs'
-import { check, hex, nextState, gsection, gview, simpleMessage } from './common.mjs'
+import { check, hex, nextState, gsection, gview, simpleMessage, ixOf, abiOf } from './common.mjs'
 import { governedSnapshot, payerRow, verifyGovernedConfig } from './admin.mjs'
 
 const STAGE = 'launch-usd-bounds', MAX_U64 = new BN('18446744073709551615')
@@ -31,17 +31,17 @@ export const launchUsdBounds = {
   name: STAGE,
   async build(ctx, pinned) {
     const { snapshot, config, governance, addresses } = await governedSnapshot(ctx, 'launch')
-    const current = ctx.ix.launchConfigArgs(config)
+    const current = ixOf(ctx).launchConfigArgs(config)
     const after = { ...current, min_virtual_quote: new BN(VIRTUAL_QUOTE_BOUNDS.min.toString()), max_virtual_quote: new BN(VIRTUAL_QUOTE_BOUNDS.max.toString()) }
     const diff = fieldDiff(plain(current), plain(after))
     if (!diff.length) return { blocked: `already applied: launch config virtual quote bounds already equal ${sol(VIRTUAL_QUOTE_BOUNDS.min)}–${sol(VIRTUAL_QUOTE_BOUNDS.max)}`, observedSlot: snapshot.slot }
     check(diff.every(x => ['min_virtual_quote', 'max_virtual_quote'].includes(x.field)), 'Only the virtual quote bounds may change')
-    const bounds = byteCheck(ctx.abi.coders.launch, Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), config, after)
-    const expected = ctx.ix.governanceCommitment('launch', governance.state)
-    const instruction = ctx.ix.governedSetConfig(ctx.programs, 'launch', ctx.roles.admin, expected, after)
+    const bounds = byteCheck(abiOf(ctx).coders.launch, Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), config, after)
+    const expected = ixOf(ctx).governanceCommitment('launch', governance.state)
+    const instruction = ixOf(ctx).governedSetConfig(ctx.programs, 'launch', ctx.roles.admin, expected, after)
     const afterState = nextState(governance.state, { config_digest: [...ix.economicsDigest('launch', ctx.programs.launch, after)], roles: { treasury: after.treasury } })
     const { review, blockhash } = await simpleMessage(ctx, { stage: STAGE, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot })
-    const before = gview(ctx, 'launch', governance.state).commitment, next = hex(ctx.ix.governanceCommitment('launch', afterState))
+    const before = gview(ctx, 'launch', governance.state).commitment, next = hex(ixOf(ctx).governanceCommitment('launch', afterState))
     const unchanged = Object.keys(plain(current)).filter(field => !diff.some(x => x.field === field))
     return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
       sections: [

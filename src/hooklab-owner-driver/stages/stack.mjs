@@ -14,7 +14,7 @@ import { derivedAddresses, LOADER, pk } from '../pins.mjs'
 import { value } from '../config.mjs'
 import { readAccounts, rentExemption } from '../rpc.mjs'
 import { plain, sol } from '../preview.mjs'
-import { check, cdecode, gsection, gview, hex, owned, simpleMessage } from './common.mjs'
+import { check, cdecode, gsection, gview, hex, owned, simpleMessage, ixOf, abiOf, elfOf } from './common.mjs'
 import { payerRow, programDataState } from './admin.mjs'
 
 const ROLES = Object.freeze(['launch', 'swap', 'gate', 'token'])
@@ -42,10 +42,10 @@ function programRow(ctx, accounts, role) {
   check(program && data, `${role} program ${address} is not deployed (program ${program ? 'present' : 'absent'}, ProgramData ${data ? 'present' : 'absent'})`)
   const link = Buffer.from(program.dataBase64, 'base64')
   check(program.owner === LOADER && program.executable && link.length === 36 && link.readUInt32LE(0) === 2 && pk(link.subarray(4)).toBase58() === dataAddress, `${role} program linkage differs`)
-  const state = programDataState(data, ctx.elf[role])
-  check(state.elfMatches, `${role} deployed code differs from the stack build's pin ${ctx.elf[role].sha256.slice(0, 12)}…`)
+  const state = programDataState(data, elfOf(ctx)[role])
+  check(state.elfMatches, `${role} deployed code differs from the stack build's pin ${elfOf(ctx)[role].sha256.slice(0, 12)}…`)
   check(state.authority === ctx.stack.upgradeAuthority || (role === 'gate' && state.authority === null), `${role} upgrade authority ${state.authority} is not the stack's ${ctx.stack.upgradeAuthority}`)
-  return `${role.padEnd(6)} ${address}: ELF ${ctx.elf[role].sha256.slice(0, 16)}… (${ctx.elf[role].length} bytes) deploy slot ${state.deploySlot}; upgrade authority ${state.authority ?? 'NONE (immutable)'}`
+  return `${role.padEnd(6)} ${address}: ELF ${elfOf(ctx)[role].sha256.slice(0, 16)}… (${elfOf(ctx)[role].length} bytes) deploy slot ${state.deploySlot}; upgrade authority ${state.authority ?? 'NONE (immutable)'}`
 }
 const programAddresses = ctx => { const d = derivedAddresses(ctx.programs, ctx.quoteMint); return ROLES.flatMap(role => [ctx.programs[role], d[`${role}ProgramData`]]) }
 
@@ -71,7 +71,7 @@ export const quoteMarker = {
     const d = derivedAddresses(ctx.programs, ctx.quoteMint), snapshot = await readAccounts(ctx.readers, ctx.genesis, [ctx.quoteMint, d.launchConfig])
     const account = owned(snapshot.accounts, ctx.quoteMint, ctx.programs.token, 'quote marker')
     const bytes = Buffer.from(account.dataBase64, 'base64'), mint = cdecode(ctx, 'token', 'Mint', account)
-    const encoded = Buffer.concat([bytes.subarray(0, 8), ctx.abi.coders.token.types.encode('Mint', mint)])
+    const encoded = Buffer.concat([bytes.subarray(0, 8), abiOf(ctx).coders.token.types.encode('Mint', mint)])
     check(bytes.subarray(0, encoded.length).equals(encoded) && bytes.subarray(encoded.length).every(b => b === 0), 'Quote marker is not a canonical Mint')
     check(mint.version === 1 && !mint.mint_authority && !mint.freeze_authority && !mint.hook_authority && !mint.metadata_authority && !mint.hook_program
       && mint.hook_flags === 0 && mint.hook_signer_bump === 0 && mint.reserved.every(v => v === 0), 'Quote marker has a hook or an authority; it must be inert')
@@ -97,7 +97,7 @@ function configInitStage(role) {
       const programs = ROLES.map(r => programRow(ctx, snapshot.accounts, r))
       check(snapshot.accounts.get(ctx.quoteMint)?.owner === ctx.programs.token, 'The quote marker does not exist yet; hook-lab\'s deploy creates it (run quote-marker)')
       const args = startArgs(ctx, role), rent = BigInt((await rentExemption(ctx.readers, [CONFIG_SIZE[role]]))[CONFIG_SIZE[role]])
-      const instruction = ctx.ix.initConfig(ctx.programs, role, { authority: ctx.roles.upgrade, payer: ctx.roles.payer, args })
+      const instruction = ixOf(ctx).initConfig(ctx.programs, role, { authority: ctx.roles.upgrade, payer: ctx.roles.payer, args })
       const { review, blockhash } = await simpleMessage(ctx, { stage, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 60000, instructionDebitLamports: String(rent) })
       return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
         sections: [{ title: `${role} Config (new account ${config})`, rows: Object.entries(plain(args)).map(([k, v]) => `${k}: ${JSON.stringify(v)}`) },
@@ -110,7 +110,7 @@ function configInitStage(role) {
     async verify(ctx, expect) {
       const snapshot = await readAccounts(ctx.readers, ctx.genesis, [expect.config])
       const c = cdecode(ctx, role, 'Config', owned(snapshot.accounts, expect.config, ctx.programs[role], `${role} config`))
-      const args = plain(role === 'launch' ? ctx.ix.launchConfigArgs(c) : ctx.ix.swapConfigArgs(c))
+      const args = plain(role === 'launch' ? ixOf(ctx).launchConfigArgs(c) : ixOf(ctx).swapConfigArgs(c))
       check(isDeepStrictEqual(args, expect.args) && c.version === 1 && (role === 'launch' ? c.launches : c.pools_created).isZero() && c.reserved.every(v => v === 0), `${role} Config differs from the reviewed starting state`)
       return [`${role} Config ${expect.config} created: ${JSON.stringify(args)}`]
     },
@@ -120,11 +120,11 @@ function configInitStage(role) {
 // The governance a fresh init_governance writes: revision 0, the gates mirroring the paused Config (launch: creation
 // closed; swap: trading closed), the economics digest of the Config as it stands, and the four roles.
 function initialState(ctx, role, config, guardian, custodyDigest) {
-  const d = derivedAddresses(ctx.programs, ctx.quoteMint), args = role === 'launch' ? ctx.ix.launchConfigArgs(config) : ctx.ix.swapConfigArgs(config)
+  const d = derivedAddresses(ctx.programs, ctx.quoteMint), args = role === 'launch' ? ixOf(ctx).launchConfigArgs(config) : ixOf(ctx).swapConfigArgs(config)
   return { genesis: [...pk(ctx.genesis).toBuffer()], program: pk(ctx.programs[role]), config: pk(role === 'launch' ? d.launchConfig : d.swapConfig),
     roles: { upgrade: pk(ctx.stack.upgradeAuthority), admin: config.admin, treasury: config.treasury, guardian: pk(guardian) }, revision: new BN(0),
     gates: role === 'launch' ? { creation: config.paused, trading: false } : { creation: false, trading: config.paused },
-    config_digest: [...ctx.ix.economicsDigest(role, ctx.programs[role], args)], custody_digest: [...custodyDigest], pending_admin: null }
+    config_digest: [...ixOf(ctx).economicsDigest(role, ctx.programs[role], args)], custody_digest: [...custodyDigest], pending_admin: null }
 }
 function governanceInitStage(role) {
   const stage = `${role}-governance-init`
@@ -142,7 +142,7 @@ function governanceInitStage(role) {
       check(c.admin.toBase58() === ctx.roles.admin, `${role} Config admin is not the admin role`)
       const digestBytes = Buffer.from(custody, 'hex'), state = initialState(ctx, role, c, ctx.roles.guardian, digestBytes)
       const rent = BigInt((await rentExemption(ctx.readers, [GOVERNANCE_SIZE]))[GOVERNANCE_SIZE])
-      const instruction = ctx.ix.initGovernance(ctx.programs, role, { admin: ctx.roles.admin, payer: ctx.roles.payer, genesis: ctx.genesis, guardian: ctx.roles.guardian, custodyDigest: digestBytes })
+      const instruction = ixOf(ctx).initGovernance(ctx.programs, role, { admin: ctx.roles.admin, payer: ctx.roles.payer, genesis: ctx.genesis, guardian: ctx.roles.guardian, custodyDigest: digestBytes })
       const { review, blockhash } = await simpleMessage(ctx, { stage, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 60000, instructionDebitLamports: String(rent) })
       const view = gview(ctx, role, state)
       return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
@@ -169,9 +169,9 @@ export const collectNative = {
     const mint = ctx.options?.mint
     check(typeof mint === 'string' && pk(mint).toBase58() === mint, 'collect-native requires --mint MINT (the coin whose platform fees to collect)')
     const d = derivedAddresses(ctx.programs, ctx.quoteMint), S = ctx.programs.swap
-    const instruction = ctx.ix.collectProtocolFeesNative(ctx.programs, ctx.quoteMint, { cranker: ctx.roles.payer, mint, collector: ctx.roles.treasury })
+    const instruction = ixOf(ctx).collectProtocolFeesNative(ctx.programs, ctx.quoteMint, { cranker: ctx.roles.payer, mint, collector: ctx.roles.treasury })
     const pool = instruction.keys[2].pubkey.toBase58(), policy = instruction.keys[6].pubkey.toBase58()
-    check(ctx.abi.idls.swap.instructions.some(ix => ix.name === 'collect_protocol_fees_native'), 'The stack\'s swap build has no collect_protocol_fees_native')
+    check(abiOf(ctx).idls.swap.instructions.some(ix => ix.name === 'collect_protocol_fees_native'), 'The stack\'s swap build has no collect_protocol_fees_native')
     const snapshot = await readAccounts(ctx.readers, ctx.genesis, [d.swapConfig, pool, policy, ctx.roles.payer, ctx.roles.treasury])
     const config = cdecode(ctx, 'swap', 'Config', owned(snapshot.accounts, d.swapConfig, S, 'swap config'))
     check(config.fee_collector.toBase58() === ctx.roles.treasury, 'The swap Config\'s fee collector is not the treasury role')

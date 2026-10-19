@@ -21,14 +21,14 @@ import { fieldDiff, plain, sol } from '../preview.mjs'
 import { LAUNCH_CONFIG_RESERVED_AT, encodeOpenCreationReserved, parseLaunchConfigReserved } from '../../hooklab-launch-config-reserved.mjs'
 import { governedSetOpenCreation, openCreationDigest } from '../../hooklab-open-creation.mjs'
 import { openLaunchTableAddresses } from '../../hooklab-max-wallet-launch.mjs'
-import { check, cdecode, hex, nextState, gsection, gview, owned, simpleMessage } from './common.mjs'
+import { check, cdecode, hex, nextState, gsection, gview, owned, simpleMessage, ixOf, abiOf, elfOf } from './common.mjs'
 import { governedSnapshot, payerRow, programDataState, verifyGovernedConfig } from './admin.mjs'
 
 // The owner confirmed the creation fee for production (2026-10-19): 0.02 SOL.
 export const OWNER_CREATION_FEE_LAMPORTS = '20000000'
 const requireOpenStack = (ctx, stage) => check(ctx.stack?.build.open === true, `${stage}: open launches run on our own stack; pass --stack FILE --stack-idls DIR for a build with open creation`)
 // The deployed launch program is the stack build: its trimmed ELF, then only zeros.
-const launchIsStackBuild = (ctx, programData) => !!programData && programDataState(programData, ctx.elf.launch).elfMatches
+const launchIsStackBuild = (ctx, programData) => !!programData && programDataState(programData, elfOf(ctx).launch).elfMatches
 const pct = bps => `${bps / 100}%`
 
 export const openCreation = {
@@ -39,11 +39,11 @@ export const openCreation = {
     check(to === 'on' || to === 'off', 'open-creation requires --to on or --to off')
     const on = to === 'on', menus = decisionValue(ctx.config, 'openCreationMenus')
     check(menus, 'open-creation needs openCreationMenus in the config file (creator fee and max per wallet, 1 to 4 bps values each); it is never defaulted')
-    const definition = ctx.abi.idls.launch.instructions.find(ix => ix.name === 'governed_set_open_creation')
+    const definition = abiOf(ctx).idls.launch.instructions.find(ix => ix.name === 'governed_set_open_creation')
     const d = derivedAddresses(ctx.programs, ctx.quoteMint)
     const { snapshot, config, governance, addresses } = await governedSnapshot(ctx, 'launch', [d.launchProgramData])
     if (!definition || !launchIsStackBuild(ctx, snapshot.accounts.get(d.launchProgramData)))
-      return { blocked: `the deployed launch program is not the stack build with open creation (${ctx.stack.build.name}, ELF ${ctx.elf.launch.sha256.slice(0, 12)}…)`, observedSlot: snapshot.slot }
+      return { blocked: `the deployed launch program is not the stack build with open creation (${ctx.stack.build.name}, ELF ${elfOf(ctx).launch.sha256.slice(0, 12)}…)`, observedSlot: snapshot.slot }
     const raw = Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), current = parseLaunchConfigReserved(raw.subarray(LAUNCH_CONFIG_RESERVED_AT))
     check(current, 'The launch Config reserved bytes are not a state the reviewed programs write; refusing')
     check(menus.creatorFeeBps.every(v => v <= config.max_creator_fee_bps), `every creator fee must be at most the Config ceiling (${config.max_creator_fee_bps} bps; run launch-config first)`)
@@ -51,7 +51,7 @@ export const openCreation = {
     if (current.open === on && isDeepStrictEqual(current.creatorFeeBps, menus.creatorFeeBps) && isDeepStrictEqual(current.capBps, menus.capBps))
       return { blocked: `open creation is already ${on ? 'ON' : 'OFF'} with these menus (the program refuses the same state, OpenCreationUnchanged)`, observedSlot: snapshot.slot }
     const after = encodeOpenCreationReserved({ native: current.native, open: on, ...menus })
-    const instruction = governedSetOpenCreation({ launchProgram: ctx.programs.launch, admin: ctx.roles.admin, expected: ctx.ix.governanceCommitment('launch', governance.state), on, ...menus })
+    const instruction = governedSetOpenCreation({ launchProgram: ctx.programs.launch, admin: ctx.roles.admin, expected: ixOf(ctx).governanceCommitment('launch', governance.state), on, ...menus })
     check(Buffer.from(definition.discriminator).equals(instruction.data.subarray(0, 8)), 'governed_set_open_creation differs from the stack\'s launch IDL')
     const afterState = nextState(governance.state, {})
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'open-creation', payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 60000 })
@@ -69,7 +69,7 @@ export const openCreation = {
         { title: 'in-flight launches go stale', rows: ['the revision bump changes every open launch\'s control hash: a launch reviewed before this lands fails on chain (CreationPolicyChanged); creators review again',
           'refresh: the stack bundle\'s launch-config pin tolerates these bytes; re-collect it only if anything else changed'] },
         { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
-      expect: { on, menus, commitment: hex(ctx.ix.governanceCommitment('launch', afterState)) } }
+      expect: { on, menus, commitment: hex(ixOf(ctx).governanceCommitment('launch', afterState)) } }
   },
   async verify(ctx, expect) {
     const { snapshot, governance, addresses } = await governedSnapshot(ctx, 'launch')
@@ -85,12 +85,12 @@ export const launchFee = {
   async build(ctx, pinned) {
     const decided = decisionValue(ctx.config, 'launchFeeLamports'), fee = decided ?? OWNER_CREATION_FEE_LAMPORTS
     const { snapshot, config, governance } = await governedSnapshot(ctx, 'launch')
-    const current = ctx.ix.launchConfigArgs(config), after = { ...current, launch_fee_lamports: new BN(fee) }
+    const current = ixOf(ctx).launchConfigArgs(config), after = { ...current, launch_fee_lamports: new BN(fee) }
     const diff = fieldDiff(plain(current), plain(after))
     if (!diff.length) return { blocked: `already applied: the creation fee is already ${sol(fee)}`, observedSlot: snapshot.slot }
     check(diff.every(x => x.field === 'launch_fee_lamports'), 'Only the creation fee may change')
-    const instruction = ctx.ix.governedSetConfig(ctx.programs, 'launch', ctx.roles.admin, ctx.ix.governanceCommitment('launch', governance.state), after)
-    const afterState = nextState(governance.state, { config_digest: [...ctx.ix.economicsDigest('launch', ctx.programs.launch, after)], roles: { treasury: after.treasury } })
+    const instruction = ixOf(ctx).governedSetConfig(ctx.programs, 'launch', ctx.roles.admin, ixOf(ctx).governanceCommitment('launch', governance.state), after)
+    const afterState = nextState(governance.state, { config_digest: [...ixOf(ctx).economicsDigest('launch', ctx.programs.launch, after)], roles: { treasury: after.treasury } })
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'launch-fee', payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot })
     return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
       sections: [{ title: 'creation fee (to the treasury, paid by every launch)', rows: [`launch_fee_lamports: ${sol(diff[0].before)} -> ${sol(fee)}${decided ? '' : ' (the owner-confirmed default; no launchFeeLamports decision in the config file)'}`,
@@ -99,7 +99,7 @@ export const launchFee = {
         { title: 'refresh after it lands', rows: ['the launch economics hash covers the fee: launches reviewed before this fail on chain; the bundle\'s launch-config pin and economics must be re-collected',
           'the website reads the fee from chain for the review screen'] },
         { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
-      expect: { role: 'launch', config: plain(after), commitment: hex(ctx.ix.governanceCommitment('launch', afterState)) } }
+      expect: { role: 'launch', config: plain(after), commitment: hex(ixOf(ctx).governanceCommitment('launch', afterState)) } }
   },
   verify: verifyGovernedConfig,
 }
@@ -127,8 +127,8 @@ export const launchTable = {
         check(hashes && hashes.readBigUInt64LE(0) > 0n, 'SlotHashes sysvar unavailable')
         recentSlot = Number(hashes.readBigUInt64LE(8))
       }
-      const [create, table] = ctx.ix.lookupCreate(payer, payer, recentSlot)
-      const { review, blockhash } = await simpleMessage(ctx, { stage: 'launch-table', payer, instructions: [create, ctx.ix.lookupExtend(payer, payer, table.toBase58(), inventory)], pinned, snapshot: base, units: 30000 })
+      const [create, table] = ixOf(ctx).lookupCreate(payer, payer, recentSlot)
+      const { review, blockhash } = await simpleMessage(ctx, { stage: 'launch-table', payer, instructions: [create, ixOf(ctx).lookupExtend(payer, payer, table.toBase58(), inventory)], pinned, snapshot: base, units: 30000 })
       return { observedSlot: base.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight, recentSlot },
         notes: ['step 1 of 2: create the shared launch table with the addresses every open launch shares; run plan/execute launch-table again to freeze it', `recent slot ${recentSlot} must still be in SlotHashes (~200 s) at execution`],
         sections: [{ title: 'shared launch lookup table', rows: [`table ${table.toBase58()} (authority and payer ${payer})`, `${inventory.length} addresses, sha256 ${sha256(JSON.stringify(inventory))}`, ...inventory.map((a, i) => `  [${i}] ${a}`)] }],
@@ -175,7 +175,7 @@ export const guardianPause = {
     const todo = Object.keys(states).filter(role => !states[role].gates[pausedGate(role)])
     if (!todo.length) return { blocked: `already paused: ${PAUSES[what].map(pausedGate).join(' and ')}`, observedSlot: snapshot.slot }
     const after = Object.fromEntries(todo.map(role => [role, nextState(states[role], { gates: { ...states[role].gates, [pausedGate(role)]: true } })]))
-    const instructions = todo.map(role => ctx.ix.governancePause(ctx.programs, role, ctx.roles.guardian, ctx.ix.governanceCommitment(role, states[role]),
+    const instructions = todo.map(role => ixOf(ctx).governancePause(ctx.programs, role, ctx.roles.guardian, ixOf(ctx).governanceCommitment(role, states[role]),
       { creation: role === 'launch', trading: role === 'swap' }))
     const { review, blockhash } = await simpleMessage(ctx, { stage: 'guardian-pause', payer: ctx.roles.payer, instructions, pinned, snapshot, units: 40000 * instructions.length })
     return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
@@ -184,7 +184,7 @@ export const guardianPause = {
         'coins and their pages stay; sent operations stay readable and settle'] },
         ...todo.map(role => gsection(ctx, role, states[role], after[role])),
         { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
-      expect: { commitments: Object.fromEntries(todo.map(role => [role, hex(ctx.ix.governanceCommitment(role, after[role]))])) } }
+      expect: { commitments: Object.fromEntries(todo.map(role => [role, hex(ixOf(ctx).governanceCommitment(role, after[role]))])) } }
   },
   async verify(ctx, expect) {
     const { states } = await governances(ctx, Object.keys(expect.commitments))

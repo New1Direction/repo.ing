@@ -7,7 +7,7 @@
 import { derivedAddresses } from '../pins.mjs'
 import { NATIVE_ELF, NATIVE_FLAGS, NATIVE_SOURCE } from '../../hooklab-native-pins.mjs'
 import { governedSetNativeLaunches, nativeLaunchesDigest, nativeLaunchesSwitch, nativeProgramDataMatches } from '../../hooklab-native-launch.mjs'
-import { check, hex, nextState, gsection, gview, simpleMessage } from './common.mjs'
+import { check, hex, nextState, gsection, gview, simpleMessage, ixOf, elfOf } from './common.mjs'
 import { governedSnapshot, payerRow, programDataState } from './admin.mjs'
 
 const STAGE = 'native-launches', BYTE = NATIVE_FLAGS.configNativeLaunches
@@ -34,16 +34,16 @@ export const nativeLaunches = {
     // Our own stack: the stack build's pins; legacy: a reviewed native-SOL build.
     for (const [role, address] of [['launch', d.launchProgramData], ['swap', d.swapProgramData]]) {
       const programData = snapshot.accounts.get(address)
-      const reviewed = !!programData && (ctx.stack ? programDataState(programData, ctx.elf[role]).elfMatches : nativeProgramDataMatches(role, Buffer.from(programData.dataBase64, 'base64')))
-      if (!reviewed) return { blocked: ctx.stack ? `the deployed ${role} program is not the stack build (${ctx.stack.build.name}, ELF ${ctx.elf[role].sha256.slice(0, 12)}…)`
+      const reviewed = !!programData && (ctx.stack ? programDataState(programData, elfOf(ctx)[role]).elfMatches : nativeProgramDataMatches(role, Buffer.from(programData.dataBase64, 'base64')))
+      if (!reviewed) return { blocked: ctx.stack ? `the deployed ${role} program is not the stack build (${ctx.stack.build.name}, ELF ${elfOf(ctx)[role].sha256.slice(0, 12)}…)`
         : `the deployed ${role} program is not the reviewed native-SOL build (hook-lab ${NATIVE_SOURCE.commit}, ELF ${NATIVE_ELF[role].trimmedSha256.slice(0, 12)}…); upgrade it first`, observedSlot: snapshot.slot }
     }
-    const expected = ctx.ix.governanceCommitment('launch', governance.state)
+    const expected = ixOf(ctx).governanceCommitment('launch', governance.state)
     const instruction = governedSetNativeLaunches({ launchProgram: ctx.programs.launch, admin: ctx.roles.admin, expected, on })
     // A recorded policy change: only the revision moves, so the commitment changes and nothing else in the state does.
     const afterState = nextState(governance.state, {})
     const { review, blockhash } = await simpleMessage(ctx, { stage: STAGE, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot, units: 60000 })
-    const before = gview(ctx, 'launch', governance.state).commitment, next = hex(ctx.ix.governanceCommitment('launch', afterState))
+    const before = gview(ctx, 'launch', governance.state).commitment, next = hex(ixOf(ctx).governanceCommitment('launch', afterState))
     return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
       sections: [
         { title: `native launches (launch Config byte ${BYTE})`, rows: [`byte ${BYTE}: ${Number(current)} -> ${Number(on)} (native launches ${word(current)} -> ${word(on)})`, ...effects(on)] },

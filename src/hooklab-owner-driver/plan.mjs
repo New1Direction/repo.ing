@@ -9,7 +9,7 @@ import { simulate } from './rpc.mjs'
 import { unsignedTransactionBase64 } from './message.mjs'
 import { addressBook, decodeMessage, renderPreview } from './preview.mjs'
 import { canaryAddresses } from './pins.mjs'
-import { signerRoles } from './stages/common.mjs'
+import { abiOf, signerRoles } from './stages/common.mjs'
 import { altRecord } from './stages/canary-common.mjs'
 
 export function book(ctx) {
@@ -26,7 +26,7 @@ export function describe(ctx, stage, built) {
   return { ...base, messageSha256: r.messageSha256, blockhash: VersionedMessage.deserialize(Buffer.from(r.messageBase64, 'base64')).recentBlockhash,
     lastValidBlockHeight: r.lastValidBlockHeight, deadlineSlot: built.deadlineSlot, payer: r.payer, requiredSigners: r.requiredSigners, signerRoles: signerRoles(ctx, r),
     networkFeeLamports: r.maxFeeLamports, wireBytes: Buffer.from(unsignedTransactionBase64(r.messageBase64), 'base64').length, lookupTable: lookupTable?.address ?? null,
-    approvalFlag: APPROVAL_FLAG_STAGES.has(stage), book: Object.fromEntries(names), instructions: decodeMessage(r.messageBase64, { programs: ctx.programs, book: names, lookupTable, abi: ctx.abi }) }
+    approvalFlag: APPROVAL_FLAG_STAGES.has(stage), book: Object.fromEntries(names), instructions: decodeMessage(r.messageBase64, { programs: ctx.programs, book: names, lookupTable, abi: abiOf(ctx) }) }
 }
 export async function plan(ctx, stageName, { write = true, log = console.log } = {}) {
   const stage = STAGES[stageName]

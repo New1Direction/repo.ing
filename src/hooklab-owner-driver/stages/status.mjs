@@ -3,7 +3,7 @@ import { derivedAddresses, canaryAddresses, holdingAddress, authorizationAddress
 import { ELF } from '../artifacts.mjs'
 import { readAccounts } from '../rpc.mjs'
 import { plain, sol } from '../preview.mjs'
-import { cdecode, gview } from './common.mjs'
+import { cdecode, gview, elfOf } from './common.mjs'
 import { programDataState } from './admin.mjs'
 import { altRecord } from './canary-common.mjs'
 
@@ -21,7 +21,7 @@ export const status = {
   async build(ctx) {
     // Our own stack: its programs and pins, its quote marker, no bridge, no canary or invites.
     const stack = !!ctx.stack, d = derivedAddresses(ctx.programs, ctx.quoteMint), r = ctx.roles, c = r.mint && !stack ? canaryAddresses(ctx.programs, ctx.quoteMint, r.mint) : null
-    const table = stack ? null : altRecord(ctx)?.address, elf = ctx.elf ?? ELF
+    const table = stack ? null : altRecord(ctx)?.address, elf = elfOf(ctx)
     const programRows = [['launch', ctx.programs.launch, d.launchProgramData, elf.launch], ['swap', ctx.programs.swap, d.swapProgramData, elf.swap], ['gate', ctx.programs.gate, d.gateProgramData, elf.gate],
       ['token', ctx.programs.token, d.tokenProgramData, elf.token], ...(stack ? [] : [['bridge', ctx.programs.bridge, d.bridgeProgramData, null]])]
     const roleList = Object.entries(r).filter(([, a]) => a)
