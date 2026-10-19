@@ -14,7 +14,7 @@ test('the reviewed bootstrap is unchanged', () => {
 })
 
 test('coin-profiles is a separate migration for one new table', () => {
-  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing'])
+  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades'])
   const migration = migrationSchema('coin-profiles')
   assert.deepEqual(migration.tables, ['hook_lab_coin_profiles'])
   assert.deepEqual(migration.requires, ['hook_lab_launch_requests'])
@@ -50,4 +50,13 @@ test('launch-pricing adds one insert-only price table per launch request', () =>
   assert.ok(!productionSchema().tables.includes('hook_lab_launch_request_prices'), 'not part of the reviewed bootstrap')
   const applied = run('migrate', 'launch-pricing', '--sha256', migration.sha256)
   assert.equal(applied.status, 0); assert.match(applied.stdout, /create table hook_lab_launch_request_prices/)
+})
+
+test('coin-trades adds the trade index and its cursors, and nothing else', () => {
+  const migration = migrationSchema('coin-trades')
+  assert.deepEqual(migration.tables, ['hook_lab_coin_trades', 'hook_lab_coin_trade_cursors']); assert.deepEqual(migration.requires, [])
+  assert.match(migration.sql, /primary key\(signature,event_index\)/); assert.match(migration.sql, /unique\(pool,swap_count\)/)
+  assert.doesNotMatch(migration.sql, /drop |delete|update |alter /i)
+  assert.ok(!productionSchema().tables.includes('hook_lab_coin_trades'), 'not part of the applied bootstrap')
+  assert.match(run('migration-check', 'coin-trades').stdout, /const mode="check"/)
 })
