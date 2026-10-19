@@ -8,7 +8,7 @@ import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import BN from 'bn.js'
-import { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { loadArtifacts, ELF } from '../../src/hooklab-owner-driver/artifacts.mjs'
 import { idlInstruction } from '../../src/hooklab-owner-driver/instructions.mjs'
 import { PROGRAMS, QUOTE_MINT, LOADER, SYSTEM, MAINNET_GENESIS, pda, pk, kb, holdingAddress, sha256, derivedAddresses } from '../../src/hooklab-owner-driver/pins.mjs'
@@ -48,9 +48,11 @@ function tokenAccount(name, value, size) {
   const bytes = Buffer.concat([Buffer.from(sha256(`account:${name}`), 'hex').subarray(0, 8), coders.token.types.encode(name, value)])
   const out = Buffer.alloc(size); bytes.copy(out); return out
 }
-const account = (pubkey, { lamports, data = Buffer.alloc(0), owner = SYSTEM, executable = false }) => ({ pubkey, account: { lamports, data: [data.toString('base64'), 'base64'], owner, executable, rentEpoch: 0 } })
-/** Synthetic genesis: quote mint at the production quote address (no bridge backing), holdings, payer/upgrade lamports. */
-export function writeGenesis(dir, roles, { creatorQuote = '10000000000', bridge = null } = {}) {
+export const genesisAccount = (pubkey, { lamports, data = Buffer.alloc(0), owner = SYSTEM, executable = false }) => ({ pubkey, account: { lamports, data: [data.toString('base64'), 'base64'], owner, executable, rentEpoch: 0 } })
+const account = genesisAccount
+/** Synthetic genesis: quote mint at the production quote address (no bridge backing), holdings, payer/upgrade lamports,
+ * and any extra genesisAccount rows. */
+export function writeGenesis(dir, roles, { creatorQuote = '10000000000', bridge = null, extra = [] } = {}) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const amount = new BN('1000000000000000')
   const mint = tokenAccount('Mint', { version: 1, decimals: 9, supply: amount, max_supply: amount, mint_authority: null, freeze_authority: null, hook_authority: null,
@@ -64,7 +66,7 @@ export function writeGenesis(dir, roles, { creatorQuote = '10000000000', bridge 
   // With a bridge copy the real quote mint (and bridge state) replace the synthetic quote mint.
   const rows = [...(bridge ? bridge.rows : [account(QUOTE_MINT, { lamports: 10000000, owner: PROGRAMS.token, data: mint })]),
     holding(roles.creator.publicKey.toBase58(), creatorQuote), holding(roles.treasury.publicKey.toBase58(), '0'),
-    account(roles.payer.publicKey.toBase58(), { lamports: 1000000000000 }), account(roles.upgrade.publicKey.toBase58(), { lamports: 100000000000 })]
+    account(roles.payer.publicKey.toBase58(), { lamports: 1000000000000 }), account(roles.upgrade.publicKey.toBase58(), { lamports: 100000000000 }), ...extra]
   rows.forEach((row, i) => writeFileSync(path.join(dir, `account-${i}.json`), JSON.stringify(row)))
 }
 /** Read-only copy of the production bridge (program ELF, config, native wrapper, SOL vault) and the
@@ -84,14 +86,16 @@ export async function cloneBridge(dir, rpc = process.env.HOOKLAB_OWNER_MAINNET_R
     return { elf, elfSha256: sha256(readFileSync(elf)), rows }
   } catch { return null }
 }
-export async function startValidator(root, roles, { bridge = null } = {}) {
-  for (const [role, file] of Object.entries(ELF_FILES)) if (sha256(readFileSync(path.join(ELF_DIR, file))) !== ELF[role].sha256) throw Error(`Pinned ${role} ELF differs`)
+/** elfDir and elfSha256 ({role: sha256} overrides of the bundle-2 pins) select the builds; accounts are extra
+ * genesisAccount rows. */
+export async function startValidator(root, roles, { bridge = null, elfDir = ELF_DIR, elfSha256 = {}, accounts = [] } = {}) {
+  for (const [role, file] of Object.entries(ELF_FILES)) if (sha256(readFileSync(path.join(elfDir, file))) !== (elfSha256[role] ?? ELF[role].sha256)) throw Error(`Pinned ${role} ELF differs`)
   const base = await portRange(4), rpc = base, faucet = base + 2, gossip = base + 3
   const ledger = path.join(root, 'ledger'), genesis = path.join(root, 'genesis'), upgrade = roles.upgrade.publicKey.toBase58()
-  writeGenesis(genesis, roles, { bridge })
+  writeGenesis(genesis, roles, { bridge, extra: accounts })
   const args = ['--ledger', ledger, '--reset', '--quiet', '--bind-address', '127.0.0.1', '--rpc-port', String(rpc), '--faucet-port', String(faucet), '--gossip-port', String(gossip),
     '--limit-ledger-size', '10000', '--account-dir', genesis,
-    ...Object.entries(ELF_FILES).flatMap(([role, file]) => ['--upgradeable-program', PROGRAMS[role], path.join(ELF_DIR, file), upgrade]),
+    ...Object.entries(ELF_FILES).flatMap(([role, file]) => ['--upgradeable-program', PROGRAMS[role], path.join(elfDir, file), upgrade]),
     ...(bridge ? ['--upgradeable-program', PROGRAMS.bridge, bridge.elf, upgrade] : [])]
   const child = spawn(VALIDATOR, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: false })
   let stderr = ''; child.stderr.on('data', d => { stderr = (stderr + d).slice(-4000) })
@@ -118,15 +122,23 @@ export async function sendLocal(connection, instructions, signers) {
   if (result.value.err) throw Error(`Local bootstrap failed: ${JSON.stringify(result.value.err)}`)
   return signature
 }
-/** Mirror the mainnet starting state: both configs paused, governance revision 0, zero fees and shares. */
-export async function bootstrapConfigs(connection, roles, genesisHash) {
+/** Make a program immutable as the owner's gate-finalize stage does: loader SetAuthority with no new authority. (The
+ * validator's "none" upgrade authority keeps the option set, with the all-zero key, so it is not immutable.) */
+export async function finalizeProgram(connection, roles, role) {
+  const programData = pk(pda(LOADER, kb(PROGRAMS[role])))
+  return sendLocal(connection, [new TransactionInstruction({ programId: pk(LOADER), data: Buffer.from([4, 0, 0, 0]),
+    keys: [{ pubkey: programData, isSigner: false, isWritable: true }, { pubkey: roles.upgrade.publicKey, isSigner: true, isWritable: false }] })], [roles.upgrade])
+}
+/** Mirror the mainnet starting state: both configs paused, governance revision 0, zero fees and shares (or the given
+ * init_config argument overrides, e.g. the approved economics). */
+export async function bootstrapConfigs(connection, roles, genesisHash, overrides = {}) {
   const d = derivedAddresses(), k = role => roles[role].publicKey, a = role => roles[role].publicKey.toBase58()
   const launchArgs = { admin: k('admin'), treasury: k('treasury'), quote_mint: pk(QUOTE_MINT), launch_fee_lamports: new BN(0), lp_fee_bps: 0, max_creator_fee_bps: 0,
     sniper_window_secs: new BN(0), sniper_start_bps: 0, curve_bps: 7500, supply: new BN('1000000000000000'), decimals: 6, min_virtual_quote: new BN(1000000000), max_virtual_quote: new BN(1000000000),
     paused: true, rule_bounds: { max_holder_fee_bps: 0, max_burn_bps: 0, max_rules_fee_bps: 0, min_max_wallet_bps: 1, max_max_wallet_bps: 1, max_creator_lock_secs: 0, max_early_window_secs: 0, max_early_lock_secs: 0 } }
   const swapArgs = { admin: k('admin'), protocol_fee_bps: 0, fee_collector: k('treasury'), treasury: k('treasury'), pool_creation_fee_lamports: new BN(0), paused: true, launch_protocol_share_bps: 0 }
   const custody = [...createHash('sha256').update('synthetic owner-driver local custody').digest()]
-  for (const [role, args] of [['launch', launchArgs], ['swap', swapArgs]]) {
+  for (const [role, args] of [['launch', { ...launchArgs, ...overrides.launch }], ['swap', { ...swapArgs, ...overrides.swap }]]) {
     const program = PROGRAMS[role], common = { program, event_authority: pda(program, '__event_authority'), program_data: pda(LOADER, kb(program)), system_program: SYSTEM }
     await sendLocal(connection, [idlInstruction(role, 'init_config', { args }, { ...common, authority: a('upgrade'), config: role === 'launch' ? d.launchConfig : d.swapConfig })], [roles.upgrade])
     await sendLocal(connection, [idlInstruction(role, 'init_governance', { args: { genesis: [...pk(genesisHash).toBuffer()], guardian: k('guardian'), custody_digest: custody } },

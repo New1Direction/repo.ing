@@ -2,8 +2,11 @@
 // the production observation dossier, and the operator configuration the server validates at start.
 // Two independent mainnet providers must return identical bytes for every account. It refuses unless
 // the gate is immutable, every deployed program equals its reviewed pin, and both configs already
-// carry the approved economics. It never signs, sends or reads secrets.
+// carry the approved economics. It never signs, sends or reads secrets. The artifacts are bundle 2's
+// unless given (bundle 3: src/hooklab-production-native-bundle.mjs). A local network is a dry run on a
+// disposable validator: its bundle carries the local schemas, which production never accepts.
 import { quoteMintSupplyBinding } from './hooklab-production-observer.mjs'
+import { LOCAL_DOSSIER_SCHEMA,LOCAL_PROFILE_SCHEMA } from './hooklab-local-acceptance.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
@@ -25,7 +28,7 @@ export function productionArtifacts(){
  const idls={launch:vendor('bordrless_launch.json'),swap:vendor('bordrless_swap.json'),gate:vendor('hook_max_wallet.json')}
  for(const role of ['launch','swap','gate'])need(sha(idls[role])===base.idlSha256[role]&&build.artifacts[role].elfSha256===base.elfSha256[role],`${role} IDL or ELF pin differs from the reviewed profile`)
  need(base.genesisHash===MAINNET_GENESIS&&base.buildFeature==='inclusive-fees-candidate','reviewed profile is not the mainnet inclusive build')
- return {base,idls,elfLengths:{launch:build.artifacts.launch.elfLength,swap:build.artifacts.swap.elfLength,gate:build.artifacts.gate.elfLength}}
+ return {base,idls,elfLengths:{launch:build.artifacts.launch.elfLength,swap:build.artifacts.swap.elfLength,gate:build.artifacts.gate.elfLength},sdkSha256:sha(vendor('build-artifacts.json'))}
 }
 // The reviewed profile plus the owner-approved creator menus. Changing a menu changes this hash.
 export function productionProfileJson(base){
@@ -34,7 +37,17 @@ export function productionProfileJson(base){
    capBpsChoices:[...WALLET_CAP_BPS_CHOICES],defaultCapBps:DEFAULT_WALLET_CAP_BPS}})
 }
 
-async function readBoth(connections,addresses){
+export const PRODUCTION_NETWORK=Object.freeze({genesisHash:MAINNET_GENESIS,local:false})
+const LOOPBACK=['127.0.0.1','localhost','[::1]']
+// The network a bundle is read from: mainnet, or (local: true) a disposable non-mainnet validator on loopback RPC only.
+function checkedNetwork(network,connections){
+ need(network&&typeof network.genesisHash==='string'&&typeof network.local==='boolean','network must name its genesis and whether it is local')
+ if(!network.local)need(network.genesisHash===MAINNET_GENESIS,'a production bundle is read from mainnet only')
+ else need(network.genesisHash!==MAINNET_GENESIS&&connections.every(c=>LOOPBACK.includes(new URL(c.connection.rpcEndpoint).hostname)),'a local dry run reads a non-mainnet validator on loopback RPC only')
+ return network
+}
+// Every address from both providers, which must return identical bytes for each.
+export async function readBoth(connections,addresses){
  const views=await Promise.all(connections.map(({connection})=>connection.getMultipleAccountsInfoAndContext(addresses.map(pk),'finalized')))
  return addresses.map((address,i)=>{
   const [a,b]=views.map(v=>v.value[i])
@@ -46,12 +59,15 @@ async function readBoth(connections,addresses){
 
 // connections: [{provider,connection}] for two independent providers (e.g. Helius, PublicNode)
 // trustDomains: [{provider,trustDomain,origin}] reviewed by the operator, same order
-export async function collectProductionOperatorBundle({connections,trustDomains,lookupTable,reviewer,treasury,approvalReference,artifacts=productionArtifacts()}){
+export async function collectProductionOperatorBundle({connections,trustDomains,lookupTable,reviewer,treasury,approvalReference,artifacts=productionArtifacts(),network=PRODUCTION_NETWORK}){
  need(Array.isArray(connections)&&connections.length===2&&new Set(connections.map(c=>c.provider)).size===2,'two distinct providers required')
- need(isDeepStrictEqual(connections.map(c=>c.provider),trustDomains.map(t=>t.provider))&&new Set(trustDomains.map(t=>t.trustDomain)).size===2,'two independent reviewed trust domains required')
+ const {genesisHash,local}=checkedNetwork(network,connections)
+ // A local validator is one trust domain behind two labelled endpoints.
+ need(isDeepStrictEqual(connections.map(c=>c.provider),trustDomains.map(t=>t.provider))&&(local||new Set(trustDomains.map(t=>t.trustDomain)).size===2),'two independent reviewed trust domains required')
  for(const [i,{connection}] of connections.entries())need(new URL(connection.rpcEndpoint).origin===new URL(trustDomains[i].origin).origin,'provider origin differs from its reviewed trust domain')
- need((await Promise.all(connections.map(c=>c.connection.getGenesisHash()))).every(g=>g===MAINNET_GENESIS),'a provider is not mainnet')
- const {base,idls,elfLengths}=artifacts,profileJson=productionProfileJson(base),P=base.programs
+ need((await Promise.all(connections.map(c=>c.connection.getGenesisHash()))).every(g=>g===genesisHash),local?'a provider is not the local validator':'a provider is not mainnet')
+ const {base,idls,elfLengths,sdkSha256}=artifacts,P=base.programs,reviewedJson=productionProfileJson(base)
+ const profileJson=local?JSON.stringify({...JSON.parse(reviewedJson),schema:LOCAL_PROFILE_SCHEMA,genesisHash}):reviewedJson
  const profile={json:profileJson,expectedSha256:sha(profileJson),providers:connections.map(c=>c.provider),
   idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')])),elfLengths}
  const programRoles=['launch','swap','gate','token'],programData=programRoles.map(role=>pda(LOADER,pk(P[role]).toBuffer()))
@@ -77,7 +93,7 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
  const tableState=AddressLookupTableAccount.deserialize(Uint8Array.from(table.data))
  // The shared trade table must be frozen with exactly the addresses every trade shares, so the pin never drifts.
  need(!tableState.authority&&tableState.deactivationSlot===0xffffffffffffffffn,'trade lookup table is not frozen and active; run the trade-table stage to completion')
- need(isDeepStrictEqual(tableState.addresses.map(a=>a.toBase58()),sharedTradeAddresses(JSON.parse(profileJson))),'trade lookup table addresses differ from the shared trade addresses')
+ need(isDeepStrictEqual(tableState.addresses.map(a=>a.toBase58()),sharedTradeAddresses(JSON.parse(reviewedJson))),'trade lookup table addresses differ from the shared trade addresses')
  const lc=new BorshCoder(JSON.parse(idls.launch)).accounts.decode('Config',Buffer.from(accounts[0].approvedDataBase64,'base64'))
  const sc=new BorshCoder(JSON.parse(idls.swap)).accounts.decode('Config',Buffer.from(accounts[1].approvedDataBase64,'base64'))
  need(lc.max_creator_fee_bps>=CREATOR_FEE_CEILING_BPS&&lc.rule_bounds.max_rules_fee_bps>=CREATOR_FEE_CEILING_BPS,`launch fee ceilings are below ${CREATOR_FEE_CEILING_BPS} bps; apply the approved config change first`)
@@ -85,8 +101,8 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
  need(sc.launch_protocol_share_bps===2500&&sc.protocol_fee_bps===0,'swap config does not select the inclusive 25% split with zero protocol fee')
  need(sc.fee_collector.toBase58()===treasury&&sc.treasury.toBase58()===treasury&&lc.treasury.toBase58()===treasury,'fee collector or treasury is not the approved treasury')
  need(lc.admin.toBase58()===reviewer&&sc.admin.toBase58()===reviewer,'config admin is not the approved reviewer')
- const dossierJson=JSON.stringify({schema:'repoing/production-observation/2',genesisHash:MAINNET_GENESIS,
-  artifacts:{sourceCommit:base.sourceCommit,profileSha256:profile.expectedSha256,sdkSha256:sha(vendor('build-artifacts.json')),
+ const dossierJson=JSON.stringify({...(local?{schema:LOCAL_DOSSIER_SCHEMA,topology:'single-local-validator-two-proxies'}:{schema:'repoing/production-observation/2'}),genesisHash,
+  artifacts:{sourceCommit:base.sourceCommit,profileSha256:profile.expectedSha256,sdkSha256,
    idlSha256:sha(Buffer.concat([idls.launch,idls.swap,idls.gate])),provenanceSha256:sha(JSON.stringify({sourceCommit:base.sourceCommit,sourcePatchSha256:base.sourcePatchSha256}))},
   providers:profile.providers,minSlot:slot,maxSlotLag:5,maxAgeMs:60000,programs,accounts})
  const config={schema:'repoing/inclusive-max-wallet-operator-config/1',feeModel:2,enabled:true,approvalReference,
@@ -94,5 +110,5 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
   economics:{creatorFeeBps:DEFAULT_CREATOR_FEE_BPS,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,protocolFeeBps:sc.protocol_fee_bps,
    launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()},
   reviewer,treasury,lookupTable:{address:lookupTable,sha256:sha(table.data)},lamportsPerSignature:'5000'}
- return {schema:'repoing/production-operator-bundle/1',genesisHash:MAINNET_GENESIS,observedSlot:slot,profile,config,dossierJson}
+ return {schema:local?'repoing/local-operator-bundle/1':'repoing/production-operator-bundle/1',genesisHash,observedSlot:slot,profile,config,dossierJson}
 }
