@@ -37,14 +37,18 @@ export function sharedTable(addresses, { frozen = true, extra = [], address = Ke
   all.forEach((a, i) => new PublicKey(a).toBuffer().copy(data, 56 + i * 32))
   return { address, owner: 'AddressLookupTab1e1111111111111111111111111', dataBase64: data.toString('base64'), sha256: sha(data) }
 }
-// reserved: the launch Config's open-creation state. The shared table is added to the accounts.
-export function openState({ reserved = { native: true, open: true, ...OWNER_MENUS }, capBps = 200 } = {}) {
+// reserved: the launch Config's open-creation state; ceiling: its max_creator_fee_bps (the canary state's 100 otherwise).
+// The shared table is added to the accounts.
+export function openState({ reserved = { native: true, open: true, ...OWNER_MENUS }, capBps = 200, ceiling = null } = {}) {
   const roles = Object.fromEntries(ROLES.map(r => [r, Keypair.generate().publicKey.toBase58()]))
   const blockhash = bs58.encode(Keypair.generate().publicKey.toBuffer())
   const state = makeCanaryState({ elfDirectory: process.env.HOOKLAB_NATIVE_ELF_DIR, openElfDirectory: OPEN_ELF_DIR, roles, blockhash, native: true, capBps })
   const programs = JSON.parse(state.profile.json).programs, configAddress = pda(programs.launch, Buffer.from('config'))
   const config = state.accounts.get(configAddress), bytes = Buffer.from(config.dataBase64, 'base64')
-  encodeOpenCreationReserved(reserved).copy(bytes, 186); config.dataBase64 = bytes.toString('base64')
+  encodeOpenCreationReserved(reserved).copy(bytes, 186)
+  if (ceiling !== null) { const coder = state.bindings.launch.coder, value = coder.accounts.decode('Config', bytes)
+    coder.types.encode('Config', { ...value, max_creator_fee_bps: ceiling }).copy(bytes, 8) }
+  config.dataBase64 = bytes.toString('base64')
   const configBytes = () => Buffer.from(state.accounts.get(configAddress).dataBase64, 'base64')
   const table = sharedTable(openLaunchTableAddresses(state.profile, configBytes()))
   state.accounts.set(table.address, { address: table.address, owner: table.owner, dataBase64: table.dataBase64, lamports: '10000000', executable: false })
@@ -76,7 +80,7 @@ export function openConnections(world) {
     getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 100 }, value: keys.map(k => { const v = state.accounts.get(k.toBase58())
       return v ? { owner: new PublicKey(v.owner), executable: v.executable, lamports: Number(v.lamports), data: Buffer.from(v.dataBase64, 'base64') } : null }) }),
     getLatestBlockhashAndContext: async () => ({ context: { slot: 100 }, value: { blockhash: world.blockhash, lastValidBlockHeight: 250 } }),
-    isBlockhashValid: async () => ({ context: { slot: 100 }, value: true }),
+    isBlockhashValid: async () => ({ context: { slot: 100 }, value: true }), getMinimumBalanceForRentExemption: async size => (128 + size) * 6960,
     getFeeForMessage: async m => ({ context: { slot: 100 }, value: 5000 * m.header.numRequiredSignatures }) })
   return state.profile.providers.map((provider, i) => ({ provider, connection: { rpcEndpoint: [e.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY, e.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY][i], ...transport() } }))
 }

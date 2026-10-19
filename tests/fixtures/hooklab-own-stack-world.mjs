@@ -14,7 +14,7 @@ import BN from 'bn.js'
 import bs58 from 'bs58'
 import { Keypair, PublicKey, TransactionInstruction, TransactionMessage, VersionedMessage, VersionedTransaction } from '@solana/web3.js'
 import { isolatedSvm, localTestEnvironment, syntheticGenesis } from './hooklab-canary.mjs'
-import { ownStack } from './hooklab-own-stack.mjs'
+import { INDEPENDENT_SKIP, independentStack, ownStack } from './hooklab-own-stack.mjs'
 import { parseStack, stackElfLengths } from '../../src/hooklab-stack.mjs'
 import { collectStackProductionBundle, stackProductionArtifacts } from '../../src/hooklab-production-stack-bundle.mjs'
 import { productionProfileJson } from '../../src/hooklab-production-operator-bundle.mjs'
@@ -40,6 +40,8 @@ export const OWNER_MENUS = Object.freeze({ creatorFeeBps: [50, 100, 200], capBps
 // The owner's confirmed creation fee (0.02 SOL) and the USD-priced opening-price bounds the website quotes within.
 export const CREATION_FEE_LAMPORTS = 20000000n
 export const VIRTUAL_QUOTE_BOUNDS = Object.freeze(['1000000000', '112500000000'])
+// The bank's clock (tests/fixtures/hooklab-canary-svm.py): every receipt is in its one finalized block.
+const BLOCK_TIME = 1800000000
 const NAMES = { launch: 'bordrless_launch', swap: 'bordrless_swap', gate: 'hook_max_wallet', token: 'bordrless_token' }
 const tokenIdl = JSON.parse(readFileSync(new URL('../../vendor/hooklab-production-candidate/idl/bordrless_token.json', import.meta.url)))
 const tokenCoder = new BorshCoder(tokenIdl)
@@ -51,9 +53,10 @@ function defaults(idl, type) {
   if (type.defined) return Object.fromEntries(idl.types.find(t => t.name === type.defined.name).type.fields.map(f => [f.name, defaults(idl, f.type)]))
   throw Error('Unsupported synthetic codec')
 }
-// The marker mint as hook-lab's deploy leaves it: a canonical Mint of our token program with no hook and no authorities.
+// The marker mint as the owner's create_mint leaves it (hook-lab independent-stack design, section 3): a Mint of our token
+// program, decimals 9, name "Native SOL quote marker", symbol SOL, no URI, max supply 0, and no authority of any kind.
 function markerMint(stack) {
-  const value = { ...defaults(tokenIdl, { defined: { name: 'Mint' } }), version: 1, decimals: 9, name: 'Hooks quote marker', symbol: 'HQM' }
+  const value = { ...defaults(tokenIdl, { defined: { name: 'Mint' } }), version: 1, decimals: 9, name: 'Native SOL quote marker', symbol: 'SOL' }
   const body = tokenCoder.types.encode('Mint', value), out = Buffer.alloc(519)
   Buffer.from(tokenIdl.accounts.find(a => a.name === 'Mint').discriminator).copy(out); body.copy(out, 8)
   return { address: stack.quoteMint, owner: stack.programs.token, dataBase64: out.toString('base64'), lamports: '10000000', executable: false }
@@ -66,11 +69,14 @@ export function frozenTable(address, addresses) {
   return { address, owner: ALT, dataBase64: data.toString('base64'), lamports: '100000000', executable: false, sha256: hex(data) }
 }
 
-export async function ownStackWorld({ seed = null } = {}) {
+// build: 'independent' (hook-lab's own build at its placeholder IDs, the default when present) or 'relocated' (the reviewed
+// ELFs moved to fresh IDs; seed picks them).
+export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : 'independent', seed = 'a' } = {}) {
   const env = localTestEnvironment(), saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]))
   Object.assign(process.env, env)
   const roles = Object.fromEntries(ROLES.map(role => [role, runnerKey(role).publicKey.toBase58()]))
-  const draft = ownStack({ seed }), stack = parseStack({ ...draft.stack, upgradeAuthority: roles.upgrade }), { elfs, idls } = draft
+  const draft = build === 'independent' ? independentStack({ upgradeAuthority: roles.upgrade }) : ownStack({ seed })
+  const stack = parseStack({ ...draft.stack, upgradeAuthority: roles.upgrade }), { elfs, idls } = draft
   const P = stack.programs, dir = mkdtempSync(path.join(tmpdir(), 'hooks-own-stack-'))
   for (const [role, bytes] of Object.entries(elfs)) writeFileSync(path.join(dir, `${NAMES[role]}.so`), bytes)
   const svm = isolatedSvm()
@@ -146,14 +152,16 @@ export async function ownStackWorld({ seed = null } = {}) {
       getLatestBlockhashAndContext: async () => ({ context: { slot: 100 }, value: { blockhash: await blockhash(), lastValidBlockHeight: 250 } }),
       getBlock: async slot => slot === 100 ? { blockhash: await blockhash(), previousBlockhash: roles.config, parentSlot: 99, blockHeight: 100, blockTime: null } : null,
       isBlockhashValid: async () => ({ context: { slot: 100 }, value: true }), getFeeForMessage: async m => ({ context: { slot: 100 }, value: 5000 * m.header.numRequiredSignatures }),
-      simulateTransaction: async (tx, config) => { const r = await svm.call('simulate', { messageBase64: Buffer.from(tx.message.serialize()).toString('base64'), addresses: config?.accounts?.addresses ?? [] })
+      // A transaction its wallet already signed is simulated exactly as given; an unsigned review, signed by the runner.
+      simulateTransaction: async (tx, config) => { const signed = tx.signatures.length > 0 && tx.signatures.every(s => s.some(b => b !== 0)), addresses = config?.accounts?.addresses ?? []
+        const r = await svm.call(signed ? 'simulate-signed' : 'simulate', signed ? { wireBase64: Buffer.from(tx.serialize()).toString('base64'), addresses } : { messageBase64: Buffer.from(tx.message.serialize()).toString('base64'), addresses })
         return { context: { slot: 100 }, value: { err: r.error, logs: r.logs, unitsConsumed: r.units, accounts: r.accounts?.map(v => v && { owner: v.owner, lamports: Number(v.lamports), executable: false, rentEpoch: 0, data: [v.dataBase64, 'base64'] }) ?? null } } },
       getTransaction: async signature => { const r = executed.get(signature); if (!r) return null; const signed = VersionedTransaction.deserialize(Buffer.from(r.wireBase64, 'base64'))
-        const tx = { slot: r.slot, transaction: { message: signed.message, signatures: signed.signatures.map(s => bs58.encode(s)) }, meta: { err: r.error, fee: r.fee, preBalances: [...r.preBalances], postBalances: [...r.postBalances],
+        const tx = { slot: r.slot, blockTime: BLOCK_TIME, transaction: { message: signed.message, signatures: signed.signatures.map(s => bs58.encode(s)) }, meta: { err: r.error, fee: r.fee, preBalances: [...r.preBalances], postBalances: [...r.postBalances],
           loadedAddresses: Object.fromEntries(Object.entries(r.loadedAddresses).map(([k, v]) => [k, v.map(pk)])), logMessages: [...r.logs],
           innerInstructions: r.innerInstructions.map(g => ({ index: g.index, instructions: g.instructions.map(({ dataBase64, ...i }) => ({ ...i, accounts: [...i.accounts], data: bs58.encode(Buffer.from(dataBase64, 'base64')) })) })) } }
         alter(tx); return tx },
-      getBlockSignatures: async () => ({ blockhash: roles.table, previousBlockhash: roles.config, parentSlot: 99, blockHeight: 100, signatures: [...executed.keys()] }) })
+      getBlockSignatures: async () => ({ blockhash: roles.table, previousBlockhash: roles.config, parentSlot: 99, blockHeight: 100, blockTime: BLOCK_TIME, signatures: [...executed.keys()] }) })
     const connections = alter => providers.map((provider, i) => ({ provider, connection: { rpcEndpoint: endpoints[i], ...transport(alter) } }))
     const trustDomains = providers.map((provider, i) => ({ provider, trustDomain: 'single-local-validator', origin: new URL(endpoints[i]).origin }))
     const configBytes = await data(pda(P.launch, 'config'))

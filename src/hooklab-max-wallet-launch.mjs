@@ -282,7 +282,9 @@ function compileLaunch(input, fixture, canary = false, open = false) {
     const menus = parseLaunchConfigReserved(Buffer.from(c.reserved))
     check(native, 'Native launches are off on chain; an open launch is native SOL only')
     check(menus.open, 'Open creation is off on chain')
-    check(menus.creatorFeeBps.includes(r.creatorFeeBps), 'The creator fee is not on the on-chain menu')
+    // The program does not re-check its menu when the owner lowers max_creator_fee_bps, so the offer is the menu
+    // intersected with the current ceiling.
+    check(menus.creatorFeeBps.includes(r.creatorFeeBps) && r.creatorFeeBps <= c.max_creator_fee_bps, 'The creator fee is not on the on-chain menu under the current ceiling')
     check(menus.capBps.includes(r.capBps), 'The wallet cap is not on the on-chain menu')
     check(r.feePayer === r.creator, 'An open launch is signed and paid by its creator: the creator pays')
   }

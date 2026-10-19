@@ -119,3 +119,29 @@ export function ownStack({ seed = 'a', freshKit = false, upgradeAuthority = PLAC
       idlSha256: Object.fromEntries(['launch', 'swap', 'gate'].map(role => [role, hex(idls[role])])), open: true } })
   return { stack, elfs, idls }
 }
+
+// hook-lab feat/independent-stack's own build (no relocation): its ELFs, IDLs and ids file, read from
+// HOOKLAB_INDEPENDENT_DIR (default hooks-local-state/independent-b2ce42e). Every pin is computed from the files, so a
+// rebuild needs no change here. upgradeAuthority: the key the test bank's ProgramData names (the ids file names the
+// owner's upgrade authority, which tests never hold).
+export const INDEPENDENT_DIR = process.env.HOOKLAB_INDEPENDENT_DIR ?? path.join(state, 'independent-b2ce42e')
+export const INDEPENDENT_SKIP = !existsSync(path.join(INDEPENDENT_DIR, 'ids', 'independent.json')) && 'the independent-stack build (HOOKLAB_INDEPENDENT_DIR) is not available'
+const INDEPENDENT_FILES = Object.freeze({ launch: 'bordrless_launch', swap: 'bordrless_swap', gate: 'hook_max_wallet', token: 'bordrless_token' })
+export function independentStack({ dir = INDEPENDENT_DIR, upgradeAuthority } = {}) {
+  const ids = JSON.parse(readFileSync(path.join(dir, 'ids', 'independent.json'), 'utf8'))
+  if (ids.schema !== 'hook-lab/independent-ids/1') throw Error('Not a hook-lab independent ids file')
+  const manifest = JSON.parse(readFileSync(path.join(dir, 'ids', 'independent-manifest.json'), 'utf8'))
+  const commit = /@ ([0-9a-f]{40})/.exec(readFileSync(path.join(dir, 'ELF-HASHES.txt'), 'utf8'))?.[1]
+  if (!commit) throw Error('ELF-HASHES.txt names no source commit')
+  const elfs = Object.fromEntries(Object.entries(INDEPENDENT_FILES).map(([role, name]) => [role, readFileSync(path.join(dir, 'elf', `${name}.so`))]))
+  const idls = Object.fromEntries(['launch', 'swap', 'gate'].map(role => [role, readFileSync(path.join(dir, 'idl', `${INDEPENDENT_FILES[role]}.json`))]))
+  const pin = role => { const t = trim(elfs[role]); return { trimmedSha256: hex(t), trimmedLength: t.length } }
+  const open = JSON.parse(idls.launch).instructions.some(ix => ix.name === 'create_launch_open_v1')
+  const stack = parseStack({ schema: 'repoing/hooks-stack/1', id: 'independent', status: 'placeholder',
+    programs: { launch: ids.launch, swap: ids.swap, gate: ids.gate, token: ids.token }, quoteMint: ids.quoteMarkerMint,
+    upgradeAuthority: upgradeAuthority ?? ids.upgradeAuthority, kitProgram: manifest.kitId,
+    build: { name: `independent-${commit.slice(0, 7)}`, source: { repo: 'New1Direction/hook-lab', branch: 'feat/independent-stack', commit },
+      elf: Object.fromEntries(Object.keys(INDEPENDENT_FILES).map(role => [role, pin(role)])),
+      idlSha256: Object.fromEntries(['launch', 'swap', 'gate'].map(role => [role, hex(idls[role])])), open } })
+  return { stack, elfs, idls, tokenIdl: readFileSync(path.join(dir, 'idl', 'bordrless_token.json')) }
+}

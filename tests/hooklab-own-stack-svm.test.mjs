@@ -13,16 +13,19 @@ import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeTradeResolver } from '../src/hooklab-native-trade-resolver.mjs'
 import { LEGACY_STACK } from '../src/hooklab-stack.mjs'
 import { ownStackWorld, openLaunch, CREATION_FEE_LAMPORTS, OWNER_MENUS, LAUNCH_LIMITS } from './fixtures/hooklab-own-stack-world.mjs'
-import { OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
+import { INDEPENDENT_SKIP, OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
 import { estimateTrade } from '../app/lib/hooklab-trade-math.mjs'
 
-const skip = OWN_STACK_SKIP || (process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HOOKLAB_CANARY_PYTHONPATH && 'the isolated SVM runner (HOOKLAB_CANARY_PYTHONPATH) is not available')
+const runner = process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HOOKLAB_CANARY_PYTHONPATH && 'the isolated SVM runner (HOOKLAB_CANARY_PYTHONPATH) is not available'
+// hook-lab's own independent-stack build at its placeholder IDs, and the reviewed ELFs relocated to fresh IDs: the same
+// website code serves both, with every address from the stack's bundle.
+const BUILDS = Object.freeze({ independent: INDEPENDENT_SKIP || runner, relocated: OWN_STACK_SKIP || runner })
 const sha = value => createHash('sha256').update(value).digest('hex')
 const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), new PublicKey(program))[0].toBase58()
 const TRADE_LIMITS = { nowMs: 1000, maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 0, reviewExpiresAtMs: 0, maxNetworkFeeLamports: '10000', maxTotalDebitLamports: '10000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' }
 
-test('our own stack from nothing: owner setup, its bundle, then open launches by fresh wallets, trades and refusals', { skip, timeout: 600000 }, async t => {
-  const w = await ownStackWorld(); t.after(w.close)
+for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build}) from nothing: owner setup, its bundle, then open launches by fresh wallets, trades and refusals`, { skip, timeout: 600000 }, async t => {
+  const w = await ownStackWorld({ build }); t.after(w.close)
   const profile = JSON.parse(w.bindings.profile.json), P = w.programs
   assert.ok(Object.values(P).every(id => !Object.values(LEGACY_STACK.programs).includes(id)) && profile.quoteMint !== LEGACY_STACK.quoteMint, 'a stack of its own')
   assert.equal(profile.programs.bridge, undefined)
