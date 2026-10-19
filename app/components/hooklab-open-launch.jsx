@@ -50,15 +50,15 @@ export function OpenLaunchSteps({ phase }) {
 
 // The review screen: only what the creator pays, the price, their rules, the graduation target and the note.
 export function OpenLaunchReview({ coin, image, profile, openCreation, costs, price, busy = false, onSign, onEdit, editLabel = 'Edit' }) {
-  const { rows, totalLamports } = openLaunchCosts(openCreation, costs), values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
+  const { rows, total } = openLaunchCosts(openCreation, costs), values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
   const amount = value => value ? <>{value.sol}{value.usd && <small>{value.usd}</small>}</> : 'Set when you sign'
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
     <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} profile={profile}/>
     <div className="hooks-open-review-grid">
       <div className="inner-card fee-breakdown"><h3>What you pay</h3>
-        {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label}<small>{row.about}</small></span><strong>{solOrWallet(row.lamports)}</strong></div>)}
-        <div className="hooks-cost"><span>Total, about</span><strong>{solOrWallet(totalLamports)}</strong><small>Your wallet shows the exact amount before you approve.</small></div>
+        {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label} <strong>{row.amount ?? 'shown in your wallet'}</strong>{row.note ? <small> {row.note}</small> : null}</span></div>)}
+        <div className="hooks-cost"><span>Total</span><strong>{total ?? 'Shown in your wallet'}</strong><small>Your wallet shows the exact amount before you approve.</small></div>
       </div>
       <div className="inner-card fee-breakdown"><h3>Your coin</h3>
         <div className="fee-line"><span>Opening price<small>Its market value when trading opens</small></span><strong>{amount(values?.opening)}</strong></div>

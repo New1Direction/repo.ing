@@ -8,13 +8,14 @@ export const OPEN_LAUNCH_NOTE = 'Anyone can launch a Hooks coin. repo.ing doesn\
 export const OPEN_LAUNCH_STEPS = Object.freeze(['Your coin', 'Review', 'Sign', 'Live'])
 export const TWO_APPROVALS = 'Your wallet will ask you to approve twice: once to set up your coin, then once to open trading.'
 
-// Signatures on each of the two transactions (the creator's and the coin address's) and the compute budget each asks for.
-const SIGNATURES_PER_TRANSACTION = 2n, LAMPORTS_PER_SIGNATURE = 5000n, COMPUTE_UNIT_LIMIT = 1_400_000n
+// The signatures each transaction carries (setup: the creator, the coin address and its launch settings; launch: the
+// creator and the coin address) and the compute budget each asks for.
+const SIGNATURES = Object.freeze({ setup: 3n, launch: 2n }), LAMPORTS_PER_SIGNATURE = 5000n, COMPUTE_UNIT_LIMIT = 1_400_000n
 // The network fee both launch transactions pay together, at the server's priority price (micro-lamports per unit).
 export function openLaunchNetworkFee(priorityMicroLamports = '0') {
   const priority = /^(0|[1-9][0-9]{0,6})$/.test(String(priorityMicroLamports)) ? BigInt(priorityMicroLamports) : 0n
-  const perTransaction = SIGNATURES_PER_TRANSACTION * LAMPORTS_PER_SIGNATURE + (COMPUTE_UNIT_LIMIT * priority + 999_999n) / 1_000_000n
-  return String(2n * perTransaction)
+  const budget = (COMPUTE_UNIT_LIMIT * priority + 999_999n) / 1_000_000n
+  return String(Object.values(SIGNATURES).reduce((sum, signatures) => sum + signatures * LAMPORTS_PER_SIGNATURE + budget, 0n))
 }
 
 // A menu choice that is still offered: the current one, else the usual default, else the menu's first.
@@ -35,18 +36,28 @@ export function openCreationProblem(openCreation) {
 }
 
 const lamports = value => value === null || value === undefined || value === '' ? null : BigInt(value)
-// What the creator pays, every figure read from the chain or the server (never a literal here). costs: the launch-requests
-// response's { networkFeeLamports }; openCreation: { launchFeeLamports, poolCreationFeeLamports?, rentLamports? }.
-// A figure the server did not send stays null and reads as "shown in your wallet".
+// An estimate in SOL: at least 4 decimals, more for a small amount so its first digit shows (25,000 lamports is
+// "≈0.00003 SOL", 27,604,720 is "≈0.0276 SOL").
+export function approxSol(value) {
+  const v = BigInt(value), decimals = Math.max(4, v > 0n ? 10 - String(v).length : 4), unit = 10n ** BigInt(9 - decimals)
+  const rounded = (v + unit / 2n) / unit, whole = rounded / 10n ** BigInt(decimals), fraction = String(rounded % 10n ** BigInt(decimals)).padStart(decimals, '0').replace(/0+$/, '')
+  return `≈${whole}${fraction ? `.${fraction}` : ''} SOL`
+}
+// What the creator pays, every figure read from the chain or the server at review time (never a literal here). costs:
+// the launch-requests response's { networkFeeLamports }; openCreation: { launchFeeLamports, poolCreationFeeLamports?,
+// rentLamports? } (the rent of every account the launch creates, at the chain's current rate). A figure the server did
+// not send stays null and reads as "shown in your wallet". Each row reads "<label> <amount> <note>", e.g.
+// "Creation fee 0.02 SOL (to repo.ing)".
 export function openLaunchCosts(openCreation, costs = {}) {
+  const row = (key, label, value, note, exact = false) => ({ key, label, lamports: value, note, amount: value === null ? null : exact ? formatSol(value, 9) : approxSol(value) })
   const rows = [
-    { key: 'creation', label: 'Creation fee (to repo.ing treasury)', about: 'Paid once, when your coin launches', lamports: lamports(openCreation?.launchFeeLamports) },
-    ...(lamports(openCreation?.poolCreationFeeLamports) > 0n ? [{ key: 'pool', label: 'Pool fee', about: 'Paid once, to open your coin’s market', lamports: lamports(openCreation.poolCreationFeeLamports) }] : []),
-    { key: 'rent', label: 'Rent', about: 'Deposits that keep your coin’s accounts on Solana', lamports: lamports(openCreation?.rentLamports) },
-    { key: 'network', label: 'Network fee', about: 'Two transactions on Solana', lamports: lamports(costs?.networkFeeLamports) },
+    row('creation', 'Creation fee', lamports(openCreation?.launchFeeLamports), '(to repo.ing)', true),
+    ...(lamports(openCreation?.poolCreationFeeLamports) > 0n ? [row('pool', 'Pool fee', lamports(openCreation.poolCreationFeeLamports), '(opens your coin’s market)', true)] : []),
+    row('rent', 'Account rent', lamports(openCreation?.rentLamports), '(stays in the coin’s accounts)'),
+    row('network', 'Network fees', lamports(costs?.networkFeeLamports), ''),
   ]
-  const known = rows.every(row => row.lamports !== null)
-  return { rows, totalLamports: known ? rows.reduce((sum, row) => sum + row.lamports, 0n) : null }
+  const known = rows.every(r => r.lamports !== null), totalLamports = known ? rows.reduce((sum, r) => sum + r.lamports, 0n) : null
+  return { rows, totalLamports, total: totalLamports === null ? null : approxSol(totalLamports) }
 }
 export const solOrWallet = value => value === null ? 'Shown in your wallet' : formatSol(value, 6)
 

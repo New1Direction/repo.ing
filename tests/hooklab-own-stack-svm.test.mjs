@@ -26,7 +26,8 @@ const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s 
 const TRADE_LIMITS = { nowMs: 1000, maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 0, reviewExpiresAtMs: 0, maxNetworkFeeLamports: '10000', maxTotalDebitLamports: '10000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' }
 
 for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build}) from nothing: owner setup, its bundle, then open launches by fresh wallets, trades and refusals`, { skip, timeout: 600000 }, async t => {
-  const w = await ownStackWorld({ build }); t.after(w.close)
+  // At mainnet's rent rate (5,080 lamports per byte), so the creator's outlay is the economics review's exact figure.
+  const w = await ownStackWorld({ build, rentPerByte: 5080 }); t.after(w.close)
   const profile = JSON.parse(w.bindings.profile.json), P = w.programs
   assert.ok(Object.values(P).every(id => !Object.values(LEGACY_STACK.programs).includes(id)) && profile.quoteMint !== LEGACY_STACK.quoteMint, 'a stack of its own')
   assert.equal(profile.programs.bridge, undefined)
@@ -66,6 +67,9 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
       // (readOpenCreation's rentLamports), and the two transactions' network fees.
       const spent = 2000000000n - (await w.lamports([launch.creator.publicKey.toBase58()]))[launch.creator.publicKey.toBase58()]
       assert.equal(spent, CREATION_FEE_LAMPORTS + rentLamports + BigInt(launch.preparationFeeLamports) + 10000n)
+      // 47,604,720 lamports plus 25,000 of signature fees: 3,713,480 setup rent, the 20,000,000 creation fee, 23,891,240
+      // creation rent (the economics review, measured on mainnet's rates).
+      assert.equal(rentLamports, 27604720n); assert.equal(spent, 47629720n)
       coins.push({ ...launch, creatorFeeBps, capBps })
     }
     assert.equal(coins.length, 4)

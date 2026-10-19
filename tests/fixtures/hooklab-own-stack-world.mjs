@@ -71,7 +71,9 @@ export function frozenTable(address, addresses) {
 
 // build: 'independent' (hook-lab's own build at its placeholder IDs, the default when present) or 'relocated' (the reviewed
 // ELFs moved to fresh IDs; seed picks them).
-export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : 'independent', seed = 'a' } = {}) {
+// rentPerByte: the bank's rent rate, lamports per byte of an account (128 bytes of overhead included in its size), as
+// mainnet's 5,080 today; the bank's own default otherwise.
+export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : 'independent', seed = 'a', rentPerByte = null } = {}) {
   const env = localTestEnvironment(), saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]))
   Object.assign(process.env, env)
   const roles = Object.fromEntries(ROLES.map(role => [role, runnerKey(role).publicKey.toBase58()]))
@@ -84,6 +86,7 @@ export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : '
   try {
     const init = await svm.call('init', { scope: 'isolated-canary-svm/1', programs: Object.entries(NAMES).map(([role, name]) => ({ address: P[role], path: path.join(dir, `${name}.so`), sha256: hex(elfs[role]) })) })
     if (JSON.stringify(init.roles) !== JSON.stringify(roles)) throw Error('Runner roles differ')
+    const perByte = rentPerByte === null ? 6960 : (await svm.call('rent', { lamportsPerByte: rentPerByte })).lamportsPerByte
     // Upgradeable programs at the stack's IDs, all upgradeable by the stack's authority (the gate is finalized below).
     const accounts = []
     for (const role of ['launch', 'swap', 'gate', 'token']) {
@@ -146,7 +149,7 @@ export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : '
     // The two frozen shared tables, at the owner's addresses, then our stack's production bundle read from the bank.
     const providers = ['local-a', 'local-b'], endpoints = [env.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY, env.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY]
     const transport = (alter = () => {}) => ({ getGenesisHash: async () => syntheticGenesis, getSlot: async () => 100, getBlockHeight: async () => 100,
-      getMinimumBalanceForRentExemption: async size => (128 + size) * 6960,
+      getMinimumBalanceForRentExemption: async size => (128 + size) * perByte,
       getMultipleAccountsInfoAndContext: async keys => { const s = await svm.call('get', { addresses: keys.map(k => k.toBase58()) })
         return { context: { slot: s.slot }, value: s.accounts.map(({ account: v }) => v ? { owner: pk(v.owner), executable: v.executable, lamports: Number(v.lamports), data: Buffer.from(v.dataBase64, 'base64') } : null) } },
       getLatestBlockhashAndContext: async () => ({ context: { slot: 100 }, value: { blockhash: await blockhash(), lastValidBlockHeight: 250 } }),

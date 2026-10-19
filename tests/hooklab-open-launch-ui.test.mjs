@@ -22,25 +22,29 @@ function assertClean(markup, label) { for (const pattern of FORBIDDEN) assert.do
 
 // The chain's open-creation state as the launch runtime reads it: the owner's menus and the creation fee (0.02 SOL).
 const openCreation = { native: true, open: true, paused: false, creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500], maxCreatorFeeBps: 200,
-  launchFeeLamports: '20000000', minVirtualQuote: '5625000000', maxVirtualQuote: '112500000000', rentLamports: '23891240' }
+  launchFeeLamports: '20000000', minVirtualQuote: '5625000000', maxVirtualQuote: '112500000000', rentLamports: '27604720' }
 const availability = { status: 'available', open: true, openCreation, costs: { networkFeeLamports: openLaunchNetworkFee('0') }, launchPrice: { solUsdMicros: '105630000', virtualQuote: '53251917070' } }
 const coin = { name: 'Repo Cat', symbol: 'RCAT', image: 'data:image/png;base64,AAAA', description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 200 }
 
 test('the review screen pays out only the essentials, every figure from the chain or server', () => {
-  const costs = openLaunchCosts(openCreation, availability.costs)
-  assert.deepEqual(costs.rows.map(r => r.label), ['Creation fee (to repo.ing treasury)', 'Rent', 'Network fee'])
-  assert.equal(costs.rows[0].lamports, 20_000_000n, 'the creation fee is the chain value'); assert.equal(costs.totalLamports, 20_000_000n + 23_891_240n + 20_000n)
+  // The economics review's exact outlay at mainnet rent: 3,713,480 setup rent + 23,891,240 creation rent, the 0.02 SOL
+  // creation fee, and three plus two signatures.
+  const costs = openLaunchCosts(openCreation, availability.costs), line = r => [r.label, r.amount, r.note].filter(Boolean).join(' ')
+  assert.deepEqual(costs.rows.map(line), ['Creation fee 0.02 SOL (to repo.ing)', 'Account rent ≈0.0276 SOL (stays in the coin’s accounts)', 'Network fees ≈0.00003 SOL'])
+  assert.equal(costs.total, '≈0.0476 SOL')
+  assert.equal(costs.rows[0].lamports, 20_000_000n, 'the creation fee is the chain value'); assert.equal(costs.totalLamports, 20_000_000n + 27_604_720n + 25_000n)
   assert.equal(openLaunchCosts({ ...openCreation, launchFeeLamports: '30000000' }).rows[0].lamports, 30_000_000n, 'never a literal: a changed fee shows the changed fee')
   assert.equal(openLaunchCosts({ ...openCreation, rentLamports: undefined }, availability.costs).totalLamports, null, 'an unknown figure leaves the total to the wallet')
   assert.equal(openLaunchCosts({ ...openCreation, poolCreationFeeLamports: '1000' }).rows[1].label, 'Pool fee')
-  assert.equal(openLaunchNetworkFee('0'), '20000'); assert.equal(openLaunchNetworkFee('1000'), String(2 * (10000 + 1400)), 'two transactions with two signatures and the priority price')
+  assert.equal(openLaunchNetworkFee('0'), '25000'); assert.equal(openLaunchNetworkFee('1000'), String(15000 + 10000 + 2 * 1400), 'setup (three signatures) and launch (two), each with the priority price')
   const price = openLaunchPrice(availability.launchPrice)
   assert.deepEqual(price.opening, { sol: '47.34 SOL', usd: '≈$5,000' }); assert.equal(price.graduation.usd, '≈$45,000'); assert.match(price.graduation.sol, / SOL$/)
   assert.deepEqual(openLaunchPrice({ virtualQuote: '53251917070' }).opening, { sol: '47.34 SOL', usd: null }, 'without a SOL price: SOL only')
   assert.equal(openCreationProblem(openCreation), ''); assert.match(openCreationProblem({ ...openCreation, paused: true }), /paused/); assert.match(openCreationProblem(null), /isn’t available/)
 
   const markup = html(h(OpenLaunchReview, { coin, image: coin.image, profile: null, openCreation, costs: availability.costs, price: availability.launchPrice, onSign() {}, onEdit() {} }))
-  for (const pattern of [/Check your launch/, /Creation fee \(to repo\.ing treasury\)/, /0\.02 SOL/, /Rent/, /0\.023891 SOL/, /Network fee/, /0\.00002 SOL/, /Total, about/,
+  for (const pattern of [/Check your launch/, /Creation fee <strong>0\.02 SOL<\/strong><small> \(to repo\.ing\)/, /Account rent <strong>≈0\.0276 SOL<\/strong><small> \(stays in the coin’s accounts\)/,
+    /Network fees <strong>≈0\.00003 SOL/, /Total<\/span><strong>≈0\.0476 SOL/,
     /Opening price/, /≈\$5,000/, /Graduates at/, /≈\$45,000/, /Creator fee/, /1%/, /Max per wallet/, /2%/, /Sign and launch/, /Your wallet will ask you to approve twice/])
     assert.match(markup, pattern)
   assert.ok(text(markup).includes(OPEN_LAUNCH_NOTE.replace("'", '&#x27;')) || markup.includes(OPEN_LAUNCH_NOTE.replace("'", '&#x27;')), 'the owner’s note, word for word')
@@ -60,7 +64,7 @@ test('the create flow, step by step: your coin (the chain’s menus), review, on
   assert.doesNotMatch(coinStep, NO_INVITE); assertClean(coinStep, 'your coin')
 
   const reviewStep = html(h(HookOpenLaunch, { genesisHash, initial: { availability, coin, step: 'review' } }), { wallet: true })
-  assert.match(reviewStep, /<li data-state="current" aria-current="step"><span>2<\/span>Review<\/li>/); assert.match(reviewStep, /Creation fee \(to repo\.ing treasury\)/)
+  assert.match(reviewStep, /<li data-state="current" aria-current="step"><span>2<\/span>Review<\/li>/); assert.match(reviewStep, /Creation fee <strong>0\.02 SOL<\/strong><small> \(to repo\.ing\)/)
   assert.doesNotMatch(reviewStep, NO_INVITE); assertClean(reviewStep, 'review step')
 
   const signStep = html(h(HookOpenLaunch, { genesisHash, initial: { availability, coin, step: 'sign' } }), { wallet: true })
@@ -172,7 +176,7 @@ test('the launch-requests API sends the chain\'s menus, fees and the network fee
     store: () => ({}), openCreation: async () => leaky, launchPriceEstimate: async () => availability.launchPrice })
   const response = await handler(new Request('https://repo.ing/api/hook-lab/launch-requests')), body = await response.json(), raw = JSON.stringify(body)
   assert.equal(body.open, true); assert.deepEqual(body.openCreation.creatorFeeBps, [50, 100, 200]); assert.equal(body.openCreation.launchFeeLamports, '20000000')
-  assert.equal(body.costs.networkFeeLamports, String(2 * (10000 + 1400)))
+  assert.equal(body.costs.networkFeeLamports, String(15000 + 10000 + 2 * 1400))
   assert.doesNotMatch(raw, new RegExp(MARKER)); assert.doesNotMatch(raw, new RegExp(PLACEHOLDER_IDS.launch)); assert.doesNotMatch(raw, /quoteMint|programs/)
 })
 

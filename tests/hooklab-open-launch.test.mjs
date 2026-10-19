@@ -70,4 +70,8 @@ test('the fee menu on offer is the on-chain menu under the current ceiling: a fe
   assert.throws(() => compileOpenLaunchReview(openInput(world)), /not on the on-chain menu under the current ceiling/, 'this coin chose 100')
   // With the ceiling at 100 the same launch compiles.
   assert.ok(compileOpenLaunchReview(openInput(openState({ ceiling: 100 }))).review)
+  // The rules-fee bound caps it too: the lower of max_creator_fee_bps and rule_bounds.max_rules_fee_bps.
+  const rules = openState({ ceiling: 200, rulesCeiling: 50 }), capped = await readOpenCreation(openConnections(rules), rules.programs)
+  assert.deepEqual([...capped.creatorFeeBps], [50]); assert.equal(capped.maxCreatorFeeBps, 50)
+  assert.throws(() => compileOpenLaunchReview(openInput(rules)), /under the current ceiling/)
 }))

@@ -39,15 +39,17 @@ export function sharedTable(addresses, { frozen = true, extra = [], address = Ke
 }
 // reserved: the launch Config's open-creation state; ceiling: its max_creator_fee_bps (the canary state's 100 otherwise).
 // The shared table is added to the accounts.
-export function openState({ reserved = { native: true, open: true, ...OWNER_MENUS }, capBps = 200, ceiling = null } = {}) {
+// rulesCeiling: its rule_bounds.max_rules_fee_bps (100 otherwise).
+export function openState({ reserved = { native: true, open: true, ...OWNER_MENUS }, capBps = 200, ceiling = null, rulesCeiling = null } = {}) {
   const roles = Object.fromEntries(ROLES.map(r => [r, Keypair.generate().publicKey.toBase58()]))
   const blockhash = bs58.encode(Keypair.generate().publicKey.toBuffer())
   const state = makeCanaryState({ elfDirectory: process.env.HOOKLAB_NATIVE_ELF_DIR, openElfDirectory: OPEN_ELF_DIR, roles, blockhash, native: true, capBps })
   const programs = JSON.parse(state.profile.json).programs, configAddress = pda(programs.launch, Buffer.from('config'))
   const config = state.accounts.get(configAddress), bytes = Buffer.from(config.dataBase64, 'base64')
   encodeOpenCreationReserved(reserved).copy(bytes, 186)
-  if (ceiling !== null) { const coder = state.bindings.launch.coder, value = coder.accounts.decode('Config', bytes)
-    coder.types.encode('Config', { ...value, max_creator_fee_bps: ceiling }).copy(bytes, 8) }
+  if (ceiling !== null || rulesCeiling !== null) { const coder = state.bindings.launch.coder, value = coder.accounts.decode('Config', bytes)
+    coder.types.encode('Config', { ...value, max_creator_fee_bps: ceiling ?? value.max_creator_fee_bps,
+      rule_bounds: { ...value.rule_bounds, max_rules_fee_bps: rulesCeiling ?? value.rule_bounds.max_rules_fee_bps } }).copy(bytes, 8) }
   config.dataBase64 = bytes.toString('base64')
   const configBytes = () => Buffer.from(state.accounts.get(configAddress).dataBase64, 'base64')
   const table = sharedTable(openLaunchTableAddresses(state.profile, configBytes()))

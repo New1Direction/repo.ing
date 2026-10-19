@@ -20,6 +20,9 @@ const pda = (program, seed) => PublicKey.findProgramAddressSync([Buffer.from(see
 // coin and LP mints, and the launch. Their rent at the chain's current rate is what the creator locks.
 export const OPEN_LAUNCH_ACCOUNT_SIZES = Object.freeze([90, 81, 176, 75, 186, 204, 204, 204, 204, 204, 411, 519, 519, 565])
 
+// The highest creator fee an open launch may choose under a launch Config: min(max_creator_fee_bps, max_rules_fee_bps).
+export const openCreatorFeeCeiling = config => Math.min(config.max_creator_fee_bps, config.rule_bounds.max_rules_fee_bps)
+
 // programs: the stack's { launch, swap } (the launch program alone still reads everything but the pool fee).
 export async function readOpenCreation(connections, programs) {
   if (!Array.isArray(connections) || connections.length !== 2) throw fail('Two providers required')
@@ -37,10 +40,12 @@ export async function readOpenCreation(connections, programs) {
   if (!reserved) throw fail('Launch configuration is in a state the reviewed programs never write')
   const rents = await Promise.all(OPEN_LAUNCH_ACCOUNT_SIZES.map(size => connections[0].connection.getMinimumBalanceForRentExemption(size, 'finalized')))
   if (!rents.every(Number.isSafeInteger)) throw fail('Rent unavailable')
-  // The creator fees on offer: the on-chain menu intersected with the current ceiling (the program does not re-check its
-  // menu when the owner lowers max_creator_fee_bps). The site offers and accepts only these.
+  // The creator fees on offer: the on-chain menu under the current ceiling, the lower of max_creator_fee_bps and
+  // rule_bounds.max_rules_fee_bps (the program does not re-check its menu when the owner lowers either). The site offers
+  // and accepts only these.
+  const ceiling = openCreatorFeeCeiling(c)
   return Object.freeze({ native: reserved.native, open: reserved.open, paused: c.paused || g.state.gates.creation,
-    creatorFeeBps: Object.freeze(reserved.creatorFeeBps.filter(bps => bps <= c.max_creator_fee_bps)), capBps: Object.freeze([...reserved.capBps]), maxCreatorFeeBps: c.max_creator_fee_bps,
+    creatorFeeBps: Object.freeze(reserved.creatorFeeBps.filter(bps => bps <= ceiling)), capBps: Object.freeze([...reserved.capBps]), maxCreatorFeeBps: ceiling,
     launchFeeLamports: c.launch_fee_lamports.toString(), minVirtualQuote: c.min_virtual_quote.toString(), maxVirtualQuote: c.max_virtual_quote.toString(),
     ...(swapConfig ? { poolCreationFeeLamports: coders.swap.accounts.decode('Config', swapConfig).pool_creation_fee_lamports.toString() } : {}),
     rentLamports: String(rents.reduce((sum, rent) => sum + BigInt(rent), 0n)) })
