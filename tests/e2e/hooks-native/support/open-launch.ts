@@ -28,7 +28,8 @@ export async function openCreationState(): Promise<OpenCreationState> {
   const governance = await connection.getAccountInfo(PublicKey.findProgramAddressSync([Buffer.from('governance')], new PublicKey(PROGRAMS.launch))[0], 'finalized')
   const gov = openCoder.accounts.decode('Governance', Buffer.from(governance!.data))
   return { native: raw[186] === 1, open: raw[187] === 1, feeMenu: menu(188), capMenu: menu(196), launchFeeLamports: BigInt(config.launch_fee_lamports.toString()),
-    paused: !!config.paused, poolCreationFeeLamports: BigInt(swap.pool_creation_fee_lamports.toString()), treasury: config.treasury.toBase58(),
+    // Creation is paused by the Config's flag or by the guardian's emergency pause (the launch governance's creation gate).
+    paused: !!config.paused || !!gov.state.gates.creation, poolCreationFeeLamports: BigInt(swap.pool_creation_fee_lamports.toString()), treasury: config.treasury.toBase58(),
     revision: BigInt(gov.state.revision.toString()) }
 }
 
