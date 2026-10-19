@@ -3,18 +3,29 @@
 // approval-gated stage approved by its exact message sha256. Order follows docs/HOOK_OWNER_LAUNCH_DAY.md: governed
 // configs, the controlled grant, gate finalization, funding, the shared trade table, public activation, then the USD
 // virtual-quote bounds and the native-launches switch on the candidate programs.
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { main } from '../../../src/hooklab-owner-driver/cli.mjs'
-import { STAGES } from '../../../src/hooklab-owner-driver/context.mjs'
+import { STACK_IDL_FILES } from '../../../src/hooklab-owner-driver/artifacts.mjs'
 import { bootstrapConfigs, localConfig } from '../../../tests/fixtures/hooklab-owner-local.mjs'
 
 // decisions: extra owner decisions for the mode (each approved), e.g. self-serve's menus and creation fee.
-export function ownerDriver({ validator, root, roles, keys, log, decisions = {} }) {
-  const configPath = path.join(root, 'owner-config.json')
+// own: our own stack (program-sets.mjs ownStackSet): the driver then runs it (--stack/--stack-idls: its descriptor and
+// its build's IDLs, written as the owner's scripts/hooklab-stack-descriptor.mjs writes them), with its own runs and journal.
+export function ownerDriver({ validator, root, roles, keys, log, decisions = {}, own = null }) {
+  const name = own ? 'owner-own' : 'owner'
+  const configPath = path.join(root, `${name}-config.json`)
   const approved = Object.fromEntries(Object.entries(decisions).map(([key, value]) => [key, { value, approved: true }]))
   writeFileSync(configPath, JSON.stringify(localConfig(roles, approved), null, 2), { mode: 0o600 })
-  const common = ['--local-test', '--rpc', validator.url, '--rpc2', validator.url2, '--config', configPath, '--runs', path.join(root, 'owner-runs'), '--journal', path.join(root, 'owner-journal')]
+  const stackArgs = []
+  if (own) {
+    const dir = path.join(root, 'own-stack'), idlDir = path.join(dir, 'idl'); mkdirSync(idlDir, { recursive: true, mode: 0o700 })
+    for (const [role, file] of Object.entries(STACK_IDL_FILES)) writeFileSync(path.join(idlDir, file), own.idls[role])
+    writeFileSync(path.join(dir, 'stack.json'), JSON.stringify(own.stack, null, 2))
+    stackArgs.push('--stack', path.join(dir, 'stack.json'), '--stack-idls', idlDir)
+  }
+  const journalRoot = path.join(root, `${name}-journal`)
+  const common = ['--local-test', '--rpc', validator.url, '--rpc2', validator.url2, '--config', configPath, '--runs', path.join(root, `${name}-runs`), '--journal', journalRoot, ...stackArgs]
   const quiet = { log: () => {}, confirm: async () => true }
   async function plan(stage, extra = []) {
     const result = await main(['plan', stage, ...common, ...extra], quiet)
@@ -28,12 +39,19 @@ export function ownerDriver({ validator, root, roles, keys, log, decisions = {} 
     const args = ['execute', stage, ...common, ...extra, '--message-sha256', sha, ...signerRoles.flatMap(role => ['--key', `${role}=${keys[role]}`]), ...(approve ? ['--approved', `${stage}:${sha}`] : [])]
     const result = await main(args, quiet)
     if (result.receipt.status !== 'finalized-success') throw Error(`${stage}: ${result.receipt.status}`)
-    log?.(`owner-driver ${stage}${extra.length ? ` ${extra.join(' ')}` : ''}: finalized ${result.receipt.signature ?? ''} (${((Date.now() - started) / 1000).toFixed(1)} s)`)
+    log?.(`${own ? 'owner-driver (own stack)' : 'owner-driver'} ${stage}${extra.length ? ` ${extra.join(' ')}` : ''}: finalized ${result.receipt.signature ?? ''} (${((Date.now() - started) / 1000).toFixed(1)} s)`)
     return result
   }
   async function status() { return (await main(['status', ...common], quiet)).text }
-  const journal = name => { const file = path.join(root, 'owner-journal', validator.genesisHash.slice(0, 16), `${name}.public.json`); return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null }
-  return { configPath, common, run, plan, status, validator, roles, journal }
+  // A public record the driver keeps (e.g. trade-table, launch-table-<stack id>), wherever under its journal root it lives.
+  const journal = record => {
+    const find = dir => { for (const entry of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {
+      const at = path.join(dir, entry.name)
+      if (entry.isDirectory()) { const found = find(at); if (found) return found } else if (entry.name === `${record}.public.json`) return at
+    } return null }
+    const file = find(journalRoot); return file ? JSON.parse(readFileSync(file, 'utf8')) : null
+  }
+  return { configPath, common, run, plan, status, validator, roles, journal, own }
 }
 
 /** Mainnet-like protocol state with every switch the native release needs. The configs start as mainnet's did (both
@@ -57,26 +75,42 @@ export async function switchNativeOn(driver) {
   await driver.run('native-launches', ['payer', 'admin'], { approve: true, extra: ['--to', 'on'] })
 }
 
-/** Self-serve: the owner's creation fee, the open-creation switch with the owner's menus, and the one shared launch table
- * every open launch uses, through the owner driver's own stages (src/hooklab-owner-driver/stages/open-creation.mjs). */
-export async function openCreationOn(driver) {
-  const missing = ['launch-fee', 'open-creation', 'launch-table'].filter(stage => !Object.hasOwn(STAGES, stage))
-  if (missing.length) throw Error(`self-serve mode needs the owner driver's ${missing.join(', ')} stage(s), which this checkout does not have yet (feat/hooks-self-serve)`)
-  await driver.run('launch-fee', ['payer', 'admin'], { approve: true })
-  await driver.run('open-creation', ['payer', 'admin'], { approve: true, extra: ['--to', 'on'] })
-  await driver.run('launch-table', ['payer'], { approve: true })
-  await driver.run('launch-table', ['payer'], { approve: true })
-}
-
 /** The protocol state each stack mode needs. Returns the shared tables the bundle pins. */
 export async function setupForMode(driver, mode, { preflight, log }) {
   await setupProtocol(driver)
-  if (mode !== 'legacy') {
+  if (mode === 'native') {
     log?.(`native preflight before the switch: ok=${preflight()}`)
     await switchNativeOn(driver)
   }
-  if (mode === 'self-serve') await openCreationOn(driver)
-  const tradeTable = driver.journal('trade-table')?.address, launchTable = mode === 'self-serve' ? driver.journal('launch-table')?.address : null
-  if (!tradeTable || (mode === 'self-serve' && !launchTable)) throw Error('the owner driver did not record the shared tables')
+  const tradeTable = driver.journal('trade-table')?.address
+  if (!tradeTable) throw Error('the owner driver did not record the shared trade table')
+  return { tradeTable, launchTable: null }
+}
+
+/** Our own stack's first-time setup, in the owner runbook's order (docs/HOOK_OWNER_LAUNCH_DAY.md; the driver's
+ * STACK_STAGE_ORDER): verify the deployed stack and quote marker, initialise configs and governances, finalize the gate,
+ * the approved economics, the 0.02 SOL creation fee, the USD bounds, native launches, open creation with the owner's
+ * menus, the shared launch and trade tables (created, then frozen), then launches and trading open. */
+export async function setupOwnStack(driver) {
+  for (const stage of ['stack-verify', 'quote-marker']) {
+    const { built } = await main(['plan', stage, ...driver.common], { log: () => {} })
+    if (built.verified !== true) throw Error(`${stage} did not verify: ${built.blocked ?? JSON.stringify(built.sections ?? [])}`)
+  }
+  await driver.run('launch-config-init', ['payer', 'upgrade'], { approve: true })
+  await driver.run('swap-config-init', ['payer', 'upgrade'], { approve: true })
+  await driver.run('launch-governance-init', ['payer', 'admin'], { approve: true })
+  await driver.run('swap-governance-init', ['payer', 'admin'], { approve: true })
+  await driver.run('gate-finalize', ['payer', 'upgrade'], { approve: true })
+  await driver.run('launch-config', ['payer', 'admin'])
+  await driver.run('swap-config', ['payer', 'admin'])
+  await driver.run('launch-fee', ['payer', 'admin'], { approve: true })
+  await driver.run('launch-usd-bounds', ['payer', 'admin'], { approve: true })
+  await driver.run('native-launches', ['payer', 'admin'], { approve: true, extra: ['--to', 'on'] })
+  await driver.run('open-creation', ['payer', 'admin'], { approve: true, extra: ['--to', 'on'] })
+  for (const stage of ['launch-table', 'trade-table']) { await driver.run(stage, ['payer'], { approve: true }); await driver.run(stage, ['payer'], { approve: true }) }
+  await driver.run('open-launches', ['payer', 'admin'], { approve: true })
+  await driver.run('open-trading', ['payer', 'admin'], { approve: true })
+  const tradeTable = driver.journal('trade-table')?.address, launchTable = driver.journal(`launch-table-${driver.own.stack.id}`)?.address
+  if (!tradeTable || !launchTable) throw Error('the owner driver did not record our stack\'s shared tables')
   return { tradeTable, launchTable }
 }

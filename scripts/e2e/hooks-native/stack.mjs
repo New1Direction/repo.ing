@@ -14,12 +14,12 @@ import { syntheticRoles, writeKeyFiles } from '../../../tests/fixtures/hooklab-o
 import { FIXED_SOL_USD, REPO_ROOT, freePort, sha256, stageLog } from './common.mjs'
 import { makeLocalCertificate } from './tls.mjs'
 import { startValidator } from './validator.mjs'
-import { ownerDriver, setupForMode } from './owner-setup.mjs'
+import { ownerDriver, setupForMode, setupOwnStack } from './owner-setup.mjs'
 import { MODES } from './modes.mjs'
-import { programSet } from './program-sets.mjs'
+import { ownStackSet, programSet } from './program-sets.mjs'
 import { createDatabase } from './database.mjs'
 import { startRpcProxies } from './rpc-proxy.mjs'
-import { collectLocalBundle } from './bundle.mjs'
+import { collectLocalBundle, collectLocalStackBundle } from './bundle.mjs'
 import { siteEnvironment, startSite } from './site.mjs'
 import { startOwnerAgent } from './owner-agent.mjs'
 import { startControl } from './control.mjs'
@@ -57,39 +57,52 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
     const roles = syntheticRoles(), keys = writeKeyFiles(path.join(root, 'keys'), roles)
     const address = role => roles[role].publicKey.toBase58()
 
-    const set = programSet(mode.set())
-    const validator = await startValidator({ root, roles, set, log })
+    const set = programSet(mode.set()), own = mode.own ? await ownStackSet({ upgradeAuthority: address('upgrade') }) : null
+    const validator = await startValidator({ root, roles, set, own, log })
     cleanups.push({ name: 'validator', run: validator.stop })
     const driver = ownerDriver({ validator, root, roles, keys, log, decisions: mode.decisions })
     // The release's read-only preflight runs inside the setup, on the protocol as it stands before the native switch.
     const preflight = () => JSON.parse(execFileSync(process.execPath, [path.join(REPO_ROOT, 'scripts/hooklab-native-preflight.mjs'), '--local-test', '--rpc', validator.url, '--rpc2', validator.url2],
       { cwd: REPO_ROOT, env: BASE_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).ok
     const tables = await setupForMode(driver, modeName, { preflight, log })
+    // Our own stack's first-time setup, through the owner driver's --stack mode (self-serve).
+    const ownDriver = own ? ownerDriver({ validator, root, roles, keys, log, decisions: mode.ownDecisions, own }) : null
+    const ownTables = own ? await setupOwnStack(ownDriver) : null
 
     const database = await createDatabase({ log })
     cleanups.push({ name: 'database', run: database.drop })
     const proxies = await startRpcProxies({ upstream: validator.url, tls, auditFile: path.join(root, 'logs', 'rpc-sends.jsonl'), log })
     cleanups.push({ name: 'rpc proxies', run: proxies.stop })
 
-    const tradeTable = tables.tradeTable, launchTable = tables.launchTable ?? null
+    const tradeTable = tables.tradeTable, launchTable = ownTables?.launchTable ?? tables.launchTable ?? null
     const token = randomBytes(32).toString('base64url'), port = await freePort(), https = httpsClient(tls.cert)
     const preload = pathToFileURL(path.join(REPO_ROOT, 'scripts/e2e/hooks-native/offline-preload.mjs')).href
     // One key ring for the whole run, so custody encrypted before a restart stays readable after it.
     const keyRing = { 'local-e2e': randomBytes(32).toString('base64') }
     async function writeBundle() {
-      const bundle = await collectLocalBundle({ genesisHash: validator.genesisHash, providers: proxies.providers, tlsCert: tls.cert, tradeTable, launchTable,
+      const bundle = await collectLocalBundle({ genesisHash: validator.genesisHash, providers: proxies.providers, tlsCert: tls.cert, tradeTable, launchTable: own ? null : launchTable,
         reviewer: address('admin'), treasury: address('treasury'), build: set.bundle.build })
       const bytes = Buffer.from(JSON.stringify(bundle)), file = path.join(root, `operator-bundle-${sha256(bytes).slice(0, 12)}.json`)
       writeFileSync(file, bytes, { mode: 0o600 })
-      log(`local operator bundle ${sha256(bytes).slice(0, 16)}… (build ${set.bundle.build}, profile ${bundle.profile.expectedSha256.slice(0, 16)}…, trade table ${tradeTable}${launchTable ? `, launch table ${launchTable}` : ''})`)
-      return { file, sha256: sha256(bytes), profileSha256: bundle.profile.expectedSha256 }
+      log(`local operator bundle ${sha256(bytes).slice(0, 16)}… (build ${set.bundle.build}, profile ${bundle.profile.expectedSha256.slice(0, 16)}…, trade table ${tradeTable}${launchTable && !own ? `, launch table ${launchTable}` : ''})`)
+      let stackBundle = null
+      if (own) {
+        const ownBundle = await collectLocalStackBundle({ own, genesisHash: validator.genesisHash, providers: proxies.providers, tlsCert: tls.cert, tradeTable: ownTables.tradeTable,
+          launchTable: ownTables.launchTable, reviewer: address('admin'), treasury: address('treasury') })
+        const ownBytes = Buffer.from(JSON.stringify(ownBundle)), ownFile = path.join(root, `stack-bundle-${sha256(ownBytes).slice(0, 12)}.json`)
+        writeFileSync(ownFile, ownBytes, { mode: 0o600 })
+        log(`our stack's bundle ${sha256(ownBytes).slice(0, 16)}… (${own.name}, profile ${ownBundle.profile.expectedSha256.slice(0, 16)}…, trade table ${ownTables.tradeTable}, launch table ${ownTables.launchTable})`)
+        stackBundle = { file: ownFile, sha256: sha256(ownBytes), profileSha256: ownBundle.profile.expectedSha256 }
+      }
+      return { file, sha256: sha256(bytes), profileSha256: bundle.profile.expectedSha256, stack: stackBundle }
     }
     // The website and the owner agent, restartable as a deploy would restart them (E2 recovery scenarios use this).
     let app = null, bundleState = null
     async function startApp({ recollect = true, env: overrides = {} } = {}) {
       if (recollect || !bundleState) bundleState = await writeBundle()
       const env = { ...siteEnvironment({ base: BASE_ENV, port, tls, genesisHash: validator.genesisHash, databaseUrl: database.url, proxies: proxies.providers,
-        bundle: bundleState, keyRing, ownerTokenSha256: createHash('sha256').update(token).digest('hex'), admin: address('admin'), preload, solUsd: FIXED_SOL_USD }), ...mode.env, ...overrides }
+        bundle: bundleState, keyRing, ownerTokenSha256: createHash('sha256').update(token).digest('hex'), admin: address('admin'), preload, solUsd: FIXED_SOL_USD }), ...mode.env,
+        ...(bundleState.stack ? { HOOKLAB_STACK_BUNDLE_FILE: bundleState.stack.file, HOOKLAB_STACK_BUNDLE_SHA256: bundleState.stack.sha256, HOOK_STACK_ADMIN_ADDRESS: address('admin') } : {}), ...overrides }
       // The production bootstrap, with the website's environment, in a child first: a clear error instead of a one-line refusal.
       // Async: the RPC proxies it reads through live in this process, so a blocking spawn would starve them.
       const check = await runChild(process.execPath, [path.join(REPO_ROOT, 'scripts/e2e/hooks-native/bootstrap-check.mjs')], { cwd: REPO_ROOT, env, timeoutMs: 120_000 })
@@ -119,6 +132,24 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
         const result = await driver.run('customer-grant', ['payer', 'admin'], { extra: ['--creator', creator] })
         return { signature: result.receipt.signature, postconditions: result.receipt.postconditions }
       },
+      // The owner's own-stack stages a test may run (self-serve): the guardian's pauses, the admin reopening, the platform
+      // fee collection. Each is the owner driver's plan -> execute with its exact approval, as the owner runs it.
+      'POST /owner/stage': async ({ stage, pause = null, mint = null }) => {
+        if (!ownDriver) throw Error('no own stack in this mode')
+        const plan = { 'guardian-pause': [['payer', 'guardian'], { extra: ['--pause', pause] }], 'open-launches': [['payer', 'admin'], { approve: true }],
+          'open-trading': [['payer', 'admin'], { approve: true }], 'collect-native': [['payer'], { extra: ['--mint', mint] }] }[stage]
+        if (!plan || (stage === 'guardian-pause' && !['creation', 'trading', 'both'].includes(pause))) throw Error('unsupported owner stage')
+        const result = await ownDriver.run(stage, ...plan)
+        return { signature: result.receipt.signature, postconditions: result.receipt.postconditions }
+      },
+      // The owner's moderation tool (scripts/hooklab-moderate.mjs), as the owner runs it, with the owner token.
+      'POST /owner/moderate': async ({ action, mint, reason = null }) => {
+        if (!['delist', 'relist'].includes(action)) throw Error('unsupported moderation action')
+        const args = [path.join(REPO_ROOT, 'scripts/hooklab-moderate.mjs'), action, mint, ...(reason ? ['--reason', reason] : []), '--origin', app.site.origin, '--yes']
+        const result = await runChild(process.execPath, args, { cwd: REPO_ROOT, env: { ...BASE_ENV, HOOK_OWNER_APPROVAL_TOKEN: token, NODE_EXTRA_CA_CERTS: tls.cert }, timeoutMs: 60_000 })
+        if (result.status !== 0) throw Error(`moderation refused: ${result.stderr.trim() || result.stdout.trim()}`)
+        return { output: result.stdout.trim() }
+      },
       'GET /rpc/sends': async () => proxies.sends(),
       'POST /rpc/faults': async ({ loseNextSendResponse = false, holdNextSendMs = 0, lowerLastValidBlockHeight = null }) => {
         Object.assign(proxies.faults, { loseNextSendResponse: loseNextSendResponse === true, holdNextSendMs: Math.min(Number(holdNextSendMs) || 0, 120_000),
@@ -140,7 +171,9 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
     cleanups.push({ name: 'control', run: control.stop })
     // The control API is up before the app, so a held failure can be retried with POST /site/restart.
     const stateFile = path.join(root, 'stack.json')
-    const writeState = () => writeFileSync(stateFile, JSON.stringify({ mode: modeName, programSet: set.name, programs: set.ids, quoteMint: set.quoteMint, launchTable, root, origin: `https://localhost:${port}`, genesisHash: validator.genesisHash,
+    const writeState = () => writeFileSync(stateFile, JSON.stringify({ mode: modeName, programSet: own ? `${set.name} + ${own.name}` : set.name, programs: own ? own.ids : set.ids, quoteMint: own ? own.quoteMint : set.quoteMint,
+      legacyPrograms: own ? set.ids : null, ownTradeTable: ownTables?.tradeTable ?? null, launchTable,
+      idlDir: own ? path.join(root, 'own-stack', 'idl') : null, root, origin: `https://localhost:${port}`, genesisHash: validator.genesisHash,
       validator: { url: validator.url, faucetPort: validator.faucetPort }, database: { url: database.url, name: database.name }, rpc: proxies.providers,
       control: { url: control.url, token: controlToken }, tls: { cert: tls.cert, spki: tls.spki }, roles: Object.fromEntries(Object.keys(roles).map(role => [role, address(role)])),
       tradeTable, bundle: app ? { sha256: app.bundle.sha256, profileSha256: app.bundle.profileSha256 } : null, solUsd: FIXED_SOL_USD }, null, 2), { mode: 0o600 })

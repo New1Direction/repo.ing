@@ -15,6 +15,7 @@ import { Agent, request } from 'node:https'
 import { Connection } from '@solana/web3.js'
 import { collectProductionOperatorBundle } from '../../../src/hooklab-production-operator-bundle.mjs'
 import { NATIVE_BUNDLE_BUILDS, collectNativeProductionBundle } from '../../../src/hooklab-production-native-bundle.mjs'
+import { collectStackProductionBundle } from '../../../src/hooklab-production-stack-bundle.mjs'
 
 /** A fetch for @solana/web3.js that trusts exactly the stack's throwaway certificate (web3.js on Node uses the global
  * fetch, which ignores httpAgent and cannot pick up a CA created after this process started). */
@@ -35,6 +36,25 @@ export function trustingFetch(agent) {
 }
 
 const LOCAL_LABEL ='repoing/local-operator-bundle/1', PRODUCTION_LABEL = 'repoing/production-operator-bundle/1'
+
+function localOptions({ genesisHash, providers, tlsCert, tradeTable, launchTable, reviewer, treasury }) {
+  const agent = new Agent({ ca: readFileSync(tlsCert), keepAlive: true })
+  const connections = providers.map(({ provider, origin }) => ({ provider, connection: new Connection(origin, { commitment: 'finalized', fetch: trustingFetch(agent) }) }))
+  const trustDomains = providers.map(({ provider, origin }) => ({ provider, trustDomain: 'single-local-validator', origin }))
+  return { agent, options: { connections, trustDomains, lookupTable: tradeTable, reviewer, treasury, approvalReference: 'DISPOSABLE-LOCAL-E2E-NOT-PRODUCTION',
+    network: { genesisHash, local: true }, ...(launchTable ? { launchTable } : {}) } }
+}
+function relabel(bundle, genesisHash) {
+  if (bundle.schema !== LOCAL_LABEL || bundle.genesisHash !== genesisHash) throw Error('the collector did not return a local dry-run bundle for this validator')
+  return { ...bundle, schema: PRODUCTION_LABEL }
+}
+
+/** Our own stack's bundle (src/hooklab-production-stack-bundle.mjs, as scripts/hooklab-stack-bundle.mjs collects it): the
+ * stack's programs, quote marker, ELF and IDL pins, no bridge, and its two frozen shared tables. */
+export async function collectLocalStackBundle({ own, ...rest }) {
+  const { agent, options } = localOptions(rest)
+  try { return relabel(await collectStackProductionBundle({ ...options, stack: own.stack, idls: own.idls }), rest.genesisHash) } finally { agent.destroy() }
+}
 
 export async function collectLocalBundle({ genesisHash, providers, tlsCert, tradeTable, launchTable = null, reviewer, treasury, build }) {
   if (build !== 'bundle-2' && !NATIVE_BUNDLE_BUILDS.includes(build)) throw Error(`unknown bundle build ${build}`)
