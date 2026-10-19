@@ -30,6 +30,9 @@ export const MIGRATIONS = Object.freeze({
   'launch-pricing': Object.freeze({ files: ['hooklab-launch-pricing-schema.sql'], requires: ['hook_lab_launch_requests'] }),
   // The Hooks coin page's trade index (src/hooklab-coin-trades.mjs): two new tables that reference nothing.
   'coin-trades': Object.freeze({ files: ['hooklab-coin-trades-schema.sql'], requires: [] }),
+  // Native-SOL trades and creator claims: widens the signing stage list. Apply before the native routes are switched on.
+  'native-stages': Object.freeze({ files: ['hooklab-native-signing-native-schema.sql'], requires: ['hook_lab_native_signing_operations'],
+    inspect: "select pg_get_constraintdef(oid) as stage_check from pg_constraint where conname='hook_lab_native_signing_operations_stage_check'" }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

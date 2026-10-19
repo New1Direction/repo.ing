@@ -7,6 +7,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { FILES } from '../src/hooklab-owner-driver/artifacts.mjs'
+import { NATIVE_FILES } from '../src/hooklab-native-pins.mjs'
 
 const KEY_FILES = ['wallet.json', 'deploy-keypair.json', 'vendor/hooklab-event-abi/inclusive-max-wallet-candidate/admin-wallet.json']
 
@@ -15,14 +16,14 @@ test('every pinned Hook Lab artifact reaches the Railway upload, and wallet and 
   try {
     execFileSync('git', ['init', '-q', dir])
     copyFileSync('.railwayignore', path.join(dir, '.gitignore'))
-    for (const file of [...Object.values(FILES), ...KEY_FILES]) {
+    for (const file of [...Object.values(FILES), ...NATIVE_FILES, ...KEY_FILES]) {
       mkdirSync(path.dirname(path.join(dir, file)), { recursive: true }); writeFileSync(path.join(dir, file), '')
     }
     const ignored = file => {
       try { execFileSync('git', ['-c', 'core.excludesFile=/dev/null', '-C', dir, 'check-ignore', '-q', file]); return true }
       catch (error) { if (error.status === 1) return false; throw error }
     }
-    for (const file of Object.values(FILES)) assert.equal(ignored(file), false, `${file} is left out of the Railway upload`)
+    for (const file of [...Object.values(FILES), ...NATIVE_FILES]) assert.equal(ignored(file), false, `${file} is left out of the Railway upload`)
     for (const file of KEY_FILES) assert.equal(ignored(file), true, `${file} would be uploaded`)
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
