@@ -12,6 +12,8 @@ import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
 import { assertSameOrigin } from './auth.mjs'
 import { walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQuota } from './hooklab-wallet-identity.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
+import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
+import { launchPriceEstimate } from './hooklab-launch-price.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 // A 384 KB PNG as base64 plus its data: prefix, and the JSON around it.
 const MAX_IMAGE_DATA_URL=524_310,MAX_BODY_BYTES=540_000
@@ -24,16 +26,17 @@ const inputSchema=z.discriminatedUnion('action',[
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 const enabled=env=>env.HOOK_OWNER_APPROVED_LAUNCHES==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
 export function createLaunchRequestsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,
- store=ownerApprovalStore,principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
+ store=ownerApprovalStore,principalStore=walletPrincipalStore,quota=walletIdentityQuota,launchPriceEstimate:estimate=launchPriceEstimate}={}){
  return async request=>{
   if(!enabled(env))return reply({status:'blocked',online:false,error:'Launch requests are not open yet.'})
   let pool
   try{
    const config=configuration(env);pool=database(config)
-   const approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS})
+   const usdPricing=usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing})
    if(request.method==='GET'){
     if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
-    return reply({status:'available',...await approvals.availability()})
+    // With USD pricing on, the page shows SOL amounts at today's price until an invite fixes them (null: USD only).
+    return reply({status:'available',...await approvals.availability(),...(usdPricing&&{launchPrice:await estimate()})})
    }
    if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
    try{assertSameOrigin(request,config.origin);if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}

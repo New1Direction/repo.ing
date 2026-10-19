@@ -7,6 +7,7 @@ import { Keypair,PublicKey } from '@solana/web3.js'
 import pg from 'pg'
 import { ownerApprovalStore,remoteAdminSigner,verifyEd25519 } from '../src/hooklab-owner-approval.mjs'
 import { MIGRATIONS,migrationSchema,productionSchema } from '../scripts/hooklab-production-schema.mjs'
+import { STANDARD_VIRTUAL_QUOTE } from '../src/hooklab-launch-pricing.mjs'
 
 const seed=label=>createHash('sha256').update(`OWNER APPROVAL TEST FIXTURE ONLY: ${label}`).digest()
 const keypair=label=>Keypair.fromSeed(seed(label))
@@ -38,6 +39,10 @@ function reviewFor(message,{validUntilSlot=1_000,lastValidBlockHeight=2_000,revi
   requiredSigners:[creatorA,admin],validUntilSlot,lastValidBlockHeight,reviewExpiresAtMs}
 }
 const intent={name:'Canary Coin',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:200}
+// What the native launcher binds on reserve: the invited coin plus the opening price it compiles.
+const launch=(over={})=>({...intent,virtualQuote:STANDARD_VIRTUAL_QUOTE,...over})
+const price={solUsdMicros:'105630000',virtualQuote:'53251917070',
+ sources:[{source:'coingecko',usdMicros:'105620000'},{source:'jupiter',usdMicros:'105630000'},{source:'coinbase',usdMicros:'105640000'}]}
 
 test('presence, queue, single invite and exact-detail binding',async()=>withDatabase(async pool=>{
  const store=ownerApprovalStore(pool,{adminAddress:admin})
@@ -60,13 +65,15 @@ test('presence, queue, single invite and exact-detail binding',async()=>withData
 
  const op=randomUUID(),db=await pool.connect()
  try{
-  await assert.rejects(store.bindLaunch(db,creatorB,op,{...intent,symbol:'BBB'}),/Wait for repo.ing/)
-  await assert.rejects(store.bindLaunch(db,creatorA,op,{...intent,name:'Other'}),/differ from the approved/)
-  await assert.rejects(store.bindLaunch(db,creatorA,op,{...intent,capBps:500}),/differ from the approved/,'cap is bound to the invite')
-  await assert.rejects(store.bindLaunch(db,creatorA,op,{...intent,creatorFeeBps:200}),/differ from the approved/,'fee is bound to the invite')
-  assert.equal((await store.bindLaunch(db,creatorA,op,intent)).status,'launching')
-  assert.equal((await store.bindLaunch(db,creatorA,op,intent)).custodyOperationId,op,'same operation is idempotent')
-  await assert.rejects(store.bindLaunch(db,creatorA,randomUUID(),intent),/bound to another launch/)
+  await assert.rejects(store.bindLaunch(db,creatorB,op,launch({symbol:'BBB'})),/Wait for repo.ing/)
+  await assert.rejects(store.bindLaunch(db,creatorA,op,launch({name:'Other'})),/differ from the approved/)
+  await assert.rejects(store.bindLaunch(db,creatorA,op,launch({capBps:500})),/differ from the approved/,'cap is bound to the invite')
+  await assert.rejects(store.bindLaunch(db,creatorA,op,launch({creatorFeeBps:200})),/differ from the approved/,'fee is bound to the invite')
+  for(const virtualQuote of ['53251917070','999999999',undefined])
+   await assert.rejects(store.bindLaunch(db,creatorA,op,launch({virtualQuote})),/opening price differs/,'pricing off: only the standard 1 SOL quote launches')
+  assert.equal((await store.bindLaunch(db,creatorA,op,launch())).status,'launching')
+  assert.equal((await store.bindLaunch(db,creatorA,op,launch())).custodyOperationId,op,'same operation is idempotent')
+  await assert.rejects(store.bindLaunch(db,creatorA,randomUUID(),launch()),/bound to another launch/)
  }finally{db.release()}
  await assert.rejects(store.invite(b.id,{inviteMs:600_000}),/Another creator is already invited/,'launching still blocks a second creator')
  assert.equal((await store.markLaunched(op)).status,'launched')
@@ -75,6 +82,44 @@ test('presence, queue, single invite and exact-detail binding',async()=>withData
  assert.equal((await store.requestFor(creatorB)).status,'invite-expired')
  const again=await store.createRequest(creatorB,{id:randomUUID(),...intent})
  assert.equal((await store.decline(again.id)).status,'declined')
+}))
+
+test('USD pricing: the invite fixes one immutable price, and only that opening price can launch',async()=>withDatabase(async pool=>{
+ const store=ownerApprovalStore(pool,{adminAddress:admin,usdPricing:true})
+ const a=await store.createRequest(creatorA,{id:randomUUID(),...intent})
+ assert.equal((await store.requestFor(creatorA)).pricing,null,'queued: no price is fixed yet')
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000}),/Launch price is missing/,'pricing on: an invite needs a price')
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,virtualQuote:'112500000000'}}),/does not follow from its SOL price/)
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,sources:price.sources.slice(0,1)}}),/at least two must agree/)
+ await assert.rejects(store.invite(a.id,{inviteMs:600_000,price:{...price,solUsdMicros:'40000000',sources:price.sources.map(s=>({...s,usdMicros:'40000000'}))}}),/outside the launch config/)
+ assert.equal((await store.requestFor(creatorA)).status,'queued','a refused price leaves the request queued')
+ assert.equal((await pool.query('select count(*)::int n from hook_lab_launch_request_prices')).rows[0].n,0)
+
+ const invited=await store.invite(a.id,{inviteMs:600_000,price})
+ assert.equal(invited.status,'invited')
+ const {pricedAt,...fixed}=invited.pricing
+ assert.deepEqual(fixed,price);assert.ok(Date.parse(pricedAt)>0)
+ assert.deepEqual((await store.requestFor(creatorA)).pricing,invited.pricing,'the creator sees the fixed price')
+ assert.deepEqual((await store.heartbeat({accepting:true,agentAddress:admin})).requests[0].pricing,invited.pricing,'the agent sees what it approves')
+ const op=randomUUID(),db=await pool.connect()
+ try{
+  for(const virtualQuote of [STANDARD_VIRTUAL_QUOTE,'53251917071',undefined])
+   await assert.rejects(store.bindLaunch(db,creatorA,op,launch({virtualQuote})),/opening price differs/,`refused: ${virtualQuote}`)
+  assert.equal((await store.bindLaunch(db,creatorA,op,launch({virtualQuote:price.virtualQuote}))).status,'launching')
+  await assert.rejects(store.bindLaunch(db,creatorA,op,launch()),/opening price differs/,'a bound launch keeps its price')
+ }finally{db.release()}
+ await assert.rejects(pool.query('update hook_lab_launch_request_prices set virtual_quote=1000000000'),/immutable/)
+ await assert.rejects(pool.query('delete from hook_lab_launch_request_prices'),/immutable/)
+
+ // Flag off on the same database: no pricing in any answer, and launches compile the standard 1 SOL quote again.
+ const off=ownerApprovalStore(pool,{adminAddress:admin})
+ assert.equal('pricing' in (await off.requestFor(creatorA)),false)
+ await off.markLaunched(op)
+ const b=await off.createRequest(creatorB,{id:randomUUID(),...intent})
+ const plain=await off.invite(b.id,{inviteMs:600_000,price})
+ assert.equal('pricing' in plain,false,'a price passed while off is ignored, never stored')
+ assert.equal((await pool.query('select count(*)::int n from hook_lab_launch_request_prices where request_id=$1',[b.id])).rows[0].n,0)
+ assert.equal((await off.bindLaunch(pool,creatorB,randomUUID(),launch())).status,'launching')
 }))
 
 test('remote admin signer returns only a verified owner signature before the real deadline',async()=>withDatabase(async pool=>{
@@ -135,7 +180,7 @@ test('per-launch lookup table: requested once, created only by the agent claim, 
  const configBytes=Buffer.from(fixture.accounts['launch-config'].dataBase64,'base64'),realAdmin='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5'
  const store=ownerApprovalStore(pool,{adminAddress:admin})
  const request=await store.createRequest(creatorA,{id:randomUUID(),...intent});await store.invite(request.id,{inviteMs:600_000})
- const preparationId=randomUUID();await store.bindLaunch(pool,creatorA,preparationId,intent)
+ const preparationId=randomUUID();await store.bindLaunch(pool,creatorA,preparationId,launch())
  const launchRequest={schema:'repoing/inclusive-max-wallet-launch-request/1',policyKind:'max-wallet',policyVersion:2,creator:creatorA,feePayer:creatorA,mint:keypair('mint').publicKey.toBase58(),
   selectedConfig:keypair('selected').publicKey.toBase58(),capBps:200,label:'customer',creatorFeeBps:100,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500,reviewer:realAdmin,
   name:intent.name,symbol:intent.symbol,uri:intent.uri,virtualQuote:'1000000000'}
@@ -170,7 +215,7 @@ test('per-launch lookup table: requested once, created only by the agent claim, 
  // A request the agent never answers fails clearly instead of hanging; without allowCreate nothing is requested.
  const second=await store.createRequest(creatorB,{id:randomUUID(),...intent});await store.cancelRequest(creatorA,request.id).catch(()=>{})
  await pool.query("update hook_lab_launch_requests set status='launched' where id=$1",[request.id])
- await store.invite(second.id,{inviteMs:600_000});const prep2=randomUUID();await store.bindLaunch(pool,creatorB,prep2,intent)
+ await store.invite(second.id,{inviteMs:600_000});const prep2=randomUUID();await store.bindLaunch(pool,creatorB,prep2,launch())
  const lr2={...launchRequest,creator:creatorB,feePayer:creatorB,mint:keypair('mint-2').publicKey.toBase58()}
  const silent=remoteLaunchLookupTable(pool,{envelope,connections:[{connection},{connection}],adminAddress:realAdmin,sleep:async()=>{},pollMs:1,timeoutMs:20,
   readLaunch:async()=>({owner_wallet:creatorB,launch_request:lr2,launch_request_id:second.id})})

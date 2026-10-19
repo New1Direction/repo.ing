@@ -9,6 +9,7 @@ import { clientAddress } from '../../src/client-address.mjs'
 import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
+import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(1).max(9999),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict(),
@@ -41,8 +42,9 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    if(input.action==='reserve'){
     if(env.HOOK_OWNER_APPROVED_LAUNCHES==='true'){
      // Owner-approved release: prepare only the exact coin the owner invited for this wallet.
-     const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS}),db=await pool.connect()
-     try{await db.query('begin');await approvals.bindLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps});await db.query('commit')}
+     // The opening price is bound too: reserve compiles exactly input.virtualQuote into the launch.
+     const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing:usdLaunchPricingEnabled(env)}),db=await pool.connect()
+     try{await db.query('begin');await approvals.bindLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,virtualQuote:input.virtualQuote});await db.query('commit')}
      catch(error){await db.query('rollback').catch(()=>{});return reply({status:'awaiting-owner',error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Wait for repo.ing to invite your launch request.'},409)}
      finally{db.release()}
     }

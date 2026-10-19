@@ -84,7 +84,7 @@ test('native launch reserve waits for the owner invite; expire and launched mark
  const launchEnv={HOOK_NATIVE_LAUNCH_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true',HOOK_OWNER_APPROVED_LAUNCHES:'true',HOOK_LAUNCH_ADMIN_ADDRESS:admin}
  const reserveInput={action:'reserve',operationId:id,capBps:200,label:'canary',name:'Canary',symbol:'CNRY',uri:'',virtualQuote:'1000000000',creatorFeeBps:100}
  let reserves=0,expires=0;const launched=[];let invited=false
- const approvals=()=>({bindLaunch:async(_db,wallet,operationId,intent)=>{assert.equal(wallet,creator);assert.equal(operationId,id);assert.deepEqual(intent,{name:'Canary',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:200})
+ const approvals=()=>({bindLaunch:async(_db,wallet,operationId,intent)=>{assert.equal(wallet,creator);assert.equal(operationId,id);assert.deepEqual(intent,{name:'Canary',symbol:'CNRY',uri:'',creatorFeeBps:100,capBps:200,virtualQuote:'1000000000'},'the compiled opening price is bound too')
   if(!invited)throw known('Wait for repo.ing to invite your launch request')},markLaunched:async op=>launched.push(op)})
  const service={reserve:async({owner})=>{reserves++;return {owner,operationId:id,mint:'m',selectedConfig:'c',request:{}}},lifecycle:{
   expire:async()=>{expires++;return {id,status:'expired',review:{messageBase64:'x',messageSha256:'a'.repeat(64)}}},reconcile:async()=>({id,stage:'launch',status:'finalized-success',custodyOperationId:id,review:{messageBase64:'x',messageSha256:'a'.repeat(64)}})}}
@@ -95,6 +95,48 @@ test('native launch reserve waits for the owner invite; expire and launched mark
  invited=true;assert.equal((await handler(launchRequest(reserveInput))).status,200);assert.equal(reserves,1)
  assert.equal((await (await handler(launchRequest({action:'expire',signingId:id}))).json()).operation.status,'expired');assert.equal(expires,1)
  await handler(launchRequest({action:'reconcile',signingId:id}));assert.deepEqual(launched,[id])
+})
+
+const fixedPrice={solUsdMicros:'105630000',virtualQuote:'53251917070',sources:[{source:'coingecko',usdMicros:'105620000'},{source:'jupiter',usdMicros:'105630000'}]}
+test('USD pricing: the owner invite reads the SOL price fresh and stores it; off, invites stay exactly as before',async()=>{
+ const seen=[],options=(env,launchPrice)=>({env,configuration:()=>({}),database:()=>pool,launchPrice,
+  store:(_pool,settings)=>({invite:async(requestId,input)=>{seen.push([settings.usdPricing,requestId,input]);return {id:requestId,status:'invited'}}})})
+ let reads=0
+ const on=createOwnerApprovalsHandler(options({...ownerEnv,HOOK_LAUNCH_USD_PRICING:'true'},async()=>{reads++;return fixedPrice}))
+ assert.equal((await on(ownerRequest({action:'invite',requestId:id,inviteSeconds:600}))).status,200)
+ assert.deepEqual(seen.pop(),[true,id,{inviteMs:600_000,price:fixedPrice}]);assert.equal(reads,1)
+ const off=createOwnerApprovalsHandler(options(ownerEnv,async()=>{reads++;return fixedPrice}))
+ assert.equal((await off(ownerRequest({action:'invite',requestId:id,inviteSeconds:600}))).status,200)
+ assert.deepEqual(seen.pop(),[false,id,{inviteMs:600_000}]);assert.equal(reads,1,'off: no price is read')
+ // A refused price reaches the owner in plain words and invites nothing.
+ const refused=createOwnerApprovalsHandler(options({...ownerEnv,HOOK_LAUNCH_USD_PRICING:'true'},async()=>{throw Object.assign(Error('SOL price sources disagree by more than 2% (coingecko $100.00, jupiter $103.00). Try again in a minute.'),{code:'LAUNCH_PRICE_REFUSED'})}))
+ const response=await refused(ownerRequest({action:'invite',requestId:id,inviteSeconds:600}))
+ assert.equal(response.status,409);assert.match((await response.json()).error,/disagree by more than 2%/);assert.equal(seen.length,0)
+})
+
+test('USD pricing: creators see a cached estimate before the invite, and nothing new while it is off',async()=>{
+ const store={availability:async()=>({online:true,lastSeenAt:null})},settings=[]
+ const handler=(env,launchPriceEstimate)=>createLaunchRequestsHandler({...creatorOptions(store),env,launchPriceEstimate,store:(_pool,s)=>{settings.push(s.usdPricing);return store}})
+ const on=await (await handler({...creatorEnv,HOOK_LAUNCH_USD_PRICING:'true'},async()=>({solUsdMicros:'105630000',virtualQuote:'53251917070'}))(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()
+ assert.deepEqual(on,{status:'available',online:true,lastSeenAt:null,launchPrice:{solUsdMicros:'105630000',virtualQuote:'53251917070'}})
+ const unknown=await (await handler({...creatorEnv,HOOK_LAUNCH_USD_PRICING:'true'},async()=>null)(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()
+ assert.equal(unknown.launchPrice,null,'sources down: the page shows the USD targets alone')
+ const off=await (await handler(creatorEnv,async()=>{throw Error('never read')})(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()
+ assert.deepEqual(off,{status:'available',online:true,lastSeenAt:null});assert.deepEqual(settings,[true,true,false])
+})
+
+test('USD pricing: reserve binds the stored opening price through the pricing-aware store',async()=>{
+ const launchEnv={HOOK_NATIVE_LAUNCH_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true',HOOK_OWNER_APPROVED_LAUNCHES:'true',HOOK_LAUNCH_ADMIN_ADDRESS:admin,HOOK_LAUNCH_USD_PRICING:'true'}
+ const bound=[],reserved=[]
+ const handler=createNativeLaunchHandler({env:launchEnv,configuration:()=>({origin:'https://repo.ing'}),database:()=>pool,quota:async()=>true,principalStore:()=>({resolve:async()=>({wallet:creator})}),
+  runtime:()=>({reserve:async({owner,input})=>{reserved.push(input.virtualQuote);return {owner,operationId:id,mint:'m',selectedConfig:'c',request:{}}},lifecycle:{}}),
+  ownerApprovals:(_pool,settings)=>({bindLaunch:async(_db,_wallet,_op,intent)=>{bound.push([settings.usdPricing,intent.virtualQuote]);if(intent.virtualQuote!==fixedPrice.virtualQuote)throw known('The opening price differs from the approved request')}})})
+ const reserve=virtualQuote=>handler(new Request('https://repo.ing/api/hook-lab/native-launch',{method:'POST',headers:{origin:'https://repo.ing','content-type':'application/json',cookie:`__Host-hook-wallet-session=${sessionToken}`},
+  body:JSON.stringify({action:'reserve',operationId:id,capBps:200,label:'CNRY',name:'Canary',symbol:'CNRY',uri:'',virtualQuote,creatorFeeBps:100})}))
+ const tampered=await reserve('112500000000');assert.equal(tampered.status,409);assert.match((await tampered.json()).error,/opening price differs/)
+ assert.deepEqual(reserved,[],'nothing is prepared at a price the owner did not fix')
+ assert.equal((await reserve(fixedPrice.virtualQuote)).status,200);assert.deepEqual(reserved,[fixedPrice.virtualQuote])
+ assert.deepEqual(bound,[[true,'112500000000'],[true,fixedPrice.virtualQuote]])
 })
 
 test('coin metadata and image are public, cacheable and only for coins that can launch',async()=>{
