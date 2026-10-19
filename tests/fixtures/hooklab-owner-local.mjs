@@ -90,13 +90,37 @@ export async function cloneBridge(dir, rpc = process.env.HOOKLAB_OWNER_MAINNET_R
  * genesisAccount rows. */
 export async function startValidator(root, roles, { bridge = null, elfDir = ELF_DIR, elfSha256 = {}, accounts = [] } = {}) {
   for (const [role, file] of Object.entries(ELF_FILES)) if (sha256(readFileSync(path.join(elfDir, file))) !== (elfSha256[role] ?? ELF[role].sha256)) throw Error(`Pinned ${role} ELF differs`)
-  const base = await portRange(4), rpc = base, faucet = base + 2, gossip = base + 3
-  const ledger = path.join(root, 'ledger'), genesis = path.join(root, 'genesis'), upgrade = roles.upgrade.publicKey.toBase58()
+  const genesis = path.join(root, 'genesis'), upgrade = roles.upgrade.publicKey.toBase58()
   writeGenesis(genesis, roles, { bridge, extra: accounts })
+  return launchValidator(root, genesis, [...Object.entries(ELF_FILES).flatMap(([role, file]) => ['--upgradeable-program', PROGRAMS[role], path.join(elfDir, file), upgrade]),
+    ...(bridge ? ['--upgradeable-program', PROGRAMS.bridge, bridge.elf, upgrade] : [])])
+}
+// Our own stack (tests/fixtures/hooklab-own-stack.mjs ownStack): its four relocated ELFs at its program IDs, upgradeable
+// by the synthetic upgrade role (the stack's upgradeAuthority must be that role), and its quote marker in genesis as
+// hook-lab's deploy creates it: a canonical Mint of the stack's token program that nobody controls. No bridge, no legacy
+// quote mint, no holdings.
+export function markerMintRow(stack, roles) {
+  const zero = new BN(0)
+  return genesisAccount(stack.quoteMint, { lamports: 10000000, owner: stack.programs.token, data: tokenAccount('Mint', { version: 1, decimals: 9, supply: zero, max_supply: zero,
+    mint_authority: null, freeze_authority: null, hook_authority: null, metadata_authority: null, hook_program: null, hook_flags: 0, name: 'Hooks quote marker', symbol: 'HQM',
+    uri: '', created_at: zero, creator: roles.payer.publicKey, hook_signer_bump: 0, reserved: Array(31).fill(0) }, 519) })
+}
+export async function startStackValidator(root, roles, { stack, elfs }, { accounts = [], marker = true } = {}) {
+  const upgrade = roles.upgrade.publicKey.toBase58()
+  if (stack.upgradeAuthority !== upgrade) throw Error('The stack\'s upgrade authority must be the synthetic upgrade role')
+  const elfDir = path.join(root, 'stack-elf'), genesis = path.join(root, 'genesis')
+  mkdirSync(elfDir, { recursive: true, mode: 0o700 }); mkdirSync(genesis, { recursive: true, mode: 0o700 })
+  const rows = [account(roles.payer.publicKey.toBase58(), { lamports: 1000000000000 }), account(upgrade, { lamports: 100000000000 }), ...(marker ? [markerMintRow(stack, roles)] : []), ...accounts]
+  rows.forEach((row, i) => writeFileSync(path.join(genesis, `account-${i}.json`), JSON.stringify(row)))
+  return launchValidator(root, genesis, Object.entries(elfs).flatMap(([role, bytes]) => {
+    const file = path.join(elfDir, `${role}.so`); writeFileSync(file, bytes)
+    return ['--upgradeable-program', stack.programs[role], file, upgrade]
+  }))
+}
+async function launchValidator(root, genesis, programArgs) {
+  const base = await portRange(4), rpc = base, faucet = base + 2, gossip = base + 3, ledger = path.join(root, 'ledger')
   const args = ['--ledger', ledger, '--reset', '--quiet', '--bind-address', '127.0.0.1', '--rpc-port', String(rpc), '--faucet-port', String(faucet), '--gossip-port', String(gossip),
-    '--limit-ledger-size', '10000', '--account-dir', genesis,
-    ...Object.entries(ELF_FILES).flatMap(([role, file]) => ['--upgradeable-program', PROGRAMS[role], path.join(elfDir, file), upgrade]),
-    ...(bridge ? ['--upgradeable-program', PROGRAMS.bridge, bridge.elf, upgrade] : [])]
+    '--limit-ledger-size', '10000', '--account-dir', genesis, ...programArgs]
   const child = spawn(VALIDATOR, args, { stdio: ['ignore', 'ignore', 'pipe'], detached: false })
   let stderr = ''; child.stderr.on('data', d => { stderr = (stderr + d).slice(-4000) })
   const url = `http://127.0.0.1:${rpc}`, url2 = `http://localhost:${rpc}`, connection = new Connection(url, { commitment: 'finalized' })
