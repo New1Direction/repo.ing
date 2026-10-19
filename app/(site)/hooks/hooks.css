@@ -67,23 +67,23 @@
 .hooks-status .launch-token-summary{max-width:620px}
 .hooks-returning{margin:0 0 18px;font-size:14px}
 .hooks-uncertain{padding:14px 16px;border:1px solid color-mix(in srgb,var(--red) 45%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--red) 7%,var(--surface))}.hooks-uncertain p{margin:0 0 10px;color:var(--text)!important;font-size:14px}
-/* Blocks: rules snap onto a coin like bricks; live ones carry green studs, coming ones sit dashed and quiet. */
+/* Blocks: live rules sit in a green-edged card; coming ones sit dashed and quiet. */
 .hooks-blocks{margin-top:26px}
 .hooks-blocks-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:14px}.hooks-blocks-head .field-label{margin:0}.hooks-blocks-head>span{color:var(--muted);font-size:13px}
-.hooks-block{--stud:var(--border-strong);position:relative;margin-top:12px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--bg)}
-.hooks-block::before{content:'';position:absolute;top:-7px;left:18px;width:78px;height:7px;background:radial-gradient(ellipse 8px 7px at 50% 100%,var(--stud) 96%,transparent 100%) 0 0/26px 7px repeat-x}
-.hooks-block.is-on{--stud:var(--green);border-color:color-mix(in srgb,var(--green) 55%,var(--border));background:color-mix(in srgb,var(--green) 5%,var(--bg))}
+.hooks-block{padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--bg)}
+.hooks-blocks>.hooks-block+.hooks-block{margin-top:10px}
+.hooks-block.is-on{border-color:color-mix(in srgb,var(--green) 55%,var(--border));background:color-mix(in srgb,var(--green) 5%,var(--bg))}
 .hooks-block header{display:flex;align-items:center;gap:12px;margin-bottom:12px}.hooks-block header img{flex:none;object-fit:contain}
 .hooks-block header>div{min-width:0;display:flex;flex-direction:column;gap:2px}.hooks-block header strong{font-size:15px}.hooks-block header>div>span{color:var(--muted);font-size:13px;line-height:1.45}
 .hooks-block-state{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:700;color:#101713;background:var(--green)}
 .hooks-block-state.is-soon{color:var(--muted);background:none;border:1px solid var(--border-strong)}
 .hooks-block .launch-buy-presets{margin-bottom:8px}
 .hooks-blocks-soon-title{margin:22px 0 2px!important;font-size:13px;font-weight:600;color:var(--muted)}
-.hooks-blocks-soon{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 12px}
+.hooks-blocks-soon{list-style:none;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}
 .hooks-block.is-soon{border-style:dashed;padding:12px 14px;background:none}.hooks-block.is-soon header{margin:0;gap:10px}.hooks-block.is-soon header img{width:32px;height:32px;opacity:.6}
 .hooks-block.is-soon header strong{font-size:14px;color:var(--muted)}.hooks-block.is-soon header>div>span{font-size:12px}
 @media(max-width:560px){.hooks-blocks-soon{grid-template-columns:1fr}.hooks-blocks-head{flex-direction:column;gap:2px}}
-.hooks-block-grid{list-style:none;margin:8px 0 12px;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}
+.hooks-block-grid{list-style:none;margin:18px 0 12px;padding:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px}
 .hooks-block-grid .hooks-block{padding:20px}.hooks-block-grid .hooks-block header{margin:0}.hooks-block-grid .hooks-block header strong{font-size:17px}.hooks-block-grid .hooks-block header>div>span{font-size:14px}
 .hooks-block-grid .hooks-block.is-soon header img{width:48px;height:48px}
 @media(max-width:760px){.hooks-block-grid{grid-template-columns:1fr}}
