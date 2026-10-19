@@ -27,6 +27,8 @@ const PINNED_SHA256 = Object.freeze({
   launch: '060f233d3d6c9fbb144279b985e62049a3098109c68d3bd231598fdd48e969b4',
   vectors: 'c731bf277a51ec3c4ffaec9367b5482555915250154852e0879716ede9274afb',
 })
+// What a native profile pins for the two IDLs (the vendored files' bytes).
+export const NATIVE_IDL_SHA256 = Object.freeze({ swap: PINNED_SHA256.swap, launch: PINNED_SHA256.launch })
 
 // Rooted at the app directory like the owner driver's artifacts (src/hooklab-owner-driver/artifacts.mjs).
 function nativeRoot() {
