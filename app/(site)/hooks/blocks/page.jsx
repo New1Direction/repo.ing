@@ -6,7 +6,7 @@ import { HooksIntro, HooksNav, HooksRisk } from '../../../components/hooks-ui'
 export const metadata = { title: 'Blocks — repo.ing Hooks', description: 'Snap blocks onto your coin to decide what it does. Max wallet and Creator fee are live today; burns, locks, half-life and holder rewards are coming.' }
 
 export default function HooksBlocksPage() {
-  return <><HooksIntro title="Blocks for your coin." action={<Link className="button primary" href="/hooks/launch-review">Launch a coin <ArrowRight size={16} aria-hidden="true"/></Link>}>
+  return <><HooksIntro title="Hooks" eyebrow={null} action={<Link className="button primary" href="/hooks/launch-review">Launch a coin <ArrowRight size={16} aria-hidden="true"/></Link>}>
     Each block is one rule your coin follows. Snap them on when you launch. Max wallet and Creator fee are live today; more are on the way.
   </HooksIntro><HooksNav active="blocks"/>
     <ul className="hooks-block-grid">{HOOK_BLOCKS.map(block => <li key={block.id} className={`hooks-block ${block.live ? 'is-on' : 'is-soon'}`}>

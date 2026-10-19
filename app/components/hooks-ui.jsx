@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import { Info, LockKeyhole } from 'lucide-react'
 
-export function HooksIntro({ title, children, art = 'launch-market', action }) {
-  return <header className="hooks-intro"><div><p className="eyebrow">HOOKS</p><h1>{title}</h1><p>{children}</p></div>
+export function HooksIntro({ title, children, art = 'launch-market', action, eyebrow = 'HOOKS' }) {
+  return <header className="hooks-intro"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h1>{title}</h1><p>{children}</p></div>
     <div className="hooks-intro-action"><img src={`/launch-icons/${art}.webp`} width={72} height={72} alt=""/>{action}</div>
   </header>
 }

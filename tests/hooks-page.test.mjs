@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { appModule, h, html } from './fixtures/render-jsx.mjs'
 import { HOOK_LAB_TEMPLATES } from '../src/hook-lab-templates.mjs'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 
 test('Hooks discovery keeps its drafts-only page until owner-approved launches open', async () => {
   const { default: Market } = await appModule('app/(site)/hooks/page.jsx')
@@ -22,6 +22,8 @@ test('Blocks: two live blocks to launch with, four coming soon, each with its ow
     assert.ok(blocks.includes(`src="${block.icon}"`), `${block.id} icon`)
     assert.ok(existsSync(new URL(`../public${block.icon}`, import.meta.url)), `${block.id} icon file`)
   }
+  assert.match(blocks, /<h1>Hooks<\/h1>/); assert.doesNotMatch(blocks, /Blocks for your coin|class="eyebrow"/, 'the heading just says Hooks, without a repeated HOOKS label')
+  assert.doesNotMatch(readFileSync(new URL('../app/(site)/hooks/hooks.css', import.meta.url), 'utf8'), /\.hooks-block::before/, 'no decorative dots above the block cards')
   assert.match(blocks, /href="\/hooks\/launch-review"/)
   assert.doesNotMatch(blocks, /[Dd]raft|\/hooks\/new/)
   assert.throws(() => Templates(), error => /NEXT_REDIRECT|redirect/i.test(String(error?.digest ?? error?.message)))
