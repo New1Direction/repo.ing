@@ -177,7 +177,7 @@ launches and trades need both. Emergency stop: `close-trading`, `close-launches`
 Every launch then opens at about a $5,000 market cap and graduates at about $45,000.
 repo.ing fixes the SOL price (median of CoinGecko, Jupiter and Coinbase, within 2%) and the
 virtual quote when you `invite`. A source more than 2% from the median of all answers is ignored
-(and shown as ignored); at least two must agree. The agent re-reads SOL from your Mac, records the
+(and shown as ignored); at least two must remain, within 2% of each other. The agent re-reads SOL from your Mac, records the
 invite only if the server's price is within 3% of its own read, and then signs only that quote.
 
 Both the agent and the server read the live launch config before an invite is recorded and refuse

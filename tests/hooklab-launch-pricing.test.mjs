@@ -44,6 +44,12 @@ test('the SOL price is the median of the sources within 2% of the median of ever
   assert.equal(outlier.solUsdMicros, '105630000')
   assert.deepEqual(outlier.sources, [{ source: 'coingecko', usdMicros: '105620000' }, { source: 'jupiter', usdMicros: '120000000', ignored: true }, { source: 'coinbase', usdMicros: '105640000' }])
   assert.equal(solUsdQuorum([reading('coingecko', 100), reading('jupiter', 100.5), reading('coinbase', 103)]).solUsdMicros, '100250000', '103 is 2.49% off the 100.50 median')
+  // The kept sources must also agree within 2% of each other (max <= min x 1.02), not just of the median.
+  assert.throws(() => solUsdQuorum([reading('coingecko', 100), reading('coinbase', 103)]),
+    /SOL price sources disagree: the ones kept are more than 2% apart \(coingecko \$100\.00, coinbase \$103\.00\)/, 'two sources 3% apart')
+  assert.equal(solUsdQuorum([reading('coingecko', 100), reading('coinbase', 101.9)]).solUsdMicros, '100950000', 'two sources 1.9% apart')
+  assert.throws(() => solUsdQuorum([reading('coingecko', 100), reading('jupiter', 102.5), reading('coinbase', 120)]), /SOL price sources disagree/,
+    'closest two 2.5% apart, third an outlier')
   // Two sources that disagree, two of three far apart, or a single answer: refused.
   assert.throws(() => solUsdQuorum([reading('coingecko', 100), reading('coinbase', 110)]),
     /SOL price sources disagree: fewer than two are within 2% of their median \(coingecko \$100\.00, coinbase \$110\.00\)/)
@@ -68,6 +74,9 @@ test('a stored price is re-derived from its sources before anyone relies on it',
   assert.equal(checkLaunchPricing(priced).sources[1].ignored, true)
   assert.throws(() => checkLaunchPricing({ ...priced, sources: priced.sources.map(({ ignored, ...s }) => s) }), /does not match its sources/)
   assert.throws(() => checkLaunchPricing({ ...priced, sources: priced.sources.map((s, i) => i === 0 ? { ...s, ignored: true } : s) }), /does not match its sources/)
+  // A stored record whose kept sources are 3% apart is refused on re-derivation too.
+  const spread = { solUsdMicros: '101500000', virtualQuote: '55418719212', sources: [{ source: 'coingecko', usdMicros: '100000000' }, { source: 'coinbase', usdMicros: '103000000' }] }
+  assert.throws(() => checkLaunchPricing(spread), /the ones kept are more than 2% apart/)
 })
 
 test('the owner sees the opening and graduation values in one line', () => {

@@ -49,8 +49,9 @@ function median(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid] + 1n) / 2n
 }
 // readings: [{ source, usdMicros: bigint }] from distinct named sources. The median of every answer picks out the
-// sources within 2% of it; at least two must remain, and their median is the price. Dropped outliers stay in the
-// record, marked ignored, so the owner sees them and anyone can re-derive the same choice.
+// sources within 2% of it; at least two must remain, they must agree within 2% of each other (max <= min x 1.02;
+// two sources each 1.9% from their midpoint are 3.8% apart), and their median is the price. Dropped outliers stay in
+// the record, marked ignored, so the owner sees them and anyone can re-derive the same choice.
 function quorum(readings) {
   const names = readings.map(r => r.source)
   need(readings.length >= 2, `Only ${readings.length} SOL price source${readings.length === 1 ? '' : 's'} answered${names.length ? ` (${names.join(', ')})` : ''}; at least two must agree before a launch is priced. Try again in a minute.`)
@@ -58,9 +59,11 @@ function quorum(readings) {
   need(readings.every(r => r.usdMicros > 0n), 'SOL price must be a positive dollar amount')
   const center = median(readings.map(r => r.usdMicros))
   const kept = readings.map(r => { const gap = r.usdMicros > center ? r.usdMicros - center : center - r.usdMicros; return gap * 10000n <= center * MAX_SOURCE_SPREAD_BPS })
-  need(kept.filter(Boolean).length >= 2,
-    `SOL price sources disagree: fewer than two are within 2% of their median (${readings.map(r => `${r.source} ${formatSolPrice(r.usdMicros)}`).join(', ')}). Try again in a minute.`)
-  return { solUsdMicros: median(readings.filter((_, i) => kept[i]).map(r => r.usdMicros)).toString(),
+  const listed = readings.map(r => `${r.source} ${formatSolPrice(r.usdMicros)}`).join(', '), agreeing = readings.filter((_, i) => kept[i]).map(r => r.usdMicros)
+  need(agreeing.length >= 2, `SOL price sources disagree: fewer than two are within 2% of their median (${listed}). Try again in a minute.`)
+  const low = agreeing.reduce((a, b) => (b < a ? b : a)), high = agreeing.reduce((a, b) => (b > a ? b : a))
+  need(high * 10000n <= low * (10000n + MAX_SOURCE_SPREAD_BPS), `SOL price sources disagree: the ones kept are more than 2% apart (${listed}). Try again in a minute.`)
+  return { solUsdMicros: median(agreeing).toString(),
     sources: readings.map((r, i) => ({ source: r.source, usdMicros: r.usdMicros.toString(), ...(!kept[i] && { ignored: true }) })) }
 }
 // readings: [{ source, usd }] as the price APIs answered (failed sources left out).
