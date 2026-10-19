@@ -85,6 +85,10 @@ function programEvidence(accounts, artifact, observedSlot, immutable) {
  * Supplied observations remain assertions, not authenticated history or execution permission.
  * Stage one has no onchain rent cap/deadline instruction; this is an offline review bound only.
  */
+// An inclusive launch build: the bridged V3 ABI, or its native V4 successor alone (our own stack's build, hook-lab
+// independent e775165, carries only v4 and the open route).
+const INCLUSIVE_LAUNCH_ABIS = Object.freeze(['create_launch_custom_v3', 'create_launch_custom_v4'])
+export const isInclusiveLaunchIdl = idl => !!idl?.instructions?.some(ix => INCLUSIVE_LAUNCH_ABIS.includes(ix.name))
 export function planInclusiveMaxWalletPreparation(input) {
   const { profile: envelope, request: r, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
@@ -93,7 +97,7 @@ export function planInclusiveMaxWalletPreparation(input) {
   const artifact = role => ({ program: profile.programs[role], idlBase64: envelope.idls[role], idlSha256: profile.idlSha256[role],
     elfSha256: profile.elfSha256[role], elfLength: envelope.elfLengths[role] })
   const launchArtifact = artifact('launch'), gateArtifact = artifact('gate'), launch = binding(launchArtifact), gate = binding(gateArtifact)
-  check(launch.idl.instructions.some(ix => ix.name === 'create_launch_custom_v3'), 'Only the explicit inclusive V3 ABI can prepare this candidate')
+  check(isInclusiveLaunchIdl(launch.idl), 'Only an explicit inclusive launch ABI (V3 or V4) can prepare this candidate')
   const addresses = { launch: profile.programs.launch, gate: profile.programs.gate,
     launchConfig: pda(profile.programs.launch, 'config'), eventAuthority: pda(profile.programs.launch, '__event_authority'),
     launchProgramData: pda(loader, pk(profile.programs.launch).toBuffer()), gateProgramData: pda(loader, pk(profile.programs.gate).toBuffer()),

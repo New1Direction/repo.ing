@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { inclusiveMaxWalletProfileSchema, inclusiveMaxWalletPreparationRequestSchema, planInclusiveMaxWalletPreparation } from '../src/hooklab-inclusive-max-wallet-preparation.mjs'
+import { inclusiveMaxWalletProfileSchema, inclusiveMaxWalletPreparationRequestSchema, isInclusiveLaunchIdl, planInclusiveMaxWalletPreparation } from '../src/hooklab-inclusive-max-wallet-preparation.mjs'
+import { stackFromIndependentBuild } from '../src/hooklab-stack-build.mjs'
+import { INDEPENDENT_DIR, INDEPENDENT_SKIP } from './fixtures/hooklab-independent-stack.mjs'
 import { maxWalletProfileSchema } from '../src/hooklab-max-wallet-preparation.mjs'
 import { inclusiveMaxWalletPreparationInventory } from '../src/hooklab-inclusive-max-wallet-preparation-collector.mjs'
 import { inclusiveMaxWalletPolicyAddress } from '../src/hooklab-inclusive-fee-abi.mjs'
@@ -67,4 +69,17 @@ test('V3 preparation rejects unreviewed fee and retained configured ceilings',{s
    const out=Buffer.alloc(bytes.length);bytes.subarray(0,8).copy(out);coder.types.encode('Config',c).copy(out,8);a.dataBase64=out.toString('base64')}
   assert.throws(()=>planInclusiveMaxWalletPreparation(x),/economics/)
  }
+})
+
+// Regression (self-serve e2e on hook-lab independent e775165, 2026-10-19): our own stack's final launch build carries
+// create_launch_custom_v4 and the open route but no v3, and the planner refused to prepare any coin on it.
+test('inclusive preparation takes a V3 build or a V4-only build (our own stack), never a plain one',()=>{
+ const vendored=dir=>JSON.parse(readFileSync(new URL(`../vendor/hooklab-event-abi/${dir}/bordrless_launch.json`,import.meta.url)))
+ assert.equal(isInclusiveLaunchIdl(vendored('inclusive-max-wallet-candidate')),true)
+ assert.equal(isInclusiveLaunchIdl(vendored('max-wallet-candidate')),false,'a plain max-wallet build is not inclusive')
+ assert.equal(isInclusiveLaunchIdl({instructions:[{name:'create_launch_open_v1'}]}),false,'the open route alone is not enough')
+})
+test('our own stack\'s final launch build (v4 and open, no v3) prepares',{skip:INDEPENDENT_SKIP},()=>{
+ const idl=JSON.parse(stackFromIndependentBuild(INDEPENDENT_DIR).idls.launch)
+ assert.equal(isInclusiveLaunchIdl(idl),true)
 })
