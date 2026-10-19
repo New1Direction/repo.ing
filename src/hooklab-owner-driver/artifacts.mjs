@@ -1,11 +1,21 @@
 // Hash-pinned ABI/profile loading. No RPC, keys or signing.
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { BorshCoder } from '@anchor-lang/core'
 import { sha256, PROGRAMS, QUOTE_MINT, MAINNET_GENESIS, LOCAL_PROFILE_SCHEMA } from './pins.mjs'
 import { productionProfileJson } from '../hooklab-production-operator-bundle.mjs'
 
-const root = new URL('../../', import.meta.url)
-const candidate = new URL('vendor/hooklab-event-abi/inclusive-max-wallet-candidate/', root)
+// Rooted at the app directory (the web server runs there and Next traces these files; see next.config.mjs), falling
+// back to this module's checkout for scripts run from elsewhere. (A static new URL('../../', import.meta.url) breaks
+// the Next bundler, which treats it as a directory asset.)
+const CANDIDATE = 'vendor/hooklab-event-abi/inclusive-max-wallet-candidate/'
+function artifactRoot() {
+  const roots = [process.cwd(), path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')]
+  const root = roots.find(dir => existsSync(path.join(dir, CANDIDATE, 'offline-builder-profile.json')))
+  if (!root) throw Error('Pinned Hook Lab artifacts are not available')
+  return root
+}
 export const PINNED_SHA256 = Object.freeze({
   profile: 'a7fd6e51ab08b7a15f4aea88a31665573efd1ba7d05a809aec2c46eb275523ce',
   launch: 'f3cb25209462044c139e8c81cf3d4fd28d2d4bd4023e265d4aaef78c9566fb8b',
@@ -20,18 +30,18 @@ export const ELF = Object.freeze({
   gate: { sha256: 'd7233dd0fd23f58f2d1efec1543017395684f43827155e8b884a624c62493857', length: 188960 },
   token: { sha256: '7aa07deb41a5545bcaff0d3fb966d5344538ec8f5c9f2155db4de030e3255df1', length: 326504 },
 })
-const files = {
-  profile: new URL('offline-builder-profile.json', candidate), launch: new URL('bordrless_launch.json', candidate),
-  swap: new URL('bordrless_swap.json', candidate), gate: new URL('hook_max_wallet.json', candidate),
-  token: new URL('vendor/hooklab-production-candidate/idl/bordrless_token.json', root),
-  bridge: new URL('vendor/hooklab-production-candidate/idl/bordrless_bridge.json', root),
+const FILES = {
+  profile: `${CANDIDATE}offline-builder-profile.json`, launch: `${CANDIDATE}bordrless_launch.json`,
+  swap: `${CANDIDATE}bordrless_swap.json`, gate: `${CANDIDATE}hook_max_wallet.json`,
+  token: 'vendor/hooklab-production-candidate/idl/bordrless_token.json',
+  bridge: 'vendor/hooklab-production-candidate/idl/bordrless_bridge.json',
 }
 let cached = null
 export function loadArtifacts() {
   if (cached) return cached
-  const text = {}
-  for (const [role, url] of Object.entries(files)) {
-    text[role] = readFileSync(url, 'utf8')
+  const text = {}, root = artifactRoot()
+  for (const [role, file] of Object.entries(FILES)) {
+    text[role] = readFileSync(path.join(root, file), 'utf8')
     if (sha256(text[role]) !== PINNED_SHA256[role]) throw Error(`Pinned ${role} artifact differs from reviewed bytes`)
   }
   const idls = Object.fromEntries(['launch', 'swap', 'gate', 'token', 'bridge'].map(role => [role, JSON.parse(text[role])]))

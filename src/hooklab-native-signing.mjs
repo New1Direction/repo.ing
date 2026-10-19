@@ -10,6 +10,8 @@ import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
 import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
 const fail=()=>Object.assign(Error('Native signing operation unavailable or changed; preserve the original identity'),{code:'NATIVE_SIGNING_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
+// Fixed texts a resolver marks for the customer (owner-approval and funding refusals) pass through; everything else is masked.
+const visible=error=>['OWNER_APPROVAL_UNAVAILABLE','HOOKLAB_USER_REFUSAL'].includes(error?.code)?error:fail()
 function context(resolved){
  check(typeof resolved.configurationSha256==='string'&&/^[a-f0-9]{64}$/.test(resolved.configurationSha256))
  check(resolved.settlementContext&&typeof resolved.settlementContext==='object')
@@ -42,6 +44,7 @@ const summary=row=>Object.freeze({id:row.id,owner:row.owner_wallet,custodyOperat
  walletRequestIssued:row.wallet_requested_at!=null,settlement:publicSettlement(row),executionAuthorized:false,canSign:false,canSubmit:false})
 export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'}}={}){
  const operations=Object.freeze({...stageOperations}),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation'],launch:['max-wallet-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
+  'wallet-fund':['hooklab-wallet-fund'],'wallet-withdraw':['hooklab-wallet-withdraw'],
   ...(localAcceptanceNetwork()?{'local-prepare-holding':['local-prepare-holding'],'local-inclusive-collection':['local-inclusive-collection']}:{})}
  check(Object.keys(operations).length>0&&Object.entries(operations).every(([stage,operation])=>allowed[stage]?.includes(operation)))
  check(!custodyAdapter||Object.keys(operations).every(stage=>['preparation','launch'].includes(stage)))
@@ -103,7 +106,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
       values($1,$2,$3,$4,$5,$6,$7,$8,'reviewed',$9,$10,$11) returning *`,[id,owner,custodyOperationId,stage,review.profileSha256,review,review.messageSha256,wire(tx),retainedContext.configurationSha256,retainedContext.settlementContext,resolved.request??null])
      return summary(saved)
     },custodyOperationId)
-   }catch(error){throw error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error:fail()}   // fixed owner-approval texts reach the customer
+   }catch(error){throw visible(error)}   // fixed owner-approval and funding texts reach the customer
   },
   async get(sessionToken,id){return transaction(sessionToken,id,async(_db,row)=>{check(row);return summary(row)})},
   async refreshReview(sessionToken,id){
@@ -129,7 +132,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      const {rows:[saved]}=await db.query('update hook_lab_native_signing_operations set review=$2,message_sha256=$3,partial_transaction=$4,settlement_context=$5,review_generation=review_generation+1,revision=revision+1,updated_at=clock_timestamp() where id=$1 returning *',[id,review,review.messageSha256,wire(tx),retainedContext.settlementContext])
      return summary(saved)
     })
-   }catch(error){throw error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error:fail()}   // fixed owner-approval texts reach the customer
+   }catch(error){throw visible(error)}   // fixed owner-approval and funding texts reach the customer
   },
 
   async walletRequest(sessionToken,id){
@@ -142,7 +145,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
      if(!row.wallet_requested_at)await db.query('update hook_lab_native_signing_operations set wallet_requested_at=clock_timestamp(),revision=revision+1,updated_at=clock_timestamp() where id=$1',[id])
      return {review:row.review,partialTransactionBase64:row.partial_transaction,canSubmit:false}
     })
-   }catch{throw fail()}
+   }catch(error){throw visible(error)}
   },
   async retainWalletSignature(sessionToken,id,signedTransactionBase64){
    return transaction(sessionToken,id,async(db,row,owner)=>{
@@ -248,7 +251,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
    })
   },
   async submitOnce(sessionToken,id){
-   let captured;try{captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&row.status==='signed');return row});await fresh(captured,captured.owner_wallet,sessionToken)}catch{throw fail()}
+   let captured;try{captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&row.status==='signed');return row});await fresh(captured,captured.owner_wallet,sessionToken)}catch(error){throw visible(error)}
    const claimed=await transaction(sessionToken,id,async(db,row,owner)=>{
     check(row&&row.status==='signed'&&String(row.revision)===String(captured.revision)&&sender&&typeof sender.send==='function')
     await currentReview(db,row.review)

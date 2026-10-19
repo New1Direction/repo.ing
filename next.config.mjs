@@ -19,7 +19,7 @@ const nextConfig = {
   // Native read-only SDK uses createRequire/new URL for exact-byte IDLs and manifest.
   serverExternalPackages: ['@repo-ing/hooklab-readonly', '@repo-ing/hooklab-guarded-candidate', '@repo-ing/hooklab-hardened-candidate', '@repo-ing/hooklab-production-candidate'],
   outputFileTracingIncludes: {
-    '/*': ['./vendor/hooklab-event-abi/inclusive-max-wallet-candidate/*.json', './vendor/hooklab-production-candidate/idl/bordrless_token.json'],
+    '/*': ['./vendor/hooklab-event-abi/inclusive-max-wallet-candidate/*.json', './vendor/hooklab-production-candidate/idl/bordrless_token.json', './vendor/hooklab-production-candidate/idl/bordrless_bridge.json'],
     '/api/direct-coins': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
     '/api/hook-lab': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],
     '/api/hook-lab/acceptance': ['./node_modules/@repo-ing/hooklab-guarded-candidate/**/*'],

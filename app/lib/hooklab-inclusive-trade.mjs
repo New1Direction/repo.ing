@@ -10,11 +10,21 @@ import {inclusiveMaxWalletSwapRequestSchema} from '../../src/hooklab-inclusive-m
 import {inclusiveTradeRuntime} from './hooklab-inclusive-trade-runtime.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 const intent=inclusiveMaxWalletSwapRequestSchema.pick({mint:true,selectedConfig:true,capBps:true,creatorFeeBps:true,side:true,amountIn:true,minAmountOut:true,maxInput:true,maxPriceImpactBps:true}).strict()
+const lamports=z.string().regex(/^[1-9]\d{0,19}$/),mintKey=z.string().max(44)
 const body=z.discriminatedUnion('action',[
  z.object({action:z.literal('quote'),signingId:z.uuid(),request:intent}).strict(),
+ // Wallet funding: add SOL to Hook Lab (creating the needed holdings), or withdraw bridged SOL back to the wallet.
+ z.object({action:z.literal('fund'),signingId:z.uuid(),request:z.object({mint:mintKey.nullable(),lamports:z.string().regex(/^(0|[1-9]\d{0,19})$/)}).strict()}).strict(),
+ z.object({action:z.literal('withdraw'),signingId:z.uuid(),request:z.object({lamports}).strict()}).strict(),
  z.object({action:z.enum(['get','refresh-review','wallet-request','submit','reconcile']),signingId:z.uuid()}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:z.uuid(),signedTransactionBase64:z.string().max(1644)}).strict(),
 ])
+// Until HOOK_TRADING_PUBLIC=true, only listed tester wallets may start trades or funding (existing operations stay recoverable).
+export function tradingOpenFor(env,wallet){
+ if(env.HOOK_TRADING_PUBLIC==='true')return true
+ return (env.HOOK_TRADING_TESTER_WALLETS??'').split(',').map(x=>x.trim()).filter(Boolean).includes(wallet)
+}
+const STAGES=['inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw']
 const reply=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 export function createInclusiveTradeHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=inclusiveTradeRuntime,
  database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
@@ -36,22 +46,32 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    if(!service)return reply({status:'blocked',blockers:[{code:'INCLUSIVE_TRADE_RUNTIME_UNCONFIGURED',message:'Exact approved program pins and trading settings are not installed.'}]})
    if(service.origin!==config.origin)throw Error()
    const lifecycle=service.lifecycle
+   // Withdrawing is never gated: anyone with SOL in Hook Lab can always take it back out.
+   if(['quote','fund'].includes(input.action)&&!tradingOpenFor(env,owner.wallet))return reply({status:'blocked',blockers:[{code:'TRADING_NOT_OPEN',message:'Trading opens to everyone soon.'}]})
+   if(input.action==='fund'&&!service.walletFunding)return reply({status:'blocked',blockers:[{code:'WALLET_FUNDING_DISABLED',message:'Adding SOL to Hook Lab is paused right now. Withdrawals still work.'}]})
+   if(input.action==='withdraw'&&!service.walletWithdraw)return reply({status:'blocked',blockers:[{code:'WALLET_WITHDRAW_UNAVAILABLE',message:'Withdrawals are unavailable right now.'}]})
    let result
    if(input.action==='wallet-request')result=await lifecycle.walletRequest(token,input.signingId)
    else{
     let operation
     if(input.action==='quote')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:`inclusive-${input.request.side}`,intent:input.request})
+    else if(input.action==='fund')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:'wallet-fund',intent:{action:'fund',...input.request}})
+    else if(input.action==='withdraw')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:'wallet-withdraw',intent:{action:'withdraw',mint:null,...input.request}})
     else if(input.action==='get')operation=await lifecycle.get(token,input.signingId)
     else if(input.action==='refresh-review')operation=await lifecycle.refreshReview(token,input.signingId)
     else if(input.action==='retain-wallet')operation=await lifecycle.retainWalletSignature(token,input.signingId,input.signedTransactionBase64)
     else if(input.action==='submit')operation=await lifecycle.submitOnce(token,input.signingId)
     else operation=await lifecycle.reconcile(token,input.signingId)
-    if(operation.owner!==owner.wallet||!['inclusive-buy','inclusive-sell'].includes(operation.stage))throw Error()
+    if(operation.owner!==owner.wallet||!STAGES.includes(operation.stage))throw Error()
     result={operation:publicNativeOperation(operation)}
    }
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()
    return reply({status:'available',...result})
-  }catch(error){return reply({error:error.status===401?'Wallet session expired. Sign in again.':'Trade unavailable or changed. Preserve the signing ID and reconcile the original transaction before starting another.'},error.status===401?401:409)}
+  }catch(error){
+   if(error.status===401)return reply({error:'Wallet session expired. Sign in again.'},401)
+   // Refusals written for customers (balance, rent, paused bridge...) are shown as they are; nothing else is.
+   return reply({error:error?.code==='HOOKLAB_USER_REFUSAL'?error.message:'Trade unavailable or changed. Your transaction is saved; check its status before starting another.'},409)
+  }
   finally{await pool?.end().catch(()=>{})}
  }
 }

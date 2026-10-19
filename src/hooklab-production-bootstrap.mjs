@@ -98,7 +98,7 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
- if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true')installInclusiveTradeRuntime(createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits}))
+ if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true')installInclusiveTradeRuntime(createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true'}))
  return {installed:true,trading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'}
  }catch(error){if(!nativeLaunchRuntime())await pool.end().catch(()=>{});throw error}
 }

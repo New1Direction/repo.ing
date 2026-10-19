@@ -10,9 +10,13 @@ import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
 const check=v=>{if(!v)throw Error('Inclusive trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
+// Mint.supply: bytes 10-17 (discriminator, version, decimals); the quote-mint pin (mint-supply-v1) ignores only it too.
+const withoutSupply=base64=>{const b=Buffer.from(base64,'base64');if(b.length>=18)b.fill(0,10,18);return b.toString('base64')}
+// About 40 seconds from review to send, so a wallet approval fits; the swap compiler allows up to 150 slots.
+const SIGNING_WINDOW_SLOTS=100
 export function inclusiveTradeResolver({config,profile,dossierJson,connections,limits,clock=Date.now}){
  const retained=structuredClone({config,profile,dossierJson,limits}),providers=connections.map(x=>({...x}))
- const bound=validateMaxWalletOperatorBindings({...retained,connections:providers})
+ const bound=validateMaxWalletOperatorBindings({...retained,connections:providers}),p=bound.profile
  check(bound.config.feeModel===2&&bound.profile.buildFeature==='inclusive-fees-candidate')
  const configurationSha256=sha(JSON.stringify(retained))
  async function collect({owner,stage,intent,expectedReview,originalContext}){
@@ -32,7 +36,12 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
    return {provider,genesisHash:bound.profile.genesisHash,commitment:'finalized',slot:state.context.slot,observedAtMs:started,
     accounts:state.value.map((v,i)=>({address:all[i],account:v?{address:all[i],owner:v.owner.toBase58(),executable:v.executable,lamports:String(integer(v.lamports)),dataBase64:Buffer.from(v.data).toString('base64')}:null}))}
   }))
-  check(isDeepStrictEqual(observations[0].accounts,observations[1].accounts))
+  // The bridged-SOL quote mint's supply moves with every wrap and unwrap through the public bridge, so providers
+  // answering at different slots differ there: compare without it, then use the first provider's mint for both.
+  const steady=o=>o.accounts.map(x=>x.address===p.quoteMint&&x.account?{...x,account:{...x.account,dataBase64:withoutSupply(x.account.dataBase64)}}:x)
+  check(isDeepStrictEqual(steady(observations[0]),steady(observations[1])))
+  const quoteMint=observations[0].accounts.find(x=>x.address===p.quoteMint)
+  observations[1].accounts=observations[1].accounts.map(x=>x.address===p.quoteMint?quoteMint:x)
   const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
   const evidence=inspectProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:bound.config.dossierSha256,nowMs:integer(clock()),
    observations:observations.map(o=>({...o,accounts:extras.filter(a=>a!==bound.config.lookupTable?.address).map(address=>{const a=map.get(address);check(a);const {lamports,...rest}=a;return rest})}))})
@@ -48,7 +57,7 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
   }))
   const liveSlots=originalContext?null:await Promise.all(providers.map(async({connection})=>integer(await connection.getSlot('confirmed'))))
   if(liveSlots)check(Math.max(...liveSlots)-Math.min(...liveSlots)<=retained.limits.maxSlotLag)
-  const l=originalContext?{...originalContext.compilationInput.limits,nowMs:integer(clock())}:{...retained.limits,nowMs:integer(clock()),validUntilSlot:Math.min(...liveSlots)+32,reviewExpiresAtMs:started+retained.limits.maxAgeMs}
+  const l=originalContext?{...originalContext.compilationInput.limits,nowMs:integer(clock())}:{...retained.limits,nowMs:integer(clock()),validUntilSlot:Math.min(Math.min(...liveSlots)+SIGNING_WINDOW_SLOTS,slot+150),reviewExpiresAtMs:started+retained.limits.maxAgeMs}
   const priority=(BigInt(l.computeUnitLimit)*BigInt(l.computeUnitPriceMicroLamports)+999999n)/1000000n
   const recentBlockhash={...latest.value,genesisHash:bound.profile.genesisHash,providers:profile.providers,observedAtMs:started,currentBlockHeight:Math.max(...confirmations.map(x=>x.height)),
    blockhashValid:true,observedSlot:Math.max(...confirmations.map(x=>x.slot)),networkFeeLamports:String(BigInt(bound.config.lamportsPerSignature)+priority),lamportsPerSignature:bound.config.lamportsPerSignature}
