@@ -101,7 +101,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
   test('more than ten capped wallets fill the curve; the panel\'s Max is the exact final fill and graduates in one transaction', { timeout: 3_600_000 }, async ({ app, screen, browser }) => {
     const coin = tradeCoin(0), cap = SUPPLY * BigInt(COINS[0].capBps) / 10_000n
     const graduationQuote = big((await launchAccount(coin.launch)).value.graduation_quote)
-    const fillers = await fillUntilOneBuyLeft(coin.mint, async (_op, address) => {
+    const fillers = await fillUntilOneBuyLeft(coin, async (_op, address) => {
       const [row] = await operations(address, 'native-buy')
       const checked = await expectNativeBuy(row, address, coin, BigInt(row.resolved_request.amountIn))
       expectNoLegacyStack(checked.tx); book(coin.mint, checked)

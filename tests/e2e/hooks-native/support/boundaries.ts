@@ -17,18 +17,28 @@ const sends = async (control: (method: 'GET', route: string) => Promise<Record<s
 const solText = (lamports: bigint) => `${lamports / 1_000_000_000n}.${(lamports % 1_000_000_000n).toString().padStart(9, '0')}`
 
 /** Buys from fresh Node wallets (real signatures, the same API) until one capped buy can finish the curve. onFilled is
- * called with each settled fill (its operation and the filler's address) for the caller's own exact checks. */
-export async function fillUntilOneBuyLeft(mint: string, onFilled?: (op: any, address: string) => Promise<void>): Promise<number> {
+ * called with each settled fill (its operation and the filler's address) for the caller's own exact checks. Graduation
+ * is read from chain state and each fill's finalized receipt, never from a page: a coin that graduated takes no more
+ * fillers, and a fill that left the curve's quote reserve where it was stops the loop (no silent spinning). */
+export async function fillUntilOneBuyLeft(coin: { mint: string; launch: string; pool: string }, onFilled?: (op: any, address: string) => Promise<void>): Promise<number> {
+  let reserve: bigint | null = null
   for (let round = 1; ; round++) {
     if (round > MAX_FILL_ROUNDS) throw new Error(`the curve did not come within one buy of its end in ${MAX_FILL_ROUNDS} fill rounds`)
-    const market = await marketView(mint), fill = finalFillLamports(market), max = maxBuyLamports(market, 0n)
+    const [launch, pool] = await Promise.all([launchAccount(coin.launch), poolAccount(coin.pool)])
+    if (launch.value.status !== 0 || pool.value.curve !== true) throw new Error(`the coin graduated after ${round - 1} fills (launch status ${launch.value.status}, curve ${pool.value.curve}); no more buyers were added`)
+    const now = big(pool.value.quote_reserve)
+    if (reserve !== null && now <= reserve) throw new Error(`fill ${round - 1} made no progress: the curve's quote reserve stayed at ${now} lamports`)
+    reserve = now
+    const market = await marketView(coin.mint), fill = finalFillLamports(market), max = maxBuyLamports(market, 0n)
     if (fill !== null && max === fill) return round - 1
+    if (max === null) throw new Error(`fill round ${round}: no buy fits any more (final fill ${fill}); the curve is stuck short of its end`)
     const filler = new SiteClient(await freshWallet(120))
     await filler.signIn()
-    const quote = await filler.nativeQuote(market, 'buy', (max as bigint) * 98n / 100n)
+    const quote = await filler.nativeQuote(market, 'buy', max * 98n / 100n)
     if (quote.status !== 200) throw new Error(`fill round ${round}: review refused ${JSON.stringify(quote.json)}`)
     const op = await filler.signAndSettle(quote.signingId)
     if (op?.status !== 'finalized-success') throw new Error(`fill round ${round}: ${op?.status} ${op?.signature}`)
+    if (events(await receipt(op.signature)).some(e => e.name === 'Graduated')) throw new Error(`fill round ${round} graduated the coin (${op.signature}); a fill must never graduate`)
     await onFilled?.(op, filler.address)
   }
 }
@@ -37,7 +47,7 @@ export async function graduationBoundaries(ctx: { app: any; screen: any; browser
   control: (method: any, route: string, body?: unknown) => Promise<any>): Promise<string[]> {
   const { app, screen, browser } = ctx, refusals: string[] = []
   const graduationQuote = big((await launchAccount(coin.launch)).value.graduation_quote)
-  await fillUntilOneBuyLeft(coin.mint)
+  await fillUntilOneBuyLeft(coin)
   const market = await marketView(coin.mint), fill = finalFillLamports(market) as bigint
   // Overshoot: a signed-in buyer's panel refuses one lamport more than the exact fill (the main button is disabled)...
   const { buyer, address } = await freshBuyerOnCoinPage(ctx, coin.mint, 200)
