@@ -1,4 +1,4 @@
-import {publicNativeOperation} from './hooklab-native-operation-public.mjs'
+import {customerTradeReview,publicNativeOperation} from './hooklab-native-operation-public.mjs'
 import {createHookLabDatabasePool} from '../../src/hooklab-database.mjs'
 import {z} from 'zod'
 import {assertSameOrigin} from './auth.mjs'
@@ -64,7 +64,7 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    if(input.action==='fund'&&!service.walletFunding)return reply({status:'blocked',blockers:[{code:'WALLET_FUNDING_DISABLED',message:'Adding SOL to Hook Lab is paused right now. Withdrawals still work.'}]})
    if(input.action==='withdraw'&&!service.walletWithdraw)return reply({status:'blocked',blockers:[{code:'WALLET_WITHDRAW_UNAVAILABLE',message:'Withdrawals are unavailable right now.'}]})
    let result
-   if(input.action==='wallet-request')result=await lifecycle.walletRequest(token,input.signingId)
+   if(input.action==='wallet-request'){const issued=await lifecycle.walletRequest(token,input.signingId);result={...issued,review:customerTradeReview(issued.review)}}
    else{
     let operation
     if(input.action==='quote')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:`inclusive-${input.request.side}`,intent:input.request})
@@ -79,7 +79,8 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
     else if(input.action==='expire')operation=await lifecycle.expire(token,input.signingId)
     else operation=await lifecycle.reconcile(token,input.signingId)
     if(operation.owner!==owner.wallet||!STAGES.includes(operation.stage))throw Error()
-    result={operation:publicNativeOperation(operation)}
+    const shown=publicNativeOperation(operation)
+    result={operation:{...shown,review:customerTradeReview(shown.review)}}
    }
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()
    return reply({status:'available',...result})
