@@ -23,7 +23,8 @@ export function cached(key, ttlMs, load, now = Date.now) {
   if (caches.size > 5000) caches.delete(caches.keys().next().value)
   return value
 }
-export const cachedMarket = (service, mint, wallet = null) => cached(`market:${mint}:${wallet ?? ''}`, 3000, () => service.market(mint, wallet))
+// coin: the listed coin record when the caller has it (its stack picks the bundle); the runtime looks it up otherwise.
+export const cachedMarket = (service, mint, wallet = null, coin = undefined) => cached(`market:${mint}:${wallet ?? ''}`, 3000, () => service.market(mint, wallet, coin))
 
 // The launch request (image, links) behind a coin listed on repo.ing, or null for any other coin. A failed read throws,
 // so an unreachable database shows as unavailable rather than as "not listed".
@@ -41,7 +42,7 @@ export function createMarketHandler({ env = process.env, runtime = inclusiveTrad
       // The listing is checked first (one cached database read), so unlisted coins are never read from Solana.
       const coin = await listedCoin(service, mint)
       if (!coin) return reply({ error: 'This coin isn’t listed on repo.ing.' }, 404, 'public, max-age=60')
-      const view = await cachedMarket(service, mint, wallet)
+      const view = await cachedMarket(service, mint, wallet, coin)
       if (!view) return reply({ error: 'This coin isn’t listed on repo.ing.' }, 404, 'public, max-age=60')
       // tradingOpen: whether this wallet may start trades yet (everyone once HOOK_TRADING_PUBLIC=true, else listed testers).
       // nativeTrading: whether a native-SOL coin (market.native) can be traded here yet (HOOK_NATIVE_TRADING_ENABLED).

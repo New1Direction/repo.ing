@@ -7,6 +7,7 @@ import { Keypair, PublicKey } from '@solana/web3.js'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { loadArtifacts } from '../src/hooklab-owner-driver/artifacts.mjs'
 import { PROGRAMS, QUOTE_MINT, holdingAddress } from '../src/hooklab-owner-driver/pins.mjs'
+const LEGACY = { programs: PROGRAMS, quoteMint: QUOTE_MINT }
 import { hookCoinAddresses } from '../src/hooklab-inclusive-max-wallet-swap.mjs'
 
 const vectors = JSON.parse(readFileSync(new URL('./fixtures/hooklab-graduation-vectors.json', import.meta.url)))
@@ -43,7 +44,7 @@ async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0,
 }
 
 test('on the curve: progress, and what a buy costs right now to finish it', async () => {
-  const s = at('near the end'), { market } = await readHookCoinMarket({ connection: await chain({ pool: s.pool }), mint })
+  const s = at('near the end'), { market } = await readHookCoinMarket({ profile: LEGACY, connection: await chain({ pool: s.pool }), mint })
   assert.equal(market.graduated, false); assert.equal(market.curveComplete, false); assert.equal(market.graduation, null)
   assert.equal(market.solToGraduationLamports, s.finalFill.amountIn, 'the exact final fill from the Rust core')
   assert.equal(market.curveProgressBps, Number(BigInt(s.pool.quoteReserve) * 10000n / BigInt(config.curve.graduationQuote)))
@@ -51,7 +52,7 @@ test('on the curve: progress, and what a buy costs right now to finish it', asyn
 })
 
 test('a full curve waiting for graduate: complete, nothing left to buy, and what graduate will do', async () => {
-  const s = at('complete'), { market } = await readHookCoinMarket({ connection: await chain({ pool: s.pool }), mint })
+  const s = at('complete'), { market } = await readHookCoinMarket({ profile: LEGACY, connection: await chain({ pool: s.pool }), mint })
   assert.equal(market.curveComplete, true); assert.equal(market.graduated, false); assert.equal(market.solToGraduationLamports, null); assert.equal(market.curveProgressBps, 10000)
   assert.deepEqual([market.graduation.topup, market.graduation.burned, market.graduation.lockedLp, market.graduation.quoteReserve],
     [s.graduation.topup, s.graduation.burned, s.graduation.lpLocked, s.graduation.after.quoteReserve])
@@ -59,7 +60,7 @@ test('a full curve waiting for graduate: complete, nothing left to buy, and what
 
 test('graduated: status 1, what graduate did, the locked LP, and the burned supply out of the market cap', async () => {
   const g = at('complete').graduation
-  const { market, wallet: mine } = await readHookCoinMarket({ connection: await chain({ pool: g.after, status: 1, graduatedAt: 1_760_000_000, topup: g.topup, burned: g.burned,
+  const { market, wallet: mine } = await readHookCoinMarket({ profile: LEGACY, connection: await chain({ pool: g.after, status: 1, graduatedAt: 1_760_000_000, topup: g.topup, burned: g.burned,
     lpSupply: g.lpSupply, lockedLp: g.lpLocked }), mint, wallet })
   assert.equal(market.graduated, true); assert.equal(market.curveComplete, false); assert.equal(market.solToGraduationLamports, null); assert.equal(market.curveProgressBps, 10000)
   assert.deepEqual(market.graduation, { at: 1_760_000_000, topup: g.topup, burned: g.burned, lockedLp: g.lpLocked, lpSupply: g.lpSupply })
@@ -69,7 +70,7 @@ test('graduated: status 1, what graduate did, the locked LP, and the burned supp
 })
 
 test('a native-SOL coin: both flags set, so the market says native and the wallet shows SOL and the coin only', async () => {
-  const s = at('near the end'), { market, wallet: mine } = await readHookCoinMarket({ connection: await chain({ pool: s.pool, poolFlag: 1, launchFlag: 1 }), mint, wallet })
+  const s = at('near the end'), { market, wallet: mine } = await readHookCoinMarket({ profile: LEGACY, connection: await chain({ pool: s.pool, poolFlag: 1, launchFlag: 1 }), mint, wallet })
   assert.equal(market.native, true); assert.equal(market.quoteFormMismatch, false)
   assert.equal(market.solToGraduationLamports, s.finalFill.amountIn, 'the same curve and final fill')
   assert.deepEqual(mine, { address: wallet, lamports: '5000000000', coin: '9' }, 'no bridged SOL for a native coin')
@@ -78,9 +79,9 @@ test('a native-SOL coin: both flags set, so the market says native and the walle
 test('flags that disagree refuse trading; a bridged coin keeps its Hook Lab balance', async () => {
   const s = at('near the end')
   for (const [poolFlag, launchFlag] of [[1, 0], [0, 1], [2, 2]]) {
-    const { market } = await readHookCoinMarket({ connection: await chain({ pool: s.pool, poolFlag, launchFlag }), mint })
+    const { market } = await readHookCoinMarket({ profile: LEGACY, connection: await chain({ pool: s.pool, poolFlag, launchFlag }), mint })
     assert.equal(market.native, false); assert.equal(market.quoteFormMismatch, true, `${poolFlag}/${launchFlag}`)
   }
-  const { market, wallet: mine } = await readHookCoinMarket({ connection: await chain({ pool: s.pool }), mint, wallet })
+  const { market, wallet: mine } = await readHookCoinMarket({ profile: LEGACY, connection: await chain({ pool: s.pool }), mint, wallet })
   assert.equal(market.native, false); assert.equal(market.quoteFormMismatch, false); assert.equal(mine.bridgedSol, '7')
 })

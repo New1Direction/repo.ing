@@ -9,6 +9,7 @@ import { UNSAFE_TEXT,coinProfileFields } from './hooklab-coin-profile.mjs'
 import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing } from './hooklab-launch-pricing.mjs'
 import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
 import { isDelistingReason,moderationState } from './hooklab-coin-moderation.mjs'
+import { coinStack } from './hooklab-stack.mjs'
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -116,7 +117,7 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     left join hook_lab_coin_profiles p on p.request_id=r.id where r.status='launched'${openLaunches?` and not exists (select 1 from hook_lab_coin_moderation m where m.request_id=r.id
      and m.id=(select max(id) from hook_lab_coin_moderation l where l.request_id=r.id) and m.action='delist')`:''} order by r.updated_at desc limit $1`,[Math.min(Math.max(1,limit|0),100)])
    return rows.filter(row=>address.safeParse(row.mint).success).map(row=>Object.freeze({id:row.id,mint:row.mint,name:row.name,symbol:row.symbol,creator:row.creator_wallet,
-    creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,profile:publicProfile(row)}))
+    creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,profile:publicProfile(row),stack:coinStack(row)}))
   },
   // Public: the launch request (and profile) behind a launched coin, found through its launch operation's mint.
   async coinByMint(mint){
@@ -124,7 +125,7 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     where o.resolved_request->>'mint'=$1 and r.status='launched' order by r.created_at desc limit 1`,[address.parse(mint)])
    if(!row)return null
    const moderation=openLaunches?moderationState((await pool.query('select id,action,reason,decided_at from hook_lab_coin_moderation where request_id=$1',[row.id])).rows):undefined
-   return Object.freeze({id:row.id,name:row.name,symbol:row.symbol,creator:row.creator_wallet,profile:publicProfile(row),...(moderation&&{moderation})})
+   return Object.freeze({id:row.id,name:row.name,symbol:row.symbol,creator:row.creator_wallet,profile:publicProfile(row),stack:coinStack(row),...(moderation&&{moderation})})
   },
   // Owner moderation (append-only): delist a launched coin with one of the owner's reasons, or list it again.
   async moderate({mint,action,reason=null,actor}){

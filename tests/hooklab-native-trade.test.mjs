@@ -62,7 +62,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  }
 
  await t.test('the coin page reads the coin as native from the bytes the programs wrote, with no bridged SOL for the wallet',async()=>{
-  const view=await readHookCoinMarket({connection:w.connections()[0].connection,mint:roles.mint,wallet:roles.creator})
+  const view=await readHookCoinMarket({connection:w.connections()[0].connection,mint:roles.mint,wallet:roles.creator,profile})
   assert.equal(view.market.native,true);assert.equal(view.market.quoteFormMismatch,false);assert.equal(view.market.graduated,false)
   assert.deepEqual(Object.keys(view.wallet).sort(),['address','coin','lamports'])
  })
