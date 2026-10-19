@@ -7,12 +7,13 @@ import pg from 'pg'
 import { MIGRATIONS, migrationSchema, productionSchema } from '../scripts/hooklab-production-schema.mjs'
 import { hookCoinTradeStore, indexHookCoinTrades } from '../src/hooklab-coin-trades.mjs'
 import { hookActivityRpc } from '../src/hooklab-coin-activity.mjs'
+import { PROGRAMS, QUOTE_MINT } from '../src/hooklab-owner-driver/pins.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
 import { createCoinActivityHandlers, createOnDemandIndexer } from '../app/lib/hooklab-coin-activity.mjs'
 import { CANARY_BUY, CANARY_CLAIM, CANARY_LAUNCH, CANARY_SELL, canary, canaryConnection, clone } from './fixtures/hooklab-canary-trades.mjs'
 
 const config = { host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' }
-const coin = { mint: canary.mint, pool: canary.pool }
+const coin = { mint: canary.mint, pool: canary.pool, programs: PROGRAMS, native: false }
 async function withDatabase(work) {
   const root = new pg.Pool(config), name = `coin_trades_${randomUUID().replaceAll('-', '')}`
   let pool
@@ -172,7 +173,7 @@ test('end to end: the first chart read indexes the coin, later reads cost no RPC
   let swapCount = '2'
   const service = { market: async () => ({ market: { mint: coin.mint, symbol: 'HLCANARY', decimals: 6, graduated: false, initialSupply: '1000000000000000',
     supply: '1000000000000000', pool: { swapCount } }, wallet: null }), activity: hookActivityRpc(canaryConnection({ calls })),
-    coinProfile: async () => ({ id: 'listed' }) }
+    coinProfile: async () => ({ id: 'listed' }), profileFor: () => ({ programs: PROGRAMS, quoteMint: QUOTE_MINT }), activityFor() { return this.activity } }
   const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async () => ({ id: 'listed' }), openStore,
     indexer: createOnDemandIndexer({ openStore, minMs: 0, waitMs: 5_000 }), solUsd: () => null })
   const get = async path => (await handlers[path.split('?')[0]](new Request(`https://repo.ing/api/hook-lab/market/${coin.mint}/${path}`), { mint: coin.mint })).json()

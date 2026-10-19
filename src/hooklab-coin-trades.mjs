@@ -48,7 +48,7 @@ async function* decoded(run, items) {
       if (item.failed) { yield { item, trades: [] }; continue }
       check(txs[i], 'HOOK_TRADE_TRANSACTION_MISSING')
       check(txs[i].slot === item.slot, 'HOOK_TRADE_SLOT_MISMATCH')
-      yield { item, trades: run.decode(txs[i], { signature: item.signature, pool: run.coin.pool }) }
+      yield { item, trades: run.decode(txs[i], { signature: item.signature, pool: run.coin.pool, programs: run.coin.programs, expectNative: run.coin.native === true }) }
     }
   }
 }
@@ -80,10 +80,12 @@ async function catchUpHead(run) {
   await save(run, { done: run.state.done, walk: { ...walk, top: point(head.items[0]) } })
 }
 
-// One indexing pass for one coin ({ mint, pool }): at most maxTransactions transaction reads and maxPages history pages.
+// One indexing pass for one coin ({ mint, pool, programs, native }: programs are its stack's, native whether every swap
+// on its pool must be a native-SOL one): at most maxTransactions transaction reads and maxPages history pages.
 // caughtUp: the cursor reached the newest history this pass saw (no walk left in progress).
 export async function indexHookCoinTrades({ rpc, store, coin, decode = decodeHookTrades, maxTransactions = 40, concurrency = 4,
   pageSize = 1000, maxPages = 5 }) {
+  check(typeof coin?.programs?.swap === 'string', 'HOOK_TRADE_PROGRAMS_MISSING')
   const saved = await store.cursor(coin.pool)
   check(!saved || saved.mint === coin.mint, 'HOOK_TRADE_CURSOR_MINT')
   const run = { rpc, store, coin, decode, concurrency, pageSize, budget: maxTransactions, pages: maxPages, transactions: 0, trades: 0,

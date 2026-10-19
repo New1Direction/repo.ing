@@ -21,7 +21,7 @@ function holdingRow(owner, amount, { holding = holdingAddress(mint, owner, PROGR
 const holdersOf = (rows, options = {}) => {
   const holdings = clone(canary.holdings); holdings.value.push(...rows)
   const calls = []
-  return { calls, read: readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection({ holdings, calls })), mint, supply, labels: hookHolderLabels(addresses), ...options }) }
+  return { calls, read: readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection({ holdings, calls })), mint, supply, labels: hookHolderLabels(addresses), programs: PROGRAMS, ...options }) }
 }
 
 test('the canary: the curve and the launch reserve, labelled; empty holdings left out', async () => {
@@ -39,7 +39,7 @@ test('traders are ranked by balance with their share of supply; after graduation
   const result = await read
   assert.equal(result.holderCount, 2, 'every holder with a balance counts')
   assert.deepEqual(result.holders.map(h => [h.rank, h.label ?? h.owner, h.percent]), [[null, 'Bonding curve', 75], [null, 'Launch reserve', 25], [1, trader, 1.2345]])
-  const graduated = await readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply, labels: hookHolderLabels(addresses, { graduated: true }) })
+  const graduated = await readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply, labels: hookHolderLabels(addresses, { graduated: true }), programs: PROGRAMS })
   assert.equal(graduated.holders[0].label, 'Liquidity pool')
 })
 
@@ -51,5 +51,12 @@ test('accounts that are not this coin’s holdings stop the read', async () => {
     { ...holdingRow(trader, '1'), account: { ...holdingRow(trader, '1').account, owner: PROGRAMS.swap } },
     { ...holdingRow(trader, '1'), account: { ...holdingRow(trader, '1').account, data: [Buffer.alloc(204).toString('base64'), 'base64'] } },
   ]) await assert.rejects(holdersOf([row]).read, /HOOK_HOLDERS_ACCOUNT_INVALID/)
-  await assert.rejects(readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply: '0' }), /HOOK_HOLDERS_SUPPLY_INVALID/)
+  await assert.rejects(readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply: '0', programs: PROGRAMS }), /HOOK_HOLDERS_SUPPLY_INVALID/)
+  await assert.rejects(readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply }), /HOOK_HOLDERS_PROGRAMS_MISSING/, 'no stack is assumed')
+})
+
+test('an owner the coin\'s stack hides (its quote marker) is never listed or ranked', async () => {
+  const { read } = holdersOf([holdingRow(trader, '7'), holdingRow(other, '9')], { hidden: [other] })
+  const result = await read
+  assert.equal(result.holderCount, 1); assert.ok(!JSON.stringify(result).includes(other))
 })
