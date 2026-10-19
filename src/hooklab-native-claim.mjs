@@ -102,7 +102,10 @@ function claimEvent(tx, launchProgram) {
   for (const group of tx.innerInstructions) for (const ix of group.instructions) {
     if (tx.keys[ix.programIdIndex] !== launchProgram) continue
     const bytes = Buffer.from(bs58.decode(ix.data))
-    check(group.index === 2 && ix.stackHeight === 2 && bytes.subarray(0, 8).equals(EVENT_TAG) && ix.accounts.length === 1 && tx.keys[ix.accounts[0]] === eventAuthority, 'Unexpected launch inner instruction')
+    // Some RPC nodes omit stackHeight: the claim's own top-level instruction (index 2) and the launch program identify
+    // the event then, since the claim makes no other call into the launch program. A height, when given, must be 2.
+    check(group.index === 2 && (ix.stackHeight === 2 || ix.stackHeight === undefined || ix.stackHeight === null)
+      && bytes.subarray(0, 8).equals(EVENT_TAG) && ix.accounts.length === 1 && tx.keys[ix.accounts[0]] === eventAuthority, 'Unexpected launch inner instruction')
     const decoded = coder.events.decode(bytes.subarray(8).toString('base64'))
     check(decoded && Buffer.concat([EVENT_TAG, Buffer.from(loadNativeArtifacts().idls.launch.events.find(e => e.name === decoded.name).discriminator), coder.types.encode(decoded.name, decoded.data)]).equals(bytes), 'Noncanonical event')
     events.push(decoded)

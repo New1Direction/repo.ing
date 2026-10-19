@@ -243,6 +243,11 @@ test('creator fees: swap_v2 buys pay the launch account, only the creator claims
   for (const [evidence, label] of [[shifted, 'launch left above rent'], [silent, 'no CreatorFeesClaimedSol']]) {
     b.executed.set(claimed.signature, evidence); assert.equal((await reconcile(RESTARTED)).status, 'unresolved', label)
   }
+  // F4: some RPC nodes omit stackHeight; the claim's own instruction and the launch program still identify the event.
+  const unstacked = structuredClone(receipt); for (const g of unstacked.innerInstructions) for (const ix of g.instructions) delete ix.stackHeight
+  const nested = structuredClone(receipt); for (const g of nested.innerInstructions) for (const ix of g.instructions) ix.stackHeight = 3
+  b.executed.set(claimed.signature, unstacked); assert.equal((await reconcile(RESTARTED)).status, 'finalized-success', 'no stackHeight in the receipt')
+  b.executed.set(claimed.signature, nested); assert.equal((await reconcile(RESTARTED)).status, 'unresolved', 'an event from a deeper call')
   b.executed.set(claimed.signature, receipt)
   const other = jsonbRoundTrip(stored.settlementContext); other.compilationInput.request.mint = roles.config
   assert.equal((await reconcile(RESTARTED, { settlementContext: other })).status, 'unresolved', 'another coin')
