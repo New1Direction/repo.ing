@@ -8,6 +8,7 @@ import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES } from './hooklab-launch
 import { UNSAFE_TEXT,coinProfileFields } from './hooklab-coin-profile.mjs'
 import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing } from './hooklab-launch-pricing.mjs'
 import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
+import { isDelistingReason,moderationState } from './hooklab-coin-moderation.mjs'
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -19,6 +20,10 @@ export const launchIntentSchema=z.object({name:text(32),symbol:text(10),uri:z.st
  creatorFeeBps:z.number().int().refine(x=>CREATOR_FEE_BPS_CHOICES.includes(x)),capBps:z.number().int().refine(x=>WALLET_CAP_BPS_CHOICES.includes(x))}).strict()
 
 const parseIntent=intent=>{try{return launchIntentSchema.parse(intent)}catch{throw fail('Choose a name, symbol, an approved creator fee (0.5%, 1% or 2%) and an approved wallet cap (1%, 2%, 3% or 5%)')}}
+// An open request chooses from the chain's menus, not the release code's.
+const openIntentSchema=menus=>z.object({name:text(32),symbol:text(10),uri:z.string().refine(x=>Buffer.byteLength(x)<=200),
+ creatorFeeBps:z.number().int().refine(x=>menus.creatorFeeBps.includes(x)),capBps:z.number().int().refine(x=>menus.capBps.includes(x))}).strict()
+const parseOpenIntent=(intent,menus)=>{try{return openIntentSchema(menus).parse(intent)}catch{throw fail('Choose a name, a symbol, and a creator fee and max per wallet from the current list')}}
 
 export function verifyEd25519(signerAddress,message,signature){
  try{
@@ -54,8 +59,10 @@ const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,
 
 // usdPricing (HOOK_LAUNCH_USD_PRICING): invites fix a SOL price and opening virtual quote, and only that quote binds.
 // Off, nothing reads the price table (it may not exist yet) and every launch binds the standard 1 SOL quote.
-export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false}={}){
- address.parse(adminAddress)
+// openLaunches (HOOK_OPEN_LAUNCHES, after the open-launches migration): creators' own requests launch without an invite,
+// launched coins can be delisted by the owner, and discovery leaves delisted coins out.
+export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false,openLaunches=false}={}){
+ if(!openLaunches)address.parse(adminAddress)
  const withProfile=requestQuery(usdPricing)
  const expireInvites=db=>db.query("update hook_lab_launch_requests set status='invite-expired',updated_at=clock_timestamp() where status='invited' and invite_expires_at<=clock_timestamp()")
  return Object.freeze({
@@ -78,13 +85,16 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   },
   // profile: { image, description, x, website, telegram } as the server validated it (image: src/token-image.mjs
   // validateTokenImage); written in the same transaction as the request and never changed afterwards.
-  async createRequest(creator,{id,...intent},profile=null){
-   address.parse(creator);z.uuid().parse(id);const value=parseIntent(intent)
+  // source 'open': the creator's own launch, no invite. menus: the chain's {creatorFeeBps,capBps} it must choose from.
+  async createRequest(creator,{id,...intent},profile=null,{source='owner-invite',menus=null}={}){
+   address.parse(creator);z.uuid().parse(id)
+   const open=source==='open';check(open?openLaunches&&menus:source==='owner-invite','Launch requests are not open')
+   const value=open?parseOpenIntent(intent,menus):parseIntent(intent)
    const coin=profile&&{...coinProfileFields(profile),image:profile.image}
    check(!coin||(typeof coin.image==='string'&&coin.image.startsWith('data:image/png;base64,')),'Add a coin image')
    try{
     return await inTransaction(pool,async db=>{
-     const {rows:[row]}=await db.query("insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status) values($1,$2,$3,$4,$5,$6,$7,'queued') returning *",[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps])
+     const {rows:[row]}=await db.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status${open?',source':''}) values($1,$2,$3,$4,$5,$6,$7,'queued'${open?",'open'":''}) returning *`,[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps])
      if(!coin)return publicRequest({...row,has_profile:false})
      const {rows:[{n}]}=await db.query("select count(*)::int n from hook_lab_coin_profiles p join hook_lab_launch_requests r on r.id=p.request_id where r.creator_wallet=$1 and p.created_at>clock_timestamp()-interval '1 day'",[creator])
      check(n<PROFILES_PER_CREATOR_PER_DAY,'You have sent several launch requests today. Try again tomorrow')
@@ -99,11 +109,12 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    const {rows:[row]}=await pool.query(`${withProfile} where r.creator_wallet=$1 order by r.created_at desc limit 1`,[creator])
    return publicRequest(row)??null
   },
-  // Public: coins launched through repo.ing approval, newest first, with their mints and profiles.
+  // Public: coins launched through the site, newest first, with their mints and profiles (delisted coins left out).
   async launchedCoins(limit=50){
    const {rows}=await pool.query(`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,o.resolved_request->>'mint' as mint
     from hook_lab_launch_requests r join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch'
-    left join hook_lab_coin_profiles p on p.request_id=r.id where r.status='launched' order by r.updated_at desc limit $1`,[Math.min(Math.max(1,limit|0),100)])
+    left join hook_lab_coin_profiles p on p.request_id=r.id where r.status='launched'${openLaunches?` and not exists (select 1 from hook_lab_coin_moderation m where m.request_id=r.id
+     and m.id=(select max(id) from hook_lab_coin_moderation l where l.request_id=r.id) and m.action='delist')`:''} order by r.updated_at desc limit $1`,[Math.min(Math.max(1,limit|0),100)])
    return rows.filter(row=>address.safeParse(row.mint).success).map(row=>Object.freeze({id:row.id,mint:row.mint,name:row.name,symbol:row.symbol,creator:row.creator_wallet,
     creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,profile:publicProfile(row)}))
   },
@@ -111,7 +122,31 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   async coinByMint(mint){
    const {rows:[row]}=await pool.query(`${withProfile} join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch'
     where o.resolved_request->>'mint'=$1 and r.status='launched' order by r.created_at desc limit 1`,[address.parse(mint)])
-   return row?Object.freeze({id:row.id,name:row.name,symbol:row.symbol,creator:row.creator_wallet,profile:publicProfile(row)}):null
+   if(!row)return null
+   const moderation=openLaunches?moderationState((await pool.query('select id,action,reason,decided_at from hook_lab_coin_moderation where request_id=$1',[row.id])).rows):undefined
+   return Object.freeze({id:row.id,name:row.name,symbol:row.symbol,creator:row.creator_wallet,profile:publicProfile(row),...(moderation&&{moderation})})
+  },
+  // Owner moderation (append-only): delist a launched coin with one of the owner's reasons, or list it again.
+  async moderate({mint,action,reason=null,actor}){
+   check(openLaunches,'Coin moderation is not enabled')
+   check(['delist','relist'].includes(action)&&(action==='delist'?isDelistingReason(reason):reason===null),'Choose one of the delisting reasons')
+   check(typeof actor==='string'&&Buffer.byteLength(actor)>=1&&Buffer.byteLength(actor)<=64,'Moderator identity required')
+   return inTransaction(pool,async db=>{
+    const {rows:[row]}=await db.query(`select r.id from hook_lab_launch_requests r join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch'
+     where o.resolved_request->>'mint'=$1 and r.status='launched' order by r.created_at desc limit 1 for update of r`,[address.parse(mint)])
+    check(row,'No coin launched through the site has this mint')
+    const {rows:records}=await db.query('select id,action,reason,decided_at from hook_lab_coin_moderation where request_id=$1',[row.id])
+    check(moderationState(records).delisted===(action==='relist'),action==='delist'?'This coin is already delisted':'This coin is not delisted')
+    await db.query('insert into hook_lab_coin_moderation(request_id,action,reason,decided_by) values($1,$2,$3,$4)',[row.id,action,reason,actor])
+    return moderationState((await db.query('select id,action,reason,decided_at from hook_lab_coin_moderation where request_id=$1',[row.id])).rows)
+   })
+  },
+  // A mint's moderation state for the trade and coin pages ({delisted:false} for any coin the site did not launch).
+  async moderationByMint(mint){
+   if(!openLaunches)return Object.freeze({delisted:false})
+   const {rows}=await pool.query(`select m.id,m.action,m.reason,m.decided_at from hook_lab_coin_moderation m join hook_lab_launch_requests r on r.id=m.request_id
+    join hook_lab_native_signing_operations o on o.custody_operation_id=r.custody_operation_id and o.stage='launch' where o.resolved_request->>'mint'=$1`,[address.parse(mint)])
+   return moderationState(rows)
   },
   // Public: the coin's name, symbol, profile and image for its metadata and image URLs.
   async coinFor(id){
@@ -162,6 +197,20 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    check(row.invite_expires_at>new Date(),'Your launch invite expired')
    const {rows:[bound]}=await db.query("update hook_lab_launch_requests set status='launching',custody_operation_id=$2,updated_at=clock_timestamp() where id=$1 and status='invited' returning *",[row.id,z.uuid().parse(custodyOperationId)])
    return publicRequest(bound)
+  },
+  // An open request: bind the creator's own queued request to this launch, at the price repo.ing fixed now (the same
+  // transaction stores it, so the launch compiles exactly this opening price). No invite, no owner.
+  async bindOpenLaunch(db,creator,custodyOperationId,{virtualQuote,pricing,...intent}){
+   check(openLaunches,'Open launches are not enabled')
+   const value=parseOpenIntent(intent,{creatorFeeBps:[intent.creatorFeeBps],capBps:[intent.capBps]}),fixed=checkLaunchPricing(pricing)
+   check(String(virtualQuote)===fixed.virtualQuote,'The opening price differs from the price repo.ing fixed')
+   const {rows:[row]}=await db.query("select * from hook_lab_launch_requests where creator_wallet=$1 and source='open' and status in ('queued','launching') for update",[address.parse(creator)])
+   check(row,'Create your coin first')
+   check(row.name===value.name&&row.symbol===value.symbol&&row.uri===value.uri&&row.creator_fee_bps===value.creatorFeeBps&&row.cap_bps===value.capBps,'Launch details differ from your coin')
+   if(row.status==='launching'){check(row.custody_operation_id===custodyOperationId,'This coin is already launching');return publicRequest(row)}
+   const {rows:[bound]}=await db.query("update hook_lab_launch_requests set status='launching',custody_operation_id=$2,invited_at=clock_timestamp(),invite_expires_at=clock_timestamp()+interval '1 day',updated_at=clock_timestamp() where id=$1 and status='queued' returning *",[row.id,z.uuid().parse(custodyOperationId)])
+   const {rows:[price]}=await db.query('insert into hook_lab_launch_request_prices(request_id,sol_usd_micros,sources,virtual_quote) values($1,$2,$3,$4) returning *',[row.id,fixed.solUsdMicros,JSON.stringify(fixed.sources),fixed.virtualQuote])
+   return publicRequest({...bound,...priceColumns(price)})
   },
   async markLaunched(custodyOperationId){
    const {rows:[row]}=await pool.query("update hook_lab_launch_requests set status='launched',updated_at=clock_timestamp() where custody_operation_id=$1 and status='launching' returning *",[z.uuid().parse(custodyOperationId)])

@@ -3,6 +3,7 @@ import { publicError } from '../../../lib/public-error.mjs'
 import { createRateLimiter } from '../../../lib/csp-report.mjs'
 import { clientAddress } from '../../../../src/client-address.mjs'
 import { normalizeTokenImage, readLimitedBody } from '../../../../src/token-image.mjs'
+import { siteLaunchesEnabled } from '../../../../src/hooklab-open-creation.mjs'
 
 // Prepares a hooks coin image the way /api/repo-images prepares a repository token image: a 512 x 512 PNG
 // returned to the launch form. Nothing is stored until the creator queues a launch request with it.
@@ -19,7 +20,7 @@ function readWithDeadline(request) {
 }
 
 export async function POST(request) {
-  if (process.env.HOOK_OWNER_APPROVED_LAUNCHES !== 'true') return Response.json({ error: 'Coin images are not open yet.' }, { status: 404 })
+  if (!siteLaunchesEnabled(process.env)) return Response.json({ error: 'Coin images are not open yet.' }, { status: 404 })
   if (request.headers.get('origin') !== publicOrigin(request.url)) return Response.json({ error: 'Open the launch form on repo.ing.' }, { status: 403 })
   if (!allowed(clientAddress(request) ?? 'unknown')) return Response.json({ error: 'Too many uploads. Try again in a few minutes.' }, { status: 429 })
   let bytes

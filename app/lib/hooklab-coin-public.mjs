@@ -8,9 +8,10 @@ import { imageWidthParam,tokenImageResponse } from '../../src/token-image.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
 import { createRateLimiter } from './csp-report.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
+import { openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 
 const notFound=()=>Response.json({error:'Coin not found.'},{status:404,headers:{'Cache-Control':'public, max-age=60','X-Content-Type-Options':'nosniff'}})
-const enabled=env=>env.HOOK_OWNER_APPROVED_LAUNCHES==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
+const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
 
 // Each read opens the Hook Lab database, which also holds custody and signing, so reads are throttled per instance.
 const defaultLimiter=createRateLimiter({limit:240,globalLimit:3000,windowMs:60_000})
@@ -24,7 +25,7 @@ export function createCoinPublicHandler({env=process.env,configuration=walletIde
   let pool
   try{
    const config=configuration(env);pool=database(config)
-   const coin=await store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS}).coinFor(id)
+   const coin=await store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,openLaunches:openLaunchesEnabled(env)}).coinFor(id)
    if(!coin)return notFound()
    // A launched coin's image never changes; before that a decline must stop it being served, so caches expire quickly.
    if(kind==='image'){

@@ -44,7 +44,6 @@ export const inclusiveMaxWalletLaunchRequestSchema = inclusiveMaxWalletPreparati
  schema:z.literal('repoing/inclusive-max-wallet-launch-request/1'),reviewer:key,name:byteString(32).refine(s=>s.length>0),
  symbol:byteString(10).refine(s=>s.length>0),uri:byteString(200),virtualQuote:u64,
 }).strict()
-export const parseMaxWalletLaunchRequest = request => (request?.policyVersion===2?inclusiveMaxWalletLaunchRequestSchema:maxWalletLaunchRequestSchema).parse(request)
 // Open (self-serve) launch: the creator's own coin, no reviewer. create_launch_open_v1 (hook-lab feat/open-creation ABI)
 // takes v4's arguments and 32 named accounts; its discriminator is sha256("global:create_launch_open_v1")[..8].
 export const OPEN_LAUNCH_DISCRIMINATOR = Buffer.from([51, 106, 16, 21, 31, 133, 167, 85])
@@ -52,6 +51,9 @@ export const openLaunchRequestSchema = inclusiveMaxWalletPreparationRequestSchem
   schema: z.literal('repoing/open-launch-request/1'), name: byteString(32).refine(s => s.length > 0),
   symbol: byteString(10).refine(s => s.length > 0), uri: byteString(200), virtualQuote: u64,
 }).strict()
+// Every launch request shape: owner-approved (v1, inclusive) or open, by its schema.
+export const parseMaxWalletLaunchRequest = request => (request?.schema === 'repoing/open-launch-request/1' ? openLaunchRequestSchema
+  : request?.policyVersion===2?inclusiveMaxWalletLaunchRequestSchema:maxWalletLaunchRequestSchema).parse(request)
 const accountSchema = z.object({ address: key, owner: key, executable: z.boolean(), dataBase64: z.string().max(14000000), lamports: u64 }).strict()
 const stateHashesSchema = z.object({ launchConfig: digest, swapConfig: digest, launchGovernance: digest, swapGovernance: digest, authorization: digest, quoteMint: digest }).strict()
 const lookupTableSchema = z.object({ address: key, owner: z.literal(lookupOwner), dataBase64: z.string().max(22000), sha256: digest }).strict()

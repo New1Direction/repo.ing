@@ -15,7 +15,7 @@ const runtimeKey=Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
 // nativeTradingEnabled (HOOK_NATIVE_TRADING_ENABLED, off by default) opens the native-SOL stages to new trades for coins whose pool and
 // launch are native; it needs the upgraded programs, a bundle pinning them (else it stays off) and the native-stages migration.
 export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
- config,profile,dossierJson,connections,limits,walletFundingEnabled=false,nativeTradingEnabled=false}={}){
+ config,profile,dossierJson,connections,limits,walletFundingEnabled=false,nativeTradingEnabled=false,openLaunches=false}={}){
  if(!ownerTradingApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Complete explicit trade adoption required')
  const dossier=JSON.parse(dossierJson)
  if((dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||!['launch-config','swap-config'].every(role=>dossier.accounts.some(pin=>pin.role===role&&pin.binding==='config-counters-v1')))throw Error('Counter-aware approved trading dossier required')
@@ -29,8 +29,9 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  // Display-only market reads use the primary provider; trades and funding re-verify on both providers.
  const market=(mint,wallet=null)=>readHookCoinMarket({connection:connections[0].connection,mint,wallet})
  const walletBalances=wallet=>readHookWalletBalances({connection:connections[0].connection,wallet})
- // Only coins launched through repo.ing approval are shown; a test coin or anything launched outside the site is not.
- const approvals=ownerApprovalStore(pool,{adminAddress:config.reviewer}),coinProfile=mint=>approvals.coinByMint(mint)
+ // Only coins launched through the site are shown; a test coin or anything launched outside the site is not. With open
+ // launches the coin also carries its moderation state (a delisted coin's page shows the notice and offers no BUY).
+ const approvals=ownerApprovalStore(pool,{adminAddress:config.reviewer,openLaunches}),coinProfile=mint=>approvals.coinByMint(mint)
  // The coin page's chart, trades and holders read the same primary provider (src/hooklab-coin-activity.mjs): reads only.
  const activity=hookActivityRpc(connections[0].connection)
  return Object.freeze({origin,genesisHash:JSON.parse(profile.json).genesisHash,ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,walletFunding:walletFundingEnabled===true,walletWithdraw:true,

@@ -9,6 +9,9 @@ import {clientAddress} from '../../src/client-address.mjs'
 import {inclusiveMaxWalletSwapRequestSchema} from '../../src/hooklab-inclusive-max-wallet-swap.mjs'
 import {inclusiveTradeRuntime} from './hooklab-inclusive-trade-runtime.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
+import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
+import { openLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
+import { DELISTED_BUY_REFUSAL } from '../../src/hooklab-coin-moderation.mjs'
 const intent=inclusiveMaxWalletSwapRequestSchema.pick({mint:true,selectedConfig:true,capBps:true,creatorFeeBps:true,side:true,amountIn:true,minAmountOut:true,maxInput:true,maxPriceImpactBps:true}).strict()
 const lamports=z.string().regex(/^[1-9]\d{0,19}$/),mintKey=z.string().max(44)
 const body=z.discriminatedUnion('action',[
@@ -30,8 +33,11 @@ const STAGES=['inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw','
 // Native-SOL trading needs its switch here and in the installed runtime (which then registers the native stages).
 export const nativeTradingOn=(env,service)=>env.HOOK_NATIVE_TRADING_ENABLED==='true'&&service?.nativeTrading===true
 const reply=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
+// moderation(pool, mint): the coin's delisting state. A delisted coin can still be sold (and its creator still claims);
+// only a new BUY is refused.
+const delistedState=(env)=>(pool,mint)=>openLaunchesEnabled(env)?ownerApprovalStore(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,openLaunches:true}).moderationByMint(mint):{delisted:false}
 export function createInclusiveTradeHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=inclusiveTradeRuntime,
- database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
+ database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota,moderation=delistedState(env)}={}){
  return async request=>{
   if(env.HOOK_INCLUSIVE_TRADING_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')return reply({status:'blocked',blockers:[{code:'INCLUSIVE_TRADING_DISABLED',message:'Trading awaits explicit deployment and fee approval.'}]})
   let pool
@@ -53,6 +59,8 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    // Withdrawing is never gated: anyone with SOL in Hook Lab can always take it back out.
    if(['quote','native-quote','fund'].includes(input.action)&&!tradingOpenFor(env,owner.wallet))return reply({status:'blocked',blockers:[{code:'TRADING_NOT_OPEN',message:'Trading opens to everyone soon.'}]})
    if(input.action==='native-quote'&&!nativeTradingOn(env,service))return reply({status:'blocked',blockers:[{code:'NATIVE_TRADING_DISABLED',message:'Trading this coin on repo.ing opens soon.'}]})
+   if(['quote','native-quote'].includes(input.action)&&input.request.side==='buy'&&(await moderation(pool,input.request.mint)).delisted)
+    return reply({status:'blocked',blockers:[{code:'COIN_DELISTED',message:DELISTED_BUY_REFUSAL}]})
    if(input.action==='fund'&&!service.walletFunding)return reply({status:'blocked',blockers:[{code:'WALLET_FUNDING_DISABLED',message:'Adding SOL to Hook Lab is paused right now. Withdrawals still work.'}]})
    if(input.action==='withdraw'&&!service.walletWithdraw)return reply({status:'blocked',blockers:[{code:'WALLET_WITHDRAW_UNAVAILABLE',message:'Withdrawals are unavailable right now.'}]})
    let result

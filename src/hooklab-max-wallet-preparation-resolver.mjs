@@ -11,7 +11,9 @@ import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const fail=()=>Object.assign(Error('Max-wallet preparation unavailable or changed'),{code:'MAX_WALLET_PREPARATION_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
-export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profile,dossierJson,connections,custody,clock=Date.now}){
+// open: the creator fee is the creator's choice from the chain's menu (the open compiler checks it there), so only the
+// rest of the economics is held to the operator's approved values.
+export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profile,dossierJson,connections,custody,clock=Date.now,open=false}){
  const retained=JSON.parse(JSON.stringify({config,profile,dossierJson})),providers=connections.map(x=>({provider:x.provider,connection:x.connection}))
  const {config:c,profile:p,dossier:d}=validateMaxWalletOperatorBindings({...retained,connections:providers})
  check(c.lamportsPerSignature==='5000'&&custody&&typeof custody.get==='function')
@@ -34,7 +36,7 @@ export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profil
     }
     const lc=decode('launch'),sc=decode('swap')
     check(lc.admin.toBase58()===c.reviewer&&lc.treasury.toBase58()===c.treasury&&sc.treasury.toBase58()===c.treasury)
-    check(isDeepStrictEqual(c.economics,{creatorFeeBps:request.creatorFeeBps,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,
+    check(isDeepStrictEqual(open?{...c.economics,creatorFeeBps:request.creatorFeeBps}:c.economics,{creatorFeeBps:request.creatorFeeBps,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,
      protocolFeeBps:sc.protocol_fee_bps,launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()}))
     const collected=await (request.policyVersion===2?collectInclusiveMaxWalletPreparationReview:collectMaxWalletPreparationReview)({profile:preparationProfile,request,connections:providers,limits,expectedReview,clock})
     const after=await custody.get(sessionToken,custodyOperationId)

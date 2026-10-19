@@ -12,7 +12,8 @@ const sha=value=>createHash('sha256').update(value).digest('hex')
 const identity=row=>({schema:'repoing/native-signer-custody/1',operationId:row.operation_id,custodySessionId:row.custody_session_id,
  owner:row.owner_wallet,profileSha256:row.profile_sha256,mint:row.mint,selectedConfig:row.selected_config,stage:row.stage})
 const wipe=keys=>{keys?.mint?.secretKey?.fill(0);keys?.selectedConfig?.secretKey?.fill(0)}
-export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,adminSigner=null}={}){
+// openLaunches: the launch stage signs create_launch_open_v1 (creator and mint only; no admin co-signature).
+export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,adminSigner=null,openLaunches=false}={}){
  const codec=nativeSignerCustodyCodec({enabled,keyRing,activeKeyId}),locked=new WeakMap()
  function record(db,operationId,owner){const row=locked.get(db);check(enabled===true&&row?.operation_id===operationId&&row.owner_wallet===owner);return row}
  async function transition(db,row,stage){
@@ -45,13 +46,13 @@ export function nativeCustodySigningAdapter({enabled=false,keyRing,activeKeyId,a
    let keys
    try{
     const row=record(db,custodyOperationId,owner);inspectHookLabMessage(review)
-    check(['preparation','launch'].includes(stage)&&review.operation===(stage==='preparation'&&row.preparation_request?.policyVersion===2?'inclusive-max-wallet-preparation':`max-wallet-${stage}`))
+    check(['preparation','launch'].includes(stage)&&review.operation===(stage==='preparation'?(row.preparation_request?.policyVersion===2?'inclusive-max-wallet-preparation':'max-wallet-preparation'):openLaunches?'open-launch':'max-wallet-launch'))
     check(row.profile_sha256===review.profileSha256&&review.wallet===owner&&review.payer===owner
      &&sha(message)===messageSha256&&messageSha256===review.messageSha256&&Buffer.from(message).toString('base64')===review.messageBase64)
     check(row.stage===(stage==='preparation'?'preparation-reviewed':'launch-reviewed'))
-    const expected=stage==='preparation'?[owner,row.mint,row.selected_config]:[owner,row.mint,adminSigner?.address]
+    const expected=stage==='preparation'?[owner,row.mint,row.selected_config]:openLaunches?[owner,row.mint]:[owner,row.mint,adminSigner?.address]
     check(expected.length===new Set(expected).size&&review.requiredSigners.length===expected.length&&expected.every(x=>review.requiredSigners.includes(x)))
-    if(stage==='launch'){
+    if(stage==='launch'&&!openLaunches){
      verifyNativeAdminSignerIdentity({configuredAdmin:adminSigner?.address,observedAdmin,owner,mint:row.mint,selectedConfig:row.selected_config})
      if(signerAddress===adminSigner.address){check(typeof adminSigner.sign==='function');return Uint8Array.from(await adminSigner.sign(Buffer.from(message),{review,owner,mint:row.mint,selectedConfig:row.selected_config}))}
     }

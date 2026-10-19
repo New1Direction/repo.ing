@@ -1,7 +1,7 @@
-// Creator side of owner-approved launches: queue a launch intent and see whether repo.ing
-// approvals are online. Queuing prepares and signs nothing; transactions start only after the
-// owner invites this exact coin. The coin's image and links are stored with the request, and
-// repo.ing serves its metadata at a uri fixed here, so the approval binds that uri too.
+// Creator side of site launches: record the coin (name, symbol, image, links, fee and max per wallet). Recording prepares
+// and signs nothing. With open launches (HOOK_OPEN_LAUNCHES) the creator then launches it themselves, choosing the fee
+// and max per wallet from the chain's menus; with owner-approved launches the owner invites it first. The coin's image
+// and links are stored with the request, and repo.ing serves its metadata at a uri fixed here, so the launch binds it.
 import { z } from 'zod'
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
@@ -14,6 +14,8 @@ import { walletIdentityConfiguration,walletIdentitySessionToken,walletIdentityQu
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
 import { launchPriceEstimate } from './hooklab-launch-price.mjs'
+import { openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
+import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 // A 384 KB PNG as base64 plus its data: prefix, and the JSON around it.
 const MAX_IMAGE_DATA_URL=524_310,MAX_BODY_BYTES=540_000
@@ -24,19 +26,23 @@ const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('cancel'),requestId:uuid}).strict(),
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
-const enabled=env=>env.HOOK_OWNER_APPROVED_LAUNCHES==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
+const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
+// The chain's open-creation state (menus, fee, pause) through the installed launch runtime's two providers.
+const chainOpenCreation=async()=>{const service=nativeLaunchRuntime();if(!service?.openLaunches)return null;return service.openCreation()}
 export function createLaunchRequestsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,
- store=ownerApprovalStore,principalStore=walletPrincipalStore,quota=walletIdentityQuota,launchPriceEstimate:estimate=launchPriceEstimate}={}){
+ store=ownerApprovalStore,principalStore=walletPrincipalStore,quota=walletIdentityQuota,launchPriceEstimate:estimate=launchPriceEstimate,openCreation=chainOpenCreation}={}){
  return async request=>{
   if(!enabled(env))return reply({status:'blocked',online:false,error:'Launch requests are not open yet.'})
   let pool
   try{
    const config=configuration(env);pool=database(config)
-   const usdPricing=usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing})
+   const open=openLaunchesEnabled(env),usdPricing=open||usdLaunchPricingEnabled(env),approvals=store(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing,openLaunches:open})
+   // Open launches: what the chain offers now (menus, creation fee, opening-price bounds, paused or not).
+   const chain=open?await openCreation().catch(()=>null):undefined
    if(request.method==='GET'){
     if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
-    // With USD pricing on, the page shows SOL amounts at today's price until an invite fixes them (null: USD only).
-    return reply({status:'available',...await approvals.availability(),...(usdPricing&&{launchPrice:await estimate()})})
+    // With USD pricing on, the page shows SOL amounts at today's price until the launch fixes them (null: USD only).
+    return reply({status:'available',...(open?{open:true,openCreation:chain}:await approvals.availability()),...(usdPricing&&{launchPrice:await estimate()})})
    }
    if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
    try{assertSameOrigin(request,config.origin);if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
@@ -51,10 +57,12 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    // Decoding the image is the expensive check, so it runs only for a signed-in wallet within its quota.
    if(profile)try{profile={...profile,image:await validateTokenImage(input.image)}}catch{return reply({error:'Add a coin image again (PNG, JPEG, WebP or GIF, up to 2 MB).'},400)}
    let launchRequest
-   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:coinMetadataUri(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps},profile)
+   if(input.action==='create'&&open&&!(chain?.native&&chain.open&&!chain.paused))return reply({error:'Launches are paused right now. Try again later.'},409)
+   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:coinMetadataUri(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps},profile,
+    open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,capBps:chain.capBps}}:{})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)
-   return reply({status:'available',request:launchRequest,...await approvals.availability()})
+   return reply({status:'available',request:launchRequest,...(open?{open:true,openCreation:chain}:await approvals.availability())})
   }catch(error){
    if(error?.status===401)return reply({error:'Wallet session expired. Sign in again.'},401)
    return reply({error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Launch requests unavailable.'},409)
