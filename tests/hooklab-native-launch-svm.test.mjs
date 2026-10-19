@@ -215,6 +215,13 @@ test('creator fees: swap_v2 buys pay the launch account, only the creator claims
     const settled = await reconcile(nowMs)
     assert.equal(settled.status, 'finalized-success', JSON.stringify(settled)); assert.equal(settled.claimedLamports, String(due)); assert.deepEqual(settled.quote, { delivered: String(due) })
   }
+  // A row stored before a bundle change keeps its own hash: it settles bound to its own context and today's profile only.
+  const legacy = 'f'.repeat(64), bound = { ...stored.settlementContext, configurationSha256: legacy }
+  assert.equal((await reconcile(RESTARTED, { configurationSha256: legacy, settlementContext: bound })).status, 'finalized-success', 'a row from before a bundle change')
+  assert.equal((await reconcile(RESTARTED, { configurationSha256: legacy })).status, 'unresolved', 'a context bound to another hash')
+  const otherProfile = jsonbRoundTrip(bound); otherProfile.compilationInput.profile.providers = [...otherProfile.compilationInput.profile.providers].reverse()
+  assert.equal((await reconcile(RESTARTED, { configurationSha256: legacy, settlementContext: otherProfile })).status, 'unresolved', 'another profile')
+  await assert.rejects(resolverAt(RESTARTED).revalidate({ owner: roles.creator, stage: 'native-claim', ...stored, configurationSha256: legacy, settlementContext: bound }), 'revalidation stays strict')
   assert.equal(await lamportsOf(a.launch), rent, 'the launch account is back at its rent')
   assert.equal(await lamportsOf(roles.creator) - creatorBefore, due - BigInt(claimed.fee), 'the creator gained exactly the claim less the network fee')
   assert.equal((await status()).claimableLamports, '0')

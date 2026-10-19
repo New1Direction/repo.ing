@@ -89,7 +89,10 @@ export function nativeClaimResolver({ config, profile, dossierJson, connections,
     const identity = { signature, messageSha256: review?.messageSha256, profileSha256: review?.profileSha256 }
     try {
       const ci = settlementContext?.compilationInput
-      check(settlementContext?.schema === 'repoing/hooklab-native-claim-settlement-context/1' && settlementContext.configurationSha256 === hash && hash === configurationSha256)
+      // A row stored before a bundle change (the dossier is re-collected after every governed change) keeps its own hash:
+      // it settles only bound to its own context and today's profile, and only if its full review still recompiles.
+      check(settlementContext?.schema === 'repoing/hooklab-native-claim-settlement-context/1' && settlementContext.configurationSha256 === hash
+        && (hash === configurationSha256 || isDeepStrictEqual(ci?.profile, claimProfile)))
       // A jsonb column hands the context back with its keys reordered: rebuild the observations in their one construction order.
       const plan = compileNativeClaimReview({ ...ci, observations: ci.observations.map(canonicalObservation) })
       check(isDeepStrictEqual(plan.review, review) && verifyHookLabSignedMessage(review, signedTransactionBase64).signature === signature)
