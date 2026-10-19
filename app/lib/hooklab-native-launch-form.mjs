@@ -1,13 +1,16 @@
 // Native launcher reserve input. Pure (no node: APIs) so the client component can use it; the server
 // re-validates everything and checks an invited coin against its stored request byte for byte.
 
-// The reviewed curve input every launch uses: 1,000,000,000 raw is curve math, not deposited SOL.
-export const STANDARD_VIRTUAL_QUOTE = '1000000000'
+import { STANDARD_VIRTUAL_QUOTE } from '../../src/hooklab-launch-pricing.mjs'
+
+// The reviewed curve input every unpriced launch uses: 1,000,000,000 raw is curve math, not deposited SOL.
+export { STANDARD_VIRTUAL_QUOTE }
 
 const bytes = value => new TextEncoder().encode(value).length
 const isHttps = value => { try { return new URL(value).protocol === 'https:' } catch { return false } }
 
-// What an invited creator cannot edit: the approved coin, plus the standard curve and a label from its symbol.
+// What an invited creator cannot edit: the approved coin, plus a label from its symbol and its opening price (the
+// virtual quote fixed with a USD-priced invite, otherwise the standard curve).
 export const lockedLaunchFields = intent => intent ? { label: intent.symbol, virtualQuote: STANDARD_VIRTUAL_QUOTE, ...intent } : {}
 
 // The reserve request body, approved details first. Throws a plain-words Error for anything invalid.

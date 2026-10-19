@@ -6,6 +6,7 @@ import { ArrowRight, Check } from 'lucide-react'
 import { HookNativeLaunch } from './hooklab-native-launch'
 import { HookWalletSignIn, shortAddress, useHookWalletSession } from './hooklab-wallet-signin'
 import { HookCoinFields, HookCoinPreview, HookLaunchNotes } from './hooklab-coin-form'
+import { HookPriceStats } from './hooklab-launch-price'
 import { DEFAULT_CREATOR_FEE_BPS, DEFAULT_WALLET_CAP_BPS } from '../../src/hooklab-launch-menus.mjs'
 import { coinImageUrl, coinProfileFields, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
 import { readLaunchHandoff } from '../lib/hooklab-launch-handoff.mjs'
@@ -52,9 +53,12 @@ export function HookLaunchSteps({ phase }) {
       <span>{index < phase ? <Check size={14} aria-hidden="true"/> : index + 1}</span>{label}</li>)}</ol>
 }
 
-export function RequestStatus({ request, online, busy, error = '', onCancel, onAnother }) {
+// launchPrice: today's estimate (or null) while USD pricing is on; undefined while it is off. Once invited, the price
+// fixed with the invite (request.pricing) is the one shown; an invite from before USD pricing shows none.
+export function RequestStatus({ request, launchPrice, online, busy, error = '', onCancel, onAnother }) {
   const symbol = `$${request.symbol}`
   const until = request.inviteExpiresAt && new Date(request.inviteExpiresAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const price = request.pricing ?? (request.status === 'queued' ? launchPrice : undefined)
   return <section className="launch-panel hooks-status" aria-live="polite">
     <HookCoinPreview image={request.profile ? coinImageUrl('', request.id, 128) : null} name={request.name} symbol={request.symbol}
       capBps={request.capBps} creatorFeeBps={request.creatorFeeBps} profile={request.profile}/>
@@ -72,6 +76,7 @@ export function RequestStatus({ request, online, busy, error = '', onCancel, onA
       <h2>{symbol} is live</h2>
       <p>Anyone can buy and sell it on repo.ing now. Share it so people can find it.</p>
     </>}
+    {price !== undefined && <HookPriceStats price={price} fixed={!!request.pricing}/>}
     <div className="launch-review-actions">
       {request.status === 'launched' && <><Link className="button primary" href="/hooks/trade">Buy or sell <ArrowRight size={16} aria-hidden="true"/></Link>
         <button type="button" className="button outline" onClick={onAnother}>Launch another coin</button></>}
@@ -86,6 +91,8 @@ export function RequestStatus({ request, online, busy, error = '', onCancel, onA
 export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
   const session = useHookWalletSession(genesisHash)
   const [online, setOnline] = useState(null)
+  // undefined: USD launch pricing is off; null: on, but no SOL price right now; else today's estimate.
+  const [launchPrice, setLaunchPrice] = useState(undefined)
   const [request, setRequest] = useState(null)
   const [coin, setCoin] = useState(EMPTY_COIN)
   const [imageBusy, setImageBusy] = useState(false)
@@ -101,7 +108,7 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
   const signedIn = session.signedIn
   const refresh = useCallback(async () => {
     try {
-      const available = await call(); setOnline(!!available.online)
+      const available = await call(); setOnline(!!available.online); setLaunchPrice(available.launchPrice)
       // Signed out (or the 30-minute session lapsed): keep showing the last request; signing in refreshes it.
       if (!signedIn) return
       const mine = await call({ action: 'get' })
@@ -131,7 +138,8 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
   const showStatus = request && !another && (open.has(status) || status === 'launched')
   const phase = !showStatus ? 0 : status === 'queued' ? 1 : status === 'launched' ? STEPS.length : 2
   const approvedIntent = showStatus && (status === 'invited' || status === 'launching' || (status === 'launched' && signedHere))
-    ? { name: request.name, symbol: request.symbol, uri: request.uri, creatorFeeBps: request.creatorFeeBps, capBps: request.capBps } : null
+    ? { name: request.name, symbol: request.symbol, uri: request.uri, creatorFeeBps: request.creatorFeeBps, capBps: request.capBps,
+        ...(request.pricing && { virtualQuote: request.pricing.virtualQuote }) } : null
   const paused = initialBlockers.length > 0
   const ready = !coinProblem(coin)
   const cta = imageBusy ? 'Preparing image…' : session.busy ? 'Check your wallet…' : busy ? 'Sending…' : signedIn ? 'Request launch' : 'Sign in and request launch'
@@ -140,7 +148,7 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
     <HookLaunchSteps phase={phase}/>
     {showStatus && !signedIn && session.checked && status === 'queued' && <HookWalletSignIn genesisHash={genesisHash} session={session} title="Sign in to see updates">
       Your request is saved. Sign in with the same wallet to see when repo.ing invites you.</HookWalletSignIn>}
-    {showStatus ? <RequestStatus request={request} online={online} busy={busy} error={error} onCancel={cancel} onAnother={() => setAnother(true)}/>
+    {showStatus ? <RequestStatus request={request} launchPrice={launchPrice} online={online} busy={busy} error={error} onCancel={cancel} onAnother={() => setAnother(true)}/>
       : <form className="launch-panel hooks-launch-panel" onSubmit={submit} noValidate>
         {status && endedText[status] && !another && <p className="hooks-ended" role="status">{endedText[status]}</p>}
         {paused && <p className="hooks-ended" role="status">Launching is paused right now. You can still send a request; it waits in line.</p>}
@@ -151,7 +159,7 @@ export function HookOwnerApprovedLaunch({ genesisHash, initialBlockers = [] }) {
             <HookCoinPreview image={coin.image} name={coin.name.trim()} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} profile={previewProfile(coin)}/>
             <HookCoinFields form={coin} set={set} disabled={busy} onImageBusy={setImageBusy}/>
           </fieldset>
-          <div className="launch-side"><HookLaunchNotes capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps}/></div>
+          <div className="launch-side"><HookLaunchNotes capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} launchPrice={launchPrice}/></div>
         </div>
         {(error || session.error) && <p className="inline-error hooks-submit-error" role="alert">{error || session.error}</p>}
         <button type="submit" className="button primary launch-submit" disabled={busy || session.busy || imageBusy || !session.checked} aria-describedby="hooks-request-note">{cta}</button>

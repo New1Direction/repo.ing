@@ -4,6 +4,7 @@ import { Check, Globe, Image as ImageIcon, Info, LoaderCircle, Send, Upload } fr
 import { CREATOR_FEE_BPS_CHOICES, WALLET_CAP_BPS_CHOICES, percent } from '../../src/hooklab-launch-menus.mjs'
 import { COIN_DESCRIPTION_MAX, coinLinks } from '../../src/hooklab-coin-profile.mjs'
 import { SOON_BLOCKS, hookBlock } from '../../src/hooklab-blocks.mjs'
+import { HookStartingPrice } from './hooklab-launch-price'
 import '../launch-pair.css'
 
 // The creator keeps 75% of the creator fee and repo.ing 25% (platform = floor(gross / 4) per trade).
@@ -134,7 +135,8 @@ export function HookBlocks({ form, set, disabled }) {
 }
 
 // The side column: how approval works and what each trade pays.
-export function HookLaunchNotes({ capBps, creatorFeeBps }) {
+// launchPrice: undefined while USD launch pricing is off (no price card), else today's estimate or null (see HookStartingPrice).
+export function HookLaunchNotes({ capBps, creatorFeeBps, launchPrice }) {
   return <>
     <div className="inner-card discovery-launch hooks-how"><h3>How launching works</h3>
       <ol>
@@ -144,6 +146,7 @@ export function HookLaunchNotes({ capBps, creatorFeeBps }) {
         <li><strong>Your coin is live.</strong> Anyone can buy and sell it on repo.ing.</li>
       </ol>
     </div>
+    {launchPrice !== undefined && <HookStartingPrice price={launchPrice}/>}
     <div className="inner-card fee-breakdown"><h3>Every trade</h3>
       <div className="fee-line"><span>Creator fee<small>Paid by every buy and sell</small></span><strong>{percent(creatorFeeBps)}</strong></div>
       <div className="fee-line"><span>You earn<small>75% of the creator fee, in SOL</small></span><strong>{creatorCut(creatorFeeBps)}</strong></div>
