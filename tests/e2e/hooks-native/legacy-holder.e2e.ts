@@ -16,10 +16,10 @@ import { expectSettlementIsReceipt } from './support/settlement.ts'
 import { freshBuyerOnCoinPage, startTrade } from './support/flows.ts'
 import { launchCoinViaUi, type Launched } from './support/launch.ts'
 import { LEGACY_PROGRAMS, LEGACY_QUOTE_MINT, invokedPrograms } from './support/stack-separation.ts'
-import { derivedAddresses } from '../../../src/hooklab-owner-driver/pins.mjs'
+import { PROGRAMS as LEGACY_IDS, QUOTE_MINT as LEGACY_MINT, derivedAddresses } from '../../../src/hooklab-owner-driver/pins.mjs'
 
 const COIN = { name: 'E2E Legacy Coin', symbol: 'E2ELEG', capBps: 500, creatorFeeBps: 100 }
-const { bridgeSolVault: VAULT, bridgeNativeWrapper: WRAPPER } = derivedAddresses()
+const { bridgeSolVault: VAULT, bridgeNativeWrapper: WRAPPER } = derivedAddresses(LEGACY_IDS, LEGACY_MINT)
 const bridgeCoder = new BorshCoder(JSON.parse(readFileSync(new URL('../../../vendor/hooklab-production-candidate/idl/bordrless_bridge.json', import.meta.url), 'utf8')))
 /** Lamports the vault holds above its own rent beyond everything wrapped (negative: under-backed by the site's rule). */
 async function backing(): Promise<bigint> {

@@ -14,7 +14,7 @@ import { REPO_ROOT, sha256 } from './common.mjs'
 const rpc = process.argv[2] ?? 'https://api.mainnet-beta.solana.com'
 const connection = new Connection(rpc, { commitment: 'finalized', disableRetryOnRateLimit: true })
 if (await connection.getGenesisHash() !== MAINNET_GENESIS) throw Error('not mainnet-beta; refusing to snapshot')
-const d = derivedAddresses(PROGRAMS)
+const d = derivedAddresses(PROGRAMS, QUOTE_MINT)
 const roles = { 'bridge-program-data': d.bridgeProgramData, 'bridge-config': d.bridgeConfig, 'bridge-native-wrapper': d.bridgeNativeWrapper,
   'bridge-sol-vault': d.bridgeSolVault, 'quote-mint': QUOTE_MINT }
 const { context, value } = await connection.getMultipleAccountsInfoAndContext(Object.values(roles).map(a => new PublicKey(a)), 'finalized')
