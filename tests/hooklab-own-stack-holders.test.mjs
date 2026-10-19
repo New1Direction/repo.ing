@@ -15,10 +15,10 @@ import { derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
 
 const skip = INDEPENDENT_SKIP || (process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HOOKLAB_CANARY_PYTHONPATH && 'the isolated SVM runner (HOOKLAB_CANARY_PYTHONPATH) is not available')
 // Until the trade-scope evidence split (trade reviews check only trade-side pins) is merged, trades refuse after any
-// launch-side change; this test then reports as a todo instead of failing the suite.
-const todo = process.env.HOOKLAB_TRADE_SCOPE_MERGED === 'true' ? false : 'needs the trade-scope evidence split (TASK C) merged'
+// launch-side change (RED with HOOKLAB_TRADE_SCOPE_MERGED=true); the test skips with that reason until then.
+const pending = process.env.HOOKLAB_TRADE_SCOPE_MERGED === 'true' ? false : 'needs the trade-scope evidence split (TASK C) merged'
 
-test('holders are never trapped: launch-side governed changes leave buys, sells, claims and graduation working, no redeploy', { skip, todo, timeout: 600000 }, async t => {
+test('holders are never trapped: launch-side governed changes leave buys, sells, claims and graduation working, no redeploy', { skip: skip || pending, timeout: 600000 }, async t => {
   const w = await ownStackWorld({ build: 'independent', rentPerByte: 5080 }); t.after(w.close)
   const launch = await openLaunch(w, { creatorFeeBps: 100, capBps: 500, name: 'Held', symbol: 'HELD', virtualQuote: '1000000000', creator: w.runnerKey('creator') })
   const { settle } = await launch.send(); assert.equal((await settle()).status, 'finalized-success')
