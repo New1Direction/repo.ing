@@ -311,7 +311,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
   })
 
   test('a delisted coin leaves discovery and shows its notice; buying is off, but holders still sell and the creator still claims', { timeout: 1_200_000 }, async ({ app, screen, browser }) => {
-    const coin = tradeCoin(2), reason = 'placeholder-content-rules'
+    const coin = tradeCoin(2), reason = 'impersonation' // one of the owner's five delisting reasons
     const holder = await freshBuyerOnCoinPage({ app, screen, browser }, coin.mint)
     let approvals = await approveSignatures(browser)
     await startTrade(screen, coin.symbol, 'buy', '0.04')
@@ -326,7 +326,9 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     // The coin page: the notice, buying off in the panel and refused by the server.
     approvals = await approveSignatures(browser)
     await app.open(`/hooks/token/${coin.mint}`)
-    await expect(screen.getByText(delistedNotice(reason))).toBeVisible({ timeout: 60_000 })
+    // The owner's wording for the reason, written out here independent of the code under test.
+    await expect(screen.getByText(/^repo\.ing has delisted this coin: It pretends to be a person, project or brand it isn't\./)).toBeVisible({ timeout: 60_000 })
+    await expect(screen.getByText(delistedNotice(reason))).toBeVisible()
     await expect(screen.getByText(DELISTED_BUY_TEXT)).toBeVisible()
     await expect(screen.getByRole('group', { name: 'Buy amounts' }).getByRole('button').first()).toBeDisabled()
     const client = new SiteClient(holder.buyer); await client.signIn()
