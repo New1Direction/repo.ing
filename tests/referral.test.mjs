@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import BN from 'bn.js'
 import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js'
@@ -28,7 +29,10 @@ function tokenAccount({ owner, tokenMint = NATIVE_MINT, state = AccountState.Ini
 const connectionWith = accountFor => ({ getAccountInfo: async key => accountFor(key) })
 
 test('referrer must be a canonical on-curve wallet address; anything else is ignored', () => {
-  const wallet = Keypair.generate().publicKey
+  // A fixed wallet whose address is 44 characters: with a random 43-character address, the `${wallet}x` case below
+  // is itself a valid 44-character key about half the time, which made this test fail at random.
+  const wallet = Keypair.fromSeed(createHash('sha256').update('REFERRAL TEST WALLET 0').digest()).publicKey
+  assert.equal(wallet.toBase58().length, 44)
   assert.ok(parseReferrer(wallet.toBase58()).equals(wallet))
   const [pda] = PublicKey.findProgramAddressSync([Buffer.from('x')], DBC_PROGRAM)
   for (const value of [pda.toBase58(), undefined, null, 42, '', 'not-a-key', `${wallet.toBase58()}x`, { toString: () => wallet.toBase58() }]) {
