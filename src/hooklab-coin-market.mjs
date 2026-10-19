@@ -26,6 +26,9 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
   if (launch.mint.toBase58() !== mint || pool.base_mint.toBase58() !== mint || policy.mint.toBase58() !== mint) return null
   // The native-SOL flags, at the bytes the programs read (32 earlier without a hook). A coin is native only when both
   // say so; any other pair (a half-migrated or unknown state) is a mismatch, and nothing offers to trade it.
+  // Display only, from the primary provider: every review re-reads both flags on two providers. If this provider were
+  // wrong, the worst case is a native coin shown as bridged, whose Add SOL deposit stays withdrawable while the bridged
+  // review refuses the trade; a bridged coin shown as native is refused by the native review before anything moves.
   const flag = (info, hooked, at, without) => Buffer.from(info.data)[hooked ? at : without]
   const poolFlag = flag(poolInfo, !!pool.hook_program, NATIVE_FLAGS.pool, NATIVE_FLAGS.poolWithoutHook)
   const launchFlag = flag(launchInfo, !!launch.custom_hook, NATIVE_FLAGS.launch, NATIVE_FLAGS.launchWithoutHook)

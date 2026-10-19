@@ -16,8 +16,14 @@ export const MAX_PRICE_IMPACT_BPS = 1000
 // (graduationHold), so no SOL moves into Hook Lab for a trade the server would refuse; a native-SOL coin opens them
 // once native trading is on (nativeTradingOpen).
 export const GRADUATION_TRADING_OPEN = false
-// The least an empty wallet keeps (Solana's rent-exempt minimum for an account with no data).
-export const WALLET_MINIMUM_LAMPORTS = 890880n
+// One rent source for every estimate shown before a review: Solana's rent-exempt minimum is this many lamports per byte
+// of an account plus its 128-byte overhead, 5,080 on mainnet since SIMD-0437 (what getMinimumBalanceForRentExemption
+// returns there). Server reviews read the live rate from the rent sysvar, so this only shapes estimates.
+export const RENT_LAMPORTS_PER_BYTE = 5080n
+export const rentExemptLamports = bytes => (128n + BigInt(bytes)) * RENT_LAMPORTS_PER_BYTE
+// The least an empty wallet keeps, and the deposit for one 204-byte Hook Lab holding (a coin account).
+export const WALLET_MINIMUM_LAMPORTS = rentExemptLamports(0)
+export const HOLDING_RENT_LAMPORTS = rentExemptLamports(204)
 
 // '0.05' -> 50_000_000n for 9 decimals; null when the text is not a positive amount with at most `decimals` places.
 export function parseUnits(text, decimals) {
@@ -114,7 +120,7 @@ export function planBuy({ amount, wallet, rentLamports }) {
   steps.push({ kind: 'buy', amount, feeLamports: STEP_FEE_LAMPORTS.buy })
   const total = steps.reduce((sum, s) => sum + (s.lamports ?? 0n) + (s.rentLamports ?? 0n) + s.feeLamports, 0n)
   const spendable = BigInt(wallet.lamports) - total
-  return { steps, walletCost: total, fromHookLab: amount - fundLamports, shortfall: spendable < 890880n ? 890880n - spendable : 0n }
+  return { steps, walletCost: total, fromHookLab: amount - fundLamports, shortfall: spendable < WALLET_MINIMUM_LAMPORTS ? WALLET_MINIMUM_LAMPORTS - spendable : 0n }
 }
 
 // The steps a sell takes: create the bridged-SOL holding if it is missing (the swap pays into it), the swap, then
@@ -123,7 +129,7 @@ export function planSell({ amount, wallet, rentLamports = 0 }) {
   const steps = [...(wallet.bridgedSol === null ? [{ kind: 'fund', lamports: 0n, rentLamports: BigInt(rentLamports), feeLamports: STEP_FEE_LAMPORTS.fund }] : []),
     { kind: 'sell', amount, feeLamports: STEP_FEE_LAMPORTS.sell }, { kind: 'withdraw', all: true, feeLamports: STEP_FEE_LAMPORTS.withdraw }]
   const needed = steps.reduce((sum, s) => sum + (s.rentLamports ?? 0n) + s.feeLamports, 0n)
-  return { steps, shortfall: BigInt(wallet.lamports) < needed + 890880n ? needed + 890880n - BigInt(wallet.lamports) : 0n }
+  return { steps, shortfall: BigInt(wallet.lamports) < needed + WALLET_MINIMUM_LAMPORTS ? needed + WALLET_MINIMUM_LAMPORTS - BigInt(wallet.lamports) : 0n }
 }
 
 // The largest buy (in lamports) this wallet can make right now, or null when nothing more can be bought: on the curve

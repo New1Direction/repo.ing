@@ -3,7 +3,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { estimateTrade, finalFillLamports, graduationHold, nativeFailureText, nativeTradeIntent, nativeTradingOpen, planBuy, planNative, tradeButton, tradeHold } from '../app/lib/hooklab-trade-math.mjs'
+import { HOLDING_RENT_LAMPORTS, RENT_LAMPORTS_PER_BYTE, WALLET_MINIMUM_LAMPORTS, estimateTrade, finalFillLamports, graduationHold, nativeFailureText, nativeTradeIntent, nativeTradingOpen, planBuy, planNative, rentExemptLamports, tradeButton, tradeHold } from '../app/lib/hooklab-trade-math.mjs'
 import { createInclusiveTradeHandler } from '../app/lib/hooklab-inclusive-trade.mjs'
 
 const vectors = JSON.parse(readFileSync(new URL('./fixtures/hooklab-graduation-vectors.json', import.meta.url)))
@@ -39,7 +39,10 @@ test('a native trade is one step: no Add SOL, a first buy pays only its coin acc
   const sale = planNative({ side: 'sell', amount: 5n, wallet: { lamports: '1000000', coin: '7' }, rentLamports: '1686560' })
   assert.deepEqual(sale.steps.map(s => s.kind), ['sell']); assert.equal(sale.walletCost, 19_000n); assert.equal(sale.shortfall, 0n)
   assert.ok(planNative({ side: 'buy', amount: 99_500_000n, wallet: { lamports: '100000000', coin: null }, rentLamports: '1686560' }).shortfall > 0n, 'short of SOL before signing')
-  assert.ok(planNative({ side: 'sell', amount: 5n, wallet: { lamports: '900000', coin: '7' }, rentLamports: '1686560' }).shortfall > 0n, 'the fee and the wallet minimum')
+  assert.ok(planNative({ side: 'sell', amount: 5n, wallet: { lamports: '600000', coin: '7' }, rentLamports: '1686560' }).shortfall > 0n, 'the fee and the wallet minimum')
+  // One rent source: mainnet's 5,080 lamports per byte (SIMD-0437) gives both the wallet minimum and the holding deposit.
+  assert.equal(RENT_LAMPORTS_PER_BYTE, 5080n); assert.equal(WALLET_MINIMUM_LAMPORTS, 128n * 5080n); assert.equal(HOLDING_RENT_LAMPORTS, 1_686_560n)
+  assert.equal(rentExemptLamports(204), HOLDING_RENT_LAMPORTS)
   assert.deepEqual(planBuy({ amount: 50_000_000n, wallet: { lamports: '100000000', bridgedSol: null, coin: null }, rentLamports: '1686560' }).steps.map(s => s.kind), ['fund', 'buy'], 'bridged coins still add SOL first')
 })
 

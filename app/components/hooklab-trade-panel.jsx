@@ -4,12 +4,12 @@ import Link from 'next/link'
 import { ArrowDown, Check, LoaderCircle, X } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
-import { GRADUATION_TRADING_OPEN, SLIPPAGE_CHOICES, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, parseUnits, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
+import { GRADUATION_TRADING_OPEN, HOLDING_RENT_LAMPORTS, SLIPPAGE_CHOICES, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, parseUnits, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
 import { callTrade, expectOperation, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import '../trade-panel.css'
 
-// Rent for one 204-byte Hook Lab holding at today's rent rate; the server's review uses the live value before signing.
-const HOLDING_RENT = '1686560'
+// Rent for one 204-byte Hook Lab holding (app/lib/hooklab-trade-math.mjs); the server's review uses the live value before signing.
+const HOLDING_RENT = HOLDING_RENT_LAMPORTS
 const STEP_LABELS = { fund: 'Add SOL to Hook Lab', buy: 'Buy', sell: 'Sell', graduate: 'Buy and graduate', withdraw: 'Withdraw SOL to your wallet' }
 const stepLabel = (kind, symbol) => ['buy', 'sell', 'graduate'].includes(kind) ? `${STEP_LABELS[kind]} ${symbol}` : STEP_LABELS[kind]
 const STATUS_TEXT = { review: 'Preparing…', sign: 'Approve in your wallet', send: 'Sending…', confirm: 'Confirming on Solana…' }
