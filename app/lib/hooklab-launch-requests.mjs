@@ -30,7 +30,7 @@ const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Contro
 const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
 // The chain's open-creation state (menus, fee, pause) through the installed launch runtime's two providers. Only these
 // fields reach the browser: nothing about the stack's programs or quote marker is ever sent to customers.
-const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','capBps','maxCreatorFeeBps','launchFeeLamports','poolCreationFeeLamports','rentLamports','minVirtualQuote','maxVirtualQuote']
+const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','capBps','maxCreatorFeeBps','launchFeeLamports','poolCreationFeeLamports','rentLamports','preparationRentLamports','launchRentLamports','guardRentLamports','minVirtualQuote','maxVirtualQuote']
 export const publicOpenCreation=chain=>chain?Object.fromEntries(PUBLIC_OPEN_CREATION.filter(key=>chain[key]!==undefined).map(key=>[key,chain[key]])):null
 const chainOpenCreation=async()=>{const service=nativeLaunchRuntime();if(!service?.openLaunches)return null;return service.openCreation()}
 export function createLaunchRequestsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,

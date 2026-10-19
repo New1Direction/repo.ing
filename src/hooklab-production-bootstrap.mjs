@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises'
 import { Connection } from '@solana/web3.js'
 import { remoteAdminSigner } from './hooklab-owner-approval.mjs'
 import { remoteLaunchLookupTable } from './hooklab-owner-launch-tables.mjs'
-import { openLaunchesEnabled, siteLaunchesEnabled } from './hooklab-open-creation.mjs'
+import { openLaunchRent, openLaunchesEnabled, siteLaunchesEnabled } from './hooklab-open-creation.mjs'
 import { isStackProfile } from './hooklab-stack.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
@@ -21,10 +21,9 @@ const BEHIND=/Minimum context slot has not been reached|-32016/
 // Snapshot-to-blockhash slack across two real providers (the second waits to catch up): ~6 s. The
 // on-chain guards (deadline slot, minimum output, price impact) are unchanged.
 const SLOT_LAG=16
-// The most rent a launch may lock, as the program's debit guard counts it (what the creator paid beyond the creation and
-// pool fees, plus the Launch account's rent): 37,554,000 lamports measured for an open launch (32,732,880 paid). The
-// review requires the creator to hold the fees and this bound, so it stays close to the real figure.
-const LAUNCH_MAX_RENT_LAMPORTS=45000000n
+// The most rent an owner-invited (legacy) launch may lock, as the program's debit guard counts it. An open launch's bound
+// is exact instead: computed from the chain's rent when the launch is reserved (openLaunchRent).
+const LEGACY_LAUNCH_MAX_RENT_LAMPORTS=45000000n
 export function catchUpConnection(connection,{attempts=12,delayMs=500,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
  return new Proxy(connection,{get(target,property,receiver){
   const value=Reflect.get(target,property,receiver)
@@ -48,10 +47,11 @@ export function chainObservers(connections){
  })
 }
 
-// What a launch may debit its creator: the creation fee and pool fee the bundle pins, the rent bound, and the network fee.
-export function launchDebitLimits({launchFeeLamports,poolCreationFeeLamports},networkFee){
- const instruction=BigInt(launchFeeLamports)+BigInt(poolCreationFeeLamports)+LAUNCH_MAX_RENT_LAMPORTS
- return {maxLaunchFeeLamports:String(launchFeeLamports),maxPoolCreationFeeLamports:String(poolCreationFeeLamports),maxRentLamports:String(LAUNCH_MAX_RENT_LAMPORTS),
+// What a launch may debit its creator: the creation fee and pool fee the bundle pins, the rent bound (for an open launch
+// the exact guard bound from openLaunchRent), and the network fee.
+export function launchDebitLimits({launchFeeLamports,poolCreationFeeLamports},networkFee,rentBound=LEGACY_LAUNCH_MAX_RENT_LAMPORTS){
+ const maxRent=BigInt(rentBound),instruction=BigInt(launchFeeLamports)+BigInt(poolCreationFeeLamports)+maxRent
+ return {maxLaunchFeeLamports:String(launchFeeLamports),maxPoolCreationFeeLamports:String(poolCreationFeeLamports),maxRentLamports:String(maxRent),
   maxInstructionDebitLamports:String(instruction),maxTotalDebitLamports:String(instruction+BigInt(networkFee))}
 }
 
@@ -108,7 +108,8 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
  const launchBundle=openLaunchesEnabled(env)?stack:bundle
  return {bundle,stack,launchBundle,connections,observers,reviewTiming,
   async launchLimits(){const c=await common();return {preparationLimits:{...c,maxRentLamports:'20000000',maxTotalDebitLamports:String(20000000+Number(networkFee))},
-   launchLimits:{...c,...launchDebitLimits(launchBundle.config.economics,networkFee)}}},
+   launchLimits:{...c,...launchDebitLimits(launchBundle.config.economics,networkFee,
+    openLaunchesEnabled(env)?(await openLaunchRent(size=>connections[0].connection.getMinimumBalanceForRentExemption(size,'finalized'))).guard:undefined)}}},
   tradeLimits:{nowMs:Date.now(),maxAgeMs:60000,maxSlotLag:SLOT_LAG,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:networkFee,maxTotalDebitLamports:networkFee,
    computeUnitLimit:1400000,computeUnitPriceMicroLamports:priority},
   ...productionKeyRing(env)}

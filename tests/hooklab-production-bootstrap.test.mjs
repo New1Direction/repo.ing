@@ -12,7 +12,8 @@ const ring=JSON.stringify({'k-2026-10':Buffer.alloc(32,7).toString('base64')})
 const env={HOOK_OWNER_APPROVED_LAUNCHES:'true',HOOK_NATIVE_LAUNCH_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true',HOOKLAB_PRODUCTION_BUNDLE_FILE:'/approved/bundle.json',HOOKLAB_PRODUCTION_BUNDLE_SHA256:createHash('sha256').update(bundleBytes).digest('hex'),
  HOOK_LAUNCH_ADMIN_ADDRESS:admin,HOOKLAB_PRODUCTION_RPC_PRIMARY_URL:'https://mainnet.helius-rpc.com/?api-key=x',HOOKLAB_PRODUCTION_RPC_SECONDARY_URL:'https://solana-rpc.publicnode.com',
  HOOK_NATIVE_KEYRING_JSON:ring,HOOK_NATIVE_ACTIVE_KEY_ID:'k-2026-10'}
-const fake=(slot,blockHeight)=>({getSlot:async()=>slot,getBlockHeight:async()=>blockHeight})
+// Mainnet's rent rate today (5,080 lamports per byte, 128 bytes of account overhead).
+const fake=(slot,blockHeight)=>({getSlot:async()=>slot,getBlockHeight:async()=>blockHeight,getMinimumBalanceForRentExemption:async size=>(128+size)*5080})
 const deps={readBundle:async()=>bundleBytes,connectionFor:()=>fake(1000,900)}
 
 test('production settings verify the approved bundle, admin, RPCs, key ring and fees before anything installs',async()=>{
@@ -73,7 +74,11 @@ test('two bundles: bundle 2 for the legacy stack and our own stack\'s bundle for
  const read={readBundle:async file=>files[file],connectionFor:()=>fake(1000,900)}
  const s=await productionSettings({env:twoEnv,...read})
  assert.equal(s.bundle.config.reviewer,admin);assert.equal(s.stack.config.reviewer,stackAdmin);assert.equal(s.launchBundle,s.stack,'open launches launch on our own stack')
- assert.equal((await s.launchLimits()).launchLimits.maxLaunchFeeLamports,'20000000','the launch fee bound is our stack\'s')
+ const open=(await s.launchLimits()).launchLimits
+ assert.equal(open.maxLaunchFeeLamports,'20000000','the launch fee bound is our stack\'s')
+ // The rent bound is exact, from the chain's rent when the launch is reserved: the launch transaction's rent (23,891,240 at
+ // today's rate), the launch account's again (the program's guard counts it twice: 3,520,440) and the 100,000 margin.
+ assert.equal(open.maxRentLamports,String(23891240+3520440+100000)); assert.equal(open.maxInstructionDebitLamports,String(20000000+23891240+3520440+100000))
  for(const [change,message] of [
   [{HOOKLAB_STACK_BUNDLE_FILE:undefined,HOOKLAB_STACK_BUNDLE_SHA256:undefined},/launch on our own stack/],
   [{HOOKLAB_STACK_BUNDLE_SHA256:undefined},/set both/],

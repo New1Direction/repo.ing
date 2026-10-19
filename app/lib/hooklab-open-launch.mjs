@@ -38,10 +38,12 @@ export function openCreationProblem(openCreation) {
 const lamports = value => value === null || value === undefined || value === '' ? null : BigInt(value)
 // An estimate in SOL: at least 4 decimals, more for a small amount so its first digit shows (25,000 lamports is
 // "≈0.00003 SOL", 27,604,720 is "≈0.0276 SOL").
-export function approxSol(value) {
+// up: round up instead (for an amount the wallet must hold at least).
+export function approxSol(value, { up = false, prefix = '≈' } = {}) {
   const v = BigInt(value), decimals = Math.max(4, v > 0n ? 10 - String(v).length : 4), unit = 10n ** BigInt(9 - decimals)
-  const rounded = (v + unit / 2n) / unit, whole = rounded / 10n ** BigInt(decimals), fraction = String(rounded % 10n ** BigInt(decimals)).padStart(decimals, '0').replace(/0+$/, '')
-  return `≈${whole}${fraction ? `.${fraction}` : ''} SOL`
+  const rounded = up ? (v + unit - 1n) / unit : (v + unit / 2n) / unit, whole = rounded / 10n ** BigInt(decimals)
+  const fraction = String(rounded % 10n ** BigInt(decimals)).padStart(decimals, '0').replace(/0+$/, '')
+  return `${prefix}${whole}${fraction ? `.${fraction}` : ''} SOL`
 }
 // What the creator pays, every figure read from the chain or the server at review time (never a literal here). costs:
 // the launch-requests response's { networkFeeLamports }; openCreation: { launchFeeLamports, poolCreationFeeLamports?,
@@ -57,7 +59,13 @@ export function openLaunchCosts(openCreation, costs = {}) {
     row('network', 'Network fees', lamports(costs?.networkFeeLamports), ''),
   ]
   const known = rows.every(r => r.lamports !== null), totalLamports = known ? rows.reduce((sum, r) => sum + r.lamports, 0n) : null
-  return { rows, totalLamports, total: totalLamports === null ? null : approxSol(totalLamports) }
+  // What the wallet must hold at the start: the setup's rent, then the launch's signed bound (the creation and pool fees
+  // and the program's rent guard, which counts the launch account twice), and both network fees. The difference from the
+  // total comes back: the guard only checks it.
+  const parts = [openCreation?.preparationRentLamports, openCreation?.guardRentLamports, openCreation?.launchFeeLamports, openCreation?.poolCreationFeeLamports ?? '0', costs?.networkFeeLamports].map(lamports)
+  const needLamports = parts.every(part => part !== null) ? parts.reduce((sum, part) => sum + part, 0n) : null
+  return { rows, totalLamports, total: totalLamports === null ? null : approxSol(totalLamports),
+    needLamports, need: needLamports === null ? null : approxSol(needLamports, { up: true, prefix: '' }) }
 }
 export const solOrWallet = value => value === null ? 'Shown in your wallet' : formatSol(value, 6)
 

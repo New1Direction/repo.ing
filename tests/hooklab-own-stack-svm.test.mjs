@@ -8,12 +8,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js'
-import { governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
+import { LAUNCH_RENT_MARGIN_LAMPORTS, governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
+import { openLaunchCosts, openLaunchNetworkFee } from '../app/lib/hooklab-open-launch.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeTradeResolver } from '../src/hooklab-native-trade-resolver.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
 import { LEGACY_STACK } from '../src/hooklab-stack.mjs'
-import { ownStackWorld, openLaunch, CREATION_FEE_LAMPORTS, OWNER_MENUS, LAUNCH_LIMITS } from './fixtures/hooklab-own-stack-world.mjs'
+import { ownStackWorld, openLaunch, launchLimitsFor, CREATION_FEE_LAMPORTS, OWNER_MENUS } from './fixtures/hooklab-own-stack-world.mjs'
 import { INDEPENDENT_SKIP, OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
 import { estimateTrade } from '../app/lib/hooklab-trade-math.mjs'
 
@@ -53,7 +54,7 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
       const { sent, settle } = await launch.send()
       // What the creator paid: the creation fee, the rent the launch locks, and two signatures; within the reviewed bounds.
       const paid = creatorBefore - (await w.lamports([launch.creator.publicKey.toBase58()]))[launch.creator.publicKey.toBase58()], rent = paid - CREATION_FEE_LAMPORTS - 10000n
-      assert.ok(rent > 0n && rent <= BigInt(LAUNCH_LIMITS.maxRentLamports), String(rent))
+      assert.ok(rent > 0n && rent <= BigInt((await launchLimitsFor(w)).maxRentLamports), String(rent))
       t.diagnostic(`launch ${i + 1}: ${sent.units} CU, ${sent.wireBytes} bytes, creator paid ${paid} lamports (fee ${CREATION_FEE_LAMPORTS}, rent ${rent}, network 10000)`)
       assert.equal(sent.error, null, (sent.logs ?? []).slice(-8).join('\n')); assert.ok(sent.wireBytes <= 1232)
       const settled = await settle()
@@ -73,6 +74,17 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
       coins.push({ ...launch, creatorFeeBps, capBps })
     }
     assert.equal(coins.length, 4)
+  })
+
+  await t.test('a wallet holding exactly what the review screen asks for launches; one lamport less is refused before anything is signed', async () => {
+    const chain = await readOpenCreation(w.connections(), P), { needLamports, need, total } = openLaunchCosts(chain, { networkFeeLamports: openLaunchNetworkFee('0') })
+    t.diagnostic(`review screen: you'll spend about ${total}; you need at least ${need} in your wallet (${needLamports} lamports)`)
+    // The launch's rent bound is exact: the launch's rent, the launch account's again (the guard counts it twice), the margin.
+    assert.equal(BigInt(chain.guardRentLamports), BigInt(chain.launchRentLamports) + 3520440n + LAUNCH_RENT_MARGIN_LAMPORTS)
+    const exact = await openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Exact', symbol: 'EXACT', virtualQuote: '53251917070', funds: needLamports })
+    const { sent, settle } = await exact.send()
+    assert.equal(sent.error, null, (sent.logs ?? []).slice(-6).join('\n')); assert.equal((await settle()).status, 'finalized-success')
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Short', symbol: 'SHORT', virtualQuote: '53251917070', funds: needLamports - 1n }), /unavailable/)
   })
 
   // A trade through the website's native trade resolver under the current bundle. The trader is a runner wallet: the trade

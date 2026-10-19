@@ -22,7 +22,8 @@ function assertClean(markup, label) { for (const pattern of FORBIDDEN) assert.do
 
 // The chain's open-creation state as the launch runtime reads it: the owner's menus and the creation fee (0.02 SOL).
 const openCreation = { native: true, open: true, paused: false, creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500], maxCreatorFeeBps: 200,
-  launchFeeLamports: '20000000', minVirtualQuote: '5625000000', maxVirtualQuote: '112500000000', rentLamports: '27604720' }
+  launchFeeLamports: '20000000', minVirtualQuote: '5625000000', maxVirtualQuote: '112500000000', rentLamports: '27604720',
+  preparationRentLamports: '3713480', launchRentLamports: '23891240', guardRentLamports: String(23891240 + 3520440 + 100000) }
 const availability = { status: 'available', open: true, openCreation, costs: { networkFeeLamports: openLaunchNetworkFee('0') }, launchPrice: { solUsdMicros: '105630000', virtualQuote: '53251917070' } }
 const coin = { name: 'Repo Cat', symbol: 'RCAT', image: 'data:image/png;base64,AAAA', description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 200 }
 
@@ -32,6 +33,9 @@ test('the review screen pays out only the essentials, every figure from the chai
   const costs = openLaunchCosts(openCreation, availability.costs), line = r => [r.label, r.amount, r.note].filter(Boolean).join(' ')
   assert.deepEqual(costs.rows.map(line), ['Creation fee 0.02 SOL (to repo.ing)', 'Account rent ≈0.0276 SOL (stays in the coin’s accounts)', 'Network fees ≈0.00003 SOL'])
   assert.equal(costs.total, '≈0.0476 SOL')
+  // What the wallet must hold at the start: the setup rent, the launch's signed bound (fee + the guard's rent, which counts
+  // the launch account twice, + the margin) and both network fees; rounded up.
+  assert.equal(costs.needLamports, 3_713_480n + 20_000_000n + 23_891_240n + 3_520_440n + 100_000n + 25_000n); assert.equal(costs.need, '0.0513 SOL')
   assert.equal(costs.rows[0].lamports, 20_000_000n, 'the creation fee is the chain value'); assert.equal(costs.totalLamports, 20_000_000n + 27_604_720n + 25_000n)
   assert.equal(openLaunchCosts({ ...openCreation, launchFeeLamports: '30000000' }).rows[0].lamports, 30_000_000n, 'never a literal: a changed fee shows the changed fee')
   assert.equal(openLaunchCosts({ ...openCreation, rentLamports: undefined }, availability.costs).totalLamports, null, 'an unknown figure leaves the total to the wallet')
@@ -44,7 +48,7 @@ test('the review screen pays out only the essentials, every figure from the chai
 
   const markup = html(h(OpenLaunchReview, { coin, image: coin.image, profile: null, openCreation, costs: availability.costs, price: availability.launchPrice, onSign() {}, onEdit() {} }))
   for (const pattern of [/Check your launch/, /Creation fee <strong>0\.02 SOL<\/strong><small> \(to repo\.ing\)/, /Account rent <strong>≈0\.0276 SOL<\/strong><small> \(stays in the coin’s accounts\)/,
-    /Network fees <strong>≈0\.00003 SOL/, /Total<\/span><strong>≈0\.0476 SOL/,
+    /Network fees <strong>≈0\.00003 SOL/, /You’ll spend about<\/span><strong>≈0\.0476 SOL/, /You need at least<\/span><strong>0\.0513 SOL in your wallet/,
     /Opening price/, /≈\$5,000/, /Graduates at/, /≈\$45,000/, /Creator fee/, /1%/, /Max per wallet/, /2%/, /Sign and launch/, /Your wallet will ask you to approve twice/])
     assert.match(markup, pattern)
   assert.ok(text(markup).includes(OPEN_LAUNCH_NOTE.replace("'", '&#x27;')) || markup.includes(OPEN_LAUNCH_NOTE.replace("'", '&#x27;')), 'the owner’s note, word for word')

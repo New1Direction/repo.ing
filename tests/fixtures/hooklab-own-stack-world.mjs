@@ -19,7 +19,7 @@ import { parseStack, stackElfLengths } from '../../src/hooklab-stack.mjs'
 import { collectStackProductionBundle, stackProductionArtifacts } from '../../src/hooklab-production-stack-bundle.mjs'
 import { productionProfileJson } from '../../src/hooklab-production-operator-bundle.mjs'
 import { governedSetNativeLaunches } from '../../src/hooklab-native-launch.mjs'
-import { governedSetOpenCreation } from '../../src/hooklab-open-creation.mjs'
+import { governedSetOpenCreation, openLaunchRent } from '../../src/hooklab-open-creation.mjs'
 import { openLaunchTableAddresses } from '../../src/hooklab-max-wallet-launch.mjs'
 import { sharedTradeAddresses } from '../../src/hooklab-owner-launch-tables.mjs'
 import { collectInclusiveMaxWalletPreparationReview } from '../../src/hooklab-inclusive-max-wallet-preparation-collector.mjs'
@@ -189,13 +189,19 @@ export async function ownStackWorld({ build = INDEPENDENT_SKIP ? 'relocated' : '
 export const PREP_LIMITS = { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxRentLamports: '20000000', maxNetworkFeeLamports: '20000',
   maxTotalDebitLamports: '20020000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' }
 // The production bootstrap's launch bounds for this bundle's economics.
-export const LAUNCH_LIMITS = { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxNetworkFeeLamports: '15000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0',
-  ...launchDebitLimits({ launchFeeLamports: String(CREATION_FEE_LAMPORTS), poolCreationFeeLamports: '0' }, '15000') }
+// The production bootstrap's launch bounds for this chain, computed as it computes them when a launch is reserved: the
+// bundle's creation fee and the exact rent guard from the chain's current rent (openLaunchRent).
+export async function launchLimitsFor(w) {
+  const rent = await openLaunchRent(size => w.connections()[0].connection.getMinimumBalanceForRentExemption(size, 'finalized'))
+  return { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxNetworkFeeLamports: '15000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0',
+    ...launchDebitLimits({ launchFeeLamports: String(CREATION_FEE_LAMPORTS), poolCreationFeeLamports: '0' }, '15000', rent.guard) }
+}
 // One self-serve launch exactly as the website runs it, for a fresh wallet (or the given creator, e.g. a runner wallet
 // whose later reviews the runner can simulate): prepare, launch, settle.
-export async function openLaunch(w, { creatorFeeBps, capBps, name, symbol, virtualQuote, creator = Keypair.generate() }) {
+// funds: the creator's starting lamports (2 SOL unless given).
+export async function openLaunch(w, { creatorFeeBps, capBps, name, symbol, virtualQuote, creator = Keypair.generate(), funds = '2000000000' }) {
   const mint = Keypair.generate(), selectedConfig = Keypair.generate(), signers = [creator, mint, selectedConfig]
-  await w.fund(creator.publicKey.toBase58(), '2000000000')
+  await w.fund(creator.publicKey.toBase58(), String(funds))
   const profile = w.bindings.profile, G = w.programs.gate
   const prep = { schema: 'repoing/inclusive-max-wallet-preparation-request/1', policyKind: 'max-wallet', policyVersion: 2, creator: creator.publicKey.toBase58(),
     feePayer: creator.publicKey.toBase58(), mint: mint.publicKey.toBase58(), selectedConfig: selectedConfig.publicKey.toBase58(), capBps, label: symbol.toLowerCase(),
@@ -210,7 +216,7 @@ export async function openLaunch(w, { creatorFeeBps, capBps, name, symbol, virtu
     preparedAccountHashes: { policy: await hashOf(pda(G, 'policy-v2', mint.publicKey.toBuffer())), registry: await hashOf(pda(G, 'bordrless-hook-accounts', mint.publicKey.toBuffer())), selectedConfig: await hashOf(prep.selectedConfig) } }
   const { schema, ...prepFields } = prep
   const request = { ...prepFields, schema: 'repoing/open-launch-request/1', name, symbol, uri: '', virtualQuote }
-  const collected = await collectOpenLaunchReview({ ...w.bindings, connections: w.connections(), preparation, request, limits: LAUNCH_LIMITS, clock: () => 1000 })
+  const collected = await collectOpenLaunchReview({ ...w.bindings, connections: w.connections(), preparation, request, limits: await launchLimitsFor(w), clock: () => 1000 })
   return { creator, mint, request, collected, preparationFeeLamports: 5000 * prepared.plan.review.requiredSigners.length, async send() {
     const review = collected.plan.review, sent = await w.signAndSubmit(review.messageBase64, sign(review))
     return { sent, async settle() { return collectOpenLaunchSettlement({ ...w.bindings, connections: w.connections(), settlementContext: collected.settlementContext, review,
