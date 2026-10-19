@@ -114,7 +114,7 @@ function failureName(logs,P){
  if(!line)return null
  const [,program,hex]=line,code=parseInt(hex,16)
  if(program===P.gate)return loadArtifacts().idls.gate.errors?.find(e=>e.code===code)?.name??null
- return nativeErrorName(program,code)
+ return nativeErrorName(program,code,P)
 }
 
 // Self-CPI events of the trade, in instruction order, each canonical and under its program's event authority, with the

@@ -67,13 +67,17 @@ def process(request):
     if operation == 'expire':
         svm.expire_blockhash()
         return {'blockhash': str(svm.latest_blockhash())}
-    if operation == 'simulate':
+    if operation in ('simulate', 'simulate-signed'):
         # As RPC simulateTransaction with an accounts config: the requested accounts after the simulated execution.
-        message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
-        signers = list(message.account_keys[:message.header.num_required_signatures])
-        assert all(str(address) in by_address for address in signers), 'Non-synthetic signer forbidden'
-        wire_message = to_bytes_versioned(message)
-        tx = VersionedTransaction.populate(message, [by_address[str(address)].sign_message(wire_message) for address in signers])
+        # 'simulate-signed': a transaction its wallets already signed (a customer's own keys), simulated exactly as given.
+        if operation == 'simulate-signed':
+            tx = VersionedTransaction.from_bytes(base64.b64decode(request['wireBase64']))
+        else:
+            message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
+            signers = list(message.account_keys[:message.header.num_required_signatures])
+            assert all(str(address) in by_address for address in signers), 'Non-synthetic signer forbidden'
+            wire_message = to_bytes_versioned(message)
+            tx = VersionedTransaction.populate(message, [by_address[str(address)].sign_message(wire_message) for address in signers])
         result = svm.simulate_transaction(tx)
         if isinstance(result, FailedTransactionMetadata):
             return {'error': str(result.err()), 'logs': result.meta().logs(), 'accounts': None}

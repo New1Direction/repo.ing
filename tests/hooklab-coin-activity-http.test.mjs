@@ -6,6 +6,9 @@ import assert from 'node:assert/strict'
 import { createCoinActivityHandlers, createOnDemandIndexer, reportOnce } from '../app/lib/hooklab-coin-activity.mjs'
 import { hookActivityRpc } from '../src/hooklab-coin-activity.mjs'
 import { canary, canaryConnection } from './fixtures/hooklab-canary-trades.mjs'
+import { PROGRAMS, QUOTE_MINT } from '../src/hooklab-owner-driver/pins.mjs'
+
+const legacyProfile = () => ({ programs: PROGRAMS, quoteMint: QUOTE_MINT })
 
 const mint = canary.mint, pool = canary.pool, trader = 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9'
 const market = { mint, name: 'Test Coin', symbol: 'TEST', decimals: 6, graduated: false, initialSupply: '1000000000000000', supply: '1000000000000000',
@@ -25,7 +28,8 @@ function fakeStore({ indexed = 2n, walking = false } = {}) {
 function setup({ listed = true, indexed = 2n, walking = false, allowed = () => true, runtime, holdersTtlMs = 60_000 } = {}) {
   const db = fakeStore({ indexed, walking }), ensured = [], rpcCalls = [], opened = [], listings = [], marketReads = []
   const service = runtime === undefined ? { market: async m => { marketReads.push(m); return m === mint ? { market, wallet: null } : null },
-    activity: hookActivityRpc(canaryConnection({ calls: rpcCalls })), coinProfile: async () => null } : runtime
+    activity: hookActivityRpc(canaryConnection({ calls: rpcCalls }), { programs: PROGRAMS }), coinProfile: async () => null, profileFor: legacyProfile,
+    activityFor() { return this.activity } } : runtime
   // listed(service, mint): app/lib/hooklab-market.mjs listedCoin's signature (its 60 s cache is shared, so tests answer directly).
   const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async (svc, m) => { listings.push(m); return listed && m === mint ? { id: 'coin', name: 'Test Coin' } : null },
     openStore: () => { opened.push('open'); return { store: db.store, close: async () => opened.push('close') } },
@@ -47,13 +51,16 @@ test('only listed Hooks coins with valid addresses, within the rate limit', asyn
     assert.equal((await get(setup({ runtime: null }).handlers[kind], kind)).status, 503)
     assert.equal((await get(setup({ runtime: { market: async () => ({ market }), coinProfile: async () => null } }).handlers[kind], kind)).status, 503, 'no activity reads')
     assert.equal((await get(setup({ runtime: { market: async () => ({ market }), activity: {} } }).handlers[kind], kind)).status, 503, 'no listing')
+    assert.equal((await get(setup({ runtime: { market: async () => ({ market }), activity: {}, coinProfile: async () => null } }).handlers[kind], kind)).status, 503, 'no stack for the coin: never a guessed one')
+    assert.equal((await get(setup({ runtime: { market: async () => ({ market }), coinProfile: async () => null, profileFor: () => null, activityFor: () => ({}) } }).handlers[kind], kind)).status, 503, 'a coin whose stack has no bundle')
+    assert.equal((await get(setup({ runtime: { market: async () => ({ market }), coinProfile: async () => null, profileFor: legacyProfile, activityFor: () => null } }).handlers[kind], kind)).status, 503, 'no reads bound to the coin\'s stack')
   }
   assert.equal((await get(handlers.trades, 'trades?before=abc')).status, 400)
   assert.equal((await get(handlers.trades, 'trades?limit=500')).status, 400)
   assert.equal((await get(handlers.candles, 'candles?interval=2m')).status, 400)
   assert.ok(listings.includes('11111111111111111111111111111111') && !marketReads.includes('11111111111111111111111111111111'),
     'the listing comes first, so an unlisted coin is never read from Solana')
-  const failing = createCoinActivityHandlers({ runtime: () => ({ market: async () => ({ market }), activity: {}, coinProfile: async () => null }),
+  const failing = createCoinActivityHandlers({ runtime: () => ({ market: async () => ({ market }), coinProfile: async () => null, profileFor: legacyProfile, activityFor: () => ({}) }),
     listed: async () => { throw Error('database unreachable') } })
   assert.equal((await get(failing.trades, 'trades')).status, 503, 'an unreachable database is unavailable, not "not listed"')
 })
@@ -66,7 +73,7 @@ test('trades: newest first with a cursor for older pages; the index catches up f
   assert.deepEqual(body, { status: 'available', decimals: 6, next: '2', syncing: 1, backfilling: false, trades: [{ signature: trade(2).signature, eventIndex: 10, side: 'sell', trader,
     tradedAt: '2026-10-18T20:49:37.000Z', solLamports: '980295', tokenBaseUnits: '1112870787571', swapCount: '2' }] })
   assert.equal(ensured.length, 1)
-  assert.deepEqual({ ...ensured[0], rpc: undefined }, { coin: { mint, pool }, rpc: undefined, behind: true })
+  assert.deepEqual({ ...ensured[0], rpc: undefined }, { coin: { mint, pool, programs: PROGRAMS, native: false }, rpc: undefined, behind: true })
   assert.deepEqual(db.calls.find(c => c[0] === 'trades'), ['trades', pool, { before: null, limit: 1 }])
   assert.deepEqual(opened, ['open', 'close'])
   const older = await get(handlers.trades, 'trades?before=2&limit=20')
@@ -133,7 +140,8 @@ test('the on-demand index runs only when behind, once per coin at a time, never 
 
 test('a failing holders read answers 503 and is not retried for a few seconds', async () => {
   const calls = []
-  const service = { market: async () => ({ market: { ...market, mint: pool } }), coinProfile: async () => null, activity: { holdings: async () => { calls.push('gpa'); throw Error('provider refused') } } }
+  const rpc = { holdings: async () => { calls.push('gpa'); throw Error('provider refused') } }
+  const service = { market: async () => ({ market: { ...market, mint: pool } }), coinProfile: async () => null, profileFor: legacyProfile, activityFor: () => rpc }
   const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async () => ({ id: 'coin' }), openStore: () => { throw Error('no database needed') } })
   const read = () => handlers.holders(new Request(`https://repo.ing/api/hook-lab/market/${pool}/holders`), { mint: pool })
   assert.equal((await read()).status, 503); assert.equal((await read()).status, 503)

@@ -2,8 +2,9 @@
 // and menus (src/hooklab-launch-config-reserved.mjs), its creation fee and opening-price bounds, and whether creation is
 // paused (Config.paused, or the launch governance's creation gate). Read at finalized from both providers, which must
 // return identical bytes. Read-only; no keys.
-import { PublicKey } from '@solana/web3.js'
-import { loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { createHash } from 'node:crypto'
+import { PublicKey, TransactionInstruction } from '@solana/web3.js'
+import { loadNativeArtifacts, loadOpenArtifacts } from './hooklab-native-pins.mjs'
 import { LAUNCH_CONFIG_RESERVED_AT, parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 
 const fail = message => Object.assign(Error(message), { code: 'OPEN_CREATION_UNAVAILABLE' })
@@ -14,21 +15,60 @@ export const openLaunchesEnabled = env => env?.HOOK_OPEN_LAUNCHES === 'true'
 export const siteLaunchesEnabled = env => env?.HOOK_OWNER_APPROVED_LAUNCHES === 'true' || openLaunchesEnabled(env)
 const pda = (program, seed) => PublicKey.findProgramAddressSync([Buffer.from(seed)], new PublicKey(program))[0]
 
-export async function readOpenCreation(connections, launchProgram) {
+// The accounts a self-serve launch creates, by size: the preparation's policy, its registry and the selected config, then
+// the launch's (measured on our own stack): the inclusive fee policy, the pool registry, five holdings, the pool, the
+// coin and LP mints, and the launch. Their rent at the chain's current rate is what the creator locks.
+export const OPEN_LAUNCH_ACCOUNT_SIZES = Object.freeze([90, 81, 176, 75, 186, 204, 204, 204, 204, 204, 411, 519, 519, 565])
+
+// The highest creator fee an open launch may choose under a launch Config: min(max_creator_fee_bps, max_rules_fee_bps).
+export const openCreatorFeeCeiling = config => Math.min(config.max_creator_fee_bps, config.rule_bounds.max_rules_fee_bps)
+
+// programs: the stack's { launch, swap } (the launch program alone still reads everything but the pool fee).
+export async function readOpenCreation(connections, programs) {
   if (!Array.isArray(connections) || connections.length !== 2) throw fail('Two providers required')
-  const keys = [pda(launchProgram, 'config'), pda(launchProgram, 'governance')]
+  const { launch: launchProgram, swap: swapProgram = null } = typeof programs === 'string' ? { launch: programs } : programs
+  const owners = [launchProgram, launchProgram, ...(swapProgram ? [swapProgram] : [])]
+  const keys = [pda(launchProgram, 'config'), pda(launchProgram, 'governance'), ...(swapProgram ? [pda(swapProgram, 'config')] : [])]
   const views = await Promise.all(connections.map(({ connection }) => connection.getMultipleAccountsInfoAndContext(keys, { commitment: 'finalized' })))
-  const [config, governance] = keys.map((_, i) => {
+  const [config, governance, swapConfig] = keys.map((_, i) => {
     const [a, b] = views.map(v => v.value[i])
-    if (!a || !b || !a.owner.equals(b.owner) || !Buffer.from(a.data).equals(Buffer.from(b.data)) || a.owner.toBase58() !== launchProgram) throw fail('Launch configuration unavailable or providers disagree')
+    if (!a || !b || !a.owner.equals(b.owner) || !Buffer.from(a.data).equals(Buffer.from(b.data)) || a.owner.toBase58() !== owners[i]) throw fail('Launch configuration unavailable or providers disagree')
     return Buffer.from(a.data)
   })
-  const coder = loadNativeArtifacts().coders.launch, c = coder.accounts.decode('Config', config), g = coder.accounts.decode('Governance', governance)
+  const { coders } = loadNativeArtifacts(), c = coders.launch.accounts.decode('Config', config), g = coders.launch.accounts.decode('Governance', governance)
   const reserved = parseLaunchConfigReserved(config.subarray(LAUNCH_CONFIG_RESERVED_AT))
   if (!reserved) throw fail('Launch configuration is in a state the reviewed programs never write')
+  const rents = await Promise.all(OPEN_LAUNCH_ACCOUNT_SIZES.map(size => connections[0].connection.getMinimumBalanceForRentExemption(size, 'finalized')))
+  if (!rents.every(Number.isSafeInteger)) throw fail('Rent unavailable')
+  // The creator fees on offer: the on-chain menu under the current ceiling, the lower of max_creator_fee_bps and
+  // rule_bounds.max_rules_fee_bps (the program does not re-check its menu when the owner lowers either). The site offers
+  // and accepts only these.
+  const ceiling = openCreatorFeeCeiling(c)
   return Object.freeze({ native: reserved.native, open: reserved.open, paused: c.paused || g.state.gates.creation,
-    creatorFeeBps: Object.freeze([...reserved.creatorFeeBps]), capBps: Object.freeze([...reserved.capBps]), maxCreatorFeeBps: c.max_creator_fee_bps,
-    launchFeeLamports: c.launch_fee_lamports.toString(), minVirtualQuote: c.min_virtual_quote.toString(), maxVirtualQuote: c.max_virtual_quote.toString() })
+    creatorFeeBps: Object.freeze(reserved.creatorFeeBps.filter(bps => bps <= ceiling)), capBps: Object.freeze([...reserved.capBps]), maxCreatorFeeBps: ceiling,
+    launchFeeLamports: c.launch_fee_lamports.toString(), minVirtualQuote: c.min_virtual_quote.toString(), maxVirtualQuote: c.max_virtual_quote.toString(),
+    ...(swapConfig ? { poolCreationFeeLamports: coders.swap.accounts.decode('Config', swapConfig).pool_creation_fee_lamports.toString() } : {}),
+    rentLamports: String(rents.reduce((sum, rent) => sum + BigInt(rent), 0n)) })
+}
+
+// The owner's governed switch (hook-lab feat/open-creation): open creation on or off with the two menus, recorded as a
+// policy change digest = sha256("hook-lab:open-creation:v1" || launch program || config || on u8 || fee 4 x u16 LE ||
+// cap 4 x u16 LE). Accounts as governed_set_native_launches: admin (signer), config and governance (writable), the event
+// authority and the program. The program refuses menus that are not strictly ascending, a fee above the Config's
+// ceiling, a cap outside 1..9999, empty menus when turning on, and the same state again.
+const slots = menu => { const out = [...menu]; while (out.length < 4) out.push(0); return out }
+export function openCreationDigest(launchProgram, config, { on, creatorFeeBps, capBps }) {
+  const menus = Buffer.alloc(16); slots(creatorFeeBps).forEach((v, i) => menus.writeUInt16LE(v, 2 * i)); slots(capBps).forEach((v, i) => menus.writeUInt16LE(v, 8 + 2 * i))
+  return createHash('sha256').update(Buffer.concat([Buffer.from('hook-lab:open-creation:v1'), new PublicKey(launchProgram).toBuffer(), new PublicKey(config).toBuffer(), Buffer.from([on ? 1 : 0]), menus])).digest()
+}
+export function governedSetOpenCreation({ launchProgram, admin, expected, on, creatorFeeBps, capBps }) {
+  const commitment = Buffer.from(expected)
+  if (commitment.length !== 32 || (on !== true && on !== false) || creatorFeeBps.length > 4 || capBps.length > 4) throw fail('Expected a 32-byte commitment, on or off, and at most 4 choices per menu')
+  const meta = (pubkey, isSigner, isWritable) => ({ pubkey: new PublicKey(pubkey), isSigner, isWritable })
+  return new TransactionInstruction({ programId: new PublicKey(launchProgram),
+    keys: [meta(admin, true, false), meta(pda(launchProgram, 'config'), false, true), meta(pda(launchProgram, 'governance'), false, true),
+      meta(pda(launchProgram, '__event_authority'), false, false), meta(launchProgram, false, false)],
+    data: loadOpenArtifacts().coders.launch.instruction.encode('governed_set_open_creation', { expected: [...commitment], on, fee_menu: slots(creatorFeeBps), cap_menu: slots(capBps) }) })
 }
 
 // Plain text for the launch program's errors a creator can meet in an open launch (hook-lab feat/open-creation ABI).

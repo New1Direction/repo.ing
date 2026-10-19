@@ -27,7 +27,7 @@ export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profil
     check(bound.profileSha256===c.profileSha256&&['preparation-reviewed','preparation-signed'].includes(bound.stage))
     const request=parseMaxWalletPreparationRequest(bound.preparedRequest)
     check(request.creator===bound.owner&&request.feePayer===bound.owner&&request.mint===bound.mint&&request.selectedConfig===bound.selectedConfig)
-    const evidence=await readProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:c.dossierSha256,providers,now:clock,timeoutMs:5000})
+    const evidence=await readProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:c.dossierSha256,providers,now:clock,timeoutMs:5000,idls:retained.profile.idls})
     check(evidence.accountBindingsMatched===true)
     const map=new Map(evidence.observations[0].accounts.map(x=>[x.address,x]))
     const decode=(role)=>{

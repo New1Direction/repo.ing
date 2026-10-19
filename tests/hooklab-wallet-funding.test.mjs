@@ -29,7 +29,7 @@ const withdraw = lamports => ({ action: 'withdraw', owner: OWNER, mint: null, la
 test('a fresh wallet adds SOL: both holdings are created, then exactly the requested SOL is wrapped', () => {
   const plan = compile(fund('1000000'), state())
   assert.equal(plan.review.operation, 'hooklab-wallet-fund')
-  assert.deepEqual(plan.quote.createdHoldings, [holdingAddress(QUOTE_MINT, OWNER), holdingAddress(COIN, OWNER)])
+  assert.deepEqual(plan.quote.createdHoldings, [holdingAddress(QUOTE_MINT, OWNER, PROGRAMS.token), holdingAddress(COIN, OWNER, PROGRAMS.token)])
   assert.equal(plan.review.instructionDebitLamports, String(2 * 1686560 + 1000000))
   assert.equal(plan.review.maxNativeDebitLamports, String(2 * 1686560 + 1000000 + 7000))
   assert.deepEqual(plan.instructions.map(ix => ix.program), ['ComputeBudget111111111111111111111111111111', 'ComputeBudget111111111111111111111111111111', PROGRAMS.token, PROGRAMS.token, PROGRAMS.bridge])

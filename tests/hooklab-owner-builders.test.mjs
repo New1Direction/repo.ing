@@ -18,7 +18,7 @@ const stateFixture = (program, config, revision, gates) => ({
 const anchorState = s => ({ genesis: [...Buffer.from(s.genesis, 'hex')], program: k(s.program), config: k(s.config),
   roles: Object.fromEntries(Object.entries(s.roles).map(([r, v]) => [r, k(v)])), revision: new BN(s.revision), gates: s.gates,
   config_digest: [...Buffer.from(s.configDigest, 'hex')], custody_digest: [...Buffer.from(s.custodyDigest, 'hex')], pending_admin: null })
-const d = derivedAddresses()
+const d = derivedAddresses(PROGRAMS, QUOTE_MINT)
 const launchState = stateFixture(PROGRAMS.launch, d.launchConfig, 7, { creation: true, trading: false })
 const swapState = stateFixture(PROGRAMS.swap, d.swapConfig, 3, { creation: false, trading: true })
 const expected = '11'.repeat(32)
@@ -33,9 +33,9 @@ const snake = a => ({ admin: k(a.admin), treasury: k(a.treasury), quote_mint: k(
 
 test('pinned PDAs reproduce independently recorded mainnet addresses', () => {
   for (const name of ['launchConfig', 'launchGovernance', 'swapConfig', 'swapGovernance', 'gateProgramData', 'bridgeConfig', 'bridgeSolVault', 'bridgeNativeWrapper']) assert.equal(d[name], MAINNET_DERIVED[name], name)
-  assert.equal(holdingAddress(QUOTE_MINT, MAINNET_ROLES.creator), MAINNET_DERIVED.creatorQuote)
-  assert.equal(holdingAddress(QUOTE_MINT, MAINNET_ROLES.treasury), MAINNET_DERIVED.treasuryQuote)
-  assert.equal(authorizationAddress(MAINNET_ROLES.creator), MAINNET_DERIVED.creatorAuthorization)
+  assert.equal(holdingAddress(QUOTE_MINT, MAINNET_ROLES.creator, PROGRAMS.token), MAINNET_DERIVED.creatorQuote)
+  assert.equal(holdingAddress(QUOTE_MINT, MAINNET_ROLES.treasury, PROGRAMS.token), MAINNET_DERIVED.treasuryQuote)
+  assert.equal(authorizationAddress(MAINNET_ROLES.creator, PROGRAMS.launch), MAINNET_DERIVED.creatorAuthorization)
   const c = canaryAddresses(PROGRAMS, QUOTE_MINT, MAINNET_ROLES.mint)
   assert.equal(new Set(Object.values(c)).size, Object.keys(c).length)
 })
@@ -94,7 +94,7 @@ test('claim_creator_fees, create_holding and quote collection bind production pr
   const claim = view(build.claimCreatorFees(PROGRAMS, QUOTE_MINT, { creator: MAINNET_ROLES.creator, launch: c.launch }))
   assert.equal(claim.keys[3].pubkey, c.launchQuote); assert.equal(claim.keys[4].pubkey, MAINNET_DERIVED.creatorQuote)
   const holding = view(build.createHolding(PROGRAMS, { payer: MAINNET_ROLES.creator, mint: MAINNET_ROLES.mint, owner: MAINNET_ROLES.creator }))
-  assert.equal(holding.programId, PROGRAMS.token); assert.equal(holding.keys[3].pubkey, holdingAddress(MAINNET_ROLES.mint, MAINNET_ROLES.creator))
+  assert.equal(holding.programId, PROGRAMS.token); assert.equal(holding.keys[3].pubkey, holdingAddress(MAINNET_ROLES.mint, MAINNET_ROLES.creator, PROGRAMS.token))
   assert.equal(holding.keys.at(-1).pubkey, PROGRAMS.token)
   const quote = view(build.collectProtocolFeesQuote(PROGRAMS, QUOTE_MINT, { admin: MAINNET_ROLES.admin, pool: c.pool, collector: MAINNET_ROLES.treasury, inclusiveFeePolicy: c.inclusiveFeePolicy }))
   assert.equal(quote.keys[5].pubkey, MAINNET_DERIVED.treasuryQuote); assert.equal(quote.keys.at(-1).pubkey, c.inclusiveFeePolicy)

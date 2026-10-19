@@ -5,7 +5,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BorshCoder } from '@anchor-lang/core'
-import { sha256, PROGRAMS } from './hooklab-owner-driver/pins.mjs'
+import { sha256 } from './hooklab-owner-driver/pins.mjs'
+import { LEGACY_STACK } from './hooklab-stack.mjs'
 
 export const NATIVE_SOURCE = Object.freeze({ repo: 'New1Direction/hook-lab', branch: 'feat/native-sol', commit: 'e357fdf' })
 // Raw build output and the trimmed bytes a deployed ProgramData holds (trailing zeros removed), as the upgrade checks.
@@ -47,15 +48,17 @@ export function loadNativeArtifacts() {
     if (sha256(text[role]) !== PINNED_SHA256[role]) throw Error(`Pinned native ${role} artifact differs from reviewed bytes`)
   }
   const idls = { swap: JSON.parse(text.swap), launch: JSON.parse(text.launch) }
-  for (const role of ['swap', 'launch']) if (idls[role].address !== PROGRAMS[role]) throw Error(`Native IDL ${role} identity differs`)
+  // The vendored e357fdf IDLs name the legacy programs they were reviewed for. Their coders serve any stack (account and
+  // event layouts do not depend on the program ID); every compiler checks the profile's own IDL bytes and identity.
+  for (const role of ['swap', 'launch']) if (idls[role].address !== LEGACY_STACK.programs[role]) throw Error(`Native IDL ${role} identity differs`)
   cached = Object.freeze({ idls, coders: { swap: new BorshCoder(idls.swap), launch: new BorshCoder(idls.launch) }, vectors: JSON.parse(text.vectors) })
   return cached
 }
 
 // The error's name for this program, or null. Codes are per program: QuoteFormMismatch is 6106 in launch, 6113 in swap.
 // The open-creation launch IDL is a superset of e357fdf's, so it also names the open-launch errors (6120..6124).
-export function nativeErrorName(programId, code) {
-  const role = programId === PROGRAMS.swap ? 'swap' : programId === PROGRAMS.launch ? 'launch' : null
+export function nativeErrorName(programId, code, programs) {
+  const role = programId === programs?.swap ? 'swap' : programId === programs?.launch ? 'launch' : null
   return role ? loadOpenArtifacts().idls[role].errors?.find(error => error.code === code)?.name ?? null : null
 }
 

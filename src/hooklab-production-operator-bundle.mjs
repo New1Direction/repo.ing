@@ -13,10 +13,11 @@ import { isDeepStrictEqual } from 'node:util'
 import { AddressLookupTableAccount,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { sharedTradeAddresses } from './hooklab-owner-launch-tables.mjs'
+import { tokenElfLengthOf } from './hooklab-stack.mjs'
 import { openLaunchTableAddresses } from './hooklab-max-wallet-launch.mjs'
 import { CREATOR_FEE_BPS_CHOICES,DEFAULT_CREATOR_FEE_BPS,WALLET_CAP_BPS_CHOICES,DEFAULT_WALLET_CAP_BPS,CREATOR_FEE_CEILING_BPS } from './hooklab-launch-menus.mjs'
 export const MAINNET_GENESIS='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
-const LOADER='BPFLoaderUpgradeab1e11111111111111111111111',TOKEN_ELF_LENGTH=326504
+const LOADER='BPFLoaderUpgradeab1e11111111111111111111111'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const pk=value=>new PublicKey(value)
 const pda=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>typeof s==='string'?Buffer.from(s):s),pk(program))[0].toBase58()
@@ -63,7 +64,8 @@ export async function readBoth(connections,addresses){
 // launchTable: the owner's shared launch table for open (self-serve) launches; required for the open-creation build, which
 // is the only one with them. It must be frozen and hold exactly the constant addresses every open launch shares.
 export async function collectProductionOperatorBundle({connections,trustDomains,lookupTable,launchTable=null,reviewer,treasury,approvalReference,artifacts=productionArtifacts(),network=PRODUCTION_NETWORK}){
- need((artifacts.build==='open-36dd07e')===(launchTable!==null),artifacts.build==='open-36dd07e'?'the open-creation build needs the shared launch table (--launch-table)':'only the open-creation build takes a shared launch table')
+ const openBuild=artifacts.build==='open-36dd07e'||artifacts.open===true
+ need(openBuild===(launchTable!==null),openBuild?'the open-creation build needs the shared launch table (--launch-table)':'only the open-creation build takes a shared launch table')
  need(Array.isArray(connections)&&connections.length===2&&new Set(connections.map(c=>c.provider)).size===2,'two distinct providers required')
  const {genesisHash,local}=checkedNetwork(network,connections)
  // A local validator is one trust domain behind two labelled endpoints.
@@ -79,11 +81,13 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
  const observed=await readBoth(connections,[...programData,...Object.values(accountRoles),...(launchTable?[launchTable]:[]),lookupTable])
  const slot=Math.min(...await Promise.all(connections.map(c=>c.connection.getSlot('finalized'))))
  const programs=programRoles.map((role,i)=>{
-  const bytes=observed[i].data,length=role==='token'?TOKEN_ELF_LENGTH:elfLengths[role],expected=role==='token'?base.dependencyObservation.tokenElfSha256:base.elfSha256[role]
+  const bytes=observed[i].data,length=role==='token'?tokenElfLengthOf(base):elfLengths[role],expected=role==='token'?base.dependencyObservation.tokenElfSha256:base.elfSha256[role]
   need(observed[i].owner===LOADER&&bytes.readUInt32LE(0)===3&&bytes.length>=45+length,`${role} program data is not an upgradeable-loader program`)
   need(sha(bytes.subarray(45,45+length))===expected&&!bytes.subarray(45+length).some(b=>b!==0),`${role} deployed code differs from its reviewed pin`)
   const upgradeAuthority=bytes[12]?pk(bytes.subarray(13,45)).toBase58():null
   if(role==='gate')need(upgradeAuthority===null,'the gate is still upgradeable; finalize it first (separate irreversible approval)')
+  // Our own stack: every other program is upgradeable only by the stack's upgrade authority (or no longer upgradeable).
+  else if(base.stack)need(upgradeAuthority===null||upgradeAuthority===base.stack.upgradeAuthority,`${role} upgrade authority is not the stack's`)
   return {role,address:P[role],programData:programData[i],upgradeAuthority,deploySlot:Number(bytes.readBigUInt64LE(4)),programDataSha256:sha(bytes),elfLength:length,elfSha256:expected}
  })
  const accounts=Object.entries(accountRoles).map(([role,address],i)=>{

@@ -22,9 +22,10 @@ import { STATUS_GRADUATED, finalFillLamports, isReady } from './hooklab-graduati
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 import { isNativeElfPin } from './hooklab-native-launch.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
-import { createHolding, graduateHookCoin } from './hooklab-owner-driver/instructions.mjs'
+import { createHolding, instructionsFor } from './hooklab-owner-driver/instructions.mjs'
+import { isStackProfile, kitOf, profileRolesDistinct } from './hooklab-stack.mjs'
 
-const { raw, owned, decoded, programEvidence, governance, typed, readHolding, KIT, noRules } = swapAccountEvidence
+const { raw, owned, decoded, programEvidence, governance, typed, readHolding, noRules } = swapAccountEvidence
 const check = (value, message) => { if (!value) throw Error(message) }
 // Refusals about the trader's own trade, in words the signing lifecycle may show them (everything else stays masked).
 const refuseUnless = (value, message) => { if (!value) throw Object.assign(Error(message), { code: 'HOOKLAB_USER_REFUSAL' }) }
@@ -78,7 +79,7 @@ const inputSchema = z.object({ profile: z.object({ json: z.string().max(16384), 
 function nativeAddresses(profile, r) {
   const { launch: L, token: T } = profile.programs
   return { ...hookCoinAddresses(profile, r.mint), traderBase: pda(T, 'holding', kb(r.mint), kb(r.trader)),
-    launchHookSigner: pda(L, 'hook-authority'), tokenKitHookSigner: pda(T, 'hook-authority', kb(KIT)), launchEventAuthority: pda(L, '__event_authority') }
+    launchHookSigner: pda(L, 'hook-authority'), tokenKitHookSigner: pda(T, 'hook-authority', kb(kitOf(profile))), launchEventAuthority: pda(L, '__event_authority') }
 }
 /** Every account a native trade reads, including absences and the rent sysvar; callers return exactly these rows. */
 export function nativeSwapInventory(profileInput, requestInput) {
@@ -90,9 +91,11 @@ export function nativeSwapInventory(profileInput, requestInput) {
 // swap_v2 in the reviewed IDL's account order (hook-lab swap.rs SwapV2, client.rs swap_v2): trader_quote is the
 // trader on both sides here (a buy pays from the wallet, a sell pays the wallet). Remaining: the base mint's gate slice,
 // the launch's pool-hook extras, the InclusiveFeePolicy last (as native_launch.rs builds it).
-export function nativeSwapV2Instruction({ programs, quoteMint }, { side, trader, mint, amountIn, minAmountOut }) {
-  const { launch: L, swap: S, gate: G, token: T } = programs, a = hookCoinAddresses({ programs, quoteMint }, mint), buy = side === 'buy'
-  const { idls, coders } = loadNativeArtifacts(), abi = idls.swap.instructions.find(ix => ix.name === 'swap_v2')
+// swapIdl: the profile's own swap IDL (the compiler passes it); the vendored native IDL otherwise (same layout).
+export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn, minAmountOut }, swapIdl = null) {
+  const { programs, quoteMint } = profile, { launch: L, swap: S, gate: G, token: T } = programs, a = hookCoinAddresses(profile, mint), buy = side === 'buy'
+  const idl = swapIdl ?? loadNativeArtifacts().idls.swap, coder = swapIdl ? new BorshCoder(swapIdl) : loadNativeArtifacts().coders.swap
+  const abi = idl.instructions.find(ix => ix.name === 'swap_v2')
   const meta = (address, writable = false, signer = false) => ({ pubkey: pk(address), isWritable: writable, isSigner: signer })
   const fixed = [meta(trader, true, true), meta(a.swapConfig), meta(a.pool, true), meta(mint), meta(quoteMint), meta(a.baseVault, true),
     meta(pda(T, 'holding', kb(mint), kb(trader)), true), meta(trader, true), meta(L), meta(a.swapHookSigner), meta(T), meta(a.tokenEventAuthority),
@@ -102,7 +105,7 @@ export function nativeSwapV2Instruction({ programs, quoteMint }, { side, trader,
   check(abi && isDeepStrictEqual(abi.accounts.map(x => x.name), names) && Buffer.from(abi.discriminator).equals(hash('global:swap_v2').subarray(0, 8))
     && abi.accounts.every((x, i) => !!x.signer === fixed[i].isSigner && !!x.writable === fixed[i].isWritable && (!x.address || x.address === str(fixed[i].pubkey))), 'swap_v2 ABI differs')
   const remaining = [meta(G), meta(a.gateHookSigner), meta(a.policy), meta(a.launch), meta(a.launch, true), meta(a.launchQuote, true), meta(a.holderVault, true), meta(a.kitConfig), meta(a.inclusiveFeePolicy)]
-  const data = coders.swap.instruction.encode('swap_v2', { args: { direction: buy ? 1 : 0, amount_in: bn(amountIn), min_amount_out: bn(minAmountOut),
+  const data = coder.instruction.encode('swap_v2', { args: { direction: buy ? 1 : 0, amount_in: bn(amountIn), min_amount_out: bn(minAmountOut),
     in_hook_accounts: buy ? 0 : 4, out_hook_accounts: buy ? 4 : 0, hook_data: Buffer.alloc(0) } })
   return new TransactionInstruction({ programId: pk(S), keys: [...fixed, ...remaining], data })
 }
@@ -110,10 +113,15 @@ export function nativeSwapV2Instruction({ programs, quoteMint }, { side, trader,
 // Whether a profile envelope names the reviewed native builds: their ELFs, as the raw build output or the trimmed bytes a
 // deployed ProgramData holds (production bundle 3 pins the trimmed form), and the exact vendored IDL bytes. The compiler
 // refuses any other, and the trade runtime keeps native trading off without it (before the programs are upgraded).
-// Either reviewed native build counts (e357fdf, or the open-creation build whose swap is byte-identical).
+// Either reviewed native build counts (e357fdf, or the open-creation build whose swap is byte-identical). A stack profile
+// pins its own build (src/hooklab-stack.mjs): its IDL bytes must be the ones it names, and its ELF pins are checked
+// against every deployed ProgramData by the collectors.
 export function pinsNativeBuilds(envelope) {
   try {
-    const profile = JSON.parse(envelope.json), build = NATIVE_BUILDS[nativeBuildOf(profile, envelope.elfLengths)]
+    const profile = JSON.parse(envelope.json)
+    if (isStackProfile(profile)) return !!kitOf(profile) && ['swap', 'launch', 'gate'].every(role => sha(raw(envelope.idls[role], 1100000)) === profile.idlSha256[role]
+      && Number.isInteger(envelope.elfLengths?.[role]))
+    const build = NATIVE_BUILDS[nativeBuildOf(profile, envelope.elfLengths)]
     return !!build && ['swap', 'launch'].every(role => isNativeElfPin(role, profile.elfSha256?.[role], envelope.elfLengths?.[role])
       && sha(raw(envelope.idls[role], 1100000)) === build.idlSha256[role])
   } catch { return false }
@@ -132,17 +140,25 @@ export function compileNativeSwapReview(input) {
   const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l, holdingCreation } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero, KIT]).size === 8, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   check(pinsNativeBuilds(envelope), 'Profile does not pin the reviewed native builds')
   const gateBytes = raw(envelope.idls.gate, 1100000)
   check(sha(gateBytes) === profile.idlSha256.gate, 'IDL digest differs')
-  const { idls, coders } = loadNativeArtifacts(), launch = { idl: idls.launch, coder: coders.launch }, swap = { idl: idls.swap, coder: coders.swap }
+  // The profile's own launch and swap IDLs (their bytes are pinned above), each naming the profile's program.
+  const ownIdl = role => { const idl = JSON.parse(raw(envelope.idls[role], 1100000)); check(idl.address === profile.programs[role], 'IDL identity differs'); return { idl, coder: new BorshCoder(idl) } }
+  const launch = ownIdl('launch'), swap = ownIdl('swap')
+  // graduate is built from the profile's own launch IDL, whose fixed addresses are the stack's.
+  const pinned = loadArtifacts(), stackInstructions = instructionsFor({ idls: { ...pinned.idls, launch: launch.idl, swap: swap.idl }, coders: { ...pinned.coders, launch: launch.coder, swap: swap.coder } })
   const gateIdl = JSON.parse(gateBytes), gate = { idl: gateIdl, coder: new BorshCoder(gateIdl) }
   check(gateIdl.address === G, 'IDL identity differs')
   // graduateHookCoin is pinned to the current launch IDL; the native build keeps graduate byte for byte.
-  check(isDeepStrictEqual(idls.launch.instructions.find(ix => ix.name === 'graduate'), loadArtifacts().idls.launch.instructions.find(ix => ix.name === 'graduate')), 'graduate ABI differs')
+  // graduate's accounts as graduateHookCoin builds them (names, order, privileges, optional slots) and its data; its fixed
+  // addresses are the stack's own (derived from the profile), so they are not compared with bundle 2's.
+  const graduateShape = idl => { const g = idl.instructions.find(ix => ix.name === 'graduate'); return g && { discriminator: g.discriminator, args: g.args,
+    accounts: g.accounts.map(a => [a.name, !!a.signer, !!a.writable, !!a.optional]) } }
+  check(graduateShape(launch.idl) && isDeepStrictEqual(graduateShape(launch.idl), graduateShape(loadArtifacts().idls.launch)), 'graduate ABI differs')
   for (const name of ['before_swap_inclusive_v1', 'after_swap_inclusive_v1']) {
-    const callback = idls.launch.instructions.find(ix => ix.name === name)
+    const callback = launch.idl.instructions.find(ix => ix.name === name)
     check(callback && Buffer.from(callback.discriminator).equals(hash(`global:${name}`).subarray(0, 8)) && callback.args.length === 1
       && callback.args[0].type?.defined?.name === 'PoolHookArgsInclusiveV1', 'Versioned inclusive callback ABI differs')
   }
@@ -152,12 +168,13 @@ export function compileNativeSwapReview(input) {
   for (const o of obs) check(o.genesisHash === profile.genesisHash && l.nowMs >= o.observedAtMs && l.nowMs - o.observedAtMs <= l.maxAgeMs, 'Stale or wrong-chain swap observation')
   const accounts = new Map(obs[0].accounts.map(x => { check(!x.account || x.address === x.account.address, 'Account identity differs'); return [x.address, x.account] }))
   check(accounts.size === obs[0].accounts.length && isDeepStrictEqual([...accounts.keys()].sort(), inventory), 'Incomplete, duplicate or extra swap inventory')
-  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, r.mint, r.selectedConfig, zero, KIT, RENT_SYSVAR, ComputeBudgetProgram.programId.toBase58()]
+  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, r.mint, r.selectedConfig, zero, kitOf(profile), RENT_SYSVAR, ComputeBudgetProgram.programId.toBase58()]
   check(new Set(roles).size === roles.length && !roles.includes(r.trader) && PublicKey.isOnCurve(kb(r.trader)), 'Swap role alias or invalid wallet')
   check(!lookupTable || ![...inventory, ...roles].includes(lookupTable.address), 'Lookup table aliases a swap role')
   // The native programs' ProgramData must hold the reviewed ELF's trimmed bytes, then only zeros (as nativeProgramDataMatches
   // reads it), whichever form the profile pins: a deployed ProgramData may be sized to the trimmed bytes. The gate keeps its pin.
-  const build = NATIVE_BUILDS[nativeBuildOf(profile, envelope.elfLengths)]
+  // A stack profile pins trimmed ELFs itself; a legacy native profile names one of the reviewed builds.
+  const build = isStackProfile(profile) ? null : NATIVE_BUILDS[nativeBuildOf(profile, envelope.elfLengths)]
   const elfPin = role => build?.elf[role] ? [build.elf[role].trimmedSha256, build.elf[role].trimmedLength] : [profile.elfSha256[role], envelope.elfLengths[role]]
   for (const o of obs) for (const role of ['launch', 'swap', 'gate']) programEvidence(accounts, profile.programs[role], ...elfPin(role), o.slot, role === 'gate')
   const token = accounts.get(T), tokenBytes = token && raw(token.dataBase64, 36)
@@ -174,7 +191,7 @@ export function compileNativeSwapReview(input) {
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
   const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
-  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, false); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, false)
+  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, false, { trading: true }); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, false, { trading: true })
   const policy = decoded(gate, 'PolicyV2', owned(accounts, a.policy, G, 90)), registry = owned(accounts, a.registry, G, 81)
   check(policy.version === 2 && policy.fee_model === 2 && policy.protocol_share_bps === 2500
     && policy.creator_fee_bps === r.creatorFeeBps && approvedCreatorFees(profile).includes(r.creatorFeeBps) && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n
@@ -279,10 +296,10 @@ export function compileNativeSwapReview(input) {
   // The wallet stays rent-exempt: what it pays leaves at least an empty account's minimum, and a sale lands in a funded account.
   refuseUnless(walletLamports >= fee + debit + rent(0), 'You need a little more SOL for this trade, its network fee and your wallet’s minimum balance.')
   check(fee + debit <= BigInt(l.maxTotalDebitLamports), 'Payer debit exceeds its reviewed bound')
-  const swapIx = nativeSwapV2Instruction(profile, { side: r.side, trader: r.trader, mint: r.mint, amountIn: amount, minAmountOut: r.minAmountOut })
+  const swapIx = nativeSwapV2Instruction(profile, { side: r.side, trader: r.trader, mint: r.mint, amountIn: amount, minAmountOut: r.minAmountOut }, swap.idl)
   const budget = [ComputeBudgetProgram.setComputeUnitLimit({ units: l.computeUnitLimit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) })]
   const instructions = [...budget, ...(createsHolding ? [createHolding(profile.programs, { payer: r.trader, mint: r.mint, owner: r.trader })] : []), swapIx,
-    ...(r.graduate ? [graduateHookCoin(profile.programs, profile.quoteMint, { cranker: r.trader, mint: r.mint })] : [])]
+    ...(r.graduate ? [stackInstructions.graduateHookCoin(profile.programs, profile.quoteMint, { cranker: r.trader, mint: r.mint, kit: kitOf(profile) })] : [])]
   const tables = lookupTable ? [new AddressLookupTableAccount({ key: pk(lookupTable.address), state: AddressLookupTableAccount.deserialize(raw(lookupTable.dataBase64, 8248)) })] : []
   if (lookupTable) {
     const b = raw(lookupTable.dataBase64, 8248), s = tables[0].state

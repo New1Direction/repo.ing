@@ -103,7 +103,7 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  check(isDeepStrictEqual(observations[0].accounts,observations[1].accounts),'Provider account snapshots disagree')
  const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
  check(map.get(configAddress)?.dataBase64===Buffer.from(bootstrap.value[0].data).toString('base64'),'Bootstrap config changed')
- const evidence=inspectProductionEvidence({dossierJson,expectedSha256:c.dossierSha256,nowMs:integer(clock()),observations:observations.map(o=>({...o,accounts:extra.filter(x=>x!==table?.address).map(address=>{const v=map.get(address);check(v,'Pinned account missing');const {lamports,...rest}=v;return rest})}))})
+ const evidence=inspectProductionEvidence({dossierJson,expectedSha256:c.dossierSha256,nowMs:integer(clock()),idls:profile.idls,observations:observations.map(o=>({...o,accounts:extra.filter(x=>x!==table?.address).map(address=>{const v=map.get(address);check(v,'Pinned account missing');const {lamports,...rest}=v;return rest})}))})
  check(evidence.accountBindingsMatched===true,'Deployment dossier does not match actual chain')
  // Require the reviewed dossier to bind every shared economic/governance account.
  for(const address of [a.launchConfig,a.swapConfig,a.launchGovernance,a.swapGovernance,p.quoteMint])check(d.accounts.some(x=>x.address===address),'Missing reviewed governance/economics pin')

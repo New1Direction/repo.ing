@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { BorshCoder } from '@anchor-lang/core'
 import { sha256, PROGRAMS, QUOTE_MINT, MAINNET_GENESIS, LOCAL_PROFILE_SCHEMA } from './pins.mjs'
 import { productionProfileJson } from '../hooklab-production-operator-bundle.mjs'
+import { parseStack } from '../hooklab-stack.mjs'
+import { stackProductionArtifacts } from '../hooklab-production-stack-bundle.mjs'
 
 // Rooted at the app directory (the web server runs there and Next traces these files; see next.config.mjs), falling
 // back to this module's checkout for scripts run from elsewhere. (A static new URL('../../', import.meta.url) breaks
@@ -66,3 +68,29 @@ export function compilerEnvelope({ genesisHash, providers, local }) {
     providers: [...providers] })
 }
 export const binding = role => { const { idls, coders } = loadArtifacts(); return { idl: idls[role], coder: coders[role] } }
+
+// Our own stack (--stack FILE --stack-idls DIR): the stack's launch, swap and gate IDLs, each the exact bytes its build
+// pins and naming the stack's program (src/hooklab-stack.mjs stackProfile checks both), and its builder profile. The
+// token IDL is the vendored cross-network one (layout only; every token address comes from the stack). No bridge.
+export const STACK_IDL_FILES = Object.freeze({ launch: 'bordrless_launch.json', swap: 'bordrless_swap.json', gate: 'hook_max_wallet.json' })
+export function loadStackArtifacts(stackInput, idlDir) {
+  const stack = parseStack(stackInput)
+  if (!idlDir) throw Error('--stack needs --stack-idls DIR (the stack build\'s bordrless_launch.json, bordrless_swap.json, hook_max_wallet.json)')
+  const bytes = Object.fromEntries(Object.entries(STACK_IDL_FILES).map(([role, file]) => [role, readFileSync(path.join(idlDir, file))]))
+  const built = stackProductionArtifacts(stack, bytes), legacy = loadArtifacts()
+  const idls = { launch: JSON.parse(bytes.launch), swap: JSON.parse(bytes.swap), gate: JSON.parse(bytes.gate), token: legacy.idls.token }
+  const coders = Object.fromEntries(Object.entries(idls).map(([role, idl]) => [role, role === 'token' ? legacy.coders.token : new BorshCoder(idl)]))
+  // ELF pins as a deployed ProgramData holds them: the trimmed bytes, then only zeros.
+  const elf = Object.fromEntries(['launch', 'swap', 'gate', 'token'].map(role => [role, { sha256: stack.build.elf[role].trimmedSha256, length: stack.build.elf[role].trimmedLength }]))
+  return Object.freeze({ stack, idls, coders, bytes, profile: built.base, elfLengths: built.elfLengths, elf })
+}
+// The stack's compiler envelope, as compilerEnvelope for bundle 2: its served profile (with the owner's menus); a local
+// test rebinds schema, id and genesis only.
+export function stackCompilerEnvelope(artifacts, { genesisHash, providers, local }) {
+  const production = productionProfileJson(artifacts.profile)
+  const json = local ? JSON.stringify({ ...JSON.parse(production), schema: LOCAL_PROFILE_SCHEMA, profileId: `local-owner-driver-${artifacts.stack.id}-${genesisHash.slice(0, 12)}`.slice(0, 64), genesisHash }) : production
+  if (!local && genesisHash !== MAINNET_GENESIS) throw Error('Mainnet envelope requires the mainnet genesis')
+  return Object.freeze({ json, expectedSha256: sha256(json),
+    idls: Object.fromEntries(['launch', 'swap', 'gate'].map(role => [role, artifacts.bytes[role].toString('base64')])),
+    elfLengths: { ...artifacts.elfLengths }, providers: [...providers] })
+}

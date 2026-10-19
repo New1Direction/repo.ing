@@ -8,7 +8,8 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { PublicKey, VersionedMessage } from '@solana/web3.js'
 import { compileOpenLaunchReview, compileMaxWalletLaunchReview, openLaunchInventory, openLaunchTableAddresses, OPEN_LAUNCH_DISCRIMINATOR } from '../src/hooklab-max-wallet-launch.mjs'
-import { openState, openInput, sharedTable, OWNER_MENUS, withLocalAcceptance } from './fixtures/hooklab-open-launch.mjs'
+import { openState, openInput, openConnections, sharedTable, OWNER_MENUS, withLocalAcceptance } from './fixtures/hooklab-open-launch.mjs'
+import { readOpenCreation } from '../src/hooklab-open-creation.mjs'
 import { missingArtifactEnv } from './fixtures/hooklab-generated-artifact.mjs'
 
 const skip = missingArtifactEnv(['HOOKLAB_NATIVE_ELF_DIR'], 'the reviewed native ELFs')
@@ -58,4 +59,19 @@ test('refused: open creation off, a fee or cap not on the menu, another payer, a
   refuses(world, { table: sharedTable(addresses, { extra: [world.roles.outsider] }) }, /shared launch table/)
   refuses(world, { table: sharedTable(addresses.slice(1)) }, /shared launch table/)
   refuses(world, { uri: `https://repo.ing/${'x'.repeat(183)}` }, /packet/)   // 200 bytes: allowed by the program, too long for one packet here
+}))
+
+test('the fee menu on offer is the on-chain menu under the current ceiling: a fee above a lowered max_creator_fee_bps is refused', { skip }, () => withLocalAcceptance(async () => {
+  // The owner lowered max_creator_fee_bps to 50 after setting the menu [50, 100, 200]; the program does not re-check it.
+  const world = openState({ ceiling: 50 })
+  const chain = await readOpenCreation(openConnections(world), world.programs)
+  assert.deepEqual([...chain.creatorFeeBps], [50], 'only the fees at or under the ceiling are offered'); assert.equal(chain.maxCreatorFeeBps, 50)
+  assert.deepEqual([...chain.capBps], OWNER_MENUS.capBps)
+  assert.throws(() => compileOpenLaunchReview(openInput(world)), /not on the on-chain menu under the current ceiling/, 'this coin chose 100')
+  // With the ceiling at 100 the same launch compiles.
+  assert.ok(compileOpenLaunchReview(openInput(openState({ ceiling: 100 }))).review)
+  // The rules-fee bound caps it too: the lower of max_creator_fee_bps and rule_bounds.max_rules_fee_bps.
+  const rules = openState({ ceiling: 200, rulesCeiling: 50 }), capped = await readOpenCreation(openConnections(rules), rules.programs)
+  assert.deepEqual([...capped.creatorFeeBps], [50]); assert.equal(capped.maxCreatorFeeBps, 50)
+  assert.throws(() => compileOpenLaunchReview(openInput(rules)), /under the current ceiling/)
 }))

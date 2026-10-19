@@ -38,8 +38,8 @@ const programBytes = () => { const b = Buffer.alloc(36); b.writeUInt32LE(2, 0); 
 export function state({ walletLamports = '1000000000', quoteHolding = null, coinHolding = null, edit = {} } = {}) {
   return {
     [OWNER]: acct(OWNER, SYSTEM, Buffer.alloc(0), walletLamports),
-    [holdingAddress(QUOTE_MINT, OWNER)]: quoteHolding === null ? null : acct(holdingAddress(QUOTE_MINT, OWNER), PROGRAMS.token, quoteHolding),
-    [COIN]: acct(COIN, PROGRAMS.token, coinBytes), [holdingAddress(COIN, OWNER)]: coinHolding === null ? null : acct(holdingAddress(COIN, OWNER), PROGRAMS.token, coinHolding),
+    [holdingAddress(QUOTE_MINT, OWNER, PROGRAMS.token)]: quoteHolding === null ? null : acct(holdingAddress(QUOTE_MINT, OWNER, PROGRAMS.token), PROGRAMS.token, quoteHolding),
+    [COIN]: acct(COIN, PROGRAMS.token, coinBytes), [holdingAddress(COIN, OWNER, PROGRAMS.token)]: coinHolding === null ? null : acct(holdingAddress(COIN, OWNER, PROGRAMS.token), PROGRAMS.token, coinHolding),
     [PROGRAMS.bridge]: acct(PROGRAMS.bridge, LOADER, programBytes(), '1141440', true), [pin.programData]: acct(pin.programData, LOADER, programDataBytes()),
     [d.bridgeConfig]: acct(d.bridgeConfig, PROGRAMS.bridge, config()), [d.bridgeNativeWrapper]: acct(d.bridgeNativeWrapper, PROGRAMS.bridge, wrapper()),
     [d.bridgeSolVault]: acct(d.bridgeSolVault, SYSTEM, Buffer.alloc(0), '17000900880'), [QUOTE_MINT]: acct(QUOTE_MINT, PROGRAMS.token, quoteMintBytes),

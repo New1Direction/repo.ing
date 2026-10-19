@@ -38,7 +38,7 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
   ...(openLaunches?{retiredOperations:{launch:['max-wallet-launch']}}:{})})
  const preparationProfile={json:profile.json,expectedSha256:profile.expectedSha256,providers:profile.providers,
   idls:{launch:profile.idls.launch,gate:profile.idls.gate},elfLengths:{launch:profile.elfLengths.launch,gate:profile.elfLengths.gate}}
- const openCreation=()=>readOpenCreation(connections,JSON.parse(profile.json).programs.launch)
+ const openCreation=()=>readOpenCreation(connections,JSON.parse(profile.json).programs)
  return Object.freeze({ownerCustodyApproved,operatorDeploymentApproved,economicsApproved,lifecycle,openLaunches,
   // The chain's open-creation state and menus, from both providers (identical bytes), for the creator's form.
   openCreation,

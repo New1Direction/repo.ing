@@ -48,7 +48,7 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
   const quoteMint=observations[0].accounts.find(x=>x.address===p.quoteMint)
   observations[1].accounts=observations[1].accounts.map(x=>x.address===p.quoteMint?quoteMint:x)
   const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
-  const evidence=inspectProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:bound.config.dossierSha256,nowMs:integer(clock()),
+  const evidence=inspectProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:bound.config.dossierSha256,nowMs:integer(clock()),idls:retained.profile.idls,
    observations:observations.map(o=>({...o,accounts:extras.filter(a=>a!==bound.config.lookupTable?.address).map(address=>{const a=map.get(address);check(a);const {lamports,...rest}=a;return rest})}))})
   check(evidence.accountBindingsMatched===true)
   const slot=Math.max(...observations.map(x=>x.slot))

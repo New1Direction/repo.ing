@@ -1,16 +1,21 @@
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
 import { HooksIntro, HooksNav, HooksUnavailable, HooksRisk } from '../../components/hooks-ui'
+import { openLaunchesEnabled, siteLaunchesEnabled } from '../../../src/hooklab-open-creation.mjs'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Hooks — repo.ing', description: 'Launch a coin with its own rules: a cap on how much one wallet can hold and a creator fee on every trade. repo.ing approves each launch.' }
+export async function generateMetadata() {
+  return { title: 'Hooks — repo.ing', description: `Launch a coin with its own rules: a cap on how much one wallet can hold and a creator fee on every trade.${openLaunchesEnabled(process.env) ? '' : ' repo.ing approves each launch.'}` }
+}
 
 const StepArt = ({ src }) => <img className="launch-benefit-art" src={src} alt="" width={64} height={64} decoding="async" fetchPriority="low"/>
 
 export default function HooksPage() {
-  if (process.env.HOOK_OWNER_APPROVED_LAUNCHES !== 'true') return <DraftsOnly/>
+  if (!siteLaunchesEnabled(process.env)) return <DraftsOnly/>
+  // Self-serve launches: anyone launches straight from their wallet; no request or approval step.
+  const open = openLaunchesEnabled(process.env)
   return <><HooksIntro title="Coins with their own rules." art="find-repo" action={<Link className="button primary" href="/hooks/launch-review">Launch a coin <ArrowRight size={16} aria-hidden="true"/></Link>}>
-    Launch a coin that caps how much one wallet can hold and pays you a fee on every trade. repo.ing approves each launch, then anyone can buy and sell here.
+    Launch a coin that caps how much one wallet can hold and pays you a fee on every trade. {open ? 'Sign it in your wallet and anyone can buy and sell it here, in SOL.' : 'repo.ing approves each launch, then anyone can buy and sell here.'}
   </HooksIntro><HooksNav active="markets"/>
     <section className="launch-benefits hooks-benefits" aria-label="How a hooks coin works">
       <ol>
@@ -18,7 +23,8 @@ export default function HooksPage() {
         <li><StepArt src="/hook-icons/max-wallet.webp?v=2"/><div><strong>Snap on blocks</strong><p>Max wallet caps any wallet at 1–5% of the supply until the coin graduates.</p></div></li>
         <li><StepArt src="/hook-icons/creator-rewards.webp?v=2"/><div><strong>Earn on every trade</strong><p>The Creator fee block takes 0.5–2%. You keep 75% of it, in SOL.</p></div></li>
       </ol>
-      <div className="launch-reward-terms"><span><strong>Free to request.</strong> repo.ing checks each coin and invites you. Then you sign the launch in your wallet, with about 0.05 SOL for deposits and fees.</span>
+      <div className="launch-reward-terms">{open ? <span><strong>Launch in minutes.</strong> Make your coin, check the costs, then approve twice in your wallet. It goes live right away.</span>
+        : <span><strong>Free to request.</strong> repo.ing checks each coin and invites you. Then you sign the launch in your wallet, with about 0.05 SOL for deposits and fees.</span>}
         <Link href="/hooks/launch-review">Start your coin <ArrowRight size={14} aria-hidden="true"/></Link></div>
     </section>
     <div className="hooks-explain"><div><h2>Already holding a hooks coin?</h2><p>Buy and sell hooks coins on repo.ing. Most wallets don’t list them yet, so trade them here.</p></div><Link href="/hooks/trade">Buy &amp; sell <ArrowRight size={16} aria-hidden="true"/></Link></div>

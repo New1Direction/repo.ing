@@ -1,7 +1,8 @@
 // Shared stage helpers: decoding, governance prediction, blockhash pinning, simple compilation.
 import BN from 'bn.js'
 import { loadArtifacts } from '../artifacts.mjs'
-import { governanceCommitment } from '../instructions.mjs'
+import { governanceCommitment, instructionsFor } from '../instructions.mjs'
+import { ELF } from '../artifacts.mjs'
 import { readBlockhash, blockhashStillValid } from '../rpc.mjs'
 import { compileReviewed } from '../message.mjs'
 import { budget } from '../instructions.mjs'
@@ -9,27 +10,38 @@ import { plain } from '../preview.mjs'
 
 export const check = (ok, message) => { if (!ok) throw Error(message) }
 export const hex = b => Buffer.from(b).toString('hex')
-export function decode(role, type, account) {
+// abi: the run's stack ABI (ctx.abi); the legacy bundle-2 IDLs when omitted.
+export function decode(role, type, account, abi = loadArtifacts()) {
   check(account, `Account for ${role}.${type} is missing`)
-  return loadArtifacts().coders[role].accounts.decode(type, Buffer.from(account.dataBase64, 'base64'))
+  return abi.coders[role].accounts.decode(type, Buffer.from(account.dataBase64, 'base64'))
 }
 export function owned(accounts, address, owner, label) {
   const account = accounts.get(address)
   check(account && account.owner === owner && !account.executable, `${label} ${address} is missing or not owned by ${owner}`)
   return account
 }
-export function governanceView(role, state) {
-  return { revision: state.revision.toString(10), gates: { ...state.gates }, commitment: hex(governanceCommitment(role, state)),
+export function governanceView(role, state, commit = governanceCommitment) {
+  return { revision: state.revision.toString(10), gates: { ...state.gates }, commitment: hex(commit(role, state)),
     admin: state.roles.admin.toBase58(), treasury: state.roles.treasury.toBase58(), pendingAdmin: state.pending_admin ? plain(state.pending_admin) : null }
 }
 export function nextState(state, change) {
   return { ...state, ...change, roles: { ...state.roles, ...(change.roles ?? {}) }, revision: state.revision.add(new BN(1)) }
 }
-export function governanceSection(role, before, after) {
-  const b = governanceView(role, before), a = governanceView(role, after)
+export function governanceSection(role, before, after, commit = governanceCommitment) {
+  const b = governanceView(role, before, commit), a = governanceView(role, after, commit)
   return { title: `${role} governance (before -> after)`, rows: [`revision    ${b.revision} -> ${a.revision}`, `commitment  ${b.commitment} -> ${a.commitment}`,
     `gates       creation=${b.gates.creation} trading=${b.gates.trading} -> creation=${a.gates.creation} trading=${a.gates.trading} (true = closed)`] }
 }
+// The run's stack: its instruction builders, ABI and ELF pins (src/hooklab-owner-driver/context.mjs). A context built
+// without them (older callers, tests) is the legacy stack.
+let legacyIx = null
+export const ixOf = ctx => ctx.ix ?? (legacyIx ??= instructionsFor(loadArtifacts))
+export const abiOf = ctx => ctx.abi ?? loadArtifacts()
+export const elfOf = ctx => ctx.elf ?? ELF
+// The same views under the run's stack: every stage that can run on our own stack uses these.
+export const gview = (ctx, role, state) => governanceView(role, state, ixOf(ctx).governanceCommitment)
+export const gsection = (ctx, role, before, after) => governanceSection(role, before, after, ixOf(ctx).governanceCommitment)
+export const cdecode = (ctx, role, type, account) => decode(role, type, account, abiOf(ctx))
 /** Reuse the reviewed blockhash while both providers still accept it; otherwise fetch a fresh one. */
 export async function blockhashFor(ctx, pinned, minSlot = 0) {
   if (pinned?.blockhash && await blockhashStillValid(ctx.readers, pinned.blockhash)) {

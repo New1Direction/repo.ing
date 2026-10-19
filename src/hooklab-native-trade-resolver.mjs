@@ -50,7 +50,7 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
   const quoteMint=observations[0].accounts.find(x=>x.address===p.quoteMint)
   observations[1].accounts=observations[1].accounts.map(x=>x.address===p.quoteMint?quoteMint:x)
   const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
-  const evidence=inspectProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:bound.config.dossierSha256,nowMs:integer(clock()),
+  const evidence=inspectProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:bound.config.dossierSha256,nowMs:integer(clock()),idls:retained.profile.idls,
    observations:observations.map(o=>({...o,accounts:extras.filter(x=>x!==bound.config.lookupTable?.address).map(address=>{const v=map.get(address);check(v);const {lamports,...rest}=v;return rest})}))})
   check(evidence.accountBindingsMatched===true)
   const slot=Math.max(...observations.map(x=>x.slot))

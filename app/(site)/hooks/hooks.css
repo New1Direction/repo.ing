@@ -196,3 +196,17 @@
 .hooks-claim .button{flex:none;white-space:nowrap}.hooks-claim-note{margin:10px 0 0;color:var(--muted)!important;font-size:13px}
 .hooks-mine .hooks-claim{margin:0 0 14px}
 @container(max-width:460px){.hooks-claim>div{flex-wrap:wrap}.hooks-claim>div>div{flex-basis:calc(100% - 32px)}.hooks-claim .button{width:100%}}
+/* Self-serve launch: review (what you pay, your coin, the note), the one guided signing step, delisted coins. */
+.hooks-open-review{display:flex;flex-direction:column;gap:18px}.hooks-open-review>h2,.hooks-open-signing>h2{font-size:30px;letter-spacing:-.03em;margin:0}
+.hooks-open-review-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.hooks-open-review-grid .inner-card{padding:20px 22px}
+.hooks-open-review-grid .fee-line strong{font-variant-numeric:tabular-nums;text-align:right}.hooks-open-review .hooks-cost{margin:14px 0 0}
+.hooks-open-note{display:flex;gap:12px;align-items:flex-start;margin:0;padding:14px 16px;border:1px solid color-mix(in srgb,var(--green) 35%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--green) 6%,var(--surface));color:var(--text);font-size:14px;line-height:1.55}
+.hooks-open-note svg{flex:none;margin-top:2px;color:var(--green)}
+.hooks-open-review .launch-review-actions,.hooks-open-live .launch-review-actions{display:flex;gap:10px;flex-wrap:wrap}.hooks-open-review .form-fineprint{margin:0}
+.hooks-open-signing{display:flex;flex-direction:column;gap:14px}.hooks-open-signing .launch-subtitle{margin:0}.hooks-open-signing p{margin:0}
+.hooks-open-progress{flex-direction:column}.hooks-open-progress li{flex:none}.hooks-open-progress li>div{display:flex;flex-direction:column;gap:2px;min-width:0}.hooks-open-progress li small{font-weight:400;color:var(--muted);font-size:12px}
+.hooks-open-review-grid .fee-line strong{white-space:nowrap;display:flex;flex-direction:column;align-items:flex-end;gap:2px}.hooks-open-review-grid .fee-line strong small{margin:0;font-weight:500;color:var(--muted)}
+.hooks-recovery-ids{margin:0;display:grid;gap:8px}.hooks-recovery-ids div{display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px;font-size:13px}.hooks-recovery-ids dt{color:var(--muted)}.hooks-recovery-ids dd{margin:0;overflow-wrap:anywhere}
+.hooks-delisted-notice{margin:12px 0 0;padding:12px 14px;border:1px solid color-mix(in srgb,var(--red) 45%,var(--border));border-radius:10px;background:color-mix(in srgb,var(--red) 8%,var(--surface));color:var(--text);font-size:14px;line-height:1.5}
+.hooks-trade .hooks-trade-soon.hooks-delisted{border:1px solid color-mix(in srgb,var(--red) 45%,var(--border));background:color-mix(in srgb,var(--red) 8%,var(--surface))}
+@media(max-width:760px){.hooks-open-live .launch-review-actions .button{flex:1 1 100%}.hooks-open-progress{overflow:visible}.hooks-open-progress li{flex:none;width:100%}.hooks-open-review-grid .inner-card{padding:16px}.hooks-open-review .hooks-cost strong{font-size:20px;white-space:nowrap}.hooks-open-review-grid{grid-template-columns:1fr}.hooks-open-review>h2,.hooks-open-signing>h2{font-size:24px}.hooks-open-review .launch-review-actions .button{flex:1 1 100%}.hooks-recovery-ids div{grid-template-columns:1fr;gap:2px}}

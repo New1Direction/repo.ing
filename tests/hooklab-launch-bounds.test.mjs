@@ -9,14 +9,14 @@ import { checkLiveBounds,readLiveLaunchBounds } from '../src/hooklab-launch-boun
 import { launchBoundsAtInvite } from '../app/lib/hooklab-launch-price.mjs'
 import { STANDARD_VIRTUAL_QUOTE,VIRTUAL_QUOTE_BOUNDS } from '../src/hooklab-launch-pricing.mjs'
 import { loadArtifacts } from '../src/hooklab-owner-driver/artifacts.mjs'
-import { PROGRAMS,derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
+import { PROGRAMS,QUOTE_MINT,derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
 
 const fixture=JSON.parse(readFileSync(new URL('./fixtures/hooklab-mainnet-public-accounts.json',import.meta.url)))
 const live=Buffer.from(fixture.accounts['launch-config'].dataBase64,'base64'),coder=loadArtifacts().coders.launch
 const widened=Buffer.concat([live.subarray(0,8),coder.types.encode('Config',{...coder.accounts.decode('Config',live),min_virtual_quote:new BN('5625000000'),max_virtual_quote:new BN('112500000000')})])
 const provider=(data,{owner=PROGRAMS.launch,fail=false}={})=>({async getAccountInfo(address,commitment){
  if(fail)throw Error('fetch failed: https://rpc.example/?api-key=SECRET')
- assert.equal(address.toBase58(),derivedAddresses().launchConfig);assert.equal(commitment,'finalized')
+ assert.equal(address.toBase58(),derivedAddresses(PROGRAMS, QUOTE_MINT).launchConfig);assert.equal(commitment,'finalized')
  return data&&{owner:new PublicKey(owner),data}}})
 
 test('reads min/max virtual quote from the launch config both providers agree on',async()=>{

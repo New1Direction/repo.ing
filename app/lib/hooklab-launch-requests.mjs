@@ -16,6 +16,7 @@ import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
 import { launchPriceEstimate } from './hooklab-launch-price.mjs'
 import { openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
+import { openLaunchNetworkFee } from './hooklab-open-launch.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 // A 384 KB PNG as base64 plus its data: prefix, and the JSON around it.
 const MAX_IMAGE_DATA_URL=524_310,MAX_BODY_BYTES=540_000
@@ -27,7 +28,10 @@ const inputSchema=z.discriminatedUnion('action',[
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED==='true'
-// The chain's open-creation state (menus, fee, pause) through the installed launch runtime's two providers.
+// The chain's open-creation state (menus, fee, pause) through the installed launch runtime's two providers. Only these
+// fields reach the browser: nothing about the stack's programs or quote marker is ever sent to customers.
+const PUBLIC_OPEN_CREATION=['native','open','paused','creatorFeeBps','capBps','maxCreatorFeeBps','launchFeeLamports','poolCreationFeeLamports','rentLamports','minVirtualQuote','maxVirtualQuote']
+export const publicOpenCreation=chain=>chain?Object.fromEntries(PUBLIC_OPEN_CREATION.filter(key=>chain[key]!==undefined).map(key=>[key,chain[key]])):null
 const chainOpenCreation=async()=>{const service=nativeLaunchRuntime();if(!service?.openLaunches)return null;return service.openCreation()}
 export function createLaunchRequestsHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,
  store=ownerApprovalStore,principalStore=walletPrincipalStore,quota=walletIdentityQuota,launchPriceEstimate:estimate=launchPriceEstimate,openCreation=chainOpenCreation}={}){
@@ -42,7 +46,8 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    if(request.method==='GET'){
     if(new URL(request.url).search)return reply({error:'Query parameters unavailable.'},400)
     // With USD pricing on, the page shows SOL amounts at today's price until the launch fixes them (null: USD only).
-    return reply({status:'available',...(open?{open:true,openCreation:chain}:await approvals.availability()),...(usdPricing&&{launchPrice:await estimate()})})
+    // Open launches also show the network fee both launch transactions pay, at the server's priority price.
+    return reply({status:'available',...(open?{open:true,openCreation:publicOpenCreation(chain),costs:{networkFeeLamports:openLaunchNetworkFee(env.HOOKLAB_PRIORITY_MICROLAMPORTS)}}:await approvals.availability()),...(usdPricing&&{launchPrice:await estimate()})})
    }
    if(request.method!=='POST')return reply({error:'Method unavailable.'},405)
    try{assertSameOrigin(request,config.origin);if(!servedFromConfiguredOrigin(request,config.origin)||request.headers.get('sec-fetch-site')==='cross-site')throw Error()}catch{return reply({error:'Open the configured launcher origin.'},403)}
@@ -62,7 +67,7 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
     open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,capBps:chain.capBps}}:{})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)
-   return reply({status:'available',request:launchRequest,...(open?{open:true,openCreation:chain}:await approvals.availability())})
+   return reply({status:'available',request:launchRequest,...(open?{open:true,openCreation:publicOpenCreation(chain)}:await approvals.availability())})
   }catch(error){
    if(error?.status===401)return reply({error:'Wallet session expired. Sign in again.'},401)
    return reply({error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Launch requests unavailable.'},409)

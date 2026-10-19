@@ -62,8 +62,8 @@ export async function readLookupTable(ctx) {
   return { pin: { address: record.address, owner: ALT_PROGRAM, dataBase64: account.dataBase64, sha256: sha256(data) }, state, slot: snapshot.slot }
 }
 /** Decode emit_cpi events (self-CPI to the program's event authority) from a finalized transaction. */
-export function cpiEvents(tx, programs) {
-  const { coders } = loadArtifacts()
+export function cpiEvents(tx, programs, abi = loadArtifacts()) {
+  const { coders } = abi
   const loaded = tx.meta.loadedAddresses ?? { writable: [], readonly: [] }
   const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: loaded })
   const addresses = Array.from({ length: keys.length }, (_, i) => keys.get(i).toBase58()), out = []

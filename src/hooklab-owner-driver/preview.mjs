@@ -23,12 +23,12 @@ export function addressBook({ programs, quoteMint, roles, extra = {} }) {
   for (const [role, address] of Object.entries(roles)) if (address) book.set(address, `${role}`)
   for (const [name, address] of Object.entries(programs)) book.set(address, `${name} program`)
   for (const [name, address] of Object.entries(d)) if (!book.has(address)) book.set(address, name)
-  for (const role of ['creator', 'treasury']) if (roles[role]) book.set(holdingAddress(quoteMint, roles[role], programs.token), `${role} quote holding`)
+  if (programs.bridge) for (const role of ['creator', 'treasury']) if (roles[role]) book.set(holdingAddress(quoteMint, roles[role], programs.token), `${role} quote holding`)
   for (const [name, address] of Object.entries(extra)) if (address && !book.has(address)) book.set(address, name)
   book.set(SYSTEM, 'system program'); book.set(LOADER, 'upgradeable loader'); book.set(ALT_PROGRAM, 'lookup-table program'); book.set(COMPUTE_BUDGET, 'compute budget')
   return book
 }
-function decodeKnown(ix, programs) {
+function decodeKnown(ix, programs, abi) {
   const program = ix.programId.toBase58()
   if (program === COMPUTE_BUDGET) {
     const type = ComputeBudgetInstruction.decodeInstructionType(ix)
@@ -55,18 +55,19 @@ function decodeKnown(ix, programs) {
   const role = Object.entries(programs).find(([, address]) => address === program)?.[0]
   if (!role) return { name: 'UNKNOWN PROGRAM', args: { dataHex: ix.data.toString('hex') } }
   // Instructions only the reviewed native-SOL build has (e.g. governed_set_native_launches) decode with its pinned IDL.
-  const pinned = loadArtifacts(), native = ['launch', 'swap'].includes(role) ? loadNativeArtifacts() : null
+  // Our own stack: its own IDLs. Legacy: bundle 2's, then the reviewed native build's for what only it has.
+  const pinned = abi ?? loadArtifacts(), native = !abi && ['launch', 'swap'].includes(role) ? loadNativeArtifacts() : null
   const { coders, idls } = pinned.coders[role].instruction.decode(ix.data) || !native ? pinned : native, decoded = coders[role].instruction.decode(ix.data)
   if (!decoded) return { name: `UNDECODABLE ${role} instruction`, args: { dataHex: ix.data.toString('hex') } }
   const definition = idls[role].instructions.find(x => x.name === decoded.name)
   return { name: `${role}.${decoded.name}`, args: plain(decoded.data), names: definition.accounts.map(a => a.name) }
 }
 /** Decode every instruction of the exact message bytes (resolving the lookup table, if any). */
-export function decodeMessage(messageBase64, { programs, book, lookupTable = null }) {
+export function decodeMessage(messageBase64, { programs, book, lookupTable = null, abi = null }) {
   const message = VersionedMessage.deserialize(Buffer.from(messageBase64, 'base64'))
   const instructions = TransactionMessage.decompile(message, { addressLookupTableAccounts: lookupTable ? [lookupAccount(lookupTable)] : [] }).instructions
   return instructions.map((ix, index) => {
-    const known = decodeKnown(ix, programs)
+    const known = decodeKnown(ix, programs, abi)
     return { index, program: ix.programId.toBase58(), programLabel: book.get(ix.programId.toBase58()) ?? 'unknown', instruction: known.name, args: known.args,
       accounts: ix.keys.map((k, i) => ({ name: known.names?.[i] ?? `remaining[${i - (known.names?.length ?? 0)}]`, address: k.pubkey.toBase58(),
         label: book.get(k.pubkey.toBase58()) ?? '', signer: k.isSigner, writable: k.isWritable })) }

@@ -136,7 +136,7 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
  try{
   const {config:c,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),{ci,plan,p,b,before}=context(settlementContext,canary)
   check(settlementContext.configurationSha256===sha(JSON.stringify(c))&&isDeepStrictEqual(ci.profile,profile)&&isDeepStrictEqual(plan.review,review))
-  for(const pin of d.accounts){const account=before.get(pin.address);check(productionAccountBindingMatches(pin,account,d))}
+  for(const pin of d.accounts){const account=before.get(pin.address);check(productionAccountBindingMatches(pin,account,d,profile.idls))}
   const signed=verifyHookLabSignedMessage(review,signedTransactionBase64);check(signed.signature===signature&&review.profileSha256===c.profileSha256)
   identity={signature,messageSha256:signed.messageSha256,profileSha256:c.profileSha256,configurationSha256:sha(JSON.stringify(c))}
   const snapshotInventory=[...new Set([...before.keys(),...d.programs.flatMap(x=>[x.address,x.programData])])].sort()
