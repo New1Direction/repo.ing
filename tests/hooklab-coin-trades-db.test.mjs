@@ -168,7 +168,14 @@ test('the table refuses rows a decoder could never produce', () => withDatabase(
   await assert.rejects(insert(row.map((v, i) => i === 0 ? 'z'.repeat(64) : i === 2 ? 'Minted' : i === 8 ? '2' : v)), /check/)
 }))
 
-test('end to end: the first chart read indexes the coin, later reads cost no RPC until the chain moves', () => withDatabase(async pool => {
+// The fixture's trades are real mainnet history from 2026-10-18, and the 24 h volume counts only trades newer than now - 24 h:
+// the end-to-end test pins the clock (Date only; timers stay real) to one hour after the newest fixture signature.
+const CANARY_NOW_MS = Math.max(...canary.signatures.map(s => s.blockTime)) * 1000 + 3_600_000
+const MARKET_CACHE_WAIT_MS = 3_100
+
+test('end to end: the first chart read indexes the coin, later reads cost no RPC until the chain moves', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: CANARY_NOW_MS })
+  return withDatabase(async pool => {
   const calls = [], openStore = () => ({ store: hookCoinTradeStore(pool), close: async () => {} })
   let swapCount = '2'
   const service = { market: async () => ({ market: { mint: coin.mint, symbol: 'HLCANARY', decimals: 6, graduated: false, initialSupply: '1000000000000000',
@@ -185,7 +192,10 @@ test('end to end: the first chart read indexes the coin, later reads cost no RPC
   assert.equal(calls.length, 5, 'the trades read cost no RPC: the index already matched the chain')
   swapCount = '3'
   // The market cache (3 s) still says 2 for this coin; once it reads 3, a pass finds nothing finalized yet and says so.
-  await new Promise(resolve => setTimeout(resolve, 3_100))
+  // The wait is real (the indexer's timers run as in production); the pinned clock moves by the same amount.
+  await new Promise(resolve => setTimeout(resolve, MARKET_CACHE_WAIT_MS))
+  t.mock.timers.tick(MARKET_CACHE_WAIT_MS)
   const ahead = await get('trades')
   assert.equal(ahead.syncing, 1); assert.deepEqual(methods(calls.slice(5)), ['getSignaturesForAddress'])
-}))
+  })
+})
