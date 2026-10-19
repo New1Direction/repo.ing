@@ -7,6 +7,7 @@ import { value } from '../config.mjs'
 import { fieldDiff, plain, sol } from '../preview.mjs'
 import { LAUNCH_CONFIG_RESERVED_AT, parseLaunchConfigReserved } from '../../hooklab-launch-config-reserved.mjs'
 import { check, cdecode, owned, hex, nextState, gsection, gview, simpleMessage, ixOf, elfOf } from './common.mjs'
+import { checkMoneyRouting } from './money-routing.mjs'
 
 const configRole = { 'launch-config': 'launch', 'swap-config': 'swap' }
 function wanted(ctx, role, current) {
@@ -199,10 +200,14 @@ const fund = {
   },
 }
 
+// The public activations (open-launches, open-trading) first re-read both configs (money-routing.mjs); the canary's
+// gate and every close are not held back by it.
+const ACTIVATIONS = new Set(['open-launches', 'open-trading'])
 function creationGateStage(stage, open) {
   return {
-    name: stage,
+    name: stage, activates: ACTIVATIONS.has(stage),
     async build(ctx, pinned) {
+      if (ACTIVATIONS.has(stage)) { const refusal = await checkMoneyRouting(ctx, stage); if (refusal) return refusal }
       const { snapshot, config, governance } = await governedSnapshot(ctx, 'launch')
       if (governance.state.gates.creation === !open) return { blocked: `launch creation gate is already ${open ? 'open' : 'closed'}`, observedSlot: snapshot.slot }
       const gates = { creation: !open, trading: false }
@@ -229,8 +234,9 @@ function creationGateStage(stage, open) {
 // public activation step together with open-launches.
 function tradingGateStage(stage, open) {
   return {
-    name: stage,
+    name: stage, activates: ACTIVATIONS.has(stage),
     async build(ctx, pinned) {
+      if (ACTIVATIONS.has(stage)) { const refusal = await checkMoneyRouting(ctx, stage); if (refusal) return refusal }
       const { snapshot, config, governance } = await governedSnapshot(ctx, 'swap')
       if (governance.state.gates.trading === !open && !governance.state.gates.creation) return { blocked: `swap trading gate is already ${open ? 'open' : 'closed'}`, observedSlot: snapshot.slot }
       const gates = { creation: false, trading: !open }

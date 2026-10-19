@@ -9,6 +9,7 @@ import { NATIVE_ELF, NATIVE_FLAGS, NATIVE_SOURCE } from '../../hooklab-native-pi
 import { governedSetNativeLaunches, nativeLaunchesDigest, nativeLaunchesSwitch, nativeProgramDataMatches } from '../../hooklab-native-launch.mjs'
 import { check, hex, nextState, gsection, gview, simpleMessage, ixOf, elfOf } from './common.mjs'
 import { governedSnapshot, payerRow, programDataState } from './admin.mjs'
+import { checkMoneyRouting } from './money-routing.mjs'
 
 const STAGE = 'native-launches', BYTE = NATIVE_FLAGS.configNativeLaunches
 const wanted = ctx => { const to = ctx.options?.to; check(to === 'on' || to === 'off', 'native-launches requires --to on or --to off'); return to === 'on' }
@@ -24,8 +25,10 @@ function effects(on) {
 
 export const nativeLaunches = {
   name: STAGE,
+  get activates() { return true },   // with --to on; --to off is never held back
   async build(ctx, pinned) {
     const on = wanted(ctx), d = derivedAddresses(ctx.programs, ctx.quoteMint)
+    if (on) { const refusal = await checkMoneyRouting(ctx, `${STAGE} --to on`); if (refusal) return refusal }
     const { snapshot, config, governance, addresses } = await governedSnapshot(ctx, 'launch', [d.launchProgramData, d.swapProgramData])
     // I-2: the switch as both providers read it, before any message exists.
     const raw = Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), current = nativeLaunchesSwitch(raw)

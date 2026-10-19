@@ -8,6 +8,9 @@ import { BorshCoder } from '@anchor-lang/core'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import { derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
 import { routingProblems, checkMoneyRouting } from '../src/hooklab-owner-driver/stages/money-routing.mjs'
+import { nativeLaunches } from '../src/hooklab-owner-driver/stages/native-launches.mjs'
+import { openCreation } from '../src/hooklab-owner-driver/stages/open-creation.mjs'
+import { adminStages } from '../src/hooklab-owner-driver/stages/admin.mjs'
 import { independentStack, INDEPENDENT_SKIP } from './fixtures/hooklab-independent-stack.mjs'
 
 const key = () => Keypair.generate().publicKey
@@ -70,4 +73,26 @@ test('checkMoneyRouting reads both configs again and refuses a wrong treasury, f
     const refusal = await checkMoneyRouting(await contextWith(over), 'open-trading')
     assert.match(refusal.blocked, /^open-trading: refusing to activate: /, JSON.stringify(Object.keys(over)))
   }
+})
+
+test('every activation stage refuses before compiling when the money is routed elsewhere', { skip: INDEPENDENT_SKIP }, async () => {
+  const runs = [
+    ['native-launches --to on', nativeLaunches, { to: 'on' }],
+    ['open-creation --to on', openCreation, { to: 'on' }],
+    ['open-launches', adminStages['open-launches'], {}],
+    ['open-trading', adminStages['open-trading'], {}],
+  ]
+  for (const [label, stage, options] of runs) {
+    const ctx = await contextWith({ feeCollector: other })
+    const built = await stage.build({ ...ctx, options })
+    assert.match(built.blocked ?? '', /refusing to activate: swap Config fee_collector/, label)
+    assert.equal(built.review, undefined, `${label}: nothing compiled`)
+  }
+})
+
+test('deactivation stages are not held back by the routing check (an emergency stop always works)', () => {
+  assert.equal(adminStages['close-trading'].activates, false)
+  assert.equal(adminStages['close-launches'].activates, false)
+  assert.equal(adminStages['open-trading'].activates, true)
+  assert.equal(adminStages['open-launches'].activates, true)
 })
