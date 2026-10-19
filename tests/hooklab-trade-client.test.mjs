@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, SystemProgram } from '@solana/web3.js'
-import { estimateTrade, formatUnits, maxBuyLamports, parseUnits, planBuy, planSell, sol, tradeIntent } from '../app/lib/hooklab-trade-math.mjs'
+import { estimateTrade, formatUnits, maxBuyLamports, parseUnits, planBuy, planSell, sol, tradeButton, tradeIntent } from '../app/lib/hooklab-trade-math.mjs'
 import { createInclusiveTradeHandler } from '../app/lib/hooklab-inclusive-trade.mjs'
 import { runOperation, pendingOperations, rememberOperation, forgetOperation } from '../app/lib/hooklab-trade-runner.mjs'
 
@@ -117,4 +117,20 @@ test('a sell from a wallet without a bridged-SOL holding creates it first, then 
   assert.deepEqual(planSell({ amount: 5n, wallet: { lamports: '10000000', bridgedSol: null }, rentLamports: '1686560' }).steps.map(s => s.kind), ['fund', 'sell', 'withdraw'])
   assert.deepEqual(planSell({ amount: 5n, wallet: { lamports: '10000000', bridgedSol: '0' } }).steps.map(s => s.kind), ['sell', 'withdraw'])
   assert.ok(planSell({ amount: 5n, wallet: { lamports: '100', bridgedSol: '0' } }).shortfall > 0n)
+})
+
+test('the trade button always offers the next step: connect, then sign in (no amount needed), then trade', () => {
+  const base = { wallet: null, signedIn: false, side: 'buy', symbol: '$HLCANARY', hasAmount: false, blocked: false, tradingOpen: false, busy: false }
+  assert.deepEqual(tradeButton(base), { label: 'Connect wallet', action: 'connect', disabled: false }, 'a new visitor can always connect, even before trading opens')
+  assert.deepEqual(tradeButton({ ...base, hasMarket: false }), { label: 'Connect wallet', action: 'connect', disabled: false }, 'and while coin data is loading')
+  const connected = { ...base, wallet: 'Fgze', tradingOpen: true }
+  assert.deepEqual(tradeButton(connected), { label: 'Sign in with your wallet', action: 'sign-in', disabled: false }, 'signing in needs no amount')
+  assert.deepEqual(tradeButton({ ...connected, hasAmount: true }), { label: 'Sign in and buy $HLCANARY', action: 'trade', disabled: false })
+  assert.deepEqual(tradeButton({ ...connected, hasAmount: true, blocked: true }), { label: 'Sign in with your wallet', action: 'sign-in', disabled: false }, 'an amount that cannot trade still lets you sign in')
+  const ready = { ...connected, signedIn: true }
+  assert.deepEqual(tradeButton(ready), { label: 'Buy $HLCANARY', action: 'trade', disabled: true }, 'signed in: waits for an amount')
+  assert.deepEqual(tradeButton({ ...ready, hasAmount: true, side: 'sell' }), { label: 'Sell $HLCANARY', action: 'trade', disabled: false })
+  assert.equal(tradeButton({ ...ready, hasAmount: true, blocked: true }).disabled, true, 'an amount the swap would refuse')
+  assert.equal(tradeButton({ ...ready, hasAmount: true, tradingOpen: false }).disabled, true, 'trading not open for this wallet yet')
+  assert.deepEqual(tradeButton({ ...ready, hasAmount: true, busy: true }), { label: 'Working…', action: 'trade', disabled: true })
 })

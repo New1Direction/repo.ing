@@ -69,7 +69,8 @@ test('coin page: unavailable without a runtime, a full trading page for a real H
   const { default: Token } = await appModule('app/(site)/hooks/token/[mint]/page.jsx')
   const mint = '2T2kXXWkSYV88iKTN1v6dwrXuhqfu9FFpzPozChtfpYn', key = Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
   const down = html(await Token({ params: Promise.resolve({ mint }) }), { wallet: true })
-  assert.match(down, /Coin details are loading slowly/); assert.doesNotMatch(down, /<form/)
+  assert.match(down, /Coin details are loading slowly/)
+  assert.match(down, /<button[^>]*class="[^"]*trade-submit[^"]*"[^>]*>Connect wallet<\/button>/, 'a visitor can connect while coin data is unavailable')
   const market = { mint, name: 'Hook Lab Canary', symbol: 'HLCANARY', uri: '', decimals: 6, observedSlot: 1, selectedConfig: '5hvm6s9DCiYX5QQFDVkcTKs1sF3PCKnACxYLHHTJCKZr',
     creator: 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9', graduated: false, capBps: 200, creatorFeeBps: 100, initialSupply: '1000000000000000', capRaw: '20000000000000',
     pool: { baseReserve: '750000000000000', quoteReserve: '1', virtualBase: '375000000000000', virtualQuote: '1000000000', protocolFeesQuote: '0', swapCount: '2' },
@@ -80,6 +81,10 @@ test('coin page: unavailable without a runtime, a full trading page for a real H
     for (const text of [/\$HLCANARY/, /Hook Lab Canary/, /Market cap/, /0\.888 SOL/, /to graduation/, /Blocks on this coin/, /Max wallet/, /Creator fee/,
       /role="tablist"/, /You pay/, /Max slippage/, /Connect wallet/]) assert.match(page, text)
     assert.doesNotMatch(page, /basis points|base units|selectedConfig|Unverified coin/)
+    assert.match(page, /<button[^>]*class="[^"]*trade-submit[^"]*"[^>]*>Connect wallet<\/button>/)
+    // Phones stack the page in source order: coin, then buy and sell, then the rest.
+    const hero = page.indexOf('Hook Lab Canary'), panel = page.indexOf('aria-label="Trade $HLCANARY"'), blocks = page.indexOf('Blocks on this coin')
+    assert.ok(hero >= 0 && hero < panel && panel < blocks, 'the trade panel comes right after the coin, before Blocks')
     await assert.rejects(Token({ params: Promise.resolve({ mint: '11111111111111111111111111111111' }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
   } finally { delete globalThis[key] }
   await assert.rejects(Token({ params: Promise.resolve({ mint: 'not-a-mint' }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
