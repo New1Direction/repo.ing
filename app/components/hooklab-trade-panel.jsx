@@ -5,7 +5,7 @@ import { ArrowDown, Check, LoaderCircle, X } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
 import { DELISTED_BUY_TEXT, GRADUATION_TRADING_OPEN, HOLDING_RENT_LAMPORTS, SLIPPAGE_CHOICES, buyOff, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, ownStackCoin, parseUnits, tradesFromWallet, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
-import { callTrade, expectOperation, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
+import { callTrade, closeExpired, expectOperation, expiredUnsent, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import '../trade-panel.css'
 
 // Rent for one 204-byte Hook Lab holding (app/lib/hooklab-trade-math.mjs); the server's review uses the live value before signing.
@@ -14,6 +14,8 @@ const STEP_LABELS = { fund: 'Add SOL to Hook Lab', buy: 'Buy', sell: 'Sell', gra
 const stepLabel = (kind, symbol) => ['buy', 'sell', 'graduate'].includes(kind) ? `${STEP_LABELS[kind]} ${symbol}` : STEP_LABELS[kind]
 const STATUS_TEXT = { review: 'Preparing…', sign: 'Approve in your wallet', send: 'Sending…', confirm: 'Confirming on Solana…' }
 const explorer = signature => `https://explorer.solana.com/tx/${encodeURIComponent(signature)}`
+// Before public trading: a coin that trades straight from the wallet has no withdrawals to test.
+const tradingSoon = view => `Trading opens to everyone soon. We are testing buys${tradesFromWallet(view) ? ' and sells' : ', sells and withdrawals'} first.`
 
 async function readMarket(mint, wallet) {
   const response = await fetch(`/api/hook-lab/market/${mint}${wallet ? `?wallet=${wallet}` : ''}`, { cache: 'no-store' })
@@ -121,7 +123,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       const load = async () => { const next = await readMarket(mint, address); setView(next); return next }
       const fresh = await load(), me = fresh?.wallet
       if (!me) throw Error('Could not read your balances. Try again.')
-      if (!fresh.tradingOpen) throw Error('Trading opens to everyone soon. We are testing buys, sells and withdrawals first.')
+      if (!fresh.tradingOpen) throw Error(tradingSoon(fresh))
       if (buying && buyOff(fresh)) throw Error(DELISTED_BUY_TEXT)
       if (ownStackCoin(fresh) && !fresh.market.native) throw Error('Trading this coin isn’t available right now.')
       if (fresh.market.native || fresh.market.quoteFormMismatch) {
@@ -195,7 +197,11 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       try {
         const ids = { signingId: entry.signingId, wallet: address, genesisHash }
         const op = expectOperation(await callTrade({ action: 'get', signingId: entry.signingId }), ids)
-        if (op.status === 'reviewed' || isFinal(op.status)) { forgetOperation(localStorage, entry.signingId); continue }
+        if (isFinal(op.status)) { forgetOperation(localStorage, entry.signingId); continue }
+        // Never sent and past its deadline: close it (expired) instead of trying to send it; if the chain has not yet
+        // passed its blockhash, keep it and try again on the next visit.
+        if (expiredUnsent(op)) { if ((await closeExpired({ op, ...ids })).status === 'expired') forgetOperation(localStorage, entry.signingId); continue }
+        if (op.status === 'reviewed') { forgetOperation(localStorage, entry.signingId); continue }
         const final = await runOperation({ create: { action: 'get' }, ...ids, signTransaction: async () => { throw Error('unsigned') } })
         if (isFinal(final.status)) forgetOperation(localStorage, entry.signingId)
       } catch {}
@@ -217,7 +223,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       {['buy', 'sell'].map(value => <button key={value} type="button" role="tab" data-side={value} aria-selected={side === value} className={side === value ? 'selected' : ''} disabled={busy}
         onClick={() => { setSide(value); setAmount(''); setError(''); setResult(null) }}>{value === 'buy' ? 'Buy' : 'Sell'}</button>)}
     </div>
-    {view && !view.tradingOpen && <p className="hooks-trade-soon" role="status">Trading opens to everyone soon. We are testing buys, sells and withdrawals first.</p>}
+    {view && !view.tradingOpen && <p className="hooks-trade-soon" role="status">{tradingSoon(view)}</p>}
     {hold && (market.graduated || native || own || market.quoteFormMismatch) && <p className="hooks-trade-soon" role="status">{hold}</p>}
     {delisted && <p className="hooks-trade-soon hooks-delisted" role="status">{DELISTED_BUY_TEXT}</p>}
     {buyPaused && !delisted && <p className="hooks-trade-soon" role="status">This coin’s bonding curve is full and it’s graduating. Buying pauses until it opens on its new market; you can still sell.</p>}

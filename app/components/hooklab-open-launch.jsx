@@ -50,7 +50,7 @@ export function OpenLaunchSteps({ phase }) {
 
 // The review screen: only what the creator pays, the price, their rules, the graduation target and the note.
 export function OpenLaunchReview({ coin, image, profile, openCreation, costs, price, busy = false, onSign, onEdit, editLabel = 'Edit' }) {
-  const { rows, total } = openLaunchCosts(openCreation, costs), values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
+  const { rows, total, need } = openLaunchCosts(openCreation, costs), values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
   const amount = value => value ? <>{value.sol}{value.usd && <small>{value.usd}</small>}</> : 'Set when you sign'
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
@@ -58,7 +58,8 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
     <div className="hooks-open-review-grid">
       <div className="inner-card fee-breakdown"><h3>What you pay</h3>
         {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label} <strong>{row.amount ?? 'shown in your wallet'}</strong>{row.note ? <small> {row.note}</small> : null}</span></div>)}
-        <div className="hooks-cost"><span>Total</span><strong>{total ?? 'Shown in your wallet'}</strong><small>Your wallet shows the exact amount before you approve.</small></div>
+        <div className="hooks-cost"><span>You’ll spend about</span><strong>{total ?? 'Shown in your wallet'}</strong><small>Your wallet shows the exact amount before you approve.</small></div>
+        {need ? <div className="hooks-cost"><span>You need at least</span><strong>{need} in your wallet</strong><small>A little more than you spend: the program checks it can cover its accounts, and the rest stays in your wallet.</small></div> : null}
       </div>
       <div className="inner-card fee-breakdown"><h3>Your coin</h3>
         <div className="fee-line"><span>Opening price<small>Its market value when trading opens</small></span><strong>{amount(values?.opening)}</strong></div>

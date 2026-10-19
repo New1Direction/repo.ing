@@ -8,6 +8,7 @@ import { collectInclusiveMaxWalletPreparationReview } from './hooklab-inclusive-
 import { readProductionEvidence } from './hooklab-production-rpc.mjs'
 import { coLocatedWalletPreparationJournal } from './hooklab-wallet-preparation.mjs'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { launchSettingsChanged,passRefusal } from './hooklab-open-creation.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const fail=()=>Object.assign(Error('Max-wallet preparation unavailable or changed'),{code:'MAX_WALLET_PREPARATION_UNAVAILABLE'})
 const check=value=>{if(!value)throw fail()}
@@ -28,7 +29,8 @@ export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profil
     const request=parseMaxWalletPreparationRequest(bound.preparedRequest)
     check(request.creator===bound.owner&&request.feePayer===bound.owner&&request.mint===bound.mint&&request.selectedConfig===bound.selectedConfig)
     const evidence=await readProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:c.dossierSha256,providers,now:clock,timeoutMs:5000,idls:retained.profile.idls})
-    check(evidence.accountBindingsMatched===true)
+    // The launch settings moved since the bundle was collected: say so plainly (setup reviews bind them too).
+    if(evidence.accountBindingsMatched!==true)throw launchSettingsChanged()
     const map=new Map(evidence.observations[0].accounts.map(x=>[x.address,x]))
     const decode=(role)=>{
      const address=d.accounts.find(x=>x.role===`${role}-config`)?.address;check(address&&map.has(address))
@@ -45,7 +47,7 @@ export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profil
      configurationSha256:sha(JSON.stringify(c)),profileSha256:c.profileSha256,messageSha256:collected.plan.review.messageSha256,review:collected.plan.review,
      settlementContext:{schema:'repoing/max-wallet-preparation-settlement-context/1',preparationInput:collected.preparationInput},
      approvalReference:c.approvalReference,collection:collected.collection,canSign:false,canSubmit:false})
-   }catch{throw fail()}
+   }catch(error){passRefusal(error,fail)}
   },
   async reconcile({sessionToken,custodyOperationId,review,signedTransactionBase64,signature,settlementContext,configurationSha256}){
    try{

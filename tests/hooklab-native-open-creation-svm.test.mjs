@@ -37,9 +37,10 @@ test('a native coin keeps trading on the website once open creation is on', { sk
     amountIn: String(amount), minAmountOut, maxInput: String(amount), maxPriceImpactBps: 1000, graduate: false } })
   const sent = await w.send((await buy()).review.messageBase64)
   assert.equal(sent.error, null, `the bank executes the buy: ${sent.logs?.slice(-6).join(' | ')}`)
-  // Open creation off again (the menus kept): still trading. A reserved state the programs never write: refused.
+  // Open creation off again (the menus kept): still trading. Even a reserved state the programs never write is launch-side
+  // state no trade reads (a trade review checks the launch Config for its identity only), so the coin still trades.
   await setReserved(encodeOpenCreationReserved({ native: true, open: false, creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] }))
   assert.ok(await buy())
   await setReserved([1, 2, ...Array(62).fill(0)])
-  await assert.rejects(buy(), /operator pins changed/)
+  assert.ok(await buy())
 })

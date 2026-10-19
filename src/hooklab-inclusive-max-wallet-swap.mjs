@@ -69,8 +69,21 @@ function programEvidence(accounts, program, expected, length, slot, immutable) {
 }
 // trading: a trade's view. The launch governance's creation gate only stops new launches (a guardian's creation pause
 // leaves trading open on chain), so only the trading gates must be open.
+// A trade reads the launch Config and launch governance only for their identity: no swap_v2 hook, graduate, creator claim
+// or native fee collection takes either as an account, so their pause, gates, revision, economics, treasury, menus and
+// reserved bytes are launch-side state that must never stop holders (src/hooklab-production-observer.mjs
+// LAUNCH_SIDE_ROLES). binding: the stack's own launch codec.
+function launchSideIdentity(binding, program, accounts, a, profile) {
+  const config = decoded(binding, 'Config', owned(accounts, a.launchConfig, program, 250)), gov = decoded(binding, 'Governance', owned(accounts, a.launchGovernance, program, 348))
+  check(config.version === 1 && config.bump === bump(program, 'config') && str(config.quote_mint) === profile.quoteMint
+    && gov.bump === bump(program, 'governance') && str(gov.state.program) === program && str(gov.state.config) === a.launchConfig
+    && Buffer.from(gov.state.genesis).equals(kb(profile.genesisHash)), 'Launch configuration or governance identity differs')
+  return { config, governance: gov }
+}
+// trading: a trade's view of the swap governance: its trading gate must be open; its creation gate only governs new
+// pools (launches), so a pool-creation pause never stops trades.
 function governance(binding, role, program, configAddress, config, gov, genesis, canary, { trading = false } = {}) {
-  const s = gov.state, roles = Object.values(s.roles).map(str), gatesOpen = trading ? !s.gates.trading && (role === 'launch' || !s.gates.creation) : !s.gates.creation && !s.gates.trading
+  const s = gov.state, roles = Object.values(s.roles).map(str), gatesOpen = trading ? !s.gates.trading : !s.gates.creation && !s.gates.trading
   check(str(s.program) === program && str(s.config) === configAddress && Buffer.from(s.genesis).equals(kb(genesis))
     && str(s.roles.admin) === str(config.admin) && str(s.roles.treasury) === str(config.treasury)
     && (canary ? canaryGateMatches(role, config, s) : gatesOpen) && s.pending_admin === null
@@ -166,7 +179,7 @@ function readHolding(accounts, address, token, mint, owner) {
 }
 
 // The same account evidence rules, shared with the native-SOL compiler (src/hooklab-native-swap.mjs).
-export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, typed, readHolding, noRules })
+export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, launchSideIdentity, typed, readHolding, noRules })
 
 export function buildInclusiveMaxWalletSwapReviewForFixture(input) {
   check(input?.provenance === 'disposable-litesvm-synthetic-fixture-not-rpc-evidence', 'Fixture provenance required')
@@ -212,15 +225,16 @@ function compile(input, fixture, canary = false) {
     check(wallet && wallet.owner === zero && !wallet.executable && raw(wallet.dataBase64, 0).length === 0, 'Wallet must be an empty system account')
   }
   for (const name of ['kitConfig', 'holderVault']) check(accounts.get(a[name]) === null, 'No-Kit account unexpectedly initialized')
-  const c = decoded(launch, 'Config', owned(accounts, a.launchConfig, L, 250)), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
-  // Launch Config.reserved[0] (byte 186) is the native-launches switch of the upgraded launch program: it steers new
-  // launches only, so a bridged coin keeps trading with it on (src/hooklab-launch-config-reserved.mjs).
-  check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && d.paused === canary
-    && launchConfigReservedValid(c.reserved) && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
-  check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
-    && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
-  const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
-  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, canary); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, canary)
+  const { config: c, governance: lg } = launchSideIdentity(launch, L, accounts, a, profile), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
+  check(d.version === 1 && d.bump === bump(S, 'config') && d.paused === canary && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
+  check(d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
+  // The owner canary keeps its full launch-side binding (its gates, admin and economics); a production trade does not.
+  // Launch Config.reserved[0] (byte 186) is the native-launches switch: it steers new launches only.
+  if (canary) check(launchConfigReservedValid(c.reserved) && str(c.treasury) === str(d.treasury) && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0,
+    'Only reviewed inclusive-fee configuration is supported')
+  const sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
+  if (canary) governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, canary)
+  governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, canary)
   const transition = canary ? canarySwapTransition(swap, sg, a) : null
   if (canary) check(str(c.admin) === transition.admin && str(d.fee_collector) === str(d.treasury)
     && !roles.includes(transition.admin) && transition.admin !== r.trader

@@ -37,8 +37,10 @@ export const stackBuildSchema = z.object({ name: z.string().regex(/^[a-z0-9][a-z
   idlSha256: z.object({ launch: hash, swap: hash, gate: hash }).strict(), open: z.boolean() }).strict()
 // The six fields of hook-lab's ids/independent.json (schema hook-lab/independent-ids/1): the four programs, the quote
 // marker mint and the programs' upgrade authority; every other address is derived from them as the programs derive it.
-// kitProgram: the kit program ID the launch code names (its PDAs are always absent on a Hooks coin; the token program's
-// signer for it is derived under our token). status: 'placeholder' until the final program IDs exist; production
+// kitProgram: an inert placeholder. The kit is not part of our stack and nothing calls it; the launch code still names its
+// ID (a Hooks coin passes its six kit accounts as absent, and the token program's signer for it is derived under our
+// token), so the compilers must derive the same addresses. If the program fix removes kit IDs from reachable code (security
+// review F4), this field goes with it. status: 'placeholder' until the final program IDs exist; production
 // refuses a placeholder stack.
 export const stackSchema = z.object({ schema: z.literal('repoing/hooks-stack/1'), id: z.string().regex(/^[a-z][a-z0-9-]{1,31}$/).refine(id => id !== 'legacy'),
   status: z.enum(['placeholder', 'reviewed']), programs: stackPrograms, quoteMint: key, upgradeAuthority: key, kitProgram: key, build: stackBuildSchema }).strict()

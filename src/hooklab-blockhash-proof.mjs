@@ -16,3 +16,10 @@ export async function provenLatestBlockhash(connections, { minContextSlot }) {
     || block.blockHeight + BLOCKHASH_LIFETIME_BLOCKS !== latest.value.lastValidBlockHeight) throw Error('The blockhash lifetime is not proven by the second provider')
   return { context: { slot }, value: { blockhash: latest.value.blockhash, lastValidBlockHeight: latest.value.lastValidBlockHeight } }
 }
+// How far the finalized chain is proven on both providers: the slot the first names as its latest finalized and the height
+// the second holds for that same block (provenLatestBlockhash). The signing lifecycle's expire() closes a never-sent
+// operation only once this slot and height are past its own deadline and lastValidBlockHeight, so it can never land.
+export async function provenFinalizedProgress(connections) {
+  const proven = await provenLatestBlockhash(connections, { minContextSlot: 0 })
+  return { slot: proven.context.slot, blockHeight: proven.value.lastValidBlockHeight - BLOCKHASH_LIFETIME_BLOCKS }
+}

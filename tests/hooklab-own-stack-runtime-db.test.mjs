@@ -12,7 +12,7 @@ import { createNativeLaunchRuntime } from '../src/hooklab-native-launch-runtime.
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { MIGRATIONS, migrationSchema, productionSchema } from '../scripts/hooklab-production-schema.mjs'
 import { dropTestDatabase } from './fixtures/drop-test-database.mjs'
-import { ownStackWorld, PREP_LIMITS, LAUNCH_LIMITS, CREATION_FEE_LAMPORTS } from './fixtures/hooklab-own-stack-world.mjs'
+import { ownStackWorld, PREP_LIMITS, launchLimitsFor, CREATION_FEE_LAMPORTS } from './fixtures/hooklab-own-stack-world.mjs'
 import { OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
 
 const skip = process.env.HOOK_SKIP_DB === 'true' ? 'database tests skipped' : OWN_STACK_SKIP
@@ -41,7 +41,7 @@ test('fresh wallets launch on our own stack through the website\'s launch runtim
   const runtime = createNativeLaunchRuntime(pool, { enabled: true, origin, ownerCustodyApproved: true, operatorDeploymentApproved: true, economicsApproved: true,
     ...w.bindings, connections: w.connections(), keyRing: { test: Buffer.alloc(32, 61) }, activeKeyId: 'test', openLaunches: true, nativeLaunches: true,
     expiryObserver: async () => ({ slot: 1, blockHeight: 1 }), reviewTiming: async () => ({ nowMs: Date.now(), validUntilSlot: 196, reviewExpiresAtMs: Date.now() + 60000 }),
-    preparationLimits: { ...PREP_LIMITS, ...timing }, launchLimits: { ...LAUNCH_LIMITS, ...timing } })
+    preparationLimits: { ...PREP_LIMITS, ...timing }, launchLimits: { ...await launchLimitsFor(w), ...timing } })
   assert.equal(runtime.openLaunches, true)
   const chain = await runtime.openCreation()
   assert.equal(chain.open, true); assert.equal(chain.launchFeeLamports, String(CREATION_FEE_LAMPORTS))

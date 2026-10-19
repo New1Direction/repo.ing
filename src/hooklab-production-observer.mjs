@@ -135,12 +135,25 @@ export function productionReadiness() {
   }
 }
 
+// Trade, claim and graduation reviews verify only what a trade executes against: every program and its ProgramData, the
+// swap config, the swap governance and the quote mint (the shared trade table is pinned by the operator config). The
+// launch-side pins change with an emergency creation pause, an open-creation toggle, a launch fee or menu change, and
+// bind launch and preparation reviews (and bootstrap and monitoring, which verify the whole dossier) only: no swap_v2
+// hook, graduate, creator claim or native fee collection takes the launch Config or launch governance as an account, so
+// a change there never traps holders. Roles, not addresses: the same holds for every stack's bundle.
+export const LAUNCH_SIDE_ROLES = Object.freeze(['launch-config', 'creation-control'])
+const tradePins = d => d.accounts.filter(a => !LAUNCH_SIDE_ROLES.includes(a.role))
+// The addresses a trade-scope inspection reads: each program, its ProgramData, and the trade-side account pins.
+export function tradeEvidenceAddresses(dossier) {
+  return [...dossier.programs.flatMap(p => [p.address, p.programData]), ...tradePins(dossier).map(a => a.address)]
+}
+
 /** Offline verification of a retained operator dossier, NOT public JSON supplied as authority.
  * expectedSha256 must be independently reviewed; matching a caller's own hash proves nothing.
  * Exact bytes bind dependencies and configuration, but do not decode/approve their semantics.
  * No result enables execution, asserts custody, or marks a token operation settled.
  */
-export function inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs, idls = null } = {}) {
+export function inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs, idls = null, scope = 'dossier' } = {}) {
   const out = { status: 'unavailable', reason: 'Reviewed dossier and two independent observations required',
     observedSlots: [], accountBindingsMatched: false, policyVerified: false, provenanceVerified: false,
     canSign: false, canSubmit: false, canRetry: false }
@@ -155,8 +168,13 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
     check(['launch-config', 'swap-config', 'quote-mint', 'creation-control'].every(r => d.accounts.some(a => a.role === r)), 'Missing config/control/quote binding')
     const roles = [...d.programs, ...d.accounts].map(a => a.role)
     check(new Set(roles).size === roles.length, 'Duplicate evidence role')
-    const addresses = [...d.programs.flatMap(p => [p.address, p.programData]), ...d.accounts.map(a => a.address)]
-    check(new Set(addresses).size === addresses.length, 'Duplicate evidence address')
+    const every = [...d.programs.flatMap(p => [p.address, p.programData]), ...d.accounts.map(a => a.address)]
+    check(new Set(every).size === every.length, 'Duplicate evidence address')
+    // scope 'trade': the trade-side pins only (see LAUNCH_SIDE_ROLES); a production dossier must pin swap governance.
+    check(['dossier', 'trade'].includes(scope), 'Unknown evidence scope')
+    const pins = scope === 'trade' ? tradePins(d) : d.accounts
+    if (scope === 'trade') check(d.schema !== 'repoing/production-observation/2' || pins.some(a => a.role === 'swap-governance'), 'Missing swap governance binding')
+    const addresses = scope === 'trade' ? tradeEvidenceAddresses(d) : every
     check(Array.isArray(observations) && observations.length === 2, 'Two observations required')
     const obs = observations.map(o => observationSchema.parse(o))
     check(new Set(obs.map(o => o.provider)).size === 2 && obs.every(o => d.providers.includes(o.provider)), 'Provider binding differs')
@@ -182,7 +200,7 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
           && data.subarray(45 + p.elfLength).every(b => b === 0), 'ELF bytes or trailing allocation differ')
         check(sha(data) === p.programDataSha256, 'ProgramData bytes/allocation drift')
       }
-      for (const a of d.accounts) {
+      for (const a of pins) {
         const observed = accounts.get(a.address)
         check(productionAccountBindingMatches(a,observed,d,idls), 'Config/control/quote account drift')
       }

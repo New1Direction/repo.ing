@@ -8,14 +8,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js'
-import { governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
+import { LAUNCHES_PAUSED, LAUNCH_RENT_MARGIN_LAMPORTS, LAUNCH_SETTINGS_CHANGED, governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
+import { openLaunchCosts, openLaunchNetworkFee } from '../app/lib/hooklab-open-launch.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
-import { nativeTradeResolver } from '../src/hooklab-native-trade-resolver.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
 import { LEGACY_STACK } from '../src/hooklab-stack.mjs'
-import { ownStackWorld, openLaunch, CREATION_FEE_LAMPORTS, OWNER_MENUS, LAUNCH_LIMITS } from './fixtures/hooklab-own-stack-world.mjs'
+import { ownStackWorld, openLaunch, launchLimitsFor, siteTrade, coinsHeld as heldBy, TRADE_LIMITS, CREATION_FEE_LAMPORTS, OWNER_MENUS } from './fixtures/hooklab-own-stack-world.mjs'
 import { INDEPENDENT_SKIP, OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
-import { estimateTrade } from '../app/lib/hooklab-trade-math.mjs'
 
 const runner = process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HOOKLAB_CANARY_PYTHONPATH && 'the isolated SVM runner (HOOKLAB_CANARY_PYTHONPATH) is not available'
 // hook-lab's own independent-stack build at its placeholder IDs, and the reviewed ELFs relocated to fresh IDs: the same
@@ -23,7 +22,6 @@ const runner = process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HO
 const BUILDS = Object.freeze({ independent: INDEPENDENT_SKIP || runner, relocated: OWN_STACK_SKIP || runner })
 const sha = value => createHash('sha256').update(value).digest('hex')
 const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), new PublicKey(program))[0].toBase58()
-const TRADE_LIMITS = { nowMs: 1000, maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 0, reviewExpiresAtMs: 0, maxNetworkFeeLamports: '10000', maxTotalDebitLamports: '10000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' }
 
 for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build}) from nothing: owner setup, its bundle, then open launches by fresh wallets, trades and refusals`, { skip, timeout: 600000 }, async t => {
   // At mainnet's rent rate (5,080 lamports per byte), so the creator's outlay is the economics review's exact figure.
@@ -53,7 +51,7 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
       const { sent, settle } = await launch.send()
       // What the creator paid: the creation fee, the rent the launch locks, and two signatures; within the reviewed bounds.
       const paid = creatorBefore - (await w.lamports([launch.creator.publicKey.toBase58()]))[launch.creator.publicKey.toBase58()], rent = paid - CREATION_FEE_LAMPORTS - 10000n
-      assert.ok(rent > 0n && rent <= BigInt(LAUNCH_LIMITS.maxRentLamports), String(rent))
+      assert.ok(rent > 0n && rent <= BigInt((await launchLimitsFor(w)).maxRentLamports), String(rent))
       t.diagnostic(`launch ${i + 1}: ${sent.units} CU, ${sent.wireBytes} bytes, creator paid ${paid} lamports (fee ${CREATION_FEE_LAMPORTS}, rent ${rent}, network 10000)`)
       assert.equal(sent.error, null, (sent.logs ?? []).slice(-8).join('\n')); assert.ok(sent.wireBytes <= 1232)
       const settled = await settle()
@@ -75,26 +73,21 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     assert.equal(coins.length, 4)
   })
 
-  // A trade through the website's native trade resolver under the current bundle. The trader is a runner wallet: the trade
-  // review simulates the exact transaction first, and only the runner signs that.
+  await t.test('a wallet holding exactly what the review screen asks for launches; one lamport less is refused before anything is signed', async () => {
+    const chain = await readOpenCreation(w.connections(), P), { needLamports, need, total } = openLaunchCosts(chain, { networkFeeLamports: openLaunchNetworkFee('0') })
+    t.diagnostic(`review screen: you'll spend about ${total}; you need at least ${need} in your wallet (${needLamports} lamports)`)
+    // The launch's rent bound is exact: the launch's rent, the launch account's again (the guard counts it twice), the margin.
+    assert.equal(BigInt(chain.guardRentLamports), BigInt(chain.launchRentLamports) + 3520440n + LAUNCH_RENT_MARGIN_LAMPORTS)
+    const exact = await openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Exact', symbol: 'EXACT', virtualQuote: '53251917070', funds: needLamports })
+    const { sent, settle } = await exact.send()
+    assert.equal(sent.error, null, (sent.logs ?? []).slice(-6).join('\n')); assert.equal((await settle()).status, 'finalized-success')
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Short', symbol: 'SHORT', virtualQuote: '53251917070', funds: needLamports - 1n }), /unavailable/)
+  })
+
+  // Trades as the site runs them (tests/fixtures/hooklab-own-stack-world.mjs siteTrade), by a runner wallet.
   const owner = w.roles.buyer
-  const coinsHeld = async coin => { const bytes = await w.data(w.holdingOf(coin.mint.publicKey.toBase58(), owner)); return bytes.length ? bytes.readBigUInt64LE(74) : 0n }
-  async function trade(coin, side, amountIn, { hold = false } = {}) {
-    const resolver = nativeTradeResolver({ ...w.bindings, connections: w.connections(), limits: TRADE_LIMITS, clock: () => 1000 }), mint = coin.mint.publicKey.toBase58()
-    // The minimum received the trade panel would send: its estimate on the coin page's market read, less 3%.
-    const { market } = await readHookCoinMarket({ connection: w.connections()[0].connection, mint, profile })
-    const minAmountOut = String(estimateTrade(market, { side, amount: BigInt(amountIn), coinBalance: await coinsHeld(coin), slippageBps: 300 }).minAmountOut)
-    const intent = { side, creatorFeeBps: coin.creatorFeeBps, capBps: coin.capBps, mint, selectedConfig: coin.request.selectedConfig,
-      amountIn: String(amountIn), minAmountOut, maxInput: String(amountIn), maxPriceImpactBps: 1000, graduate: false }
-    const prepared = await resolver.prepare({ owner, stage: `native-${side}`, intent })
-    assert.deepEqual(prepared.review.requiredSigners, [owner], 'one approval, from the trader only')
-    if (hold) return { prepared, resolver }
-    const sent = await w.send(prepared.review.messageBase64)
-    assert.equal(sent.error, null, (sent.logs ?? []).slice(-8).join('\n'))
-    const settled = await resolver.reconcile({ review: prepared.review, configurationSha256: prepared.configurationSha256, settlementContext: prepared.settlementContext,
-      signedTransactionBase64: sent.wireBase64, signature: sent.signature })
-    assert.equal(settled.status, 'finalized-success'); return settled
-  }
+  const coinsHeld = coin => heldBy(w, coin.mint.publicKey.toBase58(), owner)
+  const trade = (coin, side, amountIn, { hold = false } = {}) => siteTrade(w, coin, { owner, side, amountIn, hold })
   await t.test('a wallet buys and sells a new coin with ordinary SOL through the website\'s trade resolver', async () => {
     await trade(coins[1], 'buy', 10000000)
     const held = await coinsHeld(coins[1]); assert.ok(held > 0n)
@@ -126,17 +119,26 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     // Off the menu: the compiler refuses before anything is signed.
     await assert.rejects(openLaunch(w, { creatorFeeBps: 150, capBps: 200, name: 'Off menu', symbol: 'OFF', virtualQuote: '1000000000' }), /unavailable|menu/i)
     // Each governed change is followed by the owner collecting the bundle again (it pins both governances exactly).
-    const admin = async (label, instruction) => { await w.must(label, w.send(await w.message(w.roles.admin, [instruction]))); await w.recollect() }
+    const admin = async (label, instruction, { recollect = true } = {}) => { await w.must(label, w.send(await w.message(w.roles.admin, [instruction]))); if (recollect) await w.recollect() }
     // Reviewed while open, signed, then the owner turns open creation off: the program refuses it and only the network fee is spent.
     const early = await openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Too late', symbol: 'LATE', virtualQuote: '1000000000' })
-    await admin('open creation off', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: false, ...OWNER_MENUS }))
+    await admin('open creation off', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: false, ...OWNER_MENUS }), { recollect: false })
+    // The chain says open launches are off, in plain words, even before the owner collects the bundle again.
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Stale', symbol: 'STALE', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6120) })
+    await w.recollect()
     const creator = early.creator.publicKey.toBase58(), before = (await w.lamports([creator]))[creator]
     const off = (await early.send()).sent, refusedOff = failure(off)
     assert.ok([6120, 6056].includes(refusedOff.code), off.error); assert.ok(refusedOff.text, 'plain words for the customer')
     assert.equal(before - (await w.lamports([creator]))[creator], 10000n, 'only the network fee')
     assert.equal((await readOpenCreation(w.connections(), P)).open, false)
-    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Off', symbol: 'OFF2', virtualQuote: '1000000000' }), /unavailable/i, 'no review while off')
-    await admin('open creation on', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: true, ...OWNER_MENUS }))
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Off', symbol: 'OFF2', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: openLaunchErrorText(6120) }, 'no review while off, in plain words')
+    await admin('open creation on', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: true, ...OWNER_MENUS }), { recollect: false })
+    // Open again on chain, but the bundle still pins the old launch settings: the review says so plainly until it is collected.
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Stale', symbol: 'STALE2', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCH_SETTINGS_CHANGED })
+    await w.recollect()
     // Reviewed and signed, then the guardian pauses creation (governance Pause, the guardian alone): refused on chain.
     const signed = await openLaunch(w, { creatorFeeBps: 50, capBps: 100, name: 'Paused', symbol: 'PAUSED', virtualQuote: '1000000000' })
     const heldTrade = await trade(coins[1], 'buy', 5000000, { hold: true })
@@ -146,7 +148,8 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     assert.equal((await readOpenCreation(w.connections(), P)).paused, true)
     const paused = (await signed.send()).sent, refusedPaused = failure(paused)
     assert.ok([6055, 6056].includes(refusedPaused.code), paused.error); assert.ok(refusedPaused.text)
-    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Paused 2', symbol: 'PAUSED2', virtualQuote: '1000000000' }), /unavailable/i, 'no review while paused')
+    await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Paused 2', symbol: 'PAUSED2', virtualQuote: '1000000000' }),
+      { code: 'HOOKLAB_USER_REFUSAL', message: LAUNCHES_PAUSED }, 'no review while paused, in plain words')
     assert.equal(openLaunchErrorText(6055), 'Launches are paused right now. Your SOL was not spent; try again later.')
     // Creation is paused, trading is not: a trade signed before the pause lands on chain, and the website still reviews new ones.
     const traded = await w.send(heldTrade.prepared.review.messageBase64)
