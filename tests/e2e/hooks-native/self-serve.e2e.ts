@@ -256,6 +256,31 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     await approvals.off()
   })
 
+  test('a refused trade signature on our stack sends and charges nothing; the retry settles once', async ({ app, screen, browser }) => {
+    const coin = tradeCoin(1)
+    const { address } = await freshBuyerOnCoinPage({ app, screen, browser }, coin.mint)
+    let rejectNext = true
+    const off = await browser.onDialog(async (dialog: any) => {
+      if (rejectNext && dialog.message.includes('Sign this transaction')) { rejectNext = false; await dialog.dismiss() } else await dialog.accept()
+    })
+    const before = await lamports(address)
+    await startTrade(screen, coin.symbol, 'buy', '0.02')
+    await expect(screen.getByRole('alert').filter({ hasText: /rejected|cancel|declin|closed the request/i })).toBeVisible({ timeout: 60_000 })
+    const [refused] = await until('the refused review row', async () => { const rows = await operations(address, 'native-buy'); return rows.length === 1 ? rows : null })
+    expect([refused.signature, refused.status]).toEqual([null, 'reviewed'])
+    expect(await lamports(address)).toBe(before) // nothing charged, not even a network fee
+    expect((await walletLog(browser)).filter(e => e.kind === 'transaction')).toEqual([])
+    // The retry: a fresh review, one approval, one send.
+    await startTrade(screen, coin.symbol, 'buy', '0.02')
+    const ops = await until('the retried buy to settle', async () => { const rows = await operations(address, 'native-buy'); return rows.length === 2 && rows[1].status === 'finalized-success' ? rows : null }, { timeoutMs: 180_000 })
+    const bought = await expectNativeBuy(ops[1], address, coin, 20_000_000n)
+    expectNoLegacyStack(bought.tx); book(coin.mint, bought)
+    expect((await operations(address, 'native-buy'))[0].signature).toBeNull() // the refused one stays unsigned
+    expect(await tradeResult(screen, 'buy')).toMatch(/^You bought /)
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'refused trade signature')
+    await off()
+  })
+
   test('emergency pauses: the guardian stops new launches (holders still trade, creators still claim) until the admin reopens; a trading pause refuses trades cleanly', { timeout: 2_400_000 }, async ({ app, screen, browser }) => {
     const coin = tradeCoin(1)
     await ownerStage({ stage: 'guardian-pause', pause: 'creation' })
