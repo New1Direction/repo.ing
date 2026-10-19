@@ -105,6 +105,8 @@ jobs:
           HOOKLAB_NATIVE_ELF_DIR: ${{ runner.temp }}/hooklab-native
           HOOKS_E2E_ROOT: ${{ runner.temp }}
           HOOKS_E2E_POSTGRES_URL: postgres://postgres:launchtest@127.0.0.1:55432/postgres
+          # The release holds the native-SOL set only; the legacy and self-serve stacks need their ELFs in it first.
+          HOOKS_E2E_MODES: native
         run: |
           export HOOKS_E2E_VALIDATOR="$(command -v solana-test-validator)"
           npm run test:hooks:e2e

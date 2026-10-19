@@ -1,8 +1,9 @@
 // The operator bundle the PRODUCTION bootstrap (src/hooklab-production-bootstrap.mjs) loads, collected by the
 // PRODUCTION collectors in their local dry-run mode (network {local: true}: a non-mainnet genesis on loopback RPC only):
-//   - build 'native': bundle 3 (src/hooklab-production-native-bundle.mjs), which first refuses unless both programs hold
-//     the reviewed native-SOL build, then pins the trimmed native ELFs and native IDLs;
-//   - build 'bundle-2': the inclusive build the site ran before the upgrade (src/hooklab-production-operator-bundle.mjs).
+//   - a native build ('e357fdf' or 'open-36dd07e'): bundle 3 (src/hooklab-production-native-bundle.mjs), which first
+//     refuses unless both programs hold that reviewed build, then pins its trimmed ELFs and IDLs (the open-creation build
+//     also pins the owner's frozen shared launch table);
+//   - 'bundle-2': the legacy stack as mainnet runs it today (src/hooklab-production-operator-bundle.mjs).
 // Both read every account through the stack's two HTTPS proxies (one trust domain, two labelled endpoints), with the
 // same pins and refusals as production; the profile and dossier carry the local schemas and this validator's genesis.
 // The one substitution: the collectors label a dry-run bundle 'repoing/local-operator-bundle/1', which production never
@@ -13,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { Agent, request } from 'node:https'
 import { Connection } from '@solana/web3.js'
 import { collectProductionOperatorBundle } from '../../../src/hooklab-production-operator-bundle.mjs'
-import { collectNativeProductionBundle } from '../../../src/hooklab-production-native-bundle.mjs'
+import { NATIVE_BUNDLE_BUILDS, collectNativeProductionBundle } from '../../../src/hooklab-production-native-bundle.mjs'
 
 /** A fetch for @solana/web3.js that trusts exactly the stack's throwaway certificate (web3.js on Node uses the global
  * fetch, which ignores httpAgent and cannot pick up a CA created after this process started). */
@@ -35,15 +36,15 @@ export function trustingFetch(agent) {
 
 const LOCAL_LABEL ='repoing/local-operator-bundle/1', PRODUCTION_LABEL = 'repoing/production-operator-bundle/1'
 
-export async function collectLocalBundle({ genesisHash, providers, tlsCert, tradeTable, reviewer, treasury, build = 'native' }) {
-  if (!['native', 'bundle-2'].includes(build)) throw Error(`unknown bundle build ${build}`)
+export async function collectLocalBundle({ genesisHash, providers, tlsCert, tradeTable, launchTable = null, reviewer, treasury, build }) {
+  if (build !== 'bundle-2' && !NATIVE_BUNDLE_BUILDS.includes(build)) throw Error(`unknown bundle build ${build}`)
   const agent = new Agent({ ca: readFileSync(tlsCert), keepAlive: true })
   const connections = providers.map(({ provider, origin }) => ({ provider, connection: new Connection(origin, { commitment: 'finalized', fetch: trustingFetch(agent) }) }))
   const trustDomains = providers.map(({ provider, origin }) => ({ provider, trustDomain: 'single-local-validator', origin }))
   const options = { connections, trustDomains, lookupTable: tradeTable, reviewer, treasury, approvalReference: 'DISPOSABLE-LOCAL-E2E-NOT-PRODUCTION',
-    network: { genesisHash, local: true } }
+    network: { genesisHash, local: true }, ...(launchTable ? { launchTable } : {}) }
   try {
-    const bundle = build === 'native' ? (await collectNativeProductionBundle(options)).bundle : await collectProductionOperatorBundle(options)
+    const bundle = build === 'bundle-2' ? await collectProductionOperatorBundle(options) : (await collectNativeProductionBundle({ ...options, build })).bundle
     if (bundle.schema !== LOCAL_LABEL || bundle.genesisHash !== genesisHash) throw Error('the collector did not return a local dry-run bundle for this validator')
     return { ...bundle, schema: PRODUCTION_LABEL }
   } finally { agent.destroy() }

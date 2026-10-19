@@ -1,6 +1,7 @@
-// Brings the whole local native-SOL stack up, and down again: validator (candidate ELFs) -> owner-driver protocol setup
-// -> native preflight -> USD bounds + native-launches on -> disposable database -> HTTPS RPC proxies -> local operator
-// bundle -> website (production bootstrap, local acceptance) -> owner agent (disposable key file) -> control API.
+// Brings one local stack up, and down again: validator (one program set) -> owner-driver protocol setup for the mode ->
+// disposable database -> HTTPS RPC proxies -> local operator bundle -> website (production bootstrap, local acceptance)
+// -> owner agent (disposable key file; not in self-serve mode) -> control API. Modes (scripts/e2e/hooks-native/modes.mjs):
+// native (the owner-approved native-SOL release, E1/E2), legacy (what mainnet runs today, bridged SOL) and self-serve.
 // Everything lives under one temporary root that teardown deletes, keys included.
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -13,7 +14,9 @@ import { syntheticRoles, writeKeyFiles } from '../../../tests/fixtures/hooklab-o
 import { FIXED_SOL_USD, REPO_ROOT, freePort, sha256, stageLog } from './common.mjs'
 import { makeLocalCertificate } from './tls.mjs'
 import { startValidator } from './validator.mjs'
-import { ownerDriver, setupProtocol, switchNativeOn } from './owner-setup.mjs'
+import { ownerDriver, setupForMode } from './owner-setup.mjs'
+import { MODES } from './modes.mjs'
+import { programSet } from './program-sets.mjs'
 import { createDatabase } from './database.mjs'
 import { startRpcProxies } from './rpc-proxy.mjs'
 import { collectLocalBundle } from './bundle.mjs'
@@ -37,8 +40,10 @@ function runChild(command, args, { cwd, env, timeoutMs }) {
   })
 }
 
-export async function up({ keep = false } = {}) {
-  const log = stageLog('stack'), cleanups = []
+export async function up({ keep = false, mode: modeName = 'native' } = {}) {
+  const mode = MODES[modeName]
+  if (!mode) throw Error(`unknown stack mode ${modeName}; known: ${Object.keys(MODES).join(', ')}`)
+  const log = stageLog(`stack ${modeName}`), cleanups = []
   const root = mkdtempSync(path.join(process.env.HOOKS_E2E_ROOT ?? tmpdir(), 'hooks-native-e2e-'))
   mkdirSync(path.join(root, 'logs'), { mode: 0o700 })
   const down = async () => {
@@ -52,32 +57,31 @@ export async function up({ keep = false } = {}) {
     const roles = syntheticRoles(), keys = writeKeyFiles(path.join(root, 'keys'), roles)
     const address = role => roles[role].publicKey.toBase58()
 
-    const validator = await startValidator({ root, roles, log })
+    const set = programSet(mode.set())
+    const validator = await startValidator({ root, roles, set, log })
     cleanups.push({ name: 'validator', run: validator.stop })
-    const driver = ownerDriver({ validator, root, roles, keys, log })
-    await setupProtocol(driver)
-    // The release's read-only preflight, on the protocol as it stands before the switch (exit 0 = no native flag yet).
-    const preflight = execFileSync(process.execPath, [path.join(REPO_ROOT, 'scripts/hooklab-native-preflight.mjs'), '--local-test', '--rpc', validator.url, '--rpc2', validator.url2],
-      { cwd: REPO_ROOT, env: BASE_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-    log(`native preflight before the switch: ok=${JSON.parse(preflight).ok}`)
-    await switchNativeOn(driver)
+    const driver = ownerDriver({ validator, root, roles, keys, log, decisions: mode.decisions })
+    // The release's read-only preflight runs inside the setup, on the protocol as it stands before the native switch.
+    const preflight = () => JSON.parse(execFileSync(process.execPath, [path.join(REPO_ROOT, 'scripts/hooklab-native-preflight.mjs'), '--local-test', '--rpc', validator.url, '--rpc2', validator.url2],
+      { cwd: REPO_ROOT, env: BASE_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).ok
+    const tables = await setupForMode(driver, modeName, { preflight, log })
 
     const database = await createDatabase({ log })
     cleanups.push({ name: 'database', run: database.drop })
     const proxies = await startRpcProxies({ upstream: validator.url, tls, auditFile: path.join(root, 'logs', 'rpc-sends.jsonl'), log })
     cleanups.push({ name: 'rpc proxies', run: proxies.stop })
 
-    const tradeTable = JSON.parse(readFileSync(path.join(root, 'owner-journal', validator.genesisHash.slice(0, 16), 'trade-table.public.json'), 'utf8')).address
+    const tradeTable = tables.tradeTable, launchTable = tables.launchTable ?? null
     const token = randomBytes(32).toString('base64url'), port = await freePort(), https = httpsClient(tls.cert)
     const preload = pathToFileURL(path.join(REPO_ROOT, 'scripts/e2e/hooks-native/offline-preload.mjs')).href
     // One key ring for the whole run, so custody encrypted before a restart stays readable after it.
     const keyRing = { 'local-e2e': randomBytes(32).toString('base64') }
     async function writeBundle() {
-      const bundle = await collectLocalBundle({ genesisHash: validator.genesisHash, providers: proxies.providers, tlsCert: tls.cert, tradeTable,
-        reviewer: address('admin'), treasury: address('treasury'), build: 'native' })
+      const bundle = await collectLocalBundle({ genesisHash: validator.genesisHash, providers: proxies.providers, tlsCert: tls.cert, tradeTable, launchTable,
+        reviewer: address('admin'), treasury: address('treasury'), build: set.bundle.build })
       const bytes = Buffer.from(JSON.stringify(bundle)), file = path.join(root, `operator-bundle-${sha256(bytes).slice(0, 12)}.json`)
       writeFileSync(file, bytes, { mode: 0o600 })
-      log(`local operator bundle ${sha256(bytes).slice(0, 16)}… (profile ${bundle.profile.expectedSha256.slice(0, 16)}…, bundle 3 native pins, trade table ${tradeTable})`)
+      log(`local operator bundle ${sha256(bytes).slice(0, 16)}… (build ${set.bundle.build}, profile ${bundle.profile.expectedSha256.slice(0, 16)}…, trade table ${tradeTable}${launchTable ? `, launch table ${launchTable}` : ''})`)
       return { file, sha256: sha256(bytes), profileSha256: bundle.profile.expectedSha256 }
     }
     // The website and the owner agent, restartable as a deploy would restart them (E2 recovery scenarios use this).
@@ -85,27 +89,32 @@ export async function up({ keep = false } = {}) {
     async function startApp({ recollect = true, env: overrides = {} } = {}) {
       if (recollect || !bundleState) bundleState = await writeBundle()
       const env = { ...siteEnvironment({ base: BASE_ENV, port, tls, genesisHash: validator.genesisHash, databaseUrl: database.url, proxies: proxies.providers,
-        bundle: bundleState, keyRing, ownerTokenSha256: createHash('sha256').update(token).digest('hex'), admin: address('admin'), preload, solUsd: FIXED_SOL_USD }), ...overrides }
+        bundle: bundleState, keyRing, ownerTokenSha256: createHash('sha256').update(token).digest('hex'), admin: address('admin'), preload, solUsd: FIXED_SOL_USD }), ...mode.env, ...overrides }
       // The production bootstrap, with the website's environment, in a child first: a clear error instead of a one-line refusal.
       // Async: the RPC proxies it reads through live in this process, so a blocking spawn would starve them.
       const check = await runChild(process.execPath, [path.join(REPO_ROOT, 'scripts/e2e/hooks-native/bootstrap-check.mjs')], { cwd: REPO_ROOT, env, timeoutMs: 120_000 })
-      if (check.status !== 0 && !(check.status === 3 && overrides.HOOK_NATIVE_TRADING_ENABLED === 'false')) throw Error(`production bootstrap check failed (exit ${check.status}):\n${check.stdout}${check.stderr}`)
+      if (check.status !== 0 && !(check.status === 3 && env.HOOK_NATIVE_TRADING_ENABLED === 'false')) throw Error(`production bootstrap check failed (exit ${check.status}):\n${check.stdout}${check.stderr}`)
       log(`production bootstrap check: ${check.stdout.trim()}`)
       const site = await startSite({ root, env, port, tls, https, log })
       try {
-        const agent = await startOwnerAgent({ root, base: BASE_ENV, tls, preload, solUsd: FIXED_SOL_USD, origin: site.origin, proxies: proxies.providers,
-          genesisHash: validator.genesisHash, adminKeyFile: keys.admin, token, https, log })
+        // Self-serve mode has NO owner agent process at all (ownerless launches).
+        const agent = mode.ownerAgent ? await startOwnerAgent({ root, base: BASE_ENV, tls, preload, solUsd: FIXED_SOL_USD, origin: site.origin, proxies: proxies.providers,
+          genesisHash: validator.genesisHash, adminKeyFile: keys.admin, token, https, log }) : null
+        if (!agent) log('no owner agent in this mode')
         app = { site, agent, bundle: bundleState }
         return app
       } catch (error) { await site.stop(); throw error }
     }
-    async function stopApp() { if (!app) return; const { site, agent } = app; app = null; await agent.stop(); await site.stop() }
+    async function stopApp() { if (!app) return; const { site, agent } = app; app = null; await agent?.stop(); await site.stop() }
     cleanups.push({ name: 'site and owner agent', run: stopApp })
     const controlToken = randomBytes(24).toString('base64url')
     const control = await startControl({ token: controlToken, log, routes: {
-      'GET /health': async () => ({ validator: await validator.connection.getSlot('finalized'), site: !!app?.site.alive(), agent: !!app?.agent.alive() }),
-      'POST /owner/agent': async ({ line }) => { if (!/^(list|invite \d+( \d+)?|decline \d+|pause|resume)$/.test(line)) throw Error('unsupported agent command'); app.agent.command(line); return { ok: true, at: app.agent.lines.length } },
-      'GET /owner/agent/log': async (_, query) => { const from = Number(query.get('from') ?? 0); return { lines: app.agent.lines.slice(from), next: app.agent.lines.length } },
+      'GET /health': async () => ({ mode: modeName, validator: await validator.connection.getSlot('finalized'), site: !!app?.site.alive(), agent: !!app?.agent?.alive() }),
+      'POST /owner/agent': async ({ line }) => {
+        if (!app?.agent) throw Error('no owner agent runs in this mode')
+        if (!/^(list|invite \d+( \d+)?|decline \d+|pause|resume)$/.test(line)) throw Error('unsupported agent command'); app.agent.command(line); return { ok: true, at: app.agent.lines.length }
+      },
+      'GET /owner/agent/log': async (_, query) => { if (!app?.agent) throw Error('no owner agent runs in this mode'); const from = Number(query.get('from') ?? 0); return { lines: app.agent.lines.slice(from), next: app.agent.lines.length } },
       'POST /owner/customer-grant': async ({ creator }) => {
         const result = await driver.run('customer-grant', ['payer', 'admin'], { extra: ['--creator', creator] })
         return { signature: result.receipt.signature, postconditions: result.receipt.postconditions }
@@ -131,7 +140,7 @@ export async function up({ keep = false } = {}) {
     cleanups.push({ name: 'control', run: control.stop })
     // The control API is up before the app, so a held failure can be retried with POST /site/restart.
     const stateFile = path.join(root, 'stack.json')
-    const writeState = () => writeFileSync(stateFile, JSON.stringify({ root, origin: `https://localhost:${port}`, genesisHash: validator.genesisHash,
+    const writeState = () => writeFileSync(stateFile, JSON.stringify({ mode: modeName, programSet: set.name, programs: set.ids, quoteMint: set.quoteMint, launchTable, root, origin: `https://localhost:${port}`, genesisHash: validator.genesisHash,
       validator: { url: validator.url, faucetPort: validator.faucetPort }, database: { url: database.url, name: database.name }, rpc: proxies.providers,
       control: { url: control.url, token: controlToken }, tls: { cert: tls.cert, spki: tls.spki }, roles: Object.fromEntries(Object.keys(roles).map(role => [role, address(role)])),
       tradeTable, bundle: app ? { sha256: app.bundle.sha256, profileSha256: app.bundle.profileSha256 } : null, solUsd: FIXED_SOL_USD }, null, 2), { mode: 0o600 })
