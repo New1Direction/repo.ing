@@ -157,8 +157,15 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  })
  await t.test('the exact final fill and graduate go out as ONE transaction, and settle only with the launch graduated',async()=>{
   fill=finalFillLamports(await market())
-  const {prepared,settled}=await trade(last,'buy',fill,{graduate:true})
+  const {prepared,stored,sent,settled}=await trade(last,'buy',fill,{graduate:true})
   assert.equal(prepared.request.quote.graduates,true);assert.equal(settled.graduated,true)
+  // Both providers must read the launch graduated: one that still shows the curve keeps it unresolved.
+  const lagging=w.connections().map((c,i)=>i===0?c:{...c,connection:{...c.connection,getMultipleAccountsInfoAndContext:async(keys,config)=>{
+   const r=await c.connection.getMultipleAccountsInfoAndContext(keys,config)
+   return {...r,value:r.value.map((v,j)=>{if(!v||keys[j].toBase58()!==a.launch)return v;const data=Buffer.from(v.data);data[138]=0;return {...v,data}})}}}})
+  const settleWith=connections=>nativeTradeResolver({...w.bindings,connections,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000})
+   .reconcile({...stored,signedTransactionBase64:sent.wireBase64,signature:sent.signature})
+  assert.equal((await settleWith(lagging)).status,'unresolved');assert.equal((await settleWith(w.connections())).status,'finalized-success')
   const ixs=TransactionMessage.decompile(VersionedMessage.deserialize(Buffer.from(prepared.review.messageBase64,'base64')),{addressLookupTableAccounts:[w.lookup]}).instructions
   assert.deepEqual(ixs.map(ix=>ix.programId.toBase58()).slice(2),[profile.programs.swap,profile.programs.launch],'[swap_v2 buy of the exact fill, graduate]')
   const after=await market();assert.equal(after.graduated,true);assert.equal(after.pool.virtualBase,'0')
@@ -181,6 +188,12 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   assert.equal(await settleWith(tx=>{for(const g of tx.meta.innerInstructions)g.instructions=g.instructions.slice(0,-1)}),'unresolved','a missing event')
   assert.equal(await settleWith(tx=>{tx.meta.fee+=1}),'unresolved')
   assert.equal(await settleWith(tx=>{tx.slot+=1}),'unresolved')
+  // Providers a few trades apart see different pools; that is not receipt evidence, so the trade still settles.
+  const apart=w.connections().map((c,i)=>i===0?c:{...c,connection:{...c.connection,getMultipleAccountsInfoAndContext:async(keys,config)=>{
+   const r=await c.connection.getMultipleAccountsInfoAndContext(keys,config)
+   return {...r,value:r.value.map((v,j)=>{if(!v||keys[j].toBase58()!==a.pool)return v;const data=Buffer.from(v.data);data[200]^=1;return {...v,data}})}}}})
+  assert.equal((await nativeTradeResolver({...w.bindings,connections:apart,limits:{...LIMITS,nowMs:BOOT},clock:()=>1000})
+   .reconcile({...stored,signedTransactionBase64:sent.wireBase64,signature:sent.signature})).status,'finalized-success')
  })
  const bytes=report.map(x=>x.wireBytes),units=report.map(x=>x.units)
  t.diagnostic(`native trades settled: ${report.length}; wire bytes ${Math.min(...bytes)}-${Math.max(...bytes)}; units ${Math.min(...units)}-${Math.max(...units)}; graduation ${JSON.stringify(report.find(x=>x.graduate))}`)

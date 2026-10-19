@@ -29,7 +29,9 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
   const plan=compileNativeSwapReview(ci),p=bound.profile,a=plan.addresses
   check(isDeepStrictEqual(plan.review,review)&&verifyHookLabSignedMessage(review,signedTransactionBase64).signature===signature)
   const pinned=[...new Set(bound.dossier.programs.flatMap(x=>[x.address,x.programData]))]
-  const inventory=[...new Set([...pinned,a.policy,a.inclusiveFeePolicy,a.launch,a.pool])]
+  // The pool and launch move with every trade, so providers at different slots differ there: they are read only to see
+  // a graduation (which nothing undoes) and never compared byte for byte.
+  const graduation=plan.graduates?[a.launch,a.pool]:[],inventory=[...new Set([...pinned,a.policy,a.inclusiveFeePolicy,...graduation])]
   const rows=await Promise.all(connections.map(async({provider,connection})=>{
    check(await connection.getGenesisHash()===p.genesisHash)
    const tx=await connection.getTransaction(signature,{commitment:'finalized',maxSupportedTransactionVersion:0});if(!tx)return null
@@ -67,7 +69,8 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
    const before=ci.observations[0].accounts.find(x=>x.address===address)?.account
    check(before&&isDeepStrictEqual(live.get(address),(({lamports,...rest})=>rest)(before)))
   }
-  check(isDeepStrictEqual(rows[0].stateAccounts,rows[1].stateAccounts))
+  const steady=row=>row.stateAccounts.filter(x=>!graduation.includes(x.address))
+  check(isDeepStrictEqual(steady(rows[0]),steady(rows[1])))
   const tx=rows[0].evidence,fee=inspectHookLabMessage(review).totalFeeLamports
   check(String(tx.fee)===fee&&tx.pre.length===tx.keys.length&&tx.post.length===tx.keys.length)
   const delta=i=>BigInt(integer(tx.post[i]))-BigInt(integer(tx.pre[i]))
@@ -81,10 +84,12 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
   // lamports moved exactly as that executed trade says, and no other account's moved at all.
   const execution=verifyNativeTradeEvents({ci,plan,tx,fee:BigInt(fee)})
   check(tx.keys.every((k,i)=>delta(i)===BigInt(execution.lamportDeltas[k]??'0')))
-  if(plan.graduates){
-   const coders=loadNativeArtifacts().coders,launch=live.get(a.launch),pool=live.get(a.pool)
+  // A graduating buy also needs both providers to read the launch graduated and its pool open afterwards.
+  if(plan.graduates)for(const row of rows){
+   const coders=loadNativeArtifacts().coders,state=new Map(row.stateAccounts.map(x=>[x.address,x.account])),launch=state.get(a.launch),pool=state.get(a.pool)
+   check(launch&&pool&&launch.owner===p.programs.launch&&pool.owner===p.programs.swap)
    const l=coders.launch.accounts.decode('Launch',Buffer.from(launch.dataBase64,'base64')),q=coders.swap.accounts.decode('Pool',Buffer.from(pool.dataBase64,'base64'))
-   check(launch.owner===p.programs.launch&&pool.owner===p.programs.swap&&l.status===STATUS_GRADUATED&&!l.graduated_at.isZero()&&!q.curve&&q.virtual_base.isZero()&&q.virtual_quote.isZero())
+   check(l.status===STATUS_GRADUATED&&!l.graduated_at.isZero()&&!q.curve&&q.virtual_base.isZero()&&q.virtual_quote.isZero())
   }
   return {...identity,status:'finalized-success',executionStatus:'finalized-executed',
    reviewSlotBoundExceeded:tx.slot>review.validUntilSlot,reviewSlotCeilingEnforcedOnchain:false,
