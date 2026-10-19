@@ -56,10 +56,13 @@ export const STAGE_DECISIONS = Object.freeze({
   'trade-table': ['computeUnitPriceMicroLamports'],
   'open-launches': ['computeUnitPriceMicroLamports'], 'close-launches': ['computeUnitPriceMicroLamports'],
   'open-trading': ['computeUnitPriceMicroLamports'], 'close-trading': ['computeUnitPriceMicroLamports'],
+  // The bounds themselves are the owner decision of 2026-10-19, pinned in src/hooklab-launch-pricing.mjs.
+  'launch-usd-bounds': ['computeUnitPriceMicroLamports'],
   status: [],
 })
-// Irreversible, fund-moving or gate-opening stages need a per-run --approved STAGE:<message sha256>.
-export const APPROVAL_FLAG_STAGES = Object.freeze(new Set(['gate-finalize', 'fund', 'canary-gates-open-creation', 'canary-buy', 'canary-sell', 'trade-table', 'open-launches', 'open-trading']))
+// Irreversible, fund-moving, gate-opening or launch-economics stages need a per-run --approved STAGE:<message sha256>.
+export const APPROVAL_FLAG_STAGES = Object.freeze(new Set(['gate-finalize', 'fund', 'canary-gates-open-creation', 'canary-buy', 'canary-sell', 'trade-table', 'open-launches', 'open-trading',
+  'launch-usd-bounds']))
 
 export function loadConfig(path) {
   const parsed = configSchema.parse(JSON.parse(readFileSync(path, 'utf8')))

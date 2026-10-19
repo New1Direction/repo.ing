@@ -16,7 +16,7 @@ function wanted(ctx, role, current) {
     rule_bounds: { ...current.rule_bounds, max_rules_fee_bps: value(ctx.config, 'maxRulesFeeBps') } }
   return { ...current, protocol_fee_bps: value(ctx.config, 'protocolFeeBps'), launch_protocol_share_bps: value(ctx.config, 'launchProtocolShareBps') }
 }
-async function governedSnapshot(ctx, role, extra = []) {
+export async function governedSnapshot(ctx, role, extra = []) {
   const d = derivedAddresses(ctx.programs), config = role === 'launch' ? d.launchConfig : d.swapConfig, governance = role === 'launch' ? d.launchGovernance : d.swapGovernance
   const snapshot = await readAccounts(ctx.readers, ctx.genesis, [config, governance, ctx.roles.payer, ...extra])
   const c = decode(role, 'Config', owned(snapshot.accounts, config, ctx.programs[role], `${role} config`))
@@ -25,7 +25,15 @@ async function governedSnapshot(ctx, role, extra = []) {
   check(g.state.pending_admin === null, `${role} governance has a pending admin nomination; refusing`)
   return { snapshot, config: c, governance: g, addresses: { config, governance } }
 }
-const payerRow = (ctx, snapshot) => `payer ${ctx.roles.payer} balance ${sol(snapshot.accounts.get(ctx.roles.payer)?.lamports ?? 0)}`
+export const payerRow = (ctx, snapshot) => `payer ${ctx.roles.payer} balance ${sol(snapshot.accounts.get(ctx.roles.payer)?.lamports ?? 0)}`
+// Post-execution check shared by every governed_set_config stage: the reviewed args and the predicted commitment.
+export async function verifyGovernedConfig(ctx, expect) {
+  const { config, governance } = await governedSnapshot(ctx, expect.role)
+  const now = plain(expect.role === 'launch' ? ix.launchConfigArgs(config) : ix.swapConfigArgs(config))
+  check(isDeepStrictEqual(now, expect.config), `${expect.role} config after execution differs from the reviewed values`)
+  check(governanceView(expect.role, governance.state).commitment === expect.commitment, 'Governance commitment differs from the predicted post-state')
+  return [`${expect.role} config matches reviewed values`, `governance commitment ${expect.commitment}`]
+}
 
 function governedConfigStage(stage) {
   const role = configRole[stage]
@@ -46,13 +54,7 @@ function governedConfigStage(stage) {
           governanceSection(role, governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
         expect: { role, config: plain(after), commitment: hex(ix.governanceCommitment(role, afterState)) } }
     },
-    async verify(ctx, expect) {
-      const { config, governance } = await governedSnapshot(ctx, expect.role)
-      const now = plain(expect.role === 'launch' ? ix.launchConfigArgs(config) : ix.swapConfigArgs(config))
-      check(isDeepStrictEqual(now, expect.config), `${expect.role} config after execution differs from the reviewed values`)
-      check(governanceView(expect.role, governance.state).commitment === expect.commitment, 'Governance commitment differs from the predicted post-state')
-      return [`${expect.role} config matches reviewed values`, `governance commitment ${expect.commitment}`]
-    },
+    verify: verifyGovernedConfig,
   }
 }
 

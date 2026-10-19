@@ -46,6 +46,10 @@
 .hooks-status .launch-token-summary{margin-bottom:14px}
 .hooks-status p{margin:0}
 .hooks-status .launch-review-actions:empty{display:none}
+/* Starting price (USD launch pricing): the coin page's stat tiles, then one muted line on where the SOL amounts come from. */
+.hooks-status .hooks-price-stats{margin:14px 0 4px;max-width:620px}
+.hooks-status .hooks-price-note{font-size:13px;max-width:620px}
+@media(max-width:760px){.hooks-price-stats>div:nth-child(3){grid-column:1/-1}}
 .hooks-sign-panel{display:flex;flex-direction:column;gap:18px}
 .hooks-guided{display:flex;flex-direction:column;gap:16px}
 .hooks-operation h3{margin:0 0 6px;font-size:20px}.hooks-operation p{margin:0 0 12px}

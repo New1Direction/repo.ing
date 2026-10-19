@@ -171,3 +171,33 @@ after launches to return table rent.
 
 `open-launches` and `open-trading` **approval flag**: payer, admin. Customer
 launches and trades need both. Emergency stop: `close-trading`, `close-launches`.
+
+## 10. $5k USD launch pricing (separate approval)
+
+Every launch then opens at about a $5,000 market cap and graduates at about $45,000.
+repo.ing fixes the SOL price (median of CoinGecko, Jupiter and Coinbase, within 2%) and the
+virtual quote when you `invite`. A source more than 2% from the median of all answers is ignored
+(and shown as ignored); at least two must remain, within 2% of each other. The agent re-reads SOL from your Mac, records the
+invite only if the server's price is within 3% of its own read, and then signs only that quote.
+
+Both the agent and the server read the live launch config before an invite is recorded and refuse
+an opening the chain would reject, for example `On-chain limits are 1–1 SOL, but this launch would
+open at 53.25 SOL. Sign the launch-usd-bounds change first.` The server reads it through
+`HOOKLAB_PRODUCTION_RPC_PRIMARY_URL` and `HOOKLAB_PRODUCTION_RPC_SECONDARY_URL` (step 7).
+
+**Rollout order**, with no launch in flight:
+
+1. Apply the migration: `migration-check launch-pricing`, then `migrate launch-pricing --sha256 <printed>`
+   (step 7 commands; one new insert-only table).
+2. Sign `launch-usd-bounds` (**approval flag**: payer, admin). It sets the launch config's min/max
+   virtual quote to 5.625 and 112.5 SOL (SOL at $1,000 down to $50); the preview lists exactly those
+   two fields and the new governance commitment.
+3. Refresh the bundle pins: re-collect the production bundle (step 6); the launch-config and
+   creation-control pins change.
+4. Upgrade the owner agent to this release (an older agent never checks the opening price).
+5. Deploy with `HOOK_LAUNCH_USD_PRICING=true` and the new bundle variables.
+
+Keep the bounds change (2) and the flag deploy (5) together: between them every launch fails on
+chain (1 SOL is below the new minimum) and invites are refused, so nothing launches at the old
+price. In the agent, `list` and `invite` then print the fixed price, for example
+`Opens at ≈$5,000 (53.25 SOL virtual), graduates at ≈$45,000 / 106.5 SOL raised · SOL $105.63 (…)`.

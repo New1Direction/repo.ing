@@ -14,7 +14,7 @@ test('the reviewed bootstrap is unchanged', () => {
 })
 
 test('coin-profiles is a separate migration for one new table', () => {
-  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding'])
+  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing'])
   const migration = migrationSchema('coin-profiles')
   assert.deepEqual(migration.tables, ['hook_lab_coin_profiles'])
   assert.deepEqual(migration.requires, ['hook_lab_launch_requests'])
@@ -39,4 +39,15 @@ test('wallet-funding only widens the signing stage list, idempotently, and shows
   assert.match(migration.sql, /'preparation','launch','inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw'/)
   assert.doesNotMatch(migration.sql, /drop table|delete|update /i)
   assert.match(run('migration-check', 'wallet-funding').stdout, /stage_check/)
+})
+
+test('launch-pricing adds one insert-only price table per launch request', () => {
+  const migration = migrationSchema('launch-pricing')
+  assert.deepEqual(migration.tables, ['hook_lab_launch_request_prices']); assert.deepEqual(migration.requires, ['hook_lab_launch_requests'])
+  assert.match(migration.sql, /request_id uuid primary key references hook_lab_launch_requests\(id\)/)
+  assert.match(migration.sql, /before update or delete on hook_lab_launch_request_prices/)
+  assert.doesNotMatch(migration.sql, /drop |alter table hook_lab_launch_requests/i, 'the existing request table is untouched')
+  assert.ok(!productionSchema().tables.includes('hook_lab_launch_request_prices'), 'not part of the reviewed bootstrap')
+  const applied = run('migrate', 'launch-pricing', '--sha256', migration.sha256)
+  assert.equal(applied.status, 0); assert.match(applied.stdout, /create table hook_lab_launch_request_prices/)
 })

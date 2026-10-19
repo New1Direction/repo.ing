@@ -5,6 +5,8 @@ import { createHash,createPrivateKey,sign } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { AddressLookupTableAccount,PublicKey,VersionedMessage } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
+import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing,formatSolPrice,launchVirtualQuote,ownerPricingLine,solUsdQuorum } from './hooklab-launch-pricing.mjs'
+import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
 const COMPUTE_BUDGET='ComputeBudget111111111111111111111111111111'
 const launchIdl=JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url)))
 const coder=new BorshCoder(launchIdl)
@@ -20,14 +22,48 @@ export function decodeLookupTable(address,data){
  return new AddressLookupTableAccount({key:new PublicKey(address),state:AddressLookupTableAccount.deserialize(Uint8Array.from(data))})
 }
 
+// The opening price an invite fixed. The chain has no price oracle: the agent re-derives the server's price from its
+// sources (refusing one that does not reproduce), and an invite without a price launches at the standard 1 SOL quote.
+export const invitedVirtualQuote=request=>request?.pricing?checkLaunchPricing(request.pricing).virtualQuote:STANDARD_VIRTUAL_QUOTE
+// The agent's own SOL read (src/sol-usd-sources.mjs, from the owner's Mac): a server price that is consistent with its
+// claimed sources but more than 3% from what this Mac reads is never recorded, so a server cannot invent a price.
+// 3%, not the 2% quorum spread, because the two reads are seconds apart.
+export function checkInvitePriceAgainst(pricing,ownReadings){
+ if(!pricing)return null
+ const own=solUsdQuorum(ownReadings),server=BigInt(pricing.solUsdMicros),mine=BigInt(own.solUsdMicros)
+ const [lo,hi]=server<mine?[server,mine]:[mine,server]
+ need(hi*10000n<=lo*10300n,`server SOL price ${formatSolPrice(server)} is more than 3% from this Mac's ${formatSolPrice(mine)}`)
+ return own
+}
+// Before an invite: the opening this Mac expects (its own SOL read when the server prices invites, else the standard
+// quote) must fit the live on-chain limits, so the agent never asks for an invite the chain would refuse.
+export function checkBeforeInvite({priced,ownReadings,bounds}){
+ const quote=priced?launchVirtualQuote(solUsdQuorum(ownReadings).solUsdMicros):STANDARD_VIRTUAL_QUOTE
+ checkLiveBounds(quote,bounds);return quote
+}
+// After: the server's price re-derives, is within 3% of this Mac's read, and its quote fits the same live limits.
+// Returns the quote the invite ledger records.
+export function checkAfterInvite({confirmed,ownReadings,bounds}){
+ const quote=invitedVirtualQuote(confirmed)
+ if(confirmed.pricing)checkInvitePriceAgainst(confirmed.pricing,ownReadings)
+ checkLiveBounds(quote,bounds);return quote
+}
+// Extra list rows for one request: the fixed price, or when it will be fixed. Nothing while USD pricing is off.
+export function ownerRequestLines(request){
+ if(request.pricing===undefined)return []
+ if(request.pricing)try{invitedVirtualQuote(request);return [`    ${ownerPricingLine(request.pricing)}`]}catch(error){return [`    price: REFUSED, nothing will be signed (${error.message})`]}
+ return [request.status==='queued'?'    price: fixed from the live SOL price when you invite':'    price: standard 1 SOL virtual quote (invited before USD pricing)']
+}
+
 // signRequest: {messageBase64,messageSha256,signer,validUntilSlot,lastValidBlockHeight}
-// invited: {creator,name,symbol,uri,creatorFeeBps,capBps}
+// invited: {creator,name,symbol,uri,creatorFeeBps,capBps,virtualQuote} (virtualQuote from the agent's own invite ledger)
 // approved: {launchProgram,gateProgram,admin,creatorFeeChoices,capChoices,feeModel}
 // policy: {address,owner,data} of the mint's PolicyV2, read by the agent itself
 // lookupTables: AddressLookupTableAccount[] resolved by the agent itself
 // live: {slot,blockHeight} observed by the agent itself
 export function verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,policy,live,marginSlots=12,marginBlocks=12}){
  need(approved.creatorFeeChoices.includes(invited.creatorFeeBps)&&approved.capChoices.includes(invited.capBps),'invited fee or cap is not an approved choice')
+ need(/^[1-9]\d{0,19}$/.test(invited.virtualQuote??''),'invited opening price is missing')
  const bytes=Buffer.from(signRequest.messageBase64,'base64')
  need(createHash('sha256').update(bytes).digest('hex')===signRequest.messageSha256,'message hash differs')
  need(signRequest.signer===approved.admin,'signer is not the configured admin')
@@ -50,6 +86,7 @@ export function verifyLaunchSignRequest({signRequest,invited,approved,lookupTabl
  need(keys.get(ix.accountKeyIndexes[0]).toBase58()===invited.creator,'launch creator is not the invited creator')
  need(args.name===invited.name&&args.symbol===invited.symbol&&args.uri===invited.uri,'coin name, symbol or URI differs from the invited request')
  need(args.creator_fee_bps===invited.creatorFeeBps&&feeModel===approved.feeModel,'creator fee or fee model differs from the approved economics')
+ need(args.virtual_quote.toString()===invited.virtualQuote,'opening price (virtual quote) differs from the invited request')
  const mint=keys.get(ix.accountKeyIndexes[3]).toBase58()
  need(policy&&policy.address===policyAddress(approved.gateProgram,mint)&&policy.owner===approved.gateProgram,'mint policy missing or not owned by the gate')
  const p=gateCoder.accounts.decode('PolicyV2',Buffer.from(policy.data))

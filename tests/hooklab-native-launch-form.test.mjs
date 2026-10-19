@@ -20,6 +20,13 @@ test('approved details win over anything typed, and are sent exactly as approved
   assert.deepEqual([input.symbol, input.capBps, input.creatorFeeBps, input.virtualQuote, input.label], ['RCATT', 200, 100, STANDARD_VIRTUAL_QUOTE, 'RCATT'])
 })
 
+test('a USD-priced invite reserves at exactly its fixed opening price', () => {
+  const priced = { ...invited, virtualQuote: '53251917070' }
+  assert.equal(reservationInput(empty, priced).virtualQuote, '53251917070')
+  assert.equal(reservationInput({ ...empty, virtualQuote: '1000000000' }, priced).virtualQuote, '53251917070', 'typed values never win')
+  assert.equal(lockedLaunchFields(priced).virtualQuote, '53251917070')
+})
+
 test('lockedLaunchFields lists what the creator cannot edit after an invite', () => {
   assert.deepEqual(lockedLaunchFields(null), {})
   assert.deepEqual(Object.keys(lockedLaunchFields(invited)).sort(), ['capBps', 'creatorFeeBps', 'label', 'name', 'symbol', 'uri', 'virtualQuote'])

@@ -6,6 +6,8 @@ import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES } from './hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinProfileFields } from './hooklab-coin-profile.mjs'
+import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing } from './hooklab-launch-pricing.mjs'
+import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -33,12 +35,16 @@ async function inTransaction(pool,work){
 }
 // Rows read with withProfile also carry the coin profile (null for requests queued before profiles existed).
 const publicProfile=row=>row.has_profile?Object.freeze({description:row.description,x:row.x_handle,website:row.website,telegram:row.telegram}):null
+// With USD pricing on, rows also carry the price fixed at invite (null until then); with it off the key is absent.
+const publicPricing=row=>row.has_pricing?Object.freeze({solUsdMicros:String(row.sol_usd_micros),sources:row.price_sources,virtualQuote:String(row.virtual_quote),pricedAt:row.priced_at.toISOString()}):null
 const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,status:row.status,
  invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString(),
- ...(row.has_profile!==undefined&&{profile:publicProfile(row)}),...(row.status==='launched'&&row.mint&&{mint:row.mint})})
-const withProfile=`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,
+ ...(row.has_profile!==undefined&&{profile:publicProfile(row)}),...(row.has_pricing!==undefined&&{pricing:publicPricing(row)}),...(row.status==='launched'&&row.mint&&{mint:row.mint})})
+const priceColumns=row=>({sol_usd_micros:row.sol_usd_micros,price_sources:row.sources,virtual_quote:row.virtual_quote,priced_at:row.priced_at,has_pricing:true})
+const requestQuery=usdPricing=>`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,
+ ${usdPricing?'pr.sol_usd_micros,pr.sources as price_sources,pr.virtual_quote,pr.priced_at,(pr.request_id is not null) as has_pricing,':''}
  (select o.resolved_request->>'mint' from hook_lab_native_signing_operations o where o.custody_operation_id=r.custody_operation_id and o.stage='launch') as mint
- from hook_lab_launch_requests r left join hook_lab_coin_profiles p on p.request_id=r.id`
+ from hook_lab_launch_requests r left join hook_lab_coin_profiles p on p.request_id=r.id${usdPricing?' left join hook_lab_launch_request_prices pr on pr.request_id=r.id':''}`
 // Shown publicly (metadata and image) while the coin can still launch or has launched.
 const PUBLIC_COIN_STATUSES=['queued','invited','launching','launched']
 const publicTableRequest=row=>Object.freeze({preparationId:row.preparation_id,launchRequestId:row.launch_request_id,creator:row.creator_wallet,launchRequest:row.launch_request,
@@ -46,8 +52,11 @@ const publicTableRequest=row=>Object.freeze({preparationId:row.preparation_id,la
 const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,messageBase64:row.message_base64,messageSha256:row.message_sha256,context:row.context,
  validUntilSlot:String(row.valid_until_slot),lastValidBlockHeight:String(row.last_valid_block_height),reviewExpiresAt:row.review_expires_at.toISOString(),status:row.status,createdAt:row.created_at.toISOString()})
 
-export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000}={}){
+// usdPricing (HOOK_LAUNCH_USD_PRICING): invites fix a SOL price and opening virtual quote, and only that quote binds.
+// Off, nothing reads the price table (it may not exist yet) and every launch binds the standard 1 SOL quote.
+export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false}={}){
  address.parse(adminAddress)
+ const withProfile=requestQuery(usdPricing)
  const expireInvites=db=>db.query("update hook_lab_launch_requests set status='invite-expired',updated_at=clock_timestamp() where status='invited' and invite_expires_at<=clock_timestamp()")
  return Object.freeze({
   async availability(){
@@ -116,14 +125,22 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    const {rows:[row]}=await pool.query("update hook_lab_launch_requests set status='cancelled',updated_at=clock_timestamp() where id=$1 and creator_wallet=$2 and status in ('queued','invited') returning *",[z.uuid().parse(id),address.parse(creator)])
    check(row,'Only a queued or invited request can be cancelled');return publicRequest(row)
   },
-  // Owner agent only. The agent issues the creator grant on chain before inviting.
-  async invite(id,{inviteMs}){
+  // Owner agent only. The agent issues the creator grant on chain before inviting. With USD pricing on, price is the
+  // SOL price read at invite ({solUsdMicros,sources,virtualQuote}) and liveBounds the launch config's current
+  // {min,max} virtual quote: the price is re-derived here, and stored with the invite only if the chain accepts it.
+  async invite(id,{inviteMs,price,liveBounds}){
    check(Number.isSafeInteger(inviteMs)&&inviteMs>=60_000&&inviteMs<=maxInviteMs,'Invite window must be 1-60 minutes')
+   const pricing=usdPricing?checkLaunchPricing(price):null
+   if(pricing)checkLiveBounds(pricing.virtualQuote,liveBounds)
    return inTransaction(pool,async db=>{
     await expireInvites(db)
     try{
      const {rows:[row]}=await db.query("update hook_lab_launch_requests set status='invited',invited_at=clock_timestamp(),invite_expires_at=clock_timestamp()+make_interval(secs=>$2),updated_at=clock_timestamp() where id=$1 and status='queued' returning *",[z.uuid().parse(id),inviteMs/1000])
-     check(row,'Only a queued request can be invited');return publicRequest(row)
+     check(row,'Only a queued request can be invited')
+     if(!pricing)return publicRequest(row)
+     const {rows:[fixed]}=await db.query('insert into hook_lab_launch_request_prices(request_id,sol_usd_micros,sources,virtual_quote) values($1,$2,$3,$4) returning *',
+      [row.id,pricing.solUsdMicros,JSON.stringify(pricing.sources),pricing.virtualQuote])
+     return publicRequest({...row,...priceColumns(fixed)})
     }catch(error){if(error.code==='23505')throw fail('Another creator is already invited; finish or expire that launch first');throw error}
    })
   },
@@ -131,13 +148,16 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    const {rows:[row]}=await pool.query("update hook_lab_launch_requests set status='declined',updated_at=clock_timestamp() where id=$1 and status in ('queued','invited') returning *",[z.uuid().parse(id)])
    check(row,'Only a queued or invited request can be declined');return publicRequest(row)
   },
-  // Called on reserve: the creator may prepare only the exact coin the owner invited.
-  async bindLaunch(db,creator,custodyOperationId,intent){
+  // Called on reserve: the creator may prepare only the exact coin the owner invited, at the opening price fixed with
+  // the invite (the standard 1 SOL quote when USD pricing is off or the invite predates it).
+  async bindLaunch(db,creator,custodyOperationId,{virtualQuote,...intent}){
    const value=parseIntent(intent)
    await expireInvites(db)
    const {rows:[row]}=await db.query("select * from hook_lab_launch_requests where creator_wallet=$1 and status in ('invited','launching') for update",[address.parse(creator)])
    check(row,'Wait for repo.ing to invite your launch request')
    check(row.name===value.name&&row.symbol===value.symbol&&row.uri===value.uri&&row.creator_fee_bps===value.creatorFeeBps&&row.cap_bps===value.capBps,'Launch details differ from the approved request')
+   const fixed=usdPricing?(await db.query('select virtual_quote from hook_lab_launch_request_prices where request_id=$1',[row.id])).rows[0]:null
+   check(String(virtualQuote)===String(fixed?.virtual_quote??STANDARD_VIRTUAL_QUOTE),'The opening price differs from the approved request')
    if(row.status==='launching'){check(row.custody_operation_id===custodyOperationId,'This request is already bound to another launch');return publicRequest(row)}
    check(row.invite_expires_at>new Date(),'Your launch invite expired')
    const {rows:[bound]}=await db.query("update hook_lab_launch_requests set status='launching',custody_operation_id=$2,updated_at=clock_timestamp() where id=$1 and status='invited' returning *",[row.id,z.uuid().parse(custodyOperationId)])

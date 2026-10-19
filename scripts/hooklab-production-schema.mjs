@@ -26,6 +26,8 @@ export const MIGRATIONS = Object.freeze({
   'coin-profiles': Object.freeze({ files: ['hooklab-coin-profile-schema.sql'], requires: ['hook_lab_launch_requests'] }),
   'wallet-funding': Object.freeze({ files: ['hooklab-native-signing-funding-schema.sql'], requires: ['hook_lab_native_signing_operations'],
     inspect: "select pg_get_constraintdef(oid) as stage_check from pg_constraint where conname='hook_lab_native_signing_operations_stage_check'" }),
+  // Apply before turning on HOOK_LAUNCH_USD_PRICING; with the flag off nothing reads or writes this table.
+  'launch-pricing': Object.freeze({ files: ['hooklab-launch-pricing-schema.sql'], requires: ['hook_lab_launch_requests'] }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

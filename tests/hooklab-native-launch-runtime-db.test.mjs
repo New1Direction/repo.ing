@@ -87,7 +87,7 @@ async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}=
      const {rows:[op]}=await pool.query('select review from hook_lab_native_signing_operations where message_sha256=$1',[row.message_sha256])
      const lookupTables=op.review.lookupTables.map(t=>decodeLookupTable(t.address,Buffer.from(t.dataBase64,'base64')))
      const signRequest={messageBase64:row.message_base64,messageSha256:row.message_sha256,signer:row.signer_address,validUntilSlot:row.valid_until_slot,lastValidBlockHeight:row.last_valid_block_height}
-     const invited={creator:owner,name:initial.request.name,symbol:initial.request.symbol,uri:initial.request.uri,creatorFeeBps:initial.request.creatorFeeBps,capBps:initial.request.capBps}
+     const invited={creator:owner,name:initial.request.name,symbol:initial.request.symbol,uri:initial.request.uri,creatorFeeBps:initial.request.creatorFeeBps,capBps:initial.request.capBps,virtualQuote:initial.request.virtualQuote}
      const approved={launchProgram:profile.programs.launch,gateProgram:profile.programs.gate,admin:adminKey.publicKey.toBase58(),creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:2}
      const policyKey=policyAddress(profile.programs.gate,op.review.accounts.find(a=>a.signer&&a.address!==owner&&a.address!==adminKey.publicKey.toBase58()).address),policyAccount=current.get(policyKey)
      const policy=policyAccount&&{address:policyKey,owner:policyAccount.owner,data:Buffer.from(policyAccount.dataBase64,'base64')}
@@ -99,12 +99,14 @@ async function realRuntimeScenario({remoteAdmin=false,expireFirstAttempt=false}=
       assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,creatorFeeBps:200}}),/approved economics/)
       assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,capBps:500}}),/wallet cap or fee policy differs/)
       assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,creatorFeeBps:75}}),/not an approved choice/)
+      // The compiled message carries exactly the reserved virtual quote; any other invited price is refused.
+      assert.throws(()=>verifyLaunchSignRequest({...args,invited:{...invited,virtualQuote:String(BigInt(invited.virtualQuote)+1n)}}),/opening price \(virtual quote\) differs/)
       assert.throws(()=>verifyLaunchSignRequest({...args,policy:undefined}),/policy missing/)
       assert.throws(()=>verifyLaunchSignRequest({...args,live:{slot:Number(row.valid_until_slot)-5,blockHeight:0}}),/too close/)
       assert.throws(()=>verifyLaunchSignRequest({...args,lookupTables:[]}),/unresolved lookup table/)
      }
      const checked=verifyLaunchSignRequest({signRequest,invited,approved,lookupTables,policy,live})
-     assert.equal(checked.creatorFeeBps,initial.request.creatorFeeBps);assert.equal(checked.capBps,initial.request.capBps)
+     assert.equal(checked.creatorFeeBps,initial.request.creatorFeeBps);assert.equal(checked.capBps,initial.request.capBps);assert.equal(checked.virtualQuote,initial.request.virtualQuote)
      ownerSignatures++;await ownerStore.submitSignature(row.id,ownerAgentKey.signBase64(Buffer.from(row.message_base64,'base64')))
     }
    }}):{address:adminKey.publicKey.toBase58(),sign:signAdmin},expiryObserver:async()=>chainPastDeadline?{slot:10**9,blockHeight:10**9}:{slot:1,blockHeight:1},preparationLimits:prepLimits,launchLimits:limits})
