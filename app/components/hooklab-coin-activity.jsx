@@ -46,7 +46,7 @@ export function HookHoldersList({ data, symbol, decimals, failed = false, onRetr
         <td>{h.label ? <span className="hooks-holder-label" title="Holds coins for the market, not a trader">{h.label}</span> : <Wallet address={h.owner}/>}</td>
         <td className="is-number">{coinAmount(h.amount, decimals)}</td>
         <td className="is-number"><span className="hooks-share" style={{ '--share': Math.min(1, h.percent / 100) }}>{percentLabel(h.percent)}</span></td></tr>)}</tbody></table></div>
-    {data.holderCount === 0 && <div className="hooks-activity-empty" role="status"><img src="/hook-icons/max-wallet.webp" width={48} height={48} alt=""/><strong>No holders yet. Be the first.</strong>
+    {data.holderCount === 0 && <div className="hooks-activity-empty" role="status"><img src="/hook-icons/max-wallet.webp?v=2" width={48} height={48} alt=""/><strong>No holders yet. Be the first.</strong>
       <span>Buyers show up here with their share of the supply.</span></div>}</>
 }
 

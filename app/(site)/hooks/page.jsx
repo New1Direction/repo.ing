@@ -14,9 +14,9 @@ export default function HooksPage() {
   </HooksIntro><HooksNav active="markets"/>
     <section className="launch-benefits hooks-benefits" aria-label="How a hooks coin works">
       <ol>
-        <li><StepArt src="/hook-icons/plain.webp"/><div><strong>Make it yours</strong><p>A name, ticker, image and your links. No repository needed.</p></div></li>
-        <li><StepArt src="/hook-icons/max-wallet.webp"/><div><strong>Snap on blocks</strong><p>Max wallet caps any wallet at 1–5% of the supply until the coin graduates.</p></div></li>
-        <li><StepArt src="/hook-icons/creator-rewards.webp"/><div><strong>Earn on every trade</strong><p>The Creator fee block takes 0.5–2%. You keep 75% of it, in SOL.</p></div></li>
+        <li><StepArt src="/hook-icons/plain.webp?v=2"/><div><strong>Make it yours</strong><p>A name, ticker, image and your links. No repository needed.</p></div></li>
+        <li><StepArt src="/hook-icons/max-wallet.webp?v=2"/><div><strong>Snap on blocks</strong><p>Max wallet caps any wallet at 1–5% of the supply until the coin graduates.</p></div></li>
+        <li><StepArt src="/hook-icons/creator-rewards.webp?v=2"/><div><strong>Earn on every trade</strong><p>The Creator fee block takes 0.5–2%. You keep 75% of it, in SOL.</p></div></li>
       </ol>
       <div className="launch-reward-terms"><span><strong>Free to request.</strong> repo.ing checks each coin and invites you. Then you sign the launch in your wallet, with about 0.05 SOL for deposits and fees.</span>
         <Link href="/hooks/launch-review">Start your coin <ArrowRight size={14} aria-hidden="true"/></Link></div>
