@@ -6,6 +6,7 @@ import { nativeTransactionSender } from '../../src/hooklab-native-transaction-se
 import { nativeClaimResolver } from '../../src/hooklab-native-claim-resolver.mjs'
 import { stagedResolver } from '../../src/hooklab-wallet-funding-resolver.mjs'
 import { CLAIM_OPERATION, CLAIM_STAGE, readNativeClaimStatus } from '../../src/hooklab-native-claim.mjs'
+import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 const runtimeKey = Symbol.for('repo.ing.hooklab.native-claim-runtime')
 
 export function createNativeClaimRuntime(pool, { origin, nativeLaunchesApproved = false, config, profile, dossierJson, connections, limits } = {}) {
@@ -16,7 +17,9 @@ export function createNativeClaimRuntime(pool, { origin, nativeLaunchesApproved 
   const programs = JSON.parse(profile.json).programs
   // Display reads use the primary provider; the claim itself re-verifies on both providers before anything is signed.
   const status = mint => readNativeClaimStatus({ connection: connections[0].connection, mint, programs })
-  return Object.freeze({ origin, nativeLaunchesApproved: true, lifecycle, status })
+  // Only coins launched through repo.ing approval are read, as on the coin page.
+  const coinProfile = mint => ownerApprovalStore(pool, { adminAddress: config.reviewer }).coinByMint(mint)
+  return Object.freeze({ origin, nativeLaunchesApproved: true, lifecycle, status, coinProfile })
 }
 export function installNativeClaimRuntime(value) {
   if (nativeClaimRuntime() || !value || value.nativeLaunchesApproved !== true || !value.lifecycle || typeof value.status !== 'function') throw Error('Complete approved claim runtime required')

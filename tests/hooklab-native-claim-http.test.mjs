@@ -20,12 +20,15 @@ test('claims stay off without HOOK_NATIVE_LAUNCHES_ENABLED, and the runtime need
   assert.equal((await json(await createNativeClaimHandler({ ...options, runtime: () => null })(request({ action: 'status', mint })))).blockers[0].code, 'NATIVE_CLAIM_RUNTIME_UNCONFIGURED')
 })
 
-test('status is a public read: no session needed, and only the coin\'s own claim status comes back', async () => {
+test('status is a public read of listed coins only: no session needed, and only the coin\'s own claim status comes back', async () => {
   let reads = 0
-  const handler = createNativeClaimHandler({ ...options, runtime: () => ({ origin: 'https://repo.ing', status: async m => { reads++; return { mint: m, native: true, creator: owner, claimableLamports: '5625000' } } }) })
-  const value = await json(await handler(request({ action: 'status', mint }, { cookie: '' })))
-  assert.deepEqual(value, { status: 'available', claim: { mint, native: true, creator: owner, claimableLamports: '5625000' } })
-  await handler(request({ action: 'status', mint })); assert.equal(reads, 1, 'repeated reads share a short cache')
+  const listed = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin', unlisted = 'So11111111111111111111111111111111111111112'
+  const handler = createNativeClaimHandler({ ...options, runtime: () => ({ origin: 'https://repo.ing', coinProfile: async m => m === listed ? { id: 'listed' } : null,
+    status: async m => { reads++; return { mint: m, native: true, creator: owner, claimableLamports: '5625000' } } }) })
+  const value = await json(await handler(request({ action: 'status', mint: listed }, { cookie: '' })))
+  assert.deepEqual(value, { status: 'available', claim: { mint: listed, native: true, creator: owner, claimableLamports: '5625000' } })
+  await handler(request({ action: 'status', mint: listed })); assert.equal(reads, 1, 'repeated reads share a short cache')
+  assert.deepEqual(await json(await handler(request({ action: 'status', mint: unlisted }))), { status: 'available', claim: null }); assert.equal(reads, 1, 'an unlisted coin is never read from Solana')
 })
 
 test('HTTP cannot inject owners, amounts, observations or another stage; claims need the session', async () => {
@@ -40,13 +43,16 @@ test('HTTP cannot inject owners, amounts, observations or another stage; claims 
 })
 
 test('claim creates a native-claim review for the session wallet; any other stage is refused; refusals read plainly', async () => {
-  const seen = [], lifecycle = { createReview: async (t, i, value) => { seen.push([t, i, value]); return { id, owner, stage: 'native-claim', status: 'reviewed', review: { messageBase64: 'NEVER-UNMARKED', messageSha256: 'a'.repeat(64) } } },
-    get: async () => ({ id, owner, stage: 'inclusive-buy', status: 'reviewed', review: {} }) }
+  const seen = [], lifecycle = { createReview: async (t, i, value) => { seen.push([t, i, value]); return { id, owner, stage: 'native-claim', request: { mint }, status: 'reviewed', review: { messageBase64: 'NEVER-UNMARKED', messageSha256: 'a'.repeat(64) } } },
+    get: async () => ({ id, owner, stage: 'inclusive-buy', status: 'reviewed', review: {} }),
+    walletRequest: async () => ({ review: { operation: 'inclusive-max-wallet-buy' }, partialTransactionBase64: 'AA==' }) }
   const handler = createNativeClaimHandler({ ...options, runtime: () => ({ origin: 'https://repo.ing', status: async () => null, lifecycle }) })
   const created = await json(await handler(request({ action: 'claim', signingId: id, mint })))
   assert.deepEqual(seen, [[token, id, { custodyOperationId: id, stage: 'native-claim', intent: { mint } }]])
+  assert.equal((await handler(request({ action: 'claim', signingId: id, mint: owner }))).status, 409, 'a reused signing ID is this coin\'s claim only')
   assert.equal(created.operation.stage, 'native-claim'); assert.ok(!JSON.stringify(created).includes('NEVER-UNMARKED'), 'signable bytes only through wallet-request')
   assert.equal((await handler(request({ action: 'get', signingId: id }))).status, 409, 'a trade operation is not a claim')
+  assert.equal((await handler(request({ action: 'wallet-request', signingId: id }))).status, 409, 'nor are its signable bytes')
 
   const refusing = message => createNativeClaimHandler({ ...options, runtime: () => ({ origin: 'https://repo.ing', status: async () => null,
     lifecycle: { createReview: async () => { throw Object.assign(Error(message), { code: 'HOOKLAB_USER_REFUSAL' }) } } }) })

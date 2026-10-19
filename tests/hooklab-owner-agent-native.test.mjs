@@ -28,7 +28,7 @@ const feePolicy = pda(SWAP, 'inclusive-fee-policy', pool.toBuffer())
 // The compiler's account layout: 32 declared accounts then 10 remaining ones (the admin reviewer at 34), the mint's fee
 // policy last; the read-only accounts in a lookup table (a launch does not fit a packet without one).
 function accounts(change = {}) {
-  const at = i => change[i] ?? (i === 0 ? creator : i === 3 ? mint : i === 4 ? launchPda : i === 10 ? pool : i === 34 ? admin : i === 41 ? feePolicy : key(`account ${i}`))
+  const at = i => change[i] ?? (i === 0 ? creator : i === 3 ? mint : i === 4 ? launchPda : i === 7 ? new PublicKey(QUOTE_MINT) : i === 10 ? pool : i === 34 ? admin : i === 41 ? feePolicy : key(`account ${i}`))
   return Array.from({ length: change.length ?? 42 }, (_, i) => ({ pubkey: at(i), isSigner: [0, 3, 34].includes(i), isWritable: [0, 1, 2, 3, 4, 10, 41].includes(i) }))
 }
 const body = ({ virtualQuote = invited.virtualQuote, creatorFeeBps = 100, name = invited.name } = {}) => ({
@@ -72,8 +72,8 @@ test('tampering refuses: quote form, discriminator, non-canonical data, a wrong 
   await assert.rejects(verify(signRequest({ data: Buffer.concat([v4, Buffer.from([0])]) })), /not canonical/, 'trailing bytes')
   const other = key('other'), otherPool = pda(SWAP, 'pool', other.toBuffer(), new PublicKey(QUOTE_MINT).toBuffer(), Buffer.alloc(2), new PublicKey(LAUNCH).toBuffer())
   for (const [index, wrong, label] of [[10, otherPool, 'another mint\'s pool'], [10, pda(SWAP, 'pool', mint.toBuffer(), new PublicKey(QUOTE_MINT).toBuffer(), Buffer.from([1, 0]), new PublicKey(LAUNCH).toBuffer()), 'a pool with another LP fee'],
-    [4, pda(LAUNCH, 'launch', other.toBuffer()), 'another launch'], [41, pda(SWAP, 'inclusive-fee-policy', otherPool.toBuffer()), 'another fee policy']])
-    await assert.rejects(verify(signRequest({ keys: accounts({ [index]: wrong }) })), /launch, pool or fee policy account is not the mint's own/, label)
+    [4, pda(LAUNCH, 'launch', other.toBuffer()), 'another launch'], [41, pda(SWAP, 'inclusive-fee-policy', otherPool.toBuffer()), 'another fee policy'], [7, other, 'another quote mint']])
+    await assert.rejects(verify(signRequest({ keys: accounts({ [index]: wrong }) })), /launch, quote mint, pool or fee policy account is not the mint's own/, label)
   await assert.rejects(verify(signRequest({ keys: accounts({ length: 41 }) })), /not the mint's own/, 'a short account list')
   await assert.rejects(verify(signRequest({ keys: [...accounts(), { pubkey: key('extra'), isSigner: false, isWritable: false }] })), /not the mint's own/, 'an extra account')
   await assert.rejects(verify(signRequest(), { approve: { ...approved, swapProgram: undefined } }), /no swap program or quote mint/)

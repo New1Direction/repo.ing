@@ -61,7 +61,7 @@ export function HookClaimFees({ mint, symbol, genesisHash }) {
       if (isFinal(op.status)) forget(signingId)
       if (op.status !== 'finalized-success') throw Error(op.status === 'finalized-failure' ? 'The claim failed on Solana. Only its network fee was charged.' : 'Still confirming. This card keeps your claim and checks it again.')
       const delivered = op.settlement?.quote?.delivered
-      setDone(delivered ? `${claimText(delivered)} is in your wallet.` : 'Claimed. The SOL is in your wallet.')
+      setDone(delivered ? `Claimed ${claimText(delivered)} to your wallet.` : 'Claimed. The SOL went to your wallet.')
     } catch (e) { setError(e.message || 'Claim failed. Nothing more was signed.') }
     finally { running.current = false; setBusy(false); setStep(''); load() }
   }, [wallet, mint, genesisHash, provider, load])

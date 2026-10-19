@@ -20,20 +20,23 @@ function effects(on) {
     'v3 and plain launches are refused on chain (BridgedCustomLaunchClosed, PlainLaunchClosed); a stale website cannot create a bridged launch',
     'coins already launched are unchanged: bridged coins keep trading on swap, native ones on swap_v2']
     : ['create_launch_custom_v4 is refused on chain (NativeLaunchesOff) and bridged v3 launches reopen',
-      'native coins already launched keep trading on swap_v2, and their creators can still claim their fees']
+      'native coins already launched keep trading on swap_v2, and their creators can still claim their fees (keep HOOK_NATIVE_LAUNCHES_ENABLED=true on the website: it also serves claims)']
 }
 
 export const nativeLaunches = {
   name: STAGE,
   async build(ctx, pinned) {
     const on = wanted(ctx), d = derivedAddresses(ctx.programs)
-    const { snapshot, config, governance, addresses } = await governedSnapshot(ctx, 'launch', [d.launchProgramData])
+    const { snapshot, config, governance, addresses } = await governedSnapshot(ctx, 'launch', [d.launchProgramData, d.swapProgramData])
     // I-2: the switch as both providers read it, before any message exists.
     const raw = Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), current = nativeLaunchesSwitch(raw)
     if (current === on) return { blocked: `native launches are already ${word(on)} (launch Config byte ${BYTE} = ${Number(on)}). Refusing a flip to the same value: it would still bump the launch governance revision and make every signed launch stale`, observedSlot: snapshot.slot }
-    const programData = snapshot.accounts.get(d.launchProgramData)
-    if (!programData || !nativeProgramDataMatches('launch', Buffer.from(programData.dataBase64, 'base64')))
-      return { blocked: `the deployed launch program is not the reviewed native-SOL build (hook-lab ${NATIVE_SOURCE.commit}, ELF ${NATIVE_ELF.launch.trimmedSha256.slice(0, 12)}…); upgrade it first`, observedSlot: snapshot.slot }
+    // Both programs: a native launch creates its pool through the swap's create_pool_v4.
+    for (const [role, address] of [['launch', d.launchProgramData], ['swap', d.swapProgramData]]) {
+      const programData = snapshot.accounts.get(address)
+      if (!programData || !nativeProgramDataMatches(role, Buffer.from(programData.dataBase64, 'base64')))
+        return { blocked: `the deployed ${role} program is not the reviewed native-SOL build (hook-lab ${NATIVE_SOURCE.commit}, ELF ${NATIVE_ELF[role].trimmedSha256.slice(0, 12)}…); upgrade it first`, observedSlot: snapshot.slot }
+    }
     const expected = ix.governanceCommitment('launch', governance.state)
     const instruction = governedSetNativeLaunches({ launchProgram: ctx.programs.launch, admin: ctx.roles.admin, expected, on })
     // A recorded policy change: only the revision moves, so the commitment changes and nothing else in the state does.

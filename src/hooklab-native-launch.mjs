@@ -11,7 +11,8 @@ const sha = (...parts) => createHash('sha256').update(Buffer.concat(parts.map(p 
 const kb = value => new PublicKey(value).toBuffer()
 const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), new PublicKey(program))[0].toBase58()
 const accountDisc = name => sha(`account:${name}`).subarray(0, 8)
-const instructionDisc = name => Buffer.from(loadNativeArtifacts().idls.launch.instructions.find(i => i.name === name).discriminator)
+// Anchor's instruction discriminator; computed, so importing this module never reads the vendored native files.
+const instructionDisc = name => sha(`global:${name}`).subarray(0, 8)
 
 export const NATIVE_LAUNCHES_FLAG = 'HOOK_NATIVE_LAUNCHES_ENABLED'
 export const nativeLaunchesEnabled = (env = process.env) => env[NATIVE_LAUNCHES_FLAG] === 'true'

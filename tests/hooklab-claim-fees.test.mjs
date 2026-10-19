@@ -37,7 +37,7 @@ test('signed out: the amount and how to claim it, no button', async () => {
 test('while claiming, then done or failed', async () => {
   const busy = await view({ claim: native(), busy: true, step: 'Approve in your wallet' })
   assert.match(busy, /<button type="button" class="button primary" disabled="">Approve in your wallet<\/button>/)
-  assert.match(text(await view({ claim: native('0'), done: '0.005625 SOL is in your wallet.' })), /0\.005625 SOL is in your wallet\./)
+  assert.match(text(await view({ claim: native('0'), done: 'Claimed 0.005625 SOL to your wallet.' })), /Claimed 0\.005625 SOL to your wallet\./)
   const failed = await view({ claim: native(), error: 'The claim failed on Solana. Only its network fee was charged.' })
   assert.match(failed, /role="alert">The claim failed on Solana\. Only its network fee was charged\.</)
 })

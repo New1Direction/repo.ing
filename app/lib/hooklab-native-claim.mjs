@@ -13,8 +13,8 @@ import { readLimitedBody } from '../../src/token-image.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 import { nativeClaimRuntime } from './hooklab-native-claim-runtime.mjs'
-import { cached } from './hooklab-market.mjs'
-import { CLAIM_STAGE } from '../../src/hooklab-native-claim.mjs'
+import { cached, listedCoin } from './hooklab-market.mjs'
+import { CLAIM_OPERATION, CLAIM_STAGE } from '../../src/hooklab-native-claim.mjs'
 
 const mint = z.string().max(44).refine(v => { try { return new PublicKey(v).toBase58() === v } catch { return false } })
 const body = z.discriminatedUnion('action', [
@@ -44,13 +44,14 @@ export function createNativeClaimHandler({ env = process.env, configuration = wa
       const service = runtime()
       if (!service) return reply({ status: 'blocked', blockers: [{ code: 'NATIVE_CLAIM_RUNTIME_UNCONFIGURED', message: 'Claims are unavailable right now.' }] })
       if (service.origin !== config.origin) throw Error()
-      // Public chain data: shown only to the coin's creator by the page, re-verified on two providers by any claim.
-      if (input.action === 'status') return reply({ status: 'available', claim: await cached(`native-claim:${input.mint}`, 3000, () => service.status(input.mint)) })
+      // Public chain data for coins listed on repo.ing only: shown to the coin's creator by the page, re-verified on two
+      // providers by any claim.
+      if (input.action === 'status') return reply({ status: 'available', claim: await listedCoin(service, input.mint) ? await cached(`native-claim:${input.mint}`, 3000, () => service.status(input.mint)) : null })
       const token = walletIdentitySessionToken(request); if (!token) return reply({ error: 'Sign in with your wallet first.' }, 401)
       const principal = principalStore(pool, { enabled: true, origin: config.origin, audience: config.audience, genesisHash: config.genesisHash }), owner = await principal.resolve(token)
       const lifecycle = service.lifecycle
       let result
-      if (input.action === 'wallet-request') result = await lifecycle.walletRequest(token, input.signingId)
+      if (input.action === 'wallet-request') { result = await lifecycle.walletRequest(token, input.signingId); if (result.review?.operation !== CLAIM_OPERATION) throw Error() }
       else {
         let operation
         if (input.action === 'claim') operation = await lifecycle.createReview(token, input.signingId, { custodyOperationId: input.signingId, stage: CLAIM_STAGE, intent: { mint: input.mint } })
@@ -58,7 +59,8 @@ export function createNativeClaimHandler({ env = process.env, configuration = wa
         else if (input.action === 'retain-wallet') operation = await lifecycle.retainWalletSignature(token, input.signingId, input.signedTransactionBase64)
         else if (input.action === 'submit') operation = await lifecycle.submitOnce(token, input.signingId)
         else operation = await lifecycle.reconcile(token, input.signingId)
-        if (operation.owner !== owner.wallet || operation.stage !== CLAIM_STAGE) throw Error()
+        // A reused signing ID returns its original claim, which must be this coin's.
+        if (operation.owner !== owner.wallet || operation.stage !== CLAIM_STAGE || (input.action === 'claim' && operation.request?.mint !== input.mint)) throw Error()
         result = { operation: publicNativeOperation(operation) }
       }
       if ((await principal.resolve(token)).wallet !== owner.wallet) throw Error()

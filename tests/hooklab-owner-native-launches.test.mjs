@@ -27,7 +27,8 @@ const liveConfig = Buffer.from(fixture.accounts['launch-config'].dataBase64, 'ba
 const governance = coders.launch.accounts.decode('Governance', liveGovernance)
 const switched = (value, at = 186) => { const b = Buffer.from(liveConfig); b[at] = value; return b }
 const programData = elf => { const header = Buffer.alloc(45); header.writeUInt32LE(3); header.writeBigUInt64LE(458000000n, 4); header[12] = 1; new PublicKey(MAINNET_ROLES.upgrade).toBuffer().copy(header, 13); return Buffer.concat([header, elf, Buffer.alloc(64)]) }
-const nativeElf = () => readFileSync(path.join(process.env.HOOKLAB_NATIVE_ELF_DIR, 'bordrless_launch.so'))
+const nativeElf = (name = 'bordrless_launch') => readFileSync(path.join(process.env.HOOKLAB_NATIVE_ELF_DIR, `${name}.so`))
+const nativeElfs = () => ({ launchElf: nativeElf(), swapElf: nativeElf('bordrless_swap') })
 
 function readers(accounts, slot = fixture.slot) {
   const connection = {
@@ -38,9 +39,10 @@ function readers(accounts, slot = fixture.slot) {
   }
   return [{ provider: 'primary', url: 'https://a.example', connection }, { provider: 'secondary', url: 'https://b.example', connection }]
 }
-const chain = ({ config = liveConfig, governanceBytes = liveGovernance, launchElf = Buffer.alloc(1000, 7) } = {}) => new Map([
+const chain = ({ config = liveConfig, governanceBytes = liveGovernance, launchElf = Buffer.alloc(1000, 7), swapElf = Buffer.alloc(1000, 8) } = {}) => new Map([
   [d.launchConfig, { owner: PROGRAMS.launch, data: config }], [d.launchGovernance, { owner: PROGRAMS.launch, data: governanceBytes }],
-  [d.launchProgramData, { owner: LOADER, data: programData(launchElf) }], [MAINNET_ROLES.payer, { owner: SYSTEM, data: Buffer.alloc(0), lamports: 4_251_200_000 }]])
+  [d.launchProgramData, { owner: LOADER, data: programData(launchElf) }], [d.swapProgramData, { owner: LOADER, data: programData(swapElf) }],
+  [MAINNET_ROLES.payer, { owner: SYSTEM, data: Buffer.alloc(0), lamports: 4_251_200_000 }]])
 const template = loadConfig(new URL('../hooklab-owner.config.json', import.meta.url))
 const journal = { dir: path.join(mkdtempSync(path.join(tmpdir(), 'hooklab-native-launches-')), 'journal') }
 const context = (accounts, to = 'on') => ({ config: template, readers: readers(accounts), genesis: MAINNET_GENESIS, network: 'mainnet-beta', roles: MAINNET_ROLES,
@@ -65,7 +67,7 @@ test('a flip to the value the switch already has is refused, since it would stil
 
 test('refuses while the deployed launch program is not the reviewed native build', async () => {
   const built = await stage.build(context(chain()), null)
-  assert.match(built.blocked, /not the reviewed native-SOL build \(hook-lab e357fdf, ELF acbd9a6060fb…\); upgrade it first/)
+  assert.match(built.blocked, /deployed launch program is not the reviewed native-SOL build \(hook-lab e357fdf, ELF acbd9a6060fb…\); upgrade it first/)
   const missing = chain(); missing.delete(d.launchProgramData)
   assert.match((await stage.build(context(missing), null)).blocked, /upgrade it first/)
 })
@@ -80,8 +82,9 @@ test('registered as an approval-flag stage the committed template does not appro
 const withElf = testRequiring(missingArtifactEnv(['HOOKLAB_NATIVE_ELF_DIR'], 'the reviewed native launch ELF (hook-lab e357fdf)'))
 withElf('on the native build: one governed_set_native_launches against the live commitment; preview shows the byte and the revision', async () => {
   const elf = nativeElf(); assert.equal(elf.length, NATIVE_ELF.launch.length)
+  assert.match((await stage.build(context(chain({ launchElf: elf })), null)).blocked, /deployed swap program is not the reviewed native-SOL build \(hook-lab e357fdf, ELF 85e178c3730f…\)/, 'the swap is upgraded too')
   for (const [to, config, from, next] of [['on', liveConfig, 0, 1], ['off', switched(1), 1, 0]]) {
-    const ctx = context(chain({ config, launchElf: elf }), to), built = await stage.build(ctx, null)
+    const ctx = context(chain({ config, ...nativeElfs() }), to), built = await stage.build(ctx, null)
     assert.equal(built.blocked, undefined, built.blocked)
     const [limit, price, call] = decodeMessage(built.review.messageBase64, { programs: PROGRAMS, book: addressBook({ programs: PROGRAMS, quoteMint: QUOTE_MINT, roles: MAINNET_ROLES }) })
     assert.deepEqual([limit.instruction, price.instruction, call.instruction], ['SetComputeUnitLimit', 'SetComputeUnitPrice', 'launch.governed_set_native_launches'])
@@ -100,7 +103,7 @@ withElf('on the native build: one governed_set_native_launches against the live 
 })
 
 withElf('verify accepts only the switched byte and the predicted commitment', async () => {
-  const built = await stage.build(context(chain({ launchElf: nativeElf() })), null)
+  const built = await stage.build(context(chain(nativeElfs())), null)
   const encoded = await coders.launch.accounts.encode('Governance', { ...governance, state: nextState(governance.state, {}) })
   const governed = Buffer.concat([encoded, Buffer.alloc(liveGovernance.length - encoded.length)])
   assert.match((await stage.verify(context(chain({ config: switched(1), governanceBytes: governed })), built.expect)).join(' '), /native launches ON/)

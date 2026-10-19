@@ -105,8 +105,8 @@ export function verifyLaunchSignRequest({signRequest,invited,approved,lookupTabl
   need(approved.swapProgram&&approved.quoteMint,'the agent has no swap program or quote mint to check a native launch against')
   const at=i=>keys.get(ix.accountKeyIndexes[i]).toBase58(),launch=pda(approved.launchProgram,'launch',new PublicKey(mint).toBuffer())
   const pool=pda(approved.swapProgram,'pool',new PublicKey(mint).toBuffer(),new PublicKey(approved.quoteMint).toBuffer(),Buffer.alloc(2),new PublicKey(approved.launchProgram).toBuffer())
-  need(ix.accountKeyIndexes.length===V3_ACCOUNTS&&at(4)===launch&&at(10)===pool&&at(V3_ACCOUNTS-1)===pda(approved.swapProgram,'inclusive-fee-policy',new PublicKey(pool).toBuffer()),
-   'launch, pool or fee policy account is not the mint\'s own')
+  need(ix.accountKeyIndexes.length===V3_ACCOUNTS&&at(4)===launch&&at(7)===approved.quoteMint&&at(10)===pool&&at(V3_ACCOUNTS-1)===pda(approved.swapProgram,'inclusive-fee-policy',new PublicKey(pool).toBuffer()),
+   'launch, quote mint, pool or fee policy account is not the mint\'s own')
  }
  need(policy&&policy.address===policyAddress(approved.gateProgram,mint)&&policy.owner===approved.gateProgram,'mint policy missing or not owned by the gate')
  const p=gateCoder.accounts.decode('PolicyV2',Buffer.from(policy.data))
