@@ -162,6 +162,9 @@ function readHolding(accounts, address, token, mint, owner) {
   return bytes.readBigUInt64LE(74)
 }
 
+// The same account evidence rules, shared with the native-SOL compiler (src/hooklab-native-swap.mjs).
+export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, typed, readHolding, KIT, noRules })
+
 export function buildInclusiveMaxWalletSwapReviewForFixture(input) {
   check(input?.provenance === 'disposable-litesvm-synthetic-fixture-not-rpc-evidence', 'Fixture provenance required')
   return compile(input, true)

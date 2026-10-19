@@ -21,7 +21,7 @@ from solders.litesvm import LiteSVM
 assert solders.__version__ == '0.29.0'
 DOMAIN = 'repo.ing atomic canary isolated SVM tests v1 '
 roles = {role: Keypair.from_seed(hashlib.sha256((DOMAIN + role).encode()).digest())
-         for role in ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table']}
+         for role in ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table', 'buyer']}
 by_address = {str(k.pubkey()): k for k in roles.values()}
 svm = LiteSVM().with_sigverify(True).with_blockhash_check(True).with_log_bytes_limit(10000)
 svm.set_clock(Clock(100, 0, 0, 0, 1800000000))
@@ -62,6 +62,23 @@ def process(request):
     if operation == 'expire':
         svm.expire_blockhash()
         return {'blockhash': str(svm.latest_blockhash())}
+    if operation == 'simulate':
+        # As RPC simulateTransaction with an accounts config: the requested accounts after the simulated execution.
+        message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
+        signers = list(message.account_keys[:message.header.num_required_signatures])
+        assert all(str(address) in by_address for address in signers), 'Non-synthetic signer forbidden'
+        wire_message = to_bytes_versioned(message)
+        tx = VersionedTransaction.populate(message, [by_address[str(address)].sign_message(wire_message) for address in signers])
+        result = svm.simulate_transaction(tx)
+        if isinstance(result, FailedTransactionMetadata):
+            return {'error': str(result.err()), 'logs': result.meta().logs(), 'accounts': None}
+        post = {str(address): account for address, account in result.post_accounts()}
+        rows = []
+        for address in request['addresses']:
+            account = post.get(address) or svm.get_account(Pubkey.from_string(address))
+            rows.append(None if account is None else {'owner': str(account.owner), 'lamports': str(account.lamports),
+                                                      'dataBase64': base64.b64encode(account.data).decode()})
+        return {'error': None, 'logs': result.meta().logs(), 'units': result.meta().compute_units_consumed(), 'accounts': rows}
     if operation in ('sign', 'send'):
         message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
         signers = list(message.account_keys[:message.header.num_required_signatures])
