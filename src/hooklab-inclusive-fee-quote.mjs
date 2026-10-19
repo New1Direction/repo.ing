@@ -40,7 +40,8 @@ export function modelInclusiveCreatorQuote(input) {
   const delivered = buy ? grossOutput : grossOutput - fees.grossQuote
   check(delivered >= minAmountOut, 'MIN_OUTPUT')
   const recipientBaseAfter = amount(input.recipientBaseBalance + (buy ? delivered : 0n))
-  check(!buy || recipientBaseAfter <= cap, 'MAX_WALLET')
+  // After graduation the gate reads Launch status 1 and stops capping; only display estimates pass maxWalletLifted.
+  check(!buy || input.maxWalletLifted === true || recipientBaseAfter <= cap, 'MAX_WALLET')
   const after = Object.freeze({
     baseReserve: amount(pool.baseReserve + (buy ? -grossOutput : amountIn)),
     quoteReserve: amount(pool.quoteReserve + (buy ? curveInput : -grossOutput)),
