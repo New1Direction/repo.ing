@@ -188,9 +188,10 @@ export const PREP_LIMITS = { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196,
 // The production bootstrap's launch bounds for this bundle's economics.
 export const LAUNCH_LIMITS = { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxNetworkFeeLamports: '15000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0',
   ...launchDebitLimits({ launchFeeLamports: String(CREATION_FEE_LAMPORTS), poolCreationFeeLamports: '0' }, '15000') }
-// One self-serve launch exactly as the website runs it, for a fresh wallet: prepare, launch, settle.
-export async function openLaunch(w, { creatorFeeBps, capBps, name, symbol, virtualQuote }) {
-  const creator = Keypair.generate(), mint = Keypair.generate(), selectedConfig = Keypair.generate(), signers = [creator, mint, selectedConfig]
+// One self-serve launch exactly as the website runs it, for a fresh wallet (or the given creator, e.g. a runner wallet
+// whose later reviews the runner can simulate): prepare, launch, settle.
+export async function openLaunch(w, { creatorFeeBps, capBps, name, symbol, virtualQuote, creator = Keypair.generate() }) {
+  const mint = Keypair.generate(), selectedConfig = Keypair.generate(), signers = [creator, mint, selectedConfig]
   await w.fund(creator.publicKey.toBase58(), '2000000000')
   const profile = w.bindings.profile, G = w.programs.gate
   const prep = { schema: 'repoing/inclusive-max-wallet-preparation-request/1', policyKind: 'max-wallet', policyVersion: 2, creator: creator.publicKey.toBase58(),

@@ -81,9 +81,11 @@ export const poolIsNative = bytes => flagAt(bytes, { name: 'Pool', length: 411, 
 // trimmed bytes a deployed ProgramData holds.
 export const isNativeElfPin = (role, sha256, length) => isReviewedNativeElf(role, sha256, length)
 // A ProgramData account (45-byte header) holding exactly a reviewed native ELF: its trimmed bytes, then only zeros.
-export function nativeProgramDataMatches(role, programData) {
+// pin: a stack profile's own { trimmedSha256, trimmedLength } (our stack pins its build itself); the reviewed legacy
+// native builds otherwise.
+export function nativeProgramDataMatches(role, programData, pin = null) {
   const b = Buffer.from(programData)
   if (b.length < 45 || b.readUInt32LE(0) !== 3) return false
-  return Object.values(NATIVE_BUILDS).some(({ elf }) => { const e = elf[role]
+  return (pin ? [{ elf: { [role]: pin } }] : Object.values(NATIVE_BUILDS)).some(({ elf }) => { const e = elf[role]
     return !!e && b.length >= 45 + e.trimmedLength && createHash('sha256').update(b.subarray(45, 45 + e.trimmedLength)).digest('hex') === e.trimmedSha256 && b.subarray(45 + e.trimmedLength).every(v => v === 0) })
 }

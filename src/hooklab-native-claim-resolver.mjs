@@ -11,6 +11,7 @@ import { canonicalObservation } from './hooklab-canonical-observation.mjs'
 import { refuse } from './hooklab-wallet-funding.mjs'
 import { CLAIM_COMPUTE_UNITS, CLAIM_STAGE, compileNativeClaimReview, launchAddress, nativeClaimInventory, nativeClaimRequestSchema, verifyNativeClaimReceipt } from './hooklab-native-claim.mjs'
 import { LAUNCH_ACCOUNT_BYTES } from './hooklab-native-launch.mjs'
+import { isStackProfile } from './hooklab-stack.mjs'
 
 // About 40 seconds from review to send (the wallet approval happens inside it); the compiler allows up to 150 slots.
 export const CLAIM_SIGNING_WINDOW_SLOTS = 100
@@ -23,7 +24,9 @@ export function nativeClaimResolver({ config, profile, dossierJson, connections,
   const bound = validateMaxWalletOperatorBindings({ ...retained, connections: providers }), p = bound.profile
   // limits.nowMs is the boot time, so it is left out (JSON drops undefined): a restart or deploy must not move this hash.
   const configurationSha256 = sha(JSON.stringify({ claim: 1, ...retained, limits: { ...retained.limits, nowMs: undefined } }))
-  const claimProfile = { genesisHash: p.genesisHash, programs: p.programs, profileSha256: bound.config.profileSha256, providers: profile.providers }
+  // Our own stack pins its launch build in its profile (the trimmed ELF a deployed ProgramData holds).
+  const claimProfile = { genesisHash: p.genesisHash, programs: p.programs, profileSha256: bound.config.profileSha256, providers: profile.providers,
+    ...(isStackProfile(p) ? { launchElf: { trimmedSha256: p.elfSha256.launch, trimmedLength: profile.elfLengths.launch } } : {}) }
 
   async function collect({ owner, stage, intent, expectedReview, originalContext }) {
     check(stage === CLAIM_STAGE, 'Unsupported claim stage')

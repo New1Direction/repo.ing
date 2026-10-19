@@ -11,6 +11,7 @@ import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js'
 import { governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeTradeResolver } from '../src/hooklab-native-trade-resolver.mjs'
+import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
 import { LEGACY_STACK } from '../src/hooklab-stack.mjs'
 import { ownStackWorld, openLaunch, CREATION_FEE_LAMPORTS, OWNER_MENUS, LAUNCH_LIMITS } from './fixtures/hooklab-own-stack-world.mjs'
 import { INDEPENDENT_SKIP, OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
@@ -95,6 +96,24 @@ for (const [build, skip] of Object.entries(BUILDS)) test(`our own stack (${build
     const held = await coinsHeld(coins[1]); assert.ok(held > 0n)
     await trade(coins[1], 'sell', held / 2n)
     assert.equal(await coinsHeld(coins[1]), held - held / 2n)
+  })
+
+  await t.test('the creator claims its coin\'s creator fees in SOL, and only the creator can', async () => {
+    const creator = w.runnerKey('outsider'), owner = creator.publicKey.toBase58()
+    const launch = await openLaunch(w, { creatorFeeBps: 200, capBps: 500, name: 'Claims', symbol: 'CLAIM', virtualQuote: '53251917070', creator })
+    const { settle } = await launch.send(); assert.equal((await settle()).status, 'finalized-success')
+    const coin = { ...launch, creatorFeeBps: 200, capBps: 500 }, mint = launch.mint.publicKey.toBase58()
+    await trade(coin, 'buy', 200000000)
+    const resolver = nativeClaimResolver({ ...w.bindings, connections: w.connections(), limits: TRADE_LIMITS, clock: () => 1000 })
+    await assert.rejects(resolver.prepare({ owner: w.roles.buyer, stage: 'native-claim', intent: { mint } }), /Only the wallet that launched this coin/)
+    const prepared = await resolver.prepare({ owner, stage: 'native-claim', intent: { mint } })
+    assert.deepEqual(prepared.review.requiredSigners, [owner])
+    const before = (await w.lamports([owner]))[owner], sent = await w.send(prepared.review.messageBase64)
+    assert.equal(sent.error, null, (sent.logs ?? []).slice(-6).join('\n'))
+    const settled = await resolver.reconcile({ review: prepared.review, configurationSha256: prepared.configurationSha256, settlementContext: prepared.settlementContext,
+      signedTransactionBase64: sent.wireBase64, signature: sent.signature })
+    assert.equal(settled.status, 'finalized-success')
+    assert.ok((await w.lamports([owner]))[owner] > before, 'the creator received SOL')
   })
 
   // The program's error code from a failed send, and the customer's words for it.
