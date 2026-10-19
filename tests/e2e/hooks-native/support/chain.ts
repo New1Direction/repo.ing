@@ -9,7 +9,9 @@ import bs58 from 'bs58'
 import { connection, stack, until } from './stack.ts'
 
 const vendor = (file: string) => JSON.parse(readFileSync(new URL(`../../../../vendor/${file}`, import.meta.url), 'utf8'))
-export const PROGRAMS = { launch: 'E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft', swap: 'B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk', token: '2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22' }
+// The stack's own program IDs (stack.json, from its program set); the legacy IDs for a stack that predates them.
+export const PROGRAMS = { launch: stack.programs?.launch ?? 'E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft', swap: stack.programs?.swap ?? 'B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk',
+  token: stack.programs?.token ?? '2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22', gate: stack.programs?.gate ?? 'BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb' }
 export const coders = { launch: new BorshCoder(vendor('hooklab-native-candidate/bordrless_launch.json')), swap: new BorshCoder(vendor('hooklab-native-candidate/bordrless_swap.json')) }
 // Native flag bytes (hook-lab e357fdf): Launch.reserved[17] and Pool.reserved[0] for a coin with a hook.
 export const FLAG = { launch: 560, pool: 351 }

@@ -8,6 +8,7 @@ export interface StackState {
   root: string; origin: string; genesisHash: string; validator: { url: string; faucetPort: number }
   database: { url: string; name: string }; rpc: { provider: string; origin: string }[]; control: { url: string; token: string }
   tls: { cert: string; spki: string }; roles: Record<string, string>; tradeTable: string; bundle: { sha256: string; profileSha256: string }; solUsd: string
+  mode?: 'native' | 'legacy' | 'self-serve'; programSet?: string; programs?: { launch: string; swap: string; gate: string; token: string }; quoteMint?: string; launchTable?: string | null
 }
 
 export const stack: StackState = JSON.parse(readFileSync(process.env.HOOKS_E2E_STACK as string, 'utf8'))
