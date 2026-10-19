@@ -122,6 +122,24 @@ export function unwrapSol(programs, quoteMint, { user, amount }) {
     wrapped_mint: quoteMint, user_wrapped: holdingAddress(quoteMint, user, programs.token), token_program: programs.token, token_event_authority: d.tokenEventAuthority,
     system_program: SYSTEM, event_authority: d.bridgeEventAuthority, program: programs.bridge }, { programId: programs.bridge, crossNetworkIdl: true })
 }
+// The kit program: the token program's signer of its callbacks is a fixed graduate account even for coins without one.
+const KIT = 'AZDzvrC6733F6orekbzyF5B6Vpd9DxnV9RGfRrDgzHhm'
+// Permissionless `graduate` for a Hooks coin. Builds only: nothing here signs or sends it. Hooks coins have no kit, so
+// its five optional accounts are absent, passed as the launch program's id read-only (as the program's own client
+// does). The max-wallet gate is the custom hook, so its slice follows as remaining accounts: the gate, the token
+// program's signer for it, then its registry's extras (policy, launch), all read-only as the registry lists them.
+export function graduateHookCoin(programs, quoteMint, { cranker, mint }) {
+  const { launch: L, swap: S, gate: G, token: T } = programs, d = derivedAddresses(programs, quoteMint)
+  const launch = pda(L, 'launch', kb(mint)), pool = pda(S, 'pool', kb(mint), kb(quoteMint), Buffer.alloc(2), kb(L)), lpMint = pda(S, 'lp', kb(pool))
+  const accounts = loadArtifacts().idls.launch.instructions.find(ix => ix.name === 'graduate').accounts
+  const absent = Object.fromEntries(accounts.filter(a => a.optional).map(a => [a.name, L]))
+  const ix = idlInstruction('launch', 'graduate', {}, { cranker: pk(cranker).toBase58(), launch, mint, quote_mint: quoteMint, pool,
+    launch_reserve: holdingAddress(mint, launch, T), base_vault: holdingAddress(mint, pool, T), quote_vault: holdingAddress(quoteMint, pool, T), lp_mint: lpMint,
+    launch_lp: holdingAddress(lpMint, launch, T), hook_signer: pda(L, 'hook-authority'), swap_program: S, dex_event_authority: d.swapEventAuthority, token_program: T,
+    token_hook_signer: pda(T, 'hook-authority', kb(KIT)), token_event_authority: d.tokenEventAuthority, ...absent, event_authority: d.launchEventAuthority },
+  { programId: L, remaining: [{ address: G }, { address: pda(T, 'hook-authority', kb(G)) }, { address: pda(G, 'policy-v2', kb(mint)) }, { address: launch }] })
+  return new TransactionInstruction({ programId: ix.programId, data: ix.data, keys: ix.keys.map((k, i) => accounts[i]?.optional ? { ...k, isWritable: false } : k) })
+}
 export const transfer = (from, to, lamports) => SystemProgram.transfer({ fromPubkey: pk(from), toPubkey: pk(to), lamports: BigInt(String(lamports)) })
 export const lookupCreate = (authority, payer, recentSlot) => AddressLookupTableProgram.createLookupTable({ authority: pk(authority), payer: pk(payer), recentSlot })
 export const lookupExtend = (authority, payer, table, addresses) => AddressLookupTableProgram.extendLookupTable({ authority: pk(authority), payer: pk(payer), lookupTable: pk(table), addresses: addresses.map(pk) })
