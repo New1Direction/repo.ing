@@ -22,7 +22,15 @@ async function withDatabase(work){
   await pool.query(productionSchema().sql)
   for(const name of Object.keys(MIGRATIONS))await pool.query(migrationSchema(name).sql)
   await work(pool)
- }finally{await pool?.end();await root.query(`drop database if exists ${name} with (force)`);await root.end()}
+ }finally{await pool?.end();await closed(root,name);await root.query(`drop database if exists ${name} with (force)`);await root.end()}
+}
+// pool.end() resolves before Postgres sees the sockets close; a forced drop racing those exits makes the pool emit
+// "terminating connection due to administrator command" with no listener. Wait until the backends are gone.
+async function closed(root,name){
+ for(const deadline=Date.now()+5_000;Date.now()<deadline;await new Promise(r=>setTimeout(r,20))){
+  if((await root.query('select count(*)::int n from pg_stat_activity where datname=$1',[name])).rows[0].n===0)return
+ }
+ throw Error(`connections to ${name} are still open after the pool ended`)
 }
 function reviewFor(message,{validUntilSlot=1_000,lastValidBlockHeight=2_000,reviewExpiresAtMs=Date.now()+60_000}={}){
  const bytes=Buffer.from(message)
