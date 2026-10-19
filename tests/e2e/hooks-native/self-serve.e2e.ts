@@ -106,6 +106,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
       const checked = await expectNativeBuy(row, address, coin, BigInt(row.resolved_request.amountIn))
       expectNoLegacyStack(checked.tx); book(coin.mint, checked)
       expect(await coinBalance(coin.mint, address) <= cap).toBe(true) // never over the max per wallet before graduation
+      await browser.evaluate(() => document.readyState) // keeps the browser session active through the long Node-side fill
     })
     expect(fillers > 10).toBe(true)
     expect((await launchAccount(coin.launch)).value.status).toBe(0)
