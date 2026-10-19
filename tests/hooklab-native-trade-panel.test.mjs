@@ -40,7 +40,7 @@ test('the finishing buy says it graduates the coin; the first buy shows one coin
   assert.equal(hold, '')
   const shown = text(html(h(HookTradeSummary, { market: m, symbol: '$GRAD', buying: true, estimate, plan, hold, native: true })))
   assert.match(shown, /This buy finishes the curve\. \$GRAD graduates in the same transaction: its liquidity is locked forever and the max per wallet lifts\./)
-  assert.match(shown, /Coin account deposit \(first buy only\) 0\.00168 SOL/); assert.match(shown, /From your wallet/); assert.doesNotMatch(shown, /Hook Lab/)
+  assert.match(shown, /Coin account deposit \(first buy\) 0\.00168 SOL/); assert.match(shown, /From your wallet/); assert.doesNotMatch(shown, /Hook Lab/)
   // Native trading off: no graduation promise.
   const held = tradeHold({ market: m, nativeTrading: false }, estimate)
   assert.doesNotMatch(text(html(h(HookTradeSummary, { market: m, symbol: '$GRAD', buying: true, estimate, plan, hold: held, native: true }))), /finishes the curve/)

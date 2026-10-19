@@ -270,7 +270,7 @@ export function HookTradeSummary({ market, symbol, buying, estimate, plan, hold,
       <div><dt>Minimum received</dt><dd>{formatUnits(estimate.minAmountOut, buying ? market.decimals : 9, buying ? 0 : 6)} {buying ? symbol : 'SOL'}</dd></div>
       <div><dt>Price impact</dt><dd className={estimate.priceImpactBps >= 500 ? 'is-high' : undefined}>{(estimate.priceImpactBps / 100).toFixed(2)}%</dd></div>
       <div><dt>Creator fee <small>(included, {market.creatorFeeBps / 100}%)</small></dt><dd>{sol(estimate.creatorFee, 6)}</dd></div>
-      {deposit > 0n && <div><dt>{native ? <>Coin account deposit <small>(first buy only)</small></> : <>Hook Lab deposits <small>(first trade only)</small></>}</dt><dd>{sol(deposit, 5)}</dd></div>}
+      {deposit > 0n && <div><dt>{native ? <>Coin account deposit <small>(first buy)</small></> : <>Hook Lab deposits <small>(first trade only)</small></>}</dt><dd>{sol(deposit, 5)}</dd></div>}
       {plan && <div><dt>Network fees</dt><dd>{sol(plan.steps.reduce((sum, s) => sum + s.feeLamports, 0n), 6)}</dd></div>}
       {plan?.walletCost !== undefined && (buying || !native) && <div className="trade-details-total"><dt>From your wallet</dt><dd>{sol(plan.walletCost, 5)}</dd></div>}
     </dl>
