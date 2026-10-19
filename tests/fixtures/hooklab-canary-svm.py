@@ -79,15 +79,20 @@ def process(request):
             rows.append(None if account is None else {'owner': str(account.owner), 'lamports': str(account.lamports),
                                                       'dataBase64': base64.b64encode(account.data).decode()})
         return {'error': None, 'logs': result.meta().logs(), 'units': result.meta().compute_units_consumed(), 'accounts': rows}
-    if operation in ('sign', 'send'):
-        message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
-        signers = list(message.account_keys[:message.header.num_required_signatures])
-        assert all(str(address) in by_address for address in signers), 'Non-synthetic signer forbidden'
-        missing = set(request.get('missing', []))
-        wire_message = to_bytes_versioned(message)
-        signatures = [Signature.default() if str(address) in missing else by_address[str(address)].sign_message(wire_message)
-                      for address in signers]
-        tx = VersionedTransaction.populate(message, signatures)
+    if operation in ('sign', 'send', 'submit'):
+        if operation == 'submit':
+            # A transaction someone else signed (the wallet, through the signing lifecycle), sent exactly as given.
+            tx = VersionedTransaction.from_bytes(base64.b64decode(request['wireBase64']))
+            message, signatures = tx.message, list(tx.signatures)
+        else:
+            message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
+            signers = list(message.account_keys[:message.header.num_required_signatures])
+            assert all(str(address) in by_address for address in signers), 'Non-synthetic signer forbidden'
+            missing = set(request.get('missing', []))
+            wire_message = to_bytes_versioned(message)
+            signatures = [Signature.default() if str(address) in missing else by_address[str(address)].sign_message(wire_message)
+                          for address in signers]
+            tx = VersionedTransaction.populate(message, signatures)
         wire = bytes(tx)
         assert len(wire) <= 1232, 'Solana packet limit exceeded'
         envelope = {'wireBytes': len(wire), 'wireBase64': base64.b64encode(wire).decode(),

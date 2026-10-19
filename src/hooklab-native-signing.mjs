@@ -47,6 +47,8 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
   'wallet-fund':['hooklab-wallet-fund'],'wallet-withdraw':['hooklab-wallet-withdraw'],
   // A native-SOL launch's creator claiming its fees (needs the native-stages migration's stage list).
   'native-claim':['hooklab-native-claim'],
+  // Native-SOL trades (src/hooklab-native-swap.mjs); a graduating buy is a native buy too.
+  'native-buy':['native-max-wallet-buy'],'native-sell':['native-max-wallet-sell'],
   ...(localAcceptanceNetwork()?{'local-prepare-holding':['local-prepare-holding'],'local-inclusive-collection':['local-inclusive-collection']}:{})}
  check(Object.keys(operations).length>0&&Object.entries(operations).every(([stage,operation])=>allowed[stage]?.includes(operation)))
  check(!custodyAdapter||Object.keys(operations).every(stage=>['preparation','launch'].includes(stage)))

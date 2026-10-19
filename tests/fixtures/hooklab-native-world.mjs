@@ -4,7 +4,7 @@
 // test then runs real signed transactions; only the RPC framing around the bank is synthetic.
 import {readFileSync} from 'node:fs'
 import {createHash} from 'node:crypto'
-import {AddressLookupTableAccount,PublicKey,TransactionMessage,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
+import {AddressLookupTableAccount,Keypair,TransactionMessage,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
 import bs58 from 'bs58'
 import {compileMaxWalletLaunchReview} from '../../src/hooklab-max-wallet-launch.mjs'
 import {NATIVE_ELF} from '../../src/hooklab-native-pins.mjs'
@@ -37,6 +37,8 @@ export async function nativeWorld({capBps=5000}={}){
  await svm.call('set',{accounts:[...state.accounts].map(([address,account])=>({address,account})).sort((x,y)=>Number(x.account.executable)-Number(y.account.executable))})
  const executed=new Map(),lookup=new AddressLookupTableAccount({key:pk(state.lookupTable.address),state:AddressLookupTableAccount.deserialize(Buffer.from(state.lookupTable.dataBase64,'base64'))})
  const send=async messageBase64=>{const result=await svm.call('send',{messageBase64});if(result.historyPresent)executed.set(result.signature,result);return result}
+ // A transaction the wallet signed (through the signing lifecycle), sent exactly as given.
+ const submit=async wireBase64=>{const result=await svm.call('submit',{wireBase64});if(result.historyPresent)executed.set(result.signature,result);return result}
  const sync=async(addresses=[...state.accounts.keys()])=>{for(const row of (await svm.call('get',{addresses})).accounts){if(row.account)state.accounts.set(row.address,row.account);else state.accounts.delete(row.address)}}
  const blockhash=async()=>(await svm.call('get',{addresses:[]})).blockhash
  const expire=async()=>(await svm.call('expire')).blockhash
@@ -85,6 +87,8 @@ export async function nativeWorld({capBps=5000}={}){
  const e=localTestEnvironment(),bindings=canaryCollectorBindings(state)
  const connections=(alter)=>state.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:[e.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY,e.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY][i],...transport(alter)}}))
  const lamports=async addresses=>Object.fromEntries((await svm.call('get',{addresses})).accounts.map(r=>[r.address,BigInt(r.account?.lamports??0)]))
- return {svm,state,roles,addresses:a,programs:P,profile:base,send,sync,expire,blockhash,compile,decoded,executed,connections,bindings,lamports,close,launched,lookup,
-  holdingOf:(mint,owner)=>pda(P.token,'holding',pk(mint).toBuffer(),pk(owner).toBuffer())}
+ return {svm,state,roles,addresses:a,programs:P,profile:base,send,submit,sync,expire,blockhash,compile,decoded,executed,connections,bindings,lamports,close,launched,lookup,
+  holdingOf:(mint,owner)=>pda(P.token,'holding',pk(mint).toBuffer(),pk(owner).toBuffer()),
+  // The runner's deterministic synthetic test-domain key for a role (tests/fixtures/hooklab-canary-svm.py), to sign as a wallet.
+  walletKey:role=>Keypair.fromSeed(sha(`repo.ing atomic canary isolated SVM tests v1 ${role}`))}
 }
