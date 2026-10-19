@@ -20,7 +20,7 @@ import { collectMaxWalletLaunchSettlement } from '../src/hooklab-max-wallet-laun
 import { validateMaxWalletOperatorBindings } from '../src/hooklab-max-wallet-launch-collector.mjs'
 import { NATIVE_ELF, loadNativeArtifacts } from '../src/hooklab-native-pins.mjs'
 import { claimCreatorFeesSol, launchIsNative, poolIsNative } from '../src/hooklab-native-launch.mjs'
-import { readNativeClaimStatus } from '../src/hooklab-native-claim.mjs'
+import { CLAIM_MIN_NET_LAMPORTS, readNativeClaimStatus } from '../src/hooklab-native-claim.mjs'
 import { nativeClaimResolver } from '../src/hooklab-native-claim-resolver.mjs'
 import { hookCoinAddresses } from '../src/hooklab-inclusive-max-wallet-swap.mjs'
 import { jsonbRoundTrip } from './fixtures/jsonb-round-trip.mjs'
@@ -179,8 +179,8 @@ async function nativeCoin(t) {
 test('creator fees: swap_v2 buys pay the launch account, only the creator claims exactly what it holds above rent', { skip, timeout: 180000 }, async t => {
   const b = await nativeCoin(t), { state, roles, send, sync } = b, a = state.addresses, mint = roles.mint
   const lamportsOf = async address => BigInt((await b.account(address)).lamports), rent = BigInt(rentFor(565))
-  const programs = JSON.parse(state.profile.json).programs, status = () => readNativeClaimStatus({ connection: b.connections[0].connection, mint, programs })
-  assert.deepEqual(await status(), { mint, native: true, creator: roles.creator, claimableLamports: '0' })
+  const programs = JSON.parse(state.profile.json).programs, status = () => readNativeClaimStatus({ connection: b.connections[0].connection, mint, programs, networkFeeLamports: '5000' })
+  assert.deepEqual(await status(), { mint, native: true, creator: roles.creator, claimableLamports: '0', networkFeeLamports: '5000', receiveLamports: '0', ready: false })
 
   // Two buys by another wallet under the cap: the creator's share of each fee lands on the launch account as lamports.
   await b.svm.call('set', { accounts: [state.holding(mint, roles.outsider, 0)].map(address => ({ address, account: state.accounts.get(address) })) })
@@ -193,7 +193,7 @@ test('creator fees: swap_v2 buys pay the launch account, only the creator claims
   const launch = loadNativeArtifacts().coders.launch.accounts.decode('Launch', bytesOf(state.accounts.get(a.launch)))
   const due = await lamportsOf(a.launch) - rent
   assert.ok(due > 0n); assert.equal(due, BigInt(launch.creator_fees_accrued.toString()), 'everything above rent is the creator fees the buys paid')
-  assert.equal((await status()).claimableLamports, String(due))
+  assert.deepEqual(await status(), { mint, native: true, creator: roles.creator, claimableLamports: String(due), networkFeeLamports: '5000', receiveLamports: String(due - 5000n), ready: true })
 
   // Only the creator: the website refuses anyone else, and so does the program.
   const bindings = canaryCollectorBindings(state)
@@ -273,4 +273,28 @@ test('F1: after the flip, a new coin is prepared, launched as v4 and settled thr
   const settled = await collectMaxWalletLaunchSettlement({ ...bindings, connections: b.connections, review: launch.plan.review, settlementContext: launch.settlementContext,
     signedTransactionBase64: launched.wireBase64, signature: launched.signature })
   assert.equal(settled.status, 'finalized-success', JSON.stringify(settled))
+})
+
+// Review PoC F2, kept as a regression test: a claim worth less than its network fee (plus a small floor) is never offered.
+test('F2: a claim worth less than its network fee is refused', { skip, timeout: 180000 }, async t => {
+  const b = await nativeCoin(t), { state, roles, send, svm } = b, a = state.addresses, rent = rentFor(565)
+  const programs = JSON.parse(state.profile.json).programs
+  const resolver = nativeClaimResolver({ ...canaryCollectorBindings(state), connections: b.connections, clock: () => 1000,
+    limits: { nowMs: 1800000000000, maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 0, reviewExpiresAtMs: 0, maxNetworkFeeLamports: '10000', maxTotalDebitLamports: '10000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' } })
+  const holding = async above => { const launch = await b.account(a.launch); await svm.call('set', { accounts: [{ address: a.launch, account: { ...launch, lamports: String(rent + above) } }] }) }
+  const prepare = () => resolver.prepare({ owner: roles.creator, stage: 'native-claim', intent: { mint: roles.mint } })
+  const status = () => readNativeClaimStatus({ connection: b.connections[0].connection, mint: roles.mint, programs, networkFeeLamports: '5000' })
+  // 1 lamport (a donation or a tiny fee), and exactly the fee plus the floor: refused, and the card offers nothing.
+  for (const above of [1, 5000, 5000 + Number(CLAIM_MIN_NET_LAMPORTS)]) {
+    await holding(above)
+    await assert.rejects(prepare(), error => error.code === 'HOOKLAB_USER_REFUSAL' && /Not enough to claim yet/.test(error.message), `${above} lamports above rent`)
+    const s = await status(); assert.equal(s.claimableLamports, String(above)); assert.equal(s.ready, false); assert.equal(s.receiveLamports, '0')
+  }
+  // One lamport more is worth it: the creator receives the claim less the fee, and nothing less than the floor.
+  const above = 5001 + Number(CLAIM_MIN_NET_LAMPORTS); await holding(above)
+  const s = await status(); assert.equal(s.ready, true); assert.equal(s.receiveLamports, String(above - 5000))
+  const prepared = await prepare(), before = BigInt((await b.account(roles.creator)).lamports)
+  const claimed = await send(prepared.review.messageBase64); assert.equal(claimed.error, null, logs(claimed))
+  assert.equal(BigInt((await b.account(roles.creator)).lamports) - before, BigInt(above - claimed.fee))
+  assert.ok(BigInt(above - claimed.fee) > CLAIM_MIN_NET_LAMPORTS)
 })

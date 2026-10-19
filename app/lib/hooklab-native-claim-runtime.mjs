@@ -5,7 +5,7 @@ import { nativeSigningLifecycle } from '../../src/hooklab-native-signing.mjs'
 import { nativeTransactionSender } from '../../src/hooklab-native-transaction-sender.mjs'
 import { nativeClaimResolver } from '../../src/hooklab-native-claim-resolver.mjs'
 import { stagedResolver } from '../../src/hooklab-wallet-funding-resolver.mjs'
-import { CLAIM_OPERATION, CLAIM_STAGE, readNativeClaimStatus } from '../../src/hooklab-native-claim.mjs'
+import { CLAIM_COMPUTE_UNITS, CLAIM_OPERATION, CLAIM_STAGE, readNativeClaimStatus } from '../../src/hooklab-native-claim.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 const runtimeKey = Symbol.for('repo.ing.hooklab.native-claim-runtime')
 
@@ -16,7 +16,9 @@ export function createNativeClaimRuntime(pool, { origin, nativeLaunchesApproved 
     custodyAdapter: null, stageOperations: { [CLAIM_STAGE]: CLAIM_OPERATION } })
   const programs = JSON.parse(profile.json).programs
   // Display reads use the primary provider; the claim itself re-verifies on both providers before anything is signed.
-  const status = mint => readNativeClaimStatus({ connection: connections[0].connection, mint, programs })
+  // The claim's network fee on the same basis the claim resolver quotes it, so the card shows what the creator receives.
+  const networkFeeLamports = String(BigInt(config.lamportsPerSignature) + (BigInt(CLAIM_COMPUTE_UNITS) * BigInt(limits.computeUnitPriceMicroLamports) + 999999n) / 1000000n)
+  const status = mint => readNativeClaimStatus({ connection: connections[0].connection, mint, programs, networkFeeLamports })
   // Only coins launched through repo.ing approval are read, as on the coin page.
   const coinProfile = mint => ownerApprovalStore(pool, { adminAddress: config.reviewer }).coinByMint(mint)
   return Object.freeze({ origin, nativeLaunchesApproved: true, lifecycle, status, coinProfile })

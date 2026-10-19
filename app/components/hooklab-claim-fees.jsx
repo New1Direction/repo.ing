@@ -29,16 +29,18 @@ export async function callClaim(body) {
 // anyone else, and nothing for a coin whose fees are not paid in SOL. Pure: the container below owns the reads and the claim.
 export function HookClaimFeesView({ claim, wallet, symbol, signedIn, busy = false, step = '', done = '', error = '', onClaim }) {
   if (!claim?.native || !wallet || claim.creator !== wallet) return null
-  const amount = BigInt(claim.claimableLamports ?? '0'), coin = symbol ? `$${symbol}` : 'your coin'
+  // amount: what trades paid; receive: what reaches the wallet after the network fee (0 until a claim is worth its fee).
+  const amount = BigInt(claim.claimableLamports ?? '0'), receive = claim.ready ? BigInt(claim.receiveLamports) : 0n, coin = symbol ? `$${symbol}` : 'your coin'
+  const line = receive > 0n ? <>Trades of {coin} have paid you {claimText(amount)}. After the network fee, {claimText(receive)} comes to this wallet.</>
+    : amount > 0n ? <>Trades of {coin} have paid you {claimText(amount)} so far. You can claim it once it is worth more than the network fee.</>
+      : <>No fees to claim yet. Every buy and sell of {coin} adds to them.</>
   return <section className="hooks-claim" aria-labelledby="hooks-claim-title" aria-live="polite">
     <div>
       <Coins size={20} aria-hidden="true"/>
-      <div><strong id="hooks-claim-title">Your creator fees</strong>
-        <span>{amount > 0n ? <>Trades of {coin} have paid you {claimText(amount)}. Claiming sends it to this wallet.</>
-          : <>No fees to claim yet. Every buy and sell of {coin} adds to them.</>}</span></div>
-      {amount > 0n && signedIn && <button type="button" className="button primary" disabled={busy} onClick={onClaim}>{busy ? step || 'Working…' : `Claim ${claimText(amount)}`}</button>}
+      <div><strong id="hooks-claim-title">Your creator fees</strong><span>{line}</span></div>
+      {receive > 0n && signedIn && <button type="button" className="button primary" disabled={busy} onClick={onClaim}>{busy ? step || 'Working…' : `Claim ${claimText(receive)}`}</button>}
     </div>
-    {amount > 0n && !signedIn && <p className="hooks-claim-note">Sign in with this wallet to claim it.</p>}
+    {receive > 0n && !signedIn && <p className="hooks-claim-note">Sign in with this wallet to claim it.</p>}
     {done && <p role="status" className="hooks-trade-result">{done}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
   </section>
@@ -60,8 +62,9 @@ export function HookClaimFees({ mint, symbol, genesisHash }) {
       const op = await runOperation({ call: callClaim, create, signingId, wallet, genesisHash, signTransaction: tx => provider().signTransaction(tx), onStatus: s => setStep(STEP_TEXT[s] ?? '') })
       if (isFinal(op.status)) forget(signingId)
       if (op.status !== 'finalized-success') throw Error(op.status === 'finalized-failure' ? 'The claim failed on Solana. Only its network fee was charged.' : 'Still confirming. This card keeps your claim and checks it again.')
-      const delivered = op.settlement?.quote?.delivered
-      setDone(delivered ? `Claimed ${claimText(delivered)} to your wallet.` : 'Claimed. The SOL went to your wallet.')
+      // What reached the wallet: the claimed lamports less the claim's own network fee.
+      const delivered = op.settlement?.quote?.delivered, fee = op.settlement?.feeLamports
+      setDone(delivered && fee ? `Claimed: ${claimText(BigInt(delivered) - BigInt(fee))} is in your wallet.` : 'Claimed. The SOL is in your wallet.')
     } catch (e) { setError(e.message || 'Claim failed. Nothing more was signed.') }
     finally { running.current = false; setBusy(false); setStep(''); load() }
   }, [wallet, mint, genesisHash, provider, load])

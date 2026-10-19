@@ -21,6 +21,11 @@ const EVENT_TAG = Buffer.from('e445a52e51cb9a1d', 'hex')
 export const CLAIM_STAGE = 'native-claim', CLAIM_OPERATION = 'hooklab-native-claim'
 // Two lamport moves and one event self-CPI use about 20k compute units.
 export const CLAIM_COMPUTE_UNITS = 60000
+// A claim must leave the creator better off by more than this after its network fee (review F2): about two base fees, so a
+// claim never costs more than it pays and a few lamports of dust are not worth a wallet signature.
+export const CLAIM_MIN_NET_LAMPORTS = 10_000n
+// What the creator receives from a claim of `claimable` lamports paying `networkFee`, or 0n when that is not worth claiming.
+export const claimReceives = (claimable, networkFee) => { const net = BigInt(claimable) - BigInt(networkFee); return net > CLAIM_MIN_NET_LAMPORTS ? net : 0n }
 export const nativeClaimRequestSchema = z.object({ schema: z.literal('repoing/hooklab-native-claim-request/1'), creator: key, mint: key }).strict()
 export const launchAddress = (programs, mint) => pda(programs.launch, 'launch', kb(mint))
 
@@ -64,6 +69,7 @@ export function compileNativeClaimReview(input) {
   const priority = (BigInt(CLAIM_COMPUTE_UNITS) * BigInt(l.computeUnitPriceMicroLamports) + 999999n) / 1000000n
   const networkFee = BigInt(bh.lamportsPerSignature) + priority
   check(BigInt(bh.networkFeeLamports) === networkFee && networkFee <= BigInt(l.maxNetworkFeeLamports), 'Network fee differs from its explicit basis')
+  refuse(claimReceives(claimable, networkFee) > 0n, 'Not enough to claim yet: your fees would barely cover the network fee. Claim once more trades have paid you.')
   // The fee is paid before the claim lands; the claim refuses a recipient left below rent (RecipientBelowRent).
   refuse(BigInt(wallet.lamports) >= networkFee && BigInt(wallet.lamports) - networkFee + claimable >= BigInt(rent.walletLamports), 'Your wallet needs a little SOL (about 0.001) for the network fee.')
   const slot = Math.max(...obs.map(o => o.slot))
@@ -85,7 +91,7 @@ export function compileNativeClaimReview(input) {
   const inspected = inspectHookLabMessage(review)
   const canonical = instructions.map(ix => ({ program: ix.programId.toBase58(), dataHex: ix.data.toString('hex'), accounts: ix.keys.map(m => review.accounts.find(a => a.address === m.pubkey.toBase58())) }))
   check(message.header.numRequiredSignatures === 1 && isDeepStrictEqual(inspected.instructions, canonical), 'Compiled claim envelope differs')
-  const quote = { claimableLamports: String(claimable), launch: launchKey, launchRentLamports: String(rent.launchLamports), networkFeeLamports: String(networkFee),
+  const quote = { claimableLamports: String(claimable), receiveLamports: String(claimReceives(claimable, networkFee)), launch: launchKey, launchRentLamports: String(rent.launchLamports), networkFeeLamports: String(networkFee),
     walletLamportsBefore: String(wallet.lamports), creatorFeesClaimedBefore: launch.creator_fees_claimed.toString() }
   return Object.freeze({ schema: 'repoing/hooklab-native-claim-review/1', request: r, review, quote, instructions: inspected.instructions })
 }
@@ -124,9 +130,10 @@ export function verifyNativeClaimReceipt({ plan, rent, programs, tx }) {
   return { executed: true, claimedLamports: String(claimed), claimedTotal: event.claimed_total.toString() }
 }
 
-// Display only (coin page and My coins): whether this coin's fees are claimable in SOL, by whom, and how much right now.
+// Display only (coin page and My coins): whether this coin's fees are claimable in SOL, by whom, how much right now, and
+// what the creator would receive after the claim's network fee (networkFeeLamports, the server's claim fee basis).
 // Claims themselves re-read everything on two providers before anything is signed.
-export async function readNativeClaimStatus({ connection, mint, programs }) {
+export async function readNativeClaimStatus({ connection, mint, programs, networkFeeLamports }) {
   new PublicKey(mint)
   const launchKey = launchAddress(programs, mint)
   const [{ value: [info] }, rentLamports] = await Promise.all([connection.getMultipleAccountsInfoAndContext([new PublicKey(launchKey)], { commitment: 'confirmed' }),
@@ -134,6 +141,8 @@ export async function readNativeClaimStatus({ connection, mint, programs }) {
   if (!info || info.owner.toBase58() !== programs.launch || Buffer.from(info.data).length !== LAUNCH_ACCOUNT_BYTES) return null
   const launch = loadNativeArtifacts().coders.launch.accounts.decode('Launch', Buffer.from(info.data))
   if (launch.mint.toBase58() !== mint) return null
-  const native = launchIsNative(Buffer.from(info.data)), above = BigInt(info.lamports) - BigInt(rentLamports)
-  return Object.freeze({ mint, native, creator: launch.creator.toBase58(), claimableLamports: native && above > 0n ? String(above) : '0' })
+  const native = launchIsNative(Buffer.from(info.data)), above = BigInt(info.lamports) - BigInt(rentLamports), claimable = native && above > 0n ? above : 0n
+  const receive = claimReceives(claimable, networkFeeLamports)
+  return Object.freeze({ mint, native, creator: launch.creator.toBase58(), claimableLamports: String(claimable), networkFeeLamports: String(BigInt(networkFeeLamports)),
+    receiveLamports: String(receive), ready: receive > 0n })
 }
