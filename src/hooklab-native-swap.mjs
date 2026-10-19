@@ -19,6 +19,7 @@ import { approvedCreatorFees } from './hooklab-launch-menus.mjs'
 import { hookCoinAddresses, swapAccountEvidence } from './hooklab-inclusive-max-wallet-swap.mjs'
 import { NATIVE_ELF, NATIVE_FLAGS, NATIVE_IDL_SHA256, loadNativeArtifacts } from './hooklab-native-pins.mjs'
 import { STATUS_GRADUATED, finalFillLamports, isReady } from './hooklab-graduation.mjs'
+import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { createHolding, graduateHookCoin } from './hooklab-owner-driver/instructions.mjs'
 
@@ -161,7 +162,7 @@ export function compileNativeSwapReview(input) {
   const configBytes = owned(accounts, a.launchConfig, L, 250), c = decoded(launch, 'Config', configBytes), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
   // Config.reserved[0] is the native-launches switch (byte 186): either value trades, it only steers new launches.
   check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && !d.paused
-    && configBytes[NATIVE_FLAGS.configNativeLaunches] === c.reserved[0] && [0, 1].includes(c.reserved[0]) && c.reserved.slice(1).every(v => v === 0)
+    && configBytes[NATIVE_FLAGS.configNativeLaunches] === c.reserved[0] && launchConfigReservedValid(c.reserved)
     && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')

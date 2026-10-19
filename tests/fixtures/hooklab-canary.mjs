@@ -23,8 +23,9 @@ export function localTestEnvironment(){return {NODE_ENV:'development',HOOK_LOCAL
 // ordinary open market (swap unpaused, no governance gate) with the owner's USD-priced virtual-quote bounds; the launch
 // Config switch starts off, as on mainnet before the governed change. prepared: false leaves out the mint's prepared policy,
 // registry and selected config (launchInput is then null), for a test that runs the real preparation first. capBps: the
-// synthetic coin's max per wallet.
-export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepared=true,capBps=200}){
+// synthetic coin's max per wallet. virtualQuote: a fixed curve instead (both launch Config bounds pinned to it), for trade
+// tests whose wallets must reach the curve's end.
+export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepared=true,capBps=200,virtualQuote=null}){
  const base=new URL('../../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/',import.meta.url),nativeBase=new URL('../../vendor/hooklab-native-candidate/',import.meta.url)
  const original=JSON.parse(readFileSync(new URL('offline-builder-profile.json',base))),idlNames={launch:'bordrless_launch',swap:'bordrless_swap',gate:'hook_max_wallet',token:'bordrless_token'}
  const idlUrl=role=>role==='token'?new URL('../../vendor/hooklab-production-candidate/idl/bordrless_token.json',import.meta.url):new URL(`${idlNames[role]}.json`,native&&NATIVE_ELF[role]?nativeBase:base)
@@ -57,7 +58,7 @@ export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepa
   put(pd,loader,Buffer.concat([header,elfs[role]]));const program=Buffer.alloc(36);program.writeUInt32LE(2);pk(pd).toBuffer().copy(program,4);put(address,loader,program,'10000000000',true)
  }
  const ruleBounds=value('launch','RuleBounds',{max_rules_fee_bps:100,min_max_wallet_bps:1,max_max_wallet_bps:9999})
- const bounds=native?['5625000000','112500000000']:['1000000000','1000000000']
+ const bounds=virtualQuote?[virtualQuote,virtualQuote]:native?['5625000000','112500000000']:['1000000000','1000000000']
  const lc=value('launch','Config',{version:1,bump:bump(L,'config'),admin:pk(roles.admin),treasury:pk(roles.treasury),quote_mint:pk(profile.quoteMint),
   max_creator_fee_bps:100,curve_bps:7500,supply:bn('1000000000000000'),decimals:6,min_virtual_quote:bn(bounds[0]),max_virtual_quote:bn(bounds[1]),paused:false,rule_bounds:ruleBounds})
  const sc=value('swap','Config',{version:1,bump:bump(S,'config'),admin:pk(roles.admin),treasury:pk(roles.treasury),fee_collector:pk(roles.treasury),paused:!native,launch_protocol_share_bps:2500})
@@ -73,7 +74,7 @@ export function makeCanaryState({elfDirectory,roles,blockhash,native=false,prepa
  if(prepared)put(pda(G,'bordrless-hook-accounts',pk(roles.mint).toBuffer()),G,Buffer.concat([Buffer.from('02daf6662c38c0cd01020000000000','hex'),pk(pda(G,'policy-v2',pk(roles.mint).toBuffer())).toBuffer(),Buffer.from([0,0]),pk(pda(L,'launch',pk(roles.mint).toBuffer())).toBuffer()]))
  typed('token','Mint',profile.quoteMint,value('token','Mint',{version:1,decimals:9,supply:bn('1000000000000'),max_supply:bn('1000000000000'),name:'Synthetic quote',symbol:'TEST',creator:pk(roles.creator)}),519)
  const prep={schema:'repoing/inclusive-max-wallet-preparation-request/1',policyKind:'max-wallet',policyVersion:2,creator:roles.creator,feePayer:roles.creator,mint:roles.mint,selectedConfig:roles.config,capBps,label:'private-canary',creatorFeeBps:100,rules:'none',hookFlags:1,feeModel:2,protocolShareBps:2500}
- const request={...prep,schema:'repoing/inclusive-max-wallet-launch-request/1',reviewer:roles.admin,name:'Private canary',symbol:'CANARY',uri:'',virtualQuote:native?'53251917070':'1000000000'}
+ const request={...prep,schema:'repoing/inclusive-max-wallet-launch-request/1',reviewer:roles.admin,name:'Private canary',symbol:'CANARY',uri:'',virtualQuote:virtualQuote??(native?'53251917070':'1000000000')}
  const derived=maxWalletLaunchInventory(envelope,request,Buffer.from(accounts.get(pda(L,'config')).dataBase64,'base64')),a=derived.addresses
  const table=Buffer.alloc(56+32*derived.inventory.length);table.writeUInt32LE(1);table.writeBigUInt64LE(0xffffffffffffffffn,4);table.writeBigUInt64LE(99n,12);table[21]=1;pk(roles.admin).toBuffer().copy(table,22)
  derived.inventory.forEach((address,i)=>pk(address).toBuffer().copy(table,56+i*32))
