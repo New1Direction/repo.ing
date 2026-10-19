@@ -35,7 +35,8 @@ test('the review screen pays out only the essentials, every figure from the chai
   assert.equal(openLaunchCosts({ ...openCreation, poolCreationFeeLamports: '1000' }).rows[1].label, 'Pool fee')
   assert.equal(openLaunchNetworkFee('0'), '20000'); assert.equal(openLaunchNetworkFee('1000'), String(2 * (10000 + 1400)), 'two transactions with two signatures and the priority price')
   const price = openLaunchPrice(availability.launchPrice)
-  assert.match(price.opening, /SOL \(≈\$5,000\)/); assert.match(price.graduation, /SOL \(≈\$45,000\)/)
+  assert.deepEqual(price.opening, { sol: '47.34 SOL', usd: '≈$5,000' }); assert.equal(price.graduation.usd, '≈$45,000'); assert.match(price.graduation.sol, / SOL$/)
+  assert.deepEqual(openLaunchPrice({ virtualQuote: '53251917070' }).opening, { sol: '47.34 SOL', usd: null }, 'without a SOL price: SOL only')
   assert.equal(openCreationProblem(openCreation), ''); assert.match(openCreationProblem({ ...openCreation, paused: true }), /paused/); assert.match(openCreationProblem(null), /isn’t available/)
 
   const markup = html(h(OpenLaunchReview, { coin, image: coin.image, profile: null, openCreation, costs: availability.costs, price: availability.launchPrice, onSign() {}, onEdit() {} }))

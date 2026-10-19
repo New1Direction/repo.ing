@@ -51,6 +51,7 @@ export function OpenLaunchSteps({ phase }) {
 // The review screen: only what the creator pays, the price, their rules, the graduation target and the note.
 export function OpenLaunchReview({ coin, image, profile, openCreation, costs, price, busy = false, onSign, onEdit, editLabel = 'Edit' }) {
   const { rows, totalLamports } = openLaunchCosts(openCreation, costs), values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
+  const amount = value => value ? <>{value.sol}{value.usd && <small>{value.usd}</small>}</> : 'Set when you sign'
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
     <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} profile={profile}/>
@@ -60,8 +61,8 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
         <div className="hooks-cost"><span>Total, about</span><strong>{solOrWallet(totalLamports)}</strong><small>Your wallet shows the exact amount before you approve.</small></div>
       </div>
       <div className="inner-card fee-breakdown"><h3>Your coin</h3>
-        <div className="fee-line"><span>Opening price<small>Its market value when trading opens</small></span><strong>{values?.opening ?? 'Set when you sign'}</strong></div>
-        <div className="fee-line"><span>Graduates at<small>{values ? `Its market value once buyers put in ${values.raise}` : 'Its market value when the curve sells out'}</small></span><strong>{values?.graduation ?? 'Set when you sign'}</strong></div>
+        <div className="fee-line"><span>Opening price<small>Its market value when trading opens</small></span><strong>{amount(values?.opening)}</strong></div>
+        <div className="fee-line"><span>Graduates at<small>{values ? `Its market value once buyers put in ${values.raise}` : 'Its market value when the curve sells out'}</small></span><strong>{amount(values?.graduation)}</strong></div>
         <div className="fee-line"><span>Creator fee<small>On every buy and sell, in SOL</small></span><strong>{percent(coin.creatorFeeBps)}</strong></div>
         <div className="fee-line"><span>Max per wallet<small>Until the coin graduates</small></span><strong>{percent(coin.capBps)}</strong></div>
       </div>
@@ -96,7 +97,7 @@ export function OpenLaunchSigning({ symbol, stage, status, busy, error, canRetry
 }
 
 export function OpenLaunchLive({ symbol, mint, onAnother }) {
-  return <section className="launch-panel hooks-status" aria-live="polite">
+  return <section className="launch-panel hooks-status hooks-open-live" aria-live="polite">
     <h2>${symbol} is live</h2>
     <p>Anyone can buy and sell it on repo.ing now, in SOL. Share its page so people can find it.</p>
     {mint && <p className="hooks-fine">Coin address <code title={mint}>{shortAddress(mint)}</code></p>}

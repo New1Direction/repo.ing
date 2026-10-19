@@ -50,12 +50,12 @@ export function openLaunchCosts(openCreation, costs = {}) {
 }
 export const solOrWallet = value => value === null ? 'Shown in your wallet' : formatSol(value, 6)
 
-// The opening price and the graduation target, in SOL and USD. price: { solUsdMicros, virtualQuote } (today's estimate
-// from the server, or the price fixed when the launch was reserved), or null when no SOL price is known.
+// The opening price and the graduation target, in SOL and USD (null without a SOL price). price: { solUsdMicros,
+// virtualQuote } (today's estimate from the server, or the price fixed when the launch was reserved), or null.
 export function openLaunchPrice(price) {
   if (!price?.virtualQuote) return null
-  const v = launchValues(price.virtualQuote, price.solUsdMicros ?? null), usd = micros => micros === null ? '' : ` (≈${formatUsd(micros)})`
-  return { opening: `${formatSol(v.openingLamports)}${usd(v.openingUsdMicros)}`, graduation: `${formatSol(v.graduationLamports)}${usd(v.graduationUsdMicros)}`,
+  const v = launchValues(price.virtualQuote, price.solUsdMicros ?? null), usd = micros => micros === null ? null : `≈${formatUsd(micros)}`
+  return { opening: { sol: formatSol(v.openingLamports), usd: usd(v.openingUsdMicros) }, graduation: { sol: formatSol(v.graduationLamports), usd: usd(v.graduationUsdMicros) },
     raise: formatSol(v.raiseLamports) }
 }
 
