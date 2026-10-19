@@ -59,8 +59,10 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@e2e-dev/web": "0.15.2",
     "@modelcontextprotocol/client": "2.1.0",
     "drizzle-kit": "^0.31.11",
+    "e2e": "0.21.2",
     "esbuild": "0.25.12",
     "jsdom": "26.1.0"
   }
