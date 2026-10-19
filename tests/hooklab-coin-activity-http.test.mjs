@@ -3,7 +3,7 @@
 // on for long). No database or live RPC: stores and the index are fakes; holders read the canary's saved holdings.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createCoinActivityHandlers, createOnDemandIndexer } from '../app/lib/hooklab-coin-activity.mjs'
+import { createCoinActivityHandlers, createOnDemandIndexer, reportOnce } from '../app/lib/hooklab-coin-activity.mjs'
 import { hookActivityRpc } from '../src/hooklab-coin-activity.mjs'
 import { canary, canaryConnection } from './fixtures/hooklab-canary-trades.mjs'
 
@@ -115,4 +115,26 @@ test('the on-demand index runs only when the chain is ahead, once per coin at a 
   assert.equal(await failing.ensure({ coin, rpc: 'rpc', chainSwapCount: 2n, indexedSwapCount: 0n }), 'error')
   assert.deepEqual(errors, ['HOOK_TRADE_SLOT_MISMATCH'])
   assert.equal(await failing.ensure({ coin, rpc: 'rpc', chainSwapCount: 2n, indexedSwapCount: 0n }), 'recent')
+})
+
+test('a failing holders read answers 503 and is not retried for a few seconds', async () => {
+  const calls = []
+  const service = { market: async () => ({ market: { ...market, mint: pool } }), activity: { holdings: async () => { calls.push('gpa'); throw Error('provider refused') } } }
+  const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async () => ({ id: 'coin' }), openStore: () => { throw Error('no database needed') } })
+  const read = () => handlers.holders(new Request(`https://repo.ing/api/hook-lab/market/${pool}/holders`), { mint: pool })
+  assert.equal((await read()).status, 503); assert.equal((await read()).status, 503)
+  assert.deepEqual(calls, ['gpa'])
+})
+
+test('failures are logged by code once a minute, a missing table by name', () => {
+  // Later than anything earlier tests logged (the once-a-minute memory is per process).
+  const lines = [], warn = console.warn, at = Date.now() + 3_600_000
+  console.warn = line => lines.push(line)
+  try {
+    reportOnce(Object.assign(Error('relation does not exist'), { code: '42P01' }), at)
+    reportOnce(Object.assign(Error('x'), { code: '42P01' }), at + 1_000)
+    reportOnce(Object.assign(Error('HOOK_TRADE_SLOT_MISMATCH'), { code: 'HOOK_TRADE_SLOT_MISMATCH' }), at + 1_000)
+    reportOnce(Error('https://secret.example/?api-key=1 failed'), at + 1_000)
+  } finally { console.warn = warn }
+  assert.deepEqual(lines.map(line => JSON.parse(line).hookCoinActivityError.code), ['HOOK_TRADES_NOT_MIGRATED', 'HOOK_TRADE_SLOT_MISMATCH', 'UNAVAILABLE'])
 })

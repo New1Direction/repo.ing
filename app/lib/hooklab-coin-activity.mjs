@@ -24,6 +24,8 @@ export const REFRESH_MIN_MS = 10_000
 export const REFRESH_WAIT_MS = 2_500
 export const MAX_RUNNING_REFRESHES = 3
 export const HOLDERS_TTL_MS = 60_000
+// After a failed holders read, the coin answers 'unavailable' this long without asking the provider again.
+export const HOLDERS_RETRY_MS = 15_000
 const TRADES_PAGE = 20, TRADES_PAGE_MAX = 50
 
 const reply = (body, status = 200, cache = 'no-store') => Response.json(body, { status, headers: { 'Cache-Control': cache, 'X-Content-Type-Options': 'nosniff' } })
@@ -37,7 +39,7 @@ const addressesOf = mint => cached(`hook-addresses:${mint}`, 3_600_000, () => ho
 // A failure is logged by its code, at most once a minute each, never with RPC or database detail.
 const logged = new Map()
 export function reportOnce(error, now = Date.now()) {
-  const code = /^[A-Z][A-Z0-9_]{3,60}$/.test(error?.code ?? '') ? error.code : 'UNAVAILABLE'
+  const code = error?.code === '42P01' ? 'HOOK_TRADES_NOT_MIGRATED' : /^[A-Z][A-Z0-9_]{3,60}$/.test(error?.code ?? '') ? error.code : 'UNAVAILABLE'
   if (now - (logged.get(code) ?? -Infinity) < 60_000) return
   logged.set(code, now)
   console.warn(JSON.stringify({ hookCoinActivityError: { code } }))
@@ -84,7 +86,8 @@ const publicTrade = t => ({ signature: t.signature, eventIndex: t.eventIndex, si
   solLamports: t.quoteAmount, tokenBaseUnits: t.baseAmount, swapCount: t.swapCount })
 
 export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, listed = launchedCoinProfile, openStore = () => openHookCoinStore(),
-  indexer = null, allowed = defaultLimiter, holdersTtlMs = HOLDERS_TTL_MS } = {}) {
+  indexer = null, allowed = defaultLimiter, holdersTtlMs = HOLDERS_TTL_MS, holdersRetryMs = HOLDERS_RETRY_MS, now = Date.now } = {}) {
+  const holderFailures = new Map()
   // A listed coin's market read, then work({ service, market, addresses }); every refusal before any database read.
   const guarded = work => async (request, { mint }) => {
     if (!address(mint)) return reply({ error: 'Unknown coin.' }, 404)
@@ -132,10 +135,17 @@ export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, li
       })
     }),
     holders: guarded(async ({ service, market, addresses }) => {
+      if (now() - (holderFailures.get(market.mint) ?? -Infinity) < holdersRetryMs) return unavailable()
       const labels = hookHolderLabels(addresses, { graduated: market.graduated })
-      const value = await cached(`hook-holders:${market.mint}`, holdersTtlMs, () =>
-        readHookCoinHolders({ rpc: service.activity, mint: market.mint, supply: market.supply ?? market.initialSupply, labels }))
-      return reply({ status: 'available', decimals: market.decimals, ...value }, 200, 'public, max-age=30')
+      try {
+        const value = await cached(`hook-holders:${market.mint}`, holdersTtlMs, () =>
+          readHookCoinHolders({ rpc: service.activity, mint: market.mint, supply: market.supply ?? market.initialSupply, labels }))
+        return reply({ status: 'available', decimals: market.decimals, ...value }, 200, 'public, max-age=30')
+      } catch (error) {
+        holderFailures.set(market.mint, now())
+        if (holderFailures.size > 1000) holderFailures.delete(holderFailures.keys().next().value)
+        throw error
+      }
     }),
   })
 }

@@ -125,6 +125,8 @@ test('the table refuses rows a decoder could never produce', () => withDatabase(
   const insert = values => pool.query(`insert into hook_lab_coin_trades(signature,event_index,event,quote_asset,pool,mint,slot,traded_at,swap_count,side,trader,
     quote_amount,base_amount,quote_fee,curve_base,curve_quote) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, values)
   await insert(row)
+  // A dust sell can pay out 0 lamports after fees; it is still a trade and must never wedge the index.
+  await insert(row.map((v, i) => i === 0 ? 'w'.repeat(64) : i === 8 ? '3' : i === 9 ? 'sell' : i === 11 ? '0' : v))
   await assert.rejects(insert(row.map((v, i) => i === 0 ? 'y'.repeat(64) : v)), /hook_lab_coin_trades_pool_swap_count_key/, 'one row per swap counter')
   await assert.rejects(insert(row.map((v, i) => i === 0 ? 'z'.repeat(64) : i === 9 ? 'hold' : i === 8 ? '2' : v)), /check/)
   await assert.rejects(insert(row.map((v, i) => i === 0 ? 'z'.repeat(64) : i === 2 ? 'Minted' : i === 8 ? '2' : v)), /check/)

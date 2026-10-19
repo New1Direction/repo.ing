@@ -16,7 +16,7 @@ create table hook_lab_coin_trades (
  side text not null check(side in ('buy','sell')),
  trader text not null check(trader ~ '^[1-9A-HJ-NP-Za-km-z]{32,44}$'),
  -- SOL (or lamports) the trader paid on a buy or received on a sell; the coin amount bought or sold (raw units).
- quote_amount numeric(20,0) not null check(quote_amount>0),
+ quote_amount numeric(20,0) not null check(quote_amount>=0),
  base_amount numeric(20,0) not null check(base_amount>=0),
  quote_fee numeric(21,0) not null check(quote_fee>=0),
  -- The curve's pricing reserves after the swap (real plus virtual): price = curve_quote / curve_base.

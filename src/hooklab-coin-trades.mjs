@@ -35,8 +35,9 @@ async function pendingHistory(rpc, pool, cursor, { pageSize, maxPages }) {
 
 // One indexing pass for one coin ({ mint, pool }): reads at most maxTransactions transactions (concurrency at a time) and
 // records each in order. Returns how many were read, the trades stored and how many transactions are left for a later pass.
+// A backlog longer than maxPages pages of history stops with HOOK_TRADE_HISTORY_TOO_LONG rather than leaving a gap.
 export async function indexHookCoinTrades({ rpc, store, coin, decode = decodeHookTrades, maxTransactions = 40, concurrency = 4,
-  pageSize = 1000, maxPages = 10 }) {
+  pageSize = 1000, maxPages = 20 }) {
   const { mint, pool } = coin, cursor = await store.cursor(pool)
   check(!cursor || cursor.mint === mint, 'HOOK_TRADE_CURSOR_MINT')
   const pending = await pendingHistory(rpc, pool, cursor, { pageSize, maxPages })
