@@ -8,12 +8,14 @@ import { HookCoinPreview } from './hooklab-coin-form'
 import { sol } from '../lib/hooklab-trade-math.mjs'
 import { forgetOperation, isFinal, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import { coinImageUrl } from '../../src/hooklab-coin-profile.mjs'
+import { HookClaimFees } from './hooklab-claim-fees'
 
 const REQUEST_TEXT = { queued: 'Waiting for approval', invited: 'Invited: finish your launch', launching: 'Launching', launched: 'Live',
   declined: 'Not approved', cancelled: 'Cancelled', 'invite-expired': 'Invite ended' }
 
-// The signed-in creator's Hook Lab SOL (with withdraw) and their launch request or coin.
-export function HookMyCoins({ genesisHash }) {
+// The signed-in creator's Hook Lab SOL (with withdraw) and their launch request or coin. nativeClaims
+// (HOOK_NATIVE_LAUNCHES_ENABLED): a launched native-SOL coin also offers its creator fees to claim.
+export function HookMyCoins({ genesisHash, nativeClaims = false }) {
   const { wallet, provider } = useWallet()
   const session = useHookWalletSession(genesisHash)
   const [balances, setBalances] = useState(null), [request, setRequest] = useState(null)
@@ -64,6 +66,7 @@ export function HookMyCoins({ genesisHash }) {
       {request ? <>
         <HookCoinPreview image={request.profile ? coinImageUrl('', request.id, 128) : null} name={request.name} symbol={request.symbol} capBps={request.capBps} creatorFeeBps={request.creatorFeeBps} profile={request.profile}
           note={REQUEST_TEXT[request.status] ?? request.status}/>
+        {nativeClaims && request.mint && request.status === 'launched' && <HookClaimFees mint={request.mint} symbol={request.symbol} genesisHash={genesisHash}/>}
         <div className="launch-review-actions">{request.mint ? <Link className="button primary" href={`/hooks/token/${request.mint}`}>Open {`$${request.symbol}`} <ArrowRight size={16} aria-hidden="true"/></Link>
           : <Link className="button" href="/hooks/launch-review">Open your launch</Link>}</div>
       </> : <><p>You haven’t launched a coin with this wallet yet.</p><Link className="button primary" href="/hooks/launch-review">Launch a coin</Link></>}

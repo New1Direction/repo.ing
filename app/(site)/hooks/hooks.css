@@ -186,3 +186,10 @@
 /* 320-375 px: five trade columns fit in about 250 px (no unit in cells, compact ages and coin amounts); the table scrolls inside its card if not. */
 @media(max-width:420px){.hooks-activity{padding:10px 16px 16px}.hooks-table{font-size:12px}.hooks-table :is(th,td){padding-left:5px;padding-right:5px}.hooks-table th{font-size:10px}}
 .hooks-chart-card .chart-headline .hooks-chart-sol{color:var(--muted);font-size:13px;font-weight:500;font-variant-numeric:tabular-nums}
+/* Native-SOL coins: the creator's fee card (coin page and My coins), tinted like the graduation facts; the button takes a full row on phones. */
+.hooks-claim{margin-top:16px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--green) 50%,var(--border));border-radius:12px;background:color-mix(in srgb,var(--green) 6%,var(--bg))}
+.hooks-claim>div{display:flex;align-items:center;gap:12px}.hooks-claim>div>svg{flex:none;color:var(--green)}
+.hooks-claim>div>div{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0}.hooks-claim strong{font-size:15px}.hooks-claim span{color:var(--muted);font-size:13px;line-height:1.45}
+.hooks-claim .button{flex:none;white-space:nowrap}.hooks-claim-note{margin:10px 0 0;color:var(--muted)!important;font-size:13px}
+.hooks-mine .hooks-claim{margin:0 0 14px}
+@media(max-width:560px){.hooks-claim>div{flex-wrap:wrap}.hooks-claim .button{width:100%}}

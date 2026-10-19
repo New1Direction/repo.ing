@@ -99,6 +99,11 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
  if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true')installInclusiveTradeRuntime(createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true'}))
+ // Native-SOL launches: their creators claim fees in SOL (stage native-claim). Off unless HOOK_NATIVE_LAUNCHES_ENABLED=true.
+ if(env.HOOK_NATIVE_LAUNCHES_ENABLED==='true'){
+  const {createNativeClaimRuntime,installNativeClaimRuntime}=await import('../app/lib/hooklab-native-claim-runtime.mjs')
+  installNativeClaimRuntime(createNativeClaimRuntime(pool,{...base,nativeLaunchesApproved:true,limits:s.tradeLimits}))
+ }
  return {installed:true,trading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'}
  }catch(error){if(!nativeLaunchRuntime())await pool.end().catch(()=>{});throw error}
 }

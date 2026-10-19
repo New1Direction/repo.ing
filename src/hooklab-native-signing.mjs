@@ -45,6 +45,8 @@ const summary=row=>Object.freeze({id:row.id,owner:row.owner_wallet,custodyOperat
 export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'}}={}){
  const operations=Object.freeze({...stageOperations}),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation'],launch:['max-wallet-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
   'wallet-fund':['hooklab-wallet-fund'],'wallet-withdraw':['hooklab-wallet-withdraw'],
+  // A native-SOL launch's creator claiming its fees (needs the native-stages migration's stage list).
+  'native-claim':['hooklab-native-claim'],
   ...(localAcceptanceNetwork()?{'local-prepare-holding':['local-prepare-holding'],'local-inclusive-collection':['local-inclusive-collection']}:{})}
  check(Object.keys(operations).length>0&&Object.entries(operations).every(([stage,operation])=>allowed[stage]?.includes(operation)))
  check(!custodyAdapter||Object.keys(operations).every(stage=>['preparation','launch'].includes(stage)))

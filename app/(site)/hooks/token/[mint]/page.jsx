@@ -8,6 +8,7 @@ import { HookTradePanel } from '../../../../components/hooklab-trade-panel'
 import { HookCoinGraduation } from '../../../../components/hooklab-coin-graduation'
 import { HookCoinChart } from '../../../../components/hooklab-coin-chart'
 import { HookCoinActivity } from '../../../../components/hooklab-coin-activity'
+import { HookClaimFees } from '../../../../components/hooklab-claim-fees'
 import { inclusiveTradeRuntime } from '../../../../lib/hooklab-inclusive-trade-runtime.mjs'
 import { cachedMarket, listedCoin } from '../../../../lib/hooklab-market.mjs'
 import { coinImageUrl } from '../../../../../src/hooklab-coin-profile.mjs'
@@ -59,6 +60,8 @@ export default async function HooksCoinPage({ params }) {
             <div><dt>Creator</dt><dd><a href={`https://explorer.solana.com/address/${market.creator}`} target="_blank" rel="noopener noreferrer">{short(market.creator)}</a></dd></div>
           </dl>
           <HookCoinGraduation market={market}/>
+          {/* Native-SOL coins: their creator claims the fees in SOL here (shown to the creator only). */}
+          {process.env.HOOK_NATIVE_LAUNCHES_ENABLED === 'true' && <HookClaimFees mint={mint} symbol={market.symbol} genesisHash={executionGenesis()}/>}
         </section>}
       <aside className="hooks-coin-side"><HookTradePanel mint={mint} genesisHash={executionGenesis()} initial={view ?? null}/></aside>
       {/* The chart values the mint's current supply (graduation burns some), the same figure as the card's market cap. */}

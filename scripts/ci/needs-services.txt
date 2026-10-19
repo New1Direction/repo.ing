@@ -119,3 +119,5 @@ hooklab-database-timeouts
 hooklab-owner-approval-db
 # Hooks coin trade index, real PostgreSQL on 127.0.0.1:55432 (scratch databases it creates itself).
 hooklab-coin-trades-db
+# Native-SOL creator fee claims on the signing table after the native-stages migration, real PostgreSQL on 127.0.0.1:55432.
+hooklab-native-claim-db
