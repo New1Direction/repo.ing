@@ -210,8 +210,10 @@ function compile(input, fixture, canary = false) {
   }
   for (const name of ['kitConfig', 'holderVault']) check(accounts.get(a[name]) === null, 'No-Kit account unexpectedly initialized')
   const c = decoded(launch, 'Config', owned(accounts, a.launchConfig, L, 250)), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
+  // Launch Config.reserved[0] (byte 186) is the native-launches switch of the upgraded launch program: it steers new
+  // launches only, so a bridged coin keeps trading with it on.
   check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && d.paused === canary
-    && c.reserved.every(v => v === 0) && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
+    && [0, 1].includes(c.reserved[0]) && c.reserved.slice(1).every(v => v === 0) && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
   const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))

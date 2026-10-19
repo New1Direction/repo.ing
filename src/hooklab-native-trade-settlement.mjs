@@ -78,7 +78,9 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
   if(tx.error!==null){
    // A failed transaction moves nothing but its fee.
    check(tx.keys.every((k,i)=>delta(i)===(k===review.payer?-BigInt(fee):0n)))
-   return {...identity,status:'finalized-failure',inclusion,feeLamports:fee,errorName:failureName(rows[0].logs,p.programs),transactionSha256:sha(JSON.stringify(tx))}
+   // Display only, and only when both providers' logs name the same error.
+   const names=rows.map(row=>failureName(row.logs,p.programs)),errorName=names[0]===names[1]?names[0]:null
+   return {...identity,status:'finalized-failure',inclusion,feeLamports:fee,errorName,transactionSha256:sha(JSON.stringify(tx))}
   }
   // The fee and a buy's input are exact; a sale's output and the fee on it follow the pool it met. Every account's
   // lamports moved exactly as that executed trade says, and no other account's moved at all.
@@ -93,7 +95,8 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
   }
   return {...identity,status:'finalized-success',executionStatus:'finalized-executed',
    reviewSlotBoundExceeded:tx.slot>review.validUntilSlot,reviewSlotCeilingEnforcedOnchain:false,
-   policyReviewRequired:execution.quote.priceImpactReviewBoundExceeded||tx.slot>review.validUntilSlot,reviewBoundsSatisfied:!execution.quote.priceImpactReviewBoundExceeded&&tx.slot<=review.validUntilSlot,
+   policyReviewRequired:execution.quote.priceImpactReviewBoundExceeded||tx.slot>review.validUntilSlot||!execution.curveAsReviewed,
+   reviewBoundsSatisfied:!execution.quote.priceImpactReviewBoundExceeded&&tx.slot<=review.validUntilSlot&&execution.curveAsReviewed,
    onchainMinimumOutputSatisfied:true,impactCeilingEnforcedOnchain:false,inclusion,feeLamports:fee,quote:execution.quote,lamportDeltas:execution.lamportDeltas,
    tokenBalances:execution.tokenBalances,...(plan.graduates?{graduated:true}:{}),transactionSha256:sha(JSON.stringify(tx)),authenticatedFeeEvent:true,authenticatedTokenBalanceEvents:true}
  }catch{return {...identity,status:'unresolved'}}
@@ -171,9 +174,13 @@ function verifyNativeTradeEvents({ci,plan,tx,fee}){
   feeModel:2,protocolShareBps:2500,lpFeeBps:0,flatProtocolFeeBps:0,sniperWindowSecs:0,sniperStartBps:0,quoteHook:'none',modules:0,authorShareBps:0,rules:'none',rewards:false,
   recipientBaseBalance:traderBefore,maxWalletLifted:true,pool:pre,policy:{version:2,feeModel:2,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps,lpFeeBps:0,initialSupply:B(policy.initial_supply),capBps:r.capBps}})
  check(actual.delivered===delivered&&actual.grossOutput===out&&actual.after.baseReserve===vaultAfter&&actual.after.quoteReserve===B(s.quote_reserve)&&actual.after.protocolFeesQuote===protocolAfter)
+ // The swap met the curve the review read (its virtual offsets, which only graduation changes). If the coin graduated in
+ // between, the trade still happened, so it settles, but for a person to look at (review-required).
+ const reviewed=coders.swap.accounts.decode('Pool',Buffer.from(ci.observations[0].accounts.find(x=>x.address===a.pool).account.dataBase64,'base64'))
+ const curveAsReviewed=n(s.virtual_base)===n(reviewed.virtual_base)&&n(s.virtual_quote)===n(reviewed.virtual_quote)
  const rent=BigInt(q.holdingRentLamports)
  const lamportDeltas={[r.trader]:buy?-(fee+amount+rent):delivered-fee,[a.launch]:creator,[a.pool]:buy?amount-creator:-(delivered+creator),...(plan.createsHolding?{[a.traderBase]:rent}:{})}
- return {lamportDeltas:Object.fromEntries(Object.entries(lamportDeltas).map(([k,v])=>[k,String(v)])),
+ return {curveAsReviewed,lamportDeltas:Object.fromEntries(Object.entries(lamportDeltas).map(([k,v])=>[k,String(v)])),
   quote:{...q,delivered:String(delivered),grossCreatorFee:String(gross),protocolFee:String(platform),netCreatorFee:String(creator),priceImpactBps:String(actual.priceImpactBps),
    priceImpactReviewBoundExceeded:actual.priceImpactBps>BigInt(r.maxPriceImpactBps),
    after:{baseReserve:n(s.base_reserve),quoteReserve:n(s.quote_reserve),protocolFeesQuote:String(protocolAfter),swapCount:n(s.swap_count),traderBase:String(traderAfter)}},

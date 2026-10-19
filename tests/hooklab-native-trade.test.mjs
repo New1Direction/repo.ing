@@ -155,7 +155,17 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   assert.equal(failed.errorName,nativeErrorName(program,Number(code)),'named by the program that raised it, for the customer’s message')
   assert.equal((await market()).graduated,false)
  })
+ await t.test('a full curve waiting for graduate still takes sales, never buys',async()=>{
+  fill=finalFillLamports(await market())
+  const ix=nativeSwapV2Instruction(profile,{side:'buy',trader:last,mint:roles.mint,amountIn:fill,minAmountOut:1})
+  assert.equal((await w.send(await w.compile(last,[ComputeBudgetProgram.setComputeUnitLimit({units:1400000}),ix]))).error,null,'the fill without graduate, by another client')
+  await assert.rejects(prepare(roles.outsider,'buy',1000000),{code:'HOOKLAB_USER_REFUSAL',message:/finished its bonding curve/})
+  const {settled}=await trade(roles.outsider,'sell',await coins(roles.outsider))
+  assert.ok(BigInt(settled.quote.delivered)>0n);assert.equal((await market()).graduated,false)
+ })
+ let late
  await t.test('the exact final fill and graduate go out as ONE transaction, and settle only with the launch graduated',async()=>{
+  late=store(await prepare(roles.creator,'sell',(await coins(roles.creator))/500n))
   fill=finalFillLamports(await market())
   const {prepared,stored,sent,settled}=await trade(last,'buy',fill,{graduate:true})
   assert.equal(prepared.request.quote.graduates,true);assert.equal(settled.graduated,true)
@@ -169,6 +179,13 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   const ixs=TransactionMessage.decompile(VersionedMessage.deserialize(Buffer.from(prepared.review.messageBase64,'base64')),{addressLookupTableAccounts:[w.lookup]}).instructions
   assert.deepEqual(ixs.map(ix=>ix.programId.toBase58()).slice(2),[profile.programs.swap,profile.programs.launch],'[swap_v2 buy of the exact fill, graduate]')
   const after=await market();assert.equal(after.graduated,true);assert.equal(after.pool.virtualBase,'0')
+ })
+ await t.test('a sale reviewed on the curve that lands after graduation still settles exactly, flagged for a person to check',async()=>{
+  const before=await w.lamports([roles.creator]),sent=await w.send(late.review.messageBase64)
+  assert.equal(sent.error,null)
+  const settled=await resolverAt(RESTARTED).reconcile({...late,signedTransactionBase64:sent.wireBase64,signature:sent.signature})
+  assert.equal(settled.status,'finalized-success');assert.equal(settled.policyReviewRequired,true);assert.equal(settled.reviewBoundsSatisfied,false)
+  assert.equal(String((await w.lamports([roles.creator]))[roles.creator]-before[roles.creator]),settled.lamportDeltas[roles.creator])
  })
  await t.test('after graduation: no cap, constant product on the real reserves, the same inclusive fee',async()=>{
   const held=await coins(roles.creator);assert.ok(held>CAP-CAP/100n&&held<=CAP,'the creator sat at the old cap')
@@ -188,6 +205,15 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   assert.equal(await settleWith(tx=>{for(const g of tx.meta.innerInstructions)g.instructions=g.instructions.slice(0,-1)}),'unresolved','a missing event')
   assert.equal(await settleWith(tx=>{tx.meta.fee+=1}),'unresolved')
   assert.equal(await settleWith(tx=>{tx.slot+=1}),'unresolved')
+  // An operator settings change after the trade landed does not strand it: its stored context still settles, as long as
+  // it binds its own hash and today's profile.
+  const changed=nativeTradeResolver({...w.bindings,connections:w.connections(),limits:{...LIMITS,nowMs:BOOT,maxNetworkFeeLamports:'20000'},clock:()=>1000})
+  assert.notEqual(changed.configurationSha256,stored.configurationSha256)
+  assert.equal((await changed.reconcile({...stored,signedTransactionBase64:sent.wireBase64,signature:sent.signature})).status,'finalized-success')
+  const otherProfile=jsonbRoundTrip(stored.settlementContext);otherProfile.compilationInput.profile.providers=[...otherProfile.compilationInput.profile.providers].reverse()
+  await assert.rejects(changed.reconcile({...stored,settlementContext:otherProfile,signedTransactionBase64:sent.wireBase64,signature:sent.signature}))
+  await assert.rejects(changed.reconcile({...stored,settlementContext:{...stored.settlementContext,configurationSha256:changed.configurationSha256},signedTransactionBase64:sent.wireBase64,signature:sent.signature}),
+   'a context bound to another hash')
   // Providers a few trades apart see different pools; that is not receipt evidence, so the trade still settles.
   const apart=w.connections().map((c,i)=>i===0?c:{...c,connection:{...c.connection,getMultipleAccountsInfoAndContext:async(keys,config)=>{
    const r=await c.connection.getMultipleAccountsInfoAndContext(keys,config)

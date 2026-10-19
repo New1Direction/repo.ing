@@ -3,7 +3,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
+import {createHash} from 'node:crypto'
 import {Keypair} from '@solana/web3.js'
+import {NATIVE_ELF,NATIVE_IDL_SHA256} from '../src/hooklab-native-pins.mjs'
 import {createInclusiveTradeHandler,nativeTradingOn} from '../app/lib/hooklab-inclusive-trade.mjs'
 import {createInclusiveTradeRuntime} from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
 import {createMarketHandler} from '../app/lib/hooklab-market.mjs'
@@ -54,17 +56,34 @@ test('HTTP cannot choose the trader, inject state or drop the graduate flag of a
  assert.equal(h.seen.length,0)
 })
 
-test('the trade runtime registers the native stages only when built with the switch',async()=>{
- const bundle=JSON.parse(readFileSync(new URL('../config/hooklab-production-bundle-2.json',import.meta.url),'utf8')),origins=bundle.config.providerTrustDomains.map(t=>t.origin)
- const settings={origin:'https://repo.ing',ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:bundle.config,profile:bundle.profile,dossierJson:bundle.dossierJson,
+// Today's production bundle, re-pinned to the reviewed native builds as the post-upgrade bundle will be (profile IDLs,
+// ELF hashes and lengths, and the dossier and operator config that bind them).
+const sha=x=>createHash('sha256').update(x).digest('hex')
+function nativePinned(bundle){
+ const p=JSON.parse(bundle.profile.json),idl=role=>readFileSync(new URL(`../vendor/hooklab-native-candidate/bordrless_${role}.json`,import.meta.url))
+ const json=JSON.stringify({...p,idlSha256:{...p.idlSha256,...NATIVE_IDL_SHA256},elfSha256:{...p.elfSha256,swap:NATIVE_ELF.swap.sha256,launch:NATIVE_ELF.launch.sha256}})
+ const profile={...bundle.profile,json,expectedSha256:sha(json),idls:{...bundle.profile.idls,swap:idl('swap').toString('base64'),launch:idl('launch').toString('base64')},
+  elfLengths:{...bundle.profile.elfLengths,swap:NATIVE_ELF.swap.length,launch:NATIVE_ELF.launch.length}}
+ const dossier=JSON.parse(bundle.dossierJson);dossier.artifacts.profileSha256=profile.expectedSha256
+ for(const pin of dossier.programs)if(['swap','launch'].includes(pin.role))Object.assign(pin,{elfSha256:NATIVE_ELF[pin.role].sha256,elfLength:NATIVE_ELF[pin.role].length})
+ const dossierJson=JSON.stringify(dossier)
+ return {config:{...bundle.config,profileSha256:profile.expectedSha256,dossierSha256:sha(dossierJson)},profile,dossierJson}
+}
+
+test('the trade runtime registers the native stages only when built with the switch and a bundle pinning the native builds',async()=>{
+ const today=JSON.parse(readFileSync(new URL('../config/hooklab-production-bundle-2.json',import.meta.url),'utf8')),origins=today.config.providerTrustDomains.map(t=>t.origin)
+ const settings=bundle=>({origin:'https://repo.ing',ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:bundle.config,profile:bundle.profile,dossierJson:bundle.dossierJson,
   connections:bundle.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:origins[i]+'rpc'}})),
-  limits:{nowMs:1,maxAgeMs:60000,maxSlotLag:16,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:'15000',maxTotalDebitLamports:'15000',computeUnitLimit:1400000,computeUnitPriceMicroLamports:'0'}}
+  limits:{nowMs:1,maxAgeMs:60000,maxSlotLag:16,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:'15000',maxTotalDebitLamports:'15000',computeUnitLimit:1400000,computeUnitPriceMicroLamports:'0'}})
+ const upgraded=nativePinned(today)
  const reaches=async runtime=>{let connects=0;await assert.rejects(runtime(()=>{connects++;throw Error('no database here')}).lifecycle.createReview(token,id,{custodyOperationId:id,stage:'native-buy',intent}));return connects}
- const build=nativeTradingEnabled=>connect=>createInclusiveTradeRuntime({connect:async()=>connect(),query:async()=>{throw Error('no database here')}},{...settings,nativeTradingEnabled})
+ const build=(nativeTradingEnabled,bundle=upgraded)=>connect=>createInclusiveTradeRuntime({connect:async()=>connect(),query:async()=>{throw Error('no database here')}},{...settings(bundle),nativeTradingEnabled})
  assert.equal(build(false)(()=>{}).nativeTrading,false);assert.equal(build(true)(()=>{}).nativeTrading,true)
+ assert.equal(build(true,today)(()=>{}).nativeTrading,false,'switch on before the upgrade: native stays off, nothing throws')
  assert.equal(await reaches(build(false)),0,'off: the stage is refused before any database work');assert.equal(await reaches(build(true)),1,'on: the lifecycle takes it')
- const bridged=async nativeTradingEnabled=>{let connects=0;await assert.rejects(build(nativeTradingEnabled)(()=>{connects++;throw Error('no database')}).lifecycle.createReview(token,id,{custodyOperationId:id,stage:'inclusive-buy',intent}));return connects}
- assert.equal(await bridged(false),1);assert.equal(await bridged(true),1,'bridged stages are there either way')
+ assert.equal(await reaches(build(true,today)),0)
+ const bridged=async(nativeTradingEnabled,bundle)=>{let connects=0;await assert.rejects(build(nativeTradingEnabled,bundle)(()=>{connects++;throw Error('no database')}).lifecycle.createReview(token,id,{custodyOperationId:id,stage:'inclusive-buy',intent}));return connects}
+ assert.equal(await bridged(false,today),1);assert.equal(await bridged(true,today),1);assert.equal(await bridged(true,upgraded),1,'bridged stages are there either way')
 })
 
 test('the market API says whether native coins trade here yet',async()=>{

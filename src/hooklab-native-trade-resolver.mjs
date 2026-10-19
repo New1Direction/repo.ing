@@ -88,7 +88,9 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
    check(hash===configurationSha256);return collect({owner,stage,intent:settlementContext.compilationInput.request,expectedReview:review,originalContext:settlementContext})
   },
   async reconcile(args){
-   check(args.configurationSha256===configurationSha256&&args.settlementContext?.configurationSha256===configurationSha256)
+   // A trade that landed must stay reconcilable after an operator settings change: a row whose stored context binds its
+   // own hash settles against today's profile (settlement recompiles the full review from that context).
+   check(args.configurationSha256===configurationSha256||(args.settlementContext?.configurationSha256===args.configurationSha256&&isDeepStrictEqual(args.settlementContext.compilationInput?.profile,retained.profile)))
    return collectNativeTradeSettlement({...retained,connections:providers,...args})
   },
  })

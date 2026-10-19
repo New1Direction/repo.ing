@@ -100,6 +100,16 @@ export function nativeSwapV2Instruction({ programs, quoteMint }, { side, trader,
   return new TransactionInstruction({ programId: pk(S), keys: [...fixed, ...remaining], data })
 }
 
+// Whether a profile envelope names the reviewed native builds: their ELFs and the exact vendored IDL bytes. The compiler
+// refuses any other, and the trade runtime keeps native trading off without it (before the programs are upgraded).
+export function pinsNativeBuilds(envelope) {
+  try {
+    const profile = JSON.parse(envelope.json)
+    return ['swap', 'launch'].every(role => profile.elfSha256?.[role] === NATIVE_ELF[role].sha256 && envelope.elfLengths?.[role] === NATIVE_ELF[role].length
+      && profile.idlSha256?.[role] === NATIVE_IDL_SHA256[role] && sha(raw(envelope.idls[role], 1100000)) === NATIVE_IDL_SHA256[role])
+  } catch { return false }
+}
+
 // Rent::minimum_balance from the observed sysvar, as every program in the transaction computes it.
 function rentFrom(account) {
   check(account && account.owner === SYSVAR_OWNER && !account.executable, 'Rent sysvar differs')
@@ -114,9 +124,7 @@ export function compileNativeSwapReview(input) {
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
   check(new Set([...Object.values(profile.programs), profile.quoteMint, zero, KIT]).size === 8, 'Profile program roles alias')
-  // The profile must name the reviewed native builds: their ELFs and the exact vendored IDL bytes.
-  for (const role of ['swap', 'launch']) check(profile.elfSha256[role] === NATIVE_ELF[role].sha256 && envelope.elfLengths[role] === NATIVE_ELF[role].length
-    && profile.idlSha256[role] === NATIVE_IDL_SHA256[role] && sha(raw(envelope.idls[role], 1100000)) === NATIVE_IDL_SHA256[role], 'Profile does not pin the reviewed native builds')
+  check(pinsNativeBuilds(envelope), 'Profile does not pin the reviewed native builds')
   const gateBytes = raw(envelope.idls.gate, 1100000)
   check(sha(gateBytes) === profile.idlSha256.gate, 'IDL digest differs')
   const { idls, coders } = loadNativeArtifacts(), launch = { idl: idls.launch, coder: coders.launch }, swap = { idl: idls.swap, coder: coders.swap }
@@ -215,6 +223,8 @@ export function compileNativeSwapReview(input) {
   const amount = BigInt(r.amountIn), maxU64 = (1n << 64n) - 1n, maxU128 = (1n << 128n) - 1n
   refuseUnless(buy || amount <= traderBase, 'You’re selling more than this wallet holds.')
   const p = { baseReserve: n(pool.base_reserve), quoteReserve: n(pool.quote_reserve), virtualBase: n(pool.virtual_base), virtualQuote: n(pool.virtual_quote), protocolFeesQuote: n(pool.protocol_fees_quote) }
+  // A full curve waiting for graduate still takes sales (the swap allows them), never buys.
+  refuseUnless(graduated || !buy || !isReady(p, n(state.graduation_quote)), 'This coin has finished its bonding curve and is graduating. Buying opens again once it moves to its open market.')
   // After graduation the gate reads Launch status 1 and stops capping, so the model lifts the cap only then.
   let q
   try {
@@ -229,10 +239,7 @@ export function compileNativeSwapReview(input) {
   // Graduation: only the exact final fill finishes the curve, in the same transaction as graduate (design §4.6).
   const fill = graduated ? null : finalFillLamports({ graduated: false, graduationQuote: String(state.graduation_quote), creatorFeeBps: r.creatorFeeBps, pool: p })
   if (graduated) refuseUnless(!r.graduate, CURVE_CHANGED)
-  else {
-    refuseUnless(!isReady(p, n(state.graduation_quote)), 'This coin has finished its bonding curve and is graduating. Buying opens again once it moves to its open market.')
-    refuseUnless(r.graduate ? buy && fill !== null && amount === fill && isReady(q.after, n(state.graduation_quote)) : !buy || !isReady(q.after, n(state.graduation_quote)), CURVE_CHANGED)
-  }
+  else refuseUnless(r.graduate ? buy && fill !== null && amount === fill && isReady(q.after, n(state.graduation_quote)) : !buy || !isReady(q.after, n(state.graduation_quote)), CURVE_CHANGED)
   check(n(pool.base_volume) + (buy ? q.grossOutput : amount) <= maxU128 && n(pool.quote_volume) + (buy ? amount - creator : q.grossOutput) <= maxU128
     && q.after.quoteReserve + q.after.protocolFeesQuote <= maxU64, 'Post-swap arithmetic overflow')
   const slot = Math.max(...obs.map(o => o.slot))

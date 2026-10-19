@@ -8,6 +8,7 @@ import {VersionedMessage,VersionedTransaction} from '@solana/web3.js'
 import bs58 from 'bs58'
 import {compileMaxWalletLaunchReview} from '../src/hooklab-max-wallet-launch.mjs'
 import {inclusiveTradeResolver} from '../src/hooklab-inclusive-trade-resolver.mjs'
+import {compileInclusiveMaxWalletSwapReview} from '../src/hooklab-inclusive-max-wallet-swap.mjs'
 import {makeCanaryState,canaryCollectorBindings,localTestEnvironment,isolatedSvm,pk} from './fixtures/hooklab-canary.mjs'
 import {missingArtifactEnv} from './fixtures/hooklab-generated-artifact.mjs'
 import {jsonbRoundTrip} from './fixtures/jsonb-round-trip.mjs'
@@ -60,6 +61,13 @@ test('a real buy settles from its jsonb-stored review and context, also after a 
  const connections=state.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:[e.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY,e.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY][i],...transport()}}))
  const resolverAt=nowMs=>inclusiveTradeResolver({...bindings,connections,limits:{...LIMITS,nowMs},clock:()=>1000})
  const prepared=await resolverAt(BOOT).prepare({owner:roles.creator,stage:'inclusive-buy',intent:{side:'buy',creatorFeeBps:100,capBps:200,mint:roles.mint,selectedConfig:roles.config,amountIn:'1000200',minAmountOut:'1',maxInput:'1000200',maxPriceImpactBps:1000}})
+ // The upgraded launch program's native-launches switch (Config byte 186) steers new launches only: a bridged coin
+ // compiles the same trade with it on, and any other reserved byte is still refused.
+ const switched=at=>{const ci=structuredClone(prepared.settlementContext.compilationInput)
+  for(const o of ci.observations){const row=o.accounts.find(x=>x.address===a.launchConfig).account,bytes=Buffer.from(row.dataBase64,'base64');bytes[at]=1;row.dataBase64=bytes.toString('base64')}
+  return ci}
+ assert.equal(compileInclusiveMaxWalletSwapReview(switched(186)).review.messageBase64,prepared.review.messageBase64)
+ assert.throws(()=>compileInclusiveMaxWalletSwapReview(switched(187)),/reserved/)
  const stored=jsonbRoundTrip({review:prepared.review,configurationSha256:prepared.configurationSha256,settlementContext:prepared.settlementContext})
  assert.notEqual(JSON.stringify(stored.settlementContext),JSON.stringify(prepared.settlementContext),'jsonb reorders keys')
  // Before signing the hash must match exactly; it survives a restart.

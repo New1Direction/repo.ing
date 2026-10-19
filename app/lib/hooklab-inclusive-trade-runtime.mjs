@@ -3,6 +3,7 @@ import {nativeSigningLifecycle} from '../../src/hooklab-native-signing.mjs'
 import {nativeTransactionSender} from '../../src/hooklab-native-transaction-sender.mjs'
 import {inclusiveTradeResolver} from '../../src/hooklab-inclusive-trade-resolver.mjs'
 import {nativeTradeResolver} from '../../src/hooklab-native-trade-resolver.mjs'
+import {pinsNativeBuilds} from '../../src/hooklab-native-swap.mjs'
 import {stagedResolver,walletFundingResolver} from '../../src/hooklab-wallet-funding-resolver.mjs'
 import {readHookCoinMarket,readHookWalletBalances} from '../../src/hooklab-coin-market.mjs'
 import {ownerApprovalStore} from '../../src/hooklab-owner-approval.mjs'
@@ -12,7 +13,7 @@ const runtimeKey=Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
 // Withdrawing SOL from Hook Lab (unwrap) is always available, and every funding operation stays readable, so customers
 // can never be left with SOL they cannot take out. walletFundingEnabled only allows starting new deposits (wrap).
 // nativeTradingEnabled (HOOK_NATIVE_TRADING_ENABLED, off by default) adds the native-SOL stages for coins whose pool and
-// launch are native; it needs the upgraded programs, a bundle pinning them and the native-stages migration.
+// launch are native; it needs the upgraded programs, a bundle pinning them (else it stays off) and the native-stages migration.
 export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
  config,profile,dossierJson,connections,limits,walletFundingEnabled=false,nativeTradingEnabled=false}={}){
  if(!ownerTradingApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Complete explicit trade adoption required')
@@ -20,7 +21,8 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  if((dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||!['launch-config','swap-config'].every(role=>dossier.accounts.some(pin=>pin.role===role&&pin.binding==='config-counters-v1')))throw Error('Counter-aware approved trading dossier required')
  const trade=inclusiveTradeResolver({config,profile,dossierJson,connections,limits})
  const funding=walletFundingResolver({config,profile,dossierJson,connections,limits})
- const native=nativeTradingEnabled===true?nativeTradeResolver({config,profile,dossierJson,connections,limits}):null
+ // Native stays off, never throws, when the bundle does not pin the upgraded programs: bridged trades and withdrawals keep working.
+ const native=nativeTradingEnabled===true&&pinsNativeBuilds(profile)?nativeTradeResolver({config,profile,dossierJson,connections,limits}):null
  const resolver=stagedResolver({'inclusive-buy':trade,'inclusive-sell':trade,'wallet-fund':funding,'wallet-withdraw':funding,...(native?{'native-buy':native,'native-sell':native}:{})})
  const sender=nativeTransactionSender({enabled:true,connections})
  const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,resolver,sender,custodyAdapter:null,

@@ -98,14 +98,20 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
- // Native-SOL trading rides on the trade runtime behind its own switch (off by default; needs the upgraded programs).
- if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true')installInclusiveTradeRuntime(createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,
-  walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true',nativeTradingEnabled:env.HOOK_NATIVE_TRADING_ENABLED==='true'}))
+ // Native-SOL trading rides on the trade runtime behind its own switch (off by default), and only with a bundle that
+ // pins the upgraded programs.
+ let nativeTrading=false
+ if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'){
+  const trade=createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,
+   walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true',nativeTradingEnabled:env.HOOK_NATIVE_TRADING_ENABLED==='true'})
+  installInclusiveTradeRuntime(trade);nativeTrading=trade.nativeTrading
+  if(env.HOOK_NATIVE_TRADING_ENABLED==='true'&&!nativeTrading)console.error('Hook Lab native trading stays off: the production bundle does not pin the reviewed native-SOL programs')
+ }
  // Native-SOL launches: their creators claim fees in SOL (stage native-claim). Off unless HOOK_NATIVE_LAUNCHES_ENABLED=true.
  if(env.HOOK_NATIVE_LAUNCHES_ENABLED==='true'){
   const {createNativeClaimRuntime,installNativeClaimRuntime}=await import('../app/lib/hooklab-native-claim-runtime.mjs')
   installNativeClaimRuntime(createNativeClaimRuntime(pool,{...base,nativeLaunchesApproved:true,limits:s.tradeLimits}))
  }
- return {installed:true,trading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true',nativeTrading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'&&env.HOOK_NATIVE_TRADING_ENABLED==='true'}
+ return {installed:true,trading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true',nativeTrading}
  }catch(error){if(!nativeLaunchRuntime())await pool.end().catch(()=>{});throw error}
 }
