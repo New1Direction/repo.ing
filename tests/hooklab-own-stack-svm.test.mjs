@@ -8,64 +8,31 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, VersionedTransaction } from '@solana/web3.js'
-import { collectInclusiveMaxWalletPreparationReview } from '../src/hooklab-inclusive-max-wallet-preparation-collector.mjs'
-import { collectOpenLaunchReview } from '../src/hooklab-max-wallet-launch-collector.mjs'
-import { collectOpenLaunchSettlement } from '../src/hooklab-max-wallet-launch-settlement.mjs'
 import { governedSetOpenCreation, readOpenCreation, openLaunchErrorText } from '../src/hooklab-open-creation.mjs'
 import { readHookCoinMarket } from '../src/hooklab-coin-market.mjs'
 import { nativeTradeResolver } from '../src/hooklab-native-trade-resolver.mjs'
 import { LEGACY_STACK } from '../src/hooklab-stack.mjs'
-import { ownStackWorld, CREATION_FEE_LAMPORTS, OWNER_MENUS } from './fixtures/hooklab-own-stack-world.mjs'
+import { ownStackWorld, openLaunch, CREATION_FEE_LAMPORTS, OWNER_MENUS, LAUNCH_LIMITS } from './fixtures/hooklab-own-stack-world.mjs'
 import { OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
-import { launchDebitLimits } from '../src/hooklab-production-bootstrap.mjs'
 import { estimateTrade } from '../app/lib/hooklab-trade-math.mjs'
 
 const skip = OWN_STACK_SKIP || (process.env.HOOKLAB_CANARY_REQUIRED !== 'true' && !process.env.HOOKLAB_CANARY_PYTHONPATH && 'the isolated SVM runner (HOOKLAB_CANARY_PYTHONPATH) is not available')
 const sha = value => createHash('sha256').update(value).digest('hex')
 const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(s => typeof s === 'string' ? Buffer.from(s) : s), new PublicKey(program))[0].toBase58()
-const PREP_LIMITS = { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxRentLamports: '20000000', maxNetworkFeeLamports: '20000',
-  maxTotalDebitLamports: '20020000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' }
-// The production bootstrap's launch bounds for this bundle's economics.
-const LAUNCH_LIMITS = { maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 196, reviewExpiresAtMs: 6000, maxNetworkFeeLamports: '15000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0',
-  ...launchDebitLimits({ launchFeeLamports: String(CREATION_FEE_LAMPORTS), poolCreationFeeLamports: '0' }, '15000') }
 const TRADE_LIMITS = { nowMs: 1000, maxAgeMs: 5000, maxSlotLag: 5, validUntilSlot: 0, reviewExpiresAtMs: 0, maxNetworkFeeLamports: '10000', maxTotalDebitLamports: '10000', computeUnitLimit: 1400000, computeUnitPriceMicroLamports: '0' }
-
-// One self-serve launch exactly as the website runs it, for a fresh wallet: prepare, launch, settle.
-async function openLaunch(w, { creatorFeeBps, capBps, name, symbol, virtualQuote }) {
-  const creator = Keypair.generate(), mint = Keypair.generate(), selectedConfig = Keypair.generate(), signers = [creator, mint, selectedConfig]
-  await w.fund(creator.publicKey.toBase58(), '2000000000')
-  const profile = w.bindings.profile, G = w.programs.gate
-  const prep = { schema: 'repoing/inclusive-max-wallet-preparation-request/1', policyKind: 'max-wallet', policyVersion: 2, creator: creator.publicKey.toBase58(),
-    feePayer: creator.publicKey.toBase58(), mint: mint.publicKey.toBase58(), selectedConfig: selectedConfig.publicKey.toBase58(), capBps, label: symbol.toLowerCase(),
-    creatorFeeBps, rules: 'none', hookFlags: 1, feeModel: 2, protocolShareBps: 2500 }
-  const prepProfile = { json: profile.json, expectedSha256: profile.expectedSha256, providers: profile.providers, idls: { launch: profile.idls.launch, gate: profile.idls.gate },
-    elfLengths: { launch: profile.elfLengths.launch, gate: profile.elfLengths.gate } }
-  const prepared = await collectInclusiveMaxWalletPreparationReview({ profile: prepProfile, request: prep, connections: w.connections(), limits: PREP_LIMITS, clock: () => 1000 })
-  const sign = review => signers.filter(k => review.requiredSigners.includes(k.publicKey.toBase58()))
-  await w.must('preparation', w.signAndSubmit(prepared.plan.review.messageBase64, sign(prepared.plan.review)))
-  const hashOf = async address => sha(await w.data(address))
-  const preparation = { wallet: prep.creator, profileSha256: w.bindings.config.profileSha256, preparationIntentSha256: sha(JSON.stringify(prep)), preparedRequest: prep, executionSlot: 100,
-    preparedAccountHashes: { policy: await hashOf(pda(G, 'policy-v2', mint.publicKey.toBuffer())), registry: await hashOf(pda(G, 'bordrless-hook-accounts', mint.publicKey.toBuffer())), selectedConfig: await hashOf(prep.selectedConfig) } }
-  const { schema, ...prepFields } = prep
-  const request = { ...prepFields, schema: 'repoing/open-launch-request/1', name, symbol, uri: '', virtualQuote }
-  const collected = await collectOpenLaunchReview({ ...w.bindings, connections: w.connections(), preparation, request, limits: LAUNCH_LIMITS, clock: () => 1000 })
-  return { creator, mint, request, collected, async send() {
-    const review = collected.plan.review, sent = await w.signAndSubmit(review.messageBase64, sign(review))
-    return { sent, async settle() { return collectOpenLaunchSettlement({ ...w.bindings, connections: w.connections(), settlementContext: collected.settlementContext, review,
-      signedTransactionBase64: sent.wireBase64, signature: sent.signature }) } }
-  } }
-}
 
 test('our own stack from nothing: owner setup, its bundle, then open launches by fresh wallets, trades and refusals', { skip, timeout: 600000 }, async t => {
   const w = await ownStackWorld(); t.after(w.close)
   const profile = JSON.parse(w.bindings.profile.json), P = w.programs
   assert.ok(Object.values(P).every(id => !Object.values(LEGACY_STACK.programs).includes(id)) && profile.quoteMint !== LEGACY_STACK.quoteMint, 'a stack of its own')
   assert.equal(profile.programs.bridge, undefined)
+  let rentLamports = null
 
   await t.test('the chain says open creation is on with the owner\'s menus and the confirmed creation fee', async () => {
-    const chain = await readOpenCreation(w.connections(), P.launch)
-    assert.deepEqual({ native: chain.native, open: chain.open, paused: chain.paused, creatorFeeBps: [...chain.creatorFeeBps], capBps: [...chain.capBps], fee: chain.launchFeeLamports },
-      { native: true, open: true, paused: false, ...OWNER_MENUS, fee: String(CREATION_FEE_LAMPORTS) })
+    const chain = await readOpenCreation(w.connections(), P)
+    assert.deepEqual({ native: chain.native, open: chain.open, paused: chain.paused, creatorFeeBps: [...chain.creatorFeeBps], capBps: [...chain.capBps], fee: chain.launchFeeLamports, pool: chain.poolCreationFeeLamports },
+      { native: true, open: true, paused: false, ...OWNER_MENUS, fee: String(CREATION_FEE_LAMPORTS), pool: '0' })
+    rentLamports = BigInt(chain.rentLamports)
   })
 
   const coins = []
@@ -91,6 +58,10 @@ test('our own stack from nothing: owner setup, its bundle, then open launches by
       const { market } = await readHookCoinMarket({ connection: w.connections()[0].connection, mint: launch.mint.publicKey.toBase58(), profile })
       assert.equal(market.native, true); assert.equal(market.creatorFeeBps, creatorFeeBps); assert.equal(market.capBps, capBps)
       assert.equal(market.creator, launch.creator.publicKey.toBase58())
+      // Everything the creator spent, from the funded wallet: the creation fee, the rent the review screen shows
+      // (readOpenCreation's rentLamports), and the two transactions' network fees.
+      const spent = 2000000000n - (await w.lamports([launch.creator.publicKey.toBase58()]))[launch.creator.publicKey.toBase58()]
+      assert.equal(spent, CREATION_FEE_LAMPORTS + rentLamports + BigInt(launch.preparationFeeLamports) + 10000n)
       coins.push({ ...launch, creatorFeeBps, capBps })
     }
     assert.equal(coins.length, 4)
@@ -137,7 +108,7 @@ test('our own stack from nothing: owner setup, its bundle, then open launches by
     const off = (await early.send()).sent, refusedOff = failure(off)
     assert.ok([6120, 6056].includes(refusedOff.code), off.error); assert.ok(refusedOff.text, 'plain words for the customer')
     assert.equal(before - (await w.lamports([creator]))[creator], 10000n, 'only the network fee')
-    assert.equal((await readOpenCreation(w.connections(), P.launch)).open, false)
+    assert.equal((await readOpenCreation(w.connections(), P)).open, false)
     await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Off', symbol: 'OFF2', virtualQuote: '1000000000' }), /unavailable/i, 'no review while off')
     await admin('open creation on', governedSetOpenCreation({ launchProgram: P.launch, admin: w.roles.admin, expected: await w.commitment('launch'), on: true, ...OWNER_MENUS }))
     // Reviewed and signed, then the guardian pauses creation (governance Pause, the guardian alone): refused on chain.
@@ -146,7 +117,7 @@ test('our own stack from nothing: owner setup, its bundle, then open launches by
     await w.must('guardian pause', w.send(await w.message(w.roles.guardian, [w.ix('launch', 'governance_action',
       { expected: [...await w.commitment('launch')], action: { Pause: [{ creation: true, trading: false }] } }, { authority: w.roles.guardian })])))
     await w.recollect()
-    assert.equal((await readOpenCreation(w.connections(), P.launch)).paused, true)
+    assert.equal((await readOpenCreation(w.connections(), P)).paused, true)
     const paused = (await signed.send()).sent, refusedPaused = failure(paused)
     assert.ok([6055, 6056].includes(refusedPaused.code), paused.error); assert.ok(refusedPaused.text)
     await assert.rejects(openLaunch(w, { creatorFeeBps: 100, capBps: 200, name: 'Paused 2', symbol: 'PAUSED2', virtualQuote: '1000000000' }), /unavailable/i, 'no review while paused')

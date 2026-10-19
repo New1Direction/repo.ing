@@ -15,21 +15,33 @@ export const openLaunchesEnabled = env => env?.HOOK_OPEN_LAUNCHES === 'true'
 export const siteLaunchesEnabled = env => env?.HOOK_OWNER_APPROVED_LAUNCHES === 'true' || openLaunchesEnabled(env)
 const pda = (program, seed) => PublicKey.findProgramAddressSync([Buffer.from(seed)], new PublicKey(program))[0]
 
-export async function readOpenCreation(connections, launchProgram) {
+// The accounts a self-serve launch creates, by size: the preparation's policy, its registry and the selected config, then
+// the launch's (measured on our own stack): the inclusive fee policy, the pool registry, five holdings, the pool, the
+// coin and LP mints, and the launch. Their rent at the chain's current rate is what the creator locks.
+export const OPEN_LAUNCH_ACCOUNT_SIZES = Object.freeze([90, 81, 176, 75, 186, 204, 204, 204, 204, 204, 411, 519, 519, 565])
+
+// programs: the stack's { launch, swap } (the launch program alone still reads everything but the pool fee).
+export async function readOpenCreation(connections, programs) {
   if (!Array.isArray(connections) || connections.length !== 2) throw fail('Two providers required')
-  const keys = [pda(launchProgram, 'config'), pda(launchProgram, 'governance')]
+  const { launch: launchProgram, swap: swapProgram = null } = typeof programs === 'string' ? { launch: programs } : programs
+  const owners = [launchProgram, launchProgram, ...(swapProgram ? [swapProgram] : [])]
+  const keys = [pda(launchProgram, 'config'), pda(launchProgram, 'governance'), ...(swapProgram ? [pda(swapProgram, 'config')] : [])]
   const views = await Promise.all(connections.map(({ connection }) => connection.getMultipleAccountsInfoAndContext(keys, { commitment: 'finalized' })))
-  const [config, governance] = keys.map((_, i) => {
+  const [config, governance, swapConfig] = keys.map((_, i) => {
     const [a, b] = views.map(v => v.value[i])
-    if (!a || !b || !a.owner.equals(b.owner) || !Buffer.from(a.data).equals(Buffer.from(b.data)) || a.owner.toBase58() !== launchProgram) throw fail('Launch configuration unavailable or providers disagree')
+    if (!a || !b || !a.owner.equals(b.owner) || !Buffer.from(a.data).equals(Buffer.from(b.data)) || a.owner.toBase58() !== owners[i]) throw fail('Launch configuration unavailable or providers disagree')
     return Buffer.from(a.data)
   })
-  const coder = loadNativeArtifacts().coders.launch, c = coder.accounts.decode('Config', config), g = coder.accounts.decode('Governance', governance)
+  const { coders } = loadNativeArtifacts(), c = coders.launch.accounts.decode('Config', config), g = coders.launch.accounts.decode('Governance', governance)
   const reserved = parseLaunchConfigReserved(config.subarray(LAUNCH_CONFIG_RESERVED_AT))
   if (!reserved) throw fail('Launch configuration is in a state the reviewed programs never write')
+  const rents = await Promise.all(OPEN_LAUNCH_ACCOUNT_SIZES.map(size => connections[0].connection.getMinimumBalanceForRentExemption(size, 'finalized')))
+  if (!rents.every(Number.isSafeInteger)) throw fail('Rent unavailable')
   return Object.freeze({ native: reserved.native, open: reserved.open, paused: c.paused || g.state.gates.creation,
     creatorFeeBps: Object.freeze([...reserved.creatorFeeBps]), capBps: Object.freeze([...reserved.capBps]), maxCreatorFeeBps: c.max_creator_fee_bps,
-    launchFeeLamports: c.launch_fee_lamports.toString(), minVirtualQuote: c.min_virtual_quote.toString(), maxVirtualQuote: c.max_virtual_quote.toString() })
+    launchFeeLamports: c.launch_fee_lamports.toString(), minVirtualQuote: c.min_virtual_quote.toString(), maxVirtualQuote: c.max_virtual_quote.toString(),
+    ...(swapConfig ? { poolCreationFeeLamports: coders.swap.accounts.decode('Config', swapConfig).pool_creation_fee_lamports.toString() } : {}),
+    rentLamports: String(rents.reduce((sum, rent) => sum + BigInt(rent), 0n)) })
 }
 
 // The owner's governed switch (hook-lab feat/open-creation): open creation on or off with the two menus, recorded as a
