@@ -12,7 +12,7 @@ import { isLocalExecutionDossier } from '../../src/hooklab-local-acceptance.mjs'
 const runtimeKey=Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
 // Withdrawing SOL from Hook Lab (unwrap) is always available, and every funding operation stays readable, so customers
 // can never be left with SOL they cannot take out. walletFundingEnabled only allows starting new deposits (wrap).
-// nativeTradingEnabled (HOOK_NATIVE_TRADING_ENABLED, off by default) adds the native-SOL stages for coins whose pool and
+// nativeTradingEnabled (HOOK_NATIVE_TRADING_ENABLED, off by default) opens the native-SOL stages to new trades for coins whose pool and
 // launch are native; it needs the upgraded programs, a bundle pinning them (else it stays off) and the native-stages migration.
 export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
  config,profile,dossierJson,connections,limits,walletFundingEnabled=false,nativeTradingEnabled=false}={}){
@@ -23,7 +23,7 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const funding=walletFundingResolver({config,profile,dossierJson,connections,limits})
  // Native stays off, never throws, when the bundle does not pin the upgraded programs: bridged trades and withdrawals keep working.
  const nativeOpen=nativeTradingEnabled===true&&pinsNativeBuilds(profile)
- const native=nativeOpen?nativeTradeResolver({config,profile,dossierJson,connections,limits}):null
+ const native=nativeTradeResolver({config,profile,dossierJson,connections,limits})
  const sender=nativeTransactionSender({enabled:true,connections})
  const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen})})
  // Display-only market reads use the primary provider; trades and funding re-verify on both providers.
@@ -36,12 +36,14 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  return Object.freeze({origin,genesisHash:JSON.parse(profile.json).genesisHash,ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,walletFunding:walletFundingEnabled===true,walletWithdraw:true,
   nativeTrading:nativeOpen,lifecycle,market,walletBalances,coinProfile,activity})
 }
-// The trade lifecycle's resolvers and stages: bridged trades and funding, and native trades while native trading is open.
+// The trade lifecycle's resolvers and stages: bridged trades and funding, and native trades. The native stages are always
+// registered, so a sent native trade stays readable and settles whatever the switch says; while native trading is off
+// they are closed to new work (review, refresh, wallet request, send).
 export function tradeLifecycleSettings({trade,funding,native,nativeOpen}){
- const live=nativeOpen&&native
- return {resolver:stagedResolver({'inclusive-buy':trade,'inclusive-sell':trade,'wallet-fund':funding,'wallet-withdraw':funding,...(live?{'native-buy':native,'native-sell':native}:{})}),
+ return {resolver:stagedResolver({'inclusive-buy':trade,'inclusive-sell':trade,'wallet-fund':funding,'wallet-withdraw':funding,'native-buy':native,'native-sell':native}),
   stageOperations:{'inclusive-buy':'inclusive-max-wallet-buy','inclusive-sell':'inclusive-max-wallet-sell','wallet-fund':'hooklab-wallet-fund','wallet-withdraw':'hooklab-wallet-withdraw',
-   ...(live?{'native-buy':'native-max-wallet-buy','native-sell':'native-max-wallet-sell'}:{})}}
+   'native-buy':'native-max-wallet-buy','native-sell':'native-max-wallet-sell'},
+  closedStages:nativeOpen?[]:['native-buy','native-sell']}
 }
 export function installInclusiveTradeRuntime(value){
  if(inclusiveTradeRuntime()||!value||value.ownerTradingApproved!==true||value.operatorDeploymentApproved!==true||value.economicsApproved!==true||!value.lifecycle)throw Error('Complete approved trading runtime required')

@@ -152,13 +152,21 @@ function chain({ rows, receipt = null, blockHeight = 1100, simulated = () => nul
 const bundle = JSON.parse(readFileSync(new URL('../config/hooklab-production-bundle-2.json', import.meta.url), 'utf8'))
 // Production limits carry the boot time (nowMs); a restart or deploy changes only that.
 const LIMITS = { maxAgeMs: 60000, maxSlotLag: 150, computeUnitPriceMicroLamports: '10000', maxNetworkFeeLamports: '29000' }
-async function resolverFor(rows, receipts = [null, null], simulated = () => null, bootLimits = {}) {
-  const origins = bundle.config.providerTrustDomains.map(t => t.origin)
-  const connections = bundle.profile.providers.map((provider, i) => ({ provider, connection: Object.assign(chain({ rows, receipt: receipts[i], simulated }), { rpcEndpoint: origins[i] + 'rpc' }) }))
+// from: the production bundle the server runs; reviewedProfiles: the reconcile allowlist (default: the code-pinned one).
+async function resolverFor(rows, receipts = [null, null], simulated = () => null, bootLimits = {}, { from = bundle, reviewedProfiles } = {}) {
+  const origins = from.config.providerTrustDomains.map(t => t.origin)
+  const connections = from.profile.providers.map((provider, i) => ({ provider, connection: Object.assign(chain({ rows, receipt: receipts[i], simulated }), { rpcEndpoint: origins[i] + 'rpc' }) }))
   const limits = { ...LIMITS, ...bootLimits }
   const tokenData = Buffer.from(rows[pda(LOADER, kb(PROGRAMS.token))].dataBase64, 'base64')
-  return { resolver: walletFundingResolver({ config: bundle.config, profile: bundle.profile, dossierJson: bundle.dossierJson, connections, limits, clock: () => NOW, bridgePin: pin,
-    tokenProgramDataSha256: sha(tokenData) }), connections }
+  return { resolver: walletFundingResolver({ config: from.config, profile: from.profile, dossierJson: from.dossierJson, connections, limits, clock: () => NOW, bridgePin: pin,
+    tokenProgramDataSha256: sha(tokenData), ...(reviewedProfiles ? { reviewedProfiles } : {}) }), connections }
+}
+// The next production bundle: today's, under a new reviewed profile (as bundle 3 will follow bundle 2).
+function nextBundle(base) {
+  const json = JSON.stringify({ ...JSON.parse(base.profile.json), profileId: 'production-next-bundle' }), profile = { ...base.profile, json, expectedSha256: sha(json) }
+  const dossier = JSON.parse(base.dossierJson); dossier.artifacts.profileSha256 = profile.expectedSha256
+  const dossierJson = JSON.stringify(dossier)
+  return { ...base, profile, dossierJson, config: { ...base.config, profileSha256: profile.expectedSha256, dossierSha256: sha(dossierJson) } }
 }
 const receiptFor = (review, signed, movements, error = null) => {
   const tx = VersionedTransaction.deserialize(Buffer.from(signed, 'base64')), keys = review.accounts.map(a => a.address)
@@ -198,9 +206,18 @@ async function landedFund(bootLimits) {
   const signed = Buffer.from(tx.serialize()).toString('base64'), q = prepared.request.quote, rent = 1686560
   const receipt = receiptFor(prepared.review, signed, { [OWNER]: -(7000 + 2 * rent + 1000000), [d.bridgeSolVault]: 1000000, [q.createdHoldings[0]]: rent, [q.createdHoldings[1]]: rent })
   const stored = jsonbRoundTrip({ review: prepared.review, configurationSha256: prepared.configurationSha256, settlementContext: prepared.settlementContext })
-  const reconcile = async (args, limits = bootLimits) => (await resolverFor(rows, [receipt, receipt], () => null, limits)).resolver.reconcile({ ...stored, ...args, signedTransactionBase64: signed, signature: bs58.encode(tx.signatures[0]) })
+  const reconcile = async (args, limits = bootLimits, options) => (await resolverFor(rows, [receipt, receipt], () => null, limits, options)).resolver.reconcile({ ...stored, ...args, signedTransactionBase64: signed, signature: bs58.encode(tx.signatures[0]) })
   return { rows, prepared, stored, reconcile }
 }
+
+test('resolver (F2): a fund reviewed under bundle 2 settles after the next bundle deploys, only while bundle 2 is a reviewed profile', async () => {
+  const { stored, reconcile } = await landedFund({ nowMs: NOW - 3600000 }), next = nextBundle(bundle)
+  assert.notEqual(next.config.profileSha256, bundle.config.profileSha256)
+  assert.equal((await reconcile({}, { nowMs: NOW }, { from: next })).status, 'finalized-success', 'the code-pinned list holds bundle 2')
+  assert.equal((await reconcile({}, { nowMs: NOW }, { from: next, reviewedProfiles: [next.config.profileSha256] })).status, 'unresolved', 'a profile not in the list never settles')
+  const renamed = jsonbRoundTrip(stored.settlementContext); renamed.compilationInput.profile.quoteMint = PROGRAMS.token
+  assert.equal((await reconcile({ settlementContext: renamed }, { nowMs: NOW }, { from: next })).status, 'unresolved', 'a reviewed hash on other programs or mints')
+})
 const tokenProgramData = pda(LOADER, kb(PROGRAMS.token))
 
 test('resolver: a landed fund settles from its jsonb-stored review and context, also after a restart', async () => {

@@ -9,6 +9,7 @@ import {collectInclusiveTradeSettlement} from './hooklab-inclusive-trade-settlem
 import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
 import {provenLatestBlockhash} from './hooklab-blockhash-proof.mjs'
+import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profiles.mjs'
 const check=v=>{if(!v)throw Error('Inclusive trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
@@ -16,7 +17,8 @@ const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
 const withoutSupply=base64=>{const b=Buffer.from(base64,'base64');if(b.length>=18)b.fill(0,10,18);return b.toString('base64')}
 // About 40 seconds from review to send, so a wallet approval fits; the swap compiler allows up to 150 slots.
 const SIGNING_WINDOW_SLOTS=100
-export function inclusiveTradeResolver({config,profile,dossierJson,connections,limits,clock=Date.now}){
+// reviewedProfiles: the reconcile allowlist (src/hooklab-reviewed-profiles.mjs); tests pass their own synthetic ones.
+export function inclusiveTradeResolver({config,profile,dossierJson,connections,limits,clock=Date.now,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
  const retained=structuredClone({config,profile,dossierJson,limits}),providers=connections.map(x=>({...x}))
  const bound=validateMaxWalletOperatorBindings({...retained,connections:providers}),p=bound.profile
  check(bound.config.feeModel===2&&bound.profile.buildFeature==='inclusive-fees-candidate')
@@ -89,9 +91,13 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
    check(hash===configurationSha256);return collect({owner,stage,intent:settlementContext.compilationInput.request,expectedReview:review,originalContext:settlementContext})
   },
   async reconcile(args){
-   // Rows stored while this hash held the boot clock keep the old one: accept it only bound to its own context and today's profile (settlement recompiles the full review).
-   check(args.configurationSha256===configurationSha256||(args.settlementContext?.configurationSha256===args.configurationSha256&&isDeepStrictEqual(args.settlementContext.compilationInput?.profile,retained.profile)))
-   return collectInclusiveTradeSettlement({...retained,connections:providers,...args})
+   // Rows stored under another hash (the boot clock it once held, other operator settings, a new bundle) settle only bound
+   // to their own context, under the profile they were reviewed under: today's, or a reviewed one (settlement recompiles
+   // the full review from that context).
+   const stored=args.settlementContext?.compilationInput?.profile
+   check(args.configurationSha256===configurationSha256||(args.settlementContext?.configurationSha256===args.configurationSha256
+    &&(isDeepStrictEqual(stored,retained.profile)||reviewedEnvelope(stored,retained.profile,reviewedProfiles))))
+   return collectInclusiveTradeSettlement({...retained,connections:providers,...args,reviewedProfiles})
   },
  })
 }

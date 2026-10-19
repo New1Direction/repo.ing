@@ -42,7 +42,7 @@ const summary=row=>Object.freeze({id:row.id,owner:row.owner_wallet,custodyOperat
  messageSha256:row.message_sha256,status:row.status,revision:String(row.revision),signature:row.signature,review:row.review,request:row.resolved_request,configurationSha256:row.configuration_sha256,
  signedBy:transactionBytes(row.review,row.partial_transaction).signatures.flatMap((s,i)=>s.some(x=>x!==0)?[row.review.requiredSigners[i]]:[]),
  walletRequestIssued:row.wallet_requested_at!=null,settlement:publicSettlement(row),executionAuthorized:false,canSign:false,canSubmit:false})
-export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'}}={}){
+export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,closedStages=[],stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'}}={}){
  const operations=Object.freeze({...stageOperations}),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation'],launch:['max-wallet-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
   'wallet-fund':['hooklab-wallet-fund'],'wallet-withdraw':['hooklab-wallet-withdraw'],
   // A native-SOL launch's creator claiming its fees (needs the native-stages migration's stage list).
@@ -51,6 +51,9 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
   'native-buy':['native-max-wallet-buy'],'native-sell':['native-max-wallet-sell'],
   ...(localAcceptanceNetwork()?{'local-prepare-holding':['local-prepare-holding'],'local-inclusive-collection':['local-inclusive-collection']}:{})}
  check(Object.keys(operations).length>0&&Object.entries(operations).every(([stage,operation])=>allowed[stage]?.includes(operation)))
+ // closedStages: registered so their operations stay readable, settle and expire, but no new review, refresh, wallet
+ // request, co-signature or send starts for them (native trades while native trading is off).
+ const closed=new Set(closedStages);check([...closed].every(stage=>Object.hasOwn(operations,stage)))
  check(!custodyAdapter||Object.keys(operations).every(stage=>['preparation','launch'].includes(stage)))
  async function transaction(sessionToken,id,work,custodyOperationId=null,retainClaimedSignature=false){
   let db
@@ -91,7 +94,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
  return Object.freeze({
   async createReview(sessionToken,id,{custodyOperationId,stage,intent}){
    try{
-    z.uuid().parse(custodyOperationId);check(Object.hasOwn(operations,stage))
+    z.uuid().parse(custodyOperationId);check(Object.hasOwn(operations,stage)&&!closed.has(stage))
     const captured=await transaction(sessionToken,id,async(_db,row,owner)=>({row,owner}),custodyOperationId)
     if(captured.row){check(captured.row.custody_operation_id===custodyOperationId&&captured.row.stage===stage);return summary(captured.row)}
     check(resolver&&typeof resolver.prepare==='function')
@@ -116,7 +119,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
   async refreshReview(sessionToken,id){
    try{
     const captured=await transaction(sessionToken,id,async(_db,row)=>{
-     check(row&&row.status==='reviewed'&&!row.signature&&!row.pending_signer&&!row.wallet_requested_at)
+     check(row&&!closed.has(row.stage)&&row.status==='reviewed'&&!row.signature&&!row.pending_signer&&!row.wallet_requested_at)
      check(transactionBytes(row.review,row.partial_transaction).signatures.every(s=>s.every(x=>x===0)));return row
     })
     check(resolver&&typeof resolver.prepare==='function')
@@ -141,7 +144,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
 
   async walletRequest(sessionToken,id){
    try{
-    const captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&pending.has(row.status));return row})
+    const captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&pending.has(row.status));return row})
     await fresh(captured,captured.owner_wallet,sessionToken)
     return transaction(sessionToken,id,async(db,row)=>{
      check(row&&pending.has(row.status)&&String(row.revision)===String(captured.revision))
@@ -168,7 +171,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
   async coSignNext(sessionToken,id,signerAddress){
    let claimed
    try{
-    const captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&['partial','signed'].includes(row.status));return row})
+    const captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&['partial','signed'].includes(row.status));return row})
     const capturedTx=transactionBytes(captured.review,captured.partial_transaction),index=captured.review.requiredSigners.indexOf(signerAddress)
     check(index>=0&&signerAddress!==captured.owner_wallet&&capturedTx.signatures[captured.review.requiredSigners.indexOf(captured.owner_wallet)].some(x=>x!==0))
     if(capturedTx.signatures[index].some(x=>x!==0))return summary(captured)
@@ -255,7 +258,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
    })
   },
   async submitOnce(sessionToken,id){
-   let captured;try{captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&row.status==='signed');return row});await fresh(captured,captured.owner_wallet,sessionToken)}catch(error){throw visible(error)}
+   let captured;try{captured=await transaction(sessionToken,id,async(_db,row)=>{check(row&&!closed.has(row.stage)&&row.status==='signed');return row});await fresh(captured,captured.owner_wallet,sessionToken)}catch(error){throw visible(error)}
    const claimed=await transaction(sessionToken,id,async(db,row,owner)=>{
     check(row&&row.status==='signed'&&String(row.revision)===String(captured.revision)&&sender&&typeof sender.send==='function')
     await currentReview(db,row.review)

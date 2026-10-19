@@ -11,6 +11,7 @@ import {collectNativeTradeSettlement} from './hooklab-native-trade-settlement.mj
 import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
 import {provenLatestBlockhash} from './hooklab-blockhash-proof.mjs'
+import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profiles.mjs'
 import {STATUS_GRADUATED} from './hooklab-graduation.mjs'
 import {loadNativeArtifacts} from './hooklab-native-pins.mjs'
 const check=v=>{if(!v)throw Error('Native trade state, intent or operator pins changed')}
@@ -21,7 +22,8 @@ const SIGNING_WINDOW_SLOTS=100
 // The most a new 204-byte coin holding can cost the payer in rent (about 2.3 times today's mainnet rent); the review
 // carries the exact amount, this only bounds it.
 export const HOLDING_RENT_CEILING_LAMPORTS=4000000n
-export function nativeTradeResolver({config,profile,dossierJson,connections,limits,clock=Date.now}){
+// reviewedProfiles: the reconcile allowlist (src/hooklab-reviewed-profiles.mjs); tests pass their own synthetic ones.
+export function nativeTradeResolver({config,profile,dossierJson,connections,limits,clock=Date.now,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
  const retained=structuredClone({config,profile,dossierJson,limits}),providers=connections.map(x=>({...x}))
  const bound=validateMaxWalletOperatorBindings({...retained,connections:providers}),p=bound.profile
  check(bound.config.feeModel===2&&bound.profile.buildFeature==='inclusive-fees-candidate')
@@ -92,10 +94,13 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
    check(hash===configurationSha256);return collect({owner,stage,intent:settlementContext.compilationInput.request,expectedReview:review,originalContext:settlementContext})
   },
   async reconcile(args){
-   // A trade that landed must stay reconcilable after an operator settings change: a row whose stored context binds its
-   // own hash settles against today's profile (settlement recompiles the full review from that context).
-   check(args.configurationSha256===configurationSha256||(args.settlementContext?.configurationSha256===args.configurationSha256&&isDeepStrictEqual(args.settlementContext.compilationInput?.profile,retained.profile)))
-   return collectNativeTradeSettlement({...retained,connections:providers,...args})
+   // A trade that landed must stay reconcilable after an operator settings change or a new bundle: a row whose stored
+   // context binds its own hash settles under the profile it was reviewed under, if that is today's or a reviewed one
+   // (settlement recompiles the full review from that context).
+   const stored=args.settlementContext?.compilationInput?.profile
+   check(args.configurationSha256===configurationSha256||(args.settlementContext?.configurationSha256===args.configurationSha256
+    &&(isDeepStrictEqual(stored,retained.profile)||reviewedEnvelope(stored,retained.profile,reviewedProfiles))))
+   return collectNativeTradeSettlement({...retained,connections:providers,...args,reviewedProfiles})
   },
  })
 }

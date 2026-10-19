@@ -9,7 +9,8 @@ import bs58 from 'bs58'
 import {compileMaxWalletLaunchReview} from '../src/hooklab-max-wallet-launch.mjs'
 import {inclusiveTradeResolver} from '../src/hooklab-inclusive-trade-resolver.mjs'
 import {compileInclusiveMaxWalletSwapReview} from '../src/hooklab-inclusive-max-wallet-swap.mjs'
-import {makeCanaryState,canaryCollectorBindings,localTestEnvironment,isolatedSvm,pk} from './fixtures/hooklab-canary.mjs'
+import {makeCanaryState,canaryCollectorBindings,localTestEnvironment,isolatedSvm,pk,pda,loader as LOADER} from './fixtures/hooklab-canary.mjs'
+import {rebound} from './fixtures/hooklab-native-world.mjs'
 import {missingArtifactEnv} from './fixtures/hooklab-generated-artifact.mjs'
 import {jsonbRoundTrip} from './fixtures/jsonb-round-trip.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
@@ -89,4 +90,24 @@ test('a real buy settles from its jsonb-stored review and context, also after a 
  const other=jsonbRoundTrip(context);other.compilationInput.profile.providers=[...other.compilationInput.profile.providers].reverse()
  await assert.rejects(reconcile(RESTARTED,{configurationSha256:legacy,settlementContext:other}),'another profile')
  await assert.rejects(resolverAt(RESTARTED).revalidate({owner:roles.creator,stage:'inclusive-buy',...stored,configurationSha256:legacy,settlementContext:context}),'revalidation stays strict')
+ // F2: the next production bundle (another reviewed profile) deploys; the buy reviewed under this one still settles, but
+ // only while this profile is in the reviewed list.
+ const reviewedUnder=state.profile.expectedSha256,next=rebound(bindings,json=>({...json,profileId:'next-reviewed-bundle'}))
+ const under=(b,reviewedProfiles)=>inclusiveTradeResolver({...b,connections,limits:{...LIMITS,nowMs:RESTARTED},clock:()=>1000,reviewedProfiles})
+  .reconcile({...stored,signedTransactionBase64:bought.wireBase64,signature:bought.signature})
+ assert.equal((await under(next,[reviewedUnder])).status,'finalized-success','after the profile changes')
+ await assert.rejects(under(next,[next.profile.expectedSha256]),'a profile not in the reviewed list never settles')
+ // ... and after the swap and launch programs are upgraded to the reviewed native-SOL builds, under a bundle pinning
+ // them: settlement reads the historical receipt with the reviewed profile and never needs the old ELFs on chain.
+ if(process.env.HOOKLAB_NATIVE_ELF_DIR){
+  const upgraded=makeCanaryState({elfDirectory:process.env.HOOKLAB_NATIVE_ELF_DIR,roles,blockhash:init.blockhash,native:true}),P=JSON.parse(state.profile.json).programs
+  const programData=['swap','launch'].map(role=>pda(LOADER,pk(P[role]).toBuffer()))
+  await svm.call('set',{accounts:programData.map(address=>({address,account:upgraded.accounts.get(address)}))})
+  const live=await svm.call('get',{addresses:programData})
+  assert.ok(live.accounts.every(row=>row.account.dataBase64===upgraded.accounts.get(row.address).dataBase64),'the bank now holds the native ELFs')
+  const bundle3=canaryCollectorBindings(upgraded)
+  assert.notEqual(bundle3.profile.expectedSha256,reviewedUnder)
+  assert.equal((await under(bundle3,[bundle3.profile.expectedSha256,reviewedUnder])).status,'finalized-success','after the upgrade')
+  await assert.rejects(under(bundle3,[bundle3.profile.expectedSha256]))
+ }else t.diagnostic('upgrade case not run: HOOKLAB_NATIVE_ELF_DIR is not set')
 })

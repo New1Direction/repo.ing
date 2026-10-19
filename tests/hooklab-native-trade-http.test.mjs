@@ -70,7 +70,7 @@ function nativePinned(bundle){
  return {config:{...bundle.config,profileSha256:profile.expectedSha256,dossierSha256:sha(dossierJson)},profile,dossierJson}
 }
 
-test('the trade runtime registers the native stages only when built with the switch and a bundle pinning the native builds',async()=>{
+test('the trade runtime takes new native work only when built with the switch and a bundle pinning the native builds',async()=>{
  const today=JSON.parse(readFileSync(new URL('../config/hooklab-production-bundle-2.json',import.meta.url),'utf8')),origins=today.config.providerTrustDomains.map(t=>t.origin)
  const settings=bundle=>({origin:'https://repo.ing',ownerTradingApproved:true,operatorDeploymentApproved:true,economicsApproved:true,config:bundle.config,profile:bundle.profile,dossierJson:bundle.dossierJson,
   connections:bundle.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:origins[i]+'rpc'}})),

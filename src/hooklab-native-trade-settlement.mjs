@@ -14,6 +14,7 @@ import {compileNativeSwapReview} from './hooklab-native-swap.mjs'
 import {loadNativeArtifacts,nativeErrorName} from './hooklab-native-pins.mjs'
 import {loadArtifacts} from './hooklab-owner-driver/artifacts.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
+import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profiles.mjs'
 import {inclusiveCreatorFee,modelInclusiveCreatorQuote} from './hooklab-inclusive-fee-quote.mjs'
 import {STATUS_GRADUATED} from './hooklab-graduation.mjs'
 const check=v=>{if(!v)throw Error('Native receipt evidence differs')},sha=x=>createHash('sha256').update(x).digest('hex')
@@ -21,14 +22,17 @@ const n=x=>x.toString(),B=x=>BigInt(n(x)),pk=x=>new PublicKey(x),tag=Buffer.from
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
 const authority=program=>PublicKey.findProgramAddressSync([Buffer.from('__event_authority')],pk(program))[0].toBase58()
 
-export async function collectNativeTradeSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature}){
+export async function collectNativeTradeSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
  const identity={signature,messageSha256:review?.messageSha256,profileSha256:review?.profileSha256}
  try{
   const bound=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),stored=settlementContext.compilationInput,ci={...stored,observations:stored.observations.map(canonicalObservation)}
-  check(settlementContext.schema==='repoing/native-trade-settlement-context/1'&&isDeepStrictEqual(ci.profile,profile))
+  check(settlementContext.schema==='repoing/native-trade-settlement-context/1')
+  // Reviewed under another (allowlisted) profile: a historical receipt; today's dossier pins (deploy slots, live ELF
+  // bytes) describe programs that may have been upgraded since, so they are not checked.
+  const historical=!isDeepStrictEqual(ci.profile,profile);check(!historical||reviewedEnvelope(ci.profile,profile,reviewedProfiles))
   const plan=compileNativeSwapReview(ci),p=bound.profile,a=plan.addresses
   check(isDeepStrictEqual(plan.review,review)&&verifyHookLabSignedMessage(review,signedTransactionBase64).signature===signature)
-  const pinned=[...new Set(bound.dossier.programs.flatMap(x=>[x.address,x.programData]))]
+  const pins=historical?[]:bound.dossier.programs,pinned=[...new Set(pins.flatMap(x=>[x.address,x.programData]))]
   // The pool and launch move with every trade, so providers at different slots differ there: they are read only to see
   // a graduation (which nothing undoes) and never compared byte for byte.
   const graduation=plan.graduates?[a.launch,a.pool]:[],inventory=[...new Set([...pinned,a.policy,a.inclusiveFeePolicy,...graduation])]
@@ -38,7 +42,7 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
    const meta=tx.meta;check(meta&&Array.isArray(meta.innerInstructions)&&meta.err!==undefined)
    const wire=new VersionedTransaction(tx.transaction.message);wire.signatures=tx.transaction.signatures.map(s=>bs58.decode(s))
    check(Buffer.from(wire.serialize()).toString('base64')===signedTransactionBase64)
-   const slot=integer(tx.slot);check(bound.dossier.programs.every(pin=>pin.deploySlot<=slot));const block=await connection.getBlockSignatures(slot,'finalized')
+   const slot=integer(tx.slot);check(pins.every(pin=>pin.deploySlot<=slot));const block=await connection.getBlockSignatures(slot,'finalized')
    check(block&&pk(block.blockhash).toBase58()===block.blockhash&&pk(block.previousBlockhash).toBase58()===block.previousBlockhash
     &&block.blockhash!==block.previousBlockhash&&Array.isArray(block.signatures)
     &&block.signatures.every(s=>bs58.decode(s).length===64&&bs58.encode(bs58.decode(s))===s)
@@ -59,7 +63,7 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
   // Program identities and the immutable policies are rechecked live; the pool and launch only for graduation, which
   // nothing can undo. Mutable trade state is not historical receipt evidence.
   const live=new Map(rows[0].stateAccounts.map(x=>[x.address,x.account]))
-  for(const pin of bound.dossier.programs){
+  for(const pin of pins){
    const program=live.get(pin.address),data=live.get(pin.programData);check(program&&data&&program.executable&&!data.executable
     &&program.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&data.owner===program.owner)
    const pb=Buffer.from(program.dataBase64,'base64');check(pb.length===36&&pb.readUInt32LE()===2&&pb.subarray(4).equals(pk(pin.programData).toBuffer()))
