@@ -21,6 +21,10 @@ const BEHIND=/Minimum context slot has not been reached|-32016/
 // Snapshot-to-blockhash slack across two real providers (the second waits to catch up): ~6 s. The
 // on-chain guards (deadline slot, minimum output, price impact) are unchanged.
 const SLOT_LAG=16
+// The most rent a launch may lock, as the program's debit guard counts it (what the creator paid beyond the creation and
+// pool fees, plus the Launch account's rent): 37,554,000 lamports measured for an open launch (32,732,880 paid). The
+// review requires the creator to hold the fees and this bound, so it stays close to the real figure.
+const LAUNCH_MAX_RENT_LAMPORTS=45000000n
 export function catchUpConnection(connection,{attempts=12,delayMs=500,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
  return new Proxy(connection,{get(target,property,receiver){
   const value=Reflect.get(target,property,receiver)
@@ -42,6 +46,13 @@ export function chainObservers(connections){
   async live(){const v=await read('confirmed');return {slot:Math.max(...v.map(x=>x.slot)),blockHeight:Math.max(...v.map(x=>x.blockHeight)),nowMs:Date.now()}},
   async bothPast(){const v=await read('finalized');return {slot:Math.min(...v.map(x=>x.slot)),blockHeight:Math.min(...v.map(x=>x.blockHeight))}},
  })
+}
+
+// What a launch may debit its creator: the creation fee and pool fee the bundle pins, the rent bound, and the network fee.
+export function launchDebitLimits({launchFeeLamports,poolCreationFeeLamports},networkFee){
+ const instruction=BigInt(launchFeeLamports)+BigInt(poolCreationFeeLamports)+LAUNCH_MAX_RENT_LAMPORTS
+ return {maxLaunchFeeLamports:String(launchFeeLamports),maxPoolCreationFeeLamports:String(poolCreationFeeLamports),maxRentLamports:String(LAUNCH_MAX_RENT_LAMPORTS),
+  maxInstructionDebitLamports:String(instruction),maxTotalDebitLamports:String(instruction+BigInt(networkFee))}
 }
 
 export function productionKeyRing(env){
@@ -97,8 +108,7 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
  const launchBundle=openLaunchesEnabled(env)?stack:bundle
  return {bundle,stack,launchBundle,connections,observers,reviewTiming,
   async launchLimits(){const c=await common();return {preparationLimits:{...c,maxRentLamports:'20000000',maxTotalDebitLamports:String(20000000+Number(networkFee))},
-   launchLimits:{...c,maxLaunchFeeLamports:launchBundle.config.economics.launchFeeLamports,maxPoolCreationFeeLamports:launchBundle.config.economics.poolCreationFeeLamports,
-    maxRentLamports:'100000000',maxInstructionDebitLamports:'100000000',maxTotalDebitLamports:String(100000000+Number(networkFee))}}},
+   launchLimits:{...c,...launchDebitLimits(launchBundle.config.economics,networkFee)}}},
   tradeLimits:{nowMs:Date.now(),maxAgeMs:60000,maxSlotLag:SLOT_LAG,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:networkFee,maxTotalDebitLamports:networkFee,
    computeUnitLimit:1400000,computeUnitPriceMicroLamports:priority},
   ...productionKeyRing(env)}

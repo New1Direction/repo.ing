@@ -38,7 +38,7 @@ test('a profile is a stack (no bridge, names its stack) or legacy (with its brid
 
 test('our own stack: its profile carries its programs, marker, pins and kit, and every compiler derives from it', { skip: OWN_STACK_SKIP }, () => {
   const { stack, idls } = ownStack(), artifacts = stackProductionArtifacts(stack, idls), profile = artifacts.base
-  assert.deepEqual(profile.programs, stack.programs); assert.equal(profile.quoteMint, PLACEHOLDER_IDS.quoteMint)
+  assert.deepEqual(profile.programs, stack.programs); assert.equal(profile.quoteMint, stack.quoteMint)
   assert.equal(profile.programs.bridge, undefined); assert.equal(profile.stack.upgradeAuthority, PLACEHOLDER_IDS.upgradeAuthority)
   assert.equal(kitOf(profile), stack.kitProgram); assert.deepEqual(profile.elfSha256.launch, stack.build.elf.launch.trimmedSha256)
   // The served profile (with the owner's menus) parses as a reviewed inclusive profile.

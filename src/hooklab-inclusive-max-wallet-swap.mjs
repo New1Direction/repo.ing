@@ -67,11 +67,13 @@ function programEvidence(accounts, program, expected, length, slot, immutable) {
   check(elf.subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])) && sha(elf) === expected
     && db.subarray(45 + length).every(b => b === 0), 'Program ELF differs')
 }
-function governance(binding, role, program, configAddress, config, gov, genesis, canary) {
-  const s = gov.state, roles = Object.values(s.roles).map(str)
+// trading: a trade's view. The launch governance's creation gate only stops new launches (a guardian's creation pause
+// leaves trading open on chain), so only the trading gates must be open.
+function governance(binding, role, program, configAddress, config, gov, genesis, canary, { trading = false } = {}) {
+  const s = gov.state, roles = Object.values(s.roles).map(str), gatesOpen = trading ? !s.gates.trading && (role === 'launch' || !s.gates.creation) : !s.gates.creation && !s.gates.trading
   check(str(s.program) === program && str(s.config) === configAddress && Buffer.from(s.genesis).equals(kb(genesis))
     && str(s.roles.admin) === str(config.admin) && str(s.roles.treasury) === str(config.treasury)
-    && (canary ? canaryGateMatches(role, config, s) : !s.gates.creation && !s.gates.trading) && s.pending_admin === null
+    && (canary ? canaryGateMatches(role, config, s) : gatesOpen) && s.pending_admin === null
     && new Set(roles).size === 4 && !roles.includes(zero), 'Governance identity, roles or gates differ')
   check(gov.bump === bump(program, 'governance'), 'Governance bump differs')
   const economics = hash(`hook-lab/${role}-governed-economics/1\0`, kb(program), binding.coder.types.encode('ConfigArgs', {

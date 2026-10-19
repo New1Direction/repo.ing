@@ -22,7 +22,7 @@ import { STATUS_GRADUATED, finalFillLamports, isReady } from './hooklab-graduati
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 import { isNativeElfPin } from './hooklab-native-launch.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
-import { createHolding, graduateHookCoin } from './hooklab-owner-driver/instructions.mjs'
+import { createHolding, instructionsFor } from './hooklab-owner-driver/instructions.mjs'
 import { isStackProfile, kitOf, profileRolesDistinct } from './hooklab-stack.mjs'
 
 const { raw, owned, decoded, programEvidence, governance, typed, readHolding, noRules } = swapAccountEvidence
@@ -147,10 +147,16 @@ export function compileNativeSwapReview(input) {
   // The profile's own launch and swap IDLs (their bytes are pinned above), each naming the profile's program.
   const ownIdl = role => { const idl = JSON.parse(raw(envelope.idls[role], 1100000)); check(idl.address === profile.programs[role], 'IDL identity differs'); return { idl, coder: new BorshCoder(idl) } }
   const launch = ownIdl('launch'), swap = ownIdl('swap')
+  // graduate is built from the profile's own launch IDL, whose fixed addresses are the stack's.
+  const pinned = loadArtifacts(), stackInstructions = instructionsFor({ idls: { ...pinned.idls, launch: launch.idl, swap: swap.idl }, coders: { ...pinned.coders, launch: launch.coder, swap: swap.coder } })
   const gateIdl = JSON.parse(gateBytes), gate = { idl: gateIdl, coder: new BorshCoder(gateIdl) }
   check(gateIdl.address === G, 'IDL identity differs')
   // graduateHookCoin is pinned to the current launch IDL; the native build keeps graduate byte for byte.
-  check(isDeepStrictEqual(launch.idl.instructions.find(ix => ix.name === 'graduate'), loadArtifacts().idls.launch.instructions.find(ix => ix.name === 'graduate')), 'graduate ABI differs')
+  // graduate's accounts as graduateHookCoin builds them (names, order, privileges, optional slots) and its data; its fixed
+  // addresses are the stack's own (derived from the profile), so they are not compared with bundle 2's.
+  const graduateShape = idl => { const g = idl.instructions.find(ix => ix.name === 'graduate'); return g && { discriminator: g.discriminator, args: g.args,
+    accounts: g.accounts.map(a => [a.name, !!a.signer, !!a.writable, !!a.optional]) } }
+  check(graduateShape(launch.idl) && isDeepStrictEqual(graduateShape(launch.idl), graduateShape(loadArtifacts().idls.launch)), 'graduate ABI differs')
   for (const name of ['before_swap_inclusive_v1', 'after_swap_inclusive_v1']) {
     const callback = launch.idl.instructions.find(ix => ix.name === name)
     check(callback && Buffer.from(callback.discriminator).equals(hash(`global:${name}`).subarray(0, 8)) && callback.args.length === 1
@@ -185,7 +191,7 @@ export function compileNativeSwapReview(input) {
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
   const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
-  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, false); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, false)
+  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, false, { trading: true }); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, false, { trading: true })
   const policy = decoded(gate, 'PolicyV2', owned(accounts, a.policy, G, 90)), registry = owned(accounts, a.registry, G, 81)
   check(policy.version === 2 && policy.fee_model === 2 && policy.protocol_share_bps === 2500
     && policy.creator_fee_bps === r.creatorFeeBps && approvedCreatorFees(profile).includes(r.creatorFeeBps) && str(policy.mint) === r.mint && policy.cap_bps === r.capBps && n(policy.initial_supply) > 0n
@@ -293,7 +299,7 @@ export function compileNativeSwapReview(input) {
   const swapIx = nativeSwapV2Instruction(profile, { side: r.side, trader: r.trader, mint: r.mint, amountIn: amount, minAmountOut: r.minAmountOut }, swap.idl)
   const budget = [ComputeBudgetProgram.setComputeUnitLimit({ units: l.computeUnitLimit }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: BigInt(l.computeUnitPriceMicroLamports) })]
   const instructions = [...budget, ...(createsHolding ? [createHolding(profile.programs, { payer: r.trader, mint: r.mint, owner: r.trader })] : []), swapIx,
-    ...(r.graduate ? [graduateHookCoin(profile.programs, profile.quoteMint, { cranker: r.trader, mint: r.mint, kit: kitOf(profile) })] : [])]
+    ...(r.graduate ? [stackInstructions.graduateHookCoin(profile.programs, profile.quoteMint, { cranker: r.trader, mint: r.mint, kit: kitOf(profile) })] : [])]
   const tables = lookupTable ? [new AddressLookupTableAccount({ key: pk(lookupTable.address), state: AddressLookupTableAccount.deserialize(raw(lookupTable.dataBase64, 8248)) })] : []
   if (lookupTable) {
     const b = raw(lookupTable.dataBase64, 8248), s = tables[0].state
