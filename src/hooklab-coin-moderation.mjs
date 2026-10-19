@@ -2,13 +2,15 @@
 // and the site stops offering BUY for it. SELL and the creator's fee CLAIM always keep working, so a delisting never
 // traps a holder. Pure policy text and checks; the store keeps the append-only record (hook_lab_coin_moderation).
 
-// ---------------------------------------------------------------------------------------------------------------------
-// PLACEHOLDER: the owner's content rules are pending. Replace these entries with the owner's delisting reasons (code ->
-// the sentence shown on the coin page). Nothing below depends on the wording.
+// The owner's delisting reasons (approved 2026-10-19): code -> the sentence shown on the coin page. Nothing below depends
+// on the wording.
 export const DELISTING_REASONS = Object.freeze({
-  'placeholder-content-rules': 'PLACEHOLDER: removed under repo.ing\'s content rules (owner text pending).',
+  impersonation: 'It pretends to be a person, project or brand it isn\'t.',
+  misleading: 'It makes false claims, such as being an official coin of a project that never endorsed it.',
+  'harmful-content': 'Its name, image or links contain hateful, sexual or violent content.',
+  'malicious-links': 'It links to phishing, malware or scam sites.',
+  legal: 'We received a valid legal request about it.',
 })
-// ---------------------------------------------------------------------------------------------------------------------
 
 export const isDelistingReason = code => typeof code === 'string' && Object.hasOwn(DELISTING_REASONS, code)
 // What the coin page shows for a delisted coin, and what a refused BUY says.
