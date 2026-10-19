@@ -37,7 +37,7 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  const sender=nativeTransactionSender({enabled:true,connections})
  const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen,connections})})
  // The coin's stack profile (programs, quote marker): server-side only, never sent to a customer.
- const profileFor=coin=>(coin?.stack??coinStack(coin))==='own'?profiles.own:profiles.legacy // TEMPORARY e2e patch: the listed record carries stack, not source
+ const profileFor=coin=>coinStack(coin)==='own'?profiles.own:profiles.legacy
  // Display-only market reads use the primary provider; trades and funding re-verify on both providers. coin: the listed
  // coin record (its stack); looked up when not given. A coin whose stack has no bundle here reads as not listed.
  const market=async(mint,wallet=null,coin)=>{
