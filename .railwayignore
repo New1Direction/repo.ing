@@ -47,6 +47,8 @@ temp/
 *.secret
 *.secrets
 *wallet*.json
+# Reviewed public program ABI the app loads at runtime (sha256-pinned in src/hooklab-owner-driver/artifacts.mjs).
+!/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/hook_max_wallet.json
 *private*key*
 *secret*key*
 *credentials*.json

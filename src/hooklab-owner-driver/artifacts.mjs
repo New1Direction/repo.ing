@@ -30,7 +30,7 @@ export const ELF = Object.freeze({
   gate: { sha256: 'd7233dd0fd23f58f2d1efec1543017395684f43827155e8b884a624c62493857', length: 188960 },
   token: { sha256: '7aa07deb41a5545bcaff0d3fb966d5344538ec8f5c9f2155db4de030e3255df1', length: 326504 },
 })
-const FILES = {
+export const FILES = {
   profile: `${CANDIDATE}offline-builder-profile.json`, launch: `${CANDIDATE}bordrless_launch.json`,
   swap: `${CANDIDATE}bordrless_swap.json`, gate: `${CANDIDATE}hook_max_wallet.json`,
   token: 'vendor/hooklab-production-candidate/idl/bordrless_token.json',
