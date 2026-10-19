@@ -53,7 +53,7 @@ const stage = STAGES['native-launches']
 test('needs --to on or off, and reads byte 186 before anything else', async () => {
   for (const to of [undefined, 'yes', 'true']) await assert.rejects(stage.build({ ...context(chain()), options: { to } }, null), /requires --to on or --to off/)
   await assert.rejects(stage.build(context(chain({ config: switched(2) })), null), /byte 186 is 2, not 0 or 1/)
-  await assert.rejects(stage.build(context(chain({ config: switched(1, 200) })), null), /reserved bytes after the switch are not zero/)
+  await assert.rejects(stage.build(context(chain({ config: switched(1, 200) })), null), /reserved bytes after the switch are not a state the reviewed programs write/)
 })
 
 test('a flip to the value the switch already has is refused, since it would still stale every signed launch', async () => {

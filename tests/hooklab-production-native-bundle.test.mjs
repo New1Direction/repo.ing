@@ -13,6 +13,7 @@ import { inclusiveMaxWalletProfileSchema } from '../src/hooklab-inclusive-max-wa
 import { MAINNET_GENESIS, collectProductionOperatorBundle, productionArtifacts, productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
 import { NATIVE_ELF, NATIVE_IDL_SHA256 } from '../src/hooklab-native-pins.mjs'
 import { isNativeElfPin, nativeProgramDataMatches } from '../src/hooklab-native-launch.mjs'
+import { encodeOpenCreationReserved } from '../src/hooklab-launch-config-reserved.mjs'
 import { NATIVE_SOURCE_COMMIT, NO_SOURCE_PATCH_SHA256, deployedBuild, nativeProductionArtifacts, requireNativeBuilds } from '../src/hooklab-production-native-bundle.mjs'
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
@@ -135,4 +136,17 @@ test('real ELFs: the native build is recognised trimmed or raw, bundle 2 is name
     const trailing = programData(trimmed, 8); trailing[trailing.length - 1] = 1
     assert.equal(deployedBuild(role, trailing), 'unknown')
   }
+})
+
+test('the launch-config binding lets the governed switches and menus move (reserved bytes 186..203), and nothing else', () => {
+  const pin = dossier2.accounts.find(a => a.role === 'launch-config'), approvedBytes = Buffer.from(pin.approvedDataBase64, 'base64')
+  const live = mutate => { const b = Buffer.from(approvedBytes); mutate(b); return { ...approved(pin), dataBase64: b.toString('base64') } }
+  const open = encodeOpenCreationReserved({ native: true, open: true, creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] })
+  assert.ok(productionAccountBindingMatches(pin, live(b => open.copy(b, 186)), dossier2), 'native and open creation on, with the owner\'s menus')
+  assert.ok(productionAccountBindingMatches(pin, live(b => { b[186] = 1 }), dossier2), 'native on alone')
+  assert.equal(productionAccountBindingMatches(pin, live(b => { b[187] = 2 }), dossier2), false, 'a switch value the programs never write')
+  assert.equal(productionAccountBindingMatches(pin, live(b => { b[249] = 1 }), dossier2), false, 'a reserved byte past the menus')
+  assert.equal(productionAccountBindingMatches(pin, live(b => { open.copy(b, 186); b[106] ^= 1 }), dossier2), false, 'the launch fee (bytes 106..114) changed with the switches')
+  const swapPin = dossier2.accounts.find(a => a.role === 'swap-config'), swapLive = Buffer.from(swapPin.approvedDataBase64, 'base64'); swapLive[swapLive.length - 1] ^= 1
+  assert.equal(productionAccountBindingMatches(swapPin, { ...approved(swapPin), dataBase64: swapLive.toString('base64') }, dossier2), false, 'the swap Config has no such allowance')
 })

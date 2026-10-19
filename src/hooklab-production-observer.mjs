@@ -6,6 +6,7 @@ import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { LOCAL_DOSSIER_SCHEMA, localAcceptanceNetwork, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 import { NATIVE_IDL_SHA256, loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 import { isNativeElfPin } from './hooklab-native-launch.mjs'
 
 const sha = data => createHash('sha256').update(data).digest('hex')
@@ -93,6 +94,12 @@ export function productionAccountBindingMatches(pin,observed,dossier){
   const base=decode(approved),live=decode(current),field=role==='launch'?'launches':'pools_created'
   if(live[field].lt(base[field]))return false
   live[field]=base[field]
+  // The launch Config's governed switches (native launches, open creation) and creator menus live in its reserved bytes
+  // and may move between any states the reviewed programs write; every compiler reads them live. Nothing else may.
+  if(role==='launch'){
+   if(!parseLaunchConfigReserved(Buffer.from(live.reserved))||!parseLaunchConfigReserved(Buffer.from(base.reserved)))return false
+   live.reserved=base.reserved
+  }
   return Buffer.concat([current.subarray(0,8),codec.coder.types.encode('Config',live)]).equals(approved)
  }catch{return false}
 }

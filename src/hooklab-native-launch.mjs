@@ -22,14 +22,15 @@ export const LAUNCH_ACCOUNT_BYTES = 565
 export const CREATE_LAUNCH_V3_DISCRIMINATOR = instructionDisc('create_launch_custom_v3')
 export const CREATE_LAUNCH_V4_DISCRIMINATOR = instructionDisc('create_launch_custom_v4')
 
-// Config.reserved[0] (byte 186). Reserved bytes 187..249 stay zero whichever way it is set; anything else is not a state
-// the reviewed programs write, so nothing is compiled or signed against it.
+// Config.reserved[0] (byte 186). The rest of the reserved bytes hold open creation and its menus, or zero
+// (src/hooklab-launch-config-reserved.mjs); anything else is not a state the reviewed programs write, so nothing is
+// compiled or signed against it.
 export function nativeLaunchesSwitch(configBytes) {
   const b = Buffer.from(configBytes), at = NATIVE_FLAGS.configNativeLaunches
   check(b.length === 250 && b.subarray(0, 8).equals(accountDisc('Config')), 'Not a launch Config account')
   if (!launchConfigReservedValid(b.subarray(at))) {
-    check(b.subarray(at + 1).every(v => v === 0), 'Launch Config reserved bytes after the switch are not zero')
-    check(false, `Launch Config switch byte ${at} is ${b[at]}, not 0 or 1`)
+    check(b[at] === 0 || b[at] === 1, `Launch Config switch byte ${at} is ${b[at]}, not 0 or 1`)
+    check(false, 'Launch Config reserved bytes after the switch are not a state the reviewed programs write')
   }
   return b[at] === 1
 }
