@@ -50,6 +50,7 @@ test('a real buy settles from its jsonb-stored review and context, also after a 
   getMultipleAccountsInfoAndContext:async keys=>{const s=await svm.call('get',{addresses:keys.map(k=>k.toBase58())})
    return {context:{slot:s.slot},value:s.accounts.map(({account:v})=>v?{owner:pk(v.owner),executable:v.executable,lamports:Number(v.lamports),data:Buffer.from(v.dataBase64,'base64')}:null)}},
   getLatestBlockhashAndContext:async()=>({context:{slot:100},value:{blockhash:(await svm.call('get',{addresses:[]})).blockhash,lastValidBlockHeight:250}}),
+  getBlock:async slot=>slot===100?{blockhash:(await svm.call('get',{addresses:[]})).blockhash,blockHeight:100,parentSlot:99}:null,
   isBlockhashValid:async()=>({context:{slot:100},value:true}),getFeeForMessage:async m=>({context:{slot:100},value:5000*m.header.numRequiredSignatures}),
   simulateTransaction:async()=>({context:{slot:100},value:{err:null}}),
   getTransaction:async signature=>{const r=executed.get(signature);if(!r)return null;const signed=VersionedTransaction.deserialize(Buffer.from(r.wireBase64,'base64'))

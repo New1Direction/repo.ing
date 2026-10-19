@@ -142,6 +142,7 @@ function chain({ rows, receipt = null, blockHeight = 1100, simulated = () => nul
     getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 1000 }, value: keys.map(k => { const a = rows[k.toBase58()]; return a ? { owner: new PublicKey(a.owner), executable: a.executable, lamports: Number(a.lamports), data: Buffer.from(a.dataBase64, 'base64') } : null }) }),
     getMinimumBalanceForRentExemption: async bytes => bytes === HOLDING_BYTES ? 1686560 : 890880,
     getLatestBlockhashAndContext: async () => ({ context: { slot: 1000 }, value: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1150 } }),
+    getBlock: async slot => slot === 1000 ? { blockhash: '11111111111111111111111111111111', blockHeight: 1000, parentSlot: 999 } : null,
     isBlockhashValid: async () => ({ context: { slot: 1000 }, value: true }), getBlockHeight: async () => 1000, getSlot: async () => 1000,
     getFeeForMessage: async () => ({ context: { slot: 1000 }, value: 7000 }),
     simulateTransaction: async (_tx, options) => ({ context: { slot: 1000 }, value: { err: null, accounts: options.accounts?.addresses.map(address => ({ lamports: simulated(address) })) ?? null } }),

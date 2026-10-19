@@ -8,6 +8,7 @@ import {compileInclusiveMaxWalletSwapReview,inclusiveMaxWalletSwapInventory,incl
 import {collectInclusiveTradeSettlement} from './hooklab-inclusive-trade-settlement.mjs'
 import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
+import {provenLatestBlockhash} from './hooklab-blockhash-proof.mjs'
 const check=v=>{if(!v)throw Error('Inclusive trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
@@ -50,7 +51,7 @@ export function inclusiveTradeResolver({config,profile,dossierJson,connections,l
   check(evidence.accountBindingsMatched===true)
   const slot=Math.max(...observations.map(x=>x.slot))
   const latest=expectedReview?{context:{slot},value:{blockhash:VersionedMessage.deserialize(Buffer.from(expectedReview.messageBase64,'base64')).recentBlockhash,lastValidBlockHeight:expectedReview.lastValidBlockHeight}}
-   :await providers[0].connection.getLatestBlockhashAndContext({commitment:'finalized',minContextSlot:slot})
+   :await provenLatestBlockhash(providers,{minContextSlot:slot})
   check(integer(latest.context.slot)>=slot)
   const confirmations=await Promise.all(providers.map(async({connection})=>{
    const valid=await connection.isBlockhashValid(latest.value.blockhash,{commitment:'finalized',minContextSlot:latest.context.slot})

@@ -10,6 +10,7 @@ import {compileNativeSwapReview,nativeSwapInventory,nativeSwapRequestSchema} fro
 import {collectNativeTradeSettlement} from './hooklab-native-trade-settlement.mjs'
 import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
+import {provenLatestBlockhash} from './hooklab-blockhash-proof.mjs'
 import {STATUS_GRADUATED} from './hooklab-graduation.mjs'
 import {loadNativeArtifacts} from './hooklab-native-pins.mjs'
 const check=v=>{if(!v)throw Error('Native trade state, intent or operator pins changed')}
@@ -52,7 +53,7 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
   check(evidence.accountBindingsMatched===true)
   const slot=Math.max(...observations.map(x=>x.slot))
   const latest=expectedReview?{context:{slot},value:{blockhash:VersionedMessage.deserialize(Buffer.from(expectedReview.messageBase64,'base64')).recentBlockhash,lastValidBlockHeight:expectedReview.lastValidBlockHeight}}
-   :await providers[0].connection.getLatestBlockhashAndContext({commitment:'finalized',minContextSlot:slot})
+   :await provenLatestBlockhash(providers,{minContextSlot:slot})
   check(integer(latest.context.slot)>=slot)
   const confirmations=await Promise.all(providers.map(async({connection})=>{
    const valid=await connection.isBlockhashValid(latest.value.blockhash,{commitment:'finalized',minContextSlot:latest.context.slot})

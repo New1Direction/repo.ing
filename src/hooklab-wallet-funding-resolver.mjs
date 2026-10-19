@@ -11,6 +11,7 @@ import { BRIDGE_PIN, compileWalletFundingReview, refuse, verifyBridgeAccounts, w
 import { LOADER, derivedAddresses, kb, pda } from './hooklab-owner-driver/pins.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { canonicalObservation } from './hooklab-canonical-observation.mjs'
+import { provenLatestBlockhash } from './hooklab-blockhash-proof.mjs'
 
 // About 40 seconds from review to send (the wallet approval happens inside it); the compiler allows up to 150 slots.
 export const SIGNING_WINDOW_SLOTS = 100
@@ -81,7 +82,7 @@ export function walletFundingResolver({ config, profile, dossierJson, connection
     const rent = { holdingLamports: await rentFor(HOLDING_BYTES), walletLamports: await rentFor(0), vaultLamports: String(vaultRent) }
     const slot = Math.max(...observations.map(o => o.slot))
     const latest = expectedReview ? { context: { slot }, value: { blockhash: VersionedMessage.deserialize(Buffer.from(expectedReview.messageBase64, 'base64')).recentBlockhash, lastValidBlockHeight: expectedReview.lastValidBlockHeight } }
-      : await providers[0].connection.getLatestBlockhashAndContext({ commitment: 'finalized', minContextSlot: slot })
+      : await provenLatestBlockhash(providers, { minContextSlot: slot })
     const confirmations = await Promise.all(providers.map(async ({ connection }) => {
       const valid = await connection.isBlockhashValid(latest.value.blockhash, { commitment: 'finalized', minContextSlot: latest.context.slot })
       check(valid.value === true && integer(valid.context.slot) >= latest.context.slot, 'This review expired before it was used. Start again.')
