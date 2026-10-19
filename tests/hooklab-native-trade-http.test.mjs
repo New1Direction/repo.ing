@@ -3,12 +3,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
-import {createHash} from 'node:crypto'
 import {Keypair} from '@solana/web3.js'
-import {NATIVE_ELF,NATIVE_IDL_SHA256} from '../src/hooklab-native-pins.mjs'
 import {createInclusiveTradeHandler,nativeTradingOn} from '../app/lib/hooklab-inclusive-trade.mjs'
 import {createInclusiveTradeRuntime} from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
 import {createMarketHandler} from '../app/lib/hooklab-market.mjs'
+import {nativePinned} from './fixtures/hooklab-native-bundle.mjs'
 
 const id='11111111-1111-4111-8111-111111111111',token=Buffer.alloc(32,9).toString('base64url'),owner='11111111111111111111111111111111'
 const env={HOOK_INCLUSIVE_TRADING_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true',HOOK_TRADING_PUBLIC:'true',HOOK_NATIVE_TRADING_ENABLED:'true'}
@@ -55,20 +54,6 @@ test('HTTP cannot choose the trader, inject state or drop the graduate flag of a
   assert.equal((await h.handle(request({action:'native-quote',signingId:id,request:value}))).status,400,JSON.stringify(value))
  assert.equal(h.seen.length,0)
 })
-
-// Today's production bundle, re-pinned to the reviewed native builds as the post-upgrade bundle will be (profile IDLs,
-// ELF hashes and lengths, and the dossier and operator config that bind them).
-const sha=x=>createHash('sha256').update(x).digest('hex')
-function nativePinned(bundle){
- const p=JSON.parse(bundle.profile.json),idl=role=>readFileSync(new URL(`../vendor/hooklab-native-candidate/bordrless_${role}.json`,import.meta.url))
- const json=JSON.stringify({...p,idlSha256:{...p.idlSha256,...NATIVE_IDL_SHA256},elfSha256:{...p.elfSha256,swap:NATIVE_ELF.swap.sha256,launch:NATIVE_ELF.launch.sha256}})
- const profile={...bundle.profile,json,expectedSha256:sha(json),idls:{...bundle.profile.idls,swap:idl('swap').toString('base64'),launch:idl('launch').toString('base64')},
-  elfLengths:{...bundle.profile.elfLengths,swap:NATIVE_ELF.swap.length,launch:NATIVE_ELF.launch.length}}
- const dossier=JSON.parse(bundle.dossierJson);dossier.artifacts.profileSha256=profile.expectedSha256
- for(const pin of dossier.programs)if(['swap','launch'].includes(pin.role))Object.assign(pin,{elfSha256:NATIVE_ELF[pin.role].sha256,elfLength:NATIVE_ELF[pin.role].length})
- const dossierJson=JSON.stringify(dossier)
- return {config:{...bundle.config,profileSha256:profile.expectedSha256,dossierSha256:sha(dossierJson)},profile,dossierJson}
-}
 
 test('the trade runtime takes new native work only when built with the switch and a bundle pinning the native builds',async()=>{
  const today=JSON.parse(readFileSync(new URL('../config/hooklab-production-bundle-2.json',import.meta.url),'utf8')),origins=today.config.providerTrustDomains.map(t=>t.origin)
