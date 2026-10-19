@@ -2,7 +2,10 @@
 // and profile, never from constants. No RPC; the relocated ELFs are only read when present.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { LEGACY_STACK, coinStack, isStackProfile, kitOf, parseStack, profileRolesDistinct, stackProfile, tokenElfLengthOf } from '../src/hooklab-stack.mjs'
 import { derivedAddresses, holdingAddress, authorizationAddress } from '../src/hooklab-owner-driver/pins.mjs'
 import { parseInclusiveMaxWalletProfile } from '../src/hooklab-inclusive-max-wallet-profile.mjs'
@@ -64,9 +67,48 @@ test('our stack from hook-lab\'s independent build: the ids file\'s six fields, 
   const { stack } = stackFromIndependentBuild(INDEPENDENT_DIR), ids = JSON.parse(readFileSync(`${INDEPENDENT_DIR}/ids/independent.json`, 'utf8'))
   assert.deepEqual(stack.programs, { launch: ids.launch, swap: ids.swap, gate: ids.gate, token: ids.token })
   assert.equal(stack.quoteMint, ids.quoteMarkerMint); assert.equal(stack.upgradeAuthority, ids.upgradeAuthority); assert.equal(stack.status, 'placeholder')
-  // The trimmed pins agree with hook-lab's own ELF-HASHES.txt for every program.
+  // Every ELF the stack pins is the one hook-lab's own ELF-HASHES.txt records (each of its formats names the raw sha256).
   const hashes = readFileSync(`${INDEPENDENT_DIR}/ELF-HASHES.txt`, 'utf8')
-  for (const role of ['launch', 'swap', 'gate', 'token']) assert.ok(hashes.includes(`trimmed sha256 ${stack.build.elf[role].trimmedSha256} len ${stack.build.elf[role].trimmedLength}`), role)
+  for (const [role, bytes] of Object.entries(stackFromIndependentBuild(INDEPENDENT_DIR).elfs)) assert.ok(hashes.includes(sha256(bytes)), role)
   assert.equal(stack.build.open, true)
   assert.throws(() => stackFromIndependentBuild(INDEPENDENT_DIR, { reviewed: true }), /placeholder keys/)
+})
+
+// hook-lab's ELF-HASHES.txt formats: the annotated one (a "@ <commit>" header, then per program its name, id, raw and
+// trimmed sha256 and lengths) and a plain sha256sum listing (independent-e775165), whose source commit is the build's own
+// clean-tree record in evidence/final.log. Synthetic ELF bytes beside the build's real ids, manifest and IDLs.
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
+const COMMIT = 'c0ffee'.padEnd(40, '0'), ELF_NAMES = { launch: 'bordrless_launch', swap: 'bordrless_swap', gate: 'hook_max_wallet', token: 'bordrless_token' }
+function syntheticBuild(t, { hashes, finalLog = null }) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'independent-synthetic-')); t.after(() => rmSync(dir, { recursive: true, force: true }))
+  for (const sub of ['ids', 'idl']) cpSync(path.join(INDEPENDENT_DIR, sub), path.join(dir, sub), { recursive: true })
+  mkdirSync(path.join(dir, 'elf'))
+  const elfs = Object.fromEntries(Object.entries(ELF_NAMES).map(([role, name], i) => {
+    const bytes = Buffer.concat([Buffer.from(`synthetic ${role} ELF`), Buffer.alloc(i + 3)]); writeFileSync(path.join(dir, 'elf', `${name}.so`), bytes); return [role, bytes] }))
+  writeFileSync(path.join(dir, 'ELF-HASHES.txt'), hashes(elfs))
+  if (finalLog) { mkdirSync(path.join(dir, 'evidence')); writeFileSync(path.join(dir, 'evidence', 'final.log'), finalLog) }
+  return { dir, elfs }
+}
+const plain = elfs => Object.entries(ELF_NAMES).map(([role, name]) => `${sha256(elfs[role])}  ${name}.so\n`).join('')
+const trimmed = bytes => { let end = bytes.length; while (end > 0 && bytes[end - 1] === 0) end--; return bytes.subarray(0, end) }
+
+test('a plain sha256sum ELF-HASHES.txt is accepted with the build\'s clean-tree commit, and checked against every ELF', { skip: INDEPENDENT_SKIP }, t => {
+  const { dir, elfs } = syntheticBuild(t, { hashes: plain, finalLog: `== HEAD ${COMMIT} dirty=0\n== ids\n` })
+  const { stack } = stackFromIndependentBuild(dir)
+  assert.equal(stack.build.source.commit, COMMIT); assert.equal(stack.build.name, 'independent-c0ffee0')
+  for (const role of Object.keys(ELF_NAMES)) assert.deepEqual(stack.build.elf[role], { trimmedSha256: sha256(trimmed(elfs[role])), trimmedLength: trimmed(elfs[role]).length }, role)
+  // One listed hash is not its file's: refused, naming the program.
+  const wrong = syntheticBuild(t, { hashes: e => plain(e).replace(sha256(e.launch), sha256(Buffer.from('another'))), finalLog: `== HEAD ${COMMIT} dirty=0\n` })
+  assert.throws(() => stackFromIndependentBuild(wrong.dir), /launch ELF differs from ELF-HASHES.txt/)
+  // No clean-tree record of the source commit: refused.
+  assert.throws(() => stackFromIndependentBuild(syntheticBuild(t, { hashes: plain }).dir), /names no source commit/)
+  assert.throws(() => stackFromIndependentBuild(syntheticBuild(t, { hashes: plain, finalLog: `== HEAD ${COMMIT} dirty=1\n` }).dir), /names no source commit/)
+})
+
+test('the annotated ELF-HASHES.txt is still read: its commit header and both hashes and lengths per program', { skip: INDEPENDENT_SKIP }, t => {
+  const annotated = elfs => `feat/independent-stack @ ${COMMIT}\n` + Object.entries(ELF_NAMES).map(([role, name]) => { const tr = trimmed(elfs[role])
+    return `${name}  raw sha256 ${sha256(elfs[role])} len ${elfs[role].length} | trimmed sha256 ${sha256(tr)} len ${tr.length}\n` }).join('')
+  assert.equal(stackFromIndependentBuild(syntheticBuild(t, { hashes: annotated }).dir).stack.build.source.commit, COMMIT)
+  const short = syntheticBuild(t, { hashes: e => annotated(e).replace(`len ${e.swap.length} `, `len ${e.swap.length + 1} `) })
+  assert.throws(() => stackFromIndependentBuild(short.dir), /swap ELF differs from ELF-HASHES.txt/)
 })
