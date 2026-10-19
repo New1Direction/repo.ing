@@ -3,6 +3,7 @@
 // Two independent mainnet providers must return identical bytes for every account. It refuses unless
 // the gate is immutable, every deployed program equals its reviewed pin, and both configs already
 // carry the approved economics. It never signs, sends or reads secrets.
+import { quoteMintSupplyBinding } from './hooklab-production-observer.mjs'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { isDeepStrictEqual } from 'node:util'
@@ -68,7 +69,8 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
  const accounts=Object.entries(accountRoles).map(([role,address],i)=>{
   const a=observed[programRoles.length+i]
   return {role,address,owner:a.owner,executable:a.executable,dataSha256:sha(a.data),...(['launch-config','swap-config'].includes(role)
-   ?{binding:'config-counters-v1',approvedDataBase64:a.data.toString('base64'),idlSha256:sha(idls[role.split('-')[0]])}:{})}
+   ?{binding:'config-counters-v1',approvedDataBase64:a.data.toString('base64'),idlSha256:sha(idls[role.split('-')[0]])}
+   :role==='quote-mint'?quoteMintSupplyBinding(a.data):{})}
  })
  const table=observed.at(-1)
  need(table.owner==='AddressLookupTab1e1111111111111111111111111','lookup table is not an address lookup table')

@@ -27,23 +27,51 @@ const dossierV1 = z.object({
   accounts: z.array(accountPin).min(4).max(80),
 }).strict()
 const stableAccountPin=accountPin.extend({binding:z.literal('config-counters-v1'),approvedDataBase64:z.string().max(8192),idlSha256:hash}).strict()
-export const productionDossierSchema=z.union([dossierV1,dossierV1.extend({schema:z.literal('repoing/production-observation/2'),accounts:z.array(z.union([accountPin,stableAccountPin])).min(4).max(80)}).strict()])
+// The bridged-SOL quote mint: only `supply` may move (every wrap and unwrap through the public bridge changes it).
+const mintSupplyAccountPin=accountPin.extend({binding:z.literal('mint-supply-v1'),approvedDataBase64:z.string().max(8192),idlSha256:hash}).strict()
+export const productionDossierSchema=z.union([dossierV1,dossierV1.extend({schema:z.literal('repoing/production-observation/2'),accounts:z.array(z.union([accountPin,stableAccountPin,mintSupplyAccountPin])).min(4).max(80)}).strict()])
 export function parseExecutionDossier(value) {
   if (value?.schema !== LOCAL_DOSSIER_SCHEMA) return productionDossierSchema.parse(value)
   const local = localAcceptanceNetwork()
   if (!local) throw Error('Local dossier requires isolated acceptance configuration')
   return dossierV1.extend({ schema: z.literal(LOCAL_DOSSIER_SCHEMA), genesisHash: z.literal(local.genesisHash),
     topology: z.literal('single-local-validator-two-proxies'),
-    accounts: z.array(z.union([accountPin, stableAccountPin])).min(4).max(80) }).strict().parse(value)
+    accounts: z.array(z.union([accountPin, stableAccountPin, mintSupplyAccountPin])).min(4).max(80) }).strict().parse(value)
 }
 // Runtime source artifacts are rooted at the app directory and included in Next tracing.
 const codecBytes={launch:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json`),swap:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_swap.json`)}
 const codecs=Object.fromEntries(['launch','swap'].map(role=>{const bytes=codecBytes[role];return [role,{sha256:sha(bytes),coder:new BorshCoder(JSON.parse(bytes)),idl:JSON.parse(bytes)}]}))
+const tokenIdlBytes=readFileSync(`${process.cwd()}/vendor/hooklab-production-candidate/idl/bordrless_token.json`)
+export const TOKEN_IDL_SHA256=sha(tokenIdlBytes)
+const tokenCodec={sha256:TOKEN_IDL_SHA256,coder:new BorshCoder(JSON.parse(tokenIdlBytes)),discriminator:Buffer.from(JSON.parse(tokenIdlBytes).accounts.find(a=>a.name==='Mint').discriminator)}
+// A canonical Mint: its discriminator, then exactly the IDL encoding, then only zero padding to the allocation.
+function decodeMint(bytes){
+ if(!bytes.subarray(0,8).equals(tokenCodec.discriminator))throw Error('Not a Mint account')
+ const value=tokenCodec.coder.accounts.decode('Mint',bytes),encoded=Buffer.concat([tokenCodec.discriminator,tokenCodec.coder.types.encode('Mint',value)])
+ if(!bytes.subarray(0,encoded.length).equals(encoded)||bytes.subarray(encoded.length).some(b=>b!==0))throw Error('Noncanonical Mint')
+ return value
+}
+// Pin the reviewed quote-mint bytes so only `supply` may change afterwards (see mintSupplyBindingMatches).
+export const quoteMintSupplyBinding=data=>({binding:'mint-supply-v1',approvedDataBase64:Buffer.from(data).toString('base64'),idlSha256:TOKEN_IDL_SHA256})
+// mint-supply-v1: the live quote mint, with its supply set back to the reviewed snapshot's, must be byte-identical to that
+// snapshot (same allocation). Authorities, hook program and flags, decimals, identity and padding cannot change.
+function mintSupplyBindingMatches(pin,current,dossier){
+ if(pin.role!=='quote-mint'||pin.executable||(dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier)))return false
+ const token=dossier.programs.find(p=>p.role==='token')
+ if(!token||pin.owner!==token.address||pin.idlSha256!==tokenCodec.sha256)return false
+ const approved=rawAccount({dataBase64:pin.approvedDataBase64})
+ if(sha(approved)!==pin.dataSha256||approved.length!==current.length)return false
+ const base=decodeMint(approved),live=decodeMint(current)
+ live.supply=base.supply
+ const relaid=Buffer.concat([tokenCodec.discriminator,tokenCodec.coder.types.encode('Mint',live)])
+ return Buffer.concat([relaid,Buffer.alloc(approved.length-relaid.length)]).equals(approved)
+}
 export function productionAccountBindingMatches(pin,observed,dossier){
  try{
   if(!observed||observed.address!==pin.address||observed.owner!==pin.owner||observed.executable!==pin.executable)return false
   const current=rawAccount(observed)
   if(!pin.binding)return sha(current)===pin.dataSha256
+  if(pin.binding==='mint-supply-v1')return mintSupplyBindingMatches(pin,current,dossier)
   if(pin.binding!=='config-counters-v1'||(dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||pin.executable||!['launch-config','swap-config'].includes(pin.role))return false
   const role=pin.role.split('-')[0],codec=codecs[role],program=dossier.programs.find(p=>p.role===role)
   if(!program||pin.address!==PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(program.address))[0].toBase58()||program.address!==pin.owner||codec.sha256!==pin.idlSha256||codec.idl.address!==program.address)return false
