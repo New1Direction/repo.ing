@@ -90,9 +90,10 @@
 /* Coin page and trading: the repository token page's layout, with the trade panel on the right. */
 .hooks-page .back-link{display:inline-flex;align-items:center;gap:6px;margin-bottom:18px;color:var(--muted);font-size:14px;text-decoration:none}
 .hooks-page .back-link:hover{color:var(--text)}
-.hooks-coin-layout{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:22px;align-items:start;margin-bottom:26px}
-.hooks-coin-main{display:flex;flex-direction:column;gap:18px;min-width:0}
-.hooks-coin-side{position:sticky;top:90px}
+.hooks-coin-layout{display:grid;grid-template-columns:minmax(0,1fr) 400px;grid-template-rows:auto auto 1fr;grid-template-areas:"hero side" "blocks side" "address side";gap:18px 22px;align-items:start;margin-bottom:26px}
+.hooks-coin-layout>.hooks-coin-hero{grid-area:hero;min-width:0}.hooks-coin-layout>.hooks-coin-blocks-card{grid-area:blocks;min-width:0}.hooks-coin-layout>.hooks-address{grid-area:address;margin:0}
+.hooks-coin-side{grid-area:side;position:sticky;top:90px}
+.hooks-trade-waiting{display:flex;flex-direction:column;gap:12px}.hooks-trade-waiting h2{margin:0;font-size:20px}.hooks-trade-waiting .trade-note{margin:0}
 .hooks-coin-hero .launch-token-summary{border:0;padding:0;background:none}
 .hooks-coin-hero .launch-token-summary .preview-avatar{width:84px;height:84px}
 .hooks-coin-hero .launch-token-summary strong{font-size:32px;letter-spacing:-.03em}
@@ -131,5 +132,7 @@
 .hooks-open-coin>div{display:flex;gap:10px}.hooks-open-coin .field-input{flex:1;font-family:ui-monospace,monospace;font-size:13px}
 .hooks-mine{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:26px}.hooks-mine .hooks-coin-stats{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:12px}
 .hooks-mine .launch-token-summary{margin:6px 0 14px}
-@media(max-width:1000px){.hooks-coin-layout{grid-template-columns:1fr}.hooks-coin-side{position:static}}
+@media(max-width:1000px){.hooks-coin-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-template-areas:"hero" "side" "blocks" "address"}.hooks-coin-side{position:static}}
 @media(max-width:760px){.hooks-coin-stats{grid-template-columns:1fr 1fr}.hooks-mine{grid-template-columns:1fr}.hooks-open-coin>div{flex-direction:column}.hooks-coin-hero .launch-token-summary strong{font-size:26px}}
+/* Phones: the ticker keeps whole words, and the creator gets a full row instead of wrapping its address. */
+@media(max-width:420px){.hooks-coin-hero .launch-token-summary .preview-avatar{width:56px;height:56px}.hooks-coin-hero .launch-token-summary strong{font-size:22px;overflow-wrap:normal;word-break:normal}.hooks-coin-stats>div:nth-child(3){grid-column:1/-1}.hooks-coin-stats dd{font-size:15px}}

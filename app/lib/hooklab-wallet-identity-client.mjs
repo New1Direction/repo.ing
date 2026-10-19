@@ -1,10 +1,16 @@
+// The server sets a challenge's expiry with its own clock (5 minutes) and enforces it when verifying the signature.
+// Browser clocks differ from it by milliseconds to minutes, so the expiry bounds here allow that much drift: with no
+// allowance, any browser even 1 ms behind the server refused every challenge and sign-in stopped before the wallet.
+export const CLOCK_SKEW_MS = 10 * 60_000
+
 // Validate the exact identity-only signing request before presenting it to a wallet.
 export function validateWalletIdentityChallenge(challenge, { wallet, origin, genesisHash, nowMs = Date.now() }) {
   const fail = () => { throw Error('Wallet identity challenge changed or expired. Start again.') }
   if (!challenge || challenge.wallet !== wallet || !/^[a-f0-9]{64}$/.test(challenge.nonce ?? '')
     || typeof challenge.message !== 'string' || challenge.message.length > 2048) fail()
   const expiry = Date.parse(challenge.expiresAt)
-  if (!Number.isFinite(expiry) || new Date(expiry).toISOString() !== challenge.expiresAt || expiry <= nowMs || expiry > nowMs + 300000) fail()
+  if (!Number.isFinite(expiry) || new Date(expiry).toISOString() !== challenge.expiresAt
+    || expiry <= nowMs - CLOCK_SKEW_MS || expiry > nowMs + 300000 + CLOCK_SKEW_MS) fail()
   const lines = challenge.message.split('\n')
   if (lines.length !== 9 || lines[0] !== 'repo.ing general launcher wallet identity v1'
     || lines[1] !== `Origin: ${origin}` || lines[2] !== 'Audience: general-launcher'

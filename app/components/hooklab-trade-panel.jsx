@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { ArrowDown, Check, LoaderCircle, X } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
-import { SLIPPAGE_CHOICES, estimateTrade, formatUnits, maxBuyLamports, parseUnits, planBuy, planSell, sol, tradeIntent } from '../lib/hooklab-trade-math.mjs'
+import { SLIPPAGE_CHOICES, estimateTrade, formatUnits, maxBuyLamports, parseUnits, planBuy, planSell, sol, tradeButton, tradeIntent } from '../lib/hooklab-trade-math.mjs'
 import { callTrade, expectOperation, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import '../trade-panel.css'
 
@@ -29,9 +29,11 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   const [view, setView] = useState(initial)
   const [side, setSide] = useState('buy'), [amount, setAmount] = useState(''), [slippageBps, setSlippageBps] = useState(300)
   const [steps, setSteps] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [result, setResult] = useState(null)
+  // Coin data that failed to load: separate from trade errors so a later successful refresh clears it.
+  const [loadError, setLoadError] = useState('')
   const running = useRef(false)
   const market = view?.market, mine = view?.wallet && view.wallet.address === wallet ? view.wallet : null, symbol = market ? `$${market.symbol}` : ''
-  const refresh = useCallback(async () => { try { const next = await readMarket(mint, wallet); setView(next); return next } catch (e) { setError(e.message); return null } }, [mint, wallet])
+  const refresh = useCallback(async () => { try { const next = await readMarket(mint, wallet); setView(next); setLoadError(''); return next } catch (e) { setLoadError(e.message); return null } }, [mint, wallet])
   useEffect(() => { refresh(); const timer = setInterval(() => { if (!running.current) refresh() }, 10000); return () => clearInterval(timer) }, [refresh])
 
   const buying = side === 'buy', decimals = buying ? 9 : market?.decimals ?? 6, raw = parseUnits(amount, decimals)
@@ -43,6 +45,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   const capNote = buying && estimate?.error && /max per wallet/.test(estimate.error)
     ? (maxBuy ? `You can buy up to about ${sol(maxBuy, 4)} right now (${market.capBps / 100}% of the supply per wallet).` : 'This wallet already holds the most this coin allows.') : ''
   const tooMuch = raw && mine && (buying ? false : raw > coinBalance)
+  const button = tradeButton({ wallet, signedIn: session.signedIn, side, symbol, hasAmount: !!raw, blocked: !!estimate?.error || !!tooMuch, tradingOpen: !!view?.tradingOpen, busy: busy || session.busy })
 
   // One operation through review -> wallet -> send -> confirm, tracked in the step list and kept across reloads.
   // A trade that executed but landed after its reviewed slot settles as review-required: it still happened.
@@ -84,10 +87,11 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
 
   async function trade(event) {
     event.preventDefault()
-    if (running.current || !market) return
-    // Connecting needs no amount; trading does.
-    if (!wallet) { try { await connect() } catch {} return }
-    if (!raw || estimate?.error || tooMuch) return
+    if (running.current) return
+    // Connecting and signing in need no amount; trading does.
+    if (button.action === 'connect') { try { await connect() } catch {} return }
+    if (button.action === 'sign-in') { await session.signIn(); return }
+    if (!market || !raw || estimate?.error || tooMuch) return
     running.current = true; setBusy(true); setError(''); setResult(null)
     let funded = false
     try {
@@ -163,10 +167,14 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   }, [genesisHash, refresh])
   useEffect(() => { if (wallet && session.signedIn) resumePending(wallet) }, [wallet, session.signedIn, resumePending])
 
-  if (!market) return <div className="trade-card"><h2>Buy &amp; sell</h2><p className="trade-note">{error || 'Loading this coin…'}</p></div>
+  if (!market) return <div className="trade-card hooks-trade hooks-trade-waiting" aria-label="Buy and sell">
+    <h2>Buy &amp; sell</h2>
+    <p className="trade-note" role="status">{loadError ? `${loadError} This panel keeps trying.` : 'Loading this coin…'}</p>
+    {!wallet && <button type="button" className="button primary trade-submit" disabled={session.busy} onClick={() => connect().catch(() => {})}>Connect wallet</button>}
+    {loadError && <button type="button" className="button outline" onClick={refresh}>Try again</button>}
+  </div>
   // Buy shortcuts that can actually fill, plus Max; sell shortcuts are shares of what you hold.
   const presets = buying ? [...['0.01', '0.05', '0.1', '0.5'].filter(p => maxBuy === null || parseUnits(p, 9) <= maxBuy).slice(0, 3), ...(maxBuy ? ['max'] : [])] : [25, 50, 100]
-  const cta = !wallet ? 'Connect wallet' : !session.signedIn ? `Sign in and ${side} ${symbol}` : `${buying ? 'Buy' : 'Sell'} ${symbol}`
   return <div className="trade-card hooks-trade" aria-label={`Trade ${symbol}`}>
     <div className="trade-tabs" role="tablist" aria-label="Trade direction">
       {['buy', 'sell'].map(value => <button key={value} type="button" role="tab" data-side={value} aria-selected={side === value} className={side === value ? 'selected' : ''} disabled={busy}
@@ -204,8 +212,9 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
         {plan?.walletCost !== undefined && <div className="trade-details-total"><dt>From your wallet</dt><dd>{sol(plan.walletCost, 5)}</dd></div>}
       </dl>}
       {plan && plan.steps.length > 1 && !steps && <p className="trade-note">{plan.steps.length} approvals in your wallet: {plan.steps.map(s => s.kind === 'buy' || s.kind === 'sell' ? `${STEP_LABELS[s.kind]} ${symbol}` : STEP_LABELS[s.kind]).join(', then ')}.</p>}
-      <button type="submit" className="button primary trade-submit" disabled={busy || session.busy || (!!wallet && (!raw || !!estimate?.error || !!tooMuch)) || (!!wallet && view && !view.tradingOpen && session.signedIn)}>
-        {busy ? 'Working…' : cta}</button>
+      <button type="submit" className="button primary trade-submit" disabled={button.disabled}>{session.busy ? 'Approve in your wallet…' : button.label}</button>
+      {button.action === 'sign-in' && !session.busy && <p className="trade-note">Signing in is a free message in your wallet. It sends no transaction.</p>}
+      {session.error && <p className="inline-error" role="alert">{session.error}</p>}
     </form>
     {steps && <ol className="hooks-trade-steps" aria-label="Progress">{steps.map((s, i) => <li key={i} data-state={s.status}>
       <span aria-hidden="true">{s.status === 'done' ? <Check size={14}/> : s.status === 'failed' ? <X size={14}/> : ['review', 'sign', 'send', 'confirm'].includes(s.status) ? <LoaderCircle size={14} className="image-picker-spinner"/> : i + 1}</span>

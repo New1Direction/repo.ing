@@ -78,6 +78,16 @@ export function maxBuyLamports(market, coinBalance = 0n, ceiling = 1_000_000_000
   return low > 0n ? low : null
 }
 
+// The panel's main button: connect a wallet, then sign in (no amount needed), then trade. A visitor can always
+// connect, even while coin data loads or before trading opens for their wallet. blocked: the amount can't trade.
+export function tradeButton({ wallet, signedIn, side, symbol, hasAmount, blocked, tradingOpen, busy }) {
+  const label = text => busy ? 'Working…' : text
+  if (!wallet) return { label: label('Connect wallet'), action: 'connect', disabled: !!busy }
+  if (!signedIn) return hasAmount && !blocked ? { label: label(`Sign in and ${side} ${symbol}`), action: 'trade', disabled: !!busy }
+    : { label: label('Sign in with your wallet'), action: 'sign-in', disabled: !!busy }
+  return { label: label(`${side === 'buy' ? 'Buy' : 'Sell'} ${symbol}`), action: 'trade', disabled: !!busy || !hasAmount || !!blocked || !tradingOpen }
+}
+
 // The swap request the server reviews (its exact schema: tests/hooklab-trade-client.test.mjs posts it to the trade API).
 export function tradeIntent(market, side, amount, minAmountOut) {
   return { mint: market.mint, selectedConfig: market.selectedConfig, capBps: market.capBps, creatorFeeBps: market.creatorFeeBps, side,
