@@ -171,3 +171,21 @@ after launches to return table rent.
 
 `open-launches` and `open-trading` **approval flag**: payer, admin. Customer
 launches and trades need both. Emergency stop: `close-trading`, `close-launches`.
+
+## 10. $5k USD launch pricing (separate approval)
+
+Every launch then opens at about a $5,000 market cap and graduates at about $45,000.
+repo.ing fixes the SOL price (median of CoinGecko, Jupiter and Coinbase, within 2%) and the
+virtual quote when you `invite`; the agent signs only that quote. Do it with no launch in flight:
+
+1. Schema: `migration-check launch-pricing`, then `migrate launch-pricing --sha256 <printed>`
+   (step 7 commands; one new insert-only table).
+2. `launch-usd-bounds` **approval flag**: payer, admin. Sets the launch config's min/max virtual
+   quote to 5.625 and 112.5 SOL (SOL at $1,000 down to $50); the preview lists exactly those two
+   fields and the new governance commitment.
+3. Re-collect the production bundle (step 6): the launch-config and creation-control pins change.
+4. Set `HOOK_LAUNCH_USD_PRICING=true` with the new bundle variables, then deploy.
+
+Between 2 and 4 launches fail on chain (1 SOL is below the new minimum), so nothing can launch
+at the old price. In the agent, `list` and `invite` then print the fixed price, for example
+`Opens at ≈$5,000 (53.25 SOL virtual), graduates at ≈$45,000 / 106.5 SOL raised · SOL $105.63 (…)`.
