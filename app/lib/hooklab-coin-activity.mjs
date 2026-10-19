@@ -15,6 +15,7 @@ import { clientAddress } from '../../src/client-address.mjs'
 import { inclusiveTradeRuntime } from './hooklab-inclusive-trade-runtime.mjs'
 import { cached, cachedMarket, listedCoin } from './hooklab-market.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
+import { cachedSolUsdPrice } from './sol-usd.mjs'
 import { DEFAULT_HOOK_INTERVAL, hookIntervalSeconds } from './hooklab-coin-display.mjs'
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { hookCoinTradeStore, indexHookCoinTrades } from '../../src/hooklab-coin-trades.mjs'
@@ -90,7 +91,8 @@ const publicTrade = t => ({ signature: t.signature, eventIndex: t.eventIndex, si
   solLamports: t.quoteAmount, tokenBaseUnits: t.baseAmount, swapCount: t.swapCount })
 
 export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, listed = listedCoin, openStore = () => openHookCoinStore(),
-  indexer = null, allowed = defaultLimiter, holdersTtlMs = HOLDERS_TTL_MS, holdersRetryMs = HOLDERS_RETRY_MS, now = Date.now } = {}) {
+  indexer = null, allowed = defaultLimiter, holdersTtlMs = HOLDERS_TTL_MS, holdersRetryMs = HOLDERS_RETRY_MS, now = Date.now,
+  solUsd = () => cachedSolUsdPrice() } = {}) {
   const holderFailures = new Map()
   // A listed coin's market read, then work({ service, market, addresses }). As in the market API, the listing is checked
   // first (one cached database read; a failed read throws, so it answers unavailable, never "not listed"), so an unlisted
@@ -136,7 +138,8 @@ export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, li
       const decimals = context.market.decimals
       return indexed(context, async (store, pool, sync) => {
         const [candles, summary] = await Promise.all([store.candles(pool, { seconds, decimals }), store.summary(pool, { decimals })])
-        return reply({ status: 'available', interval, intervalSeconds: seconds, decimals, ...sync, totalTrades: summary.totalTrades,
+        // The site's cached SOL/USD price (null while unknown), never waited on: the chart shows USD with it, SOL without.
+        return reply({ status: 'available', interval, intervalSeconds: seconds, decimals, solUsd: solUsd() ?? null, ...sync, totalTrades: summary.totalTrades,
           volume24hLamports: summary.volume24hLamports, firstTradeAt: summary.firstTradeAt, lastTradeAt: summary.lastTradeAt,
           latest: summary.latest ? { priceSol: summary.latest.priceSol, tradedAt: summary.latest.tradedAt } : null, candles }, 200, 'public, max-age=5')
       })

@@ -14,6 +14,7 @@ import { coinImageUrl } from '../../../../../src/hooklab-coin-profile.mjs'
 import { hookBlock } from '../../../../../src/hooklab-blocks.mjs'
 import { executionGenesis } from '../../../../../src/hooklab-local-acceptance.mjs'
 import { formatUnits } from '../../../../lib/hooklab-trade-math.mjs'
+import { cachedSolUsdPrice } from '../../../../lib/sol-usd.mjs'
 
 export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Hooks coin — repo.ing', robots: { index: false } }
@@ -60,7 +61,7 @@ export default async function HooksCoinPage({ params }) {
           <HookCoinGraduation market={market}/>
         </section>}
       <aside className="hooks-coin-side"><HookTradePanel mint={mint} genesisHash={executionGenesis()} initial={view ?? null}/></aside>
-      {activity && <div className="hooks-coin-chart"><HookCoinChart mint={mint} symbol={market.symbol} decimals={market.decimals} supply={market.initialSupply}/></div>}
+      {activity && <div className="hooks-coin-chart"><HookCoinChart mint={mint} symbol={market.symbol} decimals={market.decimals} supply={market.initialSupply} solUsd={cachedSolUsdPrice()}/></div>}
       {activity && <div className="hooks-coin-activity"><HookCoinActivity mint={mint} symbol={market.symbol} decimals={market.decimals}/></div>}
       {market && <section className="hooks-card hooks-coin-blocks-card" aria-labelledby="hooks-coin-blocks">
         <h2 id="hooks-coin-blocks">Blocks on this coin</h2>

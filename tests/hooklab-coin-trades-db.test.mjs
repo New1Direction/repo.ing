@@ -174,7 +174,7 @@ test('end to end: the first chart read indexes the coin, later reads cost no RPC
     supply: '1000000000000000', pool: { swapCount } }, wallet: null }), activity: hookActivityRpc(canaryConnection({ calls })),
     coinProfile: async () => ({ id: 'listed' }) }
   const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async () => ({ id: 'listed' }), openStore,
-    indexer: createOnDemandIndexer({ openStore, minMs: 0, waitMs: 5_000 }) })
+    indexer: createOnDemandIndexer({ openStore, minMs: 0, waitMs: 5_000 }), solUsd: () => null })
   const get = async path => (await handlers[path.split('?')[0]](new Request(`https://repo.ing/api/hook-lab/market/${coin.mint}/${path}`), { mint: coin.mint })).json()
   const candles = await get('candles?interval=5m')
   assert.deepEqual([candles.totalTrades, candles.syncing, candles.candles.length, candles.candles[0].count, candles.volume24hLamports], [2, 0, 1, 2, '1980495'])

@@ -29,7 +29,7 @@ function setup({ listed = true, indexed = 2n, walking = false, allowed = () => t
   // listed(service, mint): app/lib/hooklab-market.mjs listedCoin's signature (its 60 s cache is shared, so tests answer directly).
   const handlers = createCoinActivityHandlers({ runtime: () => service, listed: async (svc, m) => { listings.push(m); return listed && m === mint ? { id: 'coin', name: 'Test Coin' } : null },
     openStore: () => { opened.push('open'); return { store: db.store, close: async () => opened.push('close') } },
-    indexer: { ensure: async args => { ensured.push(args); return 'indexed' } }, allowed, holdersTtlMs })
+    indexer: { ensure: async args => { ensured.push(args); return 'indexed' } }, allowed, holdersTtlMs, solUsd: () => 150 })
   return { handlers, db, ensured, rpcCalls, opened, listings, marketReads }
 }
 const get = (handler, path, m = mint) => handler(new Request(`https://repo.ing/api/hook-lab/market/${m}/${path}`), { mint: m })
@@ -77,7 +77,8 @@ test('trades: newest first with a cursor for older pages; the index catches up f
 test('candles: one interval of SOL prices, with the volume and latest price', async () => {
   const { handlers, db } = setup()
   const body = await (await get(handlers.candles, 'candles?interval=5m')).json()
-  assert.deepEqual(body, { status: 'available', interval: '5m', intervalSeconds: 300, decimals: 6, syncing: 0, backfilling: false, totalTrades: 2, volume24hLamports: '1980495',
+  // solUsd: the site's cached SOL/USD price (null while unknown), so the chart can show USD without waiting on price sources.
+  assert.deepEqual(body, { status: 'available', interval: '5m', intervalSeconds: 300, decimals: 6, solUsd: 150, syncing: 0, backfilling: false, totalTrades: 2, volume24hLamports: '1980495',
     firstTradeAt: '2026-10-18T20:48:51.000Z', lastTradeAt: '2026-10-18T20:49:37.000Z', latest: { priceSol: 0.00000000089, tradedAt: '2026-10-18T20:49:37.000Z' },
     candles: [{ time: 1792356300, open: 1, high: 2, low: 0.5, close: 1.5, volumeLamports: '1980495', count: 2 }] })
   assert.deepEqual(db.calls.find(c => c[0] === 'candles'), ['candles', pool, { seconds: 300, decimals: 6 }])

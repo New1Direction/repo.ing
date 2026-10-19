@@ -3,7 +3,7 @@
 // order phones stack (coin, trade panel, chart, activity, Blocks).
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { appModule, h, html } from './fixtures/render-jsx.mjs'
+import { appModule, h, html, offlineFetch } from './fixtures/render-jsx.mjs'
 import { appendOlderTrades, mergeTradePage } from '../app/lib/hooklab-coin-display.mjs'
 
 const { HookTradesList, HookHoldersList, HookCoinActivity } = await appModule('app/components/hooklab-coin-activity.jsx')
@@ -48,19 +48,27 @@ test('the activity card: Trades and Holders tabs, trades first', () => {
   assert.match(html(h(HookCoinActivity, { mint: 'm', symbol: 'TEST', decimals: 6, initialTrades: { trades: [], next: null, syncing: 0 } })), /No trades yet\. Be the first\./)
 })
 
-test('the chart: loading, empty, then market cap in SOL with every candle size', () => {
+const candlesBody = (extra = {}) => ({ interval: '15m', intervalSeconds: 900, decimals: 6, syncing: 0, backfilling: false, totalTrades: 2, volume24hLamports: '1980495',
+  firstTradeAt: '2026-10-18T20:48:51.000Z', lastTradeAt: '2026-10-18T20:49:37.000Z', latest: { priceSol: 0.000000000889, tradedAt: '2026-10-18T20:49:37.000Z' },
+  candles: [{ time: 1792356300, open: 0.00000000089, high: 0.00000000089, low: 0.000000000889, close: 0.000000000889, volumeLamports: '1980495', count: 2 }], ...extra })
+
+test('the chart: loading, empty, then the market cap in USD with its SOL value, at every candle size', () => {
   const props = { mint: 'm', symbol: 'TEST', decimals: 6, supply: '1000000000000000' }
   assert.match(html(h(HookCoinChart, props)), /Loading prices/)
-  const empty = html(h(HookCoinChart, { ...props, initial: { interval: '15m', intervalSeconds: 900, decimals: 6, syncing: 0, totalTrades: 0, volume24hLamports: '0',
-    firstTradeAt: null, lastTradeAt: null, latest: null, candles: [] } }))
+  const empty = html(h(HookCoinChart, { ...props, initial: candlesBody({ totalTrades: 0, volume24hLamports: '0', firstTradeAt: null, lastTradeAt: null, latest: null, candles: [] }) }))
   assert.match(empty, /No trades yet\. Be the first\./)
-  const chart = html(h(HookCoinChart, { ...props, initial: { interval: '15m', intervalSeconds: 900, decimals: 6, syncing: 0, totalTrades: 2, volume24hLamports: '1980495',
-    firstTradeAt: '2026-10-18T20:48:51.000Z', lastTradeAt: '2026-10-18T20:49:37.000Z', latest: { priceSol: 0.000000000889, tradedAt: '2026-10-18T20:49:37.000Z' },
-    candles: [{ time: 1792356300, open: 0.00000000089, high: 0.00000000089, low: 0.000000000889, close: 0.000000000889, volumeLamports: '1980495', count: 2 }] } }))
-  for (const text of [/aria-label="\$TEST price chart"/, /Market cap · SOL/, /0\.889 SOL/, /0\.00198 SOL/, /24h volume/, />2</, /Preparing chart/]) assert.match(chart, text)
+  const chart = html(h(HookCoinChart, { ...props, solUsd: 200, initial: candlesBody() }))
+  for (const text of [/aria-label="\$TEST price chart"/, /Market cap · USD estimate/, /<strong[^>]*>\$178<\/strong>/, /0\.889 SOL/, /0\.00198 SOL/, /24h volume/, />2</, /Preparing chart/]) assert.match(chart, text)
   for (const label of ['1m', '5m', '15m', '1H', '4H', '1D']) assert.match(chart, new RegExp(`<button[^>]*>${label}</button>`))
   assert.match(chart, /aria-pressed="true"[^>]*>15m</); assert.match(chart, /aria-pressed="true"[^>]*>MCap</)
-  assert.doesNotMatch(chart, /USD/)
+  // The candles response carries the newest SOL/USD price the server has; it wins over the one the page was rendered with.
+  assert.match(html(h(HookCoinChart, { ...props, solUsd: 200, initial: candlesBody({ solUsd: 100 }) })), /<strong[^>]*>\$89<\/strong>/)
+})
+
+test('the chart falls back to SOL, clearly labelled, when the SOL/USD price is unavailable', () => {
+  const chart = html(h(HookCoinChart, { mint: 'm', symbol: 'TEST', decimals: 6, supply: '1000000000000000', solUsd: null, initial: candlesBody({ solUsd: null }) }))
+  assert.match(chart, /Market cap · SOL/); assert.match(chart, /<strong[^>]*>0\.889 SOL<\/strong>/); assert.match(chart, /USD price unavailable/)
+  assert.doesNotMatch(chart, /\$\d/)
 })
 
 test('coin page: a listed coin gets the chart and the activity tabs, in phone order', async () => {
@@ -74,6 +82,8 @@ test('coin page: a listed coin gets the chart and the activity tabs, in phone or
   const listed = { id: '00000000-0000-4000-8000-000000000000', name: 'Hook Lab Canary', symbol: 'HLCANARY', creator: trader, profile: null }
   globalThis[key] = { market: async requested => [mint, other].includes(requested) ? { market: { ...market, mint: requested }, wallet: null } : null,
     coinProfile: async requested => requested === mint ? listed : null }
+  // Offline: the SOL/USD price sources fail, so the chart says SOL (the page never waits on them).
+  const offline = offlineFetch()
   try {
     await assert.rejects(Token({ params: Promise.resolve({ mint: other }) }), /NEXT_HTTP_ERROR_FALLBACK;404/)
     const page = html(await Token({ params: Promise.resolve({ mint }) }), { wallet: true })
@@ -81,7 +91,7 @@ test('coin page: a listed coin gets the chart and the activity tabs, in phone or
     const [hero, panel, chart, activity, blocks] = ['Hook Lab Canary', 'aria-label="Trade $HLCANARY"', 'aria-label="$HLCANARY price chart"', 'aria-label="$HLCANARY activity"', 'Blocks on this coin'].map(at)
     assert.ok(hero >= 0 && hero < panel && panel < chart && chart < activity && activity < blocks, `order ${[hero, panel, chart, activity, blocks]}`)
     assert.match(page, /class="hooks-coin-layout has-activity"/)
-  } finally { delete globalThis[key] }
+  } finally { delete globalThis[key]; offline.restore() }
 })
 
 test('older trades stay joined to a refreshed first page, with nothing silently skipped', () => {
