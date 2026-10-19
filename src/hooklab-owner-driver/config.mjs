@@ -8,6 +8,7 @@ import { MAINNET_ROLES, ROLE_NAMES } from './pins.mjs'
 const key = z.string().refine(v => { try { return new PublicKey(v).toBase58() === v } catch { return false } }, 'base58 public key')
 const raw = z.string().refine(v => /^(0|[1-9]\d{0,19})$/.test(v) && BigInt(v) <= 0xffffffffffffffffn, 'u64 decimal string')
 const bps = z.number().int().min(0).max(10000)
+const menu = max => z.array(z.number().int().min(1).max(max)).min(1).max(4).refine(values => values.every((v, i) => i === 0 || v > values[i - 1]), 'menu values must be strictly ascending')
 const decision = value => z.object({ value, approved: z.boolean(), note: z.string().optional(), allowed: z.array(z.any()).optional() }).strict()
 export const configSchema = z.object({
   schema: z.literal('repoing/hooklab-owner-config/1'),
@@ -33,6 +34,11 @@ export const configSchema = z.object({
     lookupTable: decision(key.nullable()),
     // Bounded priority price: at 1.4M CU this caps the priority fee at 0.07 SOL.
     computeUnitPriceMicroLamports: decision(raw.refine(v => BigInt(v) <= 50000n, 'compute unit price above 50,000 micro-lamports')),
+    // Self-serve launches (open-creation stage): the creator-fee and max-per-wallet menus the chain offers, 1 to 4 strictly
+    // ascending bps values each. Never defaulted: the stage refuses without an approved value here.
+    openCreationMenus: decision(z.object({ creatorFeeBps: menu(9999), capBps: menu(9999) }).strict().nullable()).optional(),
+    // The creation fee every launch pays the treasury (launch-fee stage), in lamports. Owner decision: 20,000,000 (0.02 SOL).
+    launchFeeLamports: decision(raw.nullable()).optional(),
   }).strict(),
 }).strict()
 
@@ -60,11 +66,17 @@ export const STAGE_DECISIONS = Object.freeze({
   'launch-usd-bounds': ['computeUnitPriceMicroLamports'],
   // On or off comes from --to; the switch itself is the owner decision recorded in the reviewed plan.
   'native-launches': ['computeUnitPriceMicroLamports'],
+  // Self-serve launches: the menus come from the config file (never defaulted), on or off from --to.
+  'open-creation': ['openCreationMenus', 'computeUnitPriceMicroLamports'],
+  'launch-fee': ['launchFeeLamports', 'computeUnitPriceMicroLamports'],
+  'launch-table': ['computeUnitPriceMicroLamports'],
+  // The guardian's emergency pause; which gates comes from --pause creation|trading|both.
+  'guardian-pause': ['computeUnitPriceMicroLamports'],
   status: [],
 })
 // Irreversible, fund-moving, gate-opening or launch-economics stages need a per-run --approved STAGE:<message sha256>.
 export const APPROVAL_FLAG_STAGES = Object.freeze(new Set(['gate-finalize', 'fund', 'canary-gates-open-creation', 'canary-buy', 'canary-sell', 'trade-table', 'open-launches', 'open-trading',
-  'launch-usd-bounds', 'native-launches']))
+  'launch-usd-bounds', 'native-launches', 'open-creation', 'launch-fee', 'launch-table']))
 
 export function loadConfig(path) {
   const parsed = configSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
@@ -78,12 +90,12 @@ export function loadConfig(path) {
 }
 export function value(config, name) { return config.decisions[name].value }
 export function unapproved(config, stage) {
-  return (STAGE_DECISIONS[stage] ?? []).filter(name => !config.decisions[name].approved)
+  return (STAGE_DECISIONS[stage] ?? []).filter(name => !config.decisions[name]?.approved)
 }
 // lookupTable may stay null: the alt stage records the table it created.
 const NULLABLE = new Set(['lookupTable'])
 export function missing(config, stage) {
-  return (STAGE_DECISIONS[stage] ?? []).filter(name => config.decisions[name].value === null && !NULLABLE.has(name))
+  return (STAGE_DECISIONS[stage] ?? []).filter(name => (config.decisions[name]?.value ?? null) === null && !NULLABLE.has(name))
 }
 export function assertExecutable(config, stage) {
   const pending = unapproved(config, stage), absent = missing(config, stage)
