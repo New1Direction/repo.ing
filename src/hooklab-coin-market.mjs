@@ -6,6 +6,7 @@ import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { PROGRAMS, QUOTE_MINT, holdingAddress } from './hooklab-owner-driver/pins.mjs'
 import { hookCoinAddresses } from './hooklab-inclusive-max-wallet-swap.mjs'
 import { STATUS_GRADUATED, finalFillLamports, graduationOutcome, isReady } from './hooklab-graduation.mjs'
+import { NATIVE_FLAGS } from './hooklab-native-pins.mjs'
 
 const s = value => value.toString()
 const holdingAmount = info => info && Buffer.from(info.data).length === 204 ? Buffer.from(info.data).readBigUInt64LE(74) : null
@@ -23,13 +24,22 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
   const launch = coders.launch.accounts.decode('Launch', launchInfo.data), pool = coders.swap.accounts.decode('Pool', poolInfo.data)
   const policy = coders.gate.accounts.decode('PolicyV2', policyInfo.data), coin = coders.token.accounts.decode('Mint', mintInfo.data)
   if (launch.mint.toBase58() !== mint || pool.base_mint.toBase58() !== mint || policy.mint.toBase58() !== mint) return null
+  // The native-SOL flags, at the bytes the programs read (32 earlier without a hook). A coin is native only when both
+  // say so; any other pair (a half-migrated or unknown state) is a mismatch, and nothing offers to trade it.
+  // Display only, from the primary provider: every review re-reads both flags on two providers. If this provider were
+  // wrong, the worst case is a native coin shown as bridged, whose Add SOL deposit stays withdrawable while the bridged
+  // review refuses the trade; a bridged coin shown as native is refused by the native review before anything moves.
+  const flag = (info, hooked, at, without) => Buffer.from(info.data)[hooked ? at : without]
+  const poolFlag = flag(poolInfo, !!pool.hook_program, NATIVE_FLAGS.pool, NATIVE_FLAGS.poolWithoutHook)
+  const launchFlag = flag(launchInfo, !!launch.custom_hook, NATIVE_FLAGS.launch, NATIVE_FLAGS.launchWithoutHook)
+  const native = poolFlag === 1 && launchFlag === 1, quoteFormMismatch = !native && !(poolFlag === 0 && launchFlag === 0)
   const base = BigInt(s(pool.base_reserve)) + BigInt(s(pool.virtual_base)), quote = BigInt(s(pool.quote_reserve)) + BigInt(s(pool.virtual_quote))
   const decimals = coin.decimals, graduation = BigInt(s(launch.graduation_quote)), quoteReserve = BigInt(s(pool.quote_reserve))
   // Status 1 is what the max-wallet gate reads (Launch byte 138) to stop capping; graduate sets it with graduated_at.
   const graduated = launch.status === STATUS_GRADUATED, [reserveHolding, lpHolding] = value.slice(4, 6).map(holdingAmount)
   const view = {
     mint, name: coin.name, symbol: coin.symbol, uri: coin.uri, decimals, observedSlot: context.slot,
-    selectedConfig: launch.config.toBase58(), creator: launch.creator.toBase58(), graduated,
+    selectedConfig: launch.config.toBase58(), creator: launch.creator.toBase58(), graduated, native, quoteFormMismatch,
     // supply: the mint's current supply (graduation burns some), the figure the market cap below and the chart's use.
     capBps: policy.cap_bps, creatorFeeBps: policy.creator_fee_bps, initialSupply: s(policy.initial_supply), supply: s(coin.supply),
     capRaw: s(BigInt(s(policy.initial_supply)) * BigInt(policy.cap_bps) / 10000n),
@@ -50,9 +60,11 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
       : outcome ? { at: null, topup: s(outcome.topup), burned: s(outcome.burned), lockedLp: s(outcome.lockedLp), lpSupply: s(outcome.lpSupply),
         baseReserve: s(outcome.pool.baseReserve), quoteReserve: s(outcome.pool.quoteReserve) } : null }
   if (!wallet) return { market, wallet: null }
-  const [walletInfo, quoteHolding, coinHolding] = value.slice(6)
+  const [walletInfo, quoteHolding, coinHolding] = value.slice(6), coinAmount = holdingAmount(coinHolding)?.toString() ?? null
+  // A native coin trades straight from the wallet's SOL, so its view has no bridged SOL in it.
+  if (native) return { market, wallet: { address: wallet, lamports: s(walletInfo?.lamports ?? 0), coin: coinAmount } }
   return { market, wallet: { address: wallet, lamports: s(walletInfo?.lamports ?? 0),
-    bridgedSol: holdingAmount(quoteHolding)?.toString() ?? null, coin: holdingAmount(coinHolding)?.toString() ?? null } }
+    bridgedSol: holdingAmount(quoteHolding)?.toString() ?? null, coin: coinAmount } }
 }
 
 // A wallet's SOL and its bridged SOL in Hook Lab (null when the bridged-SOL holding does not exist yet).

@@ -14,6 +14,7 @@ import { modelInclusiveCreatorQuote } from './hooklab-inclusive-fee-quote.mjs'
 import { readInclusiveFeePolicy } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { canaryGateMatches, canarySwapTransition } from './hooklab-canary-policy.mjs'
+import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -162,6 +163,9 @@ function readHolding(accounts, address, token, mint, owner) {
   return bytes.readBigUInt64LE(74)
 }
 
+// The same account evidence rules, shared with the native-SOL compiler (src/hooklab-native-swap.mjs).
+export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, typed, readHolding, KIT, noRules })
+
 export function buildInclusiveMaxWalletSwapReviewForFixture(input) {
   check(input?.provenance === 'disposable-litesvm-synthetic-fixture-not-rpc-evidence', 'Fixture provenance required')
   return compile(input, true)
@@ -207,8 +211,10 @@ function compile(input, fixture, canary = false) {
   }
   for (const name of ['kitConfig', 'holderVault']) check(accounts.get(a[name]) === null, 'No-Kit account unexpectedly initialized')
   const c = decoded(launch, 'Config', owned(accounts, a.launchConfig, L, 250)), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
+  // Launch Config.reserved[0] (byte 186) is the native-launches switch of the upgraded launch program: it steers new
+  // launches only, so a bridged coin keeps trading with it on (src/hooklab-launch-config-reserved.mjs).
   check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && d.paused === canary
-    && c.reserved.every(v => v === 0) && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
+    && launchConfigReservedValid(c.reserved) && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
     && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
   const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))

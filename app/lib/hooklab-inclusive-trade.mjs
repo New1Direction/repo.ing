@@ -13,6 +13,8 @@ const intent=inclusiveMaxWalletSwapRequestSchema.pick({mint:true,selectedConfig:
 const lamports=z.string().regex(/^[1-9]\d{0,19}$/),mintKey=z.string().max(44)
 const body=z.discriminatedUnion('action',[
  z.object({action:z.literal('quote'),signingId:z.uuid(),request:intent}).strict(),
+ // A native-SOL coin's trade (one approval, no Add SOL); graduate: this buy is the exact final fill and graduates the coin.
+ z.object({action:z.literal('native-quote'),signingId:z.uuid(),request:intent.extend({graduate:z.boolean()}).strict()}).strict(),
  // Wallet funding: add SOL to Hook Lab (creating the needed holdings), or withdraw bridged SOL back to the wallet.
  z.object({action:z.literal('fund'),signingId:z.uuid(),request:z.object({mint:mintKey.nullable(),lamports:z.string().regex(/^(0|[1-9]\d{0,19})$/)}).strict()}).strict(),
  z.object({action:z.literal('withdraw'),signingId:z.uuid(),request:z.object({lamports}).strict()}).strict(),
@@ -24,7 +26,9 @@ export function tradingOpenFor(env,wallet){
  if(env.HOOK_TRADING_PUBLIC==='true')return true
  return (env.HOOK_TRADING_TESTER_WALLETS??'').split(',').map(x=>x.trim()).filter(Boolean).includes(wallet)
 }
-const STAGES=['inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw']
+const STAGES=['inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw','native-buy','native-sell']
+// Native-SOL trading needs its switch here and in the installed runtime (which then registers the native stages).
+export const nativeTradingOn=(env,service)=>env.HOOK_NATIVE_TRADING_ENABLED==='true'&&service?.nativeTrading===true
 const reply=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
 export function createInclusiveTradeHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=inclusiveTradeRuntime,
  database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
@@ -47,7 +51,8 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    if(service.origin!==config.origin)throw Error()
    const lifecycle=service.lifecycle
    // Withdrawing is never gated: anyone with SOL in Hook Lab can always take it back out.
-   if(['quote','fund'].includes(input.action)&&!tradingOpenFor(env,owner.wallet))return reply({status:'blocked',blockers:[{code:'TRADING_NOT_OPEN',message:'Trading opens to everyone soon.'}]})
+   if(['quote','native-quote','fund'].includes(input.action)&&!tradingOpenFor(env,owner.wallet))return reply({status:'blocked',blockers:[{code:'TRADING_NOT_OPEN',message:'Trading opens to everyone soon.'}]})
+   if(input.action==='native-quote'&&!nativeTradingOn(env,service))return reply({status:'blocked',blockers:[{code:'NATIVE_TRADING_DISABLED',message:'Trading this coin on repo.ing opens soon.'}]})
    if(input.action==='fund'&&!service.walletFunding)return reply({status:'blocked',blockers:[{code:'WALLET_FUNDING_DISABLED',message:'Adding SOL to Hook Lab is paused right now. Withdrawals still work.'}]})
    if(input.action==='withdraw'&&!service.walletWithdraw)return reply({status:'blocked',blockers:[{code:'WALLET_WITHDRAW_UNAVAILABLE',message:'Withdrawals are unavailable right now.'}]})
    let result
@@ -55,6 +60,7 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    else{
     let operation
     if(input.action==='quote')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:`inclusive-${input.request.side}`,intent:input.request})
+    else if(input.action==='native-quote')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:`native-${input.request.side}`,intent:input.request})
     else if(input.action==='fund')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:'wallet-fund',intent:{action:'fund',...input.request}})
     else if(input.action==='withdraw')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:'wallet-withdraw',intent:{action:'withdraw',mint:null,...input.request}})
     else if(input.action==='get')operation=await lifecycle.get(token,input.signingId)

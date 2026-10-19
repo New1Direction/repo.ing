@@ -23,13 +23,16 @@ const encode = (role, name, values) => coders[role].accounts.encode(name, { ...z
 const holding = amount => { const b = Buffer.alloc(204); b.writeBigUInt64LE(BigInt(amount), 74); return b }
 const bn = v => new BN(String(v))
 
-async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0, lpSupply = 0, lockedLp = 0 }) {
-  const launch = await encode('launch', 'Launch', { version: 1, mint: new PublicKey(mint), creator: new PublicKey(wallet), pool: new PublicKey(a.pool), quote_mint: new PublicKey(QUOTE_MINT),
+// poolFlag / launchFlag: the native-SOL flags, Pool.reserved[0] (byte 351) and Launch.reserved[17] (byte 560).
+async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0, lpSupply = 0, lockedLp = 0, poolFlag = 0, launchFlag = 0 }) {
+  const reserved = (length, at, value) => Array.from({ length }, (_, i) => i === at ? value : 0)
+  const launch = await encode('launch', 'Launch', { version: 1, mint: new PublicKey(mint), creator: new PublicKey(wallet), pool: new PublicKey(a.pool), quote_mint: new PublicKey(QUOTE_MINT), reserved: reserved(22, 17, launchFlag),
     status, creator_fee_bps: config.creatorFeeBps, virtual_quote: bn(config.virtualQuote), virtual_base: bn(config.curve.virtualBase), graduation_quote: bn(config.curve.graduationQuote),
     curve_tokens: bn(config.curve.curveTokens), reserve_tokens: bn(config.curve.reserveTokens), graduated_at: bn(graduatedAt), graduation_topup: bn(topup), graduation_burned: bn(burned),
     config: new PublicKey(PROGRAMS.launch), custom_hook: new PublicKey(PROGRAMS.gate), custom_hook_flags: 1 })
   const poolBytes = await encode('swap', 'Pool', { version: 1, base_mint: new PublicKey(mint), quote_mint: new PublicKey(QUOTE_MINT), base_reserve: bn(pool.baseReserve), quote_reserve: bn(pool.quoteReserve),
-    virtual_base: bn(pool.virtualBase), virtual_quote: bn(pool.virtualQuote), protocol_fees_quote: bn(pool.protocolFeesQuote), lp_supply: bn(lpSupply), curve: status === 0, swap_count: bn(12), fee_model: 2 })
+    virtual_base: bn(pool.virtualBase), virtual_quote: bn(pool.virtualQuote), protocol_fees_quote: bn(pool.protocolFeesQuote), lp_supply: bn(lpSupply), curve: status === 0, swap_count: bn(12), fee_model: 2,
+    hook_program: new PublicKey(PROGRAMS.launch), reserved: reserved(60, 0, poolFlag) })
   const policy = await encode('gate', 'PolicyV2', { version: 2, mint: new PublicKey(mint), initial_supply: bn(config.supply), cap_bps: 200, quote_mint: new PublicKey(QUOTE_MINT), fee_model: 2, protocol_share_bps: 2500, creator_fee_bps: config.creatorFeeBps })
   const coin = await encode('token', 'Mint', { version: 1, decimals: 6, supply: bn(BigInt(config.supply) - BigInt(burned)), max_supply: bn(config.supply), name: 'Graduate', symbol: 'GRAD', uri: '' })
   const accounts = new Map([[a.launch, [PROGRAMS.launch, launch]], [a.pool, [PROGRAMS.swap, poolBytes]], [a.policy, [PROGRAMS.gate, policy]], [mint, [PROGRAMS.token, coin]],
@@ -63,4 +66,21 @@ test('graduated: status 1, what graduate did, the locked LP, and the burned supp
   const supply = BigInt(config.supply) - BigInt(g.burned)
   assert.equal(market.marketCapLamports, String(BigInt(g.after.quoteReserve) * supply / BigInt(g.after.baseReserve)))
   assert.deepEqual(mine, { address: wallet, lamports: '5000000000', bridgedSol: '7', coin: '9' }, 'wallet balances still come from their own accounts')
+})
+
+test('a native-SOL coin: both flags set, so the market says native and the wallet shows SOL and the coin only', async () => {
+  const s = at('near the end'), { market, wallet: mine } = await readHookCoinMarket({ connection: await chain({ pool: s.pool, poolFlag: 1, launchFlag: 1 }), mint, wallet })
+  assert.equal(market.native, true); assert.equal(market.quoteFormMismatch, false)
+  assert.equal(market.solToGraduationLamports, s.finalFill.amountIn, 'the same curve and final fill')
+  assert.deepEqual(mine, { address: wallet, lamports: '5000000000', coin: '9' }, 'no bridged SOL for a native coin')
+})
+
+test('flags that disagree refuse trading; a bridged coin keeps its Hook Lab balance', async () => {
+  const s = at('near the end')
+  for (const [poolFlag, launchFlag] of [[1, 0], [0, 1], [2, 2]]) {
+    const { market } = await readHookCoinMarket({ connection: await chain({ pool: s.pool, poolFlag, launchFlag }), mint })
+    assert.equal(market.native, false); assert.equal(market.quoteFormMismatch, true, `${poolFlag}/${launchFlag}`)
+  }
+  const { market, wallet: mine } = await readHookCoinMarket({ connection: await chain({ pool: s.pool }), mint, wallet })
+  assert.equal(market.native, false); assert.equal(market.quoteFormMismatch, false); assert.equal(mine.bridgedSol, '7')
 })

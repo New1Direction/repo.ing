@@ -7,7 +7,7 @@ import { inclusiveTradeRuntime } from './hooklab-inclusive-trade-runtime.mjs'
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
-import { tradingOpenFor } from './hooklab-inclusive-trade.mjs'
+import { nativeTradingOn, tradingOpenFor } from './hooklab-inclusive-trade.mjs'
 
 const reply = (body, status = 200, cache = 'no-store') => Response.json(body, { status, headers: { 'Cache-Control': cache, 'X-Content-Type-Options': 'nosniff' } })
 const address = value => { try { return new PublicKey(value).toBase58() === value ? value : null } catch { return null } }
@@ -43,7 +43,9 @@ export function createMarketHandler({ env = process.env, runtime = inclusiveTrad
       const view = await cachedMarket(service, mint, wallet)
       if (!view) return reply({ error: 'This coin isn’t listed on repo.ing.' }, 404, 'public, max-age=60')
       // tradingOpen: whether this wallet may start trades yet (everyone once HOOK_TRADING_PUBLIC=true, else listed testers).
-      return reply({ status: 'available', ...view, coin, funding: !!service.walletFunding, tradingOpen: env.HOOK_TRADING_PUBLIC === 'true' || (!!wallet && tradingOpenFor(env, wallet)) },
+      // nativeTrading: whether a native-SOL coin (market.native) can be traded here yet (HOOK_NATIVE_TRADING_ENABLED).
+      return reply({ status: 'available', ...view, coin, funding: !!service.walletFunding, nativeTrading: nativeTradingOn(env, service),
+        tradingOpen: env.HOOK_TRADING_PUBLIC === 'true' || (!!wallet && tradingOpenFor(env, wallet)) },
         200, wallet ? 'no-store' : 'public, max-age=5')
     } catch { return reply({ status: 'unavailable', error: 'Trading data is unavailable right now.' }, 503) }
   }

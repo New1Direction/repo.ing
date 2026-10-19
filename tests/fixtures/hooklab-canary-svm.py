@@ -12,6 +12,7 @@ from solders.account import Account
 from solders.clock import Clock
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
+from solders.rent import Rent
 from solders.signature import Signature
 from solders.message import from_bytes_versioned, to_bytes_versioned
 from solders.transaction import VersionedTransaction
@@ -21,7 +22,7 @@ from solders.litesvm import LiteSVM
 assert solders.__version__ == '0.29.0'
 DOMAIN = 'repo.ing atomic canary isolated SVM tests v1 '
 roles = {role: Keypair.from_seed(hashlib.sha256((DOMAIN + role).encode()).digest())
-         for role in ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table']}
+         for role in ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'mint', 'config', 'outsider', 'table', 'buyer']}
 by_address = {str(k.pubkey()): k for k in roles.values()}
 svm = LiteSVM().with_sigverify(True).with_blockhash_check(True).with_log_bytes_limit(10000)
 svm.set_clock(Clock(100, 0, 0, 0, 1800000000))
@@ -59,18 +60,44 @@ def process(request):
     if operation == 'get':
         return {'accounts': [account_row(address) for address in request['addresses']],
                 'blockhash': str(svm.latest_blockhash()), 'slot': svm.get_clock().slot}
+    if operation == 'rent':
+        # A rent-rate change (the rent sysvar's lamports per byte), as a cluster feature such as SIMD-0437 makes one.
+        svm.set_rent(Rent.with_lamports_per_byte(int(request['lamportsPerByte'])))
+        return {'lamportsPerByte': svm.get_rent().lamports_per_byte}
     if operation == 'expire':
         svm.expire_blockhash()
         return {'blockhash': str(svm.latest_blockhash())}
-    if operation in ('sign', 'send'):
+    if operation == 'simulate':
+        # As RPC simulateTransaction with an accounts config: the requested accounts after the simulated execution.
         message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
         signers = list(message.account_keys[:message.header.num_required_signatures])
         assert all(str(address) in by_address for address in signers), 'Non-synthetic signer forbidden'
-        missing = set(request.get('missing', []))
         wire_message = to_bytes_versioned(message)
-        signatures = [Signature.default() if str(address) in missing else by_address[str(address)].sign_message(wire_message)
-                      for address in signers]
-        tx = VersionedTransaction.populate(message, signatures)
+        tx = VersionedTransaction.populate(message, [by_address[str(address)].sign_message(wire_message) for address in signers])
+        result = svm.simulate_transaction(tx)
+        if isinstance(result, FailedTransactionMetadata):
+            return {'error': str(result.err()), 'logs': result.meta().logs(), 'accounts': None}
+        post = {str(address): account for address, account in result.post_accounts()}
+        rows = []
+        for address in request['addresses']:
+            account = post.get(address) or svm.get_account(Pubkey.from_string(address))
+            rows.append(None if account is None else {'owner': str(account.owner), 'lamports': str(account.lamports),
+                                                      'dataBase64': base64.b64encode(account.data).decode()})
+        return {'error': None, 'logs': result.meta().logs(), 'units': result.meta().compute_units_consumed(), 'accounts': rows}
+    if operation in ('sign', 'send', 'submit'):
+        if operation == 'submit':
+            # A transaction someone else signed (the wallet, through the signing lifecycle), sent exactly as given.
+            tx = VersionedTransaction.from_bytes(base64.b64decode(request['wireBase64']))
+            message, signatures = tx.message, list(tx.signatures)
+        else:
+            message = from_bytes_versioned(base64.b64decode(request['messageBase64']))
+            signers = list(message.account_keys[:message.header.num_required_signatures])
+            assert all(str(address) in by_address for address in signers), 'Non-synthetic signer forbidden'
+            missing = set(request.get('missing', []))
+            wire_message = to_bytes_versioned(message)
+            signatures = [Signature.default() if str(address) in missing else by_address[str(address)].sign_message(wire_message)
+                          for address in signers]
+            tx = VersionedTransaction.populate(message, signatures)
         wire = bytes(tx)
         assert len(wire) <= 1232, 'Solana packet limit exceeded'
         envelope = {'wireBytes': len(wire), 'wireBase64': base64.b64encode(wire).decode(),

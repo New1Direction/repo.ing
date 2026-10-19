@@ -11,6 +11,8 @@ import { BRIDGE_PIN, compileWalletFundingReview, refuse, verifyBridgeAccounts, w
 import { LOADER, derivedAddresses, kb, pda } from './hooklab-owner-driver/pins.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { canonicalObservation } from './hooklab-canonical-observation.mjs'
+import { provenLatestBlockhash } from './hooklab-blockhash-proof.mjs'
+import { REVIEWED_PROFILE_SHA256, reviewedFundingProfile } from './hooklab-reviewed-profiles.mjs'
 
 // About 40 seconds from review to send (the wallet approval happens inside it); the compiler allows up to 150 slots.
 export const SIGNING_WINDOW_SLOTS = 100
@@ -31,7 +33,8 @@ function wrapperTotalOffset() {
 
 // bridgePin is server configuration for synthetic tests; production always uses BRIDGE_PIN.
 // bridgePin and tokenProgramDataSha256 are server configuration for synthetic tests; production uses BRIDGE_PIN and the dossier.
-export function walletFundingResolver({ config, profile, dossierJson, connections, limits, clock = Date.now, bridgePin = BRIDGE_PIN, tokenProgramDataSha256 = null }) {
+// reviewedProfiles: the reconcile allowlist (src/hooklab-reviewed-profiles.mjs).
+export function walletFundingResolver({ config, profile, dossierJson, connections, limits, clock = Date.now, bridgePin = BRIDGE_PIN, tokenProgramDataSha256 = null, reviewedProfiles = REVIEWED_PROFILE_SHA256 }) {
   const retained = structuredClone({ config, profile, dossierJson, limits }), providers = connections.map(x => ({ ...x }))
   const bound = validateMaxWalletOperatorBindings({ ...retained, connections: providers })
   // limits.nowMs is the boot time, so it is left out (JSON drops undefined): a restart or deploy must not move this hash.
@@ -81,7 +84,7 @@ export function walletFundingResolver({ config, profile, dossierJson, connection
     const rent = { holdingLamports: await rentFor(HOLDING_BYTES), walletLamports: await rentFor(0), vaultLamports: String(vaultRent) }
     const slot = Math.max(...observations.map(o => o.slot))
     const latest = expectedReview ? { context: { slot }, value: { blockhash: VersionedMessage.deserialize(Buffer.from(expectedReview.messageBase64, 'base64')).recentBlockhash, lastValidBlockHeight: expectedReview.lastValidBlockHeight } }
-      : await providers[0].connection.getLatestBlockhashAndContext({ commitment: 'finalized', minContextSlot: slot })
+      : await provenLatestBlockhash(providers, { minContextSlot: slot })
     const confirmations = await Promise.all(providers.map(async ({ connection }) => {
       const valid = await connection.isBlockhashValid(latest.value.blockhash, { commitment: 'finalized', minContextSlot: latest.context.slot })
       check(valid.value === true && integer(valid.context.slot) >= latest.context.slot, 'This review expired before it was used. Start again.')
@@ -133,9 +136,11 @@ export function walletFundingResolver({ config, profile, dossierJson, connection
     const identity = { signature, messageSha256: review?.messageSha256, profileSha256: review?.profileSha256 }
     try {
       const ci = settlementContext?.compilationInput
-      // Rows stored while this hash held the boot clock keep the old one: accept it only bound to its own context and today's profile (the full review below must still recompile).
+      // Rows stored under another hash (the boot clock it once held, other settings, a new bundle) settle only bound to
+      // their own context, under the profile they were reviewed under: today's, or a reviewed one on today's chain,
+      // programs and providers (the full review below must still recompile).
       check(settlementContext?.schema === 'repoing/hooklab-wallet-funding-settlement-context/1' && settlementContext.configurationSha256 === hash
-        && (hash === configurationSha256 || isDeepStrictEqual(ci?.profile, fundingProfile)))
+        && (hash === configurationSha256 || isDeepStrictEqual(ci?.profile, fundingProfile) || reviewedFundingProfile(ci?.profile, fundingProfile, reviewedProfiles)))
       const plan = compileWalletFundingReview({ ...ci, observations: ci.observations.map(canonicalObservation), bridgePin })
       check(isDeepStrictEqual(plan.review, review) && verifyHookLabSignedMessage(review, signedTransactionBase64).signature === signature)
       const rows = await Promise.all(providers.map(async ({ connection }) => {

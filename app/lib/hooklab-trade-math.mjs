@@ -12,9 +12,18 @@ export const SLIPPAGE_CHOICES = [100, 300, 500]
 // The server reviews trades with at most this price impact (its request schema caps it at 10%).
 export const MAX_PRICE_IMPACT_BPS = 1000
 // Buying the last of a curve goes out as one transaction, [buy the exact final fill, graduate], and a graduated coin
-// trades on its open pool; both need the native-SOL swap the server doesn't build yet. Until it does, the panel shows
-// these estimates but holds them (graduationHold), so no SOL moves into Hook Lab for a trade the server would refuse.
+// trades on its open pool; both need the native-SOL swap. A bridged coin's panel shows these estimates but holds them
+// (graduationHold), so no SOL moves into Hook Lab for a trade the server would refuse; a native-SOL coin opens them
+// once native trading is on (nativeTradingOpen).
 export const GRADUATION_TRADING_OPEN = false
+// One rent source for every estimate shown before a review: Solana's rent-exempt minimum is this many lamports per byte
+// of an account plus its 128-byte overhead, 5,080 on mainnet since SIMD-0437 (what getMinimumBalanceForRentExemption
+// returns there). Server reviews read the live rate from the rent sysvar, so this only shapes estimates.
+export const RENT_LAMPORTS_PER_BYTE = 5080n
+export const rentExemptLamports = bytes => (128n + BigInt(bytes)) * RENT_LAMPORTS_PER_BYTE
+// The least an empty wallet keeps, and the deposit for one 204-byte Hook Lab holding (a coin account).
+export const WALLET_MINIMUM_LAMPORTS = rentExemptLamports(0)
+export const HOLDING_RENT_LAMPORTS = rentExemptLamports(204)
 
 // '0.05' -> 50_000_000n for 9 decimals; null when the text is not a positive amount with at most `decimals` places.
 export function parseUnits(text, decimals) {
@@ -71,6 +80,37 @@ export function graduationHold(market, estimate, open = GRADUATION_TRADING_OPEN)
   return ''
 }
 
+// A native-SOL coin (market.native) trades straight from the wallet's SOL, once the site turns native trading on.
+export const nativeTradingOpen = view => !!view?.market?.native && view.nativeTrading === true
+
+// Why the panel holds a trade it can estimate but not send, or '': a coin whose two native flags disagree never trades,
+// a native coin waits for native trading, and a bridged coin keeps today's graduation hold.
+export function tradeHold(view, estimate) {
+  const market = view?.market
+  if (market?.quoteFormMismatch) return 'Trading this coin isn’t available right now.'
+  if (market?.native) return nativeTradingOpen(view) ? '' : 'Trading this coin on repo.ing opens soon.'
+  return graduationHold(market, estimate)
+}
+
+// A native coin's buy or sell is one approval: the swap moves SOL straight between the wallet and the pool. A first buy
+// also pays the deposit for the wallet's coin account. wallet: { lamports, coin (null = no coin account yet) }.
+export function planNative({ side, amount, wallet, rentLamports }) {
+  const buy = side === 'buy', depositLamports = buy && wallet.coin === null ? BigInt(rentLamports) : 0n, feeLamports = STEP_FEE_LAMPORTS[side]
+  const walletCost = (buy ? amount : 0n) + depositLamports + feeLamports, left = BigInt(wallet.lamports) - walletCost
+  return { steps: [{ kind: side, feeLamports, rentLamports: depositLamports }], walletCost, depositLamports,
+    shortfall: left < WALLET_MINIMUM_LAMPORTS ? WALLET_MINIMUM_LAMPORTS - left : 0n }
+}
+
+// Why a native trade that reached Solana did not go through, in plain words, from the program error the server decoded.
+const NATIVE_FAILURES = {
+  InsufficientLiquidity: 'Someone else bought first, so the curve had less left than this buy. Nothing was bought.',
+  NotReady: 'The curve wasn’t full when this buy landed, so the coin didn’t graduate. Nothing was bought.',
+  Slippage: 'The price moved past your max slippage before this trade landed. Nothing was traded.',
+  CapExceeded: 'That would have put this wallet over the coin’s max per wallet. Nothing was bought.',
+  Paused: 'Trading is paused right now. Nothing was traded.',
+}
+export const nativeFailureText = (errorName, label) => `${NATIVE_FAILURES[errorName] ?? `${label} failed on Solana.`} Only its network fee was charged.`
+
 // The steps a buy takes: add SOL to Hook Lab when the bridged balance or holdings fall short, then the swap.
 // wallet: { lamports, bridgedSol (null = no holding yet), coin (null = no holding yet) }; rentLamports per holding.
 export function planBuy({ amount, wallet, rentLamports }) {
@@ -80,7 +120,7 @@ export function planBuy({ amount, wallet, rentLamports }) {
   steps.push({ kind: 'buy', amount, feeLamports: STEP_FEE_LAMPORTS.buy })
   const total = steps.reduce((sum, s) => sum + (s.lamports ?? 0n) + (s.rentLamports ?? 0n) + s.feeLamports, 0n)
   const spendable = BigInt(wallet.lamports) - total
-  return { steps, walletCost: total, fromHookLab: amount - fundLamports, shortfall: spendable < 890880n ? 890880n - spendable : 0n }
+  return { steps, walletCost: total, fromHookLab: amount - fundLamports, shortfall: spendable < WALLET_MINIMUM_LAMPORTS ? WALLET_MINIMUM_LAMPORTS - spendable : 0n }
 }
 
 // The steps a sell takes: create the bridged-SOL holding if it is missing (the swap pays into it), the swap, then
@@ -89,7 +129,7 @@ export function planSell({ amount, wallet, rentLamports = 0 }) {
   const steps = [...(wallet.bridgedSol === null ? [{ kind: 'fund', lamports: 0n, rentLamports: BigInt(rentLamports), feeLamports: STEP_FEE_LAMPORTS.fund }] : []),
     { kind: 'sell', amount, feeLamports: STEP_FEE_LAMPORTS.sell }, { kind: 'withdraw', all: true, feeLamports: STEP_FEE_LAMPORTS.withdraw }]
   const needed = steps.reduce((sum, s) => sum + (s.rentLamports ?? 0n) + s.feeLamports, 0n)
-  return { steps, shortfall: BigInt(wallet.lamports) < needed + 890880n ? needed + 890880n - BigInt(wallet.lamports) : 0n }
+  return { steps, shortfall: BigInt(wallet.lamports) < needed + WALLET_MINIMUM_LAMPORTS ? needed + WALLET_MINIMUM_LAMPORTS - BigInt(wallet.lamports) : 0n }
 }
 
 // The largest buy (in lamports) this wallet can make right now, or null when nothing more can be bought: on the curve
@@ -106,12 +146,14 @@ export function maxBuyLamports(market, coinBalance = 0n, ceiling = 1_000_000_000
 
 // The panel's main button: connect a wallet, then sign in (no amount needed), then trade. A visitor can always
 // connect, even while coin data loads or before trading opens for their wallet. blocked: the amount can't trade.
-export function tradeButton({ wallet, signedIn, side, symbol, hasAmount, blocked, tradingOpen, busy }) {
+// graduates: this buy is the curve's final fill and graduates the coin in the same transaction.
+export function tradeButton({ wallet, signedIn, side, symbol, hasAmount, blocked, tradingOpen, busy, graduates = false }) {
   const label = text => busy ? 'Working…' : text
   if (!wallet) return { label: label('Connect wallet'), action: 'connect', disabled: !!busy }
   if (!signedIn) return hasAmount && !blocked ? { label: label(`Sign in and ${side} ${symbol}`), action: 'trade', disabled: !!busy }
     : { label: label('Sign in with your wallet'), action: 'sign-in', disabled: !!busy }
-  return { label: label(`${side === 'buy' ? 'Buy' : 'Sell'} ${symbol}`), action: 'trade', disabled: !!busy || !hasAmount || !!blocked || !tradingOpen }
+  const text = side === 'buy' ? graduates ? `Buy and graduate ${symbol}` : `Buy ${symbol}` : `Sell ${symbol}`
+  return { label: label(text), action: 'trade', disabled: !!busy || !hasAmount || !!blocked || !tradingOpen }
 }
 
 // The swap request the server reviews (its exact schema: tests/hooklab-trade-client.test.mjs posts it to the trade API).
@@ -119,3 +161,5 @@ export function tradeIntent(market, side, amount, minAmountOut) {
   return { mint: market.mint, selectedConfig: market.selectedConfig, capBps: market.capBps, creatorFeeBps: market.creatorFeeBps, side,
     amountIn: String(amount), minAmountOut: String(minAmountOut), maxInput: String(amount), maxPriceImpactBps: MAX_PRICE_IMPACT_BPS }
 }
+// A native coin's request (the native-quote action): the same, plus whether this buy is the final fill that graduates it.
+export const nativeTradeIntent = (market, side, amount, minAmountOut, graduate) => ({ ...tradeIntent(market, side, amount, minAmountOut), graduate: side === 'buy' && !!graduate })

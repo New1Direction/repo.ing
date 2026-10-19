@@ -121,3 +121,9 @@ hooklab-owner-approval-db
 hooklab-coin-trades-db
 # Native-SOL creator fee claims on the signing table after the native-stages migration, real PostgreSQL on 127.0.0.1:55432.
 hooklab-native-claim-db
+# Native-SOL buy and sale through the signing lifecycle: real PostgreSQL on 127.0.0.1:55432 and the reviewed native ELFs.
+hooklab-native-trade-lifecycle-db
+# Native review regressions through the signing lifecycle: real PostgreSQL on 127.0.0.1:55432 and the reviewed native ELFs.
+hooklab-native-trade-review-regressions-db
+# Bridged funding across the native bundle upgrade through the signing lifecycle: real PostgreSQL on 127.0.0.1:55432.
+hooklab-wallet-funding-native-bundle-db

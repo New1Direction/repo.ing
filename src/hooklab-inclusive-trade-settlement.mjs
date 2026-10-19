@@ -12,6 +12,7 @@ import {inclusiveCreatorFee,modelInclusiveCreatorQuote} from './hooklab-inclusiv
 import {compileInclusiveMaxWalletSwapReview,compileCanaryInclusiveMaxWalletSwapReview} from './hooklab-inclusive-max-wallet-swap.mjs'
 import {canarySwapTransition,verifyCanaryGovernanceLogs} from './hooklab-canary-policy.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
+import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profiles.mjs'
 const check=v=>{if(!v)throw Error('Inclusive receipt evidence differs')},sha=x=>createHash('sha256').update(x).digest('hex')
 const n=x=>x.toString(),pk=x=>new PublicKey(x),tag=Buffer.from('e445a52e51cb9a1d','hex')
 const tokenIdlBytes=readFileSync(`${process.cwd()}/vendor/hooklab-production-candidate/idl/bordrless_token.json`)
@@ -45,14 +46,17 @@ function derivePostconditions(ci,timestamp,canary) {
 }
 export function collectInclusiveTradeSettlement(args){return collectSettlement(args,false)}
 export function collectCanaryInclusiveTradeSettlement(args){return collectSettlement(args,true)}
-async function collectSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature},canary){
+async function collectSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature,reviewedProfiles=REVIEWED_PROFILE_SHA256},canary){
  const identity={signature,messageSha256:review?.messageSha256,profileSha256:review?.profileSha256}
  try{
   const bound=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),stored=settlementContext.compilationInput,ci={...stored,observations:stored.observations.map(canonicalObservation)}
-  check(settlementContext.schema===(canary?'repoing/canary-inclusive-trade-settlement-context/1':'repoing/inclusive-trade-settlement-context/1')&&isDeepStrictEqual(ci.profile,profile))
+  check(settlementContext.schema===(canary?'repoing/canary-inclusive-trade-settlement-context/1':'repoing/inclusive-trade-settlement-context/1'))
+  // Reviewed under another (allowlisted) profile: a historical receipt, read with that profile's IDLs; today's dossier
+  // pins (deploy slots, live ELF bytes) describe programs that may have been upgraded since, so they are not checked.
+  const historical=!isDeepStrictEqual(ci.profile,profile);check(!historical||(!canary&&reviewedEnvelope(ci.profile,profile,reviewedProfiles)))
   const plan=(canary?compileCanaryInclusiveMaxWalletSwapReview:compileInclusiveMaxWalletSwapReview)(ci),r=plan.request,q=plan.quote,p=bound.profile
   check(isDeepStrictEqual(plan.review,review)&&verifyHookLabSignedMessage(review,signedTransactionBase64).signature===signature)
-  const pinned=[...new Set(bound.dossier.programs.flatMap(p=>[p.address,p.programData]))]
+  const pins=historical?[]:bound.dossier.programs,pinned=[...new Set(pins.flatMap(p=>[p.address,p.programData]))]
   const inventory=[...new Set([...pinned,plan.addresses.policy,plan.addresses.inclusiveFeePolicy])]
   const observedAtMs=Date.now()
   const rows=await Promise.all(connections.map(async({provider,connection})=>{
@@ -61,7 +65,7 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
    const meta=tx.meta;check(meta&&Array.isArray(meta.innerInstructions)&&meta.err!==undefined)
    const wire=new VersionedTransaction(tx.transaction.message);wire.signatures=tx.transaction.signatures.map(s=>bs58.decode(s))
    check(Buffer.from(wire.serialize()).toString('base64')===signedTransactionBase64)
-   const slot=integer(tx.slot);check(bound.dossier.programs.every(pin=>pin.deploySlot<=slot));const block=await connection.getBlockSignatures(slot,'finalized')
+   const slot=integer(tx.slot);check(pins.every(pin=>pin.deploySlot<=slot));const block=await connection.getBlockSignatures(slot,'finalized')
    check(block&&pk(block.blockhash).toBase58()===block.blockhash&&pk(block.previousBlockhash).toBase58()===block.previousBlockhash
     &&block.blockhash!==block.previousBlockhash&&Array.isArray(block.signatures)
     &&block.signatures.every(s=>bs58.decode(s).length===64&&bs58.encode(bs58.decode(s))===s)
@@ -84,7 +88,7 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   // Mutable pool/config/holding state is not historical receipt evidence. Only
   // exact executable identities and immutable policy bytes are rechecked here.
   const live=new Map(rows[0].stateAccounts.map(x=>[x.address,x.account]))
-  for(const pin of bound.dossier.programs){
+  for(const pin of pins){
    const program=live.get(pin.address),data=live.get(pin.programData);check(program&&data&&program.executable&&!data.executable
     &&program.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&data.owner===program.owner)
    const pb=Buffer.from(program.dataBase64,'base64');check(pb.length===36&&pb.readUInt32LE()===2&&pb.subarray(4).equals(pk(pin.programData).toBuffer()))
