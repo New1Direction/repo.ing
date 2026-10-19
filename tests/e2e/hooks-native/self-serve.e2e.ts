@@ -177,6 +177,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     const coin = tradeCoin(0), sums = accrued.get(coin.mint)!
     const { tx: claimTx, amount } = await claimViaUi({ app, screen, browser }, coin.creator, coin, sums.creator)
     expectNoLegacyStack(claimTx)
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'creator claim')
     accrued.set(coin.mint, { creator: 0n, platform: sums.platform })
     // collect_protocol_fees_native, run as the owner runs it (the owner driver's collect-native stage; anyone may crank).
     const owed = big((await poolAccount(coin.pool)).value.protocol_fees_quote)
@@ -253,6 +254,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     const [op] = await finalizedOperations(address, 'native-buy', 1), checked = await expectNativeBuy(op, address, coin, 30_000_000n)
     expectNoLegacyStack(checked.tx); book(coin.mint, checked)
     expect((await walletLog(browser)).filter(e => e.kind === 'transaction').length).toBe(1)
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'reload mid-trade')
     await approvals.off()
   })
 
@@ -294,6 +296,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
       image: pngDataUrl(), description: '', x: '', website: '', telegram: '' })
     expect([refused.status, refused.json?.error]).toEqual([409, 'Launches are paused right now. Try again later.'])
     expect(await launchRequests(blocked.publicKey.toBase58())).toEqual([])
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'paused launch page')
     // Existing holders trade and creators claim during the pause, with no redeploy.
     const holder = await freshBuyerOnCoinPage({ app, screen, browser }, coin.mint)
     let approvals = await approveSignatures(browser)
@@ -304,14 +307,17 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     await startTrade(screen, coin.symbol, 'sell', '100%')
     const [sell] = await finalizedOperations(holder.address, 'native-sell', 1), sold = await expectNativeSell(sell, holder.address, coin)
     expectNoLegacyStack(sold.tx); book(coin.mint, sold)
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'trading during the creation pause')
     await approvals.off()
     const { tx: claimTx } = await claimViaUi({ app, screen, browser }, coin.creator, coin, accrued.get(coin.mint)!.creator)
     expectNoLegacyStack(claimTx); accrued.set(coin.mint, { ...accrued.get(coin.mint)!, creator: 0n })
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'claim during the creation pause')
     // The admin reopens; launches work again.
     await ownerStage({ stage: 'open-launches' })
     expect((await openCreationState()).paused).toBe(false)
     const reopened = await launchOpenCoinViaUi({ app, screen, browser }, { name: 'After Reopen', symbol: 'REOPEN', creatorFeeBps: 50, capBps: 500 })
     expectNoLegacyStack(await receipt(reopened.launchOp.signature as string))
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'launch after reopening')
     // A trading pause: a buy is refused before anything is signed or sent, and leaves nothing in flight.
     await ownerStage({ stage: 'guardian-pause', pause: 'trading' })
     const trader = await freshBuyerOnCoinPage({ app, screen, browser }, coin.mint)
@@ -369,6 +375,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     // The creator claims.
     const { tx } = await claimViaUi({ app, screen, browser }, coin.creator, coin, accrued.get(coin.mint)!.creator)
     expectNoLegacyStack(tx)
+    await recordMarkerLeaks(browser, stack.quoteMint as string, 'claim on a delisted coin')
   })
 
   test('off-menu fees and caps and a tampered opening price are refused by the server; the site\'s rate limits still hold', async () => {
