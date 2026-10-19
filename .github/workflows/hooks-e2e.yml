@@ -1,0 +1,133 @@
+name: hooks-e2e
+
+# Real-browser e2e suite for the Hooks native-SOL release (tests/e2e/hooks-native), on a disposable local stack:
+# solana-test-validator with the candidate programs, PostgreSQL, the site in local-acceptance mode and the owner agent
+# with a disposable key. Nothing here reaches mainnet or uses a real key.
+#
+# The candidate ELFs are private: they come from ONE private release of New1Direction/hook-lab (tag
+# e2e-native-e357fdf), downloaded with the read-only secret HOOKLAB_ARTIFACTS_TOKEN and sha256-checked against the pins
+# in code (scripts/e2e/hooks-native/verify-artifacts.mjs). This repository is public, so no step caches or uploads
+# them, the validator ledger, or any directory that holds either. Without the secret (fork PRs) the suite does NOT run
+# and the job summary says so; that is never reported as a pass.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hooks-e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: '22'
+  SOLANA_VERSION: '4.0.1'
+  E2E_TELEMETRY_DISABLED: '1'
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  availability:
+    name: private artifacts available?
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          HAS_TOKEN: ${{ secrets.HOOKLAB_ARTIFACTS_TOKEN != '' }}
+          SAME_REPO: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [ "$SAME_REPO" = true ] && [ "$HAS_TOKEN" = true ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "## NOT RUN: private artifacts unavailable" >> "$GITHUB_STEP_SUMMARY"
+            echo "The native-SOL e2e suite needs the private hook-lab release; it was not run, so it did not pass." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning title=hooks-e2e NOT RUN::private artifacts unavailable (fork PR or missing HOOKLAB_ARTIFACTS_TOKEN)"
+          fi
+
+  native-release:
+    name: native-SOL release e2e (local validator, real browser)
+    needs: availability
+    # Skipped (never green) when the private artifacts are unavailable.
+    if: needs.availability.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: launchtest
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # No dependency or build cache in this job (nothing private may land in a cache).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - run: npm ci --ignore-scripts
+
+      - name: Install Solana CLI (solana-test-validator)
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Chromium for the e2e engine
+        run: npx @e2e-dev/web install chromium --with-deps
+
+      - name: Download and verify the private candidate ELFs
+        env:
+          GH_TOKEN: ${{ secrets.HOOKLAB_ARTIFACTS_TOKEN }}
+        run: |
+          dir="$RUNNER_TEMP/hooklab-native"
+          install -d -m 700 "$dir"
+          gh release download e2e-native-e357fdf --repo New1Direction/hook-lab --dir "$dir"
+          chmod 600 "$dir"/*
+          node scripts/e2e/hooks-native/verify-artifacts.mjs "$dir"
+
+      - name: 'Run the suite (one command: up, test, down)'
+        env:
+          HOOKLAB_NATIVE_ELF_DIR: ${{ runner.temp }}/hooklab-native
+          HOOKS_E2E_ROOT: ${{ runner.temp }}
+          HOOKS_E2E_POSTGRES_URL: postgres://postgres:launchtest@127.0.0.1:55432/postgres
+        run: |
+          export HOOKS_E2E_VALIDATOR="$(command -v solana-test-validator)"
+          npm run test:hooks:e2e
+
+      - name: Remove the private ELFs and any stack root
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/hooklab-native" "$RUNNER_TEMP"/hooks-native-e2e-*
+
+      # Traces, screenshots and the trade evidence only: the guard refuses an upload that holds an ELF or a ledger.
+      - name: Check the report directory holds no private file
+        id: guard
+        if: always()
+        run: |
+          report=tests/e2e/hooks-native/.e2e
+          [ -d "$report" ] || exit 0
+          if find "$report" \( -name '*.so' -o -name 'ledger' -o -name '*keypair*' -o -name '*.synthetic.json' \) | grep -q .; then
+            echo "::error::the e2e report directory holds a private or key file; not uploading"; exit 1
+          fi
+
+      - name: Upload traces and screenshots
+        if: always() && steps.guard.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hooks-e2e-report-${{ github.run_attempt }}
+          path: tests/e2e/hooks-native/.e2e
+          if-no-files-found: ignore
+          retention-days: 14
