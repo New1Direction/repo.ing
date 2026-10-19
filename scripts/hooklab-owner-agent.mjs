@@ -22,7 +22,8 @@ import { createInterface } from 'node:readline'
 import { parseArgs } from 'node:util'
 import { Connection,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
-import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress,invitedVirtualQuote,ownerRequestLines } from '../src/hooklab-owner-agent.mjs'
+import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress,invitedVirtualQuote,ownerRequestLines,checkInvitePriceAgainst } from '../src/hooklab-owner-agent.mjs'
+import { readSolUsdSources } from '../src/sol-usd-sources.mjs'
 import { STANDARD_VIRTUAL_QUOTE,formatSol,ownerPricingLine } from '../src/hooklab-launch-pricing.mjs'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinImageUrl,coinLinks } from '../src/hooklab-coin-profile.mjs'
@@ -175,8 +176,10 @@ rl.on('line',async line=>{
    const minutes=Number(arg2??opt['invite-minutes'])
    const {request:confirmed}=await api({action:'invite',requestId:pick.id,inviteSeconds:Math.round(minutes*60)})
    if(!INVITE_FIELDS.every(k=>confirmed[k]===pick[k]))throw Error('server returned a different invite')
-   // A price that does not re-derive from its sources is never recorded, so nothing is ever signed for this invite.
-   try{invitedVirtualQuote(confirmed)}catch(error){throw Error(`${error.message}; this invite is NOT recorded and will not be signed (decline ${arg} to release it)`)}
+   // A price that does not re-derive from its sources, or that this Mac's own SOL read does not confirm, is never
+   // recorded, so nothing is ever signed for this invite.
+   try{invitedVirtualQuote(confirmed);if(confirmed.pricing)checkInvitePriceAgainst(confirmed.pricing,await readSolUsdSources())}
+   catch(error){throw Error(`${error.message}; this invite is NOT recorded and will not be signed (decline ${arg} to release it)`)}
    recordInvite(confirmed)
    console.log(`Invited until ${new Date(confirmed.inviteExpiresAt).toLocaleTimeString()}${confirmed.pricing?`\n  ${ownerPricingLine(confirmed.pricing)}`:''}`)
   }

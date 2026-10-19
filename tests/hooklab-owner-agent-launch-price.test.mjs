@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto'
 import BN from 'bn.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { AddressLookupTableAccount,ComputeBudgetProgram,Keypair,PublicKey,TransactionInstruction,TransactionMessage } from '@solana/web3.js'
-import { invitedVirtualQuote,ownerRequestLines,policyAddress,verifyLaunchSignRequest } from '../src/hooklab-owner-agent.mjs'
+import { checkInvitePriceAgainst,invitedVirtualQuote,ownerRequestLines,policyAddress,verifyLaunchSignRequest } from '../src/hooklab-owner-agent.mjs'
 import { STANDARD_VIRTUAL_QUOTE } from '../src/hooklab-launch-pricing.mjs'
 
 const vendor=name=>JSON.parse(readFileSync(new URL(`../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/${name}`,import.meta.url)))
@@ -58,6 +58,16 @@ test('an unpriced invite (pricing off) signs only the standard 1 SOL quote',asyn
 test('a server price that does not re-derive is refused before the agent records the invite',()=>{
  assert.throws(()=>invitedVirtualQuote({...invited,pricing:{...pricing,virtualQuote:'112500000000'}}),/does not follow from its SOL price/)
  assert.throws(()=>invitedVirtualQuote({...invited,pricing:{...pricing,sources:pricing.sources.slice(0,1)}}),/at least two must agree/)
+})
+
+test('the agent reads SOL itself: a server price more than 3% from its own is never recorded',()=>{
+ const own=usd=>[{source:'coinbase',usd},{source:'jupiter',usd}]
+ assert.equal(checkInvitePriceAgainst(pricing,own(105.70)).solUsdMicros,'105700000','close to its own read: accepted')
+ assert.equal(checkInvitePriceAgainst(pricing,own(108.79)).solUsdMicros,'108790000','just inside 3%')
+ assert.throws(()=>checkInvitePriceAgainst(pricing,own(150)),/server SOL price \$105\.63 is more than 3% from this Mac's \$150\.00/,'a self-consistent but false server price is refused')
+ assert.throws(()=>checkInvitePriceAgainst(pricing,own(102.5)),/more than 3%/)
+ assert.throws(()=>checkInvitePriceAgainst(pricing,[{source:'coinbase',usd:150}]),/at least two must agree/,'no own quorum: nothing is recorded')
+ assert.equal(checkInvitePriceAgainst(null,[]),null,'an unpriced invite needs no price read')
 })
 
 test('list shows the owner the fixed opening and graduation values, or when they will be fixed',()=>{

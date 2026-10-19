@@ -5,7 +5,7 @@ import { createHash,createPrivateKey,sign } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { AddressLookupTableAccount,PublicKey,VersionedMessage } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
-import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing,ownerPricingLine } from './hooklab-launch-pricing.mjs'
+import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing,formatSolPrice,ownerPricingLine,solUsdQuorum } from './hooklab-launch-pricing.mjs'
 const COMPUTE_BUDGET='ComputeBudget111111111111111111111111111111'
 const launchIdl=JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url)))
 const coder=new BorshCoder(launchIdl)
@@ -24,6 +24,16 @@ export function decodeLookupTable(address,data){
 // The opening price an invite fixed. The chain has no price oracle: the agent re-derives the server's price from its
 // sources (refusing one that does not reproduce), and an invite without a price launches at the standard 1 SOL quote.
 export const invitedVirtualQuote=request=>request?.pricing?checkLaunchPricing(request.pricing).virtualQuote:STANDARD_VIRTUAL_QUOTE
+// The agent's own SOL read (src/sol-usd-sources.mjs, from the owner's Mac): a server price that is consistent with its
+// claimed sources but more than 3% from what this Mac reads is never recorded, so a server cannot invent a price.
+// 3%, not the 2% quorum spread, because the two reads are seconds apart.
+export function checkInvitePriceAgainst(pricing,ownReadings){
+ if(!pricing)return null
+ const own=solUsdQuorum(ownReadings),server=BigInt(pricing.solUsdMicros),mine=BigInt(own.solUsdMicros)
+ const [lo,hi]=server<mine?[server,mine]:[mine,server]
+ need(hi*10000n<=lo*10300n,`server SOL price ${formatSolPrice(server)} is more than 3% from this Mac's ${formatSolPrice(mine)}`)
+ return own
+}
 // Extra list rows for one request: the fixed price, or when it will be fixed. Nothing while USD pricing is off.
 export function ownerRequestLines(request){
  if(request.pricing===undefined)return []

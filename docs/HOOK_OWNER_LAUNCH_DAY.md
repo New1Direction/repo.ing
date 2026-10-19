@@ -176,7 +176,8 @@ launches and trades need both. Emergency stop: `close-trading`, `close-launches`
 
 Every launch then opens at about a $5,000 market cap and graduates at about $45,000.
 repo.ing fixes the SOL price (median of CoinGecko, Jupiter and Coinbase, within 2%) and the
-virtual quote when you `invite`; the agent signs only that quote. Do it with no launch in flight:
+virtual quote when you `invite`. The agent re-reads SOL from your Mac, records the invite only if
+the server's price is within 3% of its own read, and then signs only that quote. Do it with no launch in flight:
 
 1. Schema: `migration-check launch-pricing`, then `migrate launch-pricing --sha256 <printed>`
    (step 7 commands; one new insert-only table).
