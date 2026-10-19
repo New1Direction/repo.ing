@@ -11,6 +11,7 @@ import { compileMaxWalletLaunchReview, maxWalletLaunchInventory, parseMaxWalletL
 import { hookLabReviewSchema, inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { parseExecutionDossier, inspectProductionEvidence } from './hooklab-production-observer.mjs'
 import { assertLocalExecutionEndpoint, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
+import { LAUNCH_STATE_HASHES, canonicalLaunchProof, canonicalObservation } from './hooklab-canonical-observation.mjs'
 const sha=x=>createHash('sha256').update(x).digest('hex')
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 const integer=v=>{check(Number.isSafeInteger(v)&&v>=0,'Invalid RPC integer');return v}
@@ -86,8 +87,8 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
   const genesisHash=await connection.getGenesisHash();check(genesisHash===p.genesisHash,'Wrong chain')
   const snapshot=await connection.getMultipleAccountsInfoAndContext(all.map(pk),{commitment:'finalized',minContextSlot})
   check(snapshot.value.length===all.length&&integer(snapshot.context.slot)>=minContextSlot,'Incomplete or stale snapshot')
-  return {provider,genesisHash,commitment:'finalized',slot:snapshot.context.slot,observedAtMs:started,
-   accounts:snapshot.value.map((v,i)=>({address:all[i],account:v===null?null:{address:all[i],owner:v.owner.toBase58(),executable:v.executable,lamports:String(integer(v.lamports)),dataBase64:Buffer.from(v.data).toString('base64')}}))}
+  return canonicalObservation({provider,genesisHash,commitment:'finalized',slot:snapshot.context.slot,observedAtMs:started,
+   accounts:snapshot.value.map((v,i)=>({address:all[i],account:v===null?null:{address:all[i],owner:v.owner.toBase58(),executable:v.executable,lamports:String(integer(v.lamports)),dataBase64:Buffer.from(v.data).toString('base64')}}))})
  }))
  check(isDeepStrictEqual(observations[0].accounts,observations[1].accounts),'Provider account snapshots disagree')
  const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
@@ -115,9 +116,9 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
   blockhashValid:true,observedSlot:Math.max(...confirmations.map(x=>x.slot)),networkFeeLamports:String(BigInt(new Set([r.creator,r.feePayer,r.mint,r.reviewer]).size)*BigInt(c.lamportsPerSignature)+priority),lamportsPerSignature:c.lamportsPerSignature}
  const lookup=c.lookupTable?map.get(c.lookupTable.address):null
  if(c.lookupTable)check(lookup&&!lookup.executable&&sha(Buffer.from(lookup.dataBase64,'base64'))===c.lookupTable.sha256,'Lookup table pin differs')
- const compilationInput={profile,request:r,preparationEvidence:{schema:'repoing/max-wallet-durable-prepared-state/1',profileSha256:preparation.profileSha256,
-  preparationIntentSha256:preparation.preparationIntentSha256,executionSlot:preparation.executionSlot,preparedAccountHashes:preparation.preparedAccountHashes},
-  reviewedStateHashes:Object.fromEntries(['launchConfig','swapConfig','launchGovernance','swapGovernance','authorization','quoteMint'].map(name=>[name,sha(Buffer.from(map.get(name==='quoteMint'?p.quoteMint:a[name]).dataBase64,'base64'))])),
+ const compilationInput={profile,request:r,preparationEvidence:canonicalLaunchProof({schema:'repoing/max-wallet-durable-prepared-state/1',profileSha256:preparation.profileSha256,
+  preparationIntentSha256:preparation.preparationIntentSha256,executionSlot:preparation.executionSlot,preparedAccountHashes:preparation.preparedAccountHashes}),
+  reviewedStateHashes:Object.fromEntries(LAUNCH_STATE_HASHES.map(name=>[name,sha(Buffer.from(map.get(name==='quoteMint'?p.quoteMint:a[name]).dataBase64,'base64'))])),
   observations:observations.map(o=>({...o,accounts:o.accounts.filter(x=>inventory.includes(x.address))})),recentBlockhash,
   lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:c.lookupTable.sha256}:null,limits:{...limits,nowMs:integer(clock())}}
  const plan=compileMaxWalletLaunchReview(compilationInput)

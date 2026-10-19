@@ -11,6 +11,7 @@ import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-col
 import {inclusiveCreatorFee,modelInclusiveCreatorQuote} from './hooklab-inclusive-fee-quote.mjs'
 import {compileInclusiveMaxWalletSwapReview,compileCanaryInclusiveMaxWalletSwapReview} from './hooklab-inclusive-max-wallet-swap.mjs'
 import {canarySwapTransition,verifyCanaryGovernanceLogs} from './hooklab-canary-policy.mjs'
+import {canonicalObservation} from './hooklab-canonical-observation.mjs'
 const check=v=>{if(!v)throw Error('Inclusive receipt evidence differs')},sha=x=>createHash('sha256').update(x).digest('hex')
 const n=x=>x.toString(),pk=x=>new PublicKey(x),tag=Buffer.from('e445a52e51cb9a1d','hex')
 const tokenIdlBytes=readFileSync(`${process.cwd()}/vendor/hooklab-production-candidate/idl/bordrless_token.json`)
@@ -47,7 +48,7 @@ export function collectCanaryInclusiveTradeSettlement(args){return collectSettle
 async function collectSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature},canary){
  const identity={signature,messageSha256:review?.messageSha256,profileSha256:review?.profileSha256}
  try{
-  const bound=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),ci=settlementContext.compilationInput
+  const bound=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),stored=settlementContext.compilationInput,ci={...stored,observations:stored.observations.map(canonicalObservation)}
   check(settlementContext.schema===(canary?'repoing/canary-inclusive-trade-settlement-context/1':'repoing/inclusive-trade-settlement-context/1')&&isDeepStrictEqual(ci.profile,profile))
   const plan=(canary?compileCanaryInclusiveMaxWalletSwapReview:compileInclusiveMaxWalletSwapReview)(ci),r=plan.request,q=plan.quote,p=bound.profile
   check(isDeepStrictEqual(plan.review,review)&&verifyHookLabSignedMessage(review,signedTransactionBase64).signature===signature)
