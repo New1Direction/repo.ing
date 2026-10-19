@@ -7,6 +7,7 @@ import { AddressLookupTableAccount, ComputeBudgetProgram, PublicKey, Transaction
 import { z } from 'zod'
 import { HOOK_MAINNET_GENESIS, hookAddress as key, hookDigest as hash, hookRawAmount as u64 } from './hooklab-execution-contract.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
+import { otherPrograms, profileRolesDistinct, stackProfileFieldSchema } from './hooklab-stack.mjs'
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -19,13 +20,14 @@ const raw = (text, maximum) => {
   return bytes
 }
 const role = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)
-const roles = z.object({ launch: key, swap: key, gate: key, token: key, bridge: key }).strict()
+// Legacy profiles (bundle 2) name the bridge; a stack profile (src/hooklab-stack.mjs) has none and names its stack.
+const roles = z.union([z.object({ launch: key, swap: key, gate: key, token: key, bridge: key }).strict(), z.object({ launch: key, swap: key, gate: key, token: key }).strict()])
 const artifactHashes = z.object({ launch: hash, swap: hash, gate: hash }).strict()
 export const maxWalletProfileSchema = z.object({ schema: z.literal('hook-lab/offline-max-wallet-builder-profile/1'),
   profileId: z.string().min(1).max(128), status: z.literal('offline-candidate-not-adopted'),
   sourceCommit: z.string().regex(/^[a-f0-9]{40}$/), sourcePatchSha256: hash,
   buildFeature: z.literal('max-wallet-reuse-candidate'),
-  genesisHash: z.literal(HOOK_MAINNET_GENESIS), programs: roles, quoteMint: key,
+  genesisHash: z.literal(HOOK_MAINNET_GENESIS), programs: roles, quoteMint: key, stack: stackProfileFieldSchema.optional(),
   idlSha256: artifactHashes, elfSha256: artifactHashes,
   dependencyObservation: z.object({ tokenElfSha256: hash, sourceProvenanceVerified: z.literal(false), ownerAcceptanceVerified: z.literal(false) }).strict(),
   capability: z.object({ kind: z.literal('immutable-initial-supply-owner-cap-until-authenticated-graduation'), beforeTransferOnly: z.literal(true),
@@ -103,7 +105,7 @@ export function planMaxWalletPreparation(input) {
   const { profile: envelope, request: r, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = maxWalletProfileSchema.parse(JSON.parse(envelope.json))
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   const artifact = role => ({ program: profile.programs[role], idlBase64: envelope.idls[role], idlSha256: profile.idlSha256[role],
     elfSha256: profile.elfSha256[role], elfLength: envelope.elfLengths[role] })
   const launchArtifact = artifact('launch'), gateArtifact = artifact('gate'), launch = binding(launchArtifact), gate = binding(gateArtifact)
@@ -115,7 +117,7 @@ export function planMaxWalletPreparation(input) {
     registry: pda(profile.programs.gate, 'bordrless-hook-accounts', pk(r.mint).toBuffer()),
     canonicalLaunch: pda(profile.programs.launch, 'launch', pk(r.mint).toBuffer()) }
   // A fee payer may equal the creator. All other transaction roles must stay distinct.
-  const distinct = [...Object.values(addresses), profile.programs.swap, profile.programs.token, profile.programs.bridge, profile.quoteMint, r.creator, r.mint, r.selectedConfig, zero, ComputeBudgetProgram.programId.toBase58()]
+  const distinct = [...Object.values(addresses), ...otherPrograms(profile), profile.quoteMint, r.creator, r.mint, r.selectedConfig, zero, ComputeBudgetProgram.programId.toBase58()]
   check(new Set(distinct).size === distinct.length && (r.feePayer === r.creator || !distinct.includes(r.feePayer)), 'Preparation roles alias')
   check(!lookupTable || ![...distinct, r.feePayer, ...Object.values(profile.programs)].includes(lookupTable.address), 'Lookup table aliases a preparation role')
   check(PublicKey.isOnCurve(pk(r.creator).toBytes()) && PublicKey.isOnCurve(pk(r.feePayer).toBytes())
@@ -237,7 +239,7 @@ export function deriveMaxWalletPreparedAccounts(input) {
   const { profile: envelope, request: r, launchConfig, observedCreatedAtUnixSeconds } = value
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = maxWalletProfileSchema.parse(JSON.parse(envelope.json)), L = profile.programs.launch, G = profile.programs.gate
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   const bind = role => binding({ idlBase64: envelope.idls[role], idlSha256: profile.idlSha256[role], program: profile.programs[role] })
   const launch = bind('launch'), gate = bind('gate'), c = readLaunchConfig(launch, profile, r, launchConfig)
   const policyAddress = pda(G, 'policy', pk(r.mint).toBuffer()), registryAddress = pda(G, 'bordrless-hook-accounts', pk(r.mint).toBuffer())

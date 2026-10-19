@@ -59,7 +59,7 @@ export function writeGenesis(dir, roles, { creatorQuote = '10000000000', bridge 
     metadata_authority: null, hook_program: null, hook_flags: 0, name: 'LOCAL synthetic quote', symbol: 'LOCALQ', uri: '', created_at: new BN(0),
     creator: roles.payer.publicKey, hook_signer_bump: 0, reserved: Array(31).fill(0) }, 519)
   const holding = (owner, value) => {
-    const address = holdingAddress(QUOTE_MINT, owner), bump = PublicKey.findProgramAddressSync([Buffer.from('holding'), kb(QUOTE_MINT), kb(owner)], pk(PROGRAMS.token))[1]
+    const address = holdingAddress(QUOTE_MINT, owner, PROGRAMS.token), bump = PublicKey.findProgramAddressSync([Buffer.from('holding'), kb(QUOTE_MINT), kb(owner)], pk(PROGRAMS.token))[1]
     return account(address, { lamports: 10000000, owner: PROGRAMS.token, data: tokenAccount('Holding', { version: 1, bump, mint: pk(QUOTE_MINT), owner: pk(owner), amount: new BN(value),
       delegate: null, delegated_amount: new BN(0), frozen: false, hook_data: Array(64).fill(0), reserved: Array(16).fill(0) }, 204) })
   }
@@ -76,7 +76,7 @@ export async function cloneBridge(dir, rpc = process.env.HOOKLAB_OWNER_MAINNET_R
   try {
     const mainnet = new Connection(rpc, { commitment: 'finalized', disableRetryOnRateLimit: true })
     if (await mainnet.getGenesisHash() !== MAINNET_GENESIS) return null
-    const d = derivedAddresses(), keys = [d.bridgeProgramData, d.bridgeConfig, d.bridgeNativeWrapper, d.bridgeSolVault, QUOTE_MINT]
+    const d = derivedAddresses(PROGRAMS, QUOTE_MINT), keys = [d.bridgeProgramData, d.bridgeConfig, d.bridgeNativeWrapper, d.bridgeSolVault, QUOTE_MINT]
     const accounts = await mainnet.getMultipleAccountsInfo(keys.map(pk))
     if (accounts.some(a => !a)) return null
     mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -132,7 +132,7 @@ export async function finalizeProgram(connection, roles, role) {
 /** Mirror the mainnet starting state: both configs paused, governance revision 0, zero fees and shares (or the given
  * init_config argument overrides, e.g. the approved economics). */
 export async function bootstrapConfigs(connection, roles, genesisHash, overrides = {}) {
-  const d = derivedAddresses(), k = role => roles[role].publicKey, a = role => roles[role].publicKey.toBase58()
+  const d = derivedAddresses(PROGRAMS, QUOTE_MINT), k = role => roles[role].publicKey, a = role => roles[role].publicKey.toBase58()
   const launchArgs = { admin: k('admin'), treasury: k('treasury'), quote_mint: pk(QUOTE_MINT), launch_fee_lamports: new BN(0), lp_fee_bps: 0, max_creator_fee_bps: 0,
     sniper_window_secs: new BN(0), sniper_start_bps: 0, curve_bps: 7500, supply: new BN('1000000000000000'), decimals: 6, min_virtual_quote: new BN(1000000000), max_virtual_quote: new BN(1000000000),
     paused: true, rule_bounds: { max_holder_fee_bps: 0, max_burn_bps: 0, max_rules_fee_bps: 0, min_max_wallet_bps: 1, max_max_wallet_bps: 1, max_creator_lock_secs: 0, max_early_window_secs: 0, max_early_lock_secs: 0 } }

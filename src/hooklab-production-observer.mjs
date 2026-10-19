@@ -49,14 +49,17 @@ const codecs=Object.fromEntries(['launch','swap'].map(role=>{const bytes=codecBy
 // reviewed bytes). Config has the same layout in all; the pin names its build by IDL hash, and that must be the build its
 // program's ELF pin names: a native IDL only beside that native build's ELF, the bundle-2 IDL never beside a native ELF.
 // Any other IDL hash is refused.
-function configCodec(role,pin,program){
+// idls: the envelope's own IDLs (base64), for a stack bundle whose IDLs are its own; matched by the pin's IDL hash.
+function configCodec(role,pin,program,idls){
+ const own=idls?.[role]&&Buffer.from(idls[role],'base64')
+ if(own&&sha(own)===pin.idlSha256){const idl=JSON.parse(own);return {sha256:pin.idlSha256,coder:new BorshCoder(idl),idl}}
  const build=nativeBuildForRole(role,{elfSha256:program.elfSha256,elfLength:program.elfLength,idlSha256:pin.idlSha256})
  if(!build){
   if(isNativeElfPin(role,program.elfSha256,program.elfLength))return null
   return codecs[role].sha256===pin.idlSha256?codecs[role]:null
  }
- const {idls,coders}=build==='open-36dd07e'?loadOpenArtifacts():loadNativeArtifacts()
- return {sha256:NATIVE_BUILDS[build].idlSha256[role],coder:coders[role],idl:idls[role]}
+ const reviewed=build==='open-36dd07e'?loadOpenArtifacts():loadNativeArtifacts()
+ return {sha256:NATIVE_BUILDS[build].idlSha256[role],coder:reviewed.coders[role],idl:reviewed.idls[role]}
 }
 const tokenIdlBytes=readFileSync(`${process.cwd()}/vendor/hooklab-production-candidate/idl/bordrless_token.json`)
 export const TOKEN_IDL_SHA256=sha(tokenIdlBytes)
@@ -83,14 +86,14 @@ function mintSupplyBindingMatches(pin,current,dossier){
  const relaid=Buffer.concat([tokenCodec.discriminator,tokenCodec.coder.types.encode('Mint',live)])
  return Buffer.concat([relaid,Buffer.alloc(approved.length-relaid.length)]).equals(approved)
 }
-export function productionAccountBindingMatches(pin,observed,dossier){
+export function productionAccountBindingMatches(pin,observed,dossier,idls=null){
  try{
   if(!observed||observed.address!==pin.address||observed.owner!==pin.owner||observed.executable!==pin.executable)return false
   const current=rawAccount(observed)
   if(!pin.binding)return sha(current)===pin.dataSha256
   if(pin.binding==='mint-supply-v1')return mintSupplyBindingMatches(pin,current,dossier)
   if(pin.binding!=='config-counters-v1'||(dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||pin.executable||!['launch-config','swap-config'].includes(pin.role))return false
-  const role=pin.role.split('-')[0],program=dossier.programs.find(p=>p.role===role),codec=program&&configCodec(role,pin,program)
+  const role=pin.role.split('-')[0],program=dossier.programs.find(p=>p.role===role),codec=program&&configCodec(role,pin,program,idls)
   if(!codec||pin.address!==PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(program.address))[0].toBase58()||program.address!==pin.owner||codec.sha256!==pin.idlSha256||codec.idl.address!==program.address)return false
   const approved=rawAccount({dataBase64:pin.approvedDataBase64});if(sha(approved)!==pin.dataSha256||approved.length!==current.length)return false
   const decode=bytes=>{const value=codec.coder.accounts.decode('Config',bytes),encoded=Buffer.concat([bytes.subarray(0,8),codec.coder.types.encode('Config',value)]);if(!encoded.equals(bytes))throw Error('Noncanonical Config');return value}
@@ -137,7 +140,7 @@ export function productionReadiness() {
  * Exact bytes bind dependencies and configuration, but do not decode/approve their semantics.
  * No result enables execution, asserts custody, or marks a token operation settled.
  */
-export function inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs } = {}) {
+export function inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs, idls = null } = {}) {
   const out = { status: 'unavailable', reason: 'Reviewed dossier and two independent observations required',
     observedSlots: [], accountBindingsMatched: false, policyVerified: false, provenanceVerified: false,
     canSign: false, canSubmit: false, canRetry: false }
@@ -181,7 +184,7 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
       }
       for (const a of d.accounts) {
         const observed = accounts.get(a.address)
-        check(productionAccountBindingMatches(a,observed,d), 'Config/control/quote account drift')
+        check(productionAccountBindingMatches(a,observed,d,idls), 'Config/control/quote account drift')
       }
     }
     return { ...out, status: 'account-bindings-matched', reason: 'Retained bytes match; policy semantics, provenance signatures and operation receipts remain unverified',

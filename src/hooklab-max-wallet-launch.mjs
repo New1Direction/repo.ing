@@ -17,6 +17,7 @@ import { canaryGateMatches } from './hooklab-canary-policy.mjs'
 import { NATIVE_BUILDS, nativeBuildOf } from './hooklab-native-pins.mjs'
 import { QUOTE_FORM_NATIVE, isNativeElfPin, nativeEconomicsHash } from './hooklab-native-launch.mjs'
 import { launchConfigReservedValid, parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
+import { isStackProfile, profileRolesDistinct } from './hooklab-stack.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -257,7 +258,7 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   const { profile: envelope, request: r, observations, preparationEvidence: proof, reviewedStateHashes, recentBlockhash: bh, lookupTable, limits: l, nativeLaunches = false } = input
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   const launch = binding(envelope, profile, 'launch'), swap = binding(envelope, profile, 'swap'), gate = binding(envelope, profile, 'gate')
   const inclusive=r.policyVersion===2
   // An open launch offers the fees on the chain's menu (checked below); every other launch, the reviewed profile's menu.
@@ -288,9 +289,11 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   check(!native || nativeLaunches === true, 'Native launches are on chain; this server is not enabled for them')
   // A native launch needs a reviewed native build (e357fdf or open-creation) pinned for both programs; an open launch, the
   // open-creation build, the only one with create_launch_open_v1.
-  const build = nativeBuildOf(profile, envelope.elfLengths)
-  check(!native || (inclusive && !canary && build && ['launch', 'swap'].every(role => isNativeElfPin(role, profile.elfSha256[role], envelope.elfLengths[role]))), 'Native launches need the reviewed native-SOL programs and IDLs')
-  check(!open || build === 'open-36dd07e', 'Open launches need the reviewed open-creation launch program and IDL')
+  // Our own stack (a stack profile pins its own build) launches open, native coins only: no bridge, no invite.
+  const build = nativeBuildOf(profile, envelope.elfLengths), stack = isStackProfile(profile)
+  check(!stack || (open && native && !canary), 'Launches on our own stack are open launches with ordinary SOL')
+  check(!native || (inclusive && !canary && (stack || (build && ['launch', 'swap'].every(role => isNativeElfPin(role, profile.elfSha256[role], envelope.elfLengths[role]))))), 'Native launches need the reviewed native-SOL programs and IDLs')
+  check(!open || (stack ? profile.stack.open === true : build === 'open-36dd07e'), 'Open launches need the reviewed open-creation launch program and IDL')
   const instructionName = open ? OPEN : inclusive ? (native ? 'create_launch_custom_v4' : 'create_launch_custom_v3') : 'create_launch_custom_mainnet'
   check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury) && (open || str(c.admin) === r.reviewer), 'Current admin, treasury or quote differs')
   if (canary) check(str(c.admin) === str(d.admin), 'Canary requires the existing shared admin role')

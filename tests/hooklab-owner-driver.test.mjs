@@ -26,7 +26,7 @@ import { localConfig, syntheticRoles } from './fixtures/hooklab-owner-local.mjs'
 const template = new URL('../hooklab-owner.config.json', import.meta.url)
 const scratch = () => mkdtempSync(path.join(tmpdir(), 'hooklab-owner-unit-'))
 const write = (dir, name, value) => { const file = path.join(dir, name); writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value)); return file }
-const d = derivedAddresses()
+const d = derivedAddresses(PROGRAMS, QUOTE_MINT)
 const govState = (program, config, revision = 0) => ({ genesis: [...new PublicKey(MAINNET_GENESIS).toBuffer()], program: new PublicKey(program), config: new PublicKey(config),
   roles: { upgrade: new PublicKey(MAINNET_ROLES.upgrade), admin: new PublicKey(MAINNET_ROLES.admin), treasury: new PublicKey(MAINNET_ROLES.treasury), guardian: new PublicKey(MAINNET_ROLES.guardian) },
   revision: new BN(revision), gates: { creation: true, trading: false }, config_digest: Array(32).fill(3), custody_digest: Array(32).fill(4), pending_admin: null })
@@ -52,7 +52,7 @@ test('approval refusals: per-decision approval and the explicit approval-flag st
     assert.deepEqual(unapproved(config, 'launch-config'), ['maxRulesFeeBps'])
     raw.decisions.maxRulesFeeBps.approved = true
     assert.doesNotThrow(() => assertExecutable(loadConfig(write(dir, 'c2.json', raw)), 'launch-config'))
-    assert.deepEqual([...APPROVAL_FLAG_STAGES].sort(), ['canary-buy', 'canary-gates-open-creation', 'canary-sell', 'fund', 'gate-finalize', 'launch-usd-bounds', 'native-launches', 'open-launches', 'open-trading', 'trade-table'])
+    assert.deepEqual([...APPROVAL_FLAG_STAGES].sort(), ['canary-buy', 'canary-gates-open-creation', 'canary-sell', 'fund', 'gate-finalize', 'launch-fee', 'launch-table', 'launch-usd-bounds', 'native-launches', 'open-creation', 'open-launches', 'open-trading', 'trade-table'])
     raw.roles = { admin: MAINNET_ROLES.guardian }
     assert.throws(() => loadConfig(write(dir, 'c3.json', raw)), /may not substitute pinned role/)
     const local = localConfig(syntheticRoles()); local.roles.admin = MAINNET_ROLES.admin

@@ -22,7 +22,7 @@ import { nativeLaunchesDigest } from '../src/hooklab-native-launch.mjs'
 import { missingArtifactEnv, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/hooklab-mainnet-public-accounts.json', import.meta.url)))
-const { coders } = loadArtifacts(), d = derivedAddresses()
+const { coders } = loadArtifacts(), d = derivedAddresses(PROGRAMS, QUOTE_MINT)
 const liveConfig = Buffer.from(fixture.accounts['launch-config'].dataBase64, 'base64'), liveGovernance = Buffer.from(fixture.accounts['creation-control'].dataBase64, 'base64')
 const governance = coders.launch.accounts.decode('Governance', liveGovernance)
 const switched = (value, at = 186) => { const b = Buffer.from(liveConfig); b[at] = value; return b }

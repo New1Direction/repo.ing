@@ -15,6 +15,7 @@ import { readInclusiveFeePolicy } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { canaryGateMatches, canarySwapTransition } from './hooklab-canary-policy.mjs'
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
+import { kitOf, profileRolesDistinct } from './hooklab-stack.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -105,11 +106,10 @@ export function buildInclusiveMaxWalletSwapReview() {
   const error = Error('Production max-wallet swap adapter is unavailable; synthetic state cannot authorize trading')
   error.code = 'INCLUSIVE_MAX_WALLET_SWAP_PROOF_UNAVAILABLE'; throw error
 }
-const KIT = 'AZDzvrC6733F6orekbzyF5B6Vpd9DxnV9RGfRrDgzHhm'
 function deriveAddresses(profile, r) {
   const { launch: L, swap: S, gate: G, token: T } = profile.programs, mint = r.mint, quote = profile.quoteMint
   const launch = pda(L, 'launch', kb(mint)), pool = pda(S, 'pool', kb(mint), kb(quote), enc(0, 2), kb(L)), lpMint = pda(S, 'lp', kb(pool))
-  const holding = (mint, owner) => pda(T, 'holding', kb(mint), kb(owner)), kitConfig = pda(KIT, 'kit', kb(mint))
+  const holding = (mint, owner) => pda(T, 'holding', kb(mint), kb(owner)), kitConfig = pda(kitOf(profile), 'kit', kb(mint))
   return { launchConfig: pda(L, 'config'), swapConfig: pda(S, 'config'), launchGovernance: pda(L, 'governance'), swapGovernance: pda(S, 'governance'),
     inclusiveFeePolicy: pda(S, 'inclusive-fee-policy', kb(pool)), policy: pda(G, 'policy-v2', kb(mint)), registry: pda(G, 'bordrless-hook-accounts', kb(mint)), launch, pool, lpMint,
     launchReserve: holding(mint, launch), launchQuote: holding(quote, launch), launchLp: holding(lpMint, launch),
@@ -164,7 +164,7 @@ function readHolding(accounts, address, token, mint, owner) {
 }
 
 // The same account evidence rules, shared with the native-SOL compiler (src/hooklab-native-swap.mjs).
-export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, typed, readHolding, KIT, noRules })
+export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, typed, readHolding, noRules })
 
 export function buildInclusiveMaxWalletSwapReviewForFixture(input) {
   check(input?.provenance === 'disposable-litesvm-synthetic-fixture-not-rpc-evidence', 'Fixture provenance required')
@@ -185,7 +185,7 @@ function compile(input, fixture, canary = false) {
   const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero, KIT]).size === 8, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   const launch = binding(envelope, profile, 'launch'), swap = binding(envelope, profile, 'swap'), gate = binding(envelope, profile, 'gate')
   for (const name of ['before_swap_inclusive_v1', 'after_swap_inclusive_v1']) {
     const callback = launch.idl.instructions.find(ix => ix.name === name)
@@ -199,7 +199,7 @@ function compile(input, fixture, canary = false) {
   for (const o of obs) check(o.genesisHash === profile.genesisHash && l.nowMs >= o.observedAtMs && l.nowMs - o.observedAtMs <= l.maxAgeMs, 'Stale or wrong-chain swap observation')
   const accounts = new Map(obs[0].accounts.map(x => { check(!x.account || x.address === x.account.address, 'Account identity differs'); return [x.address, x.account] }))
   check(accounts.size === obs[0].accounts.length && isDeepStrictEqual([...accounts.keys()].sort(), inventory), 'Incomplete, duplicate or extra swap inventory')
-  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, r.mint, r.selectedConfig, zero, KIT, ComputeBudgetProgram.programId.toBase58()]
+  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, r.mint, r.selectedConfig, zero, kitOf(profile), ComputeBudgetProgram.programId.toBase58()]
   check(new Set(roles).size === roles.length && [r.trader, r.recipient, r.feePayer].every(k => !roles.includes(k) && PublicKey.isOnCurve(kb(k))), 'Swap role alias or invalid wallet')
   check(!lookupTable || ![...inventory, ...roles].includes(lookupTable.address), 'Lookup table aliases a swap role')
   for (const o of obs) for (const role of ['launch', 'swap', 'gate']) programEvidence(accounts, profile.programs[role], profile.elfSha256[role], envelope.elfLengths[role], o.slot, role === 'gate')

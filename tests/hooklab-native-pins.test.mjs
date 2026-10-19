@@ -27,8 +27,8 @@ test('the reviewed ELFs and the flag bytes the native code reads are pinned exac
 })
 
 test('errors decode by program and code: the same name has a different number in each program', () => {
-  assert.equal(nativeErrorName(PROGRAMS.swap, 6110), 'NotNativePool'); assert.equal(nativeErrorName(PROGRAMS.launch, 6103), 'NativeLaunchesOff')
-  assert.equal(nativeErrorName(PROGRAMS.launch, 6106), 'QuoteFormMismatch'); assert.equal(nativeErrorName(PROGRAMS.swap, 6113), 'QuoteFormMismatch')
-  assert.equal(nativeErrorName(PROGRAMS.swap, 6106), null, 'a launch code read as a swap code is unknown, never mislabelled')
-  assert.equal(nativeErrorName(PROGRAMS.token, 6110), null)
+  assert.equal(nativeErrorName(PROGRAMS.swap, 6110, PROGRAMS), 'NotNativePool'); assert.equal(nativeErrorName(PROGRAMS.launch, 6103, PROGRAMS), 'NativeLaunchesOff')
+  assert.equal(nativeErrorName(PROGRAMS.launch, 6106, PROGRAMS), 'QuoteFormMismatch'); assert.equal(nativeErrorName(PROGRAMS.swap, 6113, PROGRAMS), 'QuoteFormMismatch')
+  assert.equal(nativeErrorName(PROGRAMS.swap, 6106, PROGRAMS), null, 'a launch code read as a swap code is unknown, never mislabelled')
+  assert.equal(nativeErrorName(PROGRAMS.token, 6110, PROGRAMS), null)
 })

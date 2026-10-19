@@ -37,7 +37,7 @@ async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0,
   const coin = await encode('token', 'Mint', { version: 1, decimals: 6, supply: bn(BigInt(config.supply) - BigInt(burned)), max_supply: bn(config.supply), name: 'Graduate', symbol: 'GRAD', uri: '' })
   const accounts = new Map([[a.launch, [PROGRAMS.launch, launch]], [a.pool, [PROGRAMS.swap, poolBytes]], [a.policy, [PROGRAMS.gate, policy]], [mint, [PROGRAMS.token, coin]],
     [a.launchReserve, [PROGRAMS.token, holding(BigInt(config.curve.reserveTokens) - BigInt(topup) - BigInt(burned))]], [a.launchLp, [PROGRAMS.token, holding(lockedLp)]],
-    [wallet, [PublicKey.default.toBase58(), Buffer.alloc(0), 5_000_000_000]], [holdingAddress(QUOTE_MINT, wallet), [PROGRAMS.token, holding(7)]], [holdingAddress(mint, wallet), [PROGRAMS.token, holding(9)]]])
+    [wallet, [PublicKey.default.toBase58(), Buffer.alloc(0), 5_000_000_000]], [holdingAddress(QUOTE_MINT, wallet, PROGRAMS.token), [PROGRAMS.token, holding(7)]], [holdingAddress(mint, wallet, PROGRAMS.token), [PROGRAMS.token, holding(9)]]])
   return { getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 77 }, value: keys.map(k => {
     const hit = accounts.get(k.toBase58()); return hit ? { owner: new PublicKey(hit[0]), data: hit[1], lamports: hit[2] ?? 1 } : null }) }) }
 }

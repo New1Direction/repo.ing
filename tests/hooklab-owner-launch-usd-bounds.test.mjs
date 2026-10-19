@@ -19,7 +19,7 @@ import { boundByteOffsets } from '../src/hooklab-owner-driver/stages/launch-boun
 import { MAINNET_GENESIS, MAINNET_ROLES, PROGRAMS, QUOTE_MINT, SYSTEM, derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/hooklab-mainnet-public-accounts.json', import.meta.url)))
-const { coders } = loadArtifacts(), d = derivedAddresses()
+const { coders } = loadArtifacts(), d = derivedAddresses(PROGRAMS, QUOTE_MINT)
 const liveConfig = Buffer.from(fixture.accounts['launch-config'].dataBase64, 'base64'), liveGovernance = Buffer.from(fixture.accounts['creation-control'].dataBase64, 'base64')
 const config = coders.launch.accounts.decode('Config', liveConfig), governance = coders.launch.accounts.decode('Governance', liveGovernance)
 const MIN = '5625000000', MAX = '112500000000'

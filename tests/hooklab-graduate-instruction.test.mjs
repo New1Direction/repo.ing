@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import { graduateHookCoin } from '../src/hooklab-owner-driver/instructions.mjs'
 import { MAINNET_ROLES, PROGRAMS, QUOTE_MINT } from '../src/hooklab-owner-driver/pins.mjs'
+import { LEGACY_KIT } from '../src/hooklab-stack.mjs'
 import { hookCoinAddresses } from '../src/hooklab-inclusive-max-wallet-swap.mjs'
 
 const idl = JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json', import.meta.url)))
@@ -35,7 +36,7 @@ function expected(mint) {
 test('graduate: every account, its order and privileges, and the data match the deployed IDL and independent derivations', () => {
   const cranker = Keypair.generate().publicKey.toBase58()
   for (const mint of [MAINNET_ROLES.mint, Keypair.generate().publicKey.toBase58()]) {
-    const ix = graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker, mint }), want = expected(mint)
+    const ix = graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker, mint, kit: LEGACY_KIT }), want = expected(mint)
     assert.equal(ix.programId.toBase58(), L)
     assert.deepEqual([...ix.data], definition.discriminator); assert.equal(definition.args.length, 0)
     assert.deepEqual(ix.data, createHash('sha256').update('global:graduate').digest().subarray(0, 8))
@@ -55,6 +56,6 @@ test('graduate: every account, its order and privileges, and the data match the 
 })
 
 test('graduate refuses addresses that are not keys', () => {
-  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: 'nope', mint: MAINNET_ROLES.mint }))
-  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: MAINNET_ROLES.payer, mint: 'nope' }))
+  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: 'nope', mint: MAINNET_ROLES.mint, kit: LEGACY_KIT }))
+  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: MAINNET_ROLES.payer, mint: 'nope', kit: LEGACY_KIT }))
 })

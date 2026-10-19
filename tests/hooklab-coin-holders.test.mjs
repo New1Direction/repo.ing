@@ -12,7 +12,7 @@ const mint = canary.mint, supply = '1000000000000000'
 const addresses = hookCoinAddresses({ programs: PROGRAMS, quoteMint: QUOTE_MINT }, mint)
 const trader = 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9', other = 'FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i'
 // A holding row as the RPC returns it (first 82 bytes, base64), built from a real one with another owner and amount.
-function holdingRow(owner, amount, { holding = holdingAddress(mint, owner), edit = bytes => bytes } = {}) {
+function holdingRow(owner, amount, { holding = holdingAddress(mint, owner, PROGRAMS.token), edit = bytes => bytes } = {}) {
   const template = canary.holdings.value.find(row => row.pubkey === addresses.baseVault)
   const bytes = Buffer.from(template.account.data[0], 'base64')
   new PublicKey(owner).toBuffer().copy(bytes, 42); bytes.writeBigUInt64LE(BigInt(amount), 74)
@@ -45,7 +45,7 @@ test('traders are ranked by balance with their share of supply; after graduation
 
 test('accounts that are not this coin’s holdings stop the read', async () => {
   for (const row of [
-    holdingRow(trader, '1', { holding: holdingAddress(QUOTE_MINT, trader) }),
+    holdingRow(trader, '1', { holding: holdingAddress(QUOTE_MINT, trader, PROGRAMS.token) }),
     holdingRow(trader, '1', { edit: bytes => { bytes[0] ^= 1; return bytes } }),
     holdingRow(trader, '1', { edit: bytes => { new PublicKey(QUOTE_MINT).toBuffer().copy(bytes, 10); return bytes } }),
     { ...holdingRow(trader, '1'), account: { ...holdingRow(trader, '1').account, owner: PROGRAMS.swap } },

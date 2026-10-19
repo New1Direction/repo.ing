@@ -1,6 +1,7 @@
 // Owner-driver public pins. Addresses only: no keys, RPC access or signing here.
 import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
+import { LEGACY_STACK } from '../hooklab-stack.mjs'
 
 export const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 export const LOADER = 'BPFLoaderUpgradeab1e11111111111111111111111'
@@ -10,14 +11,10 @@ export const COMPUTE_BUDGET = 'ComputeBudget111111111111111111111111111111'
 export const NATIVE_MINT = 'So11111111111111111111111111111111111111112'
 export const LOCAL_PROFILE_SCHEMA = 'hook-lab/local-inclusive-max-wallet-builder-profile/1'
 
-export const PROGRAMS = Object.freeze({
-  launch: 'E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft',
-  swap: 'B2crxUdFwow36hy2KDbkiQro75mtLA4cN4pwDeQpZJwk',
-  gate: 'BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb',
-  token: '2XoEWp8cF3kRXg74eVwPAyTFhVCAztn3V88komxAvr22',
-  bridge: 'CtLkuFVitoXHTa86Hfp8KmfSDfqJaMYFWr6EGmQVsKb7',
-})
-export const QUOTE_MINT = 'A49oVhX22ExMwTEtFC6Y8nhBdZ4LJDGhdXLDn4c2f59i'
+// The LEGACY stack (bundle 2 as deployed; src/hooklab-stack.mjs): the canary, the bridged flows and the stages that
+// manage them. Our own stack's programs and marker come from its profile/bundle, never from here.
+export const PROGRAMS = LEGACY_STACK.programs
+export const QUOTE_MINT = LEGACY_STACK.quoteMint
 
 // Owner custody role addresses (public keys only). Mainnet mode never accepts substitutes.
 export const MAINNET_ROLES = Object.freeze({
@@ -52,22 +49,25 @@ export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 export const seedBytes = seed => typeof seed === 'string' ? Buffer.from(seed) : Buffer.from(seed)
 export const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(seedBytes), pk(program))[0].toBase58()
 export const pdaBump = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds.map(seedBytes), pk(program))[1]
-export const holdingAddress = (mint, owner, token = PROGRAMS.token) => pda(token, 'holding', kb(mint), kb(owner))
+const required = (value, name) => { if (!value) throw Error(`${name} is required (it comes from the stack's profile)`); return value }
+export const holdingAddress = (mint, owner, token) => pda(required(token, 'The token program'), 'holding', kb(mint), kb(owner))
 
-export function derivedAddresses(programs = PROGRAMS, quoteMint = QUOTE_MINT) {
-  const { launch: L, swap: S, gate: G, token: T, bridge: B } = programs
+// The stack's derived addresses. The bridge's appear only for a stack that has one (the legacy stack).
+export function derivedAddresses(programs, quoteMint) {
+  const { launch: L, swap: S, gate: G, token: T, bridge: B } = required(programs, 'The stack\'s programs')
   return Object.freeze({
     launchConfig: pda(L, 'config'), launchGovernance: pda(L, 'governance'),
     swapConfig: pda(S, 'config'), swapGovernance: pda(S, 'governance'),
     launchProgramData: pda(LOADER, kb(L)), swapProgramData: pda(LOADER, kb(S)), gateProgramData: pda(LOADER, kb(G)),
-    tokenProgramData: pda(LOADER, kb(T)), bridgeProgramData: pda(LOADER, kb(B)),
+    tokenProgramData: pda(LOADER, kb(T)),
     launchEventAuthority: pda(L, '__event_authority'), swapEventAuthority: pda(S, '__event_authority'),
-    tokenEventAuthority: pda(T, '__event_authority'), bridgeEventAuthority: pda(B, '__event_authority'),
-    bridgeConfig: pda(B, 'config'), bridgeSolVault: pda(B, 'sol-vault'), bridgeNativeWrapper: pda(B, 'wrapper', kb(NATIVE_MINT)),
+    tokenEventAuthority: pda(T, '__event_authority'),
+    ...(B ? { bridgeProgramData: pda(LOADER, kb(B)), bridgeEventAuthority: pda(B, '__event_authority'),
+      bridgeConfig: pda(B, 'config'), bridgeSolVault: pda(B, 'sol-vault'), bridgeNativeWrapper: pda(B, 'wrapper', kb(NATIVE_MINT)) } : {}),
     quoteMint,
   })
 }
-export const authorizationAddress = (creator, launch = PROGRAMS.launch) => pda(launch, 'creator-authorization', kb(creator))
+export const authorizationAddress = (creator, launch) => pda(required(launch, 'The launch program'), 'creator-authorization', kb(creator))
 
 export function canaryAddresses(programs, quoteMint, mint) {
   const { launch: L, swap: S, gate: G, token: T } = programs

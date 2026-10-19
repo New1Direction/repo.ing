@@ -98,7 +98,7 @@ test('every invite check still applies to a v4 launch', async () => {
 
 test('the agent reads byte 186 from both providers: agreeing 0 or 1 only', async () => {
   const config = switchByte => { const b = Buffer.alloc(250); createHash('sha256').update('account:Config').digest().copy(b, 0, 0, 8); b[186] = switchByte; return b }
-  const provider = data => ({ async getAccountInfo(address, commitment) { assert.equal(address.toBase58(), derivedAddresses().launchConfig); assert.equal(commitment, 'finalized'); return { owner: new PublicKey(LAUNCH), data } } })
+  const provider = data => ({ async getAccountInfo(address, commitment) { assert.equal(address.toBase58(), derivedAddresses(PROGRAMS, QUOTE_MINT).launchConfig); assert.equal(commitment, 'finalized'); return { owner: new PublicKey(LAUNCH), data } } })
   assert.equal(await readLiveNativeLaunches([provider(config(1)), provider(config(1))]), true)
   assert.equal(await readLiveNativeLaunches([provider(config(0)), provider(config(0))]), false)
   await assert.rejects(readLiveNativeLaunches([provider(config(1)), provider(config(0))]), /providers disagree/)
