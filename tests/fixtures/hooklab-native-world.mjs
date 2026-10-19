@@ -19,6 +19,14 @@ const NAMES={launch:'bordrless_launch',swap:'bordrless_swap',gate:'hook_max_wall
 // The quote form rides on the reviewed v3 hashes (hook-lab guard.rs config_hash_v4): sha(domain || v3 || form).
 const v4=(domain,v3,form)=>[...sha(Buffer.concat([Buffer.from(domain),Buffer.from(v3),Buffer.from([form])]))]
 
+// The same chain under another operator profile (as a newer reviewed bundle): bindings re-pinned to a changed profile JSON.
+export function rebound(bindings,change){
+ const hex=x=>createHash('sha256').update(x).digest('hex'),json=JSON.stringify(change(JSON.parse(bindings.profile.json))),profile={...bindings.profile,json,expectedSha256:hex(json)}
+ const dossier=JSON.parse(bindings.dossierJson);dossier.artifacts.profileSha256=profile.expectedSha256
+ const dossierJson=JSON.stringify(dossier)
+ return {config:{...bindings.config,profileSha256:profile.expectedSha256,dossierSha256:hex(dossierJson)},profile,dossierJson}
+}
+
 export async function nativeWorld({capBps=5000}={}){
  const elfDirectory=process.env.HOOKLAB_NATIVE_ELF_DIR
  const saved=Object.fromEntries(Object.keys(localTestEnvironment()).map(k=>[k,process.env[k]]))
@@ -74,7 +82,9 @@ export async function nativeWorld({capBps=5000}={}){
  const transport=(alter=()=>{})=>({getGenesisHash:async()=>JSON.parse(state.profile.json).genesisHash,getSlot:async()=>100,getBlockHeight:async()=>100,
   getMultipleAccountsInfoAndContext:async keys=>{const s=await svm.call('get',{addresses:keys.map(k=>k.toBase58())})
    return {context:{slot:s.slot},value:s.accounts.map(({account:v})=>v?{owner:pk(v.owner),executable:v.executable,lamports:Number(v.lamports),data:Buffer.from(v.dataBase64,'base64')}:null)}},
+  // The bank's blockhash belongs to the finalized block at slot 100, height 100, so it is valid through height 250.
   getLatestBlockhashAndContext:async()=>({context:{slot:100},value:{blockhash:await blockhash(),lastValidBlockHeight:250}}),
+  getBlock:async slot=>slot===100?{blockhash:await blockhash(),previousBlockhash:roles.config,parentSlot:99,blockHeight:100,blockTime:null}:null,
   isBlockhashValid:async()=>({context:{slot:100},value:true}),getFeeForMessage:async m=>({context:{slot:100},value:5000*m.header.numRequiredSignatures}),
   simulateTransaction:async(tx,config)=>{const r=await svm.call('simulate',{messageBase64:Buffer.from(tx.message.serialize()).toString('base64'),addresses:config?.accounts?.addresses??[]})
    return {context:{slot:100},value:{err:r.error,logs:r.logs,unitsConsumed:r.units,accounts:r.accounts?.map(v=>v&&{owner:v.owner,lamports:Number(v.lamports),executable:false,rentEpoch:0,data:[v.dataBase64,'base64']})??null}}},

@@ -12,6 +12,7 @@ from solders.account import Account
 from solders.clock import Clock
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
+from solders.rent import Rent
 from solders.signature import Signature
 from solders.message import from_bytes_versioned, to_bytes_versioned
 from solders.transaction import VersionedTransaction
@@ -59,6 +60,10 @@ def process(request):
     if operation == 'get':
         return {'accounts': [account_row(address) for address in request['addresses']],
                 'blockhash': str(svm.latest_blockhash()), 'slot': svm.get_clock().slot}
+    if operation == 'rent':
+        # A rent-rate change (the rent sysvar's lamports per byte), as a cluster feature such as SIMD-0437 makes one.
+        svm.set_rent(Rent.with_lamports_per_byte(int(request['lamportsPerByte'])))
+        return {'lamportsPerByte': svm.get_rent().lamports_per_byte}
     if operation == 'expire':
         svm.expire_blockhash()
         return {'blockhash': str(svm.latest_blockhash())}
