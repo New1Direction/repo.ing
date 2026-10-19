@@ -78,7 +78,8 @@ function Presets({ label, choices, value, onChange, disabled, format }) {
 }
 
 // Everything a creator fills in. form: { name, symbol, image, description, x, website, telegram, capBps, creatorFeeBps }.
-export function HookCoinFields({ form, set, disabled, onImageBusy }) {
+// menus: the choices the chain offers right now ({ creatorFeeBps, capBps }); the owner's release menus when absent.
+export function HookCoinFields({ form, set, disabled, onImageBusy, menus = null }) {
   const characters = [...form.description].length
   return <>
     <label className="field-label" htmlFor="hook-coin-name">Coin name</label>
@@ -105,7 +106,7 @@ export function HookCoinFields({ form, set, disabled, onImageBusy }) {
       <label className="hooks-link-input"><span><Send size={14} aria-hidden="true"/> Telegram</span><input value={form.telegram} placeholder="t.me/yourcoin" autoComplete="off" onChange={event => set({ telegram: event.target.value })}/></label>
     </fieldset>
 
-    <HookBlocks form={form} set={set} disabled={disabled}/>
+    <HookBlocks form={form} set={set} disabled={disabled} menus={menus}/>
   </>
 }
 
@@ -115,18 +116,19 @@ function BlockHeader({ id, state }) {
 }
 
 // What the coin does, as blocks snapped onto it. Every launch today carries the two live blocks; the rest are coming.
-export function HookBlocks({ form, set, disabled }) {
+export function HookBlocks({ form, set, disabled, menus = null }) {
+  const caps = menus?.capBps?.length ? menus.capBps : WALLET_CAP_BPS_CHOICES, fees = menus?.creatorFeeBps?.length ? menus.creatorFeeBps : CREATOR_FEE_BPS_CHOICES
   const on = <span className="hooks-block-state"><Check size={13} aria-hidden="true"/>On</span>
   return <section className="hooks-blocks" aria-labelledby="hooks-blocks-title">
     <div className="hooks-blocks-head"><h3 id="hooks-blocks-title" className="field-label">Blocks</h3><span>Snap on what your coin does.</span></div>
     <article className="hooks-block is-on" aria-label="Max wallet block">
       <BlockHeader id="max-wallet" state={on}/>
-      <Presets label="Max per wallet" choices={WALLET_CAP_BPS_CHOICES} value={form.capBps} onChange={capBps => set({ capBps })} disabled={disabled} format={percent}/>
+      <Presets label="Max per wallet" choices={caps} value={form.capBps} onChange={capBps => set({ capBps })} disabled={disabled} format={percent}/>
       <p className="launch-buy-hint">No wallet can hold more than {percent(form.capBps)} of the supply until your coin graduates, so early buyers can’t corner it.</p>
     </article>
     <article className="hooks-block is-on" aria-label="Creator fee block">
       <BlockHeader id="creator-fee" state={on}/>
-      <Presets label="Creator fee" choices={CREATOR_FEE_BPS_CHOICES} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>
+      <Presets label="Creator fee" choices={fees} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>
       <p className="launch-buy-hint">Every buy and sell pays {percent(form.creatorFeeBps)}. You earn {creatorCut(form.creatorFeeBps)} of each trade in SOL; repo.ing keeps {platformCut(form.creatorFeeBps)}.</p>
     </article>
     <p className="hooks-blocks-soon-title">More blocks are on the way</p>
@@ -135,19 +137,25 @@ export function HookBlocks({ form, set, disabled }) {
   </section>
 }
 
-// The side column: how approval works and what each trade pays.
+// The side column: how launching works and what each trade pays.
 // launchPrice: undefined while USD launch pricing is off (no price card), else today's estimate or null (see HookStartingPrice).
-export function HookLaunchNotes({ capBps, creatorFeeBps, launchPrice }) {
+// open: a self-serve launch (no request or approval step).
+export function HookLaunchNotes({ capBps, creatorFeeBps, launchPrice, open = false }) {
   return <>
     <div className="inner-card discovery-launch hooks-how"><h3>How launching works</h3>
-      <ol>
+      {open ? <ol>
+        <li><strong>Make your coin.</strong> A name, ticker, image and your rules.</li>
+        <li><strong>Check the costs.</strong> Everything you pay is listed before you sign.</li>
+        <li><strong>Approve twice in your wallet.</strong> Once to set up your coin, once to open trading.</li>
+        <li><strong>Your coin is live.</strong> Anyone can buy and sell it on repo.ing, in SOL.</li>
+      </ol> : <ol>
         <li><strong>Send your request.</strong> Free, and nothing to sign yet.</li>
         <li><strong>repo.ing approves it.</strong> We check each coin and invite you on this page.</li>
         <li><strong>Sign two steps in your wallet.</strong> Keep about 0.05 SOL for account deposits and network fees. Your wallet shows the exact amount first.</li>
         <li><strong>Your coin is live.</strong> Anyone can buy and sell it on repo.ing.</li>
-      </ol>
+      </ol>}
     </div>
-    {launchPrice !== undefined && <HookStartingPrice price={launchPrice}/>}
+    {launchPrice !== undefined && <HookStartingPrice price={launchPrice} open={open}/>}
     <div className="inner-card fee-breakdown"><h3>Every trade</h3>
       <div className="fee-line"><span>Creator fee<small>Paid by every buy and sell</small></span><strong>{percent(creatorFeeBps)}</strong></div>
       <div className="fee-line"><span>You earn<small>75% of the creator fee, in SOL</small></span><strong>{creatorCut(creatorFeeBps)}</strong></div>

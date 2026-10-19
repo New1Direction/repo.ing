@@ -3,12 +3,13 @@ import { redirect } from 'next/navigation'
 import { HOOK_LAB_TEMPLATES } from '../../../../src/hook-lab-templates.mjs'
 import { HooksIntro, HooksNav } from '../../../components/hooks-ui'
 import { HookLabRecipePlanner } from '../../../components/hook-lab-recipe-planner'
+import { siteLaunchesEnabled } from '../../../../src/hooklab-open-creation.mjs'
 
 export const metadata = { title: 'Create a Hooks draft — repo.ing', robots: { index: false } }
 
 export default async function HooksNewPage({ searchParams }) {
-  // While owner-approved launches are open, coins are built from blocks on the launch page.
-  if (process.env.HOOK_OWNER_APPROVED_LAUNCHES === 'true') redirect('/hooks/launch-review')
+  // While site launches are open (self-serve or owner-approved), coins are built from blocks on the launch page.
+  if (siteLaunchesEnabled(process.env)) redirect('/hooks/launch-review')
   const { template } = await searchParams ?? {}
   const initialTemplate = HOOK_LAB_TEMPLATES.some(item => item.id === template) ? template : 'plain'
   return <><HooksIntro title="Create your coin draft.">Choose the identity and rules. Review the complete recipe before any future launch.</HooksIntro><HooksNav active="templates"/>

@@ -10,6 +10,7 @@ import { hfMarketsEnabled } from '../../../src/hf-launch.mjs'
 import { guideHref } from '../../lib/launch-guide-funnel.mjs'
 import '../../maintainer-opt-out.css'
 import '../../direct-coins.css'
+import { openLaunchesEnabled, siteLaunchesEnabled } from '../../../src/hooklab-open-creation.mjs'
 export const dynamic = 'force-dynamic'
 export function generateMetadata() {
   const project = hfMarketsEnabled() ? 'a public GitHub repository or Hugging Face model' : 'a public GitHub repository'
@@ -24,9 +25,9 @@ export default async function LaunchStart({ searchParams }) {
   return <><AppHeader active="launch"/><main className="section-wrap launch-start">
     <div className="page-intro"><div className="eyebrow">LAUNCH</div><h1>Give open source a market.</h1><p>{models ? 'Paste a public GitHub repository or Hugging Face model. Review the token and costs, then launch with your wallet.'
       : 'Paste a public GitHub repository. Review the token and costs, then launch with your wallet.'}</p></div>
-    {process.env.HOOK_OWNER_APPROVED_LAUNCHES === 'true'
+    {siteLaunchesEnabled(process.env)
       ? <section className="coin-entry-points" aria-label="Create your own coin">
-        <div><strong>Your own coin, no repository needed</strong><p>Add a name, image and links, then snap on blocks: cap how much one wallet can hold and earn a fee on every trade. repo.ing approves each launch.</p></div>
+        <div><strong>Your own coin, no repository needed</strong><p>Add a name, image and links, then snap on blocks: cap how much one wallet can hold and earn a fee on every trade.{openLaunchesEnabled(process.env) ? '' : ' repo.ing approves each launch.'}</p></div>
         <Link className="button primary" href="/hooks/launch-review">Launch your own coin <ArrowRight size={15} aria-hidden="true"/></Link>
         <Link className="button outline" href="/hooks/blocks">See the blocks</Link>
       </section>

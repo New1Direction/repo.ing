@@ -20,6 +20,15 @@ const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('retain-wallet'),signingId:uuid,signedTransactionBase64:z.string().max(1644)}).strict(),
 ])
 const reply=(body,status=200)=>Response.json(body,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
+// A self-serve creator's view of an operation: what the guided step needs (status, stage, signers, deadlines, the exact
+// message hash), without the transaction's account list or the settlement's account detail. The stack's internal
+// accounts (its quote marker among them) never reach the browser as data; the wallet still shows the transaction itself.
+export function customerOperation(operation){
+ if(!operation)return operation
+ const {accounts,lookupTables,...review}=operation.review??{},{settlement,...rest}=operation
+ return {...rest,review,...(settlement&&{settlement:{executionStatus:settlement.executionStatus??null}})}
+}
+const customerWalletRequest=value=>{if(!value?.review)return value;const {accounts,lookupTables,...review}=value.review;return {...value,review}}
 // launchPrice: the SOL price and opening virtual quote fixed when an open launch is reserved (two agreeing sources; refused,
 // never clamped, outside the bounds).
 export function createNativeLaunchHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=nativeLaunchRuntime,
@@ -72,7 +81,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     const reserved=await service.reserve({sessionToken:token,owner:owner.wallet,input})
     if(reserved.owner!==owner.wallet||reserved.operationId!==input.operationId)throw Error()
     result={operationId:reserved.operationId,mint:reserved.mint,selectedConfig:reserved.selectedConfig,request:reserved.request}
-   }else if(input.action==='wallet-request')result=await lifecycle.walletRequest(token,input.signingId)
+   }else if(input.action==='wallet-request'){result=await lifecycle.walletRequest(token,input.signingId);if(openLaunchesEnabled(env))result=customerWalletRequest(result)}
    else {
     let operation
     if(input.action==='review')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.operationId,stage:input.stage})
@@ -92,7 +101,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
      if((env.HOOK_OWNER_APPROVED_LAUNCHES==='true'||openLaunchesEnabled(env))&&operation?.stage==='launch'&&operation?.status==='finalized-success')
       await ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,openLaunches:openLaunchesEnabled(env)}).markLaunched(operation.custodyOperationId)
     }
-    result={operation:publicNativeOperation(operation)}
+    result={operation:openLaunchesEnabled(env)?customerOperation(publicNativeOperation(operation)):publicNativeOperation(operation)}
    }
    // Durable signatures/outcomes remain retained even if this response loses auth.
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()

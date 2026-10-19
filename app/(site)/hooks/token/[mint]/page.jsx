@@ -28,7 +28,8 @@ async function load(mint) {
     // Only coins launched through repo.ing are shown.
     const coin = await listedCoin(runtime, mint)
     if (!coin) return { missing: true }
-    const view = await cachedMarket(runtime, mint)
+    // The coin's record picks its stack (ours or the legacy one) for the market read.
+    const view = await cachedMarket(runtime, mint, null, coin)
     return view ? { view, coin } : { missing: true }
   } catch { return { unavailable: true } }
 }
@@ -53,6 +54,7 @@ export default async function HooksCoinPage({ params }) {
           <HookCoinPreview image={coin?.profile ? coinImageUrl('', coin.id, 256) : null} name={market.name} symbol={market.symbol}
             capBps={market.capBps} creatorFeeBps={market.creatorFeeBps} profile={coin?.profile ?? null} capLifted={market.graduated}/>
           <h1 id="hooks-coin-name" className="sr-only">{market.name} (${market.symbol})</h1>
+          {coin?.moderation?.delisted && <p className="hooks-delisted-notice" role="status">{coin.moderation.notice}</p>}
           {coin?.profile?.description && <p className="hooks-coin-about">{coin.profile.description}</p>}
           <dl className="hooks-coin-stats">
             <div><dt>Market cap</dt><dd>{formatUnits(BigInt(market.marketCapLamports), 9, 3)} SOL</dd></div>
@@ -63,7 +65,7 @@ export default async function HooksCoinPage({ params }) {
           {/* Native-SOL coins: their creator claims the fees in SOL here (shown to the creator only). */}
           {process.env.HOOK_NATIVE_LAUNCHES_ENABLED === 'true' && <HookClaimFees mint={mint} symbol={market.symbol} genesisHash={executionGenesis()}/>}
         </section>}
-      <aside className="hooks-coin-side"><HookTradePanel mint={mint} genesisHash={executionGenesis()} initial={view ?? null}/></aside>
+      <aside className="hooks-coin-side"><HookTradePanel mint={mint} genesisHash={executionGenesis()} initial={view ? { ...view, coin } : null}/></aside>
       {/* The chart values the mint's current supply (graduation burns some), the same figure as the card's market cap. */}
       {activity && <div className="hooks-coin-chart"><HookCoinChart mint={mint} symbol={market.symbol} decimals={market.decimals} supply={market.supply ?? market.initialSupply} solUsd={cachedSolUsdPrice()}/></div>}
       {activity && <div className="hooks-coin-activity"><HookCoinActivity mint={mint} symbol={market.symbol} decimals={market.decimals}/></div>}
