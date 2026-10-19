@@ -23,10 +23,12 @@ export function stackFromIndependentBuild(dir, { upgradeAuthority = null, review
   const hashes = read('ELF-HASHES.txt').toString('utf8'), commit = /@ ([0-9a-f]{40})/.exec(hashes)?.[1]
   if (!commit) throw Error('ELF-HASHES.txt names no source commit')
   const elfs = Object.fromEntries(Object.entries(FILES).map(([role, name]) => [role, read('elf', `${name}.so`)]))
-  // The build's own record must agree with the bytes on disk, raw and trimmed, for each program at its ID.
+  // The build's own record must agree with the bytes on disk, raw and trimmed, for each program (its line names the
+  // program first; hook-lab's two formats so far both carry both hashes and both lengths).
   for (const [role, name] of Object.entries(FILES)) {
-    const t = trim(elfs[role]), line = hashes.split('\n').find(l => l.startsWith(name) && l.includes(` id ${ids[role]} `))
-    if (!line || !line.includes(`raw sha256 ${sha(elfs[role])} len ${elfs[role].length}`) || !line.includes(`trimmed sha256 ${sha(t)} len ${t.length}`)) throw Error(`The ${role} ELF differs from ELF-HASHES.txt`)
+    const t = trim(elfs[role]), line = hashes.split('\n').find(l => l.startsWith(`${name} `))
+    if (!line || !line.includes(sha(elfs[role])) || !line.includes(`len ${elfs[role].length}`) || !line.includes(sha(t)) || !line.includes(`len ${t.length}`)
+      || (line.includes(' id ') && !line.includes(` id ${ids[role]} `))) throw Error(`The ${role} ELF differs from ELF-HASHES.txt`)
   }
   const idls = Object.fromEntries(['launch', 'swap', 'gate'].map(role => [role, read('idl', `${FILES[role]}.json`)]))
   const pin = role => { const t = trim(elfs[role]); return { trimmedSha256: sha(t), trimmedLength: t.length } }

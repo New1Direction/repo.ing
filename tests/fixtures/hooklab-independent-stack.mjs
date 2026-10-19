@@ -3,14 +3,16 @@
 // ~/Documents/ChatGPT/hooks-local-state/independent-<commit>). Every identity and hash is read from the build's files
 // (a rebuild changes them all): the ids file, the manifest's kit ID, the ELFs (trimmed pins computed here and checked
 // against ELF-HASHES.txt) and the IDLs. Test data only: the placeholder IDs are throwaway keys, never mainnet.
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { stackFromIndependentBuild } from '../../src/hooklab-stack-build.mjs'
 
 const state = path.join(homedir(), 'Documents/ChatGPT/hooks-local-state')
 function defaultDir() {
-  const found = existsSync(state) ? readdirSync(state).filter(name => /^independent-[0-9a-f]{7,40}$/.test(name)).sort() : []
+  // The newest complete build (a build directory without its ids file is not one to test against yet).
+  const found = existsSync(state) ? readdirSync(state).filter(name => /^independent-[0-9a-f]{7,40}$/.test(name)
+    && existsSync(path.join(state, name, 'ids', 'independent.json'))).sort((a, b) => statSync(path.join(state, a)).mtimeMs - statSync(path.join(state, b)).mtimeMs) : []
   return found.length ? path.join(state, found.at(-1)) : path.join(state, 'independent')
 }
 export const INDEPENDENT_DIR = process.env.HOOKLAB_INDEPENDENT_DIR ?? defaultDir()
