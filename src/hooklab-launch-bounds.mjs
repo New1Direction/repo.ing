@@ -26,8 +26,12 @@ export async function readLiveLaunchBounds(connections,{programs=PROGRAMS}={}){
 // The native-SOL launch switch (launch Config byte 186) from the same two-provider finalized read: the owner agent's own
 // view of which launch route (v3 off, v4 on) it may co-sign. A byte other than 0 or 1 refuses.
 export async function readLiveNativeLaunches(connections,{programs=PROGRAMS}={}){
+ return (await readLiveLaunchConfigState(connections,{programs})).nativeLaunches
+}
+// The same read, with the Config bytes themselves (the owner agent derives the launch accounts from them).
+export async function readLiveLaunchConfigState(connections,{programs=PROGRAMS}={}){
  const bytes=await readLiveLaunchConfig(connections,programs)
- try{return nativeLaunchesSwitch(bytes)}catch(error){throw refuse(`${error.message}; not signing any launch`)}
+ try{return Object.freeze({bytes,nativeLaunches:nativeLaunchesSwitch(bytes)})}catch(error){throw refuse(`${error.message}; not signing any launch`)}
 }
 
 export function checkLiveBounds(virtualQuote,bounds){

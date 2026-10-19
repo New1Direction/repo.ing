@@ -110,6 +110,15 @@ export function maxWalletLaunchInventory(envelope, request, launchConfigBytes) {
   const a = addressesFor(profile, r, config), metas = exactMetas(profile, r, config, a, launch)
   return { addresses: a, inventory: [...new Set([...metas.map(m => str(m.pubkey)), a.launchProgramData, a.swapProgramData, a.swapGovernance, r.feePayer])].sort() }
 }
+// The exact account list (address, signer, writable) of an inclusive custom launch for these identities, from the pinned
+// envelope and the launch Config bytes alone (its treasury, quote and fees). v3 and v4 share it. For the owner agent,
+// which derives what it expects before the admin key co-signs anything.
+export function maxWalletLaunchAccounts(envelope, { creator, mint, selectedConfig, reviewer }, launchConfigBytes) {
+  const profile = parseMaxWalletProfile(JSON.parse(envelope.json)), launch = binding(envelope, profile, 'launch')
+  for (const value of [creator, mint, selectedConfig, reviewer]) key.parse(value)
+  const r = { policyVersion: 2, creator, mint, selectedConfig, reviewer }, config = decoded(launch, 'Config', Buffer.from(launchConfigBytes))
+  return Object.freeze(exactMetas(profile, r, config, addressesFor(profile, r, config), launch).map(m => Object.freeze({ address: str(m.pubkey), signer: m.isSigner, writable: m.isWritable })))
+}
 
 function binding(envelope, profile, role) {
   const bytes = raw(envelope.idls[role], 1100000)

@@ -25,14 +25,13 @@ import { Connection,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { verifyLaunchSignRequest,decodeLookupTable,adminSignerFromKeypair,launchMintFromMessage,policyAddress,invitedVirtualQuote,ownerRequestLines,checkBeforeInvite,checkAfterInvite } from '../src/hooklab-owner-agent.mjs'
 import { readSolUsdSources } from '../src/sol-usd-sources.mjs'
-import { readLiveLaunchBounds,readLiveNativeLaunches } from '../src/hooklab-launch-bounds.mjs'
+import { readLiveLaunchBounds,readLiveLaunchConfigState } from '../src/hooklab-launch-bounds.mjs'
 import { STANDARD_VIRTUAL_QUOTE,formatSol,ownerPricingLine } from '../src/hooklab-launch-pricing.mjs'
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinImageUrl,coinLinks } from '../src/hooklab-coin-profile.mjs'
 import { verifyTableRequest } from '../src/hooklab-owner-launch-tables.mjs'
 import { ownerTableExecutor } from '../src/hooklab-owner-agent-tables.mjs'
 import { productionArtifacts,productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
-import { PROGRAMS,QUOTE_MINT } from '../src/hooklab-owner-driver/pins.mjs'
 const LAUNCH_PROGRAM='E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft',GATE_PROGRAM='BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb',ADMIN='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',FEE_MODEL=2
 const {values:opt}=parseArgs({options:{origin:{type:'string',default:'https://repo.ing'},'admin-key':{type:'string'},rpc:{type:'string'},rpc2:{type:'string'},
  'invite-minutes':{type:'string',default:'15'},'confirm-each':{type:'boolean',default:false},'poll-ms':{type:'string',default:'1500'},'table-microlamports':{type:'string',default:'10000'}}})
@@ -43,7 +42,7 @@ if(!opt['admin-key']||!opt.rpc||!opt.rpc2)die('Required: --admin-key PATH --rpc 
 const admin=adminSignerFromKeypair(readFileSync(opt['admin-key'],'utf8'),ADMIN)   // read once from the key pipe; never logged
 const connections=[new Connection(opt.rpc,'confirmed'),new Connection(opt.rpc2,'confirmed')]
 const launchCoder=new BorshCoder(JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url))))
-const approved={launchProgram:LAUNCH_PROGRAM,gateProgram:GATE_PROGRAM,swapProgram:PROGRAMS.swap,quoteMint:QUOTE_MINT,admin:ADMIN,creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:FEE_MODEL}
+const approved={launchProgram:LAUNCH_PROGRAM,gateProgram:GATE_PROGRAM,admin:ADMIN,creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:FEE_MODEL}
 const {base,idls}=productionArtifacts(),envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')]))}
 const tables=ownerTableExecutor({connections,admin,journalDir:path.join(homedir(),'.hooklab-owner','launch-tables'),microLamports:Number(opt['table-microlamports']),log:console.log})
 let accepting=true,queue={requests:[],signRequests:[],tableRequests:[]},busy=false,lastHeartbeatOk=0
@@ -73,6 +72,16 @@ async function mintPolicy(mint){
  const address=policyAddress(GATE_PROGRAM,mint),infos=await Promise.all(connections.map(c=>c.getAccountInfo(new PublicKey(address),'confirmed')))
  if(!infos[0]||!infos[1]||!infos[0].data.equals(infos[1].data)||!infos[0].owner.equals(infos[1].owner))throw Error('Mint policy missing or providers disagree')
  return {address,owner:infos[0].owner.toBase58(),data:infos[0].data}
+}
+// The launch config a launch message names (account 29), read from both providers; they must return identical bytes.
+async function selectedLaunchConfig(messageBase64,lookupTables){
+ const {VersionedMessage}=await import('@solana/web3.js')
+ const message=VersionedMessage.deserialize(Buffer.from(messageBase64,'base64')),keys=message.getAccountKeys({addressLookupTableAccounts:lookupTables})
+ const launches=message.compiledInstructions.filter(ix=>keys.get(ix.programIdIndex).toBase58()===LAUNCH_PROGRAM)
+ if(launches.length!==1||launches[0].accountKeyIndexes.length<30)throw Error('expected exactly one launch instruction')
+ const address=keys.get(launches[0].accountKeyIndexes[29]),infos=await Promise.all(connections.map(c=>c.getAccountInfo(address,'confirmed')))
+ if(!infos[0]||!infos[1]||!infos[0].data.equals(infos[1].data)||!infos[0].owner.equals(infos[1].owner))throw Error('Selected launch config missing or providers disagree')
+ return {address:address.toBase58(),owner:infos[0].owner.toBase58(),data:infos[0].data}
 }
 // The creator's on-chain grant must exist, be enabled, have quota, and outlive the invite.
 async function grantStatus(creator){
@@ -153,9 +162,11 @@ async function handleSignRequest(signRequest){
   if(!invited)throw Error('no invited request for this creator')
   if(!matchesLedger(invited))throw Error('the server\'s invite differs from what this agent invited')
   const tables=await lookupTables(signRequest.messageBase64),policy=await mintPolicy(launchMintFromMessage(signRequest.messageBase64,tables,LAUNCH_PROGRAM))
-  // The launch route comes from this Mac's own two-provider read of launch Config byte 186, never from the server.
-  const nativeLaunches=await readLiveNativeLaunches(connections)
-  const checked=verifyLaunchSignRequest({signRequest,invited:{...invited,virtualQuote:ledgerQuote(invitedByMe()[invited.id])},approved,lookupTables:tables,policy,live:await live(),nativeLaunches})
+  // The launch route (byte 186) and every account the launch may name come from this Mac's own two-provider read of the
+  // launch Config and its pinned envelope, never from the server.
+  const {bytes:launchConfigBytes,nativeLaunches}=await readLiveLaunchConfigState(connections),selectedConfig=await selectedLaunchConfig(signRequest.messageBase64,tables)
+  const checked=verifyLaunchSignRequest({signRequest,invited:{...invited,virtualQuote:ledgerQuote(invitedByMe()[invited.id])},approved,lookupTables:tables,policy,live:await live(),
+   nativeLaunches,envelope,launchConfigBytes,selectedConfig})
   console.log(`\nSIGN? ${checked.quoteForm?'native-SOL launch ':''}${checked.symbol} "${checked.name}" creator ${checked.creator} mint ${checked.mint} fee ${percent(checked.creatorFeeBps)} cap ${percent(checked.capBps)} opens ${formatSol(checked.virtualQuote)} virtual · ${checked.slotsLeft} slots / ${checked.blocksLeft} blocks left`)
   if(opt['confirm-each']&&!(await ask('Type yes to sign: ')==='yes'))throw Error('owner declined')
   await api({action:'sign',signRequestId:signRequest.id,signatureBase64:admin.signBase64(Buffer.from(signRequest.messageBase64,'base64'))})

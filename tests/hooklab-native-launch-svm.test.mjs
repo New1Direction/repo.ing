@@ -26,7 +26,7 @@ import { hookCoinAddresses } from '../src/hooklab-inclusive-max-wallet-swap.mjs'
 import { jsonbRoundTrip } from './fixtures/jsonb-round-trip.mjs'
 import { STAGES } from '../src/hooklab-owner-driver/context.mjs'
 import { decodeLookupTable, verifyLaunchSignRequest } from '../src/hooklab-owner-agent.mjs'
-import { readLiveNativeLaunches } from '../src/hooklab-launch-bounds.mjs'
+import { readLiveLaunchConfigState } from '../src/hooklab-launch-bounds.mjs'
 import { PROGRAMS, QUOTE_MINT } from '../src/hooklab-owner-driver/pins.mjs'
 import { makeCanaryState, canaryCollectorBindings, localTestEnvironment, isolatedSvm, syntheticGenesis, pk, pda } from './fixtures/hooklab-canary.mjs'
 import { missingArtifactEnv } from './fixtures/hooklab-generated-artifact.mjs'
@@ -108,19 +108,26 @@ test('native launches end to end on the reviewed ELFs: switch, v4 launch and its
   assert.equal(decoded.name, 'create_launch_custom_v4'); assert.equal(decoded.data.quote_form, 1); assert.equal(decoded.data.args.virtual_quote.toString(), '53251917070')
   assert.deepEqual(plan.canonicalInstruction.accounts, before.canonicalInstruction.accounts, 'v4 has exactly v3\'s accounts, so the per-launch lookup table is unchanged')
 
-  // The owner agent, from its own reads only (the switch from both providers, the table, the mint policy), co-signs this
-  // v4 message, and would refuse it with the switch read off.
-  const nativeLaunches = await readLiveNativeLaunches(b.connections.map(c => c.connection))
+  // The owner agent, from its own reads only (the launch Config with its switch from both providers, the table, the mint
+  // policy, the selected config) and its pinned envelope, co-signs this v4 message, and would refuse it with the switch
+  // read off, or with any of its 42 accounts not the ones it derives (review F3: here a substituted treasury, which the
+  // program would also refuse).
+  const { bytes: launchConfigBytes, nativeLaunches } = await readLiveLaunchConfigState(b.connections.map(c => c.connection))
   assert.equal(nativeLaunches, true)
-  const policyAccount = await b.account(a.policy), r = state.request
-  const agent = switchOn => verifyLaunchSignRequest({ signRequest: { messageBase64: plan.review.messageBase64, messageSha256: plan.review.messageSha256, signer: roles.admin,
+  const policyAccount = await b.account(a.policy), selectedAccount = await b.account(roles.config), r = state.request
+  const tables = plan.review.lookupTables.map(t => decodeLookupTable(t.address, Buffer.from(t.dataBase64, 'base64')))
+  const agent = (switchOn, messageBase64 = plan.review.messageBase64) => verifyLaunchSignRequest({ signRequest: { messageBase64, messageSha256: sha(Buffer.from(messageBase64, 'base64')), signer: roles.admin,
     validUntilSlot: String(plan.review.validUntilSlot), lastValidBlockHeight: String(plan.review.lastValidBlockHeight) },
     invited: { creator: r.creator, name: r.name, symbol: r.symbol, uri: r.uri, creatorFeeBps: r.creatorFeeBps, capBps: r.capBps, virtualQuote: r.virtualQuote },
-    approved: { launchProgram: PROGRAMS.launch, gateProgram: PROGRAMS.gate, swapProgram: PROGRAMS.swap, quoteMint: QUOTE_MINT, admin: roles.admin, creatorFeeChoices: [100], capChoices: [200], feeModel: 2 },
-    lookupTables: plan.review.lookupTables.map(t => decodeLookupTable(t.address, Buffer.from(t.dataBase64, 'base64'))),
-    policy: { address: a.policy, owner: policyAccount.owner, data: bytesOf(policyAccount) }, live: { slot: 100, blockHeight: 100 }, nativeLaunches: switchOn })
+    approved: { launchProgram: PROGRAMS.launch, gateProgram: PROGRAMS.gate, admin: roles.admin, creatorFeeChoices: [100], capChoices: [200], feeModel: 2 },
+    lookupTables: tables, policy: { address: a.policy, owner: policyAccount.owner, data: bytesOf(policyAccount) }, live: { slot: 100, blockHeight: 100 }, nativeLaunches: switchOn,
+    envelope: state.profile, launchConfigBytes, selectedConfig: { address: roles.config, owner: selectedAccount.owner, data: bytesOf(selectedAccount) } })
   assert.equal(agent(nativeLaunches).quoteForm, 1)
   assert.throws(() => agent(false), /native launches are off on chain: refusing create_launch_custom_v4/)
+  const decompiled = TransactionMessage.decompile(VersionedMessage.deserialize(Buffer.from(plan.review.messageBase64, 'base64')), { addressLookupTableAccounts: tables })
+  const substituted = new TransactionMessage({ payerKey: decompiled.payerKey, recentBlockhash: decompiled.recentBlockhash, instructions: decompiled.instructions.map(ix => ix.programId.toBase58() !== PROGRAMS.launch ? ix
+    : new TransactionInstruction({ programId: ix.programId, data: ix.data, keys: ix.keys.map((k, i) => i === 2 ? { ...k, pubkey: pk(roles.outsider) } : k) })) }).compileToV0Message(tables)
+  assert.throws(() => agent(true, Buffer.from(substituted.serialize()).toString('base64')), /launch accounts differ from the ones this agent derives/, 'a substituted treasury')
 
   // The operator dossier is collected over the state the review read (after the switch, as production re-collects it).
   const bindings = canaryCollectorBindings(state)

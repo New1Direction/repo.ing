@@ -9,6 +9,8 @@ import { BorshCoder } from '@anchor-lang/core'
 import { AddressLookupTableAccount,ComputeBudgetProgram,Keypair,PublicKey,TransactionInstruction,TransactionMessage } from '@solana/web3.js'
 import { checkAfterInvite,checkBeforeInvite,checkInvitePriceAgainst,invitedVirtualQuote,ownerRequestLines,policyAddress,verifyLaunchSignRequest } from '../src/hooklab-owner-agent.mjs'
 import { STANDARD_VIRTUAL_QUOTE } from '../src/hooklab-launch-pricing.mjs'
+import { maxWalletLaunchAccounts } from '../src/hooklab-max-wallet-launch.mjs'
+import { productionArtifacts,productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
 
 const vendor=name=>JSON.parse(readFileSync(new URL(`../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/${name}`,import.meta.url)))
 const launchCoder=new BorshCoder(vendor('bordrless_launch.json')),gateCoder=new BorshCoder(vendor('hook_max_wallet.json'))
@@ -20,17 +22,21 @@ const pricing={solUsdMicros:'105630000',virtualQuote:'53251917070',pricedAt:'202
 const invited={id:'5b7f4c1e-8a0f-4d55-9a49-3f7c0c2b9d11',status:'launching',creator:creator.toBase58(),name:'Price Coin',symbol:'PRC',uri:'',creatorFeeBps:100,capBps:200,pricing}
 const noRules={holder_fee_buy_bps:0,holder_fee_sell_bps:0,burn_buy_bps:0,burn_sell_bps:0,max_wallet_bps:0,creator_lock_secs:0,early_window_secs:0,early_lock_secs:0}
 
-// One create_launch_custom_v3 call shaped like the compiler's: creator at account 0, mint at 3, admin co-signing, and
-// the read-only accounts in a lookup table (a launch does not fit a packet without one).
-const others=Array.from({length:27},(_,i)=>({pubkey:key(`account ${i}`),isSigner:false,isWritable:false}))
-const table=new AddressLookupTableAccount({key:key('table'),state:{deactivationSlot:2n**64n-1n,lastExtendedSlot:1,lastExtendedSlotStartIndex:0,authority:admin,addresses:others.map(o=>o.pubkey)}})
+// One create_launch_custom_v3 call with the compiler's exact accounts (as the agent derives them from its pinned envelope
+// and its own launch Config read), admin co-signing, and the read-only accounts in a lookup table (a launch does not fit a
+// packet without one).
+const {base,idls}=productionArtifacts(),envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')]))}
+const launchConfigBytes=Buffer.from(JSON.parse(readFileSync(new URL('./fixtures/hooklab-mainnet-public-accounts.json',import.meta.url))).accounts['launch-config'].dataBase64,'base64'),selectedConfig=key('selected config')
+const derived=maxWalletLaunchAccounts(envelope,{creator:creator.toBase58(),mint:mint.toBase58(),selectedConfig:selectedConfig.toBase58(),reviewer:admin.toBase58()},launchConfigBytes)
+const launchKeys=derived.map(m=>({pubkey:new PublicKey(m.address),isSigner:m.signer,isWritable:m.writable}))
+const table=new AddressLookupTableAccount({key:key('table'),state:{deactivationSlot:2n**64n-1n,lastExtendedSlot:1,lastExtendedSlotStartIndex:0,authority:admin,
+ addresses:[...new Set(derived.filter(m=>!m.signer&&!m.writable).map(m=>m.address))].map(a=>new PublicKey(a))}})
 function signRequestFor(virtualQuote){
  const data=launchCoder.instruction.encode('create_launch_custom_v3',{args:{name:invited.name,symbol:invited.symbol,uri:invited.uri,creator_fee_bps:100,virtual_quote:new BN(virtualQuote),rules:noRules},
   guard:{version:2,deadline_slot:new BN(5000),expected_launch_economics_hash:Array(32).fill(1),expected_pool_economics_hash:Array(32).fill(2),
    max_launch_fee_lamports:new BN(0),max_pool_creation_fee_lamports:new BN(0),max_rent_lamports:new BN(1),max_total_debit_lamports:new BN(1)},
   fee_model:2,expected_control_hash:Array(32).fill(3),expected_hook_accounts_hash:Array(32).fill(4)})
- const keys=[{pubkey:creator,isSigner:true,isWritable:true},{pubkey:key('config'),isSigner:false,isWritable:true},{pubkey:key('treasury'),isSigner:false,isWritable:true},
-  {pubkey:mint,isSigner:true,isWritable:true},...others,{pubkey:admin,isSigner:true,isWritable:false}]
+ const keys=launchKeys
  const message=new TransactionMessage({payerKey:creator,recentBlockhash:key('blockhash').toBase58(),instructions:[ComputeBudgetProgram.setComputeUnitLimit({units:1_000_000}),
   new TransactionInstruction({programId:new PublicKey(LAUNCH),keys,data})]}).compileToV0Message([table])
  const bytes=Buffer.from(message.serialize())
@@ -38,7 +44,10 @@ function signRequestFor(virtualQuote){
 }
 const policy=async()=>({address:policyAddress(GATE,mint.toBase58()),owner:GATE,data:await gateCoder.accounts.encode('PolicyV2',{version:2,mint,initial_supply:new BN('1000000000000000'),
  cap_bps:200,quote_mint:key('quote'),lp_fee_bps:0,fee_model:2,protocol_share_bps:2500,creator_fee_bps:100})})
-const verify=async(signRequest,over={})=>verifyLaunchSignRequest({signRequest,invited:{...invited,virtualQuote:invitedVirtualQuote(invited),...over},approved,lookupTables:[table],policy:await policy(),live:{slot:100,blockHeight:100}})
+const selected=async()=>({address:selectedConfig.toBase58(),owner:LAUNCH,data:await launchCoder.accounts.encode('LaunchConfig',{version:1,creator,rules:noRules,creator_fee_bps:100,
+ custom_hook:new PublicKey(GATE),custom_hook_flags:1,label:'PRC',created_at:new BN(1),author_share_bps:0,reserved:Array(30).fill(0)})})
+const verify=async(signRequest,over={})=>verifyLaunchSignRequest({signRequest,invited:{...invited,virtualQuote:invitedVirtualQuote(invited),...over},approved,lookupTables:[table],policy:await policy(),live:{slot:100,blockHeight:100},
+ envelope,launchConfigBytes,selectedConfig:await selected()})
 
 test('the agent signs only the virtual quote fixed with its invite',async()=>{
  const checked=await verify(signRequestFor(pricing.virtualQuote))
