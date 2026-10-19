@@ -201,3 +201,52 @@ Keep the bounds change (2) and the flag deploy (5) together: between them every 
 chain (1 SOL is below the new minimum) and invites are refused, so nothing launches at the old
 price. In the agent, `list` and `invite` then print the fixed price, for example
 `Opens at ≈$5,000 (53.25 SOL virtual), graduates at ≈$45,000 / 106.5 SOL raised · SOL $105.63 (…)`.
+
+## 11. Our own stack: first-time setup (new coins)
+
+New coins launch on our own stack: hook-lab's independent build of token, gate, launch and swap at
+their own program IDs, with our own quote marker mint and no bridge. The stack above (E73c, B2cr,
+BdAa, 2XoE) stays as it is for the canary and bridged coins; run it without the flags below.
+
+Before you start, hook-lab's deploy must have put the four programs at the stack's IDs (upgradeable
+by the upgrade authority) and created the quote marker. You need the stack file (`stack.json`,
+schema `repoing/hooks-stack/1`: the six fields of hook-lab `ids/independent.json`, the kit ID and
+the build's ELF and IDL hashes, with `"status": "reviewed"`) and the build's IDL folder
+(`bordrless_launch.json`, `bordrless_swap.json`, `hook_max_wallet.json`). The driver refuses a
+placeholder stack on mainnet and any IDL whose hash or program differs from the stack file.
+
+```sh
+S="--stack /path/to/stack.json --stack-idls /path/to/idl"
+GUARDIAN="guardian=$C/custody-da8970c2-1b18-4dc7-a4bc-9f096e42d5cc/primary:backup-pause"
+$H plan stack-verify $S          # read-only: all four programs match the stack file
+$H plan quote-marker $S          # read-only: the marker exists and nobody controls it
+```
+
+Decisions to add (approved) in your config file: `stackCustodyDigest` (64 hex, recorded in both
+governances), `openCreationMenus` (`{"creatorFeeBps":[50,100,200],"capBps":[100,200,300,500]}`).
+`launchFeeLamports` is optional: without it the creation fee is the confirmed 0.02 SOL.
+
+| Stage (each with `$S`) | Signers | Effect |
+|---|---|---|
+| `launch-config-init` **approval flag** | payer, upgrade | launch Config, paused, zero fees, quote mint = our marker (rent ~0.0026 SOL) |
+| `swap-config-init` **approval flag** | payer, upgrade | swap Config, paused, fee collector = treasury (rent ~0.0022 SOL) |
+| `launch-governance-init` **approval flag** | payer, admin | launch governance: roles, guardian, custody digest (rent ~0.0033 SOL) |
+| `swap-governance-init` **approval flag** | payer, admin | swap governance (rent ~0.0033 SOL) |
+| `gate-finalize` **approval flag, irreversible** | payer, upgrade | our gate becomes immutable |
+| `launch-config` | payer, admin | creator fee ceilings 200 bps |
+| `swap-config` | payer, admin | launch protocol share 2500, protocol fee 0 |
+| `launch-fee` **approval flag** | payer, admin | creation fee 0.02 SOL to the treasury |
+| `launch-usd-bounds` **approval flag** | payer, admin | opening bounds 5.625 to 112.5 SOL |
+| `native-launches --to on` **approval flag** | payer, admin | launches are native SOL |
+| `open-creation --to on` **approval flag** | payer, admin | anyone can launch, choosing from the menus |
+| `launch-table` (twice) **approval flag** | payer | shared launch table created, then frozen |
+| `trade-table` (twice) **approval flag** | payer | shared trade table created, then frozen |
+| `open-launches`, `open-trading` **approval flag** | payer, admin | public activation |
+
+Then build the stack bundle with both tables and set it on the server.
+
+Emergency stop: `guardian-pause --pause creation|trading|both $S` (guardian signs, payer pays;
+no approval flag). Only the admin reopens: `open-launches`, `open-trading`.
+
+Platform fees of a coin on our stack: `collect-native --mint <MINT> $S` (**approval flag**; the
+payer cranks, the treasury receives the SOL).
