@@ -11,6 +11,7 @@ import {finalFillLamports} from '../src/hooklab-graduation.mjs'
 import {sharedTradeAddresses} from '../src/hooklab-owner-launch-tables.mjs'
 import {nativeErrorName} from '../src/hooklab-native-pins.mjs'
 import {maxBuyLamports} from '../app/lib/hooklab-trade-math.mjs'
+import {readHookCoinMarket} from '../src/hooklab-coin-market.mjs'
 import {nativeWorld,NATIVE_SKIP} from './fixtures/hooklab-native-world.mjs'
 import {jsonbRoundTrip} from './fixtures/jsonb-round-trip.mjs'
 import {pk} from './fixtures/hooklab-canary.mjs'
@@ -59,6 +60,11 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   return {prepared,stored,sent,settled}
  }
 
+ await t.test('the coin page reads the coin as native from the bytes the programs wrote, with no bridged SOL for the wallet',async()=>{
+  const view=await readHookCoinMarket({connection:w.connections()[0].connection,mint:roles.mint,wallet:roles.creator})
+  assert.equal(view.market.native,true);assert.equal(view.market.quoteFormMismatch,false);assert.equal(view.market.graduated,false)
+  assert.deepEqual(Object.keys(view.wallet).sort(),['address','coin','lamports'])
+ })
  await t.test('a first buy creates the coin holding in the same approval; the canonical receipt to the lamport',async()=>{
   const {prepared,settled}=await trade(roles.creator,'buy',1000003)
   const rent=BigInt(prepared.request.quote.holdingRentLamports)
