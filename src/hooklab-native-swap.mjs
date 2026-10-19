@@ -222,7 +222,11 @@ export function compileNativeSwapReview(input) {
   check(poolLamports >= rent(POOL_LEN) + n(pool.quote_reserve) + n(pool.protocol_fees_quote) && launchLamports >= rent(LAUNCH_LEN), 'Native pool books differ from its lamports')
   // A first buy creates the trader's coin holding in the same transaction. create_holding is idempotent, so a holding
   // that appears before the buy lands makes it a no-op: the trade then pays no rent, and never more than reviewed.
-  const traderBaseAccount = accounts.get(a.traderBase), holdingExists = traderBaseAccount !== null
+  // Lamports anyone sent to the holding's address (a system-owned account with no data) are not a holding: create_holding
+  // tops them up, so the buy pays only the rest of the rent.
+  const traderBaseAccount = accounts.get(a.traderBase)
+  const prefunded = !!traderBaseAccount && traderBaseAccount.owner === zero && !traderBaseAccount.executable && raw(traderBaseAccount.dataBase64, 0).length === 0
+  const holdingExists = traderBaseAccount !== null && !prefunded
   check(!holdingCreation || buy, 'Only a buy creates a holding')
   const createsHolding = !!holdingCreation || !holdingExists
   refuseUnless(holdingExists || buy, 'This wallet holds none of this coin.')
@@ -255,7 +259,7 @@ export function compileNativeSwapReview(input) {
     && bh.observedSlot >= slot && bh.observedSlot - slot <= l.maxSlotLag && bh.observedSlot <= l.validUntilSlot && l.validUntilSlot - slot <= 150
     && l.reviewExpiresAtMs > l.nowMs && l.reviewExpiresAtMs - l.nowMs <= l.maxAgeMs, 'Review blockhash or offchain lifetime differs')
   // holdingRent: what the review states (and the most the payer can lose to it); rentNow: what creating it costs today.
-  const rentNow = holdingExists ? 0n : rent(HOLDING_LEN)
+  const credited = prefunded ? lamportsOf(accounts, a.traderBase) : 0n, rentNow = holdingExists || credited >= rent(HOLDING_LEN) ? 0n : rent(HOLDING_LEN) - credited
   const holdingRent = !createsHolding ? 0n : holdingCreation ? BigInt(holdingCreation.maxRentLamports) : rentNow
   refuseUnless(rentNow <= holdingRent, 'Opening your coin account now costs more than this review said. Start the trade again.')
   const fee = BigInt(bh.networkFeeLamports), debit = (buy ? amount : 0n) + holdingRent
