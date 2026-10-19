@@ -293,7 +293,7 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
     await expect(screen.getByRole('status').filter({ hasText: 'Launches are paused right now. Try again later.' })).toBeVisible({ timeout: 60_000 })
     const client = new SiteClient(blocked); await client.signIn()
     const refused = await client.post('/api/hook-lab/launch-requests', { action: 'create', requestId: crypto.randomUUID(), name: 'Paused Coin', symbol: 'PAUSED', creatorFeeBps: 100, capBps: 200,
-      image: pngDataUrl(), description: '', x: '', website: '', telegram: '' })
+      image: await preparedImage(), description: '', x: '', website: '', telegram: '' })
     expect([refused.status, refused.json?.error]).toEqual([409, 'Launches are paused right now. Try again later.'])
     expect(await launchRequests(blocked.publicKey.toBase58())).toEqual([])
     await recordMarkerLeaks(browser, stack.quoteMint as string, 'paused launch page')
@@ -381,8 +381,8 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
   test('off-menu fees and caps and a tampered opening price are refused by the server; the site\'s rate limits still hold', async () => {
     const creator = await freshWallet(5), client = new SiteClient(creator), address = creator.publicKey.toBase58()
     await client.signIn()
-    const create = (creatorFeeBps: number, capBps: number) => client.post('/api/hook-lab/launch-requests', { action: 'create', requestId: crypto.randomUUID(), name: 'Tampered', symbol: 'TAMPER',
-      creatorFeeBps, capBps, image: pngDataUrl(), description: '', x: '', website: '', telegram: '' })
+    const create = async (creatorFeeBps: number, capBps: number) => client.post('/api/hook-lab/launch-requests', { action: 'create', requestId: crypto.randomUUID(), name: 'Tampered', symbol: 'TAMPER',
+      creatorFeeBps, capBps, image: await preparedImage(), description: '', x: '', website: '', telegram: '' })
     for (const [fee, cap] of [[150, 200], [0, 200], [100, 250], [100, 1000]]) {
       const reply = await create(fee, cap)
       expect(`${fee}/${cap}: ${reply.status}`).toMatch(new RegExp(`^${fee}/${cap}: 4\\d\\d$`))
@@ -410,7 +410,19 @@ describe('self-serve launches on our own stack: ownerless, menus from the chain,
   })
 })
 
-const pngDataUrl = () => `data:image/png;base64,${readFileSync(new URL('./fixtures/coin.png', import.meta.url)).toString('base64')}`
+// The coin image as the launch form sends it: the fixture prepared by the site's own upload endpoint (the 512 px PNG the
+// launch-request API accepts), once per run.
+let prepared: string | null = null
+async function preparedImage(): Promise<string> {
+  if (prepared) return prepared
+  const response = await fetch(new URL('/api/hook-lab/coin-image', stack.origin), { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000),
+    headers: { origin: stack.origin, 'content-type': 'image/png', 'sec-fetch-site': 'same-origin', 'x-forwarded-for': '198.19.0.9' },
+    body: readFileSync(new URL('./fixtures/coin.png', import.meta.url)) })
+  const json = await response.json().catch(() => ({}))
+  if (!response.ok || typeof json.image !== 'string') throw new Error(`coin image upload: HTTP ${response.status} ${JSON.stringify(json)}`)
+  prepared = json.image
+  return json.image
+}
 /** The largest sell share (100%, 50%, 25%) the panel accepts under its 10% price-impact limit. */
 async function largestAcceptedShare(screen: any, symbol: string): Promise<string> {
   const main = screen.getByRole('button', { name: new RegExp(`^(Sign in and sell|Sell) \\$${symbol}$`) })
