@@ -20,6 +20,7 @@ import { hookCoinAddresses, swapAccountEvidence } from './hooklab-inclusive-max-
 import { NATIVE_ELF, NATIVE_FLAGS, NATIVE_IDL_SHA256, loadNativeArtifacts } from './hooklab-native-pins.mjs'
 import { STATUS_GRADUATED, finalFillLamports, isReady } from './hooklab-graduation.mjs'
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
+import { isNativeElfPin } from './hooklab-native-launch.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { createHolding, graduateHookCoin } from './hooklab-owner-driver/instructions.mjs'
 
@@ -106,12 +107,13 @@ export function nativeSwapV2Instruction({ programs, quoteMint }, { side, trader,
   return new TransactionInstruction({ programId: pk(S), keys: [...fixed, ...remaining], data })
 }
 
-// Whether a profile envelope names the reviewed native builds: their ELFs and the exact vendored IDL bytes. The compiler
+// Whether a profile envelope names the reviewed native builds: their ELFs, as the raw build output or the trimmed bytes a
+// deployed ProgramData holds (production bundle 3 pins the trimmed form), and the exact vendored IDL bytes. The compiler
 // refuses any other, and the trade runtime keeps native trading off without it (before the programs are upgraded).
 export function pinsNativeBuilds(envelope) {
   try {
     const profile = JSON.parse(envelope.json)
-    return ['swap', 'launch'].every(role => profile.elfSha256?.[role] === NATIVE_ELF[role].sha256 && envelope.elfLengths?.[role] === NATIVE_ELF[role].length
+    return ['swap', 'launch'].every(role => isNativeElfPin(role, profile.elfSha256?.[role], envelope.elfLengths?.[role])
       && profile.idlSha256?.[role] === NATIVE_IDL_SHA256[role] && sha(raw(envelope.idls[role], 1100000)) === NATIVE_IDL_SHA256[role])
   } catch { return false }
 }
@@ -152,7 +154,10 @@ export function compileNativeSwapReview(input) {
   const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, r.mint, r.selectedConfig, zero, KIT, RENT_SYSVAR, ComputeBudgetProgram.programId.toBase58()]
   check(new Set(roles).size === roles.length && !roles.includes(r.trader) && PublicKey.isOnCurve(kb(r.trader)), 'Swap role alias or invalid wallet')
   check(!lookupTable || ![...inventory, ...roles].includes(lookupTable.address), 'Lookup table aliases a swap role')
-  for (const o of obs) for (const role of ['launch', 'swap', 'gate']) programEvidence(accounts, profile.programs[role], profile.elfSha256[role], envelope.elfLengths[role], o.slot, role === 'gate')
+  // The native programs' ProgramData must hold the reviewed ELF's trimmed bytes, then only zeros (as nativeProgramDataMatches
+  // reads it), whichever form the profile pins: a deployed ProgramData may be sized to the trimmed bytes. The gate keeps its pin.
+  const elfPin = role => NATIVE_ELF[role] ? [NATIVE_ELF[role].trimmedSha256, NATIVE_ELF[role].trimmedLength] : [profile.elfSha256[role], envelope.elfLengths[role]]
+  for (const o of obs) for (const role of ['launch', 'swap', 'gate']) programEvidence(accounts, profile.programs[role], ...elfPin(role), o.slot, role === 'gate')
   const token = accounts.get(T), tokenBytes = token && raw(token.dataBase64, 36)
   check(token?.owner === loader && token.executable && tokenBytes.length === 36 && tokenBytes.readUInt32LE() === 2 && tokenBytes.subarray(4).equals(kb(pda(loader, kb(T)))), 'Token ProgramData linkage differs')
   const wallet = accounts.get(r.trader)
