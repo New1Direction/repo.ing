@@ -137,7 +137,7 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
       'POST /owner/stage': async ({ stage, pause = null, mint = null }) => {
         if (!ownDriver) throw Error('no own stack in this mode')
         const plan = { 'guardian-pause': [['payer', 'guardian'], { extra: ['--pause', pause] }], 'open-launches': [['payer', 'admin'], { approve: true }],
-          'open-trading': [['payer', 'admin'], { approve: true }], 'collect-native': [['payer'], { extra: ['--mint', mint] }] }[stage]
+          'open-trading': [['payer', 'admin'], { approve: true }], 'collect-native': [['payer'], { approve: true, extra: ['--mint', mint] }] }[stage]
         if (!plan || (stage === 'guardian-pause' && !['creation', 'trading', 'both'].includes(pause))) throw Error('unsupported owner stage')
         const result = await ownDriver.run(stage, ...plan)
         return { signature: result.receipt.signature, postconditions: result.receipt.postconditions }
