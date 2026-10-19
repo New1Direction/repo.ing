@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react'
 import { HooksRisk } from '../../../../components/hooks-ui'
 import { HookCoinPreview } from '../../../../components/hooklab-coin-form'
 import { HookTradePanel } from '../../../../components/hooklab-trade-panel'
+import { HookCoinGraduation } from '../../../../components/hooklab-coin-graduation'
 import { inclusiveTradeRuntime } from '../../../../lib/hooklab-inclusive-trade-runtime.mjs'
 import { cachedMarket, listedCoin } from '../../../../lib/hooklab-market.mjs'
 import { coinImageUrl } from '../../../../../src/hooklab-coin-profile.mjs'
@@ -51,17 +52,14 @@ export default async function HooksCoinPage({ params }) {
             <div><dt>Trades</dt><dd>{Number(market.pool.swapCount).toLocaleString('en-US')}</dd></div>
             <div><dt>Creator</dt><dd><a href={`https://explorer.solana.com/address/${market.creator}`} target="_blank" rel="noopener noreferrer">{short(market.creator)}</a></dd></div>
           </dl>
-          <div className="hooks-curve" aria-label="Progress to graduation">
-            <div className="hooks-between"><span>Bonding curve</span><strong>{(market.curveProgressBps / 100).toFixed(1)}% to graduation</strong></div>
-            <div className="hooks-curve-bar"><span style={{ transform: `scaleX(${Math.min(1, market.curveProgressBps / 10000)})` }}/></div>
-            <small>Graduates when {formatUnits(BigInt(market.graduationQuote), 9, 2)} SOL is in the curve. Until then, wallet caps apply.</small>
-          </div>
+          <HookCoinGraduation market={market}/>
         </section>}
       <aside className="hooks-coin-side"><HookTradePanel mint={mint} genesisHash={executionGenesis()} initial={view ?? null}/></aside>
       {market && <section className="hooks-card hooks-coin-blocks-card" aria-labelledby="hooks-coin-blocks">
         <h2 id="hooks-coin-blocks">Blocks on this coin</h2>
         <ul className="hooks-block-grid hooks-coin-blocks">
-          {[['max-wallet', `No wallet can hold more than ${market.capBps / 100}% of the supply (${formatUnits(BigInt(market.capRaw), market.decimals, 0)} ${market.symbol}) until graduation.`],
+          {[['max-wallet', market.graduated ? 'Lifted at graduation. Any wallet can hold any amount now.'
+            : `No wallet can hold more than ${market.capBps / 100}% of the supply (${formatUnits(BigInt(market.capRaw), market.decimals, 0)} ${market.symbol}) until graduation.`],
             ['creator-fee', `Every buy and sell pays ${market.creatorFeeBps / 100}%: 75% to the creator, 25% to repo.ing, in SOL.`]].map(([id, text]) =>
             <li key={id} className="hooks-block is-on"><header><img src={hookBlock(id).icon} width={40} height={40} alt=""/><div><strong>{hookBlock(id).title}</strong><span>{text}</span></div></header></li>)}
         </ul>
