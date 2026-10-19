@@ -58,9 +58,9 @@ export function programSet(name) {
  * reader (src/hooklab-stack-build.mjs checks every ELF against the build's ELF-HASHES.txt), or, with HOOKS_E2E_OWN_STACK=relocated, the reviewed open-creation
  * ELFs relocated onto those IDs (tests/fixtures/hooklab-own-stack.mjs). The ELF bytes stay in memory and in the stack's
  * temporary root. The upgrade authority is the stack's synthetic upgrade role. */
-// The independent build the suite runs on: the final program build, hook-lab e775165 (the coordinator's pick,
+// The independent build the suite runs on: the frozen release candidate, hook-lab 2b8b92a (tag rc/independent-2b8b92a,
 // 2026-10-19); HOOKLAB_INDEPENDENT_DIR overrides it.
-export const INDEPENDENT_BUILD_DIR = process.env.HOOKLAB_INDEPENDENT_DIR ?? path.join(HOOKS_LOCAL_STATE, 'independent-e775165')
+export const INDEPENDENT_BUILD_DIR = process.env.HOOKLAB_INDEPENDENT_DIR ?? path.join(HOOKS_LOCAL_STATE, 'independent-2b8b92a')
 export async function ownStackSet({ upgradeAuthority }) {
   const relocated = process.env.HOOKS_E2E_OWN_STACK === 'relocated'
   process.env.HOOKLAB_INDEPENDENT_DIR = INDEPENDENT_BUILD_DIR // read by the fixture when it loads
