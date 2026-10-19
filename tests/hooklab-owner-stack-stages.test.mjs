@@ -19,6 +19,7 @@ import { derivedAddresses, pda, kb, MAINNET_GENESIS, LOADER, SYSTEM } from '../s
 import { LAUNCH_CONFIG_START } from '../src/hooklab-owner-driver/stages/stack.mjs'
 import { OWNER_CREATION_FEE_LAMPORTS } from '../src/hooklab-owner-driver/stages/open-creation.mjs'
 import { ownStack, OWN_STACK_SKIP, PLACEHOLDER_IDS } from './fixtures/hooklab-own-stack.mjs'
+import { independentStack, INDEPENDENT_SKIP } from './fixtures/hooklab-independent-stack.mjs'
 
 const sha = bytes => createHash('sha256').update(bytes).digest()
 const scratch = mkdtempSync(path.join(tmpdir(), 'hooklab-owner-stack-'))
@@ -120,4 +121,13 @@ test('decisions: the creation fee defaults to the owner-confirmed 0.02 SOL; menu
   assert.deepEqual({ fee: LAUNCH_CONFIG_START.launch_fee_lamports, ceiling: LAUNCH_CONFIG_START.max_creator_fee_bps, paused: LAUNCH_CONFIG_START.paused, bounds: [LAUNCH_CONFIG_START.min_virtual_quote, LAUNCH_CONFIG_START.max_virtual_quote] },
     { fee: '0', ceiling: 0, paused: true, bounds: ['1000000000', '1000000000'] })
   assert.ok(LOADER && SYSTEM)
+})
+
+test('collect_protocol_fees_native matches hook-lab\'s independent swap IDL exactly', { skip: INDEPENDENT_SKIP }, () => {
+  const { stack, idls } = independentStack(), swap = JSON.parse(idls.swap), legacy = loadArtifacts()
+  const abi = { ...legacy, idls: { ...legacy.idls, swap }, coders: { ...legacy.coders, swap: new BorshCoder(swap) } }
+  const ix = instructionsFor(abi).collectProtocolFeesNative(stack.programs, stack.quoteMint, { cranker: key(), mint: key(), collector: key() })
+  assert.deepEqual([...ix.data], swap.instructions.find(x => x.name === 'collect_protocol_fees_native').discriminator)
+  assert.equal(new BorshCoder(swap).instruction.decode(ix.data).name, 'collect_protocol_fees_native')
+  assert.equal(swap.instructions.some(x => x.name === 'collect_protocol_fees_sol'), false, 'no bridged collection on our stack')
 })

@@ -3,7 +3,6 @@
 // between $50 and $1,000. The bounds come from the same constant the website refuses with; every other config field is
 // carried over from the live config unchanged. plan compiles and previews only; execute needs --approved like a gate.
 import BN from 'bn.js'
-import * as ix from '../instructions.mjs'
 import { fieldDiff, plain, sol } from '../preview.mjs'
 import { VIRTUAL_QUOTE_BOUNDS, formatSolPrice } from '../../hooklab-launch-pricing.mjs'
 import { check, hex, nextState, gsection, gview, simpleMessage, ixOf, abiOf } from './common.mjs'
@@ -39,7 +38,7 @@ export const launchUsdBounds = {
     const bounds = byteCheck(abiOf(ctx).coders.launch, Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), config, after)
     const expected = ixOf(ctx).governanceCommitment('launch', governance.state)
     const instruction = ixOf(ctx).governedSetConfig(ctx.programs, 'launch', ctx.roles.admin, expected, after)
-    const afterState = nextState(governance.state, { config_digest: [...ix.economicsDigest('launch', ctx.programs.launch, after)], roles: { treasury: after.treasury } })
+    const afterState = nextState(governance.state, { config_digest: [...ixOf(ctx).economicsDigest('launch', ctx.programs.launch, after)], roles: { treasury: after.treasury } })
     const { review, blockhash } = await simpleMessage(ctx, { stage: STAGE, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot })
     const before = gview(ctx, 'launch', governance.state).commitment, next = hex(ixOf(ctx).governanceCommitment('launch', afterState))
     const unchanged = Object.keys(plain(current)).filter(field => !diff.some(x => x.field === field))

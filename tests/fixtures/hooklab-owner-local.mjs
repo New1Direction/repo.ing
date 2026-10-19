@@ -97,12 +97,12 @@ export async function startValidator(root, roles, { bridge = null, elfDir = ELF_
 }
 // Our own stack (tests/fixtures/hooklab-own-stack.mjs ownStack): its four relocated ELFs at its program IDs, upgradeable
 // by the synthetic upgrade role (the stack's upgradeAuthority must be that role), and its quote marker in genesis as
-// hook-lab's deploy creates it: a canonical Mint of the stack's token program that nobody controls. No bridge, no legacy
-// quote mint, no holdings.
+// hook-lab's deploy creates it (its design, section 3): a canonical Mint of the stack's token program that nobody
+// controls, no supply. No bridge, no legacy quote mint, no holdings.
 export function markerMintRow(stack, roles) {
   const zero = new BN(0)
   return genesisAccount(stack.quoteMint, { lamports: 10000000, owner: stack.programs.token, data: tokenAccount('Mint', { version: 1, decimals: 9, supply: zero, max_supply: zero,
-    mint_authority: null, freeze_authority: null, hook_authority: null, metadata_authority: null, hook_program: null, hook_flags: 0, name: 'Hooks quote marker', symbol: 'HQM',
+    mint_authority: null, freeze_authority: null, hook_authority: null, metadata_authority: null, hook_program: null, hook_flags: 0, name: 'Native SOL quote marker', symbol: 'SOL',
     uri: '', created_at: zero, creator: roles.payer.publicKey, hook_signer_bump: 0, reserved: Array(31).fill(0) }, 519) })
 }
 export async function startStackValidator(root, roles, { stack, elfs }, { accounts = [], marker = true } = {}) {

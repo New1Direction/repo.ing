@@ -15,15 +15,21 @@ import { PublicKey } from '@solana/web3.js'
 import { derivedAddresses } from '../src/hooklab-owner-driver/pins.mjs'
 import { VALIDATOR, syntheticRoles, writeKeyFiles, startStackValidator, localConfig, cleanup } from './fixtures/hooklab-owner-local.mjs'
 import { ownStack, OWN_STACK_SKIP } from './fixtures/hooklab-own-stack.mjs'
+import { independentStack, INDEPENDENT_SKIP } from './fixtures/hooklab-independent-stack.mjs'
 
-const available = existsSync(VALIDATOR) && !OWN_STACK_SKIP
+// hook-lab's independent build when present (the real ELFs at its placeholder IDs); the relocated reviewed ELFs otherwise
+// (HOOKLAB_OWNER_STACK_SOURCE=relocated forces them).
+const SOURCE = process.env.HOOKLAB_OWNER_STACK_SOURCE ?? (INDEPENDENT_SKIP ? 'relocated' : 'independent')
+const available = existsSync(VALIDATOR) && !(SOURCE === 'independent' ? INDEPENDENT_SKIP : OWN_STACK_SKIP)
 const required = process.env.HOOKLAB_OWNER_LOCAL_REQUIRED === 'true'
 const MENUS = { creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] }
 
-test('our own stack: first-time setup through the owner driver on a local validator', { skip: !available && !required && 'local validator or reviewed ELFs unavailable', timeout: 1800000 }, async t => {
+test(`our own stack (${SOURCE} build): first-time setup through the owner driver on a local validator`, { skip: !available && !required && 'local validator or reviewed ELFs unavailable', timeout: 1800000 }, async t => {
   const root = mkdtempSync(path.join(process.env.HOOKLAB_OWNER_SCRATCH ?? tmpdir(), 'hooklab-owner-stack-'))
   const roles = syntheticRoles(), keys = writeKeyFiles(path.join(root, 'keys'), roles)
-  const built = ownStack({ seed: 'owner-driver', upgradeAuthority: roles.upgrade.publicKey.toBase58() }), { stack } = built
+  const upgradeAuthority = roles.upgrade.publicKey.toBase58()
+  const built = SOURCE === 'independent' ? independentStack({ upgradeAuthority }) : ownStack({ seed: 'owner-driver', upgradeAuthority }), { stack } = built
+  t.diagnostic(`stack ${stack.id}: launch ${stack.programs.launch}, swap ${stack.programs.swap}, gate ${stack.programs.gate}, token ${stack.programs.token}, marker ${stack.quoteMint}`)
   const stackDir = path.join(root, 'stack'), idlDir = path.join(stackDir, 'idl'); mkdirSync(idlDir, { recursive: true })
   for (const [role, file] of Object.entries(STACK_IDL_FILES)) writeFileSync(path.join(idlDir, file), built.idls[role])
   writeFileSync(path.join(stackDir, 'stack.json'), JSON.stringify(stack))

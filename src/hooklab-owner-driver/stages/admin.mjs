@@ -4,8 +4,8 @@ import BN from 'bn.js'
 import { derivedAddresses, authorizationAddress, LOADER, SYSTEM, sha256, pk } from '../pins.mjs'
 import { readAccounts, rentExemption } from '../rpc.mjs'
 import { value } from '../config.mjs'
-import * as ix from '../instructions.mjs'
 import { fieldDiff, plain, sol } from '../preview.mjs'
+import { LAUNCH_CONFIG_RESERVED_AT, parseLaunchConfigReserved } from '../../hooklab-launch-config-reserved.mjs'
 import { check, cdecode, owned, hex, nextState, gsection, gview, simpleMessage, ixOf, elfOf } from './common.mjs'
 
 const configRole = { 'launch-config': 'launch', 'swap-config': 'swap' }
@@ -39,17 +39,22 @@ function governedConfigStage(stage) {
   return {
     name: stage,
     async build(ctx, pinned) {
-      const { snapshot, config, governance } = await governedSnapshot(ctx, role)
+      const { snapshot, config, governance, addresses } = await governedSnapshot(ctx, role)
       const current = role === 'launch' ? ixOf(ctx).launchConfigArgs(config) : ixOf(ctx).swapConfigArgs(config), after = wanted(ctx, role, current)
       if (role === 'swap') check(after.fee_collector.toBase58() === after.treasury.toBase58(), 'Swap fee collector must equal the treasury')
       const diff = fieldDiff(plain(current), plain(after))
       if (!diff.length) return { blocked: `already applied: ${role} config already equals the decision values`, observedSlot: snapshot.slot }
       const expected = ixOf(ctx).governanceCommitment(role, governance.state)
       const instruction = ixOf(ctx).governedSetConfig(ctx.programs, role, ctx.roles.admin, expected, after)
-      const afterState = nextState(governance.state, { config_digest: [...ix.economicsDigest(role, ctx.programs[role], after)], roles: { treasury: after.treasury } })
+      const afterState = nextState(governance.state, { config_digest: [...ixOf(ctx).economicsDigest(role, ctx.programs[role], after)], roles: { treasury: after.treasury } })
+      // The program does not re-check the open-creation fee menu when the ceiling moves: the site offers only the menu values
+      // at or below the CURRENT ceiling, so a lowered ceiling silently withdraws the ones above it.
+      const menu = role === 'launch' ? parseLaunchConfigReserved(Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64').subarray(LAUNCH_CONFIG_RESERVED_AT)) : null
+      const withdrawn = menu?.open ? menu.creatorFeeBps.filter(v => v > after.max_creator_fee_bps) : []
       const { review, blockhash } = await simpleMessage(ctx, { stage, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot })
       return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
         sections: [{ title: `${role} config field changes (before -> after)`, rows: diff.map(x => `${x.field}: ${JSON.stringify(x.before)} -> ${JSON.stringify(x.after)}`) },
+          ...(withdrawn.length ? [{ title: 'WARNING: creator fee choices withdrawn', rows: [`the on-chain open-creation fee menu keeps [${withdrawn.join(', ')}] bps, above the new ceiling ${after.max_creator_fee_bps} bps: the site stops offering them (the program does not re-check the menu); set a new menu with open-creation`] }] : []),
           gsection(ctx, role, governance.state, afterState), { title: 'funds', rows: [payerRow(ctx, snapshot), 'no SOL or token transfer besides the network fee'] }],
         expect: { role, config: plain(after), commitment: hex(ixOf(ctx).governanceCommitment(role, afterState)) } }
     },

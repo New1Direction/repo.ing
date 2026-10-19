@@ -61,6 +61,8 @@ export const openCreation = {
           `creator fee menu: [${current.creatorFeeBps.map(pct).join(', ')}] -> [${menus.creatorFeeBps.map(pct).join(', ')}]`,
           `max per wallet menu: [${current.capBps.map(pct).join(', ')}] -> [${menus.capBps.map(pct).join(', ')}]`,
           `bytes 186..204: ${hex(raw.subarray(186, 204))} -> ${hex(after.subarray(0, 18))}`,
+          `creator fee ceiling (Config.max_creator_fee_bps) now ${config.max_creator_fee_bps} bps: the site offers only menu values at or below the CURRENT ceiling (the program does not re-check the menu if the ceiling is lowered later)`,
+          ...(current.creatorFeeBps.some(v => v > config.max_creator_fee_bps) ? [`FLAG: the current on-chain fee menu has [${current.creatorFeeBps.filter(v => v > config.max_creator_fee_bps).join(', ')}] bps above the ceiling; the site does not offer them`] : []),
           on ? 'anyone can then launch a Hooks coin from the site (create_launch_open_v1: the creator and the mint sign; no invite, no admin co-signature), choosing from these menus'
             : 'create_launch_open_v1 is refused on chain (OpenCreationOff); coins already launched keep trading and their creators can still claim'] },
         { title: 'recorded policy change', rows: [`digest ${hex(openCreationDigest(ctx.programs.launch, addresses.config, { on, ...menus }))} = sha256("hook-lab:open-creation:v1" || launch program || config || on || menus)`,
