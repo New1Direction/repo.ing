@@ -128,7 +128,7 @@ test('an own-stack coin trades straight in SOL: no Add SOL, no Withdraw, no Hook
 
 test('a delisted coin shows the notice and offers no BUY; selling still works', () => {
   const notice = 'repo.ing has delisted this coin: PLACEHOLDER. You can still sell it, and its creator can still claim fees.'
-  const view = { market: market(), coin: ownCoin({ moderation: { delisted: true, reason: 'placeholder-content-rules', notice } }), wallet: null, tradingOpen: true, nativeTrading: true }
+  const view = { market: market(), coin: ownCoin({ moderation: { delisted: true, reason: 'impersonation', notice } }), wallet: null, tradingOpen: true, nativeTrading: true }
   const markup = panel(view)
   assert.match(text(markup), /delisted this coin, so buying it here is off\. You can still sell\./)
   assert.match(markup, /<button type="button" disabled="">0\.01 SOL<\/button>/, 'the buy shortcuts are off')

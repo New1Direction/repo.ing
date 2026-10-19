@@ -17,12 +17,12 @@ const request = (path, body, headers = {}) => new Request(`https://repo.ing/api/
 const json = async response => ({ status: response.status, body: await response.json() })
 const moderation = async (_pool, mint) => mint === delistedMint ? moderationState([{ id: 1, action: 'delist', reason: Object.keys(DELISTING_REASONS)[0], decided_at: '2026-10-19T12:00:00Z' }]) : { delisted: false }
 
-test('the delisting reasons are a clearly marked placeholder until the owner sends the content rules', () => {
-  assert.ok(Object.keys(DELISTING_REASONS).length >= 1)
-  for (const text of Object.values(DELISTING_REASONS)) assert.match(text, /PLACEHOLDER/)
-  assert.equal(isDelistingReason('placeholder-content-rules'), true); assert.equal(isDelistingReason('made-up'), false)
-  assert.deepEqual(moderationState([{ id: 1, action: 'delist', reason: 'placeholder-content-rules', decided_at: '2026-10-19T12:00:00Z' }, { id: 2, action: 'relist', reason: null, decided_at: '2026-10-19T13:00:00Z' }]), { delisted: false })
-  assert.match(moderationState([{ id: 7, action: 'delist', reason: 'placeholder-content-rules', decided_at: '2026-10-19T12:00:00Z' }]).notice, /You can still sell it, and its creator can still claim fees/)
+test('the delisting reasons are exactly the owner\'s five, each a plain sentence', () => {
+  assert.deepEqual(Object.keys(DELISTING_REASONS), ['impersonation', 'misleading', 'harmful-content', 'malicious-links', 'legal'])
+  for (const text of Object.values(DELISTING_REASONS)) { assert.doesNotMatch(text, /PLACEHOLDER|pending/i); assert.match(text, /^[A-Z].*\.$/) }
+  assert.equal(isDelistingReason('impersonation'), true); assert.equal(isDelistingReason('placeholder-content-rules'), false); assert.equal(isDelistingReason('made-up'), false)
+  assert.deepEqual(moderationState([{ id: 1, action: 'delist', reason: 'impersonation', decided_at: '2026-10-19T12:00:00Z' }, { id: 2, action: 'relist', reason: null, decided_at: '2026-10-19T13:00:00Z' }]), { delisted: false })
+  assert.match(moderationState([{ id: 7, action: 'delist', reason: 'impersonation', decided_at: '2026-10-19T12:00:00Z' }]).notice, /You can still sell it, and its creator can still claim fees/)
 })
 
 test('a delisted coin: BUY is refused, SELL (bridged and native) goes on; other coins are untouched', async () => {
@@ -43,7 +43,7 @@ test('a delisted coin: BUY is refused, SELL (bridged and native) goes on; other 
 test('the creator still claims a delisted coin\'s fees: the claim path never reads moderation', async () => {
   const env = { HOOK_NATIVE_LAUNCHES_ENABLED: 'true', HOOK_WALLET_IDENTITY_ENABLED: 'true', HOOK_OPEN_LAUNCHES: 'true' }, seen = []
   const lifecycle = { createReview: async (_t, _i, value) => { seen.push(value); return { id, owner, stage: value.stage, status: 'reviewed', request: value.intent, review: { operation: 'hooklab-native-claim', messageBase64: 'NEVER', messageSha256: 'a'.repeat(64) } } } }
-  const delisted = { id: 'r', moderation: { delisted: true, reason: 'placeholder-content-rules' } }
+  const delisted = { id: 'r', moderation: { delisted: true, reason: 'impersonation' } }
   const handle = createNativeClaimHandler({ ...base, env, runtime: () => ({ origin: 'https://repo.ing', lifecycle, coinProfile: async () => delisted,
     status: async m => ({ mint: m, native: true, creator: owner, claimableLamports: '5625000' }) }) })
   assert.equal((await json(await handle(request('native-claim', { action: 'status', mint: delistedMint })))).body.claim.claimableLamports, '5625000')
@@ -57,8 +57,8 @@ test('the owner\'s moderation endpoint: open launches only, the owner token, a k
   const handle = createCoinModerationHandler({ env, configuration: () => ({}), database: () => ({ end: async () => {} }), store })
   const post = (body, auth = `Bearer ${tokenValue}`) => handle(new Request('https://repo.ing/api/hook-lab/coin-moderation', { method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' }, body: JSON.stringify(body) }))
   assert.equal((await createCoinModerationHandler({ env: {} })(new Request('https://repo.ing/api/hook-lab/coin-moderation', { method: 'POST' }))).status, 503)
-  assert.equal((await post({ action: 'delist', mint: delistedMint, reason: 'placeholder-content-rules' }, 'Bearer wrong-token-wrong-token-wrong-token')).status, 401)
-  const done = await json(await post({ action: 'delist', mint: delistedMint, reason: 'placeholder-content-rules' }))
-  assert.equal(done.status, 200); assert.deepEqual(calls, [{ mint: delistedMint, action: 'delist', reason: 'placeholder-content-rules', actor: 'owner' }])
+  assert.equal((await post({ action: 'delist', mint: delistedMint, reason: 'impersonation' }, 'Bearer wrong-token-wrong-token-wrong-token')).status, 401)
+  const done = await json(await post({ action: 'delist', mint: delistedMint, reason: 'impersonation' }))
+  assert.equal(done.status, 200); assert.deepEqual(calls, [{ mint: delistedMint, action: 'delist', reason: 'impersonation', actor: 'owner' }])
   assert.equal((await post({ action: 'relist', mint: delistedMint })).status, 200); assert.equal(calls[1].reason, null)
 })
