@@ -112,3 +112,29 @@ test('older trades stay joined to a refreshed first page, with nothing silently 
 test('while older history is still being read, the trades list says so', () => {
   assert.match(html(h(HookTradesList, { trades: [sell], symbol: 'TEST', decimals: 6, now, backfilling: true })), /Older trades are still loading/)
 })
+
+test('after graduation the chart values the mint supply (burned coins excluded), as the coin card does', async () => {
+  const { default: Token } = await appModule('app/(site)/hooks/token/[mint]/page.jsx')
+  // A coin of its own: the page's market and listing reads are cached per mint for a few seconds.
+  const mint = 'G13vXkYb82PYqQ2xbpPChfZuqEXAN12WsQ2Qc4bBvmN2', key = Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
+  const market = { mint, name: 'Graduated', symbol: 'GRAD', uri: '', decimals: 6, observedSlot: 1, creator: trader, graduated: true, curveComplete: false, capBps: 200,
+    creatorFeeBps: 100, initialSupply: '1000000000000000', supply: '900000000000000', capRaw: '20000000000000', marketCapLamports: '800100000', graduationQuote: '2000000000',
+    curveProgressBps: 10000, solToGraduationLamports: null, reserveTokens: '0', graduation: { at: 1, topup: '0', burned: '100000000000000', lockedLp: '1', lpSupply: '1' },
+    pool: { baseReserve: '750000000000000', quoteReserve: '1', virtualBase: '0', virtualQuote: '0', protocolFeesQuote: '0', swapCount: '2' } }
+  globalThis[key] = { market: async () => ({ market, wallet: null }), coinProfile: async () => ({ id: '00000000-0000-4000-8000-000000000000', name: 'Graduated', profile: null }) }
+  const offline = offlineFetch()
+  try {
+    // The page's own element tree: the chart is handed the mint supply.
+    const charts = [], walk = node => {
+      if (Array.isArray(node)) return node.forEach(walk)
+      if (!node || typeof node !== 'object' || !node.props) return
+      if (node.type === HookCoinChart) charts.push(node.props)
+      Object.values(node.props).forEach(walk)
+    }
+    walk(await Token({ params: Promise.resolve({ mint }) }))
+    assert.equal(charts.length, 1); assert.equal(charts[0].supply, '900000000000000')
+  } finally { delete globalThis[key]; offline.restore() }
+  // 0.000000000889 SOL per coin x 900,000,000 coins.
+  const chart = html(h(HookCoinChart, { mint, symbol: 'GRAD', decimals: 6, supply: market.supply, solUsd: null, initial: candlesBody({ solUsd: null }) }))
+  assert.match(chart, /<strong[^>]*>0\.8001 SOL<\/strong>/)
+})

@@ -61,7 +61,8 @@ export default async function HooksCoinPage({ params }) {
           <HookCoinGraduation market={market}/>
         </section>}
       <aside className="hooks-coin-side"><HookTradePanel mint={mint} genesisHash={executionGenesis()} initial={view ?? null}/></aside>
-      {activity && <div className="hooks-coin-chart"><HookCoinChart mint={mint} symbol={market.symbol} decimals={market.decimals} supply={market.initialSupply} solUsd={cachedSolUsdPrice()}/></div>}
+      {/* The chart values the mint's current supply (graduation burns some), the same figure as the card's market cap. */}
+      {activity && <div className="hooks-coin-chart"><HookCoinChart mint={mint} symbol={market.symbol} decimals={market.decimals} supply={market.supply ?? market.initialSupply} solUsd={cachedSolUsdPrice()}/></div>}
       {activity && <div className="hooks-coin-activity"><HookCoinActivity mint={mint} symbol={market.symbol} decimals={market.decimals}/></div>}
       {market && <section className="hooks-card hooks-coin-blocks-card" aria-labelledby="hooks-coin-blocks">
         <h2 id="hooks-coin-blocks">Blocks on this coin</h2>

@@ -16,7 +16,7 @@ const POLL_MS = 30_000, STALE_MS = 75_000
 // After this visitor's own trade (the trade panel's repoing:trade-confirmed), read again now and once the coin read catches up.
 const AFTER_TRADE_MS = [0, 5_000]
 
-// A Hooks coin's price chart, in candles of 1 minute to 1 day: the market cap (price times the supply the coin's stats use)
+// A Hooks coin's price chart, in candles of 1 minute to 1 day: the market cap (price times the mint's supply, as the coin card's)
 // or the price per coin, after each finalized swap. In USD at today's SOL price, as repository charts are, with the SOL value
 // beside it; in SOL, labelled so, while the SOL/USD price is unknown. solUsd: the server's cached price when the page was
 // rendered (null when it had none); each /candles response brings a newer one. initial: a first /candles response.
