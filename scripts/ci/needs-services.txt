@@ -127,3 +127,5 @@ hooklab-native-trade-lifecycle-db
 hooklab-native-trade-review-regressions-db
 # Bridged funding across the native bundle upgrade through the signing lifecycle: real PostgreSQL on 127.0.0.1:55432.
 hooklab-wallet-funding-native-bundle-db
+# Bundle 3 end to end on a local solana-test-validator (e357fdf ELFs) with native trading: PostgreSQL on 127.0.0.1:55432.
+hooklab-native-bundle3-trading-local
