@@ -6,51 +6,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { Keypair, PublicKey, VersionedMessage } from '@solana/web3.js'
-import bs58 from 'bs58'
+import { PublicKey, VersionedMessage } from '@solana/web3.js'
 import { compileOpenLaunchReview, compileMaxWalletLaunchReview, openLaunchInventory, openLaunchTableAddresses, OPEN_LAUNCH_DISCRIMINATOR } from '../src/hooklab-max-wallet-launch.mjs'
-import { encodeOpenCreationReserved } from '../src/hooklab-launch-config-reserved.mjs'
-import { makeCanaryState, localTestEnvironment } from './fixtures/hooklab-canary.mjs'
+import { openState, openInput, sharedTable, OWNER_MENUS, withLocalAcceptance } from './fixtures/hooklab-open-launch.mjs'
 import { missingArtifactEnv } from './fixtures/hooklab-generated-artifact.mjs'
 
 const skip = missingArtifactEnv(['HOOKLAB_NATIVE_ELF_DIR'], 'the reviewed native ELFs')
-const ROLES = ['creator', 'admin', 'upgrade', 'guardian', 'treasury', 'outsider', 'buyer', 'mint', 'config', 'table']
-const OWNER_MENUS = { creatorFeeBps: [50, 100, 200], capBps: [100, 200, 300, 500] }
 const sha = bytes => createHash('sha256').update(bytes).digest()
-const pda = (program, ...seeds) => PublicKey.findProgramAddressSync(seeds, new PublicKey(program))[0].toBase58()
-function withLocalAcceptance(run) {
-  const env = localTestEnvironment(), saved = Object.fromEntries(Object.keys(env).map(k => [k, process.env[k]]))
-  Object.assign(process.env, env)
-  try { return run() } finally { for (const [k, v] of Object.entries(saved)) if (v === undefined) delete process.env[k]; else process.env[k] = v }
-}
-// A prepared mint (policy, registry, the creator's own launch config) on a native launch Config with open creation on.
-function openState({ reserved = { native: true, open: true, ...OWNER_MENUS }, capBps = 200 } = {}) {
-  const roles = Object.fromEntries(ROLES.map(r => [r, Keypair.generate().publicKey.toBase58()]))
-  const state = makeCanaryState({ elfDirectory: process.env.HOOKLAB_NATIVE_ELF_DIR, roles, blockhash: bs58.encode(Keypair.generate().publicKey.toBuffer()), native: true, capBps })
-  const programs = JSON.parse(state.profile.json).programs, configAddress = pda(programs.launch, Buffer.from('config'))
-  const config = state.accounts.get(configAddress), bytes = Buffer.from(config.dataBase64, 'base64')
-  encodeOpenCreationReserved(reserved).copy(bytes, 186); config.dataBase64 = bytes.toString('base64')
-  return { state, roles, programs, configAddress, configBytes: () => Buffer.from(state.accounts.get(configAddress).dataBase64, 'base64') }
-}
-// The shared launch table as the owner's launch-table stage leaves it: the constant addresses, frozen, active.
-function sharedTable(addresses, { frozen = true, extra = [] } = {}) {
-  const all = [...addresses, ...extra], data = Buffer.alloc(56 + 32 * all.length)
-  data.writeUInt32LE(1); data.writeBigUInt64LE(0xffffffffffffffffn, 4); data.writeBigUInt64LE(50n, 12)
-  if (!frozen) { data[21] = 1; Keypair.generate().publicKey.toBuffer().copy(data, 22) }
-  all.forEach((address, i) => new PublicKey(address).toBuffer().copy(data, 56 + i * 32))
-  return { address: Keypair.generate().publicKey.toBase58(), owner: 'AddressLookupTab1e1111111111111111111111111', dataBase64: data.toString('base64'), sha256: sha(data).toString('hex') }
-}
-// The open launch input over the state: the creator's own request (no reviewer), its exact inventory, two signatures.
-function openInput(world, { request = {}, table, uri } = {}) {
-  const { state } = world, base = state.launchInputNow(), { reviewer, schema, ...rest } = state.request
-  const r = { ...rest, schema: 'repoing/open-launch-request/1', ...(uri === undefined ? {} : { uri }), ...request }
-  const { inventory } = openLaunchInventory(state.profile, r, world.configBytes())
-  const { authorization, ...reviewedStateHashes } = base.reviewedStateHashes
-  return { ...base, request: r, reviewedStateHashes, nativeLaunches: true,
-    observations: base.observations.map(o => ({ ...o, accounts: inventory.map(address => ({ address, account: state.accounts.get(address) ?? null })) })),
-    recentBlockhash: { ...base.recentBlockhash, networkFeeLamports: '10000' },
-    lookupTable: table ?? sharedTable(openLaunchTableAddresses(state.profile, world.configBytes())) }
-}
 
 test('an open launch compiles to create_launch_open_v1: 40 accounts, only the creator and the mint sign, the open control hash', { skip }, () => withLocalAcceptance(() => {
   const world = openState(), { state, roles, programs } = world, plan = compileOpenLaunchReview(openInput(world))

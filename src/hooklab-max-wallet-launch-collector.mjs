@@ -7,7 +7,7 @@ import { PublicKey, VersionedMessage } from '@solana/web3.js'
 import { z } from 'zod'
 import { hookAddress, hookDigest, hookRawAmount } from './hooklab-execution-contract.mjs'
 import { parseMaxWalletProfile, parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
-import { compileMaxWalletLaunchReview, maxWalletLaunchInventory, parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
+import { compileMaxWalletLaunchReview, compileOpenLaunchReview, maxWalletLaunchInventory, openLaunchInventory, openLaunchRequestSchema, parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { hookLabReviewSchema, inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { parseExecutionDossier, inspectProductionEvidence } from './hooklab-production-observer.mjs'
 import { assertLocalExecutionEndpoint, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
@@ -30,6 +30,8 @@ export const maxWalletOperatorConfigSchema=z.object({
 }).strict()
 export const inclusiveMaxWalletOperatorConfigSchema=maxWalletOperatorConfigSchema.extend({
  schema:z.literal('repoing/inclusive-max-wallet-operator-config/1'),feeModel:z.literal(2),
+ // The owner's shared, frozen launch lookup table for open (self-serve) launches, pinned by its exact bytes.
+ launchLookupTable:z.object({address:hookAddress,sha256:hookDigest}).strict().optional(),
  economics:maxWalletOperatorConfigSchema.shape.economics.extend({creatorFeeBps:z.number().int().min(0).max(9999),lpFeeBps:z.literal(0),protocolFeeBps:z.literal(0),launchProtocolShareBps:z.literal(2500)}).strict(),
 }).strict()
 export function validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}){
@@ -66,24 +68,30 @@ export async function collectMaxWalletLaunchReview(input){
  try{return await collectLaunchReview(input)}
  catch{throw Object.assign(Error('Max-wallet launch evidence unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 }
+// An open (self-serve) launch: native, no reviewer, through the operator's shared launch table.
+export async function collectOpenLaunchReview(input){
+ try{return await collectLaunchReview({...input,nativeLaunches:true,open:true})}
+ catch{throw Object.assign(Error('Open launch evidence unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
+}
 // nativeLaunches: HOOK_NATIVE_LAUNCHES_ENABLED on this server. The compiler then reads launch Config byte 186 from the two
 // providers' identical snapshots: on, it compiles create_launch_custom_v4; off, v3 exactly as before.
-async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,limits,expectedReview,clock=Date.now,nativeLaunches=false}){
+async function collectLaunchReview({config,profile,dossierJson,connections,preparation,request,limits,expectedReview,clock=Date.now,nativeLaunches=false,open=false}){
  const {config:c,profile:p,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections})
- const r=parseMaxWalletLaunchRequest(request)
+ const r=open?openLaunchRequestSchema.parse(request):parseMaxWalletLaunchRequest(request),table=open?c.launchLookupTable:c.lookupTable
+ if(open)check(table,'No shared launch table is configured')
  const retainedReview=expectedReview===undefined?null:hookLabReviewSchema.parse(expectedReview)
  if(retainedReview)inspectHookLabMessage(retainedReview)
  const prep=parseMaxWalletPreparationRequest(Object.fromEntries(Object.entries(r).filter(([k])=>!['reviewer','name','symbol','uri','virtualQuote','schema'].includes(k)).concat([['schema',r.policyVersion===2?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1']])))
  check(preparation.wallet===r.creator&&preparation.profileSha256===c.profileSha256
   &&preparation.preparationIntentSha256===sha(JSON.stringify(prep))&&isDeepStrictEqual(preparation.preparedRequest,prep),'Durable preparation identity differs')
- check(r.reviewer===c.reviewer,'Current reviewer differs')
+ if(!open)check(r.reviewer===c.reviewer,'Current reviewer differs')
  const started=integer(clock()),L=p.programs.launch,S=p.programs.swap
  const configAddress=PublicKey.findProgramAddressSync([Buffer.from('config')],pk(L))[0].toBase58()
  // Bootstrap only derives the inventory; the final snapshot must contain the same config bytes.
  const bootstrap=await connections[0].connection.getMultipleAccountsInfoAndContext([pk(configAddress)],{commitment:'finalized',minContextSlot:preparation.executionSlot})
  check(bootstrap.value.length===1&&bootstrap.value[0],'Launch config unavailable')
- const {addresses:a,inventory}=maxWalletLaunchInventory(profile,r,bootstrap.value[0].data)
- const extra=[...d.programs.flatMap(x=>[x.address,x.programData]),...d.accounts.map(x=>x.address),...(c.lookupTable?[c.lookupTable.address]:[])]
+ const {addresses:a,inventory}=(open?openLaunchInventory:maxWalletLaunchInventory)(profile,r,bootstrap.value[0].data)
+ const extra=[...d.programs.flatMap(x=>[x.address,x.programData]),...d.accounts.map(x=>x.address),...(table?[table.address]:[])]
  const all=[...new Set([...inventory,...extra])].sort(),minContextSlot=Math.max(integer(bootstrap.context.slot),integer(preparation.executionSlot),d.minSlot)
  const observations=await Promise.all(connections.map(async({provider,connection})=>{
   const genesisHash=await connection.getGenesisHash();check(genesisHash===p.genesisHash,'Wrong chain')
@@ -95,14 +103,15 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  check(isDeepStrictEqual(observations[0].accounts,observations[1].accounts),'Provider account snapshots disagree')
  const map=new Map(observations[0].accounts.map(x=>[x.address,x.account]))
  check(map.get(configAddress)?.dataBase64===Buffer.from(bootstrap.value[0].data).toString('base64'),'Bootstrap config changed')
- const evidence=inspectProductionEvidence({dossierJson,expectedSha256:c.dossierSha256,nowMs:integer(clock()),observations:observations.map(o=>({...o,accounts:extra.filter(x=>x!==c.lookupTable?.address).map(address=>{const v=map.get(address);check(v,'Pinned account missing');const {lamports,...rest}=v;return rest})}))})
+ const evidence=inspectProductionEvidence({dossierJson,expectedSha256:c.dossierSha256,nowMs:integer(clock()),observations:observations.map(o=>({...o,accounts:extra.filter(x=>x!==table?.address).map(address=>{const v=map.get(address);check(v,'Pinned account missing');const {lamports,...rest}=v;return rest})}))})
  check(evidence.accountBindingsMatched===true,'Deployment dossier does not match actual chain')
  // Require the reviewed dossier to bind every shared economic/governance account.
  for(const address of [a.launchConfig,a.swapConfig,a.launchGovernance,a.swapGovernance,p.quoteMint])check(d.accounts.some(x=>x.address===address),'Missing reviewed governance/economics pin')
+ // An open launch's fee is the creator's choice from the chain's menu (the compiler checks it there); everything else is pinned.
  const decode=(role,name,address)=>new BorshCoder(JSON.parse(Buffer.from(profile.idls[role],'base64'))).accounts.decode(name,Buffer.from(map.get(address).dataBase64,'base64'))
  const lc=decode('launch','Config',a.launchConfig),sc=decode('swap','Config',a.swapConfig)
  check(lc.admin.toBase58()===c.reviewer&&lc.treasury.toBase58()===c.treasury&&sc.treasury.toBase58()===c.treasury,'Operator admin or treasury differs')
- check(isDeepStrictEqual(c.economics,{creatorFeeBps:r.creatorFeeBps,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,
+ check(isDeepStrictEqual(open?{...c.economics,creatorFeeBps:r.creatorFeeBps}:c.economics,{creatorFeeBps:r.creatorFeeBps,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,
   protocolFeeBps:sc.protocol_fee_bps,launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()}),'Unapproved or unsupported economics')
  const slot=Math.max(...observations.map(x=>x.slot)),latest=retainedReview
   ?{context:{slot},value:{blockhash:VersionedMessage.deserialize(Buffer.from(retainedReview.messageBase64,'base64')).recentBlockhash,lastValidBlockHeight:retainedReview.lastValidBlockHeight}}
@@ -115,15 +124,15 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  }))
  const priority=(BigInt(limits.computeUnitLimit)*BigInt(limits.computeUnitPriceMicroLamports)+999999n)/1000000n
  const recentBlockhash={...latest.value,genesisHash:p.genesisHash,providers:profile.providers,observedAtMs:started,currentBlockHeight:Math.max(...confirmations.map(x=>x.height)),
-  blockhashValid:true,observedSlot:Math.max(...confirmations.map(x=>x.slot)),networkFeeLamports:String(BigInt(new Set([r.creator,r.feePayer,r.mint,r.reviewer]).size)*BigInt(c.lamportsPerSignature)+priority),lamportsPerSignature:c.lamportsPerSignature}
- const lookup=c.lookupTable?map.get(c.lookupTable.address):null
- if(c.lookupTable)check(lookup&&!lookup.executable&&sha(Buffer.from(lookup.dataBase64,'base64'))===c.lookupTable.sha256,'Lookup table pin differs')
+  blockhashValid:true,observedSlot:Math.max(...confirmations.map(x=>x.slot)),networkFeeLamports:String(BigInt(new Set([r.creator,r.feePayer,r.mint,...(open?[]:[r.reviewer])]).size)*BigInt(c.lamportsPerSignature)+priority),lamportsPerSignature:c.lamportsPerSignature}
+ const lookup=table?map.get(table.address):null
+ if(table)check(lookup&&!lookup.executable&&sha(Buffer.from(lookup.dataBase64,'base64'))===table.sha256,'Lookup table pin differs')
  const compilationInput={profile,request:r,preparationEvidence:canonicalLaunchProof({schema:'repoing/max-wallet-durable-prepared-state/1',profileSha256:preparation.profileSha256,
   preparationIntentSha256:preparation.preparationIntentSha256,executionSlot:preparation.executionSlot,preparedAccountHashes:preparation.preparedAccountHashes}),
-  reviewedStateHashes:Object.fromEntries(LAUNCH_STATE_HASHES.map(name=>[name,sha(Buffer.from(map.get(name==='quoteMint'?p.quoteMint:a[name]).dataBase64,'base64'))])),
+  reviewedStateHashes:Object.fromEntries(LAUNCH_STATE_HASHES.filter(name=>!open||name!=='authorization').map(name=>[name,sha(Buffer.from(map.get(name==='quoteMint'?p.quoteMint:a[name]).dataBase64,'base64'))])),
   observations:observations.map(o=>({...o,accounts:o.accounts.filter(x=>inventory.includes(x.address))})),recentBlockhash,
-  lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:c.lookupTable.sha256}:null,limits:{...limits,nowMs:integer(clock())},...(nativeLaunches===true?{nativeLaunches:true}:{})}
- const plan=compileMaxWalletLaunchReview(compilationInput)
+  lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:table.sha256}:null,limits:{...limits,nowMs:integer(clock())},...(nativeLaunches===true?{nativeLaunches:true}:{})}
+ const plan=(open?compileOpenLaunchReview:compileMaxWalletLaunchReview)(compilationInput)
  if(retainedReview){
   // Only observation metadata may refresh. Wallet-consented bytes, accounts,
   // fees, deadlines, identities and blockhash remain byte-for-byte retained.
@@ -134,5 +143,5 @@ async function collectLaunchReview({config,profile,dossierJson,connections,prepa
  const fees=await Promise.all(connections.map(({connection})=>connection.getFeeForMessage(message,'finalized')))
  for(const fee of fees)check(fee.value!==null&&String(integer(fee.value))===recentBlockhash.networkFeeLamports&&integer(fee.context.slot)>=recentBlockhash.observedSlot,'Exact message fee differs')
  const finished=integer(clock());check(finished>=started&&finished-started<=Math.min(limits.maxAgeMs,d.maxAgeMs)&&finished<limits.reviewExpiresAtMs,'Collection expired')
- return Object.freeze({plan:retainedReview?Object.freeze({...plan,review:Object.freeze(retainedReview)}):plan,settlementContext:{schema:'repoing/max-wallet-launch-settlement-context/1',configurationSha256:sha(JSON.stringify(c)),compilationInput},configurationSha256:sha(JSON.stringify(c)),observedAdmin:lc.admin.toBase58(),profileSha256:c.profileSha256,approvalReference:c.approvalReference,collection:{startedAtMs:started,finishedAtMs:finished,providers:[...profile.providers],feeQuotedByBoth:true},canSign:false,canSubmit:false})
+ return Object.freeze({plan:retainedReview?Object.freeze({...plan,review:Object.freeze(retainedReview)}):plan,settlementContext:{schema:open?'repoing/open-launch-settlement-context/1':'repoing/max-wallet-launch-settlement-context/1',configurationSha256:sha(JSON.stringify(c)),compilationInput},configurationSha256:sha(JSON.stringify(c)),observedAdmin:lc.admin.toBase58(),profileSha256:c.profileSha256,approvalReference:c.approvalReference,collection:{startedAtMs:started,finishedAtMs:finished,providers:[...profile.providers],feeQuotedByBoth:true},canSign:false,canSubmit:false})
 }
