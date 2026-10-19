@@ -73,11 +73,11 @@ export async function up({ keep = false } = {}) {
     // One key ring for the whole run, so custody encrypted before a restart stays readable after it.
     const keyRing = { 'local-e2e': randomBytes(32).toString('base64') }
     async function writeBundle() {
-      const bundle = await collectLocalBundle({ connection: validator.connection, genesisHash: validator.genesisHash, providers: proxies.providers, tradeTable,
-        reviewer: address('admin'), treasury: address('treasury') })
+      const bundle = await collectLocalBundle({ genesisHash: validator.genesisHash, providers: proxies.providers, tlsCert: tls.cert, tradeTable,
+        reviewer: address('admin'), treasury: address('treasury'), build: 'native' })
       const bytes = Buffer.from(JSON.stringify(bundle)), file = path.join(root, `operator-bundle-${sha256(bytes).slice(0, 12)}.json`)
       writeFileSync(file, bytes, { mode: 0o600 })
-      log(`local operator bundle ${sha256(bytes).slice(0, 16)}… (profile ${bundle.profile.expectedSha256.slice(0, 16)}…, native pins, trade table ${tradeTable})`)
+      log(`local operator bundle ${sha256(bytes).slice(0, 16)}… (profile ${bundle.profile.expectedSha256.slice(0, 16)}…, bundle 3 native pins, trade table ${tradeTable})`)
       return { file, sha256: sha256(bytes), profileSha256: bundle.profile.expectedSha256 }
     }
     // The website and the owner agent, restartable as a deploy would restart them (E2 recovery scenarios use this).
