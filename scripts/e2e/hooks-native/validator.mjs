@@ -34,6 +34,8 @@ export async function startValidator({ root, roles, log }) {
   writeGenesis(genesis, roles)
   const args = ['--ledger', ledger, '--reset', '--quiet', '--bind-address', '127.0.0.1', '--rpc-port', String(rpcPort), '--faucet-port', String(faucetPort),
     '--gossip-port', String(gossipPort), '--dynamic-port-range', `${base + 8}-${base + 47}`, '--account-dir', genesis,
+    // Keep every receipt of the run readable (the default retention pruned receipts within ~1,000 slots).
+    '--limit-ledger-size', '200000000',
     ...Object.keys(FILES).flatMap(role => ['--upgradeable-program', PROGRAMS[role], elfs[role].path, upgrade])]
   const output = createWriteStream(path.join(root, 'logs', 'validator.log'))
   const child = spawn(VALIDATOR, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: false })
