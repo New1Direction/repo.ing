@@ -35,6 +35,13 @@ async function harness(run) {
   const original = new Map(names.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]))
   for (const name of names.slice(0, 4)) Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: dom.window[name] })
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
+  // WebCrypto's digest settles on the libuv threadpool, so on a busy CI runner the signing handoff could still be
+  // waiting on it after settle() (a flaky "signCalls: 0"). The card's state transitions are what this tests, so the
+  // same SHA-256 settles as an ordinary promise here; it is removed again below.
+  const subtle = globalThis.crypto.subtle
+  Object.defineProperty(subtle, 'digest', { configurable: true, value: async (algorithm, data) => {
+    assert.equal(algorithm, 'SHA-256'); const digest = createHash('sha256').update(Buffer.from(data)).digest()
+    return digest.buffer.slice(digest.byteOffset, digest.byteOffset + digest.byteLength) } })
   const tx = new VersionedTransaction(new TransactionMessage({
     payerKey: owner, recentBlockhash: Keypair.fromSeed(seed('blockhash')).publicKey.toBase58(),
     instructions: [SystemProgram.transfer({ fromPubkey: owner, toPubkey: other, lamports: 1 })],
@@ -74,10 +81,12 @@ async function harness(run) {
         globalThis[walletSlot] = { wallet: value, provider }
         await act(async () => root.render(createElement(HookLocalOperations, { genesisHash })))
       },
-      async settle() { await act(async () => { release(); await new Promise(resolve => setImmediate(resolve)) }) },
+      // Several event-loop turns, so a late response is fully processed before the "never signs" checks run.
+      async settle() { await act(async () => { release(); for (let turn = 0; turn < 5; turn++) await new Promise(resolve => setImmediate(resolve)) }) },
     })
   } finally {
     await act(async () => root.unmount())
+    delete subtle.digest
     delete globalThis[walletSlot]
     dom.window.close()
     for (const [name, descriptor] of original) {
