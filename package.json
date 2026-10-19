@@ -22,6 +22,7 @@
     "hooks:owner": "node scripts/hooklab-owner.mjs",
     "test:hooks:owner": "node --test tests/hooklab-owner-builders.test.mjs tests/hooklab-owner-driver.test.mjs",
     "test:hooks:owner:local": "HOOKLAB_OWNER_LOCAL_REQUIRED=true node --test --test-timeout=1800000 tests/hooklab-owner-local.test.mjs",
+    "test:hooks:e2e": "node scripts/e2e/hooks-native-stack.mjs test",
     "fees:earned": "node scripts/read-repo-earnings.mjs",
     "test:github-verification": "node --test tests/github-verification.test.mjs",
     "github:verify-live": "node scripts/github-live-callback.mjs",
