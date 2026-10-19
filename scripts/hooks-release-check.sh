@@ -12,6 +12,8 @@
 #   HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR  $HOOKS_LOCAL_STATE/rebuilt-inclusive/evidence
 #   HOOKLAB_INCLUSIVE_TOKEN_ELF              $HOOKS_LOCAL_STATE/rebuilt-inclusive/elf/bordrless_token.so
 #   HOOKLAB_CANARY_ELF_DIR                   $HOOKS_LOCAL_STATE/rebuilt-inclusive/elf (launch, swap, token, max-wallet ELFs)
+#   HOOKLAB_NATIVE_ELF_DIR                   $HOOKS_LOCAL_STATE/native-e357fdf (the reviewed native-SOL launch and swap ELFs,
+#                                            hook-lab feat/native-sol e357fdf, with the unchanged token and max-wallet ELFs)
 #   HOOKLAB_CANARY_PYTHONPATH                $HOOKS_LOCAL_STATE/atomic-canary-20261018/python-0.29.0 (solders 0.29.0)
 #   HOOKLAB_CANARY_PYTHON                    python3 (3.10+)
 #   SBF_OUT_DIR                              the three hash-pinned frozen production ELFs for the curve runtime test
@@ -31,6 +33,7 @@ export HOOKLAB_GENERATED_FIXTURE_DIR="${HOOKLAB_GENERATED_FIXTURE_DIR:-$state/hi
 export HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR="${HOOKLAB_INCLUSIVE_GENERATED_FIXTURE_DIR:-$state/rebuilt-inclusive/evidence}"
 export HOOKLAB_INCLUSIVE_TOKEN_ELF="${HOOKLAB_INCLUSIVE_TOKEN_ELF:-$state/rebuilt-inclusive/elf/bordrless_token.so}"
 export HOOKLAB_CANARY_ELF_DIR="${HOOKLAB_CANARY_ELF_DIR:-$state/rebuilt-inclusive/elf}"
+export HOOKLAB_NATIVE_ELF_DIR="${HOOKLAB_NATIVE_ELF_DIR:-$state/native-e357fdf}"
 export HOOKLAB_CANARY_PYTHONPATH="${HOOKLAB_CANARY_PYTHONPATH:-$state/atomic-canary-20261018/python-0.29.0}"
 export HOOKLAB_CANARY_PYTHON="${HOOKLAB_CANARY_PYTHON:-python3}"
 export HOOKLAB_CANARY_REQUIRED=true
@@ -66,6 +69,9 @@ done
 check HOOKLAB_INCLUSIVE_TOKEN_ELF "$HOOKLAB_INCLUSIVE_TOKEN_ELF" -f
 for name in bordrless_launch bordrless_swap bordrless_token hook_max_wallet; do
   check "  HOOKLAB_CANARY_ELF_DIR/$name.so" "$HOOKLAB_CANARY_ELF_DIR/$name.so" -f
+done
+for name in bordrless_launch bordrless_swap bordrless_token hook_max_wallet; do
+  check "  HOOKLAB_NATIVE_ELF_DIR/$name.so" "$HOOKLAB_NATIVE_ELF_DIR/$name.so" -f
 done
 check HOOKLAB_CANARY_PYTHONPATH "$HOOKLAB_CANARY_PYTHONPATH" -d
 if ! PYTHONPATH="$HOOKLAB_CANARY_PYTHONPATH" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 "$HOOKLAB_CANARY_PYTHON" -c \
