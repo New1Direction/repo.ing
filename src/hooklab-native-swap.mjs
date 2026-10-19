@@ -65,6 +65,9 @@ const inputSchema = z.object({ profile: z.object({ json: z.string().max(16384), 
   limits: z.object({ nowMs: number, maxAgeMs: number.positive().max(60000), maxSlotLag: number.max(150), validUntilSlot: number,
     reviewExpiresAtMs: number, maxNetworkFeeLamports: u64, maxTotalDebitLamports: u64,
     computeUnitLimit: number.positive().max(1400000), computeUnitPriceMicroLamports: u64 }).strict(),
+  // Revalidation of a first buy: keep its create_holding (idempotent) and the rent it reviewed as a bound, whatever the
+  // holding's state now. Absent on a fresh review, which decides from the observed holding.
+  holdingCreation: z.object({ maxRentLamports: u64 }).strict().optional(),
 }).strict()
 
 // The coin's accounts as the bridged compiler derives them, plus the trader's coin holding and graduate's own signers.
@@ -120,7 +123,7 @@ function rentFrom(account) {
 const lamportsOf = (accounts, address) => BigInt(accounts.get(address).lamports)
 
 export function compileNativeSwapReview(input) {
-  const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
+  const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l, holdingCreation } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
   check(new Set([...Object.values(profile.programs), profile.quoteMint, zero, KIT]).size === 8, 'Profile program roles alias')
@@ -217,9 +220,13 @@ export function compileNativeSwapReview(input) {
   // The native books: the pool's lamports cover rent and its reserve plus the platform's share (check_native).
   const poolLamports = lamportsOf(accounts, a.pool), launchLamports = lamportsOf(accounts, a.launch), walletLamports = lamportsOf(accounts, r.trader)
   check(poolLamports >= rent(POOL_LEN) + n(pool.quote_reserve) + n(pool.protocol_fees_quote) && launchLamports >= rent(LAUNCH_LEN), 'Native pool books differ from its lamports')
-  const traderBaseAccount = accounts.get(a.traderBase), createsHolding = traderBaseAccount === null
-  refuseUnless(!createsHolding || buy, 'This wallet holds none of this coin.')
-  const traderBase = createsHolding ? 0n : readHolding(accounts, a.traderBase, T, r.mint, r.trader)
+  // A first buy creates the trader's coin holding in the same transaction. create_holding is idempotent, so a holding
+  // that appears before the buy lands makes it a no-op: the trade then pays no rent, and never more than reviewed.
+  const traderBaseAccount = accounts.get(a.traderBase), holdingExists = traderBaseAccount !== null
+  check(!holdingCreation || buy, 'Only a buy creates a holding')
+  const createsHolding = !!holdingCreation || !holdingExists
+  refuseUnless(holdingExists || buy, 'This wallet holds none of this coin.')
+  const traderBase = holdingExists ? readHolding(accounts, a.traderBase, T, r.mint, r.trader) : 0n
   const amount = BigInt(r.amountIn), maxU64 = (1n << 64n) - 1n, maxU128 = (1n << 128n) - 1n
   refuseUnless(buy || amount <= traderBase, 'You’re selling more than this wallet holds.')
   const p = { baseReserve: n(pool.base_reserve), quoteReserve: n(pool.quote_reserve), virtualBase: n(pool.virtual_base), virtualQuote: n(pool.virtual_quote), protocolFeesQuote: n(pool.protocol_fees_quote) }
@@ -247,7 +254,11 @@ export function compileNativeSwapReview(input) {
     && l.nowMs - bh.observedAtMs <= l.maxAgeMs && bh.currentBlockHeight <= bh.lastValidBlockHeight && bh.lastValidBlockHeight - bh.currentBlockHeight <= 150
     && bh.observedSlot >= slot && bh.observedSlot - slot <= l.maxSlotLag && bh.observedSlot <= l.validUntilSlot && l.validUntilSlot - slot <= 150
     && l.reviewExpiresAtMs > l.nowMs && l.reviewExpiresAtMs - l.nowMs <= l.maxAgeMs, 'Review blockhash or offchain lifetime differs')
-  const holdingRent = createsHolding ? rent(HOLDING_LEN) : 0n, fee = BigInt(bh.networkFeeLamports), debit = (buy ? amount : 0n) + holdingRent
+  // holdingRent: what the review states (and the most the payer can lose to it); rentNow: what creating it costs today.
+  const rentNow = holdingExists ? 0n : rent(HOLDING_LEN)
+  const holdingRent = !createsHolding ? 0n : holdingCreation ? BigInt(holdingCreation.maxRentLamports) : rentNow
+  refuseUnless(rentNow <= holdingRent, 'Opening your coin account now costs more than this review said. Start the trade again.')
+  const fee = BigInt(bh.networkFeeLamports), debit = (buy ? amount : 0n) + holdingRent
   // The wallet stays rent-exempt: what it pays leaves at least an empty account's minimum, and a sale lands in a funded account.
   refuseUnless(walletLamports >= fee + debit + rent(0), 'You need a little more SOL for this trade, its network fee and your wallet’s minimum balance.')
   check(fee + debit <= BigInt(l.maxTotalDebitLamports), 'Payer debit exceeds its reviewed bound')
@@ -280,7 +291,8 @@ export function compileNativeSwapReview(input) {
   const canonical = instructions.map(ix => ({ program: str(ix.programId), dataHex: ix.data.toString('hex'), accounts: ix.keys.map(m => review.accounts.find(x => x.address === str(m.pubkey))) }))
   check(isDeepStrictEqual(inspected.instructions, canonical), 'Effective swap envelope metas differ')
   // Exact lamport movement of every account the trade pays or is paid by; nothing else may change.
-  const lamportDeltas = { [r.trader]: buy ? -(fee + debit) : q.delivered - fee, [a.launch]: creator, [a.pool]: buy ? amount - creator : -(q.delivered + creator), ...(createsHolding ? { [a.traderBase]: holdingRent } : {}) }
+  const lamportDeltas = { [r.trader]: buy ? -(fee + amount + rentNow) : q.delivered - fee, [a.launch]: creator, [a.pool]: buy ? amount - creator : -(q.delivered + creator),
+    ...(createsHolding ? { [a.traderBase]: rentNow } : {}) }
   return freeze({ schema: 'repoing/native-swap-review/1', status: 'deterministic-review-not-authorization', provenance, request: r, releaseProfileSha256: envelope.expectedSha256,
     sourceCommit: profile.sourceCommit, addresses: a, review, instructions: inspected.instructions, graduated, graduates: r.graduate, createsHolding,
     quote: { delivered: String(q.delivered), minAmountOut: r.minAmountOut, capRaw: String(cap), capLifted: graduated, priceImpactBps: String(q.priceImpactBps), lpFee: '0',

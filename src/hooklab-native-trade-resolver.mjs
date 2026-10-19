@@ -70,12 +70,15 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
    blockhashValid:true,observedSlot:Math.max(...confirmations.map(x=>x.slot)),networkFeeLamports:String(BigInt(bound.config.lamportsPerSignature)+priority),lamportsPerSignature:bound.config.lamportsPerSignature}
   const lookup=bound.config.lookupTable?map.get(bound.config.lookupTable.address):null
   if(bound.config.lookupTable)check(lookup&&!lookup.executable&&sha(Buffer.from(lookup.dataBase64,'base64'))===bound.config.lookupTable.sha256)
+  // Revalidating a first buy keeps its create_holding and reviewed rent: a holding that appeared since is a no-op.
+  const original=originalContext?compileNativeSwapReview(originalContext.compilationInput):null
   const compilationInput={profile:retained.profile,request,provenance:'server-collected-finalized-state-not-execution-authorization',
    observations:observations.map(o=>({...o,accounts:o.accounts.filter(x=>inventory.includes(x.address))})),recentBlockhash,
-   lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:bound.config.lookupTable.sha256}:null,limits:l}
+   lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:bound.config.lookupTable.sha256}:null,limits:l,
+   ...(original?.createsHolding?{holdingCreation:{maxRentLamports:original.quote.holdingRentLamports}}:{})}
   const plan=compileNativeSwapReview(compilationInput)
   if(expectedReview){const stable=r=>{const {observedSlot,observedAtMs,policySha256,...rest}=r;return rest};check(isDeepStrictEqual(stable(plan.review),stable(expectedReview)))
-   check(originalContext&&isDeepStrictEqual(plan.quote,compileNativeSwapReview(originalContext.compilationInput).quote))}
+   check(original&&isDeepStrictEqual(plan.quote,original.quote))}
   await simulateExactly(providers,plan,recentBlockhash)
   check(clock()<plan.review.reviewExpiresAtMs)
   return {status:'operator-pins-and-state-verified',owner,stage,profileSha256:bound.config.profileSha256,messageSha256:plan.review.messageSha256,

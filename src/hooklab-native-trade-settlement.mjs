@@ -140,7 +140,11 @@ function verifyNativeTradeEvents({ci,plan,tx,fee}){
  const fees=at(swapAt,P.swap,'InclusiveCreatorFeeAccrued'),swaps=at(swapAt,P.swap,'Swapped'),natives=at(swapAt,P.swap,'SwappedNative'),transfers=at(swapAt,P.token,'Transferred')
  check(fees.length===1&&swaps.length===1&&natives.length===1&&transfers.length===1)
  const [f]=fees,[s]=swaps,[nat]=natives,[e]=transfers
- if(createAt>=0)check(events.filter(x=>x.index===createAt).every(x=>x.program===P.token&&x.name==='HoldingCreated'&&x.data.holding.toBase58()===a.traderBase))
+ // create_holding is idempotent: HoldingCreated means it created the trader's holding (and took its rent), none means the
+ // holding was already a token-program holding when the buy landed (the swap's transfer into it proves it) and cost nothing.
+ const creations=events.filter(x=>x.index===createAt)
+ check(creations.length<=1&&creations.every(x=>x.program===P.token&&x.name==='HoldingCreated'&&x.data.holding.toBase58()===a.traderBase
+  &&x.data.owner.toBase58()===r.trader&&x.data.mint.toBase58()===r.mint&&x.data.payer.toBase58()===r.trader))
  if(plan.graduates){
   const graduations=at(graduateAt,P.launch,'Graduated'),finals=at(graduateAt,P.swap,'CurveFinalized')
   check(graduations.length===1&&finals.length===1&&graduations[0].launch.toBase58()===a.launch&&graduations[0].mint.toBase58()===r.mint
@@ -178,7 +182,9 @@ function verifyNativeTradeEvents({ci,plan,tx,fee}){
  // between, the trade still happened, so it settles, but for a person to look at (review-required).
  const reviewed=coders.swap.accounts.decode('Pool',Buffer.from(ci.observations[0].accounts.find(x=>x.address===a.pool).account.dataBase64,'base64'))
  const curveAsReviewed=n(s.virtual_base)===n(reviewed.virtual_base)&&n(s.virtual_quote)===n(reviewed.virtual_quote)
- const rent=BigInt(q.holdingRentLamports)
+ // The rent a created holding took is what its lamports gained; it is never more than the review stated.
+ const holdingIndex=tx.keys.indexOf(a.traderBase),rent=creations.length?BigInt(tx.post[holdingIndex])-BigInt(tx.pre[holdingIndex]):0n
+ check(rent>=0n&&rent<=BigInt(q.holdingRentLamports)&&(!plan.createsHolding||holdingIndex>=0))
  const lamportDeltas={[r.trader]:buy?-(fee+amount+rent):delivered-fee,[a.launch]:creator,[a.pool]:buy?amount-creator:-(delivered+creator),...(plan.createsHolding?{[a.traderBase]:rent}:{})}
  return {curveAsReviewed,lamportDeltas:Object.fromEntries(Object.entries(lamportDeltas).map(([k,v])=>[k,String(v)])),
   quote:{...q,delivered:String(delivered),grossCreatorFee:String(gross),protocolFee:String(platform),netCreatorFee:String(creator),priceImpactBps:String(actual.priceImpactBps),
