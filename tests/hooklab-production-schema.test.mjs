@@ -14,7 +14,7 @@ test('the reviewed bootstrap is unchanged', () => {
 })
 
 test('coin-profiles is a separate migration for one new table', () => {
-  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades'])
+  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades', 'native-stages'])
   const migration = migrationSchema('coin-profiles')
   assert.deepEqual(migration.tables, ['hook_lab_coin_profiles'])
   assert.deepEqual(migration.requires, ['hook_lab_launch_requests'])
@@ -39,6 +39,15 @@ test('wallet-funding only widens the signing stage list, idempotently, and shows
   assert.match(migration.sql, /'preparation','launch','inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw'/)
   assert.doesNotMatch(migration.sql, /drop table|delete|update /i)
   assert.match(run('migration-check', 'wallet-funding').stdout, /stage_check/)
+})
+
+test('native-stages only widens the signing stage list with native buy, sell and creator claim, keeping every earlier stage', () => {
+  const migration = migrationSchema('native-stages')
+  assert.deepEqual(migration.tables, []); assert.deepEqual(migration.requires, ['hook_lab_native_signing_operations'])
+  assert.match(migration.sql, /drop constraint if exists hook_lab_native_signing_operations_stage_check/)
+  assert.match(migration.sql, /'preparation','launch','inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw','native-buy','native-sell','native-claim'/)
+  assert.doesNotMatch(migration.sql, /drop table|delete|update /i)
+  assert.match(run('migration-check', 'native-stages').stdout, /stage_check/)
 })
 
 test('launch-pricing adds one insert-only price table per launch request', () => {
