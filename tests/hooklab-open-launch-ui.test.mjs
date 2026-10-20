@@ -32,6 +32,8 @@ test('custom hook configuration and review never advertise a signing-ready gate 
   const custom = { ...coin, hookKind: 'selected', capBps: 0, selectedHook: { program: 'So11111111111111111111111111111111111111112', flags: 129 } }
   const fields = html(h(HookOpenLaunch, { genesisHash, initial: { availability, coin: custom } }), { wallet: true })
   for (const pattern of [/Immutable hook program/, /Known token callback flags/, /value="129"/, /Inclusive fee policy \(model 2\)/, /registry must be prepared for the reserved mint/, /hook’s own interface/]) assert.match(fields, pattern)
+  assert.match(text(fields), /signing requires verified release approval/i)
+  assert.doesNotMatch(text(fields), /Production launches remain max-wallet gate only|Custom hook \(signing unavailable\)/)
   assert.doesNotMatch(fields, /aria-label="Max wallet block"|Max 0% per wallet/)
   const review = html(h(OpenLaunchReview, { coin: custom, openCreation, onSign() {} }))
   for (const pattern of [/Check hook availability/, /Nothing will be signed/, /No max-wallet gate/, /Token fees require exact-message simulation/, /Flags: 129/]) assert.match(review, pattern)

@@ -127,7 +127,7 @@ export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHoo
       <label className="field-label" htmlFor="hook-kind">Hook configuration</label>
       <select id="hook-kind" className="field-input" value={selected ? 'selected' : 'max-wallet'} disabled={disabled}
         onChange={event => set(event.target.value === 'selected' ? { hookKind: 'selected', selectedHook: { program: '', flags: '' }, capBps: 0 } : { hookKind: 'max-wallet', selectedHook: undefined, capBps: caps[0] })}>
-        <option value="max-wallet">Max-wallet gate</option><option value="selected">Custom hook (signing unavailable)</option>
+        <option value="max-wallet">Max-wallet gate</option><option value="selected">Custom hook (release-gated)</option>
       </select>
       {selected && <article className="hooks-block" aria-label="Custom hook configuration">
         <label className="field-label" htmlFor="hook-program">Immutable hook program</label>

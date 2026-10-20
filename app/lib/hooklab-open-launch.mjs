@@ -4,7 +4,7 @@ import { DEFAULT_CREATOR_FEE_BPS, DEFAULT_WALLET_CAP_BPS } from '../../src/hookl
 import { formatSol, formatUsd, launchValues } from '../../src/hooklab-launch-pricing.mjs'
 import { launchHookInput } from './hooklab-native-launch-form.mjs'
 
-export const SELECTED_HOOK_NOTE = 'Custom hook signing is unavailable. Production launches remain max-wallet gate only. The selected hook’s registry must be prepared for the reserved mint through that hook’s own interface before its lifecycle can be reviewed. Program and flags are immutable after review. Token fees require exact-message simulation; no deterministic token-fee quote is available.'
+export const SELECTED_HOOK_NOTE = 'Custom hook signing requires verified release approval. The selected hook’s registry must be prepared for the reserved mint through that hook’s own interface before its lifecycle can be reviewed. Program and flags are immutable after review. Token fees require exact-message simulation; no deterministic token-fee quote is available.'
 
 // Recovery must retain the exact hook identity, not reinterpret cap 0 as a gate default.
 export function sameLaunchHook(left, right) {
