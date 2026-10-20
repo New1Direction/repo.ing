@@ -14,7 +14,7 @@ test('the reviewed bootstrap is unchanged', () => {
 })
 
 test('coin-profiles is a separate migration for one new table', () => {
-  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades', 'native-stages', 'open-launches'])
+  assert.deepEqual(Object.keys(MIGRATIONS), ['coin-profiles', 'wallet-funding', 'launch-pricing', 'coin-trades', 'native-stages', 'open-launches', 'selected-hook-requests', 'selected-hook-execution'])
   const open = migrationSchema('open-launches')
   assert.deepEqual([open.tables, open.requires], [['hook_lab_coin_moderation'], ['hook_lab_launch_requests', 'hook_lab_launch_request_prices']])
   assert.match(open.sql, /where status in \('invited','launching'\) and source='owner-invite'/)
@@ -23,6 +23,20 @@ test('coin-profiles is a separate migration for one new table', () => {
   assert.deepEqual(migration.requires, ['hook_lab_launch_requests'])
   assert.match(migration.sha256, /^[0-9a-f]{64}$/)
   assert.throws(() => migrationSchema('nope'), /Unknown migration/)
+})
+
+test('selected request recording and execution are separate exact-hash migration reviews',()=>{
+  for(const name of ['selected-hook-requests','selected-hook-execution']){
+    const migration=migrationSchema(name)
+    assert.deepEqual(migration.requires,['hook_lab_launch_requests']);assert.deepEqual(migration.tables,[])
+    assert.equal(run('migrate',name,'--sha256','0'.repeat(64)).status,2)
+    const apply=run('migrate',name,'--sha256',migration.sha256)
+    assert.equal(apply.status,0);assert.match(apply.stdout,/const mode="apply"/)
+    assert.match(run('migration-check',name).stdout,/default_transaction_read_only=on/)
+    assert.doesNotMatch(migration.sql,/delete from|update hook_lab|drop table/i)
+  }
+  assert.match(migrationSchema('selected-hook-requests').sql,/selected_review_only/)
+  assert.match(migrationSchema('selected-hook-execution').sql,/status in \('launching','launched'\) and custody_operation_id is not null/)
 })
 
 test('migrate prints a program only for the reviewed sha256; check is read-only', () => {
