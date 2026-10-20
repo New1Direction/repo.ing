@@ -175,6 +175,25 @@ test('manual builder collection preserves owner remainder, separates ledgers, re
       await assert.rejects(service.review({ repoId, receiver: custody.publicKey.toBase58(), amount }), /positive integer|exceeds/)
     }
   })
+  await t.test('an operator payout recorded under another purpose is not a DBC collection; a DBC row the pool never paid still refuses', async () => {
+    const remaining = (await reconcile(repoId)).expectedRemaining
+    const settledRow = (purpose, signature, amount) => pool.query(`insert into builder_fee_collections(id,github_repo_id,mint,pool,wallet,amount,status,
+      terms,terms_hash,expires_at,signature,signed_transaction,last_valid_block_height,receipt,settled_at)
+      values(gen_random_uuid(),$1,$2,$3,$4,$5,'settled',$6,$7,now(),$8,'fixture',1,'{}',now())`,
+      [repoId, initial.terms.mint, initial.terms.pool, custody.publicKey.toBase58(), amount, JSON.stringify({ purpose }), '0'.repeat(64), signature])
+    try {
+      // A DAMM position-fee payout in the same ledger took no DBC fees, so the DBC balance still matches the pool.
+      await settledRow('operator-damm-payout-v1', 'fixture-damm-payout', '10000000000')
+      const exact = await service.review({ repoId, receiver: custody.publicKey.toBase58(), amount: String(remaining) })
+      assert.equal(exact.terms.unclaimed, String(remaining))
+      assert.equal(exact.terms.platformCollected, String(BigInt(initial.terms.amount) + BigInt(second.terms.amount)))
+      // A DBC collection the pool never paid breaks the on-chain equality, so the check still refuses.
+      await settledRow('builder-fee-collection-v1', 'fixture-dbc-unpaid', '1')
+      await assert.rejects(service.review({ repoId, receiver: custody.publicKey.toBase58() }), /indexing or reconciliation/)
+    } finally {
+      await pool.query("delete from builder_fee_collections where signature in ('fixture-damm-payout','fixture-dbc-unpaid')")
+    }
+  })
   await t.test('fresh ordinary owner claim receives the remaining entitlement without claiming platform withdrawals', async () => {
     const remaining = (await reconcile(repoId)).expectedRemaining
     const payout = await ownerClaim.claim(ownerRequest)

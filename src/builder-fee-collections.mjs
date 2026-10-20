@@ -60,14 +60,17 @@ export function createBuilderFeeCollections({ pool, connection, verification = n
     if (account && (account.executable || !account.owner.equals(SystemProgram.programId))) throw Error('Receiver must be a normal SOL wallet')
     // Graduation leaves DBC fees claimable. DAMM position fees are a separate,
     // all-or-nothing claim and must never fund this exact DBC withdrawal.
+    // Only this service's own DBC collections reduce the DBC balance: an operator payout recorded in the same ledger
+    // under another purpose (for example a DAMM position-fee payout) never took DBC fees. The on-chain equality below
+    // still has to hold, so a payout that did take DBC fees keeps the review refused.
     const { rows: [totals] } = await db.query(`select
       coalesce((select sum(amount_base_units) from fee_events where github_repo_id=$1),0)::text as earned,
       coalesce((select sum(amount_base_units - damm_amount_base_units) from repo_claims where github_repo_id=$1 and status='settled'),0)::text as "ownerPaid",
-      coalesce((select sum(amount) from builder_fee_collections where github_repo_id=$1 and status='settled'),0)::text as "platformCollected",
+      coalesce((select sum(amount) from builder_fee_collections where github_repo_id=$1 and status='settled' and (terms::jsonb->>'purpose')=$2),0)::text as "platformCollected",
       (select count(*) from repo_claims where github_repo_id=$1 and status='pending')::int +
       (select count(*) from platform_fee_claims where github_repo_id=$1 and status='pending')::int +
       (select count(*) from discovery_claims where github_repo_id=$1 and status='pending')::int +
-      (select count(*) from builder_fee_collections where github_repo_id=$1 and status='pending')::int as pending`, [String(repoId)])
+      (select count(*) from builder_fee_collections where github_repo_id=$1 and status='pending')::int as pending`, [String(repoId), PURPOSE])
     if (totals.pending) throw Error('A conflicting payout is pending; resolve it before collection')
     const unclaimed = BigInt(totals.earned) - BigInt(totals.ownerPaid) - BigInt(totals.platformCollected)
     if (unclaimed < 0n || unclaimed !== BigInt(s.creatorQuoteFee.toString())) throw Error('Builder fees need indexing or reconciliation before collection')
