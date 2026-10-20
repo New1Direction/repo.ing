@@ -1,7 +1,9 @@
 // Pure selected-hook ABI adapter. Supplied account bytes are NOT authenticated chain evidence.
 // This does not produce a signing review, quote, or execution authorization.
 import { createHash } from 'node:crypto'
-import { PublicKey } from '@solana/web3.js'
+import { isDeepStrictEqual } from 'node:util'
+import { BorshCoder } from '@anchor-lang/core'
+import { PublicKey, TransactionInstruction } from '@solana/web3.js'
 import { z } from 'zod'
 import { hookAddress } from './hooklab-execution-contract.mjs'
 import { inclusivePolicyMeta } from './hooklab-inclusive-fee-abi.mjs'
@@ -22,7 +24,7 @@ export const selectedHookSchema = z.object({ program: hookAddress.refine(v => v 
  * Account indices refer to the token callback's accounts, NOT launch/swap outer metas.
  * Missing owner/context seeds fail rather than substitute upstream identities.
  */
-export function resolveSelectedHookRegistry({ hook, mint, registry, callbackAccounts = [], sourceOwner, destinationOwner }) {
+export function resolveSelectedHookRegistry({ hook, mint, registry, callbackAccounts = [], sourceOwner, destinationOwner, mintStable = false }) {
   kb(hook); kb(mint)
   check(registry?.address === pda(hook, Buffer.from('bordrless-hook-accounts'), kb(mint))
     && registry.owner === hook && registry.executable === false, 'Mint registry identity or owner differs')
@@ -45,9 +47,15 @@ export function resolveSelectedHookRegistry({ hook, mint, registry, callbackAcco
       for (let j = 0; j < seedCount; j++) {
         const tag = byte(); let seed
         if (tag === 0) { const length = count(); check(length <= 32, 'PDA seed too long'); seed = take(length) }
-        else if (tag === 1) { const index = byte(); check(index < callbackAccounts.length, 'Missing callback account'); seed = kb(callbackAccounts[index]) }
-        else if (tag === 2) seed = kb(sourceOwner)
-        else { check(tag === 3, 'Unknown registry seed'); seed = kb(destinationOwner) }
+        else if (tag === 1) {
+          const index = byte()
+          check(callbackAccounts.length === 5, 'Expected the five token callback prefix accounts')
+          check(!mintStable || index < 2 || index >= 5, 'Launch registry must be mint-stable')
+          check(index < callbackAccounts.length + extras.length, 'Missing callback account or forward extra reference')
+          seed = kb(index < callbackAccounts.length ? callbackAccounts[index] : extras[index - callbackAccounts.length].address)
+        }
+        else if (tag === 2) { check(!mintStable, 'Launch registry must be mint-stable'); seed = kb(sourceOwner) }
+        else { check(tag === 3, 'Unknown registry seed'); check(!mintStable, 'Launch registry must be mint-stable'); seed = kb(destinationOwner) }
         seeds.push(seed)
       }
       address = pda(program, ...seeds)
@@ -74,7 +82,7 @@ export function selectedHookAccountsHash({ hook, registry, extras, feeModel = 2 
 /** Resolve launch and transfer slices from immutable program evidence and registry bytes.
  * Hook ELF digest must be an independent operator pin, never inferred from these bytes.
  */
-export function selectedHookAccountPlan({ programs, selectedHook, mint, registry, programAccount, programData, elfSha256, callbackAccounts, sourceOwner, destinationOwner }) {
+export function selectedHookAccountPlan({ programs, selectedHook, mint, registry, programAccount, programData, elfSha256, callbackAccounts, sourceOwner, destinationOwner, mintStable = false }) {
   const { program: hook, flags } = selectedHookSchema.parse(selectedHook)
   const identities = ['token', 'swap', 'launch', 'gate'].map(role => { kb(programs[role]); return programs[role] })
   check(new Set(identities).size === identities.length && !identities.includes(zero)
@@ -85,8 +93,9 @@ export function selectedHookAccountPlan({ programs, selectedHook, mint, registry
   check(programData?.address === dataAddress && programData.owner === loader && programData.executable === false
     && db.length >= 49 && db.readUInt32LE() === 3 && db[12] === 0 && db.subarray(45, 49).equals(Buffer.from([127, 69, 76, 70]))
     && /^[a-f0-9]{64}$/.test(elfSha256) && createHash('sha256').update(db.subarray(45)).digest('hex') === elfSha256, 'Hook must be immutable and ELF-pinned')
-  const extras = resolveSelectedHookRegistry({ hook, mint, registry, callbackAccounts, sourceOwner, destinationOwner })
   const tokenSigner = pda(programs.token, Buffer.from('hook-authority'), kb(hook))
+  const prefix = mintStable ? [tokenSigner, mint, mint, mint, mint] : callbackAccounts
+  const extras = resolveSelectedHookRegistry({ hook, mint, registry, callbackAccounts: prefix, sourceOwner, destinationOwner, mintStable })
   return { hook, flags, registry: registry.address, extras, tokenSigner, programData: dataAddress,
     launchRemainingPrefix: [meta(pda(programs.launch, Buffer.from('governance'))), meta(dataAddress), meta(hook), meta(tokenSigner), meta(registry.address), ...extras],
     transferSlice: [meta(hook), meta(tokenSigner), ...extras],
@@ -102,7 +111,44 @@ export function refuseUnsupportedSelectedHook() {
 // Complete nongate remaining-account order. Derive the pool and policy from the independently
 // pinned swap/launch/token identities; do not accept an arbitrary fee-policy address.
 export function selectedHookOpenLaunchAccounts(input) {
-  const plan = selectedHookAccountPlan(input), { programs, mint, quoteMint } = input
+  const plan = selectedHookAccountPlan({ ...input, mintStable: true }), { programs, mint, quoteMint } = input
+  check(plan.extras.length <= 4, 'Launch supports at most four extras')
   const pool = pda(programs.swap, Buffer.from('pool'), kb(mint), kb(quoteMint), Buffer.alloc(2), kb(programs.launch))
   return { ...plan, pool, remaining: [...plan.launchRemainingPrefix, inclusivePolicyMeta(programs.swap, pool, 'create')] }
+}
+
+/** Candidate ABI only, with caller-supplied reviewed IDL and guard. No custody, RPC, signing,
+ * deterministic arbitrary-hook quote, or permission to use the production signing lifecycle.
+ * The registry must already be prepared by the selected hook's own initialization interface.
+ */
+export function selectedHookOpenLaunchInstruction(input, launchIdl) {
+  const { programs: { launch: L, swap: S, token: T, gate: G }, mint, quoteMint, creator, treasury, selectedConfig, args, guard, expectedControlHash } = input
+  const plan = selectedHookOpenLaunchAccounts(input)
+  check(launchIdl?.address === L, 'Launch IDL identity differs')
+  check(creator !== treasury && guard?.version === 2, 'Invalid launch payer or guard')
+  check(args.rules && Object.values(args.rules).every(v => v === 0), 'Selected hook cannot combine Kit rules')
+  const control = Buffer.from(expectedControlHash)
+  check(control.length === 32, 'Expected 32-byte control commitment')
+  const derive = (program, seed, ...keys) => pda(program, Buffer.from(seed), ...keys)
+  const launch = derive(L, 'launch', kb(mint)), pool = plan.pool, lp = derive(S, 'lp', kb(pool))
+  const holding = (mint, owner) => derive(T, 'holding', kb(mint), kb(owner))
+  const m = (address, writable = false, signer = false) => ({ pubkey: new PublicKey(address), isWritable: writable, isSigner: signer })
+  const keys = [m(creator, true, true), m(derive(L, 'config'), true), m(treasury, true), m(mint, true, true), m(launch, true),
+    m(holding(mint, launch), true), m(holding(quoteMint, launch), true), m(quoteMint), m(derive(L, 'bordrless-hook-accounts', kb(pool)), true),
+    m(derive(S, 'config'), true), m(pool, true), m(lp, true), m(holding(mint, pool), true), m(holding(quoteMint, pool), true), m(holding(lp, launch), true),
+    m(derive(L, 'hook-authority')), m(derive(S, 'hook-authority', kb(L))), m(derive(S, '__event_authority')), m(S), m(T),
+    m(derive(T, 'hook-authority', kb(G))), m(derive(T, '__event_authority')), m(zero), ...Array.from({ length: 6 }, () => m(L)),
+    m(selectedConfig), m(derive(L, '__event_authority')), m(L)]
+  const abi = launchIdl.instructions.find(i => i.name === 'create_launch_open_v1')
+  const names = ['creator', 'config', 'treasury', 'mint', 'launch', 'launch_reserve', 'launch_quote', 'quote_mint', 'registry', 'dex_config', 'pool', 'lp_mint', 'base_vault', 'quote_vault', 'launch_lp', 'hook_signer', 'dex_hook_signer', 'dex_event_authority', 'swap_program', 'token_program', 'token_hook_signer', 'token_event_authority', 'system_program', 'kit_program', 'kit_config', 'kit_registry', 'reward_vault', 'kit_caller', 'kit_event_authority', 'launch_config', 'event_authority', 'program']
+  check(abi && isDeepStrictEqual(abi.accounts.map(a => a.name), names)
+    && Buffer.from(abi.discriminator).equals(createHash('sha256').update('global:create_launch_open_v1').digest().subarray(0, 8)), 'Open launch ABI differs')
+  for (let i = 0; i < keys.length; i++) {
+    const declared = abi.accounts[i], actual = keys[i], absent = i >= 23 && i <= 28
+    check(!!declared.signer === actual.isSigner && (!!declared.writable && !absent) === actual.isWritable
+      && (!declared.address || declared.address === actual.pubkey.toBase58()), 'Launch account privileges or fixed address differ')
+  }
+  return new TransactionInstruction({ programId: new PublicKey(L), keys: [...keys, ...plan.remaining.map(a => m(a.address, a.writable))],
+    data: new BorshCoder(launchIdl).instruction.encode('create_launch_open_v1', { args, guard, fee_model: 2, quote_form: 1,
+      expected_control_hash: [...control], expected_hook_accounts_hash: [...Buffer.from(plan.commitment, 'hex')] }) })
 }

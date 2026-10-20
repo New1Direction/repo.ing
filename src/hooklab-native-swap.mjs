@@ -107,7 +107,10 @@ export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn,
     && abi.accounts.every((x, i) => !!x.signer === fixed[i].isSigner && !!x.writable === fixed[i].isWritable && (!x.address || x.address === str(fixed[i].pubkey))), 'swap_v2 ABI differs')
   // Low-level ABI support only: the signing compiler below still refuses arbitrary-hook quotes.
   // Resolve from registry bytes, never accept caller-invented remaining metas or use SDK default IDs.
-  const selected = selectedHookEvidence && selectedHookAccountPlan({ ...selectedHookEvidence, programs, mint })
+  const selected = selectedHookEvidence && selectedHookAccountPlan({ ...selectedHookEvidence, programs, mint, mintStable: false,
+    callbackAccounts: [pda(T, 'hook-authority', kb(selectedHookEvidence.selectedHook.program)), mint,
+      str(fixed[buy ? 5 : 6].pubkey), str(fixed[buy ? 6 : 5].pubkey), buy ? a.pool : trader],
+    sourceOwner: buy ? a.pool : trader, destinationOwner: buy ? trader : a.pool })
   const baseSlice = selected ? selected.transferSlice.map(x => meta(x.address, x.writable))
     : [meta(G), meta(a.gateHookSigner), meta(a.policy), meta(a.launch)]
   const remaining = [...baseSlice, meta(a.launch, true), meta(a.launchQuote, true), meta(a.holderVault, true), meta(a.kitConfig), meta(a.inclusiveFeePolicy)]
