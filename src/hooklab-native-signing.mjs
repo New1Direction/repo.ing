@@ -42,8 +42,10 @@ const summary=row=>Object.freeze({id:row.id,owner:row.owner_wallet,custodyOperat
  messageSha256:row.message_sha256,status:row.status,revision:String(row.revision),signature:row.signature,review:row.review,request:row.resolved_request,configurationSha256:row.configuration_sha256,
  signedBy:transactionBytes(row.review,row.partial_transaction).signatures.flatMap((s,i)=>s.some(x=>x!==0)?[row.review.requiredSigners[i]]:[]),
  walletRequestIssued:row.wallet_requested_at!=null,settlement:publicSettlement(row),executionAuthorized:false,canSign:false,canSubmit:false})
-export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,closedStages=[],stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'}}={}){
- const operations=Object.freeze({...stageOperations}),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation'],launch:['max-wallet-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
+// retiredOperations: {stage: [operation]} reviewed before a switch (owner-approved launches before open launches): their
+// rows stay readable so they settle and expire; no new review uses them.
+export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,serverSigner=null,sender=null,custodyAdapter=null,expiryObserver=null,closedStages=[],stageOperations={preparation:'max-wallet-preparation',launch:'max-wallet-launch'},retiredOperations={}}={}){
+ const operations=Object.freeze({...stageOperations}),allowed={preparation:['max-wallet-preparation','inclusive-max-wallet-preparation'],launch:['max-wallet-launch','open-launch'],'inclusive-buy':['inclusive-max-wallet-buy'],'inclusive-sell':['inclusive-max-wallet-sell'],
   'wallet-fund':['hooklab-wallet-fund'],'wallet-withdraw':['hooklab-wallet-withdraw'],
   // A native-SOL launch's creator claiming its fees (needs the native-stages migration's stage list).
   'native-claim':['hooklab-native-claim'],
@@ -51,6 +53,8 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
   'native-buy':['native-max-wallet-buy'],'native-sell':['native-max-wallet-sell'],
   ...(localAcceptanceNetwork()?{'local-prepare-holding':['local-prepare-holding'],'local-inclusive-collection':['local-inclusive-collection']}:{})}
  check(Object.keys(operations).length>0&&Object.entries(operations).every(([stage,operation])=>allowed[stage]?.includes(operation)))
+ const retired=Object.freeze(Object.fromEntries(Object.entries(retiredOperations).map(([stage,list])=>[stage,[...list]])))
+ check(Object.entries(retired).every(([stage,list])=>Object.hasOwn(operations,stage)&&list.every(operation=>allowed[stage]?.includes(operation)&&operation!==operations[stage])))
  // closedStages: registered so their operations stay readable, settle and expire, but no new review, refresh, wallet
  // request, co-signature or send starts for them (native trades while native trading is off).
  const closed=new Set(closedStages);check([...closed].every(stage=>Object.hasOwn(operations,stage)))
@@ -64,7 +68,7 @@ export function nativeSigningLifecycle(pool,{enabled=false,origin,resolver=null,
    const lockedCustody=custodyAdapter?await custodyAdapter.lock(db,row?.custody_operation_id??custodyOperationId):null
    const principal=await lockWalletPrincipal(db,sessionToken,origin)
    if(lockedCustody)check(lockedCustody.owner===principal.wallet)
-   if(row){check(row.owner_wallet===principal.wallet&&operations[row.stage]===row.review.operation);inspectHookLabMessage(row.review);transactionBytes(row.review,row.partial_transaction)}
+   if(row){check(row.owner_wallet===principal.wallet&&(operations[row.stage]===row.review.operation||(retired[row.stage]??[]).includes(row.review.operation)));inspectHookLabMessage(row.review);transactionBytes(row.review,row.partial_transaction)}
    const result=await work(db,row,principal.wallet)
    // Session is share-locked through commit; expiry still blocks new work.
    if(!retainClaimedSignature)await lockWalletPrincipal(db,sessionToken,origin)

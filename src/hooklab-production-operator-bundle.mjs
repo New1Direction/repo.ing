@@ -13,9 +13,11 @@ import { isDeepStrictEqual } from 'node:util'
 import { AddressLookupTableAccount,PublicKey } from '@solana/web3.js'
 import { BorshCoder } from '@anchor-lang/core'
 import { sharedTradeAddresses } from './hooklab-owner-launch-tables.mjs'
+import { tokenElfLengthOf } from './hooklab-stack.mjs'
+import { openLaunchTableAddresses } from './hooklab-max-wallet-launch.mjs'
 import { CREATOR_FEE_BPS_CHOICES,DEFAULT_CREATOR_FEE_BPS,WALLET_CAP_BPS_CHOICES,DEFAULT_WALLET_CAP_BPS,CREATOR_FEE_CEILING_BPS } from './hooklab-launch-menus.mjs'
 export const MAINNET_GENESIS='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
-const LOADER='BPFLoaderUpgradeab1e11111111111111111111111',TOKEN_ELF_LENGTH=326504
+const LOADER='BPFLoaderUpgradeab1e11111111111111111111111'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const pk=value=>new PublicKey(value)
 const pda=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>typeof s==='string'?Buffer.from(s):s),pk(program))[0].toBase58()
@@ -59,7 +61,11 @@ export async function readBoth(connections,addresses){
 
 // connections: [{provider,connection}] for two independent providers (e.g. Helius, PublicNode)
 // trustDomains: [{provider,trustDomain,origin}] reviewed by the operator, same order
-export async function collectProductionOperatorBundle({connections,trustDomains,lookupTable,reviewer,treasury,approvalReference,artifacts=productionArtifacts(),network=PRODUCTION_NETWORK}){
+// launchTable: the owner's shared launch table for open (self-serve) launches; required for the open-creation build, which
+// is the only one with them. It must be frozen and hold exactly the constant addresses every open launch shares.
+export async function collectProductionOperatorBundle({connections,trustDomains,lookupTable,launchTable=null,reviewer,treasury,approvalReference,artifacts=productionArtifacts(),network=PRODUCTION_NETWORK}){
+ const openBuild=artifacts.build==='open-36dd07e'||artifacts.open===true
+ need(openBuild===(launchTable!==null),openBuild?'the open-creation build needs the shared launch table (--launch-table)':'only the open-creation build takes a shared launch table')
  need(Array.isArray(connections)&&connections.length===2&&new Set(connections.map(c=>c.provider)).size===2,'two distinct providers required')
  const {genesisHash,local}=checkedNetwork(network,connections)
  // A local validator is one trust domain behind two labelled endpoints.
@@ -72,14 +78,16 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
   idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')])),elfLengths}
  const programRoles=['launch','swap','gate','token'],programData=programRoles.map(role=>pda(LOADER,pk(P[role]).toBuffer()))
  const accountRoles={'launch-config':pda(P.launch,'config'),'swap-config':pda(P.swap,'config'),'creation-control':pda(P.launch,'governance'),'swap-governance':pda(P.swap,'governance'),'quote-mint':base.quoteMint}
- const observed=await readBoth(connections,[...programData,...Object.values(accountRoles),lookupTable])
+ const observed=await readBoth(connections,[...programData,...Object.values(accountRoles),...(launchTable?[launchTable]:[]),lookupTable])
  const slot=Math.min(...await Promise.all(connections.map(c=>c.connection.getSlot('finalized'))))
  const programs=programRoles.map((role,i)=>{
-  const bytes=observed[i].data,length=role==='token'?TOKEN_ELF_LENGTH:elfLengths[role],expected=role==='token'?base.dependencyObservation.tokenElfSha256:base.elfSha256[role]
+  const bytes=observed[i].data,length=role==='token'?tokenElfLengthOf(base):elfLengths[role],expected=role==='token'?base.dependencyObservation.tokenElfSha256:base.elfSha256[role]
   need(observed[i].owner===LOADER&&bytes.readUInt32LE(0)===3&&bytes.length>=45+length,`${role} program data is not an upgradeable-loader program`)
   need(sha(bytes.subarray(45,45+length))===expected&&!bytes.subarray(45+length).some(b=>b!==0),`${role} deployed code differs from its reviewed pin`)
   const upgradeAuthority=bytes[12]?pk(bytes.subarray(13,45)).toBase58():null
   if(role==='gate')need(upgradeAuthority===null,'the gate is still upgradeable; finalize it first (separate irreversible approval)')
+  // Our own stack: every other program is upgradeable only by the stack's upgrade authority (or no longer upgradeable).
+  else if(base.stack)need(upgradeAuthority===null||upgradeAuthority===base.stack.upgradeAuthority,`${role} upgrade authority is not the stack's`)
   return {role,address:P[role],programData:programData[i],upgradeAuthority,deploySlot:Number(bytes.readBigUInt64LE(4)),programDataSha256:sha(bytes),elfLength:length,elfSha256:expected}
  })
  const accounts=Object.entries(accountRoles).map(([role,address],i)=>{
@@ -88,7 +96,14 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
    ?{binding:'config-counters-v1',approvedDataBase64:a.data.toString('base64'),idlSha256:sha(idls[role.split('-')[0]])}
    :role==='quote-mint'?quoteMintSupplyBinding(a.data):{})}
  })
- const table=observed.at(-1)
+ const table=observed.at(-1),launch=launchTable?observed.at(-2):null
+ if(launch){
+  // The shared launch table: frozen, active, exactly the constant addresses of an open launch under this profile and Config.
+  need(launch.owner==='AddressLookupTab1e1111111111111111111111111','launch table is not an address lookup table')
+  const state=AddressLookupTableAccount.deserialize(Uint8Array.from(launch.data)),envelope={json:reviewedJson,idls:profile.idls,elfLengths}
+  need(!state.authority&&state.deactivationSlot===0xffffffffffffffffn,'launch table is not frozen and active; run the launch-table stage to completion')
+  need(isDeepStrictEqual(state.addresses.map(a=>a.toBase58()),openLaunchTableAddresses(envelope,observed[programRoles.length].data)),'launch table addresses differ from the shared open-launch addresses')
+ }
  need(table.owner==='AddressLookupTab1e1111111111111111111111111','lookup table is not an address lookup table')
  const tableState=AddressLookupTableAccount.deserialize(Uint8Array.from(table.data))
  // The shared trade table must be frozen with exactly the addresses every trade shares, so the pin never drifts.
@@ -109,6 +124,6 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
   profileSha256:profile.expectedSha256,dossierSha256:sha(dossierJson),providerTrustDomains:trustDomains.map(({provider,trustDomain,origin})=>({provider,trustDomain,origin:`${new URL(origin).origin}/`})),
   economics:{creatorFeeBps:DEFAULT_CREATOR_FEE_BPS,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,protocolFeeBps:sc.protocol_fee_bps,
    launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()},
-  reviewer,treasury,lookupTable:{address:lookupTable,sha256:sha(table.data)},lamportsPerSignature:'5000'}
+  reviewer,treasury,lookupTable:{address:lookupTable,sha256:sha(table.data)},...(launch?{launchLookupTable:{address:launchTable,sha256:sha(launch.data)}}:{}),lamportsPerSignature:'5000'}
  return {schema:local?'repoing/local-operator-bundle/1':'repoing/production-operator-bundle/1',genesisHash,observedSlot:slot,profile,config,dossierJson}
 }

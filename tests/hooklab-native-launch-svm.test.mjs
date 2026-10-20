@@ -75,7 +75,7 @@ async function bank(t, { prepared = true } = {}) {
   const connections = state.profile.providers.map((provider, i) => ({ provider, connection: connection(i) }))
   const readers = [0, 1].map(i => ({ provider: i ? 'secondary' : 'primary', url: connections[i].connection.rpcEndpoint, connection: connections[i].connection }))
   const driver = to => ({ config: { decisions: { computeUnitPriceMicroLamports: { value: '0', approved: true } } }, readers, genesis: syntheticGenesis, network: 'local-test',
-    roles: { admin: roles.admin, payer: roles.guardian }, programs: PROGRAMS, quoteMint: QUOTE_MINT, envelope: { expectedSha256: state.profile.expectedSha256 }, journal: { dir }, options: { to } })
+    roles: { admin: roles.admin, payer: roles.guardian, treasury: roles.treasury }, programs: PROGRAMS, quoteMint: QUOTE_MINT, envelope: { expectedSha256: state.profile.expectedSha256 }, journal: { dir }, options: { to } })
   const lookup = new AddressLookupTableAccount({ key: pk(state.lookupTable.address), state: AddressLookupTableAccount.deserialize(Buffer.from(state.lookupTable.dataBase64, 'base64')) })
   return { svm, state, roles, send, sync, account, connections, driver, executed, lookup }
 }

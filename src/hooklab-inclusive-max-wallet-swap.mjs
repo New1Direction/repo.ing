@@ -15,6 +15,7 @@ import { readInclusiveFeePolicy } from './hooklab-inclusive-fee-abi.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { canaryGateMatches, canarySwapTransition } from './hooklab-canary-policy.mjs'
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
+import { kitOf, profileRolesDistinct } from './hooklab-stack.mjs'
 
 const check = (value, message) => { if (!value) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -66,11 +67,26 @@ function programEvidence(accounts, program, expected, length, slot, immutable) {
   check(elf.subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])) && sha(elf) === expected
     && db.subarray(45 + length).every(b => b === 0), 'Program ELF differs')
 }
-function governance(binding, role, program, configAddress, config, gov, genesis, canary) {
-  const s = gov.state, roles = Object.values(s.roles).map(str)
+// trading: a trade's view. The launch governance's creation gate only stops new launches (a guardian's creation pause
+// leaves trading open on chain), so only the trading gates must be open.
+// A trade reads the launch Config and launch governance only for their identity: no swap_v2 hook, graduate, creator claim
+// or native fee collection takes either as an account, so their pause, gates, revision, economics, treasury, menus and
+// reserved bytes are launch-side state that must never stop holders (src/hooklab-production-observer.mjs
+// LAUNCH_SIDE_ROLES). binding: the stack's own launch codec.
+function launchSideIdentity(binding, program, accounts, a, profile) {
+  const config = decoded(binding, 'Config', owned(accounts, a.launchConfig, program, 250)), gov = decoded(binding, 'Governance', owned(accounts, a.launchGovernance, program, 348))
+  check(config.version === 1 && config.bump === bump(program, 'config') && str(config.quote_mint) === profile.quoteMint
+    && gov.bump === bump(program, 'governance') && str(gov.state.program) === program && str(gov.state.config) === a.launchConfig
+    && Buffer.from(gov.state.genesis).equals(kb(profile.genesisHash)), 'Launch configuration or governance identity differs')
+  return { config, governance: gov }
+}
+// trading: a trade's view of the swap governance: its trading gate must be open; its creation gate only governs new
+// pools (launches), so a pool-creation pause never stops trades.
+function governance(binding, role, program, configAddress, config, gov, genesis, canary, { trading = false } = {}) {
+  const s = gov.state, roles = Object.values(s.roles).map(str), gatesOpen = trading ? !s.gates.trading : !s.gates.creation && !s.gates.trading
   check(str(s.program) === program && str(s.config) === configAddress && Buffer.from(s.genesis).equals(kb(genesis))
     && str(s.roles.admin) === str(config.admin) && str(s.roles.treasury) === str(config.treasury)
-    && (canary ? canaryGateMatches(role, config, s) : !s.gates.creation && !s.gates.trading) && s.pending_admin === null
+    && (canary ? canaryGateMatches(role, config, s) : gatesOpen) && s.pending_admin === null
     && new Set(roles).size === 4 && !roles.includes(zero), 'Governance identity, roles or gates differ')
   check(gov.bump === bump(program, 'governance'), 'Governance bump differs')
   const economics = hash(`hook-lab/${role}-governed-economics/1\0`, kb(program), binding.coder.types.encode('ConfigArgs', {
@@ -105,11 +121,10 @@ export function buildInclusiveMaxWalletSwapReview() {
   const error = Error('Production max-wallet swap adapter is unavailable; synthetic state cannot authorize trading')
   error.code = 'INCLUSIVE_MAX_WALLET_SWAP_PROOF_UNAVAILABLE'; throw error
 }
-const KIT = 'AZDzvrC6733F6orekbzyF5B6Vpd9DxnV9RGfRrDgzHhm'
 function deriveAddresses(profile, r) {
   const { launch: L, swap: S, gate: G, token: T } = profile.programs, mint = r.mint, quote = profile.quoteMint
   const launch = pda(L, 'launch', kb(mint)), pool = pda(S, 'pool', kb(mint), kb(quote), enc(0, 2), kb(L)), lpMint = pda(S, 'lp', kb(pool))
-  const holding = (mint, owner) => pda(T, 'holding', kb(mint), kb(owner)), kitConfig = pda(KIT, 'kit', kb(mint))
+  const holding = (mint, owner) => pda(T, 'holding', kb(mint), kb(owner)), kitConfig = pda(kitOf(profile), 'kit', kb(mint))
   return { launchConfig: pda(L, 'config'), swapConfig: pda(S, 'config'), launchGovernance: pda(L, 'governance'), swapGovernance: pda(S, 'governance'),
     inclusiveFeePolicy: pda(S, 'inclusive-fee-policy', kb(pool)), policy: pda(G, 'policy-v2', kb(mint)), registry: pda(G, 'bordrless-hook-accounts', kb(mint)), launch, pool, lpMint,
     launchReserve: holding(mint, launch), launchQuote: holding(quote, launch), launchLp: holding(lpMint, launch),
@@ -164,7 +179,7 @@ function readHolding(accounts, address, token, mint, owner) {
 }
 
 // The same account evidence rules, shared with the native-SOL compiler (src/hooklab-native-swap.mjs).
-export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, typed, readHolding, KIT, noRules })
+export const swapAccountEvidence = Object.freeze({ raw, owned, decoded, programEvidence, governance, launchSideIdentity, typed, readHolding, noRules })
 
 export function buildInclusiveMaxWalletSwapReviewForFixture(input) {
   check(input?.provenance === 'disposable-litesvm-synthetic-fixture-not-rpc-evidence', 'Fixture provenance required')
@@ -185,7 +200,7 @@ function compile(input, fixture, canary = false) {
   const { profile: envelope, request: r, provenance, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), { launch: L, swap: S, gate: G, token: T } = profile.programs
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero, KIT]).size === 8, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   const launch = binding(envelope, profile, 'launch'), swap = binding(envelope, profile, 'swap'), gate = binding(envelope, profile, 'gate')
   for (const name of ['before_swap_inclusive_v1', 'after_swap_inclusive_v1']) {
     const callback = launch.idl.instructions.find(ix => ix.name === name)
@@ -199,7 +214,7 @@ function compile(input, fixture, canary = false) {
   for (const o of obs) check(o.genesisHash === profile.genesisHash && l.nowMs >= o.observedAtMs && l.nowMs - o.observedAtMs <= l.maxAgeMs, 'Stale or wrong-chain swap observation')
   const accounts = new Map(obs[0].accounts.map(x => { check(!x.account || x.address === x.account.address, 'Account identity differs'); return [x.address, x.account] }))
   check(accounts.size === obs[0].accounts.length && isDeepStrictEqual([...accounts.keys()].sort(), inventory), 'Incomplete, duplicate or extra swap inventory')
-  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, r.mint, r.selectedConfig, zero, KIT, ComputeBudgetProgram.programId.toBase58()]
+  const roles = [...Object.values(a), ...Object.values(profile.programs), profile.quoteMint, r.mint, r.selectedConfig, zero, kitOf(profile), ComputeBudgetProgram.programId.toBase58()]
   check(new Set(roles).size === roles.length && [r.trader, r.recipient, r.feePayer].every(k => !roles.includes(k) && PublicKey.isOnCurve(kb(k))), 'Swap role alias or invalid wallet')
   check(!lookupTable || ![...inventory, ...roles].includes(lookupTable.address), 'Lookup table aliases a swap role')
   for (const o of obs) for (const role of ['launch', 'swap', 'gate']) programEvidence(accounts, profile.programs[role], profile.elfSha256[role], envelope.elfLengths[role], o.slot, role === 'gate')
@@ -210,15 +225,16 @@ function compile(input, fixture, canary = false) {
     check(wallet && wallet.owner === zero && !wallet.executable && raw(wallet.dataBase64, 0).length === 0, 'Wallet must be an empty system account')
   }
   for (const name of ['kitConfig', 'holderVault']) check(accounts.get(a[name]) === null, 'No-Kit account unexpectedly initialized')
-  const c = decoded(launch, 'Config', owned(accounts, a.launchConfig, L, 250)), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
-  // Launch Config.reserved[0] (byte 186) is the native-launches switch of the upgraded launch program: it steers new
-  // launches only, so a bridged coin keeps trading with it on (src/hooklab-launch-config-reserved.mjs).
-  check(c.version === 1 && d.version === 1 && c.bump === bump(L, 'config') && d.bump === bump(S, 'config') && d.paused === canary
-    && launchConfigReservedValid(c.reserved) && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
-  check(str(c.quote_mint) === profile.quoteMint && str(c.treasury) === str(d.treasury)
-    && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0 && d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
-  const lg = decoded(launch, 'Governance', owned(accounts, a.launchGovernance, L, 348)), sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
-  governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, canary); governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, canary)
+  const { config: c, governance: lg } = launchSideIdentity(launch, L, accounts, a, profile), d = decoded(swap, 'Config', owned(accounts, a.swapConfig, S, 189))
+  check(d.version === 1 && d.bump === bump(S, 'config') && d.paused === canary && d.reserved.every(v => v === 0), 'Configuration version, reserved or trading pause differs')
+  check(d.protocol_fee_bps === 0 && d.launch_protocol_share_bps === 2500, 'Only reviewed inclusive-fee configuration is supported')
+  // The owner canary keeps its full launch-side binding (its gates, admin and economics); a production trade does not.
+  // Launch Config.reserved[0] (byte 186) is the native-launches switch: it steers new launches only.
+  if (canary) check(launchConfigReservedValid(c.reserved) && str(c.treasury) === str(d.treasury) && c.lp_fee_bps === 0 && c.sniper_window_secs.isZero() && c.sniper_start_bps === 0,
+    'Only reviewed inclusive-fee configuration is supported')
+  const sg = decoded(swap, 'Governance', owned(accounts, a.swapGovernance, S, 348))
+  if (canary) governance(launch, 'launch', L, a.launchConfig, c, lg, profile.genesisHash, canary)
+  governance(swap, 'swap', S, a.swapConfig, d, sg, profile.genesisHash, canary)
   const transition = canary ? canarySwapTransition(swap, sg, a) : null
   if (canary) check(str(c.admin) === transition.admin && str(d.fee_collector) === str(d.treasury)
     && !roles.includes(transition.admin) && transition.admin !== r.trader

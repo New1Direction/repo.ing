@@ -6,6 +6,7 @@ import { clientAddress } from '../../src/client-address.mjs'
 import { inclusiveTradeRuntime } from './hooklab-inclusive-trade-runtime.mjs'
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
+import { openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
 import { nativeTradingOn, tradingOpenFor } from './hooklab-inclusive-trade.mjs'
 
@@ -22,11 +23,16 @@ export function cached(key, ttlMs, load, now = Date.now) {
   if (caches.size > 5000) caches.delete(caches.keys().next().value)
   return value
 }
-export const cachedMarket = (service, mint, wallet = null) => cached(`market:${mint}:${wallet ?? ''}`, 3000, () => service.market(mint, wallet))
+// How long the coin page and the market API reuse a read: the market data and the listed coin record share it, so an
+// owner's delisting (the record's moderation) shows on the coin page within it, as it does in the trade panel.
+export const COIN_PAGE_CACHE_MS = 3000
+// coin: the listed coin record when the caller has it (its stack picks the bundle); the runtime looks it up otherwise.
+export const cachedMarket = (service, mint, wallet = null, coin = undefined) => cached(`market:${mint}:${wallet ?? ''}`, COIN_PAGE_CACHE_MS, () => service.market(mint, wallet, coin))
 
 // The launch request (image, links) behind a coin listed on repo.ing, or null for any other coin. A failed read throws,
 // so an unreachable database shows as unavailable rather than as "not listed".
-export const listedCoin = (service, mint) => cached(`listed:${mint}`, 60_000, () => service.coinProfile(mint))
+// now: the clock (tests).
+export const listedCoin = (service, mint, now = Date.now) => cached(`listed:${mint}`, COIN_PAGE_CACHE_MS, () => service.coinProfile(mint), now)
 
 export function createMarketHandler({ env = process.env, runtime = inclusiveTradeRuntime, allowed = defaultLimiter } = {}) {
   return async (request, { mint }) => {
@@ -40,7 +46,7 @@ export function createMarketHandler({ env = process.env, runtime = inclusiveTrad
       // The listing is checked first (one cached database read), so unlisted coins are never read from Solana.
       const coin = await listedCoin(service, mint)
       if (!coin) return reply({ error: 'This coin isn’t listed on repo.ing.' }, 404, 'public, max-age=60')
-      const view = await cachedMarket(service, mint, wallet)
+      const view = await cachedMarket(service, mint, wallet, coin)
       if (!view) return reply({ error: 'This coin isn’t listed on repo.ing.' }, 404, 'public, max-age=60')
       // tradingOpen: whether this wallet may start trades yet (everyone once HOOK_TRADING_PUBLIC=true, else listed testers).
       // nativeTrading: whether a native-SOL coin (market.native) can be traded here yet (HOOK_NATIVE_TRADING_ENABLED).
@@ -63,10 +69,10 @@ export function createWalletBalancesHandler({ runtime = inclusiveTradeRuntime, a
   }
 }
 
-// Coins launched through repo.ing approval, for the Buy & sell list.
+// Coins launched through the site, for the Buy & sell list (delisted coins left out).
 export async function launchedCoins({ env = process.env, database = createHookLabDatabasePool, store = ownerApprovalStore, limit = 50 } = {}) {
-  if (env.HOOK_OWNER_APPROVED_LAUNCHES !== 'true') return []
+  if (!siteLaunchesEnabled(env)) return []
   let pool
-  try { pool = database(walletIdentityConfiguration(env)); return await store(pool, { adminAddress: env.HOOK_LAUNCH_ADMIN_ADDRESS }).launchedCoins(limit) }
+  try { pool = database(walletIdentityConfiguration(env)); return await store(pool, { adminAddress: env.HOOK_LAUNCH_ADMIN_ADDRESS, openLaunches: openLaunchesEnabled(env) }).launchedCoins(limit) }
   catch { return [] } finally { await pool?.end().catch(() => {}) }
 }

@@ -4,8 +4,8 @@ import Link from 'next/link'
 import { ArrowDown, Check, LoaderCircle, X } from 'lucide-react'
 import { useWallet } from './wallet'
 import { useHookWalletSession } from './hooklab-wallet-signin'
-import { GRADUATION_TRADING_OPEN, HOLDING_RENT_LAMPORTS, SLIPPAGE_CHOICES, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, parseUnits, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
-import { callTrade, expectOperation, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
+import { DELISTED_BUY_TEXT, GRADUATION_TRADING_OPEN, HOLDING_RENT_LAMPORTS, SLIPPAGE_CHOICES, buyOff, estimateTrade, finalFillLamports, formatUnits, graduationHold, maxBuyLamports, nativeFailureText, nativeTradeIntent, nativeTradingOpen, ownStackCoin, parseUnits, tradesFromWallet, planBuy, planNative, planSell, sol, tradeButton, tradeHold, tradeIntent } from '../lib/hooklab-trade-math.mjs'
+import { callTrade, closeExpired, expectOperation, expiredUnsent, forgetOperation, isFinal, pendingOperations, rememberOperation, runOperation } from '../lib/hooklab-trade-runner.mjs'
 import '../trade-panel.css'
 
 // Rent for one 204-byte Hook Lab holding (app/lib/hooklab-trade-math.mjs); the server's review uses the live value before signing.
@@ -14,6 +14,8 @@ const STEP_LABELS = { fund: 'Add SOL to Hook Lab', buy: 'Buy', sell: 'Sell', gra
 const stepLabel = (kind, symbol) => ['buy', 'sell', 'graduate'].includes(kind) ? `${STEP_LABELS[kind]} ${symbol}` : STEP_LABELS[kind]
 const STATUS_TEXT = { review: 'Preparing…', sign: 'Approve in your wallet', send: 'Sending…', confirm: 'Confirming on Solana…' }
 const explorer = signature => `https://explorer.solana.com/tx/${encodeURIComponent(signature)}`
+// Before public trading: a coin that trades straight from the wallet has no withdrawals to test.
+const tradingSoon = view => `Trading opens to everyone soon. We are testing buys${tradesFromWallet(view) ? ' and sells' : ', sells and withdrawals'} first.`
 
 async function readMarket(mint, wallet) {
   const response = await fetch(`/api/hook-lab/market/${mint}${wallet ? `?wallet=${wallet}` : ''}`, { cache: 'no-store' })
@@ -39,7 +41,9 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
 
   // A native-SOL coin trades straight from the wallet (one approval, no Add SOL) once the site turns native trading on;
   // a bridged coin keeps the Hook Lab flow. Coins whose two native flags disagree never trade here.
-  const native = !!market?.native, nativeOpen = nativeTradingOpen(view), graduationOpen = native ? nativeOpen : GRADUATION_TRADING_OPEN
+  // A coin on our own stack is native by construction: it never shows a Hook Lab balance or the bridged steps.
+  const native = !!market?.native, own = ownStackCoin(view), fromWallet = tradesFromWallet(view), nativeOpen = nativeTradingOpen(view), graduationOpen = native ? nativeOpen : GRADUATION_TRADING_OPEN
+  const delisted = buyOff(view)
   const buying = side === 'buy', decimals = buying ? 9 : market?.decimals ?? 6, raw = parseUnits(amount, decimals)
   const estimate = useMemo(() => market && raw ? estimateTrade(market, { side, amount: raw, coinBalance: BigInt(mine?.coin ?? 0), slippageBps }) : null, [market, raw, side, mine?.coin, slippageBps])
   const plan = useMemo(() => !raw || !mine ? null : native ? planNative({ side, amount: raw, wallet: mine, rentLamports: HOLDING_RENT })
@@ -54,7 +58,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
     return graduationOpen ? max : max > 1n ? max - 1n : null
   }, [market, coinBalance, fill, graduationOpen])
   // A full curve waits for graduate (buys pause); a held trade (tradeHold) is shown but not sent.
-  const buyPaused = buying && !!market?.curveComplete, hold = market ? tradeHold(view, estimate) : ''
+  const buyPaused = buying && (!!market?.curveComplete || delisted), hold = market ? tradeHold(view, estimate) : ''
   const capNote = buying && estimate?.error && /max per wallet/.test(estimate.error)
     ? (maxBuy ? `You can buy up to about ${sol(maxBuy, 4)} right now (${market.capBps / 100}% of the supply per wallet).` : 'This wallet already holds the most this coin allows.') : ''
   const tooMuch = raw && mine && (buying ? false : raw > coinBalance)
@@ -119,7 +123,9 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       const load = async () => { const next = await readMarket(mint, address); setView(next); return next }
       const fresh = await load(), me = fresh?.wallet
       if (!me) throw Error('Could not read your balances. Try again.')
-      if (!fresh.tradingOpen) throw Error('Trading opens to everyone soon. We are testing buys, sells and withdrawals first.')
+      if (!fresh.tradingOpen) throw Error(tradingSoon(fresh))
+      if (buying && buyOff(fresh)) throw Error(DELISTED_BUY_TEXT)
+      if (ownStackCoin(fresh) && !fresh.market.native) throw Error('Trading this coin isn’t available right now.')
       if (fresh.market.native || fresh.market.quoteFormMismatch) {
         // Native-SOL coin: one approval. The swap takes the SOL from the wallet (or pays it there); the finishing buy
         // graduates the coin in the same transaction. Everything that could refuse it is checked first.
@@ -191,7 +197,11 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       try {
         const ids = { signingId: entry.signingId, wallet: address, genesisHash }
         const op = expectOperation(await callTrade({ action: 'get', signingId: entry.signingId }), ids)
-        if (op.status === 'reviewed' || isFinal(op.status)) { forgetOperation(localStorage, entry.signingId); continue }
+        if (isFinal(op.status)) { forgetOperation(localStorage, entry.signingId); continue }
+        // Never sent and past its deadline: close it (expired) instead of trying to send it; if the chain has not yet
+        // passed its blockhash, keep it and try again on the next visit.
+        if (expiredUnsent(op)) { if ((await closeExpired({ op, ...ids })).status === 'expired') forgetOperation(localStorage, entry.signingId); continue }
+        if (op.status === 'reviewed') { forgetOperation(localStorage, entry.signingId); continue }
         const final = await runOperation({ create: { action: 'get' }, ...ids, signTransaction: async () => { throw Error('unsigned') } })
         if (isFinal(final.status)) forgetOperation(localStorage, entry.signingId)
       } catch {}
@@ -213,9 +223,10 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       {['buy', 'sell'].map(value => <button key={value} type="button" role="tab" data-side={value} aria-selected={side === value} className={side === value ? 'selected' : ''} disabled={busy}
         onClick={() => { setSide(value); setAmount(''); setError(''); setResult(null) }}>{value === 'buy' ? 'Buy' : 'Sell'}</button>)}
     </div>
-    {view && !view.tradingOpen && <p className="hooks-trade-soon" role="status">Trading opens to everyone soon. We are testing buys, sells and withdrawals first.</p>}
-    {hold && (market.graduated || native || market.quoteFormMismatch) && <p className="hooks-trade-soon" role="status">{hold}</p>}
-    {buyPaused && <p className="hooks-trade-soon" role="status">This coin’s bonding curve is full and it’s graduating. Buying pauses until it opens on its new market; you can still sell.</p>}
+    {view && !view.tradingOpen && <p className="hooks-trade-soon" role="status">{tradingSoon(view)}</p>}
+    {hold && (market.graduated || native || own || market.quoteFormMismatch) && <p className="hooks-trade-soon" role="status">{hold}</p>}
+    {delisted && <p className="hooks-trade-soon hooks-delisted" role="status">{DELISTED_BUY_TEXT}</p>}
+    {buyPaused && !delisted && <p className="hooks-trade-soon" role="status">This coin’s bonding curve is full and it’s graduating. Buying pauses until it opens on its new market; you can still sell.</p>}
     <form onSubmit={trade} aria-busy={busy}>
       <div className="trade-field">
         <div className="trade-field-head"><label htmlFor="hooks-trade-amount">You {buying ? 'pay' : 'sell'}</label>
@@ -239,7 +250,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       {estimate?.error && <p className="inline-error" role="alert">{estimate.error} {capNote}</p>}
       {tooMuch && <p className="inline-error" role="alert">You hold {formatUnits(coinBalance, market.decimals, 2)} {symbol}.</p>}
       <HookTradeSummary market={market} symbol={symbol} buying={buying} estimate={estimate} plan={plan} hold={hold} native={native}/>
-      {plan && !steps && (native ? <p className="trade-note">One approval in your wallet.</p>
+      {plan && !steps && (fromWallet ? <p className="trade-note">One approval in your wallet.</p>
         : plan.steps.length > 1 && <p className="trade-note">{plan.steps.length} approvals in your wallet: {plan.steps.map(s => stepLabel(s.kind, symbol)).join(', then ')}.</p>)}
       <button type="submit" className="button primary trade-submit" disabled={button.disabled}>{session.busy ? 'Approve in your wallet…' : button.label}</button>
       {button.action === 'sign-in' && !session.busy && <p className="trade-note">Signing in is a free message in your wallet. It sends no transaction.</p>}
@@ -252,8 +263,8 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
     {result && <p className="hooks-trade-result" role="status">{result.kind === 'buy' ? `You bought ${formatUnits(BigInt(result.received), market.decimals, 0)} ${symbol}.${result.graduated ? ` ${symbol} has graduated.` : ''}`
       : `${sol(result.received, 6)} ${result.native ? 'went straight to' : 'is back in'} your wallet.`}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
-    {mine && <HookTradeBalances mine={mine} market={market} symbol={symbol} native={native} canWithdraw={!!view?.funding} busy={busy} onWithdraw={withdrawAll}/>}
-    <HookTradeNote native={native}/>
+    {mine && <HookTradeBalances mine={mine} market={market} symbol={symbol} native={fromWallet} canWithdraw={!!view?.funding} busy={busy} onWithdraw={withdrawAll}/>}
+    <HookTradeNote native={fromWallet}/>
   </div>
 }
 

@@ -8,7 +8,7 @@ import BN from 'bn.js'
 import bs58 from 'bs58'
 import {PublicKey,VersionedTransaction} from '@solana/web3.js'
 import {encodeHookAccountList} from '@repo-ing/hooklab-production-candidate'
-import {compileMaxWalletLaunchReview,compileCanaryMaxWalletLaunchReview} from './hooklab-max-wallet-launch.mjs'
+import {compileMaxWalletLaunchReview,compileCanaryMaxWalletLaunchReview,compileOpenLaunchReview} from './hooklab-max-wallet-launch.mjs'
 import {productionAccountBindingMatches} from './hooklab-production-observer.mjs'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inspectHookLabMessage,verifyHookLabSignedMessage} from './hooklab-message-boundary.mjs'
@@ -40,24 +40,50 @@ function size(b,t,field){
 }
 function accountBytes(b,name,value){const bytes=Buffer.alloc(8+size(b,{defined:{name}}));Buffer.from(b.idl.accounts.find(a=>a.name===name).discriminator).copy(bytes);b.coder.types.encode(name,value).copy(bytes,8);return bytes}
 function eventBytes(b,name,value){return Buffer.concat([tag,Buffer.from(b.idl.events.find(e=>e.name===name).discriminator),b.coder.types.encode(name,value)])}
+// OpenLaunchCreated {launch, mint, creator, launch_config: Pubkey, creator_fee_bps: u16, cap_bps: u16}, as the
+// open-creation ABI fixes it (emitted just before LaunchCreated). Encoded here until the final IDL is pinned.
+const OPEN_LAUNCH_CREATED=Buffer.from([228,69,40,108,62,242,68,231])
+function openLaunchCreatedBytes({launch,mint,creator,launch_config,creator_fee_bps,cap_bps}){
+ const fees=Buffer.alloc(4);fees.writeUInt16LE(creator_fee_bps,0);fees.writeUInt16LE(cap_bps,2)
+ return Buffer.concat([tag,OPEN_LAUNCH_CREATED,...[launch,mint,creator,launch_config].map(x=>pk(x).toBuffer()),fees])
+}
+function decodeOpenLaunchCreated(bytes){
+ check(bytes.length===8+8+4*32+4&&bytes.subarray(8,16).equals(OPEN_LAUNCH_CREATED))
+ const at=i=>key(new PublicKey(bytes.subarray(16+32*i,48+32*i)))
+ return {name:'OpenLaunchCreated',data:{launch:at(0),mint:at(1),creator:at(2),launch_config:at(3),creator_fee_bps:bytes.readUInt16LE(144),cap_bps:bytes.readUInt16LE(146)}}
+}
 function decode(b,name,account){check(account&&!account.executable);const bytes=raw(account.dataBase64),v=b.coder.accounts.decode(name,bytes);check(accountBytes(b,name,v).equals(bytes));return v}
+// mode: 'custom' (owner-approved), 'canary' or 'open' (self-serve create_launch_open_v1).
+const SETTLEMENT_SCHEMAS={custom:'repoing/max-wallet-launch-settlement-context/1',canary:'repoing/canary-max-wallet-launch-settlement-context/1',open:'repoing/open-launch-settlement-context/1'}
+const COMPILERS={custom:compileMaxWalletLaunchReview,canary:compileCanaryMaxWalletLaunchReview,open:compileOpenLaunchReview}
 function context(input,canary=false){
- check(input?.schema===(canary?'repoing/canary-max-wallet-launch-settlement-context/1':'repoing/max-wallet-launch-settlement-context/1'))
- const stored=input.compilationInput,ci={...stored,preparationEvidence:canonicalLaunchProof(stored.preparationEvidence),reviewedStateHashes:canonicalStateHashes(stored.reviewedStateHashes),observations:stored.observations.map(canonicalObservation)},plan=(canary?compileCanaryMaxWalletLaunchReview:compileMaxWalletLaunchReview)(ci),p=JSON.parse(ci.profile.json)
+ const mode=canary===true?'canary':canary===false?'custom':canary
+ check(Object.hasOwn(SETTLEMENT_SCHEMAS,mode)&&input?.schema===SETTLEMENT_SCHEMAS[mode])
+ const stored=input.compilationInput,ci={...stored,preparationEvidence:canonicalLaunchProof(stored.preparationEvidence),reviewedStateHashes:canonicalStateHashes(stored.reviewedStateHashes),observations:stored.observations.map(canonicalObservation)},plan=COMPILERS[mode](ci),p=JSON.parse(ci.profile.json)
  const bindings={launch:binding(JSON.parse(raw(ci.profile.idls.launch))),swap:binding(JSON.parse(raw(ci.profile.idls.swap))),token:binding(tokenIdl)}
  // Token IDL is used only as a frozen account-layout codec, never to choose a
  // program address. Actual token identity and executable bytes are operator-pinned.
  const before=new Map(ci.observations[0].accounts.map(x=>[x.address,x.account]))
  return {ci,plan,p,b:bindings,before}
 }
+// The swap names a pool's LP mint "<prefix> <token symbol>/<quote symbol>" (at most 32 characters): "Bordrless LP" in
+// bundle 2 and the builds before hook-lab 2b8b92a, "repo.ing LP" from 2b8b92a on (our own stack's release candidate).
+// The settlement accepts exactly these two, whichever the launch's swap wrote.
+export const LP_NAME_PREFIXES=Object.freeze(['Bordrless LP','repo.ing LP'])
+export function lpMintName(prefix,symbol,quoteSymbol){
+ if(!LP_NAME_PREFIXES.includes(prefix))throw Error('Unknown LP name prefix')
+ return Array.from(`${prefix} ${symbol}/${quoteSymbol}`).slice(0,32).join('')
+}
 // Pure expected-state derivation: no acceptance/authority. Useful for offline
 // verification and local synthetic tests; callers cannot provide expected bytes.
 export function deriveMaxWalletLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,false)}
 export function deriveCanaryMaxWalletLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,true)}
-function derivePostconditions(settlementContext,{slot,timestamp},canary){
+export function deriveOpenLaunchPostconditions(context,evidence){return derivePostconditions(context,evidence,'open')}
+function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=LP_NAME_PREFIXES[0]){
  int(slot);int(timestamp)
- const {ci,plan,p,b,before}=context(settlementContext,canary),r=plan.request,a=plan.addresses,{launch:L,swap:S,token:T,gate:G}=p.programs
- const lc=decode(b.launch,'Config',before.get(a.launchConfig)),sc=decode(b.swap,'Config',before.get(a.swapConfig)),auth=decode(b.launch,'CreatorAuthorization',before.get(a.authorization))
+ const {ci,plan,p,b,before}=context(settlementContext,canary),r=plan.request,a=plan.addresses,{launch:L,swap:S,token:T,gate:G}=p.programs,open=canary==='open'
+ // An open launch consumes no creator grant: it has none.
+ const lc=decode(b.launch,'Config',before.get(a.launchConfig)),sc=decode(b.swap,'Config',before.get(a.swapConfig)),auth=open?null:decode(b.launch,'CreatorAuthorization',before.get(a.authorization))
  const quote=decode(b.token,'Mint',before.get(p.quoteMint)),supply=BigInt(lc.supply.toString()),curve=supply*BigInt(lc.curve_bps)/10000n,reserve=supply-curve,vbase=curve*reserve/(curve-reserve),vquote=BigInt(r.virtualQuote),graduation=vquote*(curve-reserve)/reserve
  const inclusive=r.policyVersion===2,native=plan.quoteForm===1
  // A native-SOL (v4) launch sets both flags in its one creation: Launch.reserved[17] and Pool.reserved[0].
@@ -70,7 +96,7 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary){
   base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),hook_program:pk(L),hook_flags:1985,lp_fee_bps:lc.lp_fee_bps,
   base_reserve:bn(curve),virtual_base:bn(vbase),virtual_quote:bn(vquote),curve:true,creator:pk(a.launch),created_at:bn(timestamp),hook_signer_bump:bump(S,'hook-authority',pk(L).toBuffer()),fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,reserved:flagged('Pool',0)}
  const mint={...zeroStruct(b.token,'Mint'),version:1,decimals:lc.decimals,supply:bn(supply),max_supply:bn(supply),hook_program:pk(G),hook_flags:1,name:r.name,symbol:r.symbol,uri:r.uri,created_at:bn(timestamp),creator:pk(r.creator),hook_signer_bump:bump(T,'hook-authority',pk(G).toBuffer())}
- const lpMint={...zeroStruct(b.token,'Mint'),version:1,decimals:9,mint_authority:pk(a.pool),name:Array.from(`Bordrless LP ${r.symbol}/${quote.symbol}`).slice(0,32).join(''),symbol:'BLP',created_at:bn(timestamp),creator:pk(r.creator)}
+ const lpMint={...zeroStruct(b.token,'Mint'),version:1,decimals:9,mint_authority:pk(a.pool),name:lpMintName(lpName,r.symbol,quote.symbol),symbol:'BLP',created_at:bn(timestamp),creator:pk(r.creator)}
  const expected=new Map(),put=(address,owner,data)=>expected.set(address,{address,owner,executable:false,dataBase64:data.toString('base64')})
  // Mint authority is revoked after minting. Anchor serialization preserves the
  // prior Some(authority) tail when the final None value shortens its payload.
@@ -83,7 +109,7 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary){
   {writable:true,source:{kind:'pda',program:pk(L),seeds:[{kind:'literal',bytes:Buffer.from('launch')},{kind:'account',index:2}]}},
   {writable:true,source:{kind:'pda',program:pk(T),seeds:[{kind:'literal',bytes:Buffer.from('holding')},{kind:'account',index:3},{kind:'account',index:5}]}},
   {writable:true,source:{kind:'key',key:pk(holder)}},{writable:false,source:{kind:'key',key:pk(kitConfig)}}]}))
- put(a.launchConfig,L,accountBytes(b.launch,'Config',{...lc,launches:lc.launches.addn(1)}));put(a.swapConfig,S,accountBytes(b.swap,'Config',{...sc,pools_created:sc.pools_created.addn(1)}));put(a.authorization,L,accountBytes(b.launch,'CreatorAuthorization',{...auth,consumed:auth.consumed.addn(1)}))
+ put(a.launchConfig,L,accountBytes(b.launch,'Config',{...lc,launches:lc.launches.addn(1)}));put(a.swapConfig,S,accountBytes(b.swap,'Config',{...sc,pools_created:sc.pools_created.addn(1)}));if(!open)put(a.authorization,L,accountBytes(b.launch,'CreatorAuthorization',{...auth,consumed:auth.consumed.addn(1)}))
  if(inclusive)put(a.inclusiveFeePolicy,S,Buffer.concat([Buffer.from(sha(Buffer.from('account:InclusiveFeePolicy')),'hex').subarray(0,8),Buffer.from([1]),pk(a.pool).toBuffer(),sc.fee_collector.toBuffer(),Buffer.from([0xc4,9])]))
  const launchEvent={...zeroStruct(b.launch,'LaunchCreated'),launch:pk(a.launch),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),name:r.name,symbol:r.symbol,uri:r.uri,supply:bn(supply),decimals:lc.decimals,
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),launch_fee_lamports:lc.launch_fee_lamports,config:pk(r.selectedConfig),custom_hook:pk(G),custom_hook_flags:1,slot:bn(slot),ts:bn(timestamp)}
@@ -91,7 +117,9 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary){
   lp_fee_bps:lc.lp_fee_bps,fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,hook_program:pk(L),hook_flags:1985,virtual_base:bn(vbase),virtual_quote:bn(vquote),base_reserve:bn(curve),curve:true,slot:bn(slot),ts:bn(timestamp)}
  // E2-1: a v4 creation also announces itself after LaunchCreated, which still names bridged SOL as the quote.
  const nativeEvent=native?[{program:L,name:'NativeLaunchCreated',dataBase64:eventBytes(b.launch,'NativeLaunchCreated',{launch:pk(a.launch),pool:pk(a.pool),mint:pk(r.mint),virtual_quote:bn(vquote)}).toString('base64')}]:[]
- return {native,accounts:[...expected.values()],events:[{program:L,name:'LaunchCreated',dataBase64:eventBytes(b.launch,'LaunchCreated',launchEvent).toString('base64')},{program:S,name:'PoolCreated',dataBase64:eventBytes(b.swap,'PoolCreated',poolEvent).toString('base64')},...nativeEvent],created:[r.mint,...['launch','pool','lpMint','launchReserve','launchQuote','poolRegistry','baseVault','quoteVault','launchLp',...(inclusive?['inclusiveFeePolicy']:[])].map(n=>a[n])],feesLamports:lc.launch_fee_lamports.add(sc.pool_creation_fee_lamports).toString(),treasury:key(lc.treasury)}
+ // An open launch announces itself first: OpenLaunchCreated, then LaunchCreated and NativeLaunchCreated as v4.
+ const openEvent=open?[{program:L,name:'OpenLaunchCreated',dataBase64:openLaunchCreatedBytes({launch:a.launch,mint:r.mint,creator:r.creator,launch_config:r.selectedConfig,creator_fee_bps:r.creatorFeeBps,cap_bps:r.capBps}).toString('base64')}]:[]
+ return {native,accounts:[...expected.values()],events:[...openEvent,{program:L,name:'LaunchCreated',dataBase64:eventBytes(b.launch,'LaunchCreated',launchEvent).toString('base64')},{program:S,name:'PoolCreated',dataBase64:eventBytes(b.swap,'PoolCreated',poolEvent).toString('base64')},...nativeEvent],created:[r.mint,...['launch','pool','lpMint','launchReserve','launchQuote','poolRegistry','baseVault','quoteVault','launchLp',...(inclusive?['inclusiveFeePolicy']:[])].map(n=>a[n])],feesLamports:lc.launch_fee_lamports.add(sc.pool_creation_fee_lamports).toString(),treasury:key(lc.treasury)}
 }
 function authenticatedEvents(tx,b,programs){
  const keys=tx.keys,events=[],groups=new Set()
@@ -101,20 +129,22 @@ function authenticatedEvents(tx,b,programs){
    const role=program===programs.launch?'launch':program===programs.swap?'swap':null;if(!role)continue
    const bytes=Buffer.from(bs58.decode(ix.data));if(!bytes.subarray(0,8).equals(tag))continue
    check(parent===program&&ix.accounts.length===1&&keys[ix.accounts[0]]===pda(program,'__event_authority'))
+   if(role==='launch'&&bytes.subarray(8,16).equals(OPEN_LAUNCH_CREATED)){const decoded=decodeOpenLaunchCreated(bytes);check(group.index===2);events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:decoded.data});continue}
    const decoded=b[role].coder.events.decode(bytes.subarray(8).toString('base64'));check(decoded&&eventBytes(b[role],decoded.name,decoded.data).equals(bytes))
-   if(['LaunchCreated','PoolCreated','NativeLaunchCreated'].includes(decoded.name)){check(group.index===2);events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:normalize(decoded.data)})}
+   if(['LaunchCreated','PoolCreated','NativeLaunchCreated','OpenLaunchCreated'].includes(decoded.name)){check(group.index===2);events.push({program,name:decoded.name,dataBase64:bytes.toString('base64'),data:normalize(decoded.data)})}
   }
  }
  return events
 }
 export function collectMaxWalletLaunchSettlement(args){return collectSettlement(args,false)}
 export function collectCanaryMaxWalletLaunchSettlement(args){return collectSettlement(args,true)}
+export function collectOpenLaunchSettlement(args){return collectSettlement(args,'open')}
 async function collectSettlement({config,profile,dossierJson,connections,settlementContext,review,signedTransactionBase64,signature},canary){
  let identity={signature,messageSha256:review?.messageSha256,profileSha256:review?.profileSha256,configurationSha256:settlementContext?.configurationSha256}
  try{
   const {config:c,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),{ci,plan,p,b,before}=context(settlementContext,canary)
   check(settlementContext.configurationSha256===sha(JSON.stringify(c))&&isDeepStrictEqual(ci.profile,profile)&&isDeepStrictEqual(plan.review,review))
-  for(const pin of d.accounts){const account=before.get(pin.address);check(productionAccountBindingMatches(pin,account,d))}
+  for(const pin of d.accounts){const account=before.get(pin.address);check(productionAccountBindingMatches(pin,account,d,profile.idls))}
   const signed=verifyHookLabSignedMessage(review,signedTransactionBase64);check(signed.signature===signature&&review.profileSha256===c.profileSha256)
   identity={signature,messageSha256:signed.messageSha256,profileSha256:c.profileSha256,configurationSha256:sha(JSON.stringify(c))}
   const snapshotInventory=[...new Set([...before.keys(),...d.programs.flatMap(x=>[x.address,x.programData])])].sort()
@@ -142,11 +172,15 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   const deltas=new Map(),add=(address,n)=>deltas.set(address,(deltas.get(address)??0n)+n)
   add(review.payer,-fee)
   if(t.error!==null){check(t.keys.every((k,i)=>BigInt(t.post[i])-BigInt(t.pre[i])===(deltas.get(k)??0n)));return {...identity,status:'finalized-failure',inclusion,transactionSha256:sha(JSON.stringify(t)),feeLamports:String(fee)}}
-  const events=authenticatedEvents(t,b,p.programs),native=plan.quoteForm===1
-  check(events.length===(native?3:2)&&['LaunchCreated','PoolCreated',...(native?['NativeLaunchCreated']:[])].every(name=>events.filter(x=>x.name===name).length===1))
-  const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),expected=derivePostconditions(settlementContext,{slot:t.slot,timestamp},canary)
+  const events=authenticatedEvents(t,b,p.programs),native=plan.quoteForm===1,open=canary==='open',names=['LaunchCreated','PoolCreated',...(native?['NativeLaunchCreated']:[]),...(open?['OpenLaunchCreated']:[])]
+  check(events.length===names.length&&names.every(name=>events.filter(x=>x.name===name).length===1))
+  if(open)check(events.findIndex(x=>x.name==='OpenLaunchCreated')<events.findIndex(x=>x.name==='LaunchCreated'))
+  const timestamp=Number(events.find(x=>x.name==='LaunchCreated').data.ts),actual=new Map(snapshotInventory.map((k,i)=>[k,accounts[i]]))
+  // The expected state under the LP name this swap wrote (one of LP_NAME_PREFIXES); any other LP mint fails below.
+  const variants=LP_NAME_PREFIXES.map(prefix=>derivePostconditions(settlementContext,{slot:t.slot,timestamp},canary,prefix)),lpMintOf=x=>x.accounts.find(y=>y.address===plan.addresses.lpMint)
+  const expected=variants.find(x=>isDeepStrictEqual(actual.get(plan.addresses.lpMint),lpMintOf(x)))??variants[0]
   check(isDeepStrictEqual(events.map(({data,...e})=>e).sort((a,b)=>a.name.localeCompare(b.name)),expected.events.sort((a,b)=>a.name.localeCompare(b.name))))
-  const want=new Map(expected.accounts.map(x=>[x.address,x])),actual=new Map(snapshotInventory.map((k,i)=>[k,accounts[i]]))
+  const want=new Map(expected.accounts.map(x=>[x.address,x]))
   for(const pin of d.programs){const pd=actual.get(pin.programData);check(pd&&pd.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&!pd.executable&&sha(raw(pd.dataBase64))===pin.programDataSha256&&pin.deploySlot<=t.slot)}
   for(const [address,old]of before){const desired=want.get(address)??(old?(({lamports,...v})=>v)(old):null);check(isDeepStrictEqual(actual.get(address),desired))}
   // The flags themselves, read at their bytes: pool 351 and launch 560 are 1 after a v4 creation, 0 after v3.

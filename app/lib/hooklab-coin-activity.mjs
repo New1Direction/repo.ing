@@ -21,7 +21,7 @@ import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { hookCoinTradeStore, indexHookCoinTrades } from '../../src/hooklab-coin-trades.mjs'
 import { hookHolderLabels, readHookCoinHolders } from '../../src/hooklab-coin-activity.mjs'
 import { hookCoinAddresses } from '../../src/hooklab-inclusive-max-wallet-swap.mjs'
-import { PROGRAMS, QUOTE_MINT } from '../../src/hooklab-owner-driver/pins.mjs'
+import { isStackProfile } from '../../src/hooklab-stack.mjs'
 
 export const REFRESH_MIN_MS = 10_000
 export const ERROR_BACKOFF_MS = 60_000
@@ -37,8 +37,8 @@ const unavailable = () => reply({ status: 'unavailable', error: 'Trading data is
 const address = value => { try { return new PublicKey(value).toBase58() === value ? value : null } catch { return null } }
 const defaultLimiter = createRateLimiter({ limit: 120, globalLimit: 3000, windowMs: 60_000 })
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
-// TODO(native-sol): native-SOL pools derive their pool from another quote; choose it from the coin's launch once they ship.
-const addressesOf = mint => cached(`hook-addresses:${mint}`, 3_600_000, () => hookCoinAddresses({ programs: PROGRAMS, quoteMint: QUOTE_MINT }, mint))
+// The coin's accounts under its own stack (the profile the trade runtime names for it: legacy or our own stack).
+const addressesOf = (mint, profile) => cached(`hook-addresses:${profile.programs.swap}:${profile.quoteMint}:${mint}`, 3_600_000, () => hookCoinAddresses(profile, mint))
 
 // A failure is logged by its code, at most once a minute each, never with RPC or database detail.
 const logged = new Map()
@@ -94,28 +94,35 @@ export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, li
   indexer = null, allowed = defaultLimiter, holdersTtlMs = HOLDERS_TTL_MS, holdersRetryMs = HOLDERS_RETRY_MS, now = Date.now,
   solUsd = () => cachedSolUsdPrice() } = {}) {
   const holderFailures = new Map()
-  // A listed coin's market read, then work({ service, market, addresses }). As in the market API, the listing is checked
-  // first (one cached database read; a failed read throws, so it answers unavailable, never "not listed"), so an unlisted
-  // coin is never read from Solana.
+  // A listed coin's market read, then work({ market, profile, rpc, addresses }). As in the market API, the listing is
+  // checked first (one cached database read; a failed read throws, so it answers unavailable, never "not listed"), so an
+  // unlisted coin is never read from Solana. Every address and read comes from the coin's own stack: its profile
+  // (service.profileFor(coin)) and the reads bound to it (service.activityFor(coin)). A runtime that cannot name them (no
+  // bundle for that stack) answers unavailable, never a guessed stack.
   const guarded = work => async (request, { mint }) => {
     if (!address(mint)) return reply({ error: 'Unknown coin.' }, 404)
     if (!allowed(clientAddress(request) ?? 'unknown')) return reply({ error: 'Too many requests. Try again shortly.' }, 429)
     const service = runtime()
-    if (!service?.market || !service.activity || !service.coinProfile) return unavailable()
+    if (!service?.market || !service.coinProfile || typeof service.profileFor !== 'function' || typeof service.activityFor !== 'function') return unavailable()
     try {
-      if (!await listed(service, mint)) return reply({ error: 'This coin is not listed on repo.ing.' }, 404, 'public, max-age=60')
-      const view = await cachedMarket(service, mint)
+      const coin = await listed(service, mint)
+      if (!coin) return reply({ error: 'This coin is not listed on repo.ing.' }, 404, 'public, max-age=60')
+      const profile = service.profileFor(coin), rpc = service.activityFor(coin)
+      if (typeof profile?.programs?.swap !== 'string' || typeof profile.quoteMint !== 'string' || !rpc) return unavailable()
+      const view = await cachedMarket(service, mint, null, coin)
       if (!view?.market) return reply({ error: 'This coin is not listed on repo.ing.' }, 404, 'public, max-age=60')
-      return await work({ service, market: view.market, addresses: await addressesOf(mint), url: new URL(request.url) })
+      return await work({ market: view.market, profile, rpc, addresses: await addressesOf(mint, profile), url: new URL(request.url) })
     } catch (error) { reportOnce(error); return unavailable() }
   }
   // The index caught up to the chain's swap counter (or as far as one short wait allows), then read(store, pool, sync):
   // sync.syncing is how many newer swaps are not indexed yet, sync.backfilling whether older history is still being read.
-  const indexed = async ({ service, market, addresses }, read) => {
-    const { store, close } = openStore(), coin = { mint: market.mint, pool: addresses.pool }, chainSwapCount = BigInt(market.pool.swapCount)
+  const indexed = async ({ market, profile, rpc, addresses }, read) => {
+    // A coin on our own stack trades only native SOL: every swap on its pool must carry its SwappedNative.
+    const { store, close } = openStore(), coin = { mint: market.mint, pool: addresses.pool, programs: profile.programs, native: isStackProfile(profile) }
+    const chainSwapCount = BigInt(market.pool.swapCount)
     try {
       const before = await store.progress(coin.pool), behind = before.walking || before.swapCount < chainSwapCount
-      if (behind) await (indexer ?? defaultIndexer()).ensure({ coin, rpc: service.activity, behind })
+      if (behind) await (indexer ?? defaultIndexer()).ensure({ coin, rpc, behind })
       const after = behind ? await store.progress(coin.pool) : before
       return await read(store, coin.pool, { syncing: Number(chainSwapCount > after.swapCount ? chainSwapCount - after.swapCount : 0n), backfilling: after.walking })
     } finally { await close() }
@@ -144,12 +151,13 @@ export function createCoinActivityHandlers({ runtime = inclusiveTradeRuntime, li
           latest: summary.latest ? { priceSol: summary.latest.priceSol, tradedAt: summary.latest.tradedAt } : null, candles }, 200, 'public, max-age=5')
       })
     }),
-    holders: guarded(async ({ service, market, addresses }) => {
+    holders: guarded(async ({ market, profile, rpc, addresses }) => {
       if (now() - (holderFailures.get(market.mint) ?? -Infinity) < holdersRetryMs) return unavailable()
       const labels = hookHolderLabels(addresses, { graduated: market.graduated })
       try {
         const value = await cached(`hook-holders:${market.mint}`, holdersTtlMs, () =>
-          readHookCoinHolders({ rpc: service.activity, mint: market.mint, supply: market.supply ?? market.initialSupply, labels }))
+          readHookCoinHolders({ rpc, mint: market.mint, supply: market.supply ?? market.initialSupply, labels,
+            programs: profile.programs, hidden: [profile.quoteMint] }))
         return reply({ status: 'available', decimals: market.decimals, ...value }, 200, 'public, max-age=30')
       } catch (error) {
         holderFailures.set(market.mint, now())

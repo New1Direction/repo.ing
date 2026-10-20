@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { hookAddress as key, hookDigest as hash, hookRawAmount as u64 } from './hooklab-execution-contract.mjs'
 import { inspectHookLabMessage } from './hooklab-message-boundary.mjs'
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
+import { otherPrograms, profileRolesDistinct } from './hooklab-stack.mjs'
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const check = (ok, message) => { if (!ok) throw Error(message) }
 const sha = value => createHash('sha256').update(value).digest('hex')
@@ -84,15 +85,19 @@ function programEvidence(accounts, artifact, observedSlot, immutable) {
  * Supplied observations remain assertions, not authenticated history or execution permission.
  * Stage one has no onchain rent cap/deadline instruction; this is an offline review bound only.
  */
+// An inclusive launch build: the bridged V3 ABI, or its native V4 successor alone (our own stack's build, hook-lab
+// independent e775165, carries only v4 and the open route).
+const INCLUSIVE_LAUNCH_ABIS = Object.freeze(['create_launch_custom_v3', 'create_launch_custom_v4'])
+export const isInclusiveLaunchIdl = idl => !!idl?.instructions?.some(ix => INCLUSIVE_LAUNCH_ABIS.includes(ix.name))
 export function planInclusiveMaxWalletPreparation(input) {
   const { profile: envelope, request: r, observations: obs, recentBlockhash: bh, lookupTable, limits: l } = inputSchema.parse(input)
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json))
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   const artifact = role => ({ program: profile.programs[role], idlBase64: envelope.idls[role], idlSha256: profile.idlSha256[role],
     elfSha256: profile.elfSha256[role], elfLength: envelope.elfLengths[role] })
   const launchArtifact = artifact('launch'), gateArtifact = artifact('gate'), launch = binding(launchArtifact), gate = binding(gateArtifact)
-  check(launch.idl.instructions.some(ix => ix.name === 'create_launch_custom_v3'), 'Only the explicit inclusive V3 ABI can prepare this candidate')
+  check(isInclusiveLaunchIdl(launch.idl), 'Only an explicit inclusive launch ABI (V3 or V4) can prepare this candidate')
   const addresses = { launch: profile.programs.launch, gate: profile.programs.gate,
     launchConfig: pda(profile.programs.launch, 'config'), eventAuthority: pda(profile.programs.launch, '__event_authority'),
     launchProgramData: pda(loader, pk(profile.programs.launch).toBuffer()), gateProgramData: pda(loader, pk(profile.programs.gate).toBuffer()),
@@ -100,7 +105,7 @@ export function planInclusiveMaxWalletPreparation(input) {
     registry: pda(profile.programs.gate, 'bordrless-hook-accounts', pk(r.mint).toBuffer()),
     canonicalLaunch: pda(profile.programs.launch, 'launch', pk(r.mint).toBuffer()) }
   // A fee payer may equal the creator. All other transaction roles must stay distinct.
-  const distinct = [...Object.values(addresses), profile.programs.swap, profile.programs.token, profile.programs.bridge, profile.quoteMint, r.creator, r.mint, r.selectedConfig, zero, ComputeBudgetProgram.programId.toBase58()]
+  const distinct = [...Object.values(addresses), ...otherPrograms(profile), profile.quoteMint, r.creator, r.mint, r.selectedConfig, zero, ComputeBudgetProgram.programId.toBase58()]
   check(new Set(distinct).size === distinct.length && (r.feePayer === r.creator || !distinct.includes(r.feePayer)), 'Preparation roles alias')
   check(!lookupTable || ![...distinct, r.feePayer, ...Object.values(profile.programs)].includes(lookupTable.address), 'Lookup table aliases a preparation role')
   check(PublicKey.isOnCurve(pk(r.creator).toBytes()) && PublicKey.isOnCurve(pk(r.feePayer).toBytes())
@@ -224,7 +229,7 @@ export function deriveInclusiveMaxWalletPreparedAccounts(input) {
   const { profile: envelope, request: r, launchConfig, observedCreatedAtUnixSeconds } = value
   check(sha(envelope.json) === envelope.expectedSha256, 'Reviewed profile digest differs')
   const profile = parseInclusiveMaxWalletProfile(JSON.parse(envelope.json)), L = profile.programs.launch, G = profile.programs.gate
-  check(new Set([...Object.values(profile.programs), profile.quoteMint, zero]).size === 7, 'Profile program roles alias')
+  check(profileRolesDistinct(profile), 'Profile program roles alias')
   const bind = role => binding({ idlBase64: envelope.idls[role], idlSha256: profile.idlSha256[role], program: profile.programs[role] })
   const launch = bind('launch'), gate = bind('gate'), c = readLaunchConfig(launch, profile, r, launchConfig)
   const policyAddress = pda(G, 'policy-v2', pk(r.mint).toBuffer()), registryAddress = pda(G, 'bordrless-hook-accounts', pk(r.mint).toBuffer())

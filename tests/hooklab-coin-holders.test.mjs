@@ -12,7 +12,7 @@ const mint = canary.mint, supply = '1000000000000000'
 const addresses = hookCoinAddresses({ programs: PROGRAMS, quoteMint: QUOTE_MINT }, mint)
 const trader = 'DkD5CeqH6uR5ChaaHAWusGWvfjMq5xLzsJGYoiT1J9g9', other = 'FhEwQ6ZdWJvD3t1phu1vqMsTZeEUgtQ89eU8zGzPsW3i'
 // A holding row as the RPC returns it (first 82 bytes, base64), built from a real one with another owner and amount.
-function holdingRow(owner, amount, { holding = holdingAddress(mint, owner), edit = bytes => bytes } = {}) {
+function holdingRow(owner, amount, { holding = holdingAddress(mint, owner, PROGRAMS.token), edit = bytes => bytes } = {}) {
   const template = canary.holdings.value.find(row => row.pubkey === addresses.baseVault)
   const bytes = Buffer.from(template.account.data[0], 'base64')
   new PublicKey(owner).toBuffer().copy(bytes, 42); bytes.writeBigUInt64LE(BigInt(amount), 74)
@@ -21,7 +21,7 @@ function holdingRow(owner, amount, { holding = holdingAddress(mint, owner), edit
 const holdersOf = (rows, options = {}) => {
   const holdings = clone(canary.holdings); holdings.value.push(...rows)
   const calls = []
-  return { calls, read: readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection({ holdings, calls })), mint, supply, labels: hookHolderLabels(addresses), ...options }) }
+  return { calls, read: readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection({ holdings, calls })), mint, supply, labels: hookHolderLabels(addresses), programs: PROGRAMS, ...options }) }
 }
 
 test('the canary: the curve and the launch reserve, labelled; empty holdings left out', async () => {
@@ -39,17 +39,24 @@ test('traders are ranked by balance with their share of supply; after graduation
   const result = await read
   assert.equal(result.holderCount, 2, 'every holder with a balance counts')
   assert.deepEqual(result.holders.map(h => [h.rank, h.label ?? h.owner, h.percent]), [[null, 'Bonding curve', 75], [null, 'Launch reserve', 25], [1, trader, 1.2345]])
-  const graduated = await readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply, labels: hookHolderLabels(addresses, { graduated: true }) })
+  const graduated = await readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply, labels: hookHolderLabels(addresses, { graduated: true }), programs: PROGRAMS })
   assert.equal(graduated.holders[0].label, 'Liquidity pool')
 })
 
 test('accounts that are not this coin’s holdings stop the read', async () => {
   for (const row of [
-    holdingRow(trader, '1', { holding: holdingAddress(QUOTE_MINT, trader) }),
+    holdingRow(trader, '1', { holding: holdingAddress(QUOTE_MINT, trader, PROGRAMS.token) }),
     holdingRow(trader, '1', { edit: bytes => { bytes[0] ^= 1; return bytes } }),
     holdingRow(trader, '1', { edit: bytes => { new PublicKey(QUOTE_MINT).toBuffer().copy(bytes, 10); return bytes } }),
     { ...holdingRow(trader, '1'), account: { ...holdingRow(trader, '1').account, owner: PROGRAMS.swap } },
     { ...holdingRow(trader, '1'), account: { ...holdingRow(trader, '1').account, data: [Buffer.alloc(204).toString('base64'), 'base64'] } },
   ]) await assert.rejects(holdersOf([row]).read, /HOOK_HOLDERS_ACCOUNT_INVALID/)
-  await assert.rejects(readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply: '0' }), /HOOK_HOLDERS_SUPPLY_INVALID/)
+  await assert.rejects(readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply: '0', programs: PROGRAMS }), /HOOK_HOLDERS_SUPPLY_INVALID/)
+  await assert.rejects(readHookCoinHolders({ rpc: hookActivityRpc(canaryConnection()), mint, supply }), /HOOK_HOLDERS_PROGRAMS_MISSING/, 'no stack is assumed')
+})
+
+test('an owner the coin\'s stack hides (its quote marker) is never listed or ranked', async () => {
+  const { read } = holdersOf([holdingRow(trader, '7'), holdingRow(other, '9')], { hidden: [other] })
+  const result = await read
+  assert.equal(result.holderCount, 1); assert.ok(!JSON.stringify(result).includes(other))
 })

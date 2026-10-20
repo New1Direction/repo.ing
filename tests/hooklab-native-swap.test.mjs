@@ -28,7 +28,7 @@ test('swap_v2 follows the reviewed IDL account order: the trader pays on a buy a
  for(const side of ['buy','sell']){
   const ix=nativeSwapV2Instruction({programs:PROGRAMS,quoteMint:QUOTE_MINT},{side,trader,mint,amountIn:1000003n,minAmountOut:5n}),keys=ix.keys.map(k=>k.pubkey.toBase58())
   assert.equal(ix.programId.toBase58(),PROGRAMS.swap)
-  assert.deepEqual(keys.slice(0,15),[trader,a.swapConfig,a.pool,mint,QUOTE_MINT,a.baseVault,holdingAddress(mint,trader),trader,PROGRAMS.launch,a.swapHookSigner,PROGRAMS.token,a.tokenEventAuthority,
+  assert.deepEqual(keys.slice(0,15),[trader,a.swapConfig,a.pool,mint,QUOTE_MINT,a.baseVault,holdingAddress(mint, trader, PROGRAMS.token),trader,PROGRAMS.launch,a.swapHookSigner,PROGRAMS.token,a.tokenEventAuthority,
    '11111111111111111111111111111111',a.swapEventAuthority,PROGRAMS.swap])
   assert.deepEqual(abi.accounts.map(x=>[!!x.signer,!!x.writable]),ix.keys.slice(0,15).map(k=>[k.isSigner,k.isWritable]))
   assert.deepEqual(keys.slice(15),[PROGRAMS.gate,a.gateHookSigner,a.policy,a.launch,a.launch,a.launchQuote,a.holderVault,a.kitConfig,a.inclusiveFeePolicy],'gate slice, pool-hook extras, policy last')
@@ -44,7 +44,7 @@ test('every native trade reads the same fixed account list, including the rent s
  const inventory=nativeSwapInventory(profile,request()),again=nativeSwapInventory(profile,request({side:'sell',amountIn:'7',maxInput:'7'}))
  assert.deepEqual(inventory,[...inventory].sort());assert.deepEqual(inventory,again,'buy and sell read the same accounts')
  const signer=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>typeof s==='string'?Buffer.from(s):s),new PublicKey(program))[0].toBase58()
- for(const address of [RENT_SYSVAR,trader,holdingAddress(mint,trader),PROGRAMS.launch,PROGRAMS.swap,PROGRAMS.gate,PROGRAMS.token,
+ for(const address of [RENT_SYSVAR,trader,holdingAddress(mint, trader, PROGRAMS.token),PROGRAMS.launch,PROGRAMS.swap,PROGRAMS.gate,PROGRAMS.token,
   signer(PROGRAMS.launch,'hook-authority'),signer(PROGRAMS.launch,'__event_authority')])assert.ok(inventory.includes(address),address)
  assert.ok(inventory.length<=64)
 })

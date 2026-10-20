@@ -63,13 +63,14 @@ test('a real buy settles from its jsonb-stored review and context, also after a 
  const connections=state.profile.providers.map((provider,i)=>({provider,connection:{rpcEndpoint:[e.HOOK_LOCAL_ACCEPTANCE_RPC_PRIMARY,e.HOOK_LOCAL_ACCEPTANCE_RPC_SECONDARY][i],...transport()}}))
  const resolverAt=nowMs=>inclusiveTradeResolver({...bindings,connections,limits:{...LIMITS,nowMs},clock:()=>1000})
  const prepared=await resolverAt(BOOT).prepare({owner:roles.creator,stage:'inclusive-buy',intent:{side:'buy',creatorFeeBps:100,capBps:200,mint:roles.mint,selectedConfig:roles.config,amountIn:'1000200',minAmountOut:'1',maxInput:'1000200',maxPriceImpactBps:1000}})
- // The upgraded launch program's native-launches switch (Config byte 186) steers new launches only: a bridged coin
- // compiles the same trade with it on, and any other reserved byte is still refused.
- const switched=at=>{const ci=structuredClone(prepared.settlementContext.compilationInput)
-  for(const o of ci.observations){const row=o.accounts.find(x=>x.address===a.launchConfig).account,bytes=Buffer.from(row.dataBase64,'base64');bytes[at]=1;row.dataBase64=bytes.toString('base64')}
+ // The launch Config's reserved bytes (byte 186 native launches, byte 187 open creation with its menus after it, and any
+ // other) are launch-side state no trade executes against: a bridged coin compiles the same trade whatever they hold.
+ const switched=bytes=>{const ci=structuredClone(prepared.settlementContext.compilationInput)
+  for(const o of ci.observations){const row=o.accounts.find(x=>x.address===a.launchConfig).account,data=Buffer.from(row.dataBase64,'base64');for(const [at,v] of Object.entries(bytes))data[at]=v;row.dataBase64=data.toString('base64')}
   return ci}
- assert.equal(compileInclusiveMaxWalletSwapReview(switched(186)).review.messageBase64,prepared.review.messageBase64)
- assert.throws(()=>compileInclusiveMaxWalletSwapReview(switched(187)),/reserved/)
+ assert.equal(compileInclusiveMaxWalletSwapReview(switched({186:1})).review.messageBase64,prepared.review.messageBase64)
+ assert.equal(compileInclusiveMaxWalletSwapReview(switched({186:1,187:1,188:50,190:100,192:200,196:100,198:200,200:44,201:1})).review.messageBase64,prepared.review.messageBase64,'open creation on, with the owner\'s menus')
+ for(const other of [{187:2},{249:1}])assert.equal(compileInclusiveMaxWalletSwapReview(switched(other)).review.messageBase64,prepared.review.messageBase64,JSON.stringify(other))
  const stored=jsonbRoundTrip({review:prepared.review,configurationSha256:prepared.configurationSha256,settlementContext:prepared.settlementContext})
  assert.notEqual(JSON.stringify(stored.settlementContext),JSON.stringify(prepared.settlementContext),'jsonb reorders keys')
  // Before signing the hash must match exactly; it survives a restart.

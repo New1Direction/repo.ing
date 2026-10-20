@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {Keypair} from '@solana/web3.js'
 import {createInclusiveTradeHandler,nativeTradingOn} from '../app/lib/hooklab-inclusive-trade.mjs'
-import {createInclusiveTradeRuntime} from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
+import {createInclusiveTradeRuntime,stackProfileFor} from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
 import {createMarketHandler} from '../app/lib/hooklab-market.mjs'
 import {NATIVE_ELF} from '../src/hooklab-native-pins.mjs'
 import {compileNativeSwapReview,pinsNativeBuilds} from '../src/hooklab-native-swap.mjs'
@@ -112,4 +112,34 @@ test('the market API says whether native coins trade here yet',async()=>{
  assert.equal((await read(env,true)).nativeTrading,true)
  assert.equal((await read({},true)).nativeTrading,false);assert.equal((await read(env,false)).nativeTrading,false)
  assert.equal((await read(env,true)).market.native,true)
+})
+
+// Regression (self-serve e2e, 2026-10-19): the listed coin record (coinByMint, launchedCoins) carries its stack, not the
+// launch request's source, so every own-stack coin read as legacy: its page 404'd and the market said "not listed".
+test('a listed coin record is read and traded under its own stack\'s profile',()=>{
+ const profiles={legacy:{id:'legacy'},own:{id:'own'}}
+ assert.equal(stackProfileFor(profiles,{id:'a',stack:'own'}),profiles.own,'a listed coin of our own stack')
+ assert.equal(stackProfileFor(profiles,{id:'a',stack:'legacy'}),profiles.legacy,'a listed coin of the legacy stack')
+ assert.equal(stackProfileFor(profiles,{source:'open'}),profiles.own,'a launch request row');assert.equal(stackProfileFor(profiles,{source:'owner-invite'}),profiles.legacy)
+ assert.equal(stackProfileFor(profiles,null),profiles.legacy,'a coin the site did not launch reads under the legacy stack')
+ assert.equal(stackProfileFor({...profiles,own:null},{stack:'own'}),null,'no bundle for its stack: not listed here')
+})
+
+// Regression (self-serve e2e, 2026-10-19): native-quote and get returned review.accounts, which names our stack's quote
+// marker, to the browser. The trade API keeps the transaction's account list and lookup tables on the server (as the
+// launch API does); the wallet still shows the transaction itself, and the browser keeps every field its checks use.
+test('trade responses carry what the browser checks, never the transaction\'s account list or lookup tables',async()=>{
+ const MARKER='2JTTrekMSkwF3B83LVroiKPVxauUwAJR1xtQs4CJoGVc',genesisHash='G'.repeat(44)
+ const review={wallet:owner,payer:owner,genesisHash,messageSha256:'a'.repeat(64),messageBase64:'AQID',reviewExpiresAtMs:5,requiredSigners:[owner],
+  accounts:[{address:owner,signer:true,writable:true},{address:MARKER,signer:false,writable:false}],lookupTables:[MARKER]}
+ const op=stage=>({id,owner,custodyOperationId:id,stage,status:'reviewed',review,settlement:{executionStatus:'finalized-executed',quote:{delivered:'7'}}})
+ const lifecycle={createReview:async(t,i,value)=>op(value.stage),get:async()=>op('native-sell'),walletRequest:async()=>({review,partialTransactionBase64:'AQID',canSubmit:false})}
+ const handle=createInclusiveTradeHandler({...options,env,runtime:()=>({origin:'https://repo.ing',lifecycle,walletFunding:true,walletWithdraw:true,nativeTrading:true})})
+ for(const body of [{action:'native-quote',signingId:id,request:intent},{action:'get',signingId:id},{action:'wallet-request',signingId:id},{action:'quote',signingId:id,request:(({graduate,...r})=>r)(intent)}]){
+  const r=await json(await handle(request(body))),raw=JSON.stringify(r.body),shown=r.body.operation?.review??r.body.review
+  assert.equal(r.status,200,body.action);assert.doesNotMatch(raw,new RegExp(MARKER),body.action);assert.doesNotMatch(raw,/"accounts"|"lookupTables"/,body.action)
+  for(const field of ['wallet','payer','genesisHash','messageSha256','reviewExpiresAtMs','requiredSigners'])assert.deepEqual(shown[field],review[field],`${body.action} ${field}`)
+  if(body.action==='wallet-request')assert.deepEqual([shown.messageBase64,r.body.partialTransactionBase64],['AQID','AQID'])
+  else assert.deepEqual(r.body.operation.settlement,{executionStatus:'finalized-executed',quote:{delivered:'7'}},body.action)
+ }
 })

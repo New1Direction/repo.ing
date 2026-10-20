@@ -21,10 +21,12 @@ test('the switch is HOOK_NATIVE_LAUNCHES_ENABLED=true, off by default', () => {
   assert.equal(nativeLaunchesEnabled({ HOOK_NATIVE_LAUNCHES_ENABLED: 'true' }), true)
 })
 
-test('the native-launches switch is launch Config byte 186, 0 or 1, with the rest of the reserved bytes zero', () => {
+test('the native-launches switch is launch Config byte 186, 0 or 1; the rest of the reserved bytes hold open creation or zero', () => {
   assert.equal(nativeLaunchesSwitch(config(0)), false); assert.equal(nativeLaunchesSwitch(config(1)), true)
+  assert.equal(nativeLaunchesSwitch(config(1, { 187: 1, 188: 50, 196: 100 })), true, 'open creation on, with one-choice menus')
   assert.throws(() => nativeLaunchesSwitch(config(2)), /switch byte 186 is 2/)
-  assert.throws(() => nativeLaunchesSwitch(config(1, { 187: 1 })), /reserved bytes after the switch/)
+  assert.throws(() => nativeLaunchesSwitch(config(1, { 187: 2 })), /reserved bytes after the switch are not a state/)
+  assert.throws(() => nativeLaunchesSwitch(config(1, { 249: 1 })), /reserved bytes after the switch are not a state/)
   assert.throws(() => nativeLaunchesSwitch(config(0).subarray(0, 249)), /Not a launch Config/)
   const wrong = config(0); wrong[0] ^= 1; assert.throws(() => nativeLaunchesSwitch(wrong), /Not a launch Config/)
 })

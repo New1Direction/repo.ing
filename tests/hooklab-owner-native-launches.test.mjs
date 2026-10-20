@@ -10,7 +10,7 @@ import path from 'node:path'
 import { PublicKey } from '@solana/web3.js'
 import { loadArtifacts } from '../src/hooklab-owner-driver/artifacts.mjs'
 import { loadConfig, assertExecutable, APPROVAL_FLAG_STAGES, STAGE_DECISIONS } from '../src/hooklab-owner-driver/config.mjs'
-import { STAGES, STAGE_ORDER } from '../src/hooklab-owner-driver/context.mjs'
+import { STAGES, STAGE_ORDER, legacyChain } from '../src/hooklab-owner-driver/context.mjs'
 import { describe } from '../src/hooklab-owner-driver/plan.mjs'
 import { decodeMessage, addressBook, plain, renderPreview } from '../src/hooklab-owner-driver/preview.mjs'
 import { parseArgs } from '../src/hooklab-owner-driver/cli.mjs'
@@ -22,8 +22,12 @@ import { nativeLaunchesDigest } from '../src/hooklab-native-launch.mjs'
 import { missingArtifactEnv, testRequiring } from './fixtures/hooklab-generated-artifact.mjs'
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/hooklab-mainnet-public-accounts.json', import.meta.url)))
-const { coders } = loadArtifacts(), d = derivedAddresses()
+const { coders } = loadArtifacts(), d = derivedAddresses(PROGRAMS, QUOTE_MINT)
 const liveConfig = Buffer.from(fixture.accounts['launch-config'].dataBase64, 'base64'), liveGovernance = Buffer.from(fixture.accounts['creation-control'].dataBase64, 'base64')
+// Activation re-reads both configs first (stages/money-routing.mjs), so the scripted chain serves the live swap Config and
+// governance too: they route to the treasury role and quote with the pinned mint, as the live accounts do.
+const liveSwapConfig = Buffer.from(fixture.accounts['swap-config'].dataBase64, 'base64'), liveSwapGovernance = Buffer.from(fixture.accounts['swap-governance'].dataBase64, 'base64')
+const swapConfigWith = async change => coders.swap.accounts.encode('Config', { ...coders.swap.accounts.decode('Config', liveSwapConfig), ...change })
 const governance = coders.launch.accounts.decode('Governance', liveGovernance)
 const switched = (value, at = 186) => { const b = Buffer.from(liveConfig); b[at] = value; return b }
 const programData = elf => { const header = Buffer.alloc(45); header.writeUInt32LE(3); header.writeBigUInt64LE(458000000n, 4); header[12] = 1; new PublicKey(MAINNET_ROLES.upgrade).toBuffer().copy(header, 13); return Buffer.concat([header, elf, Buffer.alloc(64)]) }
@@ -39,21 +43,22 @@ function readers(accounts, slot = fixture.slot) {
   }
   return [{ provider: 'primary', url: 'https://a.example', connection }, { provider: 'secondary', url: 'https://b.example', connection }]
 }
-const chain = ({ config = liveConfig, governanceBytes = liveGovernance, launchElf = Buffer.alloc(1000, 7), swapElf = Buffer.alloc(1000, 8) } = {}) => new Map([
+const chain = ({ config = liveConfig, governanceBytes = liveGovernance, swapConfig = liveSwapConfig, launchElf = Buffer.alloc(1000, 7), swapElf = Buffer.alloc(1000, 8) } = {}) => new Map([
   [d.launchConfig, { owner: PROGRAMS.launch, data: config }], [d.launchGovernance, { owner: PROGRAMS.launch, data: governanceBytes }],
+  [d.swapConfig, { owner: PROGRAMS.swap, data: swapConfig }], [d.swapGovernance, { owner: PROGRAMS.swap, data: liveSwapGovernance }],
   [d.launchProgramData, { owner: LOADER, data: programData(launchElf) }], [d.swapProgramData, { owner: LOADER, data: programData(swapElf) }],
   [MAINNET_ROLES.payer, { owner: SYSTEM, data: Buffer.alloc(0), lamports: 4_251_200_000 }]])
 const template = loadConfig(new URL('../hooklab-owner.config.json', import.meta.url))
 const journal = { dir: path.join(mkdtempSync(path.join(tmpdir(), 'hooklab-native-launches-')), 'journal') }
 const context = (accounts, to = 'on') => ({ config: template, readers: readers(accounts), genesis: MAINNET_GENESIS, network: 'mainnet-beta', roles: MAINNET_ROLES,
-  programs: PROGRAMS, quoteMint: QUOTE_MINT, envelope: { expectedSha256: 'aa'.repeat(32) }, journal, options: { to } })
+  ...legacyChain(), envelope: { expectedSha256: 'aa'.repeat(32) }, journal, options: { to } })
 after(() => rmSync(path.dirname(journal.dir), { recursive: true, force: true }))
 const stage = STAGES['native-launches']
 
 test('needs --to on or off, and reads byte 186 before anything else', async () => {
   for (const to of [undefined, 'yes', 'true']) await assert.rejects(stage.build({ ...context(chain()), options: { to } }, null), /requires --to on or --to off/)
   await assert.rejects(stage.build(context(chain({ config: switched(2) })), null), /byte 186 is 2, not 0 or 1/)
-  await assert.rejects(stage.build(context(chain({ config: switched(1, 200) })), null), /reserved bytes after the switch are not zero/)
+  await assert.rejects(stage.build(context(chain({ config: switched(1, 200) })), null), /reserved bytes after the switch are not a state the reviewed programs write/)
 })
 
 test('a flip to the value the switch already has is refused, since it would still stale every signed launch', async () => {
@@ -70,6 +75,28 @@ test('refuses while the deployed launch program is not the reviewed native build
   assert.match(built.blocked, /deployed launch program is not the reviewed native-SOL build \(hook-lab e357fdf, ELF acbd9a6060fb…\); upgrade it first/)
   const missing = chain(); missing.delete(d.launchProgramData)
   assert.match((await stage.build(context(missing), null)).blocked, /upgrade it first/)
+})
+
+test('turning native launches on re-reads the money routing first; turning them off is never held back by it', async () => {
+  const elsewhere = await swapConfigWith({ fee_collector: new PublicKey(MAINNET_ROLES.payer) })
+  const on = await stage.build(context(chain({ swapConfig: elsewhere }), 'on'), null)
+  assert.match(on.blocked, /^native-launches --to on: refusing to activate: swap Config fee_collector \S+ is not the configured treasury/)
+  assert.equal(on.review, undefined)
+  const off = await stage.build(context(chain({ swapConfig: elsewhere }), 'off'), null)
+  assert.match(off.blocked, /native launches are already OFF/)
+})
+
+test('a close stage still builds when the money routing is wrong (an emergency stop always works)', async () => {
+  const elsewhere = await swapConfigWith({ fee_collector: new PublicKey(MAINNET_ROLES.payer) })
+  for (const name of ['close-trading', 'close-launches']) {
+    const built = await STAGES[name].build({ ...context(chain({ swapConfig: elsewhere })), options: {} }, null)
+    assert.doesNotMatch(built.blocked ?? '', /refusing to activate/, name)
+    assert.ok(built.review || built.blocked, `${name}: a reviewable message or its own state refusal`)
+  }
+  for (const name of ['open-trading', 'open-launches']) {
+    const built = await STAGES[name].build({ ...context(chain({ swapConfig: elsewhere })), options: {} }, null)
+    assert.match(built.blocked ?? '', /^open-(trading|launches): refusing to activate: swap Config fee_collector/, name)
+  }
 })
 
 test('registered as an approval-flag stage the committed template does not approve, with --to on the command line', () => {

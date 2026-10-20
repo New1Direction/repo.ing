@@ -30,21 +30,28 @@ import { STANDARD_VIRTUAL_QUOTE,formatSol,ownerPricingLine } from '../src/hookla
 import { CREATOR_FEE_BPS_CHOICES,WALLET_CAP_BPS_CHOICES,percent } from '../src/hooklab-launch-menus.mjs'
 import { UNSAFE_TEXT,coinImageUrl,coinLinks } from '../src/hooklab-coin-profile.mjs'
 import { verifyTableRequest } from '../src/hooklab-owner-launch-tables.mjs'
+import { localAgentSettings } from '../src/hooklab-owner-agent-local.mjs'
 import { ownerTableExecutor } from '../src/hooklab-owner-agent-tables.mjs'
 import { productionArtifacts,productionProfileJson } from '../src/hooklab-production-operator-bundle.mjs'
-const LAUNCH_PROGRAM='E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft',GATE_PROGRAM='BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb',ADMIN='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',FEE_MODEL=2
+const LAUNCH_PROGRAM='E73c1hvwZr8hG4SaSLoTU1amZPqKKdzvToaYF2prCKft',GATE_PROGRAM='BdAaDVeqX1gvwJ7rLyUY7rGm7qnf1h8sBxHfwKTzjFxb',MAINNET_ADMIN='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',FEE_MODEL=2
 const {values:opt}=parseArgs({options:{origin:{type:'string',default:'https://repo.ing'},'admin-key':{type:'string'},rpc:{type:'string'},rpc2:{type:'string'},
- 'invite-minutes':{type:'string',default:'15'},'confirm-each':{type:'boolean',default:false},'poll-ms':{type:'string',default:'1500'},'table-microlamports':{type:'string',default:'10000'}}})
+ 'invite-minutes':{type:'string',default:'15'},'confirm-each':{type:'boolean',default:false},'poll-ms':{type:'string',default:'1500'},'table-microlamports':{type:'string',default:'10000'},
+ // Local acceptance only (the e2e suite): a disposable admin key file on a local validator; see src/hooklab-owner-agent-local.mjs.
+ 'local-acceptance':{type:'boolean',default:false},'state-dir':{type:'string'},genesis:{type:'string'}}})
 const die=message=>{console.error(message);process.exit(2)}
 const token=process.env.HOOK_OWNER_APPROVAL_TOKEN
 if(!token||token.length<32)die('Set HOOK_OWNER_APPROVAL_TOKEN (from your Keychain) first.')
 if(!opt['admin-key']||!opt.rpc||!opt.rpc2)die('Required: --admin-key PATH --rpc URL --rpc2 URL (two independent providers).')
-const admin=adminSignerFromKeypair(readFileSync(opt['admin-key'],'utf8'),ADMIN)   // read once from the key pipe; never logged
+const adminKeyText=readFileSync(opt['admin-key'],'utf8')   // read once from the key pipe; never logged
 const connections=[new Connection(opt.rpc,'confirmed'),new Connection(opt.rpc2,'confirmed')]
+// Local acceptance: the admin is the disposable key's own address, checked against a non-mainnet genesis on two loopback RPCs.
+const local=opt['local-acceptance']?await localAgentSettings({origin:opt.origin,rpcs:[opt.rpc,opt.rpc2],connections,adminKeyText,stateDir:opt['state-dir'],mainnetAdmin:MAINNET_ADMIN,expectedGenesis:opt.genesis}).catch(error=>die(error.message)):null
+const ADMIN=local?local.adminAddress:MAINNET_ADMIN,stateRoot=local?local.stateDir:path.join(homedir(),'.hooklab-owner')
+const admin=adminSignerFromKeypair(adminKeyText,ADMIN)
 const launchCoder=new BorshCoder(JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json',import.meta.url))))
 const approved={launchProgram:LAUNCH_PROGRAM,gateProgram:GATE_PROGRAM,admin:ADMIN,creatorFeeChoices:[...CREATOR_FEE_BPS_CHOICES],capChoices:[...WALLET_CAP_BPS_CHOICES],feeModel:FEE_MODEL}
 const {base,idls}=productionArtifacts(),envelope={json:productionProfileJson(base),idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')]))}
-const tables=ownerTableExecutor({connections,admin,journalDir:path.join(homedir(),'.hooklab-owner','launch-tables'),microLamports:Number(opt['table-microlamports']),log:console.log})
+const tables=ownerTableExecutor({connections,admin,journalDir:path.join(stateRoot,'launch-tables'),microLamports:Number(opt['table-microlamports']),log:console.log})
 let accepting=true,queue={requests:[],signRequests:[],tableRequests:[]},busy=false,lastHeartbeatOk=0
 const handled=new Set()
 
@@ -105,7 +112,7 @@ function show(){
 }
 // Only requests this agent invited (ledger on disk) can make the admin pay for a table: at most one
 // table per invited request, and only while the creator's on-chain grant still allows the launch.
-const inviteLedgerPath=path.join(homedir(),'.hooklab-owner','invited.json')
+const inviteLedgerPath=path.join(stateRoot,'invited.json')
 const invitedByMe=()=>{try{return JSON.parse(readFileSync(inviteLedgerPath,'utf8'))}catch(error){if(error.code==='ENOENT')return {};throw error}}
 function recordInvite(request){
  mkdirSync(path.dirname(inviteLedgerPath),{recursive:true,mode:0o700})
@@ -213,7 +220,7 @@ rl.on('line',async line=>{
  }catch(error){console.log(`Failed: ${error.message}`)}
 })
 for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{await api({action:'heartbeat',accepting:false,agentAddress:ADMIN}).catch(()=>{});process.exit(130)})
-console.log(`Owner agent for ${opt.origin}. Admin ${ADMIN}. Fee menu ${CREATOR_FEE_BPS_CHOICES.map(percent).join('/')}; cap menu ${WALLET_CAP_BPS_CHOICES.map(percent).join('/')}.`)
+console.log(`Owner agent for ${opt.origin}${local?` (LOCAL ACCEPTANCE: genesis ${local.genesisHash}, disposable admin, state ${stateRoot})`:''}. Admin ${ADMIN}. Fee menu ${CREATOR_FEE_BPS_CHOICES.map(percent).join('/')}; cap menu ${WALLET_CAP_BPS_CHOICES.map(percent).join('/')}.`)
 for(;;){
  try{
   const before=JSON.stringify(queue.requests)

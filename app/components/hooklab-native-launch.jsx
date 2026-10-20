@@ -7,14 +7,12 @@ import { useWallet } from './wallet'
 import { HookWalletSignIn, shortAddress, useHookWalletSession } from './hooklab-wallet-signin'
 import { formatUnits } from '../lib/format.mjs'
 import { lockedLaunchFields, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
+import { signReviewedLaunch } from '../lib/hooklab-launch-wallet.mjs'
 
 const endpoint = '/api/hook-lab/native-launch'
 const storageKey = 'repo.ing.hooks.native-launch.ids.v1'
 const uuid = value => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 const pendingStatuses = new Set(['submission-claimed', 'outcome-unknown', 'submitted'])
-const decode = value => Uint8Array.from(atob(value), char => char.charCodeAt(0))
-const encode = bytes => btoa(String.fromCharCode(...bytes))
-const equal = (a, b) => a.length === b.length && a.every((value, index) => value === b[index])
 const statusLabels = {
   reviewed: 'Ready for your review', partial: 'Wallet signed; additional signatures needed', signed: 'All signatures retained; ready to submit',
   'signing-claimed': 'Waiting for the repo.ing approval signature. Keep this page open.', 'signing-unknown': 'The approval signature did not arrive before the transaction deadline. Nothing was sent. Once the deadline has passed, close this attempt and start a fresh review.',
@@ -184,24 +182,8 @@ export function HookNativeLaunch({ genesisHash, initialBlockers = [], approvedIn
     if (!activeWallet || !accepted || !quote || Date.now() >= reviewed.reviewExpiresAtMs) throw Error('Review the current transaction with your authenticated wallet before signing.')
     const value = await request({ action: 'wallet-request', signingId: operation.id })
     if (value.status === 'blocked') { receive(value); return }
-    if (value.review.messageSha256 !== reviewed.messageSha256 || value.review.wallet !== address || value.review.genesisHash !== genesisHash) throw Error('The transaction changed after review. Signing was stopped.')
-    const { VersionedTransaction } = await import('@solana/web3.js')
-    const tx = VersionedTransaction.deserialize(decode(value.partialTransactionBase64))
-    const message = tx.message.serialize()
-    if (encode(message) !== value.review.messageBase64) throw Error('Transaction bytes differ from the reviewed message.')
-    const digest = encode(new Uint8Array(await crypto.subtle.digest('SHA-256', message)))
-    const expectedDigest = encode(Uint8Array.from(reviewed.messageSha256.match(/../g), value => parseInt(value, 16)))
-    if (digest !== expectedDigest || walletRef.current !== address) throw Error('Transaction identity or connected wallet changed.')
-    const previousSignatures = tx.signatures.map(signature => Uint8Array.from(signature))
-    const adapter = provider()
-    if (typeof adapter?.signTransaction !== 'function') throw Error('Connect a wallet that supports transaction signing.')
-    if (Date.now() >= reviewed.reviewExpiresAtMs || walletRef.current !== address) throw Error('The review expired or wallet changed before the signature prompt. Refresh the unsigned review.')
-    const signed = await adapter.signTransaction(tx)
-    if (walletRef.current !== address || !equal(signed.message.serialize(), message)) throw Error('Wallet changed the reviewed message or active account. Submission was stopped.')
-    for (let index = 0; index < previousSignatures.length; index++) {
-      if (reviewed.requiredSigners[index] !== address && !equal(signed.signatures[index], previousSignatures[index])) throw Error('Wallet changed another signer’s signature. Submission was stopped.')
-    }
-    const result = await request({ action: 'retain-wallet', signingId: operation.id, signedTransactionBase64: encode(signed.serialize()) })
+    const signedTransactionBase64 = await signReviewedLaunch({ walletRequest: value, reviewed, address, genesisHash, currentWallet: () => walletRef.current, adapter: provider() })
+    const result = await request({ action: 'retain-wallet', signingId: operation.id, signedTransactionBase64 })
     receive(result)
   })
   const action = name => run(async () => {

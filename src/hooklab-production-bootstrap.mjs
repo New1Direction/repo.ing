@@ -7,6 +7,8 @@ import { readFile } from 'node:fs/promises'
 import { Connection } from '@solana/web3.js'
 import { remoteAdminSigner } from './hooklab-owner-approval.mjs'
 import { remoteLaunchLookupTable } from './hooklab-owner-launch-tables.mjs'
+import { openLaunchRent, openLaunchesEnabled, siteLaunchesEnabled } from './hooklab-open-creation.mjs'
+import { isStackProfile } from './hooklab-stack.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
@@ -19,6 +21,9 @@ const BEHIND=/Minimum context slot has not been reached|-32016/
 // Snapshot-to-blockhash slack across two real providers (the second waits to catch up): ~6 s. The
 // on-chain guards (deadline slot, minimum output, price impact) are unchanged.
 const SLOT_LAG=16
+// The most rent an owner-invited (legacy) launch may lock, as the program's debit guard counts it. An open launch's bound
+// is exact instead: computed from the chain's rent when the launch is reserved (openLaunchRent).
+const LEGACY_LAUNCH_MAX_RENT_LAMPORTS=45000000n
 export function catchUpConnection(connection,{attempts=12,delayMs=500,sleep=ms=>new Promise(r=>setTimeout(r,ms))}={}){
  return new Proxy(connection,{get(target,property,receiver){
   const value=Reflect.get(target,property,receiver)
@@ -42,6 +47,14 @@ export function chainObservers(connections){
  })
 }
 
+// What a launch may debit its creator: the creation fee and pool fee the bundle pins, the rent bound (for an open launch
+// the exact guard bound from openLaunchRent), and the network fee.
+export function launchDebitLimits({launchFeeLamports,poolCreationFeeLamports},networkFee,rentBound=LEGACY_LAUNCH_MAX_RENT_LAMPORTS){
+ const maxRent=BigInt(rentBound),instruction=BigInt(launchFeeLamports)+BigInt(poolCreationFeeLamports)+maxRent
+ return {maxLaunchFeeLamports:String(launchFeeLamports),maxPoolCreationFeeLamports:String(poolCreationFeeLamports),maxRentLamports:String(maxRent),
+  maxInstructionDebitLamports:String(instruction),maxTotalDebitLamports:String(instruction+BigInt(networkFee))}
+}
+
 export function productionKeyRing(env){
  let ring
  try{ring=JSON.parse(env.HOOK_NATIVE_KEYRING_JSON??'')}catch{refuse('HOOK_NATIVE_KEYRING_JSON is missing or not JSON')}
@@ -51,14 +64,34 @@ export function productionKeyRing(env){
  return {keyRing:Object.fromEntries(entries),activeKeyId:env.HOOK_NATIVE_ACTIVE_KEY_ID}
 }
 
+// Our own stack's bundle (HOOKLAB_STACK_BUNDLE_FILE, approved by HOOKLAB_STACK_BUNDLE_SHA256): new coins' open launches,
+// native trades and creator claims. Its admin is HOOK_STACK_ADMIN_ADDRESS; it reads through the same two providers as
+// bundle 2 and shares no program with the legacy stack. null when neither variable is set.
+async function stackBundleFrom({env,readBundle,legacy}){
+ const file=env.HOOKLAB_STACK_BUNDLE_FILE,digest=env.HOOKLAB_STACK_BUNDLE_SHA256
+ if(file===undefined&&digest===undefined)return null
+ need(typeof file==='string'&&file.length>0&&/^[a-f0-9]{64}$/.test(digest??''),'set both HOOKLAB_STACK_BUNDLE_FILE and HOOKLAB_STACK_BUNDLE_SHA256')
+ const bytes=await readBundle(file)
+ need(sha(bytes)===digest,'our stack\'s bundle differs from its approved hash')
+ const bundle=JSON.parse(bytes),profile=JSON.parse(bundle.profile.json),legacyProfile=JSON.parse(legacy.profile.json)
+ need(bundle.schema==='repoing/production-operator-bundle/1'&&bundle.genesisHash===legacy.genesisHash&&isStackProfile(profile),'the stack bundle is not a production bundle of our own stack')
+ need(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(env.HOOK_STACK_ADMIN_ADDRESS??'')&&bundle.config.reviewer===env.HOOK_STACK_ADMIN_ADDRESS,'stack bundle reviewer is not the configured stack admin (HOOK_STACK_ADMIN_ADDRESS)')
+ need(bundle.profile.providers.length===2&&bundle.profile.providers.every((p,i)=>p===legacy.profile.providers[i]),'the stack bundle must read through the same two providers as bundle 2')
+ need(!['launch','swap','gate','token'].some(role=>Object.values(legacyProfile.programs).includes(profile.programs[role])),'our stack shares a program with the legacy stack')
+ return bundle
+}
+
 // Everything the runtimes need, verified. Separate from installation so it can be tested.
 export async function productionSettings({env=process.env,readBundle=path=>readFile(path),connectionFor=url=>catchUpConnection(new Connection(url,{commitment:'finalized',disableRetryOnRateLimit:true}))}={}){
- need(env.HOOK_OWNER_APPROVED_LAUNCHES==='true','owner-approved launches are not enabled')
+ need(siteLaunchesEnabled(env),'site launches are not enabled (neither HOOK_OWNER_APPROVED_LAUNCHES nor HOOK_OPEN_LAUNCHES is true)')
+ need(!openLaunchesEnabled(env)||env.HOOK_NATIVE_LAUNCHES_ENABLED==='true','open launches need HOOK_NATIVE_LAUNCHES_ENABLED=true (they are native SOL only)')
  need(env.HOOK_NATIVE_LAUNCH_ENABLED==='true'&&env.HOOK_WALLET_IDENTITY_ENABLED==='true','native launch and wallet identity switches must both be on')
  const bytes=await readBundle(env.HOOKLAB_PRODUCTION_BUNDLE_FILE??refuse('HOOKLAB_PRODUCTION_BUNDLE_FILE is not set'))
  need(/^[a-f0-9]{64}$/.test(env.HOOKLAB_PRODUCTION_BUNDLE_SHA256??'')&&sha(bytes)===env.HOOKLAB_PRODUCTION_BUNDLE_SHA256,'production bundle differs from its approved hash')
  const bundle=JSON.parse(bytes)
  need(bundle.schema==='repoing/production-operator-bundle/1'&&bundle.config.reviewer===env.HOOK_LAUNCH_ADMIN_ADDRESS,'bundle reviewer is not the configured launch admin')
+ const stack=await stackBundleFrom({env,readBundle,legacy:bundle})
+ need(!openLaunchesEnabled(env)||stack,'open launches launch on our own stack: set HOOKLAB_STACK_BUNDLE_FILE and HOOKLAB_STACK_BUNDLE_SHA256')
  const urls=[env.HOOKLAB_PRODUCTION_RPC_PRIMARY_URL,env.HOOKLAB_PRODUCTION_RPC_SECONDARY_URL]
  need(urls.every(u=>typeof u==='string'&&u.startsWith('https://')),'two HTTPS production RPC URLs are required')
  const connections=bundle.profile.providers.map((provider,i)=>({provider,connection:connectionFor(urls[i])}))
@@ -71,10 +104,12 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
  need(/^(0|[1-9][0-9]{0,6})$/.test(priority),'HOOKLAB_PRIORITY_MICROLAMPORTS must be a small integer')
  const networkFee=String(3*5000+Math.ceil(1400000*Number(priority)/1e6))
  const common=async()=>({...await reviewTiming(),maxAgeMs:60000,maxSlotLag:SLOT_LAG,maxNetworkFeeLamports:networkFee,computeUnitLimit:1400000,computeUnitPriceMicroLamports:priority})
- return {bundle,connections,observers,reviewTiming,
+ // Launches use the bundle of the stack they launch on (our own stack for open launches).
+ const launchBundle=openLaunchesEnabled(env)?stack:bundle
+ return {bundle,stack,launchBundle,connections,observers,reviewTiming,
   async launchLimits(){const c=await common();return {preparationLimits:{...c,maxRentLamports:'20000000',maxTotalDebitLamports:String(20000000+Number(networkFee))},
-   launchLimits:{...c,maxLaunchFeeLamports:bundle.config.economics.launchFeeLamports,maxPoolCreationFeeLamports:bundle.config.economics.poolCreationFeeLamports,
-    maxRentLamports:'100000000',maxInstructionDebitLamports:'100000000',maxTotalDebitLamports:String(100000000+Number(networkFee))}}},
+   launchLimits:{...c,...launchDebitLimits(launchBundle.config.economics,networkFee,
+    openLaunchesEnabled(env)?(await openLaunchRent(size=>connections[0].connection.getMinimumBalanceForRentExemption(size,'finalized'))).guard:undefined)}}},
   tradeLimits:{nowMs:Date.now(),maxAgeMs:60000,maxSlotLag:SLOT_LAG,validUntilSlot:0,reviewExpiresAtMs:0,maxNetworkFeeLamports:networkFee,maxTotalDebitLamports:networkFee,
    computeUnitLimit:1400000,computeUnitPriceMicroLamports:priority},
   ...productionKeyRing(env)}
@@ -89,12 +124,17 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  const s=await productionSettings({env}),identity=walletIdentityConfiguration(env)
  const pool=createHookLabDatabasePool(identity,10,'runtime')
  try{
+ // Two bundles: bundle 2 (legacy) for the canary and the bridged flows, our own stack's for new coins.
+ const bound=b=>b&&{config:b.config,profile:b.profile,dossierJson:b.dossierJson}
+ const legacy=bound(s.bundle),own=bound(s.stack)
  const base={enabled:true,origin:identity.origin,ownerCustodyApproved:true,operatorDeploymentApproved:true,economicsApproved:true,
-  config:s.bundle.config,profile:s.bundle.profile,dossierJson:s.bundle.dossierJson,connections:s.connections,keyRing:s.keyRing,activeKeyId:s.activeKeyId,
+  ...legacy,connections:s.connections,keyRing:s.keyRing,activeKeyId:s.activeKeyId,
   adminSigner:remoteAdminSigner(pool,{address:s.bundle.config.reviewer,observe:s.observers.live}),expiryObserver:s.observers.bothPast}
  // Each launch gets its own lookup table, created by the owner's Mac agent; trades use the bundle's shared table.
  const launchLookupTable=remoteLaunchLookupTable(pool,{envelope:s.bundle.profile,connections:s.connections,adminAddress:s.bundle.config.reviewer})
- const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,launchLookupTable,reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
+ // Open launches use the bundle's one shared launch table and need no admin co-signature; the owner's Mac is not involved.
+ const open=openLaunchesEnabled(env)
+ const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,...(open?{...own,openLaunches:true}:{launchLookupTable}),reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
@@ -102,7 +142,7 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  // pins the upgraded programs.
  let nativeTrading=false
  if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'){
-  const trade=createInclusiveTradeRuntime(pool,{...base,ownerTradingApproved:true,limits:s.tradeLimits,
+  const trade=createInclusiveTradeRuntime(pool,{...base,stack:own,ownerTradingApproved:true,limits:s.tradeLimits,openLaunches:openLaunchesEnabled(env),
    walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true',nativeTradingEnabled:env.HOOK_NATIVE_TRADING_ENABLED==='true'})
   installInclusiveTradeRuntime(trade);nativeTrading=trade.nativeTrading
   if(env.HOOK_NATIVE_TRADING_ENABLED==='true'&&!nativeTrading)console.error('Hook Lab native trading stays off: the production bundle does not pin the reviewed native-SOL programs')
@@ -110,7 +150,7 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  // Native-SOL launches: their creators claim fees in SOL (stage native-claim). Off unless HOOK_NATIVE_LAUNCHES_ENABLED=true.
  if(env.HOOK_NATIVE_LAUNCHES_ENABLED==='true'){
   const {createNativeClaimRuntime,installNativeClaimRuntime}=await import('../app/lib/hooklab-native-claim-runtime.mjs')
-  installNativeClaimRuntime(createNativeClaimRuntime(pool,{...base,nativeLaunchesApproved:true,limits:s.tradeLimits}))
+  installNativeClaimRuntime(createNativeClaimRuntime(pool,{...base,...(own??{}),nativeLaunchesApproved:true,limits:s.tradeLimits}))
  }
  return {installed:true,trading:env.HOOK_INCLUSIVE_TRADING_ENABLED==='true',nativeTrading}
  }catch(error){if(!nativeLaunchRuntime())await pool.end().catch(()=>{});throw error}

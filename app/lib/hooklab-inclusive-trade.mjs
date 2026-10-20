@@ -1,4 +1,4 @@
-import {publicNativeOperation} from './hooklab-native-operation-public.mjs'
+import {customerTradeReview,publicNativeOperation} from './hooklab-native-operation-public.mjs'
 import {createHookLabDatabasePool} from '../../src/hooklab-database.mjs'
 import {z} from 'zod'
 import {assertSameOrigin} from './auth.mjs'
@@ -9,6 +9,9 @@ import {clientAddress} from '../../src/client-address.mjs'
 import {inclusiveMaxWalletSwapRequestSchema} from '../../src/hooklab-inclusive-max-wallet-swap.mjs'
 import {inclusiveTradeRuntime} from './hooklab-inclusive-trade-runtime.mjs'
 import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
+import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
+import { openLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
+import { DELISTED_BUY_REFUSAL } from '../../src/hooklab-coin-moderation.mjs'
 const intent=inclusiveMaxWalletSwapRequestSchema.pick({mint:true,selectedConfig:true,capBps:true,creatorFeeBps:true,side:true,amountIn:true,minAmountOut:true,maxInput:true,maxPriceImpactBps:true}).strict()
 const lamports=z.string().regex(/^[1-9]\d{0,19}$/),mintKey=z.string().max(44)
 const body=z.discriminatedUnion('action',[
@@ -18,7 +21,7 @@ const body=z.discriminatedUnion('action',[
  // Wallet funding: add SOL to Hook Lab (creating the needed holdings), or withdraw bridged SOL back to the wallet.
  z.object({action:z.literal('fund'),signingId:z.uuid(),request:z.object({mint:mintKey.nullable(),lamports:z.string().regex(/^(0|[1-9]\d{0,19})$/)}).strict()}).strict(),
  z.object({action:z.literal('withdraw'),signingId:z.uuid(),request:z.object({lamports}).strict()}).strict(),
- z.object({action:z.enum(['get','refresh-review','wallet-request','submit','reconcile']),signingId:z.uuid()}).strict(),
+ z.object({action:z.enum(['get','refresh-review','wallet-request','submit','reconcile','expire']),signingId:z.uuid()}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:z.uuid(),signedTransactionBase64:z.string().max(1644)}).strict(),
 ])
 // Until HOOK_TRADING_PUBLIC=true, only listed tester wallets may start trades or funding (existing operations stay recoverable).
@@ -30,8 +33,11 @@ const STAGES=['inclusive-buy','inclusive-sell','wallet-fund','wallet-withdraw','
 // Native-SOL trading needs its switch here and in the installed runtime (which then registers the native stages).
 export const nativeTradingOn=(env,service)=>env.HOOK_NATIVE_TRADING_ENABLED==='true'&&service?.nativeTrading===true
 const reply=(data,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'private, no-store',Vary:'Cookie','X-Content-Type-Options':'nosniff'}})
+// moderation(pool, mint): the coin's delisting state. A delisted coin can still be sold (and its creator still claims);
+// only a new BUY is refused.
+const delistedState=(env)=>(pool,mint)=>openLaunchesEnabled(env)?ownerApprovalStore(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,openLaunches:true}).moderationByMint(mint):{delisted:false}
 export function createInclusiveTradeHandler({env=process.env,configuration=walletIdentityConfiguration,runtime=inclusiveTradeRuntime,
- database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota}={}){
+ database=createHookLabDatabasePool,principalStore=walletPrincipalStore,quota=walletIdentityQuota,moderation=delistedState(env)}={}){
  return async request=>{
   if(env.HOOK_INCLUSIVE_TRADING_ENABLED!=='true'||env.HOOK_WALLET_IDENTITY_ENABLED!=='true')return reply({status:'blocked',blockers:[{code:'INCLUSIVE_TRADING_DISABLED',message:'Trading awaits explicit deployment and fee approval.'}]})
   let pool
@@ -53,10 +59,12 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
    // Withdrawing is never gated: anyone with SOL in Hook Lab can always take it back out.
    if(['quote','native-quote','fund'].includes(input.action)&&!tradingOpenFor(env,owner.wallet))return reply({status:'blocked',blockers:[{code:'TRADING_NOT_OPEN',message:'Trading opens to everyone soon.'}]})
    if(input.action==='native-quote'&&!nativeTradingOn(env,service))return reply({status:'blocked',blockers:[{code:'NATIVE_TRADING_DISABLED',message:'Trading this coin on repo.ing opens soon.'}]})
+   if(['quote','native-quote'].includes(input.action)&&input.request.side==='buy'&&(await moderation(pool,input.request.mint)).delisted)
+    return reply({status:'blocked',blockers:[{code:'COIN_DELISTED',message:DELISTED_BUY_REFUSAL}]})
    if(input.action==='fund'&&!service.walletFunding)return reply({status:'blocked',blockers:[{code:'WALLET_FUNDING_DISABLED',message:'Adding SOL to Hook Lab is paused right now. Withdrawals still work.'}]})
    if(input.action==='withdraw'&&!service.walletWithdraw)return reply({status:'blocked',blockers:[{code:'WALLET_WITHDRAW_UNAVAILABLE',message:'Withdrawals are unavailable right now.'}]})
    let result
-   if(input.action==='wallet-request')result=await lifecycle.walletRequest(token,input.signingId)
+   if(input.action==='wallet-request'){const issued=await lifecycle.walletRequest(token,input.signingId);result={...issued,review:customerTradeReview(issued.review)}}
    else{
     let operation
     if(input.action==='quote')operation=await lifecycle.createReview(token,input.signingId,{custodyOperationId:input.signingId,stage:`inclusive-${input.request.side}`,intent:input.request})
@@ -67,9 +75,12 @@ export function createInclusiveTradeHandler({env=process.env,configuration=walle
     else if(input.action==='refresh-review')operation=await lifecycle.refreshReview(token,input.signingId)
     else if(input.action==='retain-wallet')operation=await lifecycle.retainWalletSignature(token,input.signingId,input.signedTransactionBase64)
     else if(input.action==='submit')operation=await lifecycle.submitOnce(token,input.signingId)
+    // A never-sent operation whose blockhash both providers prove expired closes as expired (nothing was ever sent).
+    else if(input.action==='expire')operation=await lifecycle.expire(token,input.signingId)
     else operation=await lifecycle.reconcile(token,input.signingId)
     if(operation.owner!==owner.wallet||!STAGES.includes(operation.stage))throw Error()
-    result={operation:publicNativeOperation(operation)}
+    const shown=publicNativeOperation(operation)
+    result={operation:{...shown,review:customerTradeReview(shown.review)}}
    }
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()
    return reply({status:'available',...result})

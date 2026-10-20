@@ -6,8 +6,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey } from '@solana/web3.js'
-import { graduateHookCoin } from '../src/hooklab-owner-driver/instructions.mjs'
+import { BorshCoder } from '@anchor-lang/core'
+import { graduateHookCoin, instructionsFor } from '../src/hooklab-owner-driver/instructions.mjs'
+import { loadArtifacts } from '../src/hooklab-owner-driver/artifacts.mjs'
+import { stackFromIndependentBuild } from '../src/hooklab-stack-build.mjs'
+import { INDEPENDENT_DIR, INDEPENDENT_SKIP } from './fixtures/hooklab-independent-stack.mjs'
 import { MAINNET_ROLES, PROGRAMS, QUOTE_MINT } from '../src/hooklab-owner-driver/pins.mjs'
+import { LEGACY_KIT } from '../src/hooklab-stack.mjs'
 import { hookCoinAddresses } from '../src/hooklab-inclusive-max-wallet-swap.mjs'
 
 const idl = JSON.parse(readFileSync(new URL('../vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json', import.meta.url)))
@@ -35,7 +40,7 @@ function expected(mint) {
 test('graduate: every account, its order and privileges, and the data match the deployed IDL and independent derivations', () => {
   const cranker = Keypair.generate().publicKey.toBase58()
   for (const mint of [MAINNET_ROLES.mint, Keypair.generate().publicKey.toBase58()]) {
-    const ix = graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker, mint }), want = expected(mint)
+    const ix = graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker, mint, kit: LEGACY_KIT }), want = expected(mint)
     assert.equal(ix.programId.toBase58(), L)
     assert.deepEqual([...ix.data], definition.discriminator); assert.equal(definition.args.length, 0)
     assert.deepEqual(ix.data, createHash('sha256').update('global:graduate').digest().subarray(0, 8))
@@ -55,6 +60,24 @@ test('graduate: every account, its order and privileges, and the data match the 
 })
 
 test('graduate refuses addresses that are not keys', () => {
-  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: 'nope', mint: MAINNET_ROLES.mint }))
-  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: MAINNET_ROLES.payer, mint: 'nope' }))
+  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: 'nope', mint: MAINNET_ROLES.mint, kit: LEGACY_KIT }))
+  assert.throws(() => graduateHookCoin(PROGRAMS, QUOTE_MINT, { cranker: MAINNET_ROLES.payer, mint: 'nope', kit: LEGACY_KIT }))
+})
+
+// Regression (self-serve e2e on hook-lab independent e775165, 2026-10-19): that build's launch program takes the token
+// program's hook signer for the GATE as graduate's token_hook_signer (manifest TOKEN_HOOK_AUTHORITY), where bundle 2 and
+// earlier builds take the signer for the kit. graduate follows the launch IDL's fixed address, and only those two.
+test('graduate on our own stack uses the launch IDL\'s token hook signer: the kit\'s or the gate\'s, never another', { skip: INDEPENDENT_SKIP }, async () => {
+  const { stack, idls } = stackFromIndependentBuild(INDEPENDENT_DIR), launchIdl = JSON.parse(idls.launch)
+  const { launch: L2, swap: S2, gate: G2, token: T2 } = stack.programs, cranker = Keypair.generate().publicKey.toBase58(), mint = Keypair.generate().publicKey.toBase58()
+  const builders = idl => instructionsFor({ idls: { ...loadArtifacts().idls, launch: idl }, coders: { ...loadArtifacts().coders, launch: new BorshCoder(idl) } })
+  const fixed = launchIdl.instructions.find(ix => ix.name === 'graduate').accounts.find(a => a.name === 'token_hook_signer').address
+  assert.ok([find(T2, 'hook-authority', key(stack.kitProgram)), find(T2, 'hook-authority', key(G2))].includes(fixed), 'the build names one of the two')
+  const ix = builders(launchIdl).graduateHookCoin(stack.programs, stack.quoteMint, { cranker, mint, kit: stack.kitProgram })
+  assert.equal(ix.keys[14].pubkey.toBase58(), fixed); assert.equal(ix.programId.toBase58(), L2)
+  assert.deepEqual(ix.keys.slice(-4).map(k => k.pubkey.toBase58()), [G2, find(T2, 'hook-authority', key(G2)), find(G2, 'policy-v2', key(mint)), find(L2, 'launch', key(mint))])
+  // An IDL naming any other token hook signer is refused.
+  const tampered = structuredClone(launchIdl)
+  tampered.instructions.find(ix => ix.name === 'graduate').accounts.find(a => a.name === 'token_hook_signer').address = find(T2, 'hook-authority', key(S2))
+  assert.throws(() => builders(tampered).graduateHookCoin(stack.programs, stack.quoteMint, { cranker, mint, kit: stack.kitProgram }), /token_hook_signer differs/)
 })

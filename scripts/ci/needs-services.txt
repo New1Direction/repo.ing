@@ -110,6 +110,8 @@ hooklab-wallet-preparation-colocated-db
 hooklab-native-signer-custody-db
 hooklab-new-mint-preparation-db
 hooklab-native-signing-db
+# Expiring never-sent native trade reviews through the signing lifecycle: real PostgreSQL on 127.0.0.1:55432 and the reviewed native ELFs.
+hooklab-native-trade-expire-db
 
 hooklab-native-launch-runtime-db
 hooklab-launch-resolver-journal-db
@@ -117,6 +119,8 @@ hooklab-launch-resolver-journal-db
 hooklab-database-timeouts
 # Owner-approved launch store, real PostgreSQL on 127.0.0.1:55432.
 hooklab-owner-approval-db
+hooklab-open-launch-db
+hooklab-own-stack-runtime-db
 # Hooks coin trade index, real PostgreSQL on 127.0.0.1:55432 (scratch databases it creates itself).
 hooklab-coin-trades-db
 # Native-SOL creator fee claims on the signing table after the native-stages migration, real PostgreSQL on 127.0.0.1:55432.

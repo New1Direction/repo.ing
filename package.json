@@ -22,6 +22,7 @@
     "hooks:owner": "node scripts/hooklab-owner.mjs",
     "test:hooks:owner": "node --test tests/hooklab-owner-builders.test.mjs tests/hooklab-owner-driver.test.mjs",
     "test:hooks:owner:local": "HOOKLAB_OWNER_LOCAL_REQUIRED=true node --test --test-timeout=1800000 tests/hooklab-owner-local.test.mjs",
+    "test:hooks:e2e": "node scripts/e2e/hooks-native-stack.mjs test",
     "fees:earned": "node scripts/read-repo-earnings.mjs",
     "test:github-verification": "node --test tests/github-verification.test.mjs",
     "github:verify-live": "node scripts/github-live-callback.mjs",
@@ -59,8 +60,10 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@e2e-dev/web": "0.15.2",
     "@modelcontextprotocol/client": "2.1.0",
     "drizzle-kit": "^0.31.11",
+    "e2e": "0.21.2",
     "esbuild": "0.25.12",
     "jsdom": "26.1.0"
   }

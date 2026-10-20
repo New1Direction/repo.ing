@@ -62,7 +62,7 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
  }
 
  await t.test('the coin page reads the coin as native from the bytes the programs wrote, with no bridged SOL for the wallet',async()=>{
-  const view=await readHookCoinMarket({connection:w.connections()[0].connection,mint:roles.mint,wallet:roles.creator})
+  const view=await readHookCoinMarket({connection:w.connections()[0].connection,mint:roles.mint,wallet:roles.creator,profile})
   assert.equal(view.market.native,true);assert.equal(view.market.quoteFormMismatch,false);assert.equal(view.market.graduated,false)
   assert.deepEqual(Object.keys(view.wallet).sort(),['address','coin','lamports'])
  })
@@ -150,10 +150,10 @@ test('native-SOL trades: one approval per trade, exact lamports, the final fill 
   await trade(roles.outsider,'buy',2000000)
   const sent=await w.send(stored.review.messageBase64),[,index,code]=/\(\((\d+), (?:Tagged\()?InstructionErrorCustom\((\d+)\)/.exec(sent.error)??[]
   const program=[profile.programs.swap,profile.programs.launch][Number(index)-2]
-  assert.ok(['InsufficientLiquidity','NotReady'].includes(nativeErrorName(program,Number(code))),sent.error)
+  assert.ok(['InsufficientLiquidity','NotReady'].includes(nativeErrorName(program,Number(code),profile.programs)),sent.error)
   const failed=await resolverAt(RESTARTED).reconcile({...stored,signedTransactionBase64:sent.wireBase64,signature:sent.signature})
   assert.equal(failed.status,'finalized-failure');assert.equal(failed.feeLamports,'5000')
-  assert.equal(failed.errorName,nativeErrorName(program,Number(code)),'named by the program that raised it, for the customer’s message')
+  assert.equal(failed.errorName,nativeErrorName(program,Number(code),profile.programs),'named by the program that raised it, for the customer’s message')
   assert.equal((await market()).graduated,false)
  })
  await t.test('a full curve waiting for graduate still takes sales, never buys',async()=>{

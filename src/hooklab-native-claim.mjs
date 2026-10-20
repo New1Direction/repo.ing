@@ -62,7 +62,7 @@ export function compileNativeClaimReview(input) {
   const link = program && Buffer.from(program.dataBase64, 'base64')
   check(program && program.owner === LOADER && program.executable && link.length === 36 && link.readUInt32LE(0) === 2 && link.subarray(4).equals(kb(pda(LOADER, kb(p.launch)))), 'Launch program link differs')
   // Only the reviewed native build pays claims this way (and only it can have written a native launch).
-  check(programData && programData.owner === LOADER && nativeProgramDataMatches('launch', Buffer.from(programData.dataBase64, 'base64')), 'The launch program is not the reviewed native-SOL build')
+  check(programData && programData.owner === LOADER && nativeProgramDataMatches('launch', Buffer.from(programData.dataBase64, 'base64'), profile.launchElf ?? null), 'The launch program is not the reviewed native-SOL build')
   const launchKey = launchAddress(p, r.mint), launch = nativeLaunch(accounts.get(launchKey), p, r)
   const claimable = BigInt(accounts.get(launchKey).lamports) - BigInt(rent.launchLamports)
   refuse(claimable > 0n, 'Nothing to claim yet. Fees arrive with every buy and sell of your coin.')

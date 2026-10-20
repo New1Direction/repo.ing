@@ -85,12 +85,20 @@ export const nativeTradingOpen = view => !!view?.market?.native && view.nativeTr
 
 // Why the panel holds a trade it can estimate but not send, or '': a coin whose two native flags disagree never trades,
 // a native coin waits for native trading, and a bridged coin keeps today's graduation hold.
+// A coin on our own stack only ever trades natively (straight from the wallet's SOL); it never takes the bridged path.
+export const ownStackCoin = view => view?.coin?.stack === 'own'
+// Whether the panel shows a coin as trading straight from the wallet (no Hook Lab balance, no Add SOL or Withdraw).
+export const tradesFromWallet = view => !!view?.market?.native || ownStackCoin(view)
 export function tradeHold(view, estimate) {
   const market = view?.market
-  if (market?.quoteFormMismatch) return 'Trading this coin isn’t available right now.'
+  if (market?.quoteFormMismatch || (ownStackCoin(view) && market && !market.native)) return 'Trading this coin isn’t available right now.'
   if (market?.native) return nativeTradingOpen(view) ? '' : 'Trading this coin on repo.ing opens soon.'
   return graduationHold(market, estimate)
 }
+
+// A delisted coin: the site stops offering BUY; SELL (and the creator's fee claim) keep working.
+export const buyOff = view => view?.coin?.moderation?.delisted === true
+export const DELISTED_BUY_TEXT = 'repo.ing has delisted this coin, so buying it here is off. You can still sell.'
 
 // A native coin's buy or sell is one approval: the swap moves SOL straight between the wallet and the pool. A first buy
 // also pays the deposit for the wallet's coin account. wallet: { lamports, coin (null = no coin account yet) }.

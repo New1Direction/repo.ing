@@ -5,7 +5,8 @@ import { inspectProductionEvidence, parseExecutionDossier } from './hooklab-prod
 // Server-owned read adapters only. Neither the dossier digest nor provider identities may come
 // from an HTTP request. Account matching is not policy approval, adoption or operation acceptance.
 // No RPC defaults, signing, sending, supply-byte exceptions or split-bank snapshots.
-export async function readProductionEvidence({ dossierJson, expectedSha256, providers, now = Date.now, timeoutMs = 8000 } = {}) {
+// idls: the envelope's own IDLs, for a stack bundle (src/hooklab-production-observer.mjs configCodec).
+export async function readProductionEvidence({ dossierJson, expectedSha256, providers, now = Date.now, timeoutMs = 8000, idls = null } = {}) {
   const unavailable = inspectProductionEvidence()
   let dossier, addresses
   try {
@@ -39,7 +40,7 @@ export async function readProductionEvidence({ dossierJson, expectedSha256, prov
       })),
       new Promise((_, reject) => { timer = setTimeout(() => reject(Error()), timeoutMs) }),
     ])
-    const inspection = inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs: now() })
+    const inspection = inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs: now(), idls })
     return { ...inspection, observations }
   } catch {
     return { ...unavailable, reason: 'Finalized production observations unavailable; retain existing evidence', observations: [] }

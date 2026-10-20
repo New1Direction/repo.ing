@@ -3,7 +3,7 @@
 // review re-reads and re-verifies state on two providers before anything is signed.
 import { PublicKey } from '@solana/web3.js'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
-import { PROGRAMS, QUOTE_MINT, holdingAddress } from './hooklab-owner-driver/pins.mjs'
+import { holdingAddress } from './hooklab-owner-driver/pins.mjs'
 import { hookCoinAddresses } from './hooklab-inclusive-max-wallet-swap.mjs'
 import { STATUS_GRADUATED, finalFillLamports, graduationOutcome, isReady } from './hooklab-graduation.mjs'
 import { NATIVE_FLAGS } from './hooklab-native-pins.mjs'
@@ -11,7 +11,9 @@ import { NATIVE_FLAGS } from './hooklab-native-pins.mjs'
 const s = value => value.toString()
 const holdingAmount = info => info && Buffer.from(info.data).length === 204 ? Buffer.from(info.data).readBigUInt64LE(74) : null
 
-export async function readHookCoinMarket({ connection, mint, wallet = null, profile = { programs: PROGRAMS, quoteMint: QUOTE_MINT } }) {
+// profile: the coin's stack profile (its programs and quote marker); the trade runtime picks it by the coin's stack.
+export async function readHookCoinMarket({ connection, mint, wallet = null, profile }) {
+  if (!profile?.programs || !profile.quoteMint) throw Error('The coin\'s stack profile is required')
   new PublicKey(mint); if (wallet) new PublicKey(wallet)
   const { coders } = loadArtifacts(), a = hookCoinAddresses(profile, mint), T = profile.programs.token
   const walletKeys = wallet ? [wallet, holdingAddress(profile.quoteMint, wallet, T), holdingAddress(mint, wallet, T)] : []
@@ -67,8 +69,10 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
     bridgedSol: holdingAmount(quoteHolding)?.toString() ?? null, coin: coinAmount } }
 }
 
-// A wallet's SOL and its bridged SOL in Hook Lab (null when the bridged-SOL holding does not exist yet).
-export async function readHookWalletBalances({ connection, wallet, profile = { programs: PROGRAMS, quoteMint: QUOTE_MINT } }) {
+// A wallet's SOL and its bridged SOL in Hook Lab (null when the bridged-SOL holding does not exist yet). Legacy stack only
+// (profile: bundle 2's): our own stack has no bridged SOL.
+export async function readHookWalletBalances({ connection, wallet, profile }) {
+  if (!profile?.programs?.bridge) throw Error('Bridged balances exist on the legacy stack only')
   new PublicKey(wallet)
   const keys = [wallet, holdingAddress(profile.quoteMint, wallet, profile.programs.token)]
   const { value } = await connection.getMultipleAccountsInfoAndContext(keys.map(k => new PublicKey(k)), { commitment: 'confirmed' })

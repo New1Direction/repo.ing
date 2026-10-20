@@ -12,24 +12,25 @@ function priceRows(price) {
     ['Raised to graduate', 'The SOL buyers put in before it graduates', v ? formatSol(v.raiseLamports) : `≈${formatUsd(TARGET_USD_MICROS.raise)}`],
   ]
 }
-const priceNote = (price, fixed) => fixed ? `Locked in when repo.ing approved your coin, with SOL at ${formatSolPrice(price.solUsdMicros)}.`
-  : price ? `SOL amounts use today’s price of ${formatSolPrice(price.solUsdMicros)} per SOL. repo.ing locks them in when it approves your coin.`
-    : 'The SOL amount is set from SOL’s price when repo.ing approves your coin.'
+// open: a self-serve launch, whose price is fixed when the creator signs (no approval step).
+const priceNote = (price, fixed, open = false) => fixed ? `Locked in ${open ? 'when you signed' : 'when repo.ing approved your coin'}, with SOL at ${formatSolPrice(price.solUsdMicros)}.`
+  : price ? `SOL amounts use today’s price of ${formatSolPrice(price.solUsdMicros)} per SOL. ${open ? 'They are fixed when you sign.' : 'repo.ing locks them in when it approves your coin.'}`
+    : open ? 'The SOL amount is set from SOL’s price when you sign.' : 'The SOL amount is set from SOL’s price when repo.ing approves your coin.'
 
 // The launch form's side card, styled like "Every trade" below it.
-export function HookStartingPrice({ price, fixed = false }) {
+export function HookStartingPrice({ price, fixed = false, open = false }) {
   return <div className="inner-card fee-breakdown hooks-price"><h3>Starting price</h3>
     {priceRows(price).map(([label, about, value]) => <div key={label} className="fee-line"><span>{label}<small>{about}</small></span><strong>{value}</strong></div>)}
-    <div className="fee-note"><Info size={18} aria-hidden="true"/><span>{priceNote(price, fixed)}</span></div>
+    <div className="fee-note"><Info size={18} aria-hidden="true"/><span>{priceNote(price, fixed, open)}</span></div>
   </div>
 }
 
 // The request status: the same three numbers as compact stats.
-export function HookPriceStats({ price, fixed = false }) {
+export function HookPriceStats({ price, fixed = false, open = false }) {
   return <>
     <dl className="hooks-coin-stats hooks-price-stats" aria-label="Starting price">
       {priceRows(price).map(([label, , value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
     </dl>
-    <p className="hooks-price-note">{priceNote(price, fixed)}</p>
+    <p className="hooks-price-note">{priceNote(price, fixed, open)}</p>
   </>
 }

@@ -4,7 +4,7 @@
 // HOOK_NATIVE_LAUNCHES_ENABLED, off by default.
 import { createHash } from 'node:crypto'
 import { PublicKey, TransactionInstruction } from '@solana/web3.js'
-import { NATIVE_ELF, NATIVE_FLAGS, loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { NATIVE_BUILDS, NATIVE_ELF, NATIVE_FLAGS, isReviewedNativeElf, loadNativeArtifacts } from './hooklab-native-pins.mjs'
 import { launchConfigReservedValid } from './hooklab-launch-config-reserved.mjs'
 
 const check = (ok, message) => { if (!ok) throw Error(message) }
@@ -22,14 +22,15 @@ export const LAUNCH_ACCOUNT_BYTES = 565
 export const CREATE_LAUNCH_V3_DISCRIMINATOR = instructionDisc('create_launch_custom_v3')
 export const CREATE_LAUNCH_V4_DISCRIMINATOR = instructionDisc('create_launch_custom_v4')
 
-// Config.reserved[0] (byte 186). Reserved bytes 187..249 stay zero whichever way it is set; anything else is not a state
-// the reviewed programs write, so nothing is compiled or signed against it.
+// Config.reserved[0] (byte 186). The rest of the reserved bytes hold open creation and its menus, or zero
+// (src/hooklab-launch-config-reserved.mjs); anything else is not a state the reviewed programs write, so nothing is
+// compiled or signed against it.
 export function nativeLaunchesSwitch(configBytes) {
   const b = Buffer.from(configBytes), at = NATIVE_FLAGS.configNativeLaunches
   check(b.length === 250 && b.subarray(0, 8).equals(accountDisc('Config')), 'Not a launch Config account')
   if (!launchConfigReservedValid(b.subarray(at))) {
-    check(b.subarray(at + 1).every(v => v === 0), 'Launch Config reserved bytes after the switch are not zero')
-    check(false, `Launch Config switch byte ${at} is ${b[at]}, not 0 or 1`)
+    check(b[at] === 0 || b[at] === 1, `Launch Config switch byte ${at} is ${b[at]}, not 0 or 1`)
+    check(false, 'Launch Config reserved bytes after the switch are not a state the reviewed programs write')
   }
   return b[at] === 1
 }
@@ -76,14 +77,15 @@ function flagAt(bytes, { name, length, tagAt, some, none }) {
 export const launchIsNative = bytes => flagAt(bytes, { name: 'Launch', length: LAUNCH_ACCOUNT_BYTES, tagAt: 498, some: NATIVE_FLAGS.launch, none: NATIVE_FLAGS.launchWithoutHook })
 export const poolIsNative = bytes => flagAt(bytes, { name: 'Pool', length: 411, tagAt: 171, some: NATIVE_FLAGS.pool, none: NATIVE_FLAGS.poolWithoutHook })
 
-// A profile's ELF pin for the reviewed native build: the raw build output, or the trimmed bytes a deployed ProgramData holds.
-export function isNativeElfPin(role, sha256, length) {
-  const e = NATIVE_ELF[role]
-  return !!e && ((sha256 === e.sha256 && length === e.length) || (sha256 === e.trimmedSha256 && length === e.trimmedLength))
-}
-// A ProgramData account (45-byte header) holding exactly the reviewed native ELF: its trimmed bytes, then only zeros.
-export function nativeProgramDataMatches(role, programData) {
-  const e = NATIVE_ELF[role], b = Buffer.from(programData)
-  if (!e || b.length < 45 + e.trimmedLength || b.readUInt32LE(0) !== 3) return false
-  return createHash('sha256').update(b.subarray(45, 45 + e.trimmedLength)).digest('hex') === e.trimmedSha256 && b.subarray(45 + e.trimmedLength).every(v => v === 0)
+// A profile's ELF pin for a reviewed native build (e357fdf or the open-creation build): the raw build output, or the
+// trimmed bytes a deployed ProgramData holds.
+export const isNativeElfPin = (role, sha256, length) => isReviewedNativeElf(role, sha256, length)
+// A ProgramData account (45-byte header) holding exactly a reviewed native ELF: its trimmed bytes, then only zeros.
+// pin: a stack profile's own { trimmedSha256, trimmedLength } (our stack pins its build itself); the reviewed legacy
+// native builds otherwise.
+export function nativeProgramDataMatches(role, programData, pin = null) {
+  const b = Buffer.from(programData)
+  if (b.length < 45 || b.readUInt32LE(0) !== 3) return false
+  return (pin ? [{ elf: { [role]: pin } }] : Object.values(NATIVE_BUILDS)).some(({ elf }) => { const e = elf[role]
+    return !!e && b.length >= 45 + e.trimmedLength && createHash('sha256').update(b.subarray(45, 45 + e.trimmedLength)).digest('hex') === e.trimmedSha256 && b.subarray(45 + e.trimmedLength).every(v => v === 0) })
 }

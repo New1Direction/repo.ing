@@ -3,11 +3,9 @@
 // between $50 and $1,000. The bounds come from the same constant the website refuses with; every other config field is
 // carried over from the live config unchanged. plan compiles and previews only; execute needs --approved like a gate.
 import BN from 'bn.js'
-import { loadArtifacts } from '../artifacts.mjs'
-import * as ix from '../instructions.mjs'
 import { fieldDiff, plain, sol } from '../preview.mjs'
 import { VIRTUAL_QUOTE_BOUNDS, formatSolPrice } from '../../hooklab-launch-pricing.mjs'
-import { check, hex, nextState, governanceSection, governanceView, simpleMessage } from './common.mjs'
+import { check, hex, nextState, gsection, gview, simpleMessage, ixOf, abiOf } from './common.mjs'
 import { governedSnapshot, payerRow, verifyGovernedConfig } from './admin.mjs'
 
 const STAGE = 'launch-usd-bounds', MAX_U64 = new BN('18446744073709551615')
@@ -19,8 +17,8 @@ export function boundByteOffsets(coder, decoded) {
   const low = encode(new BN(0)), high = encode(MAX_U64)
   return [...low.keys()].filter(i => low[i] !== high[i]).map(i => i + 8)
 }
-function byteCheck(raw, decoded, after) {
-  const coder = loadArtifacts().coders.launch, relay = value => Buffer.concat([raw.subarray(0, 8), coder.types.encode('Config', value)])
+function byteCheck(coder, raw, decoded, after) {
+  const relay = value => Buffer.concat([raw.subarray(0, 8), coder.types.encode('Config', value)])
   check(relay(decoded).equals(raw), 'Live launch config bytes are not canonical; refusing to predict its post-state')
   const predicted = relay({ ...decoded, min_virtual_quote: after.min_virtual_quote, max_virtual_quote: after.max_virtual_quote })
   const bounds = boundByteOffsets(coder, decoded), changed = [...predicted.keys()].filter(i => predicted[i] !== raw[i])
@@ -32,17 +30,17 @@ export const launchUsdBounds = {
   name: STAGE,
   async build(ctx, pinned) {
     const { snapshot, config, governance, addresses } = await governedSnapshot(ctx, 'launch')
-    const current = ix.launchConfigArgs(config)
+    const current = ixOf(ctx).launchConfigArgs(config)
     const after = { ...current, min_virtual_quote: new BN(VIRTUAL_QUOTE_BOUNDS.min.toString()), max_virtual_quote: new BN(VIRTUAL_QUOTE_BOUNDS.max.toString()) }
     const diff = fieldDiff(plain(current), plain(after))
     if (!diff.length) return { blocked: `already applied: launch config virtual quote bounds already equal ${sol(VIRTUAL_QUOTE_BOUNDS.min)}–${sol(VIRTUAL_QUOTE_BOUNDS.max)}`, observedSlot: snapshot.slot }
     check(diff.every(x => ['min_virtual_quote', 'max_virtual_quote'].includes(x.field)), 'Only the virtual quote bounds may change')
-    const bounds = byteCheck(Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), config, after)
-    const expected = ix.governanceCommitment('launch', governance.state)
-    const instruction = ix.governedSetConfig(ctx.programs, 'launch', ctx.roles.admin, expected, after)
-    const afterState = nextState(governance.state, { config_digest: [...ix.economicsDigest('launch', ctx.programs.launch, after)], roles: { treasury: after.treasury } })
+    const bounds = byteCheck(abiOf(ctx).coders.launch, Buffer.from(snapshot.accounts.get(addresses.config).dataBase64, 'base64'), config, after)
+    const expected = ixOf(ctx).governanceCommitment('launch', governance.state)
+    const instruction = ixOf(ctx).governedSetConfig(ctx.programs, 'launch', ctx.roles.admin, expected, after)
+    const afterState = nextState(governance.state, { config_digest: [...ixOf(ctx).economicsDigest('launch', ctx.programs.launch, after)], roles: { treasury: after.treasury } })
     const { review, blockhash } = await simpleMessage(ctx, { stage: STAGE, payer: ctx.roles.payer, instructions: [instruction], pinned, snapshot })
-    const before = governanceView('launch', governance.state).commitment, next = hex(ix.governanceCommitment('launch', afterState))
+    const before = gview(ctx, 'launch', governance.state).commitment, next = hex(ixOf(ctx).governanceCommitment('launch', afterState))
     const unchanged = Object.keys(plain(current)).filter(field => !diff.some(x => x.field === field))
     return { observedSlot: snapshot.slot, review, pinned: { blockhash: blockhash.blockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight },
       sections: [
@@ -52,7 +50,7 @@ export const launchUsdBounds = {
         { title: 'what this allows', rows: ['website launches open at ≈$5,000: virtual quote = ceil(1.125 x $5,000 / SOL price), fixed when the owner invites',
           `the bounds accept SOL prices from ${solPriceAt(VIRTUAL_QUOTE_BOUNDS.max)} to ${solPriceAt(VIRTUAL_QUOTE_BOUNDS.min)}; outside them the website refuses to invite`,
           'the standard 1 SOL quote no longer passes on chain: land this with no launch in flight, together with a deploy that sets HOOK_LAUNCH_USD_PRICING=true'] },
-        governanceSection('launch', governance.state, afterState),
+        gsection(ctx, 'launch', governance.state, afterState),
         { title: 'refresh after it lands', rows: [
           `refresh: launch governance commitment ${before} -> ${next}; re-plan every launch-governance stage planned before (customer-grant, gates)`,
           'refresh: launch guard expected_launch_economics_hash covers min/max_virtual_quote; launch reviews built before this change fail on chain (the compiler recomputes it per review)',

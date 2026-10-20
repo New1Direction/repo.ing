@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import { z } from 'zod'
 import { LOCAL_DOSSIER_SCHEMA, localAcceptanceNetwork, isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
-import { NATIVE_IDL_SHA256, loadNativeArtifacts } from './hooklab-native-pins.mjs'
+import { NATIVE_BUILDS, loadNativeArtifacts, loadOpenArtifacts, nativeBuildForRole } from './hooklab-native-pins.mjs'
+import { parseLaunchConfigReserved } from './hooklab-launch-config-reserved.mjs'
 import { isNativeElfPin } from './hooklab-native-launch.mjs'
 
 const sha = data => createHash('sha256').update(data).digest('hex')
@@ -43,16 +44,22 @@ export function parseExecutionDossier(value) {
 // Runtime source artifacts are rooted at the app directory and included in Next tracing.
 const codecBytes={launch:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_launch.json`),swap:readFileSync(`${process.cwd()}/vendor/hooklab-event-abi/inclusive-max-wallet-candidate/bordrless_swap.json`)}
 const codecs=Object.fromEntries(['launch','swap'].map(role=>{const bytes=codecBytes[role];return [role,{sha256:sha(bytes),coder:new BorshCoder(JSON.parse(bytes)),idl:JSON.parse(bytes)}]}))
-// Config codec for a config-counters-v1 pin. Two reviewed builds exist: bundle 2 (the IDLs above) and the native-SOL
-// builds of bundle 3 (vendor/hooklab-native-candidate, loaded on first use and only with their reviewed bytes). Config
-// has the same layout in both; the pin names its build by IDL hash, and that must be the build its program's ELF pin
-// names: the native IDL only beside the native ELF, the bundle-2 IDL never beside it. Any other IDL hash is refused.
-function configCodec(role,pin,program){
- const native=pin.idlSha256===NATIVE_IDL_SHA256[role]
- if(native!==isNativeElfPin(role,program.elfSha256,program.elfLength))return null
- if(!native)return codecs[role].sha256===pin.idlSha256?codecs[role]:null
- const {idls,coders}=loadNativeArtifacts()
- return {sha256:NATIVE_IDL_SHA256[role],coder:coders[role],idl:idls[role]}
+// Config codec for a config-counters-v1 pin. Reviewed builds: bundle 2 (the IDLs above) and the native-SOL builds
+// (e357fdf, and the open-creation build: vendor/hooklab-native-candidate, loaded on first use and only with their
+// reviewed bytes). Config has the same layout in all; the pin names its build by IDL hash, and that must be the build its
+// program's ELF pin names: a native IDL only beside that native build's ELF, the bundle-2 IDL never beside a native ELF.
+// Any other IDL hash is refused.
+// idls: the envelope's own IDLs (base64), for a stack bundle whose IDLs are its own; matched by the pin's IDL hash.
+function configCodec(role,pin,program,idls){
+ const own=idls?.[role]&&Buffer.from(idls[role],'base64')
+ if(own&&sha(own)===pin.idlSha256){const idl=JSON.parse(own);return {sha256:pin.idlSha256,coder:new BorshCoder(idl),idl}}
+ const build=nativeBuildForRole(role,{elfSha256:program.elfSha256,elfLength:program.elfLength,idlSha256:pin.idlSha256})
+ if(!build){
+  if(isNativeElfPin(role,program.elfSha256,program.elfLength))return null
+  return codecs[role].sha256===pin.idlSha256?codecs[role]:null
+ }
+ const reviewed=build==='open-36dd07e'?loadOpenArtifacts():loadNativeArtifacts()
+ return {sha256:NATIVE_BUILDS[build].idlSha256[role],coder:reviewed.coders[role],idl:reviewed.idls[role]}
 }
 const tokenIdlBytes=readFileSync(`${process.cwd()}/vendor/hooklab-production-candidate/idl/bordrless_token.json`)
 export const TOKEN_IDL_SHA256=sha(tokenIdlBytes)
@@ -79,20 +86,26 @@ function mintSupplyBindingMatches(pin,current,dossier){
  const relaid=Buffer.concat([tokenCodec.discriminator,tokenCodec.coder.types.encode('Mint',live)])
  return Buffer.concat([relaid,Buffer.alloc(approved.length-relaid.length)]).equals(approved)
 }
-export function productionAccountBindingMatches(pin,observed,dossier){
+export function productionAccountBindingMatches(pin,observed,dossier,idls=null){
  try{
   if(!observed||observed.address!==pin.address||observed.owner!==pin.owner||observed.executable!==pin.executable)return false
   const current=rawAccount(observed)
   if(!pin.binding)return sha(current)===pin.dataSha256
   if(pin.binding==='mint-supply-v1')return mintSupplyBindingMatches(pin,current,dossier)
   if(pin.binding!=='config-counters-v1'||(dossier.schema!=='repoing/production-observation/2'&&!isLocalExecutionDossier(dossier))||pin.executable||!['launch-config','swap-config'].includes(pin.role))return false
-  const role=pin.role.split('-')[0],program=dossier.programs.find(p=>p.role===role),codec=program&&configCodec(role,pin,program)
+  const role=pin.role.split('-')[0],program=dossier.programs.find(p=>p.role===role),codec=program&&configCodec(role,pin,program,idls)
   if(!codec||pin.address!==PublicKey.findProgramAddressSync([Buffer.from('config')],new PublicKey(program.address))[0].toBase58()||program.address!==pin.owner||codec.sha256!==pin.idlSha256||codec.idl.address!==program.address)return false
   const approved=rawAccount({dataBase64:pin.approvedDataBase64});if(sha(approved)!==pin.dataSha256||approved.length!==current.length)return false
   const decode=bytes=>{const value=codec.coder.accounts.decode('Config',bytes),encoded=Buffer.concat([bytes.subarray(0,8),codec.coder.types.encode('Config',value)]);if(!encoded.equals(bytes))throw Error('Noncanonical Config');return value}
   const base=decode(approved),live=decode(current),field=role==='launch'?'launches':'pools_created'
   if(live[field].lt(base[field]))return false
   live[field]=base[field]
+  // The launch Config's governed switches (native launches, open creation) and creator menus live in its reserved bytes
+  // and may move between any states the reviewed programs write; every compiler reads them live. Nothing else may.
+  if(role==='launch'){
+   if(!parseLaunchConfigReserved(Buffer.from(live.reserved))||!parseLaunchConfigReserved(Buffer.from(base.reserved)))return false
+   live.reserved=base.reserved
+  }
   return Buffer.concat([current.subarray(0,8),codec.coder.types.encode('Config',live)]).equals(approved)
  }catch{return false}
 }
@@ -122,12 +135,25 @@ export function productionReadiness() {
   }
 }
 
+// Trade, claim and graduation reviews verify only what a trade executes against: every program and its ProgramData, the
+// swap config, the swap governance and the quote mint (the shared trade table is pinned by the operator config). The
+// launch-side pins change with an emergency creation pause, an open-creation toggle, a launch fee or menu change, and
+// bind launch and preparation reviews (and bootstrap and monitoring, which verify the whole dossier) only: no swap_v2
+// hook, graduate, creator claim or native fee collection takes the launch Config or launch governance as an account, so
+// a change there never traps holders. Roles, not addresses: the same holds for every stack's bundle.
+export const LAUNCH_SIDE_ROLES = Object.freeze(['launch-config', 'creation-control'])
+const tradePins = d => d.accounts.filter(a => !LAUNCH_SIDE_ROLES.includes(a.role))
+// The addresses a trade-scope inspection reads: each program, its ProgramData, and the trade-side account pins.
+export function tradeEvidenceAddresses(dossier) {
+  return [...dossier.programs.flatMap(p => [p.address, p.programData]), ...tradePins(dossier).map(a => a.address)]
+}
+
 /** Offline verification of a retained operator dossier, NOT public JSON supplied as authority.
  * expectedSha256 must be independently reviewed; matching a caller's own hash proves nothing.
  * Exact bytes bind dependencies and configuration, but do not decode/approve their semantics.
  * No result enables execution, asserts custody, or marks a token operation settled.
  */
-export function inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs } = {}) {
+export function inspectProductionEvidence({ dossierJson, expectedSha256, observations, nowMs, idls = null, scope = 'dossier' } = {}) {
   const out = { status: 'unavailable', reason: 'Reviewed dossier and two independent observations required',
     observedSlots: [], accountBindingsMatched: false, policyVerified: false, provenanceVerified: false,
     canSign: false, canSubmit: false, canRetry: false }
@@ -142,8 +168,13 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
     check(['launch-config', 'swap-config', 'quote-mint', 'creation-control'].every(r => d.accounts.some(a => a.role === r)), 'Missing config/control/quote binding')
     const roles = [...d.programs, ...d.accounts].map(a => a.role)
     check(new Set(roles).size === roles.length, 'Duplicate evidence role')
-    const addresses = [...d.programs.flatMap(p => [p.address, p.programData]), ...d.accounts.map(a => a.address)]
-    check(new Set(addresses).size === addresses.length, 'Duplicate evidence address')
+    const every = [...d.programs.flatMap(p => [p.address, p.programData]), ...d.accounts.map(a => a.address)]
+    check(new Set(every).size === every.length, 'Duplicate evidence address')
+    // scope 'trade': the trade-side pins only (see LAUNCH_SIDE_ROLES); a production dossier must pin swap governance.
+    check(['dossier', 'trade'].includes(scope), 'Unknown evidence scope')
+    const pins = scope === 'trade' ? tradePins(d) : d.accounts
+    if (scope === 'trade') check(d.schema !== 'repoing/production-observation/2' || pins.some(a => a.role === 'swap-governance'), 'Missing swap governance binding')
+    const addresses = scope === 'trade' ? tradeEvidenceAddresses(d) : every
     check(Array.isArray(observations) && observations.length === 2, 'Two observations required')
     const obs = observations.map(o => observationSchema.parse(o))
     check(new Set(obs.map(o => o.provider)).size === 2 && obs.every(o => d.providers.includes(o.provider)), 'Provider binding differs')
@@ -169,9 +200,9 @@ export function inspectProductionEvidence({ dossierJson, expectedSha256, observa
           && data.subarray(45 + p.elfLength).every(b => b === 0), 'ELF bytes or trailing allocation differ')
         check(sha(data) === p.programDataSha256, 'ProgramData bytes/allocation drift')
       }
-      for (const a of d.accounts) {
+      for (const a of pins) {
         const observed = accounts.get(a.address)
-        check(productionAccountBindingMatches(a,observed,d), 'Config/control/quote account drift')
+        check(productionAccountBindingMatches(a,observed,d,idls), 'Config/control/quote account drift')
       }
     }
     return { ...out, status: 'account-bindings-matched', reason: 'Retained bytes match; policy semantics, provenance signatures and operation receipts remain unverified',
