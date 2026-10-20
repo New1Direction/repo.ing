@@ -3,7 +3,7 @@
 // ~/Documents/ChatGPT/hooks-local-state/independent-<commit>). Every identity and hash is read from the build's files
 // (a rebuild changes them all): the ids file, the manifest's kit ID, the ELFs (trimmed pins computed here and checked
 // against ELF-HASHES.txt) and the IDLs. Test data only: the placeholder IDs are throwaway keys, never mainnet.
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { stackFromIndependentBuild } from '../../src/hooklab-stack-build.mjs'
@@ -17,13 +17,15 @@ function complete(dir) {
     .every(file => existsSync(path.join(dir, file)))
 }
 function defaultDir() {
-  // The newest complete build.
-  const found = existsSync(state) ? readdirSync(state).filter(name => /^independent-[0-9a-f]{7,40}$/.test(name) && complete(path.join(state, name)))
-    .sort((a, b) => statSync(path.join(state, a)).mtimeMs - statSync(path.join(state, b)).mtimeMs) : []
-  return found.length ? path.join(state, found.at(-1)) : path.join(state, 'independent')
+  // Pin the complete placeholder release fixture, not the newest build: final owner IDs are
+  // deliberately not placeholder test inputs. Override explicitly for another placeholder build.
+  return path.join(state, 'independent-2b8b92a')
 }
 export const INDEPENDENT_DIR = process.env.HOOKLAB_INDEPENDENT_DIR ?? defaultDir()
 export const INDEPENDENT_SKIP = !complete(INDEPENDENT_DIR) && `hook-lab's independent build is not at ${INDEPENDENT_DIR} (HOOKLAB_INDEPENDENT_DIR)`
+if (!INDEPENDENT_SKIP && !/PLACEHOLDER/i.test(JSON.parse(readFileSync(path.join(INDEPENDENT_DIR, 'ids/independent.json'), 'utf8')).status ?? '')) {
+  throw Error('HOOKLAB_INDEPENDENT_DIR must select a PLACEHOLDER build for this test fixture, not final owner IDs')
+}
 
 // upgradeAuthority: the key the test validator names as the programs' upgrade authority (a synthetic role); the ids
 // file's own authority otherwise. The build is read as the owner's tools read it (src/hooklab-stack-build.mjs).
