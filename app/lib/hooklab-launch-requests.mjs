@@ -17,12 +17,14 @@ import { launchPriceEstimate } from './hooklab-launch-price.mjs'
 import { openLaunchesEnabled, siteLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { nativeLaunchRuntime } from './hooklab-native-launch-runtime.mjs'
 import { openLaunchNetworkFee } from './hooklab-open-launch.mjs'
+import { selectedHookSchema } from '../../src/hooklab-selected-hook.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 // A 384 KB PNG as base64 plus its data: prefix, and the JSON around it.
 const MAX_IMAGE_DATA_URL=524_310,MAX_BODY_BYTES=540_000
 const inputSchema=z.discriminatedUnion('action',[
  z.object({action:z.literal('create'),requestId:uuid,name:text(32).min(1),symbol:text(10).min(1),creatorFeeBps:z.number().int(),capBps:z.number().int(),
-  image:z.string().max(MAX_IMAGE_DATA_URL),description:z.string().max(2000),x:z.string().max(200),website:z.string().max(400),telegram:z.string().max(200)}).strict(),
+  selectedHook:selectedHookSchema.optional(),image:z.string().max(MAX_IMAGE_DATA_URL),description:z.string().max(2000),x:z.string().max(200),website:z.string().max(400),telegram:z.string().max(200)}).strict()
+  .refine(x=>x.selectedHook?x.capBps===0:x.capBps>0),
  z.object({action:z.literal('get')}).strict(),
  z.object({action:z.literal('cancel'),requestId:uuid}).strict(),
 ])
@@ -63,7 +65,7 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    if(profile)try{profile={...profile,image:await validateTokenImage(input.image)}}catch{return reply({error:'Add a coin image again (PNG, JPEG, WebP or GIF, up to 2 MB).'},400)}
    let launchRequest
    if(input.action==='create'&&open&&!(chain?.native&&chain.open&&!chain.paused))return reply({error:'Launches are paused right now. Try again later.'},409)
-   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:coinMetadataUri(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps},profile,
+   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:coinMetadataUri(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook}:{})},profile,
     open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,capBps:chain.capBps}}:{})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)

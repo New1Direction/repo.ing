@@ -37,6 +37,9 @@ export const MIGRATIONS = Object.freeze({
   // append-only moderation record. Apply before HOOK_OPEN_LAUNCHES=true.
   'open-launches': Object.freeze({ files: ['hooklab-open-launch-schema.sql'], requires: ['hook_lab_launch_requests', 'hook_lab_launch_request_prices'],
     inspect: "select indexdef from pg_indexes where indexname='hook_lab_launch_requests_single_invite'" }),
+  // Durable custom-hook coin recording only; this does not enable preparation or signing.
+  'selected-hook-requests': Object.freeze({ files: ['hooklab-selected-hook-requests-schema.sql'], requires: ['hook_lab_launch_requests'],
+    inspect: "select column_name from information_schema.columns where table_name='hook_lab_launch_requests' and column_name in ('source','selected_hook') order by column_name" }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

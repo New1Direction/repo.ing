@@ -10,6 +10,7 @@ import { STANDARD_VIRTUAL_QUOTE,checkLaunchPricing } from './hooklab-launch-pric
 import { checkLiveBounds } from './hooklab-launch-bounds.mjs'
 import { isDelistingReason,moderationState } from './hooklab-coin-moderation.mjs'
 import { coinStack } from './hooklab-stack.mjs'
+import { selectedHookSchema, refuseUnsupportedSelectedHook } from './hooklab-selected-hook.mjs'
 const fail=(message='Owner approval unavailable or changed')=>Object.assign(Error(message),{code:'OWNER_APPROVAL_UNAVAILABLE'})
 const check=(value,message)=>{if(!value)throw fail(message)}
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -23,7 +24,8 @@ export const launchIntentSchema=z.object({name:text(32),symbol:text(10),uri:z.st
 const parseIntent=intent=>{try{return launchIntentSchema.parse(intent)}catch{throw fail('Choose a name, symbol, an approved creator fee (0.5%, 1% or 2%) and an approved wallet cap (1%, 2%, 3% or 5%)')}}
 // An open request chooses from the chain's menus, not the release code's.
 const openIntentSchema=menus=>z.object({name:text(32),symbol:text(10),uri:z.string().refine(x=>Buffer.byteLength(x)<=200),
- creatorFeeBps:z.number().int().refine(x=>menus.creatorFeeBps.includes(x)),capBps:z.number().int().refine(x=>menus.capBps.includes(x))}).strict()
+ creatorFeeBps:z.number().int().refine(x=>menus.creatorFeeBps.includes(x)),capBps:z.number().int(),selectedHook:selectedHookSchema.optional()}).strict()
+ .refine(x=>x.selectedHook?x.capBps===0:menus.capBps.includes(x.capBps)&&x.capBps>0)
 const parseOpenIntent=(intent,menus)=>{try{return openIntentSchema(menus).parse(intent)}catch{throw fail('Choose a name, a symbol, and a creator fee and max per wallet from the current list')}}
 
 export function verifyEd25519(signerAddress,message,signature){
@@ -45,6 +47,7 @@ const publicProfile=row=>row.has_profile?Object.freeze({description:row.descript
 const publicPricing=row=>row.has_pricing?Object.freeze({solUsdMicros:String(row.sol_usd_micros),sources:row.price_sources,virtualQuote:String(row.virtual_quote),pricedAt:row.priced_at.toISOString()}):null
 const publicRequest=row=>row&&Object.freeze({id:row.id,creator:row.creator_wallet,name:row.name,symbol:row.symbol,uri:row.uri,creatorFeeBps:row.creator_fee_bps,capBps:row.cap_bps,status:row.status,
  invitedAt:row.invited_at?.toISOString?.()??null,inviteExpiresAt:row.invite_expires_at?.toISOString?.()??null,custodyOperationId:row.custody_operation_id,createdAt:row.created_at.toISOString(),
+ ...(row.selected_hook&&{selectedHook:selectedHookSchema.parse(row.selected_hook)}),
  ...(row.has_profile!==undefined&&{profile:publicProfile(row)}),...(row.has_pricing!==undefined&&{pricing:publicPricing(row)}),...(row.status==='launched'&&row.mint&&{mint:row.mint})})
 const priceColumns=row=>({sol_usd_micros:row.sol_usd_micros,price_sources:row.sources,virtual_quote:row.virtual_quote,priced_at:row.priced_at,has_pricing:true})
 const requestQuery=usdPricing=>`select r.*,p.description,p.x_handle,p.website,p.telegram,(p.request_id is not null) as has_profile,
@@ -95,7 +98,9 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
    check(!coin||(typeof coin.image==='string'&&coin.image.startsWith('data:image/png;base64,')),'Add a coin image')
    try{
     return await inTransaction(pool,async db=>{
-     const {rows:[row]}=await db.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status${open?',source':''}) values($1,$2,$3,$4,$5,$6,$7,'queued'${open?",'open'":''}) returning *`,[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps])
+     // Gate requests remain compatible with databases predating the additive custom-hook migration.
+     const {rows:[row]}=await db.query(`insert into hook_lab_launch_requests(id,creator_wallet,name,symbol,uri,creator_fee_bps,cap_bps,status${open?',source':''}${value.selectedHook?',selected_hook':''}) values($1,$2,$3,$4,$5,$6,$7,'queued'${open?",'open'":''}${value.selectedHook?',$8':''}) returning *`,[id,creator,value.name,value.symbol,value.uri,value.creatorFeeBps,value.capBps,...(value.selectedHook?[value.selectedHook]:[])])
+     if(usdPricing)row.has_pricing=false
      if(!coin)return publicRequest({...row,has_profile:false})
      const {rows:[{n}]}=await db.query("select count(*)::int n from hook_lab_coin_profiles p join hook_lab_launch_requests r on r.id=p.request_id where r.creator_wallet=$1 and p.created_at>clock_timestamp()-interval '1 day'",[creator])
      check(n<PROFILES_PER_CREATOR_PER_DAY,'You have sent several launch requests today. Try again tomorrow')
@@ -203,10 +208,12 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   // transaction stores it, so the launch compiles exactly this opening price). No invite, no owner.
   async bindOpenLaunch(db,creator,custodyOperationId,{virtualQuote,pricing,...intent}){
    check(openLaunches,'Open launches are not enabled')
+   if(intent.selectedHook)refuseUnsupportedSelectedHook()
    const value=parseOpenIntent(intent,{creatorFeeBps:[intent.creatorFeeBps],capBps:[intent.capBps]}),fixed=checkLaunchPricing(pricing)
    check(String(virtualQuote)===fixed.virtualQuote,'The opening price differs from the price repo.ing fixed')
    const {rows:[row]}=await db.query("select * from hook_lab_launch_requests where creator_wallet=$1 and source='open' and status in ('queued','launching') for update",[address.parse(creator)])
    check(row,'Create your coin first')
+   if(row.selected_hook)refuseUnsupportedSelectedHook()
    check(row.name===value.name&&row.symbol===value.symbol&&row.uri===value.uri&&row.creator_fee_bps===value.creatorFeeBps&&row.cap_bps===value.capBps,'Launch details differ from your coin')
    if(row.status==='launching'){check(row.custody_operation_id===custodyOperationId,'This coin is already launching');return publicRequest(row)}
    const {rows:[bound]}=await db.query("update hook_lab_launch_requests set status='launching',custody_operation_id=$2,invited_at=clock_timestamp(),invite_expires_at=clock_timestamp()+interval '1 day',updated_at=clock_timestamp() where id=$1 and status='queued' returning *",[row.id,z.uuid().parse(custodyOperationId)])

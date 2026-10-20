@@ -11,6 +11,10 @@ import { ownerApprovalStore } from '../src/hooklab-owner-approval.mjs'
 import { MIGRATIONS, migrationSchema, productionSchema } from '../scripts/hooklab-production-schema.mjs'
 import { launchVirtualQuote } from '../src/hooklab-launch-pricing.mjs'
 import { stackProfileFor } from '../app/lib/hooklab-inclusive-trade-runtime.mjs'
+import { createLaunchRequestsHandler } from '../app/lib/hooklab-launch-requests.mjs'
+import { createNativeLaunchHandler } from '../app/lib/hooklab-native-launch.mjs'
+import { executionGenesis } from '../src/hooklab-local-acceptance.mjs'
+import sharp from 'sharp'
 
 const config = { host: '127.0.0.1', port: 55432, user: 'postgres', password: 'launchtest', database: 'postgres' }
 const key = label => Keypair.fromSeed(createHash('sha256').update(`OPEN LAUNCH DB TEST ONLY ${label}`).digest()).publicKey.toBase58()
@@ -36,6 +40,43 @@ async function withDatabase(work) {
   }
 }
 const intent = (id, extra = {}) => ({ id, name: 'Open coin', symbol: 'OPEN', uri: `https://repo.ing/api/hook-lab/coins/${id}/metadata`, creatorFeeBps: 50, capBps: 500, ...extra })
+
+test('selected hook coin survives HTTP handler restart with immutable intent and refuses reserve before signing', () => withDatabase(async pool => {
+  const creator = key('selected-owner'), selectedHook = { program: key('selected-hook'), flags: 129 }, id = randomUUID()
+  const token = Buffer.alloc(32, 61).toString('base64url'), genesisHash = executionGenesis()
+  await pool.query("insert into hook_lab_wallet_sessions(token_sha256,wallet,origin,audience,genesis_hash,expires_at) values($1,$2,'https://repo.ing','general-launcher',$3,clock_timestamp()+interval '30 minutes')", [createHash('sha256').update(token).digest('hex'), creator, genesisHash])
+  const image = `data:image/png;base64,${(await sharp({ create: { width: 512, height: 512, channels: 3, background: '#81e6ad' } }).png().toBuffer()).toString('base64')}`
+  const env = { HOOK_OPEN_LAUNCHES: 'true', HOOK_WALLET_IDENTITY_ENABLED: 'true', HOOK_NATIVE_LAUNCH_ENABLED: 'true' }
+  const options = { env, configuration: () => ({ origin: 'https://repo.ing', audience: 'general-launcher', genesisHash }),
+    database: () => ({ query: (...a) => pool.query(...a), connect: () => pool.connect(), end: async () => {} }),
+    openCreation: async () => ({ native: true, open: true, paused: false, ...MENUS }), launchPriceEstimate: async () => null }
+  const request = (body, path = 'launch-requests', cookie = token) => new Request(`https://repo.ing/api/hook-lab/${path}`, { method: 'POST',
+    headers: { origin: 'https://repo.ing', 'content-type': 'application/json', cookie: `__Host-hook-wallet-session=${cookie}` }, body: JSON.stringify(body) })
+  const coin = { action: 'create', requestId: id, name: 'Custom coin', symbol: 'CSTM', image, description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 0, selectedHook }
+  const first = await createLaunchRequestsHandler(options)(request(coin))
+  assert.equal(first.status, 200, await first.clone().text())
+  const stored = (await first.json()).request
+  assert.deepEqual(stored.selectedHook, selectedHook); assert.equal(stored.capBps, 0); assert.equal(stored.status, 'queued')
+  assert.equal(stored.custodyOperationId, null)
+  const recovered = await createLaunchRequestsHandler(options)(request({ action: 'get' }))
+  assert.deepEqual((await recovered.json()).request, stored, 'fresh handler recovers the exact recorded coin')
+  assert.equal((await createLaunchRequestsHandler(options)(request({ action: 'get' }, 'launch-requests', Buffer.alloc(32, 62).toString('base64url')))).status, 401)
+  for (const change of [{ capBps: 100 }, { selectedHook: { ...selectedHook, flags: 256 } }, { selectedHook: undefined }]) {
+    const response = await createLaunchRequestsHandler(options)(request({ ...coin, ...change, requestId: randomUUID() }))
+    assert.equal(response.status, 400)
+  }
+  await assert.rejects(pool.query("update hook_lab_launch_requests set selected_hook=$2 where id=$1", [id, { ...selectedHook, flags: 1 }]), /immutable/i)
+  await assert.rejects(pool.query("update hook_lab_launch_requests set name='Other' where id=$1", [id]), /immutable/i)
+  let reserved = 0
+  const native = createNativeLaunchHandler({ ...options, runtime: () => ({ reserve: async () => { reserved++; throw Error('must not reserve') }, lifecycle: {} }) })
+  const blocked = await native(request({ action: 'reserve', operationId: randomUUID(), capBps: 0, selectedHook, creatorFeeBps: 100,
+    label: 'CSTM', name: stored.name, symbol: stored.symbol, uri: stored.uri, virtualQuote: '1000000000' }, 'native-launch'))
+  assert.equal(blocked.status, 409); assert.equal((await blocked.json()).blockers[0].code, 'SELECTED_HOOK_REVIEW_UNAVAILABLE'); assert.equal(reserved, 0)
+  assert.equal((await pool.query('select count(*)::int n from hook_lab_native_signer_custody')).rows[0].n, 0)
+  assert.equal((await createLaunchRequestsHandler(options)(request({ action: 'cancel', requestId: id }))).status, 200)
+  assert.equal((await ownerApprovalStore(pool, { openLaunches: true, usdPricing: true }).requestFor(creator)).status, 'cancelled')
+}))
+
 async function bind(pool, store, creator, operationId, { id, ...value }) {   // the request id is not part of what binds
   const db = await pool.connect()
   try { await db.query('begin'); const bound = await store.bindOpenLaunch(db, creator, operationId, value); await db.query('commit'); return bound }

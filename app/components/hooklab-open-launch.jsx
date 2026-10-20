@@ -53,15 +53,16 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
   // Gate account rent and transaction fees are not estimates for an unreviewed custom lifecycle.
   const { rows, total, need } = openLaunchCosts(coin.selectedHook ? { launchFeeLamports: openCreation?.launchFeeLamports } : openCreation, coin.selectedHook ? {} : costs)
   const values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
-  const amount = value => value ? <>{value.sol}{value.usd && <small>{value.usd}</small>}</> : 'Set when you sign'
+  const unknown = coin.selectedHook ? 'Not yet reviewed' : 'Shown in your wallet'
+  const amount = value => value ? <>{value.sol}{value.usd && <small>{value.usd}</small>}</> : coin.selectedHook ? unknown : 'Set when you sign'
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
     <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} profile={profile}/>
     {coin.selectedHook && <div role="note"><p>{SELECTED_HOOK_NOTE}</p><p>Program: <code style={{ overflowWrap: 'anywhere' }}>{coin.selectedHook.program}</code> · Flags: {coin.selectedHook.flags}</p><p>Inclusive fee policy (model 2). No max-wallet gate.</p></div>}
     <div className="hooks-open-review-grid">
       <div className="inner-card fee-breakdown"><h3>What you pay</h3>
-        {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label} <strong>{row.amount ?? 'shown in your wallet'}</strong>{row.note ? <small> {row.note}</small> : null}</span></div>)}
-        <div className="hooks-cost"><span>You’ll spend about</span><strong>{total ?? 'Shown in your wallet'}</strong><small>Your wallet shows the exact amount before you approve.</small></div>
+        {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label} <strong>{row.amount ?? (coin.selectedHook ? unknown : 'shown in your wallet')}</strong>{row.note ? <small> {row.note}</small> : null}</span></div>)}
+        <div className="hooks-cost"><span>You’ll spend about</span><strong>{total ?? unknown}</strong><small>{coin.selectedHook ? 'Costs require a complete lifecycle review. This check requests no transaction signature.' : 'Your wallet shows the exact amount before you approve.'}</small></div>
         {need ? <div className="hooks-cost"><span>You need at least</span><strong>{need} in your wallet</strong><small>A little more than you spend: the program checks it can cover its accounts, and the rest stays in your wallet.</small></div> : null}
       </div>
       <div className="inner-card fee-breakdown"><h3>Your coin</h3>
@@ -202,19 +203,21 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       if (!session.signedIn && !await session.signIn()) return
       let current = request && ['queued', 'launching'].includes(request.status) ? request : null
       if (current && (coin.selectedHook || current.selectedHook || coin.hookKind === 'selected') && !sameLaunchHook(coin, current)) throw Error('The recorded hook configuration differs. Reload to recover the original launch; nothing was signed.')
-      if ((current ?? coin).selectedHook || coin.hookKind === 'selected') {
-        // Request storage is gate-only today. Send the explicit reserve configuration to the refusing
-        // endpoint, never create a gate request and never enter the signing driver for a custom hook.
-        const source = current ?? { ...coin, name: coin.name.trim(), uri: '' }
-        if (current?.status === 'launching') throw Error(SELECTED_HOOK_NOTE)
-        await reserve(source)
-        throw Error(SELECTED_HOOK_NOTE)
-      }
       if (!current) {
         const problem = coinProblem(coin) || openCreationProblem(openCreation); if (problem) throw Error(problem)
         const created = await post(REQUESTS, { action: 'create', requestId: crypto.randomUUID(), name: coin.name.trim(), symbol: coin.symbol, image: coin.image,
-          description: coin.description, x: coin.x, website: coin.website, telegram: coin.telegram, creatorFeeBps: coin.creatorFeeBps, capBps: coin.capBps })
+          description: coin.description, x: coin.x, website: coin.website, telegram: coin.telegram, creatorFeeBps: coin.creatorFeeBps, ...launchHookInput(coin) })
+        if ((coin.selectedHook || created.request?.selectedHook || coin.hookKind === 'selected') && !sameLaunchHook(coin, created.request))
+          throw Error('The recorded hook configuration differs. Reload to recover the original launch; nothing was signed.')
         current = created.request; setRequest(current)
+      }
+      if (current.selectedHook) {
+        // Recording survives a refresh, but neither a successful availability response nor recovery
+        // can enter signing until the selected-hook review boundary is implemented and adopted.
+        if (!sameLaunchHook(coin, current)) throw Error('The recorded hook configuration differs. Reload to recover the original launch; nothing was signed.')
+        if (current.status === 'launching') throw Error(SELECTED_HOOK_NOTE)
+        await reserve(current)
+        throw Error(SELECTED_HOOK_NOTE)
       }
       setStep('sign')
       await drive(current)
