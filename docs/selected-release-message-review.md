@@ -4,7 +4,8 @@
 message review candidate**, not a signed transaction or release approval. It is not
 the missing historical `final.sh`, an acceptance runner, or a custody integration.
 The requested READY FOR OWNER SIGNING milestone is **not established** by this tool.
-Candidate/application acceptance and owner adoption remain external blockers.
+The nongate local application acceptance now passes; current production public
+inputs, candidate adoption and independent message review remain blockers.
 
 ## Interface
 
@@ -88,12 +89,18 @@ Tests parse wire bytes independently, including signer/writable flags and orderi
 
 ## Unmet current inputs and external gates
 
-No current release envelope was supplied or generated in this task. Still needed:
-approved source/features/full ELF inventory and reproduction; current finalized
+No current release envelope was supplied or generated in this task. Local source,
+feature and reproduced ELF inventories exist in the contract checkout's
+`docs/selected-hook-release-preparation.md`; owner adoption is still required.
+The real nongate browser/validator lifecycle passed 7/7 and separate exact-message
+and stale-review refusal acceptance passed 2/2. See
+`scripts/e2e/hooks-native/SELECTED-ACCEPTANCE.md`; these are loopback-only results,
+not current production evidence or support for arbitrary fee hooks. Still needed:
+approved source/features/full ELF inventory; current finalized
 cluster/genesis/provider/slot-stamped Program/ProgramData exports; existing approved
 buffer identity, exact payload/padding and authority; public payer/spill/authority
 and signer order; current balances/rent/fee/CU decisions; fresh approved blockhash
-and expiry; finalized candidate/application acceptance and owner adoption. Then
+and expiry; release acceptance and owner adoption. Then
 independently decode/review the exact message hash, simulate against current state,
 and recheck all inputs before custody. Signing/submission remain separately reviewed
 future actions. The tool cannot remove these gates even if extra acceptance flags
