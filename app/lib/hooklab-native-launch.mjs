@@ -54,7 +54,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    const lifecycle=service.lifecycle
    // Do not bind an approval, allocate custody or silently replace the selected hook with the gate.
    // Current production pins do not attest the repaired nongate instruction.
-   if(input.action==='reserve'&&input.selectedHook)refuseUnsupportedSelectedHook()
+   if(input.action==='reserve'&&input.selectedHook&&!service.selectedHooksEnabled)refuseUnsupportedSelectedHook()
    let result
    if(input.action==='reserve'&&openLaunchesEnabled(env)){
     // Open launch: the creator's own coin at the price repo.ing fixes now, if the chain offers the chosen fee and cap.
@@ -62,12 +62,12 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
     if(!service.openLaunches)throw Error()
     const chain=await service.openCreation()
     if(!chain.native||!chain.open||chain.paused)return reply({status:'paused',error:'Launches are paused right now. Your SOL was not spent; try again later.'},409)
-    if(!chain.creatorFeeBps.includes(input.creatorFeeBps)||!chain.capBps.includes(input.capBps))return reply({error:'That creator fee or max per wallet is no longer offered. Pick one from the current list.'},409)
+    if(!chain.creatorFeeBps.includes(input.creatorFeeBps)||(input.selectedHook?input.capBps!==0:!chain.capBps.includes(input.capBps)))return reply({error:'That creator fee or max per wallet is no longer offered. Pick one from the current list.'},409)
     let pricing
     try{pricing=await launchPrice()}catch(error){return reply({error:error?.code==='LAUNCH_PRICE_REFUSED'?error.message:'The SOL price is unavailable right now. Try again in a minute.'},409)}
     if(BigInt(pricing.virtualQuote)<BigInt(chain.minVirtualQuote)||BigInt(pricing.virtualQuote)>BigInt(chain.maxVirtualQuote))return reply({error:'At today\'s SOL price the opening price is outside what the launch program accepts. Try again later.'},409)
-    const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing:true,openLaunches:true}),db=await pool.connect()
-    try{await db.query('begin');await approvals.bindOpenLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,virtualQuote:pricing.virtualQuote,pricing});await db.query('commit')}
+    const approvals=ownerApprovals(pool,{adminAddress:env.HOOK_LAUNCH_ADMIN_ADDRESS,usdPricing:true,openLaunches:true,selectedHooksEnabled:service.selectedHooksEnabled===true}),db=await pool.connect()
+    try{await db.query('begin');const bound=await approvals.bindOpenLaunch(db,owner.wallet,input.operationId,{name:input.name,symbol:input.symbol,uri:input.uri,creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook}:{}),virtualQuote:pricing.virtualQuote,pricing});pricing=bound?.pricing??pricing;await db.query('commit')}
     catch(error){await db.query('rollback').catch(()=>{});return reply({error:error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Create your coin first.'},409)}
     finally{db.release()}
     const reserved=await service.reserve({sessionToken:token,owner:owner.wallet,input:{...input,virtualQuote:pricing.virtualQuote}})
@@ -111,6 +111,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()
    return reply({status:'available',...result})
   }catch(error){
+   if(error?.code==='SELECTED_HOOK_REGISTRY_REQUIRED')return reply({status:'blocked',mint:error.mint,selectedConfig:error.selectedConfig,blockers:[{code:error.code,message:error.message}]},409)
    if(error?.code==='SELECTED_HOOK_REVIEW_UNAVAILABLE')return reply({status:'blocked',blockers:[{code:error.code,message:error.message}]},409)
    // Owner-approval messages are fixed, customer-facing and secret-free (e.g. the owner is still preparing the launch table).
    const message=error.status===401?'Wallet session expired. Sign in again.':error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Launcher unavailable or changed. Preserve the operation IDs and reconcile any pending transaction.'

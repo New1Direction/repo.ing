@@ -12,12 +12,15 @@ import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 import { openLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { DELISTED_BUY_REFUSAL } from '../../src/hooklab-coin-moderation.mjs'
+import { selectedHookSchema } from '../../src/hooklab-selected-hook.mjs'
 const intent=inclusiveMaxWalletSwapRequestSchema.pick({mint:true,selectedConfig:true,capBps:true,creatorFeeBps:true,side:true,amountIn:true,minAmountOut:true,maxInput:true,maxPriceImpactBps:true}).strict()
+const nativeIntent=intent.extend({graduate:z.boolean()}).strict()
+const selectedIntent=nativeIntent.extend({policyKind:z.literal('selected-hook'),capBps:z.literal(0),selectedHook:selectedHookSchema}).strict()
 const lamports=z.string().regex(/^[1-9]\d{0,19}$/),mintKey=z.string().max(44)
 const body=z.discriminatedUnion('action',[
  z.object({action:z.literal('quote'),signingId:z.uuid(),request:intent}).strict(),
  // A native-SOL coin's trade (one approval, no Add SOL); graduate: this buy is the exact final fill and graduates the coin.
- z.object({action:z.literal('native-quote'),signingId:z.uuid(),request:intent.extend({graduate:z.boolean()}).strict()}).strict(),
+ z.object({action:z.literal('native-quote'),signingId:z.uuid(),request:z.union([nativeIntent,selectedIntent])}).strict(),
  // Wallet funding: add SOL to Hook Lab (creating the needed holdings), or withdraw bridged SOL back to the wallet.
  z.object({action:z.literal('fund'),signingId:z.uuid(),request:z.object({mint:mintKey.nullable(),lamports:z.string().regex(/^(0|[1-9]\d{0,19})$/)}).strict()}).strict(),
  z.object({action:z.literal('withdraw'),signingId:z.uuid(),request:z.object({lamports}).strict()}).strict(),

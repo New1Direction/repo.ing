@@ -50,6 +50,7 @@ export function OpenLaunchSteps({ phase }) {
 
 // The review screen: only what the creator pays, the price, their rules, the graduation target and the note.
 export function OpenLaunchReview({ coin, image, profile, openCreation, costs, price, busy = false, onSign, onEdit, editLabel = 'Edit' }) {
+  const selectedReady = coin.selectedHook && openCreation?.selectedHooksEnabled === true
   // Gate account rent and transaction fees are not estimates for an unreviewed custom lifecycle.
   const { rows, total, need } = openLaunchCosts(coin.selectedHook ? { launchFeeLamports: openCreation?.launchFeeLamports } : openCreation, coin.selectedHook ? {} : costs)
   const values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
@@ -58,11 +59,11 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
     <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} profile={profile}/>
-    {coin.selectedHook && <div role="note"><p>{SELECTED_HOOK_NOTE}</p><p>Program: <code style={{ overflowWrap: 'anywhere' }}>{coin.selectedHook.program}</code> · Flags: {coin.selectedHook.flags}</p><p>Inclusive fee policy (model 2). No max-wallet gate.</p></div>}
+    {coin.selectedHook && <div role="note"><p>{selectedReady ? 'Each approval binds this hook, its registry and the exact transaction. Changed configuration requires a new review.' : SELECTED_HOOK_NOTE}</p><p>Program: <code style={{ overflowWrap: 'anywhere' }}>{coin.selectedHook.program}</code> · Flags: {coin.selectedHook.flags}</p><p>Inclusive fee policy (model 2). No max-wallet gate.</p></div>}
     <div className="hooks-open-review-grid">
       <div className="inner-card fee-breakdown"><h3>What you pay</h3>
         {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label} <strong>{row.amount ?? (coin.selectedHook ? unknown : 'shown in your wallet')}</strong>{row.note ? <small> {row.note}</small> : null}</span></div>)}
-        <div className="hooks-cost"><span>You’ll spend about</span><strong>{total ?? unknown}</strong><small>{coin.selectedHook ? 'Costs require a complete lifecycle review. This check requests no transaction signature.' : 'Your wallet shows the exact amount before you approve.'}</small></div>
+        <div className="hooks-cost"><span>You’ll spend about</span><strong>{total ?? unknown}</strong><small>{coin.selectedHook ? selectedReady ? 'Exact transaction debit limits appear before each approval. Registry setup is separate.' : 'Costs require a complete lifecycle review. This check requests no transaction signature.' : 'Your wallet shows the exact amount before you approve.'}</small></div>
         {need ? <div className="hooks-cost"><span>You need at least</span><strong>{need} in your wallet</strong><small>A little more than you spend: the program checks it can cover its accounts, and the rest stays in your wallet.</small></div> : null}
       </div>
       <div className="inner-card fee-breakdown"><h3>Your coin</h3>
@@ -75,15 +76,15 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
     <p className="hooks-open-note" role="note"><Info size={18} aria-hidden="true"/><span>{OPEN_LAUNCH_NOTE}</span></p>
     {problem && <p className="hooks-ended" role="status">{problem}</p>}
     <div className="launch-review-actions">
-      <button type="button" className="button primary" disabled={busy || !!problem} onClick={onSign}>{busy ? 'Starting…' : coin.selectedHook ? 'Check hook availability' : 'Sign and launch'}</button>
+      <button type="button" className="button primary" disabled={busy || !!problem} onClick={onSign}>{busy ? 'Starting…' : coin.selectedHook && !selectedReady ? 'Check hook availability' : 'Sign and launch'}</button>
       {onEdit && <button type="button" className="button outline" disabled={busy} onClick={onEdit}>{editLabel}</button>}
     </div>
-    <p className="form-fineprint">{coin.selectedHook ? 'Availability check only. Nothing will be signed.' : TWO_APPROVALS}</p>
+    <p className="form-fineprint">{coin.selectedHook && !selectedReady ? 'Availability check only. Nothing will be signed.' : TWO_APPROVALS}</p>
   </section>
 }
 
 // The one guided signing step: two wallet approvals, each confirmed on Solana before the next.
-export function OpenLaunchSigning({ symbol, stage, status, busy, error, canRetry, onRetry }) {
+export function OpenLaunchSigning({ symbol, stage, status, busy, error, canRetry, onRetry, review, selectedHook }) {
   const second = stage === 'launch'
   const items = [['Approve the setup', 'Creates your coin and its accounts.'], ['Approve the launch', 'Opens trading with your rules.']]
   return <section className="launch-panel hooks-open-signing" aria-labelledby="hooks-signing-title" aria-live="polite">
@@ -95,6 +96,12 @@ export function OpenLaunchSigning({ symbol, stage, status, busy, error, canRetry
         <span>{state === 'done' ? <Check size={14} aria-hidden="true"/> : state === 'current' && busy ? <LoaderCircle size={14} className="image-picker-spinner" aria-hidden="true"/> : index + 1}</span>
         <div><strong>{label}</strong><small>{about}</small></div></li>
     })}</ol>
+    {selectedHook && review && <div className="inner-card fee-breakdown" aria-label="Exact selected-hook transaction review">
+      <p>Selected hook <code style={{ overflowWrap: 'anywhere' }}>{selectedHook.program}</code> · Flags: {selectedHook.flags}</p>
+      <p>Maximum wallet debit: <strong>{review.maxNativeDebitLamports} lamports</strong> (includes network fee).</p>
+      <p>Exact message SHA-256: <code style={{ overflowWrap: 'anywhere' }}>{review.messageSha256}</code></p>
+      <p>Continue approves only this reviewed transaction. The wallet must return these same message bytes.</p>
+    </div>}
     {status && <p className="hooks-operation-status" role="status">{status}</p>}
     {error && <p className="inline-error" role="alert">{error}</p>}
     {canRetry && <button type="button" className="button primary" disabled={busy} onClick={onRetry}>{busy ? 'Working…' : 'Continue'}</button>}
@@ -118,7 +125,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const { wallet, provider } = useWallet()
   const session = useHookWalletSession(genesisHash)
   const walletRef = useRef(wallet); walletRef.current = wallet
-  const running = useRef(false), idsRef = useRef(NO_IDS)
+  const running = useRef(false), idsRef = useRef(NO_IDS), consentRef = useRef(null)
   const [availability, setAvailability] = useState(initial.availability ?? null)
   const [request, setRequest] = useState(initial.request ?? null)
   const [coin, setCoin] = useState({ ...EMPTY_COIN, ...defaultOpenChoices(initial.availability?.openCreation), ...initial.coin })
@@ -145,8 +152,8 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   useEffect(() => {
     if (!request || running.current || step === 'live') return
     if (['queued', 'launching'].includes(request.status)) setCoin(current => ({ ...current, name: request.name, symbol: request.symbol, creatorFeeBps: request.creatorFeeBps, capBps: request.capBps, selectedHook: request.selectedHook, hookKind: request.selectedHook ? 'selected' : 'max-wallet' }))
-    if (request.status === 'queued' || request.selectedHook) setStep('review')
-    if (request.status === 'launching' && !request.selectedHook) { setStep('sign'); setCanRetry(true); setStatus('Your launch is waiting for you. Continue to finish it.') }
+    if (request.status === 'queued' || (request.selectedHook && !openCreation?.selectedHooksEnabled)) setStep('review')
+    if (request.status === 'launching' && (!request.selectedHook || openCreation?.selectedHooksEnabled)) { setStep('sign'); setCanRetry(true); setStatus('Your launch is waiting for you. Continue to finish it.') }
   }, [request?.id, request?.status])
 
   const api = body => post(LAUNCH, body)
@@ -186,7 +193,12 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       const action = nextOpenLaunchAction(op, { wallet: walletRef.current })
       setStatus(openLaunchStatus(op, action))
       if (action === 'reserve') { await reserve(current); op = await review('preparation'); continue }
-      if (action === 'sign') { op = await signStep(op); continue }
+      if (action === 'sign') {
+        if(current.selectedHook && consentRef.current !== op.review.messageSha256){
+          setCanRetry(true); setStatus('Review the exact message and maximum debit below, then Continue to request your wallet approval.'); return
+        }
+        consentRef.current=null; op = await signStep(op); continue
+      }
       if (['cosign', 'submit', 'refresh'].includes(action)) { op = checked((await api({ action: action === 'refresh' ? 'refresh-review' : action, signingId: op.id })).operation, op.id); continue }
       if (action === 'close') { op = checked((await api({ action: 'expire', signingId: op.id })).operation, op.id); continue }
       if (action === 'reconcile' || action === 'wait') { await sleep(4000); op = checked((await api({ action: action === 'wait' ? 'get' : 'reconcile', signingId: op.id })).operation, op.id); continue }
@@ -198,6 +210,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   }
   const signAndLaunch = async () => {
     if (running.current) return
+    consentRef.current=step==='sign'&&operation?.status==='reviewed'&&request?.selectedHook?operation.review.messageSha256:null
     running.current = true; setBusy(true); setError(''); setCanRetry(false)
     try {
       if (!session.signedIn && !await session.signIn()) return
@@ -211,7 +224,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
           throw Error('The recorded hook configuration differs. Reload to recover the original launch; nothing was signed.')
         current = created.request; setRequest(current)
       }
-      if (current.selectedHook) {
+      if (current.selectedHook && !openCreation?.selectedHooksEnabled) {
         // Recording survives a refresh, but neither a successful availability response nor recovery
         // can enter signing until the selected-hook review boundary is implemented and adopted.
         if (!sameLaunchHook(coin, current)) throw Error('The recorded hook configuration differs. Reload to recover the original launch; nothing was signed.')
@@ -269,7 +282,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
         busy={busy || session.busy} onSign={signAndLaunch} onEdit={recorded?.status === 'queued' ? startOver : () => setStep('coin')} editLabel={recorded?.status === 'queued' ? 'Start over' : 'Edit'}/>
       {error && <p className="inline-error" role="alert">{error}</p>}
     </>}
-    {step === 'sign' && <OpenLaunchSigning symbol={shown.symbol} stage={operation?.stage} status={status} busy={busy} error={error} canRetry={canRetry} onRetry={signAndLaunch}/>}
+    {step === 'sign' && <OpenLaunchSigning symbol={shown.symbol} stage={operation?.stage} status={status} busy={busy} error={error} canRetry={canRetry} onRetry={signAndLaunch} review={operation?.review} selectedHook={shown.selectedHook}/>}
     {step === 'live' && <OpenLaunchLive symbol={shown.symbol} mint={mint ?? recorded?.mint} onAnother={startOver}/>}
     {step === 'sign' && <details className="launch-customize hooks-recovery"><summary><span>Recovery IDs</span><ChevronDown size={18} aria-hidden="true"/></summary>
       <div className="launch-customize-body"><p>If the page reloads, these pick up the same launch on this device. Never start a second launch to get around an unclear result.</p>

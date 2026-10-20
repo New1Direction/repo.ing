@@ -65,7 +65,7 @@ const publicSignRequest=row=>Object.freeze({id:row.id,signer:row.signer_address,
 // Off, nothing reads the price table (it may not exist yet) and every launch binds the standard 1 SOL quote.
 // openLaunches (HOOK_OPEN_LAUNCHES, after the open-launches migration): creators' own requests launch without an invite,
 // launched coins can be delisted by the owner, and discovery leaves delisted coins out.
-export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false,openLaunches=false}={}){
+export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,maxInviteMs=3_600_000,usdPricing=false,openLaunches=false,selectedHooksEnabled=false}={}){
  if(!openLaunches)address.parse(adminAddress)
  const withProfile=requestQuery(usdPricing)
  const expireInvites=db=>db.query("update hook_lab_launch_requests set status='invite-expired',updated_at=clock_timestamp() where status='invited' and invite_expires_at<=clock_timestamp()")
@@ -130,7 +130,7 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
     where o.resolved_request->>'mint'=$1 and r.status='launched' order by r.created_at desc limit 1`,[address.parse(mint)])
    if(!row)return null
    const moderation=openLaunches?moderationState((await pool.query('select id,action,reason,decided_at from hook_lab_coin_moderation where request_id=$1',[row.id])).rows):undefined
-   return Object.freeze({id:row.id,name:row.name,symbol:row.symbol,creator:row.creator_wallet,profile:publicProfile(row),stack:coinStack(row),...(moderation&&{moderation})})
+   return Object.freeze({id:row.id,name:row.name,symbol:row.symbol,creator:row.creator_wallet,profile:publicProfile(row),stack:coinStack(row),...(row.selected_hook?{selectedHook:selectedHookSchema.parse(row.selected_hook)}:{}),...(moderation&&{moderation})})
   },
   // Owner moderation (append-only): delist a launched coin with one of the owner's reasons, or list it again.
   async moderate({mint,action,reason=null,actor}){
@@ -208,14 +208,20 @@ export function ownerApprovalStore(pool,{adminAddress,presenceWindowMs=20_000,ma
   // transaction stores it, so the launch compiles exactly this opening price). No invite, no owner.
   async bindOpenLaunch(db,creator,custodyOperationId,{virtualQuote,pricing,...intent}){
    check(openLaunches,'Open launches are not enabled')
-   if(intent.selectedHook)refuseUnsupportedSelectedHook()
+   if(intent.selectedHook&&!selectedHooksEnabled)refuseUnsupportedSelectedHook()
    const value=parseOpenIntent(intent,{creatorFeeBps:[intent.creatorFeeBps],capBps:[intent.capBps]}),fixed=checkLaunchPricing(pricing)
    check(String(virtualQuote)===fixed.virtualQuote,'The opening price differs from the price repo.ing fixed')
    const {rows:[row]}=await db.query("select * from hook_lab_launch_requests where creator_wallet=$1 and source='open' and status in ('queued','launching') for update",[address.parse(creator)])
    check(row,'Create your coin first')
-   if(row.selected_hook)refuseUnsupportedSelectedHook()
+   if(row.selected_hook&&!selectedHooksEnabled)refuseUnsupportedSelectedHook()
    check(row.name===value.name&&row.symbol===value.symbol&&row.uri===value.uri&&row.creator_fee_bps===value.creatorFeeBps&&row.cap_bps===value.capBps,'Launch details differ from your coin')
-   if(row.status==='launching'){check(row.custody_operation_id===custodyOperationId,'This coin is already launching');return publicRequest(row)}
+   check((row.selected_hook?.program??null)===(value.selectedHook?.program??null)&&(row.selected_hook?.flags??null)===(value.selectedHook?.flags??null),'Selected hook differs from your coin')
+   if(row.status==='launching'){
+    check(row.custody_operation_id===custodyOperationId,'This coin is already launching')
+    const {rows:[price]}=await db.query('select * from hook_lab_launch_request_prices where request_id=$1',[row.id])
+    check(price,'The original launch price is unavailable; preserve this launch')
+    return publicRequest({...row,...priceColumns(price)})
+   }
    const {rows:[bound]}=await db.query("update hook_lab_launch_requests set status='launching',custody_operation_id=$2,invited_at=clock_timestamp(),invite_expires_at=clock_timestamp()+interval '1 day',updated_at=clock_timestamp() where id=$1 and status='queued' returning *",[row.id,z.uuid().parse(custodyOperationId)])
    const {rows:[price]}=await db.query('insert into hook_lab_launch_request_prices(request_id,sol_usd_micros,sources,virtual_quote) values($1,$2,$3,$4) returning *',[row.id,fixed.solUsdMicros,JSON.stringify(fixed.sources),fixed.virtualQuote])
    return publicRequest({...bound,...priceColumns(price)})

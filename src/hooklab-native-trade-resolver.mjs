@@ -6,7 +6,7 @@ import {isDeepStrictEqual} from 'node:util'
 import {PublicKey,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inspectProductionEvidence,tradeEvidenceAddresses} from './hooklab-production-observer.mjs'
-import {compileNativeSwapReview,nativeSwapInventory,nativeSwapRequestSchema} from './hooklab-native-swap.mjs'
+import {compileNativeSwapReview,nativeSwapInventory,nativeSwapRequestSchema,selectedNativeHookPinSchema,selectedNativeHookEvidence} from './hooklab-native-swap.mjs'
 import {collectNativeTradeSettlement} from './hooklab-native-trade-settlement.mjs'
 import {approvedCreatorFees} from './hooklab-launch-menus.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
@@ -15,6 +15,8 @@ import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profi
 import {STATUS_GRADUATED} from './hooklab-graduation.mjs'
 import {loadNativeArtifacts} from './hooklab-native-pins.mjs'
 import {refuseUnsupportedSelectedHook} from './hooklab-selected-hook.mjs'
+import {collectSelectedHookSimulation} from './hooklab-selected-hook-simulation.mjs'
+import {isLocalExecutionDossier,localAcceptanceNetwork} from './hooklab-local-acceptance.mjs'
 const check=v=>{if(!v)throw Error('Native trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
@@ -24,8 +26,11 @@ const SIGNING_WINDOW_SLOTS=100
 // carries the exact amount, this only bounds it.
 export const HOLDING_RENT_CEILING_LAMPORTS=4000000n
 // reviewedProfiles: the reconcile allowlist (src/hooklab-reviewed-profiles.mjs); tests pass their own synthetic ones.
-export function nativeTradeResolver({config,profile,dossierJson,connections,limits,clock=Date.now,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
- const retained=structuredClone({config,profile,dossierJson,limits}),providers=connections.map(x=>({...x}))
+export function nativeTradeResolver({config,profile,dossierJson,connections,limits,selectedHookPin=config?.selectedHookPin??null,selectedNativeTradingEnabled=false,clock=Date.now,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
+ const selectedSettings=selectedHookPin===null?null:selectedNativeHookPinSchema.parse(selectedHookPin)
+ const selectedOpen=selectedNativeTradingEnabled===true&&selectedSettings!==null
+ if(selectedOpen)check(isLocalExecutionDossier(JSON.parse(dossierJson))&&connections.every(x=>localAcceptanceNetwork().endpoints.includes(x.connection.rpcEndpoint)))
+ const retained=structuredClone({config,profile,dossierJson,limits,...(selectedSettings?{selectedHookPin:selectedSettings,selectedNativeTradingEnabled:selectedOpen}:{})}),providers=connections.map(x=>({...x}))
  const bound=validateMaxWalletOperatorBindings({...retained,connections:providers}),p=bound.profile
  check(bound.config.feeModel===2&&bound.profile.buildFeature==='inclusive-fees-candidate')
  // Its own domain, and without the boot clock (limits.nowMs): a restart or deploy must not move this hash.
@@ -33,11 +38,27 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
  async function collect({owner,stage,intent,expectedReview,originalContext}){
   const {quote:ignored,...raw}=intent??{}
   // Never relabel a creator-selected hook as max-wallet to obtain a deterministic quote.
-  if(raw.selectedHook||raw.policyKind&&raw.policyKind!=='max-wallet')refuseUnsupportedSelectedHook()
-  const request=nativeSwapRequestSchema.parse({...raw,schema:'repoing/native-swap-request/1',policyKind:'max-wallet',policyVersion:2,feeModel:2,protocolShareBps:2500,trader:owner})
+  const selected=raw.policyKind==='selected-hook'
+  if((raw.selectedHook||raw.policyKind&&raw.policyKind!=='max-wallet')&&(!selected||!selectedOpen))refuseUnsupportedSelectedHook()
+  const request=nativeSwapRequestSchema.parse({...raw,schema:'repoing/native-swap-request/1',policyKind:selected?'selected-hook':'max-wallet',policyVersion:2,feeModel:2,protocolShareBps:2500,trader:owner})
   check(stage===`native-${request.side}`&&approvedCreatorFees(bound.profile).includes(request.creatorFeeBps))
   if(originalContext)check(originalContext.configurationSha256===configurationSha256&&isDeepStrictEqual(originalContext.compilationInput.request,request))
-  const started=integer(clock()),inventory=nativeSwapInventory(bound.profile,request)
+  const started=integer(clock())
+  let hookEvidence=null
+  if(selected){
+   check(request.selectedHook.program===selectedSettings.program)
+   const H=request.selectedHook.program,derive=(program,...seeds)=>PublicKey.findProgramAddressSync(seeds.map(x=>typeof x==='string'?Buffer.from(x):x),pk(program))[0].toBase58()
+   const addresses=[H,derive('BPFLoaderUpgradeab1e11111111111111111111111',pk(H).toBuffer()),derive(H,'bordrless-hook-accounts',pk(request.mint).toBuffer())]
+   const snapshots=await Promise.all(providers.map(async({connection})=>{
+    check(await connection.getGenesisHash()===p.genesisHash)
+    const row=await connection.getMultipleAccountsInfoAndContext(addresses.map(pk),{commitment:'finalized',minContextSlot:expectedReview?.observedSlot??bound.dossier.minSlot})
+    check(row.value.length===addresses.length)
+    return row.value.map((v,i)=>v?{address:addresses[i],owner:v.owner.toBase58(),executable:v.executable,lamports:String(integer(v.lamports)),dataBase64:Buffer.from(v.data).toString('base64')}:null)
+   }))
+   check(isDeepStrictEqual(snapshots[0],snapshots[1]))
+   hookEvidence=selectedNativeHookEvidence(p,request,new Map(addresses.map((a,i)=>[a,snapshots[0][i]])),selectedSettings)
+  }
+  const inventory=nativeSwapInventory(bound.profile,request,hookEvidence)
   // Trade-scope evidence only (programs, swap config and governance, quote mint): a launch-side pause or policy change
   // must not stop holders trading (src/hooklab-production-observer.mjs LAUNCH_SIDE_ROLES).
   const extras=[...new Set([...tradeEvidenceAddresses(bound.dossier),...(bound.config.lookupTable?[bound.config.lookupTable.address]:[])])]
@@ -83,14 +104,22 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
   const compilationInput={profile:retained.profile,request,provenance:'server-collected-finalized-state-not-execution-authorization',
    observations:observations.map(o=>({...o,accounts:o.accounts.filter(x=>inventory.includes(x.address))})),recentBlockhash,
    lookupTable:lookup?{address:lookup.address,owner:lookup.owner,dataBase64:lookup.dataBase64,sha256:bound.config.lookupTable.sha256}:null,limits:l,
-   ...(original?.createsHolding?{holdingCreation:{maxRentLamports:original.quote.holdingRentLamports}}:{})}
-  const plan=compileNativeSwapReview(compilationInput)
+   ...(original?.createsHolding?{holdingCreation:{maxRentLamports:original.quote.holdingRentLamports}}:{}),
+   ...(selected?{selectedHookPin:selectedSettings,...(originalContext?{selectedTokenDeltas:originalContext.compilationInput.selectedTokenDeltas}:{})}:{})}
+  let plan=compileNativeSwapReview(compilationInput),selectedSimulation=null
+  if(selected){
+   const measured=await collectSelectedNativeTradeReview({compilationInput,configurationSha256,connections:providers,clock,expectedReview,
+    expectedSimulation:originalContext?.selectedSimulation})
+   selectedSimulation=measured.selectedSimulation;plan=measured.plan
+   compilationInput.selectedTokenDeltas=measured.compilationInput.selectedTokenDeltas
+  }
   if(expectedReview){const stable=r=>{const {observedSlot,observedAtMs,policySha256,...rest}=r;return rest};check(isDeepStrictEqual(stable(plan.review),stable(expectedReview)))
    check(original&&isDeepStrictEqual(plan.quote,original.quote))}
   await simulateExactly(providers,plan,recentBlockhash)
   check(clock()<plan.review.reviewExpiresAtMs)
   return {status:'operator-pins-and-state-verified',owner,stage,profileSha256:bound.config.profileSha256,messageSha256:plan.review.messageSha256,
-   configurationSha256,review:expectedReview??plan.review,request:{...request,quote:plan.quote},settlementContext:{schema:'repoing/native-trade-settlement-context/1',configurationSha256,compilationInput},canSign:false,canSubmit:false}
+   configurationSha256,review:expectedReview??plan.review,request:{...request,quote:plan.quote},settlementContext:{schema:'repoing/native-trade-settlement-context/1',configurationSha256,compilationInput,
+    ...(selected?{selectedSimulation}:{})},canSign:false,canSubmit:false}
  }
  return Object.freeze({
   configurationSha256,
@@ -109,6 +138,38 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
   },
  })
 }
+
+// Read-only server adapter, not an authorization boundary. Inputs must be collected
+// and independently pinned by nativeTradeResolver before its result can enter signing.
+export async function collectSelectedNativeTradeReview({compilationInput,configurationSha256,connections,expectedReview,expectedSimulation,clock=Date.now}){
+ const input=structuredClone(compilationInput),preview=compileNativeSwapReview(input)
+ check(preview.request.policyKind==='selected-hook')
+ const conditions=selectedSimulationConditions(preview,input,configurationSha256)
+ const selectedSimulation=await collectSelectedHookSimulation({review:expectedReview??preview.review,conditions,connections,clock,expected:expectedSimulation})
+ input.selectedTokenDeltas=selectedSimulation.tokenDeltas
+ const plan=compileNativeSwapReview(input)
+ check(plan.review.messageSha256===selectedSimulation.messageSha256)
+ for(const [address,delta]of Object.entries(selectedSimulation.lamportDeltas))check(delta===(plan.lamportDeltas[address]??'0'))
+ return {plan,compilationInput:input,selectedSimulation,canSign:false,canSubmit:false}
+}
+
+function selectedSimulationConditions(plan,input,configurationSha256){
+ const a=plan.addresses,r=plan.request,p=JSON.parse(input.profile.json),buy=r.side==='buy',max='18446744073709551615'
+ const map=new Map(input.observations[0].accounts.map(x=>[x.address,x.account]))
+ const holding=(address,mint,owner,maxDebit,minCredit='0')=>({address,mint,owner,maxDebit,minCredit})
+ const holdings=[holding(a.traderBase,r.mint,r.trader,buy?'0':r.amountIn,buy?r.minAmountOut:'0'),
+  holding(a.baseVault,r.mint,a.pool,buy?max:'0',buy?'0':'1'),
+  ...(r.graduate?[holding(a.launchReserve,r.mint,a.launch,max),holding(a.launchLp,a.lpMint,a.launch,'0')]:[])]
+ const native=plan.review.accounts.filter(x=>x.writable).map(x=>({address:x.address,maxDebit:x.address===r.trader?plan.review.maxNativeDebitLamports:x.address===a.pool&&!buy?max:'0',minCredit:'0'}))
+ const unchanged=plan.review.accounts.filter(x=>!x.writable&&map.get(x.address)).map(x=>({address:x.address,sha256:sha(Buffer.from(map.get(x.address).dataBase64,'base64'))}))
+ // Registry and immutable ProgramData need not be passed to the instruction itself.
+ for(const address of [p.programs.gate,hookProgramData(r.selectedHook.program),hookRegistry(r.selectedHook.program,r.mint)])if(!unchanged.some(x=>x.address===address)){
+  const account=map.get(address);check(account);unchanged.push({address,sha256:sha(Buffer.from(account.dataBase64,'base64'))})
+ }
+ return {tokenProgram:p.programs.token,configurationSha256,holdings,native,unchanged}
+}
+const hookProgramData=hook=>PublicKey.findProgramAddressSync([pk(hook).toBuffer()],pk('BPFLoaderUpgradeab1e11111111111111111111111'))[0].toBase58()
+const hookRegistry=(hook,mint)=>PublicKey.findProgramAddressSync([Buffer.from('bordrless-hook-accounts'),pk(mint).toBuffer()],pk(hook))[0].toBase58()
 
 // Both providers run the exact message (fees and signatures as the network will) and must agree with the review to the
 // lamport: the payer, the launch PDA, the pool and a new holding, the trader's coins and the vault's, and for a

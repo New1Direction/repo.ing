@@ -15,17 +15,29 @@ export function inclusiveCreatorFee(basis, creatorFeeBps) {
   return Object.freeze({ grossQuote, platformQuote, creatorQuote: grossQuote - platformQuote })
 }
 export function modelInclusiveCreatorQuote(input) {
-  const { side, amountIn, minAmountOut, creatorFeeBps, pool, policy } = input
-  check(side === 'buy' || side === 'sell', 'INVALID_SIDE')
-  check(input.feeModel === 2 && input.protocolShareBps === 2500 && input.lpFeeBps === 0
-    && input.flatProtocolFeeBps === 0 && input.sniperWindowSecs === 0 && input.sniperStartBps === 0
-    && input.quoteHook === 'none' && input.modules === 0 && input.authorShareBps === 0
-    && input.rules === 'none' && input.rewards === false, 'UNSUPPORTED_INCLUSIVE_ECONOMICS')
+  const { creatorFeeBps, policy } = input
   check(policy?.version === 2 && policy.feeModel === 2 && policy.protocolShareBps === 2500
     && policy.creatorFeeBps === creatorFeeBps && policy.lpFeeBps === 0, 'POLICY_FEE_MISMATCH')
   check(Number.isInteger(policy.capBps) && policy.capBps > 0 && policy.capBps < 10000, 'INVALID_CAP')
   const cap = amount(policy.initialSupply) * BigInt(policy.capBps) / 10000n
   check(cap > 0n, 'INVALID_CAP')
+  return inclusiveQuote(input,cap)
+}
+
+// Display estimate only: arbitrary token-hook deductions require exact-message simulation.
+// No gate policy is manufactured for a selected hook, and this never authorizes signing.
+export function previewSelectedHookQuote(input) {
+  check(input.policy===undefined,'SELECTED_GATE_POLICY')
+  return Object.freeze({...inclusiveQuote(input,null),hookDeductionsUnmeasured:true})
+}
+
+function inclusiveQuote(input,cap) {
+  const { side, amountIn, minAmountOut, creatorFeeBps, pool } = input
+  check(side === 'buy' || side === 'sell', 'INVALID_SIDE')
+  check(input.feeModel === 2 && input.protocolShareBps === 2500 && input.lpFeeBps === 0
+    && input.flatProtocolFeeBps === 0 && input.sniperWindowSecs === 0 && input.sniperStartBps === 0
+    && input.quoteHook === 'none' && input.modules === 0 && input.authorShareBps === 0
+    && input.rules === 'none' && input.rewards === false, 'UNSUPPORTED_INCLUSIVE_ECONOMICS')
   amount(amountIn); amount(minAmountOut); amount(input.maxInput); amount(input.recipientBaseBalance)
   check(amountIn > 0n && minAmountOut > 0n && amountIn <= input.maxInput, 'INPUT_OR_OUTPUT_BOUND')
   for (const k of ['baseReserve', 'quoteReserve', 'virtualBase', 'virtualQuote', 'protocolFeesQuote']) amount(pool[k])
@@ -41,7 +53,7 @@ export function modelInclusiveCreatorQuote(input) {
   check(delivered >= minAmountOut, 'MIN_OUTPUT')
   const recipientBaseAfter = amount(input.recipientBaseBalance + (buy ? delivered : 0n))
   // After graduation the gate reads Launch status 1 and stops capping; only display estimates pass maxWalletLifted.
-  check(!buy || input.maxWalletLifted === true || recipientBaseAfter <= cap, 'MAX_WALLET')
+  check(cap === null || !buy || input.maxWalletLifted === true || recipientBaseAfter <= cap, 'MAX_WALLET')
   const after = Object.freeze({
     baseReserve: amount(pool.baseReserve + (buy ? -grossOutput : amountIn)),
     quoteReserve: amount(pool.quoteReserve + (buy ? curveInput : -grossOutput)),

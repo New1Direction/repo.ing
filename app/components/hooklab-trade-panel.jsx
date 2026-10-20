@@ -32,6 +32,10 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
   const [view, setView] = useState(initial)
   const [side, setSide] = useState('buy'), [amount, setAmount] = useState(''), [slippageBps, setSlippageBps] = useState(300)
   const [steps, setSteps] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [result, setResult] = useState(null)
+  const [consent,setConsent]=useState(null),consentReply=useRef(null)
+  useEffect(()=>()=>{consentReply.current?.(false)},[])
+  const approveReview=op=>new Promise(resolve=>{consentReply.current=resolve;setConsent(op)})
+  const answerConsent=approved=>{const reply=consentReply.current;consentReply.current=null;setConsent(null);reply?.(approved)}
   // Coin data that failed to load: separate from trade errors so a later successful refresh clears it.
   const [loadError, setLoadError] = useState('')
   const running = useRef(false)
@@ -74,6 +78,7 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
     let last = null, op
     try {
       op = await runOperation({ create, signingId, wallet: address, genesisHash, signTransaction: tx => provider().signTransaction(tx),
+        approveReview,
         onStatus: status => update({ status }), onOperation: o => { last = o; if (o.signature) update({ signature: o.signature }) } })
     } catch (e) {
       // Never signed (refused in the wallet, expired, or refused by the server): nothing to finish later.
@@ -256,6 +261,15 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       {button.action === 'sign-in' && !session.busy && <p className="trade-note">Signing in is a free message in your wallet. It sends no transaction.</p>}
       {session.error && <p className="inline-error" role="alert">{session.error}</p>}
     </form>
+    {consent && <section aria-label="Exact selected-hook trade review">
+      <h3>Review this exact trade</h3>
+      <p>Custom hook: <code>{consent.request.selectedHook.program}</code> · flags {consent.request.selectedHook.flags}</p>
+      <p>Minimum received: {formatUnits(consent.request.minAmountOut,consent.request.side==='buy'?market.decimals:9)} {consent.request.side==='buy'?symbol:'SOL'}</p>
+      <p>Maximum wallet debit including fees: {sol(consent.review.maxNativeDebitLamports,9)}</p>
+      <p>Message SHA256: <code>{consent.review.messageSha256}</code></p>
+      <button type="button" className="button primary" onClick={()=>answerConsent(true)}>Approve exact trade</button>
+      <button type="button" className="button" onClick={()=>answerConsent(false)}>Cancel trade</button>
+    </section>}
     {steps && <ol className="hooks-trade-steps" aria-label="Progress">{steps.map((s, i) => <li key={i} data-state={s.status}>
       <span aria-hidden="true">{s.status === 'done' ? <Check size={14}/> : s.status === 'failed' ? <X size={14}/> : ['review', 'sign', 'send', 'confirm'].includes(s.status) ? <LoaderCircle size={14} className="image-picker-spinner"/> : i + 1}</span>
       <div><strong>{stepLabel(s.kind, symbol)}</strong>
@@ -274,9 +288,10 @@ export function HookTradeSummary({ market, symbol, buying, estimate, plan, hold,
   if (!estimate || estimate.error) return null
   const deposit = native ? plan?.depositLamports ?? 0n : plan?.steps.find(s => s.kind === 'fund')?.rentLamports ?? 0n
   return <>
+    {estimate.hookDeductionsUnmeasured && <p role="status">Before custom-hook deductions. The exact transaction must pass hook simulation and minimum-received checks before wallet approval.</p>}
     {estimate.graduates && !(native && hold) && <p className="hooks-trade-graduates" role="status"><strong>This buy finishes the curve.</strong> {hold
       ? 'Finishing a curve from repo.ing opens soon, so buy a little less for now.'
-      : `${symbol} graduates in the same transaction: its liquidity is locked forever and the max per wallet lifts.`}</p>}
+      : `${symbol} graduates in the same transaction: its liquidity is locked forever${market.policyKind==='selected-hook'?'. The selected hook remains active.':' and the max per wallet lifts.'}`}</p>}
     <dl className="trade-details">
       <div><dt>Minimum received</dt><dd>{formatUnits(estimate.minAmountOut, buying ? market.decimals : 9, buying ? 0 : 6)} {buying ? symbol : 'SOL'}</dd></div>
       <div><dt>Price impact</dt><dd className={estimate.priceImpactBps >= 500 ? 'is-high' : undefined}>{(estimate.priceImpactBps / 100).toFixed(2)}%</dd></div>
@@ -303,4 +318,3 @@ export function HookTradeNote({ native }) {
   return <p className="trade-note">{native ? 'This coin trades straight from your wallet’s SOL: one approval per trade, nothing to move in or out first. '
     : 'Hooks coins trade with SOL moved into Hook Lab. Buying moves it in for you; selling sends it back to your wallet. '}<Link href="/hooks/blocks">How Hooks work</Link></p>
 }
-

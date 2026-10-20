@@ -1,6 +1,6 @@
 // Pure trade-panel math for Hooks coins: amounts, estimates and the steps a buy or sell takes. No network or wallet.
 // Estimates use the same quote model the server compiles with; the server's exact review is what gets signed.
-import { modelInclusiveCreatorQuote } from '../../src/hooklab-inclusive-fee-quote.mjs'
+import { modelInclusiveCreatorQuote, previewSelectedHookQuote } from '../../src/hooklab-inclusive-fee-quote.mjs'
 import { finalFillLamports, isReady } from '../../src/hooklab-graduation.mjs'
 
 export { finalFillLamports }
@@ -54,18 +54,20 @@ export function estimateTrade(market, { side, amount, coinBalance = 0n, slippage
   const fill = curveBuy ? finalFillLamports(market) : null
   if (fill !== null && amount > fill) return { error: `That’s more than this coin’s curve has left: ${sol(fill, 6)} buys all of it and graduates the coin.` }
   try {
-    const quote = modelInclusiveCreatorQuote({ side, amountIn: amount, minAmountOut: 1n, maxInput: amount, creatorFeeBps: market.creatorFeeBps,
+    const selected=market.policyKind==='selected-hook'
+    const quote = (selected?previewSelectedHookQuote:modelInclusiveCreatorQuote)({ side, amountIn: amount, minAmountOut: 1n, maxInput: amount, creatorFeeBps: market.creatorFeeBps,
       feeModel: 2, protocolShareBps: 2500, lpFeeBps: 0, flatProtocolFeeBps: 0, sniperWindowSecs: 0, sniperStartBps: 0, quoteHook: 'none', modules: 0,
       authorShareBps: 0, rules: 'none', rewards: false, recipientBaseBalance: BigInt(coinBalance), maxWalletLifted: graduated,
       pool: { baseReserve: BigInt(p.baseReserve), quoteReserve: BigInt(p.quoteReserve), virtualBase: BigInt(p.virtualBase), virtualQuote: BigInt(p.virtualQuote), protocolFeesQuote: BigInt(p.protocolFeesQuote) },
-      policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: market.creatorFeeBps, lpFeeBps: 0, initialSupply: BigInt(market.initialSupply), capBps: market.capBps } })
+      ...(!selected?{policy: { version: 2, feeModel: 2, protocolShareBps: 2500, creatorFeeBps: market.creatorFeeBps, lpFeeBps: 0, initialSupply: BigInt(market.initialSupply), capBps: market.capBps }}:{}) })
     const minAmountOut = quote.delivered * BigInt(10000 - slippageBps) / 10000n
     if (minAmountOut <= 0n) return { error: 'This amount is too small to trade.' }
     if (quote.priceImpactBps > BigInt(MAX_PRICE_IMPACT_BPS)) return { error: 'That moves the price more than 10%. Try a smaller amount.' }
     const graduates = fill !== null && amount === fill
     // Without an exact fill no buy can stop at the graduation point, so one that gets there would overshoot it.
     if (curveBuy && !graduates && isReady(quote.after, market.graduationQuote)) return { error: 'That would take the coin past graduation. Try a smaller amount.' }
-    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, priceImpactBps: Number(quote.priceImpactBps), graduates }
+    return { delivered: quote.delivered, minAmountOut, creatorFee: quote.fees.grossQuote, priceImpactBps: Number(quote.priceImpactBps), graduates,
+      ...(selected?{hookDeductionsUnmeasured:true}:{}) }
   } catch (error) {
     if (curveBuy && error?.message === 'INSUFFICIENT_LIQUIDITY') return { error: 'That’s more than this coin’s curve has left. Try a smaller amount.' }
     return { error: QUOTE_ERRORS[error?.message] ?? 'This amount can’t be traded right now.' }
@@ -170,4 +172,5 @@ export function tradeIntent(market, side, amount, minAmountOut) {
     amountIn: String(amount), minAmountOut: String(minAmountOut), maxInput: String(amount), maxPriceImpactBps: MAX_PRICE_IMPACT_BPS }
 }
 // A native coin's request (the native-quote action): the same, plus whether this buy is the final fill that graduates it.
-export const nativeTradeIntent = (market, side, amount, minAmountOut, graduate) => ({ ...tradeIntent(market, side, amount, minAmountOut), graduate: side === 'buy' && !!graduate })
+export const nativeTradeIntent = (market, side, amount, minAmountOut, graduate) => ({ ...tradeIntent(market, side, amount, minAmountOut), graduate: side === 'buy' && !!graduate,
+  ...(market.policyKind==='selected-hook'?{policyKind:'selected-hook',selectedHook:market.selectedHook}:{}) })

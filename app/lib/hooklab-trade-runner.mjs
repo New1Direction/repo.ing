@@ -36,11 +36,14 @@ export async function closeExpired({ call = callTrade, op, signingId, wallet, ge
 
 // create: the body that starts it ({ action: 'quote' | 'fund' | 'withdraw', request }). onStatus('review'|'sign'|'send'|'confirm').
 export async function runOperation({ call = callTrade, create, signingId, wallet, genesisHash, signTransaction, onStatus = () => {}, onOperation = () => {},
-  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), pollMs = 4000, maxPolls = 45, loadTransaction }) {
+  approveReview, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), pollMs = 4000, maxPolls = 45, loadTransaction }) {
   const ids = { signingId, wallet, genesisHash }
   onStatus('review')
   let op = expectOperation(await call({ ...create, signingId }), ids); onOperation(op)
   if (op.status === 'reviewed') {
+    if(create.request?.policyKind==='selected-hook'){
+      if(!approveReview || await approveReview(op)!==true)throw Error('Exact-message consent was not given. Nothing was signed.')
+    }
     onStatus('sign')
     const issued = await call({ action: 'wallet-request', signingId })
     if (issued.review?.wallet !== wallet || issued.review.genesisHash !== genesisHash || issued.review.messageSha256 !== op.review.messageSha256)

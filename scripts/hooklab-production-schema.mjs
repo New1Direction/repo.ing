@@ -40,6 +40,8 @@ export const MIGRATIONS = Object.freeze({
   // Durable custom-hook coin recording only; this does not enable preparation or signing.
   'selected-hook-requests': Object.freeze({ files: ['hooklab-selected-hook-requests-schema.sql'], requires: ['hook_lab_launch_requests'],
     inspect: "select column_name from information_schema.columns where table_name='hook_lab_launch_requests' and column_name in ('source','selected_hook') order by column_name" }),
+  'selected-hook-execution': Object.freeze({ files: ['hooklab-selected-hook-execution-schema.sql'], requires: ['hook_lab_launch_requests'],
+    inspect: "select pg_get_constraintdef(oid) as selected_check from pg_constraint where conname='hook_lab_launch_requests_selected_execution'" }),
 })
 export function productionSchema(files = SCHEMA_FILES) {
   const parts = files.map(name => ({ name, sql: readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8') }))

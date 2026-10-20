@@ -24,7 +24,7 @@ const runtimeKey=Symbol.for('repo.ing.hooklab.inclusive-trade-runtime')
 // stack has no bundle here (the coin then reads as not listed).
 export const stackProfileFor=(profiles,coin)=>(coin?.stack??coinStack(coin))==='own'?profiles.own:profiles.legacy
 export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=false,operatorDeploymentApproved=false,economicsApproved=false,
- config,profile,dossierJson,connections,limits,walletFundingEnabled=false,nativeTradingEnabled=false,openLaunches=false,stack=null}={}){
+ config,profile,dossierJson,connections,limits,walletFundingEnabled=false,nativeTradingEnabled=false,selectedNativeTradingEnabled=false,selectedHookPin=null,openLaunches=false,stack=null}={}){
  if(!ownerTradingApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Complete explicit trade adoption required')
  const counterAware=json=>{const dossier=JSON.parse(json);return (dossier.schema==='repoing/production-observation/2'||isLocalExecutionDossier(dossier))&&['launch-config','swap-config'].every(role=>dossier.accounts.some(pin=>pin.role===role&&pin.binding==='config-counters-v1'))}
  if(!counterAware(dossierJson)||(stack&&!counterAware(stack.dossierJson)))throw Error('Counter-aware approved trading dossier required')
@@ -37,16 +37,18 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
  // Native stays off, never throws, when the bundle does not pin native builds: bridged trades and withdrawals keep working.
  const nativeBundle=stack??{config,profile,dossierJson}
  const nativeOpen=nativeTradingEnabled===true&&pinsNativeBuilds(nativeBundle.profile)
- const native=nativeTradeResolver({...nativeBundle,connections,limits})
+ const hookPin=selectedHookPin??nativeBundle.config.selectedHookPin??null
+ const selectedNativeOpen=nativeOpen&&selectedNativeTradingEnabled===true&&hookPin!==null
+ const native=nativeTradeResolver({...nativeBundle,connections,limits,selectedHookPin:hookPin,selectedNativeTradingEnabled:selectedNativeOpen})
  const sender=nativeTransactionSender({enabled:true,connections})
- const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen,connections})})
+ const lifecycle=nativeSigningLifecycle(pool,{enabled:true,origin,sender,custodyAdapter:null,...tradeLifecycleSettings({trade,funding,native,nativeOpen,selectedNativeOpen,connections})})
  // The coin's stack profile (programs, quote marker): server-side only, never sent to a customer.
  const profileFor=coin=>stackProfileFor(profiles,coin)
  // Display-only market reads use the primary provider; trades and funding re-verify on both providers. coin: the listed
  // coin record (its stack); looked up when not given. A coin whose stack has no bundle here reads as not listed.
  const market=async(mint,wallet=null,coin)=>{
   const record=coin===undefined?await approvals.coinByMint(mint):coin,stackProfile=profileFor(record)
-  return stackProfile?readHookCoinMarket({connection:connections[0].connection,mint,wallet,profile:stackProfile}):null
+  return stackProfile?readHookCoinMarket({connection:connections[0].connection,mint,wallet,profile:stackProfile,selectedHook:record?.selectedHook??null}):null
  }
  // Bridged SOL exists on the legacy stack only (Add SOL and Withdraw for its holders).
  const walletBalances=wallet=>readHookWalletBalances({connection:connections[0].connection,wallet,profile:profiles.legacy})
@@ -64,10 +66,11 @@ export function createInclusiveTradeRuntime(pool,{origin,ownerTradingApproved=fa
 // registered, so a sent native trade stays readable and settles whatever the switch says; while native trading is off
 // they are closed to new work (review, refresh, wallet request, send). connections: the runtime's two providers, which
 // prove a never-sent operation's blockhash expired before expire() closes it (none: expire() is unavailable).
-export function tradeLifecycleSettings({trade,funding,native,nativeOpen,connections=null}){
+export function tradeLifecycleSettings({trade,funding,native,nativeOpen,selectedNativeOpen=false,connections=null}){
  return {resolver:stagedResolver({'inclusive-buy':trade,'inclusive-sell':trade,'wallet-fund':funding,'wallet-withdraw':funding,'native-buy':native,'native-sell':native}),
   stageOperations:{'inclusive-buy':'inclusive-max-wallet-buy','inclusive-sell':'inclusive-max-wallet-sell','wallet-fund':'hooklab-wallet-fund','wallet-withdraw':'hooklab-wallet-withdraw',
-   'native-buy':'native-max-wallet-buy','native-sell':'native-max-wallet-sell'},
+   'native-buy':selectedNativeOpen?['native-max-wallet-buy','native-selected-hook-buy']:'native-max-wallet-buy',
+   'native-sell':selectedNativeOpen?['native-max-wallet-sell','native-selected-hook-sell']:'native-max-wallet-sell'},
   closedStages:nativeOpen?[]:['native-buy','native-sell'],expiryObserver:connections?()=>provenFinalizedProgress(connections):null}
 }
 export function installInclusiveTradeRuntime(value){

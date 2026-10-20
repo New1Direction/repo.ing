@@ -37,7 +37,7 @@ export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dos
    const r=parseMaxWalletLaunchRequest(request),boundLimits=structuredClone(limits)
    const prep=await journal.resolveForLaunch(sessionToken,preparationId)
    check(prep.wallet===r.creator,'Session wallet does not own preparation')
-   check(open===(r.schema==='repoing/open-launch-request/1'),'Launch request kind differs from this server')
+   check(open===(['repoing/open-launch-request/1','repoing/selected-hook-launch-request/1'].includes(r.schema)),'Launch request kind differs from this server')
    const result=await (open?collectOpenLaunchReview:collectMaxWalletLaunchReview)({...retained,connections:providers,preparation:prep,request:r,limits:boundLimits,expectedReview,clock,nativeLaunches:nativeLaunches===true})
    // Recheck current principal and durable identity after network work. No network
    // work is performed while the principal/database transaction lock is held.

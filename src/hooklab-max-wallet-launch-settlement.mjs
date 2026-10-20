@@ -9,6 +9,7 @@ import bs58 from 'bs58'
 import {PublicKey,VersionedTransaction} from '@solana/web3.js'
 import {encodeHookAccountList} from '@repo-ing/hooklab-production-candidate'
 import {compileMaxWalletLaunchReview,compileCanaryMaxWalletLaunchReview,compileOpenLaunchReview} from './hooklab-max-wallet-launch.mjs'
+import {compileSelectedHookLaunchReview} from './hooklab-max-wallet-launch.mjs'
 import {productionAccountBindingMatches} from './hooklab-production-observer.mjs'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inspectHookLabMessage,verifyHookLabSignedMessage} from './hooklab-message-boundary.mjs'
@@ -59,7 +60,7 @@ const COMPILERS={custom:compileMaxWalletLaunchReview,canary:compileCanaryMaxWall
 function context(input,canary=false){
  const mode=canary===true?'canary':canary===false?'custom':canary
  check(Object.hasOwn(SETTLEMENT_SCHEMAS,mode)&&input?.schema===SETTLEMENT_SCHEMAS[mode])
- const stored=input.compilationInput,ci={...stored,preparationEvidence:canonicalLaunchProof(stored.preparationEvidence),reviewedStateHashes:canonicalStateHashes(stored.reviewedStateHashes),observations:stored.observations.map(canonicalObservation)},plan=COMPILERS[mode](ci),p=JSON.parse(ci.profile.json)
+ const stored=input.compilationInput,ci={...stored,preparationEvidence:canonicalLaunchProof(stored.preparationEvidence),reviewedStateHashes:canonicalStateHashes(stored.reviewedStateHashes),observations:stored.observations.map(canonicalObservation)},plan=(mode==='open'&&stored.request.policyKind==='selected-hook'?compileSelectedHookLaunchReview:COMPILERS[mode])(ci),p=JSON.parse(ci.profile.json)
  const bindings={launch:binding(JSON.parse(raw(ci.profile.idls.launch))),swap:binding(JSON.parse(raw(ci.profile.idls.swap))),token:binding(tokenIdl)}
  // Token IDL is used only as a frozen account-layout codec, never to choose a
  // program address. Actual token identity and executable bytes are operator-pinned.
@@ -86,16 +87,17 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=L
  const lc=decode(b.launch,'Config',before.get(a.launchConfig)),sc=decode(b.swap,'Config',before.get(a.swapConfig)),auth=open?null:decode(b.launch,'CreatorAuthorization',before.get(a.authorization))
  const quote=decode(b.token,'Mint',before.get(p.quoteMint)),supply=BigInt(lc.supply.toString()),curve=supply*BigInt(lc.curve_bps)/10000n,reserve=supply-curve,vbase=curve*reserve/(curve-reserve),vquote=BigInt(r.virtualQuote),graduation=vquote*(curve-reserve)/reserve
  const inclusive=r.policyVersion===2,native=plan.quoteForm===1
+ const H=r.selectedHook?.program??G,flags=r.selectedHook?.flags??1
  // A native-SOL (v4) launch sets both flags in its one creation: Launch.reserved[17] and Pool.reserved[0].
  const flagged=(name,index)=>{const zero=zeroStruct(b[name==='Launch'?'launch':'swap'],name).reserved;if(native)zero[index]=1;return zero}
  const kitConfig=pda(kit,'kit',pk(r.mint).toBuffer()),holder=pda(T,'holding',pk(p.quoteMint).toBuffer(),pk(kitConfig).toBuffer())
  const launch={...zeroStruct(b.launch,'Launch'),version:1,bump:bump(L,'launch',pk(r.mint).toBuffer()),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),
   creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),
-  reserve_holding:pk(a.launchReserve),quote_holding:pk(a.launchQuote),lp_holding:pk(a.launchLp),created_at:bn(timestamp),kit_config:pk(kitConfig),holder_vault:pk(holder),config:pk(r.selectedConfig),custom_hook:pk(G),custom_hook_flags:1,reserved:flagged('Launch',17)}
+  reserve_holding:pk(a.launchReserve),quote_holding:pk(a.launchQuote),lp_holding:pk(a.launchLp),created_at:bn(timestamp),kit_config:pk(kitConfig),holder_vault:pk(holder),config:pk(r.selectedConfig),custom_hook:pk(H),custom_hook_flags:flags,reserved:flagged('Launch',17)}
  const pool={...zeroStruct(b.swap,'Pool'),version:1,bump:bump(S,'pool',pk(r.mint).toBuffer(),pk(p.quoteMint).toBuffer(),(()=>{const v=Buffer.alloc(2);v.writeUInt16LE(lc.lp_fee_bps);return v})(),pk(L).toBuffer()),lp_mint_bump:bump(S,'lp',pk(a.pool).toBuffer()),
   base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),hook_program:pk(L),hook_flags:1985,lp_fee_bps:lc.lp_fee_bps,
   base_reserve:bn(curve),virtual_base:bn(vbase),virtual_quote:bn(vquote),curve:true,creator:pk(a.launch),created_at:bn(timestamp),hook_signer_bump:bump(S,'hook-authority',pk(L).toBuffer()),fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,reserved:flagged('Pool',0)}
- const mint={...zeroStruct(b.token,'Mint'),version:1,decimals:lc.decimals,supply:bn(supply),max_supply:bn(supply),hook_program:pk(G),hook_flags:1,name:r.name,symbol:r.symbol,uri:r.uri,created_at:bn(timestamp),creator:pk(r.creator),hook_signer_bump:bump(T,'hook-authority',pk(G).toBuffer())}
+ const mint={...zeroStruct(b.token,'Mint'),version:1,decimals:lc.decimals,supply:bn(supply),max_supply:bn(supply),hook_program:pk(H),hook_flags:flags,name:r.name,symbol:r.symbol,uri:r.uri,created_at:bn(timestamp),creator:pk(r.creator),hook_signer_bump:bump(T,'hook-authority',pk(H).toBuffer())}
  const lpMint={...zeroStruct(b.token,'Mint'),version:1,decimals:9,mint_authority:pk(a.pool),name:lpMintName(lpName,r.symbol,quote.symbol),symbol:'BLP',created_at:bn(timestamp),creator:pk(r.creator)}
  const expected=new Map(),put=(address,owner,data)=>expected.set(address,{address,owner,executable:false,dataBase64:data.toString('base64')})
  // Mint authority is revoked after minting. Anchor serialization preserves the
@@ -112,7 +114,7 @@ function derivePostconditions(settlementContext,{slot,timestamp},canary,lpName=L
  put(a.launchConfig,L,accountBytes(b.launch,'Config',{...lc,launches:lc.launches.addn(1)}));put(a.swapConfig,S,accountBytes(b.swap,'Config',{...sc,pools_created:sc.pools_created.addn(1)}));if(!open)put(a.authorization,L,accountBytes(b.launch,'CreatorAuthorization',{...auth,consumed:auth.consumed.addn(1)}))
  if(inclusive)put(a.inclusiveFeePolicy,S,Buffer.concat([Buffer.from(sha(Buffer.from('account:InclusiveFeePolicy')),'hex').subarray(0,8),Buffer.from([1]),pk(a.pool).toBuffer(),sc.fee_collector.toBuffer(),Buffer.from([0xc4,9])]))
  const launchEvent={...zeroStruct(b.launch,'LaunchCreated'),launch:pk(a.launch),mint:pk(r.mint),creator:pk(r.creator),pool:pk(a.pool),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),name:r.name,symbol:r.symbol,uri:r.uri,supply:bn(supply),decimals:lc.decimals,
-  creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),launch_fee_lamports:lc.launch_fee_lamports,config:pk(r.selectedConfig),custom_hook:pk(G),custom_hook_flags:1,slot:bn(slot),ts:bn(timestamp)}
+  creator_fee_bps:r.creatorFeeBps,lp_fee_bps:lc.lp_fee_bps,sniper_window_secs:lc.sniper_window_secs,sniper_start_bps:lc.sniper_start_bps,virtual_quote:bn(vquote),virtual_base:bn(vbase),graduation_quote:bn(graduation),curve_tokens:bn(curve),reserve_tokens:bn(reserve),launch_fee_lamports:lc.launch_fee_lamports,config:pk(r.selectedConfig),custom_hook:pk(H),custom_hook_flags:flags,slot:bn(slot),ts:bn(timestamp)}
  const poolEvent={...zeroStruct(b.swap,'PoolCreated'),pool:pk(a.pool),payer:pk(r.creator),creator:pk(a.launch),base_mint:pk(r.mint),quote_mint:pk(p.quoteMint),lp_mint:pk(a.lpMint),base_vault:pk(a.baseVault),quote_vault:pk(a.quoteVault),
   lp_fee_bps:lc.lp_fee_bps,fee_model:inclusive?2:1,protocol_share_bps:sc.launch_protocol_share_bps,hook_program:pk(L),hook_flags:1985,virtual_base:bn(vbase),virtual_quote:bn(vquote),base_reserve:bn(curve),curve:true,slot:bn(slot),ts:bn(timestamp)}
  // E2-1: a v4 creation also announces itself after LaunchCreated, which still names bridged SOL as the quote.
@@ -143,7 +145,15 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
  let identity={signature,messageSha256:review?.messageSha256,profileSha256:review?.profileSha256,configurationSha256:settlementContext?.configurationSha256}
  try{
   const {config:c,dossier:d}=validateMaxWalletOperatorBindings({config,profile,dossierJson,connections}),{ci,plan,p,b,before}=context(settlementContext,canary)
-  check(settlementContext.configurationSha256===sha(JSON.stringify(c))&&isDeepStrictEqual(ci.profile,profile)&&isDeepStrictEqual(plan.review,review))
+  // A selected launch can carry a refreshed collection after wallet consent. As in
+  // the collector, only observation metadata may refresh: signed wire, privileges,
+  // fees, intent, blockhash and all deadlines must still match exactly.
+  const stable=r=>{const {observedSlot,observedAtMs,policySha256,...rest}=r;return rest}
+  const selected=plan.request.policyKind==='selected-hook'
+  check(settlementContext.configurationSha256===sha(JSON.stringify(c))&&isDeepStrictEqual(ci.profile,profile)
+   &&(selected?isDeepStrictEqual(stable(plan.review),stable(review)):isDeepStrictEqual(plan.review,review)))
+  if(selected)check(review.observedSlot<=plan.review.observedSlot&&review.observedAtMs<=plan.review.observedAtMs)
+  if(plan.request.policyKind==='selected-hook')check(isDeepStrictEqual(ci.hookPin,c.selectedHookPin))
   for(const pin of d.accounts){const account=before.get(pin.address);check(productionAccountBindingMatches(pin,account,d,profile.idls))}
   const signed=verifyHookLabSignedMessage(review,signedTransactionBase64);check(signed.signature===signature&&review.profileSha256===c.profileSha256)
   identity={signature,messageSha256:signed.messageSha256,profileSha256:c.profileSha256,configurationSha256:sha(JSON.stringify(c))}

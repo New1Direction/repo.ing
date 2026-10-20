@@ -10,7 +10,7 @@ import {PublicKey,VersionedTransaction} from '@solana/web3.js'
 import bs58 from 'bs58'
 import {verifyHookLabSignedMessage,inspectHookLabMessage} from './hooklab-message-boundary.mjs'
 import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
-import {compileNativeSwapReview} from './hooklab-native-swap.mjs'
+import {compileNativeSwapReview,selectedNativeMeasuredQuote} from './hooklab-native-swap.mjs'
 import {loadNativeArtifacts,nativeErrorName} from './hooklab-native-pins.mjs'
 import {loadArtifacts} from './hooklab-owner-driver/artifacts.mjs'
 import {canonicalObservation} from './hooklab-canonical-observation.mjs'
@@ -32,10 +32,14 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
   const historical=!isDeepStrictEqual(ci.profile,profile);check(!historical||reviewedEnvelope(ci.profile,profile,reviewedProfiles))
   const plan=compileNativeSwapReview(ci),p=bound.profile,a=plan.addresses
   check(isDeepStrictEqual(plan.review,review)&&verifyHookLabSignedMessage(review,signedTransactionBase64).signature===signature)
+  const selected=plan.request.policyKind==='selected-hook',H=plan.request.selectedHook?.program
+  const selectedPins=selected?[H,PublicKey.findProgramAddressSync([pk(H).toBuffer()],pk('BPFLoaderUpgradeab1e11111111111111111111111'))[0].toBase58(),
+   PublicKey.findProgramAddressSync([Buffer.from('bordrless-hook-accounts'),pk(plan.request.mint).toBuffer()],pk(H))[0].toBase58()]:[]
+  const policies=[...(selected?selectedPins:[a.policy]),a.inclusiveFeePolicy]
   const pins=historical?[]:bound.dossier.programs,pinned=[...new Set(pins.flatMap(x=>[x.address,x.programData]))]
   // The pool and launch move with every trade, so providers at different slots differ there: they are read only to see
   // a graduation (which nothing undoes) and never compared byte for byte.
-  const graduation=plan.graduates?[a.launch,a.pool]:[],inventory=[...new Set([...pinned,a.policy,a.inclusiveFeePolicy,...graduation])]
+  const graduation=plan.graduates?[a.launch,a.pool]:[],inventory=[...new Set([...pinned,...policies,...graduation])]
   const rows=await Promise.all(connections.map(async({provider,connection})=>{
    check(await connection.getGenesisHash()===p.genesisHash)
    const tx=await connection.getTransaction(signature,{commitment:'finalized',maxSupportedTransactionVersion:0});if(!tx)return null
@@ -69,7 +73,7 @@ export async function collectNativeTradeSettlement({config,profile,dossierJson,c
    const pb=Buffer.from(program.dataBase64,'base64');check(pb.length===36&&pb.readUInt32LE()===2&&pb.subarray(4).equals(pk(pin.programData).toBuffer()))
    check(sha(Buffer.from(data.dataBase64,'base64'))===pin.programDataSha256)
   }
-  for(const address of [a.policy,a.inclusiveFeePolicy]){
+  for(const address of policies){
    const before=ci.observations[0].accounts.find(x=>x.address===address)?.account
    check(before&&isDeepStrictEqual(live.get(address),(({lamports,...rest})=>rest)(before)))
   }
@@ -121,7 +125,7 @@ function failureName(logs,P){
 // complete CPI ancestry. The swap's own three events and its one coin transfer give the executed trade: its exact input,
 // the curve output, the inclusive fee on them, and the pool it met, which the quote model must reproduce exactly.
 function verifyNativeTradeEvents({ci,plan,tx,fee}){
- const p=JSON.parse(ci.profile.json),r=plan.request,a=plan.addresses,buy=r.side==='buy',P=p.programs
+ const p=JSON.parse(ci.profile.json),r=plan.request,a=plan.addresses,buy=r.side==='buy',P=p.programs,selected=r.policyKind==='selected-hook'
  const {idls,coders}=loadNativeArtifacts(),token={idl:loadArtifacts().idls.token,coder:loadArtifacts().coders.token}
  const bindings={[P.swap]:{idl:idls.swap,coder:coders.swap},[P.launch]:{idl:idls.launch,coder:coders.launch},[P.token]:token}
  const programAt=i=>tx.keys[tx.instructions[i].programIdIndex],swapAt=tx.instructions.findIndex((_,i)=>programAt(i)===P.swap)
@@ -155,14 +159,15 @@ function verifyNativeTradeEvents({ci,plan,tx,fee}){
    &&graduations[0].pool.toBase58()===a.pool&&finals[0].pool.toBase58()===a.pool)
  }else check(events.every(x=>x.index===swapAt||x.index===createAt))
  const q=plan.quote,amount=BigInt(r.amountIn),out=B(s.amount_out),cut=inclusiveCreatorFee(buy?amount:out,r.creatorFeeBps)
- const gross=cut.grossQuote,platform=cut.platformQuote,creator=cut.creatorQuote,delivered=buy?out:out-gross
+ const gross=cut.grossQuote,platform=cut.platformQuote,creator=cut.creatorQuote,delivered=buy&&selected?B(s.delivered_out):buy?out:out-gross
+ const received=selected&&!buy?B(s.received_in):amount-(buy?creator:0n)
  const list=x=>x.map(d=>({holding:d.holding.toBase58(),amount:n(d.amount)})),paid=creator>0n?[{holding:a.launch,amount:String(creator)}]:[]
  check(f.version===1&&f.pool.toBase58()===a.pool&&f.quote_mint.toBase58()===p.quoteMint&&f.direction===(buy?1:0)&&f.platform_collector.toBase58()===q.platformCollector
   &&B(f.gross_quote)===gross&&B(f.creator_quote)===creator&&B(f.platform_quote)===platform&&f.creator_holding.toBase58()===(gross===0n?zero:a.launch))
  check(s.pool.toBase58()===a.pool&&s.trader.toBase58()===r.trader&&s.recipient.toBase58()===r.trader&&s.direction===(buy?1:0)&&B(s.amount_in)===amount&&n(s.slot)===String(tx.slot)
   &&B(s.delivered_out)===delivered&&delivered>=BigInt(r.minAmountOut)&&B(s.protocol_fee)===platform&&B(s.lp_fee)===0n&&s.lp_fee_bps===0&&B(s.burn_in)===0n&&B(s.burn_out)===0n
-  &&B(s.received_in)===amount-(buy?creator:0n)&&isDeepStrictEqual(list(s.deltas_in),buy?paid:[])&&isDeepStrictEqual(list(s.deltas_out),buy?[]:paid)
-  &&B(s.cuts_in)===(buy?creator:0n)&&B(s.cuts_out)===(buy?0n:creator)&&B(s.swap_count)>0n)
+  &&B(s.received_in)===received&&received>0n&&received<=amount&&isDeepStrictEqual(list(s.deltas_in),buy?paid:[])&&isDeepStrictEqual(list(s.deltas_out),buy?[]:paid)
+  &&B(s.cuts_in)===(buy?creator:amount-received)&&B(s.cuts_out)===(buy?out-delivered:creator)&&B(s.swap_count)>0n)
  const poolIndex=tx.keys.indexOf(a.pool)
  check(nat.pool.toBase58()===a.pool&&nat.direction===(buy?1:0)&&B(nat.quote_lamports)===(buy?amount-creator:delivered)&&isDeepStrictEqual(list(nat.quote_deltas),paid)
   &&poolIndex>=0&&B(nat.pool_lamports)===BigInt(tx.post[poolIndex]))
@@ -170,15 +175,20 @@ function verifyNativeTradeEvents({ci,plan,tx,fee}){
  const route=buy?{source:a.baseVault,destination:a.traderBase,sourceOwner:a.pool,destinationOwner:r.trader,authority:a.pool,amount:out}
   :{source:a.traderBase,destination:a.baseVault,sourceOwner:r.trader,destinationOwner:a.pool,authority:r.trader,amount}
  check(e.mint.toBase58()===r.mint&&e.source.toBase58()===route.source&&e.destination.toBase58()===route.destination&&e.source_owner.toBase58()===route.sourceOwner
-  &&e.destination_owner.toBase58()===route.destinationOwner&&e.authority.toBase58()===route.authority&&B(e.amount)===route.amount&&e.deltas.length===0
+  &&e.destination_owner.toBase58()===route.destinationOwner&&e.authority.toBase58()===route.authority&&B(e.amount)===route.amount&&(selected||e.deltas.length===0)
   &&n(e.slot)===String(tx.slot)&&n(e.ts)===n(s.ts)&&B(buy?e.source_post:e.destination_post)===B(s.base_reserve))
- const traderAfter=B(buy?e.destination_post:e.source_post),traderBefore=buy?traderAfter-out:traderAfter+amount,vaultAfter=B(s.base_reserve)
- const protocolAfter=B(f.protocol_fees_quote_after),pre={baseReserve:buy?vaultAfter+out:vaultAfter-amount,quoteReserve:B(s.quote_reserve)+(buy?gross-amount:out),
+ if(selected){
+  const targets=e.deltas.map(d=>d.holding.toBase58()),cutSum=e.deltas.reduce((sum,d)=>sum+B(d.amount),0n)
+  check(new Set(targets).size===targets.length&&targets.every(k=>![a.traderBase,a.baseVault].includes(k)&&plan.review.accounts.some(x=>x.address===k&&x.writable&&!x.signer))
+   &&cutSum===(buy?out-delivered:amount-received)&&amount<=BigInt(r.maxInput))
+ }
+ const traderAfter=B(buy?e.destination_post:e.source_post),traderBefore=buy?traderAfter-delivered:traderAfter+amount,vaultAfter=B(s.base_reserve)
+ const protocolAfter=B(f.protocol_fees_quote_after),pre={baseReserve:buy?vaultAfter+out:vaultAfter-received,quoteReserve:B(s.quote_reserve)+(buy?gross-amount:out),
   virtualBase:B(s.virtual_base),virtualQuote:B(s.virtual_quote),protocolFeesQuote:protocolAfter-platform}
  check(pre.baseReserve>=0n&&pre.quoteReserve>=0n&&pre.protocolFeesQuote>=0n&&traderBefore>=0n)
- const policy=new BorshCoder(JSON.parse(Buffer.from(ci.profile.idls.gate,'base64'))).accounts.decode('PolicyV2',Buffer.from(ci.observations[0].accounts.find(x=>x.address===a.policy).account.dataBase64,'base64'))
+ const policy=selected?null:new BorshCoder(JSON.parse(Buffer.from(ci.profile.idls.gate,'base64'))).accounts.decode('PolicyV2',Buffer.from(ci.observations[0].accounts.find(x=>x.address===a.policy).account.dataBase64,'base64'))
  // The gate already applied the max wallet on chain, so receipt arithmetic does not apply it again.
- const actual=modelInclusiveCreatorQuote({side:r.side,amountIn:amount,minAmountOut:BigInt(r.minAmountOut),maxInput:BigInt(r.maxInput),creatorFeeBps:r.creatorFeeBps,
+ const actual=selected?selectedNativeMeasuredQuote({...r,graduate:false},pre,{[a.traderBase]:String(buy?delivered:-amount),[a.baseVault]:String(buy?-out:received)},a):modelInclusiveCreatorQuote({side:r.side,amountIn:amount,minAmountOut:BigInt(r.minAmountOut),maxInput:BigInt(r.maxInput),creatorFeeBps:r.creatorFeeBps,
   feeModel:2,protocolShareBps:2500,lpFeeBps:0,flatProtocolFeeBps:0,sniperWindowSecs:0,sniperStartBps:0,quoteHook:'none',modules:0,authorShareBps:0,rules:'none',rewards:false,
   recipientBaseBalance:traderBefore,maxWalletLifted:true,pool:pre,policy:{version:2,feeModel:2,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps,lpFeeBps:0,initialSupply:B(policy.initial_supply),capBps:r.capBps}})
  check(actual.delivered===delivered&&actual.grossOutput===out&&actual.after.baseReserve===vaultAfter&&actual.after.quoteReserve===B(s.quote_reserve)&&actual.after.protocolFeesQuote===protocolAfter)

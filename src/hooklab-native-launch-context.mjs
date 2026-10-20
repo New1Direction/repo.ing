@@ -2,10 +2,10 @@
 import { isDeepStrictEqual } from 'node:util'
 import { z } from 'zod'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
-import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
+import { parseMaxWalletLaunchRequest, launchPreparationRequest } from './hooklab-max-wallet-launch.mjs'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { selectedHookPreparationRequestSchema } from './hooklab-selected-hook-preparation.mjs'
 const check=x=>{if(!x)throw Error('Launch context unavailable or changed')}
-const preparationOf=request=>parseMaxWalletPreparationRequest(Object.fromEntries(Object.entries(request).filter(([k])=>!['schema','reviewer','name','symbol','uri','virtualQuote'].includes(k)).concat([['schema',request.policyVersion===2?'repoing/inclusive-max-wallet-preparation-request/1':'repoing/max-wallet-preparation-request/1']])))
 export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolver,launchResolver,launchResolverFor,preparationLimits,launchLimits,reviewTiming,clock=Date.now}={}){
  const limits=structuredClone({preparationLimits,launchLimits})
  check(reviewTiming===undefined||typeof reviewTiming==='function')
@@ -34,7 +34,7 @@ export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolv
   const timing=expectedReview?{nowMs:clock(),validUntilSlot:expectedReview.validUntilSlot,reviewExpiresAtMs:expectedReview.reviewExpiresAtMs}
    :reviewTiming?await reviewTiming({stage:input.stage}):approved
   const activeLimits={...approved,nowMs:timing.nowMs,validUntilSlot:timing.validUntilSlot,reviewExpiresAtMs:timing.reviewExpiresAtMs}
-  const result=input.stage==='preparation'?await preparationResolver.resolve({sessionToken:input.sessionToken,custodyOperationId:input.custodyOperationId,limits:activeLimits,expectedReview})
+  const result=input.stage==='preparation'?await preparationResolver.resolve({sessionToken:input.sessionToken,custodyOperationId:input.custodyOperationId,limits:activeLimits,expectedReview,expectedSimulation:input.settlementContext?.simulation})
    :await activeLaunchResolver.resolve({sessionToken:input.sessionToken,preparationId:input.custodyOperationId,request:c.launch_request,limits:activeLimits,expectedReview})
   check(result&&isDeepStrictEqual(c,await get(input.sessionToken,input.custodyOperationId)))
   return result
@@ -44,7 +44,8 @@ export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolv
    const launch=parseMaxWalletLaunchRequest(request)
    return transaction(sessionToken,custodyOperationId,async(db,custody,current)=>{
     check(launch.creator===custody.owner_wallet&&launch.feePayer===custody.owner_wallet&&launch.mint===custody.mint&&launch.selectedConfig===custody.selected_config)
-    check(isDeepStrictEqual(preparationOf(launch),parseMaxWalletPreparationRequest(custody.preparation_request)))
+    const prepared=custody.preparation_request?.policyKind==='selected-hook'?selectedHookPreparationRequestSchema.parse(custody.preparation_request):parseMaxWalletPreparationRequest(custody.preparation_request)
+    check(isDeepStrictEqual(launchPreparationRequest(launch),prepared))
     if(current){check(isDeepStrictEqual(current.launch_request,launch));return {operationId:custodyOperationId}}
     check(custody.stage==='preparation-reviewed')
     await db.query('insert into hook_lab_native_launch_context(custody_operation_id,owner_wallet,launch_request,preparation_limits,launch_limits) values($1,$2,$3,$4,$5)',[custodyOperationId,custody.owner_wallet,launch,limits.preparationLimits,limits.launchLimits])

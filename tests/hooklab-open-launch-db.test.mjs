@@ -89,6 +89,24 @@ async function launched(pool, store, operationId, creator, mint) {
   return store.markLaunched(operationId)
 }
 
+test('selected launch binds exact hook and retains its original price after interrupted preparation', () => withDatabase(async pool => {
+  const creator=key('selected-binding'), id=randomUUID(), operationId=randomUUID(), selectedHook={program:key('selected-binding-hook'),flags:3}
+  const value=intent(id,{capBps:0,selectedHook}), settings={openLaunches:true,usdPricing:true,selectedHooksEnabled:true}
+  let store=ownerApprovalStore(pool,settings)
+  await store.createRequest(creator,value,profile,{source:'open',menus:MENUS})
+  const bound=await bind(pool,store,creator,operationId,{...value,virtualQuote:pricing.virtualQuote,pricing})
+  assert.equal(bound.status,'launching'); assert.deepEqual(bound.selectedHook,selectedHook)
+  store=ownerApprovalStore(pool,settings)
+  const nextPrice={solUsdMicros:'151000000',sources:pricing.sources.map(v=>({...v,usdMicros:'151000000'})),virtualQuote:launchVirtualQuote(151000000n)}
+  const recovered=await bind(pool,store,creator,operationId,{...value,virtualQuote:nextPrice.virtualQuote,pricing:nextPrice})
+  assert.equal(recovered.pricing.virtualQuote,pricing.virtualQuote)
+  assert.equal(recovered.pricing.solUsdMicros,pricing.solUsdMicros)
+  for(const patch of [{selectedHook:{...selectedHook,flags:1}},{selectedHook:undefined},{capBps:100,selectedHook:undefined}])
+    await assert.rejects(bind(pool,store,creator,operationId,{...value,...patch,virtualQuote:pricing.virtualQuote,pricing}))
+  await assert.rejects(bind(pool,store,creator,randomUUID(),{...value,virtualQuote:pricing.virtualQuote,pricing}))
+  assert.equal((await store.requestFor(creator)).custodyOperationId,operationId)
+}))
+
 test('open requests: chain menus, no invite, many creators at once, the fixed price bound with the launch', { skip: process.env.HOOK_SKIP_DB === 'true' && 'database tests skipped' }, () => withDatabase(async pool => {
   const store = ownerApprovalStore(pool, { openLaunches: true, usdPricing: true }), [a, b] = [key('a'), key('b')]
   const ra = randomUUID(), rb = randomUUID()

@@ -5,6 +5,9 @@ import { BorshCoder } from '@anchor-lang/core'
 import { validateMaxWalletOperatorBindings } from './hooklab-max-wallet-launch-collector.mjs'
 import { collectMaxWalletPreparationReview } from './hooklab-max-wallet-preparation-collector.mjs'
 import { collectInclusiveMaxWalletPreparationReview } from './hooklab-inclusive-max-wallet-preparation-collector.mjs'
+import { collectSelectedHookPreparationReview } from './hooklab-selected-hook-preparation-collector.mjs'
+import { selectedHookPreparationRequestSchema } from './hooklab-selected-hook-preparation.mjs'
+import { collectSelectedHookSimulation } from './hooklab-selected-hook-simulation.mjs'
 import { readProductionEvidence } from './hooklab-production-rpc.mjs'
 import { coLocatedWalletPreparationJournal } from './hooklab-wallet-preparation.mjs'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
@@ -22,11 +25,13 @@ export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profil
   idls:{launch:retained.profile.idls.launch,gate:retained.profile.idls.gate},elfLengths:{launch:retained.profile.elfLengths.launch,gate:retained.profile.elfLengths.gate}}
  const journal=coLocatedWalletPreparationJournal(pool,{enabled:c.enabled,origin,providers,expectedProfileSha256:c.profileSha256})
  return Object.freeze({
-  async resolve({sessionToken,custodyOperationId,limits,expectedReview}){
+  async resolve({sessionToken,custodyOperationId,limits,expectedReview,expectedSimulation}){
    try{
     const bound=await custody.get(sessionToken,custodyOperationId)
     check(bound.profileSha256===c.profileSha256&&['preparation-reviewed','preparation-signed'].includes(bound.stage))
-    const request=parseMaxWalletPreparationRequest(bound.preparedRequest)
+    const selected=bound.preparedRequest?.policyKind==='selected-hook'
+    const request=selected?selectedHookPreparationRequestSchema.parse(bound.preparedRequest):parseMaxWalletPreparationRequest(bound.preparedRequest)
+    if(selected)check(open&&c.selectedHookPin?.program===request.selectedHook.program)
     check(request.creator===bound.owner&&request.feePayer===bound.owner&&request.mint===bound.mint&&request.selectedConfig===bound.selectedConfig)
     const evidence=await readProductionEvidence({dossierJson:retained.dossierJson,expectedSha256:c.dossierSha256,providers,now:clock,timeoutMs:5000,idls:retained.profile.idls})
     // The launch settings moved since the bundle was collected: say so plainly (setup reviews bind them too).
@@ -40,12 +45,22 @@ export function coLocatedMaxWalletPreparationResolver(pool,{origin,config,profil
     check(lc.admin.toBase58()===c.reviewer&&lc.treasury.toBase58()===c.treasury&&sc.treasury.toBase58()===c.treasury)
     check(isDeepStrictEqual(open?{...c.economics,creatorFeeBps:request.creatorFeeBps}:c.economics,{creatorFeeBps:request.creatorFeeBps,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,
      protocolFeeBps:sc.protocol_fee_bps,launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()}))
-    const collected=await (request.policyVersion===2?collectInclusiveMaxWalletPreparationReview:collectMaxWalletPreparationReview)({profile:preparationProfile,request,connections:providers,limits,expectedReview,clock})
+    const collected=await (selected?collectSelectedHookPreparationReview:request.policyVersion===2?collectInclusiveMaxWalletPreparationReview:collectMaxWalletPreparationReview)({profile:preparationProfile,hookPin:c.selectedHookPin,request,connections:providers,limits,expectedReview,clock})
+    const configurationSha256=sha(JSON.stringify(c))
+    let simulation
+    if(selected){
+     const plan=collected.plan,e=plan.selectedHook
+     const conditions={tokenProgram:p.programs.token,configurationSha256,holdings:[],native:[{address:request.creator,maxDebit:plan.review.maxNativeDebitLamports,minCredit:'0'}],
+      unchanged:[{address:plan.addresses.registry,sha256:e.registrySha256},{address:plan.addresses.hook,sha256:e.programSha256},
+       {address:plan.addresses.hookProgramData,sha256:e.programDataSha256},{address:plan.addresses.launchConfig,sha256:e.launchConfigSha256}]}
+     if(expectedReview)check(expectedSimulation)
+     simulation=await collectSelectedHookSimulation({review:plan.review,conditions,connections:providers,expected:expectedSimulation,clock})
+    }
     const after=await custody.get(sessionToken,custodyOperationId)
     check(isDeepStrictEqual(after,bound)&&clock()<collected.plan.review.reviewExpiresAtMs)
     return Object.freeze({status:'operator-pins-and-state-verified',owner:bound.owner,stage:'preparation',request,
-     configurationSha256:sha(JSON.stringify(c)),profileSha256:c.profileSha256,messageSha256:collected.plan.review.messageSha256,review:collected.plan.review,
-     settlementContext:{schema:'repoing/max-wallet-preparation-settlement-context/1',preparationInput:collected.preparationInput},
+     configurationSha256,profileSha256:c.profileSha256,messageSha256:collected.plan.review.messageSha256,review:collected.plan.review,
+     settlementContext:{schema:'repoing/max-wallet-preparation-settlement-context/1',preparationInput:collected.preparationInput,...(simulation?{simulation}:{})},
      approvalReference:c.approvalReference,collection:collected.collection,canSign:false,canSubmit:false})
    }catch(error){passRefusal(error,fail)}
   },

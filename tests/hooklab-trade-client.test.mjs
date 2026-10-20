@@ -3,12 +3,25 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, SystemProgram } from '@solana/web3.js'
-import { estimateTrade, formatUnits, maxBuyLamports, parseUnits, planBuy, planSell, sol, tradeButton, tradeIntent } from '../app/lib/hooklab-trade-math.mjs'
+import { estimateTrade, formatUnits, maxBuyLamports, nativeTradeIntent, parseUnits, planBuy, planSell, sol, tradeButton, tradeIntent } from '../app/lib/hooklab-trade-math.mjs'
 import { createInclusiveTradeHandler } from '../app/lib/hooklab-inclusive-trade.mjs'
 import { runOperation, pendingOperations, rememberOperation, forgetOperation } from '../app/lib/hooklab-trade-runner.mjs'
 
 const market = { creatorFeeBps: 100, capBps: 200, initialSupply: '1000000000000000',
   pool: { baseReserve: '750000000000000', quoteReserve: '1', virtualBase: '375000000000000', virtualQuote: '1000000000', protocolFeesQuote: '0' } }
+
+test('selected-hook preview has no fabricated gate cap and preserves hook identity in native intent', () => {
+  const selectedHook={program:Keypair.generate().publicKey.toBase58(),flags:3}
+  const selected={...market,policyKind:'selected-hook',capBps:0,selectedHook}
+  const preview=estimateTrade(selected,{side:'buy',amount:30_000_000n,coinBalance:100_000_000_000_000n})
+  assert.equal(preview.error,undefined)
+  const gross=29_700_000n*1_125_000_000_000_000n/1_029_700_001n
+  assert.equal(preview.delivered,gross)
+  assert.equal(preview.hookDeductionsUnmeasured,true)
+  assert.match(estimateTrade({...market,capBps:0},{side:'buy',amount:30_000_000n}).error,/can’t be traded/)
+  assert.deepEqual(nativeTradeIntent(selected,'buy',30_000_000n,preview.minAmountOut,false),{
+    ...tradeIntent(selected,'buy',30_000_000n,preview.minAmountOut),graduate:false,policyKind:'selected-hook',selectedHook})
+})
 
 test('amounts parse exactly and format plainly', () => {
   assert.equal(parseUnits('0.05', 9), 50_000_000n); assert.equal(parseUnits('1', 9), 1_000_000_000n); assert.equal(parseUnits('.5', 6), 500_000n)
@@ -78,6 +91,18 @@ test('the runner refuses a wallet that changes the transaction, and a server tha
     signTransaction: f.signTransaction, sleep: async () => {}, loadTransaction: async () => VersionedTransaction }), /wallet changed/)
 })
 
+test('selected trades need explicit consent for the exact message before requesting wallet bytes', async () => {
+  for(const approve of [false,true]){
+    const f=fixture(),create={action:'quote',request:{policyKind:'selected-hook'}},seen=[]
+    const task=runOperation({call:f.call,create,...f.ids,signTransaction:f.signTransaction,
+      approveReview:async op=>{seen.push(op.review.messageSha256);assert.deepEqual(f.calls,['quote']);return approve},
+      sleep:async()=>{},loadTransaction:async()=>VersionedTransaction})
+    if(approve)assert.equal((await task).status,'finalized-success')
+    else{await assert.rejects(task,/consent/);assert.deepEqual(f.calls,['quote'])}
+    assert.equal(seen.length,1)
+  }
+})
+
 test('unfinished operations are remembered per wallet until forgotten', () => {
   const memory = new Map(), storage = { getItem: k => memory.get(k) ?? null, setItem: (k, v) => memory.set(k, v) }
   rememberOperation(storage, { wallet: 'A', signingId: '1', kind: 'buy' }); rememberOperation(storage, { wallet: 'B', signingId: '2', kind: 'fund' })
@@ -105,6 +130,22 @@ test('the panel’s swap request passes the trade API’s exact schema (a reject
     assert.equal(response.status, 200, side)
   }
   assert.deepEqual(seen.map(x => x.stage), ['inclusive-buy', 'inclusive-sell'])
+})
+
+test('native HTTP accepts selected identity with zero gate cap, never a hybrid policy',async()=>{
+  const owner=Keypair.generate().publicKey.toBase58(),signingId='11111111-1111-4111-8111-111111111111',seen=[]
+  const handler=createInclusiveTradeHandler({env:{HOOK_INCLUSIVE_TRADING_ENABLED:'true',HOOK_WALLET_IDENTITY_ENABLED:'true',HOOK_TRADING_PUBLIC:'true',HOOK_NATIVE_TRADING_ENABLED:'true'},
+    configuration:()=>({origin:'https://repo.ing'}),database:()=>({end:async()=>{}}),quota:async()=>true,moderation:async()=>({delisted:false}),
+    principalStore:()=>({resolve:async()=>({wallet:owner})}),runtime:()=>({origin:'https://repo.ing',nativeTrading:true,lifecycle:{createReview:async(t,id,value)=>{
+      seen.push(value);return {id:signingId,owner,stage:value.stage,status:'reviewed',review:{}}}}})})
+  const selected={...market,mint:owner,selectedConfig:Keypair.generate().publicKey.toBase58(),policyKind:'selected-hook',capBps:0,
+    selectedHook:{program:Keypair.generate().publicKey.toBase58(),flags:3}}
+  const post=request=>handler(new Request('https://repo.ing/api/hook-lab/inclusive-trade',{method:'POST',headers:{origin:'https://repo.ing','content-type':'application/json',
+    cookie:`__Host-hook-wallet-session=${Buffer.alloc(32,9).toString('base64url')}`},body:JSON.stringify({action:'native-quote',signingId,request})}))
+  for(const side of ['buy','sell'])assert.equal((await post(nativeTradeIntent(selected,side,10_000n,1n,false))).status,200)
+  assert.equal((await post({...nativeTradeIntent(selected,'buy',10_000n,1n,false),capBps:200})).status,400)
+  assert.deepEqual(seen.map(x=>x.stage),['native-buy','native-sell'])
+  assert.deepEqual(seen[0].intent.selectedHook,selected.selectedHook)
 })
 
 test('buys that would be refused are caught before any SOL moves: impact over 10%, past the end of the curve, max per wallet', () => {

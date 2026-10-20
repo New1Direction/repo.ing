@@ -9,6 +9,8 @@ import { remoteAdminSigner } from './hooklab-owner-approval.mjs'
 import { remoteLaunchLookupTable } from './hooklab-owner-launch-tables.mjs'
 import { openLaunchRent, openLaunchesEnabled, siteLaunchesEnabled } from './hooklab-open-creation.mjs'
 import { isStackProfile } from './hooklab-stack.mjs'
+import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
+import { selectedHookPinSchema } from './hooklab-max-wallet-launch.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
@@ -134,7 +136,11 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  const launchLookupTable=remoteLaunchLookupTable(pool,{envelope:s.bundle.profile,connections:s.connections,adminAddress:s.bundle.config.reviewer})
  // Open launches use the bundle's one shared launch table and need no admin co-signature; the owner's Mac is not involved.
  const open=openLaunchesEnabled(env)
- const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,...(open?{...own,openLaunches:true}:{launchLookupTable}),reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
+ const selectedHooksEnabled=env.HOOK_LOCAL_SELECTED_HOOKS_ENABLED==='true'
+ need(!selectedHooksEnabled||localAcceptanceNetwork(env),'selected hooks are acceptance-only pending full verification')
+ const selectedHookPin=selectedHooksEnabled?selectedHookPinSchema.parse(JSON.parse(env.HOOK_LOCAL_SELECTED_HOOK_PIN_JSON??'null')):null
+ if(selectedHooksEnabled){need(own&&open,'selected hooks require our open-launch stack');own.config={...own.config,selectedHookPin}}
+ const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,...(open?{...own,openLaunches:true}:{launchLookupTable}),selectedHooksEnabled,reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
  const native=await launchRuntime()
  installNativeLaunchRuntime({...native,async reserve(input){return (await launchRuntime()).reserve(input)}})
  // Trading installs only behind its own switch, the same rule as initializeInclusiveTradeRuntime.
@@ -142,7 +148,7 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  // pins the upgraded programs.
  let nativeTrading=false
  if(env.HOOK_INCLUSIVE_TRADING_ENABLED==='true'){
-  const trade=createInclusiveTradeRuntime(pool,{...base,stack:own,ownerTradingApproved:true,limits:s.tradeLimits,openLaunches:openLaunchesEnabled(env),
+  const trade=createInclusiveTradeRuntime(pool,{...base,stack:own,ownerTradingApproved:true,limits:s.tradeLimits,openLaunches:openLaunchesEnabled(env),selectedHookPin,selectedNativeTradingEnabled:selectedHooksEnabled,
    walletFundingEnabled:env.HOOK_WALLET_FUNDING_ENABLED==='true',nativeTradingEnabled:env.HOOK_NATIVE_TRADING_ENABLED==='true'})
   installInclusiveTradeRuntime(trade);nativeTrading=trade.nativeTrading
   if(env.HOOK_NATIVE_TRADING_ENABLED==='true'&&!nativeTrading)console.error('Hook Lab native trading stays off: the production bundle does not pin the reviewed native-SOL programs')

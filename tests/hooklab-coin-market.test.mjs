@@ -25,23 +25,36 @@ const holding = amount => { const b = Buffer.alloc(204); b.writeBigUInt64LE(BigI
 const bn = v => new BN(String(v))
 
 // poolFlag / launchFlag: the native-SOL flags, Pool.reserved[0] (byte 351) and Launch.reserved[17] (byte 560).
-async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0, lpSupply = 0, lockedLp = 0, poolFlag = 0, launchFlag = 0 }) {
+async function chain({ pool, status = 0, graduatedAt = 0, topup = 0, burned = 0, lpSupply = 0, lockedLp = 0, poolFlag = 0, launchFlag = 0, selectedHook = null }) {
   const reserved = (length, at, value) => Array.from({ length }, (_, i) => i === at ? value : 0)
   const launch = await encode('launch', 'Launch', { version: 1, mint: new PublicKey(mint), creator: new PublicKey(wallet), pool: new PublicKey(a.pool), quote_mint: new PublicKey(QUOTE_MINT), reserved: reserved(22, 17, launchFlag),
     status, creator_fee_bps: config.creatorFeeBps, virtual_quote: bn(config.virtualQuote), virtual_base: bn(config.curve.virtualBase), graduation_quote: bn(config.curve.graduationQuote),
     curve_tokens: bn(config.curve.curveTokens), reserve_tokens: bn(config.curve.reserveTokens), graduated_at: bn(graduatedAt), graduation_topup: bn(topup), graduation_burned: bn(burned),
-    config: new PublicKey(PROGRAMS.launch), custom_hook: new PublicKey(PROGRAMS.gate), custom_hook_flags: 1 })
+    config: new PublicKey(PROGRAMS.launch), custom_hook: new PublicKey(selectedHook?.program??PROGRAMS.gate), custom_hook_flags: selectedHook?.flags??1 })
   const poolBytes = await encode('swap', 'Pool', { version: 1, base_mint: new PublicKey(mint), quote_mint: new PublicKey(QUOTE_MINT), base_reserve: bn(pool.baseReserve), quote_reserve: bn(pool.quoteReserve),
     virtual_base: bn(pool.virtualBase), virtual_quote: bn(pool.virtualQuote), protocol_fees_quote: bn(pool.protocolFeesQuote), lp_supply: bn(lpSupply), curve: status === 0, swap_count: bn(12), fee_model: 2,
     hook_program: new PublicKey(PROGRAMS.launch), reserved: reserved(60, 0, poolFlag) })
   const policy = await encode('gate', 'PolicyV2', { version: 2, mint: new PublicKey(mint), initial_supply: bn(config.supply), cap_bps: 200, quote_mint: new PublicKey(QUOTE_MINT), fee_model: 2, protocol_share_bps: 2500, creator_fee_bps: config.creatorFeeBps })
-  const coin = await encode('token', 'Mint', { version: 1, decimals: 6, supply: bn(BigInt(config.supply) - BigInt(burned)), max_supply: bn(config.supply), name: 'Graduate', symbol: 'GRAD', uri: '' })
+  const coin = await encode('token', 'Mint', { version: 1, decimals: 6, supply: bn(BigInt(config.supply) - BigInt(burned)), max_supply: bn(config.supply), name: 'Graduate', symbol: 'GRAD', uri: '',
+    ...(selectedHook?{hook_program:new PublicKey(selectedHook.program),hook_flags:selectedHook.flags}:{}) })
   const accounts = new Map([[a.launch, [PROGRAMS.launch, launch]], [a.pool, [PROGRAMS.swap, poolBytes]], [a.policy, [PROGRAMS.gate, policy]], [mint, [PROGRAMS.token, coin]],
     [a.launchReserve, [PROGRAMS.token, holding(BigInt(config.curve.reserveTokens) - BigInt(topup) - BigInt(burned))]], [a.launchLp, [PROGRAMS.token, holding(lockedLp)]],
     [wallet, [PublicKey.default.toBase58(), Buffer.alloc(0), 5_000_000_000]], [holdingAddress(QUOTE_MINT, wallet, PROGRAMS.token), [PROGRAMS.token, holding(7)]], [holdingAddress(mint, wallet, PROGRAMS.token), [PROGRAMS.token, holding(9)]]])
+  if(selectedHook)accounts.delete(a.policy)
   return { getMultipleAccountsInfoAndContext: async keys => ({ context: { slot: 77 }, value: keys.map(k => {
     const hit = accounts.get(k.toBase58()); return hit ? { owner: new PublicKey(hit[0]), data: hit[1], lamports: hit[2] ?? 1 } : null }) }) }
 }
+
+test('selected market derives its fees and hook identity from launch/mint without a gate policy', async () => {
+  const selectedHook={program:Keypair.fromSeed(Buffer.alloc(32,91)).publicKey.toBase58(),flags:3}
+  const connection=await chain({pool:at('near the end').pool,poolFlag:1,launchFlag:1,selectedHook})
+  const result=await readHookCoinMarket({profile:LEGACY,connection,mint,wallet,selectedHook})
+  assert.ok(result); assert.equal(result.market.policyKind,'selected-hook'); assert.deepEqual(result.market.selectedHook,selectedHook)
+  assert.equal(result.market.capBps,0); assert.equal(result.market.capRaw,null); assert.equal(result.market.creatorFeeBps,config.creatorFeeBps)
+  assert.equal(result.market.native,true)
+  assert.equal(await readHookCoinMarket({profile:LEGACY,connection,mint,wallet,selectedHook:{...selectedHook,flags:1}}),null)
+  assert.equal(await readHookCoinMarket({profile:LEGACY,connection,mint,wallet}),null,'must not silently label nongate market max-wallet')
+})
 
 test('on the curve: progress, and what a buy costs right now to finish it', async () => {
   const s = at('near the end'), { market } = await readHookCoinMarket({ profile: LEGACY, connection: await chain({ pool: s.pool }), mint })

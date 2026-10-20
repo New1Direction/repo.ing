@@ -7,12 +7,13 @@ import { holdingAddress } from './hooklab-owner-driver/pins.mjs'
 import { hookCoinAddresses } from './hooklab-inclusive-max-wallet-swap.mjs'
 import { STATUS_GRADUATED, finalFillLamports, graduationOutcome, isReady } from './hooklab-graduation.mjs'
 import { NATIVE_FLAGS } from './hooklab-native-pins.mjs'
+import { selectedHookSchema } from './hooklab-selected-hook.mjs'
 
 const s = value => value.toString()
 const holdingAmount = info => info && Buffer.from(info.data).length === 204 ? Buffer.from(info.data).readBigUInt64LE(74) : null
 
 // profile: the coin's stack profile (its programs and quote marker); the trade runtime picks it by the coin's stack.
-export async function readHookCoinMarket({ connection, mint, wallet = null, profile }) {
+export async function readHookCoinMarket({ connection, mint, wallet = null, profile, selectedHook = null }) {
   if (!profile?.programs || !profile.quoteMint) throw Error('The coin\'s stack profile is required')
   new PublicKey(mint); if (wallet) new PublicKey(wallet)
   const { coders } = loadArtifacts(), a = hookCoinAddresses(profile, mint), T = profile.programs.token
@@ -20,12 +21,19 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
   const keys = [a.launch, a.pool, a.policy, mint, a.launchReserve, a.launchLp, ...walletKeys]
   const { value, context } = await connection.getMultipleAccountsInfoAndContext(keys.map(k => new PublicKey(k)), { commitment: 'confirmed' })
   const [launchInfo, poolInfo, policyInfo, mintInfo] = value
-  if (!launchInfo || !poolInfo || !policyInfo || !mintInfo) return null
+  if (!launchInfo || !poolInfo || (!selectedHook && !policyInfo) || !mintInfo) return null
   const owned = (info, program) => info.owner.toBase58() === program
-  if (!owned(launchInfo, profile.programs.launch) || !owned(poolInfo, profile.programs.swap) || !owned(policyInfo, profile.programs.gate) || !owned(mintInfo, T)) return null
+  if (!owned(launchInfo, profile.programs.launch) || !owned(poolInfo, profile.programs.swap) || (!selectedHook && !owned(policyInfo, profile.programs.gate)) || !owned(mintInfo, T)) return null
   const launch = coders.launch.accounts.decode('Launch', launchInfo.data), pool = coders.swap.accounts.decode('Pool', poolInfo.data)
-  const policy = coders.gate.accounts.decode('PolicyV2', policyInfo.data), coin = coders.token.accounts.decode('Mint', mintInfo.data)
-  if (launch.mint.toBase58() !== mint || pool.base_mint.toBase58() !== mint || policy.mint.toBase58() !== mint) return null
+  const policy = selectedHook ? null : coders.gate.accounts.decode('PolicyV2', policyInfo.data), coin = coders.token.accounts.decode('Mint', mintInfo.data)
+  if (launch.mint.toBase58() !== mint || pool.base_mint.toBase58() !== mint || (policy && policy.mint.toBase58() !== mint)) return null
+  if(selectedHook){
+    selectedHook=selectedHookSchema.parse(selectedHook)
+    if(selectedHook.program===profile.programs.gate||launch.custom_hook?.toBase58()!==selectedHook.program||launch.custom_hook_flags!==selectedHook.flags
+      ||coin.hook_program?.toBase58()!==selectedHook.program||coin.hook_flags!==selectedHook.flags||pool.fee_model!==2)return null
+  }
+  const capBps=selectedHook?0:policy.cap_bps,creatorFeeBps=selectedHook?launch.creator_fee_bps:policy.creator_fee_bps
+  const initialSupply=selectedHook?s(coin.max_supply):s(policy.initial_supply)
   // The native-SOL flags, at the bytes the programs read (32 earlier without a hook). A coin is native only when both
   // say so; any other pair (a half-migrated or unknown state) is a mismatch, and nothing offers to trade it.
   // Display only, from the primary provider: every review re-reads both flags on two providers. If this provider were
@@ -43,8 +51,9 @@ export async function readHookCoinMarket({ connection, mint, wallet = null, prof
     mint, name: coin.name, symbol: coin.symbol, uri: coin.uri, decimals, observedSlot: context.slot,
     selectedConfig: launch.config.toBase58(), creator: launch.creator.toBase58(), graduated, native, quoteFormMismatch,
     // supply: the mint's current supply (graduation burns some), the figure the market cap below and the chart's use.
-    capBps: policy.cap_bps, creatorFeeBps: policy.creator_fee_bps, initialSupply: s(policy.initial_supply), supply: s(coin.supply),
-    capRaw: s(BigInt(s(policy.initial_supply)) * BigInt(policy.cap_bps) / 10000n),
+    capBps, creatorFeeBps, initialSupply, supply: s(coin.supply),
+    capRaw: selectedHook?null:s(BigInt(initialSupply) * BigInt(capBps) / 10000n),
+    ...(selectedHook?{policyKind:'selected-hook',selectedHook}:{}),
     pool: { baseReserve: s(pool.base_reserve), quoteReserve: s(pool.quote_reserve), virtualBase: s(pool.virtual_base),
       virtualQuote: s(pool.virtual_quote), protocolFeesQuote: s(pool.protocol_fees_quote), swapCount: s(pool.swap_count) },
     // The whole supply (less what graduation burned) valued at the current price, in lamports (no fee).
