@@ -11,6 +11,7 @@ import { reviewNewMintPreparationCandidate } from './hooklab-new-mint-preparatio
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { isLocalExecutionDossier } from './hooklab-local-acceptance.mjs'
 import { readOpenCreation } from './hooklab-open-creation.mjs'
+import { refuseUnsupportedSelectedHook } from './hooklab-selected-hook.mjs'
 // openLaunches (HOOK_OPEN_LAUNCHES): self-serve launches. Anyone may launch while open creation is on chain; the launch
 // is create_launch_open_v1 through the operator's shared launch table, signed by the creator and the sealed mint key, with
 // no admin key and no owner approval. Launches reviewed before the switch still settle.
@@ -43,6 +44,7 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
   // The chain's open-creation state and menus, from both providers (identical bytes), for the creator's form.
   openCreation,
   async reserve({sessionToken,owner,input}){
+   if(input.selectedHook)refuseUnsupportedSelectedHook()
    try{
     // Creator rate is an explicit immutable approved profile/configuration input; an open launch's comes from the chain.
     const reviewedProfile=JSON.parse(profile.json)

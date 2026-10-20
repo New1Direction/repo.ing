@@ -14,6 +14,7 @@ import {provenLatestBlockhash} from './hooklab-blockhash-proof.mjs'
 import {REVIEWED_PROFILE_SHA256,reviewedEnvelope} from './hooklab-reviewed-profiles.mjs'
 import {STATUS_GRADUATED} from './hooklab-graduation.mjs'
 import {loadNativeArtifacts} from './hooklab-native-pins.mjs'
+import {refuseUnsupportedSelectedHook} from './hooklab-selected-hook.mjs'
 const check=v=>{if(!v)throw Error('Native trade state, intent or operator pins changed')}
 const sha=x=>createHash('sha256').update(x).digest('hex'),pk=x=>new PublicKey(x)
 const integer=x=>{check(Number.isSafeInteger(x)&&x>=0);return x}
@@ -31,6 +32,8 @@ export function nativeTradeResolver({config,profile,dossierJson,connections,limi
  const configurationSha256=sha(JSON.stringify({schema:'repoing/native-trade-configuration/1',...retained,limits:{...retained.limits,nowMs:undefined}}))
  async function collect({owner,stage,intent,expectedReview,originalContext}){
   const {quote:ignored,...raw}=intent??{}
+  // Never relabel a creator-selected hook as max-wallet to obtain a deterministic quote.
+  if(raw.selectedHook||raw.policyKind&&raw.policyKind!=='max-wallet')refuseUnsupportedSelectedHook()
   const request=nativeSwapRequestSchema.parse({...raw,schema:'repoing/native-swap-request/1',policyKind:'max-wallet',policyVersion:2,feeModel:2,protocolShareBps:2500,trader:owner})
   check(stage===`native-${request.side}`&&approvedCreatorFees(bound.profile).includes(request.creatorFeeBps))
   if(originalContext)check(originalContext.configurationSha256===configurationSha256&&isDeepStrictEqual(originalContext.compilationInput.request,request))

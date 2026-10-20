@@ -12,9 +12,10 @@ import { servedFromConfiguredOrigin } from './hooklab-origin.mjs'
 import { usdLaunchPricingEnabled } from '../../src/hooklab-launch-pricing.mjs'
 import { openLaunchesEnabled } from '../../src/hooklab-open-creation.mjs'
 import { launchPriceAtInvite } from './hooklab-launch-price.mjs'
+import { selectedHookSchema, refuseUnsupportedSelectedHook } from '../../src/hooklab-selected-hook.mjs'
 const uuid=z.uuid(),text=max=>z.string().refine(x=>Buffer.byteLength(x)<=max)
 const inputSchema=z.discriminatedUnion('action',[
- z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(1).max(9999),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict(),
+ z.object({action:z.literal('reserve'),operationId:uuid,capBps:z.number().int().min(0).max(9999),selectedHook:selectedHookSchema.optional(),label:text(32).min(1),name:text(32).min(1),symbol:text(10).min(1),uri:text(200),virtualQuote:z.string().regex(/^(0|[1-9][0-9]*)$/).max(20),creatorFeeBps:z.number().int().min(0).max(9999)}).strict().refine(x=>x.selectedHook?x.capBps===0:x.capBps>0,'Selected hooks cannot claim a max-wallet cap'),
  z.object({action:z.literal('review'),operationId:uuid,signingId:uuid,stage:z.enum(['preparation','launch'])}).strict(),
  z.object({action:z.enum(['get','refresh-review','wallet-request','cosign','submit','reconcile','expire']),signingId:uuid}).strict(),
  z.object({action:z.literal('retain-wallet'),signingId:uuid,signedTransactionBase64:z.string().max(1644)}).strict(),
@@ -51,6 +52,9 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    const service=runtime()
    if(!service)return reply({status:'blocked',blockers:[{code:'APPROVED_RUNTIME_UNCONFIGURED',message:'Owner-approved custody, exact deployment and fee settings are not configured.'}]})
    const lifecycle=service.lifecycle
+   // Do not bind an approval, allocate custody or silently replace the selected hook with the gate.
+   // Current production pins do not attest the repaired nongate instruction.
+   if(input.action==='reserve'&&input.selectedHook)refuseUnsupportedSelectedHook()
    let result
    if(input.action==='reserve'&&openLaunchesEnabled(env)){
     // Open launch: the creator's own coin at the price repo.ing fixes now, if the chain offers the chosen fee and cap.
@@ -107,6 +111,7 @@ export function createNativeLaunchHandler({env=process.env,configuration=walletI
    if((await principal.resolve(token)).wallet!==owner.wallet)throw Error()
    return reply({status:'available',...result})
   }catch(error){
+   if(error?.code==='SELECTED_HOOK_REVIEW_UNAVAILABLE')return reply({status:'blocked',blockers:[{code:error.code,message:error.message}]},409)
    // Owner-approval messages are fixed, customer-facing and secret-free (e.g. the owner is still preparing the launch table).
    const message=error.status===401?'Wallet session expired. Sign in again.':error?.code==='OWNER_APPROVAL_UNAVAILABLE'?error.message:'Launcher unavailable or changed. Preserve the operation IDs and reconcile any pending transaction.'
    return reply({error:message},error.status===401?401:409)}

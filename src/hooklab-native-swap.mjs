@@ -23,6 +23,7 @@ import { isNativeElfPin } from './hooklab-native-launch.mjs'
 import { loadArtifacts } from './hooklab-owner-driver/artifacts.mjs'
 import { createHolding, instructionsFor } from './hooklab-owner-driver/instructions.mjs'
 import { isStackProfile, kitOf, profileRolesDistinct } from './hooklab-stack.mjs'
+import { selectedHookAccountPlan } from './hooklab-selected-hook.mjs'
 
 const { raw, owned, decoded, programEvidence, governance, launchSideIdentity, typed, readHolding, noRules } = swapAccountEvidence
 const check = (value, message) => { if (!value) throw Error(message) }
@@ -91,9 +92,10 @@ export function nativeSwapInventory(profileInput, requestInput) {
 // trader on both sides here (a buy pays from the wallet, a sell pays the wallet). Remaining: the base mint's gate slice,
 // the launch's pool-hook extras, the InclusiveFeePolicy last (as native_launch.rs builds it).
 // swapIdl: the profile's own swap IDL (the compiler passes it); the vendored native IDL otherwise (same layout).
-export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn, minAmountOut }, swapIdl = null) {
+export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn, minAmountOut }, swapIdl = null, selectedHookEvidence = null) {
   const { programs, quoteMint } = profile, { launch: L, swap: S, gate: G, token: T } = programs, a = hookCoinAddresses(profile, mint), buy = side === 'buy'
   const idl = swapIdl ?? loadNativeArtifacts().idls.swap, coder = swapIdl ? new BorshCoder(swapIdl) : loadNativeArtifacts().coders.swap
+  check(idl.address === S, 'swap_v2 IDL identity differs')
   const abi = idl.instructions.find(ix => ix.name === 'swap_v2')
   const meta = (address, writable = false, signer = false) => ({ pubkey: pk(address), isWritable: writable, isSigner: signer })
   const fixed = [meta(trader, true, true), meta(a.swapConfig), meta(a.pool, true), meta(mint), meta(quoteMint), meta(a.baseVault, true),
@@ -103,9 +105,14 @@ export function nativeSwapV2Instruction(profile, { side, trader, mint, amountIn,
     'token_program', 'token_event_authority', 'system_program', 'event_authority', 'program']
   check(abi && isDeepStrictEqual(abi.accounts.map(x => x.name), names) && Buffer.from(abi.discriminator).equals(hash('global:swap_v2').subarray(0, 8))
     && abi.accounts.every((x, i) => !!x.signer === fixed[i].isSigner && !!x.writable === fixed[i].isWritable && (!x.address || x.address === str(fixed[i].pubkey))), 'swap_v2 ABI differs')
-  const remaining = [meta(G), meta(a.gateHookSigner), meta(a.policy), meta(a.launch), meta(a.launch, true), meta(a.launchQuote, true), meta(a.holderVault, true), meta(a.kitConfig), meta(a.inclusiveFeePolicy)]
+  // Low-level ABI support only: the signing compiler below still refuses arbitrary-hook quotes.
+  // Resolve from registry bytes, never accept caller-invented remaining metas or use SDK default IDs.
+  const selected = selectedHookEvidence && selectedHookAccountPlan({ ...selectedHookEvidence, programs, mint })
+  const baseSlice = selected ? selected.transferSlice.map(x => meta(x.address, x.writable))
+    : [meta(G), meta(a.gateHookSigner), meta(a.policy), meta(a.launch)]
+  const remaining = [...baseSlice, meta(a.launch, true), meta(a.launchQuote, true), meta(a.holderVault, true), meta(a.kitConfig), meta(a.inclusiveFeePolicy)]
   const data = coder.instruction.encode('swap_v2', { args: { direction: buy ? 1 : 0, amount_in: bn(amountIn), min_amount_out: bn(minAmountOut),
-    in_hook_accounts: buy ? 0 : 4, out_hook_accounts: buy ? 4 : 0, hook_data: Buffer.alloc(0) } })
+    in_hook_accounts: buy ? 0 : baseSlice.length, out_hook_accounts: buy ? baseSlice.length : 0, hook_data: Buffer.alloc(0) } })
   return new TransactionInstruction({ programId: pk(S), keys: [...fixed, ...remaining], data })
 }
 
