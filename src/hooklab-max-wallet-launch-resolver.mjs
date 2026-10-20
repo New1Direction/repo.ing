@@ -7,6 +7,7 @@ import { coLocatedWalletPreparationJournal } from './hooklab-wallet-preparation.
 import { collectMaxWalletLaunchReview, collectOpenLaunchReview, validateMaxWalletOperatorBindings } from './hooklab-max-wallet-launch-collector.mjs'
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { passRefusal } from './hooklab-open-creation.mjs'
+import { collectSelectedHookLaunchSimulation } from './hooklab-selected-hook-launch-simulation.mjs'
 const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
 // open: self-serve launches (create_launch_open_v1, no reviewer). Settlement follows each operation's own context, so a
 // launch reviewed before the switch to open launches still settles.
@@ -31,7 +32,7 @@ export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dos
     return result
    }catch{throw Object.assign(Error('Max-wallet launch settlement unavailable or changed'),{code:'MAX_WALLET_LAUNCH_UNAVAILABLE'})}
   },
-  async resolve({sessionToken,preparationId,request,limits,expectedReview}){
+  async resolve({sessionToken,preparationId,request,limits,expectedReview,expectedSimulation}){
    try{
    z.uuid().parse(preparationId)
    const r=parseMaxWalletLaunchRequest(request),boundLimits=structuredClone(limits)
@@ -39,6 +40,12 @@ export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dos
    check(prep.wallet===r.creator,'Session wallet does not own preparation')
    check(open===(['repoing/open-launch-request/1','repoing/selected-hook-launch-request/1'].includes(r.schema)),'Launch request kind differs from this server')
    const result=await (open?collectOpenLaunchReview:collectMaxWalletLaunchReview)({...retained,connections:providers,preparation:prep,request:r,limits:boundLimits,expectedReview,clock,nativeLaunches:nativeLaunches===true})
+   let simulation
+   if(r.policyKind==='selected-hook'){
+    check(!expectedReview||expectedSimulation,'Retained selected launch simulation required')
+    simulation=await collectSelectedHookLaunchSimulation({plan:result.plan,settlementContext:result.settlementContext,
+     configurationSha256:result.configurationSha256,connections:providers,expected:expectedSimulation,clock})
+   }
    // Recheck current principal and durable identity after network work. No network
    // work is performed while the principal/database transaction lock is held.
    const final=await journal.get(sessionToken,preparationId)
@@ -46,7 +53,7 @@ export function coLocatedMaxWalletLaunchResolver(pool,{origin,config,profile,dos
     &&final.preparationIntentSha256===prep.preparationIntentSha256&&isDeepStrictEqual(final.preparedRequest,prep.preparedRequest)
     &&!final.evidenceConflict&&final.status==='candidate-preparation-matched'&&final.lastCollectionPrelaunchEligible,'Preparation changed during collection')
    check(clock()<result.plan.review.reviewExpiresAtMs,'Review expired during principal revalidation')
-   return Object.freeze({status:'operator-pins-and-state-verified',owner:prep.wallet,stage:'launch',observedAdmin:result.observedAdmin,configurationSha256:result.configurationSha256,settlementContext:result.settlementContext,preparationId,
+   return Object.freeze({status:'operator-pins-and-state-verified',owner:prep.wallet,stage:'launch',observedAdmin:result.observedAdmin,configurationSha256:result.configurationSha256,settlementContext:{...result.settlementContext,...(simulation?{simulation}:{})},preparationId,
     preparationSignature:prep.signature,preparationIntentSha256:prep.preparationIntentSha256,request:result.plan.request,
     profileSha256:result.profileSha256,messageSha256:result.plan.review.messageSha256,review:result.plan.review,
     approvalReference:result.approvalReference,collection:result.collection,canSign:false,canSubmit:false,canRetry:false})

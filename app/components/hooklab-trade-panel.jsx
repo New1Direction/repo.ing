@@ -261,12 +261,12 @@ export function HookTradePanel({ mint, genesisHash, initial = null }) {
       {button.action === 'sign-in' && !session.busy && <p className="trade-note">Signing in is a free message in your wallet. It sends no transaction.</p>}
       {session.error && <p className="inline-error" role="alert">{session.error}</p>}
     </form>
-    {consent && <section aria-label="Exact selected-hook trade review">
+    {consent && <section className="inner-card fee-breakdown" aria-label="Exact selected-hook trade review">
       <h3>Review this exact trade</h3>
-      <p>Custom hook: <code>{consent.request.selectedHook.program}</code> · flags {consent.request.selectedHook.flags}</p>
+      <p>Custom hook: <code style={{overflowWrap:'anywhere'}}>{consent.request.selectedHook.program}</code> · flags {consent.request.selectedHook.flags}</p>
       <p>Minimum received: {formatUnits(consent.request.minAmountOut,consent.request.side==='buy'?market.decimals:9)} {consent.request.side==='buy'?symbol:'SOL'}</p>
       <p>Maximum wallet debit including fees: {sol(consent.review.maxNativeDebitLamports,9)}</p>
-      <p>Message SHA256: <code>{consent.review.messageSha256}</code></p>
+      <p>Message SHA256: <code style={{overflowWrap:'anywhere'}}>{consent.review.messageSha256}</code></p>
       <button type="button" className="button primary" onClick={()=>answerConsent(true)}>Approve exact trade</button>
       <button type="button" className="button" onClick={()=>answerConsent(false)}>Cancel trade</button>
     </section>}

@@ -3,7 +3,7 @@
 // still launch or has launched.
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
-import { coinMetadataJson } from '../../src/hooklab-coin-profile.mjs'
+import { coinMetadataJson, coinMetadataId } from '../../src/hooklab-coin-profile.mjs'
 import { imageWidthParam,tokenImageResponse } from '../../src/token-image.mjs'
 import { walletIdentityConfiguration } from './hooklab-wallet-identity.mjs'
 import { createRateLimiter } from './csp-report.mjs'
@@ -17,8 +17,15 @@ const enabled=env=>siteLaunchesEnabled(env)&&env.HOOK_WALLET_IDENTITY_ENABLED===
 const defaultLimiter=createRateLimiter({limit:240,globalLimit:3000,windowMs:60_000})
 // kind: 'metadata' | 'image'
 export function createCoinPublicHandler({env=process.env,configuration=walletIdentityConfiguration,database=createHookLabDatabasePool,store=ownerApprovalStore,allowed=defaultLimiter}={}){
- return async(request,{id,kind})=>{
+ return async(request,{id,kind,alias})=>{
   if(!enabled(env))return notFound()
+  if(alias!==undefined){
+   try{
+    id=coinMetadataId(alias)
+    // Reject alternate encodings and suffixes rather than publishing additional URL identities.
+    if(kind!=='metadata'||new URL(request.url).pathname!==`/h/${alias}`||new URL(request.url).search)return notFound()
+   }catch{return notFound()}
+  }
   if(!allowed(clientAddress(request)??'unknown'))return Response.json({error:'Too many requests. Try again shortly.'},{status:429,headers:{'Retry-After':'60'}})
   const width=kind==='image'?imageWidthParam(new URL(request.url).searchParams.get('w')):null
   if(width===undefined)return Response.json({error:'Unsupported image width.'},{status:400})

@@ -10,6 +10,9 @@ export const OWNER_MENUS = Object.freeze({ creatorFeeBps: Object.freeze([50, 100
 export const CREATION_FEE_LAMPORTS = 20_000_000n
 
 export const MODES = Object.freeze({
+  'selected-hook': Object.freeze({ set: () => 'legacy-bundle-2', own: true, selected: true, ownerAgent: false, suites: ['selected-hook'], decisions: {},
+    ownDecisions: { openCreationMenus: { creatorFeeBps: [...OWNER_MENUS.creatorFeeBps], capBps: [...OWNER_MENUS.capBps] }, stackCustodyDigest: '5a'.repeat(32) },
+    env: { HOOK_OPEN_LAUNCHES: 'true', HOOK_OWNER_APPROVED_LAUNCHES: 'false', HOOK_WALLET_FUNDING_ENABLED: 'false', HOOK_LOCAL_SELECTED_HOOKS_ENABLED: 'true' } }),
   native: Object.freeze({ set: () => 'native-e357fdf', ownerAgent: true, suites: ['native-release', 'release-edges'], decisions: {}, env: {} }),
   legacy: Object.freeze({ set: () => 'legacy-bundle-2', ownerAgent: true, suites: ['legacy-holder'], decisions: {},
     env: { HOOK_NATIVE_LAUNCHES_ENABLED: 'false', HOOK_NATIVE_TRADING_ENABLED: 'false', HOOK_WALLET_FUNDING_ENABLED: 'true', HOOK_LAUNCH_USD_PRICING: 'false' } }),

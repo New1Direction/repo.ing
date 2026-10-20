@@ -7,7 +7,7 @@
 import { spawn } from 'node:child_process'
 import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { Connection } from '@solana/web3.js'
+import { Connection, PublicKey } from '@solana/web3.js'
 import { markerMintRow, writeGenesis } from '../../../tests/fixtures/hooklab-owner-local.mjs'
 import { MAINNET_GENESIS, VALIDATOR, freePortRange, sleep } from './common.mjs'
 
@@ -18,7 +18,19 @@ export async function startValidator({ root, roles, set, own = null, log }) {
   // rpc, rpc+1 (websocket), faucet, gossip, then the validator's dynamic ports, all loopback.
   const base = await freePortRange(48), rpcPort = base, faucetPort = base + 2, gossipPort = base + 3
   const ledger = path.join(root, 'ledger'), genesis = path.join(root, 'genesis'), upgrade = roles.upgrade.publicKey.toBase58()
-  writeGenesis(genesis, roles, { bridge: set.bridge, extra: own ? [markerMintRow(own.stack, roles)] : [] })
+  const extra = own ? [markerMintRow(own.stack, roles)] : []
+  if (own?.selected) {
+    // Agave 4.0.1 --upgradeable-program ... none creates Some(SystemProgram),
+    // not Borsh None. The selected adapter correctly requires actual None.
+    // Seed genuine loader-owned immutable program accounts at local genesis.
+    const loader = 'BPFLoaderUpgradeab1e11111111111111111111111', id = own.selected.pin.program
+    const dataAddress = PublicKey.findProgramAddressSync([new PublicKey(id).toBuffer()], new PublicKey(loader))[0]
+    const program = Buffer.alloc(36); program.writeUInt32LE(2); dataAddress.toBuffer().copy(program, 4)
+    const data = Buffer.alloc(45 + own.selected.bytes.length); data.writeUInt32LE(3); own.selected.bytes.copy(data, 45)
+    const row = (pubkey, bytes, executable) => ({ pubkey, account: { lamports: 2_000_000_000, data: [bytes.toString('base64'), 'base64'], owner: loader, executable, rentEpoch: 0 } })
+    extra.push(row(id, program, true), row(dataAddress.toBase58(), data, false))
+  }
+  writeGenesis(genesis, roles, { bridge: set.bridge, extra })
   const ownArgs = []
   if (own) {
     if (own.stack.upgradeAuthority !== upgrade) throw Error('our own stack must name the synthetic upgrade role as its upgrade authority')

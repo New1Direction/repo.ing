@@ -12,6 +12,7 @@ import { OPEN_LAUNCH_NOTE, nextOpenLaunchAction, openCreationProblem, openLaunch
 const { HookOpenLaunch, OpenLaunchReview, OpenLaunchSigning, OpenLaunchLive } = await appModule('app/components/hooklab-open-launch.jsx')
 const { HookTradePanel, HookTradeBalances } = await appModule('app/components/hooklab-trade-panel.jsx')
 const { HookMyCoinsBody } = await appModule('app/components/hooklab-my-coins.jsx')
+const { HooksRisk } = await appModule('app/components/hooks-ui.jsx')
 const genesisHash = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const MARKER = PLACEHOLDER_IDS.quoteMint
 const text = markup => markup.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
@@ -162,6 +163,7 @@ test('a legacy coin’s holder still sees the Hook Lab balance and Withdraw', ()
   const holding = { address: creator, lamports: '5000000000', coin: '0', bridgedSol: '500000000' }
   const legacy = html(h(HookTradeBalances, { mine: holding, market: view.market, symbol: '$RCAT', native: tradesFromWallet(view), canWithdraw: true, onWithdraw() {} }))
   assert.match(text(legacy), /In Hook Lab/); assert.match(legacy, />Withdraw<\/button>/)
+  assert.match(text(html(h(HooksRisk))), /Trades use SOL moved into Hook Lab/)
   assert.doesNotMatch(text(html(h(HookTradeBalances, { mine: { ...holding, bridgedSol: '0' }, market: view.market, symbol: '$RCAT', native: false, canWithdraw: true, onWithdraw() {} }))), /Withdraw/,
     'no Withdraw without a balance')
 })
@@ -176,7 +178,8 @@ test('the coin page of an own-stack coin: SOL and USD only, the delisted notice,
     try {
       const page = html(await Token({ params: Promise.resolve({ mint: id }) }), { wallet: true })
       assert.match(page, /\$RCAT/); assert.match(page, /Market cap/); assert.match(page, /SOL/)
-      assertClean(page, `coin page${delisted ? ' (delisted)' : ''}`); assert.doesNotMatch(text(page), /Add SOL|Withdraw/)
+      assertClean(page, `coin page${delisted ? ' (delisted)' : ''}`); assert.doesNotMatch(text(page), /Add SOL|Withdraw|SOL moved into Hook Lab/)
+      assert.match(text(page), /Trades use SOL straight from your wallet/)
       if (delisted) assert.match(page, /class="hooks-delisted-notice"/); else assert.doesNotMatch(page, /hooks-delisted-notice/)
     } finally { delete globalThis[key] }
   }

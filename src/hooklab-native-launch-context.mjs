@@ -35,7 +35,7 @@ export function nativeLaunchContext(pool,{enabled=false,origin,preparationResolv
    :reviewTiming?await reviewTiming({stage:input.stage}):approved
   const activeLimits={...approved,nowMs:timing.nowMs,validUntilSlot:timing.validUntilSlot,reviewExpiresAtMs:timing.reviewExpiresAtMs}
   const result=input.stage==='preparation'?await preparationResolver.resolve({sessionToken:input.sessionToken,custodyOperationId:input.custodyOperationId,limits:activeLimits,expectedReview,expectedSimulation:input.settlementContext?.simulation})
-   :await activeLaunchResolver.resolve({sessionToken:input.sessionToken,preparationId:input.custodyOperationId,request:c.launch_request,limits:activeLimits,expectedReview})
+   :await activeLaunchResolver.resolve({sessionToken:input.sessionToken,preparationId:input.custodyOperationId,request:c.launch_request,limits:activeLimits,expectedReview,expectedSimulation:input.settlementContext?.simulation})
   check(result&&isDeepStrictEqual(c,await get(input.sessionToken,input.custodyOperationId)))
   return result
  }

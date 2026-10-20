@@ -64,3 +64,16 @@ test('exact-wire settlement requires unchanged selected config/registry/program 
   f=>{f.transaction.transaction.signatures[0]=f.transaction.transaction.signatures[1]},
  ]){const f=await selectedLaunchSettlementFixture();mutate(f);assert.notEqual((await collectOpenLaunchSettlement(f)).status,'finalized-success')}
 })
+
+test('selected launch settles only the simulated writable hook state without relaxing canonical postconditions',async()=>{
+ const f=await selectedLaunchSettlementFixture({hookState:true})
+ assert.equal((await collectOpenLaunchSettlement(f)).status,'finalized-success')
+ for(const mutate of [
+  f=>{delete f.settlementContext.simulation},
+  f=>{f.settlementContext.simulation.messageSha256='0'.repeat(64)},
+  f=>{f.settlementContext.simulation.configurationSha256='0'.repeat(64)},
+  f=>{f.settlementContext.simulation.hookPostStateHashes={}},
+  f=>{const a=[...f.post.values()].find(a=>a.owner===f.config.selectedHookPin.program&&Buffer.from(a.dataBase64,'base64').length===1);a.dataBase64=Buffer.from([2]).toString('base64')},
+  f=>{f.post.get(f.addresses.launch).dataBase64=''},
+ ]){const f=await selectedLaunchSettlementFixture({hookState:true});mutate(f);assert.notEqual((await collectOpenLaunchSettlement(f)).status,'finalized-success')}
+})

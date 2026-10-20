@@ -6,6 +6,7 @@ import { createOwnerApprovalsHandler,ownerTokenMatches } from '../app/lib/hookla
 import { createLaunchRequestsHandler } from '../app/lib/hooklab-launch-requests.mjs'
 import { createNativeLaunchHandler } from '../app/lib/hooklab-native-launch.mjs'
 import { createCoinPublicHandler } from '../app/lib/hooklab-coin-public.mjs'
+import { coinMetadataAlias, selectedCoinMetadataUri } from '../src/hooklab-coin-profile.mjs'
 import sharp from 'sharp'
 const ownerToken='o'.repeat(48),tokenSha=createHash('sha256').update(ownerToken).digest('hex')
 const admin='DVdd2snkU94Q9SUbXe8Xgr5AQ1cnxSoy3ebQ9mCTj8S5',id='11111111-1111-4111-8111-111111111111'
@@ -53,6 +54,20 @@ const creatorRequest=(body,headers={})=>new Request('https://repo.ing/api/hook-l
 // A prepared 512 x 512 PNG, as the image upload returns it (src/token-image.mjs normalizeTokenImage).
 const coinImage=`data:image/png;base64,${(await sharp({create:{width:512,height:512,channels:3,background:'#81e6ad'}}).png().toBuffer()).toString('base64')}`
 const coin={image:coinImage,description:'The cat that ships.',x:'@repocat',website:'repo.ing',telegram:''}
+
+test('only newly created selected-hook requests receive compact metadata; reads retain stored URLs',async()=>{
+ const existing={id,uri:`https://repo.ing/api/hook-lab/coins/${id}/metadata`},seen=[]
+ const store={availability:async()=>({online:true}),requestFor:async()=>existing,
+  createRequest:async(_wallet,value)=>{seen.push(value);return value}}
+ const handler=createLaunchRequestsHandler(creatorOptions(store))
+ const selectedHook={program:'So11111111111111111111111111111111111111112',flags:129}
+ const result=await handler(creatorRequest({action:'create',requestId:id,name:'N'.repeat(32),symbol:'S'.repeat(10),creatorFeeBps:100,capBps:0,selectedHook,...coin}))
+ assert.equal(result.status,200)
+ assert.equal((await result.json()).request.uri,selectedCoinMetadataUri('https://repo.ing',id))
+ assert.deepEqual(seen[0].selectedHook,selectedHook)
+ assert.equal((await (await handler(creatorRequest({action:'get'}))).json()).request.uri,existing.uri)
+ assert.equal(existing.uri,`https://repo.ing/api/hook-lab/coins/${id}/metadata`)
+})
 
 test('creator requests use the session wallet, show availability, and prepare nothing',async()=>{
  assert.equal((await (await createLaunchRequestsHandler({env:{}})(new Request('https://repo.ing/api/hook-lab/launch-requests'))).json()).status,'blocked')
@@ -152,6 +167,15 @@ test('coin metadata and image are public, cacheable and only for coins that can 
  const handler=createCoinPublicHandler({env:creatorEnv,configuration:()=>({origin:'https://repo.ing'}),database:()=>pool,store:()=>({coinFor:async requested=>coins[requested]??null}),allowed:()=>budget-->0})
  const metadata=await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/metadata`),{id:coinId,kind:'metadata'})
  assert.equal(metadata.status,200);assert.match(metadata.headers.get('cache-control'),/public/)
+ const alias=coinMetadataAlias(coinId),shortUrl=selectedCoinMetadataUri('https://repo.ing',coinId)
+ const compact=await handler(new Request(shortUrl),{alias,kind:'metadata'})
+ assert.equal(compact.status,200)
+ assert.deepEqual([...compact.headers],[...metadata.headers])
+ assert.equal(await compact.text(),await metadata.clone().text(),'same coin, profile and original image URL')
+ for(const bad of [alias+'=',alias.slice(1),alias.slice(0,-1)+'h','not-an-alias'])
+  assert.equal((await handler(new Request(`https://repo.ing/h/${bad}`),{alias:bad,kind:'metadata'})).status,404)
+ for(const suffix of ['?extra=1','/'])assert.equal((await handler(new Request(shortUrl+suffix),{alias,kind:'metadata'})).status,404)
+ assert.equal((await handler(new Request(shortUrl.replace(alias,`%${alias.charCodeAt(0).toString(16)}${alias.slice(1)}`)),{alias,kind:'metadata'})).status,404)
  assert.deepEqual(await metadata.json(),{name:'Repo Cat',symbol:'RCAT',description:'$RCAT launched on repo.ing.',image:`https://repo.ing/api/hook-lab/coins/${coinId}/image`,
   twitter:'https://x.com/repocat',extensions:{twitter:'https://x.com/repocat'}})
  const image=await handler(new Request(`https://repo.ing/api/hook-lab/coins/${coinId}/image`),{id:coinId,kind:'image'})

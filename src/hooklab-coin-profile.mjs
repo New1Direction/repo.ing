@@ -53,6 +53,22 @@ export const coinLinks = ({ x, website, telegram }) => ({ ...(x && { x: `https:/
   ...(telegram && { telegram: `https://t.me/${telegram}` }) })
 
 const coinBase = (origin, id) => `${origin}/api/hook-lab/coins/${id}`
+// Canonical UUID bytes, without padding. Kept browser-safe because the form imports this module.
+const canonicalUuid = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/
+export function coinMetadataAlias(id) {
+  if (typeof id !== 'string' || !canonicalUuid.test(id)) throw Error('Invalid canonical coin ID')
+  return btoa(id.replaceAll('-', '').match(/../g).map(hex => String.fromCharCode(parseInt(hex, 16))).join(''))
+    .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+export function coinMetadataId(alias) {
+  if (typeof alias !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(alias)) throw Error('Invalid coin metadata alias')
+  const hex = [...atob(alias.replaceAll('-', '+').replaceAll('_', '/') + '==')]
+    .map(char => char.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+  const id = `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
+  if (coinMetadataAlias(id) !== alias) throw Error('Invalid coin metadata alias')
+  return id
+}
+export const selectedCoinMetadataUri = (origin, id) => `${origin}/h/${coinMetadataAlias(id)}`
 // The on-chain uri an owner-approved coin launches with: fixed when the request is queued, so approval binds it.
 export const coinMetadataUri = (origin, id) => `${coinBase(origin, id)}/metadata`
 export const coinImageUrl = (origin, id, width = null) => `${coinBase(origin, id)}/image${width ? `?w=${width}` : ''}`

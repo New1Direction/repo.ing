@@ -17,6 +17,7 @@ import { startValidator } from './validator.mjs'
 import { ownerDriver, setupForMode, setupOwnStack } from './owner-setup.mjs'
 import { MODES } from './modes.mjs'
 import { ownStackSet, programSet } from './program-sets.mjs'
+import { selectedFixtureStack } from './selected-fixture.mjs'
 import { createDatabase } from './database.mjs'
 import { startRpcProxies } from './rpc-proxy.mjs'
 import { collectLocalBundle, collectLocalStackBundle } from './bundle.mjs'
@@ -57,7 +58,8 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
     const roles = syntheticRoles(), keys = writeKeyFiles(path.join(root, 'keys'), roles)
     const address = role => roles[role].publicKey.toBase58()
 
-    const set = programSet(mode.set()), own = mode.own ? await ownStackSet({ upgradeAuthority: address('upgrade') }) : null
+    const set = programSet(mode.set()), own = mode.selected ? selectedFixtureStack({ upgradeAuthority: address('upgrade') })
+      : mode.own ? await ownStackSet({ upgradeAuthority: address('upgrade') }) : null
     const validator = await startValidator({ root, roles, set, own, log })
     cleanups.push({ name: 'validator', run: validator.stop })
     const driver = ownerDriver({ validator, root, roles, keys, log, decisions: mode.decisions })
@@ -102,7 +104,8 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
       if (recollect || !bundleState) bundleState = await writeBundle()
       const env = { ...siteEnvironment({ base: BASE_ENV, port, tls, genesisHash: validator.genesisHash, databaseUrl: database.url, proxies: proxies.providers,
         bundle: bundleState, keyRing, ownerTokenSha256: createHash('sha256').update(token).digest('hex'), admin: address('admin'), preload, solUsd: FIXED_SOL_USD }), ...mode.env,
-        ...(bundleState.stack ? { HOOKLAB_STACK_BUNDLE_FILE: bundleState.stack.file, HOOKLAB_STACK_BUNDLE_SHA256: bundleState.stack.sha256, HOOK_STACK_ADMIN_ADDRESS: address('admin') } : {}), ...overrides }
+        ...(bundleState.stack ? { HOOKLAB_STACK_BUNDLE_FILE: bundleState.stack.file, HOOKLAB_STACK_BUNDLE_SHA256: bundleState.stack.sha256, HOOK_STACK_ADMIN_ADDRESS: address('admin') } : {}),
+        ...(own?.selected ? { HOOK_LOCAL_SELECTED_HOOK_PIN_JSON: JSON.stringify(own.selected.pin) } : {}), ...overrides }
       // The production bootstrap, with the website's environment, in a child first: a clear error instead of a one-line refusal.
       // Async: the RPC proxies it reads through live in this process, so a blocking spawn would starve them.
       const check = await runChild(process.execPath, [path.join(REPO_ROOT, 'scripts/e2e/hooks-native/bootstrap-check.mjs')], { cwd: REPO_ROOT, env, timeoutMs: 120_000 })
@@ -173,6 +176,7 @@ export async function up({ keep = false, mode: modeName = 'native' } = {}) {
     const stateFile = path.join(root, 'stack.json')
     const writeState = () => writeFileSync(stateFile, JSON.stringify({ mode: modeName, programSet: own ? `${set.name} + ${own.name}` : set.name, programs: own ? own.ids : set.ids, quoteMint: own ? own.quoteMint : set.quoteMint,
       legacyPrograms: own ? set.ids : null, ownTradeTable: ownTables?.tradeTable ?? null, launchTable,
+      selectedHook: own?.selected ? { pin: own.selected.pin, flags: own.selected.flags, source: own.selected.source } : null,
       idlDir: own ? path.join(root, 'own-stack', 'idl') : null, root, origin: `https://localhost:${port}`, genesisHash: validator.genesisHash,
       validator: { url: validator.url, faucetPort: validator.faucetPort }, database: { url: database.url, name: database.name }, rpc: proxies.providers,
       control: { url: control.url, token: controlToken }, tls: { cert: tls.cert, spki: tls.spki }, roles: Object.fromEntries(Object.keys(roles).map(role => [role, address(role)])),

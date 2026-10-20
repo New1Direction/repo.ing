@@ -171,6 +171,13 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   // A recorded coin not bound to a launch yet gets a fresh operation; one already bound keeps it (and the signing IDs this
   // device kept for it). IDs from any other launch are never reused.
   const reserve = async current => {
+    // A registry handoff or interrupted reserve can bind the request before its
+    // response reaches this page. Recover that binding before allocating an ID.
+    const latest = (await post(REQUESTS, { action: 'get' })).request
+    if (!latest || latest.id !== current.id || !['queued', 'launching'].includes(latest.status)
+      || latest.uri !== current.uri || latest.name !== current.name || latest.symbol !== current.symbol
+      || !sameLaunchHook(latest, current)) throw Error('The recorded launch changed. Reload to recover it; nothing was signed.')
+    current = latest; setRequest(current)
     const operationId = current.custodyOperationId ?? crypto.randomUUID()
     const ids = idsRef.current.operationId === operationId ? idsRef.current : { ...NO_IDS, operationId }
     retain(ids)
@@ -195,7 +202,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       if (action === 'reserve') { await reserve(current); op = await review('preparation'); continue }
       if (action === 'sign') {
         if(current.selectedHook && consentRef.current !== op.review.messageSha256){
-          setCanRetry(true); setStatus('Review the exact message and maximum debit below, then Continue to request your wallet approval.'); return
+          setCanRetry(true); setStatus('Review the exact message and maximum debit above, then Continue to request your wallet approval.'); return
         }
         consentRef.current=null; op = await signStep(op); continue
       }

@@ -14,7 +14,7 @@ import { cachedMarket, listedCoin } from '../../../../lib/hooklab-market.mjs'
 import { coinImageUrl } from '../../../../../src/hooklab-coin-profile.mjs'
 import { hookBlock } from '../../../../../src/hooklab-blocks.mjs'
 import { executionGenesis } from '../../../../../src/hooklab-local-acceptance.mjs'
-import { formatUnits } from '../../../../lib/hooklab-trade-math.mjs'
+import { formatUnits, tradesFromWallet } from '../../../../lib/hooklab-trade-math.mjs'
 import { cachedSolUsdPrice } from '../../../../lib/sol-usd.mjs'
 
 export const dynamic = 'force-dynamic'
@@ -52,7 +52,7 @@ export default async function HooksCoinPage({ params }) {
         <h1 className="hooks-coin-title">Coin details are loading slowly</h1><p>We couldn’t read this coin from Solana just now. Refresh in a moment.</p></section>
         : <section className="hooks-card hooks-coin-hero" aria-labelledby="hooks-coin-name">
           <HookCoinPreview image={coin?.profile ? coinImageUrl('', coin.id, 256) : null} name={market.name} symbol={market.symbol}
-            capBps={market.capBps} creatorFeeBps={market.creatorFeeBps} profile={coin?.profile ?? null} capLifted={market.graduated}/>
+            capBps={market.capBps} creatorFeeBps={market.creatorFeeBps} selectedHook={market.selectedHook} profile={coin?.profile ?? null} capLifted={market.graduated}/>
           <h1 id="hooks-coin-name" className="sr-only">{market.name} (${market.symbol})</h1>
           {coin?.moderation?.delisted && <p className="hooks-delisted-notice" role="status">{coin.moderation.notice}</p>}
           {coin?.profile?.description && <p className="hooks-coin-about">{coin.profile.description}</p>}
@@ -72,14 +72,16 @@ export default async function HooksCoinPage({ params }) {
       {market && <section className="hooks-card hooks-coin-blocks-card" aria-labelledby="hooks-coin-blocks">
         <h2 id="hooks-coin-blocks">Blocks on this coin</h2>
         <ul className="hooks-block-grid hooks-coin-blocks">
-          {[['max-wallet', market.graduated ? 'Lifted at graduation. Any wallet can hold any amount now.'
-            : `No wallet can hold more than ${market.capBps / 100}% of the supply (${formatUnits(BigInt(market.capRaw), market.decimals, 0)} ${market.symbol}) until graduation.`],
+          {[market.policyKind === 'selected-hook'
+            ? ['selected-hook', `The selected hook remains active before and after graduation. Program ${market.selectedHook.program}; flags ${market.selectedHook.flags}. Custom-hook token deductions are checked by exact-message simulation, not a max-wallet gate.`]
+            : ['max-wallet', market.graduated ? 'Lifted at graduation. Any wallet can hold any amount now.'
+              : `No wallet can hold more than ${market.capBps / 100}% of the supply (${formatUnits(BigInt(market.capRaw), market.decimals, 0)} ${market.symbol}) until graduation.`],
             ['creator-fee', `Every buy and sell pays ${market.creatorFeeBps / 100}%: 75% to the creator, 25% to repo.ing, in SOL.`]].map(([id, text]) =>
-            <li key={id} className="hooks-block is-on"><header><img src={hookBlock(id).icon} width={40} height={40} alt=""/><div><strong>{hookBlock(id).title}</strong><span>{text}</span></div></header></li>)}
+            <li key={id} className="hooks-block is-on"><header><img src={id === 'selected-hook' ? '/hook-icons/plain.webp?v=2' : hookBlock(id).icon} width={40} height={40} alt=""/><div><strong>{id === 'selected-hook' ? 'Selected hook' : hookBlock(id).title}</strong><span style={{overflowWrap:'anywhere'}}>{text}</span></div></header></li>)}
         </ul>
       </section>}
       <p className="hooks-address">Coin address <code>{mint}</code></p>
     </div>
-    <HooksRisk/>
+    <HooksRisk native={tradesFromWallet({ market, coin })}/>
   </>
 }

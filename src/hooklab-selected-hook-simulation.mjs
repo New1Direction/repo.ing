@@ -10,6 +10,7 @@ import { assertLocalExecutionEndpoint } from './hooklab-local-acceptance.mjs'
 
 const sha = x => createHash('sha256').update(x).digest('hex')
 const check = x => { if (!x) throw Error('Selected-hook simulation evidence differs') }
+const sameBank = x => { if (!x) throw Object.assign(Error('Finalized bank advanced during simulation reads'), { code: 'SELECTED_HOOK_SIMULATION_BANK_ADVANCED' }) }
 const integer = x => { check(Number.isSafeInteger(x) && x >= 0); return x }
 const pk = x => new PublicKey(x)
 const bound = z.object({ address: key, maxDebit: u64, minCredit: u64 }).strict()
@@ -50,7 +51,18 @@ const identity = result => ({ reviewSha256: result.reviewSha256, conditionsSha25
  * and matching snapshots/deltas from two providers. A bank advance requires a fresh collection.
  * A successful simulation is evidence for one bank, never a guarantee about future execution.
  */
-export async function collectSelectedHookSimulation({ review, conditions, connections, expected, clock = Date.now }) {
+export async function collectSelectedHookSimulation(input) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await collectSimulation(input) } catch (error) {
+      if (error.code !== 'SELECTED_HOOK_SIMULATION_BANK_ADVANCED' || attempt === 2)
+        throw Object.assign(Error('Exact-message selected-hook simulation unavailable or changed; preserve the review and require new consent.'), { code: 'SELECTED_HOOK_SIMULATION_UNAVAILABLE' })
+      // Retry read-only collection of the same retained message. Never retry a
+      // changed state, output, fee, blockhash or deadline; never sign or send here.
+    }
+  }
+}
+
+async function collectSimulation({ review, conditions, connections, expected, clock = Date.now }) {
   try {
     const inspected = inspectHookLabMessage(review), r = inspected.review, c = conditionsSchema.parse(conditions)
     check(connections.length === 2 && connections[0].connection !== connections[1].connection
@@ -73,7 +85,7 @@ export async function collectSelectedHookSimulation({ review, conditions, connec
     const addresses = [...new Set([...writable, ...pins.map(x => x.address)])]
     check(addresses.length > 0 && addresses.length <= 100)
     const message = VersionedMessage.deserialize(Buffer.from(r.messageBase64, 'base64'))
-    const results = await Promise.all(connections.map(async ({ provider, connection }) => {
+    const reads = await Promise.allSettled(connections.map(async ({ provider, connection }) => {
       check(await connection.getGenesisHash() === r.genesisHash)
       const pre = await connection.getMultipleAccountsInfoAndContext(addresses.map(pk), { commitment: 'finalized', minContextSlot: r.observedSlot })
       const slot = integer(pre.context.slot)
@@ -91,7 +103,8 @@ export async function collectSelectedHookSimulation({ review, conditions, connec
         && fee.value !== null && String(integer(fee.value)) === inspected.totalFeeLamports && integer(fee.context.slot) >= slot)
       const sim = await connection.simulateTransaction(new VersionedTransaction(message), { sigVerify: false, replaceRecentBlockhash: false,
         commitment: 'finalized', minContextSlot: slot, accounts: { encoding: 'base64', addresses } })
-      check(integer(sim.context.slot) === slot && sim.value.err === null && !sim.value.replacementBlockhash
+      sameBank(integer(sim.context.slot) === slot)
+      check(sim.value.err === null && !sim.value.replacementBlockhash
         && integer(sim.value.unitsConsumed) > 0 && sim.value.unitsConsumed <= inspected.computeUnits && sim.value.accounts?.length === addresses.length)
       const after = sim.value.accounts.map(a => normalized(a, true)), tokenDeltas = {}, lamportDeltas = {}
       for (const [i, address] of addresses.entries()) {
@@ -109,8 +122,14 @@ export async function collectSelectedHookSimulation({ review, conditions, connec
       check(integer(clock()) < r.reviewExpiresAtMs)
       return { provider, slot, before, after, tokenDeltas, lamportDeltas }
     }))
+    // Finish both read branches before a retry; a late response from the prior
+    // bank must not overwrite evidence collected by a subsequent attempt.
+    const failures = reads.filter(x => x.status === 'rejected').map(x => x.reason)
+    if (failures.length) throw failures.find(x => x.code !== 'SELECTED_HOOK_SIMULATION_BANK_ADVANCED') ?? failures[0]
+    const results = reads.map(x => x.value)
     const [one, two] = results
-    check(one.slot === two.slot && isDeepStrictEqual(one.before, two.before) && isDeepStrictEqual(one.after, two.after))
+    sameBank(one.slot === two.slot)
+    check(isDeepStrictEqual(one.before, two.before) && isDeepStrictEqual(one.after, two.after))
     const result = { schema: 'repoing/selected-hook-simulation/1', messageSha256: r.messageSha256,
       reviewSha256: sha(JSON.stringify(r)), configurationSha256: c.configurationSha256, conditionsSha256: sha(JSON.stringify(c)),
       preStateSha256: sha(JSON.stringify(addresses.map((address, i) => ({ address, account: one.before[i] })))),
@@ -118,7 +137,8 @@ export async function collectSelectedHookSimulation({ review, conditions, connec
       canSign: false, canSubmit: false }
     if (expected) check(isDeepStrictEqual(identity(result), identity(expected)) && isDeepStrictEqual(result.providers, expected.providers))
     return Object.freeze(result)
-  } catch {
+  } catch (error) {
+    if (error.code === 'SELECTED_HOOK_SIMULATION_BANK_ADVANCED') throw error
     throw Object.assign(Error('Exact-message selected-hook simulation unavailable or changed; preserve the review and require new consent.'), { code: 'SELECTED_HOOK_SIMULATION_UNAVAILABLE' })
   }
 }

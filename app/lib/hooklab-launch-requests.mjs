@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { createHookLabDatabasePool } from '../../src/hooklab-database.mjs'
 import { ownerApprovalStore } from '../../src/hooklab-owner-approval.mjs'
 import { readLimitedBody,validateTokenImage } from '../../src/token-image.mjs'
-import { coinMetadataUri,coinProfileFields } from '../../src/hooklab-coin-profile.mjs'
+import { coinMetadataUri,selectedCoinMetadataUri,coinProfileFields } from '../../src/hooklab-coin-profile.mjs'
 import { clientAddress } from '../../src/client-address.mjs'
 import { walletPrincipalStore } from '../../src/hooklab-wallet-principal.mjs'
 import { assertSameOrigin } from './auth.mjs'
@@ -65,7 +65,7 @@ export function createLaunchRequestsHandler({env=process.env,configuration=walle
    if(profile)try{profile={...profile,image:await validateTokenImage(input.image)}}catch{return reply({error:'Add a coin image again (PNG, JPEG, WebP or GIF, up to 2 MB).'},400)}
    let launchRequest
    if(input.action==='create'&&open&&!(chain?.native&&chain.open&&!chain.paused))return reply({error:'Launches are paused right now. Try again later.'},409)
-   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:coinMetadataUri(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook}:{})},profile,
+   if(input.action==='create')launchRequest=await approvals.createRequest(owner.wallet,{id:input.requestId,name:input.name,symbol:input.symbol,uri:(input.selectedHook?selectedCoinMetadataUri:coinMetadataUri)(config.origin,input.requestId),creatorFeeBps:input.creatorFeeBps,capBps:input.capBps,...(input.selectedHook?{selectedHook:input.selectedHook}:{})},profile,
     open?{source:'open',menus:{creatorFeeBps:chain.creatorFeeBps,capBps:chain.capBps}}:{})
    else if(input.action==='cancel')launchRequest=await approvals.cancelRequest(owner.wallet,input.requestId)
    else launchRequest=await approvals.requestFor(owner.wallet)

@@ -69,6 +69,22 @@ test('exact-message simulation measures net delivery after hook fees, and retain
   assert.deepEqual(await collectSelectedHookSimulation({ ...f, expected: JSON.parse(JSON.stringify(result)) }), result)
 })
 
+test('an advancing finalized bank recollects the same message; persistent drift and changed output still refuse', async () => {
+  let advanced = false
+  const f = fixture(({ response, index }) => {
+    if (index === 0 && !advanced) { advanced = true; response.context.slot++ }
+  })
+  const result = await collectSelectedHookSimulation(f)
+  assert.equal(result.messageSha256, f.review.messageSha256)
+  assert.equal(result.tokenDeltas[f.to], '93')
+  await assert.rejects(collectSelectedHookSimulation(fixture(({ response }) => { response.context.slot++ })))
+  const changed = fixture(({ response, addresses }) => {
+    const a = response.value.accounts[addresses.indexOf(f.to)], bytes = Buffer.from(a.data[0], 'base64')
+    bytes.writeBigUInt64LE(123n, 74); a.data[0] = bytes.toString('base64')
+  })
+  await assert.rejects(collectSelectedHookSimulation({ ...changed, expected: result }))
+})
+
 test('simulation rejects one-unit net minimum violations and excessive input or native debits', async () => {
   for (const [role, change] of [['to', -1n], ['from', -1n], ['wallet', -1n]]) {
     const f = fixture(({ response, addresses }) => {

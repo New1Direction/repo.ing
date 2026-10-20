@@ -192,7 +192,21 @@ async function collectSettlement({config,profile,dossierJson,connections,settlem
   check(isDeepStrictEqual(events.map(({data,...e})=>e).sort((a,b)=>a.name.localeCompare(b.name)),expected.events.sort((a,b)=>a.name.localeCompare(b.name))))
   const want=new Map(expected.accounts.map(x=>[x.address,x]))
   for(const pin of d.programs){const pd=actual.get(pin.programData);check(pd&&pd.owner==='BPFLoaderUpgradeab1e11111111111111111111111'&&!pd.executable&&sha(raw(pd.dataBase64))===pin.programDataSha256&&pin.deploySlot<=t.slot)}
-  for(const [address,old]of before){const desired=want.get(address)??(old?(({lamports,...v})=>v)(old):null);check(isDeepStrictEqual(actual.get(address),desired))}
+  const hookWritable=new Set(selected?plan.selectedHookExtras.filter(x=>x.writable).map(x=>x.address):[])
+  if(hookWritable.size){const sim=settlementContext.simulation
+   check(sim?.schema==='repoing/selected-hook-simulation/1'&&sim.messageSha256===review.messageSha256
+    &&sim.configurationSha256===identity.configurationSha256&&isDeepStrictEqual(sim.providers,connections.map(x=>x.provider))
+    &&isDeepStrictEqual(Object.keys(sim.hookPostStateHashes??{}).sort(),[...hookWritable].sort()))
+  }
+  for(const [address,old]of before){
+   if(hookWritable.has(address)){
+    // Only resolved hook-owned extras may follow simulated bytes. Canonical
+    // launch/token/config postconditions and every lamport delta remain exact.
+    const a=actual.get(address)
+    check(!want.has(address)&&old?.owner===ci.hookPin.program&&!old.executable&&a?.owner===old.owner&&!a.executable
+     &&sha(JSON.stringify({address,owner:a.owner,executable:a.executable,dataBase64:a.dataBase64}))===settlementContext.simulation.hookPostStateHashes[address])
+   }else{const desired=want.get(address)??(old?(({lamports,...v})=>v)(old):null);check(isDeepStrictEqual(actual.get(address),desired))}
+  }
   // The flags themselves, read at their bytes: pool 351 and launch 560 are 1 after a v4 creation, 0 after v3.
   check(poolIsNative(raw(actual.get(plan.addresses.pool).dataBase64))===native&&launchIsNative(raw(actual.get(plan.addresses.launch).dataBase64))===native)
   let rent=0n

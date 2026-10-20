@@ -53,6 +53,17 @@ test('the finishing buy says it graduates the coin; the first buy shows one coin
   assert.match(bridged, /Hook Lab deposits \(first trade only\) 0\.00337 SOL/)
 })
 
+test('selected finishing-buy preview discloses unmeasured hook deductions and never promises gate removal',()=>{
+  const m=market({native:true,policyKind:'selected-hook',capBps:0}),amount=finalFillLamports(m)
+  const estimate=estimateTrade(m,{side:'buy',amount,slippageBps:100})
+  assert.equal(estimate.error,undefined)
+  const shown=text(html(h(HookTradeSummary,{market:m,symbol:'$GRAD',buying:true,estimate,plan:null,hold:'',native:true})))
+  assert.match(shown,/Before custom-hook deductions/)
+  assert.match(shown,/exact transaction must pass hook simulation and minimum-received checks/)
+  assert.match(shown,/selected hook remains active/)
+  assert.doesNotMatch(shown,/max per wallet lifts/)
+})
+
 test('balances: a native coin shows the wallet and the coin only; a bridged coin keeps Hook Lab and Withdraw', () => {
   const nativeBalances = html(h(HookTradeBalances, { mine: { lamports: '2500000000', coin: '12000000' }, market: market({ native: true }), symbol: '$GRAD', native: true, canWithdraw: true, busy: false, onWithdraw() {} }))
   assert.match(nativeBalances, /class="hooks-trade-balances is-native"/); assert.doesNotMatch(nativeBalances, /Hook Lab|Withdraw/)

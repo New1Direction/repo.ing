@@ -9,6 +9,7 @@ const day = seconds => new Date(seconds * 1000).toLocaleDateString('en-US', { mo
 // visitors; the numbers come from the market reader (src/hooklab-coin-market.mjs).
 export function HookCoinGraduation({ market }) {
   const symbol = `$${market.symbol}`, tokens = raw => `${formatUnits(BigInt(raw), market.decimals, 0)} ${symbol}`
+  const selected = market.policyKind === 'selected-hook'
   if (market.graduated) {
     const at = market.graduation?.at
     return <div className="hooks-graduation is-graduated" aria-label="Graduation">
@@ -17,7 +18,7 @@ export function HookCoinGraduation({ market }) {
       <ul className="hooks-graduation-facts">
         <li><LockKeyhole size={18} aria-hidden="true"/><div><strong>Liquidity locked forever</strong>
           <span>The market’s liquidity belongs to the coin’s launch, which has no way to withdraw it. Not even the creator can pull it.</span></div></li>
-        <li><Wallet size={18} aria-hidden="true"/><div><strong>Max wallet lifted</strong><span>Any wallet can hold any amount of {symbol} now.</span></div></li>
+        <li><Wallet size={18} aria-hidden="true"/><div><strong>{selected ? 'Selected hook remains active' : 'Max wallet lifted'}</strong><span>{selected ? 'Custom-hook rules still apply to token transfers after graduation.' : `Any wallet can hold any amount of ${symbol} now.`}</span></div></li>
       </ul>
       <dl className="hooks-coin-stats hooks-graduation-stats">
         <div><dt>In the market</dt><dd>{solText(market.pool.quoteReserve, 2)}</dd></div>
@@ -32,7 +33,7 @@ export function HookCoinGraduation({ market }) {
       <div className="hooks-between"><span>Bonding curve</span><strong>Graduating…</strong></div>
       <div className="hooks-curve-bar"><span style={{ transform: 'scaleX(1)' }}/></div>
       <p className="hooks-graduation-next"><strong>The curve is full.</strong> Next, {g?.quoteReserve ? <>{solText(g.quoteReserve, 2)} and {tokens(g.baseReserve)}</> : 'the SOL it raised and the coins kept for this moment'} move
-        into an open market. That liquidity is locked forever, and the max per wallet lifts. Anyone can send this last step, and it costs holders nothing.</p>
+        into an open market. That liquidity is locked forever{selected ? ', and the selected hook remains active.' : ', and the max per wallet lifts.'} Anyone can send this last step, and it costs holders nothing.</p>
     </div>
   }
   const left = market.solToGraduationLamports, need = BigInt(market.graduationQuote) - BigInt(market.pool.quoteReserve)
@@ -40,7 +41,7 @@ export function HookCoinGraduation({ market }) {
     <div className="hooks-between"><span>Bonding curve</span><strong>{(Math.floor(market.curveProgressBps / 10) / 10).toFixed(1)}%</strong></div>
     <div className="hooks-curve-bar"><span style={{ transform: `scaleX(${Math.min(1, market.curveProgressBps / 10000)})` }}/></div>
     <p className="hooks-graduation-next"><strong>{left ? solText(left) : `About ${solText(need > 0n ? need : 0n)}`} to graduation.</strong> Buying
-      that much finishes the curve. Then {symbol} moves to an open market: its liquidity is locked forever and anyone can hold any amount.</p>
-    <small>Until then, no wallet can hold more than {market.capBps / 100}% of the supply.</small>
+      that much finishes the curve. Then {symbol} moves to an open market: its liquidity is locked forever{selected ? ', and the selected hook remains active.' : ' and anyone can hold any amount.'}</p>
+    <small>{selected ? 'Custom-hook rules apply before and after graduation; no max-wallet gate is installed.' : `Until then, no wallet can hold more than ${market.capBps / 100}% of the supply.`}</small>
   </div>
 }

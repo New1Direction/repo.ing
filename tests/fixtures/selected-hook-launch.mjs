@@ -9,7 +9,7 @@ import { collectOpenLaunchReview } from '../../src/hooklab-max-wallet-launch-col
 import { deriveOpenLaunchPostconditions } from '../../src/hooklab-max-wallet-launch-settlement.mjs'
 import {Keypair,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
 import bs58 from 'bs58'
-export function selectedLaunchFixture(){
+export function selectedLaunchFixture({hookState=false}={}){
  const f=fixture(),p=JSON.parse(f.profile.json),root=new URL('../../vendor/',import.meta.url)
  const read=file=>readFileSync(new URL(file,root)),zero=key(0),loader='BPFLoaderUpgradeab1e11111111111111111111111'
  const launch=JSON.parse(read('hooklab-native-candidate/open-36dd07e/bordrless_launch.json'))
@@ -43,6 +43,11 @@ export function selectedLaunchFixture(){
  typed('launch','LaunchConfig',f.request.selectedConfig,value('launch','LaunchConfig',{version:1,creator:pk(f.request.creator),label:f.request.label,creator_fee_bps:100,custom_hook:pk(f.hookPin.program),custom_hook_flags:255}),176)
  typed('token','Mint',p.quoteMint,value('token','Mint',{version:1,name:'Synthetic',symbol:'SYN'}),519)
  put(f.request.creator,zero,Buffer.alloc(0));put(treasury,zero,Buffer.alloc(0))
+ if(hookState){
+  const script=key(92),registry=pda(f.hookPin.program,'bordrless-hook-accounts',pk(f.request.mint).toBuffer())
+  put(script,f.hookPin.program,Buffer.from([0]))
+  put(registry,f.hookPin.program,Buffer.concat([Buffer.from('02daf6662c38c0cd01010000000100','hex'),pk(script).toBuffer()]))
+ }
  f.profile.json=JSON.stringify(p);f.profile.expectedSha256=sha(f.profile.json)
  const request={...f.request,schema:'repoing/selected-hook-launch-request/1',name:'Selected',symbol:'SEL',uri:'',virtualQuote:'500'}
  const configBytes=Buffer.from(accounts.get(pda(L,'config')).dataBase64,'base64'),{addresses,inventory}=selectedHookLaunchInventory(f.profile,request,configBytes,{accounts,hookPin:f.hookPin})
@@ -53,8 +58,8 @@ export function selectedLaunchFixture(){
 import {PublicKey} from '@solana/web3.js'
 const PublicBump=(program,seed)=>PublicKey.findProgramAddressSync([Buffer.from(seed)],pk(program))[1]
 
-export function selectedLaunchCollectorFixture(){
- const f=selectedLaunchFixture(),{input,accounts,p,addresses:a}=f
+export function selectedLaunchCollectorFixture(options){
+ const f=selectedLaunchFixture(options),{input,accounts,p,addresses:a}=f
  const hashAccount=address=>sha(Buffer.from(accounts.get(address).dataBase64,'base64'))
  const programs=['launch','swap','gate','token'].map(role=>{const address=p.programs[role],programData=pda('BPFLoaderUpgradeab1e11111111111111111111111',pk(address).toBuffer()),b=Buffer.from(accounts.get(programData).dataBase64,'base64');return {role,address,programData,upgradeAuthority:null,deploySlot:50,programDataSha256:sha(b),elfLength:b.length-45,elfSha256:sha(b.subarray(45))}})
  const dossier={schema:'repoing/production-observation/1',genesisHash:p.genesisHash,artifacts:{sourceCommit:p.sourceCommit,profileSha256:input.profile.expectedSha256,sdkSha256:'1'.repeat(64),idlSha256:'2'.repeat(64),provenanceSha256:'3'.repeat(64)},providers:input.profile.providers,minSlot:100,maxSlotLag:5,maxAgeMs:5000,programs,accounts:Object.entries({'launch-config':a.launchConfig,'swap-config':a.swapConfig,'creation-control':a.launchGovernance,'swap-governance':a.swapGovernance,'quote-mint':p.quoteMint}).map(([role,address])=>({role,address,owner:accounts.get(address).owner,executable:false,dataSha256:hashAccount(address)}))}
@@ -64,13 +69,20 @@ export function selectedLaunchCollectorFixture(){
  const connections=input.profile.providers.map(provider=>({provider,connection:{rpcEndpoint:`https://${provider}.example.org/`,async getGenesisHash(){return p.genesisHash},async getMultipleAccountsInfoAndContext(keys){return {context:{slot:100},value:keys.map(k=>{const v=accounts.get(k.toBase58());return v?{owner:pk(v.owner),executable:v.executable,lamports:Number(v.lamports),data:Buffer.from(v.dataBase64,'base64')}:null})}},async getLatestBlockhashAndContext(){return {context:{slot:100},value:{blockhash:input.recentBlockhash.blockhash,lastValidBlockHeight:200}}},async isBlockhashValid(){return {context:{slot:100},value:true}},async getBlockHeight(){return 100},async getFeeForMessage(){return {context:{slot:100},value:10000}}}}))
  return {...f,config,profile:input.profile,dossierJson,connections,request:input.request,limits:input.limits,clock:()=>1000,nativeLaunches:true,preparation:{wallet:input.request.creator,profileSha256:input.profile.expectedSha256,preparationIntentSha256:input.preparationEvidence.preparationIntentSha256,preparedRequest:launchPreparationRequest(input.request),executionSlot:100,preparedAccountHashes:input.preparationEvidence.preparedAccountHashes}}
 }
-export async function selectedLaunchSettlementFixture({revalidate=false}={}){
- const f=selectedLaunchCollectorFixture(),first=await collectOpenLaunchReview(f),collected=revalidate?await collectOpenLaunchReview({...f,clock:()=>1001,expectedReview:first.plan.review}):first,{review}=collected.plan,settlementContext=collected.settlementContext
+export async function selectedLaunchSettlementFixture({revalidate=false,hookState=false}={}){
+ const f=selectedLaunchCollectorFixture({hookState}),first=await collectOpenLaunchReview(f),collected=revalidate?await collectOpenLaunchReview({...f,clock:()=>1001,expectedReview:first.plan.review}):first,{review}=collected.plan,settlementContext=collected.settlementContext
  const tx=new VersionedTransaction(VersionedMessage.deserialize(Buffer.from(review.messageBase64,'base64')))
  tx.sign([31,32].map(n=>Keypair.fromSeed(Buffer.alloc(32,n))))
  const signedTransactionBase64=Buffer.from(tx.serialize()).toString('base64'),signature=bs58.encode(tx.signatures[0]),slot=110
  const expected=deriveOpenLaunchPostconditions(settlementContext,{slot,timestamp:1000}),post=new Map(f.accounts)
  for(const a of expected.accounts)post.set(a.address,{...a,lamports:expected.created.includes(a.address)?'100':f.accounts.get(a.address).lamports})
+ if(hookState){
+  const address=key(92),a={...post.get(address),dataBase64:Buffer.from([1]).toString('base64')};post.set(address,a)
+  // Independently prescribed hook result, not derived from the settlement implementation.
+  settlementContext.simulation={schema:'repoing/selected-hook-simulation/1',messageSha256:review.messageSha256,
+   configurationSha256:settlementContext.configurationSha256,providers:f.profile.providers,
+   hookPostStateHashes:{[address]:sha(JSON.stringify({address,owner:a.owner,executable:false,dataBase64:a.dataBase64}))}}
+ }
  const keys=review.accounts.map(a=>a.address),idx=k=>keys.indexOf(k),preBalances=keys.map(k=>Number(f.accounts.get(k)?.lamports??0)),postBalances=[...preBalances]
  let rent=0;for(const a of expected.created){postBalances[idx(a)]=100;rent+=100-preBalances[idx(a)]}
  postBalances[idx(f.request.creator)]-=rent+10000

@@ -465,6 +465,7 @@ function compileLaunch(input, fixture, canary = false, open = false) {
   check(isDeepStrictEqual(inspected.instructions[2], effective), 'Effective instruction metas differ from canonical max-wallet launch policy')
   return freeze({ schema: canary ? 'repoing/canary-max-wallet-launch-review/1' : open ? 'repoing/open-launch-review/1' : 'repoing/max-wallet-launch-review/1', status: fixture ? 'offline-synthetic-review-only' : 'unauthenticated-deterministic-review-only', provenance: fixture ? proof.provenance : 'compiler-inputs-not-authority', sourceCommit: profile.sourceCommit,
     sourcePatchSha256: profile.sourcePatchSha256, releaseProfileSha256: envelope.expectedSha256, request: r, addresses: a, review, canonicalInstruction, instructions: inspected.instructions,
+    ...(selectedBranch?{selectedHookExtras:selectedPlan.extras}:{}),
     policyKind: r.policyKind, policyVersion: r.policyVersion, ...(inclusive?{feeModel:2,protocolShareBps:2500,creatorFeeBps:r.creatorFeeBps}:{}), ...(native?{quoteForm:QUOTE_FORM_NATIVE}:{}), policy: selectedBranch?{capBps:0,hook:r.selectedHook.program,flags:r.hookFlags}:{ initialSupply: n(policy.initial_supply).toString(), capBps: policy.cap_bps,
       capRaw: (n(policy.initial_supply) * BigInt(policy.cap_bps) / 10000n).toString(), endsAt: 'authenticated-graduation', poolExemption: 'canonical-pool-only' },
     commitments: { launchEconomics: launchEconomics.toString('hex'), poolEconomics: poolEconomics.toString('hex'), launchGovernance: launchGov.toString('hex'),

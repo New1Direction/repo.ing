@@ -3,6 +3,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { COIN_DESCRIPTION_MAX, coinImageUrl, coinLinks, coinMetadataJson, coinMetadataUri, coinProfileFields, xHandle, telegramHandle, websiteUrl } from '../src/hooklab-coin-profile.mjs'
+import { coinMetadataAlias, coinMetadataId, selectedCoinMetadataUri } from '../src/hooklab-coin-profile.mjs'
+
+test('compact metadata IDs are strict canonical UUID bytes and save 40 URI bytes', () => {
+  const id = '6f1c3b0e-3b7a-4c55-9d7e-2d7d1b6a9c10', origin = 'https://localhost:22466'
+  const alias = coinMetadataAlias(id)
+  assert.equal(alias, 'bxw7Djt6TFWdfi19G2qcEA')
+  assert.equal(coinMetadataId(alias), id)
+  assert.equal(selectedCoinMetadataUri(origin, id), `${origin}/h/${alias}`)
+  assert.equal(Buffer.byteLength(coinMetadataUri(origin, id)), 88)
+  assert.equal(Buffer.byteLength(selectedCoinMetadataUri(origin, id)), 48)
+  // Nonzero unused trailing bits decode to the same bytes in permissive base64 decoders.
+  for (const bad of [alias.slice(0,-1)+'B', alias+'==', alias+'x', alias.slice(1), '', 'A'.repeat(21)+'!', ' '.concat(alias), '_'.repeat(22)])
+    assert.throws(() => coinMetadataId(bad), /Invalid/, bad)
+  for (const bad of [id.toUpperCase(), id.replaceAll('-', ''), 'not-a-uuid', id.replace('-4c55-', '-0c55-')])
+    assert.throws(() => coinMetadataAlias(bad), /Invalid/, bad)
+})
 
 test('an X account can be typed the way people copy it', () => {
   for (const typed of ['repocat', '@repocat', 'x.com/repocat', 'https://x.com/repocat', 'https://twitter.com/repocat/', 'www.x.com/repocat?s=21', ' @repocat '])
