@@ -10,6 +10,9 @@ import { executionGenesis } from './hooklab-local-acceptance.mjs'
 import { walletPrincipalStore } from './hooklab-wallet-principal.mjs'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { selectedHookPreparationRequestSchema } from './hooklab-selected-hook-preparation.mjs'
+const preparedRequest = input => input.request?.schema === 'repoing/selected-hook-preparation-request/1'
+  ? selectedHookPreparationRequestSchema.parse(input.request) : parseMaxWalletPreparationRequest(input.request)
 const fail = () => Object.assign(Error('Wallet preparation unavailable or changed'), { status: 409 })
 const check = value => { if (!value) throw fail() }
 const final = new Set(['candidate-preparation-matched', 'finalized-failure'])
@@ -35,7 +38,7 @@ function createJournal(pool, { enabled = false, principalStore, providers: confi
   }
   const derive = (preparationInput, signedTransactionBase64) => {
     const record = deriveCustomPreparationRecord(preparationInput, expectedProfileSha256)
-    check(record.policyKind === 'max-wallet' && isDeepStrictEqual(preparationInput.profile.providers, names))
+    check(['max-wallet', 'selected-hook'].includes(record.policyKind) && isDeepStrictEqual(preparationInput.profile.providers, names))
     return { record, signed: verifyHookLabSignedMessage(record.plan.review, signedTransactionBase64) }
   }
   const validate = row => {
@@ -56,7 +59,7 @@ function createJournal(pool, { enabled = false, principalStore, providers: confi
   }
   const summary = row => Object.freeze({ id:row.id, wallet:row.owner_wallet, mint:row.mint, profileSha256:row.profile_sha256,
     signature:row.signature, messageSha256:row.message_sha256, preparationIntentSha256:row.intent_sha256,
-    preparedRequest:Object.freeze(parseMaxWalletPreparationRequest(row.preparation_input.request)), status:row.evidence_conflict ? 'review-required' : row.latest_evidence?.status ?? 'collection-pending',
+    preparedRequest:Object.freeze(preparedRequest(row.preparation_input)), status:row.evidence_conflict ? 'review-required' : row.latest_evidence?.status ?? 'collection-pending',
     retainedFinalizedEvidence:Boolean(row.retained_evidence), evidenceConflict:row.evidence_conflict,
     lastCollectionPrelaunchEligible:row.latest_evidence?.currentPrelaunchEligible === true && !row.evidence_conflict,
     checkedAt:row.checked_at.toISOString(), sessionAuthorization:lockPrincipal ? 'co-located-transaction-lock' : 'candidate-injected-store', ...disabled })
@@ -130,7 +133,7 @@ function createJournal(pool, { enabled = false, principalStore, providers: confi
         const evidence=current.latest_evidence
         return Object.freeze({ id:current.id,wallet:current.owner_wallet,signature:current.signature,
           profileSha256:current.profile_sha256,preparationIntentSha256:current.intent_sha256,
-          preparedRequest:parseMaxWalletPreparationRequest(current.preparation_input.request),
+          preparedRequest:preparedRequest(current.preparation_input),
           executionSlot:evidence.finalizedSlot,preparedAccountHashes:{...evidence.matchedAccountHashes} })
       },sessionToken)
     },

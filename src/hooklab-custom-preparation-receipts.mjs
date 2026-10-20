@@ -8,6 +8,7 @@ import bs58 from 'bs58'
 import { PublicKey, VersionedTransaction } from '@solana/web3.js'
 import { z } from 'zod'
 import { planCustomPreparation } from './hooklab-custom-preparation.mjs'
+import { planSelectedHookPreparation } from './hooklab-selected-hook-preparation.mjs'
 import { planMaxWalletPreparation, deriveMaxWalletPreparedAccounts } from './hooklab-max-wallet-preparation.mjs'
 import { planInclusiveMaxWalletPreparation, deriveInclusiveMaxWalletPreparedAccounts } from './hooklab-inclusive-max-wallet-preparation.mjs'
 import { inspectHookLabMessage, verifyHookLabSignedMessage } from './hooklab-message-boundary.mjs'
@@ -24,6 +25,7 @@ const safeAmount = z.string().regex(/^(0|[1-9]\d{0,15})$/).refine(value => BigIn
 const commitment = z.enum(['processed', 'confirmed', 'finalized'])
 const modes = z.enum(['synthetic-fixture', 'configured-readonly-rpc'])
 const policyKind = 'immutable-canonical-single-blocked-owner'
+const isSelectedInput = input => input?.request?.schema === 'repoing/selected-hook-preparation-request/1'
 const maxWalletProfileSha256 = 'f366d222e7257e86ac23d8350741b3c20c08ea084a4445c7b0d2d913593b5ea0'
 const isInclusiveInput = input => input?.request?.schema === 'repoing/inclusive-max-wallet-preparation-request/1'
 const isMaxWalletInput = input => input?.request?.schema === 'repoing/max-wallet-preparation-request/1' || isInclusiveInput(input)
@@ -82,7 +84,7 @@ const selectedFields = [{ name: 'version', type: 'u8' }, { name: 'creator', type
 function bindings(input) {
   const profile = JSON.parse(input.profile.json)
   const maxWallet = isMaxWalletInput(input)
-  check(maxWallet
+  check(isSelectedInput(input) ? input.request.policyKind === 'selected-hook' : maxWallet
     ? input.request.policyKind === 'max-wallet' && input.request.policyVersion === (isInclusiveInput(input) ? 2 : 1)
       && profile.capability.kind === 'immutable-initial-supply-owner-cap-until-authenticated-graduation'
       && (isInclusiveInput(input) ? profile.buildFeature === 'inclusive-fees-candidate' && profile.capability.feeModel === 2 && profile.capability.protocolShareBps === 2500 : input.profile.expectedSha256 === maxWalletProfileSha256)
@@ -99,13 +101,13 @@ function bindings(input) {
     const type = bound.idl.types.find(t => t.name === name)?.type
     check(type?.kind === 'struct' && isDeepStrictEqual(type.fields.map(({ name, type }) => ({ name, type })), fields), 'UNSUPPORTED_POLICY_ABI')
   }
-  struct(gate, isInclusiveInput(input) ? 'PolicyV2' : 'Policy', maxWallet
+  if (!isSelectedInput(input)) struct(gate, isInclusiveInput(input) ? 'PolicyV2' : 'Policy', maxWallet
     ? [{ name: 'version', type: 'u8' }, { name: 'mint', type: 'pubkey' }, { name: 'initial_supply', type: 'u64' },
       { name: 'cap_bps', type: 'u16' }, { name: 'quote_mint', type: 'pubkey' }, { name: 'lp_fee_bps', type: 'u16' },
       ...(isInclusiveInput(input) ? [{name:'fee_model',type:'u8'},{name:'protocol_share_bps',type:'u16'},{name:'creator_fee_bps',type:'u16'}] : [])]
     : [{ name: 'mint', type: 'pubkey' }, { name: 'blocked_owner', type: 'pubkey' }])
   struct(launch, 'LaunchRules', ruleFields); struct(launch, 'LaunchConfig', selectedFields)
-  for (const [bound, name] of [[gate, isInclusiveInput(input) ? 'PolicyV2' : 'Policy'], [launch, 'LaunchConfig']]) {
+  for (const [bound, name] of [...(isSelectedInput(input) ? [] : [[gate, isInclusiveInput(input) ? 'PolicyV2' : 'Policy']]), [launch, 'LaunchConfig']]) {
     check(isDeepStrictEqual(bound.idl.accounts.find(a => a.name === name)?.discriminator,
       [...Buffer.from(sha(`account:${name}`), 'hex').subarray(0, 8)]), 'ACCOUNT_DISCRIMINATOR_MISMATCH')
   }
@@ -127,7 +129,8 @@ function selectedBytes(input, bound, createdAt) {
   if (isMaxWalletInput(input)) return raw(maxWalletAccounts(input, createdAt).accounts.selectedConfig.dataBase64, 176)
   const r = input.request
   return encoded(bound.launch, 'LaunchConfig', { version: 1, creator: pk(r.creator), rules: noRules,
-    creator_fee_bps: 0, custom_hook: pk(bound.profile.programs.gate), custom_hook_flags: 1,
+    creator_fee_bps: isSelectedInput(input) ? r.creatorFeeBps : 0,
+    custom_hook: pk(isSelectedInput(input) ? r.selectedHook.program : bound.profile.programs.gate), custom_hook_flags: isSelectedInput(input) ? r.hookFlags : 1,
     label: r.label, created_at: new BN(createdAt), author_share_bps: 0, reserved: Array(30).fill(0) }, 176)
 }
 
@@ -143,9 +146,19 @@ export function deriveCustomPreparationRecord(preparationInput, expectedProfileS
     && sha(preparationInput.profile.json) === expectedProfileSha256, 'SERVER_PROFILE_PIN_MISMATCH')
   const input = structuredClone(preparationInput), maxWallet = isMaxWalletInput(input)
   if (maxWallet && !isInclusiveInput(input)) check(expectedProfileSha256 === maxWalletProfileSha256, 'SERVER_PROFILE_PIN_MISMATCH')
-  const plan = isInclusiveInput(input) ? planInclusiveMaxWalletPreparation(input) : maxWallet ? planMaxWalletPreparation(input) : planCustomPreparation(input), bound = bindings(input)
+  const plan = isSelectedInput(input) ? planSelectedHookPreparation(input) : isInclusiveInput(input) ? planInclusiveMaxWalletPreparation(input) : maxWallet ? planMaxWalletPreparation(input) : planCustomPreparation(input), bound = bindings(input)
   const descriptor = (role, accountAddress, owner, bytes) => ({ role, address: accountAddress, owner,
     executable: false, size: bytes.length, dataBase64: bytes.toString('base64'), sha256: sha(bytes) })
+  if (isSelectedInput(input)) {
+    const template = selectedBytes(input, bound, '0')
+    const registry = input.observations[0].accounts.find(a => a.address === plan.addresses.registry).account
+    return freeze({ schema: 'repoing/custom-preparation-record/1', plan, profileSha256: expectedProfileSha256,
+      preparationInputSha256: sha(canonical(input, 64 * 1024 * 1024)), policyKind: 'selected-hook', policyVersion: 2,
+      expectedAbsent: [input.request.mint, plan.addresses.canonicalLaunch],
+      committedAccounts: { registry: descriptor('registry', registry.address, registry.owner, raw(registry.dataBase64, 16384)) },
+      expectedAccounts: { selectedConfig: { ...descriptor('selectedConfig', input.request.selectedConfig, plan.addresses.launch, template),
+        dataBase64: null, sha256: null, canonicalTemplateBase64: template.toString('base64'), dynamicFields: ['created_at'] } }, ...disabled })
+  }
   const prepared = maxWallet ? maxWalletAccounts(input, '0') : null
   const policy = maxWallet ? raw(prepared.accounts.policy.dataBase64, isInclusiveInput(input) ? 90 : 85)
     : encoded(bound.gate, 'Policy', { mint: pk(input.request.mint), blocked_owner: pk(input.request.blockedOwner) }, 72)
@@ -171,17 +184,17 @@ const transactionSchema = z.object({ slot: integer, blockTime: integer.nullable(
 const blockSchema = z.object({ slot: integer, blockhash: address, previousBlockhash: address, parentSlot: integer,
   blockHeight: integer.nullable(), blockTime: integer.nullable(), signatures: z.array(signature).min(1).max(16384) }).strict()
 const stateAccountSchema = z.object({ role: z.enum(['policy', 'registry', 'selectedConfig']), address, owner: address,
-  executable: z.boolean(), dataBase64: z.string().max(236), lamports: safeAmount }).strict()
-const programAccountSchema = z.object({ role: z.enum(['launch', 'gate', 'launchProgramData', 'gateProgramData']), address, owner: address,
+  executable: z.boolean(), dataBase64: z.string().max(21848), lamports: safeAmount }).strict()
+const programAccountSchema = z.object({ role: z.enum(['launch', 'gate', 'launchProgramData', 'gateProgramData', 'hook', 'hookProgramData']), address, owner: address,
   executable: z.boolean(), dataBase64: z.string().max(14000000), lamports: safeAmount }).strict()
 const observationSchema = z.object({ provider: providerId, genesisHash: address.nullable(), transactionCommitment: commitment,
   transaction: transactionSchema.nullable(), blockCommitment: commitment, block: blockSchema.nullable(),
-  snapshot: z.object({ slot: integer, commitment, accounts: z.array(stateAccountSchema).length(3) }).strict().nullable(),
+  snapshot: z.object({ slot: integer, commitment, accounts: z.array(stateAccountSchema).min(2).max(3) }).strict().nullable(),
   programSnapshot: z.object({ slot: integer, commitment, accounts: z.array(programAccountSchema).length(4) }).strict().nullable(),
   errorCode: z.enum(['READ_UNAVAILABLE', 'READ_TIMEOUT', 'INVALID_RESPONSE', 'EVIDENCE_LIMIT']).nullable(),
   rawResponseSha256: digest.nullable().optional(),
   absenceSnapshot: z.object({ slot: integer, commitment,
-    accounts: z.array(z.object({ address, exists: z.boolean() }).strict()).length(1) }).strict().nullable().optional(),
+    accounts: z.array(z.object({ address, exists: z.boolean() }).strict()).min(1).max(2) }).strict().nullable().optional(),
 }).strict()
 const providersSchema = z.array(providerId).length(2).refine(p => new Set(p).size === 2)
 const reasons = {
@@ -213,7 +226,7 @@ export function verifyCustomPreparationEvidence({ preparationInput, signedTransa
     messageSha256: signed?.messageSha256 ?? null, signedTransactionSha256: signed?.signedTransactionSha256 ?? null,
     profileSha256: record?.profileSha256 ?? null, preparationInputSha256: record?.preparationInputSha256 ?? null,
     policyKind: record?.policyKind ?? null,
-    ...(record?.policyKind === 'max-wallet' ? { policyVersion: record.policyVersion, currentPrelaunchEligible: false,
+    ...(record?.expectedAbsent ? { policyVersion: record.policyVersion, currentPrelaunchEligible: false,
       canonicalLaunchAbsenceHistorical: false, absenceEvidenceSemantics: 'current-prelaunch-eligibility-only' } : {}),
     rawEvidenceSha256: evidenceSha, providers: providerNames,
     evidenceMode: mode, evidenceAuthority: 'supplied-assertions-not-production-proof', observations: normalized,
@@ -230,7 +243,10 @@ export function verifyCustomPreparationEvidence({ preparationInput, signedTransa
   try {
     evidenceSha = sha(canonical(observations))
     normalized = z.array(observationSchema).length(2).parse(observations)
-    check(record.policyKind === 'max-wallet' || normalized.every(o => !Object.hasOwn(o, 'absenceSnapshot')), 'INVALID_EVIDENCE')
+    check(record.expectedAbsent || normalized.every(o => !Object.hasOwn(o, 'absenceSnapshot')), 'INVALID_EVIDENCE')
+    check(normalized.every(o => (!o.snapshot || o.snapshot.accounts.length === (record.policyKind === 'selected-hook' ? 2 : 3))
+      && (!o.absenceSnapshot || o.absenceSnapshot.accounts.length === record.expectedAbsent?.length)
+      && (record.policyKind === 'selected-hook' || !o.snapshot || o.snapshot.accounts.every(a => a.dataBase64.length <= 236))), 'INVALID_EVIDENCE')
   } catch { return finish('unresolved', 'INVALID_EVIDENCE') }
   if (new Set(normalized.map(o => o.provider)).size !== 2 || normalized.some(o => !providerNames.includes(o.provider))) return finish('unresolved', 'PROVIDER_BINDING')
   const [a, b] = providerNames.map(p => normalized.find(o => o.provider === p)), plan = record.plan
@@ -281,10 +297,10 @@ export function verifyCustomPreparationEvidence({ preparationInput, signedTransa
   let matchedAccountHashes, selectedConfigCreatedAt
   try {
     check(normalized.every(o => o.snapshot.slot >= t.slot), 'STATE_MISMATCH')
-    check(isDeepStrictEqual(a.snapshot.accounts.map(account => account.role), ['policy', 'registry', 'selectedConfig']), 'STATE_MISMATCH')
+    check(isDeepStrictEqual(a.snapshot.accounts.map(account => account.role), Object.keys({ ...record.expectedAccounts, ...record.committedAccounts })), 'STATE_MISMATCH')
     const bound = bindings(preparationInput), hashes = {}
     for (const account of a.snapshot.accounts) {
-      const expected = record.expectedAccounts[account.role], bytes = raw(account.dataBase64, expected.size)
+      const expected = record.expectedAccounts[account.role] ?? record.committedAccounts?.[account.role], bytes = raw(account.dataBase64, expected.size)
       check(account.address === expected.address && account.owner === expected.owner && account.executable === false && bytes.length === expected.size, 'STATE_MISMATCH')
       if (account.role === 'selectedConfig') {
         const decoded = bound.launch.coder.accounts.decode('LaunchConfig', bytes)
@@ -315,7 +331,7 @@ export function verifyCustomPreparationEvidence({ preparationInput, signedTransa
     // The canonical Launch is intentionally absent before stage two. A later Launch can legitimately
     // exist: this is a current eligibility condition, not historical preparation state or corruption.
     // These distinct non-conflict reasons preserve earlier finalized evidence in the unchanged journal.
-    if (record.policyKind === 'max-wallet') {
+    if (record.expectedAbsent) {
       if (normalized.some(o => !o.absenceSnapshot || o.absenceSnapshot.commitment !== 'finalized'
         || o.absenceSnapshot.slot !== o.snapshot.slot
         || !isDeepStrictEqual(o.absenceSnapshot.accounts.map(a => a.address), record.expectedAbsent))) {
@@ -325,7 +341,7 @@ export function verifyCustomPreparationEvidence({ preparationInput, signedTransa
     }
     // No comparison to later wallet snapshots or stale reviewed balances: actual transaction deltas only.
     return finish('candidate-preparation-matched', 'MATCHED', { ...identity, matchedAccountHashes,
-      ...(record.policyKind === 'max-wallet' ? { currentPrelaunchEligible: true, currentAbsentAccounts: record.expectedAbsent } : {}),
+      ...(record.expectedAbsent ? { currentPrelaunchEligible: true, currentAbsentAccounts: record.expectedAbsent } : {}),
       snapshotSlots: normalized.map(o => ({ provider: o.provider, slot: o.snapshot.slot, relation: o.snapshot.slot > t.slot ? 'later-state' : 'same-slot-current-state' })),
       selectedConfigCreatedAt, selectedConfigCreationTimeProvenance: 'agreed-immutable-account-field-not-historical-clock-proof',
       nativeDeltasVerified: true, currentImmutableStateMatched: true, currentPinnedProgramBytesMatched: true, matchedProgramHashes,
@@ -336,22 +352,26 @@ export function verifyCustomPreparationEvidence({ preparationInput, signedTransa
 }
 
 function programInventory(plan) {
-  return ['launch', 'gate', 'launchProgramData', 'gateProgramData'].map(role => ({ role, address: plan.addresses[role] }))
+  return (plan.policyKind === 'selected-hook' ? ['launch', 'hook', 'launchProgramData', 'hookProgramData'] : ['launch', 'gate', 'launchProgramData', 'gateProgramData']).map(role => ({ role, address: plan.addresses[role] }))
 }
 function checkCurrentPrograms(input, plan, snapshot, transactionSlot) {
   check(isDeepStrictEqual(snapshot.accounts.map(a => ({ role: a.role, address: a.address })), programInventory(plan)), 'SOURCE_MISMATCH')
   const profile = JSON.parse(input.profile.json), accounts = new Map(snapshot.accounts.map(a => [a.role, a])), hashes = {}
-  for (const role of ['launch', 'gate']) {
-    const program = accounts.get(role), data = accounts.get(role + 'ProgramData'), length = input.profile.elfLengths[role]
+  for (const role of (isSelectedInput(input) ? ['launch', 'hook'] : ['launch', 'gate'])) {
+    const program = accounts.get(role), data = accounts.get(role + 'ProgramData'), length = role === 'hook' ? input.hookPin.elfLength : input.profile.elfLengths[role]
     check(program.owner === loader && program.executable === true && data.owner === loader && data.executable === false, 'SOURCE_MISMATCH')
     const pb = raw(program.dataBase64, 36), db = raw(data.dataBase64, 10485760 + 45)
     check(pb.length === 36 && pb.readUInt32LE(0) === 2 && pb.subarray(4).equals(pk(data.address).toBuffer()), 'SOURCE_MISMATCH')
     check(db.length >= 45 + length && db.readUInt32LE(0) === 3 && db.readBigUInt64LE(4) < BigInt(transactionSlot), 'SOURCE_MISMATCH')
-    check(role === 'gate' ? db[12] === 0 : db[12] === 0 || db[12] === 1, 'SOURCE_MISMATCH')
+    check(role === 'gate' || role === 'hook' ? db[12] === 0 : db[12] === 0 || db[12] === 1, 'SOURCE_MISMATCH')
+    if (isSelectedInput(input)) {
+      const retained = address => input.observations[0].accounts.find(a => a.address === address).account.dataBase64
+      check(program.dataBase64 === retained(program.address) && data.dataBase64 === retained(data.address), 'SOURCE_MISMATCH')
+    }
     // None authority leaves old authority bytes in the fixed 45-byte metadata region on the loader.
     // They must agree across providers but are not required to have been cleared.
     const elf = db.subarray(45, 45 + length)
-    check(elf.subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])) && sha(elf) === profile.elfSha256[role]
+    check(elf.subarray(0, 4).equals(Buffer.from([127, 69, 76, 70])) && sha(elf) === (role === 'hook' ? input.hookPin.elfSha256 : profile.elfSha256[role])
       && db.subarray(45 + length).every(byte => byte === 0), 'SOURCE_MISMATCH')
     hashes[role] = { programSha256: sha(pb), programDataSha256: sha(db), elfSha256: sha(elf), deploymentSlot: String(db.readBigUInt64LE(4)) }
   }
@@ -440,7 +460,7 @@ export async function collectCustomPreparationEvidence({ preparationInput, signe
   const observations = await Promise.all(providers.map(async ({ provider, connection }) => {
     const observation = { provider, genesisHash: null, transactionCommitment: 'finalized', transaction: null,
       blockCommitment: 'finalized', block: null, snapshot: null, programSnapshot: null, errorCode: null, rawResponseSha256: null,
-      ...(record.policyKind === 'max-wallet' ? { absenceSnapshot: null } : {}) }
+      ...(record.expectedAbsent ? { absenceSnapshot: null } : {}) }
     const hashes = []
     const read = async work => {
       const remaining = Math.min(bounds.readTimeoutMs, deadline - Date.now())
@@ -465,7 +485,7 @@ export async function collectCustomPreparationEvidence({ preparationInput, signe
           previousBlockhash: block.previousBlockhash, parentSlot: block.parentSlot, blockHeight: block.blockHeight,
           blockTime: block.blockTime, signatures: block.signatures })
         if (observation.transaction.err === null && observation.block) {
-          const expected = Object.values(record.expectedAccounts), programAccounts = programInventory(record.plan)
+          const expected = Object.values({ ...record.expectedAccounts, ...record.committedAccounts }), programAccounts = programInventory(record.plan)
           const absentAccounts = record.expectedAbsent ?? [], inventory = [...expected, ...programAccounts, ...absentAccounts.map(address => ({ address }))]
           const snapshot = await read(() => connection.getMultipleAccountsInfoAndContext(inventory.map(a => pk(a.address)),
             { commitment: 'finalized', minContextSlot: observation.transaction.slot }))
@@ -476,16 +496,16 @@ export async function collectCustomPreparationEvidence({ preparationInput, signe
             return { role: e.role, address: e.address, owner: pk(a.owner).toBase58(), executable: a.executable,
               dataBase64: a.data.toString('base64'), lamports: amountFromRpc(a.lamports) }
           }) }
-          if (record.policyKind === 'max-wallet') observation.absenceSnapshot = { slot: observation.snapshot.slot, commitment: 'finalized',
+          if (record.expectedAbsent) observation.absenceSnapshot = { slot: observation.snapshot.slot, commitment: 'finalized',
             accounts: absentAccounts.map((address, i) => {
-              const account = snapshot.value[7 + i]
+              const account = snapshot.value[expected.length + programAccounts.length + i]
               check(account === null || account && Buffer.isBuffer(account.data)
                 && typeof account.executable === 'boolean' && Number.isSafeInteger(account.lamports) && account.lamports >= 0, 'INVALID_RESPONSE')
               if (account !== null) pk(account.owner)
               return { address, exists: account !== null }
             }) }
           observation.programSnapshot = { slot: observation.snapshot.slot, commitment: 'finalized', accounts: programAccounts.map((e, i) => {
-            const a = snapshot.value[i + 3]
+            const a = snapshot.value[i + expected.length]
             check(a && Buffer.isBuffer(a.data) && a.data.length <= 10485760 + 45, 'INVALID_RESPONSE')
             return { role: e.role, address: e.address, owner: pk(a.owner).toBase58(), executable: a.executable,
               dataBase64: a.data.toString('base64'), lamports: amountFromRpc(a.lamports) }
