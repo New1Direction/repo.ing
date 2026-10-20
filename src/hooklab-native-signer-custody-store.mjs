@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { isDeepStrictEqual } from 'node:util'
 import { parseMaxWalletPreparationRequest } from './hooklab-inclusive-max-wallet-profile.mjs'
+import { selectedHookPreparationRequestSchema } from './hooklab-selected-hook-preparation.mjs'
 import { Keypair } from '@solana/web3.js'
 import { walletPrincipalStore } from './hooklab-wallet-principal.mjs'
 import { lockWalletPrincipal } from './hooklab-wallet-principal-lock.mjs'
@@ -21,6 +22,7 @@ const summary=row=>Object.freeze({operationId:row.operation_id,custodySessionId:
  profileSha256:row.profile_sha256,mint:row.mint,selectedConfig:row.selected_config,stage:row.stage,revision:String(row.revision),keyId:row.sealed_signers.keyId,
  preparedRequest:row.preparation_request??null,encryptedSignersRetained:true,ownerCustodyApprovalVerified:false,canSign:false,canSubmit:false,executionAuthorized:false})
 const wipe=signers=>{signers?.mint?.secretKey?.fill(0);signers?.selectedConfig?.secretKey?.fill(0)}
+const parseRequest=request=>request?.policyKind==='selected-hook'?selectedHookPreparationRequestSchema.parse(request):parseMaxWalletPreparationRequest(request)
 export function nativeSignerCustodyStore(pool,{enabled=false,origin,keyRing,activeKeyId,signerFactory=()=>({mint:Keypair.generate(),selectedConfig:Keypair.generate()})}={}){
  const principal=walletPrincipalStore(pool,{enabled,origin,audience:'general-launcher',genesisHash:executionGenesis()})
  const codec=nativeSignerCustodyCodec({enabled,keyRing,activeKeyId})
@@ -78,9 +80,22 @@ export function nativeSignerCustodyStore(pool,{enabled=false,origin,keyRing,acti
     return summary(saved)
    })
   },
+  // Bind the chosen hook before its hook-specific registry exists. A restart must recover the
+  // same mint and intent; reserving is not a successful chain review or signing authorization.
+  async retainPreparationIntent(sessionToken,operationId,{expectedRevision,request}){
+   return transaction(sessionToken,operationId,async(db,row)=>{
+    const parsed=selectedHookPreparationRequestSchema.parse(request)
+    check(row&&String(row.revision)===expectedRevision&&row.stage==='reserved')
+    check(parsed.creator===row.owner_wallet&&parsed.feePayer===row.owner_wallet&&parsed.mint===row.mint&&parsed.selectedConfig===row.selected_config)
+    if(row.preparation_request){check(isDeepStrictEqual(row.preparation_request,parsed));return summary(row)}
+    const {rows:[saved]}=await db.query(`update hook_lab_native_signer_custody set preparation_request=$2,
+     revision=revision+1,updated_at=clock_timestamp() where operation_id=$1 returning *`,[operationId,parsed])
+    return summary(saved)
+   })
+  },
   async retainPreparationReview(sessionToken,operationId,{expectedRevision,request,evidenceSha256}){
    return transaction(sessionToken,operationId,async(db,row)=>{
-    const parsed=parseMaxWalletPreparationRequest(request)
+    const parsed=parseRequest(request)
     z.string().regex(/^[a-f0-9]{64}$/).parse(evidenceSha256)
     check(row&&String(row.revision)===expectedRevision&&['reserved','preparation-reviewed'].includes(row.stage))
     check(parsed.creator===row.owner_wallet&&parsed.feePayer===row.owner_wallet&&parsed.mint===row.mint&&parsed.selectedConfig===row.selected_config)
