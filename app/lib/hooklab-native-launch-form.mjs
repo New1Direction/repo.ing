@@ -2,6 +2,7 @@
 // re-validates everything and checks an invited coin against its stored request byte for byte.
 
 import { STANDARD_VIRTUAL_QUOTE } from '../../src/hooklab-launch-pricing.mjs'
+import bs58 from 'bs58'
 
 // The reviewed curve input every unpriced launch uses: 1,000,000,000 raw is curve math, not deposited SOL.
 export { STANDARD_VIRTUAL_QUOTE }
@@ -13,11 +14,26 @@ const isHttps = value => { try { return new URL(value).protocol === 'https:' } c
 // virtual quote fixed with a USD-priced invite, otherwise the standard curve).
 export const lockedLaunchFields = intent => intent ? { label: intent.symbol, virtualQuote: STANDARD_VIRTUAL_QUOTE, ...intent } : {}
 
+// No chain lookups: validate only the immutable creator configuration, never signing readiness.
+export function launchHookInput(form) {
+  if (form.hookKind && !['max-wallet', 'selected'].includes(form.hookKind)) throw Error('Choose a max-wallet gate or custom hook.')
+  if (form.hookKind === 'max-wallet' && form.selectedHook) throw Error('Custom hook configuration conflicts with the max-wallet gate.')
+  if (form.hookKind !== 'selected' && !form.selectedHook) return { capBps: Number(form.capBps) }
+  const hook = form.selectedHook ?? {}, program = hook.program
+  try {
+    if (typeof program !== 'string' || bs58.decode(program).length !== 32 || program === '11111111111111111111111111111111') throw Error()
+  } catch { throw Error('Enter a valid nonzero Solana hook program address.') }
+  if (!/^[1-9][0-9]{0,2}$/.test(String(hook.flags)) || Number(hook.flags) > 255) throw Error('Hook flags must be an integer from 1–255 (known token callback flags only).')
+  if (form.capBps !== 0 && form.capBps !== '0') throw Error('Custom hooks require a max-wallet cap of 0; they do not use the max-wallet gate.')
+  return { capBps: 0, selectedHook: { program, flags: Number(hook.flags) } }
+}
+
 // The reserve request body, approved details first. Throws a plain-words Error for anything invalid.
 export function reservationInput(form, approvedIntent = null) {
-  const values = { ...form, ...lockedLaunchFields(approvedIntent) }
+  const values = { ...form, ...lockedLaunchFields(approvedIntent), ...(approvedIntent ? { hookKind: approvedIntent.selectedHook ? 'selected' : 'max-wallet', selectedHook: approvedIntent.selectedHook } : {}) }
+  const hook = launchHookInput(values)
   const capBps = String(values.capBps), creatorFeeBps = String(values.creatorFeeBps), virtualQuote = String(values.virtualQuote)
-  if (!/^\d{1,4}$/.test(capBps) || +capBps < 1 || +capBps > 9999) throw Error('Max-wallet cap must be 1–9999 basis points.')
+  if (!hook.selectedHook && (!/^\d{1,4}$/.test(capBps) || +capBps < 1 || +capBps > 9999)) throw Error('Max-wallet cap must be 1–9999 basis points.')
   if (!/^\d{1,4}$/.test(creatorFeeBps) || +creatorFeeBps > 9999) throw Error('Enter an explicit creator fee from 0–9999 basis points.')
   if (!/^(0|[1-9][0-9]*)$/.test(virtualQuote)) throw Error('Enter the virtual quote amount in integer base units.')
   // The owner-approved request form makes the metadata URL optional; the operator form still requires one.
@@ -28,5 +44,5 @@ export function reservationInput(form, approvedIntent = null) {
   }
   if (values.uri && !isHttps(values.uri)) throw Error('Use an HTTPS metadata URL.')
   const { label, name, symbol, uri } = values
-  return { label, name, symbol, uri, capBps: Number(capBps), creatorFeeBps: Number(creatorFeeBps), virtualQuote }
+  return { label, name, symbol, uri, ...hook, creatorFeeBps: Number(creatorFeeBps), virtualQuote }
 }

@@ -4,6 +4,7 @@ import { Check, Globe, Image as ImageIcon, Info, LoaderCircle, Send, Upload } fr
 import { CREATOR_FEE_BPS_CHOICES, WALLET_CAP_BPS_CHOICES, percent } from '../../src/hooklab-launch-menus.mjs'
 import { COIN_DESCRIPTION_MAX, coinLinks } from '../../src/hooklab-coin-profile.mjs'
 import { SOON_BLOCKS, hookBlock } from '../../src/hooklab-blocks.mjs'
+import { SELECTED_HOOK_NOTE } from '../lib/hooklab-open-launch.mjs'
 import { HookStartingPrice } from './hooklab-launch-price'
 import '../launch-pair.css'
 
@@ -16,14 +17,14 @@ const LINK_LABELS = { x: 'X', website: 'Website', telegram: 'Telegram' }
 
 // The coin as people will see it: image, ticker, name, its rules and links.
 // capLifted: the coin has graduated, so its max per wallet no longer applies.
-export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, profile = null, note, capLifted = false }) {
+export function HookCoinPreview({ image, name, symbol, capBps, creatorFeeBps, selectedHook = null, profile = null, note, capLifted = false }) {
   const links = profile ? coinLinks(profile) : {}
   const [failed, setFailed] = useState(null)
   const shown = image && image !== failed
   return <div className="launch-token-summary hooks-coin-preview" role="group" aria-label="Coin preview">
     <div className="preview-avatar">{shown ? <img src={image} alt="" onError={() => setFailed(image)}/> : <ImageIcon size={24} aria-hidden="true"/>}</div>
     <div><strong>${symbol || 'TICKER'}</strong><span>{name || 'Coin name'}</span>
-      <small>{capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee</small>
+      <small>{selectedHook ? 'Custom hook · No max-wallet gate' : capLifted ? 'No max per wallet' : `Max ${percent(capBps)} per wallet`} · {percent(creatorFeeBps)} creator fee</small>
       {Object.keys(links).length > 0 && <span className="hooks-coin-links">{Object.entries(links).map(([key, href]) => {
         const Icon = LINK_ICONS[key]
         return <a key={key} href={href} target="_blank" rel="noopener noreferrer"><Icon/>{LINK_LABELS[key]}</a>
@@ -79,7 +80,7 @@ function Presets({ label, choices, value, onChange, disabled, format }) {
 
 // Everything a creator fills in. form: { name, symbol, image, description, x, website, telegram, capBps, creatorFeeBps }.
 // menus: the choices the chain offers right now ({ creatorFeeBps, capBps }); the owner's release menus when absent.
-export function HookCoinFields({ form, set, disabled, onImageBusy, menus = null }) {
+export function HookCoinFields({ form, set, disabled, onImageBusy, menus = null, allowSelectedHook = false }) {
   const characters = [...form.description].length
   return <>
     <label className="field-label" htmlFor="hook-coin-name">Coin name</label>
@@ -106,7 +107,7 @@ export function HookCoinFields({ form, set, disabled, onImageBusy, menus = null 
       <label className="hooks-link-input"><span><Send size={14} aria-hidden="true"/> Telegram</span><input value={form.telegram} placeholder="t.me/yourcoin" autoComplete="off" onChange={event => set({ telegram: event.target.value })}/></label>
     </fieldset>
 
-    <HookBlocks form={form} set={set} disabled={disabled} menus={menus}/>
+    <HookBlocks form={form} set={set} disabled={disabled} menus={menus} allowSelectedHook={allowSelectedHook}/>
   </>
 }
 
@@ -116,16 +117,34 @@ function BlockHeader({ id, state }) {
 }
 
 // What the coin does, as blocks snapped onto it. Every launch today carries the two live blocks; the rest are coming.
-export function HookBlocks({ form, set, disabled, menus = null }) {
+export function HookBlocks({ form, set, disabled, menus = null, allowSelectedHook = false }) {
   const caps = menus?.capBps?.length ? menus.capBps : WALLET_CAP_BPS_CHOICES, fees = menus?.creatorFeeBps?.length ? menus.creatorFeeBps : CREATOR_FEE_BPS_CHOICES
+  const selected = form.hookKind === 'selected' || !!form.selectedHook
   const on = <span className="hooks-block-state"><Check size={13} aria-hidden="true"/>On</span>
   return <section className="hooks-blocks" aria-labelledby="hooks-blocks-title">
     <div className="hooks-blocks-head"><h3 id="hooks-blocks-title" className="field-label">Blocks</h3><span>Snap on what your coin does.</span></div>
-    <article className="hooks-block is-on" aria-label="Max wallet block">
+    {allowSelectedHook && <>
+      <label className="field-label" htmlFor="hook-kind">Hook configuration</label>
+      <select id="hook-kind" className="field-input" value={selected ? 'selected' : 'max-wallet'} disabled={disabled}
+        onChange={event => set(event.target.value === 'selected' ? { hookKind: 'selected', selectedHook: { program: '', flags: '' }, capBps: 0 } : { hookKind: 'max-wallet', selectedHook: undefined, capBps: caps[0] })}>
+        <option value="max-wallet">Max-wallet gate</option><option value="selected">Custom hook (signing unavailable)</option>
+      </select>
+      {selected && <article className="hooks-block" aria-label="Custom hook configuration">
+        <label className="field-label" htmlFor="hook-program">Immutable hook program</label>
+        <input id="hook-program" className="field-input" value={form.selectedHook?.program ?? ''} disabled={disabled} autoComplete="off" spellCheck={false}
+          onChange={event => set({ selectedHook: { ...form.selectedHook, program: event.target.value } })}/>
+        <label className="field-label" htmlFor="hook-flags">Known token callback flags (1–255)</label>
+        <input id="hook-flags" className="field-input" inputMode="numeric" value={form.selectedHook?.flags ?? ''} disabled={disabled}
+          onChange={event => set({ selectedHook: { ...form.selectedHook, flags: event.target.value } })}/>
+        <p className="launch-buy-hint">{SELECTED_HOOK_NOTE}</p>
+        <p className="launch-buy-hint">Inclusive fee policy (model 2). Custom token fees may apply in addition to the creator fee.</p>
+      </article>}
+    </>}
+    {!selected && <article className="hooks-block is-on" aria-label="Max wallet block">
       <BlockHeader id="max-wallet" state={on}/>
       <Presets label="Max per wallet" choices={caps} value={form.capBps} onChange={capBps => set({ capBps })} disabled={disabled} format={percent}/>
       <p className="launch-buy-hint">No wallet can hold more than {percent(form.capBps)} of the supply until your coin graduates, so early buyers can’t corner it.</p>
-    </article>
+    </article>}
     <article className="hooks-block is-on" aria-label="Creator fee block">
       <BlockHeader id="creator-fee" state={on}/>
       <Presets label="Creator fee" choices={fees} value={form.creatorFeeBps} onChange={creatorFeeBps => set({ creatorFeeBps })} disabled={disabled} format={percent}/>
@@ -140,10 +159,10 @@ export function HookBlocks({ form, set, disabled, menus = null }) {
 // The side column: how launching works and what each trade pays.
 // launchPrice: undefined while USD launch pricing is off (no price card), else today's estimate or null (see HookStartingPrice).
 // open: a self-serve launch (no request or approval step).
-export function HookLaunchNotes({ capBps, creatorFeeBps, launchPrice, open = false }) {
+export function HookLaunchNotes({ capBps, creatorFeeBps, selectedHook = null, launchPrice, open = false }) {
   return <>
     <div className="inner-card discovery-launch hooks-how"><h3>How launching works</h3>
-      {open ? <ol>
+      {selectedHook ? <p>{SELECTED_HOOK_NOTE}</p> : open ? <ol>
         <li><strong>Make your coin.</strong> A name, ticker, image and your rules.</li>
         <li><strong>Check the costs.</strong> Everything you pay is listed before you sign.</li>
         <li><strong>Approve twice in your wallet.</strong> Once to set up your coin, once to open trading.</li>
@@ -160,7 +179,7 @@ export function HookLaunchNotes({ capBps, creatorFeeBps, launchPrice, open = fal
       <div className="fee-line"><span>Creator fee<small>Paid by every buy and sell</small></span><strong>{percent(creatorFeeBps)}</strong></div>
       <div className="fee-line"><span>You earn<small>75% of the creator fee, in SOL</small></span><strong>{creatorCut(creatorFeeBps)}</strong></div>
       <div className="fee-line"><span>repo.ing<small>25% of the creator fee</small></span><strong>{platformCut(creatorFeeBps)}</strong></div>
-      <div className="fee-line"><span>Max per wallet<small>Until the coin graduates</small></span><strong>{percent(capBps)}</strong></div>
+      <div className="fee-line"><span>{selectedHook ? 'Custom hook' : 'Max per wallet'}<small>{selectedHook ? 'Inclusive fee policy (model 2); token fees require simulation' : 'Until the coin graduates'}</small></span><strong>{selectedHook ? 'No max-wallet gate' : percent(capBps)}</strong></div>
       <div className="fee-note"><Info size={18} aria-hidden="true"/><span>Hooks coins run on repo.ing’s Hook Lab programs, not as standard Solana tokens, so most wallets and explorers won’t list them yet. Buy and sell them on repo.ing.</span></div>
     </div>
   </>

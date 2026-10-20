@@ -2,6 +2,17 @@
 // No network, wallet or React here, so the server, the client component and the tests share them.
 import { DEFAULT_CREATOR_FEE_BPS, DEFAULT_WALLET_CAP_BPS } from '../../src/hooklab-launch-menus.mjs'
 import { formatSol, formatUsd, launchValues } from '../../src/hooklab-launch-pricing.mjs'
+import { launchHookInput } from './hooklab-native-launch-form.mjs'
+
+export const SELECTED_HOOK_NOTE = 'Custom hook signing is unavailable. Production launches remain max-wallet gate only. The selected hook’s registry must be prepared for the reserved mint through that hook’s own interface before its lifecycle can be reviewed. Program and flags are immutable after review. Token fees require exact-message simulation; no deterministic token-fee quote is available.'
+
+// Recovery must retain the exact hook identity, not reinterpret cap 0 as a gate default.
+export function sameLaunchHook(left, right) {
+  try {
+    const a = launchHookInput(left), b = launchHookInput(right)
+    return a.capBps === b.capBps && a.selectedHook?.program === b.selectedHook?.program && a.selectedHook?.flags === b.selectedHook?.flags
+  } catch { return false }
+}
 
 // The owner's required wording, shown on the review screen before anything is signed.
 export const OPEN_LAUNCH_NOTE = 'Anyone can launch a Hooks coin. repo.ing doesn\'t review or vouch for coins. Check the mint address, creator and links before you buy.'

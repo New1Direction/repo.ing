@@ -3,9 +3,39 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { STANDARD_VIRTUAL_QUOTE, lockedLaunchFields, reservationInput } from '../app/lib/hooklab-native-launch-form.mjs'
+import { sameLaunchHook } from '../app/lib/hooklab-open-launch.mjs'
 
 const empty = { label: '', name: '', symbol: '', uri: '', capBps: '', creatorFeeBps: '', virtualQuote: '' }
 const invited = { name: 'Repo Cat Test', symbol: 'RCATT', uri: '', creatorFeeBps: 100, capBps: 200 }
+
+const selected = { ...invited, capBps: 0, selectedHook: { program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', flags: 255 } }
+test('selected reserve serializes explicit flags and cap zero, and reviewed identity wins', () => {
+  for (const flags of [1, 128, 255, '3']) {
+    const input = reservationInput(empty, { ...selected, selectedHook: { ...selected.selectedHook, flags } })
+    assert.deepEqual(input.selectedHook, { ...selected.selectedHook, flags: Number(flags) })
+    assert.equal(input.capBps, 0)
+  }
+  assert.deepEqual(reservationInput({ selectedHook: { program: 'bad', flags: 0 }, hookKind: 'max-wallet', capBps: 200 }, selected).selectedHook, selected.selectedHook)
+  assert.equal(reservationInput({ selectedHook: selected.selectedHook, hookKind: 'selected' }, invited).selectedHook, undefined)
+})
+
+test('selected reserve rejects malformed programs, flags, and any invented gate cap', () => {
+  for (const program of ['', 'bad', '0'.repeat(44), '11111111111111111111111111111111', `${selected.selectedHook.program} `])
+    assert.throws(() => reservationInput(empty, { ...selected, selectedHook: { ...selected.selectedHook, program } }), /program address/)
+  for (const flags of [0, 256, -1, 1.5, '', '1e2', '0x01', ' 1', true])
+    assert.throws(() => reservationInput(empty, { ...selected, selectedHook: { ...selected.selectedHook, flags } }), /flags must/)
+  assert.throws(() => reservationInput(empty, { ...selected, capBps: 200 }), /cap of 0/)
+  assert.throws(() => reservationInput(empty, { ...invited, capBps: 0 }), /Max-wallet cap/)
+})
+
+test('recovery compares the exact hook program, flags and cap without falling back to the gate', () => {
+  assert.equal(sameLaunchHook(selected, { ...selected, selectedHook: { ...selected.selectedHook, flags: '255' } }), true)
+  for (const changed of [invited, { ...selected, selectedHook: undefined }, { ...selected, capBps: 200 },
+    { ...selected, selectedHook: { ...selected.selectedHook, flags: 1 } },
+    { ...selected, selectedHook: { ...selected.selectedHook, program: 'So11111111111111111111111111111111111111112' } }])
+    assert.equal(sameLaunchHook(selected, changed), false)
+  assert.equal(sameLaunchHook(invited, { ...invited }), true)
+})
 
 test('an invited coin reserves with its approved details even though the form was never typed in', () => {
   assert.deepEqual(reservationInput(empty, invited),

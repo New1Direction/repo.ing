@@ -12,10 +12,10 @@ import { HookCoinFields, HookCoinPreview, HookLaunchNotes } from './hooklab-coin
 import { coinProblem } from './hooklab-launch-request'
 import { percent } from '../../src/hooklab-launch-menus.mjs'
 import { coinImageUrl, telegramHandle, websiteUrl, xHandle } from '../../src/hooklab-coin-profile.mjs'
-import { reservationInput } from '../lib/hooklab-native-launch-form.mjs'
+import { launchHookInput, reservationInput } from '../lib/hooklab-native-launch-form.mjs'
 import { signReviewedLaunch } from '../lib/hooklab-launch-wallet.mjs'
 import { OPEN_LAUNCH_NOTE, OPEN_LAUNCH_STEPS, TWO_APPROVALS, defaultOpenChoices, menuChoice, nextOpenLaunchAction, openCreationProblem, openLaunchCosts,
-  openLaunchPrice, openLaunchStatus, openMenus, solOrWallet } from '../lib/hooklab-open-launch.mjs'
+  openLaunchPrice, openLaunchStatus, openMenus, solOrWallet, sameLaunchHook, SELECTED_HOOK_NOTE } from '../lib/hooklab-open-launch.mjs'
 
 const REQUESTS = '/api/hook-lab/launch-requests', LAUNCH = '/api/hook-lab/native-launch'
 // The same key the guided launcher uses, so a launch started anywhere on this device resumes here.
@@ -31,7 +31,7 @@ async function post(url, body) {
   const response = await fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   const value = await response.json().catch(() => ({}))
   if (response.status === 401) throw Error('Your sign-in expired. Sign in again to continue.')
-  if (value.status === 'blocked') throw Error('Launching isn’t available right now. Nothing was signed.')
+  if (value.status === 'blocked') throw Error(value.error || value.blockers?.map(item => item.message).filter(Boolean).join(' ') || 'Launching isn’t available right now. Nothing was signed.')
   if (!response.ok || value.status !== 'available') throw Error(value.error || 'Launching isn’t available right now. Try again in a minute.')
   return value
 }
@@ -50,11 +50,14 @@ export function OpenLaunchSteps({ phase }) {
 
 // The review screen: only what the creator pays, the price, their rules, the graduation target and the note.
 export function OpenLaunchReview({ coin, image, profile, openCreation, costs, price, busy = false, onSign, onEdit, editLabel = 'Edit' }) {
-  const { rows, total, need } = openLaunchCosts(openCreation, costs), values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
+  // Gate account rent and transaction fees are not estimates for an unreviewed custom lifecycle.
+  const { rows, total, need } = openLaunchCosts(coin.selectedHook ? { launchFeeLamports: openCreation?.launchFeeLamports } : openCreation, coin.selectedHook ? {} : costs)
+  const values = openLaunchPrice(price), problem = openCreationProblem(openCreation)
   const amount = value => value ? <>{value.sol}{value.usd && <small>{value.usd}</small>}</> : 'Set when you sign'
   return <section className="launch-panel hooks-open-review" aria-labelledby="hooks-review-title">
     <h2 id="hooks-review-title">Check your launch</h2>
-    <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} profile={profile}/>
+    <HookCoinPreview image={image} name={coin.name} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} profile={profile}/>
+    {coin.selectedHook && <div role="note"><p>{SELECTED_HOOK_NOTE}</p><p>Program: <code style={{ overflowWrap: 'anywhere' }}>{coin.selectedHook.program}</code> · Flags: {coin.selectedHook.flags}</p><p>Inclusive fee policy (model 2). No max-wallet gate.</p></div>}
     <div className="hooks-open-review-grid">
       <div className="inner-card fee-breakdown"><h3>What you pay</h3>
         {rows.map(row => <div key={row.key} className="fee-line"><span>{row.label} <strong>{row.amount ?? 'shown in your wallet'}</strong>{row.note ? <small> {row.note}</small> : null}</span></div>)}
@@ -65,16 +68,16 @@ export function OpenLaunchReview({ coin, image, profile, openCreation, costs, pr
         <div className="fee-line"><span>Opening price<small>Its market value when trading opens</small></span><strong>{amount(values?.opening)}</strong></div>
         <div className="fee-line"><span>Graduates at<small>{values ? `Its market value once buyers put in ${values.raise}` : 'Its market value when the curve sells out'}</small></span><strong>{amount(values?.graduation)}</strong></div>
         <div className="fee-line"><span>Creator fee<small>On every buy and sell, in SOL</small></span><strong>{percent(coin.creatorFeeBps)}</strong></div>
-        <div className="fee-line"><span>Max per wallet<small>Until the coin graduates</small></span><strong>{percent(coin.capBps)}</strong></div>
+        <div className="fee-line"><span>{coin.selectedHook ? 'Custom hook' : 'Max per wallet'}<small>{coin.selectedHook ? 'Token fees require exact-message simulation' : 'Until the coin graduates'}</small></span><strong>{coin.selectedHook ? 'No max-wallet gate' : percent(coin.capBps)}</strong></div>
       </div>
     </div>
     <p className="hooks-open-note" role="note"><Info size={18} aria-hidden="true"/><span>{OPEN_LAUNCH_NOTE}</span></p>
     {problem && <p className="hooks-ended" role="status">{problem}</p>}
     <div className="launch-review-actions">
-      <button type="button" className="button primary" disabled={busy || !!problem} onClick={onSign}>{busy ? 'Starting…' : 'Sign and launch'}</button>
+      <button type="button" className="button primary" disabled={busy || !!problem} onClick={onSign}>{busy ? 'Starting…' : coin.selectedHook ? 'Check hook availability' : 'Sign and launch'}</button>
       {onEdit && <button type="button" className="button outline" disabled={busy} onClick={onEdit}>{editLabel}</button>}
     </div>
-    <p className="form-fineprint">{TWO_APPROVALS}</p>
+    <p className="form-fineprint">{coin.selectedHook ? 'Availability check only. Nothing will be signed.' : TWO_APPROVALS}</p>
   </section>
 }
 
@@ -130,18 +133,19 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
   const refresh = useCallback(async () => {
     try {
       const value = await available(); setAvailability(value)
-      setCoin(current => ({ ...current, creatorFeeBps: menuChoice(value.openCreation?.creatorFeeBps, current.creatorFeeBps, current.creatorFeeBps),
-        capBps: menuChoice(value.openCreation?.capBps, current.capBps, current.capBps) }))
+      setCoin(current => step !== 'coin' ? current : ({ ...current, creatorFeeBps: menuChoice(value.openCreation?.creatorFeeBps, current.creatorFeeBps, current.creatorFeeBps),
+        capBps: current.selectedHook || current.hookKind === 'selected' ? 0 : menuChoice(value.openCreation?.capBps, current.capBps, current.capBps) }))
       if (!session.signedIn) return
       const mine = await post(REQUESTS, { action: 'get' }); setRequest(mine.request ?? null)
     } catch (e) { if (!running.current) setError(e.message) }
-  }, [session.signedIn])
+  }, [session.signedIn, step])
   useEffect(() => { idsRef.current = readIds(); refresh(); const timer = setInterval(() => { if (!running.current) refresh() }, 30_000); return () => clearInterval(timer) }, [refresh])
   // A recorded coin that has not launched yet goes straight to its review; one mid-launch resumes its signing step.
   useEffect(() => {
     if (!request || running.current || step === 'live') return
-    if (request.status === 'queued') { setCoin(current => ({ ...current, name: request.name, symbol: request.symbol, creatorFeeBps: request.creatorFeeBps, capBps: request.capBps })); setStep('review') }
-    if (request.status === 'launching') { setStep('sign'); setCanRetry(true); setStatus('Your launch is waiting for you. Continue to finish it.') }
+    if (['queued', 'launching'].includes(request.status)) setCoin(current => ({ ...current, name: request.name, symbol: request.symbol, creatorFeeBps: request.creatorFeeBps, capBps: request.capBps, selectedHook: request.selectedHook, hookKind: request.selectedHook ? 'selected' : 'max-wallet' }))
+    if (request.status === 'queued' || request.selectedHook) setStep('review')
+    if (request.status === 'launching' && !request.selectedHook) { setStep('sign'); setCanRetry(true); setStatus('Your launch is waiting for you. Continue to finish it.') }
   }, [request?.id, request?.status])
 
   const api = body => post(LAUNCH, body)
@@ -162,7 +166,7 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
     const operationId = current.custodyOperationId ?? crypto.randomUUID()
     const ids = idsRef.current.operationId === operationId ? idsRef.current : { ...NO_IDS, operationId }
     retain(ids)
-    const input = reservationInput({}, { name: current.name, symbol: current.symbol, uri: current.uri, creatorFeeBps: current.creatorFeeBps, capBps: current.capBps })
+    const input = reservationInput({}, { name: current.name, symbol: current.symbol, uri: current.uri, creatorFeeBps: current.creatorFeeBps, capBps: current.capBps, selectedHook: current.selectedHook })
     const value = await api({ action: 'reserve', operationId: ids.operationId, ...input })
     if (value.operationId !== ids.operationId || !value.mint) throw Error('The launch changed while it was starting. Nothing was signed.')
     setMint(value.mint); if (value.pricing) setPricing(value.pricing)
@@ -197,6 +201,15 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
     try {
       if (!session.signedIn && !await session.signIn()) return
       let current = request && ['queued', 'launching'].includes(request.status) ? request : null
+      if (current && (coin.selectedHook || current.selectedHook || coin.hookKind === 'selected') && !sameLaunchHook(coin, current)) throw Error('The recorded hook configuration differs. Reload to recover the original launch; nothing was signed.')
+      if ((current ?? coin).selectedHook || coin.hookKind === 'selected') {
+        // Request storage is gate-only today. Send the explicit reserve configuration to the refusing
+        // endpoint, never create a gate request and never enter the signing driver for a custom hook.
+        const source = current ?? { ...coin, name: coin.name.trim(), uri: '' }
+        if (current?.status === 'launching') throw Error(SELECTED_HOOK_NOTE)
+        await reserve(source)
+        throw Error(SELECTED_HOOK_NOTE)
+      }
       if (!current) {
         const problem = coinProblem(coin) || openCreationProblem(openCreation); if (problem) throw Error(problem)
         const created = await post(REQUESTS, { action: 'create', requestId: crypto.randomUUID(), name: coin.name.trim(), symbol: coin.symbol, image: coin.image,
@@ -214,18 +227,19 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
     if (running.current) return
     running.current = true; setBusy(true); setError('')
     try { if (request?.status === 'queued') { const value = await post(REQUESTS, { action: 'cancel', requestId: request.id }); setRequest(value.request ?? null) }
-      retain(NO_IDS); setOperation(null); setMint(null); setPricing(null); setCoin(current => ({ ...EMPTY_COIN, creatorFeeBps: current.creatorFeeBps, capBps: current.capBps })); setStep('coin') }
+      retain(NO_IDS); setOperation(null); setMint(null); setPricing(null); setCoin(current => ({ ...EMPTY_COIN, creatorFeeBps: current.creatorFeeBps, capBps: defaultOpenChoices(openCreation).capBps })); setStep('coin') }
     catch (e) { setError(e.message) } finally { running.current = false; setBusy(false) }
   }
   const toReview = event => {
     event.preventDefault()
     const problem = coinProblem(coin) || openCreationProblem(openCreation)
     if (problem) { setError(problem); return }
+    try { launchHookInput(coin) } catch (e) { setError(e.message); return }
     setError(''); setStep('review')
   }
 
   const recorded = request && ['queued', 'launching', 'launched'].includes(request.status) ? request : null
-  const shown = recorded && step !== 'coin' ? { name: recorded.name, symbol: recorded.symbol, creatorFeeBps: recorded.creatorFeeBps, capBps: recorded.capBps } : { ...coin, name: coin.name.trim() }
+  const shown = recorded && step !== 'coin' ? { name: recorded.name, symbol: recorded.symbol, creatorFeeBps: recorded.creatorFeeBps, capBps: recorded.capBps, selectedHook: recorded.selectedHook } : { ...coin, name: coin.name.trim() }
   const image = recorded?.profile && step !== 'coin' ? coinImageUrl('', recorded.id, 128) : coin.image
   const phase = { coin: 0, review: 1, sign: 2, live: OPEN_LAUNCH_STEPS.length }[step]
   const paused = initialBlockers.length > 0 || !!openCreationProblem(openCreation)
@@ -237,10 +251,10 @@ export function HookOpenLaunch({ genesisHash, initialBlockers = [], initial = {}
       <div className="launch-columns">
         <fieldset className="launch-fields launch-fieldset" disabled={busy}>
           <h2>Your coin</h2><p className="launch-subtitle">How people will see it on repo.ing.</p>
-          <HookCoinPreview image={coin.image} name={coin.name.trim()} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} profile={previewProfile(coin)}/>
-          <HookCoinFields form={coin} set={set} disabled={busy} onImageBusy={setImageBusy} menus={menus}/>
+          <HookCoinPreview image={coin.image} name={coin.name.trim()} symbol={coin.symbol} capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} profile={previewProfile(coin)}/>
+          <HookCoinFields form={coin} set={set} disabled={busy} onImageBusy={setImageBusy} menus={menus} allowSelectedHook/>
         </fieldset>
-        <div className="launch-side"><HookLaunchNotes capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} launchPrice={availability?.launchPrice} open/></div>
+        <div className="launch-side"><HookLaunchNotes capBps={coin.capBps} creatorFeeBps={coin.creatorFeeBps} selectedHook={coin.selectedHook} launchPrice={availability?.launchPrice} open/></div>
       </div>
       {(error || session.error) && <p className="inline-error hooks-submit-error" role="alert">{error || session.error}</p>}
       <button type="submit" className="button primary launch-submit" disabled={busy || imageBusy}>{imageBusy ? 'Preparing image…' : 'Review your launch'}</button>

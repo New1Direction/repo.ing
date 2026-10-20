@@ -27,6 +27,16 @@ const openCreation = { native: true, open: true, paused: false, creatorFeeBps: [
 const availability = { status: 'available', open: true, openCreation, costs: { networkFeeLamports: openLaunchNetworkFee('0') }, launchPrice: { solUsdMicros: '105630000', virtualQuote: '53251917070' } }
 const coin = { name: 'Repo Cat', symbol: 'RCAT', image: 'data:image/png;base64,AAAA', description: '', x: '', website: '', telegram: '', creatorFeeBps: 100, capBps: 200 }
 
+test('custom hook configuration and review never advertise a signing-ready gate launch', () => {
+  const custom = { ...coin, hookKind: 'selected', capBps: 0, selectedHook: { program: 'So11111111111111111111111111111111111111112', flags: 129 } }
+  const fields = html(h(HookOpenLaunch, { genesisHash, initial: { availability, coin: custom } }), { wallet: true })
+  for (const pattern of [/Immutable hook program/, /Known token callback flags/, /value="129"/, /Inclusive fee policy \(model 2\)/, /registry must be prepared for the reserved mint/, /hook’s own interface/]) assert.match(fields, pattern)
+  assert.doesNotMatch(fields, /aria-label="Max wallet block"|Max 0% per wallet/)
+  const review = html(h(OpenLaunchReview, { coin: custom, openCreation, onSign() {} }))
+  for (const pattern of [/Check hook availability/, /Nothing will be signed/, /No max-wallet gate/, /Token fees require exact-message simulation/, /Flags: 129/]) assert.match(review, pattern)
+  assert.doesNotMatch(review, /Sign and launch|Approve twice|<input/)
+})
+
 test('the review screen pays out only the essentials, every figure from the chain or server', () => {
   // The economics review's exact outlay at mainnet rent: 3,713,480 setup rent + 23,891,240 creation rent, the 0.02 SOL
   // creation fee, and three plus two signatures.
