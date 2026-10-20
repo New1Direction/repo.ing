@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Keypair, VersionedTransaction, VersionedMessage } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { fixture, key, pk } from './fixtures/selected-hook-preparation.mjs'
+import { fixture, key, pk, sha } from './fixtures/selected-hook-preparation.mjs'
+import { selectedHookPreparationRpcProviders } from './fixtures/selected-hook-preparation-receipts.mjs'
 import { deriveCustomPreparationRecord, verifyCustomPreparationEvidence, collectCustomPreparationEvidence } from '../src/hooklab-custom-preparation-receipts.mjs'
 
 test('selected preparation derives config-only settlement, not gate initialization', () => {
@@ -14,8 +15,8 @@ test('selected preparation derives config-only settlement, not gate initializati
   assert.deepEqual(r.plan.review.requiredSigners, [f.request.creator, f.request.selectedConfig])
 })
 
-function evidence() {
-  const input = fixture(), record = deriveCustomPreparationRecord(input, input.profile.expectedSha256)
+function evidence(input = fixture()) {
+  const record = deriveCustomPreparationRecord(input, input.profile.expectedSha256)
   const tx = new VersionedTransaction(VersionedMessage.deserialize(Buffer.from(record.plan.review.messageBase64, 'base64')))
   tx.sign([31, 33].map(n => Keypair.fromSeed(Buffer.alloc(32, n))))
   const signedTransactionBase64 = Buffer.from(tx.serialize()).toString('base64')
@@ -107,4 +108,25 @@ test('fake read-only transport uses generalized inventory and preserves exact si
   assert.equal(r.result.reasonCode, 'MATCHED')
   providers[0].connection.getTransaction = async () => null
   assert.equal((await collectCustomPreparationEvidence({ ...f, providers })).result.reasonCode, 'READ_UNAVAILABLE')
+})
+
+test('real-sized sparse executable snapshots fit the unchanged four-MiB typed-response bound', async () => {
+  const input = fixture(), profile = JSON.parse(input.profile.json)
+  for (const [role, length] of [['launch', 836504], ['hook', 226176]]) {
+    const elf = Buffer.alloc(length); Buffer.from([127, 69, 76, 70, 7, 9, 3, 2]).copy(elf)
+    const address = input.observations[0].accounts[role === 'launch' ? 2 : 3].address
+    for (const observation of input.observations) {
+      const account = observation.accounts.find(a => a.address === address).account
+      const data = Buffer.alloc(45 + length)
+      Buffer.from(account.dataBase64, 'base64').subarray(0, 45).copy(data); elf.copy(data, 45)
+      account.dataBase64 = data.toString('base64')
+    }
+    if (role === 'launch') { profile.elfSha256.launch = sha(elf); input.profile.elfLengths.launch = length }
+    else { input.hookPin.elfSha256 = sha(elf); input.hookPin.elfLength = length }
+  }
+  input.profile.json = JSON.stringify(profile); input.profile.expectedSha256 = sha(input.profile.json)
+  const f = evidence(input), { providers } = selectedHookPreparationRpcProviders(f)
+  const collected = await collectCustomPreparationEvidence({ ...f, providers })
+  assert.equal(collected.result.reasonCode, 'MATCHED')
+  assert.ok(collected.observations.every(o => o.errorCode === null))
 })

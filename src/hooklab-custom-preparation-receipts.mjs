@@ -410,7 +410,14 @@ function captureHash(response) {
     if (typeof value === 'string') {
       check(value.length <= max, 'EVIDENCE_LIMIT'); bytes += Buffer.byteLength(JSON.stringify(value))
     } else if (value instanceof PublicKey) bytes += 46
-    else if (Buffer.isBuffer(value)) bytes += 26 + value.length * 4
+    else if (Buffer.isBuffer(value)) {
+      // Buffer.toJSON expands each byte to a decimal plus a separator. Count
+      // those digits without allocating the JSON; a worst-case four-byte
+      // estimate rejects valid, sparse program snapshots below the same cap.
+      check(value.length <= max, 'EVIDENCE_LIMIT')
+      bytes += 26
+      for (const byte of value) bytes += 2 + Number(byte >= 10) + Number(byte >= 100)
+    }
     else if (value instanceof Uint8Array) bytes += 2 + value.length * 16
     else if (value === null || typeof value === 'boolean' || typeof value === 'number' && Number.isFinite(value)) bytes += 24
     else {
