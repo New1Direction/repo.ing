@@ -17,9 +17,12 @@ const PINS = Object.freeze({
 })
 const trim = bytes => { let end = bytes.length; while (end && bytes[end - 1] === 0) end--; return bytes.subarray(0, end) }
 
-export function selectedFixtureStack({ upgradeAuthority }) {
+export function selectedFixtureStack({ upgradeAuthority, kind = process.env.HOOKS_E2E_SELECTED_FIXTURE ?? 'test' }) {
+  if (!['test', 'production-receipt'].includes(kind)) throw Error('Unknown selected-hook fixture')
+  const receipt = kind === 'production-receipt'
+  const pins = receipt ? { ...PINS, selected: ['target/production-transfer-receipt/transfer_receipt_hook.so', '5bf22f1aa461a11e7f755d0cb31129afc9b356e2a37d88cacff1ed7577613e7d'] } : PINS
   const read = file => readFileSync(path.join(ROOT, file))
-  const bytes = Object.fromEntries(Object.entries(PINS).map(([role, [file, digest]]) => {
+  const bytes = Object.fromEntries(Object.entries(pins).map(([role, [file, digest]]) => {
     const value = read(file)
     if (sha256(value) !== digest || value.subarray(0, 4).toString('hex') !== '7f454c46') throw Error(`Selected acceptance ${role} ELF differs: ${file}`)
     return [role, value]
@@ -37,8 +40,8 @@ export function selectedFixtureStack({ upgradeAuthority }) {
       idlSha256: Object.fromEntries(Object.entries(idls).map(([role, value]) => [role, sha256(value)])), open: true } })
   // solana-test-validator's loader preserves full ELF bytes. The selected adapter
   // pins exactly that immutable ProgramData payload, not a trimmed release hash.
-  const selectedHookPin = { program: SELECTED_PROGRAM, elfSha256: sha256(bytes.selected), elfLength: bytes.selected.length }
+  const selectedHookPin = { program: receipt ? '4P9UnqR2FgD1XjkcpyWzabQCrhPDTQkZy8631jvTnYqL' : SELECTED_PROGRAM, elfSha256: sha256(bytes.selected), elfLength: bytes.selected.length }
   return Object.freeze({ name: stack.build.name, stack, elfs, idls, ids: stack.programs, quoteMint: stack.quoteMint,
     elfSha256: Object.fromEntries(Object.entries(elfs).map(([role, value]) => [role, sha256(value)])),
-    selected: { bytes: bytes.selected, pin: selectedHookPin, flags: 3, source: 'programs/hook_tester/src/lib.rs' } })
+    selected: { bytes: bytes.selected, pin: selectedHookPin, flags: 3, source: receipt ? 'programs/transfer_receipt_hook/src/lib.rs' : 'programs/hook_tester/src/lib.rs' } })
 }

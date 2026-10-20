@@ -1,4 +1,4 @@
-// The test-only hook's own public init_script interface. This is a creator's
+// Each fixture hook's own public registry interface. This is a creator's
 // external registry preparation, NOT a substitute for the application's config
 // preparation / launch signing lifecycle. Only synthetic faucet-funded keys.
 import { createHash } from 'node:crypto'
@@ -12,8 +12,9 @@ export const selected = () => {
   if (!['127.0.0.1', 'localhost'].includes(new URL(stack.validator.url).hostname)) throw Error('Selected fixture requires loopback validator')
   return stack.selectedHook
 }
+const isReceipt = () => selected().source === 'programs/transfer_receipt_hook/src/lib.rs'
 const address = (mint: string, seed: string) => PublicKey.findProgramAddressSync([Buffer.from(seed), new PublicKey(mint).toBuffer()], new PublicKey(selected().pin.program))[0]
-export const scriptAddress = (mint: string) => address(mint, 'script')
+export const scriptAddress = (mint: string) => address(mint, isReceipt() ? 'receipts' : 'script')
 export const registryAddress = (mint: string) => address(mint, 'bordrless-hook-accounts')
 
 export async function initializeSelectedRegistry(creator: Keypair, mint: string): Promise<string> {
@@ -21,14 +22,17 @@ export async function initializeSelectedRegistry(creator: Keypair, mint: string)
   const key = (pubkey: PublicKey, isWritable = false, isSigner = false) => ({ pubkey, isWritable, isSigner })
   const instruction = new TransactionInstruction({ programId: new PublicKey(selected().pin.program), keys: [
     key(creator.publicKey, true, true), key(new PublicKey(mint)), key(scriptAddress(mint), true), key(registryAddress(mint), true), key(SystemProgram.programId),
-  ], data: Buffer.concat([createHash('sha256').update('global:init_script').digest().subarray(0, 8), Buffer.alloc(4)]) }) // empty extras Vec
+  ], data: isReceipt() ? createHash('sha256').update('global:prepare').digest().subarray(0, 8)
+    : Buffer.concat([createHash('sha256').update('global:init_script').digest().subarray(0, 8), Buffer.alloc(4)]) }) // test-only empty extras Vec
   return sendAndConfirmTransaction(connection, new Transaction().add(instruction), [creator], { commitment: 'finalized' })
 }
 
 export async function scriptCalls(mint: string): Promise<bigint> {
   const info = await connection.getAccountInfo(scriptAddress(mint), 'finalized')
   expect(info?.owner.toBase58()).toBe(selected().pin.program)
-  // Script: discriminator, version, bump, authority, key, calls (u64).
+  // Receipt: discriminator, version, bump, pinned token, mint, calls (u64).
+  // Test Script: discriminator, version, bump, authority, key, calls (u64).
+  if (isReceipt()) expect(info!.data.length).toBe(82)
   return Buffer.from(info!.data).readBigUInt64LE(74)
 }
 

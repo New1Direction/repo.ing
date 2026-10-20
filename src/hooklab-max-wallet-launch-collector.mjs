@@ -20,6 +20,13 @@ const check=(v,m)=>{if(!v)throw Object.assign(Error(m),{code:'MAX_WALLET_LAUNCH_
 const integer=v=>{check(Number.isSafeInteger(v)&&v>=0,'Invalid RPC integer');return v}
 const pk=v=>new PublicKey(v)
 const bps=z.number().int().min(0).max(9999)
+// The operator bundle's approved hash adopts this record; these hashes alone are not owner consent.
+const selectedHookReleaseSchema=z.object({
+ schema:z.literal('repoing/selected-hook-release/1'),approvalReference:z.string().min(1).max(256),
+ sourceCommit:z.string().regex(/^[a-f0-9]{40}$/),profileSha256:hookDigest,dossierSha256:hookDigest,
+ hookPin:selectedHookPinSchema,acceptanceSha256:hookDigest,releaseVerificationSha256:hookDigest,
+}).strict()
+export const selectedHookReleaseEvidenceSchema=selectedHookReleaseSchema.pick({hookPin:true,acceptanceSha256:true,releaseVerificationSha256:true})
 // A server-owned record of operational approval, not a cryptographic protocol envelope.
 // No fee defaults: the currently implemented adapter only supports creator/author zero.
 export const maxWalletOperatorConfigSchema=z.object({
@@ -31,6 +38,7 @@ export const maxWalletOperatorConfigSchema=z.object({
  reviewer:hookAddress,treasury:hookAddress,lookupTable:z.object({address:hookAddress,sha256:hookDigest}).strict().nullable(),
  lamportsPerSignature:hookRawAmount.refine(v=>BigInt(v)>0n),
  selectedHookPin:selectedHookPinSchema.optional(),
+ selectedHookRelease:selectedHookReleaseSchema.optional(),
 }).strict()
 export const inclusiveMaxWalletOperatorConfigSchema=maxWalletOperatorConfigSchema.extend({
  schema:z.literal('repoing/inclusive-max-wallet-operator-config/1'),feeModel:z.literal(2),
@@ -67,6 +75,19 @@ export function validateMaxWalletOperatorBindings({config,profile,dossierJson,co
   if(role==='gate')check(pin.upgradeAuthority===null,'Gate must be immutable')
  }
  return {config:c,profile:p,dossier:d}
+}
+export function validateSelectedHookReleaseBindings(input){
+ const bound=validateMaxWalletOperatorBindings(input),{config:c,profile:p,dossier:d}=bound
+ const r=selectedHookReleaseSchema.parse(c.selectedHookRelease)
+ check(d.schema==='repoing/production-observation/2'&&p.stack?.open===true&&!p.programs.bridge&&c.feeModel===2
+  &&c.launchLookupTable,'Selected production release needs the independent open stack')
+ check(r.approvalReference===c.approvalReference&&r.sourceCommit===p.sourceCommit&&r.profileSha256===c.profileSha256
+  &&r.dossierSha256===c.dossierSha256&&isDeepStrictEqual(r.hookPin,c.selectedHookPin),'Selected production release binding differs')
+ check(![...Object.values(p.programs),p.quoteMint,p.stack.kitProgram,'11111111111111111111111111111111',
+  'FbAuVaTqVPzs43KdsQE8ByfbMJdRFABanya3fuEVjdRM'].includes(r.hookPin.program),'Selected production hook is a stack role or acceptance fixture')
+ check(['launch-config','swap-config'].every(role=>d.accounts.some(a=>a.role===role&&a.binding==='config-counters-v1')),
+  'Selected production release needs stable config bindings')
+ return bound
 }
 export async function collectMaxWalletLaunchReview(input){
  try{return await collectLaunchReview(input)}

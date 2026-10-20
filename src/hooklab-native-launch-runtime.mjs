@@ -10,6 +10,7 @@ import { coLocatedMaxWalletLaunchResolver } from './hooklab-max-wallet-launch-re
 import { reviewNewMintPreparationCandidate, reviewNewMintSelectedHookPreparationCandidate } from './hooklab-new-mint-preparation.mjs'
 import { parseMaxWalletLaunchRequest } from './hooklab-max-wallet-launch.mjs'
 import { isLocalExecutionDossier, localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
+import { validateSelectedHookReleaseBindings } from './hooklab-max-wallet-launch-collector.mjs'
 import { readOpenCreation } from './hooklab-open-creation.mjs'
 import { refuseUnsupportedSelectedHook } from './hooklab-selected-hook.mjs'
 // openLaunches (HOOK_OPEN_LAUNCHES): self-serve launches. Anyone may launch while open creation is on chain; the launch
@@ -19,8 +20,13 @@ export function createNativeLaunchRuntime(pool,{enabled=false,origin,ownerCustod
  config,profile,dossierJson,connections,keyRing,activeKeyId,adminSigner,expiryObserver,preparationLimits,launchLimits,reviewTiming,launchLookupTable,nativeLaunches=false,openLaunches=false,selectedHooksEnabled=false,clock=Date.now}={}){
  if(enabled!==true||!ownerCustodyApproved||!operatorDeploymentApproved||!economicsApproved)throw Error('Explicit complete release approvals required')
  config=structuredClone(config);profile=structuredClone(profile);preparationLimits=structuredClone(preparationLimits);launchLimits=structuredClone(launchLimits)
- // Acceptance is opt-in and loopback-only until the complete selected lifecycle is adopted.
- if(selectedHooksEnabled&&(!localAcceptanceNetwork()||!openLaunches||!config.selectedHookPin))refuseUnsupportedSelectedHook()
+ if(selectedHooksEnabled){
+  if(!openLaunches||!config.selectedHookPin)refuseUnsupportedSelectedHook()
+  const local=localAcceptanceNetwork()
+  if(local){
+   if(!isLocalExecutionDossier(JSON.parse(dossierJson))||!connections.every(x=>local.endpoints.includes(x.connection.rpcEndpoint)))refuseUnsupportedSelectedHook()
+  }else validateSelectedHookReleaseBindings({config,profile,dossierJson,connections})
+ }
  if(openLaunches){if(nativeLaunches!==true||!config.launchLookupTable)throw Error('Open launches need native launches and the shared launch table')}
  else if(!adminSigner||typeof adminSigner.sign!=='function'||adminSigner.address!==config.reviewer)throw Error('Exact approved admin signer required')
  if(JSON.parse(profile.json).buildFeature==='inclusive-fees-candidate'){

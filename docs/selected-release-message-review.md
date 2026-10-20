@@ -4,8 +4,13 @@
 message review candidate**, not a signed transaction or release approval. It is not
 the missing historical `final.sh`, an acceptance runner, or a custody integration.
 The requested READY FOR OWNER SIGNING milestone is **not established** by this tool.
-The nongate local application acceptance now passes; current production public
-inputs, candidate adoption and independent message review remain blockers.
+The nongate local application acceptance passes. Public production exports have
+since been collected; the updated staged review packet is
+`.amp/in/artifacts/selected-release-signing-packet/PRODUCTION-V1-OWNER-REVIEW.md`.
+Candidate adoption, funding, live-stage preconditions and owner signatures remain
+gates. The packet uses the separate loader/Step 8 planners for explicit extension,
+seeded uploads, payer refunds and paused setup; this conservative v1 interface and
+its unsupported cases remain unchanged. Neither tool makes a message signable.
 
 ## Interface
 
@@ -87,15 +92,15 @@ UpgradeableLoader Upgrade (tag 3): ProgramData(w), Program(w), Buffer(w), Spill(
 Rent, Clock, authority(signer). No lookup tables or arbitrary instruction input.
 Tests parse wire bytes independently, including signer/writable flags and ordering.
 
-## Unmet current inputs and external gates
+## Conservative-v1 inputs and subsequent staged preparation
 
-No current release envelope was supplied or generated in this task. Local source,
+No complete conservative-v1 upgrade envelope was supplied or generated. Local source,
 feature and reproduced ELF inventories exist in the contract checkout's
 `docs/selected-hook-release-preparation.md`; owner adoption is still required.
 The real nongate browser/validator lifecycle passed 7/7 and separate exact-message
 and stale-review refusal acceptance passed 2/2. See
 `scripts/e2e/hooks-native/SELECTED-ACCEPTANCE.md`; these are loopback-only results,
-not current production evidence or support for arbitrary fee hooks. Still needed:
+not current production evidence or support for arbitrary fee hooks. This v1 still requires:
 approved source/features/full ELF inventory; current finalized
 cluster/genesis/provider/slot-stamped Program/ProgramData exports; existing approved
 buffer identity, exact payload/padding and authority; public payer/spill/authority
@@ -105,3 +110,44 @@ independently decode/review the exact message hash, simulate against current sta
 and recheck all inputs before custody. Signing/submission remain separately reviewed
 future actions. The tool cannot remove these gates even if extra acceptance flags
 are supplied. No real release message or authorization was produced by its tests.
+
+Subsequent permitted read-only mainnet collection established current authorities,
+capacities, payer balance/rent, absent Config/Governance accounts and absent proposed
+buffers. All six planned fee classes match both providers' quotes. A separate
+1,817-step local rehearsal passed, with a hypothetical top-up and synthetic future
+table slots. The owner is **not** asked to gather exports. See the current packet
+for ordered signing roles, exact rehearsal messages, expected refunds, budget and
+the remaining owner-only decisions. No buffer has been uploaded and no mainnet
+upgrade has occurred.
+
+## Production selected release gate
+
+The production runtime now accepts `HOOK_SELECTED_HOOKS_ENABLED=true` only with a
+complete owner-adopted operator bundle, never with local acceptance settings.
+`config.selectedHookRelease` uses schema `repoing/selected-hook-release/1` and binds
+the approval reference, full contract source commit, profile and current production
+dossier hashes, exact independent immutable hook pin, acceptance evidence hash and
+deployed-release verification hash. The existing whole-bundle approved SHA256 is
+the adoption boundary; evidence hashes alone are not authenticated owner consent.
+Absent or inconsistent evidence leaves selected signing refused.
+
+The read-only `collectStackProductionBundle` path forwards
+`selectedHookReleaseEvidence: {hookPin, acceptanceSha256, releaseVerificationSha256}`
+to the operator collector. It verifies the selected Program/ProgramData link,
+immutable authority and complete executable bytes on both providers. It derives
+the release record's source/profile/dossier bindings from its own freshly collected
+output, avoiding stale caller-supplied dossier hashes. Include that record before
+serializing and adopting the complete bundle; never amend approved bundle bytes.
+The generic stack CLI remains generic; release preparation uses the collector API.
+
+The proposed production receipt hook is not `hook_tester`: it has fixed authenticated
+transfer telemetry, no tax/cap/script/admin policy and a separately approved permanent
+freeze. Exact source, features, executable hash, public identity, reproduction and
+197-step disposable loader rehearsal are recorded in the production-V1 packet.
+The preserved 1817-step upgrade/setup/table/activation rehearsal is reused, not
+restarted. The combined baseline is 2014 review transactions; bounded canary funding
+is separate and reconciled in `production-v1-budget.json`. All historical/rehearsal
+messages remain **NOT SIGNABLE**. Fresh pre-sign message, fee, recipient, current
+account readback and independent decode/simulation are mandatory at each live stage.
+No owner custody, keys, signature, program upload, deployment or activation was used
+to establish these results.

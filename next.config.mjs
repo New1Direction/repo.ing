@@ -16,6 +16,8 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  // Each disposable acceptance site owns its build/lock; leave other dev servers alone.
+  ...(process.env.HOOK_LOCAL_ACCEPTANCE === 'true' ? { distDir: `.amp/in/e2e-next-${new URL(process.env.APP_ORIGIN).port}` } : {}),
   // Native read-only SDK uses createRequire/new URL for exact-byte IDLs and manifest.
   serverExternalPackages: ['@repo-ing/hooklab-readonly', '@repo-ing/hooklab-guarded-candidate', '@repo-ing/hooklab-hardened-candidate', '@repo-ing/hooklab-production-candidate'],
   outputFileTracingIncludes: {

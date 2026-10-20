@@ -11,6 +11,7 @@ import { openLaunchRent, openLaunchesEnabled, siteLaunchesEnabled } from './hook
 import { isStackProfile } from './hooklab-stack.mjs'
 import { localAcceptanceNetwork } from './hooklab-local-acceptance.mjs'
 import { selectedHookPinSchema } from './hooklab-max-wallet-launch.mjs'
+import { validateSelectedHookReleaseBindings } from './hooklab-max-wallet-launch-collector.mjs'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
 const refuse=message=>{throw Object.assign(Error(message),{code:'PRODUCTION_BOOTSTRAP_REFUSED'})}
 const need=(ok,message)=>{if(!ok)refuse(message)}
@@ -117,6 +118,20 @@ export async function productionSettings({env=process.env,readBundle=path=>readF
   ...productionKeyRing(env)}
 }
 
+export function selectedHookSettings({env=process.env,stack,open,connections=stack?.connections}){
+ const local=env.HOOK_LOCAL_SELECTED_HOOKS_ENABLED==='true',production=env.HOOK_SELECTED_HOOKS_ENABLED==='true'
+ if(!local&&!production)return {selectedHooksEnabled:false,selectedHookPin:null}
+ need(!(local&&production),'local and production selected-hook switches cannot be combined')
+ need(stack&&open,'selected hooks require our open-launch stack')
+ if(local){
+  need(localAcceptanceNetwork(env),'local selected hooks require local acceptance')
+  return {selectedHooksEnabled:true,selectedHookPin:selectedHookPinSchema.parse(JSON.parse(env.HOOK_LOCAL_SELECTED_HOOK_PIN_JSON??'null'))}
+ }
+ need(!localAcceptanceNetwork(env),'production selected hooks cannot use local acceptance')
+ const bound=validateSelectedHookReleaseBindings({...stack,connections})
+ return {selectedHooksEnabled:true,selectedHookPin:bound.config.selectedHookPin}
+}
+
 export async function bootstrapProductionHooks({env=process.env}={}){
  if(env.HOOK_PRODUCTION_BOOTSTRAP!=='true')return {installed:false}
  const [{createHookLabDatabasePool},{walletIdentityConfiguration},{createNativeLaunchRuntime},{installNativeLaunchRuntime,nativeLaunchRuntime},{createInclusiveTradeRuntime,installInclusiveTradeRuntime}]=await Promise.all([
@@ -136,9 +151,7 @@ export async function bootstrapProductionHooks({env=process.env}={}){
  const launchLookupTable=remoteLaunchLookupTable(pool,{envelope:s.bundle.profile,connections:s.connections,adminAddress:s.bundle.config.reviewer})
  // Open launches use the bundle's one shared launch table and need no admin co-signature; the owner's Mac is not involved.
  const open=openLaunchesEnabled(env)
- const selectedHooksEnabled=env.HOOK_LOCAL_SELECTED_HOOKS_ENABLED==='true'
- need(!selectedHooksEnabled||localAcceptanceNetwork(env),'selected hooks are acceptance-only pending full verification')
- const selectedHookPin=selectedHooksEnabled?selectedHookPinSchema.parse(JSON.parse(env.HOOK_LOCAL_SELECTED_HOOK_PIN_JSON??'null')):null
+ const {selectedHooksEnabled,selectedHookPin}=selectedHookSettings({env,stack:own,open,connections:s.connections})
  if(selectedHooksEnabled){need(own&&open,'selected hooks require our open-launch stack');own.config={...own.config,selectedHookPin}}
  const launchRuntime=async()=>createNativeLaunchRuntime(pool,{...base,...(open?{...own,openLaunches:true}:{launchLookupTable}),selectedHooksEnabled,reviewTiming:s.reviewTiming,nativeLaunches:env.HOOK_NATIVE_LAUNCHES_ENABLED==='true',...await s.launchLimits()})
  const native=await launchRuntime()

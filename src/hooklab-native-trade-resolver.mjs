@@ -4,7 +4,7 @@
 import {createHash} from 'node:crypto'
 import {isDeepStrictEqual} from 'node:util'
 import {PublicKey,VersionedMessage,VersionedTransaction} from '@solana/web3.js'
-import {validateMaxWalletOperatorBindings} from './hooklab-max-wallet-launch-collector.mjs'
+import {validateMaxWalletOperatorBindings,validateSelectedHookReleaseBindings} from './hooklab-max-wallet-launch-collector.mjs'
 import {inspectProductionEvidence,tradeEvidenceAddresses} from './hooklab-production-observer.mjs'
 import {compileNativeSwapReview,nativeSwapInventory,nativeSwapRequestSchema,selectedNativeHookPinSchema,selectedNativeHookEvidence} from './hooklab-native-swap.mjs'
 import {collectNativeTradeSettlement} from './hooklab-native-trade-settlement.mjs'
@@ -29,7 +29,15 @@ export const HOLDING_RENT_CEILING_LAMPORTS=4000000n
 export function nativeTradeResolver({config,profile,dossierJson,connections,limits,selectedHookPin=config?.selectedHookPin??null,selectedNativeTradingEnabled=false,clock=Date.now,reviewedProfiles=REVIEWED_PROFILE_SHA256}){
  const selectedSettings=selectedHookPin===null?null:selectedNativeHookPinSchema.parse(selectedHookPin)
  const selectedOpen=selectedNativeTradingEnabled===true&&selectedSettings!==null
- if(selectedOpen)check(isLocalExecutionDossier(JSON.parse(dossierJson))&&connections.every(x=>localAcceptanceNetwork().endpoints.includes(x.connection.rpcEndpoint)))
+ if(selectedOpen){
+  const local=localAcceptanceNetwork()
+  if(local)check(isLocalExecutionDossier(JSON.parse(dossierJson))&&connections.every(x=>local.endpoints.includes(x.connection.rpcEndpoint)))
+  else{
+   check(config?.selectedHookRelease)
+   const approved=validateSelectedHookReleaseBindings({config,profile,dossierJson,connections})
+   check(isDeepStrictEqual(approved.config.selectedHookPin,selectedSettings))
+  }
+ }
  const retained=structuredClone({config,profile,dossierJson,limits,...(selectedSettings?{selectedHookPin:selectedSettings,selectedNativeTradingEnabled:selectedOpen}:{})}),providers=connections.map(x=>({...x}))
  const bound=validateMaxWalletOperatorBindings({...retained,connections:providers}),p=bound.profile
  check(bound.config.feeModel===2&&bound.profile.buildFeature==='inclusive-fees-candidate')

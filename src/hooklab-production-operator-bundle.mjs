@@ -16,6 +16,7 @@ import { sharedTradeAddresses } from './hooklab-owner-launch-tables.mjs'
 import { tokenElfLengthOf } from './hooklab-stack.mjs'
 import { openLaunchTableAddresses } from './hooklab-max-wallet-launch.mjs'
 import { CREATOR_FEE_BPS_CHOICES,DEFAULT_CREATOR_FEE_BPS,WALLET_CAP_BPS_CHOICES,DEFAULT_WALLET_CAP_BPS,CREATOR_FEE_CEILING_BPS } from './hooklab-launch-menus.mjs'
+import { selectedHookReleaseEvidenceSchema,validateSelectedHookReleaseBindings } from './hooklab-max-wallet-launch-collector.mjs'
 export const MAINNET_GENESIS='5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
 const LOADER='BPFLoaderUpgradeab1e11111111111111111111111'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex')
@@ -63,11 +64,13 @@ export async function readBoth(connections,addresses){
 // trustDomains: [{provider,trustDomain,origin}] reviewed by the operator, same order
 // launchTable: the owner's shared launch table for open (self-serve) launches; required for the open-creation build, which
 // is the only one with them. It must be frozen and hold exactly the constant addresses every open launch shares.
-export async function collectProductionOperatorBundle({connections,trustDomains,lookupTable,launchTable=null,reviewer,treasury,approvalReference,artifacts=productionArtifacts(),network=PRODUCTION_NETWORK}){
+export async function collectProductionOperatorBundle({connections,trustDomains,lookupTable,launchTable=null,reviewer,treasury,approvalReference,artifacts=productionArtifacts(),network=PRODUCTION_NETWORK,selectedHookReleaseEvidence=null}){
  const openBuild=artifacts.build==='open-36dd07e'||artifacts.open===true
  need(openBuild===(launchTable!==null),openBuild?'the open-creation build needs the shared launch table (--launch-table)':'only the open-creation build takes a shared launch table')
  need(Array.isArray(connections)&&connections.length===2&&new Set(connections.map(c=>c.provider)).size===2,'two distinct providers required')
  const {genesisHash,local}=checkedNetwork(network,connections)
+ const selected=selectedHookReleaseEvidence===null?null:selectedHookReleaseEvidenceSchema.parse(selectedHookReleaseEvidence)
+ need(!selected||(!local&&openBuild),'selected hook release evidence is for production open stacks only')
  // A local validator is one trust domain behind two labelled endpoints.
  need(isDeepStrictEqual(connections.map(c=>c.provider),trustDomains.map(t=>t.provider))&&(local||new Set(trustDomains.map(t=>t.trustDomain)).size===2),'two independent reviewed trust domains required')
  for(const [i,{connection}] of connections.entries())need(new URL(connection.rpcEndpoint).origin===new URL(trustDomains[i].origin).origin,'provider origin differs from its reviewed trust domain')
@@ -78,7 +81,15 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
   idls:Object.fromEntries(Object.entries(idls).map(([role,bytes])=>[role,bytes.toString('base64')])),elfLengths}
  const programRoles=['launch','swap','gate','token'],programData=programRoles.map(role=>pda(LOADER,pk(P[role]).toBuffer()))
  const accountRoles={'launch-config':pda(P.launch,'config'),'swap-config':pda(P.swap,'config'),'creation-control':pda(P.launch,'governance'),'swap-governance':pda(P.swap,'governance'),'quote-mint':base.quoteMint}
- const observed=await readBoth(connections,[...programData,...Object.values(accountRoles),...(launchTable?[launchTable]:[]),lookupTable])
+ const selectedAddresses=selected?[selected.hookPin.program,pda(LOADER,pk(selected.hookPin.program).toBuffer())]:[]
+ const observed=await readBoth(connections,[...programData,...Object.values(accountRoles),...selectedAddresses,...(launchTable?[launchTable]:[]),lookupTable])
+ if(selected){
+  const [program,data]=observed.slice(programRoles.length+Object.keys(accountRoles).length),pin=selected.hookPin
+  need(program.owner===LOADER&&program.executable&&program.data.length===36&&program.data.readUInt32LE()===2
+   &&pk(program.data.subarray(4)).toBase58()===selectedAddresses[1],'selected hook program link differs')
+  need(data.owner===LOADER&&!data.executable&&data.data.length===45+pin.elfLength&&data.data.readUInt32LE()===3
+   &&data.data[12]===0&&sha(data.data.subarray(45))===pin.elfSha256,'selected hook is not the exact immutable release executable')
+ }
  const slot=Math.min(...await Promise.all(connections.map(c=>c.connection.getSlot('finalized'))))
  const programs=programRoles.map((role,i)=>{
   const bytes=observed[i].data,length=role==='token'?tokenElfLengthOf(base):elfLengths[role],expected=role==='token'?base.dependencyObservation.tokenElfSha256:base.elfSha256[role]
@@ -125,5 +136,11 @@ export async function collectProductionOperatorBundle({connections,trustDomains,
   economics:{creatorFeeBps:DEFAULT_CREATOR_FEE_BPS,authorShareBps:0,lpFeeBps:lc.lp_fee_bps,maxCreatorFeeBps:lc.max_creator_fee_bps,protocolFeeBps:sc.protocol_fee_bps,
    launchProtocolShareBps:sc.launch_protocol_share_bps,launchFeeLamports:lc.launch_fee_lamports.toString(),poolCreationFeeLamports:sc.pool_creation_fee_lamports.toString()},
   reviewer,treasury,lookupTable:{address:lookupTable,sha256:sha(table.data)},...(launch?{launchLookupTable:{address:launchTable,sha256:sha(launch.data)}}:{}),lamportsPerSignature:'5000'}
+ if(selected){
+  config.selectedHookPin=selected.hookPin
+  config.selectedHookRelease={schema:'repoing/selected-hook-release/1',approvalReference,sourceCommit:base.sourceCommit,
+   profileSha256:config.profileSha256,dossierSha256:config.dossierSha256,...selected}
+  validateSelectedHookReleaseBindings({config,profile,dossierJson,connections})
+ }
  return {schema:local?'repoing/local-operator-bundle/1':'repoing/production-operator-bundle/1',genesisHash,observedSlot:slot,profile,config,dossierJson}
 }
