@@ -44,22 +44,25 @@ test('selected initial arithmetic has no executable minimum and measured fee UI 
   const {SelectedTradeFees,HookTradeSummary}=await appModule('app/components/hooklab-trade-panel.jsx')
   const rough=html(h(HookTradeSummary,{market,symbol:'TOK',buying:true,estimate,native:true}))
   assert.match(rough,/Unmeasured/)
-  const fees=html(h(SelectedTradeFees,{market,symbol:'TOK',quote:{feeModel:1,grossCreatorFee:'100',netCreatorFee:'100',
-    hookTokenFee:'1200000',burnedToken:'300000',hookQuoteFee:'20',protocolFee:'25',networkFeeLamports:'5000',holdingRentLamports:'0',payerDebitLamports:'15000'}}))
+  const fees=html(h(SelectedTradeFees,{market,symbol:'TOK',quote:{feeModel:1,grossCreatorFee:'120',netCreatorFee:'90',
+    hookTokenFee:'1200000',burnedToken:'300000',hookQuoteFee:'20',protocolFee:'31',networkFeeLamports:'5000',holdingRentLamports:'0',payerDebitLamports:'15000'}}))
   assert.match(fees,/1.2 TOK/);assert.match(fees,/0.3 TOK/)
-  assert.match(fees,/Additional protocol charge/);assert.doesNotMatch(fees,/75|25%|inclusive/)
+  assert.match(fees,/Gross quote fee budget/)
+  assert.match(fees,/Custom SOL cut \(included in gross budget\)/)
+  assert.match(fees,/Protocol fees \(included creator share \+ LP fee\)/)
+  assert.doesNotMatch(fees,/Additional protocol charge/)
 })
 
 test('selected share estimates allow an oversized buy to consume only the final fill',()=>{
   const market={policyKind:'selected-hook',feeModel:1,creatorFeeBps:1000,protocolShareBps:2500,decimals:0,graduationQuote:'2000',
     pool:{baseReserve:'10',quoteReserve:'1000',virtualBase:'1000',virtualQuote:'0',protocolFeesQuote:'7'}}
-  // 13 consumed: creator 2, additional protocol 1, curve 10. The other 88 stay in the wallet.
-  assert.equal(finalFillLamports(market),13n)
+  // 12 consumed: gross creator fee 2 (platform rounds to zero), curve 10; 89 unspent.
+  assert.equal(finalFillLamports(market),12n)
   const estimate=estimateTrade(market,{side:'buy',amount:101n})
   assert.equal(estimate.error,undefined)
   assert.equal(estimate.delivered,10n)
-  assert.equal(estimate.consumedInput,13n)
-  assert.equal(estimate.unspentInput,88n)
+  assert.equal(estimate.consumedInput,12n)
+  assert.equal(estimate.unspentInput,89n)
   assert.equal(estimate.graduates,true)
   assert.equal(estimate.minAmountOut,null)
 })
@@ -88,8 +91,8 @@ test('selected consent shows the protected final-fill minimum rather than the la
   }
   const {HookLaunchNotes}=await appModule('app/components/hooklab-coin-form.jsx')
   const notes=html(h(HookLaunchNotes,{creatorFeeBps:100,capBps:0,selectedHook:request.selectedHook}))
-  assert.match(notes,/Additional protocol share/)
-  assert.doesNotMatch(notes,/Inclusive fee policy|75% of the creator fee/)
+  assert.match(notes,/floor\(gross creator fee \/ 4\), deducted from gross/)
+  assert.doesNotMatch(notes,/Additional protocol share/)
 })
 
 test('native-estimate HTTP creates no signing operation and rejects browser preview flags',async()=>{

@@ -347,12 +347,12 @@ export function HookTradeNote({ native }) {
 export function SelectedTradeFees({quote,market,symbol}){
   if(!quote)return null
   return <dl className="trade-details">
-    <div><dt>Creator base fee</dt><dd>{sol(quote.grossCreatorFee,9)}</dd></div>
+    <div><dt>Gross quote fee budget</dt><dd>{sol(quote.grossCreatorFee,9)}</dd></div>
     <div><dt>Net creator revenue</dt><dd>{sol(quote.netCreatorFee,9)}</dd></div>
     <div><dt>Token-hook fee</dt><dd>{quote.hookTokenFee===undefined?'Unmeasured':`${formatUnits(quote.hookTokenFee,market.decimals)} ${symbol}`}</dd></div>
     <div><dt>Token burn</dt><dd>{quote.burnedToken===undefined?'Unmeasured':`${formatUnits(quote.burnedToken,market.decimals)} ${symbol}`}</dd></div>
-    <div><dt>Custom SOL cut</dt><dd>{quote.hookQuoteFee===undefined?'Unmeasured':sol(quote.hookQuoteFee,9)}</dd></div>
-    <div><dt>{quote.feeModel===1?'Additional protocol charge':'Protocol share of creator fee'}</dt><dd>{sol(quote.protocolFee,9)}</dd></div>
+    <div><dt>Custom SOL cut (included in gross budget)</dt><dd>{quote.hookQuoteFee===undefined?'Unmeasured':sol(quote.hookQuoteFee,9)}</dd></div>
+    <div><dt>Protocol fees (included creator share + LP fee)</dt><dd>{sol(quote.protocolFee,9)}</dd></div>
     <div><dt>Network fee</dt><dd>{sol(quote.networkFeeLamports,9)}</dd></div>
     <div><dt>Account rent</dt><dd>{sol(quote.holdingRentLamports,9)}</dd></div>
     <div><dt>Total wallet spend</dt><dd>{sol(quote.payerDebitLamports,9)}</dd></div>

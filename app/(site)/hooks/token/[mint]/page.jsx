@@ -77,7 +77,7 @@ export default async function HooksCoinPage({ params }) {
             : ['max-wallet', market.graduated ? 'Lifted at graduation. Any wallet can hold any amount now.'
               : `No wallet can hold more than ${market.capBps / 100}% of the supply (${formatUnits(BigInt(market.capRaw), market.decimals, 0)} ${market.symbol}) until graduation.`],
             ['creator-fee', market.feeModel === 1
-              ? `Creator revenue is ${market.creatorFeeBps / 100}% before configured author share. The additional protocol share is charged separately, not deducted from creator revenue. Hook deductions are measured before each exact trade approval.`
+              ? `The gross creator fee is ${market.creatorFeeBps / 100}%. repo.ing receives floor(gross / 4); the creator receives the remainder before any configured author share. Custom SOL cuts join the same gross quote fee budget. No additional protocol charge is added to that budget. Hook deductions are measured before each exact trade approval.`
               : `Every buy and sell pays ${market.creatorFeeBps / 100}%: 75% to the creator, 25% to repo.ing, in SOL.`]].map(([id, text]) =>
             <li key={id} className="hooks-block is-on"><header><img src={id === 'selected-hook' ? '/hook-icons/plain.webp?v=2' : hookBlock(id).icon} width={40} height={40} alt=""/><div><strong>{id === 'selected-hook' ? 'Selected hook' : hookBlock(id).title}</strong><span style={{overflowWrap:'anywhere'}}>{text}</span></div></header>
               {id === 'selected-hook' && <details><summary>Technical details</summary><p style={{overflowWrap:'anywhere'}}>Program: {market.selectedHook.program} · Flags: {market.selectedHook.flags}</p></details>}</li>)}
