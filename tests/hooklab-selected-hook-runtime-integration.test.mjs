@@ -25,8 +25,8 @@ test('runtime reserves setup before preparation, preserves identity on restart a
  const publication={schema:'repoing/hook-publication/1',publisher:owner,name:'Synthetic',version:'1',selectedHook,manifest,behavior:'Test',fees:'Test',risks:'Test',evidence}
  const selection={digest:hookPublicationDigest(publication),manifest,configuration:{feeBps:'100',maxWalletBps:'0',collector:key(90)}}
  const economics={quoteCut:{maxBuyBps:80,maxSellBps:40},authorShareBps:1000,rules:{burnBuyBps:20,burnSellBps:30}}
- const input={operationId:id,selectedHook,hookPublication:selection,capBps:0,creatorFeeBps:100,label:'Synthetic',name:'Synthetic',symbol:'SYN',uri:'https://repo.ing/synthetic',virtualQuote:'1000000000',...economics}
- const coin={creator_wallet:owner,status:'launching',selected_hook:selectedHook,hook_publication:selection,selected_economics:economics,name:input.name,symbol:input.symbol,uri:input.uri,creator_fee_bps:100,cap_bps:0}
+ const input={operationId:id,selectedHook,hookPublication:selection,capBps:0,creatorFeeBps:137,label:'Synthetic',name:'Synthetic',symbol:'SYN',uri:'https://repo.ing/synthetic',virtualQuote:'1000000000',...economics}
+ const coin={creator_wallet:owner,status:'launching',selected_hook:selectedHook,hook_publication:selection,selected_economics:economics,name:input.name,symbol:input.symbol,uri:input.uri,creator_fee_bps:137,cap_bps:0}
  let custody,setup,context,finality,allocations=0,preparations=0,setupReads=0,changed=false
  const summary=()=>custody&&({operationId:id,custodySessionId:custody.custody_session_id,owner,profileSha256:f.profile.expectedSha256,mint:custody.mint,selectedConfig:custody.selected_config,stage:custody.stage,revision:String(custody.revision),preparedRequest:custody.preparation_request,selectedAuthorityEvidence:custody.selected_authority_evidence})
  const store={async reserveNewCandidate(){allocations++;assert.equal(allocations,1);custody={operation_id:id,custody_session_id:randomUUID(),owner_wallet:owner,profile_sha256:f.profile.expectedSha256,mint:f.request.mint,selected_config:f.request.selectedConfig,stage:'reserved',revision:0,preparation_request:null,selected_authority_evidence:null};return summary()},
@@ -85,7 +85,7 @@ test('runtime reserves setup before preparation, preserves identity on restart a
  mocked('../src/hooklab-native-signing.mjs',{nativeSigningLifecycle:(_pool,{resolver,stageOperations})=>({...resolver,stageOperations})})
  mocked('../src/hooklab-native-custody-signing.mjs',{nativeCustodySigningAdapter:()=>({})})
  mocked('../src/hooklab-native-transaction-sender.mjs',{nativeTransactionSender:()=>({})})
- mocked('../src/hooklab-open-creation.mjs',{readOpenCreation:async()=>({native:true,open:true,paused:false,creatorFeeBps:[100],capBps:[100]})})
+ mocked('../src/hooklab-open-creation.mjs',{readOpenCreation:async()=>({native:true,open:true,paused:false,creatorFeeBps:[100],maxCreatorFeeBps:200,capBps:[100]})})
  mocked('../src/hooklab-max-wallet-launch-collector.mjs',{validateSelectedHookReleaseBindings:()=>{},observeReleasedSelectedHookCompatibility:async({program,stage,expectedEvidence})=>{
   assert.equal(program,selectedHook.program);if(changed)throw Error('Code changed');if(stage!=='initial')assert.deepEqual(expectedEvidence,evidence);return structuredClone(evidence)
  }})

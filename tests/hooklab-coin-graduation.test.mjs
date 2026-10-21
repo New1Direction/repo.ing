@@ -79,8 +79,10 @@ test('the coin page carries each state into the Blocks and the trade panel', asy
     assert.match(shown, /Custom hook · Wallet limits set by hook/)
     assert.doesNotMatch(shown, /No wallet holding limit/)
     assert.match(shown, /selected hook remains active/i)
-    assert.match(shown, /Creator revenue is 1% before configured author share/)
-    assert.match(shown, /protocol share is charged separately/)
+    assert.match(shown, /The gross creator fee is 1%/)
+    assert.match(shown, /repo\.ing receives floor\(gross \/ 4\); the creator receives the remainder before any configured author share/)
+    assert.match(shown, /No additional protocol charge is added to that budget/)
+    assert.doesNotMatch(shown, /protocol share is charged separately/)
     assert.doesNotMatch(shown, /75% to the creator, 25% to repo\.ing/)
     assert.doesNotMatch(shown, /Max 0%|Max wallet lifted|max per wallet lifts|no wallet can hold more|any wallet can hold any amount/i)
   }

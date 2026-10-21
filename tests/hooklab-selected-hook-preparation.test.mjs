@@ -43,6 +43,18 @@ test('selected preparation accepts arbitrary integer fees including zero without
     const f = fixture(); f.request.creatorFeeBps = creatorFeeBps
     assert.doesNotThrow(() => planSelectedHookPreparation(f))
   }
+  // Custom admission does not relax the chain's combined fee/burn ceiling.
+  for (const creatorFeeBps of [117, 118, 137]) {
+    const f = fixture(), coder = new BorshCoder(JSON.parse(Buffer.from(f.profile.idls.launch, 'base64')))
+    const bytes = Buffer.from(f.observations[0].accounts[4].account.dataBase64, 'base64')
+    const config = coder.accounts.decode('Config', bytes)
+    config.rule_bounds.max_burn_bps = 200
+    coder.types.encode('Config', config).copy(bytes, 8)
+    for (const o of f.observations) o.accounts[4].account.dataBase64 = bytes.toString('base64')
+    Object.assign(f.request, { creatorFeeBps, feeModel: 1, authorShareBps: 2500, rules: { burnBuyBps: 37, burnSellBps: 83 } })
+    if (creatorFeeBps === 117) assert.doesNotThrow(() => planSelectedHookPreparation(f))
+    else assert.throws(() => planSelectedHookPreparation(f), /Selected hook burn bounds differ/)
+  }
 })
 test('missing registry explicitly requires creator initialization without mint replacement', async () => {
   const f = fixture(); for (const o of f.observations) o.accounts[5].account = null
